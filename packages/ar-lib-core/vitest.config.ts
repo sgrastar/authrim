@@ -6,6 +6,9 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     setupFiles: ['../../test/setup.ts'],
+    // V8 coverage instrumentation makes the large SQLite restore fixtures several times slower on
+    // two-core CI runners. Keep a bounded timeout while avoiding environment-speed-only failures.
+    testTimeout: 30_000,
     include: ['src/**/*.test.ts'],
     exclude: ['**/node_modules/**', '**/dist/**'],
     coverage: {

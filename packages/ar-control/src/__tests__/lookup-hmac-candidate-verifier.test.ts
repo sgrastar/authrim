@@ -142,8 +142,8 @@ describe('LookupHmacCandidateVerifier', () => {
       () => 1_800_000_000
     ).reconcile();
 
-    expect(result).toEqual({ attempted: 8, succeeded: 8, failed: 0 });
-    expect(state.evidence).toHaveLength(8);
+    expect(result).toEqual({ attempted: 9, succeeded: 9, failed: 0 });
+    expect(state.evidence).toHaveLength(9);
     expect(state.evidence.every((entry) => entry.status === 'succeeded')).toBe(true);
     expect(JSON.stringify(state.evidence)).not.toContain(smokePrivate.d);
   });
@@ -156,7 +156,7 @@ describe('LookupHmacCandidateVerifier', () => {
       () => 1_800_000_000
     ).reconcile();
 
-    expect(result).toEqual({ attempted: 8, succeeded: 8, failed: 0 });
+    expect(result).toEqual({ attempted: 9, succeeded: 9, failed: 0 });
   });
 
   it.each(['ar-token', 'ar-saml', 'ar-bridge', 'ar-vc'])(
@@ -169,7 +169,7 @@ describe('LookupHmacCandidateVerifier', () => {
         () => 1_800_000_000
       ).reconcile();
 
-      expect(result).toEqual({ attempted: 8, succeeded: 7, failed: 1 });
+      expect(result).toEqual({ attempted: 9, succeeded: 8, failed: 1 });
       expect(state.evidence).toContainEqual(
         expect.objectContaining({
           workerScriptName: `test-${component}`,
@@ -190,8 +190,8 @@ describe('LookupHmacCandidateVerifier', () => {
       () => 1_800_000_000
     ).reconcile();
 
-    expect(result).toEqual({ attempted: 8, succeeded: 8, failed: 0 });
-    expect(state.evidence).toHaveLength(8);
+    expect(result).toEqual({ attempted: 9, succeeded: 9, failed: 0 });
+    expect(state.evidence).toHaveLength(9);
     expect(state.evidence).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

@@ -5,12 +5,14 @@
 		type SupportOpsAggregateResponse,
 		type SupportOpsCohortCreateResponse,
 		type SupportOpsCohortPreviewResponse,
+		type SupportOpsActionResponse,
 		type SupportOpsFieldDescriptor,
 		type SupportOpsResourceDescriptor,
 		type SupportOpsSelector,
 		type SupportOpsSelectorOperator
 	} from '$lib/api/admin-support-ops';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import { aggregatableGroupBy, initialSelectorValue } from '$lib/admin/support-ops-defaults';
 	import { LL } from '$i18n/i18n-svelte';
 	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
 	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
@@ -51,13 +53,16 @@
 
 	let resources = $state<SupportOpsResourceDescriptor[]>([]);
 	let selectedResourceName = $state('User');
-	let groupBy = $state('status');
+	// Chosen from the registry once it is read: a field the API aggregates for the resource.
+	let groupBy = $state('');
 	let actionName = $state('suspend');
 	let supportCaseId = $state('');
 	let actionReason = $state('');
 	let currentCohortId = $state('');
 	let currentActionId = $state('');
 	let cohortPollTimer: ReturnType<typeof setInterval> | null = null;
+	let actionPollTimer: ReturnType<typeof setTimeout> | null = null;
+	let actionPollGeneration = 0;
 
 	let selectorRows = $state<SelectorRow[]>([
 		{ id: crypto.randomUUID(), field: 'status', op: 'eq', value: 'active' }
@@ -108,6 +113,7 @@
 
 	onDestroy(() => {
 		stopCohortPolling();
+		stopActionPolling();
 	});
 
 	async function loadRegistry() {
@@ -120,9 +126,16 @@
 				selectedResourceName = resources[0].resource;
 				const firstField = firstFilterableField();
 				if (firstField) {
-					selectorRows = [{ id: crypto.randomUUID(), field: firstField, op: 'eq', value: '' }];
+					selectorRows = [
+						{
+							id: crypto.randomUUID(),
+							field: firstField,
+							op: 'eq',
+							value: initialSelectorValue(fieldDescriptor(firstField))
+						}
+					];
 				}
-				groupBy = firstAggregatableField() ?? '';
+				groupBy = aggregatableGroupBy(selectedResource, groupBy);
 			}
 		} catch (err) {
 			error = err instanceof Error ? err.message : $LL.admin_support_ops_load_failed();
@@ -133,10 +146,6 @@
 
 	function firstFilterableField(): string | null {
 		return filterableFields[0]?.[0] ?? null;
-	}
-
-	function firstAggregatableField(): string | null {
-		return aggregatableFields[0]?.[0] ?? null;
 	}
 
 	function fieldDescriptor(fieldName: string): SupportOpsFieldDescriptor | null {
@@ -163,6 +172,48 @@
 		}, 5000);
 	}
 
+	function stopActionPolling() {
+		actionPollGeneration += 1;
+		if (actionPollTimer) {
+			clearTimeout(actionPollTimer);
+			actionPollTimer = null;
+		}
+	}
+
+	function isRunning(result: unknown): boolean {
+		return (
+			!!result && typeof result === 'object' && 'status' in result && result.status === 'running'
+		);
+	}
+
+	/**
+	 * An action executed by a background job: read, one read at a time, until it is no longer
+	 * running (or the polling is stopped or started again).
+	 */
+	function startActionPolling(actionId: string) {
+		stopActionPolling();
+		const generation = actionPollGeneration;
+		const next = () => {
+			actionPollTimer = setTimeout(() => void read(), 5000);
+		};
+		const read = async () => {
+			let action: SupportOpsActionResponse;
+			try {
+				action = await adminSupportOpsAPI.getAction(actionId);
+			} catch {
+				if (generation === actionPollGeneration && actionId === currentActionId) next();
+				return;
+			}
+			if (generation !== actionPollGeneration || actionId !== currentActionId) return;
+			actionResult = { ...action };
+			if (isRunning(action)) return next();
+			actionPollTimer = null;
+			if (action.status === 'completed') success = $LL.admin_support_ops_action_completed();
+			else error = $LL.admin_support_ops_action_execution_failed();
+		};
+		next();
+	}
+
 	function formatCount(value: number | null | undefined): string {
 		if (value === null || value === undefined) {
 			return `< ${minCount}`;
@@ -183,7 +234,7 @@
 						...row,
 						field,
 						op: descriptor?.operators[0] ?? 'eq',
-						value: ''
+						value: initialSelectorValue(descriptor)
 					}
 				: row
 		);
@@ -196,7 +247,15 @@
 	function addSelectorRow() {
 		const field = firstFilterableField();
 		if (!field) return;
-		selectorRows = [...selectorRows, { id: crypto.randomUUID(), field, op: 'eq', value: '' }];
+		selectorRows = [
+			...selectorRows,
+			{
+				id: crypto.randomUUID(),
+				field,
+				op: 'eq',
+				value: initialSelectorValue(fieldDescriptor(field))
+			}
+		];
 	}
 
 	function removeSelectorRow(rowId: string) {
@@ -249,15 +308,22 @@
 		return { all: conditions };
 	}
 
+	// Another resource may not aggregate the field chosen for the last one.
+	$effect(() => {
+		const field = aggregatableGroupBy(selectedResource, groupBy);
+		if (field !== groupBy) groupBy = field;
+	});
+
 	async function runAggregate() {
-		if (!selectedResource || !groupBy) return;
+		const field = aggregatableGroupBy(selectedResource, groupBy);
+		if (!selectedResource || !field) return;
 		resetMessages();
 		loading = true;
 		try {
 			aggregateResult = await adminSupportOpsAPI.aggregate({
 				resource: selectedResource.resource,
 				selector: buildSelector(),
-				group_by: [groupBy]
+				group_by: [field]
 			});
 			success = $LL.admin_support_ops_aggregate_completed();
 		} catch (err) {
@@ -387,11 +453,21 @@
 
 	async function executeAction() {
 		if (!currentActionId) return;
+		stopActionPolling();
+		const generation = actionPollGeneration;
+		const actionId = currentActionId;
 		resetMessages();
 		loading = true;
 		try {
-			actionResult = await adminSupportOpsAPI.executeAction(currentActionId);
-			success = $LL.admin_support_ops_action_completed();
+			const result = await adminSupportOpsAPI.executeAction(actionId);
+			if (generation !== actionPollGeneration || actionId !== currentActionId) return;
+			actionResult = result;
+			if (isRunning(actionResult)) {
+				success = $LL.admin_support_ops_action_running();
+				startActionPolling(actionId);
+			} else {
+				success = $LL.admin_support_ops_action_completed();
+			}
 		} catch (err) {
 			error = err instanceof Error ? err.message : $LL.admin_support_ops_action_execution_failed();
 		} finally {
@@ -641,7 +717,11 @@
 					</div>
 				</div>
 				<div class="privacy-line">
-					min_count {previewResult.risk.min_count} · selector {previewResult.selector_hash}
+					min_count {previewResult.risk.min_count}
+					{#if previewResult.privacy?.count_exact === false}
+						· bucket {previewResult.privacy.count_precision}
+					{/if}
+					· selector {previewResult.selector_hash}
 				</div>
 			{/if}
 

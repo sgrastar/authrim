@@ -15,6 +15,7 @@ import {
   type ResolvedTenantDatabaseSource,
 } from '@authrim/ar-lib-core';
 import { loadLookupHmacRuntimeKeys } from './lookup-hmac-runtime';
+import { AdminContactReadBatch } from './admin-contact-read-batch';
 
 const MAX_SHARDS = 32;
 const MAX_LIMIT = 100;
@@ -29,7 +30,24 @@ export interface CrossShardAccountListInput {
   limit?: number;
   cursor?: string;
   accountType?: string;
+  accountTypes?: string[];
   includeInactive?: boolean;
+  /** Also list suspended and locked accounts, so an administrator can find them to restore them. */
+  includeRestricted?: boolean;
+}
+
+/** Fixed lifecycle states of an account list; the SQL is built from this allowlist only. */
+function listLifecycleStates(
+  input: Pick<CrossShardAccountListInput, 'includeInactive' | 'includeRestricted'>
+): readonly string[] {
+  if (input.includeRestricted === true) return ['active', 'deprovisioned', 'suspended', 'locked'];
+  return input.includeInactive === true ? ['active', 'deprovisioned'] : ['active'];
+}
+
+function lifecycleStateClause(states: readonly string[]): string {
+  return states.length === 1
+    ? `account.lifecycle_state = '${states[0]}'`
+    : `account.lifecycle_state IN (${states.map((state) => `'${state}'`).join(', ')})`;
 }
 
 export interface CrossShardAccountListItem {
@@ -146,14 +164,16 @@ async function digestHex(value: string): Promise<string> {
 async function queryHash(input: {
   tenantId: string;
   accountType: string | null;
-  includeInactive: boolean;
+  accountTypes?: string[];
+  lifecycleStates: readonly string[];
 }): Promise<string> {
   return digestHex(
     JSON.stringify({
       tenantId: input.tenantId,
       accountType: input.accountType,
+      ...(input.accountTypes ? { accountTypes: input.accountTypes } : {}),
       publicationState: 'active',
-      lifecycleState: input.includeInactive ? ['active', 'deprovisioned'] : ['active'],
+      lifecycleState: input.lifecycleStates,
       sort: 'created_at_desc,id_desc',
     })
   );
@@ -368,6 +388,17 @@ export class CrossShardAccountListService {
     if (accountType !== null && !SAFE_ID.test(accountType)) {
       throw new Error('invalid_cross_shard_account_type');
     }
+    const accountTypes =
+      input.accountTypes === undefined ? undefined : [...new Set(input.accountTypes)].sort();
+    if (
+      accountTypes &&
+      (accountType !== null ||
+        accountTypes.length === 0 ||
+        accountTypes.length > 10 ||
+        accountTypes.some((type) => !SAFE_ID.test(type)))
+    ) {
+      throw new Error('invalid_cross_shard_account_type');
+    }
     const sources = await activeRouteSources(this.env, input.tenantId);
     const piiShards = sources.pii;
     const sortedShards = [...sources.core.values()].sort((left, right) =>
@@ -387,11 +418,12 @@ export class CrossShardAccountListService {
     }
     const now = this.now();
     const generation = await shardSetGeneration(sortedShards);
-    const includeInactive = input.includeInactive === true;
+    const lifecycleStates = listLifecycleStates(input);
     const expectedQueryHash = await queryHash({
       tenantId: input.tenantId,
       accountType,
-      includeInactive,
+      accountTypes,
+      lifecycleStates,
     });
     const secret = this.env.LOGGING_CURSOR_HMAC_SECRET;
     const decoded = input.cursor ? await decodeCursor(input.cursor, secret ?? '') : null;
@@ -420,11 +452,12 @@ export class CrossShardAccountListService {
       const session = shard.source.withSession('first-unconstrained');
       const clauses = [
         `account.tenant_id = ?`,
-        includeInactive
-          ? `account.lifecycle_state IN ('active', 'deprovisioned')`
-          : `account.lifecycle_state = 'active'`,
+        lifecycleStateClause(lifecycleStates),
         `account.directory_publication_state = 'active'`,
         ...(accountType ? [`account.account_type = ?`] : []),
+        ...(accountTypes
+          ? [`account.account_type IN (${accountTypes.map(() => '?').join(', ')})`]
+          : []),
         ...(position
           ? [`(account.created_at < ? OR (account.created_at = ? AND account.id < ?))`]
           : []),
@@ -432,6 +465,7 @@ export class CrossShardAccountListService {
       const params: unknown[] = [
         input.tenantId,
         ...(accountType ? [accountType] : []),
+        ...(accountTypes ?? []),
         ...(position ? [position.createdAt, position.createdAt, position.id] : []),
         limit + 1,
       ];
@@ -517,7 +551,9 @@ export class CrossShardAccountListService {
     };
   }
 
-  async count(input: Omit<CrossShardAccountListInput, 'limit' | 'cursor'>): Promise<number> {
+  async count(
+    input: Omit<CrossShardAccountListInput, 'limit' | 'cursor' | 'accountTypes'>
+  ): Promise<number> {
     if (!SAFE_ID.test(input.tenantId)) throw new Error('invalid_cross_shard_account_tenant');
     const accountType = input.accountType?.trim() || null;
     if (accountType !== null && !SAFE_ID.test(accountType)) {
@@ -741,7 +777,16 @@ interface BoundShardMetadataRow {
   residency_partition: string;
 }
 
-type ExactAccountSearchPurpose = 'active_search' | 'account_lifecycle' | 'account_delete_retry';
+/**
+ * active_search: active accounts; account_lifecycle: active or deprovisioned; account_delete_retry:
+ * those plus ones being deleted; admin_view: any account not deleted (suspended and locked too),
+ * to show who it is.
+ */
+type ExactAccountSearchPurpose =
+  | 'active_search'
+  | 'account_lifecycle'
+  | 'account_delete_retry'
+  | 'admin_view';
 
 function exactAccountStateClause(purpose: ExactAccountSearchPurpose): string {
   return purpose === 'account_delete_retry'
@@ -751,7 +796,9 @@ function exactAccountStateClause(purpose: ExactAccountSearchPurpose): string {
        )`
     : purpose === 'account_lifecycle'
       ? "AND account.lifecycle_state IN ('active', 'deprovisioned') AND account.directory_publication_state = 'active'"
-      : "AND account.lifecycle_state = 'active' AND account.directory_publication_state = 'active'";
+      : purpose === 'admin_view'
+        ? "AND account.lifecycle_state NOT IN ('deleting', 'deleted') AND account.directory_publication_state = 'active'"
+        : "AND account.lifecycle_state = 'active' AND account.directory_publication_state = 'active'";
 }
 
 async function primaryAccountRow(
@@ -841,7 +888,7 @@ async function findAccountLifecycleByFanout(input: {
            SELECT id AS owner_id FROM users_pii_tombstone
              WHERE tenant_id = ? AND id = ?
            LIMIT 1`
-        : input.purpose === 'account_lifecycle'
+        : input.purpose === 'account_lifecycle' || input.purpose === 'admin_view'
           ? `SELECT owner_id FROM identity_sensitive_values
                WHERE tenant_id = ? AND owner_type = 'runtime_user' AND owner_id = ? LIMIT 1`
           : `SELECT owner_id FROM identity_sensitive_values
@@ -996,7 +1043,7 @@ async function findAccountLifecycleAcrossBoundShards(input: {
            SELECT id AS owner_id FROM users_pii_tombstone
              WHERE tenant_id = ? AND id = ?
            LIMIT 1`
-        : input.purpose === 'account_lifecycle'
+        : input.purpose === 'account_lifecycle' || input.purpose === 'admin_view'
           ? `SELECT owner_id FROM identity_sensitive_values
                WHERE tenant_id = ? AND owner_type = 'runtime_user' AND owner_id = ? LIMIT 1`
           : `SELECT owner_id FROM identity_sensitive_values
@@ -1029,6 +1076,153 @@ async function findAccountLifecycleAcrossBoundShards(input: {
 
 export class CrossShardAccountExactSearchService {
   constructor(private readonly env: Env) {}
+
+  /** Current signed inventory only: unknown owners are absent, never guessed from other bindings. */
+  async findAdminContacts(input: {
+    tenantId: string;
+    userIds: readonly string[];
+  }): Promise<Map<string, CrossShardAccountListItem>> {
+    const userIds = [...new Set(input.userIds)];
+    if (
+      !SAFE_ID.test(input.tenantId) ||
+      userIds.length > 500 ||
+      userIds.some((id) => !isValidPersistedUserId(id))
+    ) {
+      throw new Error('invalid_cross_shard_account_search');
+    }
+    if (!userIds.length) return new Map();
+    const registry = this.env.TENANT_RUNTIME_REGISTRY;
+    if (!registry || !this.env.TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS) {
+      throw new Error('cross_shard_account_lookup_registry_unavailable');
+    }
+    // All role/shard resolutions see exactly the same signed snapshot and generation bytes.
+    // Only get(text) is used by the canonical resolver; no global cache or KV writes are added.
+    const pinned = new Map<string, Promise<string | null>>();
+    const registryView = {
+      get: (key: string) => {
+        let read = pinned.get(key);
+        if (!read) {
+          read = registry.get(key);
+          pinned.set(key, read);
+        }
+        return read;
+      },
+    };
+    const env = new Proxy(this.env, {
+      get: (target, key, receiver): unknown =>
+        key === 'TENANT_RUNTIME_REGISTRY' ? registryView : Reflect.get(target, key, receiver),
+    });
+    const sources = await activeRouteSources(env, input.tenantId);
+    const reads = new AdminContactReadBatch();
+    const candidates = new Map<
+      string,
+      Array<{ row: ExactAccountRow; shard: ActiveAccountShard }>
+    >();
+    await Promise.all(
+      [...sources.core.values()].flatMap((shard) => {
+        const tasks: Promise<void>[] = [];
+        // tenant + 2 * 49 IDs stays below D1's 100 bound parameters per statement.
+        for (let offset = 0; offset < userIds.length; offset += 49) {
+          const ids = userIds.slice(offset, offset + 49);
+          const placeholders = ids.map(() => '?').join(',');
+          tasks.push(
+            reads
+              .adapter(shard.source)
+              .query<ExactAccountRow>(
+                `SELECT account.id, account.legacy_user_id, account.tenant_id, account.account_type,
+                  account.lifecycle_state, account.display_label, account.created_at,
+                  account.account_route_generation, account.directory_publication_state,
+                  outbox.payload_json
+             FROM identity_accounts account
+             JOIN account_routing_outbox outbox
+               ON outbox.tenant_id = account.tenant_id AND outbox.account_id = account.id
+              AND outbox.event_kind = 'account_created'
+              AND outbox.route_generation = account.account_route_generation
+              AND outbox.status = 'succeeded'
+            WHERE account.tenant_id = ?
+              AND (account.id IN (${placeholders}) OR account.legacy_user_id IN (${placeholders}))
+              ${exactAccountStateClause('admin_view')}`,
+                [
+                  input.tenantId,
+                  ...ids.map((id) => (id.startsWith('account:') ? id : `account:${id}`)),
+                  ...ids,
+                ]
+              )
+              .then((rows) => {
+                for (const row of rows) {
+                  for (const id of ids) {
+                    if (
+                      row.id !== (id.startsWith('account:') ? id : `account:${id}`) &&
+                      row.legacy_user_id !== id
+                    )
+                      continue;
+                    const matches = candidates.get(id) ?? [];
+                    matches.push({ row, shard });
+                    candidates.set(id, matches);
+                  }
+                }
+              })
+          );
+        }
+        return tasks;
+      })
+    );
+    const routes = new Map<string, CrossShardAccountListItem>();
+    for (const [id, matches] of candidates) {
+      if (matches.length !== 1) throw new Error('cross_shard_account_search_ambiguous');
+      const { row, shard } = matches[0];
+      if (row.tenant_id !== input.tenantId) throw new Error('cross_shard_account_route_invalid');
+      if (
+        row.account_type !== 'user' ||
+        row.legacy_user_id !== id ||
+        !isValidPersistedUserId(row.legacy_user_id)
+      )
+        continue;
+      const route = await validatedAccountRoute({
+        row,
+        tenantId: input.tenantId,
+        coreShard: shard,
+        piiShards: sources.pii,
+      });
+      routes.set(id, {
+        id: row.id,
+        legacyUserId: row.legacy_user_id,
+        tenantId: row.tenant_id,
+        accountType: row.account_type,
+        lifecycleState: row.lifecycle_state,
+        displayLabel: row.display_label,
+        createdAt: row.created_at,
+        ...route,
+      });
+    }
+    await Promise.all(
+      [...sources.pii.values()].flatMap((shard) => {
+        const ids = [...routes]
+          .filter(([, route]) => route.piiBindingRef === shard.bindingRef)
+          .map(([id]) => id);
+        const tasks: Promise<void>[] = [];
+        for (let offset = 0; offset < ids.length; offset += 99) {
+          const chunk = ids.slice(offset, offset + 99);
+          tasks.push(
+            reads
+              .adapter(shard.source)
+              .query<{ owner_id: string }>(
+                `SELECT DISTINCT owner_id FROM identity_sensitive_values
+            WHERE tenant_id = ? AND owner_type = 'runtime_user'
+              AND owner_id IN (${chunk.map(() => '?').join(',')})`,
+                [input.tenantId, ...chunk]
+              )
+              .then((rows) => {
+                const present = new Set(rows.map((row) => row.owner_id));
+                for (const id of chunk) if (!present.has(id)) routes.delete(id);
+              })
+          );
+        }
+        return tasks;
+      })
+    );
+    return routes;
+  }
 
   async find(input: {
     tenantId: string;

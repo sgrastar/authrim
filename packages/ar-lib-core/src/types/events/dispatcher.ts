@@ -1,3 +1,4 @@
+import type { WebhookConfigWithScope } from '../../services/webhook-registry';
 /**
  * Event Dispatcher Types
  *
@@ -58,6 +59,12 @@ export interface EventPublishPayload<T = Record<string, unknown>> {
  * Controls how the event is processed and delivered.
  */
 export interface EventPublishOptions {
+  /** Trusted durable account producer only. PII is materialized per authorized destination. */
+  accountWebhookData?: (webhook: WebhookConfigWithScope) => Promise<Record<string, unknown>>;
+
+  /** Trusted durable outbox envelope. The outbox owns leasing/retries; bypass KV deduplication. */
+  durableEvent?: { id: string; occurredAt: number };
+
   /**
    * Process synchronously (wait for all handlers).
    * Default: false (async processing)

@@ -20,11 +20,16 @@ import type { TenantProfile } from '../types/contracts/tenant-profile';
 import type { ClientContract } from '../types/contracts';
 import { createAuthContextFromHono } from '../context';
 import { getClient } from './kv';
-import { loadTenantProfile, loadTenantContract, loadClientContract } from './contract-loader';
+import { loadTenantContract, loadClientContract } from './contract-loader';
 import { getTenantProfile } from '../types/contracts/tenant-profile';
-import { buildVersionedKey, getCacheTTL } from './cache-config';
+import { buildClientCacheModeKey, buildVersionedKey, getCacheTTL } from './cache-config';
 import { buildKVKey } from './tenant-context';
-import { getTenantSystemSettings } from './tenant-settings';
+import { getTenantSettingsDocument } from './tenant-settings';
+import {
+  resolveProtocolSettings,
+  type ProtocolSettings,
+  type ProtocolSettingsSection,
+} from '../services/protocol-settings';
 
 function getTenantIdFromRequestCacheContext(c: Context<{ Bindings: Env }>): string {
   // Hono's generic context type does not know about middleware-injected values.
@@ -51,59 +56,14 @@ export interface RequestCacheStats {
   clientMiss: number;
   tenantProfileHit: number;
   tenantProfileMiss: number;
-  systemSettingsHit: number;
-  systemSettingsMiss: number;
+  protocolSettingsHit: number;
+  protocolSettingsMiss: number;
   clientContractHit: number;
   clientContractMiss: number;
   featureFlagsHit: number;
   featureFlagsMiss: number;
   tenantFeatureFlagsHit: number;
   tenantFeatureFlagsMiss: number;
-}
-
-/**
- * System settings structure (partial, for caching purposes)
- * The actual structure is complex and varies; we cache the raw JSON
- * This interface covers the commonly accessed settings for type safety
- */
-export interface CachedSystemSettings {
-  oidc?: {
-    tokenExchange?: {
-      enabled?: boolean;
-      allowedTypes?: string[];
-      allowedSubjectTokenTypes?: string[];
-      maxResourceParams?: number;
-      maxAudienceParams?: number;
-      idJag?: {
-        enabled?: boolean;
-        allowedIssuers?: string[];
-        maxTokenLifetime?: number;
-        includeTenantClaim?: boolean;
-        requireConfidentialClient?: boolean;
-      };
-    };
-    clientCredentials?: {
-      enabled?: boolean;
-    };
-    [key: string]: unknown;
-  };
-  fapi?: {
-    profile?: string;
-    enabled?: boolean;
-    requireDpop?: boolean;
-    messageSigning?: {
-      enabled?: boolean;
-      requireSignedRequestObject?: boolean;
-      requireJarm?: boolean;
-      requestObjectSigningAlgorithms?: string[];
-      authorizationSigningAlgorithms?: Array<'RS256' | 'ES256' | 'PS256'>;
-      defaultAuthorizationSigningAlgorithm?: 'RS256' | 'ES256' | 'PS256';
-      maxRequestObjectAgeSeconds?: number;
-      maxRequestObjectLifetimeSeconds?: number;
-      clockSkewSeconds?: number;
-    };
-  };
-  [key: string]: unknown;
 }
 
 /**
@@ -133,12 +93,11 @@ interface RequestCache {
   tenantFeatureFlags: Map<string, TenantFeatureFlags | null>;
   /** Tenant feature flags fetched flags (to distinguish null from not-fetched) */
   tenantFeatureFlagsFetched: Set<string>;
-  /** Cached system settings (single instance per request) */
-  systemSettings: CachedSystemSettings | null;
-  /** System settings fetched flag (to distinguish null value from not-fetched) */
-  systemSettingsFetched: boolean;
-  /** The settings read failed; strict security-profile callers must not treat this as disabled. */
-  systemSettingsReadFailed: boolean;
+  /**
+   * Protocol settings per client ('' when read without one) and set of sections; a read that
+   * failed is kept as its error, so a later call in the request fails the same way.
+   */
+  protocolSettings: Map<string, { settings: ProtocolSettings } | { error: unknown }>;
   /** Cache statistics */
   stats: RequestCacheStats;
 }
@@ -166,16 +125,14 @@ export function getRequestCache(c: Context<{ Bindings: Env }>): RequestCache {
       featureFlags: new Map(),
       tenantFeatureFlags: new Map(),
       tenantFeatureFlagsFetched: new Set(),
-      systemSettings: null,
-      systemSettingsFetched: false,
-      systemSettingsReadFailed: false,
+      protocolSettings: new Map(),
       stats: {
         clientHit: 0,
         clientMiss: 0,
         tenantProfileHit: 0,
         tenantProfileMiss: 0,
-        systemSettingsHit: 0,
-        systemSettingsMiss: 0,
+        protocolSettingsHit: 0,
+        protocolSettingsMiss: 0,
         clientContractHit: 0,
         clientContractMiss: 0,
         featureFlagsHit: 0,
@@ -292,58 +249,42 @@ export async function loadTenantProfileCached(
 }
 
 /**
- * Get system settings with request-level caching
- *
- * Caches system_settings within the request scope only.
- * Does NOT persist to KV (system_settings is environment config).
- *
- * @param c - Hono context
- * @param env - Cloudflare environment bindings
- * @returns System settings object or null
- *
- * @example
- * // First call: hits SETTINGS KV
- * const settings1 = await getSystemSettingsCached(c, c.env);
- * // Second call: returns cached result
- * const settings2 = await getSystemSettingsCached(c, c.env);
+ * Protocol settings (see resolveProtocolSettings) for the request's tenant, with request-level
+ * caching. Throws when they cannot be read.
  */
-export async function getSystemSettingsCached(
+export async function getProtocolSettingsCached(
   c: Context<{ Bindings: Env }>,
   env: Env,
-  options: { failOnError?: boolean } = {}
-): Promise<CachedSystemSettings | null> {
+  options: {
+    clientId?: string;
+    sections?: readonly ProtocolSettingsSection[];
+    keys?: readonly string[];
+  }
+): Promise<ProtocolSettings> {
   const cache = getRequestCache(c);
-
-  // Check request-level cache
-  if (cache.systemSettingsFetched) {
-    cache.stats.systemSettingsHit++;
-    if (options.failOnError && cache.systemSettingsReadFailed) {
-      throw new Error('Tenant system settings are unavailable');
-    }
-    return cache.systemSettings;
+  // Values set for a client apply to that client only, so each client gets its own entry; and
+  // each selection, since only what was asked for is read.
+  const entryKey = `${options.clientId ?? ''}|${(options.sections ?? []).join(',')}|${(options.keys ?? []).join(',')}`;
+  const cached = cache.protocolSettings.get(entryKey);
+  if (cached) {
+    cache.stats.protocolSettingsHit++;
+    if ('error' in cached) throw cached.error;
+    return cached.settings;
   }
 
-  // Cache miss - fetch from SETTINGS KV
-  cache.stats.systemSettingsMiss++;
-
+  cache.stats.protocolSettingsMiss++;
   try {
-    const tenantId = getTenantIdFromRequestCacheContext(c);
-    cache.systemSettings = (await getTenantSystemSettings(env.SETTINGS, tenantId, {
-      failOnError: true,
-    })) as CachedSystemSettings | null;
-    cache.systemSettingsReadFailed = false;
+    const settings = await resolveProtocolSettings(
+      env,
+      getTenantIdFromRequestCacheContext(c),
+      options
+    );
+    cache.protocolSettings.set(entryKey, { settings });
+    return settings;
   } catch (error) {
-    // Parse error or KV error - treat as no settings
-    cache.systemSettings = null;
-    cache.systemSettingsReadFailed = true;
-    if (options.failOnError) {
-      cache.systemSettingsFetched = true;
-      throw error;
-    }
+    cache.protocolSettings.set(entryKey, { error });
+    throw error;
   }
-
-  cache.systemSettingsFetched = true;
-  return cache.systemSettings;
 }
 
 /**
@@ -428,21 +369,11 @@ export async function getTenantFeatureFlagsCached(
 
   let flags: TenantFeatureFlags | null = null;
 
-  if (env.AUTHRIM_CONFIG) {
-    try {
-      const settingsKey = `settings:tenant:${tenantId}:feature-flags`;
-      const settingsJson = await env.AUTHRIM_CONFIG.get(settingsKey);
-      if (settingsJson) {
-        const parsed = JSON.parse(settingsJson);
-        if (typeof parsed === 'object' && parsed !== null) {
-          flags = parsed as TenantFeatureFlags;
-        }
-      }
-    } catch {
-      // Parse error - treat as no flags
-      flags = null;
-    }
-  }
+  flags = (await getTenantSettingsDocument(
+    env,
+    tenantId,
+    'feature-flags'
+  )) as TenantFeatureFlags | null;
 
   // Store in request cache
   cache.tenantFeatureFlags.set(tenantId, flags);
@@ -505,7 +436,7 @@ export async function getFeatureFlagCached(
   }
 
   // 2. Check environment variable
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   const envValue = (env as unknown as Record<string, string | undefined>)[flagName];
   if (envValue !== undefined) {
     value = envValue === 'true';
@@ -613,8 +544,8 @@ export async function invalidateClientCacheOnDelete(
 ): Promise<void> {
   // Use the same key format as kv.ts getClient()
   const cacheKey = buildKVKey('client', clientId, tenantId);
-  // Cache mode uses versioned key format
-  const cacheModeKey = buildVersionedKey('cache-mode:client', clientId);
+  // Cache mode uses versioned key format, per tenant
+  const cacheModeKey = buildClientCacheModeKey({ tenantId, clientId });
 
   await Promise.all([
     env.CLIENTS_CACHE?.delete(cacheKey).catch(() => {}),
@@ -639,7 +570,7 @@ export async function invalidateTenantProfileCache(env: Env, tenantId: string): 
  * Invalidate discovery metadata cache in KV (for Admin API use)
  *
  * Should be called when settings that affect discovery metadata are changed:
- * - system_settings (OIDC config, FAPI config)
+ * - protocol settings (oauth, security)
  * - logout_settings
  * - feature-flags (tenant or global)
  * - tenant profile

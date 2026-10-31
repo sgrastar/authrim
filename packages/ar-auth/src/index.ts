@@ -1,3 +1,4 @@
+import { runSamlDrCoveredFetch } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { Hono, type Context, type Next } from 'hono';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
@@ -16,7 +17,6 @@ import {
   // UI Configuration
   getUIConfig,
   buildUIUrl,
-  shouldUseBuiltinForms,
   createConfigurationError,
   // Plugin Context (Phase 9 - Plugin Architecture)
   // CSRF Protection
@@ -25,13 +25,13 @@ import {
   getLogger,
   // Tenant-aware utilities
   getTenantIdFromContext,
-  getTenantSettings,
+  getTenantSettingsDocument,
   adminAuthMiddleware,
 } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
 
 // Import handlers
-import { authorizeHandler, authorizeConfirmHandler, authorizeLoginHandler } from './authorize';
+import { authorizeHandler } from './authorize';
 import { parHandler } from './par';
 import { adminAgentAuthorizeHandler, adminAgentParHandler } from './admin-agent-oauth';
 import {
@@ -78,8 +78,7 @@ import {
   didListHandler,
   didUnlinkHandler,
 } from './did-link';
-import { anonLoginChallengeHandler, anonLoginVerifyHandler } from './anon-login';
-import { upgradeHandler, upgradeCompleteHandler, upgradeStatusHandler } from './upgrade';
+import { guestLoginHandler } from './guest-login';
 import { setupApp } from './setup';
 import { adminSetupApiApp } from './admin-setup-api';
 import { adminInvitationEnrollmentApp } from './admin-invitation-enrollment';
@@ -98,7 +97,11 @@ import {
   directSessionHandler,
   directLogoutHandler,
 } from './direct-auth';
-import { validateInvitationHandler, useInvitationHandler } from './invitation-handlers';
+import {
+  sendInvitationEmailCodeHandler,
+  validateInvitationHandler,
+  verifyInvitationEmailCodeHandler,
+} from './invitation-handlers';
 import { registrationFieldsHandler } from './registration-fields';
 import {
   loginRuntimeEmailVerificationChallengeHandler,
@@ -106,15 +109,6 @@ import {
   loginRuntimeInteractionSubmitHandler,
 } from './login-runtime-flow';
 import { AUTH_REQUEST_DIAGNOSTIC_CONTEXT_KEY } from './request-diagnostics';
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
 
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
@@ -272,23 +266,24 @@ function authRequestDiagnosticStartMiddleware() {
       await next();
     } finally {
       const state = getMiddlewareDiagnosticState(c);
-      if (!state) return;
-      recordMiddlewareDiagnosticSpan(c, 'auth_handler_downstream');
-      state.spans.push({
-        name: 'auth_total',
-        durationMs: roundDiagnosticDurationMs(performance.now() - state.startedAt),
-      });
-      appendMiddlewareDiagnosticServerTiming(c, state.spans);
-      c.res.headers.set('X-Authrim-Diagnostic-Session-Id', state.sessionId);
-      getLogger(c)
-        .module('AUTH-REQUEST-TIMING')
-        .info('Auth request middleware diagnostics', {
-          diagnosticSessionId: state.sessionId,
-          method: c.req.method,
-          path: c.req.path,
-          status: c.res.status,
-          timingMs: Object.fromEntries(state.spans.map((span) => [span.name, span.durationMs])),
+      if (state) {
+        recordMiddlewareDiagnosticSpan(c, 'auth_handler_downstream');
+        state.spans.push({
+          name: 'auth_total',
+          durationMs: roundDiagnosticDurationMs(performance.now() - state.startedAt),
         });
+        appendMiddlewareDiagnosticServerTiming(c, state.spans);
+        c.res.headers.set('X-Authrim-Diagnostic-Session-Id', state.sessionId);
+        getLogger(c)
+          .module('AUTH-REQUEST-TIMING')
+          .info('Auth request middleware diagnostics', {
+            diagnosticSessionId: state.sessionId,
+            method: c.req.method,
+            path: c.req.path,
+            status: c.res.status,
+            timingMs: Object.fromEntries(state.spans.map((span) => [span.name, span.durationMs])),
+          });
+      }
     }
   };
 }
@@ -390,10 +385,14 @@ app.use('*', async (c, next) => {
   // Try to get allowed origins from KV (Settings Manager format)
   let allowedOriginsValue: string | undefined;
 
-  const tenantSettings = await getTenantSettings(
-    c.env.AUTHRIM_CONFIG,
+  const tenantSettings = await getTenantSettingsDocument(
+    c.env,
     getTenantIdFromContext(c),
-    'tenant'
+    'tenant',
+    {
+      // Without the tenant's settings the fallback is at least as strict.
+      onUnreadable: 'empty',
+    }
   );
   if (tenantSettings && typeof tenantSettings['tenant.allowed_origins'] === 'string') {
     allowedOriginsValue = tenantSettings['tenant.allowed_origins'];
@@ -420,7 +419,7 @@ app.use('*', async (c, next) => {
       return '';
     },
     allowMethods: ['GET', 'POST', 'OPTIONS'],
-    allowHeaders: ['Content-Type', 'Authorization', 'X-Session-Id'],
+    allowHeaders: ['Content-Type', 'Authorization', 'X-Session-Id', 'X-Authrim-Interaction-Id'],
     exposeHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
     maxAge: 86400,
     credentials: true,
@@ -491,14 +490,10 @@ app.use(
 );
 app.use('/oauth/admin-agent/authorize', csrfProtectionMiddleware());
 
-// Rate limiting for anonymous login endpoints (architecture-decisions.md §17)
-// Strict profile: prevent brute-force attacks on device authentication
-app.use('/api/auth/anon-login/*', async (c, next) => {
+// Rate limiting for browser guest login.
+app.use('/api/auth/guest/login', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'strict');
-  return rateLimitMiddleware({
-    ...profile,
-    endpoints: ['/api/auth/anon-login/challenge', '/api/auth/anon-login/verify'],
-  })(c, next);
+  return rateLimitMiddleware({ ...profile, endpoints: ['/api/auth/guest/login'] })(c, next);
 });
 
 // Rate limiting for directory password login. This endpoint reaches an external connector
@@ -533,6 +528,14 @@ app.use('/api/admin/invitations/*', async (c, next) => {
     requireAtomic: true,
   })(c, next);
 });
+// Sends codes (to the invited email only); also limited per invitation by the handler.
+app.use('/api/v1/invitations/email-verification/*', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'strict');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/v1/invitations/email-verification'],
+  })(c, next);
+});
 app.use('/api/auth/directory-connectors/heartbeat/*', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'strict');
   return rateLimitMiddleware({
@@ -541,31 +544,13 @@ app.use('/api/auth/directory-connectors/heartbeat/*', async (c, next) => {
   })(c, next);
 });
 
-// Rate limiting for upgrade endpoints (architecture-decisions.md §17)
-// Moderate profile: balance security and usability for account upgrade
-app.use('/api/auth/upgrade', async (c, next) => {
-  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
-  return rateLimitMiddleware({
-    ...profile,
-    endpoints: ['/api/auth/upgrade'],
-  })(c, next);
-});
-app.use('/api/auth/upgrade/*', async (c, next) => {
-  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
-  return rateLimitMiddleware({
-    ...profile,
-    endpoints: ['/api/auth/upgrade/complete', '/api/auth/upgrade/status'],
-  })(c, next);
-});
-
 // CSRF protection for browser-facing API endpoints
 // Validates Origin/Referer on state-changing requests (POST/PUT/PATCH/DELETE)
 // Skips Bearer token requests (server-to-server calls are not vulnerable to CSRF)
 //
-// Note: /authorize and /flow/* are NOT CSRF-protected here because:
+// Note: /authorize is NOT CSRF-protected here because:
 // - /authorize POST can receive form_post responses from RPs (cross-origin HTML form auto-submit)
 // - /authorize has its own CSRF protection via the state parameter (RFC 6749 §10.12)
-// - /flow/* endpoints handle login form submissions from the Login UI
 //
 // Note: /par, /logout/backchannel are server-to-server endpoints (use client auth, not cookies)
 app.use(
@@ -581,6 +566,7 @@ app.use('/api/v1/login/interactions/*', csrfProtectionMiddleware());
 app.use('/api/v1/login/interactions/start', authRequestDiagnosticCheckpoint('auth_csrf'));
 app.use('/auth/consent', csrfProtectionMiddleware());
 app.use('/api/flow/*', csrfProtectionMiddleware());
+app.use('/api/v1/invitations/email-verification/*', csrfProtectionMiddleware());
 
 // Health check endpoint (accessible via /api/auth/health due to route pattern)
 app.get('/api/auth/health', (c) => {
@@ -598,14 +584,6 @@ app.get('/api/auth/health', (c) => {
 // OIDC Core 3.1.2.1: MUST support both GET and POST methods
 app.get('/authorize', authorizeHandler);
 app.post('/authorize', authorizeHandler);
-
-// Authorization confirmation endpoint (for max_age re-authentication)
-app.get('/flow/confirm', authorizeConfirmHandler);
-app.post('/flow/confirm', authorizeConfirmHandler);
-
-// Authorization login endpoint (for session-less authentication)
-app.get('/flow/login', authorizeLoginHandler);
-app.post('/flow/login', authorizeLoginHandler);
 
 // PAR (Pushed Authorization Request) endpoint - RFC 9126
 app.post('/par', parHandler);
@@ -675,23 +653,14 @@ app.get('/api/auth/dids', didListHandler);
 // Unlink a DID (DELETE /api/auth/dids/:did)
 app.delete('/api/auth/dids/:did', didUnlinkHandler);
 
-// Anonymous Login endpoints (architecture-decisions.md §17)
-// Device-based anonymous authentication with upgrade capability
-app.post('/api/auth/anon-login/challenge', anonLoginChallengeHandler);
-app.post('/api/auth/anon-login/verify', anonLoginVerifyHandler);
-
-// Anonymous User Upgrade endpoints (architecture-decisions.md §17)
-// Upgrade anonymous users to full accounts
-app.post('/api/auth/upgrade', upgradeHandler);
-app.post('/api/auth/upgrade/complete', upgradeCompleteHandler);
-app.get('/api/auth/upgrade/status', upgradeStatusHandler);
+// Browser guest login. The private resume credential is stored only in an HttpOnly cookie.
+app.post('/api/auth/guest/login', guestLoginHandler);
 
 // OAuth Consent endpoints (API)
 app.get('/api/auth/consents', consentGetHandler);
 app.post('/api/auth/consents', consentPostHandler);
 
-// OAuth Consent endpoints (Builtin Forms - for OIDC conformance testing)
-// These routes are used when shouldUseBuiltinForms() returns true
+// OAuth Consent endpoints (JSON consent API, proxied by the Login UI)
 app.get('/auth/consent', consentGetHandler);
 app.post('/auth/consent', consentPostHandler);
 
@@ -714,78 +683,17 @@ app.post('/logout', frontChannelLogoutHandler);
 app.post('/logout/backchannel', backChannelLogoutHandler);
 
 // Logged out page - displayed after successful logout when no valid post_logout_redirect_uri
-// Conformance mode: show built-in HTML
 // UI configured: redirect to external UI's logged-out page
-// Neither: return configuration error
+// Not configured: return configuration error
 app.get('/logged-out', async (c) => {
-  // Check conformance mode and UI configuration
-  if (await shouldUseBuiltinForms(c.env)) {
-    // Conformance mode: show built-in HTML
-    const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Logged Out - Authrim</title>
-  <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      min-height: 100vh;
-      margin: 0;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    }
-    .container {
-      background: white;
-      padding: 2rem 3rem;
-      border-radius: 12px;
-      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
-      text-align: center;
-      max-width: 400px;
-    }
-    .icon {
-      font-size: 4rem;
-      margin-bottom: 1rem;
-    }
-    h1 {
-      color: #333;
-      margin-bottom: 0.5rem;
-      font-size: 1.5rem;
-    }
-    p {
-      color: #666;
-      margin-bottom: 1.5rem;
-    }
-    .footer {
-      margin-top: 2rem;
-      color: #999;
-      font-size: 0.85rem;
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="icon">✓</div>
-    <h1>You have been logged out</h1>
-    <p>Your session has been successfully terminated.</p>
-    <p>You may close this window or navigate to your application.</p>
-    <div class="footer">Powered by Authrim</div>
-  </div>
-</body>
-</html>`;
-    return c.html(html);
-  }
-
   // Check UI configuration
-  const uiConfig = await getUIConfig(c.env);
+  const uiConfig = await getUIConfig(c.env, getTenantIdFromContext(c));
   if (uiConfig?.baseUrl) {
     const url = buildUIUrl(uiConfig, 'loggedOut');
     return c.redirect(url, 302);
   }
 
-  // No UI configured and conformance mode disabled
+  // No UI configured
   return c.json(createConfigurationError(), 500);
 });
 
@@ -875,9 +783,12 @@ app.post('/api/v1/auth/direct/logout', directLogoutHandler);
 
 // Invitation API (public)
 // - GET  /api/v1/invitations/validate?token=xxx  - Validate token
-// - POST /api/v1/invitations/use                 - Mark token used
+// - POST /api/v1/invitations/email-verification/{send,verify} - Prove the invited email
+// An invitation is used only by the sign-up that creates the account (Direct Auth passkey and
+// email-code sign-up record it on their challenge), never by a request naming a user.
 app.get('/api/v1/invitations/validate', validateInvitationHandler);
-app.post('/api/v1/invitations/use', useInvitationHandler);
+app.post('/api/v1/invitations/email-verification/send', sendInvitationEmailCodeHandler);
+app.post('/api/v1/invitations/email-verification/verify', verifyInvitationEmailCodeHandler);
 
 // Registration fields (public)
 // - GET /api/v1/registration-fields  - Fields visible on signup form
@@ -902,121 +813,19 @@ app.route('/', adminInvitationEnrollmentApp);
 // Per OIDC RP-Initiated Logout spec, OP SHOULD display an error page when:
 // - post_logout_redirect_uri is not registered
 // - id_token_hint is invalid or missing (when required)
-// Conformance mode: show built-in HTML
 // UI configured: redirect to external UI's logout-error page
-// Neither: return configuration error
+// Not configured: return configuration error
 app.get('/logout-error', async (c) => {
   const error = c.req.query('error') || 'unknown_error';
 
-  // Error messages for different validation failures
-  const errorMessages: Record<string, { title: string; description: string }> = {
-    unregistered_post_logout_redirect_uri: {
-      title: 'Invalid Redirect URI',
-      description:
-        'The post_logout_redirect_uri provided is not registered for this client. The logout request cannot be completed with the specified redirect URI.',
-    },
-    invalid_id_token_hint: {
-      title: 'Invalid ID Token',
-      description:
-        'The id_token_hint provided is invalid or has been tampered with. Please ensure you are using a valid ID token issued by this authorization server.',
-    },
-    id_token_hint_required: {
-      title: 'ID Token Required',
-      description:
-        'An id_token_hint is required when specifying a post_logout_redirect_uri. Please include a valid ID token in your logout request.',
-    },
-    invalid_client: {
-      title: 'Invalid Client',
-      description:
-        'The client specified in the ID token could not be found. The logout request cannot be processed.',
-    },
-    unknown_error: {
-      title: 'Logout Error',
-      description:
-        'An error occurred while processing your logout request. Your session may have been terminated, but we could not redirect you to the requested location.',
-    },
-  };
-
-  const errorInfo = errorMessages[error] || errorMessages['unknown_error'];
-
-  // Check conformance mode
-  if (await shouldUseBuiltinForms(c.env)) {
-    // Conformance mode: show built-in HTML
-    const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Logout Error - Authrim</title>
-  <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      min-height: 100vh;
-      margin: 0;
-      background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
-    }
-    .container {
-      background: white;
-      padding: 2rem 3rem;
-      border-radius: 12px;
-      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
-      text-align: center;
-      max-width: 500px;
-    }
-    .icon {
-      font-size: 4rem;
-      margin-bottom: 1rem;
-    }
-    h1 {
-      color: #c0392b;
-      margin-bottom: 0.5rem;
-      font-size: 1.5rem;
-    }
-    p {
-      color: #666;
-      margin-bottom: 1rem;
-      line-height: 1.6;
-    }
-    .error-code {
-      background: #f8f9fa;
-      padding: 0.5rem 1rem;
-      border-radius: 4px;
-      font-family: monospace;
-      color: #666;
-      font-size: 0.9rem;
-      margin-top: 1rem;
-    }
-    .footer {
-      margin-top: 2rem;
-      color: #999;
-      font-size: 0.85rem;
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="icon">⚠</div>
-    <h1>${escapeHtml(errorInfo.title)}</h1>
-    <p>${escapeHtml(errorInfo.description)}</p>
-    <div class="error-code">Error: ${escapeHtml(error)}</div>
-    <div class="footer">Powered by Authrim</div>
-  </div>
-</body>
-</html>`;
-    return c.html(html);
-  }
-
   // Check UI configuration
-  const uiConfig = await getUIConfig(c.env);
+  const uiConfig = await getUIConfig(c.env, getTenantIdFromContext(c));
   if (uiConfig?.baseUrl) {
     const url = buildUIUrl(uiConfig, 'error', { error });
     return c.redirect(url, 302);
   }
 
-  // No UI configured and conformance mode disabled
+  // No UI configured
   return c.json(createConfigurationError(), 500);
 });
 
@@ -1034,7 +843,12 @@ app.onError((err, c) => {
   return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
 });
 
-// Export for Cloudflare Workers
+// Preserve Hono's request helper and the default path when the opt-in flag is absent.
+const unguardedFetch = app.fetch.bind(app);
+app.fetch = (request, env, context) =>
+  runSamlDrCoveredFetch(env, context, (coveredEnv, coveredContext) =>
+    Promise.resolve(unguardedFetch(request, coveredEnv, coveredContext))
+  );
 export default app;
 export { DirectoryConnectorRelay } from './directory-connector-relay';
 export { RuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';

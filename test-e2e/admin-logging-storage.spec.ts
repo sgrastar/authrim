@@ -25,7 +25,7 @@ const sessionResponse = {
   tenant_id: 'tenant-a',
   email: 'admin@example.com',
   name: 'Platform Admin',
-  roles: ['super_admin'],
+  roles: ['ar_super_admin'],
   admin_scope: 'platform',
   is_platform_admin: true,
   expires_at: now + 3600000,

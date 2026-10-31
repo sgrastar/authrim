@@ -1,9 +1,26 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createDiagnosticLogR2Adapter } from '../diagnostic-log-r2-adapter';
 import { createDiagnosticLogger, DiagnosticLogger } from '../diagnostic-logger';
 import type { DiagnosticLoggingSettings } from '../../../types/settings/diagnostic-logging';
 import type { Env } from '../../../types/env';
 import type { DiagnosticLogEntry } from '../types';
+
+vi.mock('../../log-iceberg-emitter', () => ({
+  emitLogIcebergRow: vi.fn(
+    async (
+      env: { LOG_ARCHIVE: { store: Map<string, string> } },
+      input: { row: { id: string; entry_json: string } }
+    ) => {
+      env.LOG_ARCHIVE.store.set(input.row.id, input.row.entry_json);
+    }
+  ),
+}));
+vi.mock('../../log-iceberg-read', () => ({
+  readLogIcebergDataset: vi.fn(async (env: { LOG_ARCHIVE: { store: Map<string, string> } }) => ({
+    rows: [...env.LOG_ARCHIVE.store].map(([id, entry_json]) => ({ id, entry_json })),
+    consistency: 'eventual',
+  })),
+}));
 
 class MockR2ObjectBody {
   constructor(private readonly value: string) {}
@@ -47,15 +64,8 @@ function createSettings(
     'diagnostic-logging.http_response_enabled': true,
     'diagnostic-logging.token_validation_enabled': true,
     'diagnostic-logging.auth_decision_enabled': true,
-    'diagnostic-logging.r2_output_enabled': true,
-    'diagnostic-logging.r2_bucket_binding': 'DIAGNOSTIC_LOGS',
-    'diagnostic-logging.r2_path_prefix': 'diagnostic-logs',
     'diagnostic-logging.output_format': 'jsonl',
-    'diagnostic-logging.buffer_strategy': 'realtime',
-    'diagnostic-logging.batch_size': 100,
-    'diagnostic-logging.batch_interval_ms': 1000,
     'diagnostic-logging.filter_pii': true,
-    'diagnostic-logging.filter_tokens': true,
     'diagnostic-logging.token_hash_prefix_length': 12,
     'diagnostic-logging.http_safe_headers':
       'content-type,user-agent,x-diagnostic-session-id,x-request-id',
@@ -73,7 +83,8 @@ function createEnv(bucket: MockR2Bucket): Env {
   return {
     ISSUER_URL: 'https://issuer.example.com',
     OTP_HMAC_SECRET: 'test-secret',
-    DIAGNOSTIC_LOGS: bucket as unknown as R2Bucket,
+    LOG_ARCHIVE: bucket as unknown as R2Bucket,
+    AUTHRIM_LOG_ARCHIVE_MODE: 'scheduled',
   } as Env;
 }
 
@@ -164,7 +175,7 @@ describe('DiagnosticLogger', () => {
     expect(entry.remoteAddress).toBe('203.0.113.0/24');
   });
 
-  it('writes immutable diagnostic chunk objects instead of appending to an hourly object', async () => {
+  it('submits two separate immutable records to the selected archive mode', async () => {
     const bucket = new MockR2Bucket();
     const logger = new DiagnosticLogger({
       env: createEnv(bucket),
@@ -187,31 +198,17 @@ describe('DiagnosticLogger', () => {
     });
 
     expect(bucket.store.size).toBe(2);
-    const keys = Array.from(bucket.store.keys());
-    const diagnosticKeyPattern = new RegExp(
-      [
-        String.raw`^diagnostic-logs/v1/t_[A-Za-z0-9_-]{32}/diagnostic_detail/diagnostic/`,
-        String.raw`auth-decision/rp-client/\d{4}/\d{2}/\d{2}/\d{2}/`,
-        String.raw`chk_[A-Za-z0-9_-]+\.jsonl$`,
-      ].join(''),
-      'u'
-    );
-    expect(keys).toEqual(expect.arrayContaining([expect.stringMatching(diagnosticKeyPattern)]));
-    expect(keys.every((key) => !key.includes('/tenant-1/'))).toBe(true);
-
     const entries = getStoredEntries(bucket);
     expect(entries).toHaveLength(2);
   });
 
   it('queries client-scoped immutable chunks without requiring a category filter', async () => {
     const bucket = new MockR2Bucket();
-    const adapter = createDiagnosticLogR2Adapter(bucket as unknown as R2Bucket, {
-      pathPrefix: 'diagnostic-logs',
+    const adapter = createDiagnosticLogR2Adapter(createEnv(bucket), {
       tenantId: 'tenant-1',
       clientId: 'client-a',
     });
-    const otherClientAdapter = createDiagnosticLogR2Adapter(bucket as unknown as R2Bucket, {
-      pathPrefix: 'diagnostic-logs',
+    const otherClientAdapter = createDiagnosticLogR2Adapter(createEnv(bucket), {
       tenantId: 'tenant-1',
       clientId: 'client-b',
     });
@@ -326,5 +323,199 @@ describe('DiagnosticLogger', () => {
     expect(details.refresh_token).toBeUndefined();
     expect(details.has_access_token).toBe(true);
     expect(details.has_id_token).toBe(true);
+  });
+
+  it('names itself as the writer of every entry', async () => {
+    const bucket = new MockR2Bucket();
+    const logger = new DiagnosticLogger({
+      env: createEnv(bucket),
+      tenantId: 'tenant-1',
+      settings: createSettings(),
+    });
+    await logger.logAuthDecision({ decision: 'allow', reason: 'ok' });
+    await logger.logTokenValidation({ step: 'issuer-check', result: 'pass' });
+
+    const entries = getStoredEntries(bucket);
+    expect(entries).toHaveLength(2);
+    for (const entry of entries) expect(entry.source).toBe('server');
+  });
+
+  describe.each(['full', 'masked', 'minimal'] as const)('secrets in %s storage mode', (mode) => {
+    it('are never stored, whatever the step, category or nesting', async () => {
+      const bucket = new MockR2Bucket();
+      const logger = new DiagnosticLogger({
+        env: createEnv(bucket),
+        tenantId: 'tenant-1',
+        clientId: 'rp-client',
+        settings: createSettings({ 'diagnostic-logging.storage_mode.default': mode }),
+      });
+      await logger.logTokenValidation({
+        step: 'issuer-check',
+        result: 'fail',
+        errorMessage: 'failed for https://rp.example.com/cb?code=raw-code-1&state=s',
+        expected: { client_secret: 'raw-expected-secret' },
+        details: {
+          client_secret: 'raw-client-secret',
+          nested: [{ refresh_token: 'raw-refresh' }, { password: { value: 'raw-password' } }],
+        },
+      });
+      await logger.logAuthDecision({
+        decision: 'deny',
+        reason: 'bad Bearer raw.opaque-credential',
+        context: { deep: { accessToken: 'raw-access', cookie: 'sid=raw-cookie' } },
+      });
+
+      const text = JSON.stringify(getStoredEntries(bucket));
+      expect(text.length).toBeGreaterThan(100);
+      for (const raw of [
+        'raw-client-secret',
+        'raw-refresh',
+        'raw-password',
+        'raw-expected-secret',
+        'raw-code-1',
+        'raw.opaque-credential',
+        'raw-access',
+        'raw-cookie',
+      ]) {
+        expect(text, raw).not.toContain(raw);
+      }
+    });
+  });
+
+  describe('full storage mode', () => {
+    const PII_CLAIMS = {
+      sub: 'upstream-sub-1',
+      email: 'jane.doe@example.com',
+      phone_number: '+81 90-1234-5678',
+      name: 'Jane Doe',
+      given_name: 'Jane',
+      family_name: 'Doe',
+      address: { street_address: '1 Main St' },
+    };
+    const TOKENS = {
+      access_token: 'raw-access-token-value',
+      id_token: 'eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJl',
+      refresh_token: 'raw-refresh-token-value',
+    };
+
+    async function writeFullModeLogs(settings: Partial<DiagnosticLoggingSettings>) {
+      const bucket = new MockR2Bucket();
+      const logger = new DiagnosticLogger({
+        env: createEnv(bucket),
+        tenantId: 'tenant-1',
+        clientId: 'rp-client',
+        settings: createSettings({
+          'diagnostic-logging.storage_mode.default': 'full',
+          ...settings,
+        }),
+      });
+      await logger.logTokenValidation({
+        step: 'token-response',
+        tokenType: 'access_token',
+        token: TOKENS.access_token,
+        result: 'pass',
+        errorMessage: 'sent to jane.doe@example.com',
+        details: { ...TOKENS },
+      });
+      await logger.logTokenValidation({
+        step: 'userinfo-response',
+        result: 'pass',
+        details: { endpoint: 'https://idp.example.com/userinfo', claims: { ...PII_CLAIMS } },
+      });
+      await logger.logHttpRequest({
+        request: new Request('https://op.example.com/token?code=abc123&state=opaque-state', {
+          headers: { 'cf-connecting-ip': '203.0.113.42', 'user-agent': 'Chrome/123' },
+        }),
+      });
+      return getStoredEntries(bucket);
+    }
+
+    it('redacts PII while the PII filter is on, which is the default', async () => {
+      const entries = await writeFullModeLogs({});
+      const text = JSON.stringify(entries);
+      for (const raw of [
+        'jane.doe@example.com',
+        '+81 90-1234-5678',
+        'Jane Doe',
+        '1 Main St',
+        '203.0.113.42',
+      ]) {
+        expect(text, raw).not.toContain(raw);
+      }
+      const userinfo = entries.find((e) => e.step === 'userinfo-response') as {
+        details: { claims: Record<string, unknown> };
+      };
+      expect(userinfo.details.claims.sub).toBe('upstream-sub-1');
+      expect(userinfo.details.claims.address).toBe('[PII_REDACTED]');
+      expect(String(userinfo.details.claims.email)).toMatch(/^j\*\*\*@example\.com \(hmac:/);
+      const request = entries.find((e) => e.category === 'http-request') as Record<string, unknown>;
+      expect(request.remoteAddress).toBe('203.0.113.0/24');
+      // what is not personal data stays as it was
+      expect((request.query as Record<string, string>).state).toBe('opaque-state');
+      expect((request.headers as Record<string, string>)['user-agent']).toBe('Chrome/123');
+    });
+
+    it('keeps the filter on when the setting is missing or not a boolean', async () => {
+      for (const value of [undefined, 'false', 0, null]) {
+        const entries = await writeFullModeLogs({
+          'diagnostic-logging.filter_pii': value as never,
+        });
+        expect(JSON.stringify(entries), String(value)).not.toContain('jane.doe@example.com');
+      }
+    });
+
+    it('shows raw PII only when the PII filter is explicitly off', async () => {
+      const entries = await writeFullModeLogs({ 'diagnostic-logging.filter_pii': false });
+      const text = JSON.stringify(entries);
+      for (const raw of ['jane.doe@example.com', '+81 90-1234-5678', 'Jane Doe', '203.0.113.42']) {
+        expect(text, raw).toContain(raw);
+      }
+    });
+
+    it.each([true, false])('never stores a token in clear text (PII filter %s)', async (filter) => {
+      const entries = await writeFullModeLogs({ 'diagnostic-logging.filter_pii': filter });
+      const text = JSON.stringify(entries);
+      for (const raw of [
+        TOKENS.access_token,
+        TOKENS.id_token,
+        TOKENS.refresh_token,
+        'code=abc123',
+        'eyJhbGciOiJSUzI1NiJ9',
+      ]) {
+        expect(text, raw).not.toContain(raw);
+      }
+      const response = entries.find((e) => e.step === 'token-response') as {
+        tokenHash?: string;
+        details: Record<string, string>;
+      };
+      expect(response.details.access_token).toMatch(/^sha256:[0-9a-f]{12}$/);
+      expect(response.details.refresh_token).toMatch(/^sha256:[0-9a-f]{12}$/);
+      expect(response.tokenHash).toMatch(/^[0-9a-f]{12}$/);
+      const request = entries.find((e) => e.category === 'http-request') as {
+        query: Record<string, string>;
+      };
+      expect(request.query.code_present).toBe('true');
+    });
+
+    it('does not change what masked and minimal storage store, whatever the PII filter is', async () => {
+      for (const mode of ['masked', 'minimal'] as const) {
+        const outputs: string[] = [];
+        for (const filter of [true, false]) {
+          const entries = await writeFullModeLogs({
+            'diagnostic-logging.storage_mode.default': mode,
+            'diagnostic-logging.filter_pii': filter,
+          });
+          // ids and times differ between runs
+          outputs.push(
+            JSON.stringify(entries, (key, value) =>
+              ['id', 'timestamp'].includes(key) ? undefined : value
+            )
+          );
+          expect(JSON.stringify(entries), mode).not.toContain('jane.doe@example.com');
+          expect(JSON.stringify(entries), mode).not.toContain(TOKENS.access_token);
+        }
+        expect(outputs[0], mode).toBe(outputs[1]);
+      }
+    });
   });
 });

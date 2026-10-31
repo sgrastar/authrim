@@ -1,6 +1,14 @@
 import type { Translation } from '../i18n-types';
 
 const completion = {
+	error_rateLimited: 'Demasiados intentos. Espera un rato y vuelve a intentarlo.',
+	error_rateLimitedRetryAfter: 'Demasiados intentos. Vuelve a intentarlo en unos {minutes} min.',
+	error_unregisteredPostLogoutRedirectUri:
+		'Se ha cerrado la sesión. No se pudo volver a la aplicación porque su dirección de retorno no está registrada. Abre la aplicación de nuevo.',
+	error_invalidIdTokenHint:
+		'Se ha cerrado la sesión. No se pudo volver a la aplicación porque no se pudo verificar su solicitud de cierre de sesión. Abre la aplicación de nuevo.',
+	error_idTokenHintRequired:
+		'Se ha cerrado la sesión. No se pudo volver a la aplicación porque su solicitud de cierre de sesión estaba incompleta. Abre la aplicación de nuevo.',
 	common_logoAlt: 'Logotipo',
 	common_footerLinks: 'Enlaces del pie de página',
 	common_selectOption: 'Selecciona una opción',
@@ -41,7 +49,7 @@ const completion = {
 	emailCode_title: 'Revisa tu correo',
 	emailCode_subtitle: 'Hemos enviado un código de verificación a',
 	emailCode_instructions:
-		'Introduce el código de 6 dígitos de tu correo. El código caducará en 5 minutos.',
+		'Introduce el código de 6 dígitos de tu correo. El correo indica cuánto tiempo es válido.',
 	emailCode_codeLabel: 'Código de verificación',
 	emailCode_resendSuccess: 'Código enviado correctamente',
 	emailCode_success: 'Verificación completada. Redirigiendo...',
@@ -91,7 +99,7 @@ const completion = {
 	device_subtitle: 'Introduce el código que aparece en tu dispositivo',
 	device_codeLabel: 'Código de verificación',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint: 'Introduce el código de 8 caracteres de tu dispositivo (formato: XXXX-XXXX)',
+	device_codeHint: 'Introduce el código que se muestra en tu dispositivo',
 	device_verifyButton: 'Verificar código',
 	device_confirmTitle: 'Autorizar dispositivo',
 	device_requestedPermissions: 'Permisos solicitados',
@@ -104,6 +112,13 @@ const completion = {
 	device_errorApproveFailed: 'No se pudo aprobar el dispositivo',
 	device_errorDenyFailed: 'No se pudo rechazar la solicitud del dispositivo',
 	device_errorInvalidRedirect: 'El servidor devolvió una URL de redirección no válida',
+	device_errorConsentWithdrawn:
+		'Esta solicitud se hizo antes de que retiraras el acceso de esta aplicación. Vuelve a empezar en el dispositivo para obtener un código nuevo.',
+	device_errorTryAgain:
+		'No se pudo guardar tu decisión en este momento y no se ha cambiado nada. Inténtalo de nuevo en unos instantes.',
+	device_errorTooManyAttempts: 'Demasiados intentos. Espera un rato y vuelve a intentarlo.',
+	device_errorOutcomeUnknown:
+		'No pudimos confirmar si se guardó tu decisión. Revisa el dispositivo o vuelve a introducir el código.',
 	ciba_title: 'Solicitud de autenticación',
 	ciba_subtitle: 'Una aplicación solicita tu aprobación',
 	ciba_noPendingRequests: 'No hay solicitudes de autenticación pendientes',
@@ -123,6 +138,18 @@ const completion = {
 	ciba_errorGeneric: 'Se produjo un error',
 	ciba_errorApproveFailed: 'No se pudo aprobar la solicitud',
 	ciba_errorDenyFailed: 'No se pudo rechazar la solicitud',
+	ciba_errorConsentWithdrawn:
+		'Esta solicitud se hizo antes de que retiraras el acceso de esta aplicación. Vuelve a empezar desde la aplicación.',
+	ciba_errorRequestGone: 'Esta solicitud ha caducado o ya se ha respondido.',
+	error_authorizationRequestExpired:
+		'La solicitud de inicio de sesión ha caducado. Vuelva a empezar desde la aplicación.',
+	ciba_errorTryAgain:
+		'No se pudo guardar tu decisión en este momento y no se ha cambiado nada. Inténtalo de nuevo en unos instantes.',
+	ciba_errorTooManyAttempts: 'Demasiados intentos. Espera un rato y vuelve a intentarlo.',
+	ciba_errorOutcomeUnknown:
+		'No pudimos confirmar si se guardó tu respuesta. Actualiza para ver las solicitudes que siguen pendientes.',
+	ciba_errorNoLongerWaiting:
+		'No pudimos confirmar tu respuesta, pero esta solicitud ya no está pendiente.',
 	reauth_title: 'Verifica tu identidad',
 	reauth_subtitle: 'Por seguridad, vuelve a autenticarte para continuar',
 	reauth_verifyWithPasskey: 'Verificar con Passkey',

@@ -3,5 +3,7 @@ updates:
   - package-ecosystem: npm
     directory: /
     target-branch: develop
+    # Disable automatic version-update PRs while retaining Dependabot alerts.
+    open-pull-requests-limit: 0
     schedule:
       interval: weekly

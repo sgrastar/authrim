@@ -1,3 +1,4 @@
+import { createCloudflareAdminAgentAuditWriter } from '@authrim/ar-agent-access/platform/cloudflare/admin-agent-audit-writer';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import {
@@ -33,6 +34,7 @@ import {
 } from '@authrim/ar-lib-core';
 import type { AgentManagementEnv } from '../../agent-downscope-auth';
 import { isFreshAdminHuman } from '../../agent-fresh-auth';
+import { actorHoldsOnTenants, actorReachesTenants } from './tenant-reach';
 
 type BulkContext = Context<{
   Bindings: AgentManagementEnv;
@@ -79,9 +81,8 @@ function human(c: BulkContext): boolean {
   );
 }
 
-function tenantScoped(c: BulkContext, tenantIds: readonly string[]): boolean {
-  const scope = current(c).tenantScope ?? [];
-  return scope.includes('*') || tenantIds.every((tenantId) => scope.includes(tenantId));
+function tenantScoped(c: BulkContext, tenantIds: readonly string[], permission: string): boolean {
+  return actorReachesTenants(current(c), controlTenant(c), tenantIds, permission);
 }
 
 function permitted(c: BulkContext, permission: string): boolean {
@@ -94,7 +95,8 @@ function error(c: BulkContext, status: 400 | 403 | 404 | 409 | 503, code: string
 
 function repository(c: BulkContext): AgentBulkRepository {
   return new AgentBulkRepository(
-    requireDedicatedAdminDatabaseAdapter(c.env, 'agent-bulk-plan-management')
+    requireDedicatedAdminDatabaseAdapter(c.env, 'agent-bulk-plan-management'),
+    createCloudflareAdminAgentAuditWriter(c.env)
   );
 }
 
@@ -199,7 +201,9 @@ agentBulkPlansRouter.get('/', async (c) => {
   const items = await repository(c).list(controlTenant(c));
   return c.json({
     bulk_plans: items.filter(
-      (item) => item.targetTenantIds && tenantScoped(c, item.targetTenantIds)
+      (item) =>
+        item.targetTenantIds &&
+        tenantScoped(c, item.targetTenantIds, ADMIN_PERMISSIONS.BULK_PLANS_READ)
     ),
   });
 });
@@ -212,7 +216,10 @@ agentBulkPlansRouter.get('/:id/:version', async (c) => {
   if (!itemVersion) return error(c, 400, 'AGENT_BULK_PLAN_INVALID_VERSION');
   const item = await repository(c).get(controlTenant(c), c.req.param('id') ?? '', itemVersion);
   if (!item) return error(c, 404, 'AGENT_BULK_PLAN_NOT_FOUND');
-  if (!item.targetTenantIds || !tenantScoped(c, item.targetTenantIds)) {
+  if (
+    !item.targetTenantIds ||
+    !tenantScoped(c, item.targetTenantIds, ADMIN_PERMISSIONS.BULK_PLANS_READ)
+  ) {
     return error(c, 403, 'AGENT_BULK_PLAN_TENANT_SCOPE_REQUIRED');
   }
   const executions = await repository(c).listTenantExecutions(
@@ -253,6 +260,11 @@ agentBulkPlansRouter.post('/', async (c) => {
   } catch {
     return error(c, 400, 'AGENT_BULK_PLAN_INVALID');
   }
+  // Whether the caller may act on these tenants is settled before anything is read about them, so
+  // that the answer does not tell a tenant's state to someone who has no business with it.
+  if (!tenantScoped(c, resolved.definition.targetTenantIds, ADMIN_PERMISSIONS.BULK_PLANS_CREATE)) {
+    return error(c, 403, 'AGENT_BULK_PLAN_TENANT_SCOPE_REQUIRED');
+  }
   if (!(await activeTargetTenants(c, resolved.definition.targetTenantIds))) {
     return error(c, 400, 'AGENT_BULK_PLAN_TARGET_INVALID');
   }
@@ -268,11 +280,11 @@ agentBulkPlansRouter.post('/', async (c) => {
       policyError
     );
   }
-  if (!tenantScoped(c, resolved.definition.targetTenantIds)) {
-    return error(c, 403, 'AGENT_BULK_PLAN_TENANT_SCOPE_REQUIRED');
-  }
   const database = requireDedicatedAdminDatabaseAdapter(c.env, 'agent-bulk-grant-validation');
-  const grants = new AdminAgentAccessRepository(database);
+  const grants = new AdminAgentAccessRepository(
+    database,
+    createCloudflareAdminAgentAuditWriter(c.env)
+  );
   const grant = await grants.getGrant(controlTenant(c), grantId);
   if (
     !grant ||
@@ -282,6 +294,9 @@ agentBulkPlansRouter.post('/', async (c) => {
     !hasAdminPermission(grant.permissions, ADMIN_PERMISSIONS.BULK_PLANS_CREATE) ||
     !hasAdminPermission(grant.permissions, ADMIN_PERMISSIONS.BULK_PLANS_APPLY) ||
     !hasAdminPermission(grant.permissions, ADMIN_PERMISSIONS.CLIENTS_READ) ||
+    // The plan acts as the grant's delegator: it is created by that Admin, not by another one
+    // borrowing the grant.
+    grant.delegatorId !== current(c).userId ||
     resolved.definition.targetTenantIds.some(
       (targetTenantId) => !grant.resolvedScopeConstraints.tenantIds.includes(targetTenantId)
     ) ||
@@ -291,21 +306,18 @@ agentBulkPlansRouter.post('/', async (c) => {
     return error(c, 403, 'AGENT_BULK_PLAN_GRANT_INVALID');
   }
   const machines = new AdminMachineAccessRepository(database);
-  const [
-    principal,
-    credential,
-    principalScopes,
-    credentialScopes,
-    principalPermissions,
-    credentialPermissions,
-  ] = await Promise.all([
-    machines.findPrincipalById(grant.machinePrincipalId),
-    machines.findCredentialById(credentialId),
-    machines.getPrincipalTenantScopes(grant.machinePrincipalId),
-    machines.getCredentialTenantScopes(credentialId),
-    machines.getPrincipalPermissions(grant.machinePrincipalId),
-    machines.getCredentialPermissions(credentialId),
-  ]);
+  // One snapshot of the principal, the credential and their scopes and permissions: the scope of
+  // one stored state is never combined with the permissions of another.
+  const machineSnapshot = await machines.loadMachineGrantSnapshot(
+    grant.machinePrincipalId,
+    credentialId
+  );
+  const principal = machineSnapshot?.principal;
+  const credential = machineSnapshot?.credential;
+  const principalScopes = machineSnapshot?.principalTenantScopes ?? [];
+  const credentialScopes = machineSnapshot?.credentialTenantScopes ?? [];
+  const principalPermissions = machineSnapshot?.principalPermissions ?? [];
+  const credentialPermissions = machineSnapshot?.credentialPermissions ?? [];
   const targetTenants = resolved.definition.targetTenantIds;
   if (
     !principal ||
@@ -342,7 +354,10 @@ agentBulkPlansRouter.post('/', async (c) => {
     requiredBulkPermissions.some(
       (permission) =>
         !hasAdminPermission(grant.permissions, permission) ||
-        !hasAdminPermission(machinePermissions, permission)
+        !hasAdminPermission(machinePermissions, permission) ||
+        // A plan that reaches other tenants needs the caller to hold the permissions for them, and
+        // `permissions` only says so for the request's tenant.
+        !actorHoldsOnTenants(current(c), controlTenant(c), targetTenants, permission)
     )
   ) {
     return error(c, 403, 'AGENT_BULK_PLAN_BASE_PERMISSION_REQUIRED');
@@ -383,7 +398,7 @@ agentBulkPlansRouter.post('/', async (c) => {
       ) ||
       tool.requiredPermissions.some(
         (permission) =>
-          !hasAdminPermission(current(c).permissions ?? [], permission) ||
+          !actorHoldsOnTenants(current(c), controlTenant(c), targetTenants, permission) ||
           !hasAdminPermission(grant.permissions, permission) ||
           !hasAdminPermission(machinePermissions, permission) ||
           targetDelegatorPermissions.some(
@@ -437,7 +452,7 @@ agentBulkPlansRouter.post('/:id/:version/validate', async (c) => {
   if (!item?.targetTenantIds || !(await activeTargetTenants(c, item.targetTenantIds))) {
     return error(c, 409, 'AGENT_BULK_PLAN_TARGET_INVALID');
   }
-  if (!tenantScoped(c, item.targetTenantIds)) {
+  if (!tenantScoped(c, item.targetTenantIds, ADMIN_PERMISSIONS.BULK_PLANS_CREATE)) {
     return error(c, 403, 'AGENT_BULK_PLAN_TENANT_SCOPE_REQUIRED');
   }
   const policyError = await targetPolicyError(c, item.targetTenantIds, item.canaryTenantIds ?? []);
@@ -482,7 +497,7 @@ agentBulkPlansRouter.post('/:id/:version/start', async (c) => {
   if (!item || item.definitionDigest !== digest || !item.targetTenantIds) {
     return error(c, 409, 'AGENT_BULK_PLAN_DIGEST_MISMATCH');
   }
-  if (!tenantScoped(c, item.targetTenantIds)) {
+  if (!tenantScoped(c, item.targetTenantIds, ADMIN_PERMISSIONS.BULK_PLANS_APPLY)) {
     return error(c, 403, 'AGENT_BULK_PLAN_TENANT_SCOPE_REQUIRED');
   }
   if (!(await activeTargetTenants(c, item.targetTenantIds))) {
@@ -542,7 +557,7 @@ async function pauseOrResume(c: BulkContext, operation: 'pause' | 'resume'): Pro
   if (!itemVersion) return error(c, 400, 'AGENT_BULK_PLAN_INVALID_VERSION');
   const item = await repository(c).get(controlTenant(c), c.req.param('id') ?? '', itemVersion);
   if (!item) return error(c, 404, 'AGENT_BULK_PLAN_NOT_FOUND');
-  if (!item.targetTenantIds || !tenantScoped(c, item.targetTenantIds)) {
+  if (!item.targetTenantIds || !tenantScoped(c, item.targetTenantIds, required)) {
     return error(c, 403, 'AGENT_BULK_PLAN_TENANT_SCOPE_REQUIRED');
   }
   const transitionId = `audit_${crypto.randomUUID()}`;
@@ -581,7 +596,10 @@ agentBulkPlansRouter.post('/:id/:version/cancel', async (c) => {
   if (!itemVersion) return error(c, 400, 'AGENT_BULK_PLAN_INVALID_VERSION');
   const item = await repository(c).get(controlTenant(c), c.req.param('id') ?? '', itemVersion);
   if (!item) return error(c, 404, 'AGENT_BULK_PLAN_NOT_FOUND');
-  if (!item.targetTenantIds || !tenantScoped(c, item.targetTenantIds)) {
+  if (
+    !item.targetTenantIds ||
+    !tenantScoped(c, item.targetTenantIds, ADMIN_PERMISSIONS.BULK_PLANS_APPLY)
+  ) {
     return error(c, 403, 'AGENT_BULK_PLAN_TENANT_SCOPE_REQUIRED');
   }
   const value = await jsonBody(c);

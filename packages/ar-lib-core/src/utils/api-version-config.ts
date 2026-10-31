@@ -164,7 +164,7 @@ export async function getApiVersionConfig(env: Env): Promise<ApiVersionConfig> {
           log.warn('Invalid config structure in KV, using defaults');
         }
       }
-    } catch (error) {
+    } catch {
       // fail-safe: log sanitized error and continue with env/default
       // Security: Only log error type/message, not full stack traces
       log.warn('Error reading KV config');

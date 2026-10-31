@@ -12,18 +12,20 @@
 import { Context } from 'hono';
 import type { Env, UserConsentRecord, ConsentRevokeResult } from '@authrim/ar-lib-core';
 import {
+  createAccountAuthContextFromHono,
   createAuthContextFromHono,
   getTenantIdFromContext,
   invalidateConsentCache,
-  revokeToken,
+  listOAuthClientConsentsWithClients,
+  resolveAccountDataContextFromHono,
   publishEvent,
   CONSENT_EVENTS,
   introspectTokenFromContext,
-  getSessionStoreBySessionId,
   type ExtendedConsentEventData,
   getLogger,
 } from '@authrim/ar-lib-core';
-import { getCookie } from 'hono/cookie';
+import { requireAccountSession } from './account-page';
+import { withdrawOAuthClientConsent } from './oauth-client-consent-withdrawal';
 
 /**
  * Get user ID from request context
@@ -45,31 +47,35 @@ async function getUserIdFromContext(c: Context<{ Bindings: Env }>): Promise<stri
     return null;
   }
 
-  // 2. Try session-based authentication
-  const sid = getCookie(c, 'sid');
-  if (sid) {
-    try {
-      const { stub: sessionStore } = getSessionStoreBySessionId(
-        c.env,
-        sid,
-        getTenantIdFromContext(c)
-      );
-      const response = await sessionStore.fetch(
-        new Request(`https://do/session/${sid}`, { method: 'GET' })
-      );
-      if (response.ok) {
-        const session = await response.json();
-        if (session && typeof session === 'object' && 'userId' in session) {
-          return (session as { userId: string }).userId;
-        }
-      }
-    } catch (error) {
-      const log = getLogger(c).module('USER-CONSENTS');
-      log.error('Session validation error', {}, error as Error);
+  // 2. Session cookie. The same validation as the other self-service APIs (/api/account/*): the
+  //    `authrim_session` cookie, a live session of this tenant, and the user's account data route.
+  //    The legacy `sid` cookie is not accepted: current logins never issue it and it was read
+  //    without the tenant and liveness checks.
+  const accountSession = await requireAccountSession(c);
+  if (accountSession instanceof Response) {
+    if (accountSession.status >= 500) {
+      throw new Error('account_session_validation_failed');
     }
+    return null;
   }
+  return accountSession.userId;
+}
 
-  return null;
+/**
+ * Resolve the user's account databases, where its consents are stored. Returns false when the
+ * user has no account route, i.e. it has no consents.
+ */
+async function resolveConsentOwnerAccount(
+  c: Context<{ Bindings: Env }>,
+  userId: string
+): Promise<boolean> {
+  try {
+    await resolveAccountDataContextFromHono(c, userId);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && error.message === 'account_data_route_not_found') return false;
+    throw error;
+  }
 }
 
 /**
@@ -92,31 +98,18 @@ export async function userConsentsListHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    if (!(await resolveConsentOwnerAccount(c, userId))) {
+      return c.json({ consents: [], total: 0 });
+    }
 
-    // Query consents with client info
-    const consentsResult = await authCtx.coreAdapter.query<{
-      id: string;
-      client_id: string;
-      scope: string;
-      selected_scopes: string | null;
-      granted_at: number;
-      expires_at: number | null;
-      privacy_policy_version: string | null;
-      tos_version: string | null;
-      consent_version: number | null;
-      client_name: string | null;
-      logo_uri: string | null;
-    }>(
-      `SELECT c.id, c.client_id, c.scope, c.selected_scopes, c.granted_at, c.expires_at,
-              c.privacy_policy_version, c.tos_version, c.consent_version,
-              oc.client_name, oc.logo_uri
-       FROM oauth_client_consents c
-       LEFT JOIN oauth_clients oc ON c.tenant_id = oc.tenant_id AND c.client_id = oc.client_id
-       WHERE c.user_id = ? AND c.tenant_id = ?
-       ORDER BY c.granted_at DESC`,
-      [userId, tenantId]
-    );
+    // Consents are stored with the user in its account database; client records are tenant
+    // metadata.
+    const consentsResult = await listOAuthClientConsentsWithClients({
+      accountCore: createAccountAuthContextFromHono(c, tenantId).coreAdapter,
+      tenantMetadata: createAuthContextFromHono(c, tenantId).coreAdapter,
+      tenantId,
+      userId,
+    });
 
     const consents: UserConsentRecord[] = consentsResult.map((row) => ({
       id: row.id,
@@ -158,7 +151,8 @@ export async function userConsentsListHandler(c: Context<{ Bindings: Env }>) {
  * Revoke consent for a specific client
  * DELETE /api/user/consents/:clientId
  *
- * Revokes consent and optionally invalidates related tokens.
+ * Revokes consent and the client's refresh tokens for the user: withdrawing the grant ends the
+ * tokens issued under it.
  */
 export async function userConsentRevokeHandler(c: Context<{ Bindings: Env }>) {
   try {
@@ -184,27 +178,18 @@ export async function userConsentRevokeHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Parse request body for options
-    let revokeTokens = true; // Default: revoke tokens
-    let reason: 'user_request' | 'admin_action' | 'policy_violation' = 'user_request';
-
-    const contentType = c.req.header('Content-Type') || '';
-    if (contentType.includes('application/json')) {
-      try {
-        const body = await c.req.json<{
-          revoke_tokens?: boolean;
-          reason?: string;
-        }>();
-        if (body.revoke_tokens !== undefined) {
-          revokeTokens = body.revoke_tokens;
-        }
-      } catch {
-        // Ignore JSON parse errors
-      }
-    }
-
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    // Consents and their history are stored with the user in its account database.
+    if (!(await resolveConsentOwnerAccount(c, userId))) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: 'Consent not found',
+        },
+        404
+      );
+    }
+    const authCtx = createAccountAuthContextFromHono(c, tenantId);
 
     // Check if consent exists
     const existingConsent = await authCtx.coreAdapter.query<{
@@ -229,45 +214,17 @@ export async function userConsentRevokeHandler(c: Context<{ Bindings: Env }>) {
 
     const consent = existingConsent[0];
     const previousScopes = consent.scope.split(' ');
-    const now = Date.now();
 
-    // Delete consent
-    await authCtx.coreAdapter.execute(
-      'DELETE FROM oauth_client_consents WHERE tenant_id = ? AND user_id = ? AND client_id = ?',
-      [tenantId, userId, clientId]
-    );
-
-    // Record in consent history
-    const historyId = crypto.randomUUID();
-    await authCtx.coreAdapter.execute(
-      `INSERT INTO consent_history (id, tenant_id, user_id, client_id, action, scopes_before, scopes_after, created_at)
-       VALUES (?, ?, ?, ?, 'revoked', ?, NULL, ?)`,
-      [historyId, tenantId, userId, clientId, JSON.stringify(previousScopes), now]
+    // Ends the tokens issued under the consent, then deletes it; a failure leaves the consent in
+    // place so that a retry can complete the withdrawal.
+    const { revokedAt: now, refreshTokenFamilies: familyCount } = await withdrawOAuthClientConsent(
+      c.env,
+      authCtx.coreAdapter,
+      { tenantId, userId, clientId, previousScopes }
     );
 
     // Invalidate consent cache
     await invalidateConsentCache(c.env, userId, tenantId, clientId);
-
-    // Revoke related tokens if requested
-    let accessTokensRevoked = 0;
-    let refreshTokensRevoked = 0;
-
-    if (revokeTokens) {
-      // Note: In a full implementation, this would query and revoke tokens
-      // For now, we add the user+client combo to a revocation list
-      // The actual token invalidation happens during token verification
-      try {
-        // Add to revocation list (tokens will be rejected on next use)
-        const revocationKey = `consent_revoked:${userId}:${clientId}`;
-        const revocationTTL = 86400 * 90; // 90 days (typical refresh token lifetime)
-        await revokeToken(c.env, revocationKey, revocationTTL, undefined, tenantId);
-        // Estimate - actual count would require querying token stores
-        refreshTokensRevoked = 1;
-      } catch (error) {
-        const log = getLogger(c).module('USER-CONSENTS');
-        log.warn('Token revocation warning', { error: (error as Error).message });
-      }
-    }
 
     // Publish consent.revoked event
     const log = getLogger(c).module('USER-CONSENTS');
@@ -279,7 +236,7 @@ export async function userConsentRevokeHandler(c: Context<{ Bindings: Env }>) {
         clientId,
         scopes: previousScopes,
         previousScopes,
-        revocationReason: reason,
+        revocationReason: 'user_request',
         initiatedBy: 'user',
       } satisfies ExtendedConsentEventData,
     }).catch((err) => {
@@ -288,8 +245,8 @@ export async function userConsentRevokeHandler(c: Context<{ Bindings: Env }>) {
 
     const result: ConsentRevokeResult = {
       success: true,
-      accessTokensRevoked,
-      refreshTokensRevoked,
+      accessTokensRevoked: 0,
+      refreshTokensRevoked: familyCount,
       revokedAt: now,
     };
 

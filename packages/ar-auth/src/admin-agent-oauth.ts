@@ -1,3 +1,4 @@
+import { createCloudflareAdminAgentAuditWriter } from '@authrim/ar-agent-access/platform/cloudflare/admin-agent-audit-writer';
 import type { Context } from 'hono';
 import {
   AdminAgentAccessRepository,
@@ -29,12 +30,14 @@ import {
   getTenantIdFromContext,
   hasAdminPermission,
   isRedirectUriRegistered,
+  redirectUriMatchOptionsFor,
   parseOAuthClientAuthenticationParams,
   requireDedicatedAdminDatabaseAdapter,
   safeFetchJson,
   validateClientId,
   validateRegisteredClientAuthenticationMethod,
   validateRedirectUri,
+  resolvePlatformSettingsWithSources,
 } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
 
@@ -79,43 +82,26 @@ interface ClientIdMetadataDocument {
  * Claude Code and some other native MCP hosts publish a portless localhost callback in their
  * Client ID Metadata Document, then bind an ephemeral localhost port for each login. Keep this
  * compatibility rule scoped to CIMD clients: ordinary pre-registered/DCR clients continue to use
- * the shared exact/RFC 8252 IP-literal comparison.
+ * the shared exact/RFC 8252 IP-literal comparison. The comparison is textual, like the exact
+ * match: the request must be the registered URI with only `:<port>` inserted after the host, so
+ * no case, encoding or dot-segment variant of the rest is accepted.
  */
 function isCimdPortlessLocalhostRedirectMatch(providedUri: string, registeredUri: string): boolean {
-  const registeredAuthority = /^http:\/\/localhost(?:[/?]|$)/iu;
-  const providedAuthority = /^http:\/\/localhost:([0-9]{1,5})(?:[/?]|$)/iu;
-  const portMatch = providedAuthority.exec(providedUri);
-  if (!registeredAuthority.test(registeredUri) || !portMatch) return false;
-
-  const port = Number(portMatch[1]);
-  if (!Number.isInteger(port) || port < 1 || port > 65_535) return false;
-
-  try {
-    const provided = new URL(providedUri);
-    const registered = new URL(registeredUri);
-    return (
-      provided.protocol === 'http:' &&
-      registered.protocol === 'http:' &&
-      provided.hostname === 'localhost' &&
-      registered.hostname === 'localhost' &&
-      provided.port === String(port) &&
-      registered.port === '' &&
-      provided.username === '' &&
-      provided.password === '' &&
-      registered.username === '' &&
-      registered.password === '' &&
-      provided.hash === '' &&
-      registered.hash === '' &&
-      provided.pathname === registered.pathname &&
-      provided.search === registered.search
-    );
-  } catch {
-    return false;
-  }
+  // The registered authority as written (its case included), then the rest of the URI.
+  const origin = registeredUri.slice(0, 'http://localhost'.length);
+  const rest = registeredUri.slice(origin.length);
+  if (origin.toLowerCase() !== 'http://localhost' || !/^(?:[/?]|$)/u.test(rest)) return false;
+  if (rest.includes('#') || !providedUri.startsWith(`${origin}:`)) return false;
+  const portMatch = /^([1-9][0-9]{0,4})(?=[/?]|$)/u.exec(providedUri.slice(origin.length + 1));
+  if (!portMatch || Number(portMatch[1]) > 65_535) return false;
+  return providedUri === `${origin}:${portMatch[1]}${rest}`;
 }
 
 function isAdminAgentRedirectUriRegistered(providedUri: string, client: ClientMetadata): boolean {
-  if (isRedirectUriRegistered(providedUri, client.redirect_uris)) return true;
+  if (
+    isRedirectUriRegistered(providedUri, client.redirect_uris, redirectUriMatchOptionsFor(client))
+  )
+    return true;
   if (client.agent_access_registration_mode !== 'cimd') return false;
   return client.redirect_uris.some((registeredUri) =>
     isCimdPortlessLocalhostRedirectMatch(providedUri, registeredUri)
@@ -215,7 +201,8 @@ async function resolveAdminAgentClient(
       const tenantId = getTenantIdFromContext(c);
       const now = Date.now();
       const repository = new AdminAgentAccessRepository(
-        requireDedicatedAdminDatabaseAdapter(c.env, 'admin-agent-cimd-change')
+        requireDedicatedAdminDatabaseAdapter(c.env, 'admin-agent-cimd-change'),
+        createCloudflareAdminAgentAuditWriter(c.env)
       );
       await repository.suspendForClientMetadataChange({
         tenantId,
@@ -449,7 +436,8 @@ async function resolveAdminAgentAuthorizationContext(
     return oauthError(c, 'unauthorized_client', 'Client is not authorized for Agent access');
   }
   const repository = new AdminAgentAccessRepository(
-    requireDedicatedAdminDatabaseAdapter(c.env, 'admin-agent-authorization')
+    requireDedicatedAdminDatabaseAdapter(c.env, 'admin-agent-authorization'),
+    createCloudflareAdminAgentAuditWriter(c.env)
   );
   const grant = await repository.findActiveGrantForDelegatorClient(
     tenantId,
@@ -1761,10 +1749,15 @@ export async function adminAgentAuthorizeHandler(c: Context<{ Bindings: Env }>):
   );
   const codeStore = c.env.AUTH_CODE_STORE.get(codeStoreId);
   try {
+    // The platform's code lifetime and per-user limit, as they applied before the Settings API.
+    const { values: oauthSettings } = await resolvePlatformSettingsWithSources(c.env, 'oauth', {});
+    const numeric = (value: unknown) => (typeof value === 'number' ? value : undefined);
     await codeStore.storeCodeRpc({
       code,
       tenantId: resolved.tenantId,
       clientId,
+      ttlSeconds: numeric(oauthSettings['oauth.auth_code_ttl']),
+      maxCodesPerUser: numeric(oauthSettings['oauth.max_codes_per_user']),
       redirectUri: consumed.redirect_uri,
       userId: `admin_user:${resolved.actor.userId}`,
       scope: approvedScopes.join(' '),

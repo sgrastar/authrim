@@ -1,5 +1,27 @@
 import { describe, expect, it, vi } from 'vitest';
 import { hashClientSecret, type Env, type OAuthClient } from '@authrim/ar-lib-core';
+
+// The client lookup goes through the persistence adapter; the tests hand it the env's mock.
+const mocks = vi.hoisted(() => ({ emitRuntimeLogRecords: vi.fn(async () => undefined) }));
+vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
+  return {
+    ...actual,
+    DiagnosticLogR2Adapter: class {
+      private readonly store: Map<string, string>;
+      constructor(config: { env: { LOG_ARCHIVE: { store: Map<string, string> } } }) {
+        this.store = config.env.LOG_ARCHIVE.store;
+      }
+      async writeLogBatch(entries: Array<{ id: string }>) {
+        for (const entry of entries) this.store.set(entry.id, JSON.stringify(entry));
+        return { success: true, entriesWritten: entries.length };
+      }
+    },
+    resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async (env: { DB: unknown }) => env.DB),
+    emitRuntimeLogRecords: mocks.emitRuntimeLogRecords,
+  };
+});
+
 import ingestApp from '../routes/diagnostic-logging/ingest';
 
 class MockR2Bucket {
@@ -120,12 +142,32 @@ function createAdapter(client: OAuthClient | null) {
   };
 }
 
-function createEnv(client: OAuthClient | null, bucket: MockR2Bucket): Env {
+function createKV(values: Record<string, string>): KVNamespace {
+  return {
+    get: vi.fn(async (key: string) =>
+      key === 'settings:tenant:tenant-1:diagnostic-logging'
+        ? JSON.stringify({
+            'diagnostic-logging.enabled': true,
+            'diagnostic-logging.sdk_ingest_enabled': true,
+            ...JSON.parse(values[key] ?? '{}'),
+          })
+        : (values[key] ?? null)
+    ),
+    put: vi.fn(async () => undefined),
+    delete: vi.fn(async () => undefined),
+    list: vi.fn(async () => ({ keys: [], list_complete: true, cacheStatus: null })),
+    getWithMetadata: vi.fn(),
+  } as unknown as KVNamespace;
+}
+
+function createEnv(client: OAuthClient | null, bucket: MockR2Bucket, settings?: KVNamespace): Env {
   return {
     ISSUER_URL: 'https://issuer.example.com',
     OTP_HMAC_SECRET: 'otp-secret',
     DB: createAdapter(client),
-    DIAGNOSTIC_LOGS: bucket as unknown as R2Bucket,
+    LOG_ARCHIVE: bucket as unknown as R2Bucket,
+    AUTHRIM_LOG_ARCHIVE_MODE: 'pipeline',
+    ...(settings ? { SETTINGS: settings } : {}),
   } as unknown as Env;
 }
 
@@ -166,8 +208,228 @@ describe('diagnostic logging ingest', () => {
     expect(response.status).toBe(401);
     await expect(response.json()).resolves.toMatchObject({
       error: 'invalid_client',
-      error_description: 'validation_error',
+      error_description: 'invalid_client_secret',
     });
     expect(bucket.store.size).toBe(0);
+  });
+
+  describe('settings and privacy', () => {
+    const SETTINGS_KEY = 'settings:tenant:tenant-1:diagnostic-logging';
+    const common = {
+      tenantId: 'tenant-1',
+      clientId: 'diag-client',
+      category: 'token-validation',
+      level: 'debug',
+      timestamp: Date.now(),
+      result: 'pass',
+      source: 'server',
+    };
+    const sdkEntries = [
+      {
+        ...common,
+        id: 'log-1',
+        step: 'token-response',
+        errorMessage: 'sent to jane.doe@example.com',
+        details: { access_token: 'raw-access-token' },
+      },
+      {
+        ...common,
+        id: 'log-2',
+        step: 'userinfo-response',
+        details: { claims: { email: 'jane.doe@example.com', name: 'Jane Doe' } },
+      },
+    ];
+
+    async function ingest(settings: KVNamespace | undefined, logs: unknown[] = sdkEntries) {
+      const bucket = new MockR2Bucket();
+      const env = createEnv(createClient({ token_endpoint_auth_method: 'none' }), bucket, settings);
+      const response = await ingestApp.request(
+        '/',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ tenant_id: 'tenant-1', client_id: 'diag-client', logs }),
+        },
+        env
+      );
+      const stored = [...bucket.store.values()].join('\n');
+      return { response, stored };
+    }
+
+    const FULL_MODE = { 'diagnostic-logging.storage_mode.default': 'full' };
+
+    it('redacts PII and fingerprints tokens of a full-mode client by default', async () => {
+      const { response, stored } = await ingest(
+        createKV({ [SETTINGS_KEY]: JSON.stringify(FULL_MODE) })
+      );
+
+      expect(response.status).toBe(200);
+      expect(stored).not.toContain('jane.doe@example.com');
+      expect(stored).not.toContain('Jane Doe');
+      expect(stored).not.toContain('raw-access-token');
+      expect(stored).toContain('sha256:');
+    });
+
+    it('stores raw PII of a full-mode client only when the PII filter is off, and still no token', async () => {
+      const { response, stored } = await ingest(
+        createKV({
+          [SETTINGS_KEY]: JSON.stringify({ ...FULL_MODE, 'diagnostic-logging.filter_pii': false }),
+        })
+      );
+
+      expect(response.status).toBe(200);
+      expect(stored).toContain('jane.doe@example.com');
+      expect(stored).toContain('Jane Doe');
+      expect(stored).not.toContain('raw-access-token');
+    });
+
+    it('stores nothing and answers 503 when the settings cannot be read', async () => {
+      const failing = createKV({});
+      (failing.get as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('kv down'));
+      const { response, stored } = await ingest(failing);
+
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toMatchObject({ error: 'temporarily_unavailable' });
+      expect(stored).toBe('');
+    });
+
+    it('stores nothing and answers 503 when the settings document is corrupt, so an admin-set off cannot be bypassed', async () => {
+      const { response, stored } = await ingest(createKV({ [SETTINGS_KEY]: '{not json' }));
+
+      expect(response.status).toBe(503);
+      expect(stored).toBe('');
+    });
+
+    it('checks the client first: a client that does not validate gets 401 even with the settings down', async () => {
+      const failing = createKV({});
+      (failing.get as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('kv down'));
+      const bucket = new MockR2Bucket();
+      const env = createEnv(
+        createClient({ client_secret_hash: await hashClientSecret('right') }),
+        bucket,
+        failing
+      );
+      const response = await ingestApp.request(
+        '/',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            tenant_id: 'tenant-1',
+            client_id: 'diag-client',
+            client_secret: 'wrong',
+            logs: sdkEntries,
+          }),
+        },
+        env
+      );
+
+      expect(response.status).toBe(401);
+      expect(failing.get).not.toHaveBeenCalled();
+      expect(bucket.store.size).toBe(0);
+    });
+
+    it.each(['full', 'masked', 'minimal'])(
+      'takes secrets out of any step and nesting in %s mode, and validates identifiers',
+      async (mode) => {
+        const { response, stored } = await ingest(
+          createKV({
+            [SETTINGS_KEY]: JSON.stringify({ 'diagnostic-logging.storage_mode.default': mode }),
+          }),
+          [
+            {
+              ...common,
+              id: 'log-9',
+              requestId: 'jane@example.com',
+              step: 'issuer-check',
+              errorMessage: 'cb https://rp.example.com/cb?code=raw-code&state=s',
+              details: {
+                client_secret: 'raw-client-secret',
+                nested: [{ refresh_token: 'raw-refresh' }, { 'Access-Token': { v: 'raw-obj' } }],
+              },
+            },
+          ]
+        );
+
+        expect(response.status).toBe(200);
+        for (const raw of [
+          'raw-client-secret',
+          'raw-refresh',
+          'raw-obj',
+          'raw-code',
+          'jane@example.com',
+        ]) {
+          expect(stored, raw).not.toContain(raw);
+        }
+      }
+    );
+
+    it('stores nothing and answers 503 when the settings namespace is not bound at all', async () => {
+      const { response, stored } = await ingest(undefined);
+
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toMatchObject({ error: 'temporarily_unavailable' });
+      expect(stored).toBe('');
+    });
+
+    it('keeps an email-shaped client_id out of the failure record it archives', async () => {
+      mocks.emitRuntimeLogRecords.mockClear();
+      const bucket = new MockR2Bucket();
+      const env = createEnv(null, bucket, createKV({}));
+      const response = await ingestApp.request(
+        '/',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            tenant_id: 'tenant-1',
+            client_id: 'jane@example.com',
+            logs: sdkEntries,
+          }),
+        },
+        env
+      );
+
+      expect(response.status).toBe(401);
+      const archived = JSON.stringify(mocks.emitRuntimeLogRecords.mock.calls);
+      expect(archived).toContain('client_not_found');
+      expect(archived).not.toContain('jane@example.com');
+      expect(archived).toMatch(/client:sha256:[0-9a-f]{12}/);
+    });
+
+    it('archives a plain client_id as it is', async () => {
+      mocks.emitRuntimeLogRecords.mockClear();
+      const env = createEnv(null, new MockR2Bucket(), createKV({}));
+      await ingestApp.request(
+        '/',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ tenant_id: 'tenant-1', client_id: 'plain-client', logs: [] }),
+        },
+        env
+      );
+      expect(JSON.stringify(mocks.emitRuntimeLogRecords.mock.calls)).toContain(
+        'client:plain-client'
+      );
+    });
+
+    it('reads the tenant settings from the Settings API namespace', async () => {
+      const settings = createKV({
+        [SETTINGS_KEY]: JSON.stringify({ 'diagnostic-logging.sdk_ingest_enabled': false }),
+      });
+      const { response, stored } = await ingest(settings);
+
+      expect(response.status).toBe(403);
+      expect(stored).toBe('');
+      expect(settings.get).toHaveBeenCalledWith(SETTINGS_KEY);
+    });
+
+    it('names the SDK as the writer, whatever the sender claims', async () => {
+      const { stored } = await ingest(createKV({}));
+
+      const entry = JSON.parse(stored.split('\n')[0]) as Record<string, unknown>;
+      expect(entry.source).toBe('sdk');
+    });
   });
 });

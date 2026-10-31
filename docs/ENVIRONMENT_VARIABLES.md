@@ -27,12 +27,12 @@ Authrim follows consistent naming conventions for environment variables to impro
 
 ### Time-Related Variables
 
-| Category          | Pattern            | Unit         | Example                                         |
-| ----------------- | ------------------ | ------------ | ----------------------------------------------- |
-| Token/Auth Expiry | `*_EXPIRY`         | Seconds      | `ACCESS_TOKEN_EXPIRY`, `AUTH_CODE_EXPIRY`       |
-| Cache TTL         | `*_CACHE_TTL`      | Seconds      | `INTROSPECTION_CACHE_TTL`, `SETTINGS_CACHE_TTL` |
-| Timeouts          | `*_TIMEOUT_MS`     | Milliseconds | `HTTPS_REQUEST_URI_TIMEOUT_MS`                  |
-| Windows           | `*_WINDOW_SECONDS` | Seconds      | `LOCKOUT_WINDOW_SECONDS`                        |
+| Category          | Pattern            | Unit         | Example                                   |
+| ----------------- | ------------------ | ------------ | ----------------------------------------- |
+| Token/Auth Expiry | `*_EXPIRY`         | Seconds      | `ACCESS_TOKEN_EXPIRY`, `AUTH_CODE_EXPIRY` |
+| Cache TTL         | `*_CACHE_TTL`      | Seconds      | `SETTINGS_CACHE_TTL`                      |
+| Timeouts          | `*_TIMEOUT_MS`     | Milliseconds | `HTTPS_REQUEST_URI_TIMEOUT_MS`            |
+| Windows           | `*_WINDOW_SECONDS` | Seconds      | `LOCKOUT_WINDOW_SECONDS`                  |
 
 **Rationale:**
 
@@ -97,20 +97,23 @@ ENABLE_CLIENT_CREDENTIALS
 
 ### Feature Flags
 
-| Variable                        | Type    | Default | Description                                                 |
-| ------------------------------- | ------- | ------- | ----------------------------------------------------------- |
-| `ENABLE_CONFORMANCE_MODE`       | boolean | `false` | Enable built-in login/consent forms for conformance testing |
-| `ENABLE_HTTP_REDIRECT`          | boolean | `false` | Allow HTTP redirect URIs (insecure, for development only)   |
-| `ENABLE_OPEN_REGISTRATION`      | boolean | `false` | Allow public client registration without IAT                |
-| `ENABLE_REFRESH_TOKEN_ROTATION` | boolean | `false` | Enable refresh token rotation on use                        |
-| `ENABLE_TOKEN_EXCHANGE`         | boolean | `false` | Enable RFC 8693 Token Exchange                              |
-| `ENABLE_CLIENT_CREDENTIALS`     | boolean | `false` | Enable RFC 6749 Client Credentials grant                    |
-| `ENABLE_RATE_LIMIT`             | boolean | `true`  | Enable rate limiting                                        |
-| `ENABLE_HTTPS_REQUEST_URI`      | boolean | `false` | Enable HTTPS request_uri support (JAR)                      |
-| `ENABLE_RAR`                    | boolean | `false` | Enable RFC 9396 Rich Authorization Requests                 |
-| `ENABLE_AI_SCOPES`              | boolean | `false` | Enable AI Ephemeral Auth scopes                             |
-| `ENABLE_NATIVE_SSO`             | boolean | `false` | Enable OIDC Native SSO 1.0                                  |
-| `ENABLE_ID_JAG`                 | boolean | `false` | Enable ID-JAG identity assertion grant                      |
+| Variable                              | Type    | Default | Description                                                                                        |
+| ------------------------------------- | ------- | ------- | -------------------------------------------------------------------------------------------------- |
+| `ENABLE_CONFORMANCE_MODE`             | boolean | `false` | Enable conformance-test-only behaviour (not for production)                                        |
+| `ENABLE_HTTP_REDIRECT`                | boolean | `false` | Allow HTTP redirect URIs (insecure, for development only)                                          |
+| `ENABLE_OPEN_REGISTRATION`            | boolean | `false` | Allow public client registration without IAT                                                       |
+| `ENABLE_REFRESH_TOKEN_ROTATION`       | boolean | `false` | Enable refresh token rotation on use                                                               |
+| `ENABLE_TOKEN_EXCHANGE`               | boolean | `false` | Enable RFC 8693 Token Exchange                                                                     |
+| `ENABLE_TOKEN_EXCHANGE_DELEGATION`    | boolean | `false` | Tenant ceiling: apps with `delegation_mode` delegation may exchange tokens                         |
+| `ENABLE_TOKEN_EXCHANGE_IMPERSONATION` | boolean | `false` | Tenant ceiling: apps with `delegation_mode` impersonation may exchange tokens (security sensitive) |
+| `ENABLE_CLIENT_CREDENTIALS`           | boolean | `false` | Enable RFC 6749 Client Credentials grant                                                           |
+| `ENABLE_RATE_LIMIT`                   | boolean | `true`  | Enable rate limiting                                                                               |
+| `ENABLE_HTTPS_REQUEST_URI`            | boolean | `false` | Enable HTTPS request_uri support (JAR)                                                             |
+| `OAUTH_PROMPT_CREATE_ENABLED`         | boolean | `false` | Open the sign-up page for `prompt=create` and list it in discovery (only the exact value `true`)   |
+| `ENABLE_RAR`                          | boolean | `false` | Enable RFC 9396 Rich Authorization Requests                                                        |
+| `ENABLE_AI_SCOPES`                    | boolean | `false` | Enable AI Ephemeral Auth scopes                                                                    |
+| `ENABLE_NATIVE_SSO`                   | boolean | `false` | Enable OIDC Native SSO 1.0                                                                         |
+| `ENABLE_ID_JAG`                       | boolean | `false` | Enable ID-JAG identity assertion grant                                                             |
 
 ### Security Configuration
 
@@ -135,14 +138,51 @@ these paths.
 | `ENABLE_IDENTITY_STITCHING`                        | boolean | `false` | Enable automatic identity linking             |
 | `ENABLE_IDENTITY_STITCHING_REQUIRE_VERIFIED_EMAIL` | boolean | `true`  | Require verified email for identity stitching |
 
+### Identity Mapping
+
+The Mapping Set that applies to OIDC apps that name none of their own is the setting
+`identity_mapping.oidc_default_set_id` (Settings API, `identity-mapping` category, platform and
+tenant scope). It has no environment variable: a Mapping Set ID means nothing outside the database
+it lives in. Left unset, no mapping applies.
+
+The limits of the search for the places that name a Mapping Set (the usage API, and the refusal to
+delete or switch off a set that is in use) are platform settings of the same category, each with a
+deployment default here. A value saved through the Settings API overrides the variable; a value
+outside the range, or that is not a whole number, is ignored and the built-in default applies.
+
+| Variable                                       | Type   | Default | Range     | Description                                                                        |
+| ---------------------------------------------- | ------ | ------- | --------- | ---------------------------------------------------------------------------------- |
+| `IDENTITY_MAPPING_REFERENCE_SCAN_TENANT_LIMIT` | number | `200`   | 1 - 1000  | Tenants whose apps are read for a platform set; more are reported as not looked at |
+| `IDENTITY_MAPPING_REFERENCE_SCAN_ROW_LIMIT`    | number | `500`   | 10 - 5000 | Rows read from one place before it is cut off (the count is then a lower bound)    |
+| `IDENTITY_MAPPING_REFERENCE_SCAN_CONCURRENCY`  | number | `8`     | 1 - 16    | Tenants read at the same time                                                      |
+| `IDENTITY_MAPPING_REFERENCE_DISPLAY_LIMIT`     | number | `20`    | 1 - 100   | References listed in an answer (the count is always the whole)                     |
+
+The platform setting `identity_mapping.shadow_compare_enabled` and its variable
+`IDENTITY_MAPPING_SHADOW_COMPARE` are retired: the comparison it switched on had nothing left to
+compare against once the selection replaced the implicit lookup. A value still stored or set is
+ignored.
+
+### Bulk Apply
+
+| Variable                             | Type   | Default | Description                                                                    |
+| ------------------------------------ | ------ | ------- | ------------------------------------------------------------------------------ |
+| `BULK_APPLY_MAX_TENANTS_PER_REQUEST` | number | `25`    | Most tenants one `POST /api/admin/settings/bulk-apply` request may name        |
+| `BULK_APPLY_MAX_KEYS_PER_REQUEST`    | number | `20`    | Most settings (keys set or cleared, over all categories) one request may carry |
+
+These are the deployment defaults of the platform settings `bulk_apply.max_tenants_per_request`
+and `bulk_apply.max_keys_per_request` (Settings API, `bulk-apply` category, platform scope; a value
+saved there overrides the variable). A value outside 1 to 100 is held to that range (a value that
+is not a number is ignored). Each tenant a request names costs several subrequests and some run
+time, so the limits keep one request inside what a Worker invocation can do; a larger job is sent
+in several requests. See the OpenAPI description of the endpoint for what the bulk apply gives and
+refuses.
+
 ### Introspection Settings
 
-| Variable                                 | Type    | Default | Description                           |
-| ---------------------------------------- | ------- | ------- | ------------------------------------- |
-| `ENABLE_INTROSPECTION_CACHE`             | boolean | `false` | Enable introspection response caching |
-| `INTROSPECTION_CACHE_TTL`                | number  | `60`    | Cache TTL in seconds                  |
-| `ENABLE_INTROSPECTION_STRICT_VALIDATION` | boolean | `false` | Enable strict token validation        |
-| `INTROSPECTION_EXPECTED_AUDIENCE`        | string  | -       | Expected audience for introspection   |
+| Variable                                 | Type    | Default | Description                         |
+| ---------------------------------------- | ------- | ------- | ----------------------------------- |
+| `ENABLE_INTROSPECTION_STRICT_VALIDATION` | boolean | `false` | Enable strict token validation      |
+| `INTROSPECTION_EXPECTED_AUDIENCE`        | string  | -       | Expected audience for introspection |
 
 ### NIST Assurance Levels
 
@@ -152,6 +192,16 @@ these paths.
 | `DEFAULT_AAL`                  | string  | `aal1`  | Default Authentication Assurance Level |
 | `DEFAULT_FAL`                  | string  | `fal1`  | Default Federation Assurance Level     |
 | `DEFAULT_IAL`                  | string  | `ial1`  | Default Identity Assurance Level       |
+
+### Deleted Accounts
+
+Defaults for the tenant settings `account-lifecycle.deletion.*` (a value saved in the Settings API
+takes precedence).
+
+| Variable                                 | Type    | Default | Description                                                                                        |
+| ---------------------------------------- | ------- | ------- | -------------------------------------------------------------------------------------------------- |
+| `ACCOUNT_TOMBSTONE_RETENTION_DAYS`       | number  | `90`    | Days a deleted account's record (tombstone) is kept, 1–3650                                        |
+| `ACCOUNT_TOMBSTONE_BLOCK_REREGISTRATION` | boolean | `false` | Refuse sign-up and admin creation with the email of an account deleted within the retention period |
 
 ### Sharding Configuration
 
@@ -168,6 +218,12 @@ these paths.
 | `ENABLE_RATE_LIMIT`  | boolean | `true`     | Enable rate limiting                                  |
 | `RATE_LIMIT_PROFILE` | string  | `standard` | Rate limit profile (`standard`, `strict`, `loadTest`) |
 
+Authenticator-app (TOTP) sign-in starts are limited per identifier and IP address, outside the
+profiles: `TOTP_RATE_LIMIT_MAX_REQUESTS` (1-100, default `10`) per `TOTP_RATE_LIMIT_WINDOW`
+seconds (60-3600, default `900`). The Settings API values (`rate_limit.totp_max_requests`,
+`rate_limit.totp_window`, platform or tenant) take precedence; a value that is not a whole number
+in range keeps the default.
+
 ### SCIM Configuration
 
 Tenant enablement, the inbound Mapping Set, enabled resource endpoints, and Bulk limits are
@@ -182,6 +238,21 @@ configured in Admin UI. The deployment environment controls authentication-abuse
 | `SCIM_AUTH_FAILURE_DELAY_MS`    | number  | `200`   | Base delay after an authentication failure       |
 
 See [SCIM Inbound Provisioning](./scim-inbound-provisioning.md) for tenant and Mapping Set setup.
+
+### SAML Configuration
+
+Each tenant can override these in the Admin Console (Authentication → Enterprise SSO) or the Settings API; the variables are the deployment-time defaults.
+
+| Variable             | Type    | Default         | Description                                                                                                                       |
+| -------------------- | ------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `ENABLE_SAML`        | boolean | `true`          | Answer SAML 2.0 requests (IdP and SP endpoints, metadata). When `false` they return 403; `/saml/health` and the admin API stay up |
+| `SAML_ASSERTION_TTL` | number  | `300`           | Assertion lifetime in seconds (60-600). A service provider with its own `assertionValiditySeconds` keeps it                       |
+| `SAML_REQUEST_TTL`   | number  | `300`           | SAML request lifetime in seconds (60-600): accepted request age, stored request lifetime and request cookie `Max-Age`             |
+| `SAML_SSO_BINDING`   | string  | `HTTP-Redirect` | Sign-in binding a new identity provider gets when its metadata offers both or none (`HTTP-Redirect`, `HTTP-POST`)                 |
+| `SAML_SLO_BINDING`   | string  | `HTTP-Redirect` | Logout binding a new provider gets when its metadata offers both or none; a profile with its own binding (`legacy`) keeps it      |
+| `SAML_NAMEID_FORMAT` | string  | `emailAddress`  | NameID format a new provider gets when its metadata names none (`emailAddress`, `persistent`, `transient`, `unspecified`)         |
+
+The Artifact binding settings (`SAML_ARTIFACT_TTL`, `SAML_ARTIFACT_RESOLUTION_TIMEOUT`) are stored but not used: the Artifact binding is not implemented.
 
 ### Logging Configuration
 
@@ -248,8 +319,6 @@ The following environment variable names have been deprecated:
 | `SCIM_AUTH_RATE_LIMIT_DISABLED`   | `ENABLE_SCIM_AUTH_RATE_LIMIT` (logic inverted) |
 | `IDENTITY_STITCHING_ENABLED`      | `ENABLE_IDENTITY_STITCHING`                    |
 | `NIST_ASSURANCE_LEVELS_ENABLED`   | `ENABLE_NIST_ASSURANCE_LEVELS`                 |
-| `INTROSPECTION_CACHE_ENABLED`     | `ENABLE_INTROSPECTION_CACHE`                   |
-| `INTROSPECTION_CACHE_TTL_SECONDS` | `INTROSPECTION_CACHE_TTL`                      |
 | `INTROSPECTION_STRICT_VALIDATION` | `ENABLE_INTROSPECTION_STRICT_VALIDATION`       |
 | `LOG_HASH_USER_ID`                | `ENABLE_LOG_HASH_USER_ID`                      |
 | `CHECK_API_WEBSOCKET_ENABLED`     | `ENABLE_CHECK_API_WEBSOCKET`                   |

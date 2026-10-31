@@ -1,7 +1,7 @@
 ---
 project: Authrim
 lang: en
-date: 2026-05-25
+date: 2026-10-28
 description: 'Authrim logging, audit, diagnostic, delivery, and storage-destination behavior.'
 type: guide
 tags:
@@ -94,9 +94,10 @@ Managed logging separates what happened from where evidence is stored.
 | Scopes         | Platform, tenant, and shared destinations                                                                        |
 | Delivery lanes | `critical`, `default`, `bulk`                                                                                    |
 
-Runtime code resolves a tenant-aware logging policy snapshot, chooses the destination for each
-`log_type` and `plane`, and routes delivery through the configured queue/storage path. Platform
-defaults can be used when a tenant does not publish an override.
+Runtime code resolves a tenant-aware logging policy snapshot for recording, retention, and
+external delivery. Cloudflare Setup owns the searchable-log storage mode described below;
+logging policies cannot switch it back to a former database or JSON archive format. Platform
+defaults apply when a tenant does not publish an override.
 
 ## Storage Destinations
 
@@ -117,8 +118,10 @@ Supported provider categories include:
 | `external` / `custom` | Connector-specific or deployment-specific destinations.                 |
 
 Setup-managed R2 bindings are displayed in Admin UI as read-only storage destinations when present.
-Typical setup bindings include `PUBLIC_ASSETS`, `DIAGNOSTIC_LOGS`, `AUDIT_ARCHIVE`,
-`IMPORT_ARTIFACTS`, `EXPORT_ARTIFACTS`, and `SENSITIVE_DETAILS`.
+Typical setup bindings include `PUBLIC_ASSETS`, `LOG_ARCHIVE`, `IMPORT_ARTIFACTS`,
+`EXPORT_ARTIFACTS`, and `SENSITIVE_DETAILS`. `LOG_ARCHIVE` holds the Iceberg table and encrypted
+log-delivery retry objects. Retry, import/export, and sensitive business artifacts have separate
+ownership and cleanup rules; their existence does not create a second searchable log copy.
 `PUBLIC_ASSETS` stores both Login UI media under `public/<tenant>/login-ui/` and user avatars under
 `avatars/<tenant>/users/`; the bucket remains private and objects are served through authenticated or
 purpose-specific Worker routes.
@@ -126,21 +129,106 @@ purpose-specific Worker routes.
 Tenant-usable destinations include tenant-owned destinations plus platform/shared destinations that
 are eligible for the tenant and the requested log type/plane.
 
-## Audit and Admin Audit
+## Cloudflare Log Storage
 
-Authrim records both tenant/user audit evidence and Admin UI/API audit evidence.
+Initial CLI and Web Setup ask whether to use Pipelines. Both choices store future searchable
+logs as Parquet records in an owned Iceberg table in R2 Data Catalog.
 
-- End-user and protocol audit events use the runtime audit service.
-- Admin operations are written to the dedicated Admin database when `DB_ADMIN` is configured.
-- Sensitive detail payloads are stored separately from immutable audit summaries.
-- Admin detail reads are themselves audited.
-- Audit delivery can fan out to primary storage, R2/S3 archive, and external sinks according to the
-  published runtime logging policy snapshot.
+| Setup mode  | At event creation                                                                                                                                                 | Afterward                                                                                                                                                                                  |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `pipeline`  | Encrypt the record and persist a private R2 retry body with a small durable outbox pointer; enqueue its reference. No searchable body is written to the database. | Management sends the record to the Stream; Cloudflare writes Parquet into Iceberg. This mode never rereads database log bodies for export. Search visibility may lag by a few minutes.     |
+| `scheduled` | Store the encrypted record in bounded Admin DB parts.                                                                                                             | Export bounded batches to Parquet after the configured DB residence period. Delete only the exact staged records whose committed snapshot, batch identity, and lineage have been verified. |
 
-Canonical archive/sink payloads use `authrim.audit.v1` where the destination expects structured
-audit data. Setup-managed audit archives are written as checksummed, cataloged, encrypted log chunks;
-the Management query path verifies the catalog checksum and decrypts the indexed record before
-returning it. Plaintext and legacy archive object layouts are not accepted by that path.
+The scheduled defaults are seven days in the database and a five-minute export interval. This
+residence period is separate from the event's total retention deadline. The original deadline is
+preserved through retries and tenant restores; an expired record is excluded even while physical
+cleanup is pending. General audit, operational, and Access Trace defaults are 90 days, PII audit
+365 days, and diagnostic logs 30 days. Datasets without an existing finite deadline remain
+unbounded rather than inheriting a new universal cutoff.
+
+Setup generates the owned resources, scoped bindings, stable content-HMAC key, and versioned
+encryption keys. The wizard can issue Catalog credentials automatically from a one-time account
+Cloudflare token with only `Account API Tokens Write`, or validate manually entered credentials.
+Setup creates an account-scoped Catalog/SQL/R2 Storage read token and a separate Catalog/R2
+Storage write token for Management Worker secrets. Pipeline mode also creates a separate Sink
+write token that stays with Setup. Setup verifies and privately stages the credentials, then
+revokes the one-time token; interrupted revocation keeps purpose-bound recovery state and reports
+any cleanup still required. Control's deployment bootstrap remains separate. Noninteractive runs
+may use `LOG_ARCHIVE_BOOTSTRAP_TOKEN` instead of `LOG_ARCHIVE_CATALOG_READ_TOKEN` and
+`LOG_ARCHIVE_CATALOG_WRITE_TOKEN` (plus `LOG_ARCHIVE_CATALOG_SINK_TOKEN` in pipeline mode).
+Explicit Catalog tokens select manual entry over automatic defaults; setting both sources,
+even partial explicit credentials, is an error. Automatic issuance does not overwrite staged credentials.
+Staged evidence binds the verified values to an account, mode and fingerprint; configuration checks
+the authenticated account and verifies the credentials again. Successful issuance records confirmed
+bootstrap revocation, allowing CLI resume with the same bootstrap variable to reuse the credentials
+without token-authority requests. Local recovery-file cleanup failures after confirmed revocation
+produce a warning and preserve the successful result. After reloading the wizard, matching staged
+credentials can be reused without another bootstrap token. Pending recovery blocks manual entry
+so the original staged values remain available; complete automatic recovery first. CLI errors
+include readable recovery and Dashboard revocation guidance. Activation requires signed deployment readiness checks, owned-table/schema verification,
+and complete producer configuration. Pipeline setup verifies the paid
+Workers entitlement before creating resources. Neither a successful Queue send nor a Stream
+acknowledgement is proof that a row is already queryable.
+
+This storage contract has no compatibility fallback for former JSON/chunk formats and does not
+backfill existing data. Local development without a remote Catalog supports encrypted hot staging
+only: responses explicitly identify `local_hot_only`, cold coverage is unavailable, and staged
+bodies are retained rather than pretending that an export succeeded. This local flag cannot be
+deployed as a Cloudflare storage configuration. AWS runtime audit ports keep their separate
+runtime-owned storage contract.
+
+### Audit and protected details
+
+End-user and protocol events use the shared audit service. Administrator evidence, Flow sign-in
+failures, access traces, operational events, PII audits, and diagnostic records use the same
+Cloudflare log-storage boundary. Legacy audit producers write the canonical `core.event_log`
+dataset instead of maintaining a second `core.audit_log` body copy.
+
+Searchable overview columns remain ordinary Parquet columns. The event body is encrypted with
+Authrim keys before storage. Administrator before/after/full metadata, operational reason details,
+and PII values have an additional protected-detail envelope and are decrypted only after the
+corresponding permission check. Trusted actor/proxy projections are supplied separately. Keys and
+decrypted bodies are not sent to an external SQL service.
+
+Business state is retained separately from searchable evidence: Mapping commit/CAS ledgers,
+revocation and atomic-audit receipts, approvals, job checkpoints, delivery claims, retry state,
+and counters are not removed by general log export. Core mutations that use source-bound publication publish their log
+only after the source commit is confirmed. Backup/replication admission covers their
+storage effects; unknown completion is not inferred from an expired lease.
+
+### Lists, details, and statistics
+
+Existing Management APIs and screens read the new records with their tenant, subject, permission,
+and protected-detail restrictions intact. Scheduled reads combine staged records with a fixed
+Catalog snapshot and verify the source-deletion watermark. Pipeline reads use Iceberg and report
+eventual visibility. Stable tenant/dataset/event identities and content HMACs remove duplicate
+copies before list or aggregate evaluation.
+
+SQL evaluation uses fixed internal queries inside the authorized Worker after decryption; it does
+not expose arbitrary SQL. Cursor responses include `has_more` and `next_cursor`. Continue with
+the same tenant, endpoint, and filters, and follow the endpoint's existing detail/timestamp
+parameters. Changing a filter or tenant starts a new traversal.
+
+![Audit entry in the existing Admin UI, using development fixtures](screenshots/log-archive-detail.png)
+
+For Management log queries using the shared query adapter, Catalog ancestry, checksum, decryption,
+subject erasure, retention, and bounded-read failures produce HTTP 503 with `error: log_query_incomplete` and `complete: false`. A partial statistic is
+not returned as a definitive count or zero. Reads have row, decoded-byte, object/range-read,
+SQL-view, and elapsed-time budgets; narrow the time range when the selected data cannot fit.
+Physical retention uses Iceberg snapshot/delete/GC rules and capture pins, rather than deleting
+Parquet files while live snapshots still reference them. Tenant backup/restore exports logical
+records, preserves original expiry, and re-encrypts for the target instead of copying shared
+Parquet or source-wide keys.
+
+## Permission Check Audit (Access Trace)
+
+Permission-check audit records (Access Trace) are enabled by default when the Check API is
+enabled. Denied decisions are selected for logging and allowed decisions are sampled at 1%;
+the default retention is 90 days. This does not enable the Check API itself. An explicit
+`audit.check_api_enabled: false` platform setting or `ENABLE_CHECK_API_AUDIT=false` environment
+override disables recording; saved platform settings take precedence over the environment.
+The default `waitUntil` mode records asynchronously, and recording failures do not fail the
+authorization request.
 
 ## Diagnostic and Sensitive Detail
 
@@ -152,10 +240,14 @@ normal audit rows or console logs.
 | `diagnostic_detail` | Short-retention operational detail for troubleshooting.                    |
 | `sensitive_detail`  | Separately protected detail records for sensitive administrative evidence. |
 
-Sensitive detail is chunked and indexed. The index can live in `DB_ADMIN`, `LOGGING_INDEX_DB`, or
-`DB` depending on deployment bindings. Payloads are stored in an object destination such as R2 and
-referenced by catalog IDs, public artifact IDs, object keys, byte offsets, checksums, and key
-versions.
+Searchable log details use the encrypted row and protected-detail envelopes described above.
+Diagnostic recording remains disabled by default; enabling it uses the Setup-selected storage
+mode, without a second legacy R2 JSONL output.
+
+Separately protected business artifacts, such as delivery/recovery payloads and export results,
+can still use the sensitive-detail chunk/index contract in `DB_ADMIN`, `LOGGING_INDEX_DB`, or
+`DB`. Their object references, checksums, key versions, permissions, and cleanup lifecycle are
+not an alternate archive for searchable logs.
 
 Sensitive detail export requires the dedicated sensitive-detail export permission. Probe/read
 operations are audited and should be treated as privileged administrative actions.
@@ -201,7 +293,7 @@ The Admin UI exposes the following operational surfaces:
 | Page                 | Purpose                                                                                  |
 | -------------------- | ---------------------------------------------------------------------------------------- |
 | User Audit Logs      | End-user audit search and review.                                                        |
-| Admin Audit Logs     | Admin action evidence stored in the Admin database.                                      |
+| Admin Audit Logs     | Admin action evidence from the configured log-storage mode.                              |
 | Access Trace         | Policy/access investigation support.                                                     |
 | Support Ops          | Privacy-preserving support operations and approved actions.                              |
 | Diagnostic Logging   | Diagnostic detail, sensitive detail policy, delivery health, DLQ, exports, and coverage. |
@@ -221,17 +313,18 @@ overdue count where the policy has a fixed cutoff. This platform-wide Jobs view 
 administrators; tenant-scoped Jobs permission does not expose fleet storage metrics.
 
 Each bucket is scanned only by its owning Worker: Control scans `MIGRATION_RELEASES`, Plugin Runner
-scans `PLUGIN_BUNDLES`, and Management scans the remaining six buckets. Owners send bounded,
+scans `PLUGIN_BUNDLES`, and Management scans its owned buckets. Owners send bounded,
 secret-free summaries to Control over authenticated service bindings. Control persists the aggregate
 and reports missing or older-than-24-hours data explicitly as pending or stale; it never receives a
 binding that would let it read another Worker's bucket.
 
-The seven tracked tasks cover tenant diagnostic-log retention, terminal and orphaned import cleanup,
-unreferenced Login UI asset and avatar cleanup, old delivery/message payload cleanup, incremental
-bucket metrics, logging storage maintenance, and general object-artifact cleanup. Each diagnostic
-tenant and object page is bounded and cursor-resumable. Because diagnostic retention is tenant
+The standard tasks cover terminal and orphaned import cleanup, unreferenced Login UI asset and
+avatar cleanup, old delivery/message payload cleanup, incremental bucket metrics, logging storage
+maintenance, and general object-artifact cleanup. The minute log-maintenance path separately
+recovers publication and delivery state, exports scheduled-mode records, and advances bounded
+retention, subject erasure, and Iceberg snapshot cleanup. Tenant and object scans are bounded and cursor-resumable. Because diagnostic retention is tenant
 configured, its fleet metric does not invent a fixed overdue count. HTTP delivery, DLQ replay, and
-message-job payloads in `AUDIT_ARCHIVE` use the common object-envelope encryption contract. Terminal
+message-job payloads in `SENSITIVE_DETAILS` use the common object-envelope encryption contract. Terminal
 delivery deletes its transient payload immediately; the scheduled scan recovers payloads orphaned
 before queue handoff or cleanup. Message payloads referenced by queued, claimed, running, retrying, or
 blocked jobs are retained even after the orphan grace period. Closed DLQ rows are not removed until
@@ -250,15 +343,19 @@ their R2 payload has also been deleted.
 
 ## Related Implementation Files
 
-| File                                                                    | Purpose                                                    |
-| ----------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `packages/ar-lib-core/src/utils/logger.ts`                              | Runtime structured logger.                                 |
-| `packages/ar-lib-core/src/middleware/request-context.ts`                | Request context and logger binding.                        |
-| `packages/ar-lib-core/src/services/logging-runtime-policy.ts`           | Runtime policy resolution.                                 |
-| `packages/ar-lib-core/src/services/logging-runtime-emitter.ts`          | Runtime managed-log emission.                              |
-| `packages/ar-lib-core/src/services/audit/audit-service.ts`              | Audit service and fan-out planning.                        |
-| `packages/ar-lib-logging/src/registry.ts`                               | Log type and plane registry.                               |
-| `packages/ar-lib-logging/src/destinations/index.ts`                     | Destination provider schemas and capabilities.             |
-| `packages/ar-lib-logging/src/delivery/`                                 | Delivery events, retry, queues, and DLQ helpers.           |
-| `packages/ar-lib-logging/src/chunks/`                                   | R2 chunking, manifests, catalog repair, and flush helpers. |
-| `packages/ar-management/src/routes/admin-management/logging-control.ts` | Admin logging control API.                                 |
+| File                                                                    | Purpose                                                      |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `packages/ar-lib-core/src/utils/logger.ts`                              | Runtime structured logger.                                   |
+| `packages/ar-lib-core/src/middleware/request-context.ts`                | Request context and logger binding.                          |
+| `packages/ar-lib-core/src/services/logging-runtime-policy.ts`           | Runtime policy resolution.                                   |
+| `packages/ar-lib-core/src/services/logging-runtime-emitter.ts`          | Runtime managed-log emission.                                |
+| `packages/ar-lib-core/src/services/audit/audit-service.ts`              | Audit service and fan-out planning.                          |
+| `packages/ar-lib-logging/src/registry.ts`                               | Log type and plane registry.                                 |
+| `packages/ar-lib-logging/src/destinations/index.ts`                     | Destination provider schemas and capabilities.               |
+| `packages/ar-lib-logging/src/delivery/`                                 | Delivery events, retry, queues, and DLQ helpers.             |
+| `packages/ar-lib-logging/src/iceberg/`                                  | Parquet, Iceberg snapshot commits, readers, and GC.          |
+| `packages/ar-lib-core/src/services/log-iceberg-runtime.ts`              | Encrypted staging and Pipeline retry/outbox storage.         |
+| `packages/ar-lib-core/src/services/log-iceberg-read.ts`                 | Authorized retained-record reads and watermark checks.       |
+| `packages/ar-management/src/log-iceberg-maintenance.ts`                 | Export, recovery, retention, and subject-erasure scheduling. |
+| `packages/setup/src/core/log-archive.ts`                                | Owned resource setup and activation readiness.               |
+| `packages/ar-management/src/routes/admin-management/logging-control.ts` | Admin logging control API.                                   |

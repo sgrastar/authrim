@@ -91,6 +91,8 @@ export interface TenantInfo extends TenantEndpoints {
 		vc: boolean;
 	};
 	login_ui_url: string | null;
+	/** The UI base URL configured for this tenant (validated as at runtime); null when none. */
+	login_ui_base_url?: string | null;
 	global_login_ui_url: string | null;
 	discover_url: string | null;
 	admin_ui_url: string | null;

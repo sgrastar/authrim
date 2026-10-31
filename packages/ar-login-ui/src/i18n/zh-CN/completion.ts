@@ -1,6 +1,14 @@
 import type { Translation } from '../i18n-types';
 
 const completion = {
+	error_rateLimited: '尝试次数过多。请稍等片刻后重试。',
+	error_rateLimitedRetryAfter: '尝试次数过多。请在约 {minutes} 分钟后重试。',
+	error_unregisteredPostLogoutRedirectUri:
+		'您已退出登录。由于应用的返回地址未注册，无法将您带回应用。请自行重新打开应用。',
+	error_invalidIdTokenHint:
+		'您已退出登录。由于无法验证应用的退出请求，无法将您带回应用。请自行重新打开应用。',
+	error_idTokenHintRequired:
+		'您已退出登录。由于应用的退出请求不完整，无法将您带回应用。请自行重新打开应用。',
 	common_logoAlt: '徽标',
 	common_footerLinks: '页脚链接',
 	common_selectOption: '请选择',
@@ -36,7 +44,7 @@ const completion = {
 	landing_signedInAs: '登录身份',
 	emailCode_title: '请查收电子邮件',
 	emailCode_subtitle: '我们已将验证码发送至',
-	emailCode_instructions: '请输入电子邮件中的 6 位验证码。验证码将在 5 分钟后过期。',
+	emailCode_instructions: '请输入电子邮件中的 6 位验证码。验证码的有效期已写在电子邮件中。',
 	emailCode_codeLabel: '验证码',
 	emailCode_resendSuccess: '验证码已发送',
 	emailCode_success: '验证成功！正在跳转...',
@@ -82,7 +90,7 @@ const completion = {
 	device_subtitle: '请输入设备上显示的代码',
 	device_codeLabel: '验证码',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint: '请输入设备上的 8 位代码（格式：XXXX-XXXX）',
+	device_codeHint: '请输入设备上显示的代码',
 	device_verifyButton: '验证代码',
 	device_confirmTitle: '授权设备',
 	device_requestedPermissions: '请求的权限',
@@ -95,6 +103,11 @@ const completion = {
 	device_errorApproveFailed: '无法批准设备',
 	device_errorDenyFailed: '无法拒绝设备授权请求',
 	device_errorInvalidRedirect: '从服务器收到的重定向网址无效',
+	device_errorConsentWithdrawn:
+		'此请求是在您撤销该应用的访问权限之前发起的。请在设备上重新开始以获取新代码。',
+	device_errorTryAgain: '目前无法保存您的决定，且未作任何更改。请稍后重试。',
+	device_errorTooManyAttempts: '尝试次数过多。请稍等片刻后重试。',
+	device_errorOutcomeUnknown: '无法确认您的决定是否已保存。请检查设备，或重新输入代码。',
 	ciba_title: '身份验证请求',
 	ciba_subtitle: '某个应用正在请求您的批准',
 	ciba_noPendingRequests: '没有待处理的身份验证请求',
@@ -114,6 +127,13 @@ const completion = {
 	ciba_errorGeneric: '发生错误',
 	ciba_errorApproveFailed: '无法批准请求',
 	ciba_errorDenyFailed: '无法拒绝请求',
+	ciba_errorConsentWithdrawn: '此请求是在您撤销该应用的访问权限之前发起的。请从应用重新开始。',
+	ciba_errorRequestGone: '此请求已过期或已被处理。',
+	error_authorizationRequestExpired: '登录请求已过期。请从应用重新开始。',
+	ciba_errorTryAgain: '目前无法保存您的决定，且未作任何更改。请稍后重试。',
+	ciba_errorTooManyAttempts: '尝试次数过多。请稍等片刻后重试。',
+	ciba_errorOutcomeUnknown: '无法确认您的回答是否已保存。请刷新以查看仍在等待的请求。',
+	ciba_errorNoLongerWaiting: '无法确认您的回答，但此请求已不再等待处理。',
 	reauth_title: '验证您的身份',
 	reauth_subtitle: '为确保安全，请重新验证身份后继续',
 	reauth_verifyWithPasskey: '使用 Passkey 验证',

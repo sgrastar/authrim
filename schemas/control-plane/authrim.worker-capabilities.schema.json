@@ -159,7 +159,8 @@
             "queue",
             "send_email",
             "hyperdrive",
-            "version_metadata"
+            "version_metadata",
+            "pipelines"
           ]
         },
         "required": { "type": "boolean" },

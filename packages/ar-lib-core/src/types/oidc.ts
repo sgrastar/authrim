@@ -6,6 +6,7 @@ import type { OrganizationType, PlanType, UserType } from './rbac';
 import type { AuthorizationDetails } from './rar';
 import type { JWKS } from './jwk';
 import type { AttributeReleaseConsentPolicy } from '../services/identity-release-consent';
+import type { IAL } from './settings/assurance-levels';
 
 /**
  * OpenID Provider Metadata (Discovery Document)
@@ -74,6 +75,8 @@ export interface OIDCProviderMetadata {
   transformed_claims_max_depth?: number;
   transformed_claims_max_count?: number;
   acr_values_supported?: string[];
+  // OIDC Discovery / Initiating User Registration (prompt=create)
+  prompt_values_supported?: string[];
   // OIDC Session Management 1.0
   check_session_iframe?: string;
   // OIDC RP-Initiated Logout 1.0
@@ -253,6 +256,8 @@ export interface OAuthErrorResponse {
 }
 
 export interface OIDCIdentityMappingFieldMappingSelector {
+  /** `none`: the app takes no mapping, whatever the tenant's and the platform's defaults say. */
+  mode?: 'none';
   fieldMappingSetId?: string;
   fieldMappingVersionId?: string;
   destinationNamespace?: string;
@@ -638,6 +643,16 @@ export interface ClientMetadata extends ClientRegistrationResponse {
    * When true, authorization requests must include code_challenge.
    */
   require_pkce?: boolean;
+
+  // ==========================================================================
+  // Identity assurance (NIST SP 800-63A)
+  // ==========================================================================
+  /**
+   * The lowest IAL a person needs to be authorized by, or issued tokens for, this client. Set by an
+   * administrator only (never in client registration). Applies whether or not tenant-wide
+   * assurance is on. Absent: the client sets no minimum.
+   */
+  minimum_ial?: IAL;
 }
 
 /**
@@ -653,6 +668,12 @@ export interface RefreshTokenData {
   exp: number; // Expiration timestamp
   resource_aud?: string | string[]; // Original access token resource audience
   familyId?: string; // Refresh token family ID for token rotation
+  /** How the user authenticated for the grant that began the family (RefreshTokenAuthContext). */
+  auth_context?: import('../durable-objects/RefreshTokenRotator').RefreshTokenAuthContext;
+  /** When the family was first issued (ms); absent for a family recorded before it was kept. */
+  family_created_at?: number;
+  /** The consent withdrawal generation the family was granted under; absent for older families. */
+  family_consent_generation?: number;
 }
 
 /**
@@ -801,7 +822,7 @@ export interface DeviceAuthorizationRequest {
  */
 export interface DeviceAuthorizationResponse {
   device_code: string; // Unique device verification code
-  user_code: string; // End-user verification code (8-char, human-readable)
+  user_code: string; // End-user verification code (human-readable; format set by device_flow.user_code_*)
   verification_uri: string; // End-user verification URI
   verification_uri_complete?: string; // Verification URI with user_code included
   expires_in: number; // Lifetime in seconds (typically 300-600)
@@ -823,8 +844,16 @@ export interface DeviceCodeMetadata {
   expires_at: number;
   last_poll_at?: number; // Last time the device polled for the token
   poll_count?: number; // Number of times the device has polled
+  // Polling interval in seconds that applies now (RFC 8628 section 3.5: raised by slow_down).
+  // Absent on codes stored before the interval was kept per code: the default applies.
+  interval?: number;
+  base_interval?: number; // Interval the code started with; written when slow_down first raises it
+  max_interval?: number; // Highest interval slow_down can raise this code to (device_flow.max_interval when it was issued)
+  slow_down_increment?: number; // Seconds one slow_down adds to the interval (device_flow.slow_down_increment when it was issued)
+  max_poll_count?: number; // Configured poll count, a floor (device_flow.max_poll_count when it was issued)
   user_id?: string; // Set when user approves the device
   sub?: string; // Subject (user identifier) - set when approved
+  consent_generation?: number; // The user's consent withdrawal generation at approval
   // Token issuance tracking (RFC 8628 token replay prevention)
   token_issued?: boolean; // True if tokens have been issued
   token_issued_at?: number; // Timestamp when tokens were issued
@@ -881,11 +910,16 @@ export interface CIBARequestMetadata {
   expires_at: number;
   last_poll_at?: number; // Last time client polled for the token
   poll_count?: number; // Number of times client has polled
-  interval: number; // Minimum polling interval in seconds
+  interval: number; // Minimum polling interval in seconds (raised by slow_down, CIBA Core section 11)
+  base_interval?: number; // Interval the request started with; written when slow_down first raises it
+  max_interval?: number; // Highest interval slow_down can raise this request to (ciba.max_interval when it was made)
+  slow_down_increment?: number; // Seconds one slow_down adds to the interval (ciba.slow_down_increment when it was made)
+  max_poll_count?: number; // Configured poll count, a floor (ciba.max_poll_count when it was made)
   user_id?: string; // Set when user approves the request
   sub?: string; // Subject (user identifier) - set when approved
   nonce?: string; // Nonce for ID token (optional)
   authenticated_acr?: string; // Authentication context established by the approval step
+  consent_generation?: number; // The user's consent withdrawal generation at approval
   // Token issuance tracking
   token_issued?: boolean; // True if tokens have been issued
   token_issued_at?: number; // Timestamp when tokens were issued

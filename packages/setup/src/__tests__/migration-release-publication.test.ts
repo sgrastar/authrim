@@ -233,6 +233,7 @@ describe('migration release artifact publication', () => {
 
   it('does not register a partially uploaded bundle', async () => {
     const fixture = temporaryRelease();
+    const expectedArtifact = buildMigrationReleaseArtifactPlan(fixture);
     let uploaded = 0;
     const executeBatch = async (): Promise<D1BatchExecutionResult[]> => {
       throw new Error('catalog registration must not run');
@@ -251,7 +252,7 @@ describe('migration release artifact publication', () => {
         executeBatch,
       })
     ).rejects.toThrow('r2_write_failed');
-    expect(uploaded).toBe(2);
+    expect(uploaded).toBe(expectedArtifact.objects.length - 1);
   });
 
   it('retries a content-addressed R2 object after a transient Cloudflare 524', async () => {
@@ -275,7 +276,7 @@ describe('migration release artifact publication', () => {
             const attempt = (attempts.get(objectKey) ?? 0) + 1;
             attempts.set(objectKey, attempt);
             if (objectKey === expectedArtifact.objects[0]?.objectKey && attempt === 1) {
-              throw new Error('Failed to fetch /r2/object - 524: A timeout occurred');
+              throw new Error('Cloudflare R2 object upload failed (524): A timeout occurred');
             }
           },
           executeBatch: sqliteBatchExecutor(database),
@@ -302,6 +303,7 @@ describe('migration release artifact publication', () => {
 
   it('does not retry a deterministic R2 permission rejection', async () => {
     const fixture = temporaryRelease();
+    const expectedArtifact = buildMigrationReleaseArtifactPlan(fixture);
     let attempts = 0;
     let catalogStarted = false;
     await expect(
@@ -313,7 +315,7 @@ describe('migration release artifact publication', () => {
         actorId: 'setup:test',
         upload: async () => {
           attempts += 1;
-          throw new Error('Failed to fetch /r2/object - 403: forbidden');
+          throw new Error('Cloudflare R2 object upload failed (403): forbidden');
         },
         executeBatch: async () => {
           catalogStarted = true;
@@ -323,8 +325,8 @@ describe('migration release artifact publication', () => {
           throw new Error('sleep_must_not_run');
         },
       })
-    ).rejects.toThrow('403: forbidden');
-    expect(attempts).toBe(1);
+    ).rejects.toThrow('failed (403): forbidden');
+    expect(attempts).toBe(expectedArtifact.objects.length - 1);
     expect(catalogStarted).toBe(false);
   });
 

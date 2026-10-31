@@ -1,3 +1,8 @@
+import type { LogIcebergRuntimeEnv } from './log-iceberg-runtime';
+import {
+  createLogIcebergPolicySnapshotObjectStore,
+  LOG_ICEBERG_POLICY_PREFIX,
+} from './log-iceberg-policy-artifacts';
 import {
   LOG_PLANES,
   LOG_TYPES,
@@ -104,7 +109,12 @@ function snapshotString(value: unknown): string | null {
 }
 
 function snapshotNumber(value: unknown, fallback: number): number {
-  const parsed = typeof value === 'number' ? value : Number.parseInt(String(value ?? ''), 10);
+  const parsed =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string'
+        ? Number.parseInt(value, 10)
+        : Number.NaN;
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
@@ -216,7 +226,9 @@ function mapSnapshotFallback(row: unknown): LoggingFallbackPolicy | null {
     return null;
   }
   return {
-    id: snapshotString(raw.id) ?? `${raw.scope_type ?? 'platform'}:${raw.scope_id ?? 'global'}`,
+    id:
+      snapshotString(raw.id) ??
+      `${snapshotString(raw.scope_type) ?? 'platform'}:${snapshotString(raw.scope_id) ?? 'global'}`,
     scopeType: readSnapshotScopeType(raw.scope_type),
     scopeId: snapshotString(raw.scope_id) ?? 'global',
     logType,
@@ -285,21 +297,14 @@ function stringRecord(value: unknown): Record<string, string> | undefined {
 
 export function targetFromRuntimeLoggingDestination(
   destination: LoggingDestination,
-  plane: LogPlane
+  _plane: LogPlane
 ): RuntimeLoggingDestinationTarget | null {
   const config = destination.providerConfig;
   if (destination.provider === 'r2') {
     return {
       type: 'r2',
       destinationId: destination.id,
-      bucketRef:
-        snapshotString(config.bindingRef) ??
-        snapshotString(config.bucketRef) ??
-        (plane === 'sensitive_detail'
-          ? 'SENSITIVE_DETAILS'
-          : plane === 'archive'
-            ? 'AUDIT_ARCHIVE'
-            : 'DIAGNOSTIC_LOGS'),
+      bucketRef: 'LOG_ARCHIVE',
       prefix: snapshotString(config.prefix) ?? undefined,
     };
   }
@@ -405,7 +410,7 @@ function findSelectedDestinationId(input: {
 }
 
 export async function loadRuntimeLoggingPolicySnapshotFromEnv(
-  env: Pick<Env, 'AUTHRIM_CONFIG' | 'DIAGNOSTIC_LOGS'>,
+  env: Pick<Env, 'AUTHRIM_CONFIG' | 'LOG_ARCHIVE' | 'LOG_ARCHIVE_WRITER'>,
   tenantId: string
 ): Promise<RuntimeLoggingPolicySnapshotPayload | null> {
   if (!env.AUTHRIM_CONFIG) {
@@ -434,7 +439,8 @@ export async function loadRuntimeLoggingPolicySnapshotFromEnv(
           scopeType,
           scopeId,
           kv: configKv,
-          objectStore: env.DIAGNOSTIC_LOGS,
+          objectStore: createLogIcebergPolicySnapshotObjectStore(env),
+          prefix: LOG_ICEBERG_POLICY_PREFIX,
         }),
     });
     if (snapshot) {
@@ -450,7 +456,7 @@ export async function loadRuntimeLoggingPolicySnapshotFromEnv(
 }
 
 export async function resolveRuntimeLoggingPolicyTargetFromEnv(
-  env: Pick<Env, 'AUTHRIM_CONFIG' | 'DIAGNOSTIC_LOGS' | 'AUDIT_ARCHIVE' | 'SENSITIVE_DETAILS'>,
+  env: LogIcebergRuntimeEnv,
   input: {
     tenantId: string;
     logType: LogType;
@@ -460,7 +466,7 @@ export async function resolveRuntimeLoggingPolicyTargetFromEnv(
 ): Promise<RuntimeLoggingPolicyResolution | null> {
   const policies = await loadRuntimeLoggingPolicySnapshotFromEnv(env, input.tenantId);
   if (!policies) {
-    if (input.plane === 'archive' && env.AUDIT_ARCHIVE) {
+    if (input.plane === 'archive' && (env.LOG_ARCHIVE || env.LOG_ARCHIVE_WRITER)) {
       const destinationId = PLATFORM_DEFAULT_R2_ARCHIVE_DESTINATION_ID;
       return {
         tenantId: input.tenantId,
@@ -478,7 +484,7 @@ export async function resolveRuntimeLoggingPolicyTargetFromEnv(
         target: {
           type: 'r2',
           destinationId,
-          bucketRef: 'AUDIT_ARCHIVE',
+          bucketRef: 'LOG_ARCHIVE',
           prefix: 'logs/v1',
         },
       };

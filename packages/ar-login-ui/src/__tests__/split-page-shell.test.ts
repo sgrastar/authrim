@@ -19,25 +19,39 @@ function expectPageShellOrder(pageSource: string) {
 	expect(pageSource).not.toContain('auth-page-header');
 }
 
+const SHELL_PAGES = [
+	'routes/login/+page.svelte',
+	'routes/signup/+page.svelte',
+	'routes/verify-email-code/+page.svelte'
+];
+
 describe('split page shell', () => {
 	it('keeps the header in the auth panel and the full-width footer outside the main area', () => {
-		expectPageShellOrder(source('routes/login/+page.svelte'));
-		expectPageShellOrder(source('routes/signup/+page.svelte'));
-		expectPageShellOrder(source('routes/verify-email-code/+page.svelte'));
+		expectPageShellOrder(source('lib/components/AuthPageShell.svelte'));
+	});
+
+	it('renders login, signup and verify-email-code through the one shared shell', () => {
+		for (const page of SHELL_PAGES) {
+			const pageSource = source(page);
+
+			expect(pageSource).toContain(
+				"import AuthPageShell from '$lib/components/AuthPageShell.svelte'"
+			);
+			expect(pageSource).toContain('<AuthPageShell');
+			// The shell markup lives in the component; a page that repeats it would drift from it.
+			expect(pageSource).not.toContain('class="auth-main"');
+			expect(pageSource).not.toContain('class="auth-header"');
+			expect(pageSource).not.toContain('<ConfiguredFooter');
+			expect(pageSource).not.toContain('<LanguageSwitcher');
+		}
 	});
 
 	it('anchors bottom theme and language controls above an enabled footer', () => {
 		const css = source('app.css');
 
-		for (const page of [
-			'routes/login/+page.svelte',
-			'routes/signup/+page.svelte',
-			'routes/verify-email-code/+page.svelte'
-		]) {
-			expect(source(page)).toContain(
-				'class:auth-page--has-footer={loginUIPageStore.footerEnabled}'
-			);
-		}
+		expect(source('lib/components/AuthPageShell.svelte')).toContain(
+			'class:auth-page--has-footer={loginUIPageStore.footerEnabled}'
+		);
 		expect(css).toContain('.auth-page--has-footer .auth-main');
 		expect(css).toContain(
 			"[data-topbar-position='bottom_right'] .auth-page--has-footer .auth-main > .auth-topbar"
@@ -47,24 +61,18 @@ describe('split page shell', () => {
 		);
 	});
 
-	it('keeps the language controls inside the shared main shell on every primary auth page', () => {
-		for (const pagePath of [
-			'routes/login/+page.svelte',
-			'routes/signup/+page.svelte',
-			'routes/verify-email-code/+page.svelte'
-		]) {
-			const page = source(pagePath);
-			const mainStart = page.indexOf('<div class="auth-main">');
-			const externalTopbar = page.indexOf(
-				"loginUIPageStore.topbarPosition !== 'in_card'",
-				mainStart
-			);
-			const containerStart = page.indexOf('<div class="auth-container"', externalTopbar);
+	it('keeps the language controls inside the shared main shell', () => {
+		const shell = source('lib/components/AuthPageShell.svelte');
+		const mainStart = shell.indexOf('<div class="auth-main">');
+		const externalTopbar = shell.indexOf(
+			"loginUIPageStore.topbarPosition !== 'in_card'",
+			mainStart
+		);
+		const containerStart = shell.indexOf('<div class="auth-container"', externalTopbar);
 
-			expect(mainStart).toBeGreaterThan(-1);
-			expect(externalTopbar).toBeGreaterThan(mainStart);
-			expect(containerStart).toBeGreaterThan(externalTopbar);
-		}
+		expect(mainStart).toBeGreaterThan(-1);
+		expect(externalTopbar).toBeGreaterThan(mainStart);
+		expect(containerStart).toBeGreaterThan(externalTopbar);
 	});
 
 	it('uses the same configurable shell on every tenant-resolved continuation screen', () => {
@@ -162,12 +170,12 @@ describe('split page shell', () => {
 
 		expect(css).toContain('.auth-container.auth-container--wide > form > .card');
 		expect(css).toContain('max-width: 760px;');
-		expect(source('routes/login/+page.svelte')).toContain(
-			'class:auth-container--wide={runtimeScreenWide}'
+		expect(source('lib/components/AuthPageShell.svelte')).toContain(
+			'class:auth-container--wide={wide}'
 		);
-		expect(source('routes/signup/+page.svelte')).toContain(
-			'class:auth-container--wide={runtimeScreenWide}'
-		);
+		for (const page of ['routes/login/+page.svelte', 'routes/signup/+page.svelte']) {
+			expect(source(page)).toContain('wide={runtimeScreenWide}');
+		}
 	});
 
 	it('keeps the shared email widget available when either email method is enabled', () => {
@@ -193,7 +201,7 @@ describe('split page shell', () => {
 		expect(css).toContain('--bg-card: rgba(14, 10, 9, 0.45);');
 		expect(css).toContain('--bg-card: rgba(255, 253, 250, 0.5);');
 		expect(css).toContain('--primary: var(--login-accent-color, #e8623f);');
-		expect(css).toContain('--primary: var(--login-accent-color, #c93a22);');
+		expect(css).toContain('--primary: var(--login-accent-color, #b0301b);');
 		expect(css).toContain('--button-primary-bg: var(--primary);');
 		expect(css).toContain("[data-login-theme='fullbleed-glass'] .auth-page .auth-header__title");
 		expect(css).toMatch(
@@ -201,7 +209,10 @@ describe('split page shell', () => {
 		);
 		expect(css).toContain("[data-login-theme='fullbleed-glass'] .auth-page .auth-header__subtitle");
 		expect(css).toContain("[data-login-theme='fullbleed-glass'] .auth-page .auth-bottom-link");
-		expect(css).toContain('rgba(10, 7, 6, 0.58)');
+		// Text on the imagery follows the boundary's scheme (contrast: theme-contrast.test.ts).
+		expect(css).toContain('color: var(--fullbleed-on-image-title);');
+		expect(css).toContain('--fullbleed-on-image-title: #fffaf6;');
+		expect(css).toContain('--fullbleed-on-image-title: #221b17;');
 	});
 
 	it('keeps split brand copy readable independently from light form colors', () => {
@@ -236,19 +247,29 @@ describe('split page shell', () => {
 
 	it('shows one generic accepted status on the email-code screen without branching on identity', () => {
 		const page = source('routes/verify-email-code/+page.svelte');
+		const view = source('lib/views/VerifyEmailCodeView.svelte');
 
-		expect(page).toContain('role="status" aria-live="polite"');
-		expect(page).toContain('$LL.emailCode_subtitle()');
-		expect(page).not.toMatch(/userExists|accountExists|emailExists/);
+		expect(page).toContain('<VerifyEmailCodeView');
+		expect(view).toContain('role="status" aria-live="polite"');
+		expect(view).toContain('$LL.emailCode_subtitle()');
+		for (const each of [page, view]) {
+			expect(each).not.toMatch(/userExists|accountExists|emailExists/);
+		}
 	});
 
 	it('announces email-code send progress on both login and signup', () => {
-		for (const pagePath of ['routes/login/+page.svelte', 'routes/signup/+page.svelte']) {
+		for (const [pagePath, viewPath] of [
+			['routes/login/+page.svelte', 'lib/views/LoginView.svelte'],
+			['routes/signup/+page.svelte', 'lib/views/SignupView.svelte']
+		]) {
 			const page = source(pagePath);
+			const view = source(viewPath);
 
 			expect(page).toContain('const emailCodeProgressMessage');
-			expect(page).toContain('{#if emailCodeProgressMessage}');
-			expect(page).toContain('role="status" aria-live="polite"');
+			expect(page).toContain('emailCodeProgress: emailCodeProgressMessage');
+			expect(view).toMatch(
+				/\{#if alerts\.emailCodeProgress\}\s*<div class="auth-progress mb-4" role="status" aria-live="polite">/
+			);
 		}
 	});
 });

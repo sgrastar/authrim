@@ -62,7 +62,10 @@ function createApp(input?: {
       userId: 'admin-1',
       authMethod: 'session',
       actorType: input?.actorType ?? 'human',
-      roles: input?.roles ?? ['system_admin'],
+      roles: input?.roles ?? ['ar_super_admin'],
+      // The roles of this fixture's Admin come from a global assignment.
+      globalRoles: input?.roles ?? ['ar_super_admin'],
+      tenantScope: ['*'],
       permissions: [],
     });
     await next();
@@ -87,7 +90,7 @@ describe('read replication admin router', () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ readReplication: status });
 
-    const denied = createApp({ roles: ['tenant_admin'] });
+    const denied = createApp({ roles: ['ar_tenant_admin'] });
     const deniedResponse = await denied.app.request(
       '/api/admin/platform/read-replication',
       {},

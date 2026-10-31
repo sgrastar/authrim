@@ -1,3 +1,4 @@
+import { LOG_ARCHIVE_PRODUCER_COMPONENTS } from './log-archive-config.js';
 import type { WorkerComponent } from './naming.js';
 
 export const SECRET_NAMES = [
@@ -8,6 +9,10 @@ export const SECRET_NAMES = [
   'OBJECT_ENCRYPTION_ROOT_KEY',
   'OTP_HMAC_SECRET',
   'LOGGING_CURSOR_HMAC_SECRET',
+  'LOG_ARCHIVE_CONTENT_HMAC_KEY',
+  'LOG_ARCHIVE_ROOT_KEYRING',
+  'LOG_ARCHIVE_CATALOG_READ_TOKEN',
+  'LOG_ARCHIVE_CATALOG_WRITE_TOKEN',
   'FLOW_RUNTIME_HMAC_SECRET',
   'VC_TRANSACTION_CODE_HMAC_SECRET',
   'VC_EVIDENCE_HMAC_SECRET',
@@ -19,6 +24,7 @@ export const SECRET_NAMES = [
   'NOTIFICATION_PAYLOAD_DECRYPTION_JWK_SLOT_B',
   'NOTIFICATION_INTENT_HMAC_KEY',
   'AGENT_ELEVATION_ENCRYPTION_KEY',
+  'TENANT_BACKUP_WRAPPING_KEY',
   'TENANT_RUNTIME_REGISTRY_SIGNING_PRIVATE_JWK',
   'TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID',
   'TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS',
@@ -29,6 +35,8 @@ export const SECRET_NAMES = [
   'CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS',
   'LOOKUP_HMAC_KEY_SLOT_A',
   'LOOKUP_HMAC_KEY_SLOT_B',
+  'TOMBSTONE_HMAC_KEYRING',
+  'INVESTIGATION_SUBJECT_HMAC_KEYRING',
   'CLOUDFLARE_API_TOKEN',
   'CLOUDFLARE_D1_API_TOKEN',
   'CLOUDFLARE_WORKERS_API_TOKEN',
@@ -37,6 +45,7 @@ export const SECRET_NAMES = [
   'RESEND_API_KEY',
   'DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_ID',
   'DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_SECRET',
+  'AUTHRIM_REPLICATION_WRITER_SECRET',
 ] as const;
 
 export type SecretName = (typeof SECRET_NAMES)[number];
@@ -50,6 +59,10 @@ export const SECRET_KEY_FILES: Partial<Record<SecretName, string>> = {
   OBJECT_ENCRYPTION_ROOT_KEY: 'object_encryption_root_key.txt',
   OTP_HMAC_SECRET: 'otp_hmac_secret.txt',
   LOGGING_CURSOR_HMAC_SECRET: 'logging_cursor_hmac_secret.txt',
+  LOG_ARCHIVE_CONTENT_HMAC_KEY: 'log_archive_content_hmac_key.txt',
+  LOG_ARCHIVE_ROOT_KEYRING: 'log_archive_root_keyring.json',
+  LOG_ARCHIVE_CATALOG_READ_TOKEN: 'log_archive_catalog_read_token.txt',
+  LOG_ARCHIVE_CATALOG_WRITE_TOKEN: 'log_archive_catalog_write_token.txt',
   FLOW_RUNTIME_HMAC_SECRET: 'flow_runtime_hmac_secret.txt',
   VC_TRANSACTION_CODE_HMAC_SECRET: 'vc_transaction_code_hmac_secret.txt',
   VC_EVIDENCE_HMAC_SECRET: 'vc_evidence_hmac_secret.txt',
@@ -63,6 +76,7 @@ export const SECRET_KEY_FILES: Partial<Record<SecretName, string>> = {
     'notification_payload_decryption_jwk_slot_b.private.jwk.json',
   NOTIFICATION_INTENT_HMAC_KEY: 'notification_intent_hmac_key.txt',
   AGENT_ELEVATION_ENCRYPTION_KEY: 'agent_elevation_encryption_key.txt',
+  TENANT_BACKUP_WRAPPING_KEY: 'tenant_backup_wrapping_key.txt',
   TENANT_RUNTIME_REGISTRY_SIGNING_PRIVATE_JWK: 'tenant_runtime_registry_signing_private.jwk.json',
   TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID: 'tenant_runtime_registry_signing_key_id.txt',
   TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: 'tenant_runtime_registry_verify.jwks.json',
@@ -73,10 +87,13 @@ export const SECRET_KEY_FILES: Partial<Record<SecretName, string>> = {
   CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS: 'control_smoke_verify.jwks.json',
   LOOKUP_HMAC_KEY_SLOT_A: 'lookup_hmac_key_slot_a.txt',
   LOOKUP_HMAC_KEY_SLOT_B: 'lookup_hmac_key_slot_b.txt',
+  TOMBSTONE_HMAC_KEYRING: 'tombstone_hmac_keyring.json',
+  INVESTIGATION_SUBJECT_HMAC_KEYRING: 'investigation_subject_hmac_keyring.json',
   CLOUDFLARE_API_TOKEN: 'cloudflare_api_token.txt',
   RESEND_API_KEY: 'resend_api_key.txt',
   DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_ID: 'downstream_grant_introspection_client_id.txt',
   DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_SECRET: 'downstream_grant_introspection_client_secret.txt',
+  AUTHRIM_REPLICATION_WRITER_SECRET: 'replication_writer_secret.txt',
 };
 
 export const SECRET_UPLOAD_PLAN: Record<WorkerComponent, readonly SecretName[]> = {
@@ -125,6 +142,8 @@ export const SECRET_UPLOAD_PLAN: Record<WorkerComponent, readonly SecretName[]> 
     'LOOKUP_HMAC_KEY_SLOT_A',
     'LOOKUP_HMAC_KEY_SLOT_B',
     'CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS',
+    'TOMBSTONE_HMAC_KEYRING',
+    'INVESTIGATION_SUBJECT_HMAC_KEYRING',
   ],
   'ar-token': [
     'PUBLIC_JWK_JSON',
@@ -144,6 +163,7 @@ export const SECRET_UPLOAD_PLAN: Record<WorkerComponent, readonly SecretName[]> 
     'CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS',
   ],
   'ar-management': [
+    'TENANT_BACKUP_WRAPPING_KEY',
     'PUBLIC_JWK_JSON',
     'RP_TOKEN_ENCRYPTION_KEY',
     'PII_ENCRYPTION_KEY',
@@ -159,6 +179,8 @@ export const SECRET_UPLOAD_PLAN: Record<WorkerComponent, readonly SecretName[]> 
     'LOOKUP_HMAC_KEY_SLOT_A',
     'LOOKUP_HMAC_KEY_SLOT_B',
     'CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS',
+    'TOMBSTONE_HMAC_KEYRING',
+    'INVESTIGATION_SUBJECT_HMAC_KEYRING',
   ],
   'ar-agent-access': [
     'AGENT_ELEVATION_ENCRYPTION_KEY',
@@ -169,6 +191,8 @@ export const SECRET_UPLOAD_PLAN: Record<WorkerComponent, readonly SecretName[]> 
   'ar-async': [
     'OBJECT_ENCRYPTION_ROOT_KEY',
     'TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS',
+    'LOOKUP_HMAC_KEY_SLOT_A',
+    'LOOKUP_HMAC_KEY_SLOT_B',
     'CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS',
   ],
   'ar-policy': [
@@ -181,6 +205,8 @@ export const SECRET_UPLOAD_PLAN: Record<WorkerComponent, readonly SecretName[]> 
     'OBJECT_ENCRYPTION_ROOT_KEY',
     'TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS',
     'CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS',
+    'TOMBSTONE_HMAC_KEYRING',
+    'INVESTIGATION_SUBJECT_HMAC_KEYRING',
   ],
   'ar-bridge': [
     'RP_TOKEN_ENCRYPTION_KEY',
@@ -189,6 +215,8 @@ export const SECRET_UPLOAD_PLAN: Record<WorkerComponent, readonly SecretName[]> 
     'LOOKUP_HMAC_KEY_SLOT_A',
     'LOOKUP_HMAC_KEY_SLOT_B',
     'CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS',
+    'TOMBSTONE_HMAC_KEYRING',
+    'INVESTIGATION_SUBJECT_HMAC_KEYRING',
   ],
   'ar-vc': [
     'LOOKUP_HMAC_KEY_SLOT_A',
@@ -205,6 +233,10 @@ export const SECRET_UPLOAD_PLAN: Record<WorkerComponent, readonly SecretName[]> 
 
 /** Provider/integration credentials that are intentionally optional at deploy time. */
 export const OPTIONAL_DEPLOY_SECRET_NAMES: readonly SecretName[] = [
+  'LOG_ARCHIVE_CONTENT_HMAC_KEY',
+  'LOG_ARCHIVE_ROOT_KEYRING',
+  'LOG_ARCHIVE_CATALOG_READ_TOKEN',
+  'LOG_ARCHIVE_CATALOG_WRITE_TOKEN',
   'CLOUDFLARE_KV_API_TOKEN',
   'CLOUDFLARE_R2_API_TOKEN',
   'RESEND_API_KEY',
@@ -253,11 +285,39 @@ export const DEFAULT_SECRET_TARGET_WORKERS: WorkerComponent[] = Object.entries(S
   .filter(([, secrets]) => secrets.length > 0)
   .map(([component]) => component as WorkerComponent);
 
-export function getSecretTargetWorkers(workers?: WorkerComponent[]): WorkerComponent[] {
+export function getSecretTargetWorkers(
+  workers?: WorkerComponent[],
+  options: { replicationWriter?: boolean } = {}
+): WorkerComponent[] {
+  if (options.replicationWriter)
+    return workers?.length ? workers : (Object.keys(SECRET_UPLOAD_PLAN) as WorkerComponent[]);
   const requestedWorkers = workers && workers.length > 0 ? workers : DEFAULT_SECRET_TARGET_WORKERS;
   return requestedWorkers.filter((component) => SECRET_UPLOAD_PLAN[component]?.length > 0);
 }
 
-export function getSecretNamesForWorker(component: WorkerComponent): readonly SecretName[] {
-  return SECRET_UPLOAD_PLAN[component] ?? [];
+export function getLogArchiveSecretNamesForWorker(
+  component: WorkerComponent
+): readonly SecretName[] {
+  if (!LOG_ARCHIVE_PRODUCER_COMPONENTS.includes(component)) return [];
+  return [
+    'LOG_ARCHIVE_CONTENT_HMAC_KEY',
+    'LOG_ARCHIVE_ROOT_KEYRING',
+    'OBJECT_ENCRYPTION_ROOT_KEY',
+    ...(component === 'ar-management'
+      ? (['LOG_ARCHIVE_CATALOG_READ_TOKEN', 'LOG_ARCHIVE_CATALOG_WRITE_TOKEN'] as const)
+      : []),
+  ];
+}
+
+export function getSecretNamesForWorker(
+  component: WorkerComponent,
+  options: { logArchive?: boolean; replicationWriter?: boolean } = {}
+): readonly SecretName[] {
+  return [
+    ...new Set<SecretName>([
+      ...(SECRET_UPLOAD_PLAN[component] ?? []),
+      ...(options.logArchive ? getLogArchiveSecretNamesForWorker(component) : []),
+      ...(options.replicationWriter ? (['AUTHRIM_REPLICATION_WRITER_SECRET'] as const) : []),
+    ]),
+  ];
 }

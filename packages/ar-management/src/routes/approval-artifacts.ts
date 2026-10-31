@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import { z } from 'zod';
+import { z } from '../zod';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   ApprovalRequestApprovalRepository,
@@ -30,10 +30,7 @@ import {
   generateAuthenticationOptions,
   verifyAuthenticationResponse,
 } from '@simplewebauthn/server';
-import type {
-  AuthenticationResponseJSON,
-  AuthenticatorTransportFuture,
-} from '@simplewebauthn/server';
+import type { AuthenticationResponseJSON, AuthenticatorTransport } from '@simplewebauthn/server';
 import {
   getApprovalCompletionArtifact,
   consumeApprovalCompletionArtifact,
@@ -208,7 +205,7 @@ async function loadPendingApprovalArtifactState(
   const adapter = getAdminAdapter(env);
   const requestRepo = new ApprovalRequestRepository(adapter);
   const approvalRepo = new ApprovalRequestApprovalRepository(adapter);
-  const request = await requestRepo.getApprovalRequestByPublicId(artifact.request_id);
+  const request = await requestRepo.getApprovalRequestByPublicId(artifact.request_id, tenantId);
   const approval = await approvalRepo.getApprovalById(artifact.approval_id);
 
   if (!request || !approval || approval.approval_request_id !== request.id) {
@@ -437,7 +434,7 @@ approvalArtifactsRouter.post('/:artifactId/passkey/options', async (c) => {
       userVerification: 'required',
       allowCredentials: passkeys.map((passkey) => ({
         id: passkey.credential_id,
-        transports: (passkey.transports ?? undefined) as AuthenticatorTransportFuture[] | undefined,
+        transports: (passkey.transports ?? undefined) as AuthenticatorTransport[] | undefined,
       })),
     });
 
@@ -585,6 +582,7 @@ approvalArtifactsRouter.post('/:artifactId/passkey/verify', async (c) => {
         publicKey,
         counter: passkey.counter,
       },
+      requireUserVerification: true,
     });
 
     if (!verification.verified) {

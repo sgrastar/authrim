@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   getChallengeStore: vi.fn(),
   completeJit: vi.fn(),
   getProvider: vi.fn(),
+  applyInvitation: vi.fn(),
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -27,6 +28,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 vi.mock('../services/identity-stitching', () => ({
   completeExternalIdpJIT: mocks.completeJit,
   handleIdentity: vi.fn(),
+}));
+
+vi.mock('../services/signup-invitation', () => ({
+  applyExternalSignupInvitation: mocks.applyInvitation,
+  externalSignupInvitationRequirement: vi.fn(),
+  releaseExternalSignupInvitation: vi.fn(),
 }));
 
 vi.mock('../services/provider-store', () => ({
@@ -54,6 +61,7 @@ async function fixture(options: {
   includeCookie?: boolean;
   resume?: boolean;
   extraRequestField?: boolean;
+  invitation?: Record<string, unknown>;
 }) {
   const digest = await sha256Hex(TOKEN);
   const challengeId = `external_idp_provisioning:${digest}`;
@@ -68,10 +76,12 @@ async function fixture(options: {
       codeChallenge: 'code-challenge-a',
       redirectUri: 'https://login.example.com/callback',
       enableSso: false,
+      ...options.invitation,
       expiresAt: Date.now() + 60_000,
       createdAt: Date.now(),
     },
     providerId: 'provider-a',
+    upstreamAcr: 'urn:mace:incommon:iap:silver',
     userInfo: {
       sub: 'provider-user-a',
       email: 'person@example.com',
@@ -87,7 +97,7 @@ async function fixture(options: {
       providerId: 'provider-a',
       providerUserId: 'provider-user-a',
     },
-  } as const;
+  };
   const consumeChallengeRpc = vi.fn().mockResolvedValue({ userId: 'user-a' });
   const storeChallengeRpc = vi.fn().mockResolvedValue(undefined);
   mocks.getChallengeStore.mockResolvedValue({
@@ -254,7 +264,14 @@ describe('external IdP durable provisioning status', () => {
     );
     expect(consumeChallengeRpc).toHaveBeenCalledOnce();
     expect(storeChallengeRpc).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'direct_auth_code', userId: 'user-a' })
+      expect.objectContaining({
+        type: 'direct_auth_code',
+        userId: 'user-a',
+        // The validated upstream acr survives the provisioning continuation.
+        metadata: expect.objectContaining({
+          upstream_acr: 'urn:mace:incommon:iap:silver',
+        }),
+      })
     );
     expect(mocks.completeJit.mock.invocationCallOrder[0]).toBeLessThan(
       consumeChallengeRpc.mock.invocationCallOrder[0]
@@ -262,5 +279,42 @@ describe('external IdP durable provisioning status', () => {
     expect(consumeChallengeRpc.mock.invocationCallOrder[0]).toBeLessThan(
       storeChallengeRpc.mock.invocationCallOrder[0]
     );
+  });
+
+  it('applies the invitation the sign-in reserved to the account it provisioned', async () => {
+    mocks.applyInvitation.mockResolvedValue(true);
+    const { response, storeChallengeRpc } = await fixture({
+      status: 'ready',
+      resume: true,
+      invitation: { inviteId: 'invite-1', inviteReservationId: 'inr-1' },
+    });
+
+    expect(response.status).toBe(302);
+    expect(mocks.applyInvitation).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({
+        inviteId: 'invite-1',
+        inviteReservationId: 'inr-1',
+        tenantId: 'tenant-a',
+        userId: 'user-a',
+      })
+    );
+    expect(mocks.applyInvitation.mock.invocationCallOrder[0]).toBeLessThan(
+      storeChallengeRpc.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('refuses a continuation whose invitation fields are malformed', async () => {
+    const { response } = await fixture({
+      status: 'ready',
+      resume: true,
+      invitation: { inviteId: 'x'.repeat(257), inviteReservationId: 'inr-1' },
+    });
+
+    expect(new URL(response.headers.get('location') ?? '').searchParams.get('error')).toBe(
+      'callback_failed'
+    );
+    expect(mocks.applyInvitation).not.toHaveBeenCalled();
   });
 });

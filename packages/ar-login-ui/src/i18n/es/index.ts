@@ -2,6 +2,32 @@ import { createTranslation } from '../create-translation';
 import completion from './completion';
 
 const es = createTranslation({
+	account_guestLogoutWarning:
+		'Si cierras sesión, no podrás volver a esta cuenta de invitado. Regístrate primero para conservar el acceso a tu cuenta y tus datos. ¿Cerrar sesión de todos modos?',
+	account_guestTitle: 'Registra tu cuenta',
+	account_guestDescription: 'Al registrarte, conservas la misma cuenta y tus datos.',
+	account_guestDue: 'Podrá eliminarse automáticamente a partir de {date}.',
+	account_guestNoExpiry: 'No hay eliminación automática programada.',
+	account_guestEmail: 'Correo electrónico',
+	account_guestSend: 'Registrarse con correo electrónico',
+	account_guestPasskey: 'Registrarse con una Passkey',
+	account_guestCode: 'Código de verificación',
+	account_guestConfirm: 'Completar registro',
+	account_guestPending:
+		'El registro está en curso. Puedes reintentar para comprobar si se ha completado.',
+	account_guestRetry: 'Reintentar',
+	account_guestError:
+		'No se pudo completar el registro. Comprueba el código de verificación o inténtalo de nuevo.',
+	account_guestCollision:
+		'Esta identidad ya tiene una cuenta. Inicia sesión en esa cuenta por separado. Tu cuenta de invitado no se fusionará.',
+	account_guestExistingLogin: 'Iniciar sesión en una cuenta existente',
+	account_guestRegistered: 'Tu cuenta se ha registrado.',
+	account_guestChangeMethod: 'Elegir otro método',
+	login_guestContinue: 'Continuar como invitado',
+	login_guestRetention:
+		'Las cuentas de invitado pueden eliminarse automáticamente {days} días después de su creación. Registra una cuenta para seguir usándola.',
+	login_guestNoExpiry: 'No hay eliminación automática programada para nuevas cuentas de invitado.',
+
 	...completion,
 	app_subtitle: 'Identidad y acceso en todas partes.',
 	dialog_cancel: 'Cancelar',
@@ -68,6 +94,32 @@ const es = createTranslation({
 	account_delete: 'Eliminar',
 	account_empty: 'No hay elementos',
 	account_planned: 'Planificado',
+	account_socialEmpty: 'No hay cuentas externas vinculadas.',
+	account_socialLinkHeading: 'Vincular una cuenta',
+	account_socialLinkWith: 'Vincular {provider}',
+	account_socialNoProviders: 'No hay otros proveedores disponibles para vincular.',
+	account_socialLinkedAt: 'Vinculada el {date}',
+	account_socialLastUsed: 'Último uso: {date}',
+	account_socialUnlink: 'Desvincular',
+	account_socialUnlinkConfirm:
+		'¿Desvincular {provider}? Ya no podrás iniciar sesión con esta cuenta.',
+	account_socialUnlinkConfirmAction: 'Desvincular {provider}',
+	account_socialLinked: 'La cuenta se vinculó.',
+	account_socialUnlinked: 'La cuenta se desvinculó.',
+	account_socialErrorAlreadyLinked: 'Esa cuenta ya está vinculada a otro usuario.',
+	account_socialErrorAlreadyLinkedHere: 'Ese proveedor ya está vinculado a tu cuenta.',
+	account_socialErrorEmailNotVerified:
+		'El proveedor no ha verificado la dirección de correo de esa cuenta.',
+	account_socialErrorSessionExpired:
+		'Tu confirmación caducó antes de que terminara la vinculación. Confirma de nuevo y vuelve a intentarlo.',
+	account_socialErrorCancelled: 'Se canceló la vinculación.',
+	account_socialErrorFailed: 'No se pudo vincular la cuenta. Inténtalo de nuevo.',
+	account_socialErrorLastMethod:
+		'Este es tu último método de acceso. Añade primero una Passkey u otro método de acceso.',
+	account_socialErrorInProgress:
+		'Hay otro cambio en curso en tus métodos de acceso. Inténtalo de nuevo en un momento.',
+	account_operationSocialLinked: 'Cuenta externa vinculada',
+	account_operationSocialUnlinked: 'Cuenta externa desvinculada',
 	account_passkeyUnsupported: 'Este navegador no permite registrar Passkeys.',
 	account_passkeyRegistrationCancelled:
 		'El registro de la Passkey se canceló o agotó el tiempo de espera. Inténtalo de nuevo.',
@@ -102,12 +154,32 @@ const es = createTranslation({
 	account_reauthTotpCodePlaceholder: 'Código de 6 u 8 dígitos',
 	account_actionFailed: 'La operación falló',
 	account_remainingLoginMethodRequired: 'Añade otro método de acceso antes de eliminar este.',
+	account_activityIncomplete:
+		'Los resultados de actividad están incompletos. Vuelve a intentarlo más tarde.',
+	account_activityLoadMore: 'Cargar actividad anterior',
 	account_activityTitle: 'Actividad',
 	account_operationNameUpdated: 'Nombre cambiado',
 	account_operationPasskeyCreated: 'Passkey añadida',
 	account_operationPasskeyUpdated: 'Passkey renombrada',
 	account_operationPasskeyDeleted: 'Passkey eliminada',
 	account_operationSessionRevoked: 'Sesión cerrada',
+	account_operationGuestCreated: 'Cuenta de invitado creada',
+	account_operationGuestUpgradeFailed: 'Error en el registro de invitado',
+	account_operationGuestUpgradeStarted: 'Registro de invitado iniciado',
+	account_operationGuestUpgraded: 'Cuenta de invitado registrada',
+	account_operationEmailAdded: 'Correo añadido',
+	account_operationEmailChanged: 'Correo cambiado',
+	account_operationEmailReauthenticated: 'Autenticado de nuevo por correo',
+	account_operationDeviceUpdated: 'Dispositivo renombrado',
+	account_operationDeviceUnlinked: 'Dispositivo desvinculado',
+	account_operationPasskeyReauthenticated: 'Autenticado de nuevo con Passkey',
+	account_operationTotpEnrollmentStarted:
+		'Configuración de la aplicación de autenticación iniciada',
+	account_operationTotpActivated: 'Aplicación de autenticación activada',
+	account_operationTotpUpdated: 'Aplicación de autenticación renombrada',
+	account_operationTotpRemoved: 'Aplicación de autenticación eliminada',
+	account_operationTotpBackupCodesRegenerated: 'Códigos de respaldo regenerados',
+	account_operationTotpReauthenticated: 'Autenticado de nuevo con la aplicación de autenticación',
 	account_launcherTitle: 'Mis aplicaciones',
 	account_launcherDescription: 'Busca y abre las aplicaciones disponibles para ti.',
 	account_launcherLoadFailed: 'No se pudieron cargar las aplicaciones.',
@@ -174,6 +246,8 @@ const es = createTranslation({
 	login_humanVerificationLoading: 'Cargando comprobación de seguridad...',
 	login_humanVerificationLoadFailed:
 		'No se pudo cargar la comprobación. Recarga la página e inténtalo de nuevo.',
+	login_humanVerificationUnavailable:
+		'La verificación humana no está disponible en este momento. Póngase en contacto con el administrador.',
 	login_noMethodsAvailable:
 		'No hay ningún método de autenticación habilitado para esta organización. Contacta con el administrador.',
 	login_passkeyPreparing: 'Preparando la autenticación con Passkey.',
@@ -270,6 +344,9 @@ const es = createTranslation({
 	login_extError_callbackFailed_title: 'Error de autenticación',
 	login_extError_callbackFailed_message:
 		'Se produjo un error durante la autenticación. Inténtalo de nuevo.',
+	login_extError_reauthNotProven_title: 'Inicio de sesión no confirmado',
+	login_extError_reauthNotProven_message:
+		'Tu proveedor de inicio de sesión no confirmó que volviste a iniciar sesión. Vuelve a iniciar sesión o elige otro método.',
 	login_extError_default_title: 'Error de autenticación',
 	login_extError_default_message: 'Se produjo un error durante la autenticación externa.'
 });

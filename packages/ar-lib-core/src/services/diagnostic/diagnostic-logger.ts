@@ -3,15 +3,13 @@
  *
  * Central service for diagnostic logging with:
  * - Console output (always available)
- * - R2 output (optional, configurable)
- * - Queue-based async processing
+ * - Durable storage using the Setup-selected Pipeline or scheduled Iceberg mode
  * - Security-first design (token hashing, header filtering, schema-aware extraction)
  */
 
 import type { Env } from '../../types/env';
 import type {
   DiagnosticLogEntry,
-  DiagnosticLogWriteResult,
   HttpRequestLogEntry,
   HttpResponseLogEntry,
   TokenValidationLogEntry,
@@ -28,7 +26,6 @@ import {
   extractBodySummary,
   sanitizeQueryParams,
   hashToken,
-  redactPII,
   applyPrivacyModeToEntry,
 } from '../../utils/diagnostic-security';
 import { readRequestTextWithLimit } from '../../utils/body-limits';
@@ -70,49 +67,24 @@ export class DiagnosticLogger {
   private readonly tenantId: string;
   private readonly clientId?: string;
   private readonly settings: DiagnosticLoggingSettings;
-  private readonly ctx?: DiagnosticLoggerExecutionContext;
   private r2Adapter?: DiagnosticLogR2Adapter;
   private readonly storageMode: DiagnosticLogPrivacyMode;
   private readonly hashSecret: string;
   private readonly tokenHashPrefixLength: number;
-
-  // In-memory buffer for batch mode
-  private buffer: DiagnosticLogEntry[] = [];
-  private flushTimer?: ReturnType<typeof setTimeout>;
 
   constructor(config: DiagnosticLoggerConfig) {
     this.env = config.env;
     this.tenantId = config.tenantId;
     this.clientId = config.clientId;
     this.settings = config.settings;
-    this.ctx = config.ctx;
     this.storageMode = this.resolveStorageMode();
     this.hashSecret = this.resolveHashSecret();
     this.tokenHashPrefixLength = this.settings['diagnostic-logging.token_hash_prefix_length'] ?? 12;
 
-    // Initialize R2 adapter if enabled
-    if (this.settings['diagnostic-logging.r2_output_enabled']) {
-      this.initializeR2Adapter();
-    }
-  }
-
-  /**
-   * Initialize R2 adapter
-   */
-  private initializeR2Adapter(): void {
-    const bindingName = this.settings['diagnostic-logging.r2_bucket_binding'];
-    const bucket = this.env[bindingName as keyof Env] as R2Bucket | undefined;
-
-    if (!bucket) {
-      log.warn('R2 bucket binding not found', { bindingName });
-      return;
-    }
-
-    this.r2Adapter = createDiagnosticLogR2Adapter(bucket, {
-      pathPrefix: this.settings['diagnostic-logging.r2_path_prefix'],
+    this.r2Adapter = createDiagnosticLogR2Adapter(this.env, {
       tenantId: this.tenantId,
-      tenantKeySalt: this.env.LOGGING_TENANT_KEY_SALT,
       clientId: this.clientId,
+      retentionDays: this.settings['diagnostic-logging.retention_days'],
     });
   }
 
@@ -198,7 +170,7 @@ export class DiagnosticLogger {
           DIAGNOSTIC_BODY_SUMMARY_MAX_BYTES
         );
         if (bodyText) {
-          const bodyObj = JSON.parse(bodyText);
+          const bodyObj: unknown = JSON.parse(bodyText);
           bodySummary = extractBodySummary(
             bodyObj,
             options.request.headers.get('content-type') || undefined,
@@ -259,7 +231,7 @@ export class DiagnosticLogger {
           DIAGNOSTIC_BODY_SUMMARY_MAX_BYTES
         );
         if (bodyText) {
-          const bodyObj = JSON.parse(bodyText);
+          const bodyObj: unknown = JSON.parse(bodyText);
           bodySummary = extractBodySummary(bodyObj);
         }
       } catch {
@@ -307,7 +279,7 @@ export class DiagnosticLogger {
 
     // Hash token if provided (used for legacy validation logs)
     let tokenHash: string | undefined;
-    if (options.token && this.storageMode !== 'full') {
+    if (options.token) {
       tokenHash = await hashToken(options.token, this.tokenHashPrefixLength);
     }
 
@@ -375,57 +347,23 @@ export class DiagnosticLogger {
    * Write log entry (internal)
    */
   private async writeLog(entry: DiagnosticLogEntry): Promise<void> {
+    // Name the writer so a merged export can tell server entries from SDK ones.
+    entry.source = 'server';
     const sanitized = await applyPrivacyModeToEntry(entry, {
       mode: this.storageMode,
       secret: this.hashSecret,
       tokenHashPrefixLength: this.tokenHashPrefixLength,
+      // Only an explicit `false` shows raw personal data (in full mode); anything else redacts it.
+      filterPii: this.settings['diagnostic-logging.filter_pii'] !== false,
     });
 
     // Console output (always enabled)
     this.writeToConsole(sanitized);
 
-    // R2 output (if enabled)
+    // Durable storage uses the Setup-selected archive mode.
     if (this.r2Adapter) {
       await this.writeToR2(sanitized);
     }
-  }
-
-  /**
-   * Apply PII filter to log entry
-   */
-  private applyPIIFilter(entry: DiagnosticLogEntry): void {
-    // Redact PII from string fields
-    if ('errorMessage' in entry && entry.errorMessage) {
-      entry.errorMessage = redactPII(entry.errorMessage);
-    }
-
-    if ('reason' in entry && entry.reason) {
-      entry.reason = redactPII(entry.reason);
-    }
-
-    // Recursively redact metadata
-    if (entry.metadata) {
-      entry.metadata = this.redactObjectPII(entry.metadata);
-    }
-  }
-
-  /**
-   * Recursively redact PII from object
-   */
-  private redactObjectPII(obj: Record<string, unknown>): Record<string, unknown> {
-    const redacted: Record<string, unknown> = {};
-
-    for (const [key, value] of Object.entries(obj)) {
-      if (typeof value === 'string') {
-        redacted[key] = redactPII(value);
-      } else if (value && typeof value === 'object' && !Array.isArray(value)) {
-        redacted[key] = this.redactObjectPII(value as Record<string, unknown>);
-      } else {
-        redacted[key] = value;
-      }
-    }
-
-    return redacted;
   }
 
   /**
@@ -449,71 +387,10 @@ export class DiagnosticLogger {
     }
   }
 
-  /**
-   * Write to R2 (async)
-   */
   private async writeToR2(entry: DiagnosticLogEntry): Promise<void> {
-    if (!this.r2Adapter) return;
-
-    const strategy = this.settings['diagnostic-logging.buffer_strategy'];
-
-    if (strategy === 'realtime') {
-      // Write immediately
-      const promise = this.r2Adapter.writeLog(entry);
-      if (this.ctx) {
-        this.ctx.waitUntil(promise);
-      } else {
-        await promise;
-      }
-    } else if (strategy === 'batch') {
-      // Add to buffer
-      this.buffer.push(entry);
-      const batchSize = this.settings['diagnostic-logging.batch_size'];
-
-      if (this.buffer.length >= batchSize) {
-        await this.flushBuffer();
-      } else {
-        // Schedule flush
-        this.scheduleFlush();
-      }
-    } else if (strategy === 'queue') {
-      // Send to Queue (future implementation)
-      // For now, fallback to batch
-      this.buffer.push(entry);
-      if (this.buffer.length >= this.settings['diagnostic-logging.batch_size']) {
-        await this.flushBuffer();
-      }
-    }
-  }
-
-  /**
-   * Schedule buffer flush
-   */
-  private scheduleFlush(): void {
-    if (this.flushTimer) return;
-
-    const interval = this.settings['diagnostic-logging.batch_interval_ms'];
-    this.flushTimer = setTimeout(() => {
-      this.flushBuffer();
-      this.flushTimer = undefined;
-    }, interval);
-  }
-
-  /**
-   * Flush buffer to R2
-   */
-  private async flushBuffer(): Promise<void> {
-    if (this.buffer.length === 0 || !this.r2Adapter) return;
-
-    const entries = [...this.buffer];
-    this.buffer = [];
-
-    const promise = this.r2Adapter.writeLogBatch(entries);
-    if (this.ctx) {
-      this.ctx.waitUntil(promise);
-    } else {
-      await promise;
-    }
+    if (!this.r2Adapter) throw new Error('diagnostic_storage_unavailable');
+    const result = await this.r2Adapter.writeLog(entry);
+    if (!result.success) throw new Error(result.errorMessage ?? 'diagnostic_log_write_failed');
   }
 
   /**
@@ -535,15 +412,10 @@ export class DiagnosticLogger {
   }
 
   /**
-   * Cleanup (flush remaining buffer)
+   * Cleanup after all durable writes have completed
    */
   async cleanup(): Promise<void> {
-    if (this.flushTimer) {
-      clearTimeout(this.flushTimer);
-      this.flushTimer = undefined;
-    }
-
-    await this.flushBuffer();
+    /* Every record is durably accepted before its logging call returns. */
   }
 }
 

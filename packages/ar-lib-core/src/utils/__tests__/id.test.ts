@@ -162,7 +162,10 @@ describe('ID Generation Utilities', () => {
         get: vi.fn().mockResolvedValue(JSON.stringify({ 'tenant.user_id_format': 'nanoid' })),
       };
 
-      const format = await getUserIdFormatFromSettings(mockKv, 'default');
+      const format = await getUserIdFormatFromSettings(
+        { SETTINGS: mockKv as unknown as KVNamespace },
+        'default'
+      );
       expect(format).toBe('nanoid');
       expect(mockKv.get).toHaveBeenCalledWith('settings:tenant:default:tenant');
     });
@@ -172,7 +175,10 @@ describe('ID Generation Utilities', () => {
         get: vi.fn().mockResolvedValue(JSON.stringify({ 'tenant.user_id_format': 'uuid' })),
       };
 
-      const format = await getUserIdFormatFromSettings(mockKv, 'default');
+      const format = await getUserIdFormatFromSettings(
+        { SETTINGS: mockKv as unknown as KVNamespace },
+        'default'
+      );
       expect(format).toBe('uuid');
     });
 
@@ -181,9 +187,13 @@ describe('ID Generation Utilities', () => {
         get: vi.fn().mockResolvedValue(JSON.stringify({ 'tenant.user_id_format': 'nanoid' })),
       };
 
-      const format = await getUserIdFormatFromSettings(mockKv, 'default', {
-        USER_ID_FORMAT: 'uuid',
-      });
+      const format = await getUserIdFormatFromSettings(
+        { SETTINGS: mockKv as unknown as KVNamespace },
+        'default',
+        {
+          USER_ID_FORMAT: 'uuid',
+        }
+      );
 
       expect(format).toBe('uuid');
       expect(mockKv.get).not.toHaveBeenCalled();
@@ -194,7 +204,10 @@ describe('ID Generation Utilities', () => {
         get: vi.fn().mockResolvedValue(null),
       };
 
-      const format = await getUserIdFormatFromSettings(mockKv, 'default');
+      const format = await getUserIdFormatFromSettings(
+        { SETTINGS: mockKv as unknown as KVNamespace },
+        'default'
+      );
       expect(format).toBe(DEFAULT_USER_ID_FORMAT);
     });
 
@@ -203,7 +216,10 @@ describe('ID Generation Utilities', () => {
         get: vi.fn().mockResolvedValue('invalid-json'),
       };
 
-      const format = await getUserIdFormatFromSettings(mockKv, 'default');
+      const format = await getUserIdFormatFromSettings(
+        { SETTINGS: mockKv as unknown as KVNamespace },
+        'default'
+      );
       expect(format).toBe(DEFAULT_USER_ID_FORMAT);
     });
 
@@ -212,7 +228,10 @@ describe('ID Generation Utilities', () => {
         get: vi.fn().mockResolvedValue(JSON.stringify({ 'tenant.user_id_format': 'invalid' })),
       };
 
-      const format = await getUserIdFormatFromSettings(mockKv, 'default');
+      const format = await getUserIdFormatFromSettings(
+        { SETTINGS: mockKv as unknown as KVNamespace },
+        'default'
+      );
       expect(format).toBe(DEFAULT_USER_ID_FORMAT);
     });
 
@@ -221,8 +240,23 @@ describe('ID Generation Utilities', () => {
         get: vi.fn().mockResolvedValue(JSON.stringify({ 'tenant.user_id_format': 'uuid' })),
       };
 
-      await getUserIdFormatFromSettings(mockKv, 'custom-tenant');
+      await getUserIdFormatFromSettings(
+        { SETTINGS: mockKv as unknown as KVNamespace },
+        'custom-tenant'
+      );
       expect(mockKv.get).toHaveBeenCalledWith('settings:tenant:custom-tenant:tenant');
+    });
+    it('should read the format saved through the Settings API, not the creation-time copy', async () => {
+      const kvWith = (format: string) =>
+        ({
+          get: vi.fn().mockResolvedValue(JSON.stringify({ 'tenant.user_id_format': format })),
+        }) as unknown as KVNamespace;
+
+      const format = await getUserIdFormatFromSettings(
+        { SETTINGS: kvWith('uuid'), AUTHRIM_CONFIG: kvWith('nanoid') },
+        'default'
+      );
+      expect(format).toBe('uuid');
     });
   });
 
@@ -245,7 +279,10 @@ describe('ID Generation Utilities', () => {
         get: vi.fn().mockResolvedValue(JSON.stringify({ 'tenant.user_id_format': 'nanoid' })),
       };
 
-      const id = await generateUserIdFromSettings(mockKv, 'default');
+      const id = await generateUserIdFromSettings(
+        { SETTINGS: mockKv as unknown as KVNamespace },
+        'default'
+      );
 
       expect(id).toHaveLength(21);
       expect(id).toMatch(/^[A-Za-z0-9_-]{21}$/);
@@ -256,7 +293,10 @@ describe('ID Generation Utilities', () => {
         get: vi.fn().mockResolvedValue(JSON.stringify({ 'tenant.user_id_format': 'uuid' })),
       };
 
-      const id = await generateUserIdFromSettings(mockKv, 'default');
+      const id = await generateUserIdFromSettings(
+        { SETTINGS: mockKv as unknown as KVNamespace },
+        'default'
+      );
 
       expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
     });

@@ -48,6 +48,7 @@ export interface FlowRuntimeDestinationFieldConsentItem {
 export interface FlowRuntimeDestinationFieldConsentContent {
 	profile_id: string;
 	profile_version_id: string;
+	consent_version?: string;
 	destination_type: 'oidc' | 'saml';
 	consent_mode?: 'once' | 'every_time' | 'until_attributes_change' | null;
 	fields: FlowRuntimeDestinationFieldConsentItem[];

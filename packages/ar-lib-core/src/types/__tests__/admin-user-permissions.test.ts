@@ -20,6 +20,24 @@ describe('operation-level Admin permissions', () => {
     ).toBe(false);
   });
 
+  it('lets users:read include the status-only read, never the other way round', () => {
+    expect(
+      hasAdminPermission([ADMIN_PERMISSIONS.USERS_READ], ADMIN_PERMISSIONS.USERS_STATUS_READ)
+    ).toBe(true);
+    expect(
+      hasAdminPermission([ADMIN_PERMISSIONS.USERS_ALL], ADMIN_PERMISSIONS.USERS_STATUS_READ)
+    ).toBe(true);
+    expect(
+      hasAdminPermission([ADMIN_PERMISSIONS.USERS_STATUS_READ], ADMIN_PERMISSIONS.USERS_READ)
+    ).toBe(false);
+    expect(
+      hasAdminPermission([ADMIN_PERMISSIONS.USERS_WRITE], ADMIN_PERMISSIONS.USERS_STATUS_READ)
+    ).toBe(false);
+    expect(
+      hasAdminPermission([ADMIN_PERMISSIONS.SESSIONS_READ], ADMIN_PERMISSIONS.USERS_STATUS_READ)
+    ).toBe(false);
+  });
+
   it('keeps coarse settings:write as a ceiling for granular settings mutations', () => {
     for (const required of [
       ADMIN_PERMISSIONS.SETTINGS_ASSURANCE_UPDATE,
@@ -58,5 +76,31 @@ describe('operation-level Admin permissions', () => {
     expect(
       hasAdminPermission([ADMIN_PERMISSIONS.SETTINGS_WRITE], ADMIN_PERMISSIONS.FLOWS_PUBLISH)
     ).toBe(true);
+  });
+});
+
+describe('break-glass permissions', () => {
+  const request = ADMIN_PERMISSIONS.SUPPORT_OPS_BREAK_GLASS_REQUEST;
+  const reveal = ADMIN_PERMISSIONS.SUPPORT_OPS_BREAK_GLASS_REVEAL;
+
+  it.each([['*'], ['admin:*'], ['admin:support_ops:*'], ['admin:support_ops:break_glass:*']])(
+    'is not granted by the wildcard %s',
+    (wildcard) => {
+      expect(hasAdminPermission([wildcard], request)).toBe(false);
+      expect(hasAdminPermission([wildcard], reveal)).toBe(false);
+    }
+  );
+
+  it('is granted by its exact name only', () => {
+    expect(hasAdminPermission([request], request)).toBe(true);
+    expect(hasAdminPermission([request], reveal)).toBe(false);
+    expect(hasAdminPermission([reveal], request)).toBe(false);
+  });
+
+  it('leaves the other Support Ops permissions to the wildcards', () => {
+    expect(
+      hasAdminPermission(['admin:support_ops:*'], ADMIN_PERMISSIONS.SUPPORT_OPS_ACTIONS_APPROVE)
+    ).toBe(true);
+    expect(hasAdminPermission(['*'], ADMIN_PERMISSIONS.SUPPORT_OPS_ACTIONS_APPROVE)).toBe(true);
   });
 });

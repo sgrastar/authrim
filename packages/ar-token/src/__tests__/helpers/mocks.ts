@@ -126,8 +126,10 @@ export interface MockEnv {
   KEY_MANAGER_SECRET: string;
   ENVIRONMENT: string;
   PUBLIC_JWK_JSON?: string;
-  ENABLE_HTTP_REDIRECT?: string;
+  HTTPS_REDIRECT_ONLY?: string;
   ENABLE_TOKEN_EXCHANGE?: string;
+  ENABLE_TOKEN_EXCHANGE_DELEGATION?: string;
+  ENABLE_TOKEN_EXCHANGE_IMPERSONATION?: string;
   ENABLE_NATIVE_SSO?: string;
   ENABLE_CIBA?: string;
   ENABLE_CLIENT_CREDENTIALS?: string;
@@ -659,12 +661,6 @@ export function createArLibCoreMocks() {
     mockPublishEvent: vi.fn().mockResolvedValue(undefined),
 
     // Configuration Manager
-    mockCreateOAuthConfigManager: vi.fn().mockReturnValue({
-      get: vi.fn().mockResolvedValue(null),
-      getWithDefault: vi
-        .fn()
-        .mockImplementation((_key: string, defaultValue: unknown) => Promise.resolve(defaultValue)),
-    }),
 
     // Timing-safe comparison
     mockTimingSafeEqual: vi.fn().mockReturnValue(true),

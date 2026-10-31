@@ -159,22 +159,21 @@ function buildPublicUrl(url: URL, request: Request): URL {
 	return publicUrl;
 }
 
+/**
+ * Whether the request is for the given page. Only the origin and path count: the query differs
+ * between requests for the same page (a form posts to `/discover?/resolve`, the page may carry
+ * return_to, lang, ...), and a different host or path is never the same page.
+ */
 function isSamePublicUrl(sourceUrl: URL, request: Request, targetUrl: string): boolean {
 	const publicUrl = buildPublicUrl(sourceUrl, request);
 	const target = new URL(targetUrl);
-	publicUrl.hash = '';
-	target.hash = '';
-	if (publicUrl.toString() === target.toString()) {
+	if (publicUrl.origin === target.origin && publicUrl.pathname === target.pathname) {
 		return true;
 	}
 
 	const sourceLooksLikeUiWorker =
 		publicUrl.hostname.endsWith('.workers.dev') || publicUrl.hostname.endsWith('.pages.dev');
-	return (
-		sourceLooksLikeUiWorker &&
-		publicUrl.pathname === target.pathname &&
-		publicUrl.search === target.search
-	);
+	return sourceLooksLikeUiWorker && publicUrl.pathname === target.pathname;
 }
 
 function defaultManualMode(
@@ -368,6 +367,8 @@ export const actions: Actions = {
 		const emailChallengeId = String(formData.get('email_challenge_id') || '').trim();
 		const emailCode = String(formData.get('email_code') || '').trim();
 		const { expectedTenantId, returnTo, loginHint } = readDiscoveryGrantContext(formData);
+		// The next form posts these again; this POST's own URL has no query to rebuild them from.
+		const carried = { expectedTenantId, returnTo };
 		const currentIsCommonDiscover = config.common_discover_url
 			? isSamePublicUrl(
 					event.url,
@@ -389,6 +390,7 @@ export const actions: Actions = {
 
 		if (!value) {
 			return fail(400, {
+				...carried,
 				errorCode: 'value_required' as const,
 				mode,
 				value
@@ -401,6 +403,7 @@ export const actions: Actions = {
 				effectiveConfig.config.selection_policy === 'manual_only')
 		) {
 			return fail(403, {
+				...carried,
 				mode: defaultManualMode(effectiveConfig.config),
 				value,
 				errorCode: 'manual_required' as const,
@@ -412,6 +415,7 @@ export const actions: Actions = {
 			if (mode === 'email' && !emailChallengeId) {
 				const started = await startDiscoveryEmailVerification(event.fetch, value, discoveryHeaders);
 				return {
+					...carried,
 					mode,
 					value,
 					loginHint: value,
@@ -423,6 +427,7 @@ export const actions: Actions = {
 
 			if (mode === 'email' && !/^\d{6}$/u.test(emailCode)) {
 				return fail(400, {
+					...carried,
 					mode,
 					value,
 					loginHint: value,
@@ -461,6 +466,7 @@ export const actions: Actions = {
 
 				if (effectiveConfig.config.selection_policy === 'always_select') {
 					return {
+						...carried,
 						mode,
 						value,
 						loginHint: mode === 'email' ? value : loginHint || '',
@@ -481,6 +487,7 @@ export const actions: Actions = {
 
 			if (result.result === 'multiple') {
 				return {
+					...carried,
 					mode,
 					value,
 					loginHint: mode === 'email' ? value : loginHint || '',
@@ -492,6 +499,7 @@ export const actions: Actions = {
 
 			if (result.result === 'manual_required') {
 				return {
+					...carried,
 					mode: defaultManualMode(effectiveConfig.config),
 					value,
 					errorCode: 'manual_required' as const,
@@ -501,6 +509,7 @@ export const actions: Actions = {
 			}
 
 			return fail(404, {
+				...carried,
 				mode,
 				value,
 				errorCode: result.code as DiscoveryErrorCode,
@@ -533,6 +542,7 @@ export const actions: Actions = {
 								? 503
 								: 500;
 			return fail(status, {
+				...carried,
 				mode,
 				value,
 				loginHint: mode === 'email' ? value : loginHint || '',

@@ -281,7 +281,7 @@ export class TokenRevocationStore {
 
       // POST /revoke - Revoke a token
       if (path === '/revoke' && request.method === 'POST') {
-        const body = (await request.json()) as Partial<RevokeTokenRequest>;
+        const body = await request.json<Partial<RevokeTokenRequest>>();
 
         if (!body.jti || !body.ttl) {
           return new Response(
@@ -306,11 +306,11 @@ export class TokenRevocationStore {
 
       // POST /bulk-revoke - Bulk revoke tokens
       if (path === '/bulk-revoke' && request.method === 'POST') {
-        const body = (await request.json()) as {
+        const body = await request.json<{
           jtis: string[];
           ttl: number;
           reason: string;
-        };
+        }>();
 
         if (!body.jtis || !Array.isArray(body.jtis) || !body.ttl) {
           return new Response(

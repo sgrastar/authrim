@@ -16,12 +16,20 @@
  * - Durable Storage as primary (for atomic operations)
  * - In-memory cache for hot data (active device codes)
  * - Dual mapping: device_code → metadata, user_code → device_code
+ *
+ * User code keys: the mapping is keyed by the CANONICAL user code (upper case, separators removed;
+ * see normalizeUserCode), whatever shape the caller sends ("abcd-efgh", "ABCD EFGH", "ABCDEFGH").
+ * Before the user code format became configurable the mapping key was the hyphenated 4-4 form
+ * ("u:ABCD-EFGH"). Codes live at most 30 minutes, so for one release those keys are still read: a
+ * lookup tries the canonical key and then the legacy 4-4 key, a duplicate check looks at both, and
+ * a delete removes whichever key holds the code. New codes are only written under the canonical key.
  */
 
 import type { DurableObjectState } from '@cloudflare/workers-types';
 import type { Env } from '../types/env';
 import type { DeviceCodeMetadata } from '../types/oidc';
-import { isDeviceCodeExpired } from '../utils/device-flow';
+import { isDeviceCodeExpired, normalizeUserCode } from '../utils/device-flow';
+import { DEVICE_POLL_LIMITS, evaluatePoll, type PollRpcResult } from '../utils/poll-governor';
 import { createLogger, type Logger } from '../utils/logger';
 
 /**
@@ -33,12 +41,20 @@ export interface DeviceCodeV2 extends DeviceCodeMetadata {
   token_issued_at?: number; // When tokens were issued
 }
 
+/** The user code is already held by another live device code. */
+export class UserCodeConflictError extends Error {
+  constructor() {
+    super('user_code_conflict');
+    this.name = 'UserCodeConflictError';
+  }
+}
+
 /**
  * Storage key prefixes
  */
 const STORAGE_PREFIX = {
   DEVICE: 'd:', // d:{device_code} → DeviceCodeV2
-  USER: 'u:', // u:{user_code} → device_code (mapping)
+  USER: 'u:', // u:{canonical user_code} → device_code (mapping); legacy: u:XXXX-XXXX
   META: 'm:', // m:initialized → boolean
 } as const;
 
@@ -76,6 +92,9 @@ export class DeviceCodeStore {
 
   private tenantId: string | null = null;
 
+  /** Tail of the queue that runs the state changes one at a time. */
+  private transitions: Promise<unknown> = Promise.resolve();
+
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
     this.env = env;
@@ -83,7 +102,7 @@ export class DeviceCodeStore {
     // Block all requests until initialization completes
     // This ensures the DO is in a consistent state before processing any requests
     // Critical for device code verification and one-time use guarantee
-    state.blockConcurrencyWhile(async () => {
+    void state.blockConcurrencyWhile(async () => {
       await this.initializeStateBlocking();
     });
   }
@@ -113,8 +132,12 @@ export class DeviceCodeStore {
       });
 
       for (const [key, deviceCode] of userMappings) {
-        const userCode = key.substring(STORAGE_PREFIX.USER.length);
-        this.userCodeToDeviceCode.set(userCode, deviceCode);
+        const stored = key.substring(STORAGE_PREFIX.USER.length);
+        const userCode = normalizeUserCode(stored);
+        // A legacy key (u:XXXX-XXXX) never overrides the canonical key of the same code
+        if (stored === userCode || !this.userCodeToDeviceCode.has(userCode)) {
+          this.userCodeToDeviceCode.set(userCode, deviceCode);
+        }
       }
 
       this.log.info('Loaded device codes and user mappings', {
@@ -152,16 +175,57 @@ export class DeviceCodeStore {
   }
 
   /**
-   * Build storage key for user code mapping
+   * Build storage key for user code mapping (canonical form: see normalizeUserCode)
    */
   private buildUserKey(userCode: string): string {
-    return `${STORAGE_PREFIX.USER}${userCode}`;
+    return `${STORAGE_PREFIX.USER}${normalizeUserCode(userCode)}`;
+  }
+
+  /**
+   * The key a user code was mapped under before the format became configurable: the hyphenated
+   * 4-4 form. Only an 8 character code ever had one.
+   */
+  private buildLegacyUserKey(userCode: string): string | null {
+    const canonical = normalizeUserCode(userCode);
+    return canonical.length === 8
+      ? `${STORAGE_PREFIX.USER}${canonical.slice(0, 4)}-${canonical.slice(4)}`
+      : null;
+  }
+
+  /** The storage keys a user code can be mapped under: canonical first, then the legacy key. */
+  private userKeysOf(userCode: string): string[] {
+    const legacy = this.buildLegacyUserKey(userCode);
+    return legacy ? [this.buildUserKey(userCode), legacy] : [this.buildUserKey(userCode)];
+  }
+
+  /**
+   * Every device code a user code maps to: the cache, the canonical key and the legacy 4-4 key,
+   * without repeats. They can differ while the previous release's codes are still alive: a
+   * canonical mapping of an expired code next to a legacy mapping of a live one, or the other
+   * way round. Anything that decides who holds a user code has to look at all of them.
+   */
+  private async findDeviceCodesByUserCode(userCode: string): Promise<string[]> {
+    if (typeof userCode !== 'string') return [];
+    const holders = new Set<string>();
+    const cached = this.userCodeToDeviceCode.get(normalizeUserCode(userCode));
+    if (cached) holders.add(cached);
+    for (const key of this.userKeysOf(userCode)) {
+      const stored = await this.state.storage.get<string>(key);
+      if (stored) holders.add(stored);
+    }
+    return [...holders];
   }
 
   /**
    * Save device code to Durable Storage
    */
-  private async saveDeviceCode(deviceCode: string, metadata: DeviceCodeV2): Promise<void> {
+  private async saveDeviceCode(
+    deviceCode: string,
+    metadata: DeviceCodeV2,
+    base?: DeviceCodeV2
+  ): Promise<void> {
+    // Checked in the same turn as the write: a code deleted meanwhile must not come back.
+    if (base) this.assertStillCached(deviceCode, base);
     const key = this.buildDeviceKey(deviceCode);
     await this.state.storage.put(key, metadata);
   }
@@ -175,12 +239,49 @@ export class DeviceCodeStore {
   }
 
   /**
-   * Delete device code from Durable Storage
+   * The code a change started from must still be the cached one: a delete (cleanup, expiry, or
+   * /delete) removes it from the cache first. Without this a change that was reading the code
+   * would write it back after the delete.
+   */
+  private assertStillCached(deviceCode: string, base: DeviceCodeV2): void {
+    if (this.deviceCodes.get(deviceCode) !== base) {
+      throw new Error('Device code not found');
+    }
+  }
+
+  /** Cache the saved copy, unless the code was deleted while it was being saved. */
+  private cacheSaved(deviceCode: string, base: DeviceCodeV2, saved: DeviceCodeV2): void {
+    if (this.deviceCodes.get(deviceCode) === base) {
+      this.deviceCodes.set(deviceCode, saved);
+    }
+  }
+
+  /**
+   * Run a state change after the earlier ones finished. A change reads the code, saves an updated
+   * copy, and only then puts it in the cache; that gap must not interleave with another change
+   * (two approvals, or a token issued twice). This does not depend on the Durable Object input
+   * gate staying closed across every await.
+   */
+  private serializeTransition<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.transitions.then(operation);
+    this.transitions = run.catch(() => undefined);
+    return run;
+  }
+
+  /**
+   * Delete device code from Durable Storage, with the user code mapping that points at it. The
+   * mapping is found under the canonical key and the legacy 4-4 key, and only a key that still
+   * holds this device code is removed: another code may have taken the user code over.
    */
   private async deleteDeviceCodeFromStorage(deviceCode: string, userCode?: string): Promise<void> {
     const keysToDelete = [this.buildDeviceKey(deviceCode)];
     if (userCode) {
-      keysToDelete.push(this.buildUserKey(userCode));
+      for (const key of new Set([
+        ...this.userKeysOf(userCode),
+        `${STORAGE_PREFIX.USER}${userCode}`,
+      ])) {
+        if ((await this.state.storage.get<string>(key)) === deviceCode) keysToDelete.push(key);
+      }
     }
     await this.state.storage.delete(keysToDelete);
   }
@@ -199,7 +300,16 @@ export class DeviceCodeStore {
       // Store device code
       if (path === '/store' && request.method === 'POST') {
         const metadata: DeviceCodeMetadata = await request.json();
-        await this.storeDeviceCode(metadata);
+        try {
+          await this.storeDeviceCode(metadata);
+        } catch (error) {
+          if (!(error instanceof UserCodeConflictError)) throw error;
+          // Distinguishable from a failure: the caller generates another user code and retries.
+          return new Response(JSON.stringify({ error: 'user_code_conflict' }), {
+            status: 409,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' },
         });
@@ -207,7 +317,7 @@ export class DeviceCodeStore {
 
       // Get device code by device_code
       if (path === '/get-by-device-code' && request.method === 'POST') {
-        const { device_code } = (await request.json()) as { device_code: string };
+        const { device_code } = await request.json<{ device_code: string }>();
         const metadata = await this.getByDeviceCode(device_code);
         return new Response(JSON.stringify(metadata), {
           headers: { 'Content-Type': 'application/json' },
@@ -216,7 +326,7 @@ export class DeviceCodeStore {
 
       // Get device code by user_code
       if (path === '/get-by-user-code' && request.method === 'POST') {
-        const { user_code } = (await request.json()) as { user_code: string };
+        const { user_code } = await request.json<{ user_code: string }>();
         const metadata = await this.getByUserCode(user_code);
         return new Response(JSON.stringify(metadata), {
           headers: { 'Content-Type': 'application/json' },
@@ -225,12 +335,13 @@ export class DeviceCodeStore {
 
       // Approve device code (user approved the request)
       if (path === '/approve' && request.method === 'POST') {
-        const { user_code, user_id, sub } = (await request.json()) as {
+        const { user_code, user_id, sub, consent_generation } = await request.json<{
           user_code: string;
           user_id: string;
           sub: string;
-        };
-        await this.approveDeviceCode(user_code, user_id, sub);
+          consent_generation?: number;
+        }>();
+        await this.approveDeviceCode(user_code, user_id, sub, consent_generation);
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' },
         });
@@ -238,16 +349,34 @@ export class DeviceCodeStore {
 
       // Deny device code (user denied the request)
       if (path === '/deny' && request.method === 'POST') {
-        const { user_code } = (await request.json()) as { user_code: string };
+        const { user_code } = await request.json<{ user_code: string }>();
         await this.denyDeviceCode(user_code);
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' },
         });
       }
 
-      // Update last poll time (for rate limiting)
+      // One poll of the token endpoint: evaluate against the previous poll, then record it.
+      if (path === '/poll' && request.method === 'POST') {
+        const { device_code, client_id } = await request.json<{
+          device_code?: unknown;
+          client_id?: unknown;
+        }>();
+        const result =
+          typeof device_code === 'string' && typeof client_id === 'string'
+            ? await this.pollDeviceCode(device_code, client_id)
+            : ({ result: 'not_found' } satisfies PollRpcResult<DeviceCodeV2>);
+        return new Response(JSON.stringify(result), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Update last poll time (for rate limiting).
+      // Deprecated: records the poll without evaluating it, so a caller that reads the code
+      // afterwards sees its own write. The token endpoint uses /poll; this stays for callers
+      // deployed before it existed.
       if (path === '/update-poll' && request.method === 'POST') {
-        const { device_code } = (await request.json()) as { device_code: string };
+        const { device_code } = await request.json<{ device_code: string }>();
         await this.updatePollTime(device_code);
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' },
@@ -256,7 +385,7 @@ export class DeviceCodeStore {
 
       // Mark token as issued (one-time use)
       if (path === '/mark-token-issued' && request.method === 'POST') {
-        const { device_code } = (await request.json()) as { device_code: string };
+        const { device_code } = await request.json<{ device_code: string }>();
         await this.markTokenIssued(device_code);
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' },
@@ -265,7 +394,7 @@ export class DeviceCodeStore {
 
       // Delete device code (consumed or expired)
       if (path === '/delete' && request.method === 'POST') {
-        const { device_code } = (await request.json()) as { device_code: string };
+        const { device_code } = await request.json<{ device_code: string }>();
         await this.deleteDeviceCode(device_code);
         return new Response(JSON.stringify({ success: true }), {
           headers: { 'Content-Type': 'application/json' },
@@ -318,10 +447,26 @@ export class DeviceCodeStore {
 
   /**
    * Store a new device code
+   *
+   * Rejects a user code that another live device code already holds: the user code is the only
+   * key the approval side has, so a second code with the same value would take the first
+   * device's approval. The check and the write run as one state change.
    */
-  private async storeDeviceCode(metadata: DeviceCodeMetadata): Promise<void> {
+  private storeDeviceCode(metadata: DeviceCodeMetadata): Promise<void> {
+    return this.serializeTransition(() => this.applyStore(metadata));
+  }
+
+  private async applyStore(metadata: DeviceCodeMetadata): Promise<void> {
     if (metadata.tenant_id) {
       this.setTenantId(metadata.tenant_id);
+    }
+
+    // Any live device code, under either key, that is not this one holds the user code. A mapping
+    // left behind by an expired or deleted code does not count; the read drops it.
+    for (const holderCode of await this.findDeviceCodesByUserCode(metadata.user_code)) {
+      if (holderCode !== metadata.device_code && (await this.getByDeviceCode(holderCode))) {
+        throw new UserCodeConflictError();
+      }
     }
 
     const v2Metadata: DeviceCodeV2 = {
@@ -330,13 +475,12 @@ export class DeviceCodeStore {
       token_issued: false,
     };
 
-    // Store in memory
-    this.deviceCodes.set(metadata.device_code, v2Metadata);
-    this.userCodeToDeviceCode.set(metadata.user_code, metadata.device_code);
-
-    // V2: Persist to Durable Storage (primary)
+    // V2: Persist to Durable Storage (primary). The cache follows once both writes are saved: a
+    // code that could not be stored must not be readable.
     await this.saveDeviceCode(metadata.device_code, v2Metadata);
     await this.saveUserMapping(metadata.user_code, metadata.device_code);
+    this.deviceCodes.set(metadata.device_code, v2Metadata);
+    this.userCodeToDeviceCode.set(normalizeUserCode(metadata.user_code), metadata.device_code);
 
     this.logEvent({
       action: 'device_code_created',
@@ -364,7 +508,7 @@ export class DeviceCodeStore {
     if (metadata) {
       // Check if expired
       if (isDeviceCodeExpired(metadata)) {
-        await this.deleteDeviceCode(deviceCode);
+        await this.removeDeviceCode(deviceCode);
         return null;
       }
       return metadata;
@@ -378,13 +522,13 @@ export class DeviceCodeStore {
     if (storedMetadata) {
       // Check if expired
       if (isDeviceCodeExpired(storedMetadata)) {
-        await this.deleteDeviceCode(deviceCode);
+        await this.removeDeviceCode(deviceCode);
         return null;
       }
 
       // Warm up cache
       this.deviceCodes.set(deviceCode, storedMetadata);
-      this.userCodeToDeviceCode.set(storedMetadata.user_code, deviceCode);
+      this.userCodeToDeviceCode.set(normalizeUserCode(storedMetadata.user_code), deviceCode);
       return storedMetadata;
     }
 
@@ -395,16 +539,11 @@ export class DeviceCodeStore {
    * Get device code metadata by user_code
    */
   private async getByUserCode(userCode: string): Promise<DeviceCodeV2 | null> {
-    // Check mapping first
-    let deviceCode = this.userCodeToDeviceCode.get(userCode);
-
-    if (!deviceCode) {
-      // Check Durable Storage
-      deviceCode = await this.state.storage.get<string>(this.buildUserKey(userCode));
-    }
-
-    if (deviceCode) {
-      return this.getByDeviceCode(deviceCode);
+    // The live holder, whichever key it is under (the cache, the canonical key, the legacy 4-4
+    // key): an expired holder under one key must not hide a live one under another.
+    for (const deviceCode of await this.findDeviceCodesByUserCode(userCode)) {
+      const metadata = await this.getByDeviceCode(deviceCode);
+      if (metadata) return metadata;
     }
 
     return null;
@@ -413,7 +552,29 @@ export class DeviceCodeStore {
   /**
    * Approve device code (user approved the authorization request)
    */
-  private async approveDeviceCode(userCode: string, userId: string, sub: string): Promise<void> {
+  private approveDeviceCode(
+    userCode: string,
+    userId: string,
+    sub: string,
+    consentGeneration?: number
+  ): Promise<void> {
+    return this.serializeTransition(() =>
+      this.applyApproval(userCode, userId, sub, consentGeneration)
+    );
+  }
+
+  private async applyApproval(
+    userCode: string,
+    userId: string,
+    sub: string,
+    consentGeneration?: number
+  ): Promise<void> {
+    if (
+      consentGeneration !== undefined &&
+      (!Number.isSafeInteger(consentGeneration) || consentGeneration < 0)
+    ) {
+      throw new Error('Invalid consent generation');
+    }
     const metadata = await this.getByUserCode(userCode);
 
     if (!metadata) {
@@ -428,16 +589,19 @@ export class DeviceCodeStore {
       throw new Error(`Device code already ${metadata.status}`);
     }
 
-    // Update status to approved
-    metadata.status = 'approved';
-    metadata.user_id = userId;
-    metadata.sub = sub;
+    // Change a copy. The cached code stays as it is until the copy is saved: a failed save must
+    // leave the code pending for readers and for a retry.
+    const approved: DeviceCodeV2 = {
+      ...metadata,
+      status: 'approved',
+      user_id: userId,
+      sub,
+      ...(consentGeneration !== undefined ? { consent_generation: consentGeneration } : {}),
+    };
 
-    // Update in memory
-    this.deviceCodes.set(metadata.device_code, metadata);
-
-    // V2: Update in Durable Storage
-    await this.saveDeviceCode(metadata.device_code, metadata);
+    // V2: Save to Durable Storage, then the cache
+    await this.saveDeviceCode(metadata.device_code, approved, metadata);
+    this.cacheSaved(metadata.device_code, metadata, approved);
 
     this.logEvent({
       action: 'device_code_approved',
@@ -453,7 +617,11 @@ export class DeviceCodeStore {
   /**
    * Deny device code (user denied the authorization request)
    */
-  private async denyDeviceCode(userCode: string): Promise<void> {
+  private denyDeviceCode(userCode: string): Promise<void> {
+    return this.serializeTransition(() => this.applyDenial(userCode));
+  }
+
+  private async applyDenial(userCode: string): Promise<void> {
     const metadata = await this.getByUserCode(userCode);
 
     if (!metadata) {
@@ -464,14 +632,12 @@ export class DeviceCodeStore {
       throw new Error(`Device code already ${metadata.status}`);
     }
 
-    // Update status to denied
-    metadata.status = 'denied';
+    // Change a copy; the cache follows only once it is saved (see applyApproval).
+    const denied: DeviceCodeV2 = { ...metadata, status: 'denied' };
 
-    // Update in memory
-    this.deviceCodes.set(metadata.device_code, metadata);
-
-    // V2: Update in Durable Storage
-    await this.saveDeviceCode(metadata.device_code, metadata);
+    // V2: Save to Durable Storage, then the cache
+    await this.saveDeviceCode(metadata.device_code, denied, metadata);
+    this.cacheSaved(metadata.device_code, metadata, denied);
 
     this.logEvent({
       action: 'device_code_denied',
@@ -483,30 +649,100 @@ export class DeviceCodeStore {
   }
 
   /**
+   * One poll of the token endpoint, decided and recorded in one state change (see
+   * utils/poll-governor.ts for the sequence). It queues with approve, deny and mark-token-issued,
+   * so none of them can run between the check and the write.
+   *
+   * A poll by a client the code does not belong to changes nothing.
+   */
+  private pollDeviceCode(
+    deviceCode: string,
+    clientId: string
+  ): Promise<PollRpcResult<DeviceCodeV2>> {
+    return this.serializeTransition(() => this.applyPoll(deviceCode, clientId));
+  }
+
+  private async applyPoll(
+    deviceCode: string,
+    clientId: string
+  ): Promise<PollRpcResult<DeviceCodeV2>> {
+    // Removes an expired code, so a missing and an expired code look the same
+    const metadata = await this.getByDeviceCode(deviceCode);
+    if (!metadata) {
+      return { result: 'not_found' };
+    }
+    if (metadata.client_id !== clientId) {
+      return { result: 'client_mismatch' };
+    }
+
+    const evaluation = evaluatePoll(
+      metadata,
+      Date.now(),
+      DEVICE_POLL_LIMITS,
+      metadata.status === 'pending'
+    );
+    if (evaluation.limitExceeded) {
+      await this.removeDeviceCode(deviceCode);
+      this.logEvent({
+        action: 'device_code_expired',
+        deviceCode,
+        clientId: metadata.client_id,
+        metadata: { reason: 'poll_limit_exceeded', poll_count: metadata.poll_count },
+        timestamp: Date.now(),
+      });
+      return { result: 'poll_limit_exceeded' };
+    }
+
+    // V2: Save to Durable Storage, then the cache
+    await this.saveDeviceCode(deviceCode, evaluation.next, metadata);
+    this.cacheSaved(deviceCode, metadata, evaluation.next);
+
+    if (evaluation.tooFast) {
+      this.logEvent({
+        action: 'slow_down_triggered',
+        deviceCode,
+        clientId: metadata.client_id,
+        metadata: { interval: evaluation.next.interval },
+        timestamp: Date.now(),
+      });
+    }
+    return { result: 'ok', too_fast: evaluation.tooFast, metadata: evaluation.next };
+  }
+
+  /**
    * Update last poll time (for rate limiting)
    */
-  private async updatePollTime(deviceCode: string): Promise<void> {
+  private updatePollTime(deviceCode: string): Promise<void> {
+    return this.serializeTransition(() => this.applyPollTime(deviceCode));
+  }
+
+  private async applyPollTime(deviceCode: string): Promise<void> {
     const metadata = await this.getByDeviceCode(deviceCode);
 
     if (!metadata) {
       throw new Error('Device code not found');
     }
 
-    // Update poll tracking
-    metadata.last_poll_at = Date.now();
-    metadata.poll_count = (metadata.poll_count || 0) + 1;
+    // Update poll tracking on a copy; the cache follows only once it is saved
+    const polled: DeviceCodeV2 = {
+      ...metadata,
+      last_poll_at: Date.now(),
+      poll_count: (metadata.poll_count || 0) + 1,
+    };
 
-    // Update in memory
-    this.deviceCodes.set(deviceCode, metadata);
-
-    // V2: Update in Durable Storage
-    await this.saveDeviceCode(deviceCode, metadata);
+    // V2: Save to Durable Storage, then the cache
+    await this.saveDeviceCode(deviceCode, polled, metadata);
+    this.cacheSaved(deviceCode, metadata, polled);
   }
 
   /**
    * Mark token as issued (one-time use enforcement) - V2
    */
-  private async markTokenIssued(deviceCode: string): Promise<void> {
+  private markTokenIssued(deviceCode: string): Promise<void> {
+    return this.serializeTransition(() => this.applyTokenIssued(deviceCode));
+  }
+
+  private async applyTokenIssued(deviceCode: string): Promise<void> {
     const metadata = await this.getByDeviceCode(deviceCode);
 
     if (!metadata) {
@@ -521,15 +757,16 @@ export class DeviceCodeStore {
       throw new Error('Device code not approved');
     }
 
-    // Mark as issued
-    metadata.token_issued = true;
-    metadata.token_issued_at = Date.now();
+    // Mark as issued on a copy; the cache follows only once it is saved
+    const issued: DeviceCodeV2 = {
+      ...metadata,
+      token_issued: true,
+      token_issued_at: Date.now(),
+    };
 
-    // Update in memory
-    this.deviceCodes.set(deviceCode, metadata);
-
-    // V2: Update in Durable Storage
-    await this.saveDeviceCode(deviceCode, metadata);
+    // V2: Save to Durable Storage, then the cache
+    await this.saveDeviceCode(deviceCode, issued, metadata);
+    this.cacheSaved(deviceCode, metadata, issued);
 
     this.logEvent({
       action: 'device_code_consumed',
@@ -544,14 +781,25 @@ export class DeviceCodeStore {
   /**
    * Delete device code (consumed or expired)
    */
-  private async deleteDeviceCode(deviceCode: string): Promise<void> {
-    const metadata = this.deviceCodes.get(deviceCode);
+  private deleteDeviceCode(deviceCode: string): Promise<void> {
+    return this.serializeTransition(() => this.removeDeviceCode(deviceCode));
+  }
+
+  /**
+   * The delete itself. A read that finds an expired code calls this directly, because the read
+   * may already run inside a state change, which holds the queue.
+   */
+  private async removeDeviceCode(deviceCode: string): Promise<void> {
+    // A code found in storage but not (or no longer) cached still has its mapping to remove
+    const metadata =
+      this.deviceCodes.get(deviceCode) ??
+      (await this.state.storage.get<DeviceCodeV2>(this.buildDeviceKey(deviceCode)));
     const userCode = metadata?.user_code;
 
-    // Remove from in-memory storage
+    // Remove from in-memory storage (the mapping only when it is still this code's)
     this.deviceCodes.delete(deviceCode);
-    if (userCode) {
-      this.userCodeToDeviceCode.delete(userCode);
+    if (userCode && this.userCodeToDeviceCode.get(normalizeUserCode(userCode)) === deviceCode) {
+      this.userCodeToDeviceCode.delete(normalizeUserCode(userCode));
     }
 
     // V2: Delete from Durable Storage

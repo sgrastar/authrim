@@ -24,7 +24,8 @@ const mocks = vi.hoisted(() => ({
   }),
   mockGetClientCached: vi.fn(),
   mockLoadTenantProfileCached: vi.fn(),
-  mockGetSystemSettingsCached: vi.fn().mockResolvedValue(null),
+  mockGetProtocolSettingsCached: vi.fn().mockResolvedValue(null),
+  mockResolveEffectiveSettings: vi.fn(),
   mockValidateClientId: vi.fn().mockReturnValue({ valid: true }),
   mockVerifyClientSecretHash: vi.fn().mockResolvedValue(true),
   mockValidateClientAssertion: vi.fn().mockResolvedValue({ valid: true }),
@@ -33,9 +34,6 @@ const mocks = vi.hoisted(() => ({
   mockParseTokenHeader: vi.fn(),
   mockVerifyToken: vi.fn().mockResolvedValue({}),
   mockIsTokenRevoked: vi.fn().mockResolvedValue(false),
-  mockCreateOAuthConfigManager: vi.fn().mockReturnValue({
-    getTokenExpiry: vi.fn().mockResolvedValue(3600),
-  }),
   mockGenerateRegionAwareJti: vi.fn().mockResolvedValue({ jti: 'region-jti-1' }),
   mockCreateAccessToken: vi.fn().mockResolvedValue({
     token: 'downstream-access-token',
@@ -46,6 +44,11 @@ const mocks = vi.hoisted(() => ({
   mockRequireDedicatedAdminDatabaseAdapter: vi.fn().mockReturnValue({}),
   mockResolveElevationGrantSubjectToken: vi.fn(),
   mockVerifyExternalIdJagSubjectToken: vi.fn(),
+  mockResolveAccountDataContextFromHono: vi.fn(),
+  mockReadAccountAuthenticationState: vi.fn(),
+  mockFindOAuthClientConsentRevocation: vi.fn(),
+  // The user's account database: the identity assurance evidence read goes through it.
+  accountAdapter: { query: vi.fn() },
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -56,8 +59,13 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     createLogger: mocks.mockCreateLogger,
     getClientCached: mocks.mockGetClientCached,
     loadTenantProfileCached: mocks.mockLoadTenantProfileCached,
-    getSystemSettingsCached: mocks.mockGetSystemSettingsCached,
-    getTenantSystemSettings: mocks.mockGetSystemSettingsCached,
+    getProtocolSettingsCached: async (...args: unknown[]) => ({
+      fapi: {},
+      oidc: {},
+      security: {},
+      ...((await mocks.mockGetProtocolSettingsCached(...args)) ?? {}),
+    }),
+    resolveEffectiveSettings: mocks.mockResolveEffectiveSettings,
     validateClientId: mocks.mockValidateClientId,
     verifyClientSecretHash: mocks.mockVerifyClientSecretHash,
     validateClientAssertion: mocks.mockValidateClientAssertion,
@@ -66,13 +74,17 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     parseTokenHeader: mocks.mockParseTokenHeader,
     verifyToken: mocks.mockVerifyToken,
     isTokenRevoked: mocks.mockIsTokenRevoked,
-    createOAuthConfigManager: mocks.mockCreateOAuthConfigManager,
     generateRegionAwareJti: mocks.mockGenerateRegionAwareJti,
     createAccessToken: mocks.mockCreateAccessToken,
     extractDPoPProof: mocks.mockExtractDPoPProof,
     validateDPoPProof: mocks.mockValidateDPoPProof,
     requireDedicatedAdminDatabaseAdapter: mocks.mockRequireDedicatedAdminDatabaseAdapter,
     resolveElevationGrantSubjectToken: mocks.mockResolveElevationGrantSubjectToken,
+    // The subject user's account database and its consent withdrawals.
+    resolveAccountDataContextFromHono: mocks.mockResolveAccountDataContextFromHono,
+    createAccountAuthContextFromHono: () => ({ coreAdapter: mocks.accountAdapter }),
+    findOAuthClientConsentRevocation: mocks.mockFindOAuthClientConsentRevocation,
+    readAccountAuthenticationState: mocks.mockReadAccountAuthenticationState,
   };
 });
 
@@ -81,12 +93,36 @@ vi.mock('../external-id-jag-verifier', () => ({
 }));
 
 import { tokenHandler } from '../token';
+import { settingsFromSystemSettings } from './helpers/effective-settings';
+import { evidenceRow } from './helpers/identity-assurance';
+
+/** The older system settings the test describes, as both the document and the Settings API. */
+const securityRegressionIt =
+  process.env.AUTHRIM_SECURITY_REGRESSION_SUITE === 'true' ? it : it.skip;
+
+let systemSettings: Record<string, unknown> | null = null;
+function setSystemSettings(value: Record<string, unknown> | null): void {
+  systemSettings = value;
+  mocks.mockGetProtocolSettingsCached.mockResolvedValue(value);
+}
 
 describe('downstream elevation grant token exchange', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.mockGetSystemSettingsCached.mockReset().mockResolvedValue(null);
+    mocks.mockGetProtocolSettingsCached.mockReset().mockResolvedValue(null);
+    setSystemSettings(null);
+    mocks.mockResolveEffectiveSettings.mockImplementation(async (env: unknown, category: string) =>
+      category === 'oauth'
+        ? { 'oauth.access_token_expiry': 3600, 'oauth.refresh_token_expiry': 86400 * 30 }
+        : settingsFromSystemSettings(env, systemSettings, category)
+    );
     mocks.mockVerifyExternalIdJagSubjectToken.mockReset();
+    mocks.accountAdapter.query.mockReset().mockResolvedValue([]);
+    mocks.mockResolveAccountDataContextFromHono.mockReset().mockResolvedValue({});
+    mocks.mockReadAccountAuthenticationState.mockReset().mockResolvedValue({ lifecycle: null });
+    mocks.mockFindOAuthClientConsentRevocation
+      .mockReset()
+      .mockResolvedValue({ generation: 0, revokedAt: null });
     mocks.mockVerifyToken.mockReset().mockResolvedValue({});
     mocks.mockIsTokenRevoked.mockReset().mockResolvedValue(false);
     mocks.mockCreateAccessToken.mockReset().mockResolvedValue({
@@ -193,6 +229,8 @@ describe('downstream elevation grant token exchange', () => {
           body: body as Record<string, string>,
           env: {
             ENABLE_TOKEN_EXCHANGE: 'true',
+            ENABLE_TOKEN_EXCHANGE_DELEGATION: 'true',
+            ENABLE_TOKEN_EXCHANGE_IMPERSONATION: 'true',
             ...envOverrides,
           },
         })
@@ -240,8 +278,23 @@ describe('downstream elevation grant token exchange', () => {
       expect(mocks.mockGetClientCached).not.toHaveBeenCalled();
     });
 
+    it('refuses token exchange when its settings cannot be read, even if env enables it', async () => {
+      mocks.mockResolveEffectiveSettings.mockRejectedValue(new Error('kv unavailable'));
+      await expectOAuthError(
+        request(),
+        503,
+        'temporarily_unavailable',
+        'Token Exchange settings are unavailable; try again later'
+      );
+      expect(mocks.mockResolveEffectiveSettings).toHaveBeenCalledWith(
+        expect.anything(),
+        'tokens',
+        expect.anything()
+      );
+    });
+
     it('uses cached settings to disable an environment-enabled exchange', async () => {
-      mocks.mockGetSystemSettingsCached.mockResolvedValue({
+      setSystemSettings({
         oidc: { tokenExchange: { enabled: false } },
       });
       await expectOAuthError(
@@ -249,16 +302,6 @@ describe('downstream elevation grant token exchange', () => {
         400,
         'unsupported_grant_type',
         'Token Exchange is not enabled'
-      );
-    });
-
-    it('falls back to environment configuration when settings lookup fails', async () => {
-      mocks.mockGetSystemSettingsCached.mockRejectedValueOnce(new Error('KV unavailable'));
-      await expectOAuthError(
-        request({ subject_token: undefined }),
-        400,
-        'invalid_request',
-        'subject_token is required'
       );
     });
 
@@ -403,6 +446,165 @@ describe('downstream elevation grant token exchange', () => {
       );
     });
 
+    describe("the tenant's delegation and impersonation ceilings", () => {
+      const clientWithMode = (delegationMode: string) => ({
+        client_id: 'service-client-1',
+        tenant_id: 'tenant-a',
+        client_secret_hash: 'hashed-secret',
+        token_exchange_allowed: true,
+        token_endpoint_auth_method: 'client_secret_post',
+        delegation_mode: delegationMode,
+        allowed_scopes: ['openid'],
+        allowed_token_exchange_resources: ['https://service.example.com'],
+        allowed_subject_token_clients: [],
+      });
+
+      it('refuses a delegating client while the tenant has not allowed delegation', async () => {
+        mocks.mockGetClientCached.mockResolvedValueOnce(clientWithMode('delegation'));
+        await expectOAuthError(
+          request({}, { ENABLE_TOKEN_EXCHANGE_DELEGATION: 'false' }),
+          403,
+          'unauthorized_client',
+          'Delegation is not enabled for this tenant (tokens.exchange_delegation_enabled)'
+        );
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      it('treats a client with no delegation_mode as delegating', async () => {
+        const client: Record<string, unknown> = clientWithMode('delegation');
+        delete client.delegation_mode;
+        mocks.mockGetClientCached.mockResolvedValueOnce(client);
+        await expectOAuthError(
+          request({}, { ENABLE_TOKEN_EXCHANGE_DELEGATION: 'false' }),
+          403,
+          'unauthorized_client',
+          'Delegation is not enabled for this tenant (tokens.exchange_delegation_enabled)'
+        );
+      });
+
+      it('refuses an impersonating client while the tenant has not allowed impersonation', async () => {
+        mocks.mockGetClientCached.mockResolvedValueOnce(clientWithMode('impersonation'));
+        await expectOAuthError(
+          request({}, { ENABLE_TOKEN_EXCHANGE_IMPERSONATION: 'false' }),
+          403,
+          'unauthorized_client',
+          'Impersonation is not enabled for this tenant (tokens.exchange_impersonation_enabled)'
+        );
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      it('keeps a client with delegation_mode none disabled whatever the tenant allows', async () => {
+        mocks.mockGetClientCached.mockResolvedValueOnce(clientWithMode('none'));
+        await expectOAuthError(
+          request(
+            {},
+            {
+              ENABLE_TOKEN_EXCHANGE_DELEGATION: 'true',
+              ENABLE_TOKEN_EXCHANGE_IMPERSONATION: 'true',
+            }
+          ),
+          403,
+          'unauthorized_client',
+          'Token Exchange is disabled for this client'
+        );
+      });
+
+      it.each([
+        ['delegation', 'ENABLE_TOKEN_EXCHANGE_DELEGATION'],
+        ['impersonation', 'ENABLE_TOKEN_EXCHANGE_IMPERSONATION'],
+      ])('exchanges for a %s client once the tenant allows it', async (mode, envKey) => {
+        const env = await createVerificationEnv();
+        mocks.mockGetClientCached.mockResolvedValue(clientWithMode(mode));
+        mocks.mockParseToken.mockReturnValue({
+          sub: 'user-1',
+          token_use: 'access',
+          jti: 'subject-jti-1',
+          aud: 'service-client-1',
+          scope: 'openid',
+        });
+
+        const response = await request(
+          {},
+          {
+            ...env,
+            ENABLE_TOKEN_EXCHANGE_DELEGATION: 'false',
+            ENABLE_TOKEN_EXCHANGE_IMPERSONATION: 'false',
+            [envKey]: 'true',
+          }
+        );
+
+        expect(response.status).toBe(200);
+        expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
+          mode === 'delegation'
+            ? expect.objectContaining({
+                act: expect.objectContaining({ client_id: 'service-client-1' }),
+              })
+            : expect.not.objectContaining({ act: expect.anything() }),
+          expect.anything(),
+          expect.any(String),
+          expect.any(Number),
+          'region-jti-1'
+        );
+      });
+
+      it('does not hold Native SSO to the ceilings: it is neither delegation nor impersonation', async () => {
+        mocks.mockGetClientCached.mockResolvedValueOnce(clientWithMode('delegation'));
+        mocks.mockResolveEffectiveSettings.mockImplementation(
+          async (env: unknown, category: string) => ({
+            ...(await settingsFromSystemSettings(env, systemSettings, category)),
+            ...(category === 'tokens'
+              ? {
+                  'tokens.exchange_enabled': true,
+                  'tokens.exchange_allowed_subject_token_types': 'access_token,id_token',
+                  'tokens.exchange_delegation_enabled': false,
+                  'tokens.exchange_impersonation_enabled': false,
+                }
+              : {}),
+          })
+        );
+
+        const response = await request({
+          subject_token_type: 'urn:ietf:params:oauth:token-type:id_token',
+          actor_token: 'device-secret',
+          actor_token_type: 'urn:openid:params:token-type:device-secret',
+        });
+        const body = await parseJsonResponse<{ error: string; error_description?: string }>(
+          response
+        );
+
+        expect(body.error_description ?? '').not.toContain('is not enabled for this tenant');
+        // It got as far as the Native SSO checks of the device secret.
+        expect(body.error_description ?? '').not.toContain('Allowed types');
+      });
+
+      it('reads the ceilings from the tenant settings', async () => {
+        mocks.mockGetClientCached.mockResolvedValueOnce(clientWithMode('delegation'));
+        mocks.mockResolveEffectiveSettings.mockImplementation(
+          async (env: unknown, category: string) => ({
+            ...(await settingsFromSystemSettings(env, systemSettings, category)),
+            ...(category === 'tokens'
+              ? {
+                  'tokens.exchange_enabled': true,
+                  'tokens.exchange_delegation_enabled': false,
+                  'tokens.exchange_impersonation_enabled': true,
+                }
+              : {}),
+          })
+        );
+        await expectOAuthError(
+          request(),
+          403,
+          'unauthorized_client',
+          'Delegation is not enabled for this tenant (tokens.exchange_delegation_enabled)'
+        );
+        expect(mocks.mockResolveEffectiveSettings).toHaveBeenCalledWith(
+          expect.anything(),
+          'tokens',
+          { tenantId: expect.any(String) }
+        );
+      });
+    });
+
     it('rejects unsupported requested token types before parsing the subject token', async () => {
       await expectOAuthError(
         request({ requested_token_type: 'urn:ietf:params:oauth:token-type:refresh_token' }),
@@ -419,7 +621,12 @@ describe('downstream elevation grant token exchange', () => {
       });
       await expectOAuthError(request(), 400, 'invalid_request', 'Invalid subject_token format');
 
-      mocks.mockParseToken.mockReturnValueOnce({ sub: 'user-1', aud: 'service-client-1' });
+      mocks.mockParseToken.mockReturnValueOnce({
+        sub: 'user-1',
+        aud: 'service-client-1',
+        token_use: 'access',
+        jti: 'subject-jti-1',
+      });
       mocks.mockParseTokenHeader.mockReturnValueOnce({ alg: 'RS256' });
       await expectOAuthError(
         request(),
@@ -433,6 +640,8 @@ describe('downstream elevation grant token exchange', () => {
       const env = await createVerificationEnv();
       mocks.mockParseToken.mockReturnValueOnce({
         sub: 'user-1',
+        token_use: 'access',
+        jti: 'subject-jti-1',
         aud: 'service-client-1',
         exp: Math.floor(Date.now() / 1000) - 1,
       });
@@ -453,6 +662,8 @@ describe('downstream elevation grant token exchange', () => {
 
       mocks.mockParseToken.mockReturnValueOnce({
         sub: 'user-1',
+        token_use: 'access',
+        jti: 'subject-jti-1',
         aud: 'unrelated-client',
         client_id: 'issuer-client',
       });
@@ -476,7 +687,12 @@ describe('downstream elevation grant token exchange', () => {
       ['not-an-absolute-uri', "resource 'not-an-absolute-uri' must be a valid absolute URI"],
     ])('rejects invalid resource parameter %s', async (resource, description) => {
       const env = await createVerificationEnv();
-      mocks.mockParseToken.mockReturnValue({ sub: 'user-1', aud: 'service-client-1' });
+      mocks.mockParseToken.mockReturnValue({
+        sub: 'user-1',
+        aud: 'service-client-1',
+        token_use: 'access',
+        jti: 'subject-jti-1',
+      });
       await expectOAuthError(
         request({ audience: undefined, resource }, env),
         400,
@@ -487,7 +703,12 @@ describe('downstream elevation grant token exchange', () => {
 
     it('rejects allowed-resource violations after subject authorization', async () => {
       const env = await createVerificationEnv();
-      mocks.mockParseToken.mockReturnValue({ sub: 'user-1', aud: 'service-client-1' });
+      mocks.mockParseToken.mockReturnValue({
+        sub: 'user-1',
+        aud: 'service-client-1',
+        token_use: 'access',
+        jti: 'subject-jti-1',
+      });
       await expectOAuthError(
         request({ audience: 'https://disallowed.example.com' }, env),
         403,
@@ -498,7 +719,12 @@ describe('downstream elevation grant token exchange', () => {
 
     it('requires actor_token_type and supports only access tokens as actors', async () => {
       const env = await createVerificationEnv();
-      mocks.mockParseToken.mockReturnValue({ sub: 'user-1', aud: 'service-client-1' });
+      mocks.mockParseToken.mockReturnValue({
+        sub: 'user-1',
+        aud: 'service-client-1',
+        token_use: 'access',
+        jti: 'subject-jti-1',
+      });
       await expectOAuthError(
         request({ actor_token: 'actor-token' }, env),
         400,
@@ -521,7 +747,12 @@ describe('downstream elevation grant token exchange', () => {
 
     it('rejects malformed actors and actors without kid or audience', async () => {
       const env = await createVerificationEnv();
-      const subject = { sub: 'user-1', aud: 'service-client-1' };
+      const subject = {
+        sub: 'user-1',
+        aud: 'service-client-1',
+        token_use: 'access',
+        jti: 'subject-jti-1',
+      };
       mocks.mockParseToken.mockReturnValueOnce(subject).mockImplementationOnce(() => {
         throw new Error('bad actor');
       });
@@ -588,6 +819,8 @@ describe('downstream elevation grant token exchange', () => {
       mocks.mockParseToken
         .mockReturnValueOnce({
           sub: 'user-1',
+          token_use: 'access',
+          jti: 'subject-jti-1',
           aud: ['service-client-1'],
           scope: 'openid profile_export admin',
           act: { sub: 'prior-actor', client_id: 'prior-client' },
@@ -643,7 +876,7 @@ describe('downstream elevation grant token exchange', () => {
     });
 
     it('restricts ID-JAG to identity-bearing subject token types', async () => {
-      mocks.mockGetSystemSettingsCached.mockResolvedValue({
+      setSystemSettings({
         oidc: {
           tokenExchange: {
             enabled: true,
@@ -667,7 +900,7 @@ describe('downstream elevation grant token exchange', () => {
       };
       mocks.mockParseTokenHeader.mockReturnValue({ kid: 'external-kid' });
 
-      mocks.mockGetSystemSettingsCached.mockResolvedValueOnce({
+      setSystemSettings({
         oidc: {
           tokenExchange: {
             enabled: true,
@@ -684,7 +917,7 @@ describe('downstream elevation grant token exchange', () => {
         'Subject token is missing issuer (iss) claim'
       );
 
-      mocks.mockGetSystemSettingsCached.mockResolvedValueOnce({
+      setSystemSettings({
         oidc: {
           tokenExchange: {
             enabled: true,
@@ -701,7 +934,7 @@ describe('downstream elevation grant token exchange', () => {
         'ID-JAG is enabled but no allowed issuers are configured. Configure allowedIssuers via Admin API.'
       );
 
-      mocks.mockGetSystemSettingsCached.mockResolvedValueOnce({
+      setSystemSettings({
         oidc: {
           tokenExchange: {
             enabled: true,
@@ -720,7 +953,7 @@ describe('downstream elevation grant token exchange', () => {
     });
 
     it('returns a generic ID-JAG error when external signature verification fails', async () => {
-      mocks.mockGetSystemSettingsCached.mockResolvedValue({
+      setSystemSettings({
         oidc: {
           tokenExchange: {
             enabled: true,
@@ -734,6 +967,8 @@ describe('downstream elevation grant token exchange', () => {
       });
       mocks.mockParseToken.mockReturnValue({
         sub: 'user-1',
+        token_use: 'access',
+        jti: 'subject-jti-1',
         iss: 'https://idp.example.com',
       });
       mocks.mockParseTokenHeader.mockReturnValue({ kid: 'external-kid' });
@@ -754,7 +989,7 @@ describe('downstream elevation grant token exchange', () => {
 
     it('issues a short-lived ID-JAG token with preserved authentication context', async () => {
       const env = await createVerificationEnv();
-      mocks.mockGetSystemSettingsCached.mockResolvedValue({
+      setSystemSettings({
         oidc: {
           tokenExchange: {
             enabled: true,
@@ -816,7 +1051,12 @@ describe('downstream elevation grant token exchange', () => {
         actor_token: 'actor-token',
         actor_token_type: 'urn:ietf:params:oauth:token-type:access_token',
       };
-      const subject = { sub: 'user-1', aud: 'service-client-1' };
+      const subject = {
+        sub: 'user-1',
+        aud: 'service-client-1',
+        token_use: 'access',
+        jti: 'subject-jti-1',
+      };
 
       mocks.mockParseToken.mockReturnValueOnce(subject).mockReturnValueOnce({
         sub: 'actor-1',
@@ -847,7 +1087,9 @@ describe('downstream elevation grant token exchange', () => {
         aud: 'service-client-1',
         jti: 'revoked-actor',
       });
-      mocks.mockIsTokenRevoked.mockResolvedValueOnce(true);
+      mocks.mockIsTokenRevoked.mockImplementation(async (_env: unknown, jti: string) => {
+        return jti === 'revoked-actor';
+      });
       await expectOAuthError(
         request(actorRequest, env),
         400,
@@ -869,7 +1111,12 @@ describe('downstream elevation grant token exchange', () => {
 
     it('fails closed when exchanged access token creation fails', async () => {
       const env = await createVerificationEnv();
-      mocks.mockParseToken.mockReturnValue({ sub: 'user-1', aud: 'service-client-1' });
+      mocks.mockParseToken.mockReturnValue({
+        sub: 'user-1',
+        aud: 'service-client-1',
+        token_use: 'access',
+        jti: 'subject-jti-1',
+      });
       mocks.mockCreateAccessToken.mockRejectedValueOnce(new Error('signing failed'));
       await expectOAuthError(
         request({}, env),
@@ -881,7 +1128,12 @@ describe('downstream elevation grant token exchange', () => {
 
     it('rejects invalid DPoP and binds valid DPoP to the exchanged token', async () => {
       const env = await createVerificationEnv();
-      mocks.mockParseToken.mockReturnValue({ sub: 'user-1', aud: 'service-client-1' });
+      mocks.mockParseToken.mockReturnValue({
+        sub: 'user-1',
+        aud: 'service-client-1',
+        token_use: 'access',
+        jti: 'subject-jti-1',
+      });
       mocks.mockExtractDPoPProof.mockReturnValue('dpop-proof');
       mocks.mockValidateDPoPProof.mockResolvedValueOnce({
         valid: false,
@@ -935,6 +1187,8 @@ describe('downstream elevation grant token exchange', () => {
         });
         mocks.mockParseToken.mockReturnValue({
           sub: 'user-1',
+          token_use: 'access',
+          jti: 'subject-jti-1',
           aud: 'service-client-1',
           scope: subjectScope,
         });
@@ -964,6 +1218,8 @@ describe('downstream elevation grant token exchange', () => {
       });
       mocks.mockParseToken.mockReturnValue({
         sub: 'user-1',
+        token_use: 'access',
+        jti: 'subject-jti-1',
         aud: 'service-client-1',
         scope: 'read:data profile',
       });
@@ -998,6 +1254,8 @@ describe('downstream elevation grant token exchange', () => {
       });
       mocks.mockParseToken.mockReturnValue({
         sub: 'user-1',
+        token_use: 'access',
+        jti: 'subject-jti-1',
         aud: 'service-client-1',
         scope: 'openid',
       });
@@ -1036,6 +1294,730 @@ describe('downstream elevation grant token exchange', () => {
         'region-jti-1'
       );
     });
+
+    describe('consent of a user subject token', () => {
+      const revokedAt = Date.now() - 60_000;
+
+      function userSubjectToken(overrides: Record<string, unknown> = {}) {
+        return {
+          sub: 'user-1',
+          token_use: 'access',
+          jti: 'subject-jti-1',
+          aud: 'service-client-1',
+          client_id: 'app-client',
+          scope: 'openid',
+          iat: Math.floor(Date.now() / 1000) - 10,
+          ...overrides,
+        };
+      }
+
+      it('refuses a subject token of a consent generation the user has withdrawn', async () => {
+        const env = await createVerificationEnv();
+        mocks.mockFindOAuthClientConsentRevocation.mockResolvedValue({ generation: 2, revokedAt });
+        mocks.mockParseToken.mockReturnValue(userSubjectToken({ authrim_consent_generation: 1 }));
+
+        await expectOAuthError(
+          request({}, env),
+          400,
+          'invalid_grant',
+          'Subject token is invalid or revoked'
+        );
+        expect(mocks.mockFindOAuthClientConsentRevocation).toHaveBeenCalledWith(expect.anything(), {
+          tenantId: 'tenant-a',
+          userId: 'user-1',
+          clientId: 'app-client',
+        });
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      it('refuses a subject token without a generation issued before the withdrawal', async () => {
+        const env = await createVerificationEnv();
+        mocks.mockFindOAuthClientConsentRevocation.mockResolvedValue({ generation: 1, revokedAt });
+        mocks.mockParseToken.mockReturnValue(
+          userSubjectToken({ iat: Math.floor(revokedAt / 1000) - 5 })
+        );
+
+        await expectOAuthError(
+          request({}, env),
+          400,
+          'invalid_grant',
+          'Subject token is invalid or revoked'
+        );
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      it('carries the subject token consent into the exchanged token', async () => {
+        const env = await createVerificationEnv();
+        mocks.mockFindOAuthClientConsentRevocation.mockResolvedValue({ generation: 2, revokedAt });
+        mocks.mockParseToken.mockReturnValue(userSubjectToken({ authrim_consent_generation: 2 }));
+
+        const response = await request({}, env);
+        expect(response.status).toBe(200);
+        expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
+          expect.objectContaining({
+            sub: 'user-1',
+            client_id: 'service-client-1',
+            authrim_consent_generation: 2,
+            authrim_consent_client_id: 'app-client',
+          }),
+          expect.anything(),
+          expect.any(String),
+          expect.any(Number),
+          'region-jti-1'
+        );
+      });
+
+      it('fails closed (503) when the withdrawal state cannot be read', async () => {
+        const env = await createVerificationEnv();
+        mocks.mockFindOAuthClientConsentRevocation.mockRejectedValue(new Error('d1 down'));
+        mocks.mockParseToken.mockReturnValue(userSubjectToken({ authrim_consent_generation: 0 }));
+
+        await expectOAuthError(
+          request({}, env),
+          503,
+          'temporarily_unavailable',
+          'Consent state is unavailable'
+        );
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      describe('identity assurance (IAL)', () => {
+        const MAP = JSON.stringify({ profile_export: 'IAL2' });
+
+        function useClient(overrides: Record<string, unknown> = {}) {
+          mocks.mockGetClientCached.mockResolvedValue({
+            client_id: 'service-client-1',
+            tenant_id: 'tenant-a',
+            client_secret_hash: 'hashed-secret',
+            token_exchange_allowed: true,
+            token_endpoint_auth_method: 'client_secret_post',
+            delegation_mode: 'delegation',
+            allowed_scopes: ['openid', 'profile_export'],
+            allowed_token_exchange_resources: ['https://service.example.com'],
+            allowed_subject_token_clients: [],
+            ...overrides,
+          });
+        }
+        function useAssurance(values: Record<string, unknown>) {
+          const base = mocks.mockResolveEffectiveSettings.getMockImplementation()!;
+          mocks.mockResolveEffectiveSettings.mockImplementation(
+            async (env: unknown, category: string) =>
+              category === 'assurance' ? values : base(env, category)
+          );
+        }
+        const evidenceReads = () => mocks.accountAdapter.query.mock.calls.length;
+
+        it('changes nothing, and reads no evidence, when nothing is configured', async () => {
+          const env = await createVerificationEnv();
+          mocks.mockParseToken.mockReturnValue(userSubjectToken({ authrim_consent_generation: 0 }));
+
+          const response = await request({}, env);
+
+          expect(response.status).toBe(200);
+          expect(evidenceReads()).toBe(0);
+        });
+
+        it('refuses the exchange of a user token for a client whose minimum the user does not meet', async () => {
+          const env = await createVerificationEnv();
+          useClient({ minimum_ial: 'IAL2' });
+          mocks.mockParseToken.mockReturnValue(userSubjectToken({ authrim_consent_generation: 0 }));
+
+          await expectOAuthError(
+            request({}, env),
+            400,
+            'invalid_grant',
+            'The identity assurance level required for this request has not been met'
+          );
+          expect(evidenceReads()).toBe(1);
+          expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+        });
+
+        it('exchanges the token of a user at the client minimum', async () => {
+          const env = await createVerificationEnv();
+          useClient({ minimum_ial: 'IAL2' });
+          mocks.accountAdapter.query.mockResolvedValue([evidenceRow('IAL2')]);
+          mocks.mockParseToken.mockReturnValue(userSubjectToken({ authrim_consent_generation: 0 }));
+
+          const response = await request({}, env);
+
+          expect(response.status).toBe(200);
+          expect(mocks.mockCreateAccessToken).toHaveBeenCalled();
+        });
+
+        it('judges the scopes the new token carries, not those of the subject token', async () => {
+          const env = await createVerificationEnv();
+          useAssurance({ 'assurance.enabled': true, 'assurance.scope_ial_requirements': MAP });
+          mocks.mockParseToken.mockReturnValue(
+            userSubjectToken({ authrim_consent_generation: 0, scope: 'openid profile_export' })
+          );
+
+          // Asking for the whole scope needs IAL2; narrowing it to openid does not.
+          await expectOAuthError(
+            request({}, env),
+            400,
+            'invalid_grant',
+            'The identity assurance level required for this request has not been met'
+          );
+          expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+          mocks.accountAdapter.query.mockClear();
+
+          const narrowed = await request({ scope: 'openid' }, env);
+
+          expect(narrowed.status).toBe(200);
+          expect(evidenceReads()).toBe(0);
+        });
+
+        it('fails closed (503) when the evidence cannot be read', async () => {
+          const env = await createVerificationEnv();
+          useClient({ minimum_ial: 'IAL2' });
+          mocks.accountAdapter.query.mockRejectedValue(new Error('account database is down'));
+          mocks.mockParseToken.mockReturnValue(userSubjectToken({ authrim_consent_generation: 0 }));
+
+          await expectOAuthError(
+            request({}, env),
+            503,
+            'temporarily_unavailable',
+            'Identity assurance is temporarily unavailable'
+          );
+          expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+        });
+
+        it('holds a subject an external issuer vouches for to the minimum: it has no evidence', async () => {
+          const env = await createVerificationEnv();
+          useClient({ minimum_ial: 'IAL2' });
+          mocks.mockResolveAccountDataContextFromHono.mockRejectedValue(
+            new Error('account_data_route_not_found')
+          );
+          mocks.mockParseToken.mockReturnValue(
+            userSubjectToken({
+              authrim_consent_generation: 0,
+              authrim_subject_issuer: 'https://idp.example.com',
+            })
+          );
+
+          await expectOAuthError(
+            request({}, env),
+            400,
+            'invalid_grant',
+            'The identity assurance level required for this request has not been met'
+          );
+          expect(evidenceReads()).toBe(0);
+          expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+        });
+      });
+
+      it('refuses a subject token whose user has no active account', async () => {
+        const env = await createVerificationEnv();
+        mocks.mockResolveAccountDataContextFromHono.mockRejectedValue(
+          new Error('lookup_destination_revalidation_failed')
+        );
+        mocks.mockParseToken.mockReturnValue(userSubjectToken({ authrim_consent_generation: 0 }));
+
+        await expectOAuthError(
+          request({}, env),
+          400,
+          'invalid_grant',
+          'Subject token is invalid or revoked'
+        );
+      });
+
+      it('carries an external subject issuer on for a subject that was never an account', async () => {
+        const env = await createVerificationEnv();
+        mocks.mockResolveAccountDataContextFromHono.mockRejectedValue(
+          new Error('account_data_route_not_found')
+        );
+        mocks.mockParseToken.mockReturnValue(
+          userSubjectToken({
+            sub: 'service-7',
+            client_id: 'https://issuer.example.com',
+            authrim_subject_issuer: 'https://issuer.example.com',
+          })
+        );
+
+        const response = await request({}, env);
+        expect(response.status).toBe(200);
+        expect(mocks.mockReadAccountAuthenticationState).toHaveBeenCalledWith(
+          expect.anything(),
+          'tenant-a',
+          'service-7'
+        );
+        expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
+          expect.objectContaining({
+            sub: 'service-7',
+            authrim_subject_issuer: 'https://issuer.example.com',
+          }),
+          expect.anything(),
+          expect.any(String),
+          expect.any(Number),
+          'region-jti-1'
+        );
+        const claims = mocks.mockCreateAccessToken.mock.calls[0]?.[0] as Record<string, unknown>;
+        expect(claims.authrim_consent_generation).toBeUndefined();
+      });
+
+      it('refuses an externally asserted subject that was a deleted account', async () => {
+        const env = await createVerificationEnv();
+        mocks.mockResolveAccountDataContextFromHono.mockRejectedValue(
+          new Error('account_data_route_not_found')
+        );
+        mocks.mockReadAccountAuthenticationState.mockResolvedValue({ lifecycle: 'deleted' });
+        mocks.mockParseToken.mockReturnValue(
+          userSubjectToken({ authrim_subject_issuer: 'https://issuer.example.com' })
+        );
+
+        await expectOAuthError(
+          request({}, env),
+          400,
+          'invalid_grant',
+          'Subject token is invalid or revoked'
+        );
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      it('holds an externally asserted subject that is an account to its consent', async () => {
+        const env = await createVerificationEnv();
+        mocks.mockFindOAuthClientConsentRevocation.mockResolvedValue({ generation: 2, revokedAt });
+        mocks.mockParseToken.mockReturnValue(
+          userSubjectToken({
+            authrim_subject_issuer: 'https://issuer.example.com',
+            authrim_consent_generation: 1,
+          })
+        );
+
+        await expectOAuthError(
+          request({}, env),
+          400,
+          'invalid_grant',
+          'Subject token is invalid or revoked'
+        );
+        expect(mocks.mockResolveAccountDataContextFromHono).toHaveBeenCalledWith(
+          expect.anything(),
+          'user-1'
+        );
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      it('holds a user grant to its consent even when its public sub looks like a client', async () => {
+        const env = await createVerificationEnv();
+        mocks.mockFindOAuthClientConsentRevocation.mockResolvedValue({ generation: 2, revokedAt });
+        mocks.mockParseToken.mockReturnValue(
+          userSubjectToken({ sub: 'client:alice', authrim_consent_generation: 1 })
+        );
+
+        await expectOAuthError(
+          request({}, env),
+          400,
+          'invalid_grant',
+          'Subject token is invalid or revoked'
+        );
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      it('refuses a legacy ID token whose mapped sub only looks like a client', async () => {
+        const env = await createVerificationEnv();
+        // Issued before mapped principal subs were refused: no consent generation, no reference,
+        // no token_use. Its owner cannot be found, so it is refused.
+        mocks.mockResolveAccountDataContextFromHono.mockRejectedValue(
+          new Error('account_data_route_not_found')
+        );
+        mocks.mockParseToken.mockReturnValue({
+          sub: 'client:alice',
+          aud: 'service-client-1',
+          scope: 'openid',
+          iat: Math.floor(Date.now() / 1000) - 10,
+        });
+
+        await expectOAuthError(
+          // Presented under any subject_token_type: what it is comes from its signed claims.
+          request({}, env),
+          400,
+          'invalid_grant',
+          'Subject token is invalid or revoked'
+        );
+        // It shows neither a sealed reference nor that its sub is the user's id, so it is refused
+        // before its sub is looked up as an account.
+        expect(mocks.mockResolveAccountDataContextFromHono).not.toHaveBeenCalled();
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      it('exchanges a client credentials token, recording its principal on the new token', async () => {
+        const env = await createVerificationEnv();
+        mocks.mockParseToken.mockReturnValue({
+          sub: 'client:app-client',
+          aud: 'service-client-1',
+          client_id: 'app-client',
+          scope: 'openid',
+          token_use: 'access',
+          jti: 'cc-jti-1',
+          iat: Math.floor(Date.now() / 1000) - 10,
+        });
+
+        const response = await request({}, env);
+        expect(response.status).toBe(200);
+        expect(mocks.mockResolveAccountDataContextFromHono).not.toHaveBeenCalled();
+        expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
+          expect.objectContaining({
+            sub: 'client:app-client',
+            client_id: 'service-client-1',
+            authrim_subject_principal: 'client',
+          }),
+          expect.anything(),
+          expect.any(String),
+          expect.any(Number),
+          'region-jti-1'
+        );
+      });
+
+      it('carries the recorded principal on through another exchange', async () => {
+        const env = await createVerificationEnv();
+        // A token from an earlier exchange: sub of the client, client_id of the exchanger.
+        mocks.mockParseToken.mockReturnValue({
+          sub: 'client:app-client',
+          aud: 'service-client-1',
+          client_id: 'first-exchanger',
+          scope: 'openid',
+          token_use: 'access',
+          jti: 'exchanged-jti-1',
+          authrim_subject_principal: 'client',
+          iat: Math.floor(Date.now() / 1000) - 10,
+        });
+
+        const response = await request({}, env);
+        expect(response.status).toBe(200);
+        expect(mocks.mockResolveAccountDataContextFromHono).not.toHaveBeenCalled();
+        expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
+          expect.objectContaining({
+            sub: 'client:app-client',
+            authrim_subject_principal: 'client',
+          }),
+          expect.anything(),
+          expect.any(String),
+          expect.any(Number),
+          'region-jti-1'
+        );
+      });
+
+      it('refuses a legacy ID token mapped to look like a client credentials token', async () => {
+        const env = await createVerificationEnv();
+        mocks.mockResolveAccountDataContextFromHono.mockRejectedValue(
+          new Error('account_data_route_not_found')
+        );
+        // A mapping could once emit sub, client_id and token_use on an ID token, but never jti.
+        mocks.mockParseToken.mockReturnValue({
+          sub: 'client:alice',
+          aud: 'service-client-1',
+          client_id: 'alice',
+          token_use: 'access',
+          scope: 'openid',
+          iat: Math.floor(Date.now() / 1000) - 10,
+        });
+
+        await expectOAuthError(
+          request({}, env),
+          400,
+          'invalid_grant',
+          'Subject token is invalid or revoked'
+        );
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      it('does not take a recorded principal on an ID token', async () => {
+        const env = await createVerificationEnv();
+        mocks.mockResolveAccountDataContextFromHono.mockRejectedValue(
+          new Error('account_data_route_not_found')
+        );
+        // No token_use: an ID token, whose mapping or custom claims might have added the claim.
+        mocks.mockParseToken.mockReturnValue({
+          sub: 'client:alice',
+          aud: 'service-client-1',
+          scope: 'openid',
+          authrim_subject_principal: 'client',
+          iat: Math.floor(Date.now() / 1000) - 10,
+        });
+
+        await expectOAuthError(
+          request({}, env),
+          400,
+          'invalid_grant',
+          'Subject token is invalid or revoked'
+        );
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      it('does not take an original_issuer claim for evidence of an external subject', async () => {
+        const env = await createVerificationEnv();
+        // An ID token whose identity mapping emitted original_issuer, for a subject with no
+        // account route: not an external subject, so refused.
+        mocks.mockResolveAccountDataContextFromHono.mockRejectedValue(
+          new Error('account_data_route_not_found')
+        );
+        mocks.mockParseToken.mockReturnValue(
+          userSubjectToken({ sub: 'pairwise-legacy', original_issuer: 'https://idp.example.com' })
+        );
+
+        await expectOAuthError(
+          request({}, env),
+          400,
+          'invalid_grant',
+          'Subject token is invalid or revoked'
+        );
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      it('finds the account of a pairwise ID token through its sealed subject reference', async () => {
+        const actual =
+          await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
+        const rootKey = 'ab'.repeat(32);
+        const reference = await actual.sealSubjectReference(
+          { OBJECT_ENCRYPTION_ROOT_KEY: rootKey },
+          { tenantId: 'tenant-a', clientId: 'app-client' },
+          'user-1'
+        );
+        const env = { ...(await createVerificationEnv()), OBJECT_ENCRYPTION_ROOT_KEY: rootKey };
+        // Only the account the reference seals has a route; the pairwise sub has none.
+        mocks.mockResolveAccountDataContextFromHono.mockImplementation(
+          async (_c: unknown, accountId: string) => {
+            if (accountId !== 'user-1') throw new Error('account_data_route_not_found');
+            return {};
+          }
+        );
+        mocks.mockFindOAuthClientConsentRevocation.mockResolvedValue({ generation: 2, revokedAt });
+        mocks.mockParseToken.mockReturnValue({
+          sub: 'pairwise-subject-abc',
+          aud: 'service-client-1',
+          azp: 'app-client',
+          scope: 'openid',
+          iat: Math.floor(Date.now() / 1000) - 10,
+          authrim_consent_generation: 2,
+          authrim_subject_ref: reference,
+        });
+
+        const response = await request({}, env);
+        expect(response.status).toBe(200);
+        expect(mocks.mockFindOAuthClientConsentRevocation).toHaveBeenCalledWith(expect.anything(), {
+          tenantId: 'tenant-a',
+          userId: 'user-1',
+          clientId: 'app-client',
+        });
+        expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
+          expect.objectContaining({
+            sub: 'pairwise-subject-abc',
+            authrim_consent_generation: 2,
+            authrim_consent_client_id: 'app-client',
+            authrim_subject_ref: reference,
+          }),
+          expect.anything(),
+          expect.any(String),
+          expect.any(Number),
+          'region-jti-1'
+        );
+      });
+
+      describe.each(['delegation', 'impersonation'])(
+        'an ID token whose mapped sub equals another user id (%s)',
+        (mode) => {
+          const modeEnv = {
+            ENABLE_TOKEN_EXCHANGE_DELEGATION: 'true',
+            ENABLE_TOKEN_EXCHANGE_IMPERSONATION: 'true',
+          };
+          beforeEach(() => {
+            mocks.mockGetClientCached.mockResolvedValue({
+              client_id: 'service-client-1',
+              tenant_id: 'tenant-a',
+              client_secret_hash: 'hashed-secret',
+              token_exchange_allowed: true,
+              token_endpoint_auth_method: 'client_secret_post',
+              delegation_mode: mode,
+              allowed_scopes: ['openid'],
+              allowed_token_exchange_resources: ['https://service.example.com'],
+              allowed_subject_token_clients: ['app-client'],
+            });
+          });
+
+          // Issued for user-1 by an app whose identity mapping chose the sub "user-2", which is
+          // another user's account id, by a server without the key to seal the reference (or
+          // before ID tokens marked their sub): the consent generation alone, no jti.
+          const collidingIdToken = {
+            sub: 'user-2',
+            aud: 'service-client-1',
+            azp: 'app-client',
+            scope: 'openid',
+            iat: Math.floor(Date.now() / 1000) - 10,
+            authrim_consent_generation: 0,
+          };
+
+          securityRegressionIt('is refused without being taken for that user', async () => {
+            const env = await createVerificationEnv();
+            mocks.mockParseToken.mockReturnValue(collidingIdToken);
+
+            await expectOAuthError(
+              request({}, { ...env, ...modeEnv }),
+              400,
+              'invalid_grant',
+              'Subject token is invalid or revoked'
+            );
+            expect(mocks.mockResolveAccountDataContextFromHono).not.toHaveBeenCalled();
+            expect(mocks.mockFindOAuthClientConsentRevocation).not.toHaveBeenCalled();
+            expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+          });
+
+          securityRegressionIt(
+            'is exchanged for the user its sealed reference names, keeping the reference',
+            async () => {
+              const actual =
+                await vi.importActual<typeof import('@authrim/ar-lib-core')>(
+                  '@authrim/ar-lib-core'
+                );
+              const rootKey = 'ab'.repeat(32);
+              const reference = await actual.sealSubjectReference(
+                { OBJECT_ENCRYPTION_ROOT_KEY: rootKey },
+                { tenantId: 'tenant-a', clientId: 'app-client' },
+                'user-1'
+              );
+              const env = {
+                ...(await createVerificationEnv()),
+                ...modeEnv,
+                OBJECT_ENCRYPTION_ROOT_KEY: rootKey,
+              };
+              mocks.mockParseToken.mockReturnValue({
+                ...collidingIdToken,
+                authrim_subject_ref: reference,
+              });
+
+              const response = await request({}, env);
+
+              expect(response.status).toBe(200);
+              expect(mocks.mockResolveAccountDataContextFromHono).toHaveBeenCalledWith(
+                expect.anything(),
+                'user-1'
+              );
+              expect(mocks.mockResolveAccountDataContextFromHono).not.toHaveBeenCalledWith(
+                expect.anything(),
+                'user-2'
+              );
+              expect(mocks.mockFindOAuthClientConsentRevocation).toHaveBeenCalledWith(
+                expect.anything(),
+                { tenantId: 'tenant-a', userId: 'user-1', clientId: 'app-client' }
+              );
+              // The exchanged token keeps the public sub and the reference, so a resource that
+              // keys on sub cannot take it for user-2.
+              expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
+                expect.objectContaining({ sub: 'user-2', authrim_subject_ref: reference }),
+                expect.anything(),
+                expect.any(String),
+                expect.any(Number),
+                'region-jti-1'
+              );
+            }
+          );
+
+          securityRegressionIt(
+            'is refused even when it names no consent client to check the account under',
+            async () => {
+              // An audience list and no azp: no consent client, so no account check would run and
+              // the exchanged token would carry the mapped sub with no reference.
+              const env = await createVerificationEnv();
+              for (const payload of [
+                { ...collidingIdToken, azp: undefined, aud: ['service-client-1', 'other'] },
+                {
+                  ...collidingIdToken,
+                  azp: undefined,
+                  aud: ['service-client-1', 'other'],
+                  authrim_subject_ref: 'sr1.iv.ciphertext',
+                },
+              ]) {
+                mocks.mockParseToken.mockReturnValue(payload);
+
+                await expectOAuthError(
+                  request({}, { ...env, ...modeEnv }),
+                  400,
+                  'invalid_grant',
+                  'Subject token is invalid or revoked'
+                );
+              }
+              expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+            }
+          );
+
+          securityRegressionIt(
+            'refuses a back-channel logout token whose sub equals that user id',
+            async () => {
+              // A logout token Authrim sent the app: a JWT ID, the sub the app's ID tokens carry
+              // (mapped), no token_use and no reference.
+              const env = await createVerificationEnv();
+              mocks.mockParseToken.mockReturnValue({
+                iss: 'https://auth.example.com',
+                sub: 'user-2',
+                aud: 'service-client-1',
+                iat: Math.floor(Date.now() / 1000) - 10,
+                jti: 'logout-jti-1',
+                events: { 'http://schemas.openid.net/event/backchannel-logout': {} },
+              });
+
+              await expectOAuthError(
+                request({}, { ...env, ...modeEnv }),
+                400,
+                'invalid_grant',
+                'Subject token is invalid or revoked'
+              );
+              expect(mocks.mockResolveAccountDataContextFromHono).not.toHaveBeenCalled();
+              expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+            }
+          );
+
+          it('is exchanged as before once the ID token marks its sub as the user id', async () => {
+            const env = await createVerificationEnv();
+            mocks.mockParseToken.mockReturnValue({
+              ...collidingIdToken,
+              sub: 'user-1',
+              authrim_subject_account: true,
+            });
+
+            const response = await request({}, { ...env, ...modeEnv });
+
+            expect(response.status).toBe(200);
+            expect(mocks.mockResolveAccountDataContextFromHono).toHaveBeenCalledWith(
+              expect.anything(),
+              'user-1'
+            );
+            const issued = mocks.mockCreateAccessToken.mock.calls.at(-1)?.[0] as Record<
+              string,
+              unknown
+            >;
+            expect(issued.sub).toBe('user-1');
+            expect(issued.authrim_subject_account).toBeUndefined();
+          });
+        }
+      );
+
+      it('refuses a subject reference sealed for another client', async () => {
+        const actual =
+          await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
+        const rootKey = 'ab'.repeat(32);
+        const reference = await actual.sealSubjectReference(
+          { OBJECT_ENCRYPTION_ROOT_KEY: rootKey },
+          { tenantId: 'tenant-a', clientId: 'other-client' },
+          'user-1'
+        );
+        const env = { ...(await createVerificationEnv()), OBJECT_ENCRYPTION_ROOT_KEY: rootKey };
+        mocks.mockParseToken.mockReturnValue({
+          sub: 'pairwise-subject-abc',
+          aud: 'service-client-1',
+          azp: 'app-client',
+          scope: 'openid',
+          iat: Math.floor(Date.now() / 1000) - 10,
+          authrim_consent_generation: 0,
+          authrim_subject_ref: reference,
+        });
+
+        await expectOAuthError(
+          request({}, env),
+          400,
+          'invalid_grant',
+          'Subject token is invalid or revoked'
+        );
+      });
+    });
   });
 
   it('mints downstream access tokens with approval authorization details', async () => {
@@ -1065,6 +2047,8 @@ describe('downstream elevation grant token exchange', () => {
           },
         }),
         ENABLE_TOKEN_EXCHANGE: 'true',
+        ENABLE_TOKEN_EXCHANGE_DELEGATION: 'true',
+        ENABLE_TOKEN_EXCHANGE_IMPERSONATION: 'true',
         PUBLIC_JWK_JSON: JSON.stringify(keySet.publicJWK),
       },
     });
@@ -1138,6 +2122,8 @@ describe('downstream elevation grant token exchange', () => {
           },
         }),
         ENABLE_TOKEN_EXCHANGE: 'true',
+        ENABLE_TOKEN_EXCHANGE_DELEGATION: 'true',
+        ENABLE_TOKEN_EXCHANGE_IMPERSONATION: 'true',
         PUBLIC_JWK_JSON: JSON.stringify(keySet.publicJWK),
       },
     });
@@ -1180,6 +2166,7 @@ describe('downstream elevation grant token exchange', () => {
       aud: ['service-client-1'],
       client_id: 'upstream-client-1',
       exp: Math.floor(Date.now() / 1000) + 300,
+      token_use: 'access',
       jti: 'subject-jti-1',
       scope: 'read:data write:data',
     });
@@ -1217,6 +2204,8 @@ describe('downstream elevation grant token exchange', () => {
           },
         }),
         ENABLE_TOKEN_EXCHANGE: 'true',
+        ENABLE_TOKEN_EXCHANGE_DELEGATION: 'true',
+        ENABLE_TOKEN_EXCHANGE_IMPERSONATION: 'true',
         PUBLIC_JWK_JSON: JSON.stringify(keySet.publicJWK),
       },
     });
@@ -1253,6 +2242,8 @@ describe('downstream elevation grant token exchange', () => {
       },
       env: {
         ENABLE_TOKEN_EXCHANGE: 'true',
+        ENABLE_TOKEN_EXCHANGE_DELEGATION: 'true',
+        ENABLE_TOKEN_EXCHANGE_IMPERSONATION: 'true',
         TOKEN_EXCHANGE_MAX_RESOURCE_PARAMS: '1',
       },
     });
@@ -1276,7 +2267,7 @@ describe('downstream elevation grant token exchange', () => {
   });
 
   it('applies settings configured audience limits before client authentication', async () => {
-    mocks.mockGetSystemSettingsCached.mockResolvedValueOnce({
+    setSystemSettings({
       oidc: {
         tokenExchange: {
           maxAudienceParams: 1,
@@ -1290,6 +2281,8 @@ describe('downstream elevation grant token exchange', () => {
       },
       env: {
         ENABLE_TOKEN_EXCHANGE: 'true',
+        ENABLE_TOKEN_EXCHANGE_DELEGATION: 'true',
+        ENABLE_TOKEN_EXCHANGE_IMPERSONATION: 'true',
         TOKEN_EXCHANGE_MAX_AUDIENCE_PARAMS: '10',
       },
     });
@@ -1324,6 +2317,8 @@ describe('downstream elevation grant token exchange', () => {
       },
       env: {
         ENABLE_TOKEN_EXCHANGE: 'true',
+        ENABLE_TOKEN_EXCHANGE_DELEGATION: 'true',
+        ENABLE_TOKEN_EXCHANGE_IMPERSONATION: 'true',
         TOKEN_EXCHANGE_ALLOWED_TYPES: 'jwt',
       },
     });
@@ -1351,6 +2346,8 @@ describe('downstream elevation grant token exchange', () => {
       },
       env: {
         ENABLE_TOKEN_EXCHANGE: 'true',
+        ENABLE_TOKEN_EXCHANGE_DELEGATION: 'true',
+        ENABLE_TOKEN_EXCHANGE_IMPERSONATION: 'true',
         TOKEN_EXCHANGE_ALLOWED_TYPES: 'refresh_token',
       },
     });

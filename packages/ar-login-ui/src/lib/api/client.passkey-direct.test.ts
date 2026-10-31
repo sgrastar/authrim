@@ -18,11 +18,91 @@ async function loadClient() {
 	return import('./client');
 }
 
+describe('naming the Flow interaction of a sign-in attempt', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		sessionStorage.clear();
+	});
+
+	const ok = () =>
+		vi
+			.fn<typeof fetch>()
+			.mockResolvedValue(
+				new Response(JSON.stringify({ challenge_id: 'c', options: {} }), { status: 200 })
+			);
+	const headerOf = (fetchMock: ReturnType<typeof ok>) =>
+		new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('X-Authrim-Interaction-Id');
+
+	it('sends it with the passkey, TOTP and directory password starts, and only when a Flow runs', async () => {
+		for (const interactionId of ['int-1', undefined]) {
+			const passkey = ok();
+			vi.stubGlobal('fetch', passkey);
+			const { passkeyAPI, totpAPI, directoryPasswordAPI } = await loadClient();
+			await passkeyAPI.getLoginOptions({ runtimeInteractionId: interactionId });
+			expect(headerOf(passkey)).toBe(interactionId ?? null);
+
+			const totp = ok();
+			vi.stubGlobal('fetch', totp);
+			await totpAPI.startLogin({ identifier: 'person', runtimeInteractionId: interactionId });
+			expect(headerOf(totp)).toBe(interactionId ?? null);
+
+			const directory = ok();
+			vi.stubGlobal('fetch', directory);
+			// Only the request is looked at: what the dummy response leads to does not matter.
+			await directoryPasswordAPI
+				.login({ username: 'person', password: 'secret', runtimeInteractionId: interactionId })
+				.catch(() => undefined);
+			expect(headerOf(directory)).toBe(interactionId ?? null);
+		}
+	});
+
+	it.each(['saml_sp', 'oauth_redirect'] as const)(
+		'adds it to the %s provider start, and only when a Flow runs',
+		async (startMode) => {
+			const { externalIdpAPI } = await loadClient();
+			const named = await externalIdpAPI.startLogin(
+				'idp-1',
+				'https://login.example.com/callback',
+				undefined,
+				startMode,
+				undefined,
+				undefined,
+				undefined,
+				'int-1'
+			);
+			expect(new URL(named.url).searchParams.get('runtime_interaction_id')).toBe('int-1');
+			const unnamed = await externalIdpAPI.startLogin(
+				'idp-1',
+				'https://login.example.com/callback',
+				undefined,
+				startMode
+			);
+			expect(new URL(unnamed.url).searchParams.has('runtime_interaction_id')).toBe(false);
+		}
+	);
+});
+
 describe('LoginUI passkey Direct Auth adapter', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		sessionStorage.clear();
 	});
+
+	it.each(['', 'oauth-challenge'])(
+		'binds guest login to the direct client or original challenge: %s',
+		async (challenge) => {
+			const fetchMock = vi
+				.fn<typeof fetch>()
+				.mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 }));
+			vi.stubGlobal('fetch', fetchMock);
+			const { guestAPI } = await loadClient();
+			await guestAPI.login(challenge);
+			const body = JSON.parse(fetchMock.mock.calls[0][1]?.body as string);
+			expect(body).toEqual(
+				challenge ? { authorizationChallengeId: challenge } : { clientId: 'login-ui' }
+			);
+		}
+	);
 
 	it('uses canonical Direct Auth endpoints and redeems the artifact into a managed session', async () => {
 		const fetchMock = vi
@@ -265,6 +345,32 @@ describe('LoginUI passkey Direct Auth adapter', () => {
 		expect(fetchMock.mock.calls[1]?.[1]?.body).toBe(fetchMock.mock.calls[0]?.[1]?.body);
 	});
 
+	it('names the screen a human verification token came from when sending an email code', async () => {
+		const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+			new Response(
+				JSON.stringify({
+					attempt_id: 'attempt_screen',
+					expires_in: 300,
+					masked_email: 'u***@example.com'
+				}),
+				{ status: 200, headers: { 'Content-Type': 'application/json' } }
+			)
+		);
+		Object.defineProperty(globalThis, 'fetch', { value: fetchMock, configurable: true });
+		const { emailCodeAPI } = await loadClient();
+
+		await emailCodeAPI.send({
+			email: 'user@example.com',
+			human_verification_response: 'human-token',
+			humanVerificationScreen: 'signup'
+		});
+		await emailCodeAPI.send({ email: 'user@example.com' });
+
+		const headersOf = (index: number) => new Headers(fetchMock.mock.calls[index]?.[1]?.headers);
+		expect(headersOf(0).get('X-Authrim-Human-Verification-Action')).toBe('signup');
+		expect(headersOf(1).has('X-Authrim-Human-Verification-Action')).toBe(false);
+	});
+
 	it('keeps the Email Code request loading until routed provisioning is ready', async () => {
 		const token = 'A'.repeat(43);
 		const fetchMock = vi
@@ -371,6 +477,154 @@ describe('LoginUI passkey Direct Auth adapter', () => {
 		});
 		expect(replayBody.client_id).toBe(initialBody.client_id);
 		expect(replayBody.code_challenge).toBe(initialBody.code_challenge);
+	});
+
+	it('sends the invitation with Passkey signup start and keeps it on a provisioning replay', async () => {
+		const token = 'B'.repeat(43);
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						status: 'provisioning',
+						provisioning_token: token,
+						status_endpoint: '/api/v1/auth/account-provisioning/status',
+						retry_after_ms: 250,
+						resume_user_id: 'user_invited_resume'
+					}),
+					{ status: 202, headers: { 'Content-Type': 'application/json' } }
+				)
+			)
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ status: 'ready' }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			)
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						challenge_id: 'challenge_invited',
+						options: { challenge: 'passkey-challenge' }
+					}),
+					{ status: 200, headers: { 'Content-Type': 'application/json' } }
+				)
+			);
+		Object.defineProperty(globalThis, 'fetch', { value: fetchMock, configurable: true });
+		const { passkeyAPI } = await loadClient();
+
+		await passkeyAPI.getRegisterOptions({ email: 'new@example.com', inviteToken: 'invite-abc' });
+
+		const initialBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+		const replayBody = JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body));
+		expect(fetchMock.mock.calls[0]?.[0].toString()).toContain(
+			'/api/v1/auth/direct/passkey/signup/start'
+		);
+		expect(initialBody).toMatchObject({ email: 'new@example.com', invite_token: 'invite-abc' });
+		expect(replayBody).toMatchObject({
+			invite_token: 'invite-abc',
+			provisioning_token: token,
+			resume_user_id: 'user_invited_resume'
+		});
+		// The status poll carries only the provisioning token.
+		expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+			provisioning_token: token
+		});
+	});
+
+	it('sends the invitation and the proof of its email with an authenticator-app signup start', async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({ challenge_id: 'totp-chal', secret: 'S', otpauth_uri: 'otpauth://x' }),
+					{ status: 201, headers: { 'Content-Type': 'application/json' } }
+				)
+			);
+		Object.defineProperty(globalThis, 'fetch', { value: fetchMock, configurable: true });
+		const { totpAPI } = await loadClient();
+
+		await totpAPI.createSignupOptions({
+			email: 'new@example.com',
+			inviteToken: 'invite-abc',
+			invitationEmailProof: 'P'.repeat(43)
+		});
+
+		expect(fetchMock.mock.calls[0]?.[0].toString()).toContain('/api/auth/totp/signup/options');
+		expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+			email: 'new@example.com',
+			invite_token: 'invite-abc',
+			invitation_email_proof: 'P'.repeat(43)
+		});
+	});
+
+	it('sends the proof of the invited email with a Passkey signup start', async () => {
+		const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
+			new Response(JSON.stringify({ challenge_id: 'chal', options: { challenge: 'c' } }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			})
+		);
+		Object.defineProperty(globalThis, 'fetch', { value: fetchMock, configurable: true });
+		const { passkeyAPI } = await loadClient();
+
+		await passkeyAPI.getRegisterOptions({
+			email: 'new@example.com',
+			inviteToken: 'invite-abc',
+			invitationEmailProof: 'P'.repeat(43)
+		});
+
+		expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+			invite_token: 'invite-abc',
+			invitation_email_proof: 'P'.repeat(43)
+		});
+	});
+
+	it('asks the invitation endpoints, and never names an address to send the code to', async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockImplementation(
+				async () =>
+					new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+			);
+		Object.defineProperty(globalThis, 'fetch', { value: fetchMock, configurable: true });
+		const { invitationAPI } = await loadClient();
+
+		await invitationAPI.validate('tok en');
+		await invitationAPI.sendEmailCode('tok');
+		await invitationAPI.verifyEmailCode({ token: 'tok', verificationId: 'v-1', code: '123456' });
+
+		const calls = fetchMock.mock.calls.map(([url, init]) => [
+			new URL(url.toString()).pathname + new URL(url.toString()).search,
+			init?.method,
+			init?.body ? JSON.parse(String(init.body)) : undefined
+		]);
+		expect(calls).toEqual([
+			['/api/v1/invitations/validate?token=tok%20en', 'GET', undefined],
+			['/api/v1/invitations/email-verification/send', 'POST', { token: 'tok' }],
+			[
+				'/api/v1/invitations/email-verification/verify',
+				'POST',
+				{ token: 'tok', verification_id: 'v-1', code: '123456' }
+			]
+		]);
+	});
+
+	it('leaves Passkey signup start without an invitation when none is given', async () => {
+		const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
+			new Response(JSON.stringify({ challenge_id: 'chal', options: { challenge: 'c' } }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			})
+		);
+		Object.defineProperty(globalThis, 'fetch', { value: fetchMock, configurable: true });
+		const { passkeyAPI } = await loadClient();
+
+		await passkeyAPI.getRegisterOptions({ email: 'new@example.com' });
+
+		expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).not.toHaveProperty(
+			'invite_token'
+		);
 	});
 
 	it('continues polling when the resumed request returns a second provisioning operation', async () => {
@@ -1006,6 +1260,45 @@ describe('LoginUI external IdP adapter boundary', () => {
 		expect(result).not.toHaveProperty('codeVerifier');
 	});
 
+	it('carries an invitation to an OAuth start and to a SAML start', async () => {
+		const { externalIdpAPI } = await loadClient();
+
+		const oauth = new URL(
+			(
+				await externalIdpAPI.startLogin(
+					'github',
+					'https://login.example.com/callback',
+					undefined,
+					'oauth_redirect',
+					undefined,
+					undefined,
+					'invite-abc'
+				)
+			).url
+		);
+		const saml = new URL(
+			(
+				await externalIdpAPI.startLogin(
+					'corp',
+					'https://login.example.com/',
+					'/saml/sp/login?idp=corp',
+					'saml_sp',
+					undefined,
+					undefined,
+					'invite-abc'
+				)
+			).url
+		);
+		const plain = new URL(
+			(await externalIdpAPI.startLogin('github', 'https://login.example.com/callback')).url
+		);
+
+		expect(oauth.searchParams.get('invite_token')).toBe('invite-abc');
+		expect(saml.searchParams.get('invite_token')).toBe('invite-abc');
+		expect(saml.searchParams.get('idp')).toBe('corp');
+		expect(plain.searchParams.has('invite_token')).toBe(false);
+	});
+
 	it('encodes the provider id as a single path segment', async () => {
 		const { externalIdpAPI } = await loadClient();
 
@@ -1035,6 +1328,29 @@ describe('LoginUI external IdP adapter boundary', () => {
 		expect(url.searchParams.has('client_id')).toBe(false);
 		expect(url.searchParams.has('code_challenge')).toBe(false);
 	});
+
+	it.each([
+		['oauth_redirect', undefined, '/api/external/corp/start'],
+		['saml_sp', '/saml/sp/login?idp=saml-idp-1', '/saml/sp/login']
+	] as const)(
+		'passes the authorization challenge a %s sign-in answers',
+		async (startMode, startUrl, pathname) => {
+			const { externalIdpAPI } = await loadClient();
+
+			const result = await externalIdpAPI.startLogin(
+				'corp',
+				'https://login.example.com/callback',
+				startUrl,
+				startMode,
+				undefined,
+				'reauth_challenge'
+			);
+			const url = new URL(result.url);
+
+			expect(url.pathname).toBe(pathname);
+			expect(url.searchParams.get('authorization_challenge_id')).toBe('reauth_challenge');
+		}
+	);
 
 	it('adds human verification responses only to Authrim-managed external start URLs', async () => {
 		const { externalIdpAPI } = await loadClient();

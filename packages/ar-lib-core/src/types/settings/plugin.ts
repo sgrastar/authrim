@@ -2,6 +2,17 @@
  * Plugin Settings Category
  *
  * Settings related to plugin execution and management.
+ * `plugin.enabled` is the tenant's permission for external (custom, dynamic worker) plugin code to
+ * run. It does not touch the built-in plugins: the email providers (Resend, Cloudflare Mail,
+ * console), the CAPTCHA providers (Turnstile, reCAPTCHA, hCaptcha) and TOTP are chosen by the
+ * plugin admin API, the Email Settings order and `authentication-methods.human_verification`, as
+ * before. Whether a tenant admin or only the platform may flip it is not decided here: both may
+ * (settings category `plugin` is tenant-scoped); a platform-only switch could be added later.
+ * How long a plugin may run is not a tenant setting: ar-plugin-runner reads it from the policy of
+ * each installation (timeout_ms, 1 to 30,000 ms), so the tenant has no switch for it.
+ * Updating plugins is not a setting either: there is no source to check for updates (no registry or
+ * distribution point), so a switch for it would do nothing. Design it anew when an update mechanism
+ * is built.
  * API: GET/PATCH /api/admin/tenants/:tenantId/settings/plugin
  * Config Level: tenant
  */
@@ -14,15 +25,6 @@ import type { CategoryMeta, SettingMeta } from '../../utils/settings-manager';
 export interface PluginSettings {
   // Plugin Execution
   'plugin.enabled': boolean;
-  'plugin.execution_timeout_ms': number;
-  'plugin.memory_limit_mb': number;
-
-  // Plugin Management
-  'plugin.auto_update_check': boolean;
-
-  // Individual Plugin Enable/Disable
-  'plugin.notifier_resend_enabled': boolean;
-  'plugin.notifier_console_enabled': boolean;
 }
 
 /**
@@ -34,66 +36,10 @@ export const PLUGIN_SETTINGS_META: Record<keyof PluginSettings, SettingMeta> = {
     type: 'boolean',
     default: false,
     envKey: 'PLUGIN_ENABLED',
-    label: 'Plugins Enabled',
-    description: 'Enable plugin execution for this tenant',
-    visibility: 'admin',
-  },
-  'plugin.execution_timeout_ms': {
-    key: 'plugin.execution_timeout_ms',
-    type: 'duration',
-    default: 5000,
-    envKey: 'PLUGIN_EXECUTION_TIMEOUT_MS',
-    label: 'Execution Timeout',
-    description: 'Maximum plugin execution time in milliseconds',
-    min: 100,
-    max: 30000,
-    unit: 'ms',
-    visibility: 'admin',
-    dependsOn: [{ key: 'plugin.enabled', value: true }],
-  },
-  'plugin.memory_limit_mb': {
-    key: 'plugin.memory_limit_mb',
-    type: 'number',
-    default: 128,
-    envKey: 'PLUGIN_MEMORY_LIMIT_MB',
-    label: 'Memory Limit',
-    description: 'Maximum memory allocation for plugins in megabytes',
-    min: 16,
-    max: 512,
-    visibility: 'admin',
-    dependsOn: [{ key: 'plugin.enabled', value: true }],
-  },
-  'plugin.auto_update_check': {
-    key: 'plugin.auto_update_check',
-    type: 'boolean',
-    default: true,
-    envKey: 'PLUGIN_AUTO_UPDATE_CHECK',
-    label: 'Auto Update Check',
-    description: 'Automatically check for plugin updates',
-    visibility: 'admin',
-    dependsOn: [{ key: 'plugin.enabled', value: true }],
-  },
-  'plugin.notifier_resend_enabled': {
-    key: 'plugin.notifier_resend_enabled',
-    type: 'boolean',
-    default: true,
-    envKey: 'PLUGIN_NOTIFIER_RESEND_ENABLED',
-    label: 'Resend Email Plugin',
+    label: 'External Plugins Enabled',
     description:
-      'Enable the Resend Email notifier plugin for sending OTP codes and transactional emails',
+      'Allow the code of external (custom) plugins to run for this tenant. Built-in email, CAPTCHA and TOTP providers are not affected.',
     visibility: 'admin',
-    dependsOn: [{ key: 'plugin.enabled', value: true }],
-  },
-  'plugin.notifier_console_enabled': {
-    key: 'plugin.notifier_console_enabled',
-    type: 'boolean',
-    default: false,
-    envKey: 'PLUGIN_NOTIFIER_CONSOLE_ENABLED',
-    label: 'Console Notifier Plugin',
-    description:
-      'Enable the Console notifier plugin (development only, logs notifications to console)',
-    visibility: 'admin',
-    dependsOn: [{ key: 'plugin.enabled', value: true }],
   },
 };
 
@@ -112,9 +58,4 @@ export const PLUGIN_CATEGORY_META: CategoryMeta = {
  */
 export const PLUGIN_DEFAULTS: PluginSettings = {
   'plugin.enabled': false,
-  'plugin.execution_timeout_ms': 5000,
-  'plugin.memory_limit_mb': 128,
-  'plugin.auto_update_check': true,
-  'plugin.notifier_resend_enabled': true,
-  'plugin.notifier_console_enabled': false,
 };

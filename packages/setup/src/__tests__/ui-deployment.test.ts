@@ -4,6 +4,8 @@ import {
   describeAdminUiApiMode,
   DISABLED_API_BACKEND_URL,
   resolveUiDeploymentSettings,
+  resolveUiPackageDir,
+  resolveUiSourcePackage,
   uiCustomDomainRequiresOwnRoute,
 } from '../core/ui-deployment.js';
 
@@ -787,5 +789,35 @@ describe('resolveUiDeploymentSettings', () => {
         multiTenant: scenario.multiTenant,
       })
     ).toBe(scenario.expected);
+  });
+});
+
+describe('Admin UI slot source package', () => {
+  it('builds the legacy Admin UI unless the admin console is selected', () => {
+    expect(resolveUiSourcePackage('ar-admin-ui', undefined)).toBe('ar-admin-ui');
+    expect(resolveUiSourcePackage('ar-admin-ui', 'legacy')).toBe('ar-admin-ui');
+    expect(resolveUiSourcePackage('ar-admin-ui', 'console')).toBe('ar-admin-console');
+    expect(resolveUiSourcePackage('ar-login-ui', 'console')).toBe('ar-login-ui');
+    expect(resolveUiPackageDir('/repo', 'ar-admin-ui', 'console')).toBe(
+      '/repo/packages/ar-admin-console'
+    );
+  });
+
+  it('keeps the slot deployment settings and only changes the source package', () => {
+    const legacy = resolveUiDeploymentSettings({
+      component: 'ar-admin-ui',
+      config: createConfig(),
+    });
+    const consoleSettings = resolveUiDeploymentSettings({
+      component: 'ar-admin-ui',
+      config: createConfig({
+        components: { adminUiVariant: 'console' } as AuthrimConfig['components'],
+      }),
+    });
+    expect(legacy.sourcePackage).toBe('ar-admin-ui');
+    expect(consoleSettings.sourcePackage).toBe('ar-admin-console');
+    const { sourcePackage: _a, ...legacyRest } = legacy;
+    const { sourcePackage: _b, ...consoleRest } = consoleSettings;
+    expect(consoleRest).toEqual(legacyRest);
   });
 });

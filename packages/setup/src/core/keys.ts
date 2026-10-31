@@ -1,3 +1,4 @@
+import { readPrivateFileSecurely, writePrivateFileAtomically } from './atomic-file.js';
 /**
  * Authrim Key Generation Module
  *
@@ -78,7 +79,11 @@ export interface KeyMetadata {
     objectEncryptionRootKey?: string;
     otpHmacSecret?: string;
     loggingCursorHmacSecret?: string;
+    logArchiveContentHmacKey?: string;
+    logArchiveRootKeyring?: string;
     lookupHmacKeySlotA?: string;
+    tombstoneHmacKeyring?: string;
+    investigationSubjectHmacKeyring?: string;
     flowRuntimeHmacSecret?: string;
     vcTransactionCodeHmacSecret?: string;
     vcEvidenceHmacSecret?: string;
@@ -90,6 +95,7 @@ export interface KeyMetadata {
     notificationPayloadEncryptPublicJwks?: string;
     notificationIntentHmacKey?: string;
     agentElevationEncryptionKey?: string;
+    tenantBackupWrappingKey?: string;
     setupMachinePrivateKey?: string;
     setupMachinePublicKey?: string;
     adminUiBffPrivateKey?: string;
@@ -160,6 +166,8 @@ export interface GeneratedSecrets {
   notificationIntentHmacKey: string;
   /** Dedicated AES-256-GCM key for Agent elevation payloads and terminal results. */
   agentElevationEncryptionKey: string;
+  /** Dedicated wrapping key for short-lived tenant backup key handoffs. */
+  tenantBackupWrappingKey: string;
   /** Setup token for initial admin creation */
   setupToken?: string;
 }
@@ -431,6 +439,58 @@ export function generateBase64Secret(bytes: number = 32): string {
 /**
  * Generate all required secrets for Authrim
  */
+/**
+ * A new tombstone keyring (TOMBSTONE_HMAC_KEYRING): one 256-bit key, generation 1, current.
+ * Deleted accounts' email fingerprints are made with it; see ar-lib-core tombstone-hmac-keyring
+ * for its format and how it is rotated (keys are added, never replaced in place).
+ */
+export function generateTombstoneHmacKeyring(): string {
+  return JSON.stringify({ current: 1, keys: { '1': generateBase64Secret(32) } });
+}
+
+/**
+ * A new investigation keyring (INVESTIGATION_SUBJECT_HMAC_KEYRING), of the tombstone keyring's
+ * shape and rotation: failed sign-in attempts carry their account's hash under it; see ar-lib-core
+ * sign-in-attempts.
+ */
+export function generateInvestigationSubjectHmacKeyring(): string {
+  return generateTombstoneHmacKeyring();
+}
+
+/** Whether a stored investigation keyring has the shape the Workers accept. */
+export function isValidInvestigationSubjectHmacKeyring(value: string): boolean {
+  return isValidTombstoneHmacKeyring(value);
+}
+
+/** Whether a stored tombstone keyring has the shape the Workers accept. */
+export function isValidTombstoneHmacKeyring(value: string): boolean {
+  try {
+    const parsed = JSON.parse(value) as { current?: unknown; keys?: unknown };
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+    if (Object.keys(parsed).some((key) => key !== 'current' && key !== 'keys')) return false;
+    const keys = parsed.keys;
+    if (!keys || typeof keys !== 'object' || Array.isArray(keys)) return false;
+    const entries = Object.entries(keys as Record<string, unknown>);
+    const secrets = entries.map(([, secret]) => secret);
+    return (
+      typeof parsed.current === 'number' &&
+      Number.isSafeInteger(parsed.current) &&
+      entries.length >= 1 &&
+      entries.length <= 32 &&
+      entries.every(
+        ([generation, secret]) =>
+          /^[1-9][0-9]{0,8}$/u.test(generation) &&
+          typeof secret === 'string' &&
+          /^[A-Za-z0-9_-]{43,512}$/u.test(secret)
+      ) &&
+      new Set(secrets).size === secrets.length &&
+      Object.hasOwn(keys, String(parsed.current))
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function generateAllSecrets(keyId?: string): GeneratedSecrets {
   const keyPair = generateRsaKeyPair(keyId);
   const setupMachineKeyPair = generateEs256KeyPair(`${keyPair.keyId}-setup`);
@@ -464,6 +524,7 @@ export function generateAllSecrets(keyId?: string): GeneratedSecrets {
     pluginMutationHmacKey: generateBase64Secret(32), // 256-bit stable idempotency key
     notificationIntentHmacKey: generateBase64Secret(32), // 256-bit notification fingerprint key
     agentElevationEncryptionKey: generateHexSecret(32), // 256-bit AES-GCM key
+    tenantBackupWrappingKey: generateHexSecret(32), // 256-bit AES-GCM key
     setupToken: generateBase64Secret(32), // 256-bit URL-safe token for initial setup
   };
 }
@@ -786,6 +847,8 @@ function getKeyBundlePaths(directory: string) {
     objectEncryptionRootKey: join(directory, 'object_encryption_root_key.txt'),
     otpHmacSecret: join(directory, 'otp_hmac_secret.txt'),
     loggingCursorHmacSecret: join(directory, 'logging_cursor_hmac_secret.txt'),
+    logArchiveContentHmacKey: join(directory, 'log_archive_content_hmac_key.txt'),
+    logArchiveRootKeyring: join(directory, 'log_archive_root_keyring.json'),
     lookupHmacKeySlotA: join(directory, 'lookup_hmac_key_slot_a.txt'),
     flowRuntimeHmacSecret: join(directory, 'flow_runtime_hmac_secret.txt'),
     vcTransactionCodeHmacSecret: join(directory, 'vc_transaction_code_hmac_secret.txt'),
@@ -807,6 +870,7 @@ function getKeyBundlePaths(directory: string) {
     ),
     notificationIntentHmacKey: join(directory, 'notification_intent_hmac_key.txt'),
     agentElevationEncryptionKey: join(directory, 'agent_elevation_encryption_key.txt'),
+    tenantBackupWrappingKey: join(directory, 'tenant_backup_wrapping_key.txt'),
     setupToken: join(directory, 'setup_token.txt'),
     setupMachinePrivateKey: join(directory, 'setup_machine_private.pem'),
     setupMachinePublicKey: join(directory, 'setup_machine_public.jwk.json'),
@@ -1052,6 +1116,12 @@ function buildKeyMetadata(keyId: string, createdAt: string, paths: KeyBundlePath
       objectEncryptionRootKey: paths.objectEncryptionRootKey,
       otpHmacSecret: paths.otpHmacSecret,
       loggingCursorHmacSecret: paths.loggingCursorHmacSecret,
+      ...(existsSync(paths.logArchiveContentHmacKey)
+        ? { logArchiveContentHmacKey: paths.logArchiveContentHmacKey }
+        : {}),
+      ...(existsSync(paths.logArchiveRootKeyring)
+        ? { logArchiveRootKeyring: paths.logArchiveRootKeyring }
+        : {}),
       lookupHmacKeySlotA: paths.lookupHmacKeySlotA,
       flowRuntimeHmacSecret: paths.flowRuntimeHmacSecret,
       vcTransactionCodeHmacSecret: paths.vcTransactionCodeHmacSecret,
@@ -1063,6 +1133,7 @@ function buildKeyMetadata(keyId: string, createdAt: string, paths: KeyBundlePath
       notificationPayloadEncryptPublicJwks: paths.notificationPayloadEncryptPublicJwks,
       notificationIntentHmacKey: paths.notificationIntentHmacKey,
       agentElevationEncryptionKey: paths.agentElevationEncryptionKey,
+      tenantBackupWrappingKey: paths.tenantBackupWrappingKey,
       setupMachinePrivateKey: paths.setupMachinePrivateKey,
       setupMachinePublicKey: paths.setupMachinePublicKey,
       adminUiBffPrivateKey: paths.adminUiBffPrivateKey,
@@ -1230,6 +1301,19 @@ export async function saveKeysToDirectory(
     await chmod(paths.loggingCursorHmacSecret, SENSITIVE_FILE_MODE);
     await writeFile(paths.lookupHmacKeySlotA, secrets.lookupHmacKeySlotA, 'utf-8');
     await chmod(paths.lookupHmacKeySlotA, SENSITIVE_FILE_MODE);
+    const tombstoneHmacKeyring = join(stagingDir, 'tombstone_hmac_keyring.json');
+    await writeFile(tombstoneHmacKeyring, generateTombstoneHmacKeyring(), 'utf-8');
+    await chmod(tombstoneHmacKeyring, SENSITIVE_FILE_MODE);
+    const investigationSubjectHmacKeyring = join(
+      stagingDir,
+      'investigation_subject_hmac_keyring.json'
+    );
+    await writeFile(
+      investigationSubjectHmacKeyring,
+      generateInvestigationSubjectHmacKeyring(),
+      'utf-8'
+    );
+    await chmod(investigationSubjectHmacKeyring, SENSITIVE_FILE_MODE);
     await writeFile(paths.flowRuntimeHmacSecret, secrets.flowRuntimeHmacSecret, 'utf-8');
     await chmod(paths.flowRuntimeHmacSecret, SENSITIVE_FILE_MODE);
     await writeFile(
@@ -1274,6 +1358,8 @@ export async function saveKeysToDirectory(
       'utf-8'
     );
     await chmod(paths.agentElevationEncryptionKey, SENSITIVE_FILE_MODE);
+    await writeFile(paths.tenantBackupWrappingKey, secrets.tenantBackupWrappingKey, 'utf-8');
+    await chmod(paths.tenantBackupWrappingKey, SENSITIVE_FILE_MODE);
 
     if (secrets.setupToken) {
       await writeFile(paths.setupToken, secrets.setupToken, 'utf-8');
@@ -1685,6 +1771,35 @@ async function removeLegacyStaticSecretFiles(keysDir: string): Promise<void> {
  * VersionManager or Admin Machine Access key material. Deploy paths call this
  * before uploading secrets and before bootstrapping DB_ADMIN machine principals.
  */
+export async function ensureLogArchiveContentHmacKey(
+  keysDir: string,
+  options: { requireExisting?: boolean } = {}
+): Promise<boolean> {
+  validateKeysDirectory(keysDir);
+  const path = join(keysDir, 'log_archive_content_hmac_key.txt');
+  const value = await readPrivateFileSecurely(path, {
+    maxBytes: 128,
+    invalidError: 'log_archive_content_key_invalid',
+    permissionsError: 'log_archive_content_key_permissions_invalid',
+  });
+  const metadataText = await readPrivateFileSecurely(join(keysDir, 'metadata.json'), {
+    maxBytes: 128 * 1024,
+    invalidError: 'log_archive_key_metadata_invalid',
+    permissionsError: 'log_archive_key_metadata_permissions_invalid',
+    repairLegacyPublicReadPermissions: true,
+  });
+  const recorded = metadataText
+    ? (JSON.parse(metadataText) as KeyMetadata).files?.logArchiveContentHmacKey
+    : undefined;
+  if (value === null && (recorded !== undefined || options.requireExisting))
+    throw new Error('log_archive_content_key_missing_restore_original_key');
+  if (value !== null && !/^[a-f0-9]{64}$/u.test(value))
+    throw new Error('log_archive_content_key_invalid');
+  if (value === null) await writePrivateFileAtomically(path, generateHexSecret(32));
+  await updateMetadataWithSupplementalFiles(keysDir, { logArchiveContentHmacKey: path });
+  return value === null;
+}
+
 export async function ensureSupplementalKeyFiles(
   keysDir: string,
   options: { includeSetupMachineKeyPair?: boolean } = {}
@@ -1704,7 +1819,10 @@ export async function ensureSupplementalKeyFiles(
     piiEncryptionKey: join(keysDir, 'pii_encryption_key.txt'),
     otpHmacSecret: join(keysDir, 'otp_hmac_secret.txt'),
     loggingCursorHmacSecret: join(keysDir, 'logging_cursor_hmac_secret.txt'),
+    logArchiveContentHmacKey: join(keysDir, 'log_archive_content_hmac_key.txt'),
     lookupHmacKeySlotA: join(keysDir, 'lookup_hmac_key_slot_a.txt'),
+    tombstoneHmacKeyring: join(keysDir, 'tombstone_hmac_keyring.json'),
+    investigationSubjectHmacKeyring: join(keysDir, 'investigation_subject_hmac_keyring.json'),
     flowRuntimeHmacSecret: join(keysDir, 'flow_runtime_hmac_secret.txt'),
     vcTransactionCodeHmacSecret: join(keysDir, 'vc_transaction_code_hmac_secret.txt'),
     vcEvidenceHmacSecret: join(keysDir, 'vc_evidence_hmac_secret.txt'),
@@ -1725,6 +1843,7 @@ export async function ensureSupplementalKeyFiles(
     ),
     notificationIntentHmacKey: join(keysDir, 'notification_intent_hmac_key.txt'),
     agentElevationEncryptionKey: join(keysDir, 'agent_elevation_encryption_key.txt'),
+    tenantBackupWrappingKey: join(keysDir, 'tenant_backup_wrapping_key.txt'),
     setupMachinePrivateKey: join(keysDir, 'setup_machine_private.pem'),
     setupMachinePublicKey: join(keysDir, 'setup_machine_public.jwk.json'),
     adminUiBffPrivateKey: join(keysDir, 'admin_ui_bff_private.pem'),
@@ -1743,10 +1862,21 @@ export async function ensureSupplementalKeyFiles(
     controlSmokeVerifyingPublicJwks: join(keysDir, 'control_smoke_verify.jwks.json'),
   };
 
+  let archiveKeyRecorded = false;
+  try {
+    archiveKeyRecorded =
+      (JSON.parse(await readFile(join(keysDir, 'metadata.json'), 'utf8')) as KeyMetadata).files
+        ?.logArchiveContentHmacKey !== undefined;
+  } catch {
+    /* Existing metadata repair owns malformed legacy metadata. */
+  }
+  if (existsSync(paths.logArchiveContentHmacKey) || archiveKeyRecorded)
+    await ensureLogArchiveContentHmacKey(keysDir);
   const hexSecretPaths = [
     paths.objectEncryptionRootKey,
     paths.piiEncryptionKey,
     paths.agentElevationEncryptionKey,
+    paths.tenantBackupWrappingKey,
   ];
   for (const path of hexSecretPaths) {
     await ensureSupplementalSecret(
@@ -1776,6 +1906,21 @@ export async function ensureSupplementalKeyFiles(
       createdFiles
     );
   }
+  // Installs from before deletion records had their own keys get a keyring on the next update or
+  // deploy; an existing one is kept as it is (rotating it adds keys by hand, see its format).
+  await ensureSupplementalSecret(
+    paths.tombstoneHmacKeyring,
+    generateTombstoneHmacKeyring,
+    isValidTombstoneHmacKeyring,
+    createdFiles
+  );
+  // Failed sign-in attempts' subject hashes: kept as it is once made, like the tombstone keyring.
+  await ensureSupplementalSecret(
+    paths.investigationSubjectHmacKeyring,
+    generateInvestigationSubjectHmacKeyring,
+    isValidInvestigationSubjectHmacKeyring,
+    createdFiles
+  );
   await ensureNotificationPayloadKeySet(
     {
       privateSlotA: paths.notificationPayloadDecryptJwkSlotA,
@@ -1831,6 +1976,14 @@ export async function ensureSupplementalKeyFiles(
     piiEncryptionKey: paths.piiEncryptionKey,
     otpHmacSecret: paths.otpHmacSecret,
     loggingCursorHmacSecret: paths.loggingCursorHmacSecret,
+    ...(existsSync(paths.logArchiveContentHmacKey)
+      ? { logArchiveContentHmacKey: paths.logArchiveContentHmacKey }
+      : {}),
+    ...(existsSync(join(keysDir, 'log_archive_root_keyring.json'))
+      ? { logArchiveRootKeyring: join(keysDir, 'log_archive_root_keyring.json') }
+      : {}),
+    tombstoneHmacKeyring: paths.tombstoneHmacKeyring,
+    investigationSubjectHmacKeyring: paths.investigationSubjectHmacKeyring,
     flowRuntimeHmacSecret: paths.flowRuntimeHmacSecret,
     vcTransactionCodeHmacSecret: paths.vcTransactionCodeHmacSecret,
     vcEvidenceHmacSecret: paths.vcEvidenceHmacSecret,
@@ -1844,6 +1997,7 @@ export async function ensureSupplementalKeyFiles(
     notificationPayloadEncryptPublicJwks: paths.notificationPayloadEncryptPublicJwks,
     notificationIntentHmacKey: paths.notificationIntentHmacKey,
     agentElevationEncryptionKey: paths.agentElevationEncryptionKey,
+    tenantBackupWrappingKey: paths.tenantBackupWrappingKey,
     ...(options.includeSetupMachineKeyPair !== false
       ? {
           setupMachinePrivateKey: paths.setupMachinePrivateKey,
@@ -2088,6 +2242,9 @@ export function generateWranglerSecretCommands(
 
   commands.push(
     `echo -n "$(cat ${join(keysDir, 'agent_elevation_encryption_key.txt')})" | wrangler secret put AGENT_ELEVATION_ENCRYPTION_KEY${envFlag}`
+  );
+  commands.push(
+    `echo -n "$(cat ${join(keysDir, 'tenant_backup_wrapping_key.txt')})" | wrangler secret put TENANT_BACKUP_WRAPPING_KEY${envFlag}`
   );
 
   return commands;

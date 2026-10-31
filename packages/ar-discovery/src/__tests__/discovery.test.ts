@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import { clearDiscoveryMetadataCache, discoveryHandler } from '../discovery';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 import type { OIDCProviderMetadata } from '@authrim/ar-lib-core/types/oidc';
-import { clearNativeSSOConfigCache, LOGOUT_SETTINGS_KEY } from '@authrim/ar-lib-core';
+import { clearNativeSSOConfigCache } from '@authrim/ar-lib-core';
 
 /**
  * Create a mock environment for testing
@@ -361,6 +361,133 @@ describe('Discovery Handler', () => {
 
       expect(metadata.id_token_signing_alg_values_supported).toEqual(['RS256', 'ES256']);
       expect(metadata.userinfo_signing_alg_values_supported).toEqual(['RS256', 'ES256']);
+    });
+
+    it("advertises only the tenant's ID token algorithm while apps may not choose", async () => {
+      const env = createMockEnv();
+      env.KEY_MANAGER_PUBLIC = {
+        getAllPublicKeys: vi.fn().mockResolvedValue([
+          JSON.parse(env.PUBLIC_JWK_JSON!) as JsonWebKey,
+          {
+            kty: 'EC',
+            use: 'sig',
+            alg: 'ES256',
+            kid: 'oidc-es256-test',
+            crv: 'P-256',
+            x: 'test-x',
+            y: 'test-y',
+          },
+        ]),
+      } as Env['KEY_MANAGER_PUBLIC'];
+      const documents: Record<string, unknown> = {
+        'settings:tenant:default:oauth': {
+          'oauth.id_token_signing_alg': 'ES256',
+          'oauth.id_token_signing_alg_client_override': false,
+        },
+      };
+      env.SETTINGS = {
+        get: async (key: string) => (key in documents ? JSON.stringify(documents[key]) : null),
+      } as unknown as KVNamespace;
+
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        { method: 'GET' },
+        env
+      );
+      const metadata = (await response.json()) as OIDCProviderMetadata;
+
+      expect(metadata.id_token_signing_alg_values_supported).toEqual(['ES256']);
+      // UserInfo is still signed as each app asks.
+      expect(metadata.userinfo_signing_alg_values_supported).toEqual(['RS256', 'ES256']);
+    });
+
+    describe('prompt_values_supported (prompt=create)', () => {
+      function envWithOauthSettings(settings?: Record<string, unknown>): Env {
+        const env = createMockEnv();
+        const documents: Record<string, unknown> = settings
+          ? { 'settings:tenant:default:oauth': settings }
+          : {};
+        env.SETTINGS = {
+          get: async (key: string) => (key in documents ? JSON.stringify(documents[key]) : null),
+        } as unknown as KVNamespace;
+        return env;
+      }
+
+      async function fetchMetadata(env: Env): Promise<Record<string, unknown>> {
+        const response = await app.request('/.well-known/openid-configuration', {}, env);
+        expect(response.status).toBe(200);
+        return (await response.json()) as Record<string, unknown>;
+      }
+
+      it('is absent while the tenant has prompt=create off', async () => {
+        expect(await fetchMetadata(envWithOauthSettings())).not.toHaveProperty(
+          'prompt_values_supported'
+        );
+        expect(
+          await fetchMetadata(envWithOauthSettings({ 'oauth.prompt_create_enabled': false }))
+        ).not.toHaveProperty('prompt_values_supported');
+      });
+
+      it.each(['true', 1, 'yes'])('does not list create for the saved value %j', async (value) => {
+        expect(
+          await fetchMetadata(envWithOauthSettings({ 'oauth.prompt_create_enabled': value }))
+        ).not.toHaveProperty('prompt_values_supported');
+      });
+
+      it('lists create with the values the authorization endpoint acts on when it is on', async () => {
+        const metadata = await fetchMetadata(
+          envWithOauthSettings({ 'oauth.prompt_create_enabled': true })
+        );
+        expect(metadata.prompt_values_supported).toEqual(['none', 'login', 'consent', 'create']);
+      });
+
+      it('follows the environment variable, which only the exact value true turns on', async () => {
+        const on = envWithOauthSettings();
+        on.OAUTH_PROMPT_CREATE_ENABLED = 'true';
+        expect((await fetchMetadata(on)).prompt_values_supported).toContain('create');
+
+        for (const value of ['TRUE', '1', 'false']) {
+          const off = envWithOauthSettings();
+          off.OAUTH_PROMPT_CREATE_ENABLED = value;
+          expect(await fetchMetadata(off)).not.toHaveProperty('prompt_values_supported');
+        }
+      });
+
+      it('does not serve a cached document after the setting changes', async () => {
+        const off = envWithOauthSettings();
+        expect(await fetchMetadata(off)).not.toHaveProperty('prompt_values_supported');
+
+        const on = envWithOauthSettings({ 'oauth.prompt_create_enabled': true });
+        expect((await fetchMetadata(on)).prompt_values_supported).toContain('create');
+
+        expect(await fetchMetadata(envWithOauthSettings())).not.toHaveProperty(
+          'prompt_values_supported'
+        );
+      });
+
+      it('is decided per tenant', async () => {
+        const env = createMockEnv();
+        const documents: Record<string, unknown> = {
+          'settings:tenant:acme:oauth': { 'oauth.prompt_create_enabled': true },
+        };
+        env.SETTINGS = {
+          get: async (key: string) => (key in documents ? JSON.stringify(documents[key]) : null),
+        } as unknown as KVNamespace;
+
+        const acme = await fetchDiscoveryMetadata(
+          'acme',
+          'https://acme.example.com/.well-known/openid-configuration',
+          env
+        );
+        const other = await fetchDiscoveryMetadata(
+          'other',
+          'https://other.example.com/.well-known/openid-configuration',
+          env
+        );
+
+        expect(acme.prompt_values_supported).toContain('create');
+        expect(other).not.toHaveProperty('prompt_values_supported');
+      });
     });
 
     it('should support public and pairwise subject types', async () => {
@@ -728,11 +855,12 @@ describe('Discovery Handler', () => {
       // Mock SETTINGS KV with logout config
       env.SETTINGS = {
         get: async (key: string) => {
-          if (key === LOGOUT_SETTINGS_KEY) {
+          if (key === 'settings:platform:session') {
             return JSON.stringify({
-              frontchannel: { enabled: false },
-              backchannel: { enabled: true },
-              session_management: { enabled: true, check_session_iframe_enabled: true },
+              'session.frontchannel_enabled': false,
+              'session.backchannel_enabled': true,
+              'session.session_management_enabled': true,
+              'session.check_session_iframe_enabled': true,
             });
           }
           return null;
@@ -761,16 +889,250 @@ describe('Discovery Handler', () => {
       expect(metadata.check_session_iframe).toBe('https://test.example.com/session/check');
     });
 
+    it.each([
+      [
+        'nothing is configured',
+        {},
+        ['urn:mace:incommon:iap:silver', 'urn:mace:incommon:iap:bronze'],
+      ],
+      [
+        'assurance is enabled',
+        { 'settings:tenant:default:assurance': { 'assurance.enabled': true } },
+        [
+          'urn:mace:incommon:iap:silver',
+          'urn:mace:incommon:iap:bronze',
+          'urn:authrim:aal:1',
+          'urn:authrim:aal:2',
+          'urn:authrim:aal:3',
+        ],
+      ],
+      [
+        'the tenant configures the list',
+        {
+          'settings:tenant:default:discovery': {
+            'discovery.acr_values_supported': ' urn:example:gold , urn:example:silver ',
+          },
+        },
+        ['urn:example:gold', 'urn:example:silver'],
+      ],
+      [
+        'the list repeats values, has empty entries and assurance adds its own',
+        {
+          'settings:tenant:default:discovery': {
+            'discovery.acr_values_supported':
+              'urn:authrim:aal:2,,urn:example:gold,urn:example:gold',
+          },
+          'settings:tenant:default:assurance': { 'assurance.enabled': true },
+        },
+        ['urn:authrim:aal:2', 'urn:example:gold', 'urn:authrim:aal:1', 'urn:authrim:aal:3'],
+      ],
+      [
+        'the list is empty',
+        { 'settings:tenant:default:discovery': { 'discovery.acr_values_supported': ' , ' } },
+        undefined,
+      ],
+    ])('advertises the acr values when %s', async (_label, documents, expected) => {
+      const env = createMockEnv();
+      env.SETTINGS = {
+        get: async (key: string) =>
+          key in documents ? JSON.stringify((documents as Record<string, unknown>)[key]) : null,
+      } as unknown as KVNamespace;
+
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        { method: 'GET' },
+        env
+      );
+
+      const metadata = (await response.json()) as OIDCProviderMetadata;
+      expect(metadata.acr_values_supported).toEqual(expected);
+    });
+
+    describe('identity assurance claims', () => {
+      const VALUES = JSON.stringify({ IAL2: ['https://example.org/assurance/IAL2'] });
+      // An identity assurance profile is saved but verified_claims are not issued yet.
+      const PROFILE = JSON.stringify({
+        trust_framework: 'nist_800_63A',
+        assurance_levels: { IAL2: 'ial2' },
+        claims: ['given_name', 'family_name'],
+      });
+
+      async function discover(
+        assurance: Record<string, unknown> | undefined,
+        env = createMockEnv(),
+        options: { documents?: Record<string, unknown> } = {}
+      ) {
+        env.SETTINGS = {
+          get: async (key: string) => {
+            if (key === 'settings:tenant:default:assurance' && assurance) {
+              return JSON.stringify(assurance);
+            }
+            const document = options.documents?.[key];
+            return document ? JSON.stringify(document) : null;
+          },
+        } as unknown as KVNamespace;
+        const response = await app.request(
+          '/.well-known/openid-configuration',
+          { method: 'GET' },
+          env
+        );
+        return (await response.json()) as OIDCProviderMetadata & Record<string, unknown>;
+      }
+
+      it('changes nothing for a tenant that has not configured them', async () => {
+        const baseline = await discover(undefined);
+        clearDiscoveryMetadataCache();
+        for (const assurance of [
+          { 'assurance.enabled': true },
+          { 'assurance.enabled': true, 'assurance.ial_assurance_values': '{}' },
+          // Configured, but assurance is off.
+          {
+            'assurance.ial_assurance_values': VALUES,
+            'assurance.ida_profile': PROFILE,
+          },
+          {
+            'assurance.enabled': false,
+            'assurance.ial_assurance_values': VALUES,
+            'assurance.ida_profile': PROFILE,
+          },
+          // Not values runtime would use.
+          { 'assurance.enabled': true, 'assurance.ial_assurance_values': 'not json' },
+          // A saved identity assurance profile does not advertise anything: verified_claims are
+          // not issued yet.
+          { 'assurance.enabled': true, 'assurance.ida_profile': PROFILE },
+        ]) {
+          // (Enabling assurance advertises its AAL acr values; nothing else changes.)
+          const withoutAcr = (m: Record<string, unknown>) =>
+            Object.fromEntries(Object.entries(m).filter(([k]) => k !== 'acr_values_supported'));
+          expect(withoutAcr(await discover(assurance))).toEqual(withoutAcr(baseline));
+          clearDiscoveryMetadataCache();
+        }
+        expect(baseline.scopes_supported).not.toContain('eduperson_assurance');
+        expect(baseline.claims_supported).not.toContain('eduperson_assurance');
+        expect(baseline.claims_supported).not.toContain('verified_claims');
+        for (const member of [
+          'trust_frameworks_supported',
+          'claims_in_verified_claims_supported',
+        ]) {
+          expect(baseline).not.toHaveProperty(member);
+        }
+      });
+
+      it('advertises the eduperson_assurance scope and claim once assurance values are set', async () => {
+        const baseline = await discover(undefined);
+        clearDiscoveryMetadataCache();
+        const metadata = await discover({
+          'assurance.enabled': true,
+          'assurance.ial_assurance_values': VALUES,
+        });
+
+        expect(metadata.scopes_supported).toEqual([
+          ...baseline.scopes_supported,
+          'eduperson_assurance',
+        ]);
+        expect(metadata.claims_supported).toEqual([
+          ...baseline.claims_supported,
+          'eduperson_assurance',
+        ]);
+      });
+
+      it('does not repeat a claim a tenant already lists in claims_supported', async () => {
+        const metadata = await discover(
+          { 'assurance.enabled': true, 'assurance.ial_assurance_values': VALUES },
+          createMockEnv(),
+          {
+            documents: {
+              'settings:tenant:default:discovery': {
+                'discovery.claims_supported': 'sub,eduperson_assurance',
+              },
+            },
+          }
+        );
+
+        expect(metadata.claims_supported.filter((c) => c === 'eduperson_assurance')).toHaveLength(
+          1
+        );
+      });
+
+      it('serves the right metadata after the settings change, whatever was cached', async () => {
+        const env = {
+          ...createMockEnv(),
+          AUTHRIM_CONFIG: createMockKV({ get: async () => null }),
+        } as Env;
+        const configured = {
+          'assurance.enabled': true,
+          'assurance.ial_assurance_values': VALUES,
+          'assurance.ida_profile': PROFILE,
+        };
+
+        expect((await discover(configured, env)).scopes_supported).toContain('eduperson_assurance');
+        // The same process answers the next request: the metadata is not the cached one.
+        const off = await discover({ ...configured, 'assurance.enabled': false }, env);
+        expect(off.scopes_supported).not.toContain('eduperson_assurance');
+        const none = await discover({ ...configured, 'assurance.ial_assurance_values': '{}' }, env);
+        expect(none.scopes_supported).not.toContain('eduperson_assurance');
+        expect(none.claims_supported).not.toContain('eduperson_assurance');
+        expect((await discover(configured, env)).scopes_supported).toContain('eduperson_assurance');
+      });
+    });
+
+    it('keeps the cache key short, however long the acr list', async () => {
+      const env = {
+        ...createMockEnv(),
+        AUTHRIM_CONFIG: createMockKV({ get: async () => null }),
+      } as Env;
+      const longList = Array.from({ length: 40 }, (_, i) => `urn:example:acr:level-${i}`).join(',');
+      env.SETTINGS = {
+        get: async (key: string) =>
+          key === 'settings:tenant:default:discovery'
+            ? JSON.stringify({ 'discovery.acr_values_supported': longList })
+            : null,
+      } as unknown as KVNamespace;
+
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        { method: 'GET' },
+        env
+      );
+
+      expect(response.status).toBe(200);
+      const keys = (
+        env.AUTHRIM_CONFIG as unknown as { put: { mock: { calls: unknown[][] } } }
+      ).put.mock.calls
+        .map(([key]) => String(key))
+        .filter((key) => key.startsWith('v1:discovery:'));
+      expect(keys.length).toBeGreaterThan(0);
+      for (const key of keys) expect(new TextEncoder().encode(key).length).toBeLessThanOrEqual(512);
+    });
+
+    it('stops when the assurance settings cannot be read', async () => {
+      const env = createMockEnv();
+      env.SETTINGS = {
+        get: async (key: string) => {
+          if (key === 'settings:tenant:default:assurance') throw new Error('KV unavailable');
+          return null;
+        },
+      } as unknown as KVNamespace;
+
+      const response = await app.request(
+        '/.well-known/openid-configuration',
+        { method: 'GET' },
+        env
+      );
+
+      expect(response.status).toBe(503);
+    });
+
     it('should not include check_session_iframe when session management is disabled', async () => {
       const env = createMockEnv();
       // Mock SETTINGS KV with session management disabled
       env.SETTINGS = {
         get: async (key: string) => {
-          if (key === LOGOUT_SETTINGS_KEY) {
+          if (key === 'settings:platform:session') {
             return JSON.stringify({
-              frontchannel: { enabled: true },
-              backchannel: { enabled: true },
-              session_management: { enabled: false },
+              'session.frontchannel_enabled': true,
+              'session.backchannel_enabled': true,
+              'session.session_management_enabled': false,
             });
           }
           return null;
@@ -789,6 +1151,176 @@ describe('Discovery Handler', () => {
 
       // Session management disabled - no check_session_iframe
       expect(metadata.check_session_iframe).toBeUndefined();
+    });
+    it("uses the tenant's logout settings over the platform's", async () => {
+      const env = createMockEnv();
+      const stored: Record<string, string> = {
+        'settings:platform:session': JSON.stringify({ 'session.frontchannel_enabled': true }),
+        'settings:tenant:default:session': JSON.stringify({
+          'session.frontchannel_enabled': false,
+          'session.check_session_iframe_enabled': false,
+        }),
+      };
+      env.SETTINGS = {
+        get: async (key: string) => stored[key] ?? null,
+      } as unknown as KVNamespace;
+
+      const response = await app.request('/.well-known/openid-configuration', {}, env);
+
+      const metadata = (await response.json()) as OIDCProviderMetadata;
+      expect(metadata.frontchannel_logout_supported).toBe(false);
+      expect(metadata.check_session_iframe).toBeUndefined();
+      expect(metadata.backchannel_logout_supported).toBe(true);
+    });
+
+    it('is unavailable while the logout settings cannot be parsed', async () => {
+      const env = createMockEnv();
+      env.SETTINGS = {
+        get: async (key: string) => (key === 'settings:platform:session' ? '{' : null),
+      } as unknown as KVNamespace;
+
+      const response = await app.request('/.well-known/openid-configuration', {}, env);
+
+      expect(response.status).toBe(503);
+    });
+
+    it('does not read the logout webhook settings', async () => {
+      const env = createMockEnv();
+      env.SETTINGS = {
+        get: async (key: string) => {
+          if (key === 'settings:logout_webhook') throw new Error('KV unavailable');
+          return null;
+        },
+      } as unknown as KVNamespace;
+
+      const response = await app.request('/.well-known/openid-configuration', {}, env);
+
+      expect(response.status).toBe(200);
+    });
+
+    it('is unavailable while the logout settings cannot be read', async () => {
+      const env = createMockEnv();
+      env.SETTINGS = {
+        get: async (key: string) => {
+          if (key === 'settings:platform:session') throw new Error('KV unavailable');
+          return null;
+        },
+      } as unknown as KVNamespace;
+
+      const response = await app.request('/.well-known/openid-configuration', {}, env);
+
+      expect(response.status).toBe(503);
+    });
+  });
+
+  describe('backchannel_user_code_parameter_supported (ciba.user_code_enabled)', () => {
+    const CIBA_KEY = 'settings:tenant:default:ciba';
+
+    function withCibaDocument(read: () => unknown, env: Env = createMockEnv()): Env {
+      env.SETTINGS = {
+        get: async (key: string) => {
+          if (key !== CIBA_KEY) return null;
+          const document = read();
+          return document === null ? null : JSON.stringify(document);
+        },
+      } as unknown as KVNamespace;
+      return env;
+    }
+
+    async function discover(env: Env) {
+      const response = await app.request('/.well-known/openid-configuration', {}, env);
+      return { response, metadata: (await response.json()) as OIDCProviderMetadata };
+    }
+
+    it('is false by default: the OP does not verify user codes', async () => {
+      const { metadata } = await discover(createMockEnv());
+
+      expect(metadata.backchannel_user_code_parameter_supported).toBe(false);
+      // The rest of the CIBA metadata is unchanged
+      expect(metadata.backchannel_authentication_endpoint).toBe(
+        'https://test.example.com/bc-authorize'
+      );
+      expect(metadata.backchannel_token_delivery_modes_supported).toEqual(['poll', 'ping', 'push']);
+    });
+
+    it('is true when the tenant turns the setting on', async () => {
+      const { metadata } = await discover(
+        withCibaDocument(() => ({ 'ciba.user_code_enabled': true }))
+      );
+
+      expect(metadata.backchannel_user_code_parameter_supported).toBe(true);
+    });
+
+    it('is false when the tenant saved it off, and for a value that is not a boolean', async () => {
+      for (const value of [false, 'true', 1, null]) {
+        clearDiscoveryMetadataCache();
+        const { metadata } = await discover(
+          withCibaDocument(() => ({ 'ciba.user_code_enabled': value }))
+        );
+        expect(metadata.backchannel_user_code_parameter_supported, String(value)).toBe(false);
+      }
+    });
+
+    it('follows ENABLE_CIBA_USER_CODE as the deployment default, and a saved value beats it', async () => {
+      const env = createMockEnv();
+      (env as Env & { ENABLE_CIBA_USER_CODE?: string }).ENABLE_CIBA_USER_CODE = 'true';
+      expect((await discover(env)).metadata.backchannel_user_code_parameter_supported).toBe(true);
+
+      clearDiscoveryMetadataCache();
+      const saved = withCibaDocument(() => ({ 'ciba.user_code_enabled': false }), env);
+      expect((await discover(saved)).metadata.backchannel_user_code_parameter_supported).toBe(
+        false
+      );
+    });
+
+    it('serves the new value after the setting changes, whatever was cached', async () => {
+      const cacheKeys: string[] = [];
+      const base = {
+        ...createMockEnv(),
+        AUTHRIM_CONFIG: createMockKV({
+          get: async () => null,
+          put: async (key) => {
+            cacheKeys.push(key);
+          },
+        }),
+      } as Env;
+
+      const off = await discover(withCibaDocument(() => null, base));
+      // The same process answers the next request: the metadata is not the cached one.
+      const on = await discover(
+        withCibaDocument(() => ({ 'ciba.user_code_enabled': true }), { ...base } as Env)
+      );
+      const offAgain = await discover(withCibaDocument(() => null, { ...base } as Env));
+
+      expect(off.metadata.backchannel_user_code_parameter_supported).toBe(false);
+      expect(on.metadata.backchannel_user_code_parameter_supported).toBe(true);
+      expect(offAgain.metadata.backchannel_user_code_parameter_supported).toBe(false);
+      // Each state has a cache key of its own
+      expect(new Set(cacheKeys.filter((key) => key.startsWith('v1:discovery:'))).size).toBe(2);
+    });
+
+    it('is unavailable while the CIBA settings cannot be read, like the other settings', async () => {
+      const { response } = await discover(
+        withCibaDocument(() => {
+          throw new Error('KV unavailable');
+        })
+      );
+
+      expect(response.status).toBe(503);
+    });
+
+    it('does not read the CIBA settings, or advertise the flag, when async is disabled', async () => {
+      const read = vi.fn(() => {
+        throw new Error('must not be read');
+      });
+      const env = withCibaDocument(read);
+      (env as Env & { ASYNC_ENABLED?: string }).ASYNC_ENABLED = 'false';
+
+      const { response, metadata } = await discover(env);
+
+      expect(response.status).toBe(200);
+      expect(read).not.toHaveBeenCalled();
+      expect(metadata.backchannel_user_code_parameter_supported).toBeUndefined();
     });
   });
 

@@ -468,19 +468,15 @@ export function seedTrustedClient(kit: SecurityMatrixEnvKit, clientId: string): 
   });
 }
 
-/** JARM requirement policy via tenant system settings (SETTINGS KV). */
+/** JARM requirement policy via the platform's Settings API security values (SETTINGS KV). */
 export function seedJarmRequirement(kit: SecurityMatrixEnvKit, required: boolean): void {
   if (!required) return;
   kit.settings.seed(
-    'system_settings',
+    'settings:platform:security',
     JSON.stringify({
-      fapi: {
-        messageSigning: {
-          enabled: true,
-          requireJarm: true,
-          defaultAuthorizationSigningAlgorithm: 'RS256',
-        },
-      },
+      'security.fapi_message_signing_enabled': true,
+      'security.require_jarm': true,
+      'security.default_authorization_signing_alg': 'RS256',
     })
   );
 }

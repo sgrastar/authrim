@@ -103,7 +103,13 @@ function domain(overrides: Record<string, unknown> = {}) {
   };
 }
 
-type Auth = { userId: string; roles: string[]; permissions: string[] };
+type Auth = {
+  userId: string;
+  roles: string[];
+  permissions: string[];
+  globalRoles?: string[];
+  tenantScope?: string[];
+};
 
 function context(
   options: {
@@ -116,7 +122,7 @@ function context(
   } = {}
 ) {
   const query = options.query ?? {};
-  const auth =
+  const given =
     options.auth === undefined
       ? {
           userId: 'admin-1',
@@ -124,6 +130,15 @@ function context(
           permissions: Object.values(ADMIN_PERMISSIONS),
         }
       : options.auth;
+  // A platform role in this fixture comes from a global assignment.
+  const platformRole = given?.roles.some(
+    (role) => role === 'ar_super_admin' || role === 'ar_super_admin'
+  );
+  const auth = given && {
+    globalRoles: platformRole ? given.roles : [],
+    tenantScope: platformRole ? ['*'] : ['tenant-a'],
+    ...given,
+  };
   return {
     get: vi.fn((name: string) => (name === 'adminAuth' ? auth : undefined)),
     req: {
@@ -205,7 +220,25 @@ describe('tenant vanity domain administration', () => {
       expect(response.status).toBe(403);
     });
 
-    it.each([['system_admin'], ['super_admin']])(
+    it.each([['ar_super_admin'], ['ar_super_admin']])(
+      'denies %s held for one tenant only: platform domains are across tenants',
+      async (role) => {
+        const response = await listPlatformTenantVanityDomainsHandler(
+          context({
+            auth: {
+              userId: 'system-1',
+              roles: [role],
+              permissions: [],
+              globalRoles: [],
+              tenantScope: ['tenant-a'],
+            },
+          })
+        );
+        expect(response.status).toBe(403);
+      }
+    );
+
+    it.each([['ar_super_admin'], ['ar_super_admin']])(
       'accepts %s as platform authority',
       async (role) => {
         const response = await listPlatformTenantVanityDomainsHandler(
@@ -260,7 +293,7 @@ describe('tenant vanity domain administration', () => {
     });
 
     it('filters platform listing by optional tenant ID', async () => {
-      const auth = { userId: 'system-1', roles: ['system_admin'], permissions: [] };
+      const auth = { userId: 'system-1', roles: ['ar_super_admin'], permissions: [] };
       await listPlatformTenantVanityDomainsHandler(
         context({ auth, query: { tenant_id: 'tenant-b' } })
       );
@@ -276,7 +309,7 @@ describe('tenant vanity domain administration', () => {
     it('gets a platform domain without constraining it to the caller tenant', async () => {
       mocks.adapter.queryOne.mockResolvedValueOnce(domain({ tenant_id: 'tenant-b' }));
       const response = await getPlatformTenantVanityDomainHandler(
-        context({ auth: { userId: 'system-1', roles: ['super_admin'], permissions: [] } })
+        context({ auth: { userId: 'system-1', roles: ['ar_super_admin'], permissions: [] } })
       );
       expect(response.status).toBe(200);
       expect(mocks.adapter.queryOne).toHaveBeenCalledWith(
@@ -403,7 +436,7 @@ describe('tenant vanity domain administration', () => {
       const response = await createPlatformTenantVanityDomainHandler(
         context({
           body: { hostname: 'login.example.com' },
-          auth: { userId: 'system-1', roles: ['system_admin'], permissions: [] },
+          auth: { userId: 'system-1', roles: ['ar_super_admin'], permissions: [] },
         })
       );
       expect(response.status).toBe(400);
@@ -414,7 +447,7 @@ describe('tenant vanity domain administration', () => {
       const response = await createPlatformTenantVanityDomainHandler(
         context({
           body: { tenant_id: 'tenant-b', hostname: 'login-b.example.com', is_primary: false },
-          auth: { userId: 'system-1', roles: ['system_admin'], permissions: [] },
+          auth: { userId: 'system-1', roles: ['ar_super_admin'], permissions: [] },
         })
       );
       expect(response.status).toBe(201);
@@ -495,7 +528,7 @@ describe('tenant vanity domain administration', () => {
         domain({ tenant_id: 'tenant-b', is_primary: 1 })
       );
       const response = await setPrimaryPlatformTenantVanityDomainHandler(
-        context({ auth: { userId: 'system-1', roles: ['system_admin'], permissions: [] } })
+        context({ auth: { userId: 'system-1', roles: ['ar_super_admin'], permissions: [] } })
       );
       expect(response.status).toBe(200);
     });
@@ -598,7 +631,7 @@ describe('tenant vanity domain administration', () => {
     });
 
     it('covers platform manual verification and deletion using the row tenant', async () => {
-      const auth = { userId: 'system-1', roles: ['system_admin'], permissions: [] };
+      const auth = { userId: 'system-1', roles: ['ar_super_admin'], permissions: [] };
       queueRows(
         domain({ tenant_id: 'tenant-b' }),
         domain({ tenant_id: 'tenant-b', status: 'active' })
@@ -614,7 +647,7 @@ describe('tenant vanity domain administration', () => {
     });
 
     it('covers platform Cloudflare sync and API failure paths', async () => {
-      const auth = { userId: 'system-1', roles: ['super_admin'], permissions: [] };
+      const auth = { userId: 'system-1', roles: ['ar_super_admin'], permissions: [] };
       const existing = domain({
         tenant_id: 'tenant-b',
         cloudflare_zone_id: 'zone-1',
@@ -655,7 +688,7 @@ describe('tenant vanity domain administration', () => {
       [setPrimaryPlatformTenantVanityDomainHandler],
     ])('returns not_found for missing platform domain %#', async (handler) => {
       const response = await handler(
-        context({ auth: { userId: 'system-1', roles: ['system_admin'], permissions: [] } })
+        context({ auth: { userId: 'system-1', roles: ['ar_super_admin'], permissions: [] } })
       );
       expect(response.status).toBe(404);
     });

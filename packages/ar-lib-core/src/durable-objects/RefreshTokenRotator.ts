@@ -37,6 +37,69 @@ const MAX_ROTATOR_JSON_BODY_BYTES = 512 * 1024;
 const MAX_FAMILY_CACHE_ENTRIES = 1024;
 
 /**
+ * How the user authenticated for the grant that began a token family, so a refresh issues tokens
+ * that say the same as the first ones (OIDC Core 12.2) and keeps to the assurance the grant met.
+ */
+export interface RefreshTokenAuthContext {
+  /** The original authentication time (seconds). */
+  auth_time?: number;
+  /** The acr and amr the grant's ID token carried. */
+  acr?: string;
+  amr?: string[];
+  /**
+   * With assurance on when the grant was made, for access tokens: the authentication time, the AAL
+   * reached, its acr and the methods proven (apart from the ID token's, which a claims request may
+   * have left out).
+   */
+  assurance_auth_time?: number;
+  aal?: string;
+  assurance_acr?: string;
+  assurance_amr?: string[];
+  /** The grant's authorization request was pushed with a signed request object (FAL3). */
+  pushed_signed_request?: true;
+}
+
+const AUTH_CONTEXT_STRING_MAX = 512;
+const AUTH_CONTEXT_LIST_MAX = 16;
+
+function boundedString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 && value.length <= AUTH_CONTEXT_STRING_MAX
+    ? value
+    : undefined;
+}
+
+function boundedStringList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value) || value.length > AUTH_CONTEXT_LIST_MAX) return undefined;
+  const list = value.filter((item): item is string => boundedString(item) !== undefined);
+  return list.length === value.length ? list : undefined;
+}
+
+/** The authentication context as stored: only well-formed, bounded fields are kept. */
+export function normalizeRefreshTokenAuthContext(
+  value: unknown
+): RefreshTokenAuthContext | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const input = value as Record<string, unknown>;
+  const positiveTime = (time: unknown): number | undefined =>
+    typeof time === 'number' && Number.isSafeInteger(time) && time > 0 ? time : undefined;
+  const authTime = positiveTime(input.auth_time);
+  const assuranceAuthTime = positiveTime(input.assurance_auth_time);
+  const context: RefreshTokenAuthContext = {
+    ...(authTime !== undefined ? { auth_time: authTime } : {}),
+    ...(boundedString(input.acr) ? { acr: input.acr as string } : {}),
+    ...(boundedStringList(input.amr) ? { amr: boundedStringList(input.amr) } : {}),
+    ...(assuranceAuthTime !== undefined ? { assurance_auth_time: assuranceAuthTime } : {}),
+    ...(boundedString(input.aal) ? { aal: input.aal as string } : {}),
+    ...(boundedString(input.assurance_acr) ? { assurance_acr: input.assurance_acr as string } : {}),
+    ...(boundedStringList(input.assurance_amr)
+      ? { assurance_amr: boundedStringList(input.assurance_amr) }
+      : {}),
+    ...(input.pushed_signed_request === true ? { pushed_signed_request: true as const } : {}),
+  };
+  return Object.keys(context).length > 0 ? context : undefined;
+}
+
+/**
  * Token Family V2 - Minimal state for high-performance rotation
  */
 export interface TokenFamilyV2 {
@@ -44,11 +107,15 @@ export interface TokenFamilyV2 {
   version: number; // Rotation version (monotonically increasing)
   last_jti: string; // Last issued JWT ID
   last_used_at: number; // Timestamp of last use (ms)
-  expires_at: number; // Absolute expiration (ms)
+  expires_at: number; // When the family expires (ms): moved on by a sliding rotation
+  created_at?: number; // When the family was first issued (ms): the start of the absolute lifetime
+  first_jti?: string; // The JWT ID the family was issued with: its row in the relational family index
+  consent_generation?: number; // The consent withdrawal generation the family was granted under
   user_id: string; // For tenant boundary enforcement
   client_id: string; // For scope validation
   allowed_scope: string; // Prevent scope amplification
   resource_aud?: string | string[]; // Original access token resource audience
+  auth_context?: RefreshTokenAuthContext; // How the user authenticated for the first grant
 }
 
 /**
@@ -62,6 +129,9 @@ export interface CreateFamilyRequestV2 {
   ttl: number; // Time to live in seconds
   tenantId: string;
   resourceAudience?: string | string[];
+  authContext?: RefreshTokenAuthContext;
+  /** The user's consent withdrawal generation for the client when the grant was given. */
+  consentGeneration?: number;
 }
 
 /**
@@ -83,6 +153,21 @@ export interface RotateTokenRequestV2 {
   clientId: string; // From JWT aud/client_id claim
   tenantId: string;
   requestedScope?: string; // Requested scope (must be subset of allowed_scope)
+  lifetime?: RefreshTokenLifetimePolicy; // The tenant's lifetime model at this rotation
+}
+
+/**
+ * How long a refresh token family lives, as the tenant (or app) sets it at a rotation:
+ * - `ttl`: seconds a refresh token lasts once issued;
+ * - `sliding`: each rotation moves the expiry on by `ttl` (an unused family still expires);
+ * - `absoluteTtl`: seconds from the first issuance after which the family ends whatever its
+ *   use, or null for no absolute limit.
+ * A family recorded before created_at existed keeps its expiry (it never slides).
+ */
+export interface RefreshTokenLifetimePolicy {
+  ttl: number;
+  sliding: boolean;
+  absoluteTtl: number | null;
 }
 
 /**
@@ -92,6 +177,8 @@ export interface RotateTokenResponseV2 {
   newVersion: number; // New version for the rotated token
   newJti: string; // New JWT ID for the rotated token
   expiresIn: number; // Seconds until expiration
+  expiresAt: number; // When the family now expires (ms)
+  familyJti?: string; // The family's first JWT ID (its index row), when the family recorded it
   allowedScope: string; // Scope to include in new token
   resourceAudience?: string | string[]; // Original access token resource audience
 }
@@ -135,6 +222,34 @@ function normalizeResourceAudience(value: unknown): string | string[] | undefine
 }
 
 /**
+ * A family's expiry after a rotation under a lifetime policy: moved on by `ttl` when sliding,
+ * never past the absolute limit (from created_at). A family without created_at (recorded before
+ * the lifetime model) keeps its expiry.
+ */
+/** A lifetime policy sent over HTTP, or undefined when it is missing or not well formed. */
+function refreshTokenLifetimePolicy(value: unknown): RefreshTokenLifetimePolicy | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const { ttl, sliding, absoluteTtl } = value as Record<string, unknown>;
+  const positive = (n: unknown): n is number =>
+    typeof n === 'number' && Number.isFinite(n) && n > 0;
+  if (!positive(ttl) || typeof sliding !== 'boolean') return undefined;
+  if (absoluteTtl !== null && !positive(absoluteTtl)) return undefined;
+  return { ttl, sliding, absoluteTtl };
+}
+
+export function rotatedExpiry(
+  family: Pick<TokenFamilyV2, 'expires_at' | 'created_at'>,
+  lifetime: RefreshTokenLifetimePolicy | undefined,
+  now: number
+): number {
+  if (!lifetime || family.created_at === undefined) return family.expires_at;
+  const cap =
+    lifetime.absoluteTtl === null ? Infinity : family.created_at + lifetime.absoluteTtl * 1000;
+  const next = lifetime.sliding ? now + lifetime.ttl * 1000 : family.expires_at;
+  return Math.min(next, cap);
+}
+
+/**
  * RefreshTokenRotator Durable Object (V2)
  *
  * Sharded by client_id for horizontal scaling.
@@ -169,7 +284,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
     // Block all requests until initialization completes
     // This ensures the DO is in a consistent state before processing any requests
     // Critical for token theft detection and version validation
-    ctx.blockConcurrencyWhile(async () => {
+    void ctx.blockConcurrencyWhile(async () => {
       await this.initializeStateBlocking();
     });
   }
@@ -255,6 +370,22 @@ export class RefreshTokenRotator extends DurableObject<Env> {
   }
 
   /**
+   * RPC: Revoke the user's family only while it is the one issued with `firstJti`, so a family
+   * issued since for the same user and client is left alone. Returns whether it was revoked.
+   */
+  async revokeFamilyIfFirstJtiRpc(
+    userId: string,
+    firstJti: string,
+    reason?: string
+  ): Promise<boolean> {
+    await this.initializeState();
+    const family = await this.loadFamily(userId);
+    if (!family || family.first_jti !== firstJti) return false;
+    await this.revokeFamily(userId, reason);
+    return true;
+  }
+
+  /**
    * RPC: Get family info
    */
   async getFamilyRpc(userId: string): Promise<TokenFamilyV2 | null> {
@@ -284,9 +415,10 @@ export class RefreshTokenRotator extends DurableObject<Env> {
   async validateRpc(
     userId: string,
     version: number,
-    clientId: string
+    clientId: string,
+    jti?: string
   ): Promise<{ valid: boolean; family?: TokenFamilyV2 }> {
-    return this.validate(userId, version, clientId);
+    return this.validate(userId, version, clientId, jti);
   }
 
   /**
@@ -354,7 +486,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
     this.families.delete(userId);
     this.families.set(userId, family);
     while (this.families.size > MAX_FAMILY_CACHE_ENTRIES) {
-      const oldestUserId = this.families.keys().next().value as string | undefined;
+      const oldestUserId = this.families.keys().next().value;
       if (!oldestUserId) break;
       this.families.delete(oldestUserId);
     }
@@ -371,7 +503,12 @@ export class RefreshTokenRotator extends DurableObject<Env> {
       !Number.isSafeInteger(family.version) ||
       family.version < 1 ||
       !family.last_jti ||
-      !Number.isFinite(family.expires_at)
+      !Number.isFinite(family.expires_at) ||
+      (family.created_at !== undefined && !Number.isFinite(family.created_at)) ||
+      (family.first_jti !== undefined &&
+        (typeof family.first_jti !== 'string' || !family.first_jti)) ||
+      (family.consent_generation !== undefined &&
+        (!Number.isSafeInteger(family.consent_generation) || family.consent_generation < 0))
     ) {
       throw new Error('refresh_token_family_storage_invalid');
     }
@@ -480,7 +617,9 @@ export class RefreshTokenRotator extends DurableObject<Env> {
       !request.userId.trim() ||
       !request.clientId.trim() ||
       !Number.isSafeInteger(request.ttl) ||
-      request.ttl < 1
+      request.ttl < 1 ||
+      (request.consentGeneration !== undefined &&
+        (!Number.isSafeInteger(request.consentGeneration) || request.consentGeneration < 0))
     ) {
       throw new Error('invalid_request: Invalid refresh token family input');
     }
@@ -518,16 +657,23 @@ export class RefreshTokenRotator extends DurableObject<Env> {
     const now = Date.now();
     const expiresAt = now + request.ttl * 1000;
     const resourceAudience = normalizeResourceAudience(request.resourceAudience);
+    const authContext = normalizeRefreshTokenAuthContext(request.authContext);
     const family: TokenFamilyV2 = {
       tenant_id: normalizedTenantId,
       version: 1,
       last_jti: request.jti,
       last_used_at: now,
       expires_at: expiresAt,
+      created_at: now,
+      first_jti: request.jti,
       user_id: request.userId,
       client_id: request.clientId,
       allowed_scope: request.scope,
       ...(resourceAudience && { resource_aud: resourceAudience }),
+      ...(authContext && { auth_context: authContext }),
+      ...(request.consentGeneration !== undefined && {
+        consent_generation: request.consentGeneration,
+      }),
     };
 
     const writes: Record<string, unknown> = {
@@ -708,7 +854,13 @@ export class RefreshTokenRotator extends DurableObject<Env> {
       version: newVersion,
       last_jti: newJti,
       last_used_at: now,
+      expires_at: rotatedExpiry(family, request.lifetime, now),
     };
+    // An absolute limit enabled since the family was issued may already have passed.
+    if (updatedFamily.expires_at <= now) {
+      await this.deleteFamily(request.userId);
+      throw new Error('invalid_grant: Refresh token expired');
+    }
 
     // Keep the prior cached family authoritative if the durable write fails.
     await this.saveFamily(request.userId, updatedFamily);
@@ -727,6 +879,8 @@ export class RefreshTokenRotator extends DurableObject<Env> {
       newVersion,
       newJti,
       expiresIn: Math.floor((updatedFamily.expires_at - now) / 1000),
+      expiresAt: updatedFamily.expires_at,
+      ...(updatedFamily.first_jti && { familyJti: updatedFamily.first_jti }),
       allowedScope: request.requestedScope || updatedFamily.allowed_scope,
       ...(updatedFamily.resource_aud && { resourceAudience: updatedFamily.resource_aud }),
     };
@@ -821,6 +975,8 @@ export class RefreshTokenRotator extends DurableObject<Env> {
       const userId = key.substring(STORAGE_PREFIX.FAMILY.length);
       this.validateStoredFamily(userId, family);
       jtiToUserMap.set(family.last_jti, userId);
+      // The family index names a family by the JWT ID it was issued with.
+      if (family.first_jti) jtiToUserMap.set(family.first_jti, userId);
     }
 
     // Revoke each JTI
@@ -857,7 +1013,13 @@ export class RefreshTokenRotator extends DurableObject<Env> {
   async validate(
     userId: string,
     version: number,
-    clientId: string
+    clientId: string,
+    /**
+     * The presented token's JWT ID: when given, only the family's latest token is valid. A family
+     * made again for the same user and client starts at version 1 too, so the version alone does
+     * not tell an older family's token from the current one's.
+     */
+    jti?: string
   ): Promise<{ valid: boolean; family?: TokenFamilyV2 }> {
     await this.initializeState();
 
@@ -873,6 +1035,9 @@ export class RefreshTokenRotator extends DurableObject<Env> {
 
     // Check version and client
     if (family.version !== version || family.client_id !== clientId) {
+      return { valid: false };
+    }
+    if (jti !== undefined && family.last_jti !== jti) {
       return { valid: false };
     }
 
@@ -1017,6 +1182,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
           ...(body.resourceAudience !== undefined && {
             resourceAudience: body.resourceAudience,
           }),
+          ...(body.authContext !== undefined && { authContext: body.authContext }),
           ...(body.generation !== undefined &&
             body.shardIndex !== undefined && {
               generation: body.generation,
@@ -1064,6 +1230,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
             clientId: body.clientId,
             tenantId: body.tenantId,
             requestedScope: body.requestedScope,
+            lifetime: refreshTokenLifetimePolicy(body.lifetime),
           });
 
           return new Response(JSON.stringify(result), {
@@ -1179,7 +1346,8 @@ export class RefreshTokenRotator extends DurableObject<Env> {
         }
 
         const version = parseInt(versionStr, 10);
-        const result = await this.validate(userId, version, clientId);
+        const jti = url.searchParams.get('jti') ?? undefined;
+        const result = await this.validate(userId, version, clientId, jti);
 
         return new Response(
           JSON.stringify({

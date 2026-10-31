@@ -1162,6 +1162,60 @@ describe('Cloudflare Queue deletion helpers', () => {
     ).toBe(false);
   });
 
+  it('reconciles an absent name-only legacy R2 bucket without attempting a Cloudflare delete', async () => {
+    mockCloudflareInventory([]);
+
+    const result = await deleteEnvironment({
+      env: 'test',
+      environmentKnownLocally: true,
+      deleteWorkers: false,
+      deleteD1: false,
+      deleteKV: false,
+      deleteQueues: false,
+      deleteR2: true,
+      deletePages: false,
+      knownR2Resources: [{ name: 'test-audit-archive' }],
+      onProgress: () => {},
+    });
+
+    expect(result.errors).toEqual([]);
+    expect(result.deleted.r2).toEqual(['test-audit-archive']);
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) =>
+          String(input).endsWith('/r2/buckets/test-audit-archive') &&
+          (init as { method?: string } | undefined)?.method === 'DELETE'
+      )
+    ).toBe(false);
+  });
+
+  it('still blocks deletion when a name-only legacy R2 bucket is present', async () => {
+    mockCloudflareInventory([], [], [{ name: 'test-audit-archive' }]);
+
+    const result = await deleteEnvironment({
+      env: 'test',
+      environmentKnownLocally: true,
+      deleteWorkers: false,
+      deleteD1: false,
+      deleteKV: false,
+      deleteQueues: false,
+      deleteR2: true,
+      deletePages: false,
+      knownR2Resources: [{ name: 'test-audit-archive' }],
+      onProgress: () => {},
+    });
+
+    expect(result.errors).toEqual([expect.stringContaining('name-only legacy state')]);
+    expect(result.deleted.r2).toEqual([]);
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) =>
+          String(input).endsWith('/r2/buckets/test-audit-archive') &&
+          (init as { method?: string } | undefined)?.method === 'DELETE'
+      )
+    ).toBe(false);
+  });
+
   it('does not fall back to deleting an absent lock resource by name without its immutable ID', async () => {
     mockCloudflareInventory([]);
 

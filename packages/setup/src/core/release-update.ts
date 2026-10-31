@@ -135,6 +135,10 @@ async function runTargetGroup(input: {
   manifest: ReleaseMigrationManifest;
   migrationsRoot: string;
   backfillLegacyChecksums: boolean;
+  requiredAppliedFilesByTarget?: ReadonlyMap<
+    string,
+    ReadonlyArray<{ path: string; checksum: string }>
+  >;
   onProgress?: (message: string) => void;
 }): Promise<ReleaseSchemaTargetResult[]> {
   const results: ReleaseSchemaTargetResult[] = [];
@@ -176,6 +180,9 @@ async function runTargetGroup(input: {
       manifestFiles: stream.files,
       releaseVersion: input.manifest.productVersion,
       backfillLegacyChecksums: input.backfillLegacyChecksums,
+      ...(input.requiredAppliedFilesByTarget?.has(target.id)
+        ? { requiredAppliedFiles: input.requiredAppliedFilesByTarget.get(target.id) }
+        : {}),
     });
     results.push({
       targetId: target.id,
@@ -200,6 +207,11 @@ export async function applyReleaseSchemaUpdatePlan(input: {
   migrationsRoot: string;
   concurrency?: number;
   backfillLegacyChecksums?: boolean;
+  /** Per target: files its evidence says it holds; verified against the database, never run. */
+  requiredAppliedFilesByTarget?: ReadonlyMap<
+    string,
+    ReadonlyArray<{ path: string; checksum: string }>
+  >;
   onProgress?: (message: string) => void;
 }): Promise<ReleaseSchemaUpdateResult> {
   if (input.plan.blockedTargets.length > 0) {
@@ -237,6 +249,7 @@ export async function applyReleaseSchemaUpdatePlan(input: {
         manifest: input.manifest,
         migrationsRoot: input.migrationsRoot,
         backfillLegacyChecksums: input.backfillLegacyChecksums === true,
+        requiredAppliedFilesByTarget: input.requiredAppliedFilesByTarget,
         onProgress: input.onProgress,
       });
       results.push(...groupResults);

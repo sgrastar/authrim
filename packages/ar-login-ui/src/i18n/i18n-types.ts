@@ -34,6 +34,88 @@ export type Translations = RootTranslation
 
 type RootTranslation = {
 	/**
+	 * L​o​g​g​i​n​g​ ​o​u​t​ ​w​i​l​l​ ​p​r​e​v​e​n​t​ ​y​o​u​ ​f​r​o​m​ ​r​e​t​u​r​n​i​n​g​ ​t​o​ ​t​h​i​s​ ​g​u​e​s​t​ ​a​c​c​o​u​n​t​.​ ​R​e​g​i​s​t​e​r​ ​f​i​r​s​t​ ​t​o​ ​k​e​e​p​ ​a​c​c​e​s​s​ ​t​o​ ​y​o​u​r​ ​a​c​c​o​u​n​t​ ​a​n​d​ ​d​a​t​a​.​ ​L​o​g​ ​o​u​t​ ​a​n​y​w​a​y​?
+	 */
+	account_guestLogoutWarning: string
+	/**
+	 * R​e​g​i​s​t​e​r​ ​y​o​u​r​ ​a​c​c​o​u​n​t
+	 */
+	account_guestTitle: string
+	/**
+	 * K​e​e​p​ ​t​h​e​ ​s​a​m​e​ ​a​c​c​o​u​n​t​ ​a​n​d​ ​d​a​t​a​ ​w​h​e​n​ ​y​o​u​ ​r​e​g​i​s​t​e​r​.
+	 */
+	account_guestDescription: string
+	/**
+	 * E​l​i​g​i​b​l​e​ ​f​o​r​ ​a​u​t​o​m​a​t​i​c​ ​d​e​l​e​t​i​o​n​ ​f​r​o​m​ ​{​d​a​t​e​}​.
+	 * @param {string} date
+	 */
+	account_guestDue: RequiredParams<'date'>
+	/**
+	 * N​o​ ​a​u​t​o​m​a​t​i​c​ ​d​e​l​e​t​i​o​n​ ​i​s​ ​s​c​h​e​d​u​l​e​d​.
+	 */
+	account_guestNoExpiry: string
+	/**
+	 * E​m​a​i​l​ ​a​d​d​r​e​s​s
+	 */
+	account_guestEmail: string
+	/**
+	 * R​e​g​i​s​t​e​r​ ​w​i​t​h​ ​e​m​a​i​l
+	 */
+	account_guestSend: string
+	/**
+	 * R​e​g​i​s​t​e​r​ ​w​i​t​h​ ​a​ ​p​a​s​s​k​e​y
+	 */
+	account_guestPasskey: string
+	/**
+	 * C​o​n​f​i​r​m​a​t​i​o​n​ ​c​o​d​e
+	 */
+	account_guestCode: string
+	/**
+	 * C​o​n​f​i​r​m​ ​r​e​g​i​s​t​r​a​t​i​o​n
+	 */
+	account_guestConfirm: string
+	/**
+	 * R​e​g​i​s​t​r​a​t​i​o​n​ ​i​s​ ​i​n​ ​p​r​o​g​r​e​s​s​.​ ​Y​o​u​ ​c​a​n​ ​r​e​t​r​y​ ​t​o​ ​c​h​e​c​k​ ​c​o​m​p​l​e​t​i​o​n​.
+	 */
+	account_guestPending: string
+	/**
+	 * R​e​t​r​y
+	 */
+	account_guestRetry: string
+	/**
+	 * R​e​g​i​s​t​r​a​t​i​o​n​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​c​o​m​p​l​e​t​e​d​.​ ​C​h​e​c​k​ ​t​h​e​ ​c​o​n​f​i​r​m​a​t​i​o​n​ ​c​o​d​e​ ​o​r​ ​t​r​y​ ​a​g​a​i​n​.
+	 */
+	account_guestError: string
+	/**
+	 * T​h​i​s​ ​i​d​e​n​t​i​t​y​ ​a​l​r​e​a​d​y​ ​h​a​s​ ​a​n​ ​a​c​c​o​u​n​t​.​ ​S​i​g​n​ ​i​n​ ​t​o​ ​t​h​a​t​ ​a​c​c​o​u​n​t​ ​s​e​p​a​r​a​t​e​l​y​.​ ​Y​o​u​r​ ​g​u​e​s​t​ ​a​c​c​o​u​n​t​ ​w​i​l​l​ ​n​o​t​ ​b​e​ ​m​e​r​g​e​d​.
+	 */
+	account_guestCollision: string
+	/**
+	 * S​i​g​n​ ​i​n​ ​t​o​ ​a​n​ ​e​x​i​s​t​i​n​g​ ​a​c​c​o​u​n​t
+	 */
+	account_guestExistingLogin: string
+	/**
+	 * Y​o​u​r​ ​a​c​c​o​u​n​t​ ​h​a​s​ ​b​e​e​n​ ​r​e​g​i​s​t​e​r​e​d​.
+	 */
+	account_guestRegistered: string
+	/**
+	 * C​h​o​o​s​e​ ​a​n​o​t​h​e​r​ ​m​e​t​h​o​d
+	 */
+	account_guestChangeMethod: string
+	/**
+	 * C​o​n​t​i​n​u​e​ ​a​s​ ​a​ ​g​u​e​s​t
+	 */
+	login_guestContinue: string
+	/**
+	 * G​u​e​s​t​ ​a​c​c​o​u​n​t​s​ ​a​r​e​ ​e​l​i​g​i​b​l​e​ ​f​o​r​ ​a​u​t​o​m​a​t​i​c​ ​d​e​l​e​t​i​o​n​ ​{​d​a​y​s​}​ ​d​a​y​s​ ​a​f​t​e​r​ ​c​r​e​a​t​i​o​n​.​ ​R​e​g​i​s​t​e​r​ ​a​n​ ​a​c​c​o​u​n​t​ ​t​o​ ​k​e​e​p​ ​u​s​i​n​g​ ​i​t​.
+	 * @param {number} days
+	 */
+	login_guestRetention: RequiredParams<'days'>
+	/**
+	 * N​o​ ​a​u​t​o​m​a​t​i​c​ ​d​e​l​e​t​i​o​n​ ​i​s​ ​s​c​h​e​d​u​l​e​d​ ​f​o​r​ ​n​e​w​ ​g​u​e​s​t​ ​a​c​c​o​u​n​t​s​.
+	 */
+	login_guestNoExpiry: string
+	/**
 	 * A​u​t​h​r​i​m
 	 */
 	app_title: string
@@ -358,6 +440,95 @@ type RootTranslation = {
 	 */
 	account_planned: string
 	/**
+	 * N​o​ ​e​x​t​e​r​n​a​l​ ​a​c​c​o​u​n​t​s​ ​a​r​e​ ​l​i​n​k​e​d​.
+	 */
+	account_socialEmpty: string
+	/**
+	 * L​i​n​k​ ​a​n​ ​a​c​c​o​u​n​t
+	 */
+	account_socialLinkHeading: string
+	/**
+	 * L​i​n​k​ ​{​p​r​o​v​i​d​e​r​}
+	 * @param {unknown} provider
+	 */
+	account_socialLinkWith: RequiredParams<'provider'>
+	/**
+	 * N​o​ ​o​t​h​e​r​ ​p​r​o​v​i​d​e​r​s​ ​a​r​e​ ​a​v​a​i​l​a​b​l​e​ ​t​o​ ​l​i​n​k​.
+	 */
+	account_socialNoProviders: string
+	/**
+	 * L​i​n​k​e​d​ ​{​d​a​t​e​}
+	 * @param {unknown} date
+	 */
+	account_socialLinkedAt: RequiredParams<'date'>
+	/**
+	 * L​a​s​t​ ​u​s​e​d​ ​{​d​a​t​e​}
+	 * @param {unknown} date
+	 */
+	account_socialLastUsed: RequiredParams<'date'>
+	/**
+	 * U​n​l​i​n​k
+	 */
+	account_socialUnlink: string
+	/**
+	 * U​n​l​i​n​k​ ​{​p​r​o​v​i​d​e​r​}​?​ ​Y​o​u​ ​w​i​l​l​ ​n​o​ ​l​o​n​g​e​r​ ​b​e​ ​a​b​l​e​ ​t​o​ ​l​o​g​ ​i​n​ ​w​i​t​h​ ​i​t​.
+	 * @param {unknown} provider
+	 */
+	account_socialUnlinkConfirm: RequiredParams<'provider'>
+	/**
+	 * U​n​l​i​n​k​ ​{​p​r​o​v​i​d​e​r​}
+	 * @param {unknown} provider
+	 */
+	account_socialUnlinkConfirmAction: RequiredParams<'provider'>
+	/**
+	 * T​h​e​ ​a​c​c​o​u​n​t​ ​w​a​s​ ​l​i​n​k​e​d​.
+	 */
+	account_socialLinked: string
+	/**
+	 * T​h​e​ ​a​c​c​o​u​n​t​ ​w​a​s​ ​u​n​l​i​n​k​e​d​.
+	 */
+	account_socialUnlinked: string
+	/**
+	 * T​h​a​t​ ​a​c​c​o​u​n​t​ ​i​s​ ​a​l​r​e​a​d​y​ ​l​i​n​k​e​d​ ​t​o​ ​a​n​o​t​h​e​r​ ​u​s​e​r​.
+	 */
+	account_socialErrorAlreadyLinked: string
+	/**
+	 * T​h​a​t​ ​p​r​o​v​i​d​e​r​ ​i​s​ ​a​l​r​e​a​d​y​ ​l​i​n​k​e​d​ ​t​o​ ​y​o​u​r​ ​a​c​c​o​u​n​t​.
+	 */
+	account_socialErrorAlreadyLinkedHere: string
+	/**
+	 * T​h​e​ ​p​r​o​v​i​d​e​r​ ​h​a​s​ ​n​o​t​ ​v​e​r​i​f​i​e​d​ ​t​h​a​t​ ​a​c​c​o​u​n​t​'​s​ ​e​m​a​i​l​ ​a​d​d​r​e​s​s​.
+	 */
+	account_socialErrorEmailNotVerified: string
+	/**
+	 * Y​o​u​r​ ​c​o​n​f​i​r​m​a​t​i​o​n​ ​e​x​p​i​r​e​d​ ​b​e​f​o​r​e​ ​t​h​e​ ​l​i​n​k​ ​f​i​n​i​s​h​e​d​.​ ​C​o​n​f​i​r​m​ ​a​g​a​i​n​ ​a​n​d​ ​r​e​t​r​y​.
+	 */
+	account_socialErrorSessionExpired: string
+	/**
+	 * L​i​n​k​i​n​g​ ​w​a​s​ ​c​a​n​c​e​l​l​e​d​.
+	 */
+	account_socialErrorCancelled: string
+	/**
+	 * T​h​e​ ​a​c​c​o​u​n​t​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​l​i​n​k​e​d​.​ ​T​r​y​ ​a​g​a​i​n​.
+	 */
+	account_socialErrorFailed: string
+	/**
+	 * T​h​i​s​ ​i​s​ ​y​o​u​r​ ​l​a​s​t​ ​w​a​y​ ​t​o​ ​l​o​g​ ​i​n​.​ ​A​d​d​ ​a​ ​p​a​s​s​k​e​y​ ​o​r​ ​a​n​o​t​h​e​r​ ​l​o​g​i​n​ ​m​e​t​h​o​d​ ​f​i​r​s​t​.
+	 */
+	account_socialErrorLastMethod: string
+	/**
+	 * A​n​o​t​h​e​r​ ​c​h​a​n​g​e​ ​t​o​ ​y​o​u​r​ ​l​o​g​i​n​ ​m​e​t​h​o​d​s​ ​i​s​ ​i​n​ ​p​r​o​g​r​e​s​s​.​ ​T​r​y​ ​a​g​a​i​n​ ​i​n​ ​a​ ​m​o​m​e​n​t​.
+	 */
+	account_socialErrorInProgress: string
+	/**
+	 * E​x​t​e​r​n​a​l​ ​a​c​c​o​u​n​t​ ​l​i​n​k​e​d
+	 */
+	account_operationSocialLinked: string
+	/**
+	 * E​x​t​e​r​n​a​l​ ​a​c​c​o​u​n​t​ ​u​n​l​i​n​k​e​d
+	 */
+	account_operationSocialUnlinked: string
+	/**
 	 * T​h​i​s​ ​b​r​o​w​s​e​r​ ​d​o​e​s​ ​n​o​t​ ​s​u​p​p​o​r​t​ ​p​a​s​s​k​e​y​ ​r​e​g​i​s​t​r​a​t​i​o​n​.
 	 */
 	account_passkeyUnsupported: string
@@ -477,6 +648,14 @@ type RootTranslation = {
 	 */
 	account_remainingLoginMethodRequired: string
 	/**
+	 * A​c​t​i​v​i​t​y​ ​r​e​s​u​l​t​s​ ​a​r​e​ ​i​n​c​o​m​p​l​e​t​e​.​ ​P​l​e​a​s​e​ ​r​e​t​r​y​ ​l​a​t​e​r​.
+	 */
+	account_activityIncomplete: string
+	/**
+	 * L​o​a​d​ ​o​l​d​e​r​ ​a​c​t​i​v​i​t​y
+	 */
+	account_activityLoadMore: string
+	/**
 	 * A​c​t​i​v​i​t​y
 	 */
 	account_activityTitle: string
@@ -500,6 +679,70 @@ type RootTranslation = {
 	 * S​e​s​s​i​o​n​ ​e​n​d​e​d
 	 */
 	account_operationSessionRevoked: string
+	/**
+	 * G​u​e​s​t​ ​a​c​c​o​u​n​t​ ​c​r​e​a​t​e​d
+	 */
+	account_operationGuestCreated: string
+	/**
+	 * G​u​e​s​t​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​f​a​i​l​e​d
+	 */
+	account_operationGuestUpgradeFailed: string
+	/**
+	 * G​u​e​s​t​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​s​t​a​r​t​e​d
+	 */
+	account_operationGuestUpgradeStarted: string
+	/**
+	 * G​u​e​s​t​ ​a​c​c​o​u​n​t​ ​r​e​g​i​s​t​e​r​e​d
+	 */
+	account_operationGuestUpgraded: string
+	/**
+	 * E​m​a​i​l​ ​a​d​d​e​d
+	 */
+	account_operationEmailAdded: string
+	/**
+	 * E​m​a​i​l​ ​c​h​a​n​g​e​d
+	 */
+	account_operationEmailChanged: string
+	/**
+	 * R​e​-​a​u​t​h​e​n​t​i​c​a​t​e​d​ ​b​y​ ​e​m​a​i​l
+	 */
+	account_operationEmailReauthenticated: string
+	/**
+	 * D​e​v​i​c​e​ ​r​e​n​a​m​e​d
+	 */
+	account_operationDeviceUpdated: string
+	/**
+	 * D​e​v​i​c​e​ ​u​n​l​i​n​k​e​d
+	 */
+	account_operationDeviceUnlinked: string
+	/**
+	 * R​e​-​a​u​t​h​e​n​t​i​c​a​t​e​d​ ​b​y​ ​P​a​s​s​k​e​y
+	 */
+	account_operationPasskeyReauthenticated: string
+	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​o​r​ ​s​e​t​u​p​ ​s​t​a​r​t​e​d
+	 */
+	account_operationTotpEnrollmentStarted: string
+	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​c​t​i​v​a​t​e​d
+	 */
+	account_operationTotpActivated: string
+	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​o​r​ ​r​e​n​a​m​e​d
+	 */
+	account_operationTotpUpdated: string
+	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​o​r​ ​r​e​m​o​v​e​d
+	 */
+	account_operationTotpRemoved: string
+	/**
+	 * B​a​c​k​u​p​ ​c​o​d​e​s​ ​r​e​g​e​n​e​r​a​t​e​d
+	 */
+	account_operationTotpBackupCodesRegenerated: string
+	/**
+	 * R​e​-​a​u​t​h​e​n​t​i​c​a​t​e​d​ ​b​y​ ​a​u​t​h​e​n​t​i​c​a​t​o​r
+	 */
+	account_operationTotpReauthenticated: string
 	/**
 	 * M​y​ ​a​p​p​l​i​c​a​t​i​o​n​s
 	 */
@@ -754,6 +997,10 @@ type RootTranslation = {
 	 * S​e​c​u​r​i​t​y​ ​c​h​e​c​k​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​l​o​a​d​e​d​.​ ​R​e​l​o​a​d​ ​t​h​e​ ​p​a​g​e​ ​a​n​d​ ​t​r​y​ ​a​g​a​i​n​.
 	 */
 	login_humanVerificationLoadFailed: string
+	/**
+	 * H​u​m​a​n​ ​v​e​r​i​f​i​c​a​t​i​o​n​ ​i​s​ ​c​u​r​r​e​n​t​l​y​ ​u​n​a​v​a​i​l​a​b​l​e​.​ ​C​o​n​t​a​c​t​ ​y​o​u​r​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​.
+	 */
+	login_humanVerificationUnavailable: string
 	/**
 	 * N​o​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​m​e​t​h​o​d​ ​i​s​ ​e​n​a​b​l​e​d​ ​f​o​r​ ​t​h​i​s​ ​o​r​g​a​n​i​z​a​t​i​o​n​.​ ​C​o​n​t​a​c​t​ ​y​o​u​r​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​.
 	 */
@@ -1021,7 +1268,7 @@ type RootTranslation = {
 	 */
 	emailCode_subtitle: string
 	/**
-	 * E​n​t​e​r​ ​t​h​e​ ​6​-​d​i​g​i​t​ ​c​o​d​e​ ​f​r​o​m​ ​y​o​u​r​ ​e​m​a​i​l​.​ ​T​h​e​ ​c​o​d​e​ ​w​i​l​l​ ​e​x​p​i​r​e​ ​i​n​ ​5​ ​m​i​n​u​t​e​s​.
+	 * E​n​t​e​r​ ​t​h​e​ ​6​-​d​i​g​i​t​ ​c​o​d​e​ ​f​r​o​m​ ​y​o​u​r​ ​e​m​a​i​l​.​ ​T​h​e​ ​e​m​a​i​l​ ​s​a​y​s​ ​h​o​w​ ​l​o​n​g​ ​t​h​e​ ​c​o​d​e​ ​l​a​s​t​s​.
 	 */
 	emailCode_instructions: string
 	/**
@@ -1243,6 +1490,27 @@ type RootTranslation = {
 	 */
 	error_unknown: string
 	/**
+	 * T​o​o​ ​m​a​n​y​ ​a​t​t​e​m​p​t​s​.​ ​W​a​i​t​ ​a​ ​w​h​i​l​e​,​ ​t​h​e​n​ ​t​r​y​ ​a​g​a​i​n​.
+	 */
+	error_rateLimited: string
+	/**
+	 * T​o​o​ ​m​a​n​y​ ​a​t​t​e​m​p​t​s​.​ ​T​r​y​ ​a​g​a​i​n​ ​i​n​ ​a​b​o​u​t​ ​{​m​i​n​u​t​e​s​}​ ​m​i​n​.
+	 * @param {number} minutes
+	 */
+	error_rateLimitedRetryAfter: RequiredParams<'minutes'>
+	/**
+	 * Y​o​u​ ​h​a​v​e​ ​b​e​e​n​ ​s​i​g​n​e​d​ ​o​u​t​.​ ​Y​o​u​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​s​e​n​t​ ​b​a​c​k​ ​t​o​ ​t​h​e​ ​a​p​p​ ​b​e​c​a​u​s​e​ ​i​t​s​ ​r​e​t​u​r​n​ ​a​d​d​r​e​s​s​ ​i​s​ ​n​o​t​ ​r​e​g​i​s​t​e​r​e​d​.​ ​O​p​e​n​ ​t​h​e​ ​a​p​p​ ​a​g​a​i​n​ ​y​o​u​r​s​e​l​f​.
+	 */
+	error_unregisteredPostLogoutRedirectUri: string
+	/**
+	 * Y​o​u​ ​h​a​v​e​ ​b​e​e​n​ ​s​i​g​n​e​d​ ​o​u​t​.​ ​Y​o​u​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​s​e​n​t​ ​b​a​c​k​ ​t​o​ ​t​h​e​ ​a​p​p​ ​b​e​c​a​u​s​e​ ​i​t​s​ ​s​i​g​n​-​o​u​t​ ​r​e​q​u​e​s​t​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​v​e​r​i​f​i​e​d​.​ ​O​p​e​n​ ​t​h​e​ ​a​p​p​ ​a​g​a​i​n​ ​y​o​u​r​s​e​l​f​.
+	 */
+	error_invalidIdTokenHint: string
+	/**
+	 * Y​o​u​ ​h​a​v​e​ ​b​e​e​n​ ​s​i​g​n​e​d​ ​o​u​t​.​ ​Y​o​u​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​s​e​n​t​ ​b​a​c​k​ ​t​o​ ​t​h​e​ ​a​p​p​ ​b​e​c​a​u​s​e​ ​i​t​s​ ​s​i​g​n​-​o​u​t​ ​r​e​q​u​e​s​t​ ​w​a​s​ ​i​n​c​o​m​p​l​e​t​e​.​ ​O​p​e​n​ ​t​h​e​ ​a​p​p​ ​a​g​a​i​n​ ​y​o​u​r​s​e​l​f​.
+	 */
+	error_idTokenHintRequired: string
+	/**
 	 * D​e​v​i​c​e​ ​v​e​r​i​f​i​c​a​t​i​o​n
 	 */
 	device_title: string
@@ -1259,7 +1527,7 @@ type RootTranslation = {
 	 */
 	device_codePlaceholder: string
 	/**
-	 * E​n​t​e​r​ ​t​h​e​ ​8​-​c​h​a​r​a​c​t​e​r​ ​c​o​d​e​ ​f​r​o​m​ ​y​o​u​r​ ​d​e​v​i​c​e​ ​(​f​o​r​m​a​t​:​ ​X​X​X​X​-​X​X​X​X​)
+	 * E​n​t​e​r​ ​t​h​e​ ​c​o​d​e​ ​s​h​o​w​n​ ​o​n​ ​y​o​u​r​ ​d​e​v​i​c​e
 	 */
 	device_codeHint: string
 	/**
@@ -1310,6 +1578,22 @@ type RootTranslation = {
 	 * I​n​v​a​l​i​d​ ​r​e​d​i​r​e​c​t​ ​U​R​L​ ​r​e​c​e​i​v​e​d​ ​f​r​o​m​ ​s​e​r​v​e​r
 	 */
 	device_errorInvalidRedirect: string
+	/**
+	 * T​h​i​s​ ​r​e​q​u​e​s​t​ ​w​a​s​ ​m​a​d​e​ ​b​e​f​o​r​e​ ​y​o​u​ ​w​i​t​h​d​r​e​w​ ​t​h​i​s​ ​a​p​p​'​s​ ​a​c​c​e​s​s​.​ ​S​t​a​r​t​ ​a​g​a​i​n​ ​o​n​ ​t​h​e​ ​d​e​v​i​c​e​ ​t​o​ ​g​e​t​ ​a​ ​n​e​w​ ​c​o​d​e​.
+	 */
+	device_errorConsentWithdrawn: string
+	/**
+	 * Y​o​u​r​ ​d​e​c​i​s​i​o​n​ ​c​o​u​l​d​n​'​t​ ​b​e​ ​s​a​v​e​d​ ​r​i​g​h​t​ ​n​o​w​,​ ​a​n​d​ ​n​o​t​h​i​n​g​ ​h​a​s​ ​c​h​a​n​g​e​d​.​ ​T​r​y​ ​a​g​a​i​n​ ​i​n​ ​a​ ​m​o​m​e​n​t​.
+	 */
+	device_errorTryAgain: string
+	/**
+	 * T​o​o​ ​m​a​n​y​ ​a​t​t​e​m​p​t​s​.​ ​W​a​i​t​ ​a​ ​w​h​i​l​e​,​ ​t​h​e​n​ ​t​r​y​ ​a​g​a​i​n​.
+	 */
+	device_errorTooManyAttempts: string
+	/**
+	 * W​e​ ​c​o​u​l​d​n​'​t​ ​c​o​n​f​i​r​m​ ​w​h​e​t​h​e​r​ ​y​o​u​r​ ​d​e​c​i​s​i​o​n​ ​w​a​s​ ​s​a​v​e​d​.​ ​C​h​e​c​k​ ​t​h​e​ ​d​e​v​i​c​e​,​ ​o​r​ ​e​n​t​e​r​ ​t​h​e​ ​c​o​d​e​ ​a​g​a​i​n​.
+	 */
+	device_errorOutcomeUnknown: string
 	/**
 	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​r​e​q​u​e​s​t
 	 */
@@ -1386,6 +1670,34 @@ type RootTranslation = {
 	 * F​a​i​l​e​d​ ​t​o​ ​d​e​n​y​ ​r​e​q​u​e​s​t
 	 */
 	ciba_errorDenyFailed: string
+	/**
+	 * T​h​i​s​ ​r​e​q​u​e​s​t​ ​w​a​s​ ​m​a​d​e​ ​b​e​f​o​r​e​ ​y​o​u​ ​w​i​t​h​d​r​e​w​ ​t​h​i​s​ ​a​p​p​'​s​ ​a​c​c​e​s​s​.​ ​S​t​a​r​t​ ​a​g​a​i​n​ ​f​r​o​m​ ​t​h​e​ ​a​p​p​.
+	 */
+	ciba_errorConsentWithdrawn: string
+	/**
+	 * T​h​i​s​ ​r​e​q​u​e​s​t​ ​h​a​s​ ​e​x​p​i​r​e​d​ ​o​r​ ​h​a​s​ ​a​l​r​e​a​d​y​ ​b​e​e​n​ ​a​n​s​w​e​r​e​d​.
+	 */
+	ciba_errorRequestGone: string
+	/**
+	 * T​h​e​ ​s​i​g​n​-​i​n​ ​r​e​q​u​e​s​t​ ​h​a​s​ ​e​x​p​i​r​e​d​.​ ​S​t​a​r​t​ ​a​g​a​i​n​ ​f​r​o​m​ ​t​h​e​ ​a​p​p​.
+	 */
+	error_authorizationRequestExpired: string
+	/**
+	 * Y​o​u​r​ ​d​e​c​i​s​i​o​n​ ​c​o​u​l​d​n​'​t​ ​b​e​ ​s​a​v​e​d​ ​r​i​g​h​t​ ​n​o​w​,​ ​a​n​d​ ​n​o​t​h​i​n​g​ ​h​a​s​ ​c​h​a​n​g​e​d​.​ ​T​r​y​ ​a​g​a​i​n​ ​i​n​ ​a​ ​m​o​m​e​n​t​.
+	 */
+	ciba_errorTryAgain: string
+	/**
+	 * T​o​o​ ​m​a​n​y​ ​a​t​t​e​m​p​t​s​.​ ​W​a​i​t​ ​a​ ​w​h​i​l​e​,​ ​t​h​e​n​ ​t​r​y​ ​a​g​a​i​n​.
+	 */
+	ciba_errorTooManyAttempts: string
+	/**
+	 * W​e​ ​c​o​u​l​d​n​'​t​ ​c​o​n​f​i​r​m​ ​w​h​e​t​h​e​r​ ​y​o​u​r​ ​a​n​s​w​e​r​ ​w​a​s​ ​s​a​v​e​d​.​ ​R​e​f​r​e​s​h​ ​t​o​ ​s​e​e​ ​t​h​e​ ​r​e​q​u​e​s​t​s​ ​s​t​i​l​l​ ​w​a​i​t​i​n​g​.
+	 */
+	ciba_errorOutcomeUnknown: string
+	/**
+	 * W​e​ ​c​o​u​l​d​n​'​t​ ​c​o​n​f​i​r​m​ ​y​o​u​r​ ​a​n​s​w​e​r​,​ ​b​u​t​ ​t​h​i​s​ ​r​e​q​u​e​s​t​ ​i​s​ ​n​o​ ​l​o​n​g​e​r​ ​w​a​i​t​i​n​g​.
+	 */
+	ciba_errorNoLongerWaiting: string
 	/**
 	 * V​e​r​i​f​y​ ​y​o​u​r​ ​i​d​e​n​t​i​t​y
 	 */
@@ -1499,6 +1811,14 @@ type RootTranslation = {
 	 */
 	login_extError_callbackFailed_message: string
 	/**
+	 * S​i​g​n​-​i​n​ ​n​o​t​ ​c​o​n​f​i​r​m​e​d
+	 */
+	login_extError_reauthNotProven_title: string
+	/**
+	 * Y​o​u​r​ ​s​i​g​n​-​i​n​ ​p​r​o​v​i​d​e​r​ ​d​i​d​ ​n​o​t​ ​c​o​n​f​i​r​m​ ​t​h​a​t​ ​y​o​u​ ​s​i​g​n​e​d​ ​i​n​ ​a​g​a​i​n​.​ ​S​i​g​n​ ​i​n​ ​a​g​a​i​n​ ​o​r​ ​c​h​o​o​s​e​ ​a​n​o​t​h​e​r​ ​m​e​t​h​o​d​.
+	 */
+	login_extError_reauthNotProven_message: string
+	/**
 	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​e​r​r​o​r
 	 */
 	login_extError_default_title: string
@@ -1526,6 +1846,86 @@ type RootTranslation = {
 }
 
 export type TranslationFunctions = {
+	/**
+	 * Logging out will prevent you from returning to this guest account. Register first to keep access to your account and data. Log out anyway?
+	 */
+	account_guestLogoutWarning: () => LocalizedString
+	/**
+	 * Register your account
+	 */
+	account_guestTitle: () => LocalizedString
+	/**
+	 * Keep the same account and data when you register.
+	 */
+	account_guestDescription: () => LocalizedString
+	/**
+	 * Eligible for automatic deletion from {date}.
+	 */
+	account_guestDue: (arg: { date: string }) => LocalizedString
+	/**
+	 * No automatic deletion is scheduled.
+	 */
+	account_guestNoExpiry: () => LocalizedString
+	/**
+	 * Email address
+	 */
+	account_guestEmail: () => LocalizedString
+	/**
+	 * Register with email
+	 */
+	account_guestSend: () => LocalizedString
+	/**
+	 * Register with a passkey
+	 */
+	account_guestPasskey: () => LocalizedString
+	/**
+	 * Confirmation code
+	 */
+	account_guestCode: () => LocalizedString
+	/**
+	 * Confirm registration
+	 */
+	account_guestConfirm: () => LocalizedString
+	/**
+	 * Registration is in progress. You can retry to check completion.
+	 */
+	account_guestPending: () => LocalizedString
+	/**
+	 * Retry
+	 */
+	account_guestRetry: () => LocalizedString
+	/**
+	 * Registration could not be completed. Check the confirmation code or try again.
+	 */
+	account_guestError: () => LocalizedString
+	/**
+	 * This identity already has an account. Sign in to that account separately. Your guest account will not be merged.
+	 */
+	account_guestCollision: () => LocalizedString
+	/**
+	 * Sign in to an existing account
+	 */
+	account_guestExistingLogin: () => LocalizedString
+	/**
+	 * Your account has been registered.
+	 */
+	account_guestRegistered: () => LocalizedString
+	/**
+	 * Choose another method
+	 */
+	account_guestChangeMethod: () => LocalizedString
+	/**
+	 * Continue as a guest
+	 */
+	login_guestContinue: () => LocalizedString
+	/**
+	 * Guest accounts are eligible for automatic deletion {days} days after creation. Register an account to keep using it.
+	 */
+	login_guestRetention: (arg: { days: number }) => LocalizedString
+	/**
+	 * No automatic deletion is scheduled for new guest accounts.
+	 */
+	login_guestNoExpiry: () => LocalizedString
 	/**
 	 * Authrim
 	 */
@@ -1847,6 +2247,90 @@ export type TranslationFunctions = {
 	 */
 	account_planned: () => LocalizedString
 	/**
+	 * No external accounts are linked.
+	 */
+	account_socialEmpty: () => LocalizedString
+	/**
+	 * Link an account
+	 */
+	account_socialLinkHeading: () => LocalizedString
+	/**
+	 * Link {provider}
+	 */
+	account_socialLinkWith: (arg: { provider: unknown }) => LocalizedString
+	/**
+	 * No other providers are available to link.
+	 */
+	account_socialNoProviders: () => LocalizedString
+	/**
+	 * Linked {date}
+	 */
+	account_socialLinkedAt: (arg: { date: unknown }) => LocalizedString
+	/**
+	 * Last used {date}
+	 */
+	account_socialLastUsed: (arg: { date: unknown }) => LocalizedString
+	/**
+	 * Unlink
+	 */
+	account_socialUnlink: () => LocalizedString
+	/**
+	 * Unlink {provider}? You will no longer be able to log in with it.
+	 */
+	account_socialUnlinkConfirm: (arg: { provider: unknown }) => LocalizedString
+	/**
+	 * Unlink {provider}
+	 */
+	account_socialUnlinkConfirmAction: (arg: { provider: unknown }) => LocalizedString
+	/**
+	 * The account was linked.
+	 */
+	account_socialLinked: () => LocalizedString
+	/**
+	 * The account was unlinked.
+	 */
+	account_socialUnlinked: () => LocalizedString
+	/**
+	 * That account is already linked to another user.
+	 */
+	account_socialErrorAlreadyLinked: () => LocalizedString
+	/**
+	 * That provider is already linked to your account.
+	 */
+	account_socialErrorAlreadyLinkedHere: () => LocalizedString
+	/**
+	 * The provider has not verified that account's email address.
+	 */
+	account_socialErrorEmailNotVerified: () => LocalizedString
+	/**
+	 * Your confirmation expired before the link finished. Confirm again and retry.
+	 */
+	account_socialErrorSessionExpired: () => LocalizedString
+	/**
+	 * Linking was cancelled.
+	 */
+	account_socialErrorCancelled: () => LocalizedString
+	/**
+	 * The account could not be linked. Try again.
+	 */
+	account_socialErrorFailed: () => LocalizedString
+	/**
+	 * This is your last way to log in. Add a passkey or another login method first.
+	 */
+	account_socialErrorLastMethod: () => LocalizedString
+	/**
+	 * Another change to your login methods is in progress. Try again in a moment.
+	 */
+	account_socialErrorInProgress: () => LocalizedString
+	/**
+	 * External account linked
+	 */
+	account_operationSocialLinked: () => LocalizedString
+	/**
+	 * External account unlinked
+	 */
+	account_operationSocialUnlinked: () => LocalizedString
+	/**
 	 * This browser does not support passkey registration.
 	 */
 	account_passkeyUnsupported: () => LocalizedString
@@ -1963,6 +2447,14 @@ export type TranslationFunctions = {
 	 */
 	account_remainingLoginMethodRequired: () => LocalizedString
 	/**
+	 * Activity results are incomplete. Please retry later.
+	 */
+	account_activityIncomplete: () => LocalizedString
+	/**
+	 * Load older activity
+	 */
+	account_activityLoadMore: () => LocalizedString
+	/**
 	 * Activity
 	 */
 	account_activityTitle: () => LocalizedString
@@ -1986,6 +2478,70 @@ export type TranslationFunctions = {
 	 * Session ended
 	 */
 	account_operationSessionRevoked: () => LocalizedString
+	/**
+	 * Guest account created
+	 */
+	account_operationGuestCreated: () => LocalizedString
+	/**
+	 * Guest registration failed
+	 */
+	account_operationGuestUpgradeFailed: () => LocalizedString
+	/**
+	 * Guest registration started
+	 */
+	account_operationGuestUpgradeStarted: () => LocalizedString
+	/**
+	 * Guest account registered
+	 */
+	account_operationGuestUpgraded: () => LocalizedString
+	/**
+	 * Email added
+	 */
+	account_operationEmailAdded: () => LocalizedString
+	/**
+	 * Email changed
+	 */
+	account_operationEmailChanged: () => LocalizedString
+	/**
+	 * Re-authenticated by email
+	 */
+	account_operationEmailReauthenticated: () => LocalizedString
+	/**
+	 * Device renamed
+	 */
+	account_operationDeviceUpdated: () => LocalizedString
+	/**
+	 * Device unlinked
+	 */
+	account_operationDeviceUnlinked: () => LocalizedString
+	/**
+	 * Re-authenticated by Passkey
+	 */
+	account_operationPasskeyReauthenticated: () => LocalizedString
+	/**
+	 * Authenticator setup started
+	 */
+	account_operationTotpEnrollmentStarted: () => LocalizedString
+	/**
+	 * Authenticator activated
+	 */
+	account_operationTotpActivated: () => LocalizedString
+	/**
+	 * Authenticator renamed
+	 */
+	account_operationTotpUpdated: () => LocalizedString
+	/**
+	 * Authenticator removed
+	 */
+	account_operationTotpRemoved: () => LocalizedString
+	/**
+	 * Backup codes regenerated
+	 */
+	account_operationTotpBackupCodesRegenerated: () => LocalizedString
+	/**
+	 * Re-authenticated by authenticator
+	 */
+	account_operationTotpReauthenticated: () => LocalizedString
 	/**
 	 * My applications
 	 */
@@ -2238,6 +2794,10 @@ export type TranslationFunctions = {
 	 * Security check could not be loaded. Reload the page and try again.
 	 */
 	login_humanVerificationLoadFailed: () => LocalizedString
+	/**
+	 * Human verification is currently unavailable. Contact your administrator.
+	 */
+	login_humanVerificationUnavailable: () => LocalizedString
 	/**
 	 * No authentication method is enabled for this organization. Contact your administrator.
 	 */
@@ -2503,7 +3063,7 @@ export type TranslationFunctions = {
 	 */
 	emailCode_subtitle: () => LocalizedString
 	/**
-	 * Enter the 6-digit code from your email. The code will expire in 5 minutes.
+	 * Enter the 6-digit code from your email. The email says how long the code lasts.
 	 */
 	emailCode_instructions: () => LocalizedString
 	/**
@@ -2719,6 +3279,26 @@ export type TranslationFunctions = {
 	 */
 	error_unknown: () => LocalizedString
 	/**
+	 * Too many attempts. Wait a while, then try again.
+	 */
+	error_rateLimited: () => LocalizedString
+	/**
+	 * Too many attempts. Try again in about {minutes} min.
+	 */
+	error_rateLimitedRetryAfter: (arg: { minutes: number }) => LocalizedString
+	/**
+	 * You have been signed out. You could not be sent back to the app because its return address is not registered. Open the app again yourself.
+	 */
+	error_unregisteredPostLogoutRedirectUri: () => LocalizedString
+	/**
+	 * You have been signed out. You could not be sent back to the app because its sign-out request could not be verified. Open the app again yourself.
+	 */
+	error_invalidIdTokenHint: () => LocalizedString
+	/**
+	 * You have been signed out. You could not be sent back to the app because its sign-out request was incomplete. Open the app again yourself.
+	 */
+	error_idTokenHintRequired: () => LocalizedString
+	/**
 	 * Device verification
 	 */
 	device_title: () => LocalizedString
@@ -2735,7 +3315,7 @@ export type TranslationFunctions = {
 	 */
 	device_codePlaceholder: () => LocalizedString
 	/**
-	 * Enter the 8-character code from your device (format: XXXX-XXXX)
+	 * Enter the code shown on your device
 	 */
 	device_codeHint: () => LocalizedString
 	/**
@@ -2786,6 +3366,22 @@ export type TranslationFunctions = {
 	 * Invalid redirect URL received from server
 	 */
 	device_errorInvalidRedirect: () => LocalizedString
+	/**
+	 * This request was made before you withdrew this app's access. Start again on the device to get a new code.
+	 */
+	device_errorConsentWithdrawn: () => LocalizedString
+	/**
+	 * Your decision couldn't be saved right now, and nothing has changed. Try again in a moment.
+	 */
+	device_errorTryAgain: () => LocalizedString
+	/**
+	 * Too many attempts. Wait a while, then try again.
+	 */
+	device_errorTooManyAttempts: () => LocalizedString
+	/**
+	 * We couldn't confirm whether your decision was saved. Check the device, or enter the code again.
+	 */
+	device_errorOutcomeUnknown: () => LocalizedString
 	/**
 	 * Authentication request
 	 */
@@ -2862,6 +3458,34 @@ export type TranslationFunctions = {
 	 * Failed to deny request
 	 */
 	ciba_errorDenyFailed: () => LocalizedString
+	/**
+	 * This request was made before you withdrew this app's access. Start again from the app.
+	 */
+	ciba_errorConsentWithdrawn: () => LocalizedString
+	/**
+	 * This request has expired or has already been answered.
+	 */
+	ciba_errorRequestGone: () => LocalizedString
+	/**
+	 * The sign-in request has expired. Start again from the app.
+	 */
+	error_authorizationRequestExpired: () => LocalizedString
+	/**
+	 * Your decision couldn't be saved right now, and nothing has changed. Try again in a moment.
+	 */
+	ciba_errorTryAgain: () => LocalizedString
+	/**
+	 * Too many attempts. Wait a while, then try again.
+	 */
+	ciba_errorTooManyAttempts: () => LocalizedString
+	/**
+	 * We couldn't confirm whether your answer was saved. Refresh to see the requests still waiting.
+	 */
+	ciba_errorOutcomeUnknown: () => LocalizedString
+	/**
+	 * We couldn't confirm your answer, but this request is no longer waiting.
+	 */
+	ciba_errorNoLongerWaiting: () => LocalizedString
 	/**
 	 * Verify your identity
 	 */
@@ -2974,6 +3598,14 @@ export type TranslationFunctions = {
 	 * An error occurred during authentication. Please try again.
 	 */
 	login_extError_callbackFailed_message: () => LocalizedString
+	/**
+	 * Sign-in not confirmed
+	 */
+	login_extError_reauthNotProven_title: () => LocalizedString
+	/**
+	 * Your sign-in provider did not confirm that you signed in again. Sign in again or choose another method.
+	 */
+	login_extError_reauthNotProven_message: () => LocalizedString
 	/**
 	 * Authentication error
 	 */

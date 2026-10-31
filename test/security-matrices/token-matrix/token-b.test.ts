@@ -85,7 +85,7 @@ function seedClientRow(kit: SecurityMatrixEnvKit, clientId: string): void {
         redirect_uris: REDIRECT,
         grant_types: 'authorization_code refresh_token',
         response_types: 'code',
-        scope: 'openid',
+        scope: 'openid offline_access',
         token_endpoint_auth_method: 'none',
         default_resource: RESOURCE,
         require_pkce: 0,
@@ -121,7 +121,7 @@ async function storeCode(kit: SecurityMatrixEnvKit, input: StoredCodeInput): Pro
     clientId: input.clientId,
     redirectUri: REDIRECT,
     userId: 'user-001',
-    scope: 'openid',
+    scope: 'openid offline_access',
     codeChallenge: input.codeChallenge,
     codeChallengeMethod: input.codeChallenge ? 'S256' : undefined,
     nonce: input.nonce,
@@ -196,7 +196,7 @@ async function seedRegistrationRaceCodeDirect(
     clientId,
     redirectUri: REDIRECT,
     userId: 'user-001',
-    scope: 'openid',
+    scope: 'openid offline_access',
     codeChallenge,
     codeChallengeMethod: codeChallenge ? 'S256' : undefined,
     nonce: NONCE,
@@ -355,7 +355,7 @@ async function buildObservation(
   if (typeof run.body.access_token === 'string') {
     const access = await verifyTokenMaterial(run.body.access_token);
     obs.kidMatchesFixedKey = access.kid === moduleFixedKeyKid();
-    obs.scopePresent = access.payload.scope === 'openid';
+    obs.scopePresent = access.payload.scope === 'openid offline_access';
     if (typeof run.body.id_token === 'string') {
       const id = await verifyTokenMaterial(run.body.id_token);
       const atHash = typeof id.payload.at_hash === 'string' ? id.payload.at_hash : null;

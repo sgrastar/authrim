@@ -1,0 +1,277 @@
+/* ============================================================
+   Colour tokens registered as <color> so they interpolate during a theme switch.
+   `color` is inherited, so transitioning it per element makes children chase their parents
+   and snap at the end. Animating the tokens once at the root means every element reads the
+   same value in the same frame. Only plain colours can be registered; material tokens that
+   hold gradients (--surface-bg, --page-backdrop) stay unregistered and switch instantly.
+   ============================================================ */
+
+@property --bg-page {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #eeeae3;
+}
+
+@property --bg-card {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #fefdfa;
+}
+
+@property --bg-subtle {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #f5f2ec;
+}
+
+@property --bg-input {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #ffffff;
+}
+
+@property --bg-hover {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: rgba(51, 51, 51, 0.045);
+}
+
+@property --primary {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #2c2724;
+}
+
+@property --primary-hover {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #1a1715;
+}
+
+@property --text-primary {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #2c2724;
+}
+
+@property --text-secondary {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #5f5851;
+}
+
+@property --text-muted {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #6e665e;
+}
+
+@property --text-inverse {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #ffffff;
+}
+
+@property --border {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: rgba(51, 51, 51, 0.12);
+}
+
+@property --border-strong {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: rgba(51, 51, 51, 0.2);
+}
+
+@property --border-subtle {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: rgba(51, 51, 51, 0.07);
+}
+
+@property --focus-ring {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #4a7fa6;
+}
+
+@property --accent-enduser {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #7aadcc;
+}
+
+@property --accent-client {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #68b89a;
+}
+
+@property --accent-tenant {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #c9a05a;
+}
+
+@property --accent-platform {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #9b84c4;
+}
+
+@property --success {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #25774f;
+}
+
+@property --success-bg {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #e7f5ef;
+}
+
+@property --warning {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #8f5f14;
+}
+
+@property --warning-bg {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #fdf3e0;
+}
+
+@property --danger {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #b03a31;
+}
+
+@property --danger-bg {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #fbeae8;
+}
+
+@property --info {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #3b6c90;
+}
+
+@property --info-bg {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #e9f1f7;
+}
+
+@property --info-text {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #33556e;
+}
+
+@property --warning-text {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #6e4a0e;
+}
+
+@property --platform-text {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #5d4a7a;
+}
+
+@property --on-accent {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #1a1715;
+}
+
+@property --switch-off {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: rgba(51, 51, 51, 0.24);
+}
+
+@property --switch-knob {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #ffffff;
+}
+
+@property --scrim {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: rgba(0, 0, 0, 0.42);
+}
+
+@property --code-comment {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #6e665e;
+}
+
+@property --code-string {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #2f7a4d;
+}
+
+@property --code-number {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #9a5b13;
+}
+
+@property --code-keyword {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #8a3f8f;
+}
+
+@property --code-literal {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #0f6a8a;
+}
+
+@property --code-property {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #1d5f9a;
+}
+
+@property --code-tag {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #a0402f;
+}
+
+@property --code-attr {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #7a5c10;
+}
+
+@property --code-function {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #5a4bb0;
+}
+
+@property --code-variable {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #a03f6b;
+}
+
+@property --code-punct {
+	syntax: '<color>';
+	inherits: true;
+	initial-value: #6b635c;
+}

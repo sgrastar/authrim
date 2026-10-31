@@ -1,3 +1,9 @@
+import {
+  isLowCount,
+  redactCohortCounts,
+  redactResultSummary,
+  type RedactedCohortCounts,
+} from './support-ops-redaction';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type {
@@ -5,6 +11,7 @@ import type {
   DatabaseAdapter,
   Env,
   SupportOpsActionName,
+  SupportOpsRiskSummary,
   SupportOpsSelector,
 } from '@authrim/ar-lib-core';
 import {
@@ -18,16 +25,36 @@ import {
   generateInvestigationId,
   getSupportOpsResource,
   getTenantIdFromContext,
-  getTenantSettings,
+  getTenantSettingsDocument,
   hasAdminPermission,
   listSupportOpsResources,
   requireDedicatedAdminDatabaseAdapter,
-  resolveAuthCorePersistenceAdapterFromEnv,
-  transitionAccountAuthenticationState,
   validateSupportOpsAction,
 } from '@authrim/ar-lib-core';
-import { writeAdminAuditLog } from './admin-shared';
+import { writeAdminAuditLog, getAdminActorAuditMetadata } from './admin-shared';
 import { getApprovalPresetExpiry } from './approval-policy-presets';
+import {
+  assertSupportOpsStoreIdentity,
+  preflightSupportOpsExecutionStores,
+} from './support-ops-execution-stores';
+import {
+  createSupportOpsExecuteJob,
+  deleteSupportOpsExecuteJob,
+  processSupportOpsExecuteJobInline,
+  type SupportOpsRunBudget,
+} from './support-ops-execute-job';
+import {
+  accountsByStore,
+  ACCOUNT_ID_CHUNK,
+  heldByAnotherStore,
+  mapAccountStores,
+  mayCountAccountTwice,
+  SupportOpsAmbiguousAccountError,
+  supportOpsStoresFromEnv,
+  supportOpsStoresFromHono,
+  type SupportOpsAccountStore,
+  type SupportOpsStores,
+} from './support-ops-stores';
 
 type SupportOpsContext = Context<{
   Bindings: Env;
@@ -84,6 +111,8 @@ interface SupportOpsSnapshotJobProgress {
   failed: number;
   actionable: number;
   blocked: number;
+  /** The account database being read (its key), and the last account taken from it. */
+  store_key: string;
   last_target_id: string;
   stage: 'queued' | 'processing' | 'completed' | 'failed';
 }
@@ -94,24 +123,13 @@ interface SupportOpsSnapshotJobRow {
   status: 'pending' | 'processing';
   progress: string | null;
   config: string | null;
+  updated_at: number;
 }
 
 interface SupportOpsLogger {
   info(message: string, metadata?: Record<string, unknown>): void;
   warn(message: string, metadata?: Record<string, unknown>): void;
   error(message: string, metadata?: Record<string, unknown>, error?: Error): void;
-}
-
-interface RedactedCohortCounts {
-  matched_count: number | null;
-  actionable_count: number | null;
-  blocked_count: number | null;
-  blocked_reasons: string[];
-  blocked_reasons_suppressed: boolean;
-  privacy: {
-    min_count: number;
-    low_count_suppressed: boolean;
-  };
 }
 
 interface SupportOpsCountAuditSummary {
@@ -124,6 +142,10 @@ interface SupportOpsCountAuditSummary {
     low_count_suppressed: boolean;
   };
 }
+
+/** The groups an aggregate answers, and the most it reads from one account database. */
+const AGGREGATE_GROUP_LIMIT = 100;
+const AGGREGATE_STORE_GROUP_LIMIT = 1000;
 
 export const supportOpsRouter = new Hono<{
   Bindings: Env;
@@ -148,7 +170,12 @@ function requirePermission(c: SupportOpsContext, permission: string): Response |
   return null;
 }
 
-function jsonError(c: SupportOpsContext, status: 400 | 404 | 409, error: string, message: string) {
+function jsonError(
+  c: SupportOpsContext,
+  status: 400 | 404 | 409 | 503,
+  error: string,
+  message: string
+) {
   return c.json({ error, error_description: message }, status);
 }
 
@@ -191,6 +218,7 @@ function parseSnapshotJobProgress(value: string | null): SupportOpsSnapshotJobPr
     failed: 0,
     actionable: 0,
     blocked: 0,
+    store_key: '',
     last_target_id: '',
     stage: 'queued',
   };
@@ -204,6 +232,7 @@ function parseSnapshotJobProgress(value: string | null): SupportOpsSnapshotJobPr
       failed: Number(parsed.failed ?? 0),
       actionable: Number(parsed.actionable ?? 0),
       blocked: Number(parsed.blocked ?? 0),
+      store_key: typeof parsed.store_key === 'string' ? parsed.store_key : '',
       last_target_id: typeof parsed.last_target_id === 'string' ? parsed.last_target_id : '',
       stage:
         parsed.stage === 'processing' || parsed.stage === 'completed' || parsed.stage === 'failed'
@@ -243,54 +272,29 @@ function createSupportOpsAuthContext(c: SupportOpsContext, tenantId: string) {
   );
 }
 
-function isLowCount(value: number, minCount: number): boolean {
-  return value > 0 && value < minCount;
-}
-
-function redactCohortCounts(
-  resource: { minCount: number },
-  matchedCount: number,
-  actionableCount: number,
-  blockedCount: number,
-  blockedReasons: string[] = []
-): RedactedCohortCounts {
-  const actionableSuppressed = isLowCount(actionableCount, resource.minCount);
-  const blockedSuppressed = isLowCount(blockedCount, resource.minCount);
-  const matchedSuppressed =
-    isLowCount(matchedCount, resource.minCount) ||
-    (actionableSuppressed && blockedCount > 0) ||
-    (blockedSuppressed && actionableCount > 0);
-
+/**
+ * A risk summary as a response shows it: its matched count only as the counts beside it show it,
+ * so a suppressed count cannot be told from it.
+ */
+function redactRiskSummary(
+  risk: Partial<SupportOpsRiskSummary>,
+  counts: { matched_count: number | null; privacy: { low_count_suppressed: boolean } }
+) {
   return {
-    matched_count: matchedSuppressed ? null : matchedCount,
-    actionable_count: actionableSuppressed ? null : actionableCount,
-    blocked_count: blockedSuppressed ? null : blockedCount,
-    blocked_reasons: blockedSuppressed ? [] : blockedReasons,
-    blocked_reasons_suppressed: blockedSuppressed,
-    privacy: {
-      min_count: resource.minCount,
-      low_count_suppressed: matchedSuppressed || actionableSuppressed || blockedSuppressed,
-    },
+    min_count: risk.minCount,
+    matched_count: counts.matched_count,
+    low_count_suppressed: counts.privacy.low_count_suppressed,
+    uses_sensitive_field: risk.usesSensitiveField,
+    risk_level: risk.riskLevel,
+    approval_required: risk.approvalRequired,
   };
 }
 
-function redactResultSummary(
-  resource: { minCount: number },
-  resultSummary: Record<string, unknown>,
-  matchedCount: number,
-  actionableCount: number,
-  blockedCount: number
-): Record<string, unknown> {
-  const redacted = redactCohortCounts(resource, matchedCount, actionableCount, blockedCount);
-  return {
-    ...resultSummary,
-    matched_count: redacted.matched_count,
-    attempted_count: redacted.actionable_count,
-    blocked_count: redacted.blocked_count,
-    blocked_reasons_suppressed: redacted.blocked_reasons_suppressed,
-    privacy: redacted.privacy,
-  };
-}
+/**
+ * An action's result as a response or audit shows it. Its succeeded and failed counts are shown
+ * only together and only when neither is a low count (nor the attempted count they add up to):
+ * one of them is the other subtracted from the attempted count.
+ */
 
 function redactCountAuditSummary(
   resource: { minCount: number },
@@ -315,6 +319,27 @@ function bucketAggregateCount(value: number, minCount: number): number | null {
   return Math.floor(value / minCount) * minCount;
 }
 
+/**
+ * Bucket the visible preview counts after complementary low-count suppression, using the
+ * aggregate's precision. Frozen cohorts retain their existing count contract.
+ */
+function bucketPreviewCounts(
+  resource: { minCount: number },
+  counts: RedactedCohortCounts
+): RedactedCohortCounts & {
+  privacy: RedactedCohortCounts['privacy'] & { count_exact: false; count_precision: number };
+} {
+  const bucket = (value: number | null) =>
+    value === null ? null : bucketAggregateCount(value, resource.minCount);
+  return {
+    ...counts,
+    matched_count: bucket(counts.matched_count),
+    actionable_count: bucket(counts.actionable_count),
+    blocked_count: bucket(counts.blocked_count),
+    privacy: { ...counts.privacy, count_exact: false, count_precision: resource.minCount },
+  };
+}
+
 function hasActionableMinimum(actionableCount: number, minCount: number): boolean {
   return actionableCount >= minCount;
 }
@@ -327,9 +352,7 @@ async function getSupportOpsTenantSettings(
   c: SupportOpsContext,
   tenantId: string
 ): Promise<{ allowSelfApproval: boolean; dutySeparation: SupportOpsDutySeparation }> {
-  const settings =
-    (await getTenantSettings(c.env.SETTINGS, tenantId, 'support-ops')) ??
-    (await getTenantSettings(c.env.AUTHRIM_CONFIG, tenantId, 'support-ops'));
+  const settings = await getTenantSettingsDocument(c.env, tenantId, 'support-ops');
   const dutySeparation = settings?.['support_ops.duty_separation'];
 
   return {
@@ -452,7 +475,10 @@ async function getSupportOpsApprovalWorkflowState(
   const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'support-ops-approval-state');
   const requestRepo = new ApprovalRequestRepository(adminAdapter);
   const approvalRepo = new ApprovalRequestApprovalRepository(adminAdapter);
-  const request = await requestRepo.getApprovalRequestByPublicId(approvalRequestId);
+  const request = await requestRepo.getApprovalRequestByPublicId(
+    approvalRequestId,
+    expected.tenantId
+  );
   if (!request) {
     return { approved: false, approvedBy: [], bound: false };
   }
@@ -502,15 +528,155 @@ async function auditSupportOps(
   });
 }
 
-function buildBlockExpression(action?: SupportOpsActionName): string {
-  if (action !== 'suspend') {
-    return 'NULL';
+/** Counts that changed while they were checked (see assertCountedOnce): none is answered. */
+class SupportOpsCountUnverifiedError extends Error {
+  constructor() {
+    super('support_ops_count_unverified');
   }
-  return `CASE
-    WHEN status != 'active' THEN 'not_active'
-    WHEN lifecycle_state = 'deprovisioned' THEN 'deprovisioned'
-    ELSE NULL
-  END`;
+}
+
+/**
+ * Refuses (SupportOpsAmbiguousAccountError) a count summed over the account databases that may
+ * count an account more than once to reach the minimum (see mayCountAccountTwice): the accounts
+ * it counts are read (fewer than the minimum times the databases), each database's as many as it
+ * counted (else SupportOpsCountUnverifiedError: they changed since, and what was counted is not
+ * known), and none may be in two databases. Each of `subsets` is a condition (beside the
+ * selector) and each database's count of it.
+ */
+async function assertCountedOnce(
+  stores: SupportOpsStores,
+  resource: { table: string; idColumn: string; activeWhereSql: string; minCount: number },
+  tenantId: string,
+  compiled: { whereSql: string; params: unknown[] },
+  subsets: Array<{ whereSql: string; storeCounts: number[] }>
+): Promise<void> {
+  const checked = subsets.filter(({ storeCounts }) =>
+    mayCountAccountTwice(
+      storeCounts.reduce((sum, count) => sum + count, 0),
+      resource.minCount,
+      stores.accounts.length
+    )
+  );
+  if (checked.length === 0) return;
+  const read = await mapAccountStores(stores.accounts, ({ adapter }, index) => {
+    const counted = checked.reduce((sum, { storeCounts }) => sum + (storeCounts[index] ?? 0), 0);
+    return adapter.query<Record<string, unknown> & { id: string }>(
+      `SELECT ${resource.idColumn} AS id,
+              ${checked.map(({ whereSql }, subset) => `CASE WHEN (${whereSql}) THEN 1 ELSE 0 END AS in_${subset}`).join(', ')}
+         FROM ${resource.table}
+        WHERE tenant_id = ? AND ${resource.activeWhereSql} AND ${compiled.whereSql}
+          AND (${checked.map(({ whereSql }) => `(${whereSql})`).join(' OR ')})
+        LIMIT ?`,
+      [tenantId, ...compiled.params, counted + 1]
+    );
+  });
+  read.forEach((rows, index) => {
+    checked.forEach(({ storeCounts }, subset) => {
+      const found = rows.filter((row) => Number(row[`in_${subset}`]) === 1).length;
+      if (found !== (storeCounts[index] ?? 0)) throw new SupportOpsCountUnverifiedError();
+    });
+  });
+  await accountsByStore(
+    stores.accounts,
+    tenantId,
+    read.flat().map(({ id }) => id)
+  );
+}
+
+/**
+ * As assertCountedOnce, for the groups of an aggregate: the accounts of each group whose count
+ * may count one twice are read, each database's as many as it counted (else the counts are not
+ * verified), and none may be in two databases.
+ */
+async function assertGroupsCountedOnce(
+  stores: SupportOpsStores,
+  resource: {
+    table: string;
+    idColumn: string;
+    activeWhereSql: string;
+    minCount: number;
+    maxSnapshotCount: number;
+  },
+  tenantId: string,
+  compiled: { whereSql: string; params: unknown[] },
+  selectColumns: string[],
+  storeGroups: Array<Map<string, number>>,
+  groups: Map<string, { count: number }>
+): Promise<void> {
+  const checked = [...groups.entries()]
+    // A group is compared with the minimum and (for complementary suppression) twice it.
+    .filter(([, { count }]) =>
+      mayCountAccountTwice(count, resource.minCount, stores.accounts.length, resource.minCount * 2)
+    )
+    .map(([key]) => key);
+  if (checked.length === 0) return;
+  const counted = checked.reduce((sum, key) => sum + groups.get(key)!.count, 0);
+  // No more than a cohort the request snapshots is read; a larger read is not made.
+  if (counted > resource.maxSnapshotCount) throw new SupportOpsCountUnverifiedError();
+  const groupKey = `json_array(${selectColumns.join(', ')})`;
+  const read = await mapAccountStores(stores.accounts, ({ adapter }) =>
+    adapter.query<{ id: string; group_key: string }>(
+      `SELECT ${resource.idColumn} AS id, ${groupKey} AS group_key
+         FROM ${resource.table}
+        WHERE tenant_id = ? AND ${resource.activeWhereSql} AND ${compiled.whereSql}
+          AND ${groupKey} IN (SELECT value FROM json_each(?))
+        LIMIT ?`,
+      [tenantId, ...compiled.params, `[${checked.join(',')}]`, counted + 1]
+    )
+  );
+  read.forEach((rows, index) => {
+    const found = new Map<string, number>();
+    for (const row of rows) {
+      const key = JSON.stringify(JSON.parse(row.group_key) as unknown);
+      found.set(key, (found.get(key) ?? 0) + 1);
+    }
+    for (const key of checked) {
+      if ((found.get(key) ?? 0) !== (storeGroups[index]!.get(key) ?? 0)) {
+        throw new SupportOpsCountUnverifiedError();
+      }
+    }
+  });
+  await accountsByStore(
+    stores.accounts,
+    tenantId,
+    read.flat().map(({ id }) => id)
+  );
+}
+
+type SupportOpsCountConflict = 'account_store_ambiguous' | 'count_unverified';
+
+/** Why a count or cohort could not be answered across the account databases, if it is that. */
+function countConflictReason(error: unknown): SupportOpsCountConflict | null {
+  if (error instanceof SupportOpsAmbiguousAccountError) return 'account_store_ambiguous';
+  if (error instanceof SupportOpsCountUnverifiedError) return 'count_unverified';
+  return null;
+}
+
+function countConflictResponse(c: SupportOpsContext, reason: SupportOpsCountConflict) {
+  return reason === 'account_store_ambiguous'
+    ? ambiguousAccountResponse(c)
+    : jsonError(
+        c,
+        409,
+        'count_unverified',
+        'The counts could not be verified across the account databases'
+      );
+}
+
+function ambiguousAccountResponse(c: SupportOpsContext) {
+  return jsonError(
+    c,
+    409,
+    'account_store_ambiguous',
+    'An account is in more than one account database'
+  );
+}
+
+function buildBlockExpression(
+  resource: { blockReasonSql?: Partial<Record<SupportOpsActionName, string>> },
+  action?: SupportOpsActionName
+): string {
+  return (action && resource.blockReasonSql?.[action]) || 'NULL';
 }
 
 function buildSnapshotCutoffExpression(resource: {
@@ -571,8 +737,9 @@ async function cleanupCohort(
   );
 }
 
+/** The snapshot job, kept in DB_ADMIN (`jobsAdapter`) where the scheduled run claims it. */
 async function createSupportOpsSnapshotJob(
-  coreAdapter: DatabaseAdapter,
+  jobsAdapter: DatabaseAdapter,
   input: {
     jobId?: string;
     tenantId: string;
@@ -596,6 +763,7 @@ async function createSupportOpsSnapshotJob(
     failed: 0,
     actionable: 0,
     blocked: 0,
+    store_key: '',
     last_target_id: '',
     stage: 'queued',
   };
@@ -610,7 +778,7 @@ async function createSupportOpsSnapshotJob(
     support_case_id: input.supportCaseId ?? null,
   };
 
-  await coreAdapter.execute(
+  await jobsAdapter.execute(
     `INSERT INTO admin_jobs (
       id, tenant_id, job_type, status, progress, config,
       created_by, created_at, updated_at, estimated_completion
@@ -630,8 +798,25 @@ async function createSupportOpsSnapshotJob(
   return jobId;
 }
 
+/** Where a snapshot job is kept (DB_ADMIN), and the tenant's databases it snapshots. */
+interface SupportOpsSnapshotStores {
+  jobs: DatabaseAdapter;
+  tenant: SupportOpsStores;
+}
+
+/**
+ * How much a scheduled run of the snapshot jobs reads (smaller in tests, to stop it part-way): a
+ * job's rows, and the statements of all its jobs (each page reads one database and checks the
+ * others for its accounts).
+ */
+export interface SupportOpsSnapshotRunLimits {
+  pageSize?: number;
+  maxRowsPerRun?: number;
+  maxQueriesPerRun?: number;
+}
+
 async function updateSnapshotJobFailure(
-  coreAdapter: DatabaseAdapter,
+  stores: SupportOpsSnapshotStores,
   jobId: string,
   tenantId: string,
   cohortId: string,
@@ -639,13 +824,13 @@ async function updateSnapshotJobFailure(
 ): Promise<void> {
   const nowMs = Date.now();
   const nowTs = Math.floor(nowMs / 1000);
-  await coreAdapter.execute(
+  await stores.tenant.metadata.execute(
     `UPDATE support_operation_cohorts
         SET snapshot_status = 'failed', snapshot_error = ?, snapshot_job_id = COALESCE(snapshot_job_id, ?)
       WHERE tenant_id = ? AND id = ?`,
     [message, jobId, tenantId, cohortId]
   );
-  await coreAdapter.execute(
+  await stores.jobs.execute(
     `UPDATE admin_jobs
         SET status = 'failed', error_message = ?, completed_at = ?, updated_at = ?
       WHERE tenant_id = ? AND id = ?`,
@@ -653,15 +838,37 @@ async function updateSnapshotJobFailure(
   );
 }
 
+/**
+ * The account database a job resumes in: the one its progress names, or (when that one is gone)
+ * the next after it, from the start of it. Null once it is past the last.
+ */
+function resumeSnapshotStore(
+  accounts: readonly SupportOpsAccountStore[],
+  progress: SupportOpsSnapshotJobProgress
+): number | null {
+  // A job started before its progress named a database starts again from the first: the
+  // targets it already took are taken once all the same.
+  const index =
+    progress.store_key === '' ? 0 : accounts.findIndex(({ key }) => key >= progress.store_key);
+  if (index < 0 || index >= accounts.length) return null;
+  if (accounts[index].key !== progress.store_key) progress.last_target_id = '';
+  return index;
+}
+
 async function processSupportOpsSnapshotJob(
-  coreAdapter: DatabaseAdapter,
+  stores: SupportOpsSnapshotStores,
   job: SupportOpsSnapshotJobRow,
-  logger?: SupportOpsLogger
+  logger?: SupportOpsLogger,
+  limits: SupportOpsSnapshotRunLimits = {},
+  /** Statements the jobs of this scheduled run may still make; this job's are taken from it. */
+  budget: { remaining: number } = { remaining: limits.maxQueriesPerRun ?? 400 }
 ): Promise<void> {
+  const metadata = stores.tenant.metadata;
+  const accounts = stores.tenant.accounts;
   const config = parseSnapshotJobConfig(job.config);
   if (!config) {
     await updateSnapshotJobFailure(
-      coreAdapter,
+      stores,
       job.id,
       job.tenant_id,
       'unknown',
@@ -673,7 +880,7 @@ async function processSupportOpsSnapshotJob(
   const resource = getSupportOpsResource(config.resource);
   if (!resource) {
     await updateSnapshotJobFailure(
-      coreAdapter,
+      stores,
       job.id,
       job.tenant_id,
       config.cohort_id,
@@ -684,7 +891,7 @@ async function processSupportOpsSnapshotJob(
 
   const startedTs = Math.floor(Date.now() / 1000);
   const leaseCutoffTs = startedTs - 15 * 60;
-  const transition = await coreAdapter.execute(
+  const transition = await stores.jobs.execute(
     `UPDATE admin_jobs
         SET status = 'processing', started_at = COALESCE(started_at, ?), updated_at = ?
       WHERE tenant_id = ? AND id = ?
@@ -694,7 +901,7 @@ async function processSupportOpsSnapshotJob(
   if (transition.rowsAffected === 0) return;
 
   try {
-    await coreAdapter.execute(
+    await metadata.execute(
       `UPDATE support_operation_cohorts
           SET snapshot_status = 'running', snapshot_job_id = ?, snapshot_error = NULL
         WHERE tenant_id = ? AND id = ? AND snapshot_status IN ('pending', 'running')`,
@@ -707,26 +914,39 @@ async function processSupportOpsSnapshotJob(
 
     const selector = parseSupportOpsSelectorJson(config.selector_json);
     const compiled = await compileSupportOpsSelector(resource, selector);
-    const blockExpression = buildBlockExpression(config.intended_action);
+    const blockExpression = buildBlockExpression(resource, config.intended_action);
     const cutoffExpression = buildSnapshotCutoffExpression(resource);
-    const pageSize = 500;
-    const maxRowsPerRun = 5000;
+    const pageSize = limits.pageSize ?? 500;
+    const maxRowsPerRun = limits.maxRowsPerRun ?? 5000;
     let processedThisRun = 0;
+    let storeIndex = resumeSnapshotStore(accounts, progress);
+    const failAmbiguous = async () => {
+      await metadata.execute(
+        'DELETE FROM support_operation_cohort_targets WHERE tenant_id = ? AND cohort_id = ?',
+        [job.tenant_id, config.cohort_id]
+      );
+      await updateSnapshotJobFailure(
+        stores,
+        job.id,
+        job.tenant_id,
+        config.cohort_id,
+        'account_store_ambiguous'
+      );
+    };
 
-    while (processedThisRun < maxRowsPerRun) {
-      const rows = await coreAdapter.query<SupportOpsTargetSnapshotRow>(
+    // Each account database in turn, in pages by account id, as many as a run's rows and
+    // statements allow. A page whose progress was not recorded (the run ended before) is read
+    // again, and its targets already taken are skipped.
+    while (storeIndex !== null && processedThisRun < maxRowsPerRun && budget.remaining > 0) {
+      const store = accounts[storeIndex];
+      progress.store_key = store.key;
+      const limit = Math.min(pageSize, maxRowsPerRun - processedThisRun);
+      const rows = await store.adapter.query<SupportOpsTargetSnapshotRow>(
         `SELECT ${resource.idColumn} as target_id, ${blockExpression} as block_reason
            FROM ${resource.table}
           WHERE tenant_id = ? AND ${resource.activeWhereSql} AND ${compiled.whereSql}
             AND ${cutoffExpression}
             AND ${resource.idColumn} > ?
-            AND NOT EXISTS (
-              SELECT 1
-                FROM support_operation_cohort_targets existing
-               WHERE existing.tenant_id = ?
-                 AND existing.cohort_id = ?
-                 AND existing.target_id = ${resource.table}.${resource.idColumn}
-            )
           ORDER BY ${resource.idColumn} ASC
           LIMIT ?`,
         [
@@ -735,93 +955,52 @@ async function processSupportOpsSnapshotJob(
           config.snapshot_cutoff,
           config.snapshot_cutoff,
           progress.last_target_id,
-          job.tenant_id,
-          config.cohort_id,
-          pageSize,
+          limit,
         ]
       );
 
-      if (rows.length === 0) {
-        const counts = await getCohortCounts(coreAdapter, config.cohort_id, job.tenant_id);
-        if (!hasActionableMinimum(counts.actionable, resource.minCount)) {
-          await coreAdapter.execute(
-            'DELETE FROM support_operation_cohort_targets WHERE tenant_id = ? AND cohort_id = ?',
-            [job.tenant_id, config.cohort_id]
-          );
-          await updateSnapshotJobFailure(
-            coreAdapter,
-            job.id,
+      budget.remaining -= 1;
+
+      // An account of the page in another database too (in any state) is one whose copy is
+      // unknown: the cohort is refused, as cohort creation and execute refuse it.
+      if (rows.length > 0 && accounts.length > 1) {
+        budget.remaining -= (accounts.length - 1) * Math.ceil(rows.length / ACCOUNT_ID_CHUNK);
+        if (
+          await heldByAnotherStore(
+            accounts,
+            store.key,
             job.tenant_id,
-            config.cohort_id,
-            'actionable_min_count_not_met'
-          );
+            rows.map((target) => target.target_id)
+          )
+        ) {
+          await failAmbiguous();
           return;
         }
-        const nowTs = Math.floor(Date.now() / 1000);
-        const finalProgress: SupportOpsSnapshotJobProgress = {
-          ...progress,
-          processed: progress.processed,
-          succeeded: progress.succeeded,
-          actionable: counts.actionable,
-          blocked: counts.blocked,
-          stage: 'completed',
-        };
-        await coreAdapter.execute(
-          `UPDATE support_operation_cohorts
-              SET snapshot_status = 'completed',
-                  actionable_count = ?,
-                  blocked_count = ?,
-                  blocked_summary_json = ?,
-                  snapshot_error = NULL
-            WHERE tenant_id = ? AND id = ?`,
-          [
-            counts.actionable,
-            counts.blocked,
-            toJson({ reasons: counts.blockedReasons }),
-            job.tenant_id,
-            config.cohort_id,
-          ]
-        );
-        await coreAdapter.execute(
-          `UPDATE admin_jobs
-              SET status = 'completed', progress = ?, result = ?, completed_at = ?, updated_at = ?
-            WHERE tenant_id = ? AND id = ?`,
-          [
-            toJson(finalProgress),
-            toJson({
-              cohort_id: config.cohort_id,
-              matched_count: config.matched_count,
-              actionable_count: counts.actionable,
-              blocked_count: counts.blocked,
-            }),
-            nowTs,
-            nowTs,
-            job.tenant_id,
-            job.id,
-          ]
-        );
-        logger?.info('Support Ops snapshot job completed', {
-          job_id: job.id,
-          cohort_id: config.cohort_id,
-        });
-        return;
       }
-
-      for (const target of rows) {
-        await coreAdapter.execute(
-          `INSERT INTO support_operation_cohort_targets (
-            id, cohort_id, tenant_id, resource, target_id, target_hash, block_reason, created_at
-          ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)`,
-          [
-            `sct_${crypto.randomUUID().replace(/-/g, '')}`,
-            config.cohort_id,
-            job.tenant_id,
-            resource.resource,
-            target.target_id,
-            target.block_reason ?? null,
-            Date.now(),
-          ]
-        );
+      const inserted =
+        rows.length === 0
+          ? []
+          : await metadata.batch(
+              rows.map((target) => ({
+                sql: `INSERT INTO support_operation_cohort_targets (
+                        id, cohort_id, tenant_id, resource, target_id, target_hash, block_reason,
+                        created_at
+                      ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
+                      ON CONFLICT (cohort_id, target_id) DO NOTHING`,
+                params: [
+                  `sct_${crypto.randomUUID().replace(/-/g, '')}`,
+                  config.cohort_id,
+                  job.tenant_id,
+                  resource.resource,
+                  target.target_id,
+                  target.block_reason ?? null,
+                  Date.now(),
+                ],
+              }))
+            );
+      budget.remaining -= rows.length === 0 ? 0 : 1;
+      rows.forEach((target, index) => {
+        if ((inserted[index]?.rowsAffected ?? 0) === 0) return;
         progress.processed += 1;
         progress.succeeded += 1;
         if (target.block_reason) {
@@ -829,33 +1008,119 @@ async function processSupportOpsSnapshotJob(
         } else {
           progress.actionable += 1;
         }
-      }
-      progress.last_target_id = rows[rows.length - 1]?.target_id ?? progress.last_target_id;
+      });
       processedThisRun += rows.length;
+      if (rows.length < limit) {
+        // This database is done: the next one, from its start.
+        storeIndex = storeIndex + 1 < accounts.length ? storeIndex + 1 : null;
+        progress.last_target_id = '';
+        if (storeIndex !== null) progress.store_key = accounts[storeIndex].key;
+      } else {
+        progress.last_target_id = rows[rows.length - 1].target_id;
+      }
+      if (storeIndex === null) break;
 
       const nowTs = Math.floor(Date.now() / 1000);
-      await coreAdapter.execute(
+      await stores.jobs.execute(
         `UPDATE admin_jobs
             SET progress = ?, updated_at = ?
           WHERE tenant_id = ? AND id = ?`,
         [toJson(progress), nowTs, job.tenant_id, job.id]
       );
-
-      if (rows.length < pageSize) {
-        continue;
-      }
+      budget.remaining -= 1;
     }
 
+    if (storeIndex !== null) {
+      const nowTs = Math.floor(Date.now() / 1000);
+      await stores.jobs.execute(
+        `UPDATE admin_jobs
+            SET status = 'pending', progress = ?, updated_at = ?
+          WHERE tenant_id = ? AND id = ? AND status = 'processing'`,
+        [toJson(progress), nowTs, job.tenant_id, job.id]
+      );
+      return;
+    }
+
+    const counts = await getCohortCounts(metadata, config.cohort_id, job.tenant_id);
+    if (!hasActionableMinimum(counts.actionable, resource.minCount)) {
+      await metadata.execute(
+        'DELETE FROM support_operation_cohort_targets WHERE tenant_id = ? AND cohort_id = ?',
+        [job.tenant_id, config.cohort_id]
+      );
+      await updateSnapshotJobFailure(
+        stores,
+        job.id,
+        job.tenant_id,
+        config.cohort_id,
+        'actionable_min_count_not_met'
+      );
+      return;
+    }
     const nowTs = Math.floor(Date.now() / 1000);
-    await coreAdapter.execute(
-      `UPDATE admin_jobs
-          SET status = 'pending', progress = ?, updated_at = ?
-        WHERE tenant_id = ? AND id = ? AND status = 'processing'`,
-      [toJson(progress), nowTs, job.tenant_id, job.id]
+    // The cohort's targets as recorded, also those a run took before its progress was; its count
+    // is of them (as a cohort the request snapshots), not the count it was queued with, of
+    // accounts some of which may have changed or gone since.
+    const snapshotCount = counts.actionable + counts.blocked;
+    const finalProgress: SupportOpsSnapshotJobProgress = {
+      ...progress,
+      total: snapshotCount,
+      processed: snapshotCount,
+      succeeded: snapshotCount,
+      actionable: counts.actionable,
+      blocked: counts.blocked,
+      stage: 'completed',
+    };
+    await metadata.execute(
+      `UPDATE support_operation_cohorts
+          SET snapshot_status = 'completed',
+              matched_count = ?,
+              actionable_count = ?,
+              blocked_count = ?,
+              blocked_summary_json = ?,
+              risk_json = ?,
+              snapshot_error = NULL
+        WHERE tenant_id = ? AND id = ?`,
+      [
+        snapshotCount,
+        counts.actionable,
+        counts.blocked,
+        toJson({ reasons: counts.blockedReasons }),
+        toJson(
+          buildSupportOpsRiskSummary({
+            resource,
+            matchedCount: snapshotCount,
+            action: config.intended_action,
+          })
+        ),
+        job.tenant_id,
+        config.cohort_id,
+      ]
     );
+    await stores.jobs.execute(
+      `UPDATE admin_jobs
+          SET status = 'completed', progress = ?, result = ?, completed_at = ?, updated_at = ?
+        WHERE tenant_id = ? AND id = ?`,
+      [
+        toJson(finalProgress),
+        toJson({
+          cohort_id: config.cohort_id,
+          matched_count: snapshotCount,
+          actionable_count: counts.actionable,
+          blocked_count: counts.blocked,
+        }),
+        nowTs,
+        nowTs,
+        job.tenant_id,
+        job.id,
+      ]
+    );
+    logger?.info('Support Ops snapshot job completed', {
+      job_id: job.id,
+      cohort_id: config.cohort_id,
+    });
   } catch (error) {
     await updateSnapshotJobFailure(
-      coreAdapter,
+      stores,
       job.id,
       job.tenant_id,
       config.cohort_id,
@@ -871,14 +1136,34 @@ async function processSupportOpsSnapshotJob(
 
 export async function processPendingSupportOpsSnapshotJobs(
   env: Env,
-  logger?: SupportOpsLogger
+  logger?: SupportOpsLogger,
+  limits: SupportOpsSnapshotRunLimits = {},
+  /** The scheduled run's budget, shared with its other Support Ops jobs; this run's is taken from it. */
+  shared?: SupportOpsRunBudget
 ): Promise<void> {
-  const coreAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
-    env,
-    'support-ops-snapshot-jobs'
-  );
-  const jobs = await coreAdapter.query<SupportOpsSnapshotJobRow>(
-    `SELECT id, tenant_id, status, progress, config
+  // One budget for all the jobs of this run (they run in one invocation).
+  const budget = {
+    remaining: Math.min(limits.maxQueriesPerRun ?? 400, shared?.remaining ?? Infinity),
+  };
+  const started = budget.remaining;
+  try {
+    await processSnapshotJobs(env, logger, limits, budget);
+  } finally {
+    if (shared) shared.remaining -= started - budget.remaining;
+  }
+}
+
+async function processSnapshotJobs(
+  env: Env,
+  logger: SupportOpsLogger | undefined,
+  limits: SupportOpsSnapshotRunLimits,
+  budget: { remaining: number }
+): Promise<void> {
+  if (budget.remaining <= 0) return;
+  const jobsAdapter = requireDedicatedAdminDatabaseAdapter(env, 'support-ops-snapshot-jobs');
+  budget.remaining -= 1;
+  const jobs = await jobsAdapter.query<SupportOpsSnapshotJobRow>(
+    `SELECT id, tenant_id, status, progress, config, updated_at
        FROM admin_jobs
       WHERE job_type = 'support-ops/cohort-snapshot'
         AND (status = 'pending' OR (status = 'processing' AND updated_at < ?))
@@ -887,7 +1172,38 @@ export async function processPendingSupportOpsSnapshotJobs(
     [Math.floor(Date.now() / 1000) - 15 * 60]
   );
   for (const job of jobs) {
-    await processSupportOpsSnapshotJob(coreAdapter, job, logger);
+    let tenant: SupportOpsStores;
+    try {
+      tenant = await supportOpsStoresFromEnv(env, job.tenant_id);
+    } catch (error) {
+      // Failed, not left pending: a job whose tenant cannot be routed would take a slot of
+      // every run. Only as this run found it: another run may have claimed or ended it since.
+      // The cohort stays pending until it expires.
+      const nowTs = Math.floor(Date.now() / 1000);
+      budget.remaining -= 1;
+      await jobsAdapter.execute(
+        `UPDATE admin_jobs
+            SET status = 'failed', error_message = ?, completed_at = ?, updated_at = ?
+          WHERE tenant_id = ? AND id = ? AND status = ? AND updated_at = ?`,
+        [
+          'snapshot_tenant_database_unavailable',
+          nowTs,
+          nowTs,
+          job.tenant_id,
+          job.id,
+          job.status,
+          job.updated_at,
+        ]
+      );
+      logger?.error(
+        'Support Ops snapshot job tenant database unavailable',
+        { job_id: job.id },
+        error as Error
+      );
+      continue;
+    }
+    if (budget.remaining <= 0) break;
+    await processSupportOpsSnapshotJob({ jobs: jobsAdapter, tenant }, job, logger, limits, budget);
   }
 }
 
@@ -918,18 +1234,56 @@ supportOpsRouter.post('/aggregate', async (c) => {
 
   try {
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createSupportOpsAuthContext(c, tenantId);
+    const stores = await supportOpsStoresFromHono(c, tenantId);
     const compiled = await compileSupportOpsSelector(resource, body.selector);
     const selectColumns = groupBy.map((name) => resource.fields[name].column);
-    const rows = await authCtx.coreAdapter.query<Record<string, unknown>>(
-      `SELECT ${selectColumns.join(', ')}, COUNT(*) as count
-         FROM ${resource.table}
-        WHERE tenant_id = ? AND ${resource.activeWhereSql} AND ${compiled.whereSql}
-        GROUP BY ${selectColumns.join(', ')}
-        ORDER BY count DESC
-        LIMIT 100`,
-      [tenantId, ...compiled.params]
+    // Each group's count over all the account databases, before any is bucketed or suppressed:
+    // a group under the minimum in every database may not be under it in all of them together.
+    const merged = new Map<string, Record<string, unknown> & { count: number }>();
+    const storeGroups: Array<Map<string, number>> = [];
+    for (const storeRows of await mapAccountStores(stores.accounts, ({ adapter }) =>
+      adapter.query<Record<string, unknown>>(
+        `SELECT ${selectColumns.join(', ')}, COUNT(*) as count
+           FROM ${resource.table}
+          WHERE tenant_id = ? AND ${resource.activeWhereSql} AND ${compiled.whereSql}
+          GROUP BY ${selectColumns.join(', ')}
+          LIMIT ${AGGREGATE_STORE_GROUP_LIMIT + 1}`,
+        [tenantId, ...compiled.params]
+      )
+    )) {
+      // Groups a database leaves out could not be added up: none is answered.
+      if (storeRows.length > AGGREGATE_STORE_GROUP_LIMIT) {
+        await auditSupportOps(c, 'support_ops.aggregate', null, 'failure', {
+          resource: resource.resource,
+          reason: 'too_many_groups',
+        });
+        return jsonError(c, 400, 'too_many_groups', 'Too many groups to aggregate');
+      }
+      const counts = new Map<string, number>();
+      storeGroups.push(counts);
+      for (const row of storeRows) {
+        const groupKey = JSON.stringify(selectColumns.map((column) => row[column] ?? null));
+        counts.set(groupKey, Number(row.count ?? 0));
+        const group = merged.get(groupKey);
+        if (group) group.count += Number(row.count ?? 0);
+        else merged.set(groupKey, { ...row, count: Number(row.count ?? 0) });
+      }
+    }
+    await assertGroupsCountedOnce(
+      stores,
+      resource,
+      tenantId,
+      compiled,
+      selectColumns,
+      storeGroups,
+      merged
     );
+    const rows = [...merged.entries()]
+      .sort(([leftKey, left], [rightKey, right]) =>
+        right.count !== left.count ? right.count - left.count : leftKey < rightKey ? -1 : 1
+      )
+      .slice(0, AGGREGATE_GROUP_LIMIT)
+      .map(([, row]) => row);
 
     let lowCountSuppressedGroups = 0;
     let complementarySuppressedGroups = 0;
@@ -982,12 +1336,15 @@ supportOpsRouter.post('/aggregate', async (c) => {
         complementary_suppression: complementarySuppressedGroups > 0,
       },
     });
-  } catch {
+  } catch (error) {
+    const conflict = countConflictReason(error);
     await auditSupportOps(c, 'support_ops.aggregate', null, 'failure', {
       resource: body.resource,
-      reason: 'invalid_selector',
+      reason: conflict ?? 'invalid_selector',
     });
-    return jsonError(c, 400, 'invalid_selector', 'Invalid selector');
+    return conflict
+      ? countConflictResponse(c, conflict)
+      : jsonError(c, 400, 'invalid_selector', 'Invalid selector');
   }
 });
 
@@ -1013,76 +1370,101 @@ supportOpsRouter.post('/cohorts/preview', async (c) => {
 
   try {
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createSupportOpsAuthContext(c, tenantId);
+    const stores = await supportOpsStoresFromHono(c, tenantId);
     const compiled = await compileSupportOpsSelector(resource, body.selector);
-    const matched = await authCtx.coreAdapter.queryOne<{ count: number }>(
-      `SELECT COUNT(*) as count
-         FROM ${resource.table}
-        WHERE tenant_id = ? AND ${resource.activeWhereSql} AND ${compiled.whereSql}`,
-      [tenantId, ...compiled.params]
-    );
-    const blockExpression = buildBlockExpression(body.intent?.action);
-    const actionable = await authCtx.coreAdapter.queryOne<{ count: number }>(
-      `SELECT COUNT(*) as count
-         FROM ${resource.table}
-        WHERE tenant_id = ? AND ${resource.activeWhereSql} AND ${compiled.whereSql}
-          AND (${blockExpression}) IS NULL`,
-      [tenantId, ...compiled.params]
-    );
-    const blockedRows = await authCtx.coreAdapter.query<{ block_reason: string }>(
-      `SELECT block_reason
-         FROM (
-           SELECT ${blockExpression} as block_reason
-             FROM ${resource.table}
-            WHERE tenant_id = ? AND ${resource.activeWhereSql} AND ${compiled.whereSql}
-         )
-        WHERE block_reason IS NOT NULL
-        GROUP BY block_reason
-        ORDER BY block_reason`,
-      [tenantId, ...compiled.params]
-    );
-    const matchedCount = matched?.count ?? 0;
-    const actionableCount = actionable?.count ?? matchedCount;
+    const blockExpression = buildBlockExpression(resource, body.intent?.action);
+    // The counts over all the account databases: only these are compared with the minimum.
+    const perStore = await mapAccountStores(stores.accounts, async ({ adapter }) => {
+      const matched = await adapter.queryOne<{ count: number }>(
+        `SELECT COUNT(*) as count
+           FROM ${resource.table}
+          WHERE tenant_id = ? AND ${resource.activeWhereSql} AND ${compiled.whereSql}`,
+        [tenantId, ...compiled.params]
+      );
+      const actionable = await adapter.queryOne<{ count: number }>(
+        `SELECT COUNT(*) as count
+           FROM ${resource.table}
+          WHERE tenant_id = ? AND ${resource.activeWhereSql} AND ${compiled.whereSql}
+            AND (${blockExpression}) IS NULL`,
+        [tenantId, ...compiled.params]
+      );
+      const blockedRows = await adapter.query<{ block_reason: string }>(
+        `SELECT block_reason
+           FROM (
+             SELECT ${blockExpression} as block_reason
+               FROM ${resource.table}
+              WHERE tenant_id = ? AND ${resource.activeWhereSql} AND ${compiled.whereSql}
+           )
+          WHERE block_reason IS NOT NULL
+          GROUP BY block_reason
+          ORDER BY block_reason`,
+        [tenantId, ...compiled.params]
+      );
+      const matchedCount = matched?.count ?? 0;
+      return {
+        matchedCount,
+        actionableCount: actionable?.count ?? matchedCount,
+        blockReasons: blockedRows.map((row) => row.block_reason),
+      };
+    });
+    const matchedCount = perStore.reduce((sum, store) => sum + store.matchedCount, 0);
+    const actionableCount = perStore.reduce((sum, store) => sum + store.actionableCount, 0);
     const blockedCount = matchedCount - actionableCount;
-    const redactedCounts = redactCohortCounts(
+    await assertCountedOnce(stores, resource, tenantId, compiled, [
+      { whereSql: '1 = 1', storeCounts: perStore.map((store) => store.matchedCount) },
+      {
+        whereSql: `(${blockExpression}) IS NULL`,
+        storeCounts: perStore.map((store) => store.actionableCount),
+      },
+      {
+        whereSql: `(${blockExpression}) IS NOT NULL`,
+        storeCounts: perStore.map((store) => store.matchedCount - store.actionableCount),
+      },
+    ]);
+    const redactedCounts = bucketPreviewCounts(
       resource,
-      matchedCount,
-      actionableCount,
-      blockedCount,
-      blockedRows.map((row) => row.block_reason)
+      redactCohortCounts(
+        resource,
+        matchedCount,
+        actionableCount,
+        blockedCount,
+        [...new Set(perStore.flatMap((store) => store.blockReasons))].sort()
+      )
     );
     const risk = buildSupportOpsRiskSummary({
       resource,
-      matchedCount,
+      matchedCount: redactedCounts.matched_count ?? matchedCount,
       action: body.intent?.action,
     });
 
     await auditSupportOps(c, 'support_ops.cohort.preview', null, 'success', {
       resource: resource.resource,
       selector_hash: compiled.selectorHash,
-      counts: redactCountAuditSummary(resource, matchedCount, actionableCount, blockedCount),
+      counts: {
+        matched_count: redactedCounts.matched_count,
+        actionable_count: redactedCounts.actionable_count,
+        blocked_count: redactedCounts.blocked_count,
+        blocked_reasons_suppressed: redactedCounts.blocked_reasons_suppressed,
+        privacy: redactedCounts.privacy,
+      },
       support_case_id: body.intent?.support_case_id ?? null,
     });
 
     return c.json({
       resource: resource.resource,
       ...redactedCounts,
-      risk: {
-        min_count: risk.minCount,
-        matched_count: redactedCounts.matched_count,
-        low_count_suppressed: redactedCounts.privacy.low_count_suppressed,
-        uses_sensitive_field: risk.usesSensitiveField,
-        risk_level: risk.riskLevel,
-        approval_required: risk.approvalRequired,
-      },
+      risk: redactRiskSummary(risk, redactedCounts),
       selector_hash: compiled.selectorHash,
     });
-  } catch {
+  } catch (error) {
+    const conflict = countConflictReason(error);
     await auditSupportOps(c, 'support_ops.cohort.preview', null, 'failure', {
       resource: body.resource,
-      reason: 'invalid_selector',
+      reason: conflict ?? 'invalid_selector',
     });
-    return jsonError(c, 400, 'invalid_selector', 'Invalid selector');
+    return conflict
+      ? countConflictResponse(c, conflict)
+      : jsonError(c, 400, 'invalid_selector', 'Invalid selector');
   }
 });
 
@@ -1109,19 +1491,23 @@ supportOpsRouter.post('/cohorts', async (c) => {
   } | null = null;
   try {
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createSupportOpsAuthContext(c, tenantId);
+    const stores = await supportOpsStoresFromHono(c, tenantId);
     const compiled = await compileSupportOpsSelector(resource, body.selector);
     const now = Date.now();
     const snapshotCutoff = now;
     const cutoffExpression = buildSnapshotCutoffExpression(resource);
-    const matched = await authCtx.coreAdapter.queryOne<{ count: number }>(
-      `SELECT COUNT(*) as count
-         FROM ${resource.table}
-        WHERE tenant_id = ? AND ${resource.activeWhereSql} AND ${compiled.whereSql}
-          AND ${cutoffExpression}`,
-      [tenantId, ...compiled.params, snapshotCutoff, snapshotCutoff]
-    );
-    const matchedCount = matched?.count ?? 0;
+    const matchedCount = (
+      await mapAccountStores(stores.accounts, async ({ adapter }) => {
+        const matched = await adapter.queryOne<{ count: number }>(
+          `SELECT COUNT(*) as count
+             FROM ${resource.table}
+            WHERE tenant_id = ? AND ${resource.activeWhereSql} AND ${compiled.whereSql}
+              AND ${cutoffExpression}`,
+          [tenantId, ...compiled.params, snapshotCutoff, snapshotCutoff]
+        );
+        return matched?.count ?? 0;
+      })
+    ).reduce((sum, count) => sum + count, 0);
     if (matchedCount > 0 && matchedCount < resource.minCount) {
       return jsonError(
         c,
@@ -1132,7 +1518,7 @@ supportOpsRouter.post('/cohorts', async (c) => {
     }
     const cohortId = `cohort_${crypto.randomUUID().replace(/-/g, '')}`;
     const expiresAt = now + 24 * 60 * 60 * 1000;
-    const blockExpression = buildBlockExpression(intendedAction);
+    const blockExpression = buildBlockExpression(resource, intendedAction);
     const risk = buildSupportOpsRiskSummary({
       resource,
       matchedCount,
@@ -1143,7 +1529,7 @@ supportOpsRouter.post('/cohorts', async (c) => {
 
     if (matchedCount > resource.maxSnapshotCount) {
       const jobId = crypto.randomUUID();
-      await authCtx.coreAdapter.execute(
+      await stores.metadata.execute(
         `INSERT INTO support_operation_cohorts (
           id, tenant_id, resource, intended_action, selector_json, selector_hash,
           matched_count, actionable_count, blocked_count, blocked_summary_json,
@@ -1167,21 +1553,24 @@ supportOpsRouter.post('/cohorts', async (c) => {
           now,
         ]
       );
-      createdCohort = { coreAdapter: authCtx.coreAdapter, tenantId, cohortId };
+      createdCohort = { coreAdapter: stores.metadata, tenantId, cohortId };
 
-      await createSupportOpsSnapshotJob(authCtx.coreAdapter, {
-        jobId,
-        tenantId,
-        cohortId,
-        resource: resource.resource,
-        intendedAction,
-        selectorJson,
-        selectorHash: compiled.selectorHash,
-        matchedCount,
-        snapshotCutoff,
-        actor,
-        supportCaseId: body.intent?.support_case_id ?? null,
-      });
+      await createSupportOpsSnapshotJob(
+        requireDedicatedAdminDatabaseAdapter(c.env, 'support-ops-snapshot-jobs'),
+        {
+          jobId,
+          tenantId,
+          cohortId,
+          resource: resource.resource,
+          intendedAction,
+          selectorJson,
+          selectorHash: compiled.selectorHash,
+          matchedCount,
+          snapshotCutoff,
+          actor,
+          supportCaseId: body.intent?.support_case_id ?? null,
+        }
+      );
 
       await auditSupportOps(c, 'support_ops.cohort.create', cohortId, 'success', {
         resource: resource.resource,
@@ -1211,13 +1600,16 @@ supportOpsRouter.post('/cohorts', async (c) => {
           snapshot_job_id: jobId,
           expires_at: expiresAt,
           selector_hash: compiled.selectorHash,
-          risk,
+          risk: redactRiskSummary(risk, {
+            matched_count: matchedCount,
+            privacy: { low_count_suppressed: false },
+          }),
         },
         202
       );
     }
 
-    await authCtx.coreAdapter.execute(
+    await stores.metadata.execute(
       `INSERT INTO support_operation_cohorts (
         id, tenant_id, resource, intended_action, selector_json, selector_hash,
         matched_count, actionable_count, blocked_count, blocked_summary_json,
@@ -1240,17 +1632,27 @@ supportOpsRouter.post('/cohorts', async (c) => {
         now,
       ]
     );
-    createdCohort = { coreAdapter: authCtx.coreAdapter, tenantId, cohortId };
+    createdCohort = { coreAdapter: stores.metadata, tenantId, cohortId };
 
-    const targetRows = await authCtx.coreAdapter.query<SupportOpsTargetSnapshotRow>(
-      `SELECT ${resource.idColumn} as target_id, ${blockExpression} as block_reason
-         FROM ${resource.table}
-        WHERE tenant_id = ? AND ${resource.activeWhereSql} AND ${compiled.whereSql}
-          AND ${cutoffExpression}`,
-      [tenantId, ...compiled.params, snapshotCutoff, snapshotCutoff]
+    // An account in more than one database (in any state) is refused: which copy is it?
+    const targetRows = (
+      await mapAccountStores(stores.accounts, ({ adapter }) =>
+        adapter.query<SupportOpsTargetSnapshotRow>(
+          `SELECT ${resource.idColumn} as target_id, ${blockExpression} as block_reason
+             FROM ${resource.table}
+            WHERE tenant_id = ? AND ${resource.activeWhereSql} AND ${compiled.whereSql}
+              AND ${cutoffExpression}`,
+          [tenantId, ...compiled.params, snapshotCutoff, snapshotCutoff]
+        )
+      )
+    ).flat();
+    await accountsByStore(
+      stores.accounts,
+      tenantId,
+      targetRows.map((target) => target.target_id)
     );
     for (const target of targetRows) {
-      await authCtx.coreAdapter.execute(
+      await stores.metadata.execute(
         `INSERT INTO support_operation_cohort_targets (
           id, cohort_id, tenant_id, resource, target_id, target_hash, block_reason, created_at
         ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)`,
@@ -1266,9 +1668,9 @@ supportOpsRouter.post('/cohorts', async (c) => {
       );
     }
 
-    const counts = await getCohortCounts(authCtx.coreAdapter, cohortId, tenantId);
+    const counts = await getCohortCounts(stores.metadata, cohortId, tenantId);
     if (!hasActionableMinimum(counts.actionable, resource.minCount)) {
-      await cleanupCohort(authCtx.coreAdapter, cohortId, tenantId);
+      await cleanupCohort(stores.metadata, cohortId, tenantId);
       await auditSupportOps(c, 'support_ops.cohort.create', null, 'failure', {
         resource: resource.resource,
         selector_hash: compiled.selectorHash,
@@ -1283,18 +1685,30 @@ supportOpsRouter.post('/cohorts', async (c) => {
         `Cohort must include at least ${resource.minCount} actionable records`
       );
     }
-    await authCtx.coreAdapter.execute(
+    // The cohort's count is of its targets, the accounts as it took them (each once), not of the
+    // databases' counts before: those may have changed since, or counted an account twice.
+    const snapshotCount = counts.actionable + counts.blocked;
+    const snapshotRisk = buildSupportOpsRiskSummary({
+      resource,
+      matchedCount: snapshotCount,
+      action: intendedAction,
+    });
+    await stores.metadata.execute(
       `UPDATE support_operation_cohorts
-          SET actionable_count = ?,
+          SET matched_count = ?,
+              actionable_count = ?,
               blocked_count = ?,
               blocked_summary_json = ?,
+              risk_json = ?,
               snapshot_status = 'completed',
               snapshot_error = NULL
         WHERE tenant_id = ? AND id = ?`,
       [
+        snapshotCount,
         counts.actionable,
         counts.blocked,
         toJson({ reasons: counts.blockedReasons }),
+        toJson(snapshotRisk),
         tenantId,
         cohortId,
       ]
@@ -1304,13 +1718,13 @@ supportOpsRouter.post('/cohorts', async (c) => {
       resource: resource.resource,
       intended_action: intendedAction,
       selector_hash: compiled.selectorHash,
-      counts: redactCountAuditSummary(resource, matchedCount, counts.actionable, counts.blocked),
+      counts: redactCountAuditSummary(resource, snapshotCount, counts.actionable, counts.blocked),
       support_case_id: body.intent?.support_case_id ?? null,
     });
 
     const redactedCounts = redactCohortCounts(
       resource,
-      matchedCount,
+      snapshotCount,
       counts.actionable,
       counts.blocked,
       counts.blockedReasons
@@ -1326,11 +1740,11 @@ supportOpsRouter.post('/cohorts', async (c) => {
         snapshot_job_id: null,
         expires_at: expiresAt,
         selector_hash: compiled.selectorHash,
-        risk,
+        risk: redactRiskSummary(snapshotRisk, redactedCounts),
       },
       201
     );
-  } catch {
+  } catch (error) {
     if (createdCohort) {
       await cleanupCohort(
         createdCohort.coreAdapter,
@@ -1338,11 +1752,14 @@ supportOpsRouter.post('/cohorts', async (c) => {
         createdCohort.tenantId
       );
     }
+    const conflict = countConflictReason(error);
     await auditSupportOps(c, 'support_ops.cohort.create', null, 'failure', {
       resource: body.resource,
-      reason: 'invalid_cohort',
+      reason: conflict ?? 'invalid_cohort',
     });
-    return jsonError(c, 400, 'invalid_cohort', 'Invalid cohort');
+    return conflict
+      ? countConflictResponse(c, conflict)
+      : jsonError(c, 400, 'invalid_cohort', 'Invalid cohort');
   }
 });
 
@@ -1400,7 +1817,10 @@ supportOpsRouter.get('/cohorts/:cohortId', async (c) => {
     blocked_summary: redactedCounts.blocked_reasons_suppressed
       ? { suppressed: true }
       : blockedSummary,
-    risk: fromJsonRecord(row.risk_json),
+    risk: redactRiskSummary(
+      fromJsonRecord(row.risk_json) as Partial<SupportOpsRiskSummary>,
+      redactedCounts
+    ),
     support_case_id: row.support_case_id,
     expires_at: row.expires_at,
     created_at: row.created_at,
@@ -1699,6 +2119,7 @@ supportOpsRouter.post('/actions/:actionId/execute', async (c) => {
     );
   }
   let approvalActors: string[] = [];
+  let pendingApprovalActor: string | undefined;
   if (action.status === 'approval_required' && action.approval_request_id) {
     const approvalState = await getSupportOpsApprovalWorkflowState(c, action.approval_request_id, {
       tenantId,
@@ -1725,19 +2146,10 @@ supportOpsRouter.post('/actions/:actionId/execute', async (c) => {
     if (!approvalState.approved) {
       return jsonError(c, 409, 'not_executable', 'Action must be approved before execution');
     }
-    const approvedBy =
+    pendingApprovalActor =
       approvalActors.length > 0
         ? approvalActors.join(',')
         : `approval:${action.approval_request_id}`;
-    const approvalTransition = await authCtx.coreAdapter.execute(
-      `UPDATE support_operation_actions
-          SET status = 'approved', approved_by = ?, approved_at = ?, updated_at = ?
-        WHERE tenant_id = ? AND id = ? AND status = 'approval_required'`,
-      [approvedBy, Date.now(), Date.now(), tenantId, actionId]
-    );
-    if (approvalTransition.rowsAffected === 0) {
-      return jsonError(c, 409, 'not_executable', 'Action is no longer pending approval');
-    }
   } else if (action.status !== 'approved') {
     return jsonError(c, 409, 'not_executable', 'Action must be approved before execution');
   } else if (action.approved_by) {
@@ -1773,135 +2185,140 @@ supportOpsRouter.post('/actions/:actionId/execute', async (c) => {
     );
   }
 
-  const now = Date.now();
-  const transition = await authCtx.coreAdapter.execute(
-    `UPDATE support_operation_actions
-        SET status = 'running', updated_at = ?
-      WHERE tenant_id = ? AND id = ? AND status = 'approved'`,
-    [now, tenantId, actionId]
-  );
-  if (transition.rowsAffected === 0) {
+  let executionStores: SupportOpsStores;
+  try {
+    executionStores = await supportOpsStoresFromHono(c, tenantId);
+    await preflightSupportOpsExecutionStores(executionStores);
+  } catch {
+    return jsonError(
+      c,
+      503,
+      'execution_store_unavailable',
+      'Action execution stores could not be verified'
+    );
+  }
+  if (pendingApprovalActor !== undefined) {
+    const approvalTransition = await authCtx.coreAdapter.execute(
+      `UPDATE support_operation_actions
+          SET status = 'approved', approved_by = ?, approved_at = ?, updated_at = MAX(updated_at,?)
+        WHERE tenant_id = ? AND id = ? AND status = 'approval_required'`,
+      [pendingApprovalActor, Date.now(), Date.now(), tenantId, actionId]
+    );
+    if (approvalTransition.rowsAffected === 0)
+      return jsonError(c, 409, 'not_executable', 'Action is no longer pending approval');
+  }
+
+  // The same durable operation is used for both bounded inline execution and scheduled work.
+  // Persist intent before the Core action CAS; a restart can always find the original source version.
+  const jobsAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'support-ops-execute-jobs');
+  const jobId = crypto.randomUUID();
+  const sourceVersionMs = Date.now();
+  const adminAuth = getAdminAuth(c);
+  assertSupportOpsStoreIdentity(executionStores.metadataIdentity);
+  await createSupportOpsExecuteJob(jobsAdapter, {
+    jobId,
+    tenantId,
+    actionId,
+    cohortId: action.cohort_id,
+    executor,
+    sourceVersionMs,
+    actionableCount: action.actionable_count,
+    matchedCount: action.matched_count,
+    blockedCount: action.blocked_count,
+    actor: {
+      adminUserId:
+        adminAuth?.authMethod === 'machine_access_token' ? null : adminAuth?.userId || 'system',
+      metadata: getAdminActorAuditMetadata(adminAuth),
+    },
+    metadataIdentity: executionStores.metadataIdentity,
+  });
+  let confirmed = false;
+  try {
+    await authCtx.coreAdapter.execute(
+      `UPDATE support_operation_actions SET status='running', result_summary_json=?,
+        updated_at=MAX(updated_at,?) WHERE tenant_id=? AND id=? AND status='approved'`,
+      [toJson({ job_id: jobId }), sourceVersionMs, tenantId, actionId]
+    );
+    const bound = await authCtx.coreAdapter.queryOne<{
+      status: string;
+      result_summary_json: string | null;
+    }>(
+      'SELECT status,result_summary_json FROM support_operation_actions WHERE tenant_id=? AND id=?',
+      [tenantId, actionId],
+      { consistencyClass: 'primary_required' }
+    );
+    confirmed =
+      bound?.status === 'running' && bound.result_summary_json === toJson({ job_id: jobId });
+  } catch {
+    // An uncertain write is left durable for the scheduler; it is never deleted from an error guess.
+    return jsonError(
+      c,
+      503,
+      'execution_state_unavailable',
+      'Action execution state could not be confirmed'
+    );
+  }
+  if (!confirmed) {
+    await deleteSupportOpsExecuteJob(jobsAdapter, tenantId, jobId);
     return jsonError(c, 409, 'not_executable', 'Action is no longer approved for execution');
   }
-
-  try {
-    const targets = await authCtx.coreAdapter.query<{ target_id: string }>(
-      `SELECT target_id
-         FROM support_operation_cohort_targets
-        WHERE tenant_id = ? AND cohort_id = ? AND block_reason IS NULL`,
-      [tenantId, action.cohort_id]
+  await auditSupportOps(c, 'support_ops.action.execute', actionId, 'success', {
+    cohort_id: action.cohort_id,
+    resource: action.resource,
+    action: action.action,
+    execution: 'job',
+    job_id: jobId,
+  });
+  if (action.actionable_count <= resource.maxSyncExecuteCount) {
+    await processSupportOpsExecuteJobInline(c.env, tenantId, jobId, {
+      maxCallsPerRun: 400,
+      maxTargetsPerRun: resource.maxSyncExecuteCount,
+    });
+    const completed = await authCtx.coreAdapter.queryOne<{
+      status: string;
+      result_summary_json: string | null;
+    }>(
+      'SELECT status,result_summary_json FROM support_operation_actions WHERE tenant_id=? AND id=?',
+      [tenantId, actionId],
+      { consistencyClass: 'primary_required' }
     );
-    for (let offset = 0; offset < targets.length; offset += 20) {
-      await Promise.all(
-        targets.slice(offset, offset + 20).map((target) =>
-          transitionAccountAuthenticationState(c.env, {
-            tenantId,
-            userId: target.target_id,
-            lifecycle: 'suspended',
-            sourceVersionMs: now,
-            operationId: crypto.randomUUID(),
-            revokeSessions: true,
-          })
-        )
-      );
+    const durable = await jobsAdapter.queryOne<{ status: string }>(
+      'SELECT status FROM admin_jobs WHERE tenant_id=? AND id=?',
+      [tenantId, jobId],
+      { consistencyClass: 'primary_required' }
+    );
+    // Completion includes final durable audit and logout-job transfer, not remote logout delivery.
+    if (completed?.status === 'completed' && durable?.status === 'completed') {
+      const summary = JSON.parse(completed.result_summary_json ?? '{}') as Record<string, unknown>;
+      return c.json({
+        action_id: actionId,
+        status: 'completed',
+        resource: action.resource,
+        action: action.action,
+        cohort_id: action.cohort_id,
+        ...redactResultSummary(
+          resource,
+          summary,
+          action.matched_count,
+          action.actionable_count,
+          action.blocked_count
+        ),
+      });
     }
-    const updateResult = await authCtx.coreAdapter.execute(
-      `UPDATE identity_accounts
-          SET lifecycle_state = 'suspended',
-              metadata_json = json_set(COALESCE(metadata_json, '{}'), '$.status', 'suspended', '$.suspended_at', ?),
-              updated_at = ?
-        WHERE tenant_id = ?
-          AND legacy_user_id IN (
-            SELECT target_id
-              FROM support_operation_cohort_targets
-             WHERE tenant_id = ? AND cohort_id = ? AND block_reason IS NULL
-          )
-          AND lifecycle_state = 'active'`,
-      [Math.floor(now / 1000), now, tenantId, tenantId, action.cohort_id]
-    );
-    await authCtx.coreAdapter.execute(
-      `UPDATE identity_subjects
-          SET lifecycle_state = 'suspended', updated_at = ?
-        WHERE tenant_id = ?
-          AND id IN (
-            SELECT primary_subject_id
-              FROM identity_accounts
-             WHERE tenant_id = ?
-               AND legacy_user_id IN (
-                 SELECT target_id
-                   FROM support_operation_cohort_targets
-                  WHERE tenant_id = ? AND cohort_id = ? AND block_reason IS NULL
-               )
-          )`,
-      [now, tenantId, tenantId, tenantId, action.cohort_id]
-    );
-    const succeededCount = updateResult.rowsAffected ?? 0;
-    const failedCount = Math.max(0, action.actionable_count - succeededCount);
-    const resultSummary = {
-      matched_count: action.matched_count,
-      attempted_count: action.actionable_count,
-      succeeded_count: succeededCount,
-      failed_count: failedCount,
-      blocked_count: action.blocked_count,
-    };
-    await authCtx.coreAdapter.execute(
-      `UPDATE support_operation_actions
-          SET status = 'completed', result_summary_json = ?, updated_at = ?
-        WHERE tenant_id = ? AND id = ? AND status = 'running'`,
-      [toJson(resultSummary), Date.now(), tenantId, actionId]
-    );
-
-    await auditSupportOps(c, 'support_ops.action.execute', actionId, 'success', {
-      cohort_id: action.cohort_id,
-      resource: action.resource,
-      action: action.action,
-      result: redactResultSummary(
-        resource,
-        resultSummary,
-        action.matched_count,
-        action.actionable_count,
-        action.blocked_count
-      ),
-    });
-    const redactedResultSummary = redactResultSummary(
-      resource,
-      resultSummary,
-      action.matched_count,
-      action.actionable_count,
-      action.blocked_count
-    );
-
-    return c.json({
-      action_id: actionId,
-      status: 'completed',
-      resource: action.resource,
-      action: action.action,
-      cohort_id: action.cohort_id,
-      ...redactedResultSummary,
-    });
-  } catch {
-    const failureSummary = {
-      matched_count: action.matched_count,
-      attempted_count: action.actionable_count,
-      succeeded_count: 0,
-      failed_count: action.actionable_count,
-      blocked_count: action.blocked_count,
-      error: 'execution_failed',
-    };
-    await authCtx.coreAdapter.execute(
-      `UPDATE support_operation_actions
-          SET status = 'failed', result_summary_json = ?, updated_at = ?
-        WHERE tenant_id = ? AND id = ? AND status = 'running'`,
-      [toJson(failureSummary), Date.now(), tenantId, actionId]
-    );
-    await auditSupportOps(c, 'support_ops.action.execute', actionId, 'failure', {
-      cohort_id: action.cohort_id,
-      resource: action.resource,
-      action: action.action,
-      reason: 'execution_failed',
-    });
-    return jsonError(c, 409, 'execution_failed', 'Action execution failed');
+    if (completed?.status === 'failed' && durable?.status === 'failed')
+      return jsonError(c, 409, 'execution_failed', 'Action execution failed');
   }
+  return c.json(
+    {
+      action_id: actionId,
+      status: 'running',
+      resource: action.resource,
+      action: action.action,
+      cohort_id: action.cohort_id,
+      job_id: jobId,
+    },
+    202
+  );
 });
 
 supportOpsRouter.get('/actions/:actionId', async (c) => {

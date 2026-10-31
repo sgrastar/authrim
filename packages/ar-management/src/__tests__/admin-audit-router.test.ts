@@ -126,6 +126,11 @@ describe('adminAuditRouter detail permission', () => {
       email: 'admin@example.com',
       name: 'Admin',
     });
+    mockAdapter.queryOne.mockResolvedValue({
+      id: 'admin-1',
+      email: 'admin@example.com',
+      name: 'Admin',
+    });
     mockGrantRepo.listActiveElevationGrants.mockResolvedValue([]);
     mockLoadAdminAuditDetail.mockResolvedValue({
       before: { name: 'before' },
@@ -175,18 +180,16 @@ describe('adminAuditRouter detail permission', () => {
     expect(body.id).toBe('audit-1');
     expect(body.before).toEqual({ name: 'before' });
     expect(body.after).toEqual({ name: 'after' });
+    expect(mockAdapter.queryOne).toHaveBeenCalledWith(
+      'SELECT id,name,email FROM admin_users WHERE tenant_id=? AND id=?',
+      ['tenant-a', 'admin-1']
+    );
     expect(body.admin_user).toEqual({
       id: 'admin-1',
       email: 'admin@example.com',
       name: 'Admin',
     });
-    expect(mockLoadAdminAuditDetail).toHaveBeenCalledWith(
-      expect.anything(),
-      mockAdapter,
-      'tenant-a',
-      'oa_audit123',
-      'catalog-123'
-    );
+    expect(mockLoadAdminAuditDetail).toHaveBeenCalledWith(expect.anything(), 'tenant-a', 'audit-1');
   });
 
   it('loads full detail with a matching elevation grant when detail permission is absent', async () => {

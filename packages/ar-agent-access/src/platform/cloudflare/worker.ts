@@ -1,3 +1,8 @@
+import { createCloudflareAdminAgentAuditWriter } from './admin-agent-audit-writer';
+import {
+  runSamlDrCoveredFetch,
+  runSamlDrCoveredOperation,
+} from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import {
   AdminAgentAccessRepository,
   AgentBaselineRepository,
@@ -19,7 +24,6 @@ import {
   AdminMachineAccessRepository,
   buildIssuerUrl,
   ensureDatabaseAdapter,
-  hasAdminPermission,
   isAllowedOrigin,
   parseAllowedOrigins,
   requireDedicatedAdminDatabaseAdapter,
@@ -27,6 +31,7 @@ import {
   type Env as CoreEnv,
 } from '@authrim/ar-lib-core';
 import { CloudflareAdminAgentAuditAdapter } from './admin-agent-audit';
+import { machinePermissionLimit } from './machine-permission-limit';
 import { CloudflareAgentMcpAdmissionAuditAdapter } from './mcp-admission-audit';
 import { CloudflareAgentConfigurationPlanAdapter } from './configuration-plans';
 import { CloudflareAgentConfigurationResourceReader } from './configuration-resources';
@@ -104,7 +109,7 @@ async function resolveActiveBulkTenantIds(
   await Promise.all(
     Array.from({ length: Math.min(8, tenantIds.length) }, async () => {
       while (cursor < tenantIds.length) {
-        const tenantId = tenantIds[cursor++]!;
+        const tenantId = tenantIds[cursor++];
         const store = await resolveTenantDatabaseSourceFromRegistry(env, {
           tenantId,
           role: 'tenant_core',
@@ -132,8 +137,14 @@ const AgentAccessMcpAgentBase = createCloudflareAgentAccessMcpAgent<CloudflareAg
     getEnvironmentName: (env) => env.AUTHRIM_ENVIRONMENT_NAME,
     createDependencies(env, _getCurrentRequest, discoveryProfiles) {
       const database = requireDedicatedAdminDatabaseAdapter(env, 'agent-access-mcp-worker');
-      const repository = new AdminAgentAccessRepository(database);
-      const configurationRepository = new AgentConfigurationRepository(database);
+      const repository = new AdminAgentAccessRepository(
+        database,
+        createCloudflareAdminAgentAuditWriter(env)
+      );
+      const configurationRepository = new AgentConfigurationRepository(
+        database,
+        createCloudflareAdminAgentAuditWriter(env)
+      );
       const machineRepository = new AdminMachineAccessRepository(
         requireDedicatedAdminDatabaseAdapter(env, 'agent-access-machine-principal')
       );
@@ -149,43 +160,8 @@ const AgentAccessMcpAgentBase = createCloudflareAgentAccessMcpAgent<CloudflareAg
         isFeatureEnabled: (tenantId) => isCloudflareAgentAccessMcpEnabled(env, tenantId),
         getDelegatorPermissions: (tenantId, delegatorId, now) =>
           repository.getActiveDelegatorPermissions(tenantId, delegatorId, now),
-        getPrincipalPermissionLimit: async (tenantId, principalId, credentialId) => {
-          const principal = await machineRepository.findPrincipalById(principalId);
-          if (!principal || principal.status !== 'active') return null;
-          const tenantScopes = await machineRepository.getPrincipalTenantScopes(principalId);
-          if (
-            tenantScopes.length === 0 ||
-            tenantScopes.some((scope) => scope.scopeMode !== 'allow') ||
-            !tenantScopes.some((scope) => scope.tenantId === tenantId)
-          ) {
-            return null;
-          }
-          const principalPermissions = await machineRepository.getPrincipalPermissions(principalId);
-          if (!credentialId) return principalPermissions;
-          const credential = await machineRepository.findCredentialById(credentialId);
-          if (
-            !credential ||
-            credential.principalId !== principalId ||
-            (credential.status !== 'active' && credential.status !== 'rotating')
-          ) {
-            return null;
-          }
-          const credentialScopes = await machineRepository.getCredentialTenantScopes(credentialId);
-          if (
-            credentialScopes.length > 0 &&
-            (credentialScopes.some((scope) => scope.scopeMode !== 'allow') ||
-              !credentialScopes.some((scope) => scope.tenantId === tenantId))
-          ) {
-            return null;
-          }
-          const credentialPermissions =
-            await machineRepository.getCredentialPermissions(credentialId);
-          return credentialPermissions.length === 0
-            ? principalPermissions
-            : principalPermissions.filter((permission) =>
-                hasAdminPermission(credentialPermissions, permission)
-              );
-        },
+        getPrincipalPermissionLimit: (tenantId, principalId, credentialId) =>
+          machinePermissionLimit(machineRepository, tenantId, principalId, credentialId),
         getRiskPolicy: async (tenantId) => {
           const tenantSettings = await settings.get(tenantId);
           return {
@@ -253,7 +229,8 @@ const AgentAccessMcpAgentBase = createCloudflareAgentAccessMcpAgent<CloudflareAg
           settings,
           schemaValidator,
           (tenantIds) => resolveActiveBulkTenantIds(env, tenantIds),
-          () => Date.now()
+          () => Date.now(),
+          createCloudflareAdminAgentAuditWriter(env)
         ),
         runtimeDiagnostics: new CloudflareAgentRuntimeDiagnostics(
           env.OP_DISCOVERY,
@@ -290,7 +267,8 @@ const mcp = createCloudflareAgentAccessMcpWorker<CloudflareAgentAccessWorkerEnv>
       getAdmissionAudit(env) {
         return new CloudflareAgentMcpAdmissionAuditAdapter(
           new AdminAgentAccessRepository(
-            requireDedicatedAdminDatabaseAdapter(env, 'agent-access-mcp-admission-audit')
+            requireDedicatedAdminDatabaseAdapter(env, 'agent-access-mcp-admission-audit'),
+            createCloudflareAdminAgentAuditWriter(env)
           )
         );
       },
@@ -326,7 +304,8 @@ const mcp = createCloudflareAgentAccessMcpWorker<CloudflareAgentAccessWorkerEnv>
 
 function bulkCoordinator(env: CloudflareAgentAccessWorkerEnv): CloudflareAgentBulkCoordinator {
   const repository = new AgentBulkRepository(
-    requireDedicatedAdminDatabaseAdapter(env, 'agent-bulk-coordinator')
+    requireDedicatedAdminDatabaseAdapter(env, 'agent-bulk-coordinator'),
+    createCloudflareAdminAgentAuditWriter(env)
   );
   return new CloudflareAgentBulkCoordinator(
     repository,
@@ -345,8 +324,8 @@ function baselineRemediationCoordinator(
 ): CloudflareAgentBaselineRemediationCoordinator {
   const database = requireDedicatedAdminDatabaseAdapter(env, 'agent-baseline-remediation');
   return new CloudflareAgentBaselineRemediationCoordinator(
-    new AgentBaselineRepository(database),
-    new AgentBulkRepository(database),
+    new AgentBaselineRepository(database, createCloudflareAdminAgentAuditWriter(env)),
+    new AgentBulkRepository(database, createCloudflareAdminAgentAuditWriter(env)),
     new CloudflareAgentSettingsProvider(env),
     { now: () => Date.now() },
     new CloudflareTenantConfigurationReader(env)
@@ -470,31 +449,36 @@ export async function checkAgentAccessReadiness(
 
 const worker: ExportedHandler<CloudflareAgentAccessWorkerEnv> = {
   async fetch(request, env, context) {
-    const path = new URL(request.url).pathname;
-    if (path === '/health/live' || path === '/api/health') {
-      return Response.json({ status: 'ok', service: 'ar-agent-access' });
-    }
-    if (path === '/health/ready') {
-      const readiness = await checkAgentAccessReadiness(env);
-      return Response.json(readiness, {
-        status: readiness.status === 'ok' ? 200 : 503,
-        headers: { 'cache-control': 'no-store' },
-      });
-    }
-    if (path !== '/mcp') return new Response(null, { status: 404 });
-    return mcp.fetch!(request, env, context);
+    return runSamlDrCoveredFetch(env, context, async (coveredEnv, coveredContext) => {
+      const path = new URL(request.url).pathname;
+      if (path === '/health/live' || path === '/api/health') {
+        return Response.json({ status: 'ok', service: 'ar-agent-access' });
+      }
+      if (path === '/health/ready') {
+        const readiness = await checkAgentAccessReadiness(coveredEnv ?? env);
+        return Response.json(readiness, {
+          status: readiness.status === 'ok' ? 200 : 503,
+          headers: { 'cache-control': 'no-store' },
+        });
+      }
+      if (path !== '/mcp') return new Response(null, { status: 404 });
+      return mcp.fetch!(request, coveredEnv ?? env, coveredContext ?? context);
+    });
   },
-  async scheduled(_controller, env, _context) {
-    const baseline = baselineRemediationCoordinator(env);
-    const bulk = bulkCoordinator(env);
-    await runAgentAccessScheduledTasks({
-      evaluateBaselines: () => baseline.evaluateScheduled(),
-      runBaselineRemediation: () => baseline.runScheduled(),
-      runBulkPlans: () => bulk.runScheduled(),
-      cleanupMcpSessions: () => cleanupExpiredAgentAccessMcpSessions(env),
+  async scheduled(_controller, env, context) {
+    return runSamlDrCoveredOperation(env, context, async (env) => {
+      const baseline = baselineRemediationCoordinator(env);
+      const bulk = bulkCoordinator(env);
+      await runAgentAccessScheduledTasks({
+        evaluateBaselines: () => baseline.evaluateScheduled(),
+        runBaselineRemediation: () => baseline.runScheduled(),
+        runBulkPlans: () => bulk.runScheduled(),
+        cleanupMcpSessions: () => cleanupExpiredAgentAccessMcpSessions(env),
+      });
     });
   },
 };
 
+export const SAML_DR_WRITER_SURFACES = ['fetch', 'scheduled'] as const;
 export default worker;
 export { RuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';

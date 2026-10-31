@@ -19,6 +19,7 @@ import {
 	getRememberedTenantHost,
 	normalizeTenantHost
 } from '$lib/discovery-session';
+import { getAuthConfig } from '$lib/auth';
 import type { AuthenticationMethodsResponse } from '$lib/api/authentication-methods';
 import {
 	getCachedAuthenticationMethods,
@@ -39,12 +40,8 @@ import {
 } from '$lib/server/account-page-initial-data';
 import { sanitizeColor } from '$lib/utils/url-validation';
 import {
-	LOGIN_UI_DARK_VARIANT_HINT_COOKIE,
-	LOGIN_UI_LIGHT_VARIANT_HINT_COOKIE,
 	LOGIN_UI_THEME_HINT_COOKIE,
 	LOGIN_UI_THEME_HINT_MAX_AGE_SECONDS,
-	normalizeLoginUIDarkVariant,
-	normalizeLoginUILightVariant,
 	normalizeLoginUIThemeMode,
 	resolveLoginUIThemeBackground
 } from '$lib/theme-bootstrap';
@@ -479,7 +476,14 @@ export async function fetchLoginChallengeThemeTargetForPageRequest(
 		if (!response.ok) {
 			return { challengeId, valid: false, clientId: null };
 		}
-		const data = (await response.json()) as { client?: { client_id?: unknown } };
+		const data = (await response.json()) as {
+			protocol?: unknown;
+			client?: { client_id?: unknown };
+		};
+		// The challenge of a SAML request is valid and names no client: the default methods apply.
+		if (data.protocol === 'saml' && data.client === undefined) {
+			return { challengeId, valid: true, clientId: null };
+		}
 		const clientId = typeof data.client?.client_id === 'string' ? data.client.client_id.trim() : '';
 		if (!CLIENT_ID_PATTERN.test(clientId)) {
 			return { challengeId, valid: false, clientId: null };
@@ -576,101 +580,64 @@ export function shouldBootstrapLoginUIThemeForRequest(
 
 export function resolveInitialLoginUIAppearance(
 	authenticationMethods: AuthenticationMethodsResponse | null | undefined,
-	themeHint?: {
-		theme?: string | null;
-		lightVariant?: string | null;
-		darkVariant?: string | null;
-	}
+	themeHint?: { theme?: string | null }
 ): { background: string; colorScheme: 'light' | 'dark' | 'light dark' } {
 	const ui = authenticationMethods?.ui;
 	const configuredBackground = sanitizeColor(ui?.pageTemplate?.backgroundColor);
+	// The page background of the theme template in the mode the page opens in.
+	const template = ui?.themeTemplate;
 	const theme = ui?.theme?.trim().toLowerCase();
 	if (theme === 'dark') {
-		const variant = ui?.variant?.trim().toLowerCase() || 'brown';
 		return {
-			background: resolveLoginUIThemeBackground('dark', variant, configuredBackground),
+			background: resolveLoginUIThemeBackground('dark', template, configuredBackground),
 			colorScheme: 'dark'
 		};
 	}
 	if (theme === 'auto') {
 		return {
-			background: configuredBackground || '#eeeae3',
+			background: resolveLoginUIThemeBackground('light', template, configuredBackground),
 			colorScheme: 'light dark'
 		};
 	}
 	if (theme === 'light') {
-		const variant = ui?.variant?.trim().toLowerCase() || 'beige';
 		return {
-			background: resolveLoginUIThemeBackground('light', variant, configuredBackground),
+			background: resolveLoginUIThemeBackground('light', template, configuredBackground),
 			colorScheme: 'light'
 		};
 	}
 
 	const hintedTheme = normalizeLoginUIThemeMode(themeHint?.theme);
-	if (hintedTheme === 'dark') {
+	if (hintedTheme) {
 		return {
-			background: resolveLoginUIThemeBackground('dark', themeHint?.darkVariant),
-			colorScheme: 'dark'
-		};
-	}
-	if (hintedTheme === 'light') {
-		return {
-			background: resolveLoginUIThemeBackground('light', themeHint?.lightVariant),
-			colorScheme: 'light'
+			background: resolveLoginUIThemeBackground(hintedTheme, template),
+			colorScheme: hintedTheme
 		};
 	}
 
 	return {
-		background: configuredBackground || '#eeeae3',
+		background: resolveLoginUIThemeBackground('light', template, configuredBackground),
 		colorScheme: 'light'
 	};
 }
 
-function getInitialLoginUIThemeHint(event: RequestEvent): {
-	theme?: string | null;
-	lightVariant?: string | null;
-	darkVariant?: string | null;
-} {
-	return {
-		theme: event.cookies.get(LOGIN_UI_THEME_HINT_COOKIE),
-		lightVariant: event.cookies.get(LOGIN_UI_LIGHT_VARIANT_HINT_COOKIE),
-		darkVariant: event.cookies.get(LOGIN_UI_DARK_VARIANT_HINT_COOKIE)
-	};
+function getInitialLoginUIThemeHint(event: RequestEvent): { theme?: string | null } {
+	return { theme: event.cookies.get(LOGIN_UI_THEME_HINT_COOKIE) };
 }
 
 function setInitialLoginUIThemeHint(
 	event: RequestEvent,
 	authenticationMethods: AuthenticationMethodsResponse | null | undefined
 ): void {
-	const ui = authenticationMethods?.ui;
-	const theme = normalizeLoginUIThemeMode(ui?.theme);
+	const theme = normalizeLoginUIThemeMode(authenticationMethods?.ui?.theme);
 	if (!theme) return;
 
-	const cookieOptions = {
+	event.cookies.set(LOGIN_UI_THEME_HINT_COOKIE, theme, {
 		path: '/',
 		maxAge: LOGIN_UI_THEME_HINT_MAX_AGE_SECONDS,
 		httpOnly: false,
-		sameSite: 'lax' as const,
+		sameSite: 'lax',
 		secure: event.url.protocol === 'https:'
-	};
-
-	event.cookies.set(LOGIN_UI_THEME_HINT_COOKIE, theme, cookieOptions);
-
-	const variant = ui?.variant?.trim().toLowerCase();
-	if (theme === 'light') {
-		event.cookies.set(
-			LOGIN_UI_LIGHT_VARIANT_HINT_COOKIE,
-			normalizeLoginUILightVariant(variant) ?? 'beige',
-			cookieOptions
-		);
-	}
-	if (theme === 'dark') {
-		event.cookies.set(
-			LOGIN_UI_DARK_VARIANT_HINT_COOKIE,
-			normalizeLoginUIDarkVariant(variant) ?? 'brown',
-			cookieOptions
-		);
-	}
+	});
 }
 
 function parseHumanVerificationProviderForCsp(
@@ -909,7 +876,11 @@ export function buildProxyHeaders(
 		'x-request-id',
 		'x-correlation-id',
 		'x-session-id',
-		'x-diagnostic-session-id'
+		'x-diagnostic-session-id',
+		// The screen an email-code send's human verification token came from.
+		'x-authrim-human-verification-action',
+		// The Flow interaction a passkey or TOTP sign-in start belongs to (the server checks it).
+		'x-authrim-interaction-id'
 	];
 
 	const headers = new Headers();
@@ -944,12 +915,22 @@ export function getForwardedHost(
 		return urlTenantHost;
 	}
 
+	const originalHost = getOriginalRequestHost(event);
+	// A tenant page proxied through Router already has an explicit target host.
+	// A cookie from the shared Login UI must not switch it to another tenant.
+	if (
+		originalHost &&
+		originalHost !== event.url.host &&
+		event.request.headers.get('x-authrim-shared-login-host') !== 'true'
+	) {
+		return originalHost;
+	}
+
 	const loginTenantHost = getLoginTenantRequestHost(event);
 	if (loginTenantHost) {
 		return loginTenantHost;
 	}
 
-	const originalHost = getOriginalRequestHost(event);
 	if (originalHost) {
 		return originalHost;
 	}
@@ -1186,6 +1167,19 @@ const csrfHandle: Handle = async ({ event, resolve }) => {
 	return resolve(event);
 };
 
+export function resolveAuthenticationMethodsClientId(
+	url: URL,
+	challengeTarget: { valid: boolean; clientId: string | null } | null | undefined,
+	directClientId: string
+): string | null {
+	if (challengeTarget) return challengeTarget.valid ? challengeTarget.clientId : null;
+	return url.pathname === '/login' &&
+		!url.searchParams.has('challenge_id') &&
+		!url.searchParams.has('saml_request_id')
+		? directClientId
+		: null;
+}
+
 const loginUIThemeBootstrapHandle: Handle = async ({ event, resolve }) => {
 	const platformEnv = getPlatformEnv(event);
 	if (shouldBootstrapLoginUIThemeForRequest(event, platformEnv)) {
@@ -1203,7 +1197,7 @@ const loginUIThemeBootstrapHandle: Handle = async ({ event, resolve }) => {
 			fetchAuthenticationMethodsForPageRequest(
 				event,
 				platformEnv,
-				challengeTarget?.valid ? challengeTarget.clientId : null
+				resolveAuthenticationMethodsClientId(event.url, challengeTarget, getAuthConfig().clientId)
 			),
 			accountPageInitialPromise
 		]);

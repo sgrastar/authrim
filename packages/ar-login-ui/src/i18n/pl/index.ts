@@ -1,6 +1,32 @@
 import type { Translation } from '../i18n-types';
 
 const translation = {
+	account_guestLogoutWarning:
+		'Po wylogowaniu nie będzie można wrócić do tego konta gościa. Najpierw zarejestruj konto, aby zachować dostęp do konta i danych. Wylogować mimo to?',
+	account_guestTitle: 'Zarejestruj konto',
+	account_guestDescription: 'Po rejestracji zachowasz to samo konto i dane.',
+	account_guestDue: 'Konto może zostać automatycznie usunięte od {date}.',
+	account_guestNoExpiry: 'Nie zaplanowano automatycznego usuwania.',
+	account_guestEmail: 'Adres e-mail',
+	account_guestSend: 'Zarejestruj się przez e-mail',
+	account_guestPasskey: 'Zarejestruj się kluczem dostępu',
+	account_guestCode: 'Kod weryfikacyjny',
+	account_guestConfirm: 'Zakończ rejestrację',
+	account_guestPending:
+		'Rejestracja jest w toku. Możesz spróbować ponownie, aby sprawdzić, czy została zakończona.',
+	account_guestRetry: 'Spróbuj ponownie',
+	account_guestError:
+		'Nie udało się zakończyć rejestracji. Sprawdź kod weryfikacyjny lub spróbuj ponownie.',
+	account_guestCollision:
+		'Dla tej tożsamości istnieje już konto. Zaloguj się na to konto osobno. Konto gościa nie zostanie scalone.',
+	account_guestExistingLogin: 'Zaloguj się na istniejące konto',
+	account_guestRegistered: 'Konto zostało zarejestrowane.',
+	account_guestChangeMethod: 'Wybierz inną metodę',
+	login_guestContinue: 'Kontynuuj jako gość',
+	login_guestRetention:
+		'Konta gości mogą zostać automatycznie usunięte po {days} dniach od utworzenia. Zarejestruj konto, aby nadal z niego korzystać.',
+	login_guestNoExpiry: 'Nie zaplanowano automatycznego usuwania nowych kont gości.',
+
 	app_title: 'Authrim',
 	app_subtitle: 'Tożsamość i dostęp na brzegu sieci — wszędzie.',
 	button_openDialog: 'Otwórz okno dialogowe',
@@ -84,6 +110,30 @@ const translation = {
 	account_delete: 'Usuń',
 	account_empty: 'Brak elementów',
 	account_planned: 'Planowane',
+	account_socialEmpty: 'Brak połączonych kont zewnętrznych.',
+	account_socialLinkHeading: 'Połącz konto',
+	account_socialLinkWith: 'Połącz z {provider}',
+	account_socialNoProviders: 'Brak innych dostawców do połączenia.',
+	account_socialLinkedAt: 'Połączono {date}',
+	account_socialLastUsed: 'Ostatnio użyto: {date}',
+	account_socialUnlink: 'Odłącz',
+	account_socialUnlinkConfirm:
+		'Odłączyć {provider}? Nie będzie już można logować się za jego pomocą.',
+	account_socialUnlinkConfirmAction: 'Odłącz {provider}',
+	account_socialLinked: 'Konto zostało połączone.',
+	account_socialUnlinked: 'Konto zostało odłączone.',
+	account_socialErrorAlreadyLinked: 'To konto jest już połączone z innym użytkownikiem.',
+	account_socialErrorAlreadyLinkedHere: 'Ten dostawca jest już połączony z Twoim kontem.',
+	account_socialErrorEmailNotVerified: 'Dostawca nie zweryfikował adresu e-mail tego konta.',
+	account_socialErrorSessionExpired:
+		'Potwierdzenie wygasło przed zakończeniem łączenia. Potwierdź ponownie i spróbuj jeszcze raz.',
+	account_socialErrorCancelled: 'Łączenie zostało anulowane.',
+	account_socialErrorFailed: 'Nie udało się połączyć konta. Spróbuj ponownie.',
+	account_socialErrorLastMethod:
+		'To Twoja ostatnia metoda logowania. Najpierw dodaj klucz dostępu lub inną metodę logowania.',
+	account_socialErrorInProgress: 'Trwa inna zmiana metod logowania. Spróbuj ponownie za chwilę.',
+	account_operationSocialLinked: 'Połączono konto zewnętrzne',
+	account_operationSocialUnlinked: 'Odłączono konto zewnętrzne',
 	account_passkeyUnsupported: 'Ta przeglądarka nie obsługuje rejestracji kluczy dostępu.',
 	account_passkeyRegistrationCancelled:
 		'Rejestracja Passkey została anulowana lub zakończona. Proszę spróbować jeszcze raz.',
@@ -119,12 +169,30 @@ const translation = {
 	account_reauthTotpCodePlaceholder: '6- lub 8-cyfrowy kod',
 	account_actionFailed: 'Operacja zawiodła.',
 	account_remainingLoginMethodRequired: 'Dodaj inną metodę logowania przed usunięciem tej metody.',
+	account_activityIncomplete: 'Wyniki aktywności są niepełne. Spróbuj ponownie później.',
+	account_activityLoadMore: 'Wczytaj starsze aktywności',
 	account_activityTitle: 'Aktywność',
 	account_operationNameUpdated: 'Zmieniono nazwę',
 	account_operationPasskeyCreated: 'Dodano klucz dostępu',
 	account_operationPasskeyUpdated: 'Zmieniono nazwę klucza dostępu',
 	account_operationPasskeyDeleted: 'Usunięto klucz dostępu',
 	account_operationSessionRevoked: 'Unieważniono sesję',
+	account_operationGuestCreated: 'Utworzono konto gościa',
+	account_operationGuestUpgradeFailed: 'Rejestracja gościa nie powiodła się',
+	account_operationGuestUpgradeStarted: 'Rozpoczęto rejestrację gościa',
+	account_operationGuestUpgraded: 'Zarejestrowano konto gościa',
+	account_operationEmailAdded: 'Dodano adres e-mail',
+	account_operationEmailChanged: 'Zmieniono adres e-mail',
+	account_operationEmailReauthenticated: 'Ponownie uwierzytelniono przez e-mail',
+	account_operationDeviceUpdated: 'Zmieniono nazwę urządzenia',
+	account_operationDeviceUnlinked: 'Odłączono urządzenie',
+	account_operationPasskeyReauthenticated: 'Ponownie uwierzytelniono kluczem dostępu',
+	account_operationTotpEnrollmentStarted: 'Rozpoczęto konfigurację aplikacji uwierzytelniającej',
+	account_operationTotpActivated: 'Aktywowano aplikację uwierzytelniającą',
+	account_operationTotpUpdated: 'Zmieniono nazwę aplikacji uwierzytelniającej',
+	account_operationTotpRemoved: 'Usunięto aplikację uwierzytelniającą',
+	account_operationTotpBackupCodesRegenerated: 'Wygenerowano ponownie kody zapasowe',
+	account_operationTotpReauthenticated: 'Ponownie uwierzytelniono aplikacją uwierzytelniającą',
 	account_launcherTitle: 'Moje aplikacje',
 	account_launcherDescription: 'Wyszukuj i otwieraj dostępne aplikacje.',
 	account_launcherLoadFailed: 'Nie udało się wczytać aplikacji.',
@@ -190,6 +258,8 @@ const translation = {
 	login_humanVerificationLoading: 'Sprawdzanie bezpieczeństwa...',
 	login_humanVerificationLoadFailed:
 		'Nie udało się wczytać zabezpieczenia. Odśwież stronę i spróbuj ponownie.',
+	login_humanVerificationUnavailable:
+		'Weryfikacja, że jesteś człowiekiem, jest obecnie niedostępna. Skontaktuj się z administratorem.',
 	login_noMethodsAvailable:
 		'Żadna metoda uwierzytelniania nie jest włączona do tej organizacji. Skontaktuj się ze swoim administratorem.',
 	login_passkeyPreparing: 'Przygotowywanie uwierzytelniania kluczem dostępu…',
@@ -268,7 +338,8 @@ const translation = {
 		'Utwórz konto za pomocą klucza dostępu, kodu e-mail lub innej dostępnej metody.',
 	emailCode_title: 'Sprawdź pocztę',
 	emailCode_subtitle: 'Wysłaliśmy kod weryfikacyjny do',
-	emailCode_instructions: 'Wpisz 6-cyfrowy kod z poczty e-mail. Kod wygasa za 5 minut.',
+	emailCode_instructions:
+		'Wpisz 6-cyfrowy kod z poczty e-mail. W wiadomości podano, jak długo kod jest ważny.',
 	emailCode_codeLabel: 'Kod weryfikacyjny',
 	emailCode_verifyButton: 'Sprawdź',
 	emailCode_resendButton: 'Wyślij kod ponownie',
@@ -324,11 +395,19 @@ const translation = {
 	error_temporarily_unavailable: 'Serwer autoryzacji tymczasowo nie może obsłużyć żądania.',
 	error_login_required: 'Wymagane jest uwierzytelnienie. Zaloguj się, aby kontynuować.',
 	error_unknown: 'Wystąpił nieznany błąd.',
+	error_rateLimited: 'Zbyt wiele prób. Odczekaj chwilę i spróbuj ponownie.',
+	error_rateLimitedRetryAfter: 'Zbyt wiele prób. Spróbuj ponownie za około {minutes} min.',
+	error_unregisteredPostLogoutRedirectUri:
+		'Wylogowano Cię. Nie udało się wrócić do aplikacji, bo jej adres powrotu nie jest zarejestrowany. Otwórz aplikację ponownie samodzielnie.',
+	error_invalidIdTokenHint:
+		'Wylogowano Cię. Nie udało się wrócić do aplikacji, bo nie udało się zweryfikować jej żądania wylogowania. Otwórz aplikację ponownie samodzielnie.',
+	error_idTokenHintRequired:
+		'Wylogowano Cię. Nie udało się wrócić do aplikacji, bo jej żądanie wylogowania było niekompletne. Otwórz aplikację ponownie samodzielnie.',
 	device_title: 'Weryfikacja urządzenia',
 	device_subtitle: 'Wprowadź kod pokazany na urządzeniu',
 	device_codeLabel: 'Kod weryfikacyjny',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint: 'Wprowadź kod 8 znaków z urządzenia (format: XXXX-XXXX)',
+	device_codeHint: 'Wprowadź kod wyświetlony na urządzeniu',
 	device_verifyButton: 'Sprawdź kod',
 	device_confirmTitle: 'Autoryzuj urządzenie',
 	device_requestedPermissions: 'Żądane uprawnienia',
@@ -341,6 +420,13 @@ const translation = {
 	device_errorApproveFailed: 'Nie udało się zatwierdzić urządzenia',
 	device_errorDenyFailed: 'Nie udało się odmówić żądania urządzenia',
 	device_errorInvalidRedirect: 'Nieprawidłowy adres URL przekierowania otrzymany z serwera',
+	device_errorConsentWithdrawn:
+		'To żądanie zostało utworzone, zanim cofnięto dostęp tej aplikacji. Zacznij od nowa na urządzeniu, aby otrzymać nowy kod.',
+	device_errorTryAgain:
+		'Nie udało się teraz zapisać Twojej decyzji i nic nie zostało zmienione. Spróbuj ponownie za chwilę.',
+	device_errorTooManyAttempts: 'Zbyt wiele prób. Odczekaj chwilę i spróbuj ponownie.',
+	device_errorOutcomeUnknown:
+		'Nie udało się potwierdzić, czy Twoja decyzja została zapisana. Sprawdź urządzenie lub wpisz kod ponownie.',
 	ciba_title: 'Żądanie uwierzytelnienia',
 	ciba_subtitle: 'Aplikacja prosi o Twoją zgodę.',
 	ciba_noPendingRequests: 'Brak oczekujących żądań uwierzytelnienia',
@@ -360,6 +446,17 @@ const translation = {
 	ciba_errorGeneric: 'Wystąpił błąd',
 	ciba_errorApproveFailed: 'Nie udało się zatwierdzić żądania',
 	ciba_errorDenyFailed: 'Nie udało się odrzucić wniosku',
+	ciba_errorConsentWithdrawn:
+		'To żądanie zostało utworzone, zanim cofnięto dostęp tej aplikacji. Zacznij od nowa w aplikacji.',
+	ciba_errorRequestGone: 'To żądanie wygasło lub zostało już rozpatrzone.',
+	error_authorizationRequestExpired: 'Żądanie logowania wygasło. Zacznij ponownie w aplikacji.',
+	ciba_errorTryAgain:
+		'Nie udało się teraz zapisać Twojej decyzji i nic nie zostało zmienione. Spróbuj ponownie za chwilę.',
+	ciba_errorTooManyAttempts: 'Zbyt wiele prób. Odczekaj chwilę i spróbuj ponownie.',
+	ciba_errorOutcomeUnknown:
+		'Nie udało się potwierdzić, czy Twoja odpowiedź została zapisana. Odśwież, aby zobaczyć oczekujące żądania.',
+	ciba_errorNoLongerWaiting:
+		'Nie udało się potwierdzić Twojej odpowiedzi, ale to żądanie już nie oczekuje.',
 	reauth_title: 'Sprawdź swoją tożsamość',
 	reauth_subtitle: 'Dla bezpieczeństwa, proszę ponownie uwierzytelnić, aby kontynuować.',
 	reauth_verifyWithPasskey: 'Sprawdź przy użyciu Passkey',
@@ -396,6 +493,9 @@ const translation = {
 	login_extError_callbackFailed_title: 'Nie udało się uwierzytelnić',
 	login_extError_callbackFailed_message:
 		'Wystąpił błąd podczas uwierzytelniania. Spróbuj ponownie.',
+	login_extError_reauthNotProven_title: 'Nie potwierdzono logowania',
+	login_extError_reauthNotProven_message:
+		'Twój dostawca logowania nie potwierdził, że zalogowałeś się ponownie. Zaloguj się ponownie lub wybierz inną metodę.',
 	login_extError_default_title: 'Błąd uwierzytelniania',
 	login_extError_default_message: 'Wystąpił błąd podczas uwierzytelniania zewnętrznego.',
 	login_signingInTo: 'Logowanie do',

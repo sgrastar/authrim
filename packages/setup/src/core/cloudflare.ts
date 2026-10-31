@@ -1,3 +1,16 @@
+import { IcebergRestCatalog, prepareScheduledTable } from '@authrim/ar-lib-logging/iceberg';
+import {
+  assertLogArchiveImplemented,
+  type LogArchiveConfig,
+  type LogArchiveLock,
+} from './log-archive-config.js';
+import {
+  LogArchiveApi,
+  preflightLogArchive,
+  provisionLogArchive,
+  prepareLogArchiveDeletion,
+  LOG_ARCHIVE_SCHEMA_DIGEST,
+} from './log-archive.js';
 /**
  * Cloudflare API Integration Module
  *
@@ -27,6 +40,7 @@ import {
   KV_NAMESPACES,
 } from './naming.js';
 import type { AuthrimConfig, D1Location, D1Jurisdiction } from './config.js';
+import { isReservedTenantId } from './tenant-id.js';
 import type { DnsOwnershipEntry, DnsOwnershipRole, DnsRecordRestoreSnapshot } from './lock.js';
 import type {
   ProvisioningResourceCheckpoint,
@@ -62,6 +76,9 @@ import {
 const D1_MIGRATION_EXECUTE_TIMEOUT_MS = 180_000;
 const D1_MIGRATION_MAX_ATTEMPTS = 4;
 const D1_MIGRATION_AUTH_MAX_ATTEMPTS = 8;
+// Queue creation can take longer than the default API read deadline. Aborting a POST after
+// Cloudflare commits it loses the queue_id needed to safely resume provisioning.
+const CLOUDFLARE_QUEUE_CREATE_TIMEOUT_MS = 120_000;
 const QUEUE_PROVISIONING_DEFINITIONS = [
   { binding: 'AUDIT_QUEUE', nameSuffix: 'audit-queue' },
   { binding: 'LOGGING_DELIVERY_CRITICAL_QUEUE', nameSuffix: 'logging-delivery-critical-queue' },
@@ -78,7 +95,10 @@ export function getRequiredQueues(env: string): Array<{ binding: string; name: s
 }
 
 export function getProvisioningResourceCount(
-  options: Pick<ProvisionOptions, 'env' | 'createD1' | 'createKV' | 'createQueues' | 'createR2'>
+  options: Pick<
+    ProvisionOptions,
+    'env' | 'createD1' | 'createKV' | 'createQueues' | 'createR2' | 'logArchive'
+  >
 ): number {
   validateEnvName(options.env);
   return (
@@ -87,7 +107,9 @@ export function getProvisioningResourceCount(
     (options.createQueues ? QUEUE_PROVISIONING_DEFINITIONS.length : 0) +
     getRequiredR2Buckets(options.env, {
       includeFeatureBuckets: options.createR2 !== false,
-    }).length
+      logArchiveBucketName: options.logArchive?.bucketName,
+    }).length +
+    (options.logArchive ? (options.logArchive.mode === 'pipeline' ? 4 : 1) : 0)
   );
 }
 const QUEUE_CONSUMER_DETACH_PROPAGATION_DELAY_MS = 15_000;
@@ -398,6 +420,7 @@ export interface ProvisionedResources {
   kv: KVNamespaceInfo[];
   queues: QueueInfo[];
   r2: R2BucketInfo[];
+  logArchive?: LogArchiveLock;
 }
 
 /** Options for creating a D1 database with location/jurisdiction */
@@ -416,6 +439,14 @@ export interface DatabaseProvisionConfig {
 }
 
 export interface ProvisionOptions {
+  logArchive?: LogArchiveConfig;
+  logArchiveCatalogSecrets?: { readToken: string; writeToken: string; sinkToken?: string };
+  /** Account the staged tokens were issued for by Setup; tokens bound to it skip policy re-inspection. */
+  logArchiveIssuedForAccountId?: string;
+  prepareScheduledLogArchiveTable?: (catalog: {
+    catalogUri: string;
+    warehouse: string;
+  }) => Promise<void>;
   env: string;
   createD1?: boolean;
   createKV?: boolean;
@@ -552,8 +583,6 @@ export const R2_BUCKETS = [
   { binding: 'MIGRATION_RELEASES', suffix: 'migration-releases', baseline: true },
   { binding: 'PLUGIN_BUNDLES', suffix: 'plugin-bundles', baseline: false },
   { binding: 'PUBLIC_ASSETS', suffix: 'public-assets', baseline: false },
-  { binding: 'DIAGNOSTIC_LOGS', suffix: 'diagnostic-logs', baseline: false },
-  { binding: 'AUDIT_ARCHIVE', suffix: 'audit-archive', baseline: false },
   { binding: 'IMPORT_ARTIFACTS', suffix: 'import-artifacts', baseline: false },
   { binding: 'EXPORT_ARTIFACTS', suffix: 'export-artifacts', baseline: false },
   { binding: 'SENSITIVE_DETAILS', suffix: 'sensitive-details', baseline: false },
@@ -571,19 +600,25 @@ export function getR2BucketName(env: string, binding: R2BucketBinding): string {
 
 export function getRequiredR2Buckets(
   env: string,
-  options: { includeFeatureBuckets?: boolean } = {}
+  options: { includeFeatureBuckets?: boolean; logArchiveBucketName?: string } = {}
 ): R2BucketInfo[] {
   const includeFeatureBuckets = options.includeFeatureBuckets ?? true;
-  return R2_BUCKETS.filter((bucket) => bucket.baseline || includeFeatureBuckets).map((bucket) => ({
-    binding: bucket.binding,
-    name: `${env}-${bucket.suffix}`,
-  }));
+  return [
+    ...R2_BUCKETS.filter((bucket) => bucket.baseline || includeFeatureBuckets).map((bucket) => ({
+      binding: bucket.binding,
+      name: `${env}-${bucket.suffix}`,
+    })),
+    ...(options.logArchiveBucketName
+      ? [{ binding: 'LOG_ARCHIVE', name: options.logArchiveBucketName }]
+      : []),
+  ];
 }
 
 export function buildR2BucketProvisioningStatus(
   env: string,
   recordedBuckets: Record<string, Omit<R2BucketInfo, 'binding'>> | null | undefined,
-  cloudflareBuckets: Iterable<R2BucketProviderIdentity>
+  cloudflareBuckets: Iterable<R2BucketProviderIdentity>,
+  options: { logArchiveBucketName?: string } = {}
 ): {
   env: string;
   enabled: boolean;
@@ -595,7 +630,7 @@ export function buildR2BucketProvisioningStatus(
   const liveByName = new Map(
     Array.from(cloudflareBuckets, (bucket) => [bucket.name, bucket] as const)
   );
-  const buckets = getRequiredR2Buckets(env).map((bucket) => {
+  const buckets = getRequiredR2Buckets(env, options).map((bucket) => {
     const recordedBucket = recordedBuckets?.[bucket.binding];
     const recordedName = recordedBucket?.name;
     const name = recordedName ?? bucket.name;
@@ -884,7 +919,9 @@ async function wranglerCreateWithDefiniteRejectionRetry(
   const oauthRefresh: WranglerOAuthRefreshState = { attempted: false };
   for (let attempt = 1; attempt <= D1_MIGRATION_AUTH_MAX_ATTEMPTS; attempt++) {
     try {
-      return await wrangler(args);
+      // Cloudflare can take longer than the default 30 seconds to commit a resource create.
+      // A killed Wrangler process can leave the create outcome unknown.
+      return await wrangler(args, { timeout: 120_000 });
     } catch (error) {
       lastError = error;
       const message = error instanceof Error ? error.message : String(error);
@@ -988,6 +1025,12 @@ async function wrangler(
       timeout: options.timeout ?? 30000,
     });
 
+    // With reject:false, execa can resolve a timed-out process even when a child handles
+    // SIGTERM and exits successfully. Never interpret its partial output as a successful create.
+    if (result.timedOut) {
+      throw new Error(`Wrangler command timed out: ${args.join(' ')}`);
+    }
+
     if (result.exitCode !== 0) {
       const detail = [result.stderr, result.stdout].filter(Boolean).join('\n');
       throw new Error(`Wrangler command failed (${result.exitCode}): ${detail || args.join(' ')}`);
@@ -1005,6 +1048,23 @@ async function wrangler(
     }
     throw new Error(`Wrangler command failed: ${execaError.message}`);
   }
+}
+
+/**
+ * Local-only execution target for D1/KV helpers.
+ *
+ * When supplied, the helper talks to the Miniflare state under `persistTo` (the same directory a
+ * `wrangler dev --persist-to` session reads) instead of the Cloudflare account. `configPath` is a
+ * Wrangler config that declares every database and namespace the caller addresses by name.
+ */
+export interface LocalWranglerTarget {
+  configPath: string;
+  persistTo: string;
+  cwd?: string;
+}
+
+function localTargetArgs(target: LocalWranglerTarget): string[] {
+  return ['--local', '--persist-to', target.persistTo, '-c', target.configPath];
 }
 
 /**
@@ -3219,70 +3279,27 @@ function stripAnsiSequences(value: string): string {
   return value.replace(new RegExp(`${escape}\\[[0-?]*[ -/]*[@-~]`, 'g'), '');
 }
 
-function findJsonContainerCandidates(
-  value: string,
-  openingCharacter: '[' | '{',
-  closingCharacter: ']' | '}'
-): string[] {
-  const candidates: string[] = [];
-  const normalized = stripAnsiSequences(value);
-
-  for (let start = 0; start < normalized.length; start++) {
-    if (normalized[start] !== openingCharacter) continue;
-
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-
-    for (let index = start; index < normalized.length; index++) {
-      const character = normalized[index];
-      if (inString) {
-        if (escaped) {
-          escaped = false;
-        } else if (character === '\\') {
-          escaped = true;
-        } else if (character === '"') {
-          inString = false;
-        }
-        continue;
-      }
-
-      if (character === '"') {
-        inString = true;
-      } else if (character === openingCharacter) {
-        depth++;
-      } else if (character === closingCharacter) {
-        depth--;
-        if (depth === 0) {
-          candidates.push(normalized.slice(start, index + 1));
-          break;
-        }
-      }
-    }
-  }
-
-  return candidates;
-}
-
+/**
+ * The first output value that `normalizeRows` accepts. Candidates are the independent JSON values
+ * in the output, longest first (so a banner or a notice around the result is tolerated). A value
+ * that is rejected is rejected whole: what lies inside it is never tried as a result of its own,
+ * because a failure response that happens to hold an empty list would otherwise read as an empty
+ * inventory.
+ */
 function parseValidatedJsonOutput<T>(
   stdout: string,
   normalizeRows: (rows: unknown) => T[],
   invalidOutputMessage: string
 ): T[] {
-  const normalized = stripAnsiSequences(stdout).trim();
-  const candidates = Array.from(
-    new Set([
-      normalized,
-      ...findJsonContainerCandidates(normalized, '[', ']'),
-      ...findJsonContainerCandidates(normalized, '{', '}'),
-    ])
-  ).sort((left, right) => right.length - left.length);
+  const fragments = findIndependentJsonFragments(stripAnsiSequences(stdout)).sort(
+    (left, right) => right.length - left.length
+  );
 
-  for (const candidate of candidates) {
+  for (const fragment of fragments) {
     try {
-      return normalizeRows(JSON.parse(candidate));
+      return normalizeRows(fragment.value);
     } catch {
-      // Try the next complete JSON container found in noisy Wrangler output.
+      // Try the next independent JSON value found in noisy Wrangler output.
     }
   }
 
@@ -3516,14 +3533,114 @@ export async function listWorkerCronTriggers(input: {
   throw new Error('cloudflare_worker_cron_oauth_refresh_retry_exhausted');
 }
 
+/** Durable Object migration state of a deployed Worker script. */
+export type WorkerMigrationState =
+  | { exists: false }
+  | {
+      exists: true;
+      /** Tag of the last migration Cloudflare applied; absent if none was ever applied. */
+      migrationTag?: string;
+    };
+
+/** Cloudflare error codes Wrangler treats as "script does not exist" (10007, 10090, 10092). */
+const WORKER_SCRIPT_NOT_FOUND_ERROR_CODES: ReadonlySet<number> = new Set([10007, 10090, 10092]);
+
+export function normalizeWorkerMigrationStateResponse(payload: unknown): WorkerMigrationState {
+  const result =
+    payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? (payload as { result?: unknown }).result
+      : undefined;
+  const environment =
+    result && typeof result === 'object' && !Array.isArray(result)
+      ? (result as { default_environment?: unknown }).default_environment
+      : undefined;
+  const script =
+    environment && typeof environment === 'object' && !Array.isArray(environment)
+      ? (environment as { script?: unknown }).script
+      : undefined;
+  if (!script || typeof script !== 'object' || Array.isArray(script)) {
+    throw new Error('cloudflare_worker_migration_response_invalid');
+  }
+  const tag = (script as { migration_tag?: unknown }).migration_tag;
+  if (tag === undefined || tag === null || tag === '') return { exists: true };
+  if (typeof tag !== 'string') throw new Error('cloudflare_worker_migration_response_invalid');
+  return { exists: true, migrationTag: tag };
+}
+
+/**
+ * Read the Durable Object migration tag Cloudflare holds for a deployed Worker script. This is the
+ * same read Wrangler performs before it computes the migrations to upload (deploy-helpers
+ * `getMigrationsToUpload`): GET /accounts/{id}/workers/services/{name} and
+ * `result.default_environment.script.migration_tag`. A missing script is reported as
+ * `{ exists: false }` rather than an error.
+ */
+export async function readWorkerMigrationState(input: {
+  workerName: string;
+  accountId?: string;
+}): Promise<WorkerMigrationState> {
+  if (!input.workerName || input.workerName.trim() !== input.workerName) {
+    throw new Error('cloudflare_worker_name_invalid');
+  }
+  let credentials = await resolveCloudflareInventoryCredentials(input.accountId);
+  if (!credentials) throw new Error('cloudflare_worker_migration_credentials_unavailable');
+
+  const url =
+    `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/workers/services/` +
+    encodeURIComponent(input.workerName);
+  for (let authAttempt = 1; authAttempt <= 2; authAttempt++) {
+    const { response, data } = await requestCloudflareApiJson<{
+      success?: boolean;
+      result?: unknown;
+      errors?: CloudflareApiMessage[];
+    }>(
+      url,
+      { headers: { Authorization: `Bearer ${credentials.token}` } },
+      { label: `Cloudflare Worker migration tag lookup for ${input.workerName}`, retryMode: 'read' }
+    );
+    const errorCodes = (data.errors ?? []).flatMap((error) =>
+      typeof error.code === 'number' ? [error.code] : []
+    );
+    if (
+      shouldRefreshCloudflareOAuthCredential({
+        status: response.status,
+        errorCodes,
+        source: credentials.source,
+        attempt: authAttempt,
+      })
+    ) {
+      const refreshed = await refreshPinnedCloudflareOAuthToken(credentials.accountId);
+      if (refreshed) {
+        credentials = refreshed;
+        continue;
+      }
+    }
+    if (
+      !response.ok &&
+      (response.status === 404 ||
+        errorCodes.some((code) => WORKER_SCRIPT_NOT_FOUND_ERROR_CODES.has(code)))
+    ) {
+      return { exists: false };
+    }
+    if (!response.ok || data.success === false) {
+      const detail = formatCloudflareApiMessages(data);
+      throw new Error(
+        `Cloudflare Worker migration tag lookup failed (${response.status})${detail ? `: ${detail}` : ''}`
+      );
+    }
+    return normalizeWorkerMigrationStateResponse(data);
+  }
+  throw new Error('cloudflare_worker_migration_oauth_refresh_retry_exhausted');
+}
+
 async function listCloudflarePaginatedResourcesViaApi<T>(input: {
   path: string;
   label: string;
   normalizeRows: (rows: unknown) => T[];
   identityKey: (row: T) => string;
   perPage?: number;
+  accountId?: string;
 }): Promise<T[] | null> {
-  let credentials = await resolveCloudflareInventoryCredentials();
+  let credentials = await resolveCloudflareInventoryCredentials(input.accountId);
   if (!credentials) return null;
 
   const resources: T[] = [];
@@ -3944,7 +4061,11 @@ export async function putKVKeyByNamespaceId(
   namespaceId: string,
   key: string,
   value: string,
-  options: { expirationTtl?: number; onProgress?: (message: string) => void } = {}
+  options: {
+    expirationTtl?: number;
+    onProgress?: (message: string) => void;
+    target?: LocalWranglerTarget;
+  } = {}
 ): Promise<void> {
   await withPrivateTemporaryTextFile(value, async (valuePath) => {
     const oauthRefresh: WranglerOAuthRefreshState = { attempted: false };
@@ -3957,10 +4078,14 @@ export async function putKVKeyByNamespaceId(
       valuePath,
       '--namespace-id',
       namespaceId,
-      '--remote',
+      ...(options.target ? localTargetArgs(options.target) : ['--remote']),
     ];
     if (options.expirationTtl !== undefined) {
       args.push('--ttl', String(options.expirationTtl));
+    }
+    if (options.target) {
+      await wrangler(args, { timeout: 60000, cwd: options.target.cwd });
+      return;
     }
     for (let attempt = 1; attempt <= D1_MIGRATION_AUTH_MAX_ATTEMPTS; attempt++) {
       try {
@@ -3985,11 +4110,24 @@ export async function putKVKeyByNamespaceId(
   });
 }
 
-export async function getKVKeyByNamespaceId(namespaceId: string, key: string): Promise<string> {
+export async function getKVKeyByNamespaceId(
+  namespaceId: string,
+  key: string,
+  target?: LocalWranglerTarget
+): Promise<string> {
   const { stdout } = await wrangler(
-    ['kv', 'key', 'get', key, '--namespace-id', namespaceId, '--remote'],
+    [
+      'kv',
+      'key',
+      'get',
+      key,
+      '--namespace-id',
+      namespaceId,
+      ...(target ? localTargetArgs(target) : ['--remote']),
+    ],
     {
       timeout: 60000,
+      cwd: target?.cwd,
     }
   );
   return stdout;
@@ -4025,18 +4163,28 @@ export function parseKVKeyListOutput(stdout: string): KVKeyListRow[] {
 
 export async function getOptionalKVKeyByNamespaceId(
   namespaceId: string,
-  key: string
+  key: string,
+  target?: LocalWranglerTarget
 ): Promise<string | null> {
   const { stdout } = await wrangler(
-    ['kv', 'key', 'list', '--namespace-id', namespaceId, '--prefix', key, '--remote'],
-    { timeout: 60000 }
+    [
+      'kv',
+      'key',
+      'list',
+      '--namespace-id',
+      namespaceId,
+      '--prefix',
+      key,
+      ...(target ? localTargetArgs(target) : ['--remote']),
+    ],
+    { timeout: 60000, cwd: target?.cwd }
   );
   const exactMatches = parseKVKeyListOutput(stdout).filter((row) => row.name === key);
   if (exactMatches.length === 0) return null;
   if (exactMatches.length !== 1) {
     throw new Error('Cloudflare KV returned duplicate exact keys');
   }
-  return getKVKeyByNamespaceId(namespaceId, key);
+  return getKVKeyByNamespaceId(namespaceId, key, target);
 }
 
 /**
@@ -4190,6 +4338,7 @@ export async function executeD1Migration(
   options: {
     transactionSuffixSql?: string;
     verifyCommitted?: () => Promise<boolean>;
+    target?: LocalWranglerTarget;
   } = {}
 ): Promise<{ success: boolean; error?: string }> {
   try {
@@ -4199,6 +4348,20 @@ export async function executeD1Migration(
     const transactionSql = options.transactionSuffixSql
       ? `${renderedSql.trimEnd()}\n\n${options.transactionSuffixSql}\n`
       : renderedSql;
+    if (options.target) {
+      const target = options.target;
+      return await withPrivateTemporaryTextFile(transactionSql, async (tempSqlPath) => {
+        try {
+          await wrangler(
+            ['d1', 'execute', dbName, ...localTargetArgs(target), '--file', tempSqlPath, '--yes'],
+            { timeout: D1_MIGRATION_EXECUTE_TIMEOUT_MS, cwd: target.cwd }
+          );
+          return { success: true };
+        } catch (error) {
+          return { success: false, error: error instanceof Error ? error.message : String(error) };
+        }
+      });
+    }
     return await withPrivateTemporaryTextFile(
       transactionSql,
       async (tempSqlPath) => {
@@ -4401,18 +4564,29 @@ export async function executeD1Batch(
 export async function executeD1Command(
   dbName: string,
   sql: string,
-  options: { json?: boolean; timeout?: number; onProgress?: (message: string) => void } = {}
+  options: {
+    json?: boolean;
+    timeout?: number;
+    onProgress?: (message: string) => void;
+    target?: LocalWranglerTarget;
+  } = {}
 ): Promise<D1ExecuteCommandResult> {
   const args = [
     'd1',
     'execute',
     dbName,
-    '--remote',
+    ...(options.target ? localTargetArgs(options.target) : ['--remote']),
     '--yes',
     '--command',
     sql,
     ...(options.json ? ['--json'] : []),
   ];
+  if (options.target) {
+    return wrangler(args, {
+      timeout: options.timeout ?? D1_MIGRATION_EXECUTE_TIMEOUT_MS,
+      cwd: options.target.cwd,
+    });
+  }
   const oauthRefresh: WranglerOAuthRefreshState = { attempted: false };
   for (let attempt = 1; attempt <= D1_MIGRATION_AUTH_MAX_ATTEMPTS; attempt++) {
     try {
@@ -4445,73 +4619,156 @@ export async function executeD1Command(
   throw new Error('D1 command retry loop exited unexpectedly');
 }
 
+/**
+ * The rows of one D1 query response, or an error. "No rows" is a statement about the data, so it
+ * is believed only from a response that reports success: exactly one result entry, and that entry
+ * says `success: true`. An empty list of entries, an entry without `success`, a failure
+ * response and several entries (this reads one statement) are all errors.
+ */
 function normalizeD1QueryRows<T extends Record<string, unknown>>(payload: unknown): T[] {
-  let queryResults = payload;
-  if (!Array.isArray(payload) && payload && typeof payload === 'object' && 'result' in payload) {
-    const envelope = payload as { success?: unknown; result?: unknown };
-    if (envelope.success !== true) {
-      throw new TypeError('Cloudflare D1 query response was not successful');
-    }
-    queryResults = envelope.result;
+  const entries = Array.isArray(payload)
+    ? payload
+    : payload && typeof payload === 'object' && 'result' in payload
+      ? (payload as { success?: unknown; result?: unknown }).success === true
+        ? (payload as { result?: unknown }).result
+        : undefined
+      : undefined;
+  if (!Array.isArray(entries) || entries.length !== 1) {
+    throw new TypeError('D1 query response did not contain exactly one successful result');
   }
-
-  const entries = Array.isArray(queryResults) ? queryResults : [queryResults];
-  return entries.flatMap((entry, entryIndex) => {
-    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-      throw new TypeError(`D1 result entry ${entryIndex} was not an object`);
+  const entry: unknown = entries[0];
+  if (!entry || typeof entry !== 'object' || (entry as { success?: unknown }).success !== true) {
+    throw new TypeError('D1 query response contained a result that was not successful');
+  }
+  const results = (entry as { results?: unknown }).results;
+  if (!Array.isArray(results)) {
+    throw new TypeError('D1 result entry did not contain a results array');
+  }
+  return results.map((row, rowIndex) => {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      throw new TypeError(`D1 result row ${rowIndex} was not an object`);
     }
-    if ((entry as { success?: unknown }).success === false) {
-      throw new TypeError(`D1 result entry ${entryIndex} was not successful`);
-    }
-    const results = (entry as { results?: unknown }).results;
-    if (!Array.isArray(results)) {
-      throw new TypeError(`D1 result entry ${entryIndex} did not contain a results array`);
-    }
-    return results.map((row, rowIndex) => {
-      if (!row || typeof row !== 'object' || Array.isArray(row)) {
-        throw new TypeError(`D1 result row ${rowIndex} was not an object`);
-      }
-      return row as T;
-    });
+    return row as T;
   });
+}
+
+/**
+ * The independent JSON values in `text`: each `[...]` or `{...}` that parses, taken whole and in
+ * order, with whatever lies inside one never listed again as a value of its own. `length` is the
+ * size of the text the value was read from.
+ */
+function findIndependentJsonFragments(text: string): Array<{ value: unknown; length: number }> {
+  const fragments: Array<{ value: unknown; length: number }> = [];
+  let index = 0;
+  while (index < text.length) {
+    const open = text[index];
+    const close = open === '[' ? ']' : open === '{' ? '}' : null;
+    if (!close) {
+      index += 1;
+      continue;
+    }
+    let end = -1;
+    let depth = 0;
+    let inString = false;
+    for (let cursor = index; cursor < text.length; cursor += 1) {
+      const char = text[cursor];
+      if (inString) {
+        if (char === '\\') cursor += 1;
+        else if (char === '"') inString = false;
+      } else if (char === '"') {
+        inString = true;
+      } else if (char === '[' || char === '{') {
+        depth += 1;
+      } else if (char === ']' || char === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          end = cursor;
+          break;
+        }
+      }
+    }
+    if (end < 0) {
+      index += 1;
+      continue;
+    }
+    try {
+      fragments.push({ value: JSON.parse(text.slice(index, end + 1)), length: end + 1 - index });
+      index = end + 1;
+    } catch {
+      index += 1;
+    }
+  }
+  return fragments;
+}
+
+/**
+ * Whether a JSON value found in Wrangler's output is shaped like a D1 result, successful or not:
+ * an object with a `success`, `results` or `error` key, or a list holding at least one such
+ * object. Wrangler also prints diagnostics around the result, and a configuration warning such as
+ * `Unexpected fields found in d1_databases[0] field` holds JSON-valid text (`[0]`) that is no
+ * result of any kind. Those are not counted, so they can neither be taken for the answer nor
+ * spoil it. A failed result has the same shape as a successful one, so it is still counted.
+ */
+function looksLikeD1ResultFragment(value: unknown): boolean {
+  const isEntry = (candidate: unknown): boolean =>
+    !!candidate &&
+    typeof candidate === 'object' &&
+    !Array.isArray(candidate) &&
+    ['success', 'results', 'error'].some((key) => key in candidate);
+  return Array.isArray(value) ? value.some(isEntry) : isEntry(value);
+}
+
+/**
+ * Reads the answer from Wrangler's output, stdout and stderr both. Every D1-shaped JSON value in
+ * either must be a successful result: one that reports a failure (or lacks `success: true`) makes
+ * the whole output a failure, whatever else it carries. The answer is the single
+ * value that is left; two results, even agreeing ones, are refused.
+ */
+function parseD1RowsFromWranglerOutputs<T extends Record<string, unknown>>(
+  outputs: ReadonlyArray<string | undefined>
+): T[] {
+  const fragments = outputs.flatMap((output) =>
+    findIndependentJsonFragments(stripAnsiSequences(output ?? '')).filter((fragment) =>
+      looksLikeD1ResultFragment(fragment.value)
+    )
+  );
+  if (fragments.length === 0) {
+    throw new SyntaxError('Wrangler stdout and stderr did not contain a valid D1 query result');
+  }
+  const rows = fragments.map((fragment) => normalizeD1QueryRows<T>(fragment.value));
+  if (rows.length !== 1) {
+    throw new SyntaxError('Wrangler output contained more than one D1 query result');
+  }
+  return rows[0];
 }
 
 export function parseD1RowsFromWranglerJson<T extends Record<string, unknown>>(
   output: string
 ): T[] {
-  return parseValidatedJsonOutput(
-    output,
-    normalizeD1QueryRows<T>,
-    'Wrangler output did not contain a valid D1 query result'
-  );
+  return parseD1RowsFromWranglerOutputs<T>([output]);
 }
 
 function parseD1RowsFromWranglerResult<T extends Record<string, unknown>>(
   result: D1ExecuteCommandResult
 ): T[] {
-  const candidates = Array.from(
-    new Set(
-      [result.stdout, result.stderr, [result.stdout, result.stderr].filter(Boolean).join('\n')]
-        .map((output) => output.trim())
-        .filter(Boolean)
-    )
-  );
-
-  for (const candidate of candidates) {
-    try {
-      return parseD1RowsFromWranglerJson<T>(candidate);
-    } catch {
-      // Wrangler has emitted JSON on both stdout and stderr across released versions.
-    }
-  }
-
-  throw new SyntaxError('Wrangler stdout and stderr did not contain a valid D1 query result');
+  return parseD1RowsFromWranglerOutputs<T>([result.stdout, result.stderr]);
 }
 
+/**
+ * Runs a read-only query and returns its rows. A result counts only when D1 reported a
+ * successful result entry: an empty list, a failure response and output that cannot be parsed all
+ * throw, so an empty array always means a query that ran and found nothing. (The Cloudflare API is
+ * tried only when Wrangler could not answer, and is held to the same rule.)
+ */
 export async function queryD1Rows<T extends Record<string, unknown>>(
   dbName: string,
-  sql: string
+  sql: string,
+  options: { target?: LocalWranglerTarget } = {}
 ): Promise<T[]> {
+  if (options.target) {
+    const result = await executeD1Command(dbName, sql, { json: true, target: options.target });
+    return parseD1RowsFromWranglerResult<T>(result);
+  }
   let wranglerError: unknown;
   try {
     const result = await executeD1Command(dbName, sql, { json: true });
@@ -4627,7 +4884,14 @@ async function getAppliedMigrationRows(
   onProgress?: (message: string) => void
 ): Promise<AppliedMigrationRow[]> {
   await ensureMigrationsTable(dbName, onProgress);
+  return readAppliedMigrationRows(dbName);
+}
 
+/**
+ * Read the migration history with SELECT only. Unlike getAppliedMigrationRows it never creates or
+ * alters the tracking table, so a missing table or column is reported as the failure it is.
+ */
+async function readAppliedMigrationRows(dbName: string): Promise<AppliedMigrationRow[]> {
   let apiError: unknown;
   try {
     const apiRows = await queryD1RowsViaApi<AppliedMigrationRow>(
@@ -4760,7 +5024,7 @@ async function backfillLegacyMigrationChecksums(
   return backfills.length;
 }
 
-function buildRecordMigrationWithChecksumSql(input: {
+export function buildRecordMigrationWithChecksumSql(input: {
   filename: string;
   checksum: string;
   appliedAt?: number;
@@ -4808,6 +5072,62 @@ export interface RunD1MigrationOptions extends ListD1MigrationOptions {
   releaseVersion?: string;
   /** Backfill pre-checksum history only when files came from a published release manifest. */
   backfillLegacyChecksums?: boolean;
+  /**
+   * Files the caller's evidence says this database already holds. They are never executed: each
+   * must be recorded in `authrim_migrations` with the identical checksum, otherwise the run stops
+   * before any migration is applied. This is how an appended tail is applied without ever
+   * re-running (or silently skipping) the prefix it extends.
+   */
+  requiredAppliedFiles?: ReadonlyArray<{ path: string; checksum: string }>;
+}
+
+/** Return the required files that are missing from, or differ in, the recorded history. */
+export function findUnsatisfiedRequiredMigrationFiles(
+  migrations: ReadonlyArray<D1MigrationFileState>,
+  required: ReadonlyArray<{ path: string; checksum: string }>
+): string[] {
+  const byFilename = new Map(migrations.map((migration) => [migration.filename, migration]));
+  return required
+    .filter((file) => {
+      const state = byFilename.get(file.path);
+      return state?.status !== 'applied' || state.appliedChecksum !== file.checksum;
+    })
+    .map((file) => file.path);
+}
+
+/**
+ * Verify, without changing anything, that a database records every given migration with the
+ * expected checksum. Only SELECTs are issued, so it is safe in a dry run and before any lock is
+ * taken; a database without the tracking table (or its columns) fails instead of being repaired.
+ */
+export async function verifyD1AppliedMigrationFiles(
+  dbName: string,
+  files: ReadonlyArray<{ path: string; checksum: string }>
+): Promise<{ success: boolean; error?: string }> {
+  let rows: AppliedMigrationRow[];
+  try {
+    rows = await readAppliedMigrationRows(dbName);
+  } catch (error) {
+    return {
+      success: false,
+      error: `Could not read migration history for ${dbName}: ${describeInventoryError(
+        error,
+        'unknown error'
+      )}`,
+    };
+  }
+  const checksumByFilename = new Map(rows.map((row) => [row.filename, row.checksum ?? null]));
+  const unsatisfied = files
+    .filter((file) => checksumByFilename.get(file.path) !== file.checksum)
+    .map((file) => file.path);
+  return unsatisfied.length === 0
+    ? { success: true }
+    : {
+        success: false,
+        error:
+          'Applied migration history does not match the recorded evidence: ' +
+          formatMigrationFileSummary(unsatisfied),
+      };
 }
 
 export function listD1MigrationSqlFiles(
@@ -5098,9 +5418,34 @@ export async function runD1Migrations(
   const discoveredManifest = options.manifestFiles
     ? null
     : discoverReleaseMigrationStream(migrationsDir);
-  const manifestFiles = options.manifestFiles ?? discoveredManifest?.stream.files;
+  const executionFiles = options.manifestFiles ?? discoveredManifest?.stream.files;
   const releaseVersion = options.releaseVersion ?? discoveredManifest?.manifest.productVersion;
   const allSqlFiles = listD1MigrationSqlFiles(migrationsDir, options);
+  const executionFileSet = executionFiles
+    ? new Set(executionFiles.map((file) => file.path))
+    : undefined;
+  // Required (already applied) files are checked against the local SQL and the history like any
+  // manifest file, but only `executionFiles` are ever executed.
+  const requiredFiles = options.requiredAppliedFiles ?? [];
+  const manifestFiles: NonNullable<ListD1MigrationOptions['manifestFiles']> | undefined =
+    executionFiles
+      ? [
+          ...new Map(
+            [...requiredFiles, ...executionFiles].map((file) => [file.path, file] as const)
+          ).values(),
+        ]
+      : executionFiles;
+  for (const required of requiredFiles) {
+    const execution = executionFiles?.find((file) => file.path === required.path);
+    if (execution && execution.checksum !== required.checksum) {
+      return {
+        success: false,
+        appliedCount: 0,
+        skippedCount: 0,
+        error: `Required applied migration disagrees with the release manifest: ${required.path}`,
+      };
+    }
+  }
   const manifestFileSet = manifestFiles
     ? new Set(manifestFiles.map((file) => file.path))
     : undefined;
@@ -5115,7 +5460,7 @@ export async function runD1Migrations(
       };
     }
   }
-  const selectedFiles = options.onlyFiles ?? manifestFileSet;
+  const selectedFiles = options.onlyFiles ?? executionFileSet;
   const sqlFiles = selectedFiles
     ? allSqlFiles.filter((file) => selectedFiles.has(file))
     : allSqlFiles;
@@ -5166,7 +5511,7 @@ export async function runD1Migrations(
     }
   }
 
-  if (sqlFiles.length === 0) {
+  if (sqlFiles.length === 0 && requiredFiles.length === 0) {
     onProgress?.(`  No migration files found in ${migrationsDir}`);
     return { success: true, appliedCount: 0, skippedCount: 0 };
   }
@@ -5192,6 +5537,21 @@ export async function runD1Migrations(
       error:
         `${status.error ?? `Could not read migration history for ${dbName}`}. ` +
         'Refusing to run migrations without a trustworthy applied-migration history.',
+    };
+  }
+  const unsatisfiedRequired = findUnsatisfiedRequiredMigrationFiles(
+    status.migrations,
+    requiredFiles
+  );
+  if (unsatisfiedRequired.length > 0) {
+    return {
+      success: false,
+      appliedCount: 0,
+      skippedCount: status.counts.applied,
+      error:
+        'Applied migration history does not match the recorded evidence; refusing to apply ' +
+        'further migrations: ' +
+        formatMigrationFileSummary(unsatisfiedRequired),
     };
   }
   const changedFiles = getBlockingChangedMigrationFiles(status.migrations, selectedFiles);
@@ -5304,6 +5664,21 @@ function sqlString(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
+/** The initial tenant is created (or renamed to) under this ID, so a reserved one must stop here. */
+function assertInitialTenantIdNotReserved(tenantId: string): void {
+  if (isReservedTenantId(tenantId)) {
+    throw new Error(
+      `Initial tenant ID "${tenantId.trim()}" is reserved for platform-wide data; choose another tenant ID`
+    );
+  }
+}
+
+/**
+ * Read-only check for tenants already registered under the reserved platform ID, as the tenant ID
+ * or as the tenant code. Such a row would make platform-wide rows look like that tenant's.
+ */
+export const RESERVED_TENANT_ROWS_QUERY_SQL = `SELECT id, tenant_code FROM tenants WHERE lower(trim(id)) = 'platform' OR lower(trim(tenant_code)) = 'platform'`;
+
 /**
  * Build idempotent SQL that guarantees the configured initial tenant exists.
  *
@@ -5314,6 +5689,7 @@ function sqlString(value: string): string {
 export function buildInitialTenantBootstrapSql(config: AuthrimConfig): string {
   const sqlExpr = getPortableSqlExpressions('sqlite');
   const tenantId = config.tenant?.name?.trim() || 'default';
+  assertInitialTenantIdNotReserved(tenantId);
   const tenantCode = tenantId;
   const displayName = config.tenant?.displayName?.trim() || 'Initial Tenant';
   const placementPolicy = config.tenant?.placementPolicy ?? 'tenant_exclusive';
@@ -5546,6 +5922,7 @@ WHERE tenant_id = ${tenantIdSql}
  */
 export function buildInitialAdminRolesBootstrapSql(config: AuthrimConfig): string {
   const tenantId = config.tenant?.name?.trim() || 'default';
+  assertInitialTenantIdNotReserved(tenantId);
   const tenantIdSql = sqlString(tenantId);
 
   return `
@@ -5652,15 +6029,37 @@ export async function ensureInitialTenantInD1(
   env: string,
   config: AuthrimConfig,
   onProgress?: (message: string) => void,
-  options: { databaseIdentifier?: string } = {}
+  options: { databaseIdentifier?: string; target?: LocalWranglerTarget } = {}
 ): Promise<InitialTenantBootstrapResult> {
   const dbName = options.databaseIdentifier?.trim() || getD1DatabaseName(env, 'core-db');
   const tenantId = config.tenant?.name?.trim() || 'default';
+  if (isReservedTenantId(tenantId)) {
+    const error = `Initial tenant ID "${tenantId}" is reserved for platform-wide data; choose another tenant ID`;
+    onProgress?.(`  ❌ Initial tenant bootstrap refused: ${error}`);
+    return { success: false, error };
+  }
   const sql = buildInitialTenantBootstrapSql(config);
 
   try {
+    // Every setup, update and deploy path ends up here, so this is where a tenant that already
+    // holds the reserved ID or code is found, before anything is written.
+    const reservedRows = await queryD1Rows<{ id: unknown; tenant_code: unknown }>(
+      dbName,
+      RESERVED_TENANT_ROWS_QUERY_SQL,
+      { target: options.target }
+    );
+    if (reservedRows.length > 0) {
+      const error =
+        'A tenant is registered with the reserved ID or code "platform" in ' +
+        `${dbName}. Platform-wide data uses that ID, so rename or remove the tenant before continuing.`;
+      onProgress?.(`  ❌ Initial tenant bootstrap refused: ${error}`);
+      return { success: false, error };
+    }
     onProgress?.(`🔧 Ensuring initial tenant exists in ${dbName} (${tenantId})...`);
-    const { stdout, stderr } = await executeD1Command(dbName, sql, { onProgress });
+    const { stdout, stderr } = await executeD1Command(dbName, sql, {
+      onProgress,
+      target: options.target,
+    });
     const combined = (stdout + '\n' + stderr).toLowerCase();
     if (combined.includes('[error]') || combined.includes('✘ [error]')) {
       const errorDetail = stderr || stdout;
@@ -5683,7 +6082,7 @@ export async function ensureInitialAdminRolesInD1(
   env: string,
   config: AuthrimConfig,
   onProgress?: (message: string) => void,
-  options: { databaseIdentifier?: string } = {}
+  options: { databaseIdentifier?: string; target?: LocalWranglerTarget } = {}
 ): Promise<InitialAdminRolesBootstrapResult> {
   const dbName = options.databaseIdentifier?.trim() || getD1DatabaseName(env, 'admin-db');
   const tenantId = config.tenant?.name?.trim() || 'default';
@@ -5691,7 +6090,10 @@ export async function ensureInitialAdminRolesInD1(
 
   try {
     onProgress?.(`🔧 Ensuring admin roles exist in ${dbName} (${tenantId})...`);
-    const { stdout, stderr } = await executeD1Command(dbName, sql, { onProgress });
+    const { stdout, stderr } = await executeD1Command(dbName, sql, {
+      onProgress,
+      target: options.target,
+    });
     const combined = (stdout + '\n' + stderr).toLowerCase();
     if (combined.includes('[error]') || combined.includes('✘ [error]')) {
       const errorDetail = stderr || stdout;
@@ -5715,7 +6117,7 @@ export async function ensureSetupMachineAccessInD1(
   config: AuthrimConfig,
   keysDir: string,
   onProgress?: (message: string) => void,
-  options: { databaseIdentifier?: string } = {}
+  options: { databaseIdentifier?: string; target?: LocalWranglerTarget } = {}
 ): Promise<SetupMachineAccessBootstrapResult> {
   const dbName = options.databaseIdentifier?.trim() || getD1DatabaseName(env, 'admin-db');
 
@@ -5725,7 +6127,10 @@ export async function ensureSetupMachineAccessInD1(
     const sql = buildSetupMachineAccessBootstrapSql(config, publicJwk);
 
     onProgress?.(`🔧 Ensuring setup machine access exists in ${dbName}...`);
-    const { stdout, stderr } = await executeD1Command(dbName, sql, { onProgress });
+    const { stdout, stderr } = await executeD1Command(dbName, sql, {
+      onProgress,
+      target: options.target,
+    });
     const combined = (stdout + '\n' + stderr).toLowerCase();
     if (combined.includes('[error]') || combined.includes('✘ [error]')) {
       const errorDetail = stderr || stdout;
@@ -5752,7 +6157,7 @@ export async function cleanupSetupMachineAccessInD1(
   env: string,
   keysDir: string,
   onProgress?: (message: string) => void,
-  options: { databaseIdentifier?: string } = {}
+  options: { databaseIdentifier?: string; target?: LocalWranglerTarget } = {}
 ): Promise<SetupMachineAccessBootstrapResult> {
   const dbName = options.databaseIdentifier?.trim() || getD1DatabaseName(env, 'admin-db');
   let remoteError: string | undefined;
@@ -5762,7 +6167,10 @@ export async function cleanupSetupMachineAccessInD1(
       const sql = buildSetupMachineAccessCleanupSql();
 
       onProgress?.(`🧹 Removing setup machine access from ${dbName}...`);
-      const { stdout, stderr } = await executeD1Command(dbName, sql, { onProgress });
+      const { stdout, stderr } = await executeD1Command(dbName, sql, {
+        onProgress,
+        target: options.target,
+      });
       const combined = (stdout + '\n' + stderr).toLowerCase();
       if (combined.includes('[error]') || combined.includes('✘ [error]')) {
         remoteError = stderr || stdout;
@@ -5803,7 +6211,7 @@ export async function ensureAdminUiBffMachineAccessInD1(
   config: AuthrimConfig,
   keysDir: string,
   onProgress?: (message: string) => void,
-  options: { databaseIdentifier?: string } = {}
+  options: { databaseIdentifier?: string; target?: LocalWranglerTarget } = {}
 ): Promise<SetupMachineAccessBootstrapResult> {
   const dbName = options.databaseIdentifier?.trim() || getD1DatabaseName(env, 'admin-db');
 
@@ -5812,7 +6220,10 @@ export async function ensureAdminUiBffMachineAccessInD1(
     const sql = buildAdminUiBffMachineAccessBootstrapSql(config, publicJwk);
 
     onProgress?.(`🔧 Ensuring Admin UI BFF machine access exists in ${dbName}...`);
-    const { stdout, stderr } = await executeD1Command(dbName, sql, { onProgress });
+    const { stdout, stderr } = await executeD1Command(dbName, sql, {
+      onProgress,
+      target: options.target,
+    });
     const combined = (stdout + '\n' + stderr).toLowerCase();
     if (combined.includes('[error]') || combined.includes('✘ [error]')) {
       const errorDetail = stderr || stdout;
@@ -5835,7 +6246,7 @@ type SeededRuntimeProfile = {
   payload: Record<string, unknown>;
 };
 
-type DefaultCanonicalCatalogEntrySeed = {
+export type DefaultCanonicalCatalogEntrySeed = {
   stableFieldId: string;
   path: string;
   valueType: string;
@@ -5855,7 +6266,11 @@ const DEFAULT_CANONICAL_CATALOG_VERSION_LABEL = '2026-05-30';
 const DEFAULT_CANONICAL_CATALOG_BUNDLE_HASH =
   '0000000000000000000000000000000000000000000000000000000000000001';
 
-const DEFAULT_CANONICAL_CATALOG_ENTRIES: DefaultCanonicalCatalogEntrySeed[] = [
+/**
+ * The standard canonical fields. Source 041_platform_default_canonical_catalog.sql in the
+ * 0.5.0 Admin D1 release delta seeds the same fields for the platform namespace; a test keeps the two equal.
+ */
+export const DEFAULT_CANONICAL_CATALOG_ENTRIES: DefaultCanonicalCatalogEntrySeed[] = [
   {
     stableFieldId: 'field.canonical.name',
     path: 'name',
@@ -6361,14 +6776,17 @@ export async function seedDefaultCanonicalCatalog(
   env: string,
   config: AuthrimConfig,
   onProgress?: (message: string) => void,
-  options: { databaseIdentifier?: string } = {}
+  options: { databaseIdentifier?: string; target?: LocalWranglerTarget } = {}
 ): Promise<DefaultCanonicalCatalogSeedResult> {
   const dbName = options.databaseIdentifier?.trim() || getD1DatabaseName(env, 'admin-db');
   const sql = buildDefaultCanonicalCatalogSeedSql(config);
 
   try {
     onProgress?.(`🔧 Seeding default canonical field catalog into ${dbName}...`);
-    const { stdout, stderr } = await executeD1Command(dbName, sql, { onProgress });
+    const { stdout, stderr } = await executeD1Command(dbName, sql, {
+      onProgress,
+      target: options.target,
+    });
 
     const combined = (stdout + '\n' + stderr).toLowerCase();
     if (combined.includes('[error]') || combined.includes('✘ [error]')) {
@@ -6392,7 +6810,7 @@ export async function seedRuntimeProfiles(
   env: string,
   config: AuthrimConfig,
   onProgress?: (message: string) => void,
-  options: { databaseIdentifier?: string } = {}
+  options: { databaseIdentifier?: string; target?: LocalWranglerTarget } = {}
 ): Promise<RuntimeProfileSeedResult> {
   const seeded = collectSeededRuntimeProfiles(config);
   if (seeded.length === 0) {
@@ -6414,7 +6832,10 @@ export async function seedRuntimeProfiles(
       }
 
       onProgress?.(`🔧 Seeding ${seeded.length} runtime profile(s) into ${dbName}...`);
-      const { stdout, stderr } = await executeD1Command(dbName, sql, { onProgress });
+      const { stdout, stderr } = await executeD1Command(dbName, sql, {
+        onProgress,
+        target: options.target,
+      });
 
       const combined = (stdout + '\n' + stderr).toLowerCase();
       if (combined.includes('[error]') || combined.includes('✘ [error]')) {
@@ -6434,17 +6855,31 @@ export async function seedRuntimeProfiles(
       let written = false;
       for (let attempt = 1; attempt <= D1_MIGRATION_AUTH_MAX_ATTEMPTS; attempt++) {
         try {
-          await wrangler([
-            'kv',
-            'key',
-            'put',
-            key,
-            JSON.stringify(profile.payload),
-            '--env',
-            env,
-            '--binding',
-            'AUTHRIM_CONFIG',
-          ]);
+          await wrangler(
+            options.target
+              ? [
+                  'kv',
+                  'key',
+                  'put',
+                  key,
+                  JSON.stringify(profile.payload),
+                  '--binding',
+                  'AUTHRIM_CONFIG',
+                  ...localTargetArgs(options.target),
+                ]
+              : [
+                  'kv',
+                  'key',
+                  'put',
+                  key,
+                  JSON.stringify(profile.payload),
+                  '--env',
+                  env,
+                  '--binding',
+                  'AUTHRIM_CONFIG',
+                ],
+            { cwd: options.target?.cwd }
+          );
           written = true;
           break;
         } catch (error) {
@@ -6980,24 +7415,12 @@ export async function checkAdminSetupStatus(
   kvNamespaceId: string
 ): Promise<{ completed: boolean; error?: string }> {
   try {
-    const { stdout } = await wrangler([
-      'kv',
-      'key',
-      'get',
-      'setup:completed',
-      '--namespace-id',
-      kvNamespaceId,
-      '--remote',
-    ]);
-
-    return { completed: stdout.trim() === 'true' };
+    // An absent key produces a generic HTTP 404 in current Wrangler versions.
+    // List exact keys first so a missing namespace or auth failure stays unknown.
+    const value = await getOptionalKVKeyByNamespaceId(kvNamespaceId, 'setup:completed');
+    return { completed: value?.trim() === 'true' };
   } catch (error) {
-    // Key not found or other error - assume not completed
     const message = error instanceof Error ? error.message : String(error);
-    // "key not found" is expected when setup hasn't been completed
-    if (message.includes('key') && message.includes('not found')) {
-      return { completed: false };
-    }
     return { completed: false, error: message };
   }
 }
@@ -7231,7 +7654,11 @@ async function createQueueViaApi(name: string): Promise<{ id: string; name: stri
         },
         body: JSON.stringify({ queue_name: name }),
       },
-      { label: 'Cloudflare Queue create', retryMode: 'non_idempotent_mutation' }
+      {
+        label: 'Cloudflare Queue create',
+        retryMode: 'non_idempotent_mutation',
+        timeoutMs: CLOUDFLARE_QUEUE_CREATE_TIMEOUT_MS,
+      }
     );
     const queueId = typeof data.result?.queue_id === 'string' ? data.result.queue_id.trim() : '';
     const queueName =
@@ -7368,7 +7795,8 @@ export async function createQueue(
     if (!responseId) {
       throw new Error(
         `Queue ${name} creation outcome is ambiguous and Cloudflare returned no immutable queue ` +
-          'ID. Setup will not adopt a same-name Queue; inspect or delete it before retrying.',
+          `ID (${sanitizeError(error)}). Setup will not adopt a same-name Queue; inspect or ` +
+          'delete it before retrying.',
         { cause: error }
       );
     }
@@ -7829,6 +8257,50 @@ export async function putR2Object(input: {
   );
 }
 
+/** Reuse one resolved account and credential across a release's small R2 object uploads. */
+export async function createR2ObjectApiUploader(): Promise<typeof putR2Object | null> {
+  const credentials = await getR2ApiCredentials();
+  if (!credentials) return null;
+
+  return async (input) => {
+    if (!R2_BUCKET_NAME_PATTERN.test(input.bucketName)) throw new Error('invalid_r2_bucket_name');
+    assertSafeR2ObjectKey(input.objectKey);
+    if (input.bytes.byteLength === 0 || input.bytes.byteLength > 16 * 1024 * 1024) {
+      throw new Error('invalid_r2_object_size');
+    }
+
+    const { data } = await requestR2Api<{
+      success?: boolean;
+      // Cloudflare documents size as a string ("1048576"); a number is read the same way.
+      result?: { key?: string; size?: string | number };
+      errors?: CloudflareApiMessage[];
+      messages?: CloudflareApiMessage[];
+    }>(
+      `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/r2/buckets/${encodeURIComponent(input.bucketName)}/objects/${encodeR2ObjectKeyPath(input.objectKey)}`,
+      {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${credentials.token}`,
+          'Content-Type': input.contentType,
+        },
+        body: Buffer.from(input.bytes),
+      },
+      'Cloudflare R2 object upload',
+      false,
+      credentials.source,
+      180_000
+    );
+    if (
+      data.success !== true ||
+      (data.result?.key !== undefined && data.result.key !== input.objectKey) ||
+      (data.result?.size !== undefined &&
+        String(data.result.size) !== String(input.bytes.byteLength))
+    ) {
+      throw new Error('cloudflare_r2_object_upload_response_invalid');
+    }
+  };
+}
+
 export async function getR2ObjectBytes(input: {
   bucketName: string;
   objectKey: string;
@@ -7901,18 +8373,58 @@ function buildR2OwnershipMarkerPayload(input: {
   );
 }
 
+type R2OwnershipMarkerExpectation = {
+  bucketName: string;
+  markerKey: string;
+  ownershipId: string;
+  environment?: string;
+  binding?: string;
+};
+
+function assertR2OwnershipMarkerIdentity(input: R2OwnershipMarkerExpectation): void {
+  if (input.markerKey !== buildR2OwnershipMarkerKey(input.ownershipId)) {
+    throw new Error(`R2 ownership marker identity is invalid for ${input.bucketName}`);
+  }
+}
+
+function validateR2OwnershipMarker(
+  input: R2OwnershipMarkerExpectation,
+  marker: Uint8Array | null
+): void {
+  assertR2OwnershipMarkerIdentity(input);
+
+  if (!marker) throw new Error(`R2 ownership marker is missing for ${input.bucketName}`);
+  let payload: unknown;
+  try {
+    payload = JSON.parse(new TextDecoder().decode(marker));
+  } catch {
+    throw new Error(`R2 ownership marker is invalid for ${input.bucketName}`);
+  }
+  if (
+    !payload ||
+    typeof payload !== 'object' ||
+    (payload as { version?: unknown }).version !== 1 ||
+    (payload as { ownershipId?: unknown }).ownershipId !== input.ownershipId ||
+    (payload as { bucketName?: unknown }).bucketName !== input.bucketName ||
+    (input.environment !== undefined &&
+      (payload as { environment?: unknown }).environment !== input.environment) ||
+    (input.binding !== undefined && (payload as { binding?: unknown }).binding !== input.binding)
+  ) {
+    throw new Error(`R2 ownership marker does not match ${input.bucketName}`);
+  }
+}
+
 export async function assertR2OwnershipMarker(input: {
   bucketName: string;
   markerKey: string;
   ownershipId: string;
   environment?: string;
   binding?: string;
+  credentials?: CloudflareInventoryCredentials;
 }): Promise<void> {
-  if (input.markerKey !== buildR2OwnershipMarkerKey(input.ownershipId)) {
-    throw new Error(`R2 ownership marker identity is invalid for ${input.bucketName}`);
-  }
+  assertR2OwnershipMarkerIdentity(input);
 
-  const credentials = await getR2ApiCredentials();
+  const credentials = input.credentials ?? (await getR2ApiCredentials());
   let marker: Uint8Array | null;
   if (credentials) {
     const rows = await listR2ObjectRowsViaApi({
@@ -7936,25 +8448,7 @@ export async function assertR2OwnershipMarker(input: {
       maxBytes: 4 * 1024,
     });
   }
-  if (!marker) throw new Error(`R2 ownership marker is missing for ${input.bucketName}`);
-  let payload: unknown;
-  try {
-    payload = JSON.parse(new TextDecoder().decode(marker));
-  } catch {
-    throw new Error(`R2 ownership marker is invalid for ${input.bucketName}`);
-  }
-  if (
-    !payload ||
-    typeof payload !== 'object' ||
-    (payload as { version?: unknown }).version !== 1 ||
-    (payload as { ownershipId?: unknown }).ownershipId !== input.ownershipId ||
-    (payload as { bucketName?: unknown }).bucketName !== input.bucketName ||
-    (input.environment !== undefined &&
-      (payload as { environment?: unknown }).environment !== input.environment) ||
-    (input.binding !== undefined && (payload as { binding?: unknown }).binding !== input.binding)
-  ) {
-    throw new Error(`R2 ownership marker does not match ${input.bucketName}`);
-  }
+  validateR2OwnershipMarker(input, marker);
 }
 
 export async function writeAndVerifyR2OwnershipMarker(input: {
@@ -8202,15 +8696,18 @@ function isRecognizedR2BucketListOutput(stdout: string): boolean {
   return parseR2BucketRows(trimmed).length > 0;
 }
 
-async function listR2BucketsViaApi(): Promise<R2BucketProviderIdentity[] | null> {
+async function listR2BucketsViaApi(
+  pinnedCredentials?: CloudflareInventoryCredentials
+): Promise<R2BucketProviderIdentity[] | null> {
   if (
+    !pinnedCredentials &&
     process.env.NODE_ENV === 'test' &&
     (!process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || !process.env.CLOUDFLARE_API_TOKEN?.trim())
   ) {
     return null;
   }
 
-  const credentials = await resolveCloudflareInventoryCredentials();
+  const credentials = pinnedCredentials ?? (await resolveCloudflareInventoryCredentials());
   if (!credentials) return null;
 
   const buckets: R2BucketProviderIdentity[] = [];
@@ -8266,10 +8763,13 @@ function assertR2BucketIdentityComplete(
   }
 }
 
-async function listR2BucketIdentitiesStrict(): Promise<
-  Array<R2BucketProviderIdentity & { creationDate: string }>
-> {
-  const buckets = await listR2Buckets({ throwOnError: true, requireIdentity: true });
+async function listR2BucketIdentitiesStrict(
+  credentials?: CloudflareInventoryCredentials
+): Promise<Array<R2BucketProviderIdentity & { creationDate: string }>> {
+  const buckets = credentials
+    ? await listR2BucketsViaApi(credentials)
+    : await listR2Buckets({ throwOnError: true, requireIdentity: true });
+  if (!buckets) throw new Error('cloudflare_r2_bucket_list_unavailable');
   buckets.forEach(assertR2BucketIdentityComplete);
   return buckets.map((bucket) => ({ name: bucket.name, creationDate: bucket.creationDate! }));
 }
@@ -8357,6 +8857,7 @@ export async function provisionR2Buckets(
       }
     > | null;
     includeFeatureBuckets?: boolean;
+    logArchiveBucketName?: string;
     onProgress?: (message: string) => void;
     onResourceProvisioned?: (resource: ProvisioningResourceCheckpoint) => Promise<void>;
     onResourceIdentified?: (resource: ProvisioningResourceCheckpoint) => Promise<void>;
@@ -8370,6 +8871,7 @@ export async function provisionR2Buckets(
   const existing = options.existing ?? {};
   const requiredBuckets = getRequiredR2Buckets(env, {
     includeFeatureBuckets: options.includeFeatureBuckets,
+    logArchiveBucketName: options.logArchiveBucketName,
   });
   const provisioned: Array<R2BucketInfo | undefined> = new Array(requiredBuckets.length);
   const bucketsByName = new Map(
@@ -8645,6 +9147,29 @@ function sanitizeError(error: unknown): string {
 export async function provisionResources(options: ProvisionOptions): Promise<ProvisionedResources> {
   const { env, onProgress = console.log } = options;
 
+  // Reject an incomplete mode before provisioning any remote resource.
+  assertLogArchiveImplemented(options.logArchive);
+  if (options.logArchive && options.createR2 === false) throw new Error('log_archive_requires_r2');
+  if (options.logArchive?.mode === 'pipeline' && options.createQueues !== true)
+    throw new Error('log_archive_requires_durable_queues');
+  let logArchiveApi: LogArchiveApi | undefined;
+  let logArchivePolicyVerified = false;
+  if (options.logArchive) {
+    const accountId = await getAccountId();
+    const credential = await getCloudflareApiToken();
+    if (!accountId || !credential) throw new Error('log_archive_cloudflare_credentials_required');
+    logArchiveApi = new LogArchiveApi(accountId, credential.token);
+    logArchivePolicyVerified = options.logArchiveIssuedForAccountId === accountId;
+    await preflightLogArchive({
+      catalogPolicyVerified: logArchivePolicyVerified,
+      archive: options.logArchive,
+      api: logArchiveApi,
+      catalogReadToken: options.logArchiveCatalogSecrets?.readToken ?? '',
+      catalogWriteToken: options.logArchiveCatalogSecrets?.writeToken ?? '',
+      catalogSinkToken: options.logArchiveCatalogSecrets?.sinkToken,
+      onProgress,
+    });
+  }
   // Security: Validate environment name
   validateEnvName(env);
   const resources: ProvisionedResources = {
@@ -8803,6 +9328,7 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
       ...(await provisionR2Buckets(env, {
         onProgress,
         includeFeatureBuckets: options.createR2 !== false,
+        logArchiveBucketName: options.logArchive?.bucketName,
         onResourceProvisioned: options.onResourceProvisioned,
         onResourceIdentified: options.onResourceIdentified,
         provisioningIntentResources: options.provisioningIntentResources,
@@ -8815,6 +9341,63 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
     throw new Error('Failed to provision baseline R2 migration release bucket', { cause: error });
   }
   onProgress('');
+
+  if (options.logArchive && logArchiveApi) {
+    const bucket = resources.r2.find((resource) => resource.binding === 'LOG_ARCHIVE');
+    if (!bucket) throw new Error('log_archive_owned_bucket_missing');
+    resources.logArchive = await provisionLogArchive({
+      environment: env,
+      archive: options.logArchive,
+      api: logArchiveApi,
+      onProgress,
+      catalogReadToken: options.logArchiveCatalogSecrets!.readToken,
+      catalogWriteToken: options.logArchiveCatalogSecrets!.writeToken,
+      catalogSinkToken: options.logArchiveCatalogSecrets!.sinkToken,
+      catalogPolicyVerified: logArchivePolicyVerified,
+      checkpoints: options.provisioningIntentResources,
+      checkpoint: async (resource) => {
+        if (resource.state === 'create_issued') await options.onResourceCreateIssued(resource);
+        else if (resource.state === 'create_rejected')
+          await options.onResourceCreateRejected(resource);
+        else if (resource.state === 'identified') await options.onResourceIdentified(resource);
+        else await options.onResourceProvisioned(resource);
+      },
+      assertBucketOwned: async () => {
+        if (!bucket.creationDate || !bucket.ownershipId || !bucket.ownershipMarkerKey)
+          throw new Error('log_archive_bucket_ownership_incomplete');
+        await assertR2OwnershipMarker({
+          bucketName: bucket.name,
+          markerKey: bucket.ownershipMarkerKey,
+          ownershipId: bucket.ownershipId,
+          environment: env,
+          binding: 'LOG_ARCHIVE',
+        });
+      },
+      loadArchiveTable: () =>
+        new IcebergRestCatalog({
+          uri: `https://catalog.cloudflarestorage.com/${logArchiveApi.accountId}/${options.logArchive!.bucketName}`,
+          warehouse: `${logArchiveApi.accountId}_${options.logArchive!.bucketName}`,
+          namespace: [options.logArchive!.namespace],
+          table: options.logArchive!.tableName,
+          bucketName: options.logArchive!.bucketName,
+          token: options.logArchiveCatalogSecrets!.readToken,
+        }).loadTable(),
+      prepareScheduledTable:
+        options.prepareScheduledLogArchiveTable ??
+        (async (catalog) => {
+          await prepareScheduledTable({
+            uri: catalog.catalogUri,
+            warehouse: catalog.warehouse,
+            namespace: [options.logArchive!.namespace],
+            table: options.logArchive!.tableName,
+            bucketName: options.logArchive!.bucketName,
+            token: options.logArchiveCatalogSecrets!.writeToken,
+            storageGeneration: options.logArchive!.storageGeneration,
+            schemaDigest: LOG_ARCHIVE_SCHEMA_DIGEST,
+          });
+        }),
+    });
+  }
 
   // Summary
   onProgress('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -8830,6 +9413,7 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
  * Convert provisioned resources to ResourceIds format for wrangler.ts
  */
 export function toResourceIds(resources: ProvisionedResources): {
+  logArchive?: LogArchiveLock;
   d1: Record<string, { id: string; name: string }>;
   kv: Record<string, { id: string; name: string }>;
   queues?: Record<string, { id: string; name: string }>;
@@ -8846,6 +9430,7 @@ export function toResourceIds(resources: ProvisionedResources): {
   const result: ReturnType<typeof toResourceIds> = {
     d1: {},
     kv: {},
+    ...(resources.logArchive ? { logArchive: resources.logArchive } : {}),
   };
 
   for (const db of resources.d1) {
@@ -8895,7 +9480,7 @@ const AUTHRIM_PATTERNS = {
     /^([a-z][a-z0-9-]*)-(audit-queue|logging-delivery-critical-queue|logging-delivery-queue|logging-delivery-bulk-queue)$/,
   // Keep the retired authrim-avatars suffix discoverable so environment deletion can clean up
   // buckets created by pre-consolidation installations.
-  r2: /^([a-z][a-z0-9-]*)-(migration-releases|plugin-bundles|public-assets|authrim-avatars|diagnostic-logs|audit-archive|import-artifacts|export-artifacts|sensitive-details)$/,
+  r2: /^([a-z][a-z0-9-]*)-(migration-releases|plugin-bundles|public-assets|authrim-avatars|diagnostic-logs|audit-archive|import-artifacts|export-artifacts|sensitive-details|log-archive)$/,
   // Legacy Pages projects kept only for cleanup of older installations.
   pages: /^([a-z][a-z0-9-]*)-(ar-admin-ui|ar-login-ui)$/,
 };
@@ -8937,6 +9522,12 @@ export type ExactDeletionR2Identity = DeletionR2Identity &
     Pick<DeletionR2Identity, 'name' | 'creationDate' | 'ownershipMarkerKey' | 'ownershipId'>
   >;
 
+/** A live inventory generation verified by its Setup marker, awaiting explicit adoption. */
+export type R2OwnershipAdoptionCandidate = ExactDeletionR2Identity & {
+  binding: string;
+  environment: string;
+};
+
 export interface DeletionPagesIdentity {
   name: string;
   id: string;
@@ -8973,6 +9564,18 @@ export interface DeleteOptions {
   knownQueueResources?: DeletionResourceIdentity[];
   /** Exact R2 provider generation and Setup ownership marker pinned in the environment lock. */
   knownR2Resources?: DeletionR2Identity[];
+  /** Opt in for this run only; never enabled by a generic confirmation bypass. */
+  adoptR2Ownership?: boolean;
+  /** A caller already confirmed candidates; compare even an empty rediscovered set. */
+  expectR2OwnershipAdoption?: boolean;
+  onR2OwnershipAdoption?: (
+    candidates: readonly R2OwnershipAdoptionCandidate[]
+  ) => Promise<boolean | 'abort'>;
+  /** Must durably save the verified identities before deletion preflight is run again. */
+  onR2OwnershipAdoptionPersist?: (
+    candidates: readonly R2OwnershipAdoptionCandidate[]
+  ) => Promise<void>;
+  knownLogArchiveResource?: LogArchiveLock;
   /** Exact retired Pages provider identities pinned in the environment lock. */
   knownPagesResources?: DeletionPagesIdentity[];
   /** Final Worker identities pinned in the environment lock. */
@@ -9095,11 +9698,50 @@ function normalizeKnownR2DeletionIdentities(
   });
 }
 
+async function discoverR2OwnershipAdoptionCandidate(
+  environment: string,
+  bucket: R2BucketProviderIdentity & { creationDate: string }
+): Promise<R2OwnershipAdoptionCandidate> {
+  const credentials = await getR2ApiCredentials();
+  if (!credentials) throw new Error('R2 marker discovery credentials are unavailable');
+  const rows = await listR2ObjectRowsViaApi({
+    bucketName: bucket.name,
+    credentials,
+    prefix: R2_OWNERSHIP_MARKER_PREFIX,
+  });
+  if (rows.length !== 1) throw new Error('R2 ownership marker must be unique');
+  const markerKey = rows[0]!.key!;
+  const ownershipId = markerKey.slice(R2_OWNERSHIP_MARKER_PREFIX.length, -'.json'.length);
+  // Derive the expected binding from the known environment topology, never from untrusted JSON.
+  const binding = Object.entries(OBJECT_CATALOG_R2_BUCKET_SUFFIX_BY_BINDING).find(
+    ([, suffix]) => bucket.name === `${environment}-${suffix}`
+  )?.[0];
+  if (!binding) throw new Error('R2 ownership binding is unknown for this environment');
+  const candidate = {
+    name: bucket.name,
+    creationDate: bucket.creationDate,
+    ownershipMarkerKey: markerKey,
+    ownershipId,
+    binding,
+    environment,
+  };
+  const marker = await getR2ObjectBytesViaApi({
+    bucketName: bucket.name,
+    objectKey: markerKey,
+    credentials,
+    maxBytes: 4 * 1024,
+  });
+  validateR2OwnershipMarker({ ...candidate, bucketName: bucket.name, markerKey }, marker);
+  return candidate;
+}
+
 async function reconcileR2DeletionIdentities(input: {
+  env: string;
   pinned: readonly DeletionR2Identity[];
   remote: readonly (R2BucketProviderIdentity & { creationDate: string })[];
 }): Promise<{
   targets: DeletionR2Identity[];
+  adoptionCandidates: R2OwnershipAdoptionCandidate[];
   mismatches: string[];
   liveNames: Set<string>;
 }> {
@@ -9107,28 +9749,36 @@ async function reconcileR2DeletionIdentities(input: {
   const pinnedByName = new Map(input.pinned.map((resource) => [resource.name, resource]));
   const mismatches: string[] = [];
   const targets: DeletionR2Identity[] = [];
+  const adoptionCandidates: R2OwnershipAdoptionCandidate[] = [];
 
   for (const remote of input.remote) {
     if (!pinnedByName.has(remote.name)) {
-      mismatches.push(
-        `R2 ownership for ${remote.name} is not recorded in lock.json. No resources were deleted. ` +
-          `Delete that bucket manually in Cloudflare, or use an explicit ownership-adoption workflow.`
-      );
+      try {
+        adoptionCandidates.push(await discoverR2OwnershipAdoptionCandidate(input.env, remote));
+      } catch {
+        mismatches.push(
+          `R2 ownership for ${remote.name} is not recorded in lock.json. No resources were deleted. ` +
+            'Delete that bucket manually in Cloudflare. Setup marker ownership could not be verified.'
+        );
+      }
     }
   }
 
   for (const pinned of input.pinned) {
+    const remote = remoteByName.get(pinned.name);
+    // A previous manual or interrupted cleanup may already have removed this bucket. A
+    // name-only legacy lock cannot prove ownership of a live bucket, but no ownership proof is
+    // needed to reconcile an absent one without sending a deletion request.
+    if (!remote) {
+      targets.push(pinned);
+      continue;
+    }
     const complete = pinned.creationDate && pinned.ownershipMarkerKey && pinned.ownershipId;
     if (!complete) {
       mismatches.push(
         `R2 ownership for ${pinned.name} is name-only legacy state. No resources were deleted. ` +
           `Delete that bucket manually in Cloudflare, or use an explicit ownership-adoption workflow.`
       );
-      continue;
-    }
-    const remote = remoteByName.get(pinned.name);
-    if (!remote) {
-      targets.push(pinned);
       continue;
     }
     if (remote.creationDate !== pinned.creationDate) {
@@ -9155,7 +9805,12 @@ async function reconcileR2DeletionIdentities(input: {
     }
   }
 
-  return { targets, mismatches, liveNames: new Set(input.remote.map((row) => row.name)) };
+  return {
+    targets,
+    adoptionCandidates,
+    mismatches,
+    liveNames: new Set(input.remote.map((row) => row.name)),
+  };
 }
 
 function normalizeKnownPagesDeletionIdentities(
@@ -9814,29 +10469,36 @@ function isRecognizedQueueListOutput(stdout: string): boolean {
   }
 }
 
-async function listQueuesViaApi(): Promise<QueueListRow[] | null> {
+async function listQueuesViaApi(accountId?: string): Promise<QueueListRow[] | null> {
   return listCloudflarePaginatedResourcesViaApi({
     path: 'queues',
     label: 'Queue list',
     normalizeRows: normalizeQueueRows,
     identityKey: (row) => `${row.name}\u0000${row.id ?? ''}`,
+    accountId,
   });
 }
 
 export async function listQueues(
-  options: { strictOutput?: boolean; requireIds?: boolean } = {}
+  options: { strictOutput?: boolean; requireIds?: boolean; accountId?: string } = {}
 ): Promise<Array<{ name: string; id?: string }>> {
   let apiError: unknown;
   try {
     // Wrangler's Queue command exposes one page at a time. Prefer the REST inventory because it
     // carries stable pagination metadata and is therefore the authoritative complete snapshot.
-    const apiQueues = await listQueuesViaApi();
+    const apiQueues = await listQueuesViaApi(options.accountId);
     if (apiQueues) {
       if (options.requireIds) assertQueueInventoryHasUniqueIds(apiQueues, 'Cloudflare API');
       return apiQueues;
     }
   } catch (error) {
     apiError = error;
+  }
+
+  // Recovery must inspect the exact account pinned by the provisioning journal. Wrangler's
+  // ambient-account fallback cannot prove that a same-name Queue is absent from that account.
+  if (options.accountId) {
+    throw new Error('Pinned Cloudflare Queue inventory is unavailable', { cause: apiError });
   }
 
   let wranglerError: unknown;
@@ -10782,9 +11444,10 @@ export async function deleteQueue(queueId: string): Promise<boolean> {
   return result.status !== 'failed';
 }
 
-const OBJECT_CATALOG_R2_BUCKET_SUFFIX_BY_BINDING: Record<string, string> = Object.fromEntries(
-  R2_BUCKETS.map((bucket) => [bucket.binding, bucket.suffix])
-);
+const OBJECT_CATALOG_R2_BUCKET_SUFFIX_BY_BINDING: Record<string, string> = Object.fromEntries([
+  ...R2_BUCKETS.map((bucket) => [bucket.binding, bucket.suffix]),
+  ['LOG_ARCHIVE', 'log-archive'],
+]);
 
 interface ObjectCatalogR2Row {
   bucket_binding?: unknown;
@@ -11142,7 +11805,8 @@ async function requestR2Api<
   init: NonNullable<Parameters<typeof fetch>[1]>,
   label: string,
   acceptNotFound = false,
-  credentialSource: CloudflareApiToken['source'] = 'env'
+  credentialSource: CloudflareApiToken['source'] = 'env',
+  timeoutMs?: number
 ): Promise<{ data: T; notFound: boolean }> {
   const method = (init.method ?? 'GET').toUpperCase();
   const retryMode: CloudflareApiRetryMode =
@@ -11152,6 +11816,7 @@ async function requestR2Api<
     const { response, data } = await requestCloudflareApiJson<T>(url, requestInit, {
       label,
       retryMode,
+      timeoutMs,
       maxAttempts: 7,
       isRetryableResponse: (_response, payload) => {
         const errors =
@@ -11226,13 +11891,14 @@ function parseR2BucketInfoOutput(
  * the account-wide list when Cloudflare exposes a bucket-scoped identity endpoint.
  */
 async function getR2BucketIdentityStrict(
-  name: string
+  name: string,
+  pinnedCredentials?: CloudflareInventoryCredentials
 ): Promise<(R2BucketProviderIdentity & { creationDate: string }) | null> {
   if (!R2_BUCKET_NAME_PATTERN.test(name)) throw new Error('invalid_r2_bucket_name');
 
   let apiError: unknown;
   try {
-    const credentials = await resolveCloudflareInventoryCredentials();
+    const credentials = pinnedCredentials ?? (await resolveCloudflareInventoryCredentials());
     if (credentials) {
       const { data, notFound } = await requestR2Api<CloudflareR2BucketGetResponse>(
         `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/r2/buckets/${encodeURIComponent(name)}`,
@@ -11455,9 +12121,9 @@ async function removeAllR2ObjectsViaApi(
 
 async function assertLiveR2DeletionIdentity(
   identity: ExactDeletionR2Identity,
-  options: { requireMarker: boolean }
+  options: { requireMarker: boolean; credentials?: CloudflareInventoryCredentials }
 ): Promise<'present' | 'absent'> {
-  const live = await getR2BucketIdentityStrict(identity.name);
+  const live = await getR2BucketIdentityStrict(identity.name, options.credentials);
   if (!live) return 'absent';
   if (live.creationDate !== identity.creationDate) {
     throw new Error(
@@ -11471,6 +12137,7 @@ async function assertLiveR2DeletionIdentity(
       ownershipId: identity.ownershipId,
       environment: identity.environment,
       binding: identity.binding,
+      credentials: options.credentials,
     });
   }
   return 'present';
@@ -11508,17 +12175,31 @@ export async function assertR2BucketOwnershipIdentity(identity: DeletionR2Identi
  * an R2 bucket. Unlike binding-only verification, legacy name-only locks are intentionally denied:
  * a same-name replacement could otherwise supply untrusted migration SQL or receive plugin code.
  */
-export async function assertR2BucketOwnershipForUse(identity: DeletionR2Identity): Promise<void> {
+export async function assertR2BucketOwnershipForUse(
+  identity: DeletionR2Identity,
+  credentials?: CloudflareInventoryCredentials
+): Promise<void> {
   const exact = requireCompleteR2DeletionIdentity(identity.name, identity);
-  if ((await assertLiveR2DeletionIdentity(exact, { requireMarker: true })) === 'absent') {
+  if (
+    (await assertLiveR2DeletionIdentity(exact, { requireMarker: true, credentials })) === 'absent'
+  ) {
     throw new Error(`R2 bucket ${identity.name} recorded in lock.json is missing`);
   }
-  const afterMarker = (await listR2BucketIdentitiesStrict()).find(
+  const afterMarker = (await listR2BucketIdentitiesStrict(credentials)).find(
     (bucket) => bucket.name === exact.name
   );
   if (!afterMarker || afterMarker.creationDate !== exact.creationDate) {
     throw new Error(`R2 bucket ${identity.name} changed while Setup verified its ownership marker`);
   }
+}
+
+/** Resolve credentials once, while checking the live bucket generation on every write boundary. */
+export async function createR2BucketOwnershipVerifier(
+  identity: DeletionR2Identity
+): Promise<() => Promise<void>> {
+  requireCompleteR2DeletionIdentity(identity.name, identity);
+  const credentials = await resolveCloudflareInventoryCredentials();
+  return () => assertR2BucketOwnershipForUse(identity, credentials ?? undefined);
 }
 
 /**
@@ -11706,6 +12387,9 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     pages: string[];
     dns: string[];
   };
+  adoptionCandidates?: R2OwnershipAdoptionCandidate[];
+  /** All other ownership preflights passed; candidates may be offered for confirmation. */
+  adoptionReady?: boolean;
   manualR2: R2ManualCleanupTarget[];
   manualDns: ManagedDnsCleanupIssue[];
   manualControlTokens?: ControlTokenManualCleanupIssue[];
@@ -11729,6 +12413,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     knownKVResources = [],
     knownQueueResources = [],
     knownR2Resources = [],
+    knownLogArchiveResource,
     knownPagesResources = [],
     onWorkerIdentityBackfill,
     knownDnsOwnership,
@@ -11927,9 +12612,10 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     remote: remoteQueues,
   });
   const r2Preflight = deleteR2
-    ? await reconcileR2DeletionIdentities({ pinned: pinnedR2, remote: remoteR2 })
+    ? await reconcileR2DeletionIdentities({ env, pinned: pinnedR2, remote: remoteR2 })
     : {
         targets: [] as DeletionR2Identity[],
+        adoptionCandidates: [] as R2OwnershipAdoptionCandidate[],
         mismatches: [] as string[],
         liveNames: new Set<string>(),
       };
@@ -11981,6 +12667,10 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
       );
     }
   }
+  // Every other identity must be verifiable before asking to adopt anything. A failed bucket
+  // or any other ownership mismatch blocks the whole operation, including lock adoption.
+  const adoptionCandidates =
+    resourceIdentityMismatches.length === 0 ? r2Preflight.adoptionCandidates : [];
   // Preserve strict remote inventory separately from lock-recorded recovery names. The token
   // cleanup gate uses this evidence to distinguish a still-queryable Control D1 from one that was
   // already removed during a previously interrupted deletion.
@@ -12101,7 +12791,12 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
         errors.push(
           'Verified legacy Worker identities could not be durably backfilled before deletion'
         );
-      } else {
+      } else if (
+        adoptionCandidates.length === 0 &&
+        !(options.adoptR2Ownership && options.expectR2OwnershipAdoption)
+      ) {
+        // Pending adoption must pass every other preflight before any lock write. The full
+        // second pass performs Worker backfills after the R2 adoption has been saved.
         try {
           await onWorkerIdentityBackfill(workerPreflight.backfills);
         } catch (error) {
@@ -12172,6 +12867,30 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     }
   }
 
+  let deleteLogArchiveResources: (() => Promise<void>) | undefined;
+  if (!dependentDeletionBlocked && deleteR2 && knownLogArchiveResource) {
+    try {
+      // Candidates authorize only this read-only preflight. Its deletion closure is discarded
+      // when adoption is saved; the full second pass verifies the now-pinned bucket again.
+      const bucket = [...pinnedR2, ...adoptionCandidates].find(
+        (resource) => resource.name === knownLogArchiveResource.bucketName
+      );
+      if (!bucket || !bucket.ownershipId || !bucket.ownershipMarkerKey || !bucket.creationDate)
+        throw new Error('log_archive_deletion_bucket_ownership_missing');
+      const accountId = await getAccountId();
+      const credential = await getCloudflareApiToken();
+      if (!accountId || !credential) throw new Error('log_archive_deletion_credentials_required');
+      deleteLogArchiveResources = await prepareLogArchiveDeletion(
+        knownLogArchiveResource,
+        new LogArchiveApi(accountId, credential.token)
+      );
+    } catch (error) {
+      errors.push(`Log archive ownership preflight failed: ${sanitizeError(error)}`);
+      dependentDeletionBlocked = true;
+      dependentDeletionReason = 'resource_identity';
+    }
+  }
+
   // Prove DNS ownership before the first destructive operation. A missing lock entry, changed
   // immutable ID, or changed value must not be discovered only after Workers have been removed.
   if (!dependentDeletionBlocked && fullDeletionRequested) {
@@ -12201,6 +12920,54 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
         }
       }
       onProgress('');
+    }
+  }
+
+  const adoptionReady = adoptionCandidates.length > 0 && !dependentDeletionBlocked;
+  if (
+    !dependentDeletionBlocked &&
+    options.adoptR2Ownership &&
+    options.onR2OwnershipAdoption &&
+    (adoptionReady || options.expectR2OwnershipAdoption)
+  ) {
+    try {
+      const confirmed = await options.onR2OwnershipAdoption(adoptionCandidates);
+      if (confirmed === true && adoptionCandidates.length > 0) {
+        if (!options.onR2OwnershipAdoptionPersist) {
+          throw new Error('R2 ownership adoption lock writer is unavailable');
+        }
+        await options.onR2OwnershipAdoptionPersist(adoptionCandidates);
+        // All preflights passed without provider mutation. Refresh the entire inventory and
+        // repeat every preflight with the durably adopted rows pinned before deleting anything.
+        return deleteEnvironment({
+          ...options,
+          knownR2Resources: [...pinnedR2, ...adoptionCandidates],
+          adoptR2Ownership: false,
+        });
+      }
+      if (confirmed !== true && adoptionCandidates.length === 0) {
+        dependentDeletionBlocked = true;
+        dependentDeletionReason = 'resource_identity';
+        errors.push('R2 ownership adoption candidates changed. No resources were deleted.');
+      }
+    } catch (error) {
+      dependentDeletionBlocked = true;
+      dependentDeletionReason = 'resource_identity';
+      errors.push(`R2 ownership adoption failed: ${sanitizeError(error)}`);
+    }
+  }
+  if (r2Preflight.adoptionCandidates.length > 0) {
+    // Pending candidates are not identity mismatches: they must not skip the read-only
+    // preflights above, but must always stop the normal path before its first mutation.
+    dependentDeletionBlocked = true;
+    dependentDeletionReason ??= 'resource_identity';
+    for (const candidate of r2Preflight.adoptionCandidates) {
+      const message =
+        `R2 ownership for ${candidate.name} is not recorded in lock.json. No resources were deleted. ` +
+        'Verified Setup marker adoption is available: retry delete with --adopt-r2-ownership ' +
+        '(Web: Adopt and delete), or delete that bucket manually in Cloudflare.';
+      errors.push(message);
+      onProgress(`  ❌ ${message}`);
     }
   }
 
@@ -12356,6 +13123,17 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     onProgress('');
   }
 
+  if (!dependentDeletionBlocked && deleteLogArchiveResources) {
+    try {
+      await deleteLogArchiveResources();
+      onProgress('Log archive Pipeline, Stream, Sink and Catalog resources removed.');
+    } catch (error) {
+      errors.push(`Log archive deletion failed: ${sanitizeError(error)}`);
+      dependentDeletionBlocked = true;
+      dependentDeletionReason = 'r2_delete';
+    }
+  }
+
   // Delete R2 buckets before D1 so object_catalog_objects can still identify stored objects.
   if (!dependentDeletionBlocked && deleteR2 && envInfo.r2.length > 0) {
     const r2ApiCredentials = await getR2ApiCredentials();
@@ -12365,12 +13143,14 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     onProgress(`📁 Deleting R2 Buckets (${envInfo.r2.length})...`);
     for (const bucket of envInfo.r2) {
       onProgress(`  ⏳ Deleting: ${bucket.name}...`);
-      const r2Result = await deleteR2Bucket(bucket.name, {
-        objectKeys: knownR2ObjectsByBucket.get(bucket.name) ?? [],
-        onProgress,
-        apiCredentials: r2ApiCredentials,
-        ownership: bucket,
-      });
+      const r2Result = r2Preflight.liveNames.has(bucket.name)
+        ? await deleteR2Bucket(bucket.name, {
+            objectKeys: knownR2ObjectsByBucket.get(bucket.name) ?? [],
+            onProgress,
+            apiCredentials: r2ApiCredentials,
+            ownership: bucket,
+          })
+        : ({ status: 'deleted' } as const);
       if (r2Result.status === 'deleted') {
         deleted.r2.push(bucket.name);
         onProgress(`  ✅ ${bucket.name}`);
@@ -12618,6 +13398,8 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     manualR2,
     manualDns,
     manualControlTokens,
+    adoptionCandidates,
+    adoptionReady,
     errors,
   };
 }

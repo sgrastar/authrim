@@ -18,10 +18,10 @@ export const EmailNotificationSchema = z.object({
   channel: z.literal('email'),
 
   /** Recipient email address */
-  to: z.string().email(),
+  to: z.email(),
 
   /** Sender email address (optional, uses default) */
-  from: z.string().email().optional(),
+  from: z.email().optional(),
 
   /** Email subject */
   subject: z.string().min(1).max(998), // RFC 2822 limit
@@ -30,22 +30,22 @@ export const EmailNotificationSchema = z.object({
   body: z.string(),
 
   /** Reply-to address (optional) */
-  replyTo: z.string().email().optional(),
+  replyTo: z.email().optional(),
 
   /** CC recipients (optional) */
-  cc: z.array(z.string().email()).optional(),
+  cc: z.array(z.email()).optional(),
 
   /** BCC recipients (optional) */
-  bcc: z.array(z.string().email()).optional(),
+  bcc: z.array(z.email()).optional(),
 
   /** Template ID (optional) */
   templateId: z.string().optional(),
 
   /** Template variables (optional) */
-  templateVars: z.record(z.unknown()).optional(),
+  templateVars: z.record(z.string(), z.unknown()).optional(),
 
   /** Additional metadata */
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 export type EmailNotification = z.infer<typeof EmailNotificationSchema>;
@@ -70,10 +70,10 @@ export const SMSNotificationSchema = z.object({
   templateId: z.string().optional(),
 
   /** Template variables (optional) */
-  templateVars: z.record(z.unknown()).optional(),
+  templateVars: z.record(z.string(), z.unknown()).optional(),
 
   /** Additional metadata */
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 export type SMSNotification = z.infer<typeof SMSNotificationSchema>;
@@ -101,10 +101,10 @@ export const PushNotificationSchema = z.object({
   sound: z.string().optional(),
 
   /** Custom data payload (optional) */
-  data: z.record(z.unknown()).optional(),
+  data: z.record(z.string(), z.unknown()).optional(),
 
   /** Additional metadata */
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 export type PushNotification = z.infer<typeof PushNotificationSchema>;

@@ -83,6 +83,59 @@ describe('CIBA conformance capability action', () => {
       authenticated_acr: 'urn:mace:incommon:iap:silver',
     });
     expect(sendPingNotification).toHaveBeenCalledTimes(1);
+    // nothing saved: the default timeout of the ping notification
+    expect(sendPingNotification.mock.calls[0][3]).toEqual({ timeoutMs: 5000 });
+  });
+
+  describe('the ping notification timeout (ciba.ping_notification_timeout_ms)', () => {
+    function app() {
+      const hono = new Hono<{ Bindings: Env }>();
+      hono.use('*', async (c, next) => {
+        c.set('tenantId' as never, 'fapi-ciba' as never);
+        await next();
+      });
+      hono.post('/action', cibaConformanceActionHandler);
+      return hono;
+    }
+    const act = () =>
+      app().request(
+        `/action?secret=${secret}&auth_req_id=request-1&action=allow`,
+        { method: 'POST' },
+        env
+      );
+
+    it('passes the tenant value', async () => {
+      env.SETTINGS = {
+        get: vi.fn(async (key: string) =>
+          key === 'settings:tenant:fapi-ciba:ciba'
+            ? JSON.stringify({ 'ciba.ping_notification_timeout_ms': 20000 })
+            : null
+        ),
+      } as unknown as KVNamespace;
+
+      expect((await act()).status).toBe(200);
+      expect(sendPingNotification.mock.calls[0][3]).toEqual({ timeoutMs: 20000 });
+    });
+
+    it('passes the default for a saved value out of range', async () => {
+      env.SETTINGS = {
+        get: vi.fn(async () => JSON.stringify({ 'ciba.ping_notification_timeout_ms': 999999 })),
+      } as unknown as KVNamespace;
+
+      expect((await act()).status).toBe(200);
+      expect(sendPingNotification.mock.calls[0][3]).toEqual({ timeoutMs: 5000 });
+    });
+
+    it('uses the default when the settings cannot be read, and the action still completes', async () => {
+      env.SETTINGS = {
+        get: vi.fn(async () => {
+          throw new Error('kv down');
+        }),
+      } as unknown as KVNamespace;
+
+      expect((await act()).status).toBe(200);
+      expect(sendPingNotification.mock.calls[0][3]).toEqual({ timeoutMs: 5000 });
+    });
   });
 
   it('fails closed for an unknown capability', async () => {

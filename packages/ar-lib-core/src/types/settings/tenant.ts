@@ -14,10 +14,6 @@ import type { SAMLAttributeReleaseFailureUserMessageMode } from '../saml';
  * Tenant Settings Interface
  */
 export interface TenantSettings {
-  // Core Settings
-  'tenant.base_domain': string;
-  'tenant.default_id': string;
-  'tenant.isolation_enabled': boolean;
   'tenant.user_id_format': UserIdFormat;
 
   // CORS Settings
@@ -36,10 +32,7 @@ export interface TenantSettings {
   'tenant.saml_attribute_release_failure_message_mode': SAMLAttributeReleaseFailureUserMessageMode;
 
   // Branding
-  'tenant.name': string;
   'tenant.logo_uri': string;
-  'tenant.tos_uri': string;
-  'tenant.policy_uri': string;
 
   // UI Paths
   'tenant.ui_base_url': string;
@@ -47,42 +40,21 @@ export interface TenantSettings {
   'tenant.ui_consent_path': string;
   'tenant.ui_reauth_path': string;
   'tenant.ui_error_path': string;
+  'tenant.ui_device_path': string;
+  'tenant.ui_device_authorize_path': string;
+  'tenant.ui_logout_complete_path': string;
+  'tenant.ui_logged_out_path': string;
+  'tenant.ui_register_path': string;
 }
 
 /**
  * Tenant Settings Metadata
  */
 export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
-  // Core Settings
-  'tenant.base_domain': {
-    key: 'tenant.base_domain',
-    type: 'string',
-    default: '',
-    envKey: 'BASE_DOMAIN',
-    label: 'Base Domain',
-    description: 'Base domain for this tenant',
-    visibility: 'admin',
-  },
-  'tenant.default_id': {
-    key: 'tenant.default_id',
-    type: 'string',
-    default: 'default',
-    envKey: 'DEFAULT_TENANT_ID',
-    label: 'Default Tenant ID',
-    description: 'Default tenant identifier',
-    visibility: 'internal',
-  },
-  'tenant.isolation_enabled': {
-    key: 'tenant.isolation_enabled',
-    type: 'boolean',
-    default: false,
-    envKey: 'TENANT_ISOLATION_ENABLED',
-    label: 'Tenant Isolation',
-    description: 'Enable strict tenant isolation',
-    visibility: 'admin',
-  },
   'tenant.user_id_format': {
     key: 'tenant.user_id_format',
+    // Per tenant (or app) only, as before the category had platform values.
+    scopes: ['tenant'],
     type: 'enum',
     default: 'nanoid',
     envKey: 'USER_ID_FORMAT',
@@ -96,6 +68,8 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
   // CORS Settings
   'tenant.allowed_origins': {
     key: 'tenant.allowed_origins',
+    // Per tenant (or app) only, as before the category had platform values.
+    scopes: ['tenant'],
     type: 'string',
     default: '',
     envKey: 'ALLOWED_ORIGINS',
@@ -106,6 +80,8 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
   },
   'tenant.allowed_domains': {
     key: 'tenant.allowed_domains',
+    // Per tenant (or app) only, as before the category had platform values.
+    scopes: ['tenant'],
     type: 'string',
     default: '',
     label: 'Allowed Domains',
@@ -115,6 +91,8 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
   },
   'tenant.allowed_identifiers': {
     key: 'tenant.allowed_identifiers',
+    // Per tenant (or app) only, as before the category had platform values.
+    scopes: ['tenant'],
     type: 'string',
     default: '',
     label: 'Allowed Identifiers',
@@ -124,6 +102,8 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
   },
   'tenant.audit_profile_id': {
     key: 'tenant.audit_profile_id',
+    // Per tenant (or app) only, as before the category had platform values.
+    scopes: ['tenant'],
     type: 'string',
     default: '',
     label: 'Audit Profile Override',
@@ -133,6 +113,8 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
   },
   'tenant.residency_profile_id': {
     key: 'tenant.residency_profile_id',
+    // Per tenant (or app) only, as before the category had platform values.
+    scopes: ['tenant'],
     type: 'string',
     default: '',
     label: 'Residency Profile Override',
@@ -142,6 +124,8 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
   },
   'tenant.browser_public_client_mode': {
     key: 'tenant.browser_public_client_mode',
+    // Per tenant (or app) only, as before the category had platform values.
+    scopes: ['tenant'],
     type: 'enum',
     default: 'cookie_fallback',
     envKey: 'TENANT_BROWSER_PUBLIC_CLIENT_MODE',
@@ -153,6 +137,8 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
   },
   'tenant.saml_attribute_release_failure_message_mode': {
     key: 'tenant.saml_attribute_release_failure_message_mode',
+    // Per tenant (or app) only, as before the category had platform values.
+    scopes: ['tenant'],
     type: 'enum',
     default: 'generic',
     label: 'SAML Attribute Failure Message Mode',
@@ -163,40 +149,15 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
   },
 
   // Branding
-  'tenant.name': {
-    key: 'tenant.name',
-    type: 'string',
-    default: '',
-    envKey: 'TENANT_NAME',
-    label: 'Tenant Name',
-    description: 'Display name for this tenant',
-    visibility: 'public',
-  },
   'tenant.logo_uri': {
     key: 'tenant.logo_uri',
+    // Per tenant (or app) only, as before the category had platform values.
+    scopes: ['tenant'],
     type: 'string',
     default: '',
     envKey: 'TENANT_LOGO_URI',
     label: 'Logo URI',
     description: 'URL to tenant logo image',
-    visibility: 'public',
-  },
-  'tenant.tos_uri': {
-    key: 'tenant.tos_uri',
-    type: 'string',
-    default: '',
-    envKey: 'TENANT_TOS_URI',
-    label: 'Terms of Service URI',
-    description: 'URL to tenant terms of service',
-    visibility: 'public',
-  },
-  'tenant.policy_uri': {
-    key: 'tenant.policy_uri',
-    type: 'string',
-    default: '',
-    envKey: 'TENANT_POLICY_URI',
-    label: 'Privacy Policy URI',
-    description: 'URL to tenant privacy policy',
     visibility: 'public',
   },
 
@@ -205,46 +166,94 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
     key: 'tenant.ui_base_url',
     type: 'string',
     default: '',
-    envKey: 'UI_BASE_URL',
+    envKey: 'UI_URL',
+    // As the login redirects read it.
+    envString: 'strip-trailing-slash',
     label: 'UI Base URL',
-    description: 'Base URL for authentication UI (if different from issuer)',
+    description:
+      "Base URL of this tenant's sign-in UI: the platform's or this tenant's issuer origin (including its active primary custom domain), localhost, or an allowed origin (ALLOWED_ORIGINS). It goes before the platform's (the older ui-config API, else UI_URL) and before a Login UI hosted on the tenant's issuer host; an app's own login UI URL goes first.",
     visibility: 'page',
   },
   'tenant.ui_login_path': {
     key: 'tenant.ui_login_path',
     type: 'string',
     default: '/login',
-    envKey: 'UI_LOGIN_PATH',
     label: 'Login Path',
-    description: 'Path for user login page',
+    description:
+      "Path of the sign-in page on this tenant's sign-in UI (starts with a single /; no query or fragment). Unset: the platform's.",
     visibility: 'page',
   },
   'tenant.ui_consent_path': {
     key: 'tenant.ui_consent_path',
     type: 'string',
     default: '/consent',
-    envKey: 'UI_CONSENT_PATH',
     label: 'Consent Path',
-    description: 'Path for OAuth consent page',
+    description:
+      "Path of the consent page on this tenant's sign-in UI (starts with a single /; no query or fragment). Unset: the platform's.",
     visibility: 'page',
   },
   'tenant.ui_reauth_path': {
     key: 'tenant.ui_reauth_path',
     type: 'string',
     default: '/reauth',
-    envKey: 'UI_REAUTH_PATH',
     label: 'Reauth Path',
-    description: 'Path for re-authentication page',
+    description:
+      "Path of the re-authentication page on this tenant's sign-in UI (starts with a single /; no query or fragment). Unset: the platform's.",
     visibility: 'page',
   },
   'tenant.ui_error_path': {
     key: 'tenant.ui_error_path',
     type: 'string',
     default: '/error',
-    envKey: 'UI_ERROR_PATH',
     label: 'Error Path',
-    description: 'Path for error display page',
+    description:
+      "Path of the error page on this tenant's sign-in UI (starts with a single /; no query or fragment). Unset: the platform's.",
     visibility: 'page',
+  },
+  'tenant.ui_device_path': {
+    key: 'tenant.ui_device_path',
+    type: 'string',
+    label: 'Device Path',
+    description:
+      "Path of the device code entry page on this tenant's sign-in UI (starts with a single /; no query or fragment). Unset: the platform's.",
+    visibility: 'page',
+    default: '/device',
+  },
+  'tenant.ui_device_authorize_path': {
+    key: 'tenant.ui_device_authorize_path',
+    type: 'string',
+    label: 'Device Authorize Path',
+    description:
+      "Path of the device authorization page on this tenant's sign-in UI (starts with a single /; no query or fragment). Unset: the platform's.",
+    visibility: 'page',
+    default: '/device/authorize',
+  },
+  'tenant.ui_logout_complete_path': {
+    key: 'tenant.ui_logout_complete_path',
+    type: 'string',
+    label: 'Logout Complete Path',
+    description:
+      "Path of the logout completion page on this tenant's sign-in UI (starts with a single /; no query or fragment). Unset: the platform's.",
+    visibility: 'page',
+    default: '/logout-complete',
+  },
+  'tenant.ui_logged_out_path': {
+    key: 'tenant.ui_logged_out_path',
+    type: 'string',
+    label: 'Logged Out Path',
+    description:
+      "Path of the logged-out page on this tenant's sign-in UI (starts with a single /; no query or fragment). Unset: the platform's.",
+    visibility: 'page',
+    default: '/logged-out',
+  },
+  'tenant.ui_register_path': {
+    key: 'tenant.ui_register_path',
+    type: 'string',
+    label: 'Register Path',
+    description:
+      "Path of the sign-up page on this tenant's sign-in UI (starts with a single /; no query or fragment). Authorization requests with prompt=create open it while Sign-up Requests (oauth.prompt_create_enabled) is on. Unset: the platform's.",
+    visibility: 'page',
+    default: '/signup',
   },
 };
 
@@ -262,9 +271,6 @@ export const TENANT_CATEGORY_META: CategoryMeta = {
  * Default Tenant settings values
  */
 export const TENANT_DEFAULTS: TenantSettings = {
-  'tenant.base_domain': '',
-  'tenant.default_id': 'default',
-  'tenant.isolation_enabled': false,
   'tenant.user_id_format': 'nanoid',
   // CORS Settings
   'tenant.allowed_origins': '',
@@ -275,14 +281,16 @@ export const TENANT_DEFAULTS: TenantSettings = {
   'tenant.browser_public_client_mode': 'cookie_fallback',
   'tenant.saml_attribute_release_failure_message_mode': 'generic',
   // Branding
-  'tenant.name': '',
   'tenant.logo_uri': '',
-  'tenant.tos_uri': '',
-  'tenant.policy_uri': '',
   // UI Paths
   'tenant.ui_base_url': '',
   'tenant.ui_login_path': '/login',
   'tenant.ui_consent_path': '/consent',
   'tenant.ui_reauth_path': '/reauth',
   'tenant.ui_error_path': '/error',
+  'tenant.ui_device_path': '/device',
+  'tenant.ui_device_authorize_path': '/device/authorize',
+  'tenant.ui_logout_complete_path': '/logout-complete',
+  'tenant.ui_logged_out_path': '/logged-out',
+  'tenant.ui_register_path': '/signup',
 };

@@ -34,7 +34,7 @@ describe('runtime logging policy resolver', () => {
     const { bucket } = createSnapshotStores();
 
     const resolved = await resolveRuntimeLoggingPolicyTargetFromEnv(
-      { AUDIT_ARCHIVE: bucket },
+      { LOG_ARCHIVE: bucket },
       {
         tenantId: 'tenant-fresh-environment',
         logType: 'admin_audit',
@@ -49,7 +49,7 @@ describe('runtime logging policy resolver', () => {
       target: {
         type: 'r2',
         destinationId: 'platform_default_r2_archive',
-        bucketRef: 'AUDIT_ARCHIVE',
+        bucketRef: 'LOG_ARCHIVE',
       },
     });
   });
@@ -107,6 +107,7 @@ describe('runtime logging policy resolver', () => {
       },
     });
     await publishRuntimeLoggingPolicySnapshot({
+      prefix: '__authrim_log_archive_private__/policy-snapshots/v1',
       snapshot,
       kv,
       objectStore: bucket,
@@ -115,7 +116,7 @@ describe('runtime logging policy resolver', () => {
     vi.mocked(kv.get).mockClear();
     vi.mocked(bucket.get).mockClear();
 
-    const env = { AUTHRIM_CONFIG: kv, DIAGNOSTIC_LOGS: bucket };
+    const env = { AUTHRIM_CONFIG: kv, LOG_ARCHIVE: bucket };
     const first = await resolveRuntimeLoggingPolicyTargetFromEnv(env, {
       tenantId,
       logType: 'webhook',
@@ -139,7 +140,7 @@ describe('runtime logging policy resolver', () => {
       format: 'json',
     });
     expect(second).toEqual(first);
-    expect(kv.get).toHaveBeenCalledTimes(1);
+    expect(kv.get).toHaveBeenCalledTimes(2);
     expect(bucket.get).toHaveBeenCalledTimes(1);
   });
 
@@ -180,7 +181,7 @@ describe('runtime logging policy resolver', () => {
             lifecycle_status: 'active',
             health_status: 'healthy',
             provider_config: JSON.stringify({
-              bindingRef: 'DIAGNOSTIC_LOGS',
+              bindingRef: 'LOG_ARCHIVE',
               prefix: 'job-chunks',
             }),
             allowed_tenant_ids: JSON.stringify([]),
@@ -196,6 +197,7 @@ describe('runtime logging policy resolver', () => {
       },
     });
     await publishRuntimeLoggingPolicySnapshot({
+      prefix: '__authrim_log_archive_private__/policy-snapshots/v1',
       snapshot,
       kv,
       objectStore: bucket,
@@ -205,7 +207,7 @@ describe('runtime logging policy resolver', () => {
     vi.mocked(bucket.get).mockClear();
 
     const resolved = await resolveRuntimeLoggingPolicyTargetFromEnv(
-      { AUTHRIM_CONFIG: kv, DIAGNOSTIC_LOGS: bucket },
+      { AUTHRIM_CONFIG: kv, LOG_ARCHIVE: bucket },
       {
         tenantId,
         logType: 'job',
@@ -217,10 +219,10 @@ describe('runtime logging policy resolver', () => {
     expect(resolved?.target).toEqual({
       type: 'r2',
       destinationId: 'dest_job_archive',
-      bucketRef: 'DIAGNOSTIC_LOGS',
+      bucketRef: 'LOG_ARCHIVE',
       prefix: 'job-chunks',
     });
-    expect(kv.get).toHaveBeenCalledTimes(2);
+    expect(kv.get).toHaveBeenCalledTimes(3);
     expect(bucket.get).toHaveBeenCalledTimes(1);
   });
 
@@ -305,6 +307,7 @@ describe('runtime logging policy resolver', () => {
       },
     });
     await publishRuntimeLoggingPolicySnapshot({
+      prefix: '__authrim_log_archive_private__/policy-snapshots/v1',
       snapshot,
       kv,
       objectStore: bucket,
@@ -312,7 +315,7 @@ describe('runtime logging policy resolver', () => {
     });
 
     const resolved = await resolveRuntimeLoggingPolicyTargetFromEnv(
-      { AUTHRIM_CONFIG: kv, DIAGNOSTIC_LOGS: bucket },
+      { AUTHRIM_CONFIG: kv, LOG_ARCHIVE: bucket },
       {
         tenantId,
         logType: 'webhook',

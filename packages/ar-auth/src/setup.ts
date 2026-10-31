@@ -8,7 +8,7 @@
  * 1. Deploy script generates setup token and stores in KV (1 hour TTL)
  * 2. Admin opens /admin-init-setup?token=xxx in browser
  * 3. Admin enters email, registers Passkey
- * 4. System creates user with system_admin role
+ * 4. System creates user with the ar_super_admin role
  * 5. Setup is permanently disabled (setup:completed flag set)
  */
 
@@ -29,7 +29,7 @@ import {
   generateId,
   generateUserIdFromSettings,
   getTenantIdFromContext,
-  getTenantSettings,
+  getTenantSettingsDocument,
   parseAllowedOrigins,
   isAllowedOrigin,
   // Logger
@@ -39,6 +39,7 @@ import {
   AdminPasskeyRepository,
   // Database adapter
   requireDedicatedAdminDatabaseAdapter,
+  ADMIN_ROLES,
 } from '@authrim/ar-lib-core';
 
 // Note: Passkey registration is now handled by Admin UI, not Router
@@ -88,7 +89,10 @@ function toBase64URLString(input: CredentialIDLike): string {
 async function getAllowedOriginsFromKV(env: Env, tenantId: string): Promise<string[]> {
   let allowedOriginsValue: string | undefined;
 
-  const settings = await getTenantSettings(env.AUTHRIM_CONFIG, tenantId, 'tenant');
+  const settings = await getTenantSettingsDocument(env, tenantId, 'tenant', {
+    // Without the tenant's settings the fallback is at least as strict.
+    onUnreadable: 'empty',
+  });
   if (settings && typeof settings['tenant.allowed_origins'] === 'string') {
     allowedOriginsValue = settings['tenant.allowed_origins'];
   }
@@ -337,7 +341,7 @@ setupApp.use('/api/admin-init-setup/*', checkSetupEnabled);
  * GET /api/admin-init-setup/status
  *
  * Returns the current setup status.
- * - initialized: true if system_admin exists
+ * - initialized: true if an ar_super_admin exists
  * - setup_token_valid: true if a valid setup token exists
  */
 setupApp.get('/api/admin-init-setup/status', async (c) => {
@@ -526,7 +530,7 @@ setupApp.post('/api/admin-init-setup/initialize', async (c) => {
 
     // Create user in database
     const tenantId = getTenantIdFromContext(c);
-    const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
+    const userId = await generateUserIdFromSettings(c.env, tenantId, c.env);
 
     const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'setup-admin');
     const adminUserRepo = new AdminUserRepository(adminAdapter);
@@ -539,7 +543,7 @@ setupApp.post('/api/admin-init-setup/initialize', async (c) => {
     createdUserId = userId;
     await adminUserRepo.setEmailVerified(userId);
 
-    // Assign super_admin role
+    // Assign the ar_super_admin role
     await assignSystemAdminRole(c.env, userId, tenantId);
 
     // Create setup token for Admin UI passkey registration
@@ -689,7 +693,7 @@ setupApp.post('/api/admin-init-setup/complete', async (c) => {
         id: userId,
         email,
         name: name || null,
-        role: 'system_admin',
+        role: ADMIN_ROLES.SUPER_ADMIN,
       },
       message: 'Administrator account created. Please complete passkey registration on Admin UI.',
       admin_ui_url: adminUiUrl,

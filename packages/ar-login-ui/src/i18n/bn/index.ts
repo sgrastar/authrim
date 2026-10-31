@@ -1,6 +1,30 @@
 import type { Translation } from '../i18n-types';
 
 const translation = {
+	account_guestLogoutWarning:
+		'লগ আউট করলে এই অতিথি অ্যাকাউন্টে আর ফিরতে পারবেন না। অ্যাকাউন্ট ও ডেটার অ্যাক্সেস রাখতে আগে নিবন্ধন করুন। তবুও লগ আউট করবেন?',
+	account_guestTitle: 'আপনার অ্যাকাউন্ট নিবন্ধন করুন',
+	account_guestDescription: 'নিবন্ধনের পরেও একই অ্যাকাউন্ট ও ডেটা বজায় থাকবে।',
+	account_guestDue: '{date} থেকে স্বয়ংক্রিয়ভাবে মুছে ফেলা হতে পারে।',
+	account_guestNoExpiry: 'স্বয়ংক্রিয় মুছে ফেলার সময় নির্ধারিত নেই।',
+	account_guestEmail: 'ইমেইল ঠিকানা',
+	account_guestSend: 'ইমেইল দিয়ে নিবন্ধন করুন',
+	account_guestPasskey: 'পাসকি দিয়ে নিবন্ধন করুন',
+	account_guestCode: 'যাচাইকরণ কোড',
+	account_guestConfirm: 'নিবন্ধন সম্পন্ন করুন',
+	account_guestPending: 'নিবন্ধন প্রক্রিয়াধীন। সম্পন্ন হয়েছে কিনা দেখতে আবার চেষ্টা করতে পারেন।',
+	account_guestRetry: 'আবার চেষ্টা করুন',
+	account_guestError: 'নিবন্ধন সম্পন্ন করা যায়নি। যাচাইকরণ কোড পরীক্ষা করুন বা আবার চেষ্টা করুন।',
+	account_guestCollision:
+		'এই পরিচয়ের জন্য ইতিমধ্যে একটি অ্যাকাউন্ট আছে। সেই অ্যাকাউন্টে আলাদাভাবে সাইন ইন করুন। আপনার অতিথি অ্যাকাউন্ট একত্রিত করা হবে না।',
+	account_guestExistingLogin: 'বিদ্যমান অ্যাকাউন্টে সাইন ইন করুন',
+	account_guestRegistered: 'আপনার অ্যাকাউন্ট নিবন্ধিত হয়েছে।',
+	account_guestChangeMethod: 'অন্য পদ্ধতি বেছে নিন',
+	login_guestContinue: 'অতিথি হিসেবে চালিয়ে যান',
+	login_guestRetention:
+		'অতিথি অ্যাকাউন্ট তৈরির {days} দিন পরে স্বয়ংক্রিয়ভাবে মুছে ফেলা হতে পারে। ব্যবহার চালিয়ে যেতে অ্যাকাউন্ট নিবন্ধন করুন।',
+	login_guestNoExpiry: 'নতুন অতিথি অ্যাকাউন্টের স্বয়ংক্রিয় মুছে ফেলার সময় নির্ধারিত নেই।',
+
 	app_title: 'Authrim',
 	app_subtitle: 'পরিচয় ও অ্যাক্সেস সর্বত্র প্রান্তে।',
 	button_openDialog: 'ডায়ালগ খুলুন',
@@ -85,6 +109,32 @@ const translation = {
 	account_delete: 'মুছে ফেলুন',
 	account_empty: 'কোন আইটেম নেই',
 	account_planned: 'পরিকল্পিত',
+	account_socialEmpty: 'কোনো বাহ্যিক অ্যাকাউন্ট সংযুক্ত নেই।',
+	account_socialLinkHeading: 'অ্যাকাউন্ট সংযুক্ত করুন',
+	account_socialLinkWith: '{provider} সংযুক্ত করুন',
+	account_socialNoProviders: 'সংযুক্ত করার মতো অন্য কোনো প্রোভাইডার নেই।',
+	account_socialLinkedAt: '{date} তারিখে সংযুক্ত',
+	account_socialLastUsed: 'সর্বশেষ ব্যবহৃত {date}',
+	account_socialUnlink: 'সংযোগ বিচ্ছিন্ন করুন',
+	account_socialUnlinkConfirm:
+		'{provider}-এর সংযোগ বিচ্ছিন্ন করবেন? এরপর আপনি এটি দিয়ে আর লগইন করতে পারবেন না।',
+	account_socialUnlinkConfirmAction: '{provider}-এর সংযোগ বিচ্ছিন্ন করুন',
+	account_socialLinked: 'অ্যাকাউন্টটি সংযুক্ত হয়েছে।',
+	account_socialUnlinked: 'অ্যাকাউন্টটির সংযোগ বিচ্ছিন্ন হয়েছে।',
+	account_socialErrorAlreadyLinked:
+		'এই অ্যাকাউন্টটি ইতিমধ্যে অন্য একজন ব্যবহারকারীর সঙ্গে সংযুক্ত।',
+	account_socialErrorAlreadyLinkedHere: 'এই প্রোভাইডার ইতিমধ্যে আপনার অ্যাকাউন্টের সঙ্গে সংযুক্ত।',
+	account_socialErrorEmailNotVerified: 'প্রোভাইডার এই অ্যাকাউন্টের ইমেইল ঠিকানা যাচাই করেনি।',
+	account_socialErrorSessionExpired:
+		'সংযোগ সম্পূর্ণ হওয়ার আগেই আপনার নিশ্চিতকরণের মেয়াদ শেষ হয়েছে। আবার নিশ্চিত করে পুনরায় চেষ্টা করুন।',
+	account_socialErrorCancelled: 'সংযুক্ত করা বাতিল করা হয়েছে।',
+	account_socialErrorFailed: 'অ্যাকাউন্টটি সংযুক্ত করা যায়নি। আবার চেষ্টা করুন।',
+	account_socialErrorLastMethod:
+		'এটি লগইন করার আপনার শেষ উপায়। আগে একটি পাসকি বা অন্য লগইন পদ্ধতি যোগ করুন।',
+	account_socialErrorInProgress:
+		'আপনার লগইন পদ্ধতিতে আরেকটি পরিবর্তন চলছে। কিছুক্ষণ পরে আবার চেষ্টা করুন।',
+	account_operationSocialLinked: 'বাহ্যিক অ্যাকাউন্ট সংযুক্ত হয়েছে',
+	account_operationSocialUnlinked: 'বাহ্যিক অ্যাকাউন্টের সংযোগ বিচ্ছিন্ন হয়েছে',
 	account_passkeyUnsupported: 'এই ব্রাউজার পাসকি রেজিস্ট্রেশন সমর্থন করে না।',
 	account_passkeyRegistrationCancelled:
 		'পাসকি রেজিস্ট্রেশন বাতিল করা হয়েছে অথবা সময়সীমা শেষ হয়ে গেছে। দয়া করে আবার চেষ্টা করুন।',
@@ -119,12 +169,31 @@ const translation = {
 	account_reauthTotpCodePlaceholder: '৬ বা ৮ অঙ্কের কোড',
 	account_actionFailed: 'অপারেশন ব্যর্থ',
 	account_remainingLoginMethodRequired: 'এই পদ্ধতি মুছে ফেলার আগে আরেকটি লগইন পদ্ধতি যোগ করুন।',
+	account_activityIncomplete: 'কার্যকলাপের ফলাফল অসম্পূর্ণ। পরে আবার চেষ্টা করুন।',
+	account_activityLoadMore: 'আগের কার্যকলাপ লোড করুন',
 	account_activityTitle: 'কার্যকলাপ',
 	account_operationNameUpdated: 'নাম পরিবর্তন করা হয়েছে',
 	account_operationPasskeyCreated: 'পাসকি যোগ করা হয়েছে',
 	account_operationPasskeyUpdated: 'পাসকি নামকরণ করা হয়েছে',
 	account_operationPasskeyDeleted: 'পাস কী মুছে ফেলা হয়েছে',
 	account_operationSessionRevoked: 'অধিবেশন সমাপ্ত',
+	account_operationGuestCreated: 'অতিথি অ্যাকাউন্ট তৈরি হয়েছে',
+	account_operationGuestUpgradeFailed: 'অতিথি নিবন্ধন ব্যর্থ হয়েছে',
+	account_operationGuestUpgradeStarted: 'অতিথি নিবন্ধন শুরু হয়েছে',
+	account_operationGuestUpgraded: 'অতিথি অ্যাকাউন্ট নিবন্ধিত হয়েছে',
+	account_operationEmailAdded: 'ইমেইল যোগ করা হয়েছে',
+	account_operationEmailChanged: 'ইমেইল পরিবর্তন করা হয়েছে',
+	account_operationEmailReauthenticated: 'ইমেইলের মাধ্যমে পুনরায় প্রমাণীকরণ করা হয়েছে',
+	account_operationDeviceUpdated: 'ডিভাইসের নাম পরিবর্তন করা হয়েছে',
+	account_operationDeviceUnlinked: 'ডিভাইসের সংযোগ বিচ্ছিন্ন করা হয়েছে',
+	account_operationPasskeyReauthenticated: 'Passkey দিয়ে পুনরায় প্রমাণীকরণ করা হয়েছে',
+	account_operationTotpEnrollmentStarted: 'প্রমাণীকরণ অ্যাপ্লিকেশন সেটআপ শুরু হয়েছে',
+	account_operationTotpActivated: 'প্রমাণীকরণ অ্যাপ্লিকেশন সক্রিয় করা হয়েছে',
+	account_operationTotpUpdated: 'প্রমাণীকরণ অ্যাপ্লিকেশনের নাম পরিবর্তন করা হয়েছে',
+	account_operationTotpRemoved: 'প্রমাণীকরণ অ্যাপ্লিকেশন সরানো হয়েছে',
+	account_operationTotpBackupCodesRegenerated: 'ব্যাকআপ কোড পুনরায় তৈরি করা হয়েছে',
+	account_operationTotpReauthenticated:
+		'প্রমাণীকরণ অ্যাপ্লিকেশন দিয়ে পুনরায় প্রমাণীকরণ করা হয়েছে',
 	account_launcherTitle: 'আমার অ্যাপ্লিকেশন',
 	account_launcherDescription: 'আপনার জন্য উপলভ্য অ্যাপ্লিকেশন খুঁজুন এবং খুলুন।',
 	account_launcherLoadFailed: 'অ্যাপ্লিকেশন লোড করা যায়নি।',
@@ -191,6 +260,8 @@ const translation = {
 	login_humanVerificationLoading: 'নিরাপত্তা যাচাই লোড হচ্ছে...',
 	login_humanVerificationLoadFailed:
 		'সিকিউরিটি চেক লোড করা যায়নি। পৃষ্ঠাটি পুনরায় লোড করুন এবং আবার চেষ্টা করুন।',
+	login_humanVerificationUnavailable:
+		'মানুষ যাচাইকরণ এখন উপলব্ধ নয়। অনুগ্রহ করে প্রশাসকের সঙ্গে যোগাযোগ করুন।',
 	login_noMethodsAvailable:
 		'এই সংস্থার জন্য কোনও প্রমাণীকরণ পদ্ধতি সক্ষম নয়। আপনার প্রশাসকের সাথে যোগাযোগ করুন।',
 	login_passkeyPreparing: 'পাসকি প্রমাণীকরণ প্রস্তুত হচ্ছে...',
@@ -270,7 +341,8 @@ const translation = {
 		'পাসকি, ইমেইল কোড বা অন্য কোনো উপলভ্য পদ্ধতি দিয়ে অ্যাকাউন্ট তৈরি করুন।',
 	emailCode_title: 'আপনার ইমেইল চেক করুন',
 	emailCode_subtitle: 'আমরা একটি যাচাইকরণ কোড পাঠিয়েছি',
-	emailCode_instructions: 'আপনার ই-মেইলের ৬ অঙ্কের কোড লিখুন। কোড ৫ মিনিটের মধ্যে শেষ হয়ে যাবে।',
+	emailCode_instructions:
+		'আপনার ই-মেইলের ৬ অঙ্কের কোড লিখুন। কোডের মেয়াদ কতক্ষণ, তা ই-মেইলে লেখা আছে।',
 	emailCode_codeLabel: 'যাচাইকরণ কোড',
 	emailCode_verifyButton: 'যাচাই করুন',
 	emailCode_resendButton: 'কোড আবার পাঠান',
@@ -327,11 +399,20 @@ const translation = {
 	error_temporarily_unavailable: 'অনুমোদন সার্ভার অস্থায়ীভাবে অনুরোধ পরিচালনা করতে অক্ষম',
 	error_login_required: 'যাচাইকরণ প্রয়োজন। চালিয়ে যাওয়ার জন্য সাইন ইন করুন।',
 	error_unknown: 'একটি অজানা ত্রুটি ঘটেছে',
+	error_rateLimited: 'অনেকবার চেষ্টা করা হয়েছে। কিছুক্ষণ অপেক্ষা করে আবার চেষ্টা করুন।',
+	error_rateLimitedRetryAfter:
+		'অনেকবার চেষ্টা করা হয়েছে। প্রায় {minutes} মিনিট পরে আবার চেষ্টা করুন।',
+	error_unregisteredPostLogoutRedirectUri:
+		'আপনি সাইন আউট হয়েছেন। অ্যাপের ফেরার ঠিকানা নিবন্ধিত নয়, তাই আপনাকে অ্যাপে ফেরত পাঠানো যায়নি। অ্যাপটি নিজে আবার খুলুন।',
+	error_invalidIdTokenHint:
+		'আপনি সাইন আউট হয়েছেন। অ্যাপের সাইন-আউট অনুরোধ যাচাই করা যায়নি, তাই আপনাকে অ্যাপে ফেরত পাঠানো যায়নি। অ্যাপটি নিজে আবার খুলুন।',
+	error_idTokenHintRequired:
+		'আপনি সাইন আউট হয়েছেন। অ্যাপের সাইন-আউট অনুরোধ অসম্পূর্ণ ছিল, তাই আপনাকে অ্যাপে ফেরত পাঠানো যায়নি। অ্যাপটি নিজে আবার খুলুন।',
 	device_title: 'ডিভাইস যাচাইকরণ',
 	device_subtitle: 'আপনার ডিভাইসে প্রদর্শিত কোড লিখুন',
 	device_codeLabel: 'যাচাইকরণ কোড',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint: 'আপনার ডিভাইস থেকে 8-অক্ষর কোড লিখুন (ফরম্যাটঃ XXXX-XXXX)',
+	device_codeHint: 'আপনার ডিভাইসে দেখানো কোডটি লিখুন',
 	device_verifyButton: 'কোড যাচাই করুন',
 	device_confirmTitle: 'ডিভাইস অনুমোদন করুন',
 	device_requestedPermissions: 'অনুরোধ করা অনুমতি',
@@ -344,6 +425,13 @@ const translation = {
 	device_errorApproveFailed: 'ডিভাইস অনুমোদন করা যায়নি',
 	device_errorDenyFailed: 'ডিভাইস অনুরোধ অস্বীকার করতে পারেনি',
 	device_errorInvalidRedirect: 'সার্ভার থেকে প্রাপ্ত অবৈধ পুনর্নির্দেশ URL',
+	device_errorConsentWithdrawn:
+		'আপনি এই অ্যাপের অ্যাক্সেস প্রত্যাহার করার আগে এই অনুরোধটি করা হয়েছিল। নতুন কোড পেতে ডিভাইসে আবার শুরু করুন।',
+	device_errorTryAgain:
+		'এই মুহূর্তে আপনার সিদ্ধান্ত সংরক্ষণ করা যায়নি এবং কিছুই পরিবর্তন হয়নি। একটু পরে আবার চেষ্টা করুন।',
+	device_errorTooManyAttempts: 'অনেকবার চেষ্টা করা হয়েছে। কিছুক্ষণ অপেক্ষা করে আবার চেষ্টা করুন।',
+	device_errorOutcomeUnknown:
+		'আপনার সিদ্ধান্ত সংরক্ষিত হয়েছে কিনা তা নিশ্চিত করা যায়নি। ডিভাইসটি দেখুন, অথবা কোডটি আবার লিখুন।',
 	ciba_title: 'প্রমাণীকরণ অনুরোধ',
 	ciba_subtitle: 'একটি অ্যাপ্লিকেশন আপনার অনুমোদন চাইছে',
 	ciba_noPendingRequests: 'প্রতীক্ষিত প্রমাণীকরণ অনুরোধ নেই',
@@ -363,6 +451,17 @@ const translation = {
 	ciba_errorGeneric: 'একটি ত্রুটি ঘটেছে',
 	ciba_errorApproveFailed: 'অনুরোধ অনুমোদন করা যায়নি',
 	ciba_errorDenyFailed: 'অনুরোধ অস্বীকার করতে ব্যর্থ',
+	ciba_errorConsentWithdrawn:
+		'আপনি এই অ্যাপের অ্যাক্সেস প্রত্যাহার করার আগে এই অনুরোধটি করা হয়েছিল। অ্যাপ থেকে আবার শুরু করুন।',
+	ciba_errorRequestGone: 'এই অনুরোধের মেয়াদ শেষ হয়েছে বা এর উত্তর ইতিমধ্যে দেওয়া হয়েছে।',
+	error_authorizationRequestExpired:
+		'সাইন-ইন অনুরোধের মেয়াদ শেষ হয়েছে। অ্যাপ থেকে আবার শুরু করুন।',
+	ciba_errorTryAgain:
+		'এই মুহূর্তে আপনার সিদ্ধান্ত সংরক্ষণ করা যায়নি এবং কিছুই পরিবর্তন হয়নি। একটু পরে আবার চেষ্টা করুন।',
+	ciba_errorTooManyAttempts: 'অনেকবার চেষ্টা করা হয়েছে। কিছুক্ষণ অপেক্ষা করে আবার চেষ্টা করুন।',
+	ciba_errorOutcomeUnknown:
+		'আপনার উত্তর সংরক্ষিত হয়েছে কিনা তা নিশ্চিত করা যায়নি। এখনও অপেক্ষমাণ অনুরোধ দেখতে রিফ্রেশ করুন।',
+	ciba_errorNoLongerWaiting: 'আপনার উত্তর নিশ্চিত করা যায়নি, তবে এই অনুরোধটি আর অপেক্ষমাণ নয়।',
 	reauth_title: 'আপনার পরিচয় যাচাই করুন',
 	reauth_subtitle: 'নিরাপত্তার জন্য চালিয়ে যাওয়ার আগে আবার প্রমাণীকরণ করুন।',
 	reauth_verifyWithPasskey: 'Passkey দিয়ে যাচাই করুন',
@@ -399,6 +498,9 @@ const translation = {
 	login_extError_callbackFailed_title: 'প্রমাণীকরণ ব্যর্থ',
 	login_extError_callbackFailed_message:
 		'প্রমাণীকরণের সময় একটি ত্রুটি ঘটেছে। দয়া করে আবার চেষ্টা করুন।',
+	login_extError_reauthNotProven_title: 'সাইন-ইন নিশ্চিত হয়নি',
+	login_extError_reauthNotProven_message:
+		'আপনার সাইন-ইন প্রদানকারী নিশ্চিত করেনি যে আপনি আবার সাইন ইন করেছেন। আবার সাইন ইন করুন বা অন্য একটি পদ্ধতি বেছে নিন।',
 	login_extError_default_title: 'প্রমাণীকরণ ত্রুটি',
 	login_extError_default_message: 'বাহ্যিক প্রমাণীকরণের সময় একটি ত্রুটি ঘটেছে।',
 	login_signingInTo: 'যে অ্যাপ্লিকেশনে সাইন ইন করছেন:',

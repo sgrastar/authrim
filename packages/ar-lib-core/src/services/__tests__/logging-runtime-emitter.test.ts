@@ -1,53 +1,13 @@
+import { logProducerFixture } from './log-iceberg-producer-fixture';
+import { LOG_ICEBERG_POLICY_PREFIX } from '../log-iceberg-policy-artifacts';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createRuntimeLoggingPolicySnapshot,
   publishRuntimeLoggingPolicySnapshot,
 } from '@authrim/ar-lib-logging/policies';
-import { decryptLogChunkBody } from '@authrim/ar-lib-logging/chunks';
-import type { LogPlane, LogType } from '@authrim/ar-lib-logging/contract';
 import { emitRuntimeLogRecords } from '../logging-runtime-emitter';
 
 const ROOT_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
-
-function hexToBytes(hex: string): Uint8Array {
-  const bytes = new Uint8Array(32);
-  for (let index = 0; index < hex.length; index += 2) {
-    bytes[index / 2] = Number.parseInt(hex.slice(index, index + 2), 16);
-  }
-  return bytes;
-}
-
-async function deriveRuntimeChunkKey(input: {
-  tenantKey: string;
-  logType: LogType;
-  plane: LogPlane;
-  keyVersion: number;
-}): Promise<Uint8Array> {
-  const material = await crypto.subtle.importKey('raw', hexToBytes(ROOT_KEY), 'HKDF', false, [
-    'deriveBits',
-  ]);
-  const bits = await crypto.subtle.deriveBits(
-    {
-      name: 'HKDF',
-      hash: 'SHA-256',
-      salt: new TextEncoder().encode('authrim-log-chunk-archive-encryption'),
-      info: new TextEncoder().encode(
-        `${input.tenantKey}:${input.logType}:${input.plane}:v${input.keyVersion}`
-      ),
-    },
-    material,
-    256
-  );
-  return new Uint8Array(bits);
-}
-
-function chunkIdFromObjectKey(objectKey: string): string {
-  const match = /\/(chk_[^/]+)\.jsonl(?:\.gz)?$/u.exec(objectKey);
-  if (!match) {
-    throw new Error('test_chunk_id_not_found');
-  }
-  return match[1];
-}
 
 function createSnapshotStores() {
   const kvValues = new Map<string, string>();
@@ -116,354 +76,7 @@ function findDeliveryEventMetadata(adapter: ReturnType<typeof createMockAdapter>
   return params?.[13] ? JSON.parse(String(params[13])) : null;
 }
 
-async function decodeFirstChunkRecord(input: {
-  bytes: Uint8Array;
-  objectKey: string;
-  tenantKey: string;
-  logType: LogType;
-  plane: LogPlane;
-}): Promise<Record<string, unknown>> {
-  const keyVersion = 1;
-  const decoded = await decryptLogChunkBody({
-    storedBody: input.bytes,
-    keyBytes: await deriveRuntimeChunkKey({
-      tenantKey: input.tenantKey,
-      logType: input.logType,
-      plane: input.plane,
-      keyVersion,
-    }),
-    tenantKey: input.tenantKey,
-    logType: input.logType,
-    plane: input.plane,
-    objectKey: input.objectKey,
-    chunkId: chunkIdFromObjectKey(input.objectKey),
-    expectedEncryptionScope: `tenant:${input.tenantKey}:${input.logType}:${input.plane}`,
-    expectedKeyVersion: keyVersion,
-  });
-  const body =
-    typeof DecompressionStream === 'undefined'
-      ? decoded.body
-      : new Uint8Array(
-          await new Response(
-            new Blob([decoded.body]).stream().pipeThrough(new DecompressionStream('gzip'))
-          ).arrayBuffer()
-        );
-  return JSON.parse(new TextDecoder().decode(body).split('\n')[0]) as Record<string, unknown>;
-}
-
 describe('runtime log emitter', () => {
-  it('commits fresh-environment platform archives without redundant delivery fanout', async () => {
-    const { bucket, objectValues } = createSnapshotStores();
-    const deliveryAdapter = createMockAdapter();
-    const indexAdapter = createMockAdapter();
-    const criticalQueue = { send: vi.fn(async () => {}) };
-
-    const result = await emitRuntimeLogRecords({
-      env: {
-        DB_ADMIN: deliveryAdapter as never,
-        LOGGING_INDEX_DB: indexAdapter as never,
-        AUDIT_ARCHIVE: bucket,
-        OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
-        LOGGING_DELIVERY_CRITICAL_QUEUE: criticalQueue as never,
-      },
-      tenantId: 'tenant-fresh-environment',
-      logType: 'admin_audit',
-      surface: 'admin_audit',
-      tenantKeyResolver: async () => 't_fresh_environment',
-      records: [
-        {
-          id: 'admin-audit-fresh-1',
-          eventAt: 1_700_000_000_000,
-          payload: { action: 'environment.initialized', status: 'success' },
-        },
-      ],
-      planes: ['archive'],
-    });
-
-    expect([...objectValues.keys()]).toHaveLength(1);
-    expect(result.targetResults[0]).toMatchObject({
-      plane: 'archive',
-      destinationId: 'platform_default_r2_archive',
-      status: 'delivered',
-      queued: false,
-    });
-    expect(criticalQueue.send).not.toHaveBeenCalled();
-    expect(deliveryAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO logging_delivery_events'),
-      expect.arrayContaining([
-        't_fresh_environment',
-        'platform_default_r2_archive',
-        'admin_audit',
-        'archive',
-        'critical',
-        'delivered',
-      ])
-    );
-  });
-
-  it('writes normal, job, webhook, and operational archive chunks with stable R2 layout and metadata', async () => {
-    const tenantId = 'tenant-runtime-contract';
-    const tenantKey = 't_runtime_contract';
-    const { kv, bucket, objectValues, objectWrites } = createSnapshotStores();
-    const logTypes = ['normal', 'job', 'webhook', 'operational'] as const;
-    const snapshot = await createRuntimeLoggingPolicySnapshot({
-      scopeType: 'tenant',
-      scopeId: tenantId,
-      version: 1,
-      snapshotId: 'snap_runtime_output_contract',
-      synchronizedAt: 1_700_000_000_000,
-      sourceUpdatedAt: 1_700_000_000_000,
-      policies: {
-        assignments: logTypes.map((logType) => ({
-          id: `lpa_${logType}_archive`,
-          tenant_id: tenantId,
-          log_type: logType,
-          plane: 'archive',
-          destination_id: 'dest_runtime_archive',
-          enabled: 1,
-          managed_by: 'tenant',
-          lane: 'default',
-          version: 1,
-        })),
-        fallbacks: [],
-        destinations: [
-          {
-            id: 'dest_runtime_archive',
-            scope_type: 'shared',
-            scope_id: null,
-            destination_kind: 'object_storage',
-            provider: 'r2',
-            name: 'runtime-archive',
-            display_name: 'Runtime Archive',
-            lifecycle_status: 'active',
-            health_status: 'healthy',
-            provider_config: JSON.stringify({
-              bindingRef: 'AUDIT_ARCHIVE',
-              prefix: 'runtime-contract',
-            }),
-            allowed_tenant_ids: JSON.stringify([]),
-            allowed_log_types: JSON.stringify(logTypes),
-            allowed_planes: JSON.stringify(['archive']),
-            region: null,
-            critical_allowed: 0,
-            default_fallback_eligible: 1,
-            retention_days: 30,
-            encryption_mode: 'platform_managed',
-          },
-        ],
-      },
-    });
-    await publishRuntimeLoggingPolicySnapshot({
-      snapshot,
-      kv,
-      objectStore: bucket,
-      now: 1_700_000_000_000,
-    });
-    vi.mocked(bucket.put).mockClear();
-    objectWrites.length = 0;
-
-    const deliveryAdapter = createMockAdapter();
-    const indexAdapter = createMockAdapter();
-    const queue = { send: vi.fn(async () => {}) };
-
-    for (const logType of logTypes) {
-      await emitRuntimeLogRecords({
-        env: {
-          DB_ADMIN: deliveryAdapter as never,
-          LOGGING_INDEX_DB: indexAdapter as never,
-          AUTHRIM_CONFIG: kv,
-          DIAGNOSTIC_LOGS: bucket,
-          AUDIT_ARCHIVE: bucket,
-          OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
-          LOGGING_DELIVERY_QUEUE: queue as never,
-        },
-        tenantId,
-        logType,
-        surface: `${logType}_surface`,
-        tenantKeyResolver: async () => tenantKey,
-        records: [
-          {
-            id: `${logType}-1`,
-            eventAt: 1_700_000_000_000,
-            payload: { log_type: logType, status: 'stored' },
-            indexedFields: { status: 'stored' },
-          },
-        ],
-        planes: ['archive'],
-      });
-    }
-
-    expect(objectWrites).toHaveLength(logTypes.length);
-    for (const logType of logTypes) {
-      const write = objectWrites.find((item) => item.key.includes(`/archive/${logType}/`));
-      const objectKeyPattern = new RegExp(
-        [
-          `^runtime-contract/${tenantKey}/archive/${logType}/`,
-          String.raw`\d{4}/\d{2}/\d{2}/\d{2}/shard-\d\d/chk_[^/]+\.jsonl\.gz$`,
-        ].join(''),
-        'u'
-      );
-      expect(write?.key).toMatch(objectKeyPattern);
-      expect(write?.options?.httpMetadata).toMatchObject({
-        contentType: 'application/authrim.log-chunk+encrypted',
-      });
-      expect(write?.options?.customMetadata).toMatchObject({
-        tenantKey,
-        logType,
-        plane: 'archive',
-        recordCount: '1',
-        compression: 'gzip_block',
-        encryptionScope: `tenant:${tenantKey}:${logType}:archive`,
-        keyVersion: '1',
-      });
-    }
-    expect(queue.send).toHaveBeenCalledTimes(logTypes.length);
-
-    const normalKey = [...objectValues.keys()].find((key) => key.includes('/archive/normal/'));
-    expect(normalKey).toBeTruthy();
-    const normalRecord = await decodeFirstChunkRecord({
-      bytes: objectValues.get(normalKey!)!,
-      objectKey: normalKey!,
-      tenantKey,
-      logType: 'normal',
-      plane: 'archive',
-    });
-    expect(normalRecord).toMatchObject({
-      schema_version: 'authrim.log.archive.v1',
-      record_type: 'log_record',
-      tenant_key: tenantKey,
-      log_type: 'normal',
-      plane: 'archive',
-      surface: 'normal_surface',
-      summary: { log_type: 'normal', status: 'stored' },
-      delivery: {
-        target_type: 'r2',
-        destination_id: 'dest_runtime_archive',
-      },
-    });
-  });
-
-  it('writes operational archive chunks and enqueues chunk delivery from runtime policy', async () => {
-    const tenantId = 'tenant-runtime-op';
-    const { kv, bucket, objectValues } = createSnapshotStores();
-    const snapshot = await createRuntimeLoggingPolicySnapshot({
-      scopeType: 'tenant',
-      scopeId: tenantId,
-      version: 1,
-      snapshotId: 'snap_runtime_op_archive',
-      synchronizedAt: 1_700_000_000_000,
-      sourceUpdatedAt: 1_700_000_000_000,
-      policies: {
-        assignments: [
-          {
-            id: 'lpa_operational_archive',
-            tenant_id: tenantId,
-            log_type: 'operational',
-            plane: 'archive',
-            destination_id: 'dest_ops_archive',
-            enabled: 1,
-            managed_by: 'tenant',
-            lane: 'default',
-            version: 1,
-          },
-        ],
-        fallbacks: [],
-        destinations: [
-          {
-            id: 'dest_ops_archive',
-            scope_type: 'shared',
-            scope_id: null,
-            destination_kind: 'object_storage',
-            provider: 'r2',
-            name: 'ops-archive',
-            display_name: 'Operational Archive',
-            lifecycle_status: 'active',
-            health_status: 'healthy',
-            provider_config: JSON.stringify({
-              bindingRef: 'AUDIT_ARCHIVE',
-              prefix: 'ops-chunks',
-            }),
-            allowed_tenant_ids: JSON.stringify([]),
-            allowed_log_types: JSON.stringify(['operational']),
-            allowed_planes: JSON.stringify(['archive']),
-            region: null,
-            critical_allowed: 0,
-            default_fallback_eligible: 1,
-            retention_days: 30,
-            encryption_mode: 'platform_managed',
-          },
-        ],
-      },
-    });
-    await publishRuntimeLoggingPolicySnapshot({
-      snapshot,
-      kv,
-      objectStore: bucket,
-      now: 1_700_000_000_000,
-    });
-    vi.mocked(kv.get).mockClear();
-    vi.mocked(bucket.get).mockClear();
-    vi.mocked(bucket.put).mockClear();
-
-    const deliveryAdapter = createMockAdapter();
-    const indexAdapter = createMockAdapter();
-    const queue = { send: vi.fn(async () => {}) };
-    const result = await emitRuntimeLogRecords({
-      env: {
-        DB_ADMIN: deliveryAdapter as never,
-        LOGGING_INDEX_DB: indexAdapter as never,
-        AUTHRIM_CONFIG: kv,
-        DIAGNOSTIC_LOGS: bucket,
-        AUDIT_ARCHIVE: bucket,
-        OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
-        LOGGING_DELIVERY_QUEUE: queue as never,
-      },
-      tenantId,
-      logType: 'operational',
-      surface: 'operational_log',
-      tenantKeyResolver: async () => 't_registry_ops',
-      records: [
-        {
-          id: 'op-1',
-          eventAt: 1_700_000_000_000,
-          payload: { action: 'user.lock', status: 'stored' },
-          indexedFields: {
-            surface: 'operational_log',
-            eventType: 'user.lock',
-            severity: 'info',
-            status: 'stored',
-          },
-        },
-      ],
-      planes: ['archive'],
-    });
-
-    expect(result.tenantKey).toBe('t_registry_ops');
-    expect(result.targetResults[0]).toMatchObject({
-      plane: 'archive',
-      destinationId: 'dest_ops_archive',
-      status: 'queued',
-      queued: true,
-    });
-    expect([...objectValues.keys()].some((key) => key.includes('ops-chunks/'))).toBe(true);
-    expect(queue.send).toHaveBeenCalledWith(
-      expect.objectContaining({
-        payload_type: 'delivery_fanout',
-        destination_id: 'dest_ops_archive',
-        log_type: 'operational',
-        plane: 'archive',
-      })
-    );
-    expect(indexAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO log_object_catalog'),
-      expect.any(Array)
-    );
-    expect(deliveryAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO logging_delivery_events'),
-      expect.any(Array)
-    );
-  });
-
   it('stores webhook HTTP sink batches and enqueues delivery payloads', async () => {
     const tenantId = 'tenant-runtime-webhook';
     const { kv, bucket, objectValues } = createSnapshotStores();
@@ -519,6 +132,7 @@ describe('runtime log emitter', () => {
       snapshot,
       kv,
       objectStore: bucket,
+      prefix: LOG_ICEBERG_POLICY_PREFIX,
       now: 1_700_000_000_000,
     });
     vi.mocked(bucket.put).mockClear();
@@ -529,8 +143,8 @@ describe('runtime log emitter', () => {
       env: {
         DB_ADMIN: adapter as never,
         AUTHRIM_CONFIG: kv,
-        DIAGNOSTIC_LOGS: bucket,
-        AUDIT_ARCHIVE: bucket,
+        LOG_ARCHIVE: bucket,
+        SENSITIVE_DETAILS: bucket,
         LOGGING_DELIVERY_QUEUE: queue as never,
         OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
       },
@@ -602,7 +216,7 @@ describe('runtime log emitter', () => {
             payload: { action: 'logging.critical.update', status: 'attempted' },
           },
         ],
-        planes: ['archive'],
+        planes: ['external_sink'],
       })
     ).rejects.toThrow('runtime_log_critical_target_not_configured');
 
@@ -614,7 +228,7 @@ describe('runtime log emitter', () => {
         't_registry_critical_missing',
         null,
         'admin_audit',
-        'archive',
+        'external_sink',
         'critical',
         'retrying',
       ])
@@ -624,140 +238,60 @@ describe('runtime log emitter', () => {
       fallback_used: false,
     });
   });
-
-  it('records platform fallback metadata when the selected destination is unusable', async () => {
-    const tenantId = 'tenant-runtime-fallback';
-    const { kv, bucket } = createSnapshotStores();
-    const snapshot = await createRuntimeLoggingPolicySnapshot({
-      scopeType: 'tenant',
-      scopeId: tenantId,
-      version: 1,
-      snapshotId: 'snap_runtime_webhook_fallback',
-      synchronizedAt: 1_700_000_000_000,
-      sourceUpdatedAt: 1_700_000_000_000,
-      policies: {
-        assignments: [
-          {
-            id: 'lpa_webhook_sink_failing',
-            tenant_id: tenantId,
-            log_type: 'webhook',
-            plane: 'external_sink',
-            destination_id: 'dest_webhook_failing',
-            enabled: 1,
-            managed_by: 'tenant',
-            lane: 'default',
-            version: 1,
-          },
-        ],
-        fallbacks: [
-          {
-            id: 'lfp_webhook_platform',
-            scope_type: 'platform',
-            scope_id: 'global',
-            log_type: 'webhook',
-            plane: 'external_sink',
-            fallback_destination_id: 'dest_webhook_platform',
-            failure_mode: 'platform_default',
-            version: 1,
-          },
-        ],
-        destinations: [
-          {
-            id: 'dest_webhook_failing',
-            scope_type: 'shared',
-            scope_id: null,
-            destination_kind: 'http_sink',
-            provider: 'http',
-            name: 'webhook-failing',
-            display_name: 'Webhook Failing',
-            lifecycle_status: 'active',
-            health_status: 'failing',
-            provider_config: JSON.stringify({
-              url: 'https://failing.example/logs',
-            }),
-            allowed_tenant_ids: JSON.stringify([]),
-            allowed_log_types: JSON.stringify(['webhook']),
-            allowed_planes: JSON.stringify(['external_sink']),
-            region: null,
-            critical_allowed: 0,
-            default_fallback_eligible: 0,
-            retention_days: 30,
-            encryption_mode: 'platform_managed',
-          },
-          {
-            id: 'dest_webhook_platform',
-            scope_type: 'platform',
-            scope_id: null,
-            destination_kind: 'http_sink',
-            provider: 'http',
-            name: 'webhook-platform',
-            display_name: 'Webhook Platform',
-            lifecycle_status: 'active',
-            health_status: 'healthy',
-            provider_config: JSON.stringify({
-              url: 'https://platform.example/logs',
-            }),
-            allowed_tenant_ids: JSON.stringify([]),
-            allowed_log_types: JSON.stringify(['webhook']),
-            allowed_planes: JSON.stringify(['external_sink']),
-            region: null,
-            critical_allowed: 0,
-            default_fallback_eligible: 1,
-            retention_days: 30,
-            encryption_mode: 'platform_managed',
-          },
-        ],
-      },
-    });
-    await publishRuntimeLoggingPolicySnapshot({
-      snapshot,
-      kv,
-      objectStore: bucket,
-      now: 1_700_000_000_000,
-    });
-
-    const adapter = createMockAdapter();
-    const queue = { send: vi.fn(async () => {}) };
-    const result = await emitRuntimeLogRecords({
-      env: {
-        DB_ADMIN: adapter as never,
-        AUTHRIM_CONFIG: kv,
-        DIAGNOSTIC_LOGS: bucket,
-        AUDIT_ARCHIVE: bucket,
-        LOGGING_DELIVERY_QUEUE: queue as never,
-        OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
-      },
-      tenantId,
-      logType: 'webhook',
-      surface: 'webhook_delivery',
-      tenantKeyResolver: async () => 't_registry_fallback',
-      records: [
-        {
-          id: 'delivery-fallback-1',
-          eventAt: 1_700_000_000_000,
-          payload: { webhook_id: 'wh-1', event_type: 'user.updated', status: 'success' },
-        },
-      ],
-      planes: ['external_sink'],
-    });
-
-    expect(result.targetResults[0]).toMatchObject({
-      destinationId: 'dest_webhook_platform',
-      status: 'queued',
-    });
-    expect(queue.send).toHaveBeenCalledWith(
-      expect.objectContaining({
-        destination_id: 'dest_webhook_platform',
-        endpoint_url: 'https://platform.example/logs',
-      })
-    );
-    expect(findDeliveryEventMetadata(adapter)).toMatchObject({
-      selected_destination_id: 'dest_webhook_failing',
-      effective_destination_id: 'dest_webhook_platform',
-      fallback_destination_id: 'dest_webhook_platform',
-      fallback_used: true,
-      fallback_reason: 'destination_unusable',
-      policy_warnings: ['destination_unusable'],
-    });
-  });
 });
+
+for (const mode of ['scheduled', 'pipeline'] as const)
+  for (const [logType, sourceDataset] of [
+    ['job', 'runtime.admin_job_events'],
+    ['webhook', 'runtime.webhook_delivery_events'],
+  ] as const) {
+    it(`writes ${logType} through ${mode} without old JSON chunks or a second searchable copy`, async () => {
+      const f = await logProducerFixture(mode);
+      try {
+        const result = await emitRuntimeLogRecords({
+          env: f.env,
+          tenantId: 'tenant-a',
+          logType,
+          sourceDataset,
+          surface: logType,
+          planes: ['archive'],
+          tenantKeyResolver: async () => 'key-a',
+          records: [
+            {
+              id: 'runtime-1',
+              eventAt: f.now,
+              payload: { status: 'success', private_note: 'private-body' },
+            },
+          ],
+        });
+        expect(result.targetResults).toHaveLength(1);
+        expect(await f.rows(sourceDataset)).toMatchObject([
+          { id: 'runtime-1', tenant_id: 'tenant-a' },
+        ]);
+        expect(f.db.prepare('SELECT COUNT(*) n FROM log_iceberg_records').get()).toMatchObject({
+          n: mode === 'scheduled' ? 1 : 0,
+        });
+        expect(f.objects.size).toBe(mode === 'pipeline' ? 1 : 0);
+        expect(JSON.stringify([...f.objects.values()])).not.toContain('private-body');
+        if (mode === 'pipeline') expect(f.queueMessages).toHaveLength(1);
+        await emitRuntimeLogRecords({
+          env: f.env,
+          tenantId: 'tenant-a',
+          logType,
+          sourceDataset,
+          surface: logType,
+          planes: ['archive'],
+          records: [
+            {
+              id: 'runtime-1',
+              eventAt: f.now,
+              payload: { status: 'success', private_note: 'private-body' },
+            },
+          ],
+        });
+        expect(await f.rows(sourceDataset)).toHaveLength(1);
+      } finally {
+        f.db.close();
+      }
+    });
+  }

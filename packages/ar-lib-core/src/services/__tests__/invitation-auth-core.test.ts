@@ -95,7 +95,12 @@ describe('invitation-auth-core', () => {
       .mockResolvedValueOnce({ id: 'role-1' })
       .mockResolvedValueOnce({ id: 'assignment-1' });
 
-    const result = await assignTenantRoleToUser(adapter, 'user-1', 'role-1', 'tenant-1');
+    const result = await assignTenantRoleToUser(
+      { metadata: adapter, account: adapter },
+      'user-1',
+      'role-1',
+      'tenant-1'
+    );
 
     expect(result).toEqual({
       success: true,
@@ -110,18 +115,21 @@ describe('invitation-auth-core', () => {
     vi.mocked(adapter.queryOne)
       .mockResolvedValueOnce({ id: 'role-1' })
       .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ id: 'org-1' })
       .mockResolvedValueOnce(null);
+    vi.mocked(adapter.query).mockResolvedValueOnce([{ id: 'org-1' }]);
     vi.mocked(adapter.execute)
       .mockResolvedValueOnce({ success: true, rowsAffected: 1 })
       .mockResolvedValueOnce({ success: true, rowsAffected: 1 });
 
-    const result = await applyInvitationAssignments(adapter, {
-      userId: 'user-1',
-      tenantId: 'tenant-1',
-      roleId: 'role-1',
-      orgId: 'org-1',
-    });
+    const result = await applyInvitationAssignments(
+      { metadata: adapter, account: adapter },
+      {
+        userId: 'user-1',
+        tenantId: 'tenant-1',
+        roleId: 'role-1',
+        orgId: 'org-1',
+      }
+    );
 
     expect(result.roleAssignment?.success).toBe(true);
     expect(result.orgMembership?.success).toBe(true);
@@ -132,7 +140,7 @@ describe('invitation-auth-core', () => {
     );
     expect(adapter.execute).toHaveBeenNthCalledWith(
       2,
-      expect.stringContaining('INSERT INTO org_memberships'),
+      expect.stringContaining('INSERT INTO subject_org_membership'),
       expect.arrayContaining(['tenant-1', 'user-1', 'org-1', 'member'])
     );
   });

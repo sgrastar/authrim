@@ -9,6 +9,7 @@ import {
 } from '@authrim/ar-lib-core';
 import { sendPingNotification } from '@authrim/ar-lib-core/notifications';
 import { resolveAsyncTenantId } from './tenant';
+import { resolvePingTimeoutMs } from './ciba-ping-timeout';
 
 interface ConformanceApprovalCapability {
   type: 'ciba-conformance-approval';
@@ -79,7 +80,7 @@ export async function cibaConformanceActionHandler(c: Context<{ Bindings: Env }>
     })
   );
   if (!getResponse.ok) return c.json({ error: 'not_found' }, 404);
-  const metadata = (await getResponse.json()) as CIBARequestMetadata | null;
+  const metadata = await getResponse.json<CIBARequestMetadata | null>();
   if (!metadata || metadata.status !== 'pending') {
     return c.json({ error: 'invalid_request' }, 400);
   }
@@ -110,10 +111,13 @@ export async function cibaConformanceActionHandler(c: Context<{ Bindings: Env }>
     metadata.client_notification_token
   ) {
     try {
+      // Awaited inline, like the approval: the tenant's ping timeout bounds the wait.
+      const timeoutMs = await resolvePingTimeoutMs(c.env, tenantId, log);
       await sendPingNotification(
         metadata.client_notification_endpoint,
         metadata.client_notification_token,
-        authReqId
+        authReqId,
+        { timeoutMs }
       );
     } catch (error) {
       // The OP must not retry a failed ping. The client may still poll the token endpoint.

@@ -4,7 +4,7 @@
  * Settings for Authentication Assurance Level (AAL), Federation Assurance Level (FAL),
  * and Identity Assurance Level (IAL) per NIST SP 800-63 Revision 4.
  *
- * API: GET/PUT/DELETE /api/admin/settings/assurance-levels
+ * API: the Settings API (assurance category)
  * Config Level: tenant
  */
 
@@ -106,26 +106,15 @@ export const DEFAULT_ACR_MAPPINGS: ACRAssuranceMapping[] = [
 ];
 
 /**
- * AMR (Authentication Methods References) to AAL mapping
+ * The highest IAL (as a number: 1 is IAL1, 3 is IAL3) a SCIM token may assert for a user through
+ * the assurance extension, when the tenant has not set `assurance.scim_max_ial`. The secure
+ * default: a SCIM source asserts IAL2 or IAL3 only once the tenant raises the ceiling. This is
+ * the one place the default is named.
  */
-export const AMR_TO_AAL: Record<string, AAL> = {
-  // AAL1 methods
-  pwd: 'AAL1',
-  pin: 'AAL1',
-  sms: 'AAL1',
-  email: 'AAL1',
-
-  // AAL2 methods (multi-factor)
-  otp: 'AAL2',
-  mfa: 'AAL2',
-  swk: 'AAL2', // Software key
-  pop: 'AAL2', // Proof of possession
-
-  // AAL3 methods (hardware)
-  hwk: 'AAL3', // Hardware key
-  fpt: 'AAL3', // Fingerprint (when with hardware)
-  face: 'AAL3', // Face recognition (when with hardware)
-};
+export const DEFAULT_SCIM_MAX_IAL = 1;
+/** The range of `assurance.scim_max_ial`: the IALs of the identity assurance service. */
+export const SCIM_MAX_IAL_MIN = 1;
+export const SCIM_MAX_IAL_MAX = 3;
 
 /**
  * Assurance Levels Settings Interface
@@ -140,11 +129,32 @@ export interface AssuranceLevelsSettings {
   /** Default FAL when not explicitly set */
   'assurance.default_fal': FAL;
 
-  /** Default IAL for new users */
+  /** The IAL recorded for accounts the organisation creates (admin, SCIM, CSV) */
   'assurance.default_ial': IAL;
+
+  /** The highest IAL (1 to 3) a SCIM token may assert through the assurance extension */
+  'assurance.scim_max_ial': number;
+
+  /** Require minimum IAL for specific scopes (JSON) */
+  'assurance.scope_ial_requirements': string;
+
+  /** The assurance values (URIs) released for each IAL (JSON) */
+  'assurance.ial_assurance_values': string;
+
+  /** The AAL a SAML AuthnContextClassRef stands for (JSON) */
+  'assurance.saml_authn_context_aal': string;
+
+  /** The OpenID Connect for Identity Assurance profile verified_claims are released under (JSON) */
+  'assurance.ida_profile': string;
 
   /** Require minimum AAL for specific scopes (JSON) */
   'assurance.scope_aal_requirements': string;
+
+  /** The AAL an external or SAML IdP's acr is taken for (JSON) */
+  'assurance.upstream_acr_mappings': string;
+
+  /** The acr values of other vocabularies Authrim may return when asked, with their AAL (JSON) */
+  'assurance.outbound_acr_mappings': string;
 
   /** Include assurance levels in ID token */
   'assurance.include_in_id_token': boolean;
@@ -169,7 +179,8 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
     default: false,
     envKey: 'ENABLE_NIST_ASSURANCE_LEVELS',
     label: 'Enable Assurance Levels',
-    description: 'Enable explicit AAL/FAL/IAL tracking per NIST SP 800-63-4',
+    description:
+      'Enforce the AAL and FAL below (NIST SP 800-63-4); off leaves authorization, tokens and discovery as they were',
   },
   'assurance.default_aal': {
     key: 'assurance.default_aal',
@@ -177,7 +188,8 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
     default: 'AAL1',
     envKey: 'DEFAULT_AAL',
     label: 'Default AAL',
-    description: 'Default Authentication Assurance Level',
+    description:
+      'The AAL every authorization requires when AAL2 or AAL3: a session below it re-authenticates (guests are exempt). AAL1 requires nothing beyond what a login already does',
     enum: ['AAL1', 'AAL2', 'AAL3'],
   },
   'assurance.default_fal': {
@@ -186,7 +198,8 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
     default: 'FAL1',
     envKey: 'DEFAULT_FAL',
     label: 'Default FAL',
-    description: 'Default Federation Assurance Level',
+    description:
+      'The FAL tokens for a user must meet: FAL1 bearer, FAL2 bound to a DPoP key, FAL3 also from a pushed (PAR) authorization request with a signed request object',
     enum: ['FAL1', 'FAL2', 'FAL3'],
   },
   'assurance.default_ial': {
@@ -195,8 +208,22 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
     default: 'IAL1',
     envKey: 'DEFAULT_IAL',
     label: 'Default IAL',
-    description: 'Default Identity Assurance Level for new users',
+    description:
+      'The IAL recorded, as tenant-policy evidence, for accounts the organisation creates (by an administrator, SCIM or a CSV import) when IAL2 or IAL3, unless the SCIM client or CSV row gives the IAL itself. Self-registration, guests and sign-in from another IdP are never given it. Applies whether or not assurance levels are enabled, and to accounts created after the change',
     enum: ['IAL1', 'IAL2', 'IAL3'],
+  },
+  'assurance.scim_max_ial': {
+    key: 'assurance.scim_max_ial',
+    type: 'number',
+    default: DEFAULT_SCIM_MAX_IAL,
+    envKey: 'SCIM_MAX_IAL',
+    label: 'SCIM Maximum IAL',
+    description:
+      'The highest IAL a SCIM token may assert for a user through the assurance extension (1 is IAL1, 2 is IAL2, 3 is IAL3). A SCIM request asserting a higher level is refused (400) and writes nothing, also for the user fields it carries. At the default 1 a SCIM source can assert only IAL1. Evidence recorded earlier is not revoked when the ceiling is lowered. Applies whether or not assurance levels are enabled. It does not limit evidence an administrator records, the default IAL for accounts the organisation creates, or a CSV import',
+    min: SCIM_MAX_IAL_MIN,
+    max: SCIM_MAX_IAL_MAX,
+    integer: true,
+    envNumber: 'strict-in-range',
   },
   'assurance.scope_aal_requirements': {
     key: 'assurance.scope_aal_requirements',
@@ -204,21 +231,73 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
     default: '{}',
     label: 'Scope AAL Requirements',
     description:
-      'JSON mapping of scopes to minimum AAL (e.g., {"admin": "AAL2", "financial": "AAL3"})',
+      'JSON mapping of scopes to the AAL they require (e.g., {"admin": "AAL2", "financial": "AAL3"}); a request for such a scope re-authenticates until it is met',
+  },
+  'assurance.upstream_acr_mappings': {
+    key: 'assurance.upstream_acr_mappings',
+    type: 'string',
+    default: '{}',
+    label: 'Upstream ACR Mappings',
+    description:
+      'JSON mapping of the acr (or SAML AuthnContextClassRef) an external IdP returns to the AAL it is taken for (e.g., {"urn:mace:incommon:iap:silver": "AAL2"}); unmapped logins count as AAL1',
+  },
+  'assurance.outbound_acr_mappings': {
+    key: 'assurance.outbound_acr_mappings',
+    type: 'string',
+    default: '{}',
+    label: 'Outbound ACR Mappings',
+    description:
+      'JSON mapping of acr values from another vocabulary that Authrim may return to a client, to the AAL each requires (e.g., {"urn:mace:incommon:iap:silver": "AAL2", "urn:mace:incommon:iap:bronze": "AAL1"}). A client asking for one in acr_values (or as an essential acr) is stepped up to that AAL like for urn:authrim:aal:N and gets the value back once it is met; values not listed are never returned. The opposite direction of Upstream ACR Mappings',
+  },
+  'assurance.scope_ial_requirements': {
+    key: 'assurance.scope_ial_requirements',
+    type: 'string',
+    default: '{}',
+    label: 'Scope IAL Requirements',
+    description:
+      'JSON mapping of scopes to the IAL they require (e.g., {"payroll": "IAL2"}); a request for such a scope by someone below it is refused (access_denied at authorization, invalid_grant at the token endpoint, access_denied for device and CIBA), since no sign-in can raise an IAL. It applies to the scopes requested at authorization and to the scopes of every token a user grant issues (including refresh and token exchange), so evidence revoked later stops them. Applies while assurance levels are enabled; a client\'s own minimum IAL applies whether or not they are. It matches OAuth scopes, so it does not apply to SAML: a SAML service provider has its own minimum IAL',
+  },
+  'assurance.ial_assurance_values': {
+    key: 'assurance.ial_assurance_values',
+    type: 'string',
+    default: '{}',
+    label: 'IAL Assurance Values',
+    description:
+      'JSON mapping of each IAL to the assurance values (URIs) released for it, e.g. {"IAL1": ["https://www.gakunin.jp/profile/IAL1"], "IAL2": ["https://www.gakunin.jp/profile/IAL2"]}. A person gets the values of every IAL up to theirs, read from their evidence at the time (so revoked or expired evidence stops them with the next response). OIDC: the claim eduperson_assurance, released in UserInfo and ID tokens like a scope claim (the eduperson_assurance scope, or a claims parameter request); an app with a Destination Profile also needs the field listed in it; advertised in discovery. SAML: the attribute eduPersonAssurance (and the IAL itself) is released to a service provider whose field mapping set maps the system sources Assurance Values (eduPersonAssurance) and Identity Assurance Level (IAL) to it, with the same rules. Applies while assurance levels are enabled; empty releases nothing',
+  },
+  'assurance.saml_authn_context_aal': {
+    key: 'assurance.saml_authn_context_aal',
+    type: 'string',
+    default: '{}',
+    label: 'SAML AuthnContext AAL',
+    description:
+      'JSON mapping of SAML AuthnContextClassRef values to the AAL each stands for, e.g. {"https://www.gakunin.jp/profile/AAL2": "AAL2"}. A class reference a service provider requests (RequestedAuthnContext) is taken as the lowest AAL the sign-in may have, read with its Comparison (exact and minimum: that AAL; better: above it; maximum: no step-up). A session below it authenticates again (a step-up, when the request is not passive), and if the new sign-in falls short too the SP is answered with NoAuthnContext. A service provider whose AuthnContextClassRef mode is Assurance gets in the assertion the class reference of the AAL reached. A class reference not listed is handled as before. A service provider\'s own minimum AAL applies whether or not assurance levels are enabled. The bundled login UI carries a step-up out on its re-authentication page: the person authenticates again as the same user with a method the tenant allows for re-authentication (passkey, email code or TOTP, by their re-authentication setting, not their sign-in setting), and a session proven before the step-up began is never counted (a custom login UI has to do the same). The SP gets AuthnFailed when a ForceAuthn sign-in did not happen, or when the person comes back from the login or re-authentication page with no session. Applies while assurance levels are enabled; empty maps nothing',
+  },
+  'assurance.ida_profile': {
+    key: 'assurance.ida_profile',
+    // Saved and validated, not applied yet: runtime use lands with the identity assurance work.
+    status: 'in_development',
+    type: 'string',
+    default: '{}',
+    label: 'Identity Assurance Profile',
+    description:
+      'JSON describing the OpenID Connect for Identity Assurance verified_claims released to a client that requests them: {"trust_framework": "…", "assurance_levels": {"IAL2": "…"}, "claims": ["given_name", "family_name", "birthdate"]}. Empty releases no verified_claims. Released only for people at IAL2 or above, and only claims the request and its scopes allow. Applies while assurance levels are enabled (not applied yet)',
   },
   'assurance.include_in_id_token': {
     key: 'assurance.include_in_id_token',
     type: 'boolean',
     default: true,
     label: 'Include in ID Token',
-    description: 'Include acr/amr/aal/fal claims in ID tokens',
+    description:
+      'Give ID tokens an acr of the form urn:authrim:aal:N: the most preferred requested value the authentication meets (Outbound ACR Mappings included), otherwise the acr of the AAL reached (none at AAL0); an essential acr request always gets one of its values',
   },
   'assurance.include_in_access_token': {
     key: 'assurance.include_in_access_token',
     type: 'boolean',
     default: false,
     label: 'Include in Access Token',
-    description: 'Include assurance level claims in access tokens',
+    description:
+      'Give access tokens from an authorization (the authorization code, implicit and hybrid flows, and refreshes of them) auth_time, the acr of the AAL reached and the methods the authentication proved (RFC 9068)',
     visibility: 'admin',
   },
   'assurance.fal2_requires_dpop': {
@@ -226,7 +305,8 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
     type: 'boolean',
     default: true,
     label: 'FAL2 Requires DPoP',
-    description: 'Require DPoP proof-of-possession for FAL2 and higher',
+    description:
+      'At FAL2 and above, refuse token requests without a DPoP proof and access tokens from the authorization endpoint',
     visibility: 'admin',
   },
   'assurance.fal3_requires_par': {
@@ -234,7 +314,8 @@ export const ASSURANCE_LEVELS_SETTINGS_META: Record<keyof AssuranceLevelsSetting
     type: 'boolean',
     default: true,
     label: 'FAL3 Requires PAR',
-    description: 'Require Pushed Authorization Requests for FAL3',
+    description:
+      'At FAL3, accept only pushed (PAR) authorization requests whose request object the client signed, and refuse flows without one (device, CIBA, token exchange and others)',
     visibility: 'admin',
   },
 };
@@ -257,43 +338,19 @@ export const ASSURANCE_LEVELS_DEFAULTS: AssuranceLevelsSettings = {
   'assurance.default_aal': 'AAL1',
   'assurance.default_fal': 'FAL1',
   'assurance.default_ial': 'IAL1',
+  'assurance.scim_max_ial': DEFAULT_SCIM_MAX_IAL,
   'assurance.scope_aal_requirements': '{}',
+  'assurance.upstream_acr_mappings': '{}',
+  'assurance.outbound_acr_mappings': '{}',
+  'assurance.scope_ial_requirements': '{}',
+  'assurance.ial_assurance_values': '{}',
+  'assurance.saml_authn_context_aal': '{}',
+  'assurance.ida_profile': '{}',
   'assurance.include_in_id_token': true,
   'assurance.include_in_access_token': false,
   'assurance.fal2_requires_dpop': true,
   'assurance.fal3_requires_par': true,
 };
-
-/**
- * Determine AAL from authentication methods
- *
- * @param amr - Array of authentication method references
- * @returns The highest AAL level achieved
- */
-export function determineAALFromAMR(amr: string[]): AAL {
-  if (!amr || amr.length === 0) {
-    return 'AAL1';
-  }
-
-  let highestAAL: AAL = 'AAL1';
-
-  for (const method of amr) {
-    const aal = AMR_TO_AAL[method];
-    if (aal === 'AAL3') {
-      return 'AAL3'; // Can't get higher
-    }
-    if (aal === 'AAL2' && highestAAL === 'AAL1') {
-      highestAAL = 'AAL2';
-    }
-  }
-
-  // Multi-factor check: if multiple factors are present, bump to AAL2
-  if (amr.length >= 2 && highestAAL === 'AAL1') {
-    highestAAL = 'AAL2';
-  }
-
-  return highestAAL;
-}
 
 /**
  * Determine FAL based on token binding and assertion signing

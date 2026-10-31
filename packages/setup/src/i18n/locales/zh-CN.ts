@@ -742,6 +742,26 @@ const zhCN: Translations = {
   'web.lightMode': '浅色',
   'web.systemMode': '系统',
 
+  // Web UI cloud platform selection
+  'web.platform.title': '选择部署平台',
+  'web.platform.description': '请选择用于部署 Authrim 的云平台。',
+  'web.platform.cloudflareAction': '在 Cloudflare 上部署',
+  'web.platform.cloudflareDescription': '在 Cloudflare Workers 上设置 Authrim。',
+  'web.platform.awsAction': '在 AWS 上部署',
+  'web.platform.development': '开发中',
+  'web.platform.awsScope': '目前仅支持 SAML DR',
+  'web.platform.choose': '选择',
+  'web.platform.back': '返回选择部署平台',
+  'web.platform.awsTitle': '在 AWS 上准备 SAML DR',
+  'web.platform.awsDescription': '准备 SAML IdP 恢复环境，以应对 Cloudflare 故障。',
+  'web.platform.awsGuide':
+    '目前可通过 AWS 设置命令检查前提条件并创建部署计划。浏览器部署功能仍在开发中。',
+  'web.platform.awsPrerequisites': '请准备 AWS 账户、区域，以及通过专用角色登录的配置文件。',
+  'web.platform.awsCommand': '前提条件检查命令',
+  'web.platform.awsCommandNote': '请将账户 ID 和配置文件名称替换为您实际使用的 AWS 设置。',
+  'web.platform.targetPending': '未选择',
+  'web.platform.chooseCloudflare': '继续设置 Cloudflare',
+
   // Web UI Prerequisites
   'web.prereq.title': '准备',
   'web.prereq.checking': '检查中...',
@@ -1046,6 +1066,12 @@ const zhCN: Translations = {
   'web.comp.loginUiDesc': '面向用户的登录、注册、同意和账户管理页面。',
   'web.comp.adminUi': '管理 UI',
   'web.comp.adminUiDesc': '用于管理租户、客户端、用户和系统设置的管理仪表板。',
+  'web.comp.adminUiVariant': '管理界面版本',
+  'web.comp.adminUiLegacy': '当前管理界面',
+  'web.comp.adminUiLegacyDesc': '目前使用的管理界面，包含全部功能。',
+  'web.comp.adminUiConsole': '管理控制台（预览）',
+  'web.comp.adminUiConsoleDesc':
+    '重新设计的管理控制台。功能将逐步加入，尚未重建的项目会显示占位页面。与当前管理界面使用相同的 URL 和管理员通行密钥。',
 
   // Web UI Domain Row Labels
   'web.domain.loginUi': '登录 UI',
@@ -1277,6 +1303,8 @@ const zhCN: Translations = {
   'web.status.adminNotConfigured': '管理员未配置',
   'web.status.initializing': '初始化中...',
   'web.status.found': '找到 {{count}} 个',
+  'web.status.serverUnreachable':
+    '无法连接到 Setup 服务器。请检查它是否仍在终端中运行，必要时重新启动后再试。',
   'web.status.operationInProgress': '另一个设置操作正在进行中。请等待其完成后重试。',
   'web.status.warning': '警告：',
 

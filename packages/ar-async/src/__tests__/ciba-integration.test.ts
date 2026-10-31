@@ -20,6 +20,7 @@ const securityRegressionIt =
 
 // Mock getClient and logger at module level
 const mockGetClient = vi.hoisted(() => vi.fn());
+const mockValidateCIBAIdTokenHint = vi.hoisted(() => vi.fn());
 const mockLogger = vi.hoisted(() => ({
   info: vi.fn(),
   warn: vi.fn(),
@@ -39,6 +40,10 @@ vi.mock('@authrim/ar-lib-core', async () => {
       .fn()
       .mockImplementation((_c, env, clientId) => mockGetClient(env, clientId)),
     getLogger: () => mockLogger,
+    // The hint's signature is verified by validateCIBAIdTokenHint (tested on its own); here it
+    // stands for a hint this server signed, with the claims each test gives it.
+    validateCIBAIdTokenHint: mockValidateCIBAIdTokenHint,
+    getIssuedIDTokenKeys: vi.fn().mockResolvedValue([]),
     sendPingNotification: vi.fn().mockResolvedValue(undefined),
     // Mock rate limiting to always allow (bypass for tests)
     checkRateLimit: vi.fn().mockResolvedValue({
@@ -51,6 +56,10 @@ vi.mock('@authrim/ar-lib-core', async () => {
     getClientIP: vi.fn().mockReturnValue('127.0.0.1'),
     // Mock auth check
     isMockAuthEnabled: vi.fn().mockResolvedValue(true),
+    // Mock-mode approvers have no account data, so no consent withdrawals.
+    resolveAccountDataContextFromHono: vi
+      .fn()
+      .mockRejectedValue(new Error('account_data_route_not_found')),
   };
 });
 
@@ -98,10 +107,8 @@ describe('CIBA Integration', () => {
         if (pathname === '/get-by-auth-req-id') {
           const body = (await request.json()) as { auth_req_id: string };
           const metadata = storedCIBARequests.get(body.auth_req_id);
-          if (metadata) {
-            return new Response(JSON.stringify(metadata), { status: 200 });
-          }
-          return new Response(JSON.stringify({ error: 'not_found' }), { status: 404 });
+          // Like the real store: a request that does not exist is 200 with JSON null.
+          return new Response(JSON.stringify(metadata ?? null), { status: 200 });
         }
 
         if (pathname === '/approve') {
@@ -441,6 +448,50 @@ describe('CIBA Integration', () => {
       expect(body.error).toBe('invalid_scope');
       // AR_ERROR_CODES.SCOPE_UNAUTHORIZED uses standardized message
       expect(body.error_description).toContain('not authorized to request this scope');
+    });
+
+    describe('with an id_token_hint whose sub an identity mapping chose', () => {
+      function hintContext() {
+        return createMockContext(
+          withCIBAClientSecret({
+            client_id: 'ciba-client',
+            scope: 'openid',
+            id_token_hint: 'signed-id-token',
+          })
+        );
+      }
+
+      securityRegressionIt(
+        'refuses a hint that shows neither a sealed reference nor that its sub is the user id',
+        async () => {
+          mockGetClient.mockResolvedValue(createCIBAClientMetadata());
+          // Its mapped sub equals another user's id: the request would be for them.
+          mockValidateCIBAIdTokenHint.mockResolvedValue({
+            valid: true,
+            payload: { sub: 'user-2', aud: 'ciba-client', authrim_consent_generation: 0 },
+            subjectId: 'user-2',
+          });
+
+          const response = await cibaAuthorizationHandler(hintContext());
+
+          expect(response.status).toBe(400);
+          expect(storedCIBARequests.size).toBe(0);
+        }
+      );
+
+      it('starts the request for the user a marked hint names', async () => {
+        mockGetClient.mockResolvedValue(createCIBAClientMetadata());
+        mockValidateCIBAIdTokenHint.mockResolvedValue({
+          valid: true,
+          payload: { sub: 'user-1', aud: 'ciba-client', authrim_subject_account: true },
+          subjectId: 'user-1',
+        });
+
+        const response = await cibaAuthorizationHandler(hintContext());
+
+        expect(response.status).toBe(200);
+        expect([...storedCIBARequests.values()][0]?.resolved_subject_id).toBe('user-1');
+      });
     });
 
     it('should reject request without any login hint', async () => {

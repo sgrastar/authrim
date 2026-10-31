@@ -1,6 +1,14 @@
 import type { Translation } from '../i18n-types';
 
 const completion = {
+	error_rateLimited: 'Muitas tentativas. Aguarde um pouco e tente novamente.',
+	error_rateLimitedRetryAfter: 'Muitas tentativas. Tente novamente em cerca de {minutes} min.',
+	error_unregisteredPostLogoutRedirectUri:
+		'Você saiu da sua conta. Não foi possível voltar ao aplicativo porque o endereço de retorno dele não está registrado. Abra o aplicativo novamente.',
+	error_invalidIdTokenHint:
+		'Você saiu da sua conta. Não foi possível voltar ao aplicativo porque a solicitação de saída dele não pôde ser verificada. Abra o aplicativo novamente.',
+	error_idTokenHintRequired:
+		'Você saiu da sua conta. Não foi possível voltar ao aplicativo porque a solicitação de saída dele estava incompleta. Abra o aplicativo novamente.',
 	common_logoAlt: 'Logotipo',
 	common_footerLinks: 'Links do rodapé',
 	common_selectOption: 'Selecione uma opção',
@@ -40,7 +48,7 @@ const completion = {
 	emailCode_title: 'Verifique seu e-mail',
 	emailCode_subtitle: 'Enviamos um código de verificação para',
 	emailCode_instructions:
-		'Digite o código de 6 dígitos recebido por e-mail. O código expira em 5 minutos.',
+		'Digite o código de 6 dígitos recebido por e-mail. O e-mail informa por quanto tempo ele é válido.',
 	emailCode_codeLabel: 'Código de verificação',
 	emailCode_resendSuccess: 'Código enviado com sucesso',
 	emailCode_success: 'Verificação concluída. Redirecionando...',
@@ -89,7 +97,7 @@ const completion = {
 	device_subtitle: 'Digite o código exibido no seu dispositivo',
 	device_codeLabel: 'Código de verificação',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint: 'Digite o código de 8 caracteres do seu dispositivo (formato: XXXX-XXXX)',
+	device_codeHint: 'Digite o código exibido no seu dispositivo',
 	device_verifyButton: 'Verificar código',
 	device_confirmTitle: 'Autorizar dispositivo',
 	device_requestedPermissions: 'Permissões solicitadas',
@@ -102,6 +110,13 @@ const completion = {
 	device_errorApproveFailed: 'Não foi possível aprovar o dispositivo',
 	device_errorDenyFailed: 'Não foi possível recusar a solicitação do dispositivo',
 	device_errorInvalidRedirect: 'O servidor retornou uma URL de redirecionamento inválida',
+	device_errorConsentWithdrawn:
+		'Esta solicitação foi feita antes de você revogar o acesso deste aplicativo. Recomece no dispositivo para obter um novo código.',
+	device_errorTryAgain:
+		'Não foi possível salvar sua decisão agora e nada foi alterado. Tente novamente em instantes.',
+	device_errorTooManyAttempts: 'Muitas tentativas. Aguarde um pouco e tente novamente.',
+	device_errorOutcomeUnknown:
+		'Não foi possível confirmar se sua decisão foi salva. Verifique o dispositivo ou digite o código novamente.',
 	ciba_title: 'Solicitação de autenticação',
 	ciba_subtitle: 'Um aplicativo está solicitando sua aprovação',
 	ciba_noPendingRequests: 'Nenhuma solicitação de autenticação pendente',
@@ -121,6 +136,18 @@ const completion = {
 	ciba_errorGeneric: 'Ocorreu um erro',
 	ciba_errorApproveFailed: 'Não foi possível aprovar a solicitação',
 	ciba_errorDenyFailed: 'Não foi possível rejeitar a solicitação',
+	ciba_errorConsentWithdrawn:
+		'Esta solicitação foi feita antes de você revogar o acesso deste aplicativo. Recomece pelo aplicativo.',
+	ciba_errorRequestGone: 'Esta solicitação expirou ou já foi respondida.',
+	error_authorizationRequestExpired:
+		'A solicitação de login expirou. Comece novamente pelo aplicativo.',
+	ciba_errorTryAgain:
+		'Não foi possível salvar sua decisão agora e nada foi alterado. Tente novamente em instantes.',
+	ciba_errorTooManyAttempts: 'Muitas tentativas. Aguarde um pouco e tente novamente.',
+	ciba_errorOutcomeUnknown:
+		'Não foi possível confirmar se sua resposta foi salva. Atualize para ver as solicitações ainda pendentes.',
+	ciba_errorNoLongerWaiting:
+		'Não foi possível confirmar sua resposta, mas esta solicitação não está mais pendente.',
 	reauth_title: 'Verifique sua identidade',
 	reauth_subtitle: 'Por segurança, autentique-se novamente para continuar',
 	reauth_verifyWithPasskey: 'Verificar com Passkey',

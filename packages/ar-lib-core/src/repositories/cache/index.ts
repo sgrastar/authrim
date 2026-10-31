@@ -320,7 +320,7 @@ export class CacheRepository {
 
           return cached as T;
         }
-      } catch (error) {
+      } catch {
         this.stats.errors++;
         // Fall through to fetch
       }
@@ -357,7 +357,7 @@ export class CacheRepository {
         await this.userCacheKV.put(key, JSON.stringify(data), {
           expirationTtl: this.config.defaultTtlSeconds,
         });
-      } catch (error) {
+      } catch {
         this.stats.errors++;
       }
     }
@@ -382,7 +382,7 @@ export class CacheRepository {
     if (this.userCacheKV) {
       try {
         await Promise.all([this.userCacheKV.delete(coreKey), this.userCacheKV.delete(piiKey)]);
-      } catch (error) {
+      } catch {
         this.stats.errors++;
       }
     }
@@ -428,7 +428,7 @@ export class CacheRepository {
 
           return cached as T;
         }
-      } catch (error) {
+      } catch {
         this.stats.errors++;
         // Fall through to fetch
       }
@@ -465,7 +465,7 @@ export class CacheRepository {
         await this.clientCacheKV.put(key, JSON.stringify(data), {
           expirationTtl: this.config.defaultTtlSeconds,
         });
-      } catch (error) {
+      } catch {
         this.stats.errors++;
       }
     }
@@ -488,7 +488,7 @@ export class CacheRepository {
     if (this.clientCacheKV) {
       try {
         await this.clientCacheKV.delete(key);
-      } catch (error) {
+      } catch {
         this.stats.errors++;
       }
     }

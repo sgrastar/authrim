@@ -11,7 +11,7 @@
  * - Client ownership validation via D1 database
  * - Scoped KV keys with environment prefix
  * - Generalized error messages to prevent information leakage
- * - RBAC: Requires system_admin or org_admin role
+ * - RBAC: Requires the ar_tenant_admin role
  * - Audit logging for all contract modifications
  * - Status transition validation for lifecycle management
  *
@@ -31,11 +31,14 @@ import { Context, Hono } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 import {
   getTenantIdFromContext,
+  bumpAuthenticationMethodsCacheRevision,
   type DatabaseAdapter,
   createAuthContextFromHono,
   createPolicyResolver,
   type TenantContract,
   type ClientContract,
+  createDefaultGuestClientPolicy,
+  isValidGuestClientPolicy,
   type TenantPolicyPreset,
   type ClientProfilePreset,
   TENANT_POLICY_PRESETS,
@@ -79,8 +82,11 @@ import {
   type AuditActor,
   createAuditLogEntry,
   createLogger,
-  getTenantSystemSettings,
+  resolveEffectiveSettings,
+  ADMIN_ROLE_GROUPS,
 } from '@authrim/ar-lib-core';
+import { requireTenantAdminForChanges } from '../../admin-role-gates';
+import { redactClientContract, redactResolutionDebug } from './client-key-redaction';
 
 // =============================================================================
 // Types
@@ -324,6 +330,8 @@ async function saveClientContract(
 ): Promise<void> {
   const key = buildContractKey(env, 'client', tenantId, clientId);
   await kv.put(key, JSON.stringify(contract));
+  // Public authentication methods depend on client guest permission as well as tenant settings.
+  await bumpAuthenticationMethodsCacheRevision(env, tenantId);
 }
 
 // =============================================================================
@@ -376,6 +384,7 @@ function createDefaultClientContract(
   const now = new Date().toISOString();
   return {
     clientId,
+    guestAuth: createDefaultGuestClientPolicy(),
     version: 1,
     tenantContractVersion,
     preset,
@@ -439,6 +448,7 @@ const ALLOWED_CLIENT_PROFILE_KEYS = [
   'encryption',
   'scopes',
   'authMethods',
+  'guestAuth',
   'consent',
   'redirect',
   'tokens',
@@ -524,9 +534,13 @@ const policyRouter = new Hono<{
 // unrelated routes that are registered after this sub-router (for example Agent-safe read
 // operations). Keep the guard explicitly scoped to the paths owned by this router.
 // Note: adminAuthMiddleware is already applied at the parent router level.
-const policyAdminRoles = ['system_admin', 'org_admin', 'admin'];
+//
+// Only changes are held to the role. A read goes by the permission the declared access table asks
+// for (`admin:settings:read`, `admin:clients:read`), which is what the viewer role is given.
+// `GET /tenant-policy` is the one read that keeps the role: when the tenant has no contract yet it
+// saves a default one, so it is not a read-only call.
+const policyAdminRoles = [...ADMIN_ROLE_GROUPS.tenantAdmin];
 for (const path of [
-  '/tenant-policy',
   '/tenant-policy/*',
   '/clients/:clientId/profile',
   '/clients/:clientId/profile/validate',
@@ -535,8 +549,9 @@ for (const path of [
   '/effective-policy',
   '/effective-policy/options',
 ]) {
-  policyRouter.use(path, requireAnyRole(policyAdminRoles));
+  policyRouter.use(path, requireTenantAdminForChanges());
 }
+policyRouter.use('/tenant-policy', requireAnyRole(policyAdminRoles));
 
 // =============================================================================
 // Tenant Policy Routes
@@ -652,17 +667,21 @@ policyRouter.put('/tenant-policy', async (c) => {
       }
 
       if (requestedProfile === 'ai_ephemeral') {
-        // Check feature flag (KV > env > default: false)
-        let aiEphemeralEnabled = false;
+        // feature.enable_ai_ephemeral_auth: the saved value, else ENABLE_AI_EPHEMERAL_AUTH,
+        // else off. A setting that cannot be read does not enable it.
+        let aiEphemeralEnabled: boolean;
         try {
-          const settings = await getTenantSystemSettings(c.env.SETTINGS, tenantId);
-          const oidc = settings?.oidc as { aiEphemeralAuth?: { enabled?: boolean } } | undefined;
-          aiEphemeralEnabled = oidc?.aiEphemeralAuth?.enabled ?? false;
+          const flags = await resolveEffectiveSettings(c.env, 'feature-flags', {
+            tenantId,
+          });
+          aiEphemeralEnabled = flags['feature.enable_ai_ephemeral_auth'] === true;
         } catch {
-          // Fall back to env
-        }
-        if (!aiEphemeralEnabled) {
-          aiEphemeralEnabled = c.env.ENABLE_AI_EPHEMERAL_AUTH === 'true';
+          return errorResponse(
+            c,
+            'temporarily_unavailable',
+            'AI Ephemeral Auth settings cannot be read; try again',
+            503
+          );
         }
 
         if (!aiEphemeralEnabled) {
@@ -959,7 +978,9 @@ policyRouter.get('/clients/:clientId/profile', async (c) => {
   const tenantContract = await getTenantContract(kv, c.env, tenantId);
 
   return c.json({
-    profile: contract,
+    // The client's JWKS is its public key set. A private member saved into it (the PUT does not
+    // refuse one) is not handed back, to a viewer any more than to anyone else.
+    profile: redactClientContract(contract),
     tenantPolicyVersion: tenantContract?.version ?? 0,
     _links: {
       self: `/api/admin/clients/${clientId}/profile`,
@@ -1039,13 +1060,38 @@ policyRouter.put('/clients/:clientId/profile', async (c) => {
     }
   }
 
+  if (body.profile?.guestAuth !== undefined && !isValidGuestClientPolicy(body.profile.guestAuth)) {
+    return errorResponse(
+      c,
+      'bad_request',
+      'Invalid guest policy. Use explicit scope and upgrade method lists and preserve the existing subject.',
+      400
+    );
+  }
+
   // Get existing contract
   const existing = await getClientContract(kv, c.env, tenantId, clientId);
   const existingVersion = existing?.version ?? 0;
   const existingStatus = existing?.metadata?.status ?? 'draft';
 
-  // Get tenant policy for validation
-  const tenantContract = await getTenantContract(kv, c.env, tenantId);
+  // A guest-only update can use the same initial policy as the tenant-policy page.
+  // Read failures must not be mistaken for an unconfigured tenant.
+  let tenantContract: TenantContract | null;
+  try {
+    tenantContract = await kv.get<TenantContract>(
+      buildContractKey(c.env, 'tenant', tenantId),
+      'json'
+    );
+  } catch {
+    return errorResponse(c, 'service_unavailable', 'Tenant policy could not be loaded', 503);
+  }
+  const initializeTenantPolicy =
+    !tenantContract &&
+    Object.keys(body.profile ?? {}).length === 1 &&
+    body.profile?.guestAuth !== undefined;
+  if (initializeTenantPolicy) {
+    tenantContract = createDefaultTenantContract(tenantId, 'b2c-standard', actor);
+  }
   if (!tenantContract) {
     return errorResponse(
       c,
@@ -1148,6 +1194,9 @@ policyRouter.put('/clients/:clientId/profile', async (c) => {
     );
   }
 
+  if (initializeTenantPolicy) {
+    await saveTenantContract(kv, c.env, tenantId, tenantContract);
+  }
   await saveClientContract(kv, c.env, tenantId, clientId, updatedContract);
 
   // Audit logging
@@ -1429,7 +1478,8 @@ policyRouter.get('/effective-policy', async (c) => {
 
   return c.json({
     effectivePolicy: result.policy,
-    debug: result.debug,
+    // The trace echoes the contracts it read, the client's key set among them.
+    debug: redactResolutionDebug(result.debug),
     warnings: result.warnings,
     _links: {
       self: `/api/admin/effective-policy?client_id=${clientId}`,

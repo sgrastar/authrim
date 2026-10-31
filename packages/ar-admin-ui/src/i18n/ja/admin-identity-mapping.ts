@@ -335,6 +335,8 @@ const adminIdentityMapping = {
 	admin_identity_mapping_profile_edit_destination_method_aria: 'Destination作成方法',
 	admin_identity_mapping_profile_edit_create_from_existing: '既存から作成',
 	admin_identity_mapping_profile_edit_create_from_template: 'テンプレートから作成',
+	admin_identity_mapping_scope_standard_default_note:
+		'Scopes を空にすると、標準 claim は対応する scope が必要になります（email・email_verified は email、name などのプロフィール claim は profile、phone_number・phone_number_verified は phone、address は address）。sub と独自 claim は scope なしで出力されます。標準 claim をすべてのリクエストで出力するときは openid を選んでください。classification が pii または regulated の claim は scope の明示が必須で、Scopes を空のまま保存できません。',
 	admin_identity_mapping_scope_select_placeholder: 'scopeを選択',
 	admin_identity_mapping_scope_create_inline: '新規 scope...',
 	admin_identity_mapping_scope_create: 'scopeを作成',

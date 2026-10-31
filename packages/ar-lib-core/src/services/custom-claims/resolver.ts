@@ -12,6 +12,7 @@
 import type { KVNamespace } from '@cloudflare/workers-types';
 import type { DatabaseSource } from '../../db';
 import { createLogger } from '../../utils/logger';
+import { resolveEffectiveSettings, type EffectiveSettingsEnv } from '../effective-settings';
 import { SchemaLoader } from './schema-loader';
 import { ClaimScopeEvaluator } from './scope-evaluator';
 import { UserCustomDataFetcher } from './data-fetcher';
@@ -83,38 +84,42 @@ export interface CustomClaimSchemaResolverSources {
 // =============================================================================
 
 const DEFAULT_MAX_CLAIMS_PER_TARGET = 50;
-const FEATURE_CONFIG_CACHE_KEY = 'custom_claims:feature_config';
 
+/**
+ * Whether custom claim schemas add claims (and to introspection responses), and how many, for a
+ * tenant: `feature.enable_custom_claim_schemas(_introspection)` and
+ * `limits.custom_claim_schemas_max_per_target` as the Settings API resolves them (tenant,
+ * platform, the older `policy:flags:*` in AUTHRIM_CONFIG, defaults). Off when they cannot be read,
+ * as when the older flags could not be read.
+ */
 export async function loadFeatureConfig(
-  cache: KVNamespace | null
+  env: EffectiveSettingsEnv,
+  tenantId: string
 ): Promise<CustomClaimsFeatureConfig> {
   const config: CustomClaimsFeatureConfig = {
     enabled: false,
     introspectionEnabled: false,
     maxClaimsPerTarget: DEFAULT_MAX_CLAIMS_PER_TARGET,
   };
-
-  if (!cache) return config;
-
   try {
-    const [enabled, introspection, maxClaims] = await Promise.all([
-      cache.get('policy:flags:ENABLE_CUSTOM_CLAIMS'),
-      cache.get('policy:flags:ENABLE_CUSTOM_CLAIMS_INTROSPECTION'),
-      cache.get('policy:flags:CUSTOM_CLAIMS_MAX_PER_TOKEN'),
+    const [flags, limits] = await Promise.all([
+      resolveEffectiveSettings(env, 'feature-flags', { tenantId }),
+      resolveEffectiveSettings(env, 'limits', { tenantId }),
     ]);
-
-    config.enabled = enabled?.toLowerCase() === 'true' || enabled === '1';
-    config.introspectionEnabled = introspection?.toLowerCase() === 'true' || introspection === '1';
-    if (maxClaims) {
-      const n = parseInt(maxClaims, 10);
-      if (Number.isFinite(n) && n > 0) {
-        config.maxClaimsPerTarget = n;
-      }
+    config.enabled = flags['feature.enable_custom_claim_schemas'] === true;
+    config.introspectionEnabled =
+      flags['feature.enable_custom_claim_schemas_introspection'] === true;
+    const max = limits['limits.custom_claim_schemas_max_per_target'];
+    if (typeof max === 'number' && Number.isSafeInteger(max) && max > 0) {
+      config.maxClaimsPerTarget = max;
     }
   } catch {
-    // KV read failure: return defaults (disabled)
+    return {
+      enabled: false,
+      introspectionEnabled: false,
+      maxClaimsPerTarget: DEFAULT_MAX_CLAIMS_PER_TARGET,
+    };
   }
-
   return config;
 }
 

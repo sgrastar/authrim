@@ -461,3 +461,242 @@ describe('ApiMigrationEngine', () => {
     expect(d1.queryD1).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('ApiMigrationEngine same-version draft append', () => {
+  const baselineSql = 'CREATE TABLE account (id TEXT PRIMARY KEY);';
+  const appendedSql = 'ALTER TABLE account ADD COLUMN revoked_at INTEGER;';
+  const baseline = { path: '001_0_4_0_core_baseline.sql', checksum: digest(baselineSql) };
+  const appended = { path: '002_consent_revocations.sql', checksum: digest(appendedSql) };
+  const stream = (files: Array<{ path: string; checksum: string }>) => ({
+    id: 'core-d1',
+    schemaFamily: 'core',
+    dialect: 'sqlite',
+    targetKind: 'cloudflare-d1',
+    logicalRoles: ['core', 'tenant_core'],
+    files,
+  });
+
+  const middleSql = 'ALTER TABLE account ADD COLUMN display_name TEXT;';
+  const middle = { path: '002_display_name.sql', checksum: digest(middleSql) };
+
+  function appendRelease(withMiddle = false) {
+    const tail = withMiddle ? [middle, appended] : [appended];
+    const manifest = `${JSON.stringify({
+      formatVersion: 2,
+      productVersion: '0.4.2',
+      streams: [stream([baseline, ...tail])],
+      upgradePaths: [
+        { fromProductVersion: '0.4.2', kind: 'draft_append', streams: [stream(tail)] },
+      ],
+      acceptedMigrationHistory: [stream([baseline, ...tail])],
+    })}\n`;
+    const manifestDigest = digest(manifest);
+    const releaseId = `0.4.2-draft.${manifestDigest.slice(0, 12)}`;
+    const base = `releases/${releaseId}/${manifestDigest}/`;
+    const pin: MigrationReleasePin = {
+      environmentId: 'env-test',
+      streamId: 'core-d1',
+      releaseId,
+      manifestDigest,
+      manifestObjectKey: `${base}manifest.json`,
+      sourceProductVersion: '0.4.2',
+    };
+    return {
+      pin,
+      objects: new Map<string, string>([
+        [pin.manifestObjectKey, manifest],
+        [`${base}streams/core-d1/${appended.path}`, appendedSql],
+        [`${base}streams/core-d1/${middle.path}`, middleSql],
+      ]),
+    };
+  }
+
+  function executor(
+    history: Array<{ filename: string; checksum: string; applied_at: number }>,
+    pin: MigrationReleasePin
+  ) {
+    const executed: string[] = [];
+    let sentinelFiles = 0;
+    const queryD1 = vi.fn(async (_id: string, sql: string): Promise<CloudflareD1QueryResult[]> => {
+      if (sql.includes('FROM sqlite_master')) {
+        return queryResult([
+          { name: 'authrim_migrations' },
+          { name: 'tenant_database_migration_state' },
+        ]);
+      }
+      if (sql.startsWith('SELECT filename')) return queryResult(history);
+      if (sql.startsWith('SELECT stream_id')) {
+        return queryResult(
+          sentinelFiles === 0
+            ? []
+            : [
+                {
+                  stream_id: pin.streamId,
+                  release_id: pin.releaseId,
+                  manifest_digest: pin.manifestDigest,
+                  applied_file_count: sentinelFiles,
+                  state: 'ready',
+                  last_filename: appended.path,
+                },
+              ]
+        );
+      }
+      throw new Error('unexpected_query');
+    });
+    const queryD1Batch = vi.fn(async (_id: string, batch: readonly MigrationD1Query[]) => {
+      for (const query of batch) {
+        executed.push(query.sql);
+        if (query.sql.includes('INSERT INTO authrim_migrations')) {
+          history.push({
+            filename: String(query.params?.[0]),
+            checksum: String(query.params?.[1]),
+            applied_at: 1,
+          });
+        }
+        if (query.sql.includes('INSERT INTO tenant_database_migration_state')) {
+          sentinelFiles = Number(query.params?.[3]);
+        }
+      }
+      return batch.map(() => ({ success: true, results: [] }));
+    });
+    return { d1: { queryD1, queryD1Batch } satisfies MigrationD1Executor, executed };
+  }
+
+  it('applies only the appended file to a database that holds the baseline, then stays idempotent', async () => {
+    const { pin, objects } = appendRelease();
+    const history = [{ filename: baseline.path, checksum: baseline.checksum, applied_at: 1 }];
+    const { d1, executed } = executor(history, pin);
+    const engine = new ApiMigrationEngine(
+      new MigrationReleaseArtifactReader(new MemoryStore(objects)),
+      d1,
+      () => 2
+    );
+
+    await expect(engine.apply({ databaseId: 'db-id', pin })).resolves.toMatchObject({
+      totalFiles: 1,
+      appliedFiles: 1,
+      skippedFiles: 0,
+      lastFilename: appended.path,
+    });
+    expect(executed.some((sql) => sql.includes('CREATE TABLE account'))).toBe(false);
+    expect(executed.some((sql) => sql.includes('revoked_at'))).toBe(true);
+
+    executed.length = 0;
+    await expect(engine.apply({ databaseId: 'db-id', pin })).resolves.toMatchObject({
+      appliedFiles: 0,
+      skippedFiles: 1,
+    });
+    expect(executed).toHaveLength(0);
+  });
+
+  it('refuses a database whose recorded baseline differs from the accepted history', async () => {
+    const { pin, objects } = appendRelease();
+    const history = [{ filename: baseline.path, checksum: 'f'.repeat(64), applied_at: 1 }];
+    const { d1, executed } = executor(history, pin);
+    const engine = new ApiMigrationEngine(
+      new MigrationReleaseArtifactReader(new MemoryStore(objects)),
+      d1,
+      () => 2
+    );
+
+    await expect(engine.apply({ databaseId: 'db-id', pin })).rejects.toThrow(
+      'migration_history_checksum_mismatch'
+    );
+    expect(executed).toHaveLength(0);
+  });
+
+  async function applyAgainst(
+    history: Array<{ filename: string; checksum: string; applied_at: number }>,
+    withMiddle = false
+  ) {
+    const { pin, objects } = appendRelease(withMiddle);
+    const { d1, executed } = executor(history, pin);
+    const engine = new ApiMigrationEngine(
+      new MigrationReleaseArtifactReader(new MemoryStore(objects)),
+      d1,
+      () => 2
+    );
+    return { result: engine.apply({ databaseId: 'db-id', pin }), executed };
+  }
+
+  it('never starts a database without the baseline from empty history', async () => {
+    const { result, executed } = await applyAgainst([]);
+    await expect(result).rejects.toThrow('migration_history_prefix_missing');
+    expect(executed.some((sql) => sql.includes('CREATE TABLE account'))).toBe(false);
+    expect(executed.some((sql) => sql.includes('revoked_at'))).toBe(false);
+  });
+
+  it('refuses a database that skipped a file inside the prefix it claims to hold', async () => {
+    const { result, executed } = await applyAgainst(
+      [
+        { filename: baseline.path, checksum: baseline.checksum, applied_at: 1 },
+        { filename: appended.path, checksum: appended.checksum, applied_at: 1 },
+      ],
+      true
+    );
+    await expect(result).rejects.toThrow('migration_history_prefix_gap');
+    expect(executed.some((sql) => sql.includes('display_name'))).toBe(false);
+  });
+
+  it('refuses a recorded row the draft does not contain', async () => {
+    const { result } = await applyAgainst([
+      { filename: baseline.path, checksum: baseline.checksum, applied_at: 1 },
+      { filename: '009_hand_applied.sql', checksum: 'a'.repeat(64), applied_at: 1 },
+    ]);
+    await expect(result).rejects.toThrow('migration_history_unexpected_file');
+  });
+
+  it('refuses a changed middle file of the recorded prefix', async () => {
+    const { result, executed } = await applyAgainst(
+      [
+        { filename: baseline.path, checksum: baseline.checksum, applied_at: 1 },
+        { filename: middle.path, checksum: 'b'.repeat(64), applied_at: 1 },
+      ],
+      true
+    );
+    await expect(result).rejects.toThrow('migration_history_checksum_mismatch');
+    expect(executed).toHaveLength(0);
+  });
+
+  it('requires every baseline of the stream to be recorded, judged by name', async () => {
+    const lateBaselineSql = 'CREATE TABLE later_series (id TEXT);';
+    const lateBaseline = { path: '009_0_5_0_core_baseline.sql', checksum: digest(lateBaselineSql) };
+    const manifest = `${JSON.stringify({
+      formatVersion: 2,
+      productVersion: '0.4.2',
+      streams: [stream([baseline, appended, lateBaseline])],
+      upgradePaths: [
+        { fromProductVersion: '0.4.2', kind: 'draft_append', streams: [stream([appended])] },
+      ],
+      acceptedMigrationHistory: [stream([baseline, appended, lateBaseline])],
+    })}\n`;
+    const manifestDigest = digest(manifest);
+    const releaseId = `0.4.2-draft.${manifestDigest.slice(0, 12)}`;
+    const base = `releases/${releaseId}/${manifestDigest}/`;
+    const pin: MigrationReleasePin = {
+      environmentId: 'env-test',
+      streamId: 'core-d1',
+      releaseId,
+      manifestDigest,
+      manifestObjectKey: `${base}manifest.json`,
+      sourceProductVersion: '0.4.2',
+    };
+    const objects = new Map<string, string>([
+      [pin.manifestObjectKey, manifest],
+      [`${base}streams/core-d1/${appended.path}`, appendedSql],
+    ]);
+    const { d1, executed } = executor(
+      [{ filename: baseline.path, checksum: baseline.checksum, applied_at: 1 }],
+      pin
+    );
+    const engine = new ApiMigrationEngine(
+      new MigrationReleaseArtifactReader(new MemoryStore(objects)),
+      d1,
+      () => 2
+    );
+    await expect(engine.apply({ databaseId: 'db-id', pin })).rejects.toThrow(
+      'migration_history_prefix_missing'
+    );
+    expect(executed).toHaveLength(0);
+  });
+});

@@ -22,7 +22,6 @@
 
 import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../types/env';
-import { createOAuthConfigManager, type OAuthConfigManager } from '../utils/oauth-config';
 import type { ActorContext } from '../actor';
 import { CloudflareActorContext } from '../actor';
 import { createLogger, type Logger } from '../utils/logger';
@@ -50,6 +49,10 @@ export interface AuthorizationCode {
   authTime?: number; // OIDC auth_time (authentication timestamp)
   acr?: string; // OIDC acr (Authentication Context Class Reference)
   amr?: string[]; // OIDC amr (Authentication Methods References)
+  aal?: string; // The AAL the authentication reached (assurance enabled only)
+  pushedSignedRequest?: boolean; // Pushed (PAR) with a request object the client signed (FAL3)
+  assuranceAcr?: string; // The acr of the AAL reached, for access tokens (assurance enabled only)
+  assuranceAmr?: string[]; // The methods proven (none unverified), for access tokens
   cHash?: string; // OIDC c_hash for hybrid flows (RFC 3.3.2.11)
   dpopJkt?: string; // DPoP JWK thumbprint (RFC 9449) - binds code to DPoP key
   sid?: string; // OIDC Session Management: Session ID for RP-Initiated Logout
@@ -61,6 +64,7 @@ export interface AuthorizationCode {
   agentGrantId?: string;
   agentGrantGeneration?: number;
   agentConsentVersion?: number;
+  consentGeneration?: number; // The user's consent withdrawal generation for the client
   used: boolean;
   expiresAt: number;
   createdAt: number;
@@ -70,12 +74,29 @@ export interface AuthorizationCode {
   replayDetectedBeforeTokenRegistration?: boolean;
 }
 
+/** A request's value (code lifetime, per-user limit) when a positive integer, else the store's. */
+function positiveIntegerOr(requested: number | undefined, fallback: number): number {
+  return typeof requested === 'number' && Number.isSafeInteger(requested) && requested > 0
+    ? requested
+    : fallback;
+}
+
 /**
  * Store code request
  */
 export interface StoreCodeRequest {
   code: string;
   tenantId: string;
+  /**
+   * Lifetime of this code in seconds, as configured for the tenant or client
+   * (`oauth.auth_code_ttl`). The store's own configured lifetime applies when absent.
+   */
+  ttlSeconds?: number;
+  /**
+   * Most active codes one user may hold, as configured for the tenant
+   * (`oauth.max_codes_per_user`). The store's own limit applies when absent.
+   */
+  maxCodesPerUser?: number;
   clientId: string;
   redirectUri: string;
   userId: string;
@@ -89,6 +110,10 @@ export interface StoreCodeRequest {
   authTime?: number;
   acr?: string;
   amr?: string[];
+  aal?: string;
+  pushedSignedRequest?: boolean;
+  assuranceAcr?: string;
+  assuranceAmr?: string[];
   cHash?: string; // OIDC c_hash for hybrid flows
   dpopJkt?: string; // DPoP JWK thumbprint (RFC 9449)
   sid?: string; // OIDC Session Management: Session ID for RP-Initiated Logout
@@ -100,6 +125,8 @@ export interface StoreCodeRequest {
   agentGrantId?: string;
   agentGrantGeneration?: number;
   agentConsentVersion?: number;
+  /** The user's consent withdrawal generation for the client when the code was granted. */
+  consentGeneration?: number;
 }
 
 function assertValidTenantId(tenantId: unknown): asserts tenantId is string {
@@ -141,6 +168,10 @@ export interface ConsumeCodeResponse {
   authTime?: number;
   acr?: string;
   amr?: string[];
+  aal?: string;
+  pushedSignedRequest?: boolean;
+  assuranceAcr?: string;
+  assuranceAmr?: string[];
   cHash?: string; // OIDC c_hash for hybrid flows
   dpopJkt?: string; // DPoP JWK thumbprint (RFC 9449)
   sid?: string; // OIDC Session Management: Session ID for RP-Initiated Logout
@@ -152,6 +183,8 @@ export interface ConsumeCodeResponse {
   agentGrantId?: string;
   agentGrantGeneration?: number;
   agentConsentVersion?: number;
+  consentGeneration?: number;
+  createdAt?: number; // When the code was issued (ms): a consent withdrawn since refuses it
   // Present when replay attack is detected - contains JTIs to revoke
   replayAttack?: {
     accessTokenJti?: string;
@@ -188,7 +221,6 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
   private codes: Map<string, AuthorizationCode> = new Map();
   private cleanupInterval: number | null = null;
   private initialized: boolean = false;
-  private configManager: OAuthConfigManager;
   private actorCtx: ActorContext;
   private readonly log: Logger = createLogger().module('AuthorizationCodeStore');
 
@@ -201,7 +233,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
   // only one request can cross the one-time redemption boundary.
   private consumingCodes: Set<string> = new Set();
 
-  // Configuration (loaded from KV > env > default in initializeState)
+  // Fallbacks from env (else defaults), for requests that do not carry their own values
   private CODE_TTL: number; // Default: 60 seconds per OAuth 2.0 Security BCP
   private CLEANUP_INTERVAL_MS: number; // Default: 30 seconds
   private MAX_CODES_PER_USER: number; // DDoS protection
@@ -210,11 +242,8 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
     super(ctx, env);
     this.actorCtx = new CloudflareActorContext(ctx);
 
-    // Create config manager for KV > env > default priority
-    this.configManager = createOAuthConfigManager(env);
-
-    // Set initial values from environment (will be updated in initializeState with KV values)
-    // Default: 60 seconds per OAuth 2.0 Security BCP, but can be increased for load testing
+    // Lifetime and per-user limit when a request does not carry them (callers pass the values
+    // the Settings API resolves for the tenant and client). Default: 60 seconds per OAuth 2.0 Security BCP, but can be increased for load testing
     const codeTtlEnv = env.AUTH_CODE_EXPIRY;
     this.CODE_TTL = codeTtlEnv && !isNaN(Number(codeTtlEnv)) ? Number(codeTtlEnv) : 60;
 
@@ -235,33 +264,16 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
     // Block all requests until initialization completes
     // This ensures the DO is in a consistent state before processing any requests
     // Critical for one-time code consumption guarantee
-    this.actorCtx.blockConcurrencyWhile(async () => {
+    void this.actorCtx.blockConcurrencyWhile(async () => {
       await this.initializeStateBlocking();
     });
   }
 
   /**
-   * Initialize state from Durable Storage and load configuration from KV
+   * Initialize state from Durable Storage
    * Called by blockConcurrencyWhile() in constructor
-   *
-   * Configuration Priority: KV > Environment variable > Default value
    */
   private async initializeStateBlocking(): Promise<void> {
-    // Load configuration from KV (with env/default fallback)
-    try {
-      [this.CODE_TTL, this.MAX_CODES_PER_USER] = await Promise.all([
-        this.configManager.getAuthCodeTTL(),
-        this.configManager.getMaxCodesPerUser(),
-      ]);
-      this.log.info('Loaded config from KV', {
-        codeTTL: this.CODE_TTL,
-        maxCodesPerUser: this.MAX_CODES_PER_USER,
-      });
-    } catch (error) {
-      this.log.warn('Failed to load config from KV, using env/default values', {}, error as Error);
-      // Keep constructor-initialized values (from env)
-    }
-
     try {
       // Load all codes from individual key storage (code:*)
       const storedCodes = await this.actorCtx.storage.list<AuthorizationCode>({
@@ -374,44 +386,6 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
     };
   }
 
-  /**
-   * RPC: Force reload configuration from KV
-   */
-  async reloadConfigRpc(): Promise<{
-    status: string;
-    message?: string;
-    config?: {
-      previous: { ttl: number; maxCodesPerUser: number };
-      current: { ttl: number; maxCodesPerUser: number };
-    };
-  }> {
-    const previousTTL = this.CODE_TTL;
-    const previousMaxCodes = this.MAX_CODES_PER_USER;
-
-    // Clear configManager cache to force fresh KV read
-    this.configManager.clearCache();
-
-    // Reload configuration from KV
-    [this.CODE_TTL, this.MAX_CODES_PER_USER] = await Promise.all([
-      this.configManager.getAuthCodeTTL(),
-      this.configManager.getMaxCodesPerUser(),
-    ]);
-
-    this.log.info('Config reloaded', {
-      codeTTL: { previous: previousTTL, current: this.CODE_TTL },
-      maxCodesPerUser: { previous: previousMaxCodes, current: this.MAX_CODES_PER_USER },
-    });
-
-    return {
-      status: 'ok',
-      message: 'Configuration reloaded',
-      config: {
-        previous: { ttl: previousTTL, maxCodesPerUser: previousMaxCodes },
-        current: { ttl: this.CODE_TTL, maxCodesPerUser: this.MAX_CODES_PER_USER },
-      },
-    };
-  }
-
   // ==========================================
   // Internal Methods
   // ==========================================
@@ -447,7 +421,11 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
   private startCleanup(): void {
     if (this.cleanupInterval === null) {
       this.cleanupInterval = setInterval(() => {
-        this.cleanupExpiredCodes();
+        // Nothing awaits a timer callback: a storage failure is logged here, not left unhandled.
+        // The codes are already out of memory and expired; a restart reloads and cleans them up.
+        this.cleanupExpiredCodes().catch((error: unknown) => {
+          this.log.error('Failed to clean up expired codes', {}, error as Error);
+        });
       }, this.CLEANUP_INTERVAL_MS) as unknown as number;
     }
   }
@@ -544,10 +522,16 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
   async storeCode(request: StoreCodeRequest): Promise<{ success: boolean; expiresAt: number }> {
     await this.initializeState();
     assertValidTenantId(request.tenantId);
+    if (
+      request.consentGeneration !== undefined &&
+      (!Number.isSafeInteger(request.consentGeneration) || request.consentGeneration < 0)
+    ) {
+      throw new Error('invalid_request: Invalid consent generation');
+    }
 
     // DDoS protection: Limit codes per user
     const userCodeCount = this.countUserCodes(request.userId);
-    if (userCodeCount >= this.MAX_CODES_PER_USER) {
+    if (userCodeCount >= positiveIntegerOr(request.maxCodesPerUser, this.MAX_CODES_PER_USER)) {
       throw new Error('Too many authorization codes for this user');
     }
 
@@ -568,6 +552,10 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
       authTime: request.authTime,
       acr: request.acr,
       amr: request.amr,
+      ...(request.aal ? { aal: request.aal } : {}),
+      ...(request.pushedSignedRequest ? { pushedSignedRequest: true } : {}),
+      ...(request.assuranceAcr ? { assuranceAcr: request.assuranceAcr } : {}),
+      ...(request.assuranceAmr ? { assuranceAmr: request.assuranceAmr } : {}),
       cHash: request.cHash,
       dpopJkt: request.dpopJkt,
       sid: request.sid, // OIDC Session Management: Session ID for RP-Initiated Logout
@@ -579,8 +567,11 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
       agentGrantId: request.agentGrantId,
       agentGrantGeneration: request.agentGrantGeneration,
       agentConsentVersion: request.agentConsentVersion,
+      ...(request.consentGeneration !== undefined
+        ? { consentGeneration: request.consentGeneration }
+        : {}),
       used: false,
-      expiresAt: now + this.CODE_TTL * 1000,
+      expiresAt: now + positiveIntegerOr(request.ttlSeconds, this.CODE_TTL) * 1000,
       createdAt: now,
     };
 
@@ -742,6 +733,10 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
           authTime: stored.authTime,
           acr: stored.acr,
           amr: stored.amr,
+          aal: stored.aal,
+          pushedSignedRequest: stored.pushedSignedRequest,
+          assuranceAcr: stored.assuranceAcr,
+          assuranceAmr: stored.assuranceAmr,
           cHash: stored.cHash,
           dpopJkt: stored.dpopJkt,
           sid: stored.sid,
@@ -788,6 +783,10 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
         authTime: stored.authTime,
         acr: stored.acr,
         amr: stored.amr,
+        aal: stored.aal,
+        pushedSignedRequest: stored.pushedSignedRequest,
+        assuranceAcr: stored.assuranceAcr,
+        assuranceAmr: stored.assuranceAmr,
         cHash: stored.cHash,
         dpopJkt: stored.dpopJkt,
         sid: stored.sid, // OIDC Session Management: Session ID for RP-Initiated Logout
@@ -799,6 +798,8 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
         agentGrantId: stored.agentGrantId,
         agentGrantGeneration: stored.agentGrantGeneration,
         agentConsentVersion: stored.agentConsentVersion,
+        consentGeneration: stored.consentGeneration,
+        createdAt: stored.createdAt,
       };
     } finally {
       this.consumingCodes.delete(request.code);
@@ -876,7 +877,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
     try {
       // POST /code - Store authorization code
       if (path === '/code' && request.method === 'POST') {
-        const body = (await request.json()) as Partial<StoreCodeRequest>;
+        const body = await request.json<Partial<StoreCodeRequest>>();
 
         // Validate required fields
         if (!body.code || !body.clientId || !body.redirectUri || !body.userId || !body.scope) {
@@ -902,7 +903,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
 
       // POST /code/consume - Consume authorization code
       if (path === '/code/consume' && request.method === 'POST') {
-        const body = (await request.json()) as Partial<ConsumeCodeRequest>;
+        const body = await request.json<Partial<ConsumeCodeRequest>>();
 
         // Validate required fields
         if (!body.code || !body.clientId) {
@@ -992,10 +993,10 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
       // POST /code/:code/tokens - Register issued token JTIs for replay attack revocation
       if (path.startsWith('/code/') && path.endsWith('/tokens') && request.method === 'POST') {
         const code = path.substring(6, path.length - 7); // Remove '/code/' and '/tokens'
-        const body = (await request.json()) as {
+        const body = await request.json<{
           accessTokenJti?: string;
           refreshTokenJti?: string;
-        };
+        }>();
 
         if (!body.accessTokenJti) {
           return new Response(
@@ -1069,56 +1070,6 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
             headers: { 'Content-Type': 'application/json' },
           }
         );
-      }
-
-      // POST /reload-config - Force reload configuration from KV
-      // Used for updating TTL and other settings without restarting the DO
-      if (path === '/reload-config' && request.method === 'POST') {
-        const previousTTL = this.CODE_TTL;
-        const previousMaxCodes = this.MAX_CODES_PER_USER;
-
-        try {
-          // Clear configManager cache to force fresh KV read
-          this.configManager.clearCache();
-
-          // Reload configuration from KV
-          [this.CODE_TTL, this.MAX_CODES_PER_USER] = await Promise.all([
-            this.configManager.getAuthCodeTTL(),
-            this.configManager.getMaxCodesPerUser(),
-          ]);
-
-          this.log.info('Config reloaded via fetch', {
-            codeTTL: { previous: previousTTL, current: this.CODE_TTL },
-            maxCodesPerUser: { previous: previousMaxCodes, current: this.MAX_CODES_PER_USER },
-          });
-
-          return new Response(
-            JSON.stringify({
-              status: 'ok',
-              message: 'Configuration reloaded',
-              config: {
-                previous: { ttl: previousTTL, maxCodesPerUser: previousMaxCodes },
-                current: { ttl: this.CODE_TTL, maxCodesPerUser: this.MAX_CODES_PER_USER },
-              },
-            }),
-            {
-              headers: { 'Content-Type': 'application/json' },
-            }
-          );
-        } catch (error) {
-          this.log.error('Failed to reload config', {}, error as Error);
-          return new Response(
-            JSON.stringify({
-              status: 'error',
-              // SECURITY: Do not expose internal error details
-              message: 'Failed to reload configuration',
-            }),
-            {
-              status: 500,
-              headers: { 'Content-Type': 'application/json' },
-            }
-          );
-        }
       }
 
       return new Response('Not Found', { status: 404 });

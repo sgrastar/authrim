@@ -19,6 +19,12 @@
 import { createHash } from 'node:crypto';
 import { createLogger } from './logger';
 import { sanitizeObject } from './security';
+import {
+  identityMappingLevelHistoryChoicesEqual,
+  normalizeIdentityMappingLevelHistoryChoice,
+  type IdentityMappingLevelHistoryInput,
+  type IdentityMappingLevelHistoryMetadata,
+} from '../services/identity-mapping-level-history';
 
 const log = createLogger().module('SETTINGS_MANAGER');
 
@@ -36,8 +42,57 @@ export type SettingScope =
 
 /**
  * Setting value source
+ * - 'kv': set at the requested scope
+ * - 'tenant' / 'platform': inherited from that parent scope
+ * - 'env' / 'default': the deployment's environment variable, or the code default
  */
-export type SettingSource = 'env' | 'kv' | 'default';
+export type SettingSource = 'env' | 'kv' | 'default' | 'tenant' | 'platform';
+
+/** Where a value would come from if the requested scope set nothing. */
+export type InheritedSettingSource = Exclude<SettingSource, 'kv'>;
+
+/**
+ * Read options
+ */
+export interface SettingsReadOptions {
+  /**
+   * Scopes to inherit from, nearest first (for a client: its tenant, then the platform).
+   * Only scopes the category allows belong here; see `settingsParentScopes`.
+   */
+  parents?: SettingScope[];
+}
+
+/** Options of `SettingsManager.patch`. */
+export interface SettingsPatchOptions extends SettingsReadOptions {
+  /**
+   * Save values without checking their dependencies: for a set saved as a whole (values carried
+   * over from the older stores, which applied whatever their dependencies were, or a
+   * certification profile), where refusing one would change what applies.
+   */
+  skipDependencyCheck?: boolean;
+  /**
+   * Decide what the request would apply, clear, disable and reject (version conflict included)
+   * without saving, auditing or invalidating anything. A caller that must act before a change
+   * is saved uses it to act only on a change that will be accepted.
+   */
+  dryRun?: boolean;
+}
+
+interface InheritedLayer {
+  source: InheritedSettingSource;
+  data: Record<string, unknown>;
+}
+
+/** The layers a scope inherits from, nearest first: its tenant, then the platform. */
+function inheritedLayers(
+  parents: SettingScope[],
+  parentData: Record<string, unknown>[]
+): InheritedLayer[] {
+  return parents.map((parent, index) => ({
+    source: parent.type as InheritedSettingSource,
+    data: parentData[index],
+  }));
+}
 
 /**
  * Marker for disabled settings
@@ -57,6 +112,32 @@ export interface SettingMeta {
   default: unknown;
   /** Environment variable key mapping */
   envKey?: string;
+  /**
+   * The scopes this setting can be set at, when fewer than its category allows (for example a
+   * platform-only switch in a category that tenants can also set). Values stored at other
+   * scopes are ignored, and setting them is refused.
+   */
+  scopes?: Array<'platform' | 'tenant' | 'client'>;
+  /**
+   * How a boolean environment variable reads. 'true-or-1' (default): only `true` or `1` is true.
+   * 'unless-false': anything but `false` or `0` is true, as the older oauth-config read it.
+   * 'exactly-true': only the exact string `true` is true, as the older system settings read it.
+   * 'unless-exactly-false': anything but the exact string `false` is true, for a protection that
+   * only an explicit `false` turns off.
+   */
+  envBoolean?: 'true-or-1' | 'unless-false' | 'exactly-true' | 'unless-exactly-false';
+  /**
+   * 'false': a defined but empty boolean env value reads as false (not as unset), for settings
+   * whose runtime treats any defined value as set. Implied by envBoolean 'exactly-true'.
+   */
+  envEmpty?: 'unset' | 'false';
+  /**
+   * 'positive': a number env value of 0 or less is ignored, as runtime ignores it.
+   * 'in-range': one outside min..max is ignored, as runtime ignores it.
+   * 'fraction-in-range': read as a decimal (not cut to its whole part), and ignored outside
+   * min..max, for a setting such as a sample rate.
+   */
+  envNumber?: 'any' | 'positive' | 'in-range' | 'fraction-in-range' | 'strict-in-range';
   /** Human-readable label */
   label: string;
   /** Description for admin UI */
@@ -65,6 +146,12 @@ export interface SettingMeta {
   min?: number;
   /** Maximum value (for number/duration) */
   max?: number;
+  /** Require a safe integer for numeric settings. */
+  integer?: boolean;
+  /** Require a multiple of this (for a value runtime applies in larger units, such as ms as s). */
+  step?: number;
+  /** 'strip-trailing-slash': a string env value loses one trailing slash, as runtime reads it. */
+  envString?: 'as-is' | 'strip-trailing-slash';
   /** Unit (e.g., "seconds", "ms") */
   unit?: string;
   /** Allowed values (for enum type) */
@@ -117,6 +204,11 @@ export interface SettingsGetResult {
   values: Record<string, unknown>;
   /** Source of each value */
   sources: Record<string, SettingSource>;
+  /** What each value would be if this scope set nothing: the parents, then env, then default */
+  inherited: {
+    values: Record<string, unknown>;
+    sources: Record<string, InheritedSettingSource>;
+  };
 }
 
 /**
@@ -147,6 +239,49 @@ export interface SettingsPatchResult {
   disabled: string[];
   /** Rejected keys with reasons */
   rejected: Record<string, string>;
+  /**
+   * 'pending' when the change is saved but not yet copied to the KV that runtime workers read.
+   * Until a scheduled retry copies it (within about a minute), runtime keeps the previous values.
+   */
+  projection?: 'pending';
+  /**
+   * Only on a dry run: the scope's own document (what is saved, not the inherited values) before
+   * the request and as the request would leave it, after the keys it rejects are left out. A caller
+   * that must judge the result before it is saved (a guard) reads this, not the KV projection, so
+   * it sees the same document the save would act on.
+   */
+  candidate?: {
+    before: Record<string, unknown>;
+    after: Record<string, unknown>;
+  };
+}
+
+export interface CanonicalSettingsDocument {
+  data: Record<string, unknown>;
+  version: string;
+}
+
+/** Strong source used for platform, tenant and client settings; KV remains a runtime projection. */
+export interface SettingsCanonicalStore {
+  load(category: string, scope: SettingScope): Promise<CanonicalSettingsDocument | null>;
+  create(
+    category: string,
+    scope: SettingScope,
+    document: CanonicalSettingsDocument
+  ): Promise<CanonicalSettingsDocument>;
+  compareAndSet(
+    category: string,
+    scope: SettingScope,
+    expectedVersion: string,
+    document: CanonicalSettingsDocument,
+    history?: IdentityMappingLevelHistoryInput
+  ): Promise<boolean>;
+  markProjected(category: string, scope: SettingScope, version: string): Promise<void>;
+  /**
+   * Ask for this version to be projected again by the scheduled retry. Does nothing when a
+   * newer version has been saved since, because that save projects itself.
+   */
+  markPending(category: string, scope: SettingScope, version: string): Promise<void>;
 }
 
 /**
@@ -204,7 +339,31 @@ export function generateVersion(data: Record<string, unknown>): string {
 /**
  * Parse value from environment variable string
  */
-function parseEnvValue(value: string | undefined, type: SettingMeta['type']): unknown {
+function parseEnvValue(
+  value: string | undefined,
+  type: SettingMeta['type'],
+  parsing: Pick<
+    SettingMeta,
+    | 'envBoolean'
+    | 'envEmpty'
+    | 'envNumber'
+    | 'step'
+    | 'integer'
+    | 'envString'
+    | 'min'
+    | 'max'
+    | 'enum'
+  > = {}
+): unknown {
+  const envBoolean = parsing.envBoolean ?? 'true-or-1';
+  // Runtime that treats any defined value as set reads a defined but empty boolean as false.
+  if (
+    value === '' &&
+    type === 'boolean' &&
+    (envBoolean === 'exactly-true' || parsing.envEmpty === 'false')
+  ) {
+    return false;
+  }
   if (value === undefined || value === '') {
     return undefined;
   }
@@ -212,14 +371,41 @@ function parseEnvValue(value: string | undefined, type: SettingMeta['type']): un
   switch (type) {
     case 'number':
     case 'duration': {
-      const parsed = parseInt(value, 10);
-      return isNaN(parsed) ? undefined : parsed;
+      // 'strict-in-range': the whole value must be a number ('600junk' and '1800.9' are not 600
+      // and 1800); it is then checked like 'in-range' (and as an integer where required).
+      const parsed =
+        parsing.envNumber === 'fraction-in-range'
+          ? parseFloat(value)
+          : parsing.envNumber === 'strict-in-range'
+            ? /^\s*-?\d+(?:\.\d+)?\s*$/.test(value)
+              ? Number(value)
+              : NaN
+            : parseInt(value, 10);
+      if (!Number.isFinite(parsed)) return undefined;
+      if (parsing.envNumber === 'positive' && parsed <= 0) return undefined;
+      if (
+        (parsing.envNumber === 'in-range' ||
+          parsing.envNumber === 'fraction-in-range' ||
+          parsing.envNumber === 'strict-in-range') &&
+        ((parsing.min !== undefined && parsed < parsing.min) ||
+          (parsing.max !== undefined && parsed > parsing.max))
+      ) {
+        return undefined;
+      }
+      if (parsing.integer && !Number.isSafeInteger(parsed)) return undefined;
+      // A value the setting refuses (runtime could not apply it) is not used from env either.
+      return parsing.step !== undefined && parsed % parsing.step !== 0 ? undefined : parsed;
     }
     case 'boolean':
+      if (envBoolean === 'unless-false') return value.toLowerCase() !== 'false' && value !== '0';
+      if (envBoolean === 'exactly-true') return value === 'true';
+      if (envBoolean === 'unless-exactly-false') return value !== 'false';
       return value.toLowerCase() === 'true' || value === '1';
     case 'string':
+      return parsing.envString === 'strip-trailing-slash' ? value.replace(/\/$/, '') : value;
     case 'enum':
-      return value;
+      // A value the setting does not offer is not used from env (its default applies).
+      return !parsing.enum || parsing.enum.includes(value) ? value : undefined;
     case 'json':
       try {
         return JSON.parse(value);
@@ -234,6 +420,18 @@ function parseEnvValue(value: string | undefined, type: SettingMeta['type']): un
 /**
  * Check if a value is the disabled marker
  */
+/** Whether a setting can be set at a scope (its own `scopes`, when it narrows its category's). */
+function settableAt(meta: SettingMeta, scope: 'platform' | 'tenant' | 'client'): boolean {
+  return !meta.scopes || meta.scopes.includes(scope);
+}
+
+/** A value stored in one scope's document; the disabled marker reads as false. */
+function readLayer(data: Record<string, unknown>, key: string): { value: unknown } | undefined {
+  const value = data[key];
+  if (value === undefined) return undefined;
+  return { value: isDisabled(value) ? false : value };
+}
+
 export function isDisabled(value: unknown): boolean {
   return value === DISABLED_MARKER;
 }
@@ -269,6 +467,10 @@ function getKVKey(category: string, scope: SettingScope): string {
   }
 }
 
+export function settingsStorageKey(category: string, scope: SettingScope): string {
+  return getKVKey(category, scope);
+}
+
 // ============================================================================
 // Settings Manager
 // ============================================================================
@@ -287,21 +489,46 @@ export class SettingsManager {
   private kv: KVNamespace | null;
   private categoryMeta: Map<string, CategoryMeta> = new Map();
   private auditCallback?: (event: SettingsAuditEvent) => Promise<void>;
+  private canonicalStore: SettingsCanonicalStore | null;
+  private legacyKv: KVNamespace | null;
+  private readOnly: boolean;
+  private identityMappingHistory?: IdentityMappingLevelHistoryMetadata;
 
   // In-memory cache for runtime performance
   private cache: Map<string, { data: Record<string, unknown>; expiresAt: number }> = new Map();
   private cacheTTL: number;
+  private strictReads: boolean;
 
   constructor(options: {
     env: Record<string, string | undefined>;
     kv?: KVNamespace | null;
     cacheTTL?: number;
+    strictReads?: boolean;
+    canonicalStore?: SettingsCanonicalStore | null;
+    /**
+     * KV holding the tenant settings copy written at tenant creation (AUTHRIM_CONFIG). Read
+     * only to bootstrap a tenant's canonical document when the primary KV has none, so a tenant
+     * created before settings were written to SETTINGS keeps its values.
+     */
+    legacyKv?: KVNamespace | null;
     auditCallback?: (event: SettingsAuditEvent) => Promise<void>;
+    /**
+     * Read without writing anything: a missing canonical document is read from KV (and, for a
+     * tenant, the creation-time copy) without creating it, and saves are refused. For previews.
+     */
+    readOnly?: boolean;
+    /** Required actor/provenance for the tenant Mapping Set choice's atomic history. */
+    identityMappingHistory?: IdentityMappingLevelHistoryMetadata;
   }) {
     this.env = options.env;
     this.kv = options.kv ?? null;
     this.cacheTTL = options.cacheTTL ?? 5000; // Default 5 seconds
     this.auditCallback = options.auditCallback;
+    this.strictReads = options.strictReads ?? false;
+    this.canonicalStore = options.canonicalStore ?? null;
+    this.legacyKv = options.legacyKv ?? null;
+    this.readOnly = options.readOnly ?? false;
+    this.identityMappingHistory = options.identityMappingHistory;
   }
 
   /**
@@ -321,23 +548,35 @@ export class SettingsManager {
   /**
    * Get all settings for a category
    */
-  async getAll(category: string, scope: SettingScope): Promise<SettingsGetResult> {
+  async getAll(
+    category: string,
+    scope: SettingScope,
+    options: SettingsReadOptions = {}
+  ): Promise<SettingsGetResult> {
     const meta = this.categoryMeta.get(category);
     if (!meta) {
       throw new Error(`Unknown category: ${category}`);
     }
 
-    // Load KV data
-    const kvData = await this.loadKVData(category, scope);
+    const parents = options.parents ?? [];
+    const [kvData, ...parentData] = await Promise.all([
+      this.loadKVData(category, scope),
+      ...parents.map((parent) => this.loadKVData(category, parent)),
+    ]);
+    const layers = inheritedLayers(parents, parentData);
 
-    // Resolve values with priority: env > KV > default
+    // Resolve values with priority: this scope > parents (nearest first) > env > default
     const values: Record<string, unknown> = {};
     const sources: Record<string, SettingSource> = {};
+    const inherited: SettingsGetResult['inherited'] = { values: {}, sources: {} };
 
     for (const [key, settingMeta] of Object.entries(meta.settings)) {
-      const resolved = this.resolveValue(key, settingMeta, kvData);
-      values[key] = resolved.value;
-      sources[key] = resolved.source;
+      const fallback = this.resolveInherited(key, settingMeta, layers);
+      inherited.values[key] = fallback.value;
+      inherited.sources[key] = fallback.source;
+      const own = settableAt(settingMeta, scope.type) ? readLayer(kvData, key) : undefined;
+      values[key] = own ? own.value : fallback.value;
+      sources[key] = own ? 'kv' : fallback.source;
     }
 
     return {
@@ -346,26 +585,20 @@ export class SettingsManager {
       version: generateVersion(kvData),
       values,
       sources,
+      inherited,
     };
   }
 
   /**
    * Get a single setting value
    */
-  async get(key: string, scope: SettingScope): Promise<unknown> {
-    const [category] = key.split('.');
-    const meta = this.categoryMeta.get(category);
-    if (!meta) {
-      throw new Error(`Unknown category: ${category}`);
-    }
-
-    const settingMeta = meta.settings[key];
-    if (!settingMeta) {
+  async get(key: string, scope: SettingScope, options: SettingsReadOptions = {}): Promise<unknown> {
+    const category = this.categoryOfKey(key);
+    if (!category) {
       throw new Error(`Unknown setting: ${key}`);
     }
-
-    const kvData = await this.loadKVData(category, scope);
-    return this.resolveValue(key, settingMeta, kvData).value;
+    const result = await this.getAll(category, scope, options);
+    return result.values[key];
   }
 
   /**
@@ -381,7 +614,8 @@ export class SettingsManager {
     category: string,
     scope: SettingScope,
     request: SettingsPatchRequest,
-    actor: string
+    actor: string,
+    options: SettingsPatchOptions = {}
   ): Promise<SettingsPatchResult> {
     const meta = this.categoryMeta.get(category);
     if (!meta) {
@@ -393,8 +627,16 @@ export class SettingsManager {
 
     // Load current KV data directly from KV (skip cache to prevent TOCTOU race conditions)
     // This ensures we always read the latest KV data for version checking
-    const kvData = await this.loadKVData(category, scope, true);
+    // The loaded document is also what the cache holds: change a copy, never the cached object
+    // (a dry run, or a request that ends up saving nothing, must leave no candidate behind).
+    const kvData = structuredClone(await this.loadKVData(category, scope, true));
     const currentVersion = generateVersion(kvData);
+    // Dependencies are checked against effective values, which may come from a parent scope.
+    const parents = options.parents ?? [];
+    const parentData = await Promise.all(
+      parents.map((parent) => this.loadKVData(category, parent))
+    );
+    const layers = inheritedLayers(parents, parentData);
 
     // Check optimistic lock
     if (request.ifMatch !== currentVersion) {
@@ -409,91 +651,154 @@ export class SettingsManager {
     const rejected: Record<string, string> = {};
     const diff: Record<string, { before: unknown; after: unknown }> = {};
 
-    // Process set operations
+    // Build the document as it would be after this request: sets, then clears, then disables.
+    // Dependencies are checked against that document, so a value set, cleared or disabled in
+    // the same request counts, and anything this scope does not set is read as inherited.
+    const original = { ...kvData };
+    const setKeys: string[] = [];
+
+    // A key named by more than one operation has no single outcome; refuse it everywhere.
+    const operationCount = new Map<string, number>();
+    for (const key of [
+      ...new Set(Object.keys(request.set ?? {})),
+      ...new Set(request.clear ?? []),
+      ...new Set(request.disable ?? []),
+    ]) {
+      operationCount.set(key, (operationCount.get(key) ?? 0) + 1);
+    }
+    for (const [key, count] of operationCount) {
+      if (count > 1) rejected[key] = 'Conflicting operations for the same key';
+      const keyMeta = meta.settings[key];
+      if (keyMeta && !settableAt(keyMeta, scope.type) && !(key in rejected)) {
+        rejected[key] = `Not settable at ${scope.type} scope`;
+      }
+    }
+
     if (request.set) {
       for (const [key, value] of Object.entries(request.set)) {
+        if (key in rejected) continue;
         const settingMeta = meta.settings[key];
         if (!settingMeta) {
           rejected[key] = 'Unknown setting key';
           continue;
         }
-
-        // Note: KV values take priority over env values (per CLAUDE.md policy)
-        // Priority: Cache → KV → Environment variables → Default values
-        // So we allow KV writes even when env is set
-
-        // Validate value
+        // KV values take priority over env values (per CLAUDE.md policy), so KV writes are
+        // allowed even when env is set.
         const validation = this.validateSingleValue(key, value, settingMeta);
         if (!validation.valid) {
           rejected[key] = validation.errors[0]?.reason ?? 'Validation failed';
           continue;
         }
-
-        // Check dependencies
-        const depCheck = this.checkDependencies(key, settingMeta, kvData, request.set);
-        if (!depCheck.valid) {
-          rejected[key] = depCheck.reason;
-          continue;
-        }
-
-        // Apply
-        const before = kvData[key];
         kvData[key] = value;
-        diff[key] = { before, after: value };
-        applied.push(key);
+        setKeys.push(key);
       }
     }
 
-    // Process clear operations
     if (request.clear) {
       for (const key of request.clear) {
-        const settingMeta = meta.settings[key];
-        if (!settingMeta) {
+        if (key in rejected) continue;
+        if (!meta.settings[key]) {
           rejected[key] = 'Unknown setting key';
           continue;
         }
-
-        // Note: KV values take priority over env values (per CLAUDE.md policy)
-        // Clearing KV allows env fallback to take effect
-
+        // Clearing KV lets the inherited value (parents, env, default) take effect.
         if (key in kvData) {
-          const before = kvData[key];
           delete kvData[key];
-          diff[key] = { before, after: settingMeta.default };
-          cleared.push(key);
+          if (key in original) cleared.push(key);
         }
       }
     }
 
-    // Process disable operations
     if (request.disable) {
       for (const key of request.disable) {
+        if (key in rejected) continue;
         const settingMeta = meta.settings[key];
         if (!settingMeta) {
           rejected[key] = 'Unknown setting key';
           continue;
         }
-
-        // Note: KV values take priority over env values (per CLAUDE.md policy)
-        // Disabling via KV marker takes precedence over env value
-
-        // Only boolean settings can be disabled
+        // Only boolean settings can be disabled; the marker takes precedence over env.
         if (settingMeta.type !== 'boolean') {
           rejected[key] = 'Only boolean settings can be disabled';
           continue;
         }
-
-        const before = kvData[key];
         kvData[key] = DISABLED_MARKER;
-        diff[key] = { before, after: DISABLED_MARKER };
         disabled.push(key);
       }
     }
 
+    // Refuse sets whose dependencies the resulting document does not meet. Refusing one can
+    // break another's dependency, so repeat until nothing more is refused.
+    let changed = options.skipDependencyCheck !== true;
+    while (changed) {
+      changed = false;
+      for (const key of setKeys) {
+        if (key in rejected) continue;
+        const depCheck = this.checkDependencies(
+          meta.settings[key],
+          meta,
+          kvData,
+          layers,
+          scope.type
+        );
+        if (depCheck.valid) continue;
+        rejected[key] = depCheck.reason;
+        if (key in original) kvData[key] = original[key];
+        else delete kvData[key];
+        changed = true;
+      }
+    }
+
+    for (const key of setKeys) {
+      if (key in rejected) continue;
+      applied.push(key);
+      diff[key] = { before: original[key], after: request.set?.[key] };
+    }
+    for (const key of cleared) {
+      // After clearing, the scope takes what it inherits (a parent, env or the default).
+      diff[key] = {
+        before: original[key],
+        after: this.resolveInherited(key, meta.settings[key], layers).value,
+      };
+    }
+    for (const key of disabled) {
+      diff[key] = { before: original[key], after: DISABLED_MARKER };
+    }
+
+    if (options.dryRun) {
+      return {
+        version: currentVersion,
+        applied,
+        cleared,
+        disabled,
+        rejected,
+        candidate: { before: original, after: { ...kvData } },
+      };
+    }
+
     // Save if anything changed
     const hasChanges = applied.length > 0 || cleared.length > 0 || disabled.length > 0;
+    let projection: 'applied' | 'pending' = 'applied';
     if (hasChanges) {
-      await this.saveKVData(category, scope, kvData);
+      const key = 'identity_mapping.oidc_default_set_id';
+      const recordsChoice =
+        category === 'identity-mapping' &&
+        scope.type === 'tenant' &&
+        this.identityMappingHistory &&
+        !identityMappingLevelHistoryChoicesEqual('tenant_default', original[key], kvData[key]);
+      const history: IdentityMappingLevelHistoryInput | undefined =
+        recordsChoice && scope.type === 'tenant' && this.identityMappingHistory
+          ? {
+              ...this.identityMappingHistory,
+              id: crypto.randomUUID(),
+              tenantId: scope.id,
+              tier: 'tenant_default',
+              before: normalizeIdentityMappingLevelHistoryChoice('tenant_default', original[key]),
+              after: normalizeIdentityMappingLevelHistoryChoice('tenant_default', kvData[key]),
+              sourceVersion: generateVersion(kvData),
+            }
+          : undefined;
+      projection = await this.saveKVData(category, scope, kvData, currentVersion, history);
 
       // Invalidate cache
       this.invalidateCache(category, scope);
@@ -519,6 +824,7 @@ export class SettingsManager {
       cleared,
       disabled,
       rejected,
+      ...(projection === 'pending' ? { projection } : {}),
     };
   }
 
@@ -559,17 +865,13 @@ export class SettingsManager {
    * Get runtime view (resolved values only, no sources/version)
    * Uses short TTL cache for performance
    */
-  async getRuntimeView(category: string, scope: SettingScope): Promise<Record<string, unknown>> {
-    const cacheKey = getKVKey(category, scope);
-    const cached = this.cache.get(cacheKey);
-
-    if (cached && cached.expiresAt > Date.now()) {
-      // Return resolved values from cache
-      return this.resolveAllValues(category, cached.data);
-    }
-
-    // Load fresh
-    const result = await this.getAll(category, scope);
+  async getRuntimeView(
+    category: string,
+    scope: SettingScope,
+    options: SettingsReadOptions = {}
+  ): Promise<Record<string, unknown>> {
+    // loadKVData serves each scope's document from the short-lived cache.
+    const result = await this.getAll(category, scope, options);
     return result.values;
   }
 
@@ -586,7 +888,7 @@ export class SettingsManager {
     scope: SettingScope,
     skipCache = false
   ): Promise<Record<string, unknown>> {
-    if (!this.kv) {
+    if (!this.kv && !this.canonicalStore) {
       return {};
     }
 
@@ -602,21 +904,56 @@ export class SettingsManager {
 
     try {
       const key = getKVKey(category, scope);
-      const json = await this.kv.get(key);
+      if (this.canonicalStore) {
+        const canonical = await this.canonicalStore.load(category, scope);
+        if (canonical) {
+          if (generateVersion(canonical.data) !== canonical.version)
+            throw new Error('settings_canonical_version_invalid');
+          this.cache.set(cacheKey, {
+            data: canonical.data,
+            expiresAt: Date.now() + this.cacheTTL,
+          });
+          return canonical.data;
+        }
+      }
+      let json = this.kv ? await this.kv.get(key) : null;
+      // Bootstrapping a tenant document with nothing in the primary KV: take the creation-time
+      // copy instead of starting empty. It is left pending so it gets projected to the primary KV.
+      let fromLegacy = false;
+      if (json === null && this.canonicalStore && scope.type === 'tenant' && this.legacyKv) {
+        json = await this.legacyKv.get(key);
+        fromLegacy = json !== null;
+      }
 
       // Parse and validate KV data
       let data: Record<string, unknown> = {};
-      if (json) {
-        const parsed = JSON.parse(json);
+      // Only a missing key is an empty document: a stored empty string is unreadable data.
+      if (json !== null) {
+        const parsed: unknown = JSON.parse(json) as unknown;
         // Validate parsed data is a plain object (not null, not array)
         // and sanitize to prevent prototype pollution
         if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
           data = sanitizeObject(parsed);
         } else {
+          if (this.strictReads) throw new Error('settings_data_invalid');
           log.warn(
             `Invalid KV data format for ${key}: expected object, got ${Array.isArray(parsed) ? 'array' : typeof parsed}`
           );
         }
+      }
+
+      // A read-only manager (previews) never creates the canonical document from KV.
+      if (this.canonicalStore && !this.readOnly) {
+        const sourceVersion = generateVersion(data);
+        const created = await this.canonicalStore.create(category, scope, {
+          data,
+          version: sourceVersion,
+        });
+        if (generateVersion(created.data) !== created.version)
+          throw new Error('settings_canonical_version_invalid');
+        if (json !== null && !fromLegacy && created.version === sourceVersion)
+          await this.canonicalStore.markProjected(category, scope, created.version);
+        data = created.data;
       }
 
       // Update cache
@@ -626,8 +963,9 @@ export class SettingsManager {
       });
 
       return data;
-    } catch (error) {
+    } catch {
       log.warn('Failed to load settings from KV');
+      if (this.strictReads || this.canonicalStore) throw new Error('settings_read_failed');
       return {};
     }
   }
@@ -638,14 +976,49 @@ export class SettingsManager {
   private async saveKVData(
     category: string,
     scope: SettingScope,
-    data: Record<string, unknown>
-  ): Promise<void> {
-    if (!this.kv) {
-      throw new Error('KV not configured');
-    }
-
+    data: Record<string, unknown>,
+    expectedVersion: string,
+    history?: IdentityMappingLevelHistoryInput
+  ): Promise<'applied' | 'pending'> {
     const key = getKVKey(category, scope);
+    const version = generateVersion(data);
+    if (this.readOnly) throw new Error('Settings manager is read-only');
+    if (this.canonicalStore) {
+      if (
+        !(await this.canonicalStore.compareAndSet(
+          category,
+          scope,
+          expectedVersion,
+          {
+            data,
+            version,
+          },
+          history
+        ))
+      ) {
+        const latest = await this.canonicalStore.load(category, scope);
+        throw new ConflictError('Settings were updated by someone else. Please refresh.', {
+          currentVersion: latest?.version ?? expectedVersion,
+        });
+      }
+      return this.projectLatest(category, scope, key);
+    }
+    if (history) throw new Error('identity_mapping_history_canonical_required');
+    if (!this.kv) throw new Error('KV not configured');
     await this.kv.put(key, JSON.stringify(data));
+    return 'applied';
+  }
+
+  private async projectLatest(
+    category: string,
+    scope: SettingScope,
+    key: string
+  ): Promise<'applied' | 'pending'> {
+    if (!this.canonicalStore || !this.kv) {
+      log.warn('Settings saved; KV projection remains pending');
+      return 'pending';
+    }
+    return projectLatestSettingsDocument(this.canonicalStore, this.kv, category, scope, key);
   }
 
   /**
@@ -657,55 +1030,38 @@ export class SettingsManager {
   }
 
   /**
-   * Resolve a single value with priority: KV > env > default
-   * (per CLAUDE.md: Priority: Cache → KV → Environment variables → Default values)
-   *
-   * This allows Admin UI to override environment variables without redeployment.
+   * Resolve the value a scope inherits: the parents (nearest first), then env, then default
+   * (per CLAUDE.md: Priority: Cache → KV → Environment variables → Default values).
+   * A value set in KV overrides environment variables without redeployment.
    */
-  private resolveValue(
+  private resolveInherited(
     key: string,
     meta: SettingMeta,
-    kvData: Record<string, unknown>
-  ): { value: unknown; source: SettingSource } {
-    // 1. Check KV value (highest priority - allows dynamic override)
-    const kvValue = kvData[key];
-    if (kvValue !== undefined) {
-      // Handle disabled marker
-      if (isDisabled(kvValue)) {
-        return { value: false, source: 'kv' };
-      }
-      return { value: kvValue, source: 'kv' };
+    layers: InheritedLayer[]
+  ): { value: unknown; source: InheritedSettingSource } {
+    for (const layer of layers) {
+      // A parent is consulted only where that scope may set the setting.
+      if (!settableAt(meta, layer.source === 'tenant' ? 'tenant' : 'platform')) continue;
+      const found = readLayer(layer.data, key);
+      if (found) return { value: found.value, source: layer.source };
     }
 
-    // 2. Check env value (fallback when KV not set)
     if (meta.envKey) {
-      const envValue = parseEnvValue(this.env[meta.envKey], meta.type);
+      const envValue = parseEnvValue(this.env[meta.envKey], meta.type, meta);
       if (envValue !== undefined) {
         return { value: envValue, source: 'env' };
       }
     }
 
-    // 3. Use default
     return { value: meta.default, source: 'default' };
   }
 
-  /**
-   * Resolve all values for a category
-   */
-  private resolveAllValues(
-    category: string,
-    kvData: Record<string, unknown>
-  ): Record<string, unknown> {
-    const meta = this.categoryMeta.get(category);
-    if (!meta) {
-      return {};
+  /** The registered category that defines a key (key prefixes do not always match the category). */
+  private categoryOfKey(key: string): string | undefined {
+    for (const [category, meta] of this.categoryMeta) {
+      if (key in meta.settings) return category;
     }
-
-    const values: Record<string, unknown> = {};
-    for (const [key, settingMeta] of Object.entries(meta.settings)) {
-      values[key] = this.resolveValue(key, settingMeta, kvData).value;
-    }
-    return values;
+    return undefined;
   }
 
   /**
@@ -722,9 +1078,15 @@ export class SettingsManager {
     switch (meta.type) {
       case 'number':
       case 'duration':
-        if (typeof value !== 'number') {
+        if (typeof value !== 'number' || !Number.isFinite(value)) {
           errors.push({ key, reason: `Expected number, got ${typeof value}` });
         } else {
+          if (meta.integer && !Number.isSafeInteger(value)) {
+            errors.push({ key, reason: 'Value must be a safe integer' });
+          }
+          if (meta.step !== undefined && value % meta.step !== 0) {
+            errors.push({ key, reason: `Value must be a multiple of ${meta.step}` });
+          }
           if (meta.min !== undefined && value < meta.min) {
             errors.push({ key, reason: `Value must be >= ${meta.min}` });
           }
@@ -775,31 +1137,38 @@ export class SettingsManager {
   }
 
   /**
-   * Check setting dependencies
+   * Check setting dependencies against effective values: the value in the candidate document
+   * (this scope after the request), else what the scope inherits (parents, env, default).
+   * A dependency set to the disabled marker reads as disabled.
    */
   private checkDependencies(
-    key: string,
     meta: SettingMeta,
-    currentKvData: Record<string, unknown>,
-    pendingSet?: Record<string, unknown>
+    categoryMeta: CategoryMeta,
+    candidate: Record<string, unknown>,
+    layers: InheritedLayer[],
+    scopeType: SettingScope['type']
   ): { valid: boolean; reason: string } {
     if (!meta.dependsOn || meta.dependsOn.length === 0) {
       return { valid: true, reason: '' };
     }
 
     for (const dep of meta.dependsOn) {
-      // Check pending set first, then current KV data
-      const depValue = pendingSet?.[dep.key] ?? currentKvData[dep.key];
+      const depMeta = categoryMeta.settings[dep.key];
+      const raw =
+        dep.key in candidate && (!depMeta || settableAt(depMeta, scopeType))
+          ? candidate[dep.key]
+          : depMeta
+            ? this.effectiveInheritedRaw(dep.key, depMeta, layers)
+            : undefined;
 
-      // If dependency is disabled, reject the setting
-      if (isDisabled(depValue)) {
+      if (isDisabled(raw)) {
         return {
           valid: false,
           reason: `Depends on ${dep.key} which is currently disabled`,
         };
       }
 
-      if (depValue !== dep.value) {
+      if (raw !== dep.value) {
         return {
           valid: false,
           reason: `Depends on ${dep.key} = ${JSON.stringify(dep.value)}`,
@@ -809,6 +1178,81 @@ export class SettingsManager {
 
     return { valid: true, reason: '' };
   }
+
+  /** The inherited value of a key, keeping a parent's disabled marker so it can be reported. */
+  private effectiveInheritedRaw(key: string, meta: SettingMeta, layers: InheritedLayer[]): unknown {
+    for (const layer of layers) {
+      if (!settableAt(meta, layer.source === 'tenant' ? 'tenant' : 'platform')) continue;
+      if (layer.data[key] !== undefined) return layer.data[key];
+    }
+    return this.resolveInherited(key, meta, []).value;
+  }
+}
+
+/**
+ * Copy the latest canonical settings document to the KV that runtime workers read. Used right
+ * after a save and by the scheduled retry of pending projections.
+ *
+ * Always the latest, never a document the caller holds: another save may have landed in
+ * between, and writing an older document after it would leave KV behind the canonical copy
+ * while that copy is already marked as projected. After writing, the canonical version is read
+ * again; if it moved, the newer document is written instead, so whichever projection finishes
+ * last leaves KV at the latest version. If that does not settle within a few attempts, or KV
+ * keeps failing, the latest version seen is marked pending again for the scheduled retry.
+ *
+ * KV has no conditional write, so a slow write of an older document can still land after a
+ * newer one was projected and marked, and a failed read can hide that. The scheduled retry
+ * therefore also compares recently projected documents with KV and repairs any that differ
+ * (`processPendingSettingsProjections`).
+ *
+ * A document deleted while it was being written (a discarded tenant restore removes its
+ * documents and their keys) is no longer listed for any retry, so the write is undone here.
+ */
+export async function projectLatestSettingsDocument(
+  store: SettingsCanonicalStore,
+  kv: KVNamespace,
+  category: string,
+  scope: SettingScope,
+  key: string,
+  attempts = 3
+): Promise<'applied' | 'pending'> {
+  let lastSeen: string | undefined;
+  let written = false;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    // Any failure (reading the canonical copy, writing KV, marking) counts as this attempt
+    // failing: the save itself has already succeeded and must not be reported as an error.
+    try {
+      const latest = await store.load(category, scope);
+      if (!latest) {
+        if (written) await kv.delete(key);
+        return 'applied';
+      }
+      lastSeen = latest.version;
+      written = true;
+      await kv.put(key, JSON.stringify(latest.data));
+      const after = await store.load(category, scope);
+      if (!after) {
+        await kv.delete(key);
+        return 'applied';
+      }
+      lastSeen = after.version;
+      if (after?.version !== latest.version) continue;
+      // Throws when a newer save landed between the check and the mark; project that one.
+      await store.markProjected(category, scope, latest.version);
+      return 'applied';
+    } catch {
+      continue;
+    }
+  }
+  log.warn('Settings saved; KV projection remains pending');
+  if (lastSeen) {
+    try {
+      await store.markPending(category, scope, lastSeen);
+    } catch {
+      log.warn('Settings projection could not be marked pending');
+    }
+  }
+  return 'pending';
 }
 
 // ============================================================================
@@ -831,11 +1275,8 @@ export class ConflictError extends Error {
 /**
  * Create a SettingsManager instance
  */
-export function createSettingsManager(options: {
-  env: Record<string, string | undefined>;
-  kv?: KVNamespace | null;
-  cacheTTL?: number;
-  auditCallback?: (event: SettingsAuditEvent) => Promise<void>;
-}): SettingsManager {
+export function createSettingsManager(
+  options: ConstructorParameters<typeof SettingsManager>[0]
+): SettingsManager {
   return new SettingsManager(options);
 }

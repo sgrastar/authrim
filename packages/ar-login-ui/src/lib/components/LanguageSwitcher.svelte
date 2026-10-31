@@ -65,9 +65,9 @@
 			aria-label={themeStore.isDark ? $LL.theme_switchToLightMode() : $LL.theme_switchToDarkMode()}
 		>
 			{#if themeStore.isDark}
-				<div class="i-heroicons-sun h-4.5 w-4.5"></div>
+				<div class="i-ph-sun h-4.5 w-4.5"></div>
 			{:else}
-				<div class="i-heroicons-moon h-4.5 w-4.5"></div>
+				<div class="i-ph-moon h-4.5 w-4.5"></div>
 			{/if}
 		</button>
 	{/if}

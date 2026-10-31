@@ -1,6 +1,14 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { logProducerFixture } from './log-iceberg-producer-fixture';
 import type { DatabaseAdapter, TransactionContext } from '../../db/adapter';
 import { recordTenantRuntimeRegistrySnapshotSecurityEvent } from '../tenant-runtime-registry-security-events';
+
+vi.mock('@authrim/ar-lib-logging/iceberg/capabilities', async (original) => ({
+  ...(await original<typeof import('@authrim/ar-lib-logging/iceberg/capabilities')>()),
+  LOG_ARCHIVE_IMPLEMENTED_MODES: ['scheduled', 'pipeline'],
+}));
+const dispose: (() => void)[] = [];
+afterEach(() => dispose.splice(0).forEach((close) => close()));
 
 function createAdapter(overrides: Partial<DatabaseAdapter> = {}): DatabaseAdapter {
   let notificationLookupCount = 0;
@@ -50,6 +58,8 @@ function createAdapter(overrides: Partial<DatabaseAdapter> = {}): DatabaseAdapte
 
 describe('tenant-runtime-registry-security-events', () => {
   it('records audit, internal notification, and tenant security alert for snapshot verification failure', async () => {
+    const f = await logProducerFixture('scheduled');
+    dispose.push(() => f.db.close());
     const adminAdapter = createAdapter();
     const securityAlertAdapter = createAdapter();
 
@@ -67,6 +77,7 @@ describe('tenant-runtime-registry-security-events', () => {
       },
       {
         adminAuditAdapter: adminAdapter,
+        logEnv: f.env,
         internalNotificationAdapter: adminAdapter,
         securityAlertAdapter,
       }
@@ -78,18 +89,17 @@ describe('tenant-runtime-registry-security-events', () => {
       securityAlertCreated: true,
       errors: [],
     });
-    expect(adminAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining([
-        'tenant_runtime_registry_snapshot.verification_failed',
-        'tenant_runtime_registry_snapshot',
-        'tenant:tenant-a:runtime-registry:snapshot:tenant:edge-a',
-        'failure',
-        'invalid_signature',
-        'Runtime registry snapshot verification failed',
-        'critical',
-      ])
-    );
+    expect(await f.rows('admin.admin_audit_log')).toMatchObject([
+      {
+        action: 'tenant_runtime_registry_snapshot.verification_failed',
+        resource_type: 'tenant_runtime_registry_snapshot',
+        resource_id: 'tenant:tenant-a:runtime-registry:snapshot:tenant:edge-a',
+        result: 'failure',
+        error_code: 'invalid_signature',
+        error_message: 'Runtime registry snapshot verification failed',
+        severity: 'critical',
+      },
+    ]);
     expect(adminAdapter.execute).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO internal_notification_events'),
       expect.arrayContaining([
@@ -107,6 +117,12 @@ describe('tenant-runtime-registry-security-events', () => {
   });
 
   it('treats notification delivery failures as fail-open', async () => {
+    const f = await logProducerFixture('scheduled');
+    dispose.push(() => f.db.close());
+    if (!f.env.LOG_ARCHIVE_WRITER) throw new Error('missing fixture writer');
+    f.env.LOG_ARCHIVE_WRITER.writeRecords = vi.fn(async () => {
+      throw new Error('db_unavailable');
+    });
     const brokenAdapter = createAdapter({
       execute: vi.fn().mockRejectedValue(new Error('db_unavailable')),
     });
@@ -122,6 +138,7 @@ describe('tenant-runtime-registry-security-events', () => {
       },
       {
         adminAuditAdapter: brokenAdapter,
+        logEnv: f.env,
         internalNotificationAdapter: brokenAdapter,
       }
     );

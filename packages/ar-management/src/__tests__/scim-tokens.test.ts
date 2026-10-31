@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core/types/env';
+import { generateScimToken } from '@authrim/ar-lib-scim';
 import { adminScimTokenCreateHandler } from '../scim-tokens';
 
 // Mock scim-auth module (now from @authrim/ar-lib-scim package)
@@ -119,13 +120,13 @@ describe('SCIM Token Create Handler - Input Validation', () => {
       expect(body.error_description).toContain('invalid');
     });
 
-    it('should reject expiresInDays exceeding maximum (10 years)', async () => {
+    it('should reject expiresInDays exceeding maximum (1 year)', async () => {
       const response = await app.request(
         '/api/admin/scim-tokens',
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ expiresInDays: 3651 }), // > 10 years
+          body: JSON.stringify({ expiresInDays: 366 }), // > 1 year
         },
         mockEnv as Env
       );
@@ -212,7 +213,23 @@ describe('SCIM Token Create Handler - Input Validation', () => {
       expect(body.expiresInDays).toBe(1);
     });
 
-    it('should accept maximum valid expiresInDays (3650 days)', async () => {
+    it('should accept maximum valid expiresInDays (365 days)', async () => {
+      const response = await app.request(
+        '/api/admin/scim-tokens',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ expiresInDays: 365 }),
+        },
+        mockEnv as Env
+      );
+
+      expect(response.status).toBe(201);
+      const body = (await response.json()) as { expiresInDays: number };
+      expect(body.expiresInDays).toBe(365);
+    });
+
+    it('should no longer accept the old 10 year maximum', async () => {
       const response = await app.request(
         '/api/admin/scim-tokens',
         {
@@ -223,9 +240,93 @@ describe('SCIM Token Create Handler - Input Validation', () => {
         mockEnv as Env
       );
 
+      expect(response.status).toBe(400);
+    });
+  });
+
+  describe('expiry settings of the tenant (federation.scim_token_*_expiry)', () => {
+    const DAY = 86400;
+    const withSettings = (values: Record<string, unknown> | null) =>
+      ({
+        SETTINGS: {
+          get: vi.fn(async (key: string) =>
+            values && key === 'settings:tenant:default:federation' ? JSON.stringify(values) : null
+          ),
+        } as unknown as KVNamespace,
+      }) as Partial<Env>;
+    const create = (body: Record<string, unknown>, settings: Record<string, unknown> | null) =>
+      app.request(
+        '/api/admin/scim-tokens',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        },
+        { ...mockEnv, ...withSettings(settings) } as Env
+      );
+
+    it("gives a token the tenant's default lifetime when the request names none", async () => {
+      const response = await create({}, { 'federation.scim_token_default_expiry': 30 * DAY });
+
       expect(response.status).toBe(201);
-      const body = (await response.json()) as { expiresInDays: number };
-      expect(body.expiresInDays).toBe(3650);
+      expect(((await response.json()) as { expiresInDays: number }).expiresInDays).toBe(30);
+      expect(vi.mocked(generateScimToken)).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ expiresInDays: 30 })
+      );
+    });
+
+    it("refuses a lifetime past the tenant's maximum and accepts one at it", async () => {
+      const settings = { 'federation.scim_token_max_expiry': 30 * DAY };
+
+      expect((await create({ expiresInDays: 31 }, settings)).status).toBe(400);
+      expect(vi.mocked(generateScimToken)).not.toHaveBeenCalled();
+      const atMax = await create({ expiresInDays: 30 }, settings);
+      expect(atMax.status).toBe(201);
+      expect(((await atMax.json()) as { expiresInDays: number }).expiresInDays).toBe(30);
+    });
+
+    it('keeps the default within a lower maximum', async () => {
+      const response = await create({}, { 'federation.scim_token_max_expiry': 30 * DAY });
+
+      expect(((await response.json()) as { expiresInDays: number }).expiresInDays).toBe(30);
+    });
+
+    it('uses a year for values out of range', async () => {
+      const response = await create(
+        { expiresInDays: 366 },
+        {
+          'federation.scim_token_max_expiry': 10 * 365 * DAY,
+          'federation.scim_token_default_expiry': 5,
+        }
+      );
+      expect(response.status).toBe(400);
+
+      const byDefault = await create(
+        {},
+        { 'federation.scim_token_default_expiry': 5, 'federation.scim_token_max_expiry': 5 }
+      );
+      expect(((await byDefault.json()) as { expiresInDays: number }).expiresInDays).toBe(365);
+    });
+
+    it('issues nothing when the tenant settings cannot be read', async () => {
+      const response = await app.request(
+        '/api/admin/scim-tokens',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ expiresInDays: 30 }),
+        },
+        {
+          ...mockEnv,
+          SETTINGS: {
+            get: vi.fn(async () => '{not json'),
+          } as unknown as KVNamespace,
+        } as Env
+      );
+
+      expect(response.status).toBe(500);
+      expect(vi.mocked(generateScimToken)).not.toHaveBeenCalled();
     });
   });
 

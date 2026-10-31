@@ -1,26 +1,37 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
+  ACCOUNT_REAUTH_REQUIRED_ERROR,
   accountDirectoryRemovalOutboxId,
+  type AccountDirectoryRemovalPublication,
+  advancePasskeyAuthenticationState,
+  buildDOKey,
   CanonicalRuntimeUserStore,
-  PasskeyRepository,
-  passkeyCredentialLookupSubject,
   createAccountAuthContextFromHono,
   createPIIContextFromHono,
-  buildDOKey,
+  type ExecuteResult,
   generateId,
   getChallengeStoreByChallengeId,
   getLogger,
+  getSessionRevocationStore,
+  getSessionStoreBySessionId,
+  getTenantIdFromContext,
+  isAccountAuthenticationDeniedError,
+  isAccountReauthFresh,
+  isAuthenticationMethodUsageAvailable,
+  isLoginMethodRemovalSafe,
+  LoginMethodRemovalInProgressError,
   markAccountDirectoryRemovalReady,
+  passkeyCredentialLookupSubject,
+  PasskeyRepository,
   produceNotificationDelivery,
   resolveAccountDataContextFromHono,
-  getSessionStoreBySessionId,
-  getSessionRevocationStore,
-  advancePasskeyAuthenticationState,
-  isAccountAuthenticationDeniedError,
-  getTenantIdFromContext,
-  type AccountDirectoryRemovalPublication,
-  type ExecuteResult,
+  resolveAccountReauthTtlSeconds,
+  runTenantBackupCoveredEffect,
+  withLoginMethodRemovalLock,
+  CREDENTIALS_SETTINGS_META,
+  resolveEmailCodeTtlSeconds,
+  resolveEmailSendLimit,
 } from '@authrim/ar-lib-core';
 import { resolveAaguidAuthenticator } from '@authrim/ar-lib-core/webauthn/aaguid-metadata';
 import { requireAccountSession, type AccountSession } from './account-page';
@@ -32,7 +43,7 @@ import {
 } from '@simplewebauthn/server';
 import type {
   AuthenticationResponseJSON,
-  AuthenticatorTransportFuture,
+  AuthenticatorTransport,
   RegistrationResponseJSON,
 } from '@simplewebauthn/server';
 import { recordAccountOperation } from './account-operation-log';
@@ -52,13 +63,8 @@ async function resolveAccountAuthContext(
   await resolveAccountDataContextFromHono(c, userId);
   return createAccountAuthContextFromHono(c, tenantId);
 }
-const REAUTH_TTL_SECONDS = 5 * 60;
-const EMAIL_REAUTH_TTL_SECONDS = 5 * 60;
 const RP_NAME = 'Authrim';
-const AUTHENTICATION_METHODS_CATEGORY = 'authentication-methods';
 type AccountAuthenticatorTransport = 'usb' | 'nfc' | 'ble' | 'internal' | 'hybrid';
-type AuthenticationMethodUsage = 'login' | 'signup' | 'reauth' | 'account_link';
-type BuiltInAuthenticationMethod = 'passkey' | 'email_otp';
 
 const VALID_TRANSPORTS: AccountAuthenticatorTransport[] = [
   'usb',
@@ -150,19 +156,28 @@ function buildWebAuthnSignalDetails(
   };
 }
 
-function reauthRequired(c: Context<{ Bindings: Env }>): Response {
+/** Another removal of the account's sign-in methods is running (409, retry shortly). */
+function loginMethodRemovalInProgress(c: Context<{ Bindings: Env }>): Response {
   return c.json(
     {
-      error: 'reauth_required',
-      error_description: 'Recent authentication is required for this operation',
-      reauth_required: true,
+      error: 'operation_in_progress',
+      error_description: 'Another change to how this account signs in is in progress.',
     },
-    403
+    409
   );
 }
 
-function isRecentlyAuthenticated(accountSession: AccountSession): boolean {
-  return Math.floor(Date.now() / 1000) < accountSession.authTime + REAUTH_TTL_SECONDS;
+function reauthRequired(c: Context<{ Bindings: Env }>): Response {
+  return c.json(ACCOUNT_REAUTH_REQUIRED_ERROR, 403);
+}
+
+/** Whether the session was authenticated within the tenant's re-authentication window. */
+async function isRecentlyAuthenticated(
+  c: Context<{ Bindings: Env }>,
+  accountSession: AccountSession
+): Promise<boolean> {
+  const ttlSeconds = await resolveAccountReauthTtlSeconds(c.env, getTenantIdFromContext(c));
+  return isAccountReauthFresh(accountSession.authTime, undefined, ttlSeconds);
 }
 
 function normalizeOrigin(value: string | undefined | null): string | null {
@@ -247,8 +262,17 @@ function isSameOriginAccountRequest(
   return candidateOrigins.has(normalizedOrigin);
 }
 
-function getAccountWebAuthnOrigin(c: Context<{ Bindings: Env }>): string | null {
-  const originHeader = c.req.header('Origin');
+export function getAccountWebAuthnOrigin(
+  c: Context<{ Bindings: Env }>,
+  allowReadOrigin = false
+): string | null {
+  // Same-origin browser GETs omit Origin. Eligibility reads may use the page/referrer
+  // origin, but proof creation and verification still require the explicit Origin header.
+  const originHeader =
+    c.req.header('Origin') ??
+    (allowReadOrigin && c.req.method === 'GET'
+      ? (c.req.header('Referer') ?? c.req.url)
+      : undefined);
   const origin = normalizeOrigin(originHeader);
   if (!origin) {
     return null;
@@ -303,7 +327,8 @@ async function requireRecentAccountSession(
   if (accountSession instanceof Response) {
     return accountSession;
   }
-  if (!isRecentlyAuthenticated(accountSession)) {
+  if (accountSession.isGuestSession) return c.json({ error: 'guest_registration_required' }, 403);
+  if (!(await isRecentlyAuthenticated(c, accountSession))) {
     return reauthRequired(c);
   }
   return accountSession;
@@ -318,80 +343,6 @@ function normalizeDeviceName(value: unknown): string | null {
   }
   const normalized = value.trim().replace(/\s+/g, ' ');
   return normalized || null;
-}
-
-function normalizeBoolean(value: unknown, fallback: boolean): boolean {
-  if (typeof value === 'boolean') {
-    return value;
-  }
-  if (typeof value === 'string') {
-    const normalized = value.trim().toLowerCase();
-    if (normalized === 'true') return true;
-    if (normalized === 'false') return false;
-  }
-  return fallback;
-}
-
-function getAuthenticationMethodSettingKey(
-  method: BuiltInAuthenticationMethod,
-  usage: AuthenticationMethodUsage
-): string {
-  return usage === 'account_link'
-    ? `authentication-methods.${method}.account_link_enabled`
-    : `authentication-methods.${method}.${usage}_enabled`;
-}
-
-async function getLegacyAuthenticationMethodDefault(
-  env: Env,
-  method: BuiltInAuthenticationMethod
-): Promise<boolean> {
-  let legacyDefault = method === 'passkey';
-  try {
-    const rawSystemSettings = await env.SETTINGS?.get('system_settings');
-    if (!rawSystemSettings) {
-      return legacyDefault;
-    }
-    const systemSettings = JSON.parse(rawSystemSettings) as Record<string, unknown>;
-    const advanced =
-      systemSettings.advanced &&
-      typeof systemSettings.advanced === 'object' &&
-      !Array.isArray(systemSettings.advanced)
-        ? (systemSettings.advanced as Record<string, unknown>)
-        : {};
-    legacyDefault =
-      method === 'passkey' ? advanced.passkeyEnabled !== false : advanced.magicLinkEnabled === true;
-  } catch {
-    legacyDefault = method === 'passkey';
-  }
-  return legacyDefault;
-}
-
-async function isAuthenticationMethodUsageAvailable(
-  env: Env,
-  tenantId: string,
-  method: BuiltInAuthenticationMethod,
-  usage: AuthenticationMethodUsage
-): Promise<boolean> {
-  const legacyDefault = await getLegacyAuthenticationMethodDefault(env, method);
-  try {
-    const raw = await env.SETTINGS?.get(
-      `settings:tenant:${tenantId}:${AUTHENTICATION_METHODS_CATEGORY}`
-    );
-    if (!raw) {
-      return legacyDefault;
-    }
-    const settings = JSON.parse(raw) as Record<string, unknown>;
-    const legacyEnabled = normalizeBoolean(
-      settings[`authentication-methods.${method}.enabled`],
-      legacyDefault
-    );
-    return normalizeBoolean(
-      settings[getAuthenticationMethodSettingKey(method, usage)],
-      legacyEnabled
-    );
-  } catch {
-    return legacyDefault;
-  }
 }
 
 function generateEmailCode(): string {
@@ -501,6 +452,9 @@ async function refreshAccountReauthSession(
     authTime,
     acr: accountSession.acr ?? 'urn:mace:incommon:iap:bronze',
     amr: reauthMethods,
+    // This method, just proven, is what a later re-authentication request can take from here.
+    reauth_proven_amr: [method],
+    reauth_proven_at: authenticatedAtMs,
   });
   if (!updatedSession) {
     return c.json({ error: 'server_error', error_description: 'Failed to update session' }, 500);
@@ -510,7 +464,7 @@ async function refreshAccountReauthSession(
     ok: true,
     reauth: {
       authenticated_at: authTime,
-      expires_at: authTime + REAUTH_TTL_SECONDS,
+      expires_at: authTime + (await resolveAccountReauthTtlSeconds(c.env, tenantId)),
       methods: reauthMethods,
     },
   });
@@ -565,7 +519,7 @@ export async function createAccountPasskeyReauthOptionsHandler(
       type: 'public-key' as const,
       transports:
         passkey.transports.length > 0
-          ? (passkey.transports as AuthenticatorTransportFuture[])
+          ? (passkey.transports as AuthenticatorTransport[])
           : undefined,
     })),
   });
@@ -737,16 +691,18 @@ export async function completeAccountPasskeyReauthHandler(
     );
   }
   c.executionCtx.waitUntil(
-    passkeyRepo
-      .mirrorCounterAfterAuth(passkey.id, verification.authenticationInfo.newCounter)
-      .catch((error: unknown) => {
-        getLogger(c)
-          .module('ACCOUNT-REAUTH')
-          .error('Failed to mirror Passkey counter', {
-            action: 'passkey_state_mirror',
-            errorType: error instanceof Error ? error.name : 'Unknown',
-          });
-      })
+    runTenantBackupCoveredEffect(c.env, { tenantId }, () =>
+      passkeyRepo
+        .mirrorCounterAfterAuth(passkey.id, verification.authenticationInfo.newCounter)
+        .catch((error: unknown) => {
+          getLogger(c)
+            .module('ACCOUNT-REAUTH')
+            .error('Failed to mirror Passkey counter', {
+              action: 'passkey_state_mirror',
+              errorType: error instanceof Error ? error.name : 'Unknown',
+            });
+        })
+    )
   );
   const response = await refreshAccountReauthSession(
     c,
@@ -816,12 +772,14 @@ export async function sendAccountEmailCodeReauthHandler(
     );
   }
 
+  // The tenant's email send limit (rate_limit.email_max_requests per rate_limit.email_window).
+  const emailSendLimit = await resolveEmailSendLimit(c.env, tenantId);
   const rateLimiter = c.env.RATE_LIMITER.get(
     c.env.RATE_LIMITER.idFromName(buildDOKey('rate-limit', 'account-email-reauth', tenantId))
   );
   const rateLimitResult = await rateLimiter.incrementRpc(`send:${accountSession.userId}`, {
-    windowSeconds: 15 * 60,
-    maxRequests: 3,
+    windowSeconds: emailSendLimit.windowSeconds,
+    maxRequests: emailSendLimit.maxRequests,
   });
   if (!rateLimitResult.allowed) {
     return c.json(
@@ -834,6 +792,8 @@ export async function sendAccountEmailCodeReauthHandler(
     );
   }
 
+  // The tenant's email code lifetime (credentials.email_code_ttl).
+  const emailCodeTtlSeconds = await resolveEmailCodeTtlSeconds(c.env, tenantId);
   const challengeId = crypto.randomUUID();
   const code = generateEmailCode();
   const issuedAt = Date.now();
@@ -845,7 +805,7 @@ export async function sendAccountEmailCodeReauthHandler(
     type: 'account_email_reauth',
     userId: accountSession.userId,
     challenge: codeHash,
-    ttl: EMAIL_REAUTH_TTL_SECONDS,
+    ttl: emailCodeTtlSeconds,
     email: normalizedEmail,
     metadata: {
       sessionId: accountSession.sessionId,
@@ -860,7 +820,7 @@ export async function sendAccountEmailCodeReauthHandler(
     notificationKind: 'account.email-reauth',
     accountId: accountSession.userId,
     idempotencyKey: `account-email-reauth:${challengeId}`,
-    expiresAt: Math.floor(issuedAt / 1000) + EMAIL_REAUTH_TTL_SECONDS,
+    expiresAt: Math.floor(issuedAt / 1000) + emailCodeTtlSeconds,
     payload: {
       channel: 'email',
       to: normalizedEmail,
@@ -870,14 +830,14 @@ export async function sendAccountEmailCodeReauthHandler(
         name: user.name,
         email: normalizedEmail,
         code,
-        expiresInMinutes: EMAIL_REAUTH_TTL_SECONDS / 60,
+        expiresInMinutes: Math.ceil(emailCodeTtlSeconds / 60),
       }),
       metadata: {
         textBody: getEmailReauthText({
           name: user.name,
           email: normalizedEmail,
           code,
-          expiresInMinutes: EMAIL_REAUTH_TTL_SECONDS / 60,
+          expiresInMinutes: Math.ceil(emailCodeTtlSeconds / 60),
         }),
       },
     },
@@ -891,7 +851,7 @@ export async function sendAccountEmailCodeReauthHandler(
 
   return c.json({
     challenge_id: challengeId,
-    expires_in: EMAIL_REAUTH_TTL_SECONDS,
+    expires_in: emailCodeTtlSeconds,
     masked_email: maskEmail(normalizedEmail),
   });
 }
@@ -948,7 +908,8 @@ export async function completeAccountEmailCodeReauthHandler(
     c.env.RATE_LIMITER.idFromName(buildDOKey('rate-limit', 'account-email-reauth', tenantId))
   );
   const attemptResult = await rateLimiter.incrementRpc(`verify:${body.challenge_id}`, {
-    windowSeconds: EMAIL_REAUTH_TTL_SECONDS,
+    // As long as any code can last, so a code's attempts never reset while it is valid.
+    windowSeconds: CREDENTIALS_SETTINGS_META['credentials.email_code_ttl'].max ?? 900,
     maxRequests: 5,
   });
   if (!attemptResult.allowed) {
@@ -1031,34 +992,6 @@ export async function completeAccountEmailCodeReauthHandler(
   return response;
 }
 
-async function isEmailCodeLoginAvailable(env: Env, tenantId: string): Promise<boolean> {
-  return isAuthenticationMethodUsageAvailable(env, tenantId, 'email_otp', 'login');
-}
-
-async function hasVerifiedEmailLoginMethod(
-  c: Context<{ Bindings: Env }>,
-  accountSession: AccountSession,
-  tenantId: string
-): Promise<boolean> {
-  if (!(await isEmailCodeLoginAvailable(c.env, tenantId))) {
-    return false;
-  }
-
-  try {
-    const authCtx = await resolveAccountAuthContext(c, accountSession.userId, tenantId);
-    const piiCtx = createPIIContextFromHono(c, tenantId);
-    const runtimeUsers = new CanonicalRuntimeUserStore({
-      coreAdapter: authCtx.coreAdapter,
-      piiAdapter: piiCtx.defaultPiiAdapter,
-      tenantId,
-    });
-    const user = await runtimeUsers.findById(accountSession.userId);
-    return Boolean(user?.email && user.email_verified === 1);
-  } catch {
-    return false;
-  }
-}
-
 export async function createAccountPasskeyOptionsHandler(
   c: Context<{ Bindings: Env }>
 ): Promise<Response> {
@@ -1098,9 +1031,7 @@ export async function createAccountPasskeyOptionsHandler(
     id: passkey.credential_id,
     type: 'public-key' as const,
     transports:
-      passkey.transports.length > 0
-        ? (passkey.transports as AuthenticatorTransportFuture[])
-        : undefined,
+      passkey.transports.length > 0 ? (passkey.transports as AuthenticatorTransport[]) : undefined,
   }));
 
   const userName = accountSession.userId;
@@ -1413,7 +1344,7 @@ export async function deleteAccountPasskeyHandler(
   if (accountSession instanceof Response) {
     return accountSession;
   }
-  if (!isRecentlyAuthenticated(accountSession)) {
+  if (!(await isRecentlyAuthenticated(c, accountSession))) {
     return reauthRequired(c);
   }
 
@@ -1427,120 +1358,142 @@ export async function deleteAccountPasskeyHandler(
     return c.json({ error: 'not_found', error_description: 'Passkey was not found' }, 404);
   }
 
-  const registeredPasskeys = await passkeyRepo.findByUserId(accountSession.userId);
-  const hasAnotherPasskey = registeredPasskeys.some((passkey) => passkey.id !== existing.id);
-  const hasOtherLoginMethod =
-    hasAnotherPasskey || (await hasVerifiedEmailLoginMethod(c, accountSession, tenantId));
-
-  if (!hasOtherLoginMethod) {
-    return c.json(
-      {
-        error: 'remaining_login_method_required',
-        error_description: 'Cannot delete the last available login method.',
-      },
-      400
-    );
-  }
-
-  const deleteSql = hasAnotherPasskey
-    ? `DELETE FROM passkeys
-        WHERE id = ? AND tenant_id = ? AND user_id = ?
-          AND (SELECT COUNT(*) FROM passkeys WHERE tenant_id = ? AND user_id = ?) > 1`
-    : `DELETE FROM passkeys WHERE id = ? AND tenant_id = ? AND user_id = ?`;
-  const deleteParams = hasAnotherPasskey
-    ? [existing.id, tenantId, accountSession.userId, tenantId, accountSession.userId]
-    : [existing.id, tenantId, accountSession.userId];
-  let result: ExecuteResult;
-  let removal: AccountDirectoryRemovalPublication | null = null;
-  if (accountDataContext) {
-    if (!existing.rp_id) throw new Error('account_passkey_route_authority_missing');
-    const now = Math.floor(Date.now() / 1000);
-    removal = await prepareAccountExternalSubjectRemoval(
+  try {
+    return await withLoginMethodRemovalLock(
       c.env,
-      {
-        operationId: `account-passkey-remove-${existing.id}`,
-        idempotencyKey: `account-passkey-remove:${existing.id}`,
-        tenantId,
-        accountId: accountDataContext.accountId,
-        externalSubject: passkeyCredentialLookupSubject({
-          rpId: existing.rp_id,
-          credentialId: existing.credential_id,
-        }),
-        routeProjection: accountDataContext.membership.routeProjection,
-      },
-      authCtx.coreAdapter,
-      now
-    );
-    const outboxId = accountDirectoryRemovalOutboxId(removal.operationId);
-    const results = await authCtx.coreAdapter.batch([
-      { sql: deleteSql, params: deleteParams },
-      {
-        sql: `UPDATE account_routing_outbox
-                SET status = 'pending', next_attempt_at = ?, updated_at = ?
-              WHERE outbox_id = ? AND status = 'prepared'
-                AND NOT EXISTS (
-                  SELECT 1 FROM passkeys WHERE id = ? AND tenant_id = ? AND user_id = ?
-                )`,
-        params: [now, now, outboxId, existing.id, tenantId, accountSession.userId],
-      },
-    ]);
-    result = results[0];
-    if (results.length !== 2 || !results[1].success || results[1].rowsAffected !== 1) {
-      if (result?.rowsAffected > 0) {
-        await markAccountDirectoryRemovalReady(authCtx.coreAdapter, removal.operationId, now);
-      } else {
-        await authCtx.coreAdapter.execute(
-          `DELETE FROM account_routing_outbox WHERE outbox_id = ? AND status = 'prepared'`,
-          [outboxId]
+      tenantId,
+      accountSession.userId,
+      async (lease) => {
+        const registeredPasskeys = await passkeyRepo.findByUserId(accountSession.userId);
+        const hasAnotherPasskey = registeredPasskeys.some((passkey) => passkey.id !== existing.id);
+        const hasOtherLoginMethod = await isLoginMethodRemovalSafe(c.env, {
+          tenantId,
+          userId: accountSession.userId,
+          coreAdapter: authCtx.coreAdapter,
+          piiAdapter: createPIIContextFromHono(c, tenantId).defaultPiiAdapter,
+          removing: { kind: 'passkey', id: existing.id },
+        });
+
+        if (!hasOtherLoginMethod) {
+          return c.json(
+            {
+              error: 'remaining_login_method_required',
+              error_description: 'Cannot delete the last available login method.',
+            },
+            400
+          );
+        }
+
+        const deleteSql = hasAnotherPasskey
+          ? `DELETE FROM passkeys
+            WHERE id = ? AND tenant_id = ? AND user_id = ?
+              AND (SELECT COUNT(*) FROM passkeys WHERE tenant_id = ? AND user_id = ?) > 1`
+          : `DELETE FROM passkeys WHERE id = ? AND tenant_id = ? AND user_id = ?`;
+        const deleteParams = hasAnotherPasskey
+          ? [existing.id, tenantId, accountSession.userId, tenantId, accountSession.userId]
+          : [existing.id, tenantId, accountSession.userId];
+        let result: ExecuteResult;
+        let removal: AccountDirectoryRemovalPublication | null = null;
+        if (accountDataContext) {
+          if (!existing.rp_id) throw new Error('account_passkey_route_authority_missing');
+          const now = Math.floor(Date.now() / 1000);
+          removal = await prepareAccountExternalSubjectRemoval(
+            c.env,
+            {
+              operationId: `account-passkey-remove-${existing.id}`,
+              idempotencyKey: `account-passkey-remove:${existing.id}`,
+              tenantId,
+              accountId: accountDataContext.accountId,
+              externalSubject: passkeyCredentialLookupSubject({
+                rpId: existing.rp_id,
+                credentialId: existing.credential_id,
+              }),
+              routeProjection: accountDataContext.membership.routeProjection,
+            },
+            authCtx.coreAdapter,
+            now
+          );
+          const outboxId = accountDirectoryRemovalOutboxId(removal.operationId);
+          // Right before the removing write: the lease must still be this removal's.
+          await lease.assertHeld();
+          const results = await authCtx.coreAdapter.batch([
+            { sql: deleteSql, params: deleteParams },
+            {
+              sql: `UPDATE account_routing_outbox
+                    SET status = 'pending', next_attempt_at = ?, updated_at = ?
+                  WHERE outbox_id = ? AND status = 'prepared'
+                    AND NOT EXISTS (
+                      SELECT 1 FROM passkeys WHERE id = ? AND tenant_id = ? AND user_id = ?
+                    )`,
+              params: [now, now, outboxId, existing.id, tenantId, accountSession.userId],
+            },
+          ]);
+          result = results[0];
+          if (results.length !== 2 || !results[1].success || results[1].rowsAffected !== 1) {
+            if (result?.rowsAffected > 0) {
+              await markAccountDirectoryRemovalReady(authCtx.coreAdapter, removal.operationId, now);
+            } else {
+              await authCtx.coreAdapter.execute(
+                `DELETE FROM account_routing_outbox WHERE outbox_id = ? AND status = 'prepared'`,
+                [outboxId]
+              );
+            }
+          }
+        } else {
+          await lease.assertHeld();
+          result = await authCtx.coreAdapter.execute(deleteSql, deleteParams);
+        }
+
+        if (!result || result.rowsAffected <= 0) {
+          return c.json({ error: 'not_found', error_description: 'Passkey was not found' }, 404);
+        }
+        if (removal) {
+          await attemptImmediateAccountDirectoryRemovals(c.env.ACCOUNT_DIRECTORY, [removal]);
+        }
+        c.executionCtx.waitUntil(
+          runTenantBackupCoveredEffect(c.env, { tenantId }, () =>
+            getSessionRevocationStore(c.env, tenantId, accountSession.userId)
+              .deleteCredentialStateRpc(
+                tenantId,
+                accountSession.userId,
+                `account:${accountSession.userId}`,
+                'passkey',
+                existing.id
+              )
+              .catch((error: unknown) => {
+                getLogger(c)
+                  .module('ACCOUNT_PASSKEY')
+                  .error('Failed to clean Passkey DO state', {
+                    action: 'passkey_state_cleanup',
+                    errorType: error instanceof Error ? error.name : 'Unknown',
+                  });
+              })
+          )
         );
+
+        await recordAccountOperation(c, {
+          userId: accountSession.userId,
+          action: 'account.passkey.deleted',
+          resourceType: 'passkey',
+          resourceId: existing.id,
+        });
+
+        return c.json({
+          ok: true,
+          passkey: {
+            id: existing.id,
+            deleted: true,
+          },
+          webauthn_signal: buildWebAuthnSignalDetails(
+            c,
+            accountSession,
+            registeredPasskeys.filter((passkey) => passkey.id !== existing.id)
+          ),
+        });
       }
-    }
-  } else {
-    result = await authCtx.coreAdapter.execute(deleteSql, deleteParams);
+    );
+  } catch (error) {
+    if (error instanceof LoginMethodRemovalInProgressError) return loginMethodRemovalInProgress(c);
+    throw error;
   }
-
-  if (!result || result.rowsAffected <= 0) {
-    return c.json({ error: 'not_found', error_description: 'Passkey was not found' }, 404);
-  }
-  if (removal) {
-    await attemptImmediateAccountDirectoryRemovals(c.env.ACCOUNT_DIRECTORY, [removal]);
-  }
-  c.executionCtx.waitUntil(
-    getSessionRevocationStore(c.env, tenantId, accountSession.userId)
-      .deleteCredentialStateRpc(
-        tenantId,
-        accountSession.userId,
-        `account:${accountSession.userId}`,
-        'passkey',
-        existing.id
-      )
-      .catch((error: unknown) => {
-        getLogger(c)
-          .module('ACCOUNT_PASSKEY')
-          .error('Failed to clean Passkey DO state', {
-            action: 'passkey_state_cleanup',
-            errorType: error instanceof Error ? error.name : 'Unknown',
-          });
-      })
-  );
-
-  await recordAccountOperation(c, {
-    userId: accountSession.userId,
-    action: 'account.passkey.deleted',
-    resourceType: 'passkey',
-    resourceId: existing.id,
-  });
-
-  return c.json({
-    ok: true,
-    passkey: {
-      id: existing.id,
-      deleted: true,
-    },
-    webauthn_signal: buildWebAuthnSignalDetails(
-      c,
-      accountSession,
-      registeredPasskeys.filter((passkey) => passkey.id !== existing.id)
-    ),
-  });
 }

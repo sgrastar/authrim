@@ -30,6 +30,7 @@ describe('HTTP sink delivery service', () => {
         method: 'POST',
         headers: expect.objectContaining({
           'Content-Type': 'application/json',
+          'X-Authrim-Delivery': 'delivery-1',
           Authorization: 'Bearer token-123',
         }),
         body: '{"records":[]}',

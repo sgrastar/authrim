@@ -1,0 +1,93 @@
+import { Meta } from '@storybook/addon-docs/blocks';
+
+<Meta title="Pages/Building pages" />
+
+# Building pages
+
+Storybook is the console's mock-up: a page is designed here, with sample data, before it is
+wired to the Admin API, and the page shown here **is** the page the console serves. These rules
+keep the two from drifting apart.
+
+## The page is a component; the route only feeds it
+
+The body of every page lives in `src/lib/pages/<area>/<Page>.svelte`. Its route
+(`src/routes/admin/(console)/…/+page.svelte`) decides what the page is about (the tenant in
+scope, an id from the URL) and passes the real API client; the page's story passes an
+in-memory one. Nothing else differs, so what is fixed in Storybook is fixed in the console.
+
+Pages take their API as a prop (`client: SettingsClient`), never import `fetch` or the HTTP
+client themselves.
+
+## Sample data has the API's shape
+
+In-memory clients (`src/lib/api/fake/`) are typed with the Admin API's own types from
+`@authrim/ar-lib-core`, and follow its rules: versions, where values come from, refused values,
+access by role. A page cannot be designed around data the API could never return.
+
+## Every state is a story
+
+| State       | What the page shows                            |
+| ----------- | ---------------------------------------------- |
+| Normal      | the data                                       |
+| Loading     | `LoadingState`                                 |
+| Load failed | what happened and **Try again**                |
+| No access   | that the admin cannot see it — nothing else    |
+| View only   | values as text, one note saying why            |
+| Conflict    | who changed what first, and the admin's choice |
+
+Settings pages get all of these from `SettingsPage`; other page templates provide them the
+same way.
+
+## Tags: how far a page has got
+
+| Tag           | Meaning                                                                    |
+| ------------- | -------------------------------------------------------------------------- |
+| `draft`       | designed here, not wired to the API yet                                    |
+| `api-pending` | uses something the API does not provide yet; the story's comment says what |
+
+Filter by tag in the sidebar. A wired page with nothing pending carries neither.
+
+## Settings pages: subtract, but never hide what applies
+
+The Settings API groups settings the way they are built (`session`, `oauth`…). Pages group them
+by what admins want to do, and place each setting at a depth (`src/lib/settings/placement.ts`):
+
+| Depth      | Where                                                             |
+| ---------- | ----------------------------------------------------------------- |
+| `primary`  | on the page — what most tenants look at                           |
+| `advanced` | in the section's **Advanced** part, closed until opened           |
+| `search`   | not on the page (search, the all-settings list) — unless set here |
+| `hidden`   | never (set when deploying, not in use yet)                        |
+
+Whatever the depth, a value set for this tenant is never out of sight: the closed Advanced
+heading counts it, and a `search` setting set here appears under Advanced. Settings that do not
+apply are left out, not greyed out (a dependent setting appears with the one it depends on).
+
+Settings read as a table, whoever looks: the name on the start side, the value on the end side,
+rows divided by a line and no vertical lines. Admins who may change them get **Field row**s
+(the control on the end side); admins who may only look get a ruled **Detail list** (the value in
+bold, on/off with a dot). The columns are the same, so the page does not change shape between
+the two.
+
+Each setting shows **Override** (a small checkbox) with the default beside it — from the scope
+above: **Platform default: 1 day** on a tenant, **Tenant default: …** on an app (OIDC client
+settings). The value can be changed once the box is checked, so nothing is overridden by
+accident, and unchecking goes back to the default. On/off settings take their value from a list
+(On / Off), so two checkboxes never sit together. (A checkbox, not a switch: the choice waits for
+Save like the value it unlocks.) A closed Advanced part counts what is overridden inside it
+(**Overridden settings: 2**); a view-only table marks each such value **Overridden**.
+
+A test checks that every setting of an
+adopted category has exactly one place, so none goes missing when the API adds one.
+
+## Pages across several screens
+
+Storybook shows one page at a time. Journeys across pages (list → detail → save → back) are
+checked in the app shell story, or in the console itself with the dev mock
+(`AUTHRIM_ADMIN_UI_DEV_MOCK=true`; `AUTHRIM_ADMIN_UI_DEV_MOCK_PERSONA=tenant|support|viewer`
+signs in as that kind of admin).
+
+## Stories that play
+
+A story with a `play` function acts as soon as it opens. Keep the first story of a page still,
+for looking at; put interactions in stories named after what they check.

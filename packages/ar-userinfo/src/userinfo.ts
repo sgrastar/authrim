@@ -1,3 +1,4 @@
+import { ACCOUNT_LIFECYCLE_CLAIM, readAccountLifecycleClaim } from './account-lifecycle';
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
@@ -10,9 +11,10 @@ import {
   isUserInfoEncryptionRequired,
   getClientPublicKey,
   validateJWEOptions,
-  createOAuthConfigManager,
+  resolveEffectiveSettings,
   buildRequestIssuerUrl,
   getLogger,
+  getWaitUntilFromContext,
   getTenantIdFromContext,
   type JWEAlgorithm,
   type JWEEncryption,
@@ -29,12 +31,20 @@ import {
   OIDCAttributeReleaseConsentRequiredError,
   setBoundedMapEntry,
   resolveAccountDataContextFromHono,
+  resolveIDTokenSigningPolicy,
+  resolveAssuranceClaims,
+  asksForEduPersonAssurance,
 } from '@authrim/ar-lib-core';
 import {
   resolveUserInfoSigningAlgorithm,
+  resolveIDTokenSigningAlgorithm,
   type OIDCSigningAlgorithm,
 } from '@authrim/ar-lib-core/utils/oidc-signing';
 import { SignJWT } from 'jose';
+import {
+  scheduleIdentityMappingFailure,
+  type IdentityMappingFailureContext,
+} from '@authrim/ar-lib-core/services/identity-mapping-failures';
 
 // ===== Key Caching for Performance Optimization =====
 // Per-tenant Map cache for signing keys (avoids expensive RSA key import on every request)
@@ -131,7 +141,7 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     }
     const error = introspection.error;
     c.header('WWW-Authenticate', error.wwwAuthenticate);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     return c.json(
       {
         error: error.error,
@@ -152,10 +162,17 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   const claimsParam = (tokenClaims.claims as string) || undefined;
   const scopes = scope.split(' ');
 
-  // OIDC Core 5.3.1: Check if openid scope is required
-  // Configurable via KV (USERINFO_REQUIRE_OPENID_SCOPE) for OAuth 2.0 compatibility
-  const configManager = createOAuthConfigManager(c.env);
-  const requireOpenidScope = await configManager.isUserInfoRequireOpenidScope();
+  // OIDC Core 5.3.1: Check if openid scope is required. Configurable (Settings API for the
+  // client or tenant, else the older oauth-config value, else env) for OAuth 2.0 compatibility.
+  const tokenClientId =
+    typeof tokenClaims.client_id === 'string' ? tokenClaims.client_id : undefined;
+  const requireOpenidScope =
+    (
+      await resolveEffectiveSettings(c.env, 'oauth', {
+        tenantId: getTenantIdFromContext(c),
+        clientId: tokenClientId,
+      })
+    )['oauth.userinfo_require_openid'] !== false;
 
   if (requireOpenidScope && !scopes.includes('openid')) {
     c.header('WWW-Authenticate', 'Bearer error="insufficient_scope", scope="openid"');
@@ -258,11 +275,46 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   const client_id = tokenClaims.client_id as string;
   const clientMetadata = client_id ? await getClientCached(c, c.env, client_id) : null;
 
+  // eduperson_assurance comes from the person's evidence, read now and only when the request asks
+  // for it and the tenant has values to release. A failed read releases nothing (and is logged).
+  // Without the client's metadata (the client was deleted, and an access token it was issued is
+  // still valid) the client's claims policy, identity mapping, Destination Profile and attribute
+  // release consent cannot be applied, and those are what decide who may be told a person's
+  // assurance. So it is not released then: the rest of UserInfo is answered as before.
+  const assuranceRequest = {
+    target: 'userinfo' as const,
+    scopes,
+    claimsRequest,
+    includeScopeClaims: true,
+  };
+  if (!clientMetadata && asksForEduPersonAssurance(assuranceRequest)) {
+    log.warn('eduperson_assurance not released: the client of the access token is unknown', {
+      client_id,
+    });
+  }
+  const assuranceClaims = clientMetadata
+    ? await resolveAssuranceClaims({
+        ...assuranceRequest,
+        tenantId,
+        userId: sub,
+        clientPolicy: clientMetadata,
+        requestScope: c,
+        loadSettings: () => resolveEffectiveSettings(c.env, 'assurance', { tenantId }),
+        getAdapter: () => piiCtx.coreAdapter,
+        onError: (message, error) => log.error(message, { client_id }, error as Error),
+      })
+    : {};
+
   const claimEvaluation = evaluateClaimsForTarget({
     target: 'userinfo',
     claimsRequest,
     initialClaims: { sub },
-    availableClaims: userData,
+    availableClaims: {
+      ...userData,
+      ...(assuranceClaims.eduperson_assurance
+        ? { eduperson_assurance: assuranceClaims.eduperson_assurance }
+        : {}),
+    },
     grantedScopes: scopes,
     clientPolicy: clientMetadata,
     includeScopeClaims: true,
@@ -278,9 +330,12 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     );
   }
 
+  // Released with the other claims, so the app's identity mapping, Destination Profile and
+  // attribute release consent hold it to the same rules.
   const userClaims: Record<string, unknown> = claimEvaluation.claims;
 
   if (client_id && clientMetadata) {
+    const failureContext: IdentityMappingFailureContext = {};
     try {
       const authCtx = createAuthContextFromHono(c, tenantId);
       const mapped = await applyOIDCIdentityMapping({
@@ -288,11 +343,21 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
         env: c.env,
         tenantId,
         clientId: client_id,
+        failureContext,
         sectorIdentifier: clientMetadata.sector_identifier_uri,
         selector: clientMetadata.identity_mapping,
         destinationSurface: 'userinfo',
         grantedScopes: scopes,
         claims: userClaims,
+        // The request (its scope, or a claims parameter the client's policy lets through) allowed
+        // eduperson_assurance already, as authorize judges it for an ID token: a Destination
+        // Profile field that names no scope does not ask for it again.
+        ...(assuranceClaims.eduperson_assurance
+          ? { authorizedClaimNames: ['eduperson_assurance'] }
+          : {}),
+        // The mapping reads the user's attributes, not only what these scopes release, so it
+        // derives the same sub as the ID token does.
+        sourceAttributes: userData,
       });
       if (mapped.claims !== userClaims) {
         Object.keys(userClaims).forEach((key) => {
@@ -301,6 +366,21 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
         Object.assign(userClaims, mapped.claims);
       }
     } catch (mappingError) {
+      failureContext.code ??=
+        mappingError instanceof OIDCIdentityMappingRuntimeError
+          ? mappingError.details.code
+          : 'mapping_failed';
+      try {
+        scheduleIdentityMappingFailure({
+          env: c.env,
+          tenantId,
+          clientId: client_id,
+          failure: failureContext,
+          waitUntil: getWaitUntilFromContext(c),
+        });
+      } catch {
+        // Failure accounting is optional and cannot replace the protocol response.
+      }
       log.error(
         'Failed to apply OIDC identity mapping for userinfo',
         { client_id },
@@ -323,6 +403,35 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
         500
       );
     }
+  }
+
+  // Reserved runtime claim: neither a claims parameter nor mapping can bypass its scope.
+  delete userClaims[ACCOUNT_LIFECYCLE_CLAIM];
+  try {
+    const lifecycle = await readAccountLifecycleClaim({
+      c,
+      adapter: piiCtx.coreAdapter,
+      tenantId,
+      clientId: client_id,
+      user: projection!,
+      scopes,
+    });
+    if (lifecycle) userClaims[ACCOUNT_LIFECYCLE_CLAIM] = lifecycle;
+  } catch (error) {
+    c.header('Cache-Control', 'no-store');
+    c.header('Pragma', 'no-cache');
+    if (error instanceof Error && error.message === 'account_lifecycle_deleted') {
+      c.header('WWW-Authenticate', 'Bearer error="invalid_token"');
+      return c.json(
+        { error: 'invalid_token', error_description: 'The access token is invalid' },
+        401
+      );
+    }
+    log.error('Failed to read account lifecycle', {}, error as Error);
+    return c.json(
+      { error: 'temporarily_unavailable', error_description: 'User data is unavailable' },
+      503
+    );
   }
 
   if (client_id && clientMetadata) {
@@ -415,7 +524,15 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     // For UserInfo encryption, we need to sign the claims first (JWT), then encrypt (JWE)
     // This creates a nested JWT: JWS inside JWE
     try {
-      const signingAlgorithm = resolveUserInfoSigningAlgorithm(clientMetadata, true);
+      // Unless the app names a UserInfo algorithm, signed as its ID tokens are.
+      const signingAlgorithm = resolveUserInfoSigningAlgorithm(
+        clientMetadata,
+        true,
+        resolveIDTokenSigningAlgorithm(
+          clientMetadata,
+          await resolveIDTokenSigningPolicy(c.env, getTenantIdFromContext(c))
+        )
+      );
       if (signingAlgorithm === 'none') {
         throw new Error('Encrypted UserInfo requires a signing algorithm');
       }

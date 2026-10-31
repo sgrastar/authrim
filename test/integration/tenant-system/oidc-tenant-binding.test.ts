@@ -41,7 +41,7 @@ describe('tenant-system OIDC tenant binding matrix', () => {
     topology: 'D3_custom_subdomain' | 'D4_custom_naked' = 'D3_custom_subdomain'
   ) {
     const env = await buildEnvForTopology(topology, {
-      ENABLE_CONFORMANCE_MODE: 'true',
+      UI_URL: 'https://login.tenant-system.authrim.test',
     });
     await seedTenantDataset(env, 'default');
     await applyLoginEntryProfile(env, 'first', tenantSystemProfiles.P00);
@@ -84,12 +84,13 @@ describe('tenant-system OIDC tenant binding matrix', () => {
     );
     expect(response.status).toBe(302);
     const location = response.headers.get('location');
-    expect(location).toMatch(/^\/flow\/login\?challenge_id=/);
+    // The tenant's issuer hosts the Login UI.
+    const loginUrl = new URL(location!);
+    expect(loginUrl.origin + loginUrl.pathname).toBe(
+      'https://first.tenant-system.authrim.test/login'
+    );
 
-    const challengeId = new URL(
-      location!,
-      'https://first.tenant-system.authrim.test'
-    ).searchParams.get('challenge_id');
+    const challengeId = loginUrl.searchParams.get('challenge_id');
     expect(challengeId).toBeTruthy();
     const challengeStore = await getChallengeStoreByChallengeId(env, challengeId!, 'first');
     const challenge = await challengeStore.getChallengeRpc(challengeId!);
@@ -113,10 +114,10 @@ describe('tenant-system OIDC tenant binding matrix', () => {
     );
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({
-      error: 'invalid_request',
-      error_description: 'client_id is invalid',
-    });
+    expect(response.headers.get('location')).toBeNull();
+    const body = await response.text();
+    expect(body).toContain('invalid_request');
+    expect(body).toContain('client_id is invalid');
   });
 
   it('OIDC-003 rejects an unknown client before challenge creation', async () => {
@@ -132,10 +133,10 @@ describe('tenant-system OIDC tenant binding matrix', () => {
     );
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({
-      error: 'invalid_request',
-      error_description: 'client_id is invalid',
-    });
+    expect(response.headers.get('location')).toBeNull();
+    const body = await response.text();
+    expect(body).toContain('invalid_request');
+    expect(body).toContain('client_id is invalid');
   });
 
   it('OIDC-005/OIDC-019 rejects a redirect URI registered under another tenant client', async () => {

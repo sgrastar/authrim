@@ -1,5 +1,6 @@
+import { recordingAdminAgentAuditWriter } from './helpers/admin-audit-writer';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type {
@@ -100,7 +101,10 @@ class SqliteCliAdapter implements DatabaseAdapter {
       'COMMIT;',
       'SELECT rows_affected AS rowsAffected FROM _agent_batch_results ORDER BY position;',
     ].join('\n');
-    const execution = spawnSync(this.sqlite3Path, ['-json', '-bail', this.databasePath, script], {
+    const execution = spawnSync(this.sqlite3Path, ['-json', '-bail', this.databasePath], {
+      // -bail stops at the failed statement when SQL is read from stdin; a command-line
+      // SQL argument can continue through COMMIT on some SQLite CLI versions.
+      input: script,
       encoding: 'utf8',
     });
     if (execution.error) throw execution.error;
@@ -138,8 +142,11 @@ describeWithSqlite('AdminAgentAccessRepository SQLite fences', () => {
     temporaryDirectory = mkdtempSync(path.join(tmpdir(), 'authrim-agent-access-'));
     const databasePath = path.join(temporaryDirectory, 'test.db');
     adapter = new SqliteCliAdapter(sqlite3Path!, databasePath);
-    repository = new AdminAgentAccessRepository(adapter);
-    configurationRepository = new AgentConfigurationRepository(adapter);
+    repository = new AdminAgentAccessRepository(adapter, recordingAdminAgentAuditWriter);
+    configurationRepository = new AgentConfigurationRepository(
+      adapter,
+      recordingAdminAgentAuditWriter
+    );
     execFileSync(
       sqlite3Path!,
       [
@@ -1744,14 +1751,14 @@ describeWithSqlite('AgentBulkRepository SQLite lifecycle', () => {
     temporaryDirectory = mkdtempSync(path.join(tmpdir(), 'authrim-agent-bulk-'));
     const databasePath = path.join(temporaryDirectory, 'test.db');
     adapter = new SqliteCliAdapter(sqlite3Path!, databasePath);
-    repository = new AgentBulkRepository(adapter);
+    repository = new AgentBulkRepository(adapter, recordingAdminAgentAuditWriter);
     const rootCandidate = path.resolve(process.cwd(), 'migrations/admin/d1');
     const migrationDirectory = existsSync(rootCandidate)
       ? rootCandidate
       : path.resolve(process.cwd(), '../../migrations/admin/d1');
-    const migrationSql = readdirSync(migrationDirectory)
-      .filter((name) => /^\d{3}_.*\.sql$/u.test(name))
-      .sort()
+    // The fresh-install baseline only: the 0.4.0 baseline and the 0.4.1 bridge delta in the same
+    // directory are for existing environments and would collide with it.
+    const migrationSql = ['001_0_5_0_admin_baseline.sql']
       .map((filename) =>
         readFileSync(path.join(migrationDirectory, filename), 'utf8')
           .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '0')
@@ -2125,7 +2132,7 @@ describeWithSqlite('AgentBulkRepository SQLite lifecycle', () => {
       "UPDATE agent_bulk_tenant_executions SET stage = 'verify', status = 'succeeded' WHERE bulk_plan_id = 'bulk-template' AND bulk_plan_version = 1"
     );
 
-    const baselines = new AgentBaselineRepository(adapter);
+    const baselines = new AgentBaselineRepository(adapter, recordingAdminAgentAuditWriter);
     await baselines.publishTemplate({
       id: 'template-1',
       version: 1,

@@ -817,6 +817,171 @@ describe('field mapping flow data adapter', () => {
 		expect(JSON.stringify(destinationSamples)).not.toContain('Catalog-only user name');
 	});
 
+	describe('identity assurance sources', () => {
+		const identitySchemas = [
+			{
+				id: 'builtin:tenant_a:email',
+				tenant_id: 'tenant_a',
+				field_key: 'email',
+				display_label: 'Email',
+				field_type: 'string' as const,
+				cardinality: 'single' as const,
+				is_pii: 1,
+				is_required: 0,
+				is_active: 1,
+				validation_rules: null,
+				include_in_id_token: 0,
+				include_in_userinfo: 0,
+				include_in_introspection: 0,
+				required_scopes: null,
+				scope_mode: 'any' as const,
+				is_system: 1,
+				is_searchable: 0,
+				is_exportable: 1,
+				is_vc_claim: 0,
+				claim_namespace: null,
+				description: null,
+				display_order: 0,
+				schema_version: 1,
+				operation_status: 'active' as const,
+				operation_detail: null,
+				created_by: null,
+				created_at: 0,
+				updated_at: 0
+			}
+		];
+		const input: IdentityMappingFlowInput = {
+			policies: [],
+			catalogs: [],
+			identitySchemas,
+			sourceProfiles: [
+				{
+					id: 'source_csv',
+					tenantId: 'tenant_a',
+					sourceType: 'csv',
+					profileKey: 'people',
+					displayName: 'People CSV',
+					lifecycleState: 'active',
+					version: {
+						id: 'source_csv_v1',
+						versionLabel: 'v1',
+						lifecycleState: 'active',
+						schemaHash: 'hash',
+						schema: {
+							sourceType: 'csv',
+							columns: [
+								{
+									stableColumnId: 'csv.mail',
+									headerName: 'mail',
+									label: 'mail',
+									valueType: 'string',
+									required: false,
+									classification: 'pii'
+								}
+							]
+						},
+						warningSummary: {}
+					}
+				}
+			],
+			destinationProfiles: [
+				{
+					id: 'destination_saml',
+					tenantId: 'tenant_a',
+					destinationType: 'saml',
+					profileKey: 'saml',
+					displayName: 'SAML',
+					ownerScopeType: 'tenant',
+					lifecycleState: 'active',
+					version: {
+						id: 'destination_saml_v1',
+						versionLabel: 'v1',
+						lifecycleState: 'active',
+						schema: {
+							destinationType: 'saml',
+							attributes: [{ name: 'mail', label: 'mail', valueType: 'string' }]
+						}
+					}
+				}
+			],
+			protocolSchemas: [],
+			externalSchemas: [],
+			schemaReadinessRows: []
+		};
+
+		it('offers the IAL and its assurance values as sources a destination can release', () => {
+			const [destination] = buildIdentityMappingDestinationSamples(input);
+			const targets = destination.nodes.filter((node) => node.role === 'target');
+
+			expect(targets).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						label: 'Identity Assurance Level (IAL)',
+						inputCardinality: 'one',
+						valueMultiplicity: 'single',
+						allowedValues: ['IAL1', 'IAL2', 'IAL3'],
+						fieldRef: expect.objectContaining({
+							namespace: 'authrim.profile',
+							path: 'assurance_ial',
+							catalogEntryId: 'system.identity.assurance_ial'
+						})
+					}),
+					expect.objectContaining({
+						label: 'Assurance Values (eduPersonAssurance)',
+						inputCardinality: 'many',
+						valueMultiplicity: 'multi',
+						fieldRef: expect.objectContaining({
+							namespace: 'authrim.profile',
+							path: 'edu_person_assurance',
+							catalogEntryId: 'system.identity.edu_person_assurance'
+						})
+					})
+				])
+			);
+		});
+
+		it('offers the home organization and the organization name as sources a destination can release', () => {
+			const [destination] = buildIdentityMappingDestinationSamples(input);
+			const targets = destination.nodes.filter((node) => node.role === 'target');
+
+			expect(targets).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						label: 'Home Organization (schacHomeOrganization)',
+						valueMultiplicity: 'single',
+						fieldRef: expect.objectContaining({
+							namespace: 'authrim.profile',
+							path: 'schac_home_organization',
+							catalogEntryId: 'system.identity.schac_home_organization'
+						})
+					}),
+					expect.objectContaining({
+						label: 'Organization Name (o)',
+						valueMultiplicity: 'single',
+						fieldRef: expect.objectContaining({
+							namespace: 'authrim.profile',
+							path: 'organization_name',
+							catalogEntryId: 'system.identity.organization_name'
+						})
+					})
+				])
+			);
+		});
+
+		it('does not offer them as targets of an inbound mapping', () => {
+			const [source] = buildIdentityMappingSourceSamples(input);
+			const targets = source.nodes.filter((node) => node.role === 'target');
+
+			expect(targets.some((node) => node.fieldRef?.path === 'assurance_ial')).toBe(false);
+			expect(targets.some((node) => node.fieldRef?.path === 'edu_person_assurance')).toBe(false);
+			expect(targets.some((node) => node.fieldRef?.path === 'schac_home_organization')).toBe(false);
+			expect(targets.some((node) => node.fieldRef?.path === 'organization_name')).toBe(false);
+			// The rest of the system sources stay as they were.
+			expect(targets.some((node) => node.fieldRef?.path === 'account_id')).toBe(true);
+			expect(targets.some((node) => node.fieldRef?.path === 'email')).toBe(true);
+		});
+	});
+
 	it('builds a destination release graph when only destination profiles are registered', () => {
 		const samples = buildIdentityMappingFlowSamples({
 			policies: [

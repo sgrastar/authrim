@@ -105,7 +105,7 @@ function pruneMemoryCache(now: number): void {
     if (value.expiresAt <= now) memoryCache.delete(key);
   }
   while (memoryCache.size >= MAX_MEMORY_CACHE_ENTRIES) {
-    const oldest = memoryCache.keys().next().value as string | undefined;
+    const oldest = memoryCache.keys().next().value;
     if (oldest === undefined) break;
     memoryCache.delete(oldest);
   }
@@ -116,7 +116,7 @@ function pruneAliasMemoryCache(now: number): void {
     if (value.expiresAt <= now) aliasMemoryCache.delete(key);
   }
   while (aliasMemoryCache.size >= MAX_MEMORY_CACHE_ENTRIES) {
-    const oldest = aliasMemoryCache.keys().next().value as string | undefined;
+    const oldest = aliasMemoryCache.keys().next().value;
     if (oldest === undefined) break;
     aliasMemoryCache.delete(oldest);
   }
@@ -329,11 +329,21 @@ export class LookupRouteResolver {
     dataRole: TenantRouteDataRole;
     residencyPartition: string;
     observedBindingRouteGenerations: Readonly<Record<string, number>>;
-    verifyAtDestination(target: ResolvedLookupTarget): Promise<boolean>;
+    /**
+     * true when the destination is the one routed to and holds the record; `account_inactive`
+     * when it is, but the record there is no longer active (for example, deleted since the route
+     * was cached); false otherwise.
+     */
+    verifyAtDestination(target: ResolvedLookupTarget): Promise<boolean | 'account_inactive'>;
   }): Promise<ResolvedLookupTarget> {
     const target = this.resolveTarget(input);
-    if (!(await input.verifyAtDestination(target))) {
-      throw new Error('lookup_destination_revalidation_failed');
+    const verified = await input.verifyAtDestination(target);
+    if (verified !== true) {
+      // Same message either way (callers match it); the cause tells an inactive record apart.
+      throw new Error(
+        'lookup_destination_revalidation_failed',
+        verified === 'account_inactive' ? { cause: 'account_inactive' } : undefined
+      );
     }
     return target;
   }

@@ -40,20 +40,22 @@
 </div>
 
 <style>
+	/* The --card-* and --surface-* properties are unset (so the fallbacks apply) except where a
+	   page asks for flat, still surfaces: the account page (AccountShell) sets them. */
 	.card {
-		background: var(--bg-card);
-		backdrop-filter: var(--blur-sm);
-		-webkit-backdrop-filter: var(--blur-sm);
+		background: var(--card-surface, var(--bg-card));
+		backdrop-filter: var(--surface-backdrop-filter, var(--blur-sm));
+		-webkit-backdrop-filter: var(--surface-backdrop-filter, var(--blur-sm));
 		border-radius: var(--card-radius, var(--radius-xl));
 		border: 1px solid var(--border-glass);
-		box-shadow: var(--shadow-sm);
-		transition: all var(--transition-base);
+		box-shadow: var(--card-shadow, var(--shadow-sm));
+		transition: var(--surface-transition, all var(--transition-base));
 		overflow: hidden;
 	}
 
 	.card.hoverable:hover {
-		box-shadow: var(--shadow-md);
-		transform: translateY(-4px);
+		box-shadow: var(--card-shadow, var(--shadow-md));
+		transform: var(--surface-hover-transform, translateY(-4px));
 	}
 
 	.card-header {

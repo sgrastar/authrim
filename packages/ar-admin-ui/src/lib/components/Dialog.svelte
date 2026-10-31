@@ -44,7 +44,7 @@
 
 			<!-- Close Button -->
 			<button use:melt={$close} class="dialog-close">
-				<div class="i-heroicons-x-mark dialog-close-icon"></div>
+				<div class="i-ph-x dialog-close-icon"></div>
 				<span class="sr-only">{$LL.common_close()}</span>
 			</button>
 		</div>

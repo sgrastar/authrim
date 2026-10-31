@@ -126,7 +126,7 @@ export interface AdminRole {
   id: string;
   /** Tenant ID for multi-tenant support */
   tenant_id: string;
-  /** Machine-readable name (e.g., 'super_admin') */
+  /** Machine-readable name (e.g., 'ar_super_admin') */
   name: string;
   /** Human-readable name (e.g., 'Super Administrator') */
   display_name: string | null;
@@ -179,7 +179,7 @@ export interface AdminRoleUpdateInput {
 
 /**
  * Scope type for role assignment
- * - global: Role applies to all tenants (super_admin only)
+ * - global: Role applies to all tenants (ar_super_admin only)
  * - tenant: Role applies to specific tenant
  * - org: Reserved for future Admin scope binding; current Admin APIs do not create it
  */
@@ -380,6 +380,8 @@ export interface AdminAuditLogEntry {
  */
 export interface AdminAuditLogCreateInput {
   id?: string;
+  /** Freeze the original operation time when retrying a stable audit ID. */
+  created_at?: number;
   tenant_id?: string;
   admin_user_id?: string;
   admin_email?: string;
@@ -397,6 +399,8 @@ export interface AdminAuditLogCreateInput {
   before?: Record<string, unknown>;
   after?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
+  /** Trusted actor/proxy data, kept separate from arbitrary detail metadata. */
+  inline_metadata?: Record<string, unknown>;
   detail_object_catalog_id?: string;
 }
 
@@ -498,6 +502,9 @@ export const ADMIN_PERMISSIONS = {
 
   // End user management
   USERS_READ: 'admin:users:read',
+  // An account's status alone (lifecycle, lock, credential kinds, session counts), read from Core
+  // without personal data. `admin:users:read` includes it; it never includes `admin:users:read`.
+  USERS_STATUS_READ: 'admin:users:status:read',
   USERS_WRITE: 'admin:users:write',
   USERS_SUSPEND: 'admin:users:suspend',
   USERS_DELETE: 'admin:users:delete',
@@ -513,6 +520,11 @@ export const ADMIN_PERMISSIONS = {
   ACCOUNT_LEGAL_HOLDS_READ: 'admin:account_legal_holds:read',
   ACCOUNT_LEGAL_HOLDS_WRITE: 'admin:account_legal_holds:write',
   ACCOUNT_LEGAL_HOLDS_ALL: 'admin:account_legal_holds:*',
+
+  // Identity assurance evidence (the IAL a person was proofed at)
+  ACCOUNT_ASSURANCE_READ: 'admin:account_assurance:read',
+  ACCOUNT_ASSURANCE_WRITE: 'admin:account_assurance:write',
+  ACCOUNT_ASSURANCE_ALL: 'admin:account_assurance:*',
 
   // Email delivery diagnostics
   EMAIL_DELIVERIES_READ: 'admin:email_deliveries:read',
@@ -727,6 +739,13 @@ export const ADMIN_PERMISSIONS = {
   BULK_PLANS_PAUSE: 'admin:bulk_plans:pause',
   BULK_PLANS_RESUME: 'admin:bulk_plans:resume',
 
+  // Tenant backup operations
+  BACKUPS_READ: 'admin:backups:read',
+  BACKUPS_MANAGE: 'admin:backups:manage',
+  BACKUPS_EXPORT: 'admin:backups:export',
+  BACKUPS_IMPORT: 'admin:backups:import',
+  BACKUPS_SENSITIVE: 'admin:backups:sensitive',
+
   // Admin Machine Access
   ADMIN_MACHINE_ACCESS_READ: 'admin:machine_access:read',
   ADMIN_MACHINE_ACCESS_WRITE: 'admin:machine_access:write',
@@ -794,6 +813,9 @@ export const ADMIN_PERMISSIONS = {
  */
 export type AdminPermission = (typeof ADMIN_PERMISSIONS)[keyof typeof ADMIN_PERMISSIONS] | string;
 
+/** Permissions under these prefixes are never granted by a wildcard, only by their exact name. */
+const EXACT_MATCH_ONLY_PERMISSION_PREFIXES: readonly string[] = ['admin:support_ops:break_glass:'];
+
 /**
  * Check if a set of permissions includes a specific permission
  *
@@ -802,6 +824,12 @@ export type AdminPermission = (typeof ADMIN_PERMISSIONS)[keyof typeof ADMIN_PERM
  * - "admin:users:*" matches "admin:users:read", "admin:users:write", etc.
  */
 export function hasAdminPermission(permissions: string[], required: string): boolean {
+  // Break-glass permissions are held by name only. `*`, `admin:*` and `admin:support_ops:*`
+  // do not carry them: emergency access is not something a broad role picks up as a side effect.
+  if (EXACT_MATCH_ONLY_PERMISSION_PREFIXES.some((prefix) => required.startsWith(prefix))) {
+    return permissions.includes(required);
+  }
+
   // Check for wildcard
   if (permissions.includes('*')) {
     return true;
@@ -817,6 +845,7 @@ export function hasAdminPermission(permissions: string[], required: string): boo
   // bound until role definitions are migrated.
   const compatibilityParent: Readonly<Record<string, string>> = {
     [ADMIN_PERMISSIONS.USERS_SUSPEND]: ADMIN_PERMISSIONS.USERS_WRITE,
+    [ADMIN_PERMISSIONS.USERS_STATUS_READ]: ADMIN_PERMISSIONS.USERS_READ,
     [ADMIN_PERMISSIONS.CLIENTS_CREATE]: ADMIN_PERMISSIONS.CLIENTS_WRITE,
     [ADMIN_PERMISSIONS.CLIENTS_UPDATE]: ADMIN_PERMISSIONS.CLIENTS_WRITE,
     [ADMIN_PERMISSIONS.CLIENTS_SECRET_ROTATE]: ADMIN_PERMISSIONS.CLIENTS_WRITE,

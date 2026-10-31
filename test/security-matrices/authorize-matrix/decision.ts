@@ -14,7 +14,7 @@ export type ResponseMode = 'query' | 'fragment' | 'form_post' | 'jwt';
 
 export type Outcome =
   | { kind: 'direct-error'; status: number; error: string }
-  | { kind: 'html-error'; status: number; htmlContains: string }
+  | { kind: 'html-error'; status: number; htmlContains: string; error?: string }
   | {
       kind: 'error-redirect';
       error: string;
@@ -150,6 +150,22 @@ export function decideAuthn(row: Row): { outcome: Outcome; sideEffects: SideEffe
     };
   }
 
+  if (row.tenantSso === 'failure') {
+    // This fixture fails the whole tenant OAuth document, which the protocol settings read
+    // (authorize's security profile, before redirect_uri, the session and SSO): authorization
+    // stops with 503 rather than going on without settings it cannot read.
+    return {
+      outcome: { kind: 'direct-error', status: 503, error: 'temporarily_unavailable' },
+      sideEffects: {
+        ...sideEffects,
+        sessionReadAttempted: false,
+        sessionReadFailed: false,
+        sessionBindingRejected: false,
+        clientSsoReadFailed: false,
+      },
+    };
+  }
+
   if (prompt === 'none-invalid') {
     // prompt=none combined with other values is rejected after the session read
     // (authorize.ts:3134).
@@ -169,7 +185,7 @@ export function decideAuthn(row: Row): { outcome: Outcome; sideEffects: SideEffe
   if (usable && prompt !== 'none' && (prompt === 'login' || maxAgeForcesReauth)) {
     sideEffects.challengeStored = 'reauth';
     return {
-      outcome: { kind: 'challenge', challengeType: 'reauth', path: '/flow/confirm' },
+      outcome: { kind: 'challenge', challengeType: 'reauth', path: '/reauth' },
       sideEffects,
     };
   }
@@ -190,7 +206,7 @@ export function decideAuthn(row: Row): { outcome: Outcome; sideEffects: SideEffe
     }
     sideEffects.challengeStored = 'login';
     return {
-      outcome: { kind: 'challenge', challengeType: 'login', path: '/flow/login' },
+      outcome: { kind: 'challenge', challengeType: 'login', path: '/login' },
       sideEffects,
     };
   }
@@ -212,8 +228,8 @@ export function decideAuthn(row: Row): { outcome: Outcome; sideEffects: SideEffe
     }
     sideEffects.consentLookup = true;
     if (authnConsentSatisfied(row.consent, prompt)) {
-      sideEffects.codeIssued = true;
       sideEffects.consentWrite = row.consent === 'auto-grant';
+      sideEffects.codeIssued = true;
       return { outcome: { kind: 'code-success', mode: 'query' }, sideEffects };
     }
     return {
@@ -230,13 +246,13 @@ export function decideAuthn(row: Row): { outcome: Outcome; sideEffects: SideEffe
   // prompt: omitted, select_account, or consent
   sideEffects.consentLookup = true;
   if (authnConsentSatisfied(row.consent, prompt)) {
-    sideEffects.codeIssued = true;
     sideEffects.consentWrite = row.consent === 'auto-grant';
+    sideEffects.codeIssued = true;
     return { outcome: { kind: 'code-success', mode: 'query' }, sideEffects };
   }
   sideEffects.challengeStored = 'consent';
   return {
-    outcome: { kind: 'challenge', challengeType: 'consent', path: '/auth/consent' },
+    outcome: { kind: 'challenge', challengeType: 'consent', path: '/consent' },
     sideEffects,
   };
 }
@@ -359,17 +375,27 @@ export function decideProtocol(row: Row): { outcome: Outcome; sideEffects: SideE
         sideEffects,
       };
     }
-    // Effective response-type validation precedes the client tenant and redirect checks
-    // (authorize.ts:1954-1987).
+    // Effective response-type validation precedes the client tenant and redirect checks and
+    // answers with the AS's own HTML error page, never a redirect.
     if (effectiveResponseType(row) === 'missing') {
       return {
-        outcome: { kind: 'direct-error', status: 400, error: 'invalid_request' },
+        outcome: {
+          kind: 'html-error',
+          status: 400,
+          htmlContains: 'Invalid Authorization Request',
+          error: 'invalid_request',
+        },
         sideEffects,
       };
     }
     if (effectiveResponseType(row) === 'unsupported') {
       return {
-        outcome: { kind: 'direct-error', status: 400, error: 'unsupported_response_type' },
+        outcome: {
+          kind: 'html-error',
+          status: 400,
+          htmlContains: 'Invalid Authorization Request',
+          error: 'unsupported_response_type',
+        },
         sideEffects,
       };
     }
@@ -452,7 +478,7 @@ export function decideProtocol(row: Row): { outcome: Outcome; sideEffects: SideE
   if (row.sessionBinding !== 'active-request-tenant') {
     sideEffects.challengeStored = 'login';
     return {
-      outcome: { kind: 'challenge', challengeType: 'login', path: '/flow/login' },
+      outcome: { kind: 'challenge', challengeType: 'login', path: '/login' },
       sideEffects,
     };
   }

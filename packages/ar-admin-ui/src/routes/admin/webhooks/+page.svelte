@@ -26,8 +26,32 @@
 	let newName = $state('');
 	let newUrl = $state('');
 	let newSecret = $state('');
-	let selectedEvents = $state<string[]>(['user.*']);
+	let selectedEvents = $state<string[]>(['account.*']);
 	let customEvent = $state('');
+	let selectedPayloadFields = $state<Array<'email' | 'registration_state'>>([]);
+	let payloadDestination: Webhook | null = $state(null);
+	let editPayloadFields = $state<Array<'email' | 'registration_state'>>([]);
+	let payloadSaving = $state(false);
+	let payloadError = $state('');
+	let selectedRegistrationStates = $state<Array<'guest' | 'registered'>>([]);
+	let editRegistrationStates = $state<Array<'guest' | 'registered'>>([]);
+	async function savePayloadFields() {
+		if (!payloadDestination) return;
+		payloadSaving = true;
+		payloadError = '';
+		try {
+			await adminWebhooksAPI.update(payloadDestination.id, {
+				payloadFields: editPayloadFields,
+				registrationStates: editRegistrationStates
+			});
+			payloadDestination = null;
+			await loadWebhooks();
+		} catch (err) {
+			payloadError = err instanceof Error ? err.message : $LL.admin_webhooks_update_failed();
+		} finally {
+			payloadSaving = false;
+		}
+	}
 
 	// Delete confirmation dialog state
 	let showDeleteDialog = $state(false);
@@ -65,7 +89,9 @@
 		newName = '';
 		newUrl = '';
 		newSecret = '';
-		selectedEvents = ['user.*'];
+		selectedEvents = ['account.*'];
+		selectedPayloadFields = [];
+		selectedRegistrationStates = [];
 		customEvent = '';
 		createError = '';
 		showCreateDialog = true;
@@ -105,7 +131,9 @@
 				name: newName.trim(),
 				url: newUrl.trim(),
 				secret: newSecret.trim() || undefined,
-				events: selectedEvents
+				events: selectedEvents,
+				payloadFields: selectedPayloadFields,
+				registrationStates: selectedRegistrationStates
 			});
 			showCreateDialog = false;
 			await loadWebhooks();
@@ -339,6 +367,17 @@
 							<td class="text-right">
 								<div class="action-buttons">
 									<button
+										class="btn btn-secondary btn-sm"
+										disabled={webhook.scope === 'client'}
+										onclick={(e) => {
+											e.stopPropagation();
+											payloadDestination = webhook;
+											editPayloadFields = [...(webhook.payloadFields ?? [])];
+											editRegistrationStates = [...(webhook.registrationStates ?? [])];
+											payloadError = '';
+										}}>{$LL.admin_webhooks_payload_fields()}</button
+									>
+									<button
 										class="btn btn-warning btn-sm"
 										onclick={(e) => navigateToDeliveries(webhook, e)}
 									>
@@ -369,6 +408,53 @@
 	{/if}
 </AdminPageShell>
 
+<Modal
+	open={payloadDestination !== null}
+	onClose={() => {
+		if (!payloadSaving) payloadDestination = null;
+	}}
+	title={$LL.admin_webhooks_payload_fields()}
+	size="lg"
+>
+	{#if payloadError}<div class="alert alert-error" role="alert">{payloadError}</div>{/if}
+	<p>{$LL.admin_webhooks_payload_hint()}</p>
+	<fieldset>
+		<legend>{$LL.admin_webhooks_registration_filter()}</legend>
+		<label
+			><input
+				type="checkbox"
+				value="guest"
+				bind:group={editRegistrationStates}
+				disabled={payloadSaving}
+			/> guest</label
+		>
+		<label
+			><input
+				type="checkbox"
+				value="registered"
+				bind:group={editRegistrationStates}
+				disabled={payloadSaving}
+			/> registered</label
+		>
+	</fieldset>
+	<label
+		><input type="checkbox" value="email" bind:group={editPayloadFields} disabled={payloadSaving} />
+		{$LL.admin_webhooks_payload_email()}</label
+	>
+	<label
+		><input
+			type="checkbox"
+			value="registration_state"
+			bind:group={editPayloadFields}
+			disabled={payloadSaving}
+		/>
+		{$LL.admin_webhooks_payload_registration()}</label
+	>
+	<button class="btn btn-primary" onclick={savePayloadFields} disabled={payloadSaving}
+		>{$LL.admin_webhooks_payload_save()}</button
+	>
+</Modal>
+
 <!-- Create Dialog -->
 <Modal
 	open={showCreateDialog}
@@ -379,6 +465,28 @@
 	{#if createError}
 		<div class="alert alert-error">{createError}</div>
 	{/if}
+
+	<fieldset class="admin-field dialog-field">
+		<legend class="admin-field__label">{$LL.admin_webhooks_payload_fields()}</legend>
+		<p>{$LL.admin_webhooks_payload_hint()}</p>
+		<fieldset>
+			<legend>{$LL.admin_webhooks_registration_filter()}</legend>
+			<label
+				><input type="checkbox" value="guest" bind:group={selectedRegistrationStates} /> guest</label
+			>
+			<label
+				><input type="checkbox" value="registered" bind:group={selectedRegistrationStates} /> registered</label
+			>
+		</fieldset>
+		<label
+			><input type="checkbox" value="email" bind:group={selectedPayloadFields} />
+			{$LL.admin_webhooks_payload_email()}</label
+		>
+		<label
+			><input type="checkbox" value="registration_state" bind:group={selectedPayloadFields} />
+			{$LL.admin_webhooks_payload_registration()}</label
+		>
+	</fieldset>
 
 	<div class="admin-field dialog-field">
 		<label for="webhook-name" class="admin-field__label">{$LL.admin_webhooks_name_label()}</label>

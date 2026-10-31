@@ -147,6 +147,12 @@ describe('WORKER_DEPLOYMENT_DEPENDENCIES', () => {
     );
   });
 
+  it('deploys Management before UserInfo for guest upgrade readiness', () => {
+    expect(WORKER_DEPLOYMENT_DEPENDENCIES['ar-userinfo']).toContain('ar-management');
+    const order = getDeploymentOrder(new Set(['ar-userinfo', 'ar-management'])).flat();
+    expect(order.indexOf('ar-management')).toBeLessThan(order.indexOf('ar-userinfo'));
+  });
+
   it('should deploy Agent Access only after its token and management dependencies', () => {
     expect(WORKER_DEPLOYMENT_DEPENDENCIES['ar-agent-access']).toEqual(
       expect.arrayContaining(['ar-lib-core', 'ar-token', 'ar-management'])
@@ -180,7 +186,7 @@ describe('getBuiltinD1BindingsForComponent', () => {
       'LOOKUP_DB',
     ]);
     expect(getBuiltinD1BindingsForComponent('ar-token')).toEqual(['DB_ADMIN', 'LOOKUP_DB']);
-    expect(getBuiltinD1BindingsForComponent('ar-userinfo')).toEqual(['LOOKUP_DB']);
+    expect(getBuiltinD1BindingsForComponent('ar-userinfo')).toEqual(['DB_ADMIN', 'LOOKUP_DB']);
     expect(getBuiltinD1BindingsForComponent('ar-bridge')).toEqual([
       'DB',
       'DB_PII',
@@ -190,7 +196,7 @@ describe('getBuiltinD1BindingsForComponent', () => {
     expect(getBuiltinD1BindingsForComponent('ar-discovery')).toEqual([]);
     expect(getBuiltinD1BindingsForComponent('ar-policy')).toEqual([]);
     expect(getBuiltinD1BindingsForComponent('ar-agent-access')).toEqual(['DB_ADMIN']);
-    expect(getBuiltinD1BindingsForComponent('ar-async')).toEqual([]);
+    expect(getBuiltinD1BindingsForComponent('ar-async')).toEqual(['LOOKUP_DB']);
     expect(getBuiltinD1BindingsForComponent('ar-saml')).toEqual([
       'DB',
       'DB_PII',

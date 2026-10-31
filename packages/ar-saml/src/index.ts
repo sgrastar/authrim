@@ -1,3 +1,7 @@
+import {
+  runSamlDrCoveredFetch,
+  runSamlDrCoveredOperation,
+} from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 /**
  * Authrim SAML 2.0 Worker
  *
@@ -19,6 +23,9 @@
  * - GET  /saml/sp/login     - Initiate login (SP-initiated)
  * - POST /saml/sp/acs       - Assertion Consumer Service
  * - POST /saml/sp/slo       - Single Logout
+ *
+ * The IdP and SP endpoints (and the metadata) answer 403 while the tenant has SAML turned off
+ * (federation.saml_enabled); /saml/health and the admin API below are not affected.
  *
  * Admin Endpoints:
  * - GET    /api/admin/saml-providers     - List SAML providers
@@ -86,6 +93,7 @@ import {
   handleRetireSigningBackup,
 } from './admin/providers';
 import { handleScheduled } from './scheduled';
+import { samlEnabledMiddleware } from './common/saml-enabled';
 import {
   GAKUNIN_SHIBBOLETH_SAML2_IDP_SLO_POST_PATH,
   GAKUNIN_SHIBBOLETH_SAML2_IDP_SLO_REDIRECT_PATH,
@@ -115,6 +123,11 @@ app.use(
   })
 );
 app.use('*', pluginContextMiddleware());
+
+// The tenant's SAML switch (federation.saml_enabled). It decides on the request path, so it covers
+// every protocol endpoint below, the Shibboleth aliases and anything added later under /saml/;
+// the health check and the admin API stay available.
+app.use('*', samlEnabledMiddleware());
 
 // Health check
 app.get('/saml/health', (c) => {
@@ -315,8 +328,14 @@ export { app, handleScheduled };
 
 export default {
   fetch(request: Request, env?: Env, ctx?: ExecutionContext): Promise<Response> {
-    return Promise.resolve(app.fetch(request, env, ctx));
+    return runSamlDrCoveredFetch(env, ctx, (coveredEnv, coveredContext) =>
+      Promise.resolve(app.fetch(request, coveredEnv, coveredContext))
+    );
   },
-  scheduled: handleScheduled,
+  scheduled(controller: Parameters<typeof handleScheduled>[0], env: Env, ctx: ExecutionContext) {
+    return runSamlDrCoveredOperation(env, ctx, (coveredEnv, coveredContext) =>
+      handleScheduled(controller, coveredEnv, coveredContext ?? ctx)
+    );
+  },
 };
 export { RuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';

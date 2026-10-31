@@ -612,6 +612,18 @@ describe('Token Claim Evaluator Service', () => {
           { type: 'add_claim', claim_name: 'cnf', claim_value: { jkt: 'attacker' } },
           { type: 'add_claim', claim_name: 'sid', claim_value: 'other-session' },
           { type: 'add_claim', claim_name: 'token_use', claim_value: 'refresh' },
+          { type: 'add_claim', claim_name: 'authrim_consent_generation', claim_value: 99 },
+          { type: 'add_claim', claim_name: 'authrim_consent_client_id', claim_value: 'other' },
+          { type: 'add_claim', claim_name: 'authrim_subject_issuer', claim_value: 'https://x' },
+          { type: 'add_claim', claim_name: 'authrim_subject_ref', claim_value: 'sr1.x.y' },
+          { type: 'add_claim', claim_name: 'original_issuer', claim_value: 'https://idp' },
+          { type: 'add_claim', claim_name: 'authrim_subject_principal', claim_value: 'client' },
+          {
+            type: 'add_claim',
+            claim_name: 'eduperson_assurance',
+            claim_value: ['https://example.org/assurance/IAL3'],
+          },
+          { type: 'add_claim', claim_name: 'verified_claims', claim_value: { claims: {} } },
           { type: 'add_claim', claim_name: 'valid_claim', claim_value: 'allowed' },
         ]),
         priority: 100,
@@ -624,7 +636,7 @@ describe('Token Claim Evaluator Service', () => {
 
       const result = await evaluator.evaluate(baseContext, 'access');
 
-      // Reserved claims should be skipped
+      // Reserved claims should be skipped (a rule saved before they were reserved included)
       expect(result.claims_to_add).toEqual({ valid_claim: 'allowed' });
       expect(result.claims_to_add).not.toHaveProperty('sub');
       expect(result.claims_to_add).not.toHaveProperty('iss');

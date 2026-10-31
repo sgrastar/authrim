@@ -5,6 +5,7 @@ const {
   mockProcessPendingUserImportJobs,
   mockProcessPendingDataExportRequests,
   mockProcessPendingSupportOpsSnapshotJobs,
+  mockProcessPendingSupportOpsExecuteJobs,
   mockProcessConsentRetentionJobs,
   mockRefreshTenantDatabaseStats,
   mockProcessPendingTenantDatabaseHealthCheckJobs,
@@ -14,11 +15,13 @@ const {
   mockProcessPendingTenantDiscoveryReindexJobs,
   mockProcessLoggingStorageMaintenanceJobs,
   mockProcessPendingGenericAdminJobs,
+  mockProcessPendingIdentityMappingHistory,
 } = vi.hoisted(() => ({
   mockProcessPendingTenantDeletionJobs: vi.fn(),
   mockProcessPendingUserImportJobs: vi.fn(),
   mockProcessPendingDataExportRequests: vi.fn(),
   mockProcessPendingSupportOpsSnapshotJobs: vi.fn(),
+  mockProcessPendingSupportOpsExecuteJobs: vi.fn(),
   mockProcessConsentRetentionJobs: vi.fn(),
   mockRefreshTenantDatabaseStats: vi.fn(),
   mockProcessPendingTenantDatabaseHealthCheckJobs: vi.fn(),
@@ -28,6 +31,11 @@ const {
   mockProcessPendingTenantDiscoveryReindexJobs: vi.fn(),
   mockProcessLoggingStorageMaintenanceJobs: vi.fn(),
   mockProcessPendingGenericAdminJobs: vi.fn(),
+  mockProcessPendingIdentityMappingHistory: vi.fn(),
+}));
+
+vi.mock('../identity-mapping-history-maintenance', () => ({
+  processPendingIdentityMappingHistory: mockProcessPendingIdentityMappingHistory,
 }));
 
 vi.mock('../tenant-deletion-jobs', () => ({
@@ -40,6 +48,10 @@ vi.mock('../user-import-jobs', () => ({
 
 vi.mock('../data-export', () => ({
   processPendingDataExportRequests: mockProcessPendingDataExportRequests,
+}));
+
+vi.mock('../support-ops-execute-job', () => ({
+  processPendingSupportOpsExecuteJobs: mockProcessPendingSupportOpsExecuteJobs,
 }));
 
 vi.mock('../support-ops', () => ({
@@ -92,12 +104,21 @@ describe('scheduled admin job queues', () => {
     error: vi.fn(),
   };
 
+  it('regularly reconciles history in both schedules and isolates an unavailable history store', async () => {
+    mockProcessPendingIdentityMappingHistory.mockRejectedValueOnce(new Error('unavailable'));
+    await processInteractiveAdminJobQueues(env as never, log);
+    expect(mockProcessPendingGenericAdminJobs).toHaveBeenCalled();
+    await processScheduledAdminJobQueues(env as never, log);
+    expect(mockProcessPendingIdentityMappingHistory).toHaveBeenCalledTimes(2);
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockProcessPendingTenantDeletionJobs.mockResolvedValue(undefined);
     mockProcessPendingUserImportJobs.mockResolvedValue(undefined);
     mockProcessPendingDataExportRequests.mockResolvedValue(undefined);
     mockProcessPendingSupportOpsSnapshotJobs.mockResolvedValue(undefined);
+    mockProcessPendingSupportOpsExecuteJobs.mockResolvedValue(undefined);
     mockProcessConsentRetentionJobs.mockResolvedValue(undefined);
     mockRefreshTenantDatabaseStats.mockResolvedValue(undefined);
     mockProcessPendingTenantDatabaseHealthCheckJobs.mockResolvedValue(undefined);
@@ -108,6 +129,29 @@ describe('scheduled admin job queues', () => {
     mockProcessLoggingStorageMaintenanceJobs.mockResolvedValue(undefined);
     mockProcessPendingGenericAdminJobs.mockResolvedValue(undefined);
   });
+
+  it.each([
+    ['interactive', processInteractiveAdminJobQueues],
+    ['periodic', processScheduledAdminJobQueues],
+  ] as const)(
+    '%s keeps execution running after snapshot failure with the same remaining budget',
+    async (_name, schedule) => {
+      mockProcessPendingSupportOpsSnapshotJobs.mockImplementationOnce(
+        async (_env: unknown, _log: unknown, _limits: unknown, budget: { remaining: number }) => {
+          budget.remaining -= 200;
+          throw new Error('snapshot_unavailable');
+        }
+      );
+      await schedule(env as never, log);
+      expect(mockProcessPendingSupportOpsExecuteJobs).toHaveBeenCalledWith(
+        env,
+        log,
+        { maxCallsPerRun: 400 },
+        { remaining: 400 }
+      );
+      expect(mockProcessPendingGenericAdminJobs).toHaveBeenCalled();
+    }
+  );
 
   it('identifies only the bounded interactive queue schedule', () => {
     expect(INTERACTIVE_ADMIN_JOB_CRON).toBe('*/5 * * * *');
@@ -122,7 +166,18 @@ describe('scheduled admin job queues', () => {
     expect(mockProcessPendingTenantDeletionJobs).toHaveBeenCalledWith(env, log);
     expect(mockProcessPendingUserImportJobs).toHaveBeenCalledWith(env, log);
     expect(mockProcessPendingDataExportRequests).toHaveBeenCalledWith(env, log);
-    expect(mockProcessPendingSupportOpsSnapshotJobs).toHaveBeenCalledWith(env, log);
+    expect(mockProcessPendingSupportOpsSnapshotJobs).toHaveBeenCalledWith(
+      env,
+      log,
+      { maxQueriesPerRun: 200 },
+      { remaining: 600 }
+    );
+    expect(mockProcessPendingSupportOpsExecuteJobs).toHaveBeenCalledWith(
+      env,
+      log,
+      { maxCallsPerRun: 400 },
+      { remaining: 600 }
+    );
     expect(mockProcessPendingTenantDatabaseHealthCheckJobs).toHaveBeenCalledWith(env, log);
     expect(mockProcessPendingTenantDatabaseReconciliationJobs).toHaveBeenCalledWith(env, log);
     expect(mockProcessPendingTenantDiscoveryReindexJobs).toHaveBeenCalledWith(env, log);
@@ -153,7 +208,18 @@ describe('scheduled admin job queues', () => {
     expect(mockProcessPendingTenantDeletionJobs).toHaveBeenCalledWith(env, log);
     expect(mockProcessPendingUserImportJobs).toHaveBeenCalledWith(env, log);
     expect(mockProcessPendingDataExportRequests).toHaveBeenCalledWith(env, log);
-    expect(mockProcessPendingSupportOpsSnapshotJobs).toHaveBeenCalledWith(env, log);
+    expect(mockProcessPendingSupportOpsSnapshotJobs).toHaveBeenCalledWith(
+      env,
+      log,
+      { maxQueriesPerRun: 200 },
+      { remaining: 600 }
+    );
+    expect(mockProcessPendingSupportOpsExecuteJobs).toHaveBeenCalledWith(
+      env,
+      log,
+      { maxCallsPerRun: 400 },
+      { remaining: 600 }
+    );
     expect(mockProcessConsentRetentionJobs).toHaveBeenCalledWith(env, log);
     expect(mockRefreshTenantDatabaseStats).toHaveBeenCalledWith(env, log);
     expect(mockProcessPendingTenantDatabaseHealthCheckJobs).toHaveBeenCalledWith(env, log);
@@ -172,7 +238,18 @@ describe('scheduled admin job queues', () => {
     await processScheduledAdminJobQueues(env as never, log);
 
     expect(mockProcessPendingDataExportRequests).toHaveBeenCalledWith(env, log);
-    expect(mockProcessPendingSupportOpsSnapshotJobs).toHaveBeenCalledWith(env, log);
+    expect(mockProcessPendingSupportOpsSnapshotJobs).toHaveBeenCalledWith(
+      env,
+      log,
+      { maxQueriesPerRun: 200 },
+      { remaining: 600 }
+    );
+    expect(mockProcessPendingSupportOpsExecuteJobs).toHaveBeenCalledWith(
+      env,
+      log,
+      { maxCallsPerRun: 400 },
+      { remaining: 600 }
+    );
     expect(mockRefreshTenantDatabaseStats).toHaveBeenCalledWith(env, log);
     expect(mockProcessPendingTenantDatabaseHealthCheckJobs).toHaveBeenCalledWith(env, log);
     expect(mockRefreshTenantDatabaseHealth).toHaveBeenCalledWith(env, log);

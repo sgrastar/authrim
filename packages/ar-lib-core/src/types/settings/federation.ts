@@ -22,21 +22,8 @@ export interface FederationSettings {
   'federation.saml_slo_binding': 'HTTP-POST' | 'HTTP-Redirect';
   'federation.saml_nameid_format': 'emailAddress' | 'persistent' | 'transient' | 'unspecified';
 
-  // SCIM Settings
-  'federation.scim_lockout_seconds': number;
-  'federation.scim_failure_window_seconds': number;
-  'federation.scim_token_min_expiry': number;
   'federation.scim_token_max_expiry': number;
   'federation.scim_token_default_expiry': number;
-  'federation.scim_default_page_size': number;
-  'federation.scim_max_page_size': number;
-  'federation.scim_max_filter_complexity': number;
-
-  // Federation General
-  'federation.allow_unverified_email': boolean;
-  'federation.auto_link_accounts': boolean;
-  'federation.require_signed_requests': boolean;
-  'federation.metadata_cache_ttl': number;
 }
 
 /**
@@ -46,10 +33,11 @@ export const FEDERATION_SETTINGS_META: Record<keyof FederationSettings, SettingM
   'federation.saml_enabled': {
     key: 'federation.saml_enabled',
     type: 'boolean',
-    default: false,
+    default: true,
     envKey: 'ENABLE_SAML',
     label: 'SAML Enabled',
-    description: 'Enable SAML 2.0 federation',
+    description:
+      'Whether this tenant answers SAML 2.0 requests: the IdP and SP endpoints and the metadata. Off refuses them all; registered providers are kept. The health check and the SAML admin API stay available.',
     visibility: 'public',
   },
   'federation.saml_assertion_ttl': {
@@ -58,10 +46,13 @@ export const FEDERATION_SETTINGS_META: Record<keyof FederationSettings, SettingM
     default: 300,
     envKey: 'SAML_ASSERTION_TTL',
     label: 'SAML Assertion TTL',
-    description: 'SAML assertion lifetime in seconds',
+    description:
+      'How long a SAML assertion issued by Authrim is valid (NotOnOrAfter), in seconds. A service provider with its own assertion lifetime keeps it. Applies to assertions issued after the change.',
     min: 60,
     max: 600,
     unit: 'seconds',
+    integer: true,
+    envNumber: 'strict-in-range',
     visibility: 'admin',
   },
   'federation.saml_request_ttl': {
@@ -70,10 +61,13 @@ export const FEDERATION_SETTINGS_META: Record<keyof FederationSettings, SettingM
     default: 300,
     envKey: 'SAML_REQUEST_TTL',
     label: 'SAML Request TTL',
-    description: 'SAML authentication request lifetime in seconds',
+    description:
+      'How long a SAML request (sign-in and logout) stays valid, in seconds: the age Authrim accepts of an incoming request, and how long the requests it sends are kept to match their responses. A change applies to the lifetime of requests made after it; the age of a request is also checked against the current value when a sign-in in progress resumes, so shortening it can reject sign-ins that have already started.',
     min: 60,
     max: 600,
     unit: 'seconds',
+    integer: true,
+    envNumber: 'strict-in-range',
     visibility: 'admin',
   },
   'federation.saml_artifact_ttl': {
@@ -86,7 +80,10 @@ export const FEDERATION_SETTINGS_META: Record<keyof FederationSettings, SettingM
     min: 30,
     max: 300,
     unit: 'seconds',
+    integer: true,
+    envNumber: 'strict-in-range',
     visibility: 'admin',
+    status: 'in_development',
   },
   'federation.saml_artifact_resolution_timeout': {
     key: 'federation.saml_artifact_resolution_timeout',
@@ -98,25 +95,30 @@ export const FEDERATION_SETTINGS_META: Record<keyof FederationSettings, SettingM
     min: 1000,
     max: 30000,
     unit: 'ms',
+    integer: true,
+    envNumber: 'strict-in-range',
     visibility: 'admin',
+    status: 'in_development',
   },
   'federation.saml_sso_binding': {
     key: 'federation.saml_sso_binding',
     type: 'enum',
-    default: 'HTTP-POST',
+    default: 'HTTP-Redirect',
     envKey: 'SAML_SSO_BINDING',
     label: 'SAML SSO Binding',
-    description: 'SAML Single Sign-On request binding (HTTP-POST recommended)',
+    description:
+      'The sign-in request binding a new identity provider gets when its metadata offers both or its settings name none. HTTP-Redirect carries a signed request; HTTP-POST carries an unsigned one. Existing providers are not changed.',
     enum: ['HTTP-POST', 'HTTP-Redirect'],
     visibility: 'admin',
   },
   'federation.saml_slo_binding': {
     key: 'federation.saml_slo_binding',
     type: 'enum',
-    default: 'HTTP-POST',
+    default: 'HTTP-Redirect',
     envKey: 'SAML_SLO_BINDING',
     label: 'SAML SLO Binding',
-    description: 'SAML Single Logout request binding',
+    description:
+      'The logout request binding a new provider gets when its metadata offers both or its settings name none. A provider profile with its own logout binding (legacy: HTTP-POST) keeps it. Existing providers are not changed.',
     enum: ['HTTP-POST', 'HTTP-Redirect'],
     visibility: 'admin',
   },
@@ -126,142 +128,40 @@ export const FEDERATION_SETTINGS_META: Record<keyof FederationSettings, SettingM
     default: 'emailAddress',
     envKey: 'SAML_NAMEID_FORMAT',
     label: 'SAML NameID Format',
-    description: 'SAML NameID format (persistent provides privacy protection)',
+    description:
+      'The NameID format a new provider gets when its metadata names none (persistent gives each service its own identifier and protects privacy). A provider profile with its own NameID format keeps it. Existing providers are not changed.',
     enum: ['emailAddress', 'persistent', 'transient', 'unspecified'],
     visibility: 'admin',
   },
 
-  // SCIM Settings
-  'federation.scim_lockout_seconds': {
-    key: 'federation.scim_lockout_seconds',
-    type: 'duration',
-    default: 900,
-    envKey: 'SCIM_LOCKOUT_SECONDS',
-    label: 'SCIM Lockout Duration',
-    description: 'Lockout duration after SCIM authentication failures in seconds',
-    min: 60,
-    max: 86400,
-    unit: 'seconds',
-    visibility: 'admin',
-  },
-  'federation.scim_failure_window_seconds': {
-    key: 'federation.scim_failure_window_seconds',
-    type: 'duration',
-    default: 300,
-    envKey: 'SCIM_FAILURE_WINDOW_SECONDS',
-    label: 'SCIM Failure Window',
-    description: 'Time window for counting SCIM authentication failures',
-    min: 60,
-    max: 3600,
-    unit: 'seconds',
-    visibility: 'admin',
-  },
-  'federation.scim_token_min_expiry': {
-    key: 'federation.scim_token_min_expiry',
-    type: 'duration',
-    default: 3600,
-    envKey: 'SCIM_TOKEN_MIN_EXPIRY',
-    label: 'SCIM Token Min Expiry',
-    description: 'Minimum SCIM token lifetime in seconds (1 hour)',
-    min: 300,
-    max: 86400,
-    unit: 'seconds',
-    visibility: 'admin',
-  },
   'federation.scim_token_max_expiry': {
     key: 'federation.scim_token_max_expiry',
     type: 'duration',
     default: 31536000,
     envKey: 'SCIM_TOKEN_MAX_EXPIRY',
     label: 'SCIM Token Max Expiry',
-    description: 'Maximum SCIM token lifetime in seconds (1 year)',
+    description:
+      'The longest lifetime a new SCIM token can be given, in seconds (default and highest: 1 year). Tokens already issued keep their lifetime.',
     min: 86400,
     max: 31536000,
     unit: 'seconds',
+    integer: true,
+    envNumber: 'strict-in-range',
     visibility: 'admin',
   },
   'federation.scim_token_default_expiry': {
     key: 'federation.scim_token_default_expiry',
     type: 'duration',
-    default: 7776000,
+    default: 31536000,
     envKey: 'SCIM_TOKEN_DEFAULT_EXPIRY',
     label: 'SCIM Token Default Expiry',
-    description: 'Default SCIM token lifetime in seconds (90 days)',
-    min: 3600,
+    description:
+      'The lifetime of a new SCIM token when the request names none, in seconds (default: 1 year, as before this setting applied). Never longer than the maximum. Tokens already issued keep their lifetime.',
+    min: 86400,
     max: 31536000,
     unit: 'seconds',
-    visibility: 'admin',
-  },
-  'federation.scim_default_page_size': {
-    key: 'federation.scim_default_page_size',
-    type: 'number',
-    default: 100,
-    envKey: 'SCIM_DEFAULT_PAGE_SIZE',
-    label: 'SCIM Default Page Size',
-    description: 'Default number of items per SCIM list response',
-    min: 10,
-    max: 1000,
-    visibility: 'admin',
-  },
-  'federation.scim_max_page_size': {
-    key: 'federation.scim_max_page_size',
-    type: 'number',
-    default: 1000,
-    envKey: 'SCIM_MAX_PAGE_SIZE',
-    label: 'SCIM Max Page Size',
-    description: 'Maximum items per SCIM list response',
-    min: 100,
-    max: 5000,
-    visibility: 'admin',
-  },
-  'federation.scim_max_filter_complexity': {
-    key: 'federation.scim_max_filter_complexity',
-    type: 'number',
-    default: 5,
-    envKey: 'SCIM_MAX_FILTER_COMPLEXITY',
-    label: 'SCIM Max Filter Complexity',
-    description: 'Maximum nesting depth for SCIM filter expressions',
-    min: 1,
-    max: 10,
-    visibility: 'admin',
-  },
-  'federation.allow_unverified_email': {
-    key: 'federation.allow_unverified_email',
-    type: 'boolean',
-    default: false,
-    envKey: 'ENABLE_FEDERATION_UNVERIFIED_EMAIL',
-    label: 'Allow Unverified Email',
-    description: 'Allow federation with unverified email addresses',
-    visibility: 'admin',
-  },
-  'federation.auto_link_accounts': {
-    key: 'federation.auto_link_accounts',
-    type: 'boolean',
-    default: false,
-    envKey: 'FEDERATION_AUTO_LINK_ACCOUNTS',
-    label: 'Auto-Link Accounts',
-    description: 'Automatically link accounts with matching email',
-    visibility: 'admin',
-  },
-  'federation.require_signed_requests': {
-    key: 'federation.require_signed_requests',
-    type: 'boolean',
-    default: true,
-    envKey: 'FEDERATION_REQUIRE_SIGNED_REQUESTS',
-    label: 'Require Signed Requests',
-    description: 'Require cryptographic signatures on federation requests',
-    visibility: 'admin',
-  },
-  'federation.metadata_cache_ttl': {
-    key: 'federation.metadata_cache_ttl',
-    type: 'duration',
-    default: 86400,
-    envKey: 'FEDERATION_METADATA_CACHE_TTL',
-    label: 'Metadata Cache TTL',
-    description: 'Federation metadata cache lifetime in seconds (default: 24 hours)',
-    min: 3600,
-    max: 604800,
-    unit: 'seconds',
+    integer: true,
+    envNumber: 'strict-in-range',
     visibility: 'admin',
   },
 };
@@ -281,26 +181,14 @@ export const FEDERATION_CATEGORY_META: CategoryMeta = {
  */
 export const FEDERATION_DEFAULTS: FederationSettings = {
   // SAML
-  'federation.saml_enabled': false,
+  'federation.saml_enabled': true,
   'federation.saml_assertion_ttl': 300,
   'federation.saml_request_ttl': 300,
   'federation.saml_artifact_ttl': 120,
   'federation.saml_artifact_resolution_timeout': 5000,
-  'federation.saml_sso_binding': 'HTTP-POST',
-  'federation.saml_slo_binding': 'HTTP-POST',
+  'federation.saml_sso_binding': 'HTTP-Redirect',
+  'federation.saml_slo_binding': 'HTTP-Redirect',
   'federation.saml_nameid_format': 'emailAddress',
-  // SCIM
-  'federation.scim_lockout_seconds': 900,
-  'federation.scim_failure_window_seconds': 300,
-  'federation.scim_token_min_expiry': 3600,
   'federation.scim_token_max_expiry': 31536000,
-  'federation.scim_token_default_expiry': 7776000,
-  'federation.scim_default_page_size': 100,
-  'federation.scim_max_page_size': 1000,
-  'federation.scim_max_filter_complexity': 5,
-  // General
-  'federation.allow_unverified_email': false,
-  'federation.auto_link_accounts': false,
-  'federation.require_signed_requests': true,
-  'federation.metadata_cache_ttl': 86400,
+  'federation.scim_token_default_expiry': 31536000,
 };

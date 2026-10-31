@@ -644,20 +644,14 @@ async function getTenantPluginConfigRecord(
 }
 
 /**
- * Convert plugin ID to settings-v2 key format
- * e.g. "notifier-resend" → "plugin.notifier_resend_enabled"
- */
-function pluginIdToSettingsKey(pluginId: string): string {
-  return `plugin.${pluginId.replace(/-/g, '_')}_enabled`;
-}
-
-/**
  * Check if a plugin is enabled
  *
  * Resolution order:
- * 1. settings-v2 (AUTHRIM_CONFIG KV): `plugin.{plugin_id_underscore}_enabled`
- * 2. Legacy (SETTINGS KV): `plugins:enabled:{pluginId}` (tenant-specific → global)
- * 3. Default: true
+ * 1. Legacy (SETTINGS KV): `plugins:enabled:{pluginId}` (tenant-specific → global)
+ * 2. Default: true
+ *
+ * The tenant settings document holds no per-plugin switch any more (`plugin.notifier_resend_enabled`
+ * was the only one and is retired): a value saved under that key is ignored.
  */
 async function isPluginEnabledInKV(env: Env, pluginId: string, tenantId: string): Promise<boolean> {
   const cacheKey = getPluginEnabledCacheKey(pluginId, tenantId);
@@ -666,28 +660,7 @@ async function isPluginEnabledInKV(env: Env, pluginId: string, tenantId: string)
     return cached;
   }
 
-  // 1. Check settings-v2 (AUTHRIM_CONFIG KV)
-  try {
-    const configKV = env.AUTHRIM_CONFIG;
-    if (configKV) {
-      const settingsKey = pluginIdToSettingsKey(pluginId);
-      const kvJson = await configKV.get(`settings:tenant:${tenantId}:plugin`);
-      if (kvJson) {
-        const settings = JSON.parse(kvJson) as Record<string, unknown>;
-        if (typeof settings[settingsKey] === 'boolean') {
-          return setCachedValue(env, cacheKey, settings[settingsKey] as boolean);
-        }
-        // Also check string form (KV stores may serialize as string)
-        if (typeof settings[settingsKey] === 'string') {
-          return setCachedValue(env, cacheKey, settings[settingsKey] === 'true');
-        }
-      }
-    }
-  } catch {
-    // Ignore errors, fall through
-  }
-
-  // 2. Check legacy SETTINGS KV
+  // 1. Check legacy SETTINGS KV
   const kv = env.SETTINGS;
   if (kv) {
     try {
@@ -709,7 +682,7 @@ async function isPluginEnabledInKV(env: Env, pluginId: string, tenantId: string)
     }
   }
 
-  // 3. Default: enabled
+  // 2. Default: enabled
   return setCachedValue(env, cacheKey, true);
 }
 
@@ -887,7 +860,7 @@ export interface PluginLoaderConfig {
   /**
    * The plugin to load
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   plugin: {
     id: string;
     version: string;

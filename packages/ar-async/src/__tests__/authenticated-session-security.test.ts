@@ -16,7 +16,8 @@ vi.mock('@authrim/ar-lib-core', async () => {
     ...actual,
     isShardedSessionId: mocks.isShardedSessionId,
     getSessionStoreBySessionId: mocks.getSessionStoreBySessionId,
-    createAuthContextFromHono: () => ({ coreAdapter: {} }),
+    resolveAccountDataContextFromHono: async () => ({}),
+    createAccountAuthContextFromHono: () => ({ coreAdapter: {} }),
     createPIIContextFromHono: () => ({ defaultPiiAdapter: {} }),
     CanonicalRuntimeUserStore: class {
       findById = mocks.findById;

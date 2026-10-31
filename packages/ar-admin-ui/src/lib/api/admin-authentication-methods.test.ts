@@ -73,12 +73,171 @@ describe('adminAuthenticationMethodsAPI', () => {
 			'tenant-a'
 		);
 		expect(result.builtIn).toMatchObject({
+			guestLoginEnabled: false,
+			passkeyGuestUpgradeEnabled: true,
+			emailOtpGuestUpgradeEnabled: true,
 			totpLoginEnabled: true,
 			totpSignupEnabled: false,
 			totpReauthEnabled: true,
 			totpAccountLinkEnabled: true,
 			totpPreset: 'strong',
 			totpDefaultAcr: 'urn:authrim:aal:3'
+		});
+	});
+
+	it('reads DID login as off unless the tenant turned it on, whatever the other methods say', async () => {
+		mockAdminSettingsAPI.getSettings.mockResolvedValue({
+			version: 'v1',
+			values: {
+				'authentication-methods.passkey.enabled': true,
+				'authentication-methods.totp.enabled': true,
+				'authentication-methods.email_otp.enabled': true
+			}
+		});
+		expect((await adminAuthenticationMethodsAPI.get('tenant-a')).builtIn.didLoginEnabled).toBe(
+			false
+		);
+
+		mockAdminSettingsAPI.getSettings.mockResolvedValue({
+			version: 'v1',
+			values: { 'authentication-methods.did.login_enabled': true }
+		});
+		expect((await adminAuthenticationMethodsAPI.get('tenant-a')).builtIn.didLoginEnabled).toBe(
+			true
+		);
+	});
+
+	it('shows a DID login value that is not a boolean true as off, and does not write it back as true', async () => {
+		for (const value of ['true', ' TRUE ', 'yes', 1, null]) {
+			const saved = {
+				version: 'v1',
+				values: { 'authentication-methods.did.login_enabled': value }
+			};
+			mockAdminSettingsAPI.getSettings.mockResolvedValue(saved);
+			const loaded = await adminAuthenticationMethodsAPI.get('tenant-a');
+			expect(loaded.builtIn.didLoginEnabled, String(value)).toBe(false);
+
+			// Saving another method on the screen sends what was shown: false, never a true.
+			mockAdminSettingsAPI.updateSettings.mockResolvedValue({ applied: [] });
+			await adminAuthenticationMethodsAPI.update(
+				{ category: 'authentication-methods', version: 'v1', values: saved.values, sources: {} },
+				{ ...loaded.builtIn, totpPreset: 'strong' },
+				loaded.directoryPassword,
+				loaded.humanVerification,
+				[],
+				[],
+				'tenant-a'
+			);
+			const sent = mockAdminSettingsAPI.updateSettings.mock.calls.at(-1)?.[1].set;
+			expect(sent['authentication-methods.did.login_enabled'], String(value)).toBe(false);
+		}
+	});
+
+	it('reads and keeps the per-provider re-authentication evidence setting', async () => {
+		mockAdminSettingsAPI.getSettings.mockResolvedValue({
+			version: 'v1',
+			values: {
+				'authentication-methods.external_provider_usage': JSON.stringify([
+					{
+						id: 'entra',
+						providerId: 'p-entra',
+						reauthEnabled: true,
+						reauthAcceptWithoutAuthTime: true
+					},
+					{ id: 'github', providerId: 'p-github', reauthEnabled: true }
+				])
+			}
+		});
+		mockAdminExternalProvidersAPI.list.mockResolvedValue({
+			providers: [
+				{ id: 'p-entra', slug: 'entra', name: 'Entra', providerType: 'oidc', enabled: true },
+				{ id: 'p-github', slug: 'github', name: 'GitHub', providerType: 'oauth2', enabled: true }
+			]
+		});
+
+		const result = await adminAuthenticationMethodsAPI.get('tenant-a');
+
+		expect(result.externalProviderUsages).toEqual([
+			expect.objectContaining({
+				id: 'entra',
+				reauthEnabled: true,
+				reauthAcceptWithoutAuthTime: true
+			}),
+			// No ID token dates a new login: never re-authenticates, whatever was saved.
+			expect.objectContaining({
+				id: 'github',
+				reauthEnabled: false,
+				reauthAcceptWithoutAuthTime: false
+			})
+		]);
+
+		mockAdminSettingsAPI.updateSettings.mockResolvedValue({ version: 'v2', values: {} });
+		await adminAuthenticationMethodsAPI.update(
+			result.settings,
+			result.builtIn,
+			result.directoryPassword,
+			result.humanVerification,
+			[],
+			result.externalProviderUsages,
+			'tenant-a'
+		);
+		const saved = JSON.parse(
+			mockAdminSettingsAPI.updateSettings.mock.calls[0][1].set[
+				'authentication-methods.external_provider_usage'
+			]
+		) as Array<Record<string, unknown>>;
+		expect(saved[0]).toMatchObject({ id: 'entra', reauthAcceptWithoutAuthTime: true });
+		expect(saved[1]).toMatchObject({ id: 'github', reauthEnabled: false });
+		expect(saved[1]).not.toHaveProperty('reauthAcceptWithoutAuthTime');
+	});
+
+	it("never shows another provider's entry that once had the same slug", async () => {
+		mockAdminSettingsAPI.getSettings.mockResolvedValue({
+			version: 'v1',
+			values: {
+				'authentication-methods.external_provider_usage': JSON.stringify([
+					{
+						id: 'corp',
+						providerId: 'p-old',
+						reauthEnabled: true,
+						reauthAcceptWithoutAuthTime: true
+					}
+				])
+			}
+		});
+		mockAdminExternalProvidersAPI.list.mockResolvedValue({
+			providers: [{ id: 'p-new', slug: 'corp', name: 'Corp', providerType: 'oidc', enabled: true }]
+		});
+
+		const result = await adminAuthenticationMethodsAPI.get('tenant-a');
+
+		expect(result.externalProviderUsages[0]).toMatchObject({
+			id: 'corp',
+			providerId: 'p-new',
+			reauthAcceptWithoutAuthTime: false
+		});
+	});
+
+	it('keeps guest promotion independent from signup and login permissions', async () => {
+		mockAdminSettingsAPI.getSettings.mockResolvedValue({
+			version: 'v3',
+			values: {
+				'authentication-methods.guest.login_enabled': true,
+				'authentication-methods.passkey.signup_enabled': false,
+				'authentication-methods.passkey.login_enabled': false,
+				'authentication-methods.passkey.guest_upgrade_enabled': true,
+				'authentication-methods.email_otp.signup_enabled': true,
+				'authentication-methods.email_otp.guest_upgrade_enabled': false
+			}
+		});
+		const result = await adminAuthenticationMethodsAPI.get('tenant-b');
+		expect(result.builtIn).toMatchObject({
+			guestLoginEnabled: true,
+			passkeySignupEnabled: false,
+			passkeyLoginEnabled: false,
+			passkeyGuestUpgradeEnabled: true,
+			emailOtpSignupEnabled: true,
+			emailOtpGuestUpgradeEnabled: false
 		});
 	});
 
@@ -94,6 +253,9 @@ describe('adminAuthenticationMethodsAPI', () => {
 			sources: {}
 		};
 		const builtIn: AuthenticationMethodBuiltInSettings = {
+			guestLoginEnabled: false,
+			passkeyGuestUpgradeEnabled: true,
+			emailOtpGuestUpgradeEnabled: true,
 			passkeyLoginEnabled: true,
 			passkeySignupEnabled: true,
 			passkeyReauthEnabled: true,
@@ -106,6 +268,7 @@ describe('adminAuthenticationMethodsAPI', () => {
 			totpSignupEnabled: false,
 			totpReauthEnabled: true,
 			totpAccountLinkEnabled: true,
+			didLoginEnabled: true,
 			totpPreset: 'strong',
 			totpDefaultAcr: 'urn:authrim:aal:3'
 		};
@@ -139,10 +302,14 @@ describe('adminAuthenticationMethodsAPI', () => {
 			expect.objectContaining({
 				ifMatch: 'v1',
 				set: expect.objectContaining({
+					'authentication-methods.guest.login_enabled': false,
+					'authentication-methods.passkey.guest_upgrade_enabled': true,
+					'authentication-methods.email_otp.guest_upgrade_enabled': true,
 					'authentication-methods.totp.login_enabled': true,
 					'authentication-methods.totp.signup_enabled': false,
 					'authentication-methods.totp.reauth_enabled': true,
 					'authentication-methods.totp.account_link_enabled': true,
+					'authentication-methods.did.login_enabled': true,
 					'authentication-methods.totp.preset': 'strong',
 					'authentication-methods.totp.default_acr': 'urn:authrim:aal:3'
 				})

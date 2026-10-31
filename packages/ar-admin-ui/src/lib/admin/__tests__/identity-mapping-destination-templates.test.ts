@@ -30,6 +30,18 @@ describe('identity mapping destination templates', () => {
 		);
 	});
 
+	it('lists every standard OIDC claim for both the ID token and UserInfo', () => {
+		// OIDC Core 5.4: with response_type=id_token there is no UserInfo, so the scope claims travel
+		// in the ID token; a profile that lists them for UserInfo only would drop them there.
+		const standardOidc = oidcDestinationTemplates.find(
+			(template) => template.id === 'template_destination_oidc_standard'
+		);
+		const claims = standardOidc?.schema.claims as Array<{ claimName: string; surfaces: string[] }>;
+		for (const claim of claims) {
+			expect(claim.surfaces, claim.claimName).toEqual(['id_token', 'userinfo']);
+		}
+	});
+
 	it('provides a client-scoped Resource Server introspection template', () => {
 		const standard = resourceServerDestinationTemplates.find(
 			(template) => template.id === 'template_destination_resource_server_standard'

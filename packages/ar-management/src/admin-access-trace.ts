@@ -1,3 +1,10 @@
+import {
+  createLogReadAdapter,
+  logCoverageHeaders,
+  logDetailWindow,
+  logPageRequest,
+} from './log-read-adapter';
+import { logQueryErrorResponse } from './log-archive-query';
 /**
  * Admin Access Trace API
  *
@@ -87,7 +94,19 @@ function aggregateResolvedVia(rows: Array<{ resolved_via_json: string | null }>)
 export async function adminAccessTraceListHandler(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
-    const db = createAuthContextFromHono(c, tenantId).coreAdapter;
+    const logRead = createLogReadAdapter({
+      env: c.env,
+      tenantId,
+      dataset: 'core.permission_check_audit',
+      onCoverage: logCoverageHeaders(c),
+      adapter: createAuthContextFromHono(c, tenantId).coreAdapter,
+      page: logPageRequest(
+        c,
+        tenantId,
+        Math.min(200, Math.max(1, Number.parseInt(c.req.query('limit') ?? '50', 10)))
+      ),
+    });
+    const db = logRead.adapter;
 
     const {
       subject_id,
@@ -154,7 +173,10 @@ export async function adminAccessTraceListHandler(c: Context<{ Bindings: Env }>)
 
     const entries = rows.map(rowToAccessTrace);
 
+    if (logRead.pagination())
+      return c.json({ entries, pagination: logRead.pagination(), coverage: logRead.coverage() });
     return c.json({
+      coverage: logRead.coverage(),
       entries,
       pagination: {
         page: pageNum,
@@ -164,6 +186,8 @@ export async function adminAccessTraceListHandler(c: Context<{ Bindings: Env }>)
       },
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     const log = getLogger(c).module('ADMIN-ACCESS-TRACE');
     log.error('Failed to list access trace entries', {}, error as Error);
     return c.json(
@@ -182,7 +206,15 @@ export async function adminAccessTraceListHandler(c: Context<{ Bindings: Env }>)
 export async function adminAccessTraceGetHandler(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
-    const db = createAuthContextFromHono(c, tenantId).coreAdapter;
+    const logRead = createLogReadAdapter({
+      env: c.env,
+      tenantId,
+      dataset: 'core.permission_check_audit',
+      onCoverage: logCoverageHeaders(c),
+      adapter: createAuthContextFromHono(c, tenantId).coreAdapter,
+      ...logDetailWindow(c),
+    });
+    const db = logRead.adapter;
     const entryId = c.req.param('id')!;
 
     const row = await db.queryOne<PermissionCheckAuditRow>(
@@ -201,9 +233,12 @@ export async function adminAccessTraceGetHandler(c: Context<{ Bindings: Env }>) 
     }
 
     return c.json({
+      coverage: logRead.coverage(),
       entry: rowToAccessTrace(row),
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     const log = getLogger(c).module('ADMIN-ACCESS-TRACE');
     log.error('Failed to get access trace entry', {}, error as Error);
     return c.json(
@@ -222,7 +257,14 @@ export async function adminAccessTraceGetHandler(c: Context<{ Bindings: Env }>) 
 export async function adminAccessTraceStatsHandler(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
-    const db = createAuthContextFromHono(c, tenantId).coreAdapter;
+    const logRead = createLogReadAdapter({
+      env: c.env,
+      tenantId,
+      dataset: 'core.permission_check_audit',
+      onCoverage: logCoverageHeaders(c),
+      adapter: createAuthContextFromHono(c, tenantId).coreAdapter,
+    });
+    const db = logRead.adapter;
 
     const { period = '24h' } = c.req.query();
 
@@ -297,6 +339,7 @@ export async function adminAccessTraceStatsHandler(c: Context<{ Bindings: Env }>
     const resolutionStats = aggregateResolvedVia(resolutionRows);
 
     return c.json({
+      coverage: logRead.coverage(),
       period,
       total: totalStats?.total || 0,
       allowed: totalStats?.allowed || 0,
@@ -309,6 +352,8 @@ export async function adminAccessTraceStatsHandler(c: Context<{ Bindings: Env }>
       resolution_distribution: resolutionStats,
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     const log = getLogger(c).module('ADMIN-ACCESS-TRACE');
     log.error('Failed to get access trace stats', {}, error as Error);
     return c.json(
@@ -327,7 +372,14 @@ export async function adminAccessTraceStatsHandler(c: Context<{ Bindings: Env }>
 export async function adminAccessTraceTimelineHandler(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
-    const db = createAuthContextFromHono(c, tenantId).coreAdapter;
+    const logRead = createLogReadAdapter({
+      env: c.env,
+      tenantId,
+      dataset: 'core.permission_check_audit',
+      onCoverage: logCoverageHeaders(c),
+      adapter: createAuthContextFromHono(c, tenantId).coreAdapter,
+    });
+    const db = logRead.adapter;
 
     const { period = '24h', granularity = 'hour' } = c.req.query();
 
@@ -371,7 +423,7 @@ export async function adminAccessTraceTimelineHandler(c: Context<{ Bindings: Env
       denied: number;
     }>(
       `SELECT
-        (checked_at / ?) * ? as bucket,
+        FLOOR(checked_at / ?) * ? as bucket,
         COUNT(*) as total,
         SUM(CASE WHEN allowed = 1 THEN 1 ELSE 0 END) as allowed,
         SUM(CASE WHEN allowed = 0 THEN 1 ELSE 0 END) as denied
@@ -383,6 +435,7 @@ export async function adminAccessTraceTimelineHandler(c: Context<{ Bindings: Env
     );
 
     return c.json({
+      coverage: logRead.coverage(),
       period,
       granularity: bucketSize,
       data: timeline.map((row) => ({
@@ -393,6 +446,8 @@ export async function adminAccessTraceTimelineHandler(c: Context<{ Bindings: Env
       })),
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     const log = getLogger(c).module('ADMIN-ACCESS-TRACE');
     log.error('Failed to get access trace timeline', {}, error as Error);
     return c.json(

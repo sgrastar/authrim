@@ -1,13 +1,20 @@
+import { LogQueryIncompleteError, logQueryErrorResponse } from '../../log-archive-query';
+import {
+  createLogReadAdapter,
+  logCoverageHeaders,
+  logDetailWindow,
+  logPageRequest,
+  readLogProtectedDetail,
+} from '../../log-read-adapter';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import type { AdminAuthContext, Env, OperationalLogStorageOptions } from '@authrim/ar-lib-core';
+import type { AdminAuthContext, Env } from '@authrim/ar-lib-core';
 import {
   adminAuthMiddleware,
   ADMIN_PERMISSIONS,
   AR_ERROR_CODES,
   createAuthContextFromHono,
   createErrorResponse,
-  getOperationalLog,
   getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
 import {
@@ -30,22 +37,31 @@ interface OperationalLogSummaryRow {
   detail_object_catalog_id: string | null;
 }
 
-function getCoreAdapter(c: Context<any, any, any>) {
+function getCoreAdapter(c: AdminContext) {
   const tenantId = getTenantIdFromContext(c);
-  return createAuthContextFromHono(c, tenantId).coreAdapter;
+  // Hono's Variables generic is invariant; this helper only consumes the shared Env bindings.
+  return createAuthContextFromHono(c as unknown as Context<{ Bindings: Env }>, tenantId)
+    .coreAdapter;
 }
 
-function getOperationalLogStorageOptions(c: AdminContext): OperationalLogStorageOptions {
-  return {
-    inlineEncryptionKey: c.env.PII_ENCRYPTION_KEY,
-    objectStorage:
-      c.env.SENSITIVE_DETAILS && c.env.OBJECT_ENCRYPTION_ROOT_KEY
-        ? {
-            bucket: c.env.SENSITIVE_DETAILS,
-            rootKeyHex: c.env.OBJECT_ENCRYPTION_ROOT_KEY,
-          }
-        : undefined,
-  };
+function getLogRead(c: AdminContext, list = false) {
+  const tenantId = getTenantIdFromContext(c);
+  return createLogReadAdapter({
+    env: c.env,
+    tenantId,
+    dataset: 'core.operational_logs',
+    onCoverage: logCoverageHeaders(c),
+    adapter: getCoreAdapter(c),
+    ...(list
+      ? {
+          page: logPageRequest(
+            c,
+            tenantId,
+            Math.max(1, Math.min(Number(c.req.query('limit') || 50), 100))
+          ),
+        }
+      : logDetailWindow(c)),
+  });
 }
 
 export const operationalLogsRouter = new Hono<{
@@ -62,7 +78,8 @@ operationalLogsRouter.use(
 
 operationalLogsRouter.get('/', async (c) => {
   try {
-    const adapter = getCoreAdapter(c);
+    const logRead = getLogRead(c, true);
+    const adapter = logRead.adapter;
     const tenantId = getTenantIdFromContext(c);
     const subjectType = c.req.query('subject_type');
     const subjectId = c.req.query('subject_id');
@@ -102,6 +119,7 @@ operationalLogsRouter.get('/', async (c) => {
     );
 
     return c.json({
+      coverage: logRead.coverage(),
       items: rows.map((row) => ({
         id: row.id,
         tenant_id: row.tenant_id,
@@ -114,16 +132,18 @@ operationalLogsRouter.get('/', async (c) => {
         expires_at: row.expires_at,
         has_detail: !!row.detail_object_catalog_id,
       })),
-      total: rows.length,
+      ...(logRead.pagination() ? { pagination: logRead.pagination() } : { total: rows.length }),
     });
-  } catch {
+  } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 });
 
 operationalLogsRouter.get('/:id', async (c) => {
   try {
-    const id = c.req.param('id')!;
+    const id = c.req.param('id');
     const access = await requireAdminPermissionOrElevationGrant(c as AdminContext, {
       directPermission: ADMIN_PERMISSIONS.OPERATIONAL_LOGS_DETAIL_READ,
       requestSurface: 'operational_logs',
@@ -136,14 +156,23 @@ operationalLogsRouter.get('/:id', async (c) => {
     if (access instanceof Response) {
       return access;
     }
-    const adapter = getCoreAdapter(c);
+    const read = getLogRead(c);
     const tenantId = getTenantIdFromContext(c);
-    const entry = await getOperationalLog(
-      adapter,
-      getOperationalLogStorageOptions(c as AdminContext),
-      tenantId,
-      id
+    const row = await read.adapter.queryOne<OperationalLogSummaryRow>(
+      'SELECT * FROM operational_logs WHERE tenant_id=? AND id=?',
+      [tenantId, id]
     );
+    const detail = row
+      ? await readLogProtectedDetail(c.env, {
+          tenantId,
+          sourceDataset: 'core.operational_logs',
+          eventId: id,
+        })
+      : null;
+    if (row && typeof detail?.reason_detail !== 'string') throw new LogQueryIncompleteError();
+    const entry = row
+      ? { ...row, encryption_key_version: 0, reason_detail: detail?.reason_detail as string }
+      : null;
 
     if (!entry) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
@@ -160,8 +189,10 @@ operationalLogsRouter.get('/:id', async (c) => {
       },
     });
 
-    return c.json(entry);
-  } catch {
+    return c.json({ ...entry, coverage: read.coverage() });
+  } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 });

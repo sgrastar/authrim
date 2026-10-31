@@ -1,0 +1,118 @@
+import { Meta } from '@storybook/addon-docs/blocks';
+
+<Meta title="Tokens/Scales" />
+
+# Scales
+
+Every size, space, height and layer the console uses, defined in `src/lib/ui/tokens/tokens.css`.
+The rules for using them are in **Design rules** (Spacing, Typography, Controls and icons,
+Layers and shadows). None of these is themable: a theme changes the look, never the layout.
+Samples use the current theme's fonts.
+
+## Sizes
+
+| Token             | Size | Role                                             | Sample                                                                                                                                                                                   |
+| ----------------- | ---- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--fs-page-title` | 24px | the page's h1 (theme weight and tracking)        | <span style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--fs-page-title)', fontWeight: 'var(--heading-weight)', letterSpacing: 'var(--heading-tracking)' }}>Users 利用者</span> |
+| `--fs-title-lg`   | 18px | a standalone card's title (sign-in, setup)       | <span style={{ fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-title-lg)', fontWeight: 'var(--fw-semibold)' }}>Sign in ログイン</span>                                               |
+| `--fs-title`      | 16px | dialog titles                                    | <span style={{ fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-semibold)' }}>Delete this client? 削除しますか</span>                                  |
+| `--fs-heading`    | 14px | box titles                                       | <span style={{ fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-semibold)' }}>Sessions セッション</span>                                             |
+| `--fs-body-lg`    | 14px | page text, large buttons                         | <span style={{ fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-body-lg)' }}>Page text ページの本文</span>                                                                            |
+| `--fs-control`    | 14px | text in inputs and selects, the page description | <span style={{ fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-control)' }}>{'alice@example.com'}</span>                                                                             |
+| `--fs-body`       | 13px | rows, cells, card text, buttons, checkbox labels | <span style={{ fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-body)' }}>Row text 行の文字</span>                                                                                    |
+| `--fs-label`      | 13px | field labels, secondary headings                 | <span style={{ fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-label)', fontWeight: 'var(--fw-semibold)' }}>Email メールアドレス</span>                                              |
+| `--fs-caption`    | 12px | hints, notes, meta, errors                       | <span style={{ fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-caption)' }}>Used to sign in. ログインに使います。</span>                                                             |
+| `--fs-small`      | 12px | badges, second lines, table column heads         | <span style={{ fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-small)' }}>Updated 2 min ago 2分前に更新</span>                                                                       |
+| `--fs-overline`   | 12px | upper-case group labels, flow status             | <span style={{ fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-overline)', fontWeight: 'var(--fw-bold)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Settings</span>      |
+
+## Weights and line heights
+
+Four actual weights and three line heights. Role aliases keep the intent clear without
+introducing another visual tier.
+
+| Token                      | Value | Use                                                 |
+| -------------------------- | ----- | --------------------------------------------------- |
+| `--fw-regular`             | 400   | text                                                |
+| `--fw-medium`, `--fw-name` | 500   | leading text, names, options and button labels      |
+| `--fw-semibold`            | 600   | field labels, box titles, table heads, current item |
+| `--fw-bold`                | 700   | upper-case overlines and counts                     |
+| `--lh-tight`               | 1.25  | titles and names that may wrap in a small box       |
+| `--lh-snug`, `--lh-body`   | 1.5   | captions, tips and running text                     |
+| `--lh-relaxed`             | 1.7   | longer prose such as dialog bodies and notes        |
+
+## Spacing
+
+All pages share one 1100px maximum content width (`--page-w`). The frame is start-aligned
+and shrinks with the viewport; tables scroll within it if their columns need more room.
+
+Layout spacing uses 8, 12, 16, 24, 32 and 48px. Component details such as an icon-to-label
+gap can use smaller local values. Where three values are given, they apply at desktop,
+≤1024px and ≤640px; two values mean desktop and ≤640px.
+
+| Token                   | Value           | Between / inside                            |
+| ----------------------- | --------------- | ------------------------------------------- |
+| `--space-page-x`        | 32 / 24 / 16px  | page sides (desktop / ≤1024px / ≤640px)     |
+| `--space-page-top`      | 24 / 24 / 16px  | above the page header                       |
+| `--space-page-bottom`   | 48 / 48 / 32px  | below the last box                          |
+| `--space-page-header`   | 8px             | extra after the page's 16px gap; 24px total |
+| `--space-section`       | 16px            | boxes stacked on a page, panes side by side |
+| `--space-grid`          | 12px            | tiles of one set                            |
+| `--space-columns`       | 24px            | form columns inside a box                   |
+| `--space-field`         | 16px            | fields and settings one below the other     |
+| `--space-related`       | 8px             | a control and what belongs to it            |
+| `--space-back`          | 12px            | under a back link, before the title         |
+| `--box-pad`             | 16 / 12px       | box sides; top and bottom of a box body     |
+| `--box-head-pad-y`      | 12px            | box header, setting rows, danger rows       |
+| `--box-foot-pad-y`      | 12 / 8px        | box footer                                  |
+| `--note-pad-y` / `-x`   | 8·12 / 8·8px    | a note inside a box                         |
+| `--tile-pad`            | 12px            | item card                                   |
+| `--dialog-pad-y` / `-x` | 24·24 / 16·16px | dialogs                                     |
+
+## Control heights
+
+| Token               | Value | Use                                                           |
+| ------------------- | ----- | ------------------------------------------------------------- |
+| `--control-h-lg`    | 42px  | the one main action of a standalone card (sign-in)            |
+| `--control-h`       | 36px  | buttons, text fields, selects                                 |
+| `--control-h-dense` | 32px  | icon buttons; inputs repeated in rows (options, translations) |
+| `--control-h-sm`    | 28px  | toolbars, table and pagination controls, small buttons        |
+| `--control-h-xs`    | 24px  | switches, "?" tips — the smallest target                      |
+
+## Icon sizes
+
+| Token       | Value | Beside                                 |
+| ----------- | ----- | -------------------------------------- |
+| `--icon-xs` | 12px  | small text; carets and chevrons        |
+| `--icon-sm` | 14px  | labels and captions; small controls    |
+| `--icon-md` | 16px  | body text; buttons and menu rows       |
+| `--icon-lg` | 18px  | alone in an icon button; navigation    |
+| `--icon-xl` | 22px  | empty states, drop zones, placeholders |
+
+## Compact UI pairings
+
+| Element          | Text                                            | Icon and geometry                                                    |
+| ---------------- | ----------------------------------------------- | -------------------------------------------------------------------- |
+| Help `?`         | —                                               | 16px SVG, about 13px drawn circle, in a 24 × 24px target             |
+| Help bubble      | 12px regular, line-height 1.5                   | max-width 260px, padding 8 × 10px, 8px anchor gap and viewport inset |
+| Field            | label 13px semibold, control 14px               | hint, error and counter 12px                                         |
+| Table            | head 12px semibold, cell 13px, second line 12px | sort icon 12px                                                       |
+| Badge            | 12px semibold; count 12px bold                  | status dot 6px                                                       |
+| Selected chip    | label 13px                                      | 28px high; remove target 24px with a 12px icon                       |
+| Empty state      | title 14px semibold, description 13px           | 22px icon in a 44px tile                                             |
+| Icon-only action | —                                               | 18px icon / 32px target; small 14px icon / 24px target               |
+
+The use rules, including when to show help and how it is placed, are in **Design rules**.
+
+## Layers
+
+Lowest first. Dialogs, the drawer, tips and select menus are in the browser's top layer,
+above all of these.
+
+| Token           | Value | What                                 |
+| --------------- | ----- | ------------------------------------ |
+| `--z-nav`       | 30    | the sticky top nav                   |
+| `--z-header`    | 40    | the sticky header                    |
+| `--z-save-bar`  | 45    | the floating save bar                |
+| `--z-menu`      | 60    | dropdown panels anchored in the page |
+| `--z-toast`     | 70    | notifications                        |
+| `--z-skip-link` | 100   | "skip to content" when focused       |

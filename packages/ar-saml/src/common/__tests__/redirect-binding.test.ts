@@ -11,6 +11,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
+import { deflateRaw } from 'pako';
 import {
   buildLogoutRequest,
   buildLogoutResponse,
@@ -22,7 +23,7 @@ import {
   type LogoutRequestOptions,
   type LogoutResponseOptions,
 } from '../slo-messages';
-import { SAML_MESSAGE_LIMITS } from '../message-limits';
+import { inflateRawToStringLimited, SAML_MESSAGE_LIMITS } from '../message-limits';
 import {
   parseRedirectBindingSignatureInput,
   signRedirectBinding,
@@ -510,6 +511,13 @@ describe('HTTP-Redirect Binding - SAML 2.0 Bindings Section 3.4', () => {
       expect(() => parseLogoutRequestRedirect(base64)).toThrow(
         'SAML LogoutRequest exceeds maximum inflated size'
       );
+    });
+
+    it('preserves UTF-8 characters split across pako output chunks', () => {
+      const xml = `${'a'.repeat(16 * 1024 - 1)}😀z`;
+      const compressed = deflateRaw(xml);
+
+      expect(inflateRawToStringLimited(compressed, xml.length, 'SAML message')).toBe(xml);
     });
 
     it('should reject POST messages that exceed the decoded XML limit', () => {

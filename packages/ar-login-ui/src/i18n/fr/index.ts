@@ -2,6 +2,33 @@ import { createTranslation } from '../create-translation';
 import completion from './completion';
 
 const fr = createTranslation({
+	account_guestLogoutWarning:
+		'Après la déconnexion, vous ne pourrez plus accéder à ce compte invité. Inscrivez-vous pour conserver votre accès au compte et aux données. Se déconnecter quand même ?',
+	account_guestTitle: 'Enregistrer votre compte',
+	account_guestDescription: 'Vous conservez le même compte et vos données lors de l’inscription.',
+	account_guestDue: 'Ce compte peut être supprimé automatiquement à partir de {date}.',
+	account_guestNoExpiry: 'Aucune suppression automatique n’est prévue.',
+	account_guestEmail: 'Adresse e-mail',
+	account_guestSend: 'S’inscrire par e-mail',
+	account_guestPasskey: 'S’inscrire avec une Passkey',
+	account_guestCode: 'Code de vérification',
+	account_guestConfirm: 'Confirmer l’inscription',
+	account_guestPending:
+		'L’inscription est en cours. Vous pouvez réessayer pour vérifier qu’elle est terminée.',
+	account_guestRetry: 'Réessayer',
+	account_guestError:
+		'L’inscription n’a pas pu être finalisée. Contrôlez le code de vérification ou réessayez.',
+	account_guestCollision:
+		'Un compte existe déjà pour cette identité. Connectez-vous à ce compte séparément. Votre compte invité ne sera pas fusionné.',
+	account_guestExistingLogin: 'Se connecter à un compte existant',
+	account_guestRegistered: 'Votre compte a été enregistré.',
+	account_guestChangeMethod: 'Choisir une autre méthode',
+	login_guestContinue: 'Continuer en tant qu’invité',
+	login_guestRetention:
+		'Les comptes invités peuvent être supprimés automatiquement {days} jours après leur création. Inscrivez-vous pour continuer à utiliser votre compte.',
+	login_guestNoExpiry:
+		'Aucune suppression automatique n’est prévue pour les nouveaux comptes invités.',
+
 	...completion,
 	app_subtitle: 'Identité et accès partout.',
 	dialog_cancel: 'Annuler',
@@ -68,6 +95,32 @@ const fr = createTranslation({
 	account_delete: 'Supprimer',
 	account_empty: 'Aucun élément',
 	account_planned: 'Planifié',
+	account_socialEmpty: 'Aucun compte externe n’est associé.',
+	account_socialLinkHeading: 'Associer un compte',
+	account_socialLinkWith: 'Associer {provider}',
+	account_socialNoProviders: 'Aucun autre fournisseur n’est disponible pour l’association.',
+	account_socialLinkedAt: 'Associé le {date}',
+	account_socialLastUsed: 'Dernière utilisation : {date}',
+	account_socialUnlink: 'Dissocier',
+	account_socialUnlinkConfirm:
+		'Dissocier {provider} ? Vous ne pourrez plus vous connecter avec ce compte.',
+	account_socialUnlinkConfirmAction: 'Dissocier {provider}',
+	account_socialLinked: 'Le compte a été associé.',
+	account_socialUnlinked: 'Le compte a été dissocié.',
+	account_socialErrorAlreadyLinked: 'Ce compte est déjà associé à un autre utilisateur.',
+	account_socialErrorAlreadyLinkedHere: 'Ce fournisseur est déjà associé à votre compte.',
+	account_socialErrorEmailNotVerified:
+		'Le fournisseur n’a pas vérifié l’adresse e-mail de ce compte.',
+	account_socialErrorSessionExpired:
+		'Votre confirmation a expiré avant la fin de l’association. Confirmez à nouveau, puis réessayez.',
+	account_socialErrorCancelled: 'L’association a été annulée.',
+	account_socialErrorFailed: 'Le compte n’a pas pu être associé. Réessayez.',
+	account_socialErrorLastMethod:
+		'C’est votre dernière méthode de connexion. Ajoutez d’abord une Passkey ou une autre méthode de connexion.',
+	account_socialErrorInProgress:
+		'Une autre modification de vos méthodes de connexion est en cours. Réessayez dans un instant.',
+	account_operationSocialLinked: 'Compte externe associé',
+	account_operationSocialUnlinked: 'Compte externe dissocié',
 	account_passkeyUnsupported: 'Ce navigateur ne prend pas en charge l’enregistrement des Passkeys.',
 	account_passkeyRegistrationCancelled:
 		'L’enregistrement de la Passkey a été annulé ou a expiré. Réessayez.',
@@ -103,12 +156,31 @@ const fr = createTranslation({
 	account_actionFailed: 'L’opération a échoué',
 	account_remainingLoginMethodRequired:
 		'Ajoutez une autre méthode de connexion avant de supprimer celle-ci.',
+	account_activityIncomplete: 'Les résultats de l’activité sont incomplets. Réessayez plus tard.',
+	account_activityLoadMore: 'Charger les activités plus anciennes',
 	account_activityTitle: 'Activité',
 	account_operationNameUpdated: 'Nom modifié',
 	account_operationPasskeyCreated: 'Passkey ajoutée',
 	account_operationPasskeyUpdated: 'Passkey renommée',
 	account_operationPasskeyDeleted: 'Passkey supprimée',
 	account_operationSessionRevoked: 'Session fermée',
+	account_operationGuestCreated: 'Compte invité créé',
+	account_operationGuestUpgradeFailed: 'Échec de l’inscription du compte invité',
+	account_operationGuestUpgradeStarted: 'Inscription du compte invité commencée',
+	account_operationGuestUpgraded: 'Compte invité enregistré',
+	account_operationEmailAdded: 'E-mail ajouté',
+	account_operationEmailChanged: 'E-mail modifié',
+	account_operationEmailReauthenticated: 'Réauthentifié par e-mail',
+	account_operationDeviceUpdated: 'Appareil renommé',
+	account_operationDeviceUnlinked: 'Appareil dissocié',
+	account_operationPasskeyReauthenticated: 'Réauthentifié par Passkey',
+	account_operationTotpEnrollmentStarted:
+		'Configuration de l’application d’authentification commencée',
+	account_operationTotpActivated: 'Application d’authentification activée',
+	account_operationTotpUpdated: 'Application d’authentification renommée',
+	account_operationTotpRemoved: 'Application d’authentification supprimée',
+	account_operationTotpBackupCodesRegenerated: 'Codes de secours régénérés',
+	account_operationTotpReauthenticated: 'Réauthentifié par application d’authentification',
 	account_launcherTitle: 'Mes applications',
 	account_launcherDescription: 'Recherchez et ouvrez les applications auxquelles vous avez accès.',
 	account_launcherLoadFailed: 'Impossible de charger les applications.',
@@ -174,6 +246,8 @@ const fr = createTranslation({
 	login_humanVerificationLoading: 'Chargement du contrôle de sécurité...',
 	login_humanVerificationLoadFailed:
 		'Impossible de charger le contrôle. Rechargez la page et réessayez.',
+	login_humanVerificationUnavailable:
+		'La vérification humaine est actuellement indisponible. Contactez votre administrateur.',
 	login_noMethodsAvailable:
 		'Aucune méthode d’authentification n’est activée pour cette organisation. Contactez votre administrateur.',
 	login_passkeyPreparing: 'Préparation de l’authentification par Passkey.',
@@ -270,6 +344,9 @@ const fr = createTranslation({
 	login_extError_callbackFailed_title: 'Échec de l’authentification',
 	login_extError_callbackFailed_message:
 		'Une erreur s’est produite pendant l’authentification. Réessayez.',
+	login_extError_reauthNotProven_title: 'Connexion non confirmée',
+	login_extError_reauthNotProven_message:
+		"Votre fournisseur de connexion n'a pas confirmé que vous vous êtes reconnecté. Reconnectez-vous ou choisissez une autre méthode.",
 	login_extError_default_title: 'Erreur d’authentification',
 	login_extError_default_message: 'Une erreur s’est produite pendant l’authentification externe.'
 });

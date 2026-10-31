@@ -714,6 +714,8 @@ adminSetupApiApp.post('/api/admin/auth/passkey/verify', async (c) => {
           publicKey: publicKey,
           counter: passkey.counter,
         },
+        // Explicit (the library default): mfa_verified below rests on the user-verified flag.
+        requireUserVerification: true,
       });
     } catch (error) {
       logger.error('Admin passkey verification failed', { action: 'admin_verify' }, error as Error);

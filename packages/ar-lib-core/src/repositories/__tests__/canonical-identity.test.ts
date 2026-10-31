@@ -1,3 +1,4 @@
+import type { AccountGovernanceMutationCapability } from '../../db/adapter';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createLookupBlindIndex,
@@ -31,6 +32,31 @@ describe('CanonicalIdentityRepository', () => {
 
   beforeEach(() => {
     adapter = new MockDatabaseAdapter();
+    const governance: AccountGovernanceMutationCapability = {
+      putSupportContext: async () => {
+        throw new Error('unused');
+      },
+      createLegalHold: async () => {
+        throw new Error('unused');
+      },
+      releaseLegalHold: async () => {
+        throw new Error('unused');
+      },
+      async transitionAccountDeletion(input) {
+        const account = adapter.getById('identity_accounts', input.accountId);
+        if (!account || account.tenant_id !== input.tenantId) return false;
+        adapter.seed('identity_accounts', [
+          {
+            ...account,
+            lifecycle_state: input.state,
+            deleted_at: account.deleted_at ?? input.now,
+            updated_at: input.now,
+          },
+        ]);
+        return true;
+      },
+    };
+    Object.assign(adapter, { accountGovernanceMutations: governance });
     for (const tableName of CANONICAL_TABLES) {
       adapter.initTable(tableName, 'id');
     }
@@ -267,8 +293,9 @@ describe('CanonicalIdentityRepository', () => {
       subject_id: 'subject-1',
       binding_id: binding.id,
       evidence_type: 'saml_authn_context',
-      assurance_level: 'ial2',
-      evidence_ref: 'artifact://assertion/1',
+      assurance_framework: 'nist_800_63',
+      assurance_level: 'IAL2',
+      evidence_storage_ref: 'artifact://assertion/1',
     });
 
     await expect(
@@ -276,7 +303,7 @@ describe('CanonicalIdentityRepository', () => {
     ).resolves.toEqual(binding);
     expect(JSON.parse(event.reason_codes_json ?? '[]')).toEqual(['hard_match']);
     expect(candidate.decision_state).toBe('pending');
-    expect(evidence.evidence_ref).toBe('artifact://assertion/1');
+    expect(evidence.evidence_storage_ref).toBe('artifact://assertion/1');
 
     await expect(repository.transitionResolutionCandidate('candidate-1', 'approved')).resolves.toBe(
       true

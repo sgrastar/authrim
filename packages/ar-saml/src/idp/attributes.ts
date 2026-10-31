@@ -14,6 +14,19 @@ import type {
   SAMLAttributeValueType,
   SAMLComputedAttribute,
 } from '@authrim/ar-lib-core';
+import {
+  findConflictingSourceIds,
+  mappingSourceSubjectPath,
+  normalizeSubjectReadPath,
+} from '@authrim/ar-lib-core';
+import {
+  applySAMLInstitutionScopePolicy,
+  scopedAttributeKind,
+  scopedKindFromHints,
+  type SAMLInstitutionScopePolicy,
+  type SAMLScopedAttributeKind,
+  type SAMLWithheldScopedValues,
+} from './institution-scope';
 
 export interface SAMLAttributeSubject {
   id: string;
@@ -30,6 +43,21 @@ export interface SAMLAttributeSubject {
   attributes?: Record<string, unknown>;
   customClaims?: Record<string, unknown>;
   customFields?: Record<string, unknown>;
+  /**
+   * The person's effective IAL ("IAL2"), read from their assurance evidence. Set only by
+   * resolveSAMLAssuranceAttributes, never from user data, and only when a mapping releases it.
+   */
+  assurance_ial?: string;
+  /** The assurance values (eduPersonAssurance URIs) of the person's IAL. Set like assurance_ial. */
+  edu_person_assurance?: string[];
+  /**
+   * The tenant's default institution scope (schacHomeOrganization). Set only by
+   * withSAMLInstitutionAttributes from the tenant's settings, never from user data, and only when
+   * a mapping releases it.
+   */
+  schac_home_organization?: string;
+  /** The tenant's institution name (the organization name, `o`). Set like schac_home_organization. */
+  organization_name?: string;
 }
 
 export interface SAMLAttributeReleaseConfig {
@@ -41,6 +69,13 @@ export interface SAMLAttributeReleaseConfig {
     attributes: SAMLAttributeReleaseRule[];
   };
   identityMapping?: SAMLIdentityMappingReleaseConfig;
+  /**
+   * The tenant's registered institution scopes, which the scoped attributes (eduPersonScopedAffiliation,
+   * eduPersonPrincipalName) must be under. Left out, the values are released as the mapping gives them.
+   */
+  institutionScope?: SAMLInstitutionScopePolicy;
+  /** The names the tenant registered for its institution, which `o` must be one of. */
+  institutionNames?: readonly string[];
 }
 
 export interface SAMLAttributeReleaseRule {
@@ -108,13 +143,19 @@ export interface SAMLIdentityMappingReleaseConfig extends Partial<SAMLIdentityMa
 
 export class MissingRequiredSAMLAttributeError extends Error {
   readonly missingAttributes: MissingRequiredSAMLAttribute[];
+  /** The scoped values withheld on the way, which may be why an attribute has none left. */
+  readonly withheldScopedValues: SAMLWithheldScopedValues[];
 
-  constructor(missingAttributes: MissingRequiredSAMLAttribute[]) {
+  constructor(
+    missingAttributes: MissingRequiredSAMLAttribute[],
+    withheldScopedValues: SAMLWithheldScopedValues[] = []
+  ) {
     super(
       `Missing required SAML attribute value: ${missingAttributes.map((attr) => attr.name).join(', ')}`
     );
     this.name = 'MissingRequiredSAMLAttributeError';
     this.missingAttributes = missingAttributes;
+    this.withheldScopedValues = withheldScopedValues;
   }
 }
 
@@ -139,14 +180,11 @@ export type SAMLAttributeReleaseSource =
 export interface SAMLAttributeReleaseResult {
   attributes: SAMLAttribute[];
   optionalMissingAttributes: MissingRequiredSAMLAttribute[];
+  /** Scoped values the tenant's institution scopes did not allow (see institution-scope.ts). */
+  withheldScopedValues?: SAMLWithheldScopedValues[];
 }
 
 type AttributeValue = string | number | boolean;
-
-const SOURCE_ALIASES: Record<string, keyof SAMLAttributeSubject> = {
-  sub: 'id',
-  user_id: 'id',
-};
 
 /**
  * Build SAML attributes from the existing claim-to-SAML attribute mapping.
@@ -188,13 +226,19 @@ export function buildSAMLAttributesForSPWithDiagnostics(
   spConfig: SAMLAttributeReleaseConfig
 ): SAMLAttributeReleaseResult {
   if (spConfig.identityMapping && hasSAMLIdentityMappingRuntimeConfig(spConfig.identityMapping)) {
-    return buildSAMLAttributesFromIdentityMapping(subject, spConfig.identityMapping, {
-      role: 'idp',
-      tenantId: spConfig.tenantId,
-      localEntityId: spConfig.localEntityId,
-      partnerEntityId: spConfig.entityId,
-      runtimeContext: spConfig.identityMapping.runtimeContext,
-    });
+    return buildSAMLAttributesFromIdentityMapping(
+      subject,
+      spConfig.identityMapping,
+      {
+        role: 'idp',
+        tenantId: spConfig.tenantId,
+        localEntityId: spConfig.localEntityId,
+        partnerEntityId: spConfig.entityId,
+        runtimeContext: spConfig.identityMapping.runtimeContext,
+      },
+      spConfig.institutionScope,
+      spConfig.institutionNames
+    );
   }
 
   throw new SAMLIdentityMappingRuntimeError([
@@ -219,7 +263,9 @@ export function hasSAMLIdentityMappingRuntimeConfig(
 function buildSAMLAttributesFromIdentityMapping(
   subject: SAMLAttributeSubject,
   config: SAMLIdentityMappingReleaseConfig,
-  context: SAMLIdentityMappingRuntimeContext
+  context: SAMLIdentityMappingRuntimeContext,
+  institutionScope?: SAMLInstitutionScopePolicy,
+  institutionNames?: readonly string[]
 ): SAMLAttributeReleaseResult {
   const binding = resolveSAMLIdentityMappingFieldMappingBinding(config, context);
   const destinationNamespace = binding.destinationNamespace ?? 'saml.attribute';
@@ -238,15 +284,37 @@ function buildSAMLAttributesFromIdentityMapping(
     throw new SAMLIdentityMappingRuntimeError(result.reasons);
   }
 
-  const attributes = applyDestinationFieldReleasePolicy(
-    mergeSAMLAttributes(
-      result.values
-        .filter((value) => value.sourceRef.namespace === destinationNamespace)
-        .map((value) => buildAttributeFromMappedValue(value, binding))
-        .filter((attribute): attribute is SAMLAttribute => attribute !== null)
-    ),
+  const mappedAttributes: Array<{
+    attribute: SAMLAttribute;
+    kind: SAMLScopedAttributeKind | null;
+  }> = [];
+  const provenance = mappedProvenance(binding);
+  for (const value of result.values) {
+    if (value.sourceRef.namespace !== destinationNamespace) continue;
+    const attribute = buildAttributeFromMappedValue(value, binding);
+    if (!attribute) continue;
+    mappedAttributes.push({
+      attribute,
+      kind: scopedKindOfMappedValue(value.sourceRef, attribute, binding, provenance),
+    });
+  }
+  // What an attribute is does not rest on the name it is released under: the catalog entry, the
+  // path and the fields it is read from say so too (see scopedKindOfMappedValue).
+  const kindByName = new Map<string, SAMLScopedAttributeKind>();
+  for (const { attribute, kind } of mappedAttributes) {
+    if (kind && !kindByName.has(attribute.name)) kindByName.set(attribute.name, kind);
+  }
+  const kindOf = (attribute: SAMLAttribute): SAMLScopedAttributeKind | null =>
+    kindByName.get(attribute.name) ?? scopedAttributeKind(attribute);
+  const mapped = applyDestinationFieldReleasePolicy(
+    mergeSAMLAttributes(mappedAttributes.map(({ attribute }) => attribute)),
     binding.destinationFieldPolicies
   );
+  // Before the required attributes are checked: a required scoped attribute none of whose values
+  // is under a registered scope is missing, as any other that has no value.
+  const { attributes, withheld } = institutionScope
+    ? applySAMLInstitutionScopePolicy(mapped, institutionScope, kindOf, institutionNames)
+    : { attributes: mapped, withheld: [] };
   const missingAttributes = findMissingRequiredMappedAttributes(
     attributes,
     binding,
@@ -254,12 +322,13 @@ function buildSAMLAttributesFromIdentityMapping(
   );
 
   if (missingAttributes.length > 0) {
-    throw new MissingRequiredSAMLAttributeError(missingAttributes);
+    throw new MissingRequiredSAMLAttributeError(missingAttributes, withheld);
   }
 
   return {
     attributes,
     optionalMissingAttributes: [],
+    ...(withheld.length > 0 ? { withheldScopedValues: withheld } : {}),
   };
 }
 
@@ -291,6 +360,73 @@ export function resolveSAMLIdentityMappingFieldMappingBinding(
       severity: 'critical',
     },
   ]);
+}
+
+/** The subject keys the identity assurance sources of a mapping read (system.identity.*). */
+export const SAML_ASSURANCE_SUBJECT_KEYS = {
+  ial: 'assurance_ial',
+  eduPersonAssurance: 'edu_person_assurance',
+} as const;
+
+/** The subject keys the institution sources of a mapping read (system.identity.*). */
+export const SAML_INSTITUTION_SUBJECT_KEYS = {
+  homeOrganization: 'schac_home_organization',
+  organizationName: 'organization_name',
+} as const;
+
+export interface SAMLAssuranceSourceNeeds {
+  ial: boolean;
+  eduPersonAssurance: boolean;
+}
+
+/**
+ * Which identity assurance sources the mapping that will release attributes reads, so the
+ * person's evidence is read only when an attribute built from it can be released: a source that
+ * no edge reads, or whose destination field the SP's release policy hides, is not read. Never
+ * throws: a mapping that cannot be resolved needs nothing here (the release itself fails on it).
+ */
+export function findSAMLAssuranceSourceNeeds(
+  config: SAMLIdentityMappingReleaseConfig | undefined,
+  context: SAMLIdentityMappingRuntimeContext
+): SAMLAssuranceSourceNeeds {
+  const needs = findSAMLSystemSourceNeeds(config, context, {
+    ial: SAML_ASSURANCE_SUBJECT_KEYS.ial,
+    eduPersonAssurance: SAML_ASSURANCE_SUBJECT_KEYS.eduPersonAssurance,
+  });
+  return { ial: needs.ial, eduPersonAssurance: needs.eduPersonAssurance };
+}
+
+/**
+ * Which of the named subject keys (each a system source the runtime fills) an edge of the mapping
+ * reads and releases.
+ */
+function findSAMLSystemSourceNeeds<Name extends string>(
+  config: SAMLIdentityMappingReleaseConfig | undefined,
+  context: SAMLIdentityMappingRuntimeContext,
+  subjectKeys: Record<Name, string>
+): Record<Name, boolean> {
+  const needs = Object.fromEntries(
+    (Object.keys(subjectKeys) as Name[]).map((name) => [name, false])
+  ) as Record<Name, boolean>;
+  if (!config || !hasSAMLIdentityMappingRuntimeConfig(config)) return needs;
+  let binding: SAMLIdentityMappingFieldMappingBinding;
+  try {
+    binding = resolveSAMLIdentityMappingFieldMappingBinding(config, context);
+  } catch {
+    return needs;
+  }
+  for (const edge of binding.edges) {
+    const sourcePath = mappingSourceSubjectPath(edge.sourceRef);
+    const key = (Object.keys(subjectKeys) as Name[]).find(
+      (name) => subjectKeys[name] === sourcePath
+    );
+    if (!key || needs[key]) continue;
+    const attributeName = findMappedAttributeDescriptor(edge.targetRef, binding)?.name;
+    const hidden =
+      binding.destinationFieldPolicies?.[attributeName ?? edge.targetRef.path] === 'hidden';
+    if (!hidden) needs[key] = true;
+  }
+  return needs;
 }
 
 function isCompleteSAMLIdentityMappingBinding(
@@ -350,6 +486,18 @@ function buildIdentityMappingSourceValues(
   subject: SAMLAttributeSubject,
   edges: MappingRuleEdge[]
 ): SourceValueEnvelope[] {
+  // A value is matched to an edge by the catalog entry id the edge names, so one id may not stand
+  // for different reads: the value read for one would be released as the other's.
+  if (findConflictingSourceIds(edges.map((edge) => edge.sourceRef)).length > 0) {
+    throw new SAMLIdentityMappingRuntimeError([
+      {
+        category: 'policy',
+        code: 'policy.mapping_source_reference_conflict',
+        severity: 'critical',
+      },
+    ]);
+  }
+
   const seen = new Set<string>();
   const values: SourceValueEnvelope[] = [];
 
@@ -370,6 +518,80 @@ function buildIdentityMappingSourceValues(
   }
 
   return values;
+}
+
+/** What a mapping keeps about a field that says what it is: its path, catalog entry id and path. */
+function fieldHints(
+  binding: SAMLIdentityMappingFieldMappingBinding,
+  ref: FieldRef,
+  withCatalogEntry: boolean
+): string[] {
+  const hints = [ref.path];
+  if (ref.catalogEntryId) hints.push(ref.catalogEntryId);
+  if (withCatalogEntry) {
+    const entry = findCatalogEntry(binding.catalog, ref);
+    if (entry) hints.push(entry.id, entry.path);
+  }
+  return hints;
+}
+
+/**
+ * Where each destination's value comes from, by destination (namespace and path): the fields it is read from and
+ * the fields it passes through on the way when a transform takes it from its input edges (so a
+ * value that goes through a hidden intermediate field and a copy is still known for what it
+ * started as). A value read from a field called
+ * eduPersonPrincipalName is a principal name whatever it is released as.
+ */
+function provenanceKey(ref: Pick<FieldRef, 'namespace' | 'path'>): string {
+  // The namespace is part of the identity: a field called mail in one namespace is not another's.
+  return `${ref.namespace}:${ref.path}`;
+}
+
+function mappedProvenance(binding: SAMLIdentityMappingFieldMappingBinding): Map<string, string[]> {
+  const byPath = new Map<string, Set<string>>();
+  const add = (path: string, hints: readonly string[]): void => {
+    const set = byPath.get(path) ?? new Set<string>();
+    for (const hint of hints) set.add(hint);
+    byPath.set(path, set);
+  };
+  const edgesById = new Map(binding.edges.map((edge) => [edge.id, edge]));
+  for (const edge of binding.edges)
+    add(provenanceKey(edge.targetRef), fieldHints(binding, edge.sourceRef, false));
+  // A transform's output is what its input edges carry, whatever field they end in (hidden or not).
+  for (const step of binding.transforms ?? []) {
+    for (const id of step.inputEdgeIds) {
+      const edge = edgesById.get(id);
+      if (!edge) continue;
+      add(provenanceKey(step.outputTargetRef), [
+        ...fieldHints(binding, edge.sourceRef, false),
+        ...fieldHints(binding, edge.targetRef, true),
+      ]);
+    }
+  }
+  return new Map([...byPath].map(([path, hints]) => [path, [...hints]]));
+}
+
+/**
+ * Which scoped attribute a mapped value is, from everything the mapping keeps about it: the name
+ * and friendly name it is released under, the destination's catalog entry and path (what a
+ * transform's output names too), and the fields it is read from. Null when none says one.
+ */
+function scopedKindOfMappedValue(
+  target: FieldRef,
+  attribute: SAMLAttribute,
+  binding: SAMLIdentityMappingFieldMappingBinding,
+  provenance: Map<string, string[]>
+): SAMLScopedAttributeKind | null {
+  const entry = findCatalogEntry(binding.catalog, target);
+  return scopedKindFromHints([
+    attribute.name,
+    attribute.friendlyName,
+    target.path,
+    target.catalogEntryId,
+    entry?.id,
+    entry?.path,
+    ...(provenance.get(provenanceKey(target)) ?? []),
+  ]);
 }
 
 function buildAttributeFromMappedValue(
@@ -506,10 +728,12 @@ function findMappedAttributeDescriptor(
   config: SAMLIdentityMappingFieldMappingBinding
 ): SAMLIdentityMappingAttributeDescriptor | undefined {
   const descriptors = config.attributeDescriptors ?? {};
+  // Own keys only: a field may be named constructor or toString, and must not find Object's.
+  const own = (key: string) => (Object.hasOwn(descriptors, key) ? descriptors[key] : undefined);
   return (
-    (fieldRef.catalogEntryId ? descriptors[fieldRef.catalogEntryId] : undefined) ??
-    descriptors[fieldRef.path] ??
-    descriptors[`${fieldRef.namespace}:${fieldRef.path}`]
+    (fieldRef.catalogEntryId ? own(fieldRef.catalogEntryId) : undefined) ??
+    own(fieldRef.path) ??
+    own(`${fieldRef.namespace}:${fieldRef.path}`)
   );
 }
 
@@ -530,31 +754,7 @@ function dedupeMissingAttributes(
 }
 
 function readMappingSourceValue(subject: SAMLAttributeSubject, fieldRef: FieldRef): unknown {
-  switch (fieldRef.namespace) {
-    case 'authrim.profile':
-    case 'authrim.claim':
-    case 'oidc.claim':
-      return readSubjectValue(subject, fieldRef.path);
-    case 'authrim.claims':
-    case 'claims':
-      return readSubjectValue(subject, `claims.${fieldRef.path}`);
-    case 'authrim.custom_claims':
-    case 'custom_claims':
-      return readSubjectValue(subject, `customClaims.${fieldRef.path}`);
-    case 'authrim.custom_fields':
-    case 'custom_fields':
-      return readSubjectValue(subject, `customFields.${fieldRef.path}`);
-    case 'authrim.attributes':
-    case 'attributes':
-      return readSubjectValue(subject, `attributes.${fieldRef.path}`);
-    case 'authrim.system':
-      if (fieldRef.path === 'uid') {
-        return subject.id;
-      }
-      return readSubjectValue(subject, fieldRef.path);
-    default:
-      return readSubjectValue(subject, fieldRef.path);
-  }
+  return readSubjectValue(subject, mappingSourceSubjectPath(fieldRef));
 }
 
 function fieldRefKey(fieldRef: FieldRef): string {
@@ -563,93 +763,18 @@ function fieldRefKey(fieldRef: FieldRef): string {
     : `${fieldRef.side}:${fieldRef.namespace}:${fieldRef.path}`;
 }
 
-function buildAttributeFromRule(
-  subject: SAMLAttributeSubject,
-  rule: SAMLAttributeReleaseRule
-): SAMLAttribute | null {
-  const values = normalizeAttributeValues(readRuleValue(subject, rule));
-  if (values.length === 0) {
-    return null;
-  }
-
-  return {
-    name: rule.name,
-    nameFormat: rule.nameFormat,
-    friendlyName: rule.friendlyName,
-    valueType: rule.valueType,
-    values,
-  };
-}
-
-function readRuleValue(subject: SAMLAttributeSubject, rule: SAMLAttributeReleaseRule): unknown {
-  switch (rule.source) {
-    case 'claim':
-      return rule.claim ? readSubjectValue(subject, rule.claim) : undefined;
-    case 'attribute':
-      return rule.claim ? readSubjectValue(subject, `attributes.${rule.claim}`) : undefined;
-    case 'custom_claim':
-      return rule.claim ? readSubjectValue(subject, `customClaims.${rule.claim}`) : undefined;
-    case 'custom_field':
-      return rule.claim ? readSubjectValue(subject, `customFields.${rule.claim}`) : undefined;
-    case 'constant':
-      return rule.value;
-    case 'computed':
-      return readComputedRuleValue(subject, rule);
-  }
-}
-
-function readComputedRuleValue(
-  subject: SAMLAttributeSubject,
-  rule: SAMLAttributeReleaseRule
-): unknown {
-  switch (rule.computed) {
-    case 'eduPersonScopedAffiliation':
-      return readEduPersonScopedAffiliation(subject, rule.claim);
-    default:
-      return undefined;
-  }
-}
-
-function readEduPersonScopedAffiliation(
-  subject: SAMLAttributeSubject,
-  directClaim = 'eduPersonScopedAffiliation'
-): unknown {
-  const directValue =
-    readSubjectValue(subject, `customClaims.${directClaim}`) ??
-    readSubjectValue(subject, `claims.${directClaim}`) ??
-    readSubjectValue(subject, directClaim);
-  if (normalizeAttributeValues(directValue).length > 0) {
-    return directValue;
-  }
-
-  const affiliations = normalizeAttributeValues(
-    readSubjectValue(subject, 'customClaims.eduPersonAffiliation') ??
-      readSubjectValue(subject, 'customClaims.affiliation') ??
-      readSubjectValue(subject, 'claims.eduPersonAffiliation') ??
-      readSubjectValue(subject, 'claims.affiliation')
-  );
-  const scopes = normalizeAttributeValues(
-    readSubjectValue(subject, 'customClaims.eduPersonScope') ??
-      readSubjectValue(subject, 'customClaims.institutionScope') ??
-      readSubjectValue(subject, 'customClaims.scope') ??
-      readSubjectValue(subject, 'claims.eduPersonScope') ??
-      readSubjectValue(subject, 'claims.institutionScope') ??
-      readSubjectValue(subject, 'claims.scope')
-  );
-
-  if (affiliations.length === 0 || scopes.length === 0) {
-    return undefined;
-  }
-
-  return affiliations.flatMap((affiliation) => scopes.map((scope) => `${affiliation}@${scope}`));
-}
-
+/**
+ * A value of the subject at a key path. The path is normalized first (normalizeSubjectReadPath,
+ * shared with the release safety check): this is the only place a path is read, so what is
+ * classified and what is read are the same place.
+ */
 function readSubjectValue(subject: SAMLAttributeSubject, sourceClaim: string): unknown {
-  const aliasedClaim = SOURCE_ALIASES[sourceClaim] ?? sourceClaim;
-  const path = aliasedClaim.split('.');
+  const path = normalizeSubjectReadPath(sourceClaim).split('.');
 
   if (path.length === 1) {
-    return subject[path[0] as keyof SAMLAttributeSubject];
+    return Object.hasOwn(subject, path[0])
+      ? subject[path[0] as keyof SAMLAttributeSubject]
+      : undefined;
   }
 
   const [root, ...rest] = path;
@@ -668,13 +793,11 @@ function readRootValue(subject: SAMLAttributeSubject, root: string): unknown {
     case 'attributes':
       return subject.attributes;
     case 'customClaims':
-    case 'custom_claims':
       return subject.customClaims;
     case 'customFields':
-    case 'custom_fields':
       return subject.customFields;
     default:
-      return subject[root as keyof SAMLAttributeSubject];
+      return Object.hasOwn(subject, root) ? subject[root as keyof SAMLAttributeSubject] : undefined;
   }
 }
 
@@ -685,7 +808,7 @@ function readNestedValue(record: Record<string, unknown>, path: string[]): unkno
     if (!isRecord(current)) {
       return undefined;
     }
-    current = current[segment];
+    current = Object.hasOwn(current, segment) ? current[segment] : undefined;
   }
 
   return current;

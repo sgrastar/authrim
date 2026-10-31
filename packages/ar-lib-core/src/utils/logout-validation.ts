@@ -7,6 +7,7 @@
  */
 
 import { jwtVerify, errors } from 'jose';
+import { ISSUED_ID_TOKEN_ALGORITHMS } from './issued-id-token';
 import type { JWTPayload, JWTVerifyOptions, CryptoKey } from 'jose';
 import type { ValidationResult } from './validation';
 
@@ -15,9 +16,12 @@ import type { ValidationResult } from './validation';
  */
 export interface IdTokenHintValidationResult {
   valid: boolean;
+  /** The hint's sub: the user's id, or the identifier the app's identity mapping chose. */
   userId?: string;
   clientId?: string;
   sid?: string;
+  /** The verified hint's claims. */
+  payload?: JWTPayload;
   error?: string;
   errorCode?: 'invalid_token' | 'invalid_request';
 }
@@ -54,8 +58,8 @@ export async function validateIdTokenHint(
 ): Promise<IdTokenHintValidationResult> {
   const { required = false, allowExpired = true } = options;
 
-  // Check if id_token_hint is required
-  if (!idTokenHint) {
+  // Not given (absent, or an empty query parameter). Any other non-string is refused below.
+  if (idTokenHint === undefined || idTokenHint === '') {
     if (required) {
       return {
         valid: false,
@@ -64,6 +68,15 @@ export async function validateIdTokenHint(
       };
     }
     return { valid: true };
+  }
+
+  // A request object or PAR may carry any JSON value: only a string can be an ID token.
+  if (typeof idTokenHint !== 'string') {
+    return {
+      valid: false,
+      error: 'id_token_hint is not a valid JWT format',
+      errorCode: 'invalid_request',
+    };
   }
 
   // Validate token format (3 parts separated by dots)
@@ -84,7 +97,7 @@ export async function validateIdTokenHint(
     // even after their session has expired
     const verifyOptions: JWTVerifyOptions = {
       issuer,
-      algorithms: ['RS256'],
+      algorithms: [...ISSUED_ID_TOKEN_ALGORITHMS],
     };
 
     // If we don't allow expired tokens, include clock tolerance
@@ -136,6 +149,7 @@ export async function validateIdTokenHint(
       userId,
       clientId,
       sid,
+      payload,
     };
   } catch (error) {
     // Handle specific JWT errors

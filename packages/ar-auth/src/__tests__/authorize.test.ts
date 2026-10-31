@@ -1,9 +1,35 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Hono } from 'hono';
-import { SignJWT, exportJWK, exportPKCS8, generateKeyPair } from 'jose';
-import { authorizeConfirmHandler, authorizeHandler, authorizeLoginHandler } from '../authorize';
-import { buildPolicyConstrainedRegionShardConfig } from '@authrim/ar-lib-core';
+import {
+  SignJWT,
+  decodeJwt,
+  decodeProtectedHeader,
+  exportJWK,
+  exportPKCS8,
+  generateKeyPair,
+} from 'jose';
+import { authorizeHandler } from '../authorize';
+import { createHash } from 'node:crypto';
+import {
+  buildPolicyConstrainedRegionShardConfig,
+  OIDCAttributeReleaseConsentRequiredError,
+  OIDCIdentityMappingRuntimeError,
+  openSubjectReference,
+} from '@authrim/ar-lib-core';
 import type { Env } from '@authrim/ar-lib-core/types/env';
+import { systemSettingsPlatformDocuments } from '@authrim/ar-lib-core/utils/system-settings-fields';
+import type { IdentityMappingFailureRow } from '@authrim/ar-lib-core/services/identity-mapping-failures';
+import { adapterOver, migrate, type SqliteDatabase } from './helpers/real-sql';
+
+/** Save an older `system_settings` document's values as the platform's Settings API values. */
+async function putSystemSettings(
+  kv: { put(key: string, value: string): Promise<unknown> },
+  document: Record<string, unknown>
+): Promise<void> {
+  for (const [key, values] of Object.entries(systemSettingsPlatformDocuments(document))) {
+    await kv.put(key, JSON.stringify(values));
+  }
+}
 
 const securityRegressionIt =
   process.env.AUTHRIM_SECURITY_REGRESSION_SUITE === 'true' ? it : it.skip;
@@ -24,6 +50,10 @@ const TEST_REGION_CONFIG = buildPolicyConstrainedRegionShardConfig({
 
 // Mock getClient and getClientCached at module level
 const mockGetClient = vi.hoisted(() => vi.fn());
+// The app's identity mapping (id_token_hint subjects): no mapping unless a test sets one.
+const mockDeriveOIDCSubject = vi.hoisted(() =>
+  vi.fn(async (input: { claims: { sub?: unknown } }) => String(input.claims.sub))
+);
 const mockResolveAccountDataContextFromHono = vi.hoisted(() =>
   vi.fn(async (c: { env: Env; set: (key: string, value: unknown) => void }, userId: string) => {
     const context = {
@@ -54,7 +84,136 @@ vi.mock('@authrim/ar-lib-core', async () => {
       .fn()
       .mockImplementation((_c, env, clientId) => mockGetClient(env, clientId)),
     resolveAccountDataContextFromHono: mockResolveAccountDataContextFromHono,
+    // The mock D1 binding stands in for the tenant's Core database (the signed tenant registry
+    // that picks it is not part of these tests).
+    resolveAuthCorePersistenceAdapterFromEnv: vi.fn(
+      async (env: { DB: unknown }, partition?: string) =>
+        (
+          actual as { ensureDatabaseAdapter: (db: unknown, partition?: string) => unknown }
+        ).ensureDatabaseAdapter(env.DB, partition)
+    ),
+    deriveOIDCSubject: mockDeriveOIDCSubject,
+    CanonicalRuntimeUserProjectionRepository: class {
+      async findByLegacyUserId(...args: unknown[]) {
+        mappingFixture.userLookups.push(args);
+        return mappingFixture.userRow;
+      }
+    },
   };
+});
+
+// The database boundary of a real identity mapping: the binding the app's Mapping Set resolves to,
+// the user's canonical record, and the Destination Profile consent filter. Unset, each is the real
+// implementation; the mapping itself always runs for real.
+const mappingFixture = vi.hoisted(() => ({
+  // What the Mapping Set the app is bound to reads as. The selection and the reading of the set
+  // are tested in ar-lib-core; here a binding stands for "the tenant's default Mapping Set".
+  binding: null as unknown,
+  // What an activation of the whole tenant would resolve to if it were looked up by its scope: the
+  // OIDC path no longer looks for it, and `implicitLookups` counts the times it was asked.
+  implicit: null as unknown,
+  implicitLookups: 0,
+  // A Destination Profile (its schema's claims) the real release filter is run against.
+  profile: null as { claims: Array<Record<string, unknown>> } | null,
+  // Whether the user has already agreed to release the profile's fields (the stored selection).
+  profileConsent: 'all' as 'all' | 'none',
+  userRow: null as Record<string, unknown> | null,
+  userLookups: [] as unknown[][],
+}));
+vi.mock('@authrim/ar-lib-core/services/identity-mapping-resolution', async () => {
+  const actual = await vi.importActual<Record<string, unknown>>(
+    '@authrim/ar-lib-core/services/identity-mapping-resolution'
+  );
+  return {
+    ...actual,
+    resolveOidcIdentityMappingBinding: (...args: unknown[]) =>
+      // An app that opts out is bound to nothing, whatever the tenant names.
+      mappingFixture.binding &&
+      (args[0] as { clientSelector?: { mode?: string } | null }).clientSelector?.mode !== 'none'
+        ? Promise.resolve({
+            selection: { kind: 'bound', tier: 'tenant_default', setId: 'set-tenant', chain: [] },
+            binding: mappingFixture.binding,
+          })
+        : (actual.resolveOidcIdentityMappingBinding as (...a: unknown[]) => unknown)(...args),
+  };
+});
+vi.mock('@authrim/ar-lib-core/services/identity-mapping-runtime-resolver', async () => {
+  const actual = await vi.importActual<Record<string, unknown>>(
+    '@authrim/ar-lib-core/services/identity-mapping-runtime-resolver'
+  );
+  return {
+    ...actual,
+    resolveRuntimeIdentityMappingBinding: (...args: unknown[]) => {
+      mappingFixture.implicitLookups += 1;
+      return mappingFixture.implicit
+        ? Promise.resolve(mappingFixture.implicit)
+        : (actual.resolveRuntimeIdentityMappingBinding as (...a: unknown[]) => unknown)(...args);
+    },
+  };
+});
+vi.mock('@authrim/ar-lib-core/services/destination-profile-consent', async () => {
+  const actual = await vi.importActual<Record<string, unknown>>(
+    '@authrim/ar-lib-core/services/destination-profile-consent'
+  );
+  return {
+    ...actual,
+    filterOidcClaimsByDestinationConsent: (input: { claims: Record<string, unknown> }) => {
+      const filter = actual.filterOidcClaimsByDestinationConsent as (i: unknown) => unknown;
+      if (mappingFixture.profile) {
+        // The real filter, over the profile, with the user's stored selection (all fields, or none).
+        const claims = mappingFixture.profile.claims;
+        const database = {
+          queryOne: async (sql: string) =>
+            sql.includes('destination_profiles')
+              ? {
+                  profile_id: 'profile-1',
+                  destination_type: 'oidc',
+                  version_id: 'version-1',
+                  schema_json: JSON.stringify({ claims }),
+                }
+              : mappingFixture.profileConsent === 'none'
+                ? null
+                : {
+                    id: 'consent-1',
+                    released_claims_json: JSON.stringify(claims.map((claim) => claim.claimName)),
+                    released_attributes_json: null,
+                    evidence_json: '{}',
+                    created_at: 1,
+                  },
+        };
+        return filter({ ...input, coreAdapter: database, adminAdapter: database });
+      }
+      return mappingFixture.binding ? Promise.resolve(input.claims) : filter(input);
+    },
+  };
+});
+
+// The shared ID token release steps (identity mapping, claim release consent) run inside
+// ar-lib-core, so they are mocked at their own modules; both run the real implementation unless a
+// test replaces them for one call.
+const mockApplyOIDCIdentityMapping = vi.hoisted(() =>
+  vi.fn<(input: { claims: Record<string, unknown> }) => unknown>()
+);
+const mockEnforceOIDCAttributeReleaseConsent = vi.hoisted(() =>
+  vi.fn<(input: Record<string, unknown>) => unknown>()
+);
+vi.mock('@authrim/ar-lib-core/services/oidc-identity-mapping', async () => {
+  const actual = await vi.importActual<Record<string, unknown>>(
+    '@authrim/ar-lib-core/services/oidc-identity-mapping'
+  );
+  mockApplyOIDCIdentityMapping.mockImplementation(
+    actual.applyOIDCIdentityMapping as (...args: unknown[]) => unknown
+  );
+  return { ...actual, applyOIDCIdentityMapping: mockApplyOIDCIdentityMapping };
+});
+vi.mock('@authrim/ar-lib-core/services/oidc-attribute-release-consent', async () => {
+  const actual = await vi.importActual<Record<string, unknown>>(
+    '@authrim/ar-lib-core/services/oidc-attribute-release-consent'
+  );
+  mockEnforceOIDCAttributeReleaseConsent.mockImplementation(
+    actual.enforceOIDCAttributeReleaseConsent as (...args: unknown[]) => unknown
+  );
+  return { ...actual, enforceOIDCAttributeReleaseConsent: mockEnforceOIDCAttributeReleaseConsent };
 });
 
 /**
@@ -92,6 +251,12 @@ class MockKVNamespace {
  */
 function createMockDB() {
   const trustPolicies = new Map<string, Record<string, unknown>>();
+  // The bridge's external providers (`upstream_providers`), answered as the query asks for them:
+  // the tenant's enabled rows, in order, up to the limit. `failure` makes the read throw.
+  const upstreamProviders = {
+    rows: [] as Array<Record<string, unknown>>,
+    failure: false,
+  };
   const prepare = vi.fn((sql: string) => {
     let boundParams: unknown[] = [];
     const statement = {
@@ -106,9 +271,19 @@ function createMockDB() {
           const policy = trustPolicies.get(`${tenantId}:${targetType}:${targetId}`);
           return { results: policy ? [policy] : [] };
         }
+        if (sql.includes('FROM upstream_providers')) {
+          if (upstreamProviders.failure) throw new Error('D1 unavailable');
+          const [tenantId, limit] = boundParams;
+          return {
+            results: upstreamProviders.rows
+              .filter((row) => row.tenant_id === tenantId && row.enabled === 1)
+              .slice(0, Number(limit)),
+          };
+        }
         return { results: [] };
       }),
-      run: vi.fn().mockResolvedValue({ success: true }),
+      // D1 reports the rows a write changed.
+      run: vi.fn().mockResolvedValue({ success: true, meta: { changes: 1 } }),
     };
     return statement;
   });
@@ -117,8 +292,10 @@ function createMockDB() {
     prepare,
     batch: vi.fn().mockResolvedValue([]),
     _trustPolicies: trustPolicies,
+    _upstreamProviders: upstreamProviders,
   } as unknown as D1Database & {
     _trustPolicies: Map<string, Record<string, unknown>>;
+    _upstreamProviders: typeof upstreamProviders;
   };
 }
 
@@ -219,6 +396,23 @@ function createMockSessionStore() {
               data,
             });
             return { id: sessionId };
+          }
+        ),
+      updateSessionDataRpc: vi
+        .fn()
+        .mockImplementation(
+          async (
+            sessionId: string,
+            updates: Record<string, unknown>,
+            options?: { ifDataMatches?: Record<string, unknown> }
+          ) => {
+            const session = sessions.get(sessionId);
+            if (!session) return null;
+            const stale = Object.entries(options?.ifDataMatches ?? {}).some(
+              ([field, value]) => JSON.stringify(session.data?.[field]) !== JSON.stringify(value)
+            );
+            if (!stale) session.data = { ...session.data, ...updates };
+            return session;
           }
         ),
       fetch: vi.fn().mockResolvedValue(new Response(JSON.stringify({ success: true }))),
@@ -350,8 +544,8 @@ function createMockEnv(): Env {
     STATE_EXPIRY: '300',
     NONCE_EXPIRY: '300',
     REFRESH_TOKEN_EXPIRY: '2592000',
-    ENABLE_HTTP_REDIRECT: 'true',
-    ENABLE_CONFORMANCE_MODE: 'true', // Enable conformance mode for testing (uses built-in forms)
+    HTTPS_REDIRECT_ONLY: 'false',
+    UI_URL: 'https://login.example.com', // Login UI that login, re-authentication and consent go to
     STATE_STORE: new MockKVNamespace() as unknown as KVNamespace,
     NONCE_STORE: new MockKVNamespace() as unknown as KVNamespace,
     CLIENTS_CACHE: new MockKVNamespace() as unknown as KVNamespace,
@@ -360,6 +554,8 @@ function createMockEnv(): Env {
       'region_shard_config:default': JSON.stringify(TEST_REGION_CONFIG),
     }) as unknown as KVNamespace,
     DB: createMockDB(),
+    // The Admin database: a Mapping Set the app is bound to is read from it.
+    DB_ADMIN: createMockDB(),
     PUBLIC_ASSETS: {} as R2Bucket,
     KEY_MANAGER: createMockDO() as unknown as Env['KEY_MANAGER'],
     SESSION_STORE: createMockSessionStore() as unknown as Env['SESSION_STORE'],
@@ -423,10 +619,6 @@ describe('Authorization Handler', () => {
     });
     app.get('/authorize', authorizeHandler);
     app.post('/authorize', authorizeHandler);
-    app.get('/flow/login', authorizeLoginHandler);
-    app.post('/flow/login', authorizeLoginHandler);
-    app.get('/flow/confirm', authorizeConfirmHandler);
-    app.post('/flow/confirm', authorizeConfirmHandler);
     env = createMockEnv();
   });
 
@@ -442,7 +634,7 @@ describe('Authorization Handler', () => {
       const location = response.headers.get('Location');
       expect(location).toBeTruthy();
       // Should redirect to login page with challenge_id
-      expect(location).toContain('/flow/login');
+      expect(location).toContain('https://login.example.com/login');
       expect(location).toContain('challenge_id=');
     });
 
@@ -455,7 +647,7 @@ describe('Authorization Handler', () => {
 
       expect(response.status).toBe(302);
       const location = response.headers.get('Location');
-      expect(location).toContain('/flow/login');
+      expect(location).toContain('https://login.example.com/login');
       expect(location).not.toContain('code=');
     });
 
@@ -469,10 +661,10 @@ describe('Authorization Handler', () => {
       expect(response.status).toBe(302);
       const location = response.headers.get('Location');
       // Login redirect preserves authorization parameters in challenge
-      expect(location).toContain('/flow/login');
+      expect(location).toContain('https://login.example.com/login');
     });
 
-    it('should accept http://localhost redirect_uri when ENABLE_HTTP_REDIRECT is true', async () => {
+    it('should accept http://localhost redirect_uri for a web app when security.https_redirect_only is off', async () => {
       const response = await app.request(
         '/authorize?response_type=code&client_id=test-client&redirect_uri=http://localhost:3000/callback&scope=openid',
         { method: 'GET' },
@@ -482,11 +674,86 @@ describe('Authorization Handler', () => {
       // Should redirect to login (localhost is allowed)
       expect(response.status).toBe(302);
       const location = response.headers.get('Location');
-      expect(location).toContain('/flow/login');
+      expect(location).toContain('https://login.example.com/login');
+    });
+
+    it('refuses a web app’s http loopback redirect_uri while security.https_redirect_only is on', async () => {
+      delete (env as { HTTPS_REDIRECT_ONLY?: string }).HTTPS_REDIRECT_ONLY;
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=http://localhost:3000/callback&scope=openid',
+        { method: 'GET' },
+        env
+      );
+
+      // Not redirected to an http callback the policy does not allow: an error page instead.
+      expect(response.status).toBe(400);
+      expect(await response.text()).toContain('Invalid Redirect URI');
+    });
+
+    it('accepts a native app’s http loopback redirect_uri (RFC 8252) while HTTPS only is on', async () => {
+      delete (env as { HTTPS_REDIRECT_ONLY?: string }).HTTPS_REDIRECT_ONLY;
+      mockGetClient.mockResolvedValue({
+        client_id: 'test-client',
+        client_secret: 'test-secret',
+        application_type: 'native',
+        redirect_uris: ['http://localhost:3000/callback'],
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+        scope: 'openid profile email',
+        token_endpoint_auth_method: 'client_secret_basic',
+      });
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=http://localhost:3000/callback&scope=openid',
+        { method: 'GET' },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      expect(response.headers.get('Location')).toContain('https://login.example.com/login');
+    });
+
+    it('requires an encrypted request object when the tenant does (security.require_encrypted_request_object)', async () => {
+      await env.SETTINGS!.put(
+        'settings:tenant:default:security',
+        JSON.stringify({ 'security.require_encrypted_request_object': true })
+      );
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=s1',
+        { method: 'GET' },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const location = new URL(response.headers.get('Location')!);
+      expect(location.origin + location.pathname).toBe('https://example.com/callback');
+      expect(location.searchParams.get('error')).toBe('invalid_request_object');
+      expect(location.searchParams.get('error_description')).toBe(
+        'An encrypted request object is required for this client'
+      );
+    });
+
+    it('requires PKCE when the tenant requires it (security.pkce_required)', async () => {
+      await env.SETTINGS!.put(
+        'settings:tenant:default:security',
+        JSON.stringify({ 'security.pkce_required': true })
+      );
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=s1',
+        { method: 'GET' },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const location = new URL(response.headers.get('Location')!);
+      expect(location.origin + location.pathname).toBe('https://example.com/callback');
+      expect(location.searchParams.get('error')).toBe('invalid_request');
+      expect(location.searchParams.get('error_description')).toBe(
+        'PKCE with S256 is required for this client'
+      );
     });
 
     it('should redirect with temporarily_unavailable when login UI is not configured', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
+      delete (env as { UI_URL?: string }).UI_URL;
 
       const response = await app.request(
         '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=test-state',
@@ -506,7 +773,7 @@ describe('Authorization Handler', () => {
     });
 
     it('should preserve client-specific login_ui_url when global UI_URL is not configured', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
+      delete (env as { UI_URL?: string }).UI_URL;
       mockGetClient.mockResolvedValue({
         client_id: 'test-client',
         client_secret: 'test-secret',
@@ -534,7 +801,6 @@ describe('Authorization Handler', () => {
     securityRegressionIt(
       '[security regression] never sends an authenticated consent challenge to a client-controlled UI',
       async () => {
-        env.ENABLE_CONFORMANCE_MODE = 'false';
         env.UI_URL = 'https://tenant-login.example.com';
         env.LOGIN_UI_EXECUTION_HOST_MODE = 'dedicated';
         await configureClientSettings(env, { 'client.sso_enabled': true });
@@ -567,8 +833,7 @@ describe('Authorization Handler', () => {
       }
     );
 
-    it('does not enable built-in login from a certification redirect URI alone', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
+    it('sends a certification-suite redirect URI to the normal Login UI', async () => {
       env.UI_URL = 'https://login.example.com';
       env.LOGIN_UI_EXECUTION_HOST_MODE = 'dedicated';
       const certificationRedirectUri =
@@ -602,7 +867,6 @@ describe('Authorization Handler', () => {
     });
 
     it('should keep authorization UI redirects on the tenant issuer host in multi-tenant mode', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
       env.UI_URL = 'https://login.example.com';
       env.BASE_DOMAIN = 'test.authrim.com';
 
@@ -630,7 +894,6 @@ describe('Authorization Handler', () => {
     });
 
     it('should use UI_URL for separate Login UI redirects in single-tenant mode', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
       env.UI_URL = 'https://login.example.com';
       env.LOGIN_UI_EXECUTION_HOST_MODE = 'dedicated';
 
@@ -650,7 +913,6 @@ describe('Authorization Handler', () => {
     });
 
     it('should use the issuer for issuer-hosted single-tenant Login UI redirects', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
       env.UI_URL = 'https://login.example.com';
       env.LOGIN_UI_EXECUTION_HOST_MODE = 'issuer';
 
@@ -668,8 +930,31 @@ describe('Authorization Handler', () => {
       );
     });
 
+    it("should use the tenant's own Login UI before the issuer-hosted one", async () => {
+      env.UI_URL = 'https://login.example.com';
+      env.LOGIN_UI_EXECUTION_HOST_MODE = 'issuer';
+      env.ALLOWED_ORIGINS = 'https://tenant-login.example.org';
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'settings:tenant:default:tenant',
+        JSON.stringify({
+          'tenant.ui_base_url': 'https://tenant-login.example.org',
+          'tenant.ui_login_path': '/signin',
+        })
+      );
+
+      const response = await app.request(
+        'https://test.example.com/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid',
+        { method: 'GET' },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const location = new URL(response.headers.get('Location')!);
+      expect(location.origin + location.pathname).toBe('https://tenant-login.example.org/signin');
+    });
+
     it('should use form_post for temporarily_unavailable when response_mode=form_post', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
+      delete (env as { UI_URL?: string }).UI_URL;
 
       const response = await app.request(
         '/authorize?response_type=code&response_mode=form_post&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=test-state',
@@ -713,7 +998,7 @@ describe('Authorization Handler', () => {
 
       expect(response.status).toBe(302);
       const location = response.headers.get('Location');
-      expect(location).toContain('/flow/login');
+      expect(location).toContain('https://login.example.com/login');
 
       const challengeId = new URL(location!, 'https://test.example.com').searchParams.get(
         'challenge_id'
@@ -792,6 +1077,19 @@ describe('Authorization Handler', () => {
       expect(response.headers.get('location')).toContain('error=invalid_request');
     });
 
+    it('refuses a request without state when the state setting cannot be read', async () => {
+      // The state setting lives with the response types and PAR settings, which authorize reads
+      // first: the request is refused as soon as those cannot be read.
+      await (env.SETTINGS as unknown as MockKVNamespace).put('settings:tenant:default:oauth', '');
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https%3A%2F%2Fexample.com%2Fcallback&scope=openid',
+        {},
+        env
+      );
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toMatchObject({ error: 'temporarily_unavailable' });
+    });
+
     it.each([
       '{',
       '[]',
@@ -827,11 +1125,26 @@ describe('Authorization Handler', () => {
       });
     });
 
-    it('requires PAR by default when FAPI mode is enabled', async () => {
+    it('requires a signed request object on direct requests when the tenant requires one', async () => {
       await (env.SETTINGS as unknown as MockKVNamespace).put(
-        'system_settings',
-        JSON.stringify({ fapi: { enabled: true } })
+        'settings:tenant:default:security',
+        JSON.stringify({ 'security.require_signed_request_object': true })
       );
+      const response = await app.request(
+        `${base}&code_challenge=${'a'.repeat(43)}&code_challenge_method=S256`,
+        {},
+        env
+      );
+      expect(response.status).toBe(302);
+      const redirect = new URL(response.headers.get('location')!);
+      expect(redirect.searchParams.get('error')).toBe('invalid_request');
+      expect(redirect.searchParams.get('error_description')).toContain('signed request object');
+    });
+
+    it('requires PAR by default when FAPI mode is enabled', async () => {
+      await putSystemSettings(env.SETTINGS as unknown as MockKVNamespace, {
+        fapi: { enabled: true },
+      });
       const response = await app.request(
         `${base}&code_challenge=${'a'.repeat(43)}&code_challenge_method=S256`,
         {},
@@ -865,10 +1178,9 @@ describe('Authorization Handler', () => {
           token_endpoint_auth_method: 'private_key_jwt',
           jwks: { keys: [publicJwk] },
         });
-        await (env.SETTINGS as unknown as MockKVNamespace).put(
-          'system_settings',
-          JSON.stringify({ fapi: { enabled: true } })
-        );
+        await putSystemSettings(env.SETTINGS as unknown as MockKVNamespace, {
+          fapi: { enabled: true },
+        });
         await configureClientSettings(env, { 'client.sso_enabled': true });
         configureClientTrustPolicy(env);
         seedSession(env, 'par-jar-user');
@@ -965,7 +1277,7 @@ describe('Authorization Handler', () => {
 
       expect(response.status).toBe(302);
       const redirect = new URL(response.headers.get('location')!, 'https://test.example.com');
-      expect(redirect.pathname).toBe('/flow/confirm');
+      expect(redirect.origin + redirect.pathname).toBe('https://login.example.com/reauth');
       const challenge = getChallengeMap(env).get(redirect.searchParams.get('challenge_id')!) as {
         metadata?: Record<string, unknown>;
       };
@@ -975,10 +1287,9 @@ describe('Authorization Handler', () => {
 
     it('resumes a server-side PAR authorization transaction after login without reusing request_uri', async () => {
       configureClientTrustPolicy(env);
-      await (env.SETTINGS as unknown as MockKVNamespace).put(
-        'system_settings',
-        JSON.stringify({ fapi: { enabled: true } })
-      );
+      await putSystemSettings(env.SETTINGS as unknown as MockKVNamespace, {
+        fapi: { enabled: true },
+      });
       getChallengeMap(env).set('fapi_login_confirmation', {
         id: 'fapi_login_confirmation',
         tenantId: 'default',
@@ -1031,6 +1342,36 @@ describe('Authorization Handler', () => {
       await expect(replay.json()).resolves.toMatchObject({
         error_description: expect.stringContaining('confirmation challenge'),
       });
+    });
+
+    it('does not take the challenge of a SAML request for an authorization confirmation, nor use it up', async () => {
+      configureClientTrustPolicy(env);
+      getChallengeMap(env).set('saml-reauth-challenge', {
+        id: 'saml-reauth-challenge',
+        tenantId: 'default',
+        type: 'reauth',
+        userId: 'test-user',
+        challenge: 'saml-reauth-challenge',
+        metadata: {
+          protocol: 'saml',
+          saml_request_id: '_request-1',
+          saml_sp_entity_id: 'https://sp.example.test/entity',
+          tenant_id: 'default',
+          sessionUserId: 'test-user',
+          reauth_issued_at: 1_700_000_100_000,
+        },
+      });
+
+      const response = await app.request(
+        '/authorize?_confirmation_challenge=saml-reauth-challenge',
+        { method: 'GET', headers: { Cookie: 'authrim_authorize_confirmation=anything' } },
+        env
+      );
+
+      expect(response.status).toBe(400);
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+      // It stays for the SAML request it belongs to.
+      expect(getChallengeMap(env).has('saml-reauth-challenge')).toBe(true);
     });
 
     it('does not let a confirmation URL move an authenticated authorization across browsers', async () => {
@@ -1110,10 +1451,10 @@ describe('Authorization Handler', () => {
       expect(first.status).toBe(302);
       expect(second.status).toBe(302);
       expect(new URL(first.headers.get('location')!, 'https://test.example.com').pathname).toBe(
-        '/flow/login'
+        '/login'
       );
       expect(new URL(second.headers.get('location')!, 'https://test.example.com').pathname).toBe(
-        '/flow/login'
+        '/login'
       );
       expect(parStore._getRequestRpc).toHaveBeenCalledTimes(2);
       expect(parStore._consumeRequestRpc).not.toHaveBeenCalled();
@@ -1231,10 +1572,9 @@ describe('Authorization Handler', () => {
     });
 
     it('does not let a front-channel continuation bypass FAPI PAR enforcement', async () => {
-      await (env.SETTINGS as unknown as MockKVNamespace).put(
-        'system_settings',
-        JSON.stringify({ fapi: { enabled: true } })
-      );
+      await putSystemSettings(env.SETTINGS as unknown as MockKVNamespace, {
+        fapi: { enabled: true },
+      });
       getChallengeMap(env).set('non_par_confirmation', {
         id: 'non_par_confirmation',
         tenantId: 'default',
@@ -1275,14 +1615,27 @@ describe('Authorization Handler', () => {
       expect(redirect.searchParams.get('error_description')).toContain('PAR is required');
     });
 
-    it('rejects public clients when FAPI explicitly disallows them', async () => {
-      await (env.SETTINGS as unknown as MockKVNamespace).put(
-        'system_settings',
-        JSON.stringify({
-          fapi: { enabled: true, allowPublicClients: false },
-          oidc: { requirePar: false },
-        })
-      );
+    /** A pushed request for test-client (FAPI requires PAR), as authorize reads it back. */
+    function pushedRequest(request: Record<string, unknown> = {}): string {
+      const requestUri = 'urn:ietf:params:oauth:request_uri:fapi_checks';
+      env.PAR_REQUEST_STORE = createMockPARRequestStore({
+        client_id: 'test-client',
+        response_type: 'code',
+        redirect_uri: 'https://example.com/callback',
+        scope: 'openid',
+        state: 'test-state',
+        code_challenge: 'a'.repeat(43),
+        code_challenge_method: 'S256',
+        ...request,
+      }) as unknown as Env['PAR_REQUEST_STORE'];
+      return `/authorize?client_id=test-client&request_uri=${encodeURIComponent(requestUri)}`;
+    }
+
+    it('requires PAR in FAPI mode even when the older document turns requirePar off', async () => {
+      await putSystemSettings(env.SETTINGS as unknown as MockKVNamespace, {
+        fapi: { enabled: true },
+        oidc: { requirePar: false },
+      });
       const response = await app.request(
         `${base}&code_challenge=${'a'.repeat(43)}&code_challenge_method=S256`,
         {},
@@ -1290,8 +1643,63 @@ describe('Authorization Handler', () => {
       );
       expect(response.status).toBe(302);
       const redirect = new URL(response.headers.get('location')!);
+      expect(redirect.searchParams.get('error')).toBe('invalid_request');
+      expect(redirect.searchParams.get('error_description')).toContain('PAR is required in FAPI');
+    });
+
+    it('requires PAR outside FAPI mode when the tenant requires it', async () => {
+      await putSystemSettings(env.SETTINGS as unknown as MockKVNamespace, {
+        oidc: { requirePar: true },
+      });
+      const refused = await app.request(
+        `${base}&code_challenge=${'a'.repeat(43)}&code_challenge_method=S256`,
+        {},
+        env
+      );
+      expect(refused.status).toBe(302);
+      const redirect = new URL(refused.headers.get('location')!);
+      expect(redirect.searchParams.get('error')).toBe('invalid_request');
+      expect(redirect.searchParams.get('error_description')).toBe(
+        'PAR is required. Use /par endpoint first.'
+      );
+
+      // A pushed request passes the check.
+      const pushed = await app.request(pushedRequest(), {}, env);
+      expect(pushed.headers.get('location') ?? '').not.toContain('PAR+is+required');
+    });
+
+    it('rejects public clients when FAPI explicitly disallows them', async () => {
+      await putSystemSettings(env.SETTINGS as unknown as MockKVNamespace, {
+        fapi: { enabled: true, allowPublicClients: false },
+      });
+      const response = await app.request(pushedRequest(), {}, env);
+      expect(response.status).toBe(302);
+      const redirect = new URL(response.headers.get('location')!);
       expect(redirect.searchParams.get('error')).toBe('invalid_client');
       expect(redirect.searchParams.get('error_description')).toContain('Public clients');
+    });
+
+    it('rejects public clients when FAPI_ALLOW_PUBLIC_CLIENTS is false and nothing is saved', async () => {
+      await putSystemSettings(env.SETTINGS as unknown as MockKVNamespace, {
+        fapi: { enabled: true },
+      });
+      env.FAPI_ALLOW_PUBLIC_CLIENTS = 'false';
+      const refused = await app.request(pushedRequest(), {}, env);
+      expect(new URL(refused.headers.get('location')!).searchParams.get('error')).toBe(
+        'invalid_client'
+      );
+
+      // A saved value wins over the environment variable (a new store: settings are cached).
+      env.SETTINGS = new MockKVNamespace() as unknown as KVNamespace;
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'settings:tenant:default:security',
+        JSON.stringify({
+          'security.fapi_enabled': true,
+          'security.fapi_allow_public_clients': true,
+        })
+      );
+      const allowed = await app.request(pushedRequest(), {}, env);
+      expect(allowed.headers.get('location')).not.toContain('error=invalid_client');
     });
 
     it('requires S256 PKCE for a confidential FAPI client', async () => {
@@ -1302,11 +1710,14 @@ describe('Authorization Handler', () => {
         response_types: ['code'],
         scope: 'openid',
       });
-      await (env.SETTINGS as unknown as MockKVNamespace).put(
-        'system_settings',
-        JSON.stringify({ fapi: { enabled: true }, oidc: { requirePar: false } })
+      await putSystemSettings(env.SETTINGS as unknown as MockKVNamespace, {
+        fapi: { enabled: true },
+      });
+      const response = await app.request(
+        pushedRequest({ code_challenge: undefined, code_challenge_method: undefined }),
+        {},
+        env
       );
-      const response = await app.request(base, {}, env);
       expect(response.status).toBe(302);
       const redirect = new URL(response.headers.get('location')!);
       expect(redirect.searchParams.get('error')).toBe('invalid_request');
@@ -1314,7 +1725,10 @@ describe('Authorization Handler', () => {
     });
 
     it('fails closed when security profile settings JSON is malformed', async () => {
-      await (env.SETTINGS as unknown as MockKVNamespace).put('system_settings', '{');
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'settings:tenant:default:security',
+        '{'
+      );
       const response = await app.request(base, {}, env);
       expect(response.status).toBe(503);
       await expect(response.json()).resolves.toMatchObject({
@@ -1337,7 +1751,6 @@ describe('Authorization Handler', () => {
         response_mode: 'query',
         prompt: 'login',
         max_age: '0',
-        id_token_hint: 'invalid.jwt.value',
         acr_values: 'urn:mace:incommon:iap:bronze',
         display: 'page',
         ui_locales: 'ja en',
@@ -1357,7 +1770,7 @@ describe('Authorization Handler', () => {
         env
       );
       expect(response.status).toBe(302);
-      expect(response.headers.get('location')).toContain('/flow/login');
+      expect(response.headers.get('location')).toContain('https://login.example.com/login');
     });
   });
 
@@ -1373,7 +1786,7 @@ describe('Authorization Handler', () => {
       // Valid PKCE should proceed to login
       expect(response.status).toBe(302);
       const location = response.headers.get('Location');
-      expect(location).toContain('/flow/login');
+      expect(location).toContain('https://login.example.com/login');
     });
 
     it('should redirect with error when code_challenge is provided without code_challenge_method', async () => {
@@ -1407,13 +1820,13 @@ describe('Authorization Handler', () => {
       expect(redirectUrl.searchParams.get('error')).toBe('invalid_request');
       expect(redirectUrl.searchParams.get('error_description')).toContain('S256');
       const settingsKeys = settingsGet.mock.calls.map(([key]) => key);
+      // The client's settings are not read for a request refused before they are needed.
       expect(settingsKeys).not.toContain('settings:client:default:test-client:client');
-      expect(settingsKeys).not.toContain('settings:tenant:default:oauth');
     });
 
     it('should reject invalid code_challenge format', async () => {
       const response = await app.request(
-        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&code_challenge=invalid!@#&code_challenge_method=S256',
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&code_challenge=invalid%21%40%23&code_challenge_method=S256',
         { method: 'GET' },
         env
       );
@@ -1424,6 +1837,20 @@ describe('Authorization Handler', () => {
       expect(redirectUrl.searchParams.get('error')).toBe('invalid_request');
       expect(redirectUrl.searchParams.get('error_description')).toContain(
         'Invalid code_challenge format'
+      );
+    });
+
+    it('does not read a PKCE method from the URL fragment', async () => {
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&code_challenge=invalid!@#&code_challenge_method=S256',
+        { method: 'GET' },
+        env
+      );
+      expect(response.status).toBe(302);
+      const redirectUrl = new URL(response.headers.get('Location')!, 'https://example.com');
+      expect(redirectUrl.searchParams.get('error')).toBe('invalid_request');
+      expect(redirectUrl.searchParams.get('error_description')).toContain(
+        'code_challenge_method is required'
       );
     });
 
@@ -1477,30 +1904,12 @@ describe('Authorization Handler', () => {
   });
 
   describe('Parameter Validation - Direct Errors', () => {
-    it('should return 400 when response_type is missing', async () => {
-      const response = await app.request(
-        '/authorize?client_id=test-client&redirect_uri=https://example.com/callback&scope=openid',
-        { method: 'GET' },
-        env
-      );
-
-      expect(response.status).toBe(400);
-      const body = (await response.json()) as ErrorResponse;
-      // RFC 6749: missing required parameter should return invalid_request
-      expect(body.error).toBe('invalid_request');
-      expect(body.error_description).toContain('response_type');
-    });
-
     it('should return a local 400 error page when response_type is missing and external UI is configured', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
-      await (env.SETTINGS as unknown as MockKVNamespace).put(
-        'system_settings',
-        JSON.stringify({
-          ui: {
-            baseUrl: 'https://login.example.com',
-          },
-        })
-      );
+      await putSystemSettings(env.SETTINGS as unknown as MockKVNamespace, {
+        ui: {
+          baseUrl: 'https://login.example.com',
+        },
+      });
 
       const response = await app.request(
         '/authorize?client_id=test-client&redirect_uri=https://example.com/callback&scope=openid',
@@ -1516,29 +1925,12 @@ describe('Authorization Handler', () => {
       expect(body).toContain('response_type is required');
     });
 
-    it('should return 400 when response_type is unsupported', async () => {
-      const response = await app.request(
-        '/authorize?response_type=token&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid',
-        { method: 'GET' },
-        env
-      );
-
-      expect(response.status).toBe(400);
-      const body = (await response.json()) as ErrorResponse;
-      expect(body.error).toBe('unsupported_response_type');
-      expect(body.error_description).toContain('response_type');
-    });
-
     it('should return a local 400 error page when response_type is unsupported and external UI is configured', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
-      await (env.SETTINGS as unknown as MockKVNamespace).put(
-        'system_settings',
-        JSON.stringify({
-          ui: {
-            baseUrl: 'https://login.example.com',
-          },
-        })
-      );
+      await putSystemSettings(env.SETTINGS as unknown as MockKVNamespace, {
+        ui: {
+          baseUrl: 'https://login.example.com',
+        },
+      });
 
       const response = await app.request(
         '/authorize?response_type=token&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid',
@@ -1555,15 +1947,11 @@ describe('Authorization Handler', () => {
     });
 
     it('escapes attacker-controlled values in local authorization error pages', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
-      await (env.SETTINGS as unknown as MockKVNamespace).put(
-        'system_settings',
-        JSON.stringify({
-          ui: {
-            baseUrl: 'https://login.example.com',
-          },
-        })
-      );
+      await putSystemSettings(env.SETTINGS as unknown as MockKVNamespace, {
+        ui: {
+          baseUrl: 'https://login.example.com',
+        },
+      });
 
       const response = await app.request(
         '/authorize?response_type=%3Cimg%20src%3Dx%20onerror%3Dalert(1)%3E&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid',
@@ -1613,8 +2001,6 @@ describe('Authorization Handler', () => {
     });
 
     it('should return a local HTML error page before redirect_uri is validated', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
-
       const response = await app.request(
         '/authorize?client_id=test-client&redirect_uri=https://example.com/callback&scope=openid',
         { method: 'GET' },
@@ -1706,7 +2092,6 @@ describe('Authorization Handler', () => {
     it.each([true, false])(
       'routes prompt=login with an existing session through reauth when SSO enabled=%s',
       async (ssoEnabled) => {
-        env.ENABLE_CONFORMANCE_MODE = 'false';
         env.UI_URL = 'https://login.example.com';
         await configureClientSettings(env, {
           'client.sso_enabled': ssoEnabled,
@@ -1741,6 +2126,265 @@ describe('Authorization Handler', () => {
         });
       }
     );
+
+    it('finds the consent the user gave in the account database', async () => {
+      // The consent screen records consents with the user's account; the tenant metadata database
+      // (env.DB here) has none. prompt=none must find the one already given.
+      await configureClientSettings(env, { 'client.sso_enabled': true });
+      seedSession(env);
+      const consentRow = { scope: 'openid', granted_at: Date.now() - 1000, expires_at: null };
+      const accountDb = createMockDB();
+      const prepare = vi.mocked(accountDb.prepare);
+      const basePrepare = prepare.getMockImplementation()!;
+      prepare.mockImplementation((sql: string) => {
+        const statement = basePrepare(sql);
+        if (sql.includes('FROM oauth_client_consents')) {
+          vi.mocked(statement.first).mockResolvedValue(consentRow as never);
+          vi.mocked(statement.all).mockResolvedValue({ results: [consentRow] } as never);
+        }
+        return statement;
+      });
+      mockResolveAccountDataContextFromHono.mockImplementationOnce(async (c, userId) => {
+        const context = {
+          tenantId: 'default',
+          accountId: userId,
+          legacyUserId: userId,
+          coreDb: accountDb,
+          piiDb: accountDb,
+          coreBindingRef: 'DB_ACCOUNT',
+          piiBindingRef: 'DB_ACCOUNT',
+          coreResidencyPartition: 'default',
+          piiResidencyPartition: 'default',
+          accountRouteGeneration: 1,
+          userCacheScope: { tenantId: 'default', accountRouteGeneration: 1 },
+          piiCacheMode: 'disabled',
+        };
+        c.set('accountDataContext', context);
+        return context;
+      });
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=consented&prompt=none',
+        {
+          method: 'GET',
+          headers: { Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}` },
+        },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const redirectUrl = new URL(response.headers.get('Location')!);
+      expect(redirectUrl.searchParams.get('error')).toBeNull();
+      expect(redirectUrl.searchParams.get('code')).toBeTruthy();
+    });
+
+    describe('after the user withdrew a consent for the client', () => {
+      /** An account database answering the given consent and consent withdrawal rows. */
+      function useAccountDatabase(rows: {
+        consent?: Record<string, unknown>;
+        withdrawal?: Record<string, unknown>;
+      }) {
+        const accountDb = createMockDB();
+        const prepare = vi.mocked(accountDb.prepare);
+        const basePrepare = prepare.getMockImplementation()!;
+        const reads: string[] = [];
+        prepare.mockImplementation((sql: string) => {
+          const statement = basePrepare(sql);
+          const row = sql.includes('FROM oauth_client_consents')
+            ? rows.consent
+            : sql.includes('FROM oauth_client_consent_revocations')
+              ? rows.withdrawal
+              : undefined;
+          if (sql.includes('FROM oauth_client_consent')) reads.push(sql);
+          if (row) {
+            vi.mocked(statement.first).mockResolvedValue(row as never);
+            vi.mocked(statement.all).mockResolvedValue({ results: [row] } as never);
+          }
+          return statement;
+        });
+        mockResolveAccountDataContextFromHono.mockImplementationOnce(async (c, userId) => {
+          const context = {
+            tenantId: 'default',
+            accountId: userId,
+            legacyUserId: userId,
+            coreDb: accountDb,
+            piiDb: accountDb,
+            coreBindingRef: 'DB_ACCOUNT',
+            piiBindingRef: 'DB_ACCOUNT',
+            coreResidencyPartition: 'default',
+            piiResidencyPartition: 'default',
+            accountRouteGeneration: 1,
+            userCacheScope: { tenantId: 'default', accountRouteGeneration: 1 },
+            piiCacheMode: 'disabled',
+          };
+          c.set('accountDataContext', context);
+          return context;
+        });
+        return reads;
+      }
+
+      function authorizeWithoutPrompt(state: string) {
+        return app.request(
+          `/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=${state}&prompt=none`,
+          {
+            method: 'GET',
+            headers: { Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}` },
+          },
+          env
+        );
+      }
+
+      it('records in the code the generation read before the consent was checked', async () => {
+        await configureClientSettings(env, { 'client.sso_enabled': true });
+        seedSession(env);
+        const grantedAt = Date.now() - 1000;
+        const reads = useAccountDatabase({
+          consent: {
+            scope: 'openid',
+            granted_at: grantedAt,
+            expires_at: null,
+            consent_generation: 3,
+          },
+          withdrawal: { generation: 3, revoked_at: grantedAt - 1000 },
+        });
+
+        const response = await authorizeWithoutPrompt('reconsented');
+
+        expect(response.status).toBe(302);
+        expect(new URL(response.headers.get('Location')!).searchParams.get('code')).toBeTruthy();
+        expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
+          expect.objectContaining({ consentGeneration: 3 })
+        );
+        expect(reads[0]).toContain('FROM oauth_client_consent_revocations');
+        expect(reads).toContainEqual(expect.stringContaining('FROM oauth_client_consents'));
+      });
+
+      it('does not issue a code for a consent confirmed before a withdrawal completed', async () => {
+        // Approved on the consent screen under generation 0; withdrawn before the user got back.
+        await configureClientSettings(env, { 'client.sso_enabled': true });
+        seedSession(env);
+        getChallengeMap(env).set('confirm_withdrawn_consent', {
+          id: 'confirm_withdrawn_consent',
+          tenantId: 'default',
+          type: 'consent',
+          userId: 'test-user',
+          challenge: 'confirm_withdrawn_consent',
+          metadata: {
+            purpose: 'authorize_consent_confirmation',
+            consent_generation: 0,
+            sessionId: TEST_SESSION_ID,
+            browserBinding: 'consent-browser-binding',
+          },
+        });
+        useAccountDatabase({ withdrawal: { generation: 2, revoked_at: Date.now() - 100 } });
+
+        const response = await app.request(
+          '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=withdrawn-confirmation&prompt=none&_consent_confirmation_challenge=confirm_withdrawn_consent',
+          {
+            method: 'GET',
+            headers: {
+              Cookie:
+                `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}; ` +
+                'authrim_consent_confirmation=consent-browser-binding',
+            },
+          },
+          env
+        );
+
+        expect(response.status).toBe(302);
+        const redirectUrl = new URL(response.headers.get('Location')!);
+        expect(redirectUrl.searchParams.get('code')).toBeNull();
+        expect(redirectUrl.searchParams.get('error')).toBe('consent_required');
+        expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+      });
+
+      it('uses the consent given again after the withdrawal over a stale cached one', async () => {
+        await configureClientSettings(env, { 'client.sso_enabled': true });
+        seedSession(env);
+        const revokedAt = Date.now() - 5_000;
+        const put = vi.fn(async () => undefined);
+        (env as unknown as { CONSENT_CACHE: unknown }).CONSENT_CACHE = {
+          // Cached before the withdrawal (or written by a read that raced it).
+          get: vi.fn(async () =>
+            JSON.stringify({ scope: 'openid', granted_at: revokedAt - 10_000, expires_at: null })
+          ),
+          put,
+          delete: vi.fn(async () => undefined),
+        };
+        const reconsent = {
+          scope: 'openid',
+          granted_at: revokedAt + 1_000,
+          expires_at: null,
+          consent_generation: 2,
+        };
+        useAccountDatabase({
+          consent: reconsent,
+          withdrawal: { generation: 2, revoked_at: revokedAt },
+        });
+
+        const response = await authorizeWithoutPrompt('reconsented-stale-cache');
+
+        expect(response.status).toBe(302);
+        const redirectUrl = new URL(response.headers.get('Location')!);
+        expect(redirectUrl.searchParams.get('error')).toBeNull();
+        expect(redirectUrl.searchParams.get('code')).toBeTruthy();
+        expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
+          expect.objectContaining({ consentGeneration: 2 })
+        );
+        // The cache now holds the consent given again.
+        expect(put).toHaveBeenCalledWith(
+          expect.any(String),
+          JSON.stringify(reconsent),
+          expect.anything()
+        );
+      });
+
+      it('treats a consent recorded under an earlier generation as absent', async () => {
+        // An approval read generation 1 and its write landed after a withdrawal moved it to 2.
+        await configureClientSettings(env, { 'client.sso_enabled': true });
+        seedSession(env);
+        useAccountDatabase({
+          consent: {
+            scope: 'openid',
+            granted_at: Date.now() - 1_000,
+            expires_at: null,
+            consent_generation: 1,
+          },
+          withdrawal: { generation: 2, revoked_at: Date.now() - 2_000 },
+        });
+
+        const response = await authorizeWithoutPrompt('raced-approval');
+
+        expect(response.status).toBe(302);
+        expect(new URL(response.headers.get('Location')!).searchParams.get('error')).toBe(
+          'consent_required'
+        );
+        expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+      });
+
+      it('does not use a consent cached from before the withdrawal', async () => {
+        await configureClientSettings(env, { 'client.sso_enabled': true });
+        seedSession(env);
+        const grantedAt = Date.now() - 10_000;
+        const cache = new Map<string, string>();
+        (env as unknown as { CONSENT_CACHE: unknown }).CONSENT_CACHE = {
+          get: vi.fn(async () =>
+            JSON.stringify({ scope: 'openid', granted_at: grantedAt, expires_at: null })
+          ),
+          put: vi.fn(async (key: string, value: string) => void cache.set(key, value)),
+          delete: vi.fn(async () => undefined),
+        };
+        useAccountDatabase({ withdrawal: { generation: 1, revoked_at: grantedAt + 1000 } });
+
+        const response = await authorizeWithoutPrompt('stale-cache');
+
+        expect(response.status).toBe(302);
+        expect(new URL(response.headers.get('Location')!).searchParams.get('error')).toBe(
+          'consent_required'
+        );
+        expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+      });
+    });
 
     it('issues an authorization code for an existing SSO session when consent is not required', async () => {
       await configureClientSettings(env, {
@@ -1800,6 +2444,7 @@ describe('Authorization Handler', () => {
         idFromName: vi.fn().mockReturnValue({ toString: () => 'default-v3' }),
         get: vi.fn().mockReturnValue({
           getAllPublicKeysRpc: vi.fn().mockResolvedValue([publicJwk]),
+          getAllOIDCPublicKeysRpc: vi.fn().mockResolvedValue([publicJwk]),
         }),
       } as unknown as Env['KEY_MANAGER'];
 
@@ -1839,6 +2484,116 @@ describe('Authorization Handler', () => {
       expect(redirect.searchParams.get('code')).toBeNull();
       expect(redirect.searchParams.get('state')).toBe('id-token-hint-poc');
       expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    describe('id_token_hint names the End-User, it does not sign them in', () => {
+      async function hintSigner() {
+        const keyPair = await generateKeyPair('RS256', { extractable: true });
+        const publicJwk = {
+          ...(await exportJWK(keyPair.publicKey)),
+          kid: 'hint-key',
+          alg: 'RS256',
+        };
+        env.KEY_MANAGER = {
+          idFromName: vi.fn().mockReturnValue({ toString: () => 'default-v3' }),
+          get: vi.fn().mockReturnValue({
+            getAllOIDCPublicKeysRpc: vi.fn().mockResolvedValue([publicJwk]),
+          }),
+        } as unknown as Env['KEY_MANAGER'];
+        return (sub: string, options: { issuer?: string; expired?: boolean } = {}) => {
+          const now = Math.floor(Date.now() / 1000);
+          return new SignJWT({ sub })
+            .setProtectedHeader({ alg: 'RS256', kid: 'hint-key' })
+            .setIssuer(options.issuer ?? 'https://test.example.com')
+            .setAudience('test-client')
+            .setIssuedAt(now - 7200)
+            .setExpirationTime(options.expired ? now - 3600 : now + 3600)
+            .sign(keyPair.privateKey);
+        };
+      }
+      async function authorizeWithHint(hint: string, prompt = 'none') {
+        const response = await app.request(
+          `/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=hint&prompt=${prompt}&id_token_hint=${encodeURIComponent(hint)}`,
+          {
+            method: 'GET',
+            headers: { Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}` },
+          },
+          env
+        );
+        expect(response.status).toBe(302);
+        return new URL(response.headers.get('Location')!);
+      }
+
+      beforeEach(async () => {
+        await configureClientSettings(env, { 'client.sso_enabled': true });
+        configureClientTrustPolicy(env);
+        seedSession(env, 'test-user');
+      });
+
+      it('issues a code when the signed-in End-User is the one the hint names, expired or not', async () => {
+        const sign = await hintSigner();
+        const redirect = await authorizeWithHint(await sign('test-user', { expired: true }));
+        expect(redirect.searchParams.get('error')).toBeNull();
+        expect(redirect.searchParams.get('code')).toBeTruthy();
+      });
+
+      it('answers login_required to prompt=none when another End-User is signed in', async () => {
+        const sign = await hintSigner();
+        const redirect = await authorizeWithHint(await sign('another-user'));
+        expect(redirect.searchParams.get('error')).toBe('login_required');
+        expect(redirect.searchParams.get('code')).toBeNull();
+        expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+      });
+
+      it('answers login_required to an interactive request when another End-User is signed in', async () => {
+        const sign = await hintSigner();
+        const response = await app.request(
+          `/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=hint&code_challenge=${'a'.repeat(43)}&code_challenge_method=S256&id_token_hint=${encodeURIComponent(await sign('another-user'))}`,
+          {
+            method: 'GET',
+            headers: { Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}` },
+          },
+          env
+        );
+        expect(response.status).toBe(302);
+        const redirect = new URL(response.headers.get('Location')!);
+        expect(redirect.searchParams.get('error')).toBe('login_required');
+        expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+      });
+
+      it("matches a hint carrying the sub this app's identity mapping issues", async () => {
+        const sign = await hintSigner();
+        mockDeriveOIDCSubject.mockResolvedValueOnce('pairwise-for-test-client');
+        const redirect = await authorizeWithHint(await sign('pairwise-for-test-client'));
+        expect(redirect.searchParams.get('error')).toBeNull();
+        expect(redirect.searchParams.get('code')).toBeTruthy();
+        expect(mockDeriveOIDCSubject).toHaveBeenCalledWith(
+          expect.objectContaining({
+            clientId: 'test-client',
+            claims: expect.objectContaining({ sub: 'test-user' }),
+          })
+        );
+      });
+
+      it('refuses a hint this server did not issue, even with a session', async () => {
+        const sign = await hintSigner();
+        for (const hint of [
+          await sign('test-user', { issuer: 'https://other.example.com' }),
+          'invalid.jwt.value',
+        ]) {
+          const redirect = await authorizeWithHint(hint);
+          expect(redirect.searchParams.get('error')).toBe('invalid_request');
+          expect(redirect.searchParams.get('code')).toBeNull();
+        }
+        const otherKey = await generateKeyPair('RS256', { extractable: true });
+        const forged = await new SignJWT({ sub: 'test-user' })
+          .setProtectedHeader({ alg: 'RS256', kid: 'hint-key' })
+          .setIssuer('https://test.example.com')
+          .setExpirationTime('1h')
+          .sign(otherKey.privateKey);
+        const redirect = await authorizeWithHint(forged);
+        expect(redirect.searchParams.get('error')).toBe('invalid_request');
+      });
     });
 
     securityRegressionIt(
@@ -1918,13 +2673,1292 @@ describe('Authorization Handler', () => {
       }
     );
 
+    it('ignores offline_access when the response returns no code (OIDC Core 11)', async () => {
+      mockGetClient.mockResolvedValue({
+        client_id: 'test-client',
+        redirect_uris: ['https://example.com/callback'],
+        grant_types: ['implicit', 'authorization_code'],
+        response_types: ['id_token token', 'code id_token token'],
+        scope: 'openid profile offline_access',
+        token_endpoint_auth_method: 'none',
+      });
+      await configureClientSettings(env, { 'client.sso_enabled': true });
+      configureClientTrustPolicy(env);
+      seedSession(env, 'offline-user');
+      const keyPair = await generateKeyPair('RS256', { extractable: true });
+      const privatePEM = await exportPKCS8(keyPair.privateKey);
+      env.KEY_MANAGER = {
+        idFromName: vi.fn().mockReturnValue({ toString: () => 'default-v3' }),
+        get: vi.fn().mockReturnValue({
+          getActiveOIDCSigningKeyWithPrivateRpc: vi.fn().mockResolvedValue({
+            kid: 'offline-signing-key',
+            privatePEM,
+          }),
+        }),
+      } as unknown as Env['KEY_MANAGER'];
+
+      const response = await app.request(
+        '/authorize?response_type=id_token%20token&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid%20profile%20offline_access&state=offline&nonce=offline-nonce',
+        {
+          method: 'GET',
+          headers: { Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}` },
+        },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const fragment = new URLSearchParams(
+        new URL(response.headers.get('Location')!).hash.slice(1)
+      );
+      const accessClaims = decodeJwt(fragment.get('access_token')!);
+      expect(String(accessClaims.scope).split(' ')).not.toContain('offline_access');
+      expect(String(accessClaims.scope).split(' ')).toContain('openid');
+    });
+
+    it('issues implicit and hybrid tokens with the configured token lifetimes', async () => {
+      mockGetClient.mockResolvedValue({
+        client_id: 'test-client',
+        redirect_uris: ['https://example.com/callback'],
+        grant_types: ['implicit', 'authorization_code'],
+        response_types: ['id_token token', 'code id_token token'],
+        scope: 'openid profile',
+        token_endpoint_auth_method: 'none',
+      });
+      await configureClientSettings(env, { 'client.sso_enabled': true });
+      configureClientTrustPolicy(env);
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'settings:tenant:default:oauth',
+        JSON.stringify({ 'oauth.access_token_expiry': 300, 'oauth.id_token_expiry': 120 })
+      );
+      seedSession(env, 'lifetime-user');
+
+      const keyPair = await generateKeyPair('RS256', { extractable: true });
+      const privatePEM = await exportPKCS8(keyPair.privateKey);
+      env.KEY_MANAGER = {
+        idFromName: vi.fn().mockReturnValue({ toString: () => 'default-v3' }),
+        get: vi.fn().mockReturnValue({
+          getActiveOIDCSigningKeyWithPrivateRpc: vi.fn().mockResolvedValue({
+            kid: 'lifetime-signing-key',
+            privatePEM,
+          }),
+        }),
+      } as unknown as Env['KEY_MANAGER'];
+
+      const response = await app.request(
+        '/authorize?response_type=id_token%20token&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid%20profile&state=lifetime&nonce=lifetime-nonce',
+        {
+          method: 'GET',
+          headers: { Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}` },
+        },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const fragment = new URLSearchParams(
+        new URL(response.headers.get('Location')!).hash.slice(1)
+      );
+      expect(fragment.get('expires_in')).toBe('300');
+      const accessClaims = decodeJwt(fragment.get('access_token')!);
+      expect(accessClaims.exp! - accessClaims.iat!).toBe(300);
+      // The ID token has its own lifetime (oauth.id_token_expiry).
+      const idClaims = decodeJwt(fragment.get('id_token')!);
+      expect(idClaims.exp! - idClaims.iat!).toBe(120);
+    });
+
+    describe('signs implicit and hybrid ID tokens as the token endpoint does', () => {
+      async function implicitIdTokenAlgorithm(options: {
+        appAlgorithm?: string;
+        tenantOAuth?: Record<string, unknown>;
+      }) {
+        mockGetClient.mockResolvedValue({
+          client_id: 'test-client',
+          redirect_uris: ['https://example.com/callback'],
+          grant_types: ['implicit', 'authorization_code'],
+          response_types: ['id_token token', 'code id_token token'],
+          scope: 'openid profile',
+          token_endpoint_auth_method: 'none',
+          ...(options.appAlgorithm ? { id_token_signed_response_alg: options.appAlgorithm } : {}),
+        });
+        await configureClientSettings(env, { 'client.sso_enabled': true });
+        configureClientTrustPolicy(env);
+        if (options.tenantOAuth) {
+          await (env.SETTINGS as unknown as MockKVNamespace).put(
+            'settings:tenant:default:oauth',
+            JSON.stringify(options.tenantOAuth)
+          );
+        }
+        seedSession(env, 'signing-user');
+        const pems = Object.fromEntries(
+          await Promise.all(
+            (['RS256', 'ES256', 'PS256'] as const).map(async (algorithm) => [
+              algorithm,
+              await exportPKCS8(
+                (await generateKeyPair(algorithm, { extractable: true })).privateKey
+              ),
+            ])
+          )
+        ) as Record<string, string>;
+        env.KEY_MANAGER = {
+          idFromName: vi.fn().mockReturnValue({ toString: () => 'default-v3' }),
+          get: vi.fn().mockReturnValue({
+            getActiveOIDCSigningKeyWithPrivateRpc: vi.fn(async (algorithm: string) => ({
+              kid: `signing-${algorithm}`,
+              privatePEM: pems[algorithm],
+            })),
+          }),
+        } as unknown as Env['KEY_MANAGER'];
+
+        const response = await app.request(
+          '/authorize?response_type=id_token%20token&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid%20profile&state=signing&nonce=signing-nonce',
+          {
+            method: 'GET',
+            headers: { Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}` },
+          },
+          env
+        );
+        expect(response.status).toBe(302);
+        const fragment = new URLSearchParams(
+          new URL(response.headers.get('Location')!).hash.slice(1)
+        );
+        return decodeProtectedHeader(fragment.get('id_token')!).alg;
+      }
+
+      it("uses the app's id_token_signed_response_alg", async () => {
+        await expect(implicitIdTokenAlgorithm({ appAlgorithm: 'ES256' })).resolves.toBe('ES256');
+      });
+
+      it("uses the tenant's algorithm while apps may not choose", async () => {
+        await expect(
+          implicitIdTokenAlgorithm({
+            appAlgorithm: 'ES256',
+            tenantOAuth: {
+              'oauth.id_token_signing_alg': 'PS256',
+              'oauth.id_token_signing_alg_client_override': false,
+            },
+          })
+        ).resolves.toBe('PS256');
+      });
+    });
+
+    describe("applies the app's identity mapping to implicit and hybrid ID tokens as the token endpoint does", () => {
+      const ROOT_KEY = 'ab'.repeat(32);
+      const PAIRWISE_SUB = 'pairwise-for-test-client';
+
+      function failureRecordingStore() {
+        const db = migrate('admin') as SqliteDatabase & { close(): void };
+        return {
+          db,
+          adapter: adapterOver(db),
+          rows: () =>
+            db
+              .prepare('SELECT * FROM identity_mapping_failures')
+              .all() as IdentityMappingFailureRow[],
+        };
+      }
+
+      /** The left half of the SHA-256 of a value, as at_hash and c_hash carry it. */
+      const halfHash = (value: string) =>
+        Buffer.from(createHash('sha256').update(value).digest().subarray(0, 16)).toString(
+          'base64url'
+        );
+
+      async function authorizeFor(
+        responseType: string,
+        options: {
+          rootKey?: boolean;
+          scope?: string;
+          claims?: Record<string, unknown>;
+          client?: Record<string, unknown>;
+          mapping?: (input: { claims: Record<string, unknown> }) => unknown;
+          waitUntil?: (work: Promise<unknown>) => void;
+        } = {}
+      ) {
+        mockGetClient.mockResolvedValue({
+          client_id: 'test-client',
+          redirect_uris: ['https://example.com/callback'],
+          grant_types: ['implicit', 'authorization_code'],
+          response_types: ['id_token', 'id_token token', 'code id_token', 'code id_token token'],
+          scope: 'openid profile email phone address',
+          token_endpoint_auth_method: 'none',
+          ...options.client,
+        });
+        await configureClientSettings(env, { 'client.sso_enabled': true });
+        configureClientTrustPolicy(env);
+        seedSession(env, 'mapped-user');
+        if (options.rootKey !== false) {
+          (env as unknown as Record<string, unknown>).OBJECT_ENCRYPTION_ROOT_KEY = ROOT_KEY;
+        }
+        const keyPair = await generateKeyPair('RS256', { extractable: true });
+        const privatePEM = await exportPKCS8(keyPair.privateKey);
+        env.KEY_MANAGER = {
+          idFromName: vi.fn().mockReturnValue({ toString: () => 'default-v3' }),
+          get: vi.fn().mockReturnValue({
+            getActiveOIDCSigningKeyWithPrivateRpc: vi.fn().mockResolvedValue({
+              kid: 'mapped-signing-key',
+              privatePEM,
+            }),
+          }),
+        } as unknown as Env['KEY_MANAGER'];
+        if (options.mapping) {
+          mockApplyOIDCIdentityMapping.mockImplementationOnce(async (input) => ({
+            claims: await options.mapping!(input),
+            binding: null,
+          }));
+        }
+        const response = await app.request(
+          `/authorize?response_type=${encodeURIComponent(responseType)}&client_id=test-client&redirect_uri=https://example.com/callback&scope=${encodeURIComponent(options.scope ?? 'openid profile')}&state=mapped&nonce=mapped-nonce&code_challenge=${'M'.repeat(43)}&code_challenge_method=S256${options.claims ? `&claims=${encodeURIComponent(JSON.stringify(options.claims))}` : ''}`,
+          {
+            method: 'GET',
+            headers: { Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}` },
+          },
+          env,
+          options.waitUntil
+            ? { waitUntil: options.waitUntil, passThroughOnException() {}, props: {} }
+            : undefined
+        );
+        expect(response.status).toBe(302);
+        return new URLSearchParams(new URL(response.headers.get('Location')!).hash.slice(1));
+      }
+
+      const mappedUserRow = (): Record<string, unknown> => ({
+        id: 'mapped-user',
+        tenant_id: 'default',
+        subject_id: 'subject-mapped-user',
+        account_id: 'account-mapped-user',
+        account_type: 'end_user',
+        lifecycle_state: 'active',
+        email: 'alice@example.com',
+        email_verified: 1,
+        name: 'Alice Example',
+        given_name: 'Alice',
+        family_name: 'Example',
+        middle_name: null,
+        nickname: null,
+        preferred_username: 'alice',
+        profile: null,
+        picture: null,
+        website: null,
+        gender: null,
+        birthdate: null,
+        zoneinfo: null,
+        locale: null,
+        phone_number: '+8100000000',
+        phone_number_verified: 0,
+        address_json: null,
+        password_hash: null,
+        external_id: null,
+        last_login_at: null,
+        active: 1,
+        custom_attributes_json: null,
+        created_at: '2026-01-01T00:00:00.000Z',
+        updated_at: '2026-01-01T00:00:00.000Z',
+      });
+
+      const pairwise = (input: { claims: Record<string, unknown> }) => ({
+        ...input.claims,
+        sub: PAIRWISE_SUB,
+        department: 'research',
+      });
+
+      it.each(['id_token', 'code id_token'])(
+        'records one real resolution failure for %s without changing the redirect error',
+        async (responseType) => {
+          const store = failureRecordingStore();
+          const pending: Promise<unknown>[] = [];
+          Object.assign(env, { DB_ADMIN: store.adapter });
+          try {
+            const fragment = await authorizeFor(responseType, {
+              client: { identity_mapping: { fieldMappingSetId: 'set-gone' } },
+              waitUntil: (work) => pending.push(work),
+            });
+            expect(fragment.get('error')).toBe('server_error');
+            expect(fragment.get('id_token')).toBeNull();
+            expect(fragment.get('code')).toBeNull();
+            await Promise.all(pending);
+            expect(store.rows()).toHaveLength(1);
+            expect(store.rows()[0]).toMatchObject({
+              tenant_id: 'default',
+              client_id: 'test-client',
+              code: 'set_missing',
+              tier: 'client',
+              set_id: 'set-gone',
+              count: 1,
+            });
+            expect(JSON.stringify(store.rows())).not.toMatch(
+              /mapped-user|alice@example.com|claims|stack/
+            );
+          } finally {
+            await Promise.all(pending);
+            store.db.close();
+          }
+        }
+      );
+
+      it.each(['id_token', 'code id_token'])(
+        'preserves the %s redirect error when recording the failure cannot write',
+        async (responseType) => {
+          const store = failureRecordingStore();
+          const pending: Promise<unknown>[] = [];
+          Object.assign(env, { DB_ADMIN: store.adapter });
+          const client = { identity_mapping: { fieldMappingSetId: 'set-gone' } };
+          try {
+            const baseline = await authorizeFor(responseType, { client });
+            expect(baseline.get('error')).toBe('server_error');
+            expect(store.rows()).toEqual([]);
+            store.db.exec(
+              "CREATE TRIGGER refuse_mapping_failure BEFORE INSERT ON identity_mapping_failures BEGIN SELECT RAISE(ABORT,'failure_record_refused'); END"
+            );
+            const fragment = await authorizeFor(responseType, {
+              client,
+              waitUntil: (work) => pending.push(work),
+            });
+            expect(pending.length).toBeGreaterThan(0);
+            await expect(Promise.all(pending)).resolves.toBeDefined();
+            expect([...fragment]).toEqual([...baseline]);
+            expect(fragment.get('id_token')).toBeNull();
+            expect(fragment.get('code')).toBeNull();
+            expect(store.rows()).toEqual([]);
+          } finally {
+            await Promise.all(pending);
+            store.db.close();
+          }
+        }
+      );
+
+      it('issues the sub the mapping derives, and the sealed account reference, in an ID token', async () => {
+        const fragment = await authorizeFor('id_token token', { mapping: pairwise });
+
+        const idToken = decodeJwt(fragment.get('id_token')!);
+        const accessToken = decodeJwt(fragment.get('access_token')!);
+        expect(idToken.sub).toBe(PAIRWISE_SUB);
+        expect(idToken.department).toBe('research');
+        // The access token names the user, as the token endpoint's does for a code grant.
+        expect(accessToken.sub).toBe('mapped-user');
+        expect(accessToken).not.toHaveProperty('authrim_subject_ref');
+        // The ID token's grant claims: the consent generation, and the account its sub stands for.
+        expect(idToken.authrim_consent_generation).toBe(accessToken.authrim_consent_generation);
+        await expect(
+          openSubjectReference(
+            env as unknown as { OBJECT_ENCRYPTION_ROOT_KEY: string },
+            { tenantId: 'default', clientId: 'test-client' },
+            idToken.authrim_subject_ref as string
+          )
+        ).resolves.toBe('mapped-user');
+      });
+
+      it('hands the mapping the ID token claims, for the destination surface and granted scopes', async () => {
+        await authorizeFor('id_token', { mapping: (input) => input.claims });
+
+        expect(mockApplyOIDCIdentityMapping).toHaveBeenCalledTimes(1);
+        expect(mockApplyOIDCIdentityMapping).toHaveBeenCalledWith(
+          expect.objectContaining({
+            tenantId: 'default',
+            clientId: 'test-client',
+            destinationSurface: 'id_token',
+            grantedScopes: ['openid', 'profile'],
+            claims: expect.objectContaining({
+              iss: 'https://test.example.com',
+              sub: 'mapped-user',
+              aud: 'test-client',
+              nonce: 'mapped-nonce',
+            }),
+          })
+        );
+      });
+
+      it('keeps the protocol claims, at_hash and c_hash computed from the tokens returned', async () => {
+        const fragment = await authorizeFor('code id_token token', { mapping: pairwise });
+
+        const idToken = decodeJwt(fragment.get('id_token')!);
+        expect(idToken.sub).toBe(PAIRWISE_SUB);
+        expect(idToken.nonce).toBe('mapped-nonce');
+        expect(idToken.aud).toBe('test-client');
+        expect(idToken.iss).toBe('https://test.example.com');
+        expect(typeof idToken.auth_time).toBe('number');
+        expect(idToken.at_hash).toBe(halfHash(fragment.get('access_token')!));
+        expect(idToken.c_hash).toBe(halfHash(fragment.get('code')!));
+        // The code is the user's: the token endpoint derives the same sub for it.
+        expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
+          expect.objectContaining({ userId: 'mapped-user' })
+        );
+      });
+
+      it('records the mapped sub with the session-client, for the logout token', async () => {
+        const registerClientRpc = vi.fn(async (input: Record<string, unknown>) => ({
+          id: 'sc-1',
+          tenant_id: input.tenantId,
+          session_id: input.sessionId,
+          client_id: input.clientId,
+          first_token_at: 1,
+          last_token_at: 1,
+          last_seen_at: null,
+        }));
+        env.SESSION_CLIENT_STORE = {
+          idFromName: vi.fn((name: string) => ({ toString: () => name })),
+          get: vi.fn(() => ({
+            registerClientRpc,
+            registerOidcSidAliasRpc: vi.fn(async () => undefined),
+          })),
+        } as unknown as Env['SESSION_CLIENT_STORE'];
+
+        const fragment = await authorizeFor('id_token token', { mapping: pairwise });
+
+        expect(decodeJwt(fragment.get('id_token')!).sub).toBe(PAIRWISE_SUB);
+        expect(registerClientRpc).toHaveBeenCalledWith(
+          expect.objectContaining({ clientId: 'test-client', oidcSub: PAIRWISE_SUB })
+        );
+      });
+
+      securityRegressionIt(
+        'refuses to issue a mapped sub without the key to seal its account reference',
+        async () => {
+          // Without the reference the mapped sub would name whichever account has that id.
+          const fragment = await authorizeFor('code id_token', {
+            rootKey: false,
+            mapping: pairwise,
+          });
+
+          expect(fragment.get('error')).toBe('server_error');
+          expect(fragment.get('id_token')).toBeNull();
+          expect(fragment.get('code')).toBeNull();
+        }
+      );
+
+      it.each([
+        ['an invalid mapping configuration', 'policy.missing_identity_mapping_binding'],
+        ['a mapped sub in a reserved namespace', 'policy.identity_mapping_reserved_subject'],
+      ])('refuses to issue an ID token for %s', async (_name, code) => {
+        const fragment = await authorizeFor('id_token token', {
+          mapping: () => {
+            throw new OIDCIdentityMappingRuntimeError('mapping failed', { code });
+          },
+        });
+
+        expect(fragment.get('error')).toBe('server_error');
+        expect(fragment.get('state')).toBe('mapped');
+        expect(fragment.get('id_token')).toBeNull();
+        expect(fragment.get('access_token')).toBeNull();
+      });
+
+      it('answers server_error when the mapping fails unexpectedly', async () => {
+        const fragment = await authorizeFor('id_token', {
+          mapping: () => {
+            throw new Error('database unavailable');
+          },
+        });
+
+        expect(fragment.get('error')).toBe('server_error');
+        expect(fragment.get('id_token')).toBeNull();
+      });
+
+      it("holds the ID token's claims to the app's claim release consent, by the user's id", async () => {
+        mockEnforceOIDCAttributeReleaseConsent.mockImplementationOnce(async () => {
+          throw new OIDCAttributeReleaseConsentRequiredError({
+            claimSetHash: 'sha256:changed',
+            reasonCodes: ['release.attribute_consent.attribute_set_changed'],
+            consentMode: 'until_attributes_change',
+            claimNames: ['department'],
+          });
+        });
+
+        const fragment = await authorizeFor('id_token token', { mapping: pairwise });
+
+        expect(fragment.get('error')).toBe('consent_required');
+        expect(fragment.get('id_token')).toBeNull();
+        expect(mockEnforceOIDCAttributeReleaseConsent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            subjectId: 'mapped-user',
+            target: 'id_token',
+            claims: expect.objectContaining({ sub: PAIRWISE_SUB, department: 'research' }),
+          })
+        );
+      });
+
+      describe('with identity assurance claims', () => {
+        const IAL1_URI = 'https://example.org/assurance/IAL1';
+        const IAL2_URI = 'https://example.org/assurance/IAL2';
+        const ASSURANCE = {
+          'assurance.enabled': true,
+          'assurance.ial_assurance_values': JSON.stringify({ IAL1: [IAL1_URI], IAL2: [IAL2_URI] }),
+        };
+        const client = { scope: 'openid profile eduperson_assurance', identity_mapping: null };
+
+        const evidenceRow = (level: string, overrides: Record<string, unknown> = {}) => ({
+          id: `ev-${level}`,
+          assurance_framework: 'nist_800_63',
+          assurance_level: level,
+          verified_at: Date.now() - 86_400_000,
+          expires_at: null,
+          revoked_at: null,
+          ...overrides,
+        });
+
+        /** The user's account database answers the evidence read with `rows` (or fails it). */
+        function useEvidence(rows: Array<Record<string, unknown>> | 'fail') {
+          const accountDb = createMockDB();
+          const prepare = vi.mocked(accountDb.prepare);
+          const basePrepare = prepare.getMockImplementation()!;
+          const reads: string[] = [];
+          prepare.mockImplementation((sql: string) => {
+            const statement = basePrepare(sql);
+            if (sql.includes('assurance_evidence')) {
+              reads.push(sql);
+              if (rows === 'fail') {
+                vi.mocked(statement.all).mockRejectedValue(new Error('account database is down'));
+              } else {
+                vi.mocked(statement.all).mockResolvedValue({ results: rows } as never);
+              }
+            }
+            return statement;
+          });
+          mockResolveAccountDataContextFromHono.mockImplementation(async (c, userId) => {
+            const context = {
+              tenantId: 'default',
+              accountId: userId,
+              legacyUserId: userId,
+              coreDb: accountDb,
+              piiDb: accountDb,
+              coreBindingRef: 'DB_ACCOUNT',
+              piiBindingRef: 'DB_ACCOUNT',
+              coreResidencyPartition: 'default',
+              piiResidencyPartition: 'default',
+              accountRouteGeneration: 1,
+              userCacheScope: { tenantId: 'default', accountRouteGeneration: 1 },
+              piiCacheMode: 'disabled',
+            };
+            c.set('accountDataContext', context);
+            return context;
+          });
+          return reads;
+        }
+
+        async function setAssurance(values: Record<string, unknown>) {
+          await (env.SETTINGS as unknown as MockKVNamespace).put(
+            'settings:tenant:default:assurance',
+            JSON.stringify(values)
+          );
+        }
+
+        beforeEach(async () => {
+          mappingFixture.userRow = mappedUserRow();
+          await setAssurance(ASSURANCE);
+        });
+
+        afterEach(() => {
+          mappingFixture.userRow = null;
+          mappingFixture.binding = null;
+          mappingFixture.profile = null;
+          mappingFixture.profileConsent = 'all';
+          mappingFixture.userLookups = [];
+          mockResolveAccountDataContextFromHono.mockImplementation(async (c, userId) => {
+            const context = {
+              tenantId: 'default',
+              accountId: userId,
+              legacyUserId: userId,
+              coreDb: c.env.DB,
+              piiDb: c.env.DB,
+              coreBindingRef: 'DB',
+              piiBindingRef: 'DB',
+              coreResidencyPartition: 'default',
+              piiResidencyPartition: 'default',
+              accountRouteGeneration: 1,
+              userCacheScope: { tenantId: 'default', accountRouteGeneration: 1 },
+              piiCacheMode: 'disabled',
+            };
+            c.set('accountDataContext', context);
+            return context;
+          });
+        });
+
+        it('carries eduperson_assurance in an ID token that is all the app gets, by scope', async () => {
+          const reads = useEvidence([evidenceRow('IAL2')]);
+
+          const fragment = await authorizeFor('id_token', {
+            scope: 'openid eduperson_assurance',
+            client,
+          });
+
+          expect(decodeJwt(fragment.get('id_token')!).eduperson_assurance).toEqual([
+            IAL1_URI,
+            IAL2_URI,
+          ]);
+          expect(reads).toHaveLength(1);
+        });
+
+        it('carries nothing, and reads no evidence, for a scope alone when UserInfo is available', async () => {
+          const reads = useEvidence([evidenceRow('IAL2')]);
+
+          const fragment = await authorizeFor('id_token token', {
+            scope: 'openid eduperson_assurance',
+            client,
+          });
+
+          expect(decodeJwt(fragment.get('id_token')!)).not.toHaveProperty('eduperson_assurance');
+          expect(reads).toEqual([]);
+        });
+
+        it('carries eduperson_assurance for a claims parameter request the scope backs', async () => {
+          const reads = useEvidence([evidenceRow('IAL2')]);
+
+          const fragment = await authorizeFor('id_token token', {
+            scope: 'openid eduperson_assurance',
+            claims: { id_token: { eduperson_assurance: null } },
+            client,
+          });
+
+          expect(decodeJwt(fragment.get('id_token')!).eduperson_assurance).toEqual([
+            IAL1_URI,
+            IAL2_URI,
+          ]);
+          expect(reads).toHaveLength(1);
+        });
+
+        it('stops carrying evidence that was revoked', async () => {
+          useEvidence([evidenceRow('IAL2', { revoked_at: Date.now() - 10 })]);
+
+          const fragment = await authorizeFor('id_token', {
+            scope: 'openid eduperson_assurance',
+            client,
+          });
+
+          expect(decodeJwt(fragment.get('id_token')!).eduperson_assurance).toEqual([IAL1_URI]);
+        });
+
+        it('reads no evidence while assurance is off or nothing is configured', async () => {
+          const reads = useEvidence([evidenceRow('IAL2')]);
+          for (const values of [
+            { ...ASSURANCE, 'assurance.enabled': false },
+            { 'assurance.enabled': true },
+          ]) {
+            await setAssurance(values);
+            const fragment = await authorizeFor('id_token', {
+              scope: 'openid eduperson_assurance',
+              client,
+            });
+            expect(decodeJwt(fragment.get('id_token')!)).not.toHaveProperty('eduperson_assurance');
+          }
+          expect(reads).toEqual([]);
+        });
+
+        it('issues the ID token without the claim when the evidence cannot be read', async () => {
+          useEvidence('fail');
+
+          const fragment = await authorizeFor('id_token', {
+            scope: 'openid eduperson_assurance',
+            client,
+          });
+
+          expect(fragment.get('error')).toBeNull();
+          expect(decodeJwt(fragment.get('id_token')!)).not.toHaveProperty('eduperson_assurance');
+        });
+
+        it('reads the evidence once when the client minimum IAL and the claim both apply', async () => {
+          const reads = useEvidence([evidenceRow('IAL2')]);
+
+          const fragment = await authorizeFor('id_token', {
+            scope: 'openid eduperson_assurance',
+            client: { ...client, minimum_ial: 'IAL2' },
+          });
+
+          expect(decodeJwt(fragment.get('id_token')!).eduperson_assurance).toEqual([
+            IAL1_URI,
+            IAL2_URI,
+          ]);
+          expect(reads).toHaveLength(1);
+        });
+
+        describe("under the app's Destination Profile", () => {
+          const bind = (claims: Array<Record<string, unknown>>) => {
+            mappingFixture.profile = { claims };
+            mappingFixture.binding = {
+              id: 'binding-tenant',
+              tenantId: 'default',
+              fieldMappingSetId: 'set-tenant',
+              fieldMappingVersionId: 'version-tenant',
+              mappingSnapshotHash: 'hash-tenant',
+              catalog: { identity: { id: 'c', version: '1', contentHash: 'c' }, entries: [] },
+              edges: [],
+              transforms: [],
+              validationRules: [],
+              fieldMappingSet: {},
+              activationScope: { tenantId: 'default' },
+              destinationNamespace: 'oidc.claim',
+              destinationProfileId: 'profile-1',
+              destinationProfileIds: ['profile-1'],
+            };
+          };
+
+          it('releases them only when the profile lists the field', async () => {
+            useEvidence([evidenceRow('IAL2')]);
+            bind([{ claimName: 'sub', required: true }]);
+            const unlisted = await authorizeFor('id_token', {
+              scope: 'openid eduperson_assurance',
+              client,
+            });
+            expect(decodeJwt(unlisted.get('id_token')!)).not.toHaveProperty('eduperson_assurance');
+
+            useEvidence([evidenceRow('IAL2')]);
+            bind([{ claimName: 'sub', required: true }, { claimName: 'eduperson_assurance' }]);
+            const listed = await authorizeFor('id_token', {
+              scope: 'openid eduperson_assurance',
+              client,
+            });
+            expect(decodeJwt(listed.get('id_token')!).eduperson_assurance).toEqual([
+              IAL1_URI,
+              IAL2_URI,
+            ]);
+          });
+
+          it('holds a claims parameter request to the scope unless the client policy lets it through', async () => {
+            useEvidence([evidenceRow('IAL2')]);
+            bind([{ claimName: 'sub', required: true }, { claimName: 'eduperson_assurance' }]);
+            const claims = { id_token: { eduperson_assurance: null } };
+
+            const held = await authorizeFor('id_token token', {
+              scope: 'openid profile',
+              claims,
+              client,
+            });
+            expect(decodeJwt(held.get('id_token')!)).not.toHaveProperty('eduperson_assurance');
+
+            const allowed = await authorizeFor('id_token token', {
+              scope: 'openid profile',
+              claims,
+              client: { ...client, allow_claims_without_scope: true },
+            });
+            // The profile's field then counts the scope that releases it as granted, as it does
+            // for a standard claim the claims parameter requested.
+            expect(decodeJwt(allowed.get('id_token')!).eduperson_assurance).toEqual([
+              IAL1_URI,
+              IAL2_URI,
+            ]);
+          });
+        });
+      });
+
+      describe("with an identity mapping that derives sub from the user's preferred_username", () => {
+        const field = (id: string, path: string) => ({
+          id,
+          namespace: 'oidc.claim',
+          path,
+          valueType: 'string',
+          cardinality: 'single',
+          classification: 'pii',
+          targetType: 'destination-only',
+        });
+
+        beforeEach(() => {
+          mappingFixture.userLookups = [];
+          mappingFixture.userRow = mappedUserRow();
+          mappingFixture.binding = {
+            id: 'binding-1',
+            tenantId: 'default',
+            fieldMappingSetId: 'set-1',
+            fieldMappingVersionId: 'version-1',
+            mappingSnapshotHash: 'hash-1',
+            catalog: {
+              identity: {
+                id: 'test.catalog',
+                version: '1',
+                contentHash: 'test-catalog',
+                compatibilityRange: '^0.2.0',
+              },
+              entries: [
+                field('field.oidc.preferred_username', 'preferred_username'),
+                field('field.oidc.sub', 'sub'),
+              ],
+            },
+            edges: [
+              {
+                id: 'edge-preferred-username-to-sub',
+                sourceRef: {
+                  side: 'source',
+                  namespace: 'oidc.claim',
+                  path: 'preferred_username',
+                  catalogEntryId: 'field.oidc.preferred_username',
+                },
+                targetRef: {
+                  side: 'destination',
+                  namespace: 'oidc.claim',
+                  path: 'sub',
+                  catalogEntryId: 'field.oidc.sub',
+                },
+              },
+            ],
+            transforms: [],
+            validationRules: [],
+            fieldMappingSet: {},
+            activationScope: {},
+            destinationNamespace: 'oidc.claim',
+            destinationProfileId: 'profile-1',
+            destinationProfileIds: ['profile-1'],
+          };
+        });
+
+        afterEach(() => {
+          mappingFixture.binding = null;
+          mappingFixture.userRow = null;
+          mappingFixture.userLookups = [];
+        });
+
+        /** Make the mapping read another attribute for sub (a custom one, say). */
+        function readSourceAttribute(path: string) {
+          const binding = mappingFixture.binding as {
+            catalog: { entries: Array<{ id: string; path: string }> };
+            edges: Array<{ sourceRef: { path: string; catalogEntryId: string } }>;
+          };
+          binding.catalog.entries[0] = { ...binding.catalog.entries[0], path };
+          binding.edges[0].sourceRef.path = path;
+        }
+
+        it.each([
+          ['id_token', 'openid profile'],
+          ['id_token token', 'openid profile'],
+          ['code id_token', 'openid profile'],
+          ['code id_token token', 'openid profile'],
+          ['id_token', 'openid'],
+          ['id_token token', 'openid'],
+          ['code id_token', 'openid'],
+          ['code id_token token', 'openid'],
+        ])(
+          'issues the same sub for response_type=%s with scope %s',
+          async (responseType, scope) => {
+            const fragment = await authorizeFor(responseType, { scope });
+
+            const idToken = decodeJwt(fragment.get('id_token')!);
+            expect(idToken.sub).toBe('alice');
+            // Only the attribute the mapping reads is looked up for it, and not at all when the
+            // ID token's claims already carry it. (An ID token with no access token or code
+            // also reads the user in full to evaluate its own claims, as it always has.)
+            const named = ['mapped-user', { claimNames: ['preferred_username'] }];
+            const own = ['mapped-user', undefined];
+            const lookups = mappingFixture.userLookups;
+            if (responseType === 'id_token' && scope === 'openid profile') {
+              expect(lookups).toEqual([own]);
+            } else if (responseType === 'id_token') {
+              expect(lookups).toEqual([own, named]);
+            } else {
+              expect(lookups).toEqual([named]);
+            }
+            // The mapping reads preferred_username without releasing it or anything else.
+            if (scope === 'openid' || responseType !== 'id_token') {
+              expect(idToken).not.toHaveProperty('preferred_username');
+            }
+            expect(idToken).not.toHaveProperty('phone_number');
+            expect(idToken).not.toHaveProperty('email');
+            // The user's id stays the access token's sub, and the ID token's sealed account.
+            if (fragment.get('access_token')) {
+              expect(decodeJwt(fragment.get('access_token')!).sub).toBe('mapped-user');
+            }
+            await expect(
+              openSubjectReference(
+                env as unknown as { OBJECT_ENCRYPTION_ROOT_KEY: string },
+                { tenantId: 'default', clientId: 'test-client' },
+                idToken.authrim_subject_ref as string
+              )
+            ).resolves.toBe('mapped-user');
+          }
+        );
+
+        it.each(['code id_token', 'id_token token'])(
+          'looks up no profile or contact value when the mapping reads only a custom attribute (%s)',
+          async (responseType) => {
+            readSourceAttribute('employee_id');
+
+            const fragment = await authorizeFor(responseType, { scope: 'openid' });
+
+            // The custom claim resolver is the source of such an attribute (here the feature is
+            // off, so there is none): the user's profile and contacts are not read for it.
+            expect(mappingFixture.userLookups).toEqual([]);
+            expect(decodeJwt(fragment.get('id_token')!).sub).toBe('mapped-user');
+          }
+        );
+
+        describe('with a mapping that has no edge, only a rule that the attribute must be present', () => {
+          beforeEach(() => {
+            const binding = mappingFixture.binding as {
+              edges: unknown[];
+              validationRules: unknown[];
+            };
+            binding.edges = [];
+            binding.validationRules = [
+              {
+                id: 'rule-username-required',
+                kind: 'required',
+                targetRef: { side: 'source', namespace: 'oidc.claim', path: 'preferred_username' },
+                defaultSeverity: 'critical',
+              },
+            ];
+          });
+
+          it.each([
+            ['id_token', 'openid profile'],
+            ['id_token token', 'openid profile'],
+            ['code id_token', 'openid profile'],
+            ['code id_token token', 'openid profile'],
+            ['id_token', 'openid'],
+            ['id_token token', 'openid'],
+            ['code id_token', 'openid'],
+            ['code id_token token', 'openid'],
+          ])(
+            'validates the same way whatever the response carries (%s, scope %s)',
+            async (responseType, scope) => {
+              const fragment = await authorizeFor(responseType, { scope });
+
+              expect(fragment.get('error')).toBeNull();
+              const idToken = decodeJwt(fragment.get('id_token')!);
+              expect(idToken.sub).toBe('mapped-user');
+              if (responseType !== 'id_token' || scope === 'openid') {
+                expect(idToken).not.toHaveProperty('preferred_username');
+              }
+            }
+          );
+
+          it('fails for every response when the user has no such attribute', async () => {
+            mappingFixture.userRow = { ...mappingFixture.userRow, preferred_username: null };
+
+            for (const responseType of ['id_token token', 'code id_token']) {
+              const fragment = await authorizeFor(responseType, { scope: 'openid' });
+              expect(fragment.get('error')).toBe('server_error');
+              expect(fragment.get('id_token')).toBeNull();
+            }
+          });
+        });
+
+        it("binds the code to the user's id while the ID token carries the mapped sub", async () => {
+          const fragment = await authorizeFor('code id_token', { scope: 'openid' });
+
+          expect(decodeJwt(fragment.get('id_token')!).sub).toBe('alice');
+          expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
+            expect.objectContaining({ userId: 'mapped-user' })
+          );
+        });
+      });
+
+      describe('with a tenant-wide mapping whose Destination Profile lists the standard claims for UserInfo only', () => {
+        // The shape of the admin console's "Standard OIDC claims" template: each standard claim
+        // names the OIDC Core 5.4 scope that releases it, and the userinfo surface only.
+        const standardProfile = () => ({
+          claims: [
+            { claimName: 'sub', required: true, surfaces: ['id_token', 'userinfo'] },
+            ...[
+              ['name', 'profile'],
+              ['email', 'email'],
+              ['email_verified', 'email'],
+              ['phone_number', 'phone'],
+              ['phone_number_verified', 'phone'],
+            ].map(([claimName, scope]) => ({
+              claimName,
+              surfaces: ['userinfo'],
+              requiredScopes: [scope],
+            })),
+          ],
+        });
+        // The app has no identity mapping of its own (identity_mapping is null); the tenant names a
+        // default Mapping Set, and its Destination Profile is the one above. It maps nothing: it
+        // only decides what each surface may carry.
+        const policy = { identity_mapping: null };
+
+        beforeEach(() => {
+          mappingFixture.userRow = mappedUserRow();
+          mappingFixture.profile = standardProfile();
+          mappingFixture.binding = {
+            id: 'binding-tenant',
+            tenantId: 'default',
+            fieldMappingSetId: 'set-tenant',
+            fieldMappingVersionId: 'version-tenant',
+            mappingSnapshotHash: 'hash-tenant',
+            catalog: { identity: { id: 'c', version: '1', contentHash: 'c' }, entries: [] },
+            edges: [],
+            transforms: [],
+            validationRules: [],
+            fieldMappingSet: {},
+            activationScope: { tenantId: 'default' },
+            destinationNamespace: 'oidc.claim',
+            destinationProfileId: 'profile-1',
+            destinationProfileIds: ['profile-1'],
+          };
+        });
+
+        afterEach(() => {
+          mappingFixture.userRow = null;
+          mappingFixture.binding = null;
+          mappingFixture.profile = null;
+          mappingFixture.profileConsent = 'all';
+          mappingFixture.userLookups = [];
+        });
+
+        it.each([
+          ['openid email', { email: 'alice@example.com', email_verified: true }],
+          ['openid phone', { phone_number: '+8100000000', phone_number_verified: false }],
+          ['openid profile', { name: 'Alice Example' }],
+        ])(
+          'carries the claims of the scope in an ID token with no access token or code (%s)',
+          async (scope, expected) => {
+            const fragment = await authorizeFor('id_token', { scope, client: policy });
+
+            const idToken = decodeJwt(fragment.get('id_token')!);
+            expect(idToken).toMatchObject(expected);
+            // Only the scopes asked for: the other scope claims stay out.
+            for (const claim of ['name', 'email', 'phone_number'].filter((c) => !(c in expected))) {
+              expect(idToken).not.toHaveProperty(claim);
+            }
+          }
+        );
+
+        it('carries the claims the claims parameter requests for the ID token without their scope', async () => {
+          const fragment = await authorizeFor('id_token', {
+            scope: 'openid',
+            claims: { id_token: { name: { essential: true } } },
+            client: { ...policy, allow_claims_without_scope: true },
+          });
+
+          const idToken = decodeJwt(fragment.get('id_token')!);
+          expect(idToken.name).toBe('Alice Example');
+          expect(idToken).not.toHaveProperty('email');
+        });
+
+        it('does not carry a claim without its scope when the claims parameter is not allowed to', async () => {
+          const fragment = await authorizeFor('id_token', {
+            scope: 'openid',
+            claims: { id_token: { name: { essential: true } } },
+            client: policy,
+          });
+
+          expect(decodeJwt(fragment.get('id_token')!)).not.toHaveProperty('name');
+        });
+
+        it.each(['id_token token', 'code id_token', 'code id_token token'])(
+          'leaves the scope claims to UserInfo when the response carries an access token or code (%s)',
+          async (responseType) => {
+            const fragment = await authorizeFor(responseType, {
+              scope: 'openid email',
+              client: policy,
+            });
+
+            const idToken = decodeJwt(fragment.get('id_token')!);
+            expect(idToken.sub).toBe('mapped-user');
+            expect(idToken).not.toHaveProperty('email');
+            expect(idToken).not.toHaveProperty('email_verified');
+          }
+        );
+
+        it('holds a scope of the profile’s own to the granted scopes, however the claim was authorized', async () => {
+          mappingFixture.profile = {
+            claims: [
+              { claimName: 'sub', required: true, surfaces: ['id_token', 'userinfo'] },
+              { claimName: 'email', surfaces: ['id_token'], requiredScopes: ['directory'] },
+            ],
+          };
+
+          // Implicit: the email scope releases email to the ID token, but the profile asks for
+          // 'directory' too.
+          const implicit = await authorizeFor('id_token', {
+            scope: 'openid email',
+            client: policy,
+          });
+          expect(decodeJwt(implicit.get('id_token')!)).not.toHaveProperty('email');
+
+          // Hybrid: the claims parameter authorizes email for the ID token, the same applies.
+          const hybrid = await authorizeFor('code id_token', {
+            scope: 'openid email',
+            claims: { id_token: { email: null } },
+            client: policy,
+          });
+          expect(decodeJwt(hybrid.get('id_token')!)).not.toHaveProperty('email');
+
+          // Granted, both carry it.
+          const granted = await authorizeFor('id_token', {
+            scope: 'openid email directory',
+            client: { ...policy, scope: 'openid email directory' },
+          });
+          expect(decodeJwt(granted.get('id_token')!).email).toBe('alice@example.com');
+        });
+
+        describe('before the user has agreed to release any field', () => {
+          beforeEach(() => {
+            mappingFixture.profileConsent = 'none';
+          });
+
+          it('releases only the fields the profile requires', async () => {
+            mappingFixture.profile = {
+              claims: [
+                { claimName: 'sub', required: true, surfaces: ['id_token', 'userinfo'] },
+                { claimName: 'email', required: true, requiredScopes: ['email'] },
+                { claimName: 'phone_number', requiredScopes: ['phone'] },
+              ],
+            };
+
+            const fragment = await authorizeFor('id_token', {
+              scope: 'openid email phone',
+              client: policy,
+            });
+
+            const idToken = decodeJwt(fragment.get('id_token')!);
+            expect(idToken.email).toBe('alice@example.com');
+            // An optional field waits for the user's selection (the consent step stores it).
+            expect(idToken).not.toHaveProperty('phone_number');
+          });
+        });
+
+        // The 2026-10-10 environment lost email, phone and name from its ID tokens this way: an
+        // activation for the whole tenant (`{ kind: 'tenant' }`, as the admin console sends it)
+        // bound apps that named no Mapping Set to a Destination Profile that lists the standard
+        // claims as optional, and for UserInfo only. An activation binds no app now: the app's
+        // own choice, else the tenant's default, else the platform's decides.
+        describe('an app with no Mapping Set of its own', () => {
+          const allScopes = 'openid profile email phone';
+
+          beforeEach(() => {
+            mappingFixture.profileConsent = 'none';
+          });
+
+          it('is held to the Mapping Set the tenant names as its default, so its ID token loses the scope claims the profile makes optional', async () => {
+            const fragment = await authorizeFor('id_token', { scope: allScopes, client: policy });
+
+            const idToken = decodeJwt(fragment.get('id_token')!);
+            expect(idToken.sub).toBe('mapped-user');
+            for (const claim of ['name', 'email', 'email_verified', 'phone_number']) {
+              expect(idToken).not.toHaveProperty(claim);
+            }
+          });
+
+          describe('in a tenant with an activation for the whole tenant, and no default named', () => {
+            beforeEach(() => {
+              // The activation is there to be found (the binding above, as the old lookup would
+              // have resolved it); the app is bound to nothing.
+              mappingFixture.implicit = mappingFixture.binding;
+              mappingFixture.binding = null;
+              mappingFixture.implicitLookups = 0;
+            });
+
+            afterEach(() => {
+              mappingFixture.implicit = null;
+            });
+
+            it('is bound to nothing: its ID token carries the claims its scopes release', async () => {
+              const fragment = await authorizeFor('id_token', { scope: allScopes, client: policy });
+
+              expect(decodeJwt(fragment.get('id_token')!)).toMatchObject({
+                email: 'alice@example.com',
+                phone_number: '+8100000000',
+                name: 'Alice Example',
+              });
+              expect(mappingFixture.implicitLookups).toBe(0);
+            });
+
+            it('carries the claims the claims parameter asks for', async () => {
+              const fragment = await authorizeFor('id_token', {
+                scope: 'openid',
+                claims: { id_token: { email: { essential: true }, name: null } },
+                client: { ...policy, allow_claims_without_scope: true },
+              });
+
+              const idToken = decodeJwt(fragment.get('id_token')!);
+              expect(idToken.email).toBe('alice@example.com');
+              expect(idToken.name).toBe('Alice Example');
+              expect(mappingFixture.implicitLookups).toBe(0);
+            });
+
+            it('is not bound by the activation on the hybrid flows either, nor for the sub of an id_token_hint', async () => {
+              for (const responseType of ['code id_token', 'id_token token']) {
+                const fragment = await authorizeFor(responseType, {
+                  scope: allScopes,
+                  client: policy,
+                });
+                expect(decodeJwt(fragment.get('id_token')!).sub).toBe('mapped-user');
+              }
+              expect(mappingFixture.implicitLookups).toBe(0);
+            });
+          });
+
+          describe('in a tenant whose default Mapping Set cannot be used', () => {
+            beforeEach(async () => {
+              // The real selection runs: the tenant names a Mapping Set the Admin database lacks.
+              mappingFixture.binding = null;
+              await (env.SETTINGS as unknown as MockKVNamespace).put(
+                'settings:tenant:default:identity-mapping',
+                JSON.stringify({ 'identity_mapping.oidc_default_set_id': 'set-gone' })
+              );
+            });
+
+            it.each(['id_token', 'code id_token', 'id_token token'])(
+              'issues no ID token (%s), and does not go on without the mapping',
+              async (responseType) => {
+                const fragment = await authorizeFor(responseType, {
+                  scope: allScopes,
+                  client: policy,
+                });
+
+                expect(fragment.get('error')).toBe('server_error');
+                expect(fragment.get('id_token')).toBeNull();
+                expect(fragment.get('access_token')).toBeNull();
+              }
+            );
+          });
+
+          it('carries the claims its scopes release when the app opts out with { mode: "none" }, whatever the tenant names', async () => {
+            const fragment = await authorizeFor('id_token', {
+              scope: allScopes,
+              client: { identity_mapping: { mode: 'none' } },
+            });
+
+            expect(decodeJwt(fragment.get('id_token')!)).toMatchObject({
+              email: 'alice@example.com',
+              phone_number: '+8100000000',
+              name: 'Alice Example',
+            });
+          });
+        });
+
+        it('does not carry the claims of a scope that was not granted', async () => {
+          const fragment = await authorizeFor('id_token', { scope: 'openid', client: policy });
+
+          const idToken = decodeJwt(fragment.get('id_token')!);
+          for (const claim of ['name', 'email', 'phone_number']) {
+            expect(idToken).not.toHaveProperty(claim);
+          }
+        });
+      });
+
+      it.each(['id_token', 'id_token token', 'code id_token', 'code id_token token'])(
+        'leaves the ID token as it was when the app has no identity mapping (%s)',
+        async (responseType) => {
+          const fragment = await authorizeFor(responseType);
+
+          const types = responseType.split(' ');
+          const idToken = decodeJwt(fragment.get('id_token')!);
+          expect(idToken.sub).toBe('mapped-user');
+          expect(Object.keys(idToken).sort()).toEqual(
+            [
+              'iss',
+              'sub',
+              'aud',
+              'iat',
+              'exp',
+              'auth_time',
+              'nonce',
+              'authrim_consent_generation',
+              // The mark that the sub is the user's id (no mapping chose another).
+              'authrim_subject_account',
+              'sid',
+              ...(types.includes('token') ? ['at_hash'] : []),
+              ...(types.includes('code') ? ['c_hash'] : []),
+            ].sort()
+          );
+          if (types.includes('token')) {
+            expect(decodeJwt(fragment.get('access_token')!).sub).toBe('mapped-user');
+          }
+        }
+      );
+    });
+
     securityRegressionIt(
       '[security regression] enforces a tenant code-only response type policy',
       async () => {
-        await (env.SETTINGS as unknown as MockKVNamespace).put(
-          'system_settings',
-          JSON.stringify({ oidc: { responseTypesSupported: ['code'] } })
-        );
+        await putSystemSettings(env.SETTINGS as unknown as MockKVNamespace, {
+          oidc: { responseTypesSupported: ['code'] },
+        });
         mockGetClient.mockResolvedValue({
           client_id: 'test-client',
           client_secret: 'test-secret',
@@ -2021,6 +4055,125 @@ describe('Authorization Handler', () => {
       );
     });
 
+    it('records a confirmed re-authentication in the consent challenge it sends the user to', async () => {
+      env.UI_URL = 'https://login.example.com';
+      seedSession(env);
+      getChallengeMap(env).set('confirm_reauth_before_consent', {
+        id: 'confirm_reauth_before_consent',
+        tenantId: 'default',
+        type: 'reauth',
+        userId: 'test-user',
+        challenge: 'confirm_reauth_before_consent',
+        metadata: {
+          purpose: 'authorize_confirmation',
+          authTime: 1_700_000_100,
+          sessionUserId: 'test-user',
+          browserBinding: 'confirm-reauth-browser',
+        },
+      });
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=reauth-then-consent&prompt=login&_confirmation_challenge=confirm_reauth_before_consent',
+        {
+          method: 'GET',
+          headers: {
+            Cookie:
+              `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}; ` +
+              'authrim_authorize_confirmation=confirm-reauth-browser',
+          },
+        },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const location = new URL(response.headers.get('Location')!);
+      expect(location.origin + location.pathname).toBe('https://login.example.com/consent');
+      const consentChallenge = getChallengeMap(env).get(location.searchParams.get('challenge_id')!);
+      expect(consentChallenge).toMatchObject({
+        type: 'consent',
+        metadata: expect.objectContaining({
+          prompt: 'login',
+          confirmed_reauth: { auth_time: expect.any(Number) },
+        }),
+      });
+    });
+
+    it.each([
+      ['max_age', '&max_age=10000'],
+      ['prompt=login', '&prompt=login'],
+    ])(
+      'keeps the auth_time of the authentication that answered a %s challenge',
+      async (_label, query) => {
+        configureClientTrustPolicy(env);
+        getChallengeMap(env).set('confirm_dated_login', {
+          id: 'confirm_dated_login',
+          tenantId: 'default',
+          type: 'reauth',
+          userId: 'test-user',
+          challenge: 'confirm_dated_login',
+          metadata: {
+            purpose: 'authorize_confirmation',
+            authTime: 1_700_000_100,
+            sessionUserId: 'test-user',
+            browserBinding: 'confirm-dated-browser',
+          },
+        });
+        const authCodeStore = getAuthCodeStore(env);
+
+        const response = await app.request(
+          `/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=dated${query}&_confirmation_challenge=confirm_dated_login`,
+          {
+            method: 'GET',
+            headers: { Cookie: 'authrim_authorize_confirmation=confirm-dated-browser' },
+          },
+          env
+        );
+
+        expect(response.status).toBe(302);
+        expect(new URL(response.headers.get('Location')!).searchParams.get('code')).toBeTruthy();
+        // Not the time of this request: no authentication happened at it.
+        expect(authCodeStore.storeCodeRpc).toHaveBeenCalledWith(
+          expect.objectContaining({ authTime: 1_700_000_100 })
+        );
+      }
+    );
+
+    it.each([
+      [false, true],
+      [true, false],
+    ])(
+      'asks for a fresh sign-in when SSO is %s only if it is off',
+      async (ssoEnabled, freshRequired) => {
+        env.ENABLE_CONFORMANCE_MODE = 'false';
+        env.UI_URL = 'https://login.example.com';
+        await configureClientSettings(env, { 'client.sso_enabled': ssoEnabled });
+        seedSession(env);
+
+        const response = await app.request(
+          '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=sso-fresh',
+          {
+            method: 'GET',
+            headers: { Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}` },
+          },
+          env
+        );
+
+        expect(response.status).toBe(302);
+        const location = new URL(response.headers.get('Location')!);
+        if (!freshRequired) {
+          // SSO on: the session answers; no sign-in challenge.
+          expect(location.pathname).not.toBe('/login');
+          return;
+        }
+        expect(location.origin + location.pathname).toBe('https://login.example.com/login');
+        const challenge = getChallengeMap(env).get(location.searchParams.get('challenge_id')!);
+        expect(challenge).toMatchObject({
+          type: 'login',
+          metadata: expect.objectContaining({ fresh_sign_in_after: expect.any(Number) }),
+        });
+      }
+    );
+
     it('issues an authorization code for confirmed consent even when SSO is disabled', async () => {
       seedSession(env);
       getChallengeMap(env).set('confirm_consent', {
@@ -2031,6 +4184,7 @@ describe('Authorization Handler', () => {
         challenge: 'confirm_consent',
         metadata: {
           purpose: 'authorize_consent_confirmation',
+          consent_generation: 0,
           sessionId: TEST_SESSION_ID,
           browserBinding: 'consent-browser-binding',
         },
@@ -2069,6 +4223,91 @@ describe('Authorization Handler', () => {
       );
     });
 
+    it.each([
+      ['prompt=login', '&prompt=login'],
+      ['max_age', '&max_age=1'],
+      // A sign-in confirmed before consent, with neither: its time still holds.
+      ['sign-in', ''],
+    ])(
+      'issues the code after consent that followed a %s re-authentication, with its auth_time',
+      async (_label, query) => {
+        env.UI_URL = 'https://login.example.com';
+        seedSession(env);
+        getChallengeMap(env).set('confirm_consent_after_reauth', {
+          id: 'confirm_consent_after_reauth',
+          tenantId: 'default',
+          type: 'consent',
+          userId: 'test-user',
+          challenge: 'confirm_consent_after_reauth',
+          metadata: {
+            purpose: 'authorize_consent_confirmation',
+            consent_generation: 0,
+            sessionId: TEST_SESSION_ID,
+            browserBinding: 'consent-browser-binding',
+            confirmed_reauth: { auth_time: 1_700_000_200 },
+          },
+        });
+        const authCodeStore = getAuthCodeStore(env);
+
+        const response = await app.request(
+          `/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=reauth-consent-state${query}&_consent_confirmation_challenge=confirm_consent_after_reauth`,
+          {
+            method: 'GET',
+            headers: {
+              Cookie:
+                `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}; ` +
+                'authrim_consent_confirmation=consent-browser-binding',
+            },
+          },
+          env
+        );
+
+        expect(response.status).toBe(302);
+        const redirectUrl = new URL(response.headers.get('Location')!);
+        expect(redirectUrl.origin + redirectUrl.pathname).toBe('https://example.com/callback');
+        expect(redirectUrl.searchParams.get('code')).toBeTruthy();
+        expect(authCodeStore.storeCodeRpc).toHaveBeenCalledWith(
+          expect.objectContaining({ userId: 'test-user', authTime: 1_700_000_200 })
+        );
+      }
+    );
+
+    it('still asks for re-authentication after consent that carries no completed one', async () => {
+      env.UI_URL = 'https://login.example.com';
+      configureClientTrustPolicy(env);
+      seedSession(env);
+      getChallengeMap(env).set('confirm_consent_without_reauth', {
+        id: 'confirm_consent_without_reauth',
+        tenantId: 'default',
+        type: 'consent',
+        userId: 'test-user',
+        challenge: 'confirm_consent_without_reauth',
+        metadata: {
+          purpose: 'authorize_consent_confirmation',
+          consent_generation: 0,
+          sessionId: TEST_SESSION_ID,
+          browserBinding: 'consent-browser-binding',
+        },
+      });
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=no-reauth-state&prompt=login&_consent_confirmation_challenge=confirm_consent_without_reauth',
+        {
+          method: 'GET',
+          headers: {
+            Cookie:
+              `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}; ` +
+              'authrim_consent_confirmation=consent-browser-binding',
+          },
+        },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const location = new URL(response.headers.get('Location')!);
+      expect(location.origin + location.pathname).toBe('https://login.example.com/reauth');
+    });
+
     it('does not consume consent confirmation without the originating browser session', async () => {
       getChallengeMap(env).set('unbound_confirm_consent', {
         id: 'unbound_confirm_consent',
@@ -2078,6 +4317,7 @@ describe('Authorization Handler', () => {
         challenge: 'unbound_confirm_consent',
         metadata: {
           purpose: 'authorize_consent_confirmation',
+          consent_generation: 0,
           sessionId: TEST_SESSION_ID,
           browserBinding: 'consent-browser-binding',
         },
@@ -2103,6 +4343,7 @@ describe('Authorization Handler', () => {
         challenge: 'wrong_binding_confirm_consent',
         metadata: {
           purpose: 'authorize_consent_confirmation',
+          consent_generation: 0,
           sessionId: TEST_SESSION_ID,
           browserBinding: 'consent-browser-binding',
         },
@@ -2125,8 +4366,9 @@ describe('Authorization Handler', () => {
       expect(getChallengeMap(env).has('wrong_binding_confirm_consent')).toBe(true);
     });
 
-    it('allows prompt=none for logged-in OIDC certification clients in conformance mode', async () => {
+    it('allows prompt=none for a logged-in certification-suite client when SSO is enabled', async () => {
       env.ENABLE_CONFORMANCE_MODE = 'true';
+      await configureClientSettings(env, { 'client.sso_enabled': true });
       const certificationRedirectUri =
         'https://www.certification.openid.net/test/a/authrim/callback';
       mockGetClient.mockResolvedValue({
@@ -2172,8 +4414,43 @@ describe('Authorization Handler', () => {
       );
     });
 
-    it('rejects prompt=none with max_age=0 even in the same second as authentication', async () => {
+    it('does not turn SSO on for a certification-suite redirect URI in conformance mode', async () => {
       env.ENABLE_CONFORMANCE_MODE = 'true';
+      const certificationRedirectUri =
+        'https://www.certification.openid.net/test/a/authrim/callback';
+      mockGetClient.mockResolvedValue({
+        client_id: 'test-client',
+        client_secret: 'test-secret',
+        redirect_uris: [certificationRedirectUri],
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+        scope: 'openid profile email',
+        token_endpoint_auth_method: 'client_secret_basic',
+      });
+      configureClientTrustPolicy(env);
+      seedSession(env);
+
+      const response = await app.request(
+        `/authorize?response_type=code&client_id=test-client&redirect_uri=${encodeURIComponent(
+          certificationRedirectUri
+        )}&scope=openid&state=prompt-none-state&prompt=none`,
+        {
+          method: 'GET',
+          headers: { Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}` },
+        },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const redirectUrl = new URL(response.headers.get('Location')!);
+      expect(redirectUrl.origin + redirectUrl.pathname).toBe(certificationRedirectUri);
+      expect(redirectUrl.searchParams.get('error')).toBe('login_required');
+      expect(redirectUrl.searchParams.get('code')).toBeNull();
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it('rejects prompt=none with max_age=0 even in the same second as authentication', async () => {
+      await configureClientSettings(env, { 'client.sso_enabled': true });
       const certificationRedirectUri =
         'https://www.certification.openid.net/test/a/authrim/callback';
       mockGetClient.mockResolvedValue({
@@ -2374,7 +4651,7 @@ describe('Authorization Handler', () => {
 
       expect(response.status).toBe(302);
       const location = response.headers.get('Location');
-      expect(location).toContain('/auth/consent');
+      expect(location).toContain('https://login.example.com/consent');
       const consentUrl = new URL(location!, 'https://test.example.com');
       expect(consentUrl.searchParams.get('ui_locales')).toBe('de en');
       const challengeId = consentUrl.searchParams.get('challenge_id');
@@ -2424,7 +4701,7 @@ describe('Authorization Handler', () => {
 
       expect(response.status).toBe(302);
       const location = response.headers.get('Location');
-      expect(location).toContain('/auth/consent');
+      expect(location).toContain('https://login.example.com/consent');
       const challengeId = new URL(location!, 'https://test.example.com').searchParams.get(
         'challenge_id'
       );
@@ -2481,355 +4758,12 @@ describe('Authorization Handler', () => {
       expect(redirectUrl.searchParams.get('state')).toBe('dpop-required');
     });
 
-    it('renders the built-in login form with client display metadata from the login challenge', async () => {
-      env.ENABLE_TEST_ENDPOINTS = 'true';
-      getChallengeMap(env).set('login_challenge', {
-        id: 'login_challenge',
-        type: 'login',
-        metadata: {
-          client_name: 'Example RP',
-          logo_uri: 'https://example.com/logo.png',
-          policy_uri: 'https://example.com/privacy',
-          tos_uri: 'https://example.com/terms',
-        },
-      });
-
-      const response = await app.request(
-        '/flow/login?challenge_id=login_challenge',
-        { method: 'GET' },
-        env
-      );
-      const html = await response.text();
-
-      expect(response.status).toBe(200);
-      expect(html).toContain('Signing in to <strong>Example RP</strong>');
-      expect(html).toContain('https://example.com/logo.png');
-      expect(html).toContain('https://example.com/privacy');
-      expect(html).toContain('https://example.com/terms');
-      expect(html).toContain('name="challenge_id" value="login_challenge"');
-    });
-
-    it('drops unsafe client display metadata URLs from the built-in login form', async () => {
-      env.ENABLE_TEST_ENDPOINTS = 'true';
-      getChallengeMap(env).set('unsafe_login_challenge', {
-        id: 'unsafe_login_challenge',
-        type: 'login',
-        metadata: {
-          client_name: '<img src=x onerror=alert(1)>',
-          logo_uri: 'javascript:alert(1)',
-          policy_uri: 'javascript:alert(1)',
-          tos_uri: 'data:text/html,<script>alert(1)</script>',
-        },
-      });
-
-      const response = await app.request(
-        '/flow/login?challenge_id=unsafe_login_challenge',
-        { method: 'GET' },
-        env
-      );
-      const html = await response.text();
-
-      expect(response.status).toBe(200);
-      expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
-      expect(html).not.toContain('javascript:alert');
-      expect(html).not.toContain('data:text/html');
-      expect(html).not.toContain('<img src="javascript:');
-      expect(html).not.toContain('href="javascript:');
-    });
-
-    securityRegressionIt.each(['/flow/login'])(
-      '[security regression][AO-15] escapes attacker-controlled challenge_id in the %s form',
-      async (path) => {
-        env.ENABLE_TEST_ENDPOINTS = 'true';
-        const payload = '"><script data-authrim-xss>globalThis.__authrimXss=1</script>';
-        getChallengeMap(env).set(payload, {
-          id: payload,
-          tenantId: 'default',
-          type: 'login',
-          metadata: {},
-        });
-        const response = await app.request(
-          `${path}?challenge_id=${encodeURIComponent(payload)}`,
-          { method: 'GET' },
-          env
-        );
-        const html = await response.text();
-
-        expect(response.status).toBe(200);
-        expect(html).not.toContain(payload);
-        expect(html).toContain(
-          '&quot;&gt;&lt;script data-authrim-xss&gt;globalThis.__authrimXss=1&lt;/script&gt;'
-        );
-      }
-    );
-
-    it('processes built-in login by creating a session and restoring the authorization request', async () => {
-      env.ENABLE_TEST_ENDPOINTS = 'true';
-      getChallengeMap(env).set('login_challenge', {
-        id: 'login_challenge',
-        type: 'login',
-        userId: 'anonymous',
-        metadata: {
-          response_type: 'code',
-          client_id: 'test-client',
-          redirect_uri: 'https://example.com/callback',
-          scope: 'openid profile',
-          state: 'login-state',
-          nonce: 'login-nonce',
-          code_challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
-          code_challenge_method: 'S256',
-          acr_values: 'urn:authrim:acr:mfa',
-        },
-      });
-
-      const response = await app.request(
-        '/flow/login',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-          body: new URLSearchParams({
-            challenge_id: 'login_challenge',
-            username: 'login-user@example.com',
-            password: 'ignored-by-stub',
-          }),
-        },
-        env
-      );
-
-      expect(response.status).toBe(302);
-      expect(response.headers.get('Set-Cookie')).toContain('authrim_session=');
-      const location = response.headers.get('Location')!;
-      expect(location).toContain('/authorize?');
-      const redirect = new URL(location, 'https://test.example.com');
-      expect([...redirect.searchParams.keys()]).toEqual(['_confirmation_challenge']);
-      const confirmationChallenge = redirect.searchParams.get('_confirmation_challenge');
-      expect(confirmationChallenge).toMatch(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-      );
-      expect(getChallengeMap(env).get(confirmationChallenge!)).toEqual(
-        expect.objectContaining({
-          type: 'reauth',
-          userId: expect.any(String),
-          metadata: expect.objectContaining({
-            purpose: 'authorize_confirmation',
-            authTime: expect.any(Number),
-            sessionId: expect.stringMatching(/^g\d+:/),
-            browserBinding: expect.any(String),
-            authorization_request: expect.objectContaining({
-              response_type: 'code',
-              client_id: 'test-client',
-              state: 'login-state',
-              nonce: 'login-nonce',
-              code_challenge_method: 'S256',
-            }),
-          }),
-        })
-      );
-      expect(getChallengeMap(env).has('login_challenge')).toBe(false);
-    });
-
-    securityRegressionIt(
-      '[security regression] disables the credential-free login adapter without consuming challenges in production',
-      async () => {
-        env.ENABLE_CONFORMANCE_MODE = 'false';
-        env.ENABLE_TEST_ENDPOINTS = 'false';
-        getChallengeMap(env).set('production-login-challenge', {
-          id: 'production-login-challenge',
-          tenantId: 'default',
-          type: 'login',
-          userId: 'anonymous',
-          metadata: {
-            response_type: 'code',
-            client_id: 'test-client',
-            redirect_uri: 'https://example.com/callback',
-            scope: 'openid',
-          },
-        });
-
-        const getResponse = await app.request(
-          '/flow/login?challenge_id=production-login-challenge',
-          { method: 'GET' },
-          env
-        );
-        expect(getResponse.status).toBe(403);
-        expect(await getResponse.text()).not.toContain('<form');
-        expect(getChallengeMap(env).has('production-login-challenge')).toBe(true);
-
-        const postResponse = await app.request(
-          '/flow/login',
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({
-              challenge_id: 'production-login-challenge',
-              username: 'attacker@example.com',
-              password: 'accepted-by-old-stub',
-            }),
-          },
-          env
-        );
-        expect(postResponse.status).toBe(403);
-        expect(getChallengeMap(env).has('production-login-challenge')).toBe(true);
-      }
-    );
-
-    it('rejects certification stub login when conformance mode is disabled', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
-      env.ENABLE_TEST_ENDPOINTS = 'false';
-      getChallengeMap(env).set('certification_login_challenge', {
-        id: 'certification_login_challenge',
-        type: 'login',
-        userId: 'anonymous',
-        metadata: {
-          response_type: 'code',
-          client_id: 'test-client',
-          redirect_uri: 'https://www.certification.openid.net/test/a/authrim/callback',
-          scope: 'openid',
-        },
-      });
-
-      const response = await app.request(
-        '/flow/login',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-          body: new URLSearchParams({
-            challenge_id: 'certification_login_challenge',
-            username: 'attacker@example.com',
-            password: 'accepted-by-old-stub',
-          }),
-        },
-        env
-      );
-
-      expect(response.status).toBe(403);
-      await expect(response.json()).resolves.toMatchObject({
-        error: 'access_denied',
-      });
-      expect(getChallengeMap(env).has('certification_login_challenge')).toBe(true);
-    });
-
-    it('renders and processes built-in reauthentication confirmation', async () => {
-      env.ENABLE_TEST_ENDPOINTS = 'true';
-      getChallengeMap(env).set('reauth_challenge', {
-        id: 'reauth_challenge',
-        type: 'reauth',
-        userId: 'test-user',
-        metadata: {
-          response_type: 'code',
-          client_id: 'test-client',
-          redirect_uri: 'https://example.com/callback',
-          scope: 'openid',
-          state: 'reauth-state',
-          prompt: 'login',
-          authTime: 1700000000,
-          sessionUserId: 'test-user',
-        },
-      });
-
-      const getResponse = await app.request(
-        '/flow/confirm?challenge_id=reauth_challenge',
-        { method: 'GET' },
-        env
-      );
-      expect(getResponse.status).toBe(200);
-      await expect(getResponse.text()).resolves.toContain('Re-authentication Required');
-
-      const postResponse = await app.request(
-        '/flow/confirm',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-          body: new URLSearchParams({
-            challenge_id: 'reauth_challenge',
-          }),
-        },
-        env
-      );
-
-      expect(postResponse.status).toBe(302);
-      const redirect = new URL(postResponse.headers.get('Location')!, 'https://test.example.com');
-      expect(redirect.pathname).toBe('/authorize');
-      expect([...redirect.searchParams.keys()]).toEqual(['_confirmation_challenge']);
-      const confirmationChallenge = redirect.searchParams.get('_confirmation_challenge');
-      expect(confirmationChallenge).toMatch(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-      );
-      expect(getChallengeMap(env).get(confirmationChallenge!)).toEqual(
-        expect.objectContaining({
-          type: 'reauth',
-          userId: 'test-user',
-          metadata: expect.objectContaining({
-            purpose: 'authorize_confirmation',
-            authTime: 1700000000,
-            sessionUserId: 'test-user',
-            authorization_request: expect.objectContaining({
-              response_type: 'code',
-              client_id: 'test-client',
-              state: 'reauth-state',
-              prompt: 'login',
-            }),
-          }),
-        })
-      );
-      expect(getChallengeMap(env).has('reauth_challenge')).toBe(false);
-    });
-
-    securityRegressionIt(
-      '[security regression] rejects the credential-free reauthentication adapter outside explicit test mode',
-      async () => {
-        env.ENABLE_TEST_ENDPOINTS = 'false';
-        env.ENABLE_CONFORMANCE_MODE = 'false';
-        getChallengeMap(env).set('production-reauth-challenge', {
-          id: 'production-reauth-challenge',
-          tenantId: 'default',
-          type: 'reauth',
-          userId: 'test-user',
-          metadata: {
-            response_type: 'code',
-            client_id: 'test-client',
-            redirect_uri: 'https://example.com/callback',
-            scope: 'openid',
-            sessionUserId: 'test-user',
-          },
-        });
-
-        const response = await app.request(
-          '/flow/confirm',
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({
-              challenge_id: 'production-reauth-challenge',
-              username: 'anything',
-              password: 'anything',
-            }),
-          },
-          env
-        );
-
-        expect(response.status).toBe(403);
-        expect(getChallengeMap(env).has('production-reauth-challenge')).toBe(true);
-        expect(getChallengeMap(env).size).toBe(1);
-      }
-    );
-
     it('should not reuse cached UI settings across different SETTINGS bindings', async () => {
       const envWithUi = createMockEnv();
-      envWithUi.ENABLE_CONFORMANCE_MODE = 'false';
+      envWithUi.ALLOWED_ORIGINS = 'https://login.example.com';
       await (envWithUi.SETTINGS as unknown as MockKVNamespace).put(
-        'system_settings',
-        JSON.stringify({
-          ui: {
-            baseUrl: 'https://login.example.com',
-          },
-        })
+        'settings:platform:tenant',
+        JSON.stringify({ 'tenant.ui_base_url': 'https://login.example.com' })
       );
 
       const firstResponse = await app.request(
@@ -2842,7 +4776,7 @@ describe('Authorization Handler', () => {
       expect(firstResponse.headers.get('Location')).toContain('https://login.example.com/login');
 
       const envWithoutUi = createMockEnv();
-      envWithoutUi.ENABLE_CONFORMANCE_MODE = 'false';
+      delete (envWithoutUi as { UI_URL?: string }).UI_URL;
 
       const secondResponse = await app.request(
         '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=test-state',
@@ -2860,7 +4794,7 @@ describe('Authorization Handler', () => {
     });
 
     it('should clean up consent challenge when consent UI is not configured', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
+      delete (env as { UI_URL?: string }).UI_URL;
       await (env.SETTINGS as unknown as MockKVNamespace).put(
         'settings:client:test-client:client',
         JSON.stringify({
@@ -2889,9 +4823,8 @@ describe('Authorization Handler', () => {
       expect(getChallengeMap(env).size).toBe(0);
     });
 
-    it('routes OIDC certification clients to built-in consent in conformance mode', async () => {
+    it('routes certification-suite clients to the Login UI consent page in conformance mode', async () => {
       env.ENABLE_CONFORMANCE_MODE = 'true';
-      env.UI_URL = 'https://login.example.com';
       const certificationRedirectUri =
         'https://www.certification.openid.net/test/a/authrim/callback';
       mockGetClient.mockResolvedValue({
@@ -2924,8 +4857,8 @@ describe('Authorization Handler', () => {
       expect(response.status).toBe(302);
       const location = response.headers.get('Location');
       expect(location).toBeTruthy();
-      const redirectUrl = new URL(location!, 'https://test.example.com');
-      expect(redirectUrl.pathname).toBe('/auth/consent');
+      const redirectUrl = new URL(location!);
+      expect(redirectUrl.origin + redirectUrl.pathname).toBe('https://login.example.com/consent');
       const challengeId = redirectUrl.searchParams.get('challenge_id');
       expect(challengeId).toBeTruthy();
       expect(getChallengeMap(env).get(challengeId!)).toMatchObject({
@@ -2950,7 +4883,7 @@ describe('Authorization Handler', () => {
       expect(response.status).toBe(302);
       const location = response.headers.get('Location');
       // Valid request should redirect to login
-      expect(location).toContain('/flow/login');
+      expect(location).toContain('https://login.example.com/login');
     });
 
     it('should reject invalid client_id format', async () => {
@@ -2980,32 +4913,13 @@ describe('Authorization Handler', () => {
       expect(redirectUrl.searchParams.get('error_description')).toContain('state');
     });
 
-    it('should reject request with unregistered client', async () => {
-      mockGetClient.mockResolvedValue(null);
-
-      const response = await app.request(
-        '/authorize?response_type=code&client_id=unknown-client&redirect_uri=https://example.com/callback&scope=openid',
-        { method: 'GET' },
-        env
-      );
-
-      expect(response.status).toBe(400);
-      const body = (await response.json()) as ErrorResponse;
-      expect(body.error).toBe('invalid_request');
-      expect(body.error_description).toBe('client_id is invalid');
-    });
-
     it('should return a local 400 error page for an unknown client when external UI is configured', async () => {
-      env.ENABLE_CONFORMANCE_MODE = 'false';
       mockGetClient.mockResolvedValue(null);
-      await (env.SETTINGS as unknown as MockKVNamespace).put(
-        'system_settings',
-        JSON.stringify({
-          ui: {
-            baseUrl: 'https://login.example.com',
-          },
-        })
-      );
+      await putSystemSettings(env.SETTINGS as unknown as MockKVNamespace, {
+        ui: {
+          baseUrl: 'https://login.example.com',
+        },
+      });
 
       const response = await app.request(
         '/authorize?response_type=code&client_id=unknown-client&redirect_uri=https://example.com/callback&scope=openid',
@@ -3146,7 +5060,7 @@ describe('Authorization Handler', () => {
           env
         );
         expect(accepted.status).toBe(302);
-        expect(accepted.headers.get('Location')).toContain('/flow/login');
+        expect(accepted.headers.get('Location')).toContain('https://login.example.com/login');
       }
     );
 
@@ -3351,7 +5265,7 @@ describe('Authorization Handler', () => {
 
       expect(response.status).toBe(302);
       const location = response.headers.get('Location');
-      expect(location).toContain('/auth/consent');
+      expect(location).toContain('https://login.example.com/consent');
       const challengeId = new URL(location!, 'https://test.example.com').searchParams.get(
         'challenge_id'
       );
@@ -3441,7 +5355,2387 @@ describe('Authorization Handler', () => {
       expect(response.status).toBe(302);
       const location = response.headers.get('Location');
       expect(location).toBeTruthy();
-      expect(location).toContain('/flow/login');
+      expect(location).toContain('https://login.example.com/login');
+    });
+  });
+
+  describe('prompt=create (Initiating User Registration)', () => {
+    const base =
+      '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=create-state';
+    const sessionHeaders = () => ({
+      Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}`,
+    });
+
+    async function enablePromptCreate(settings: Record<string, unknown> = {}) {
+      await configureTenantOauthSettings(env, { 'oauth.prompt_create_enabled': true, ...settings });
+    }
+
+    async function configureAuthenticationMethods(settings: Record<string, unknown>) {
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'settings:tenant:default:authentication-methods',
+        JSON.stringify(settings)
+      );
+    }
+
+    function destination(response: Response): URL {
+      expect(response.status).toBe(302);
+      return new URL(response.headers.get('Location')!);
+    }
+
+    function challengeOf(url: URL) {
+      return getChallengeMap(env).get(url.searchParams.get('challenge_id')!) as {
+        type: string;
+        metadata: Record<string, unknown>;
+      };
+    }
+
+    it('sends the user to the sign-up page with the login challenge when enabled', async () => {
+      await enablePromptCreate();
+
+      const url = destination(await app.request(`${base}&prompt=create`, {}, env));
+
+      expect(url.origin + url.pathname).toBe('https://login.example.com/signup');
+      expect(url.searchParams.get('challenge_id')).toBeTruthy();
+      expect(url.searchParams.get('tenant_hint')).toBe('default');
+      expect(challengeOf(url)).toMatchObject({
+        type: 'login',
+        metadata: expect.objectContaining({
+          prompt: 'create',
+          client_id: 'test-client',
+          state: 'create-state',
+          redirect_uri: 'https://example.com/callback',
+        }),
+      });
+    });
+
+    it('ignores prompt=create while the tenant has not turned it on', async () => {
+      const url = destination(await app.request(`${base}&prompt=create`, {}, env));
+
+      expect(url.pathname).toBe('/login');
+      expect(challengeOf(url).type).toBe('login');
+    });
+
+    it('turns on from the environment variable only when it is exactly true', async () => {
+      env.OAUTH_PROMPT_CREATE_ENABLED = 'true';
+      expect(destination(await app.request(`${base}&prompt=create`, {}, env)).pathname).toBe(
+        '/signup'
+      );
+      for (const value of ['TRUE', '1', 'yes', '']) {
+        env.OAUTH_PROMPT_CREATE_ENABLED = value;
+        expect(destination(await app.request(`${base}&prompt=create`, {}, env)).pathname).toBe(
+          '/login'
+        );
+      }
+    });
+
+    it('lets the tenant setting override the environment variable', async () => {
+      env.OAUTH_PROMPT_CREATE_ENABLED = 'true';
+      await configureTenantOauthSettings(env, { 'oauth.prompt_create_enabled': false });
+      expect(destination(await app.request(`${base}&prompt=create`, {}, env)).pathname).toBe(
+        '/login'
+      );
+    });
+
+    it.each([
+      ['a string', 'true'],
+      ['a number', 1],
+    ])('does not turn on from %s in the tenant setting', async (_label, value) => {
+      await configureTenantOauthSettings(env, { 'oauth.prompt_create_enabled': value });
+      expect(destination(await app.request(`${base}&prompt=create`, {}, env)).pathname).toBe(
+        '/login'
+      );
+    });
+
+    it('goes to the sign-in page when the tenant offers no sign-up method', async () => {
+      await enablePromptCreate();
+      await configureAuthenticationMethods({
+        'authentication-methods.passkey.signup_enabled': false,
+        'authentication-methods.email_otp.signup_enabled': false,
+      });
+
+      const url = destination(await app.request(`${base}&prompt=create`, {}, env));
+
+      expect(url.pathname).toBe('/login');
+    });
+
+    it('goes to the sign-in page when the sign-up settings cannot be read', async () => {
+      await enablePromptCreate();
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'settings:tenant:default:authentication-methods',
+        'not json'
+      );
+
+      expect(destination(await app.request(`${base}&prompt=create`, {}, env)).pathname).toBe(
+        '/login'
+      );
+    });
+
+    it.each([
+      [
+        'email code',
+        {
+          'authentication-methods.passkey.enabled': false,
+          'authentication-methods.email_otp.signup_enabled': true,
+        },
+      ],
+      [
+        'authenticator app',
+        {
+          'authentication-methods.passkey.enabled': false,
+          'authentication-methods.totp.signup_enabled': true,
+        },
+      ],
+    ])('goes to the sign-up page when only %s is on for sign-up', async (_label, methods) => {
+      await enablePromptCreate();
+      await configureAuthenticationMethods(methods);
+
+      expect(destination(await app.request(`${base}&prompt=create`, {}, env)).pathname).toBe(
+        '/signup'
+      );
+    });
+
+    describe('through an external identity provider', () => {
+      const noOwnMethods = {
+        'authentication-methods.passkey.signup_enabled': false,
+        'authentication-methods.email_otp.signup_enabled': false,
+        'authentication-methods.totp.signup_enabled': false,
+      };
+      type UpstreamDb = {
+        _upstreamProviders: { rows: Array<Record<string, unknown>>; failure: boolean };
+        prepare: ReturnType<typeof vi.fn>;
+      };
+      const upstream = () => env.DB as unknown as UpstreamDb;
+
+      function addProvider(overrides: Record<string, unknown> = {}) {
+        upstream()._upstreamProviders.rows.push({
+          id: 'prov-1',
+          tenant_id: 'default',
+          slug: 'corp',
+          name: 'Corp',
+          enabled: 1,
+          priority: 0,
+          jit_provisioning: 1,
+          ...overrides,
+        });
+      }
+
+      async function configureExternalIdp(settings: Record<string, unknown> | string) {
+        await (env.SETTINGS as unknown as MockKVNamespace).put(
+          'settings:tenant:default:external-idp',
+          typeof settings === 'string' ? settings : JSON.stringify(settings)
+        );
+      }
+
+      const queriedProviders = () =>
+        upstream().prepare.mock.calls.some(([sql]) => String(sql).includes('upstream_providers'));
+      const outcome = async () =>
+        destination(await app.request(`${base}&prompt=create`, {}, env)).pathname;
+
+      it('goes to the sign-up page when only a provider that creates accounts offers sign-up', async () => {
+        await enablePromptCreate();
+        await configureAuthenticationMethods(noOwnMethods);
+        addProvider();
+
+        expect(await outcome()).toBe('/signup');
+      });
+
+      it('ignores prompt=create for a provider that can only link an existing account', async () => {
+        await enablePromptCreate();
+        await configureAuthenticationMethods(noOwnMethods);
+        addProvider({ jit_provisioning: 0 });
+
+        expect(await outcome()).toBe('/login');
+      });
+
+      it('counts a provider that creates accounts even next to one that only links', async () => {
+        await enablePromptCreate();
+        await configureAuthenticationMethods(noOwnMethods);
+        addProvider({ id: 'link-only', slug: 'link', jit_provisioning: 0, priority: 0 });
+        addProvider({ id: 'prov-2', slug: 'second', priority: 1 });
+
+        expect(await outcome()).toBe('/signup');
+      });
+
+      it('ignores prompt=create when there is no provider', async () => {
+        await enablePromptCreate();
+        await configureAuthenticationMethods(noOwnMethods);
+
+        expect(await outcome()).toBe('/login');
+      });
+
+      it("ignores prompt=create for a disabled provider, and for another tenant's", async () => {
+        await enablePromptCreate();
+        await configureAuthenticationMethods(noOwnMethods);
+        addProvider({ enabled: 0 });
+        addProvider({ id: 'other', tenant_id: 'another-tenant' });
+
+        expect(await outcome()).toBe('/login');
+      });
+
+      it.each([
+        [
+          "the provider's sign-up use is off (by its id)",
+          [{ providerId: 'prov-1', loginEnabled: true, signupEnabled: false }],
+        ],
+        [
+          "the provider's sign-up use is off (an older entry, by its slug)",
+          [{ id: 'corp', loginEnabled: true, signupEnabled: 'false' }],
+        ],
+        [
+          'every use of every listed provider is off, so the sign-up page lists none',
+          [
+            {
+              providerId: 'prov-1',
+              loginEnabled: false,
+              signupEnabled: false,
+              reauthEnabled: false,
+              accountLinkEnabled: false,
+            },
+          ],
+        ],
+      ])('ignores prompt=create when %s', async (_label, usage) => {
+        await enablePromptCreate();
+        await configureAuthenticationMethods({
+          ...noOwnMethods,
+          'authentication-methods.external_provider_usage': usage,
+        });
+        addProvider();
+
+        expect(await outcome()).toBe('/login');
+      });
+
+      it('goes to the sign-up page when the saved usage leaves sign-up on', async () => {
+        await enablePromptCreate();
+        await configureAuthenticationMethods({
+          ...noOwnMethods,
+          'authentication-methods.external_provider_usage': [
+            { providerId: 'prov-1', loginEnabled: false, signupEnabled: true },
+          ],
+        });
+        addProvider();
+
+        expect(await outcome()).toBe('/signup');
+      });
+
+      it('ignores prompt=create when the tenant has turned JIT provisioning off', async () => {
+        await enablePromptCreate();
+        await configureAuthenticationMethods(noOwnMethods);
+        await configureExternalIdp({ 'external_idp.jit_provisioning_enabled': false });
+        addProvider();
+
+        expect(await outcome()).toBe('/login');
+      });
+
+      // The tenant's settings are read through the isolate's 60 s cache: one value per test.
+      it.each([
+        ['names the provider', 'prov-1', '/signup'],
+        ['is empty (every provider)', '', '/signup'],
+        ['names only other providers', 'someone-else, x', '/login'],
+        ['names no provider', '-', '/login'],
+      ])(
+        "follows the tenant's list of providers allowed to create accounts: %s",
+        async (_label, allowed, expected) => {
+          await enablePromptCreate();
+          await configureAuthenticationMethods(noOwnMethods);
+          await configureExternalIdp({ 'external_idp.jit_allowed_provider_ids': allowed });
+          addProvider();
+
+          expect(await outcome()).toBe(expected);
+        }
+      );
+
+      it('is not decided by a verified-email requirement, which depends on the person', async () => {
+        await enablePromptCreate();
+        await configureAuthenticationMethods(noOwnMethods);
+        await configureExternalIdp({ 'external_idp.jit_require_verified_email': true });
+        addProvider();
+
+        expect(await outcome()).toBe('/signup');
+      });
+
+      it('ignores prompt=create when a provider has contradicting saved sign-up entries', async () => {
+        await enablePromptCreate();
+        await configureAuthenticationMethods({
+          ...noOwnMethods,
+          'authentication-methods.external_provider_usage': [
+            { providerId: 'prov-1', loginEnabled: true, signupEnabled: true },
+            { providerId: 'prov-1', loginEnabled: true, signupEnabled: false },
+          ],
+        });
+        addProvider();
+
+        expect(await outcome()).toBe('/login');
+      });
+
+      it('ignores prompt=create when any JIT setting has the wrong type, as the bridge does', async () => {
+        await enablePromptCreate();
+        await configureAuthenticationMethods(noOwnMethods);
+        await configureExternalIdp({ 'external_idp.jit_require_verified_email': 'maybe' });
+        addProvider();
+
+        expect(await outcome()).toBe('/login');
+      });
+
+      it('ignores prompt=create when the provider list cannot be read', async () => {
+        await enablePromptCreate();
+        await configureAuthenticationMethods(noOwnMethods);
+        addProvider();
+        upstream()._upstreamProviders.failure = true;
+
+        expect(await outcome()).toBe('/login');
+      });
+
+      it.each([
+        ['the JIT settings are damaged', () => configureExternalIdp('not json')],
+        [
+          'the JIT switch is not a boolean',
+          () => configureExternalIdp({ 'external_idp.jit_provisioning_enabled': 'yes' }),
+        ],
+        [
+          'the saved usage is not understood',
+          () =>
+            configureAuthenticationMethods({
+              ...noOwnMethods,
+              'authentication-methods.external_provider_usage': [
+                { providerId: 'prov-1', signupEnabled: 'maybe' },
+              ],
+            }),
+        ],
+      ])('ignores prompt=create when %s', async (_label, damage) => {
+        await enablePromptCreate();
+        await configureAuthenticationMethods(noOwnMethods);
+        addProvider();
+        await damage();
+
+        expect(await outcome()).toBe('/login');
+      });
+
+      it("leaves the tenant's own methods as they were, and does not read providers for them", async () => {
+        await enablePromptCreate();
+        addProvider({ jit_provisioning: 0 });
+        upstream()._upstreamProviders.failure = true;
+
+        // Passkey sign-up is on by default.
+        expect(await outcome()).toBe('/signup');
+        await configureAuthenticationMethods({
+          'authentication-methods.passkey.enabled': false,
+          'authentication-methods.email_otp.signup_enabled': true,
+        });
+        expect(await outcome()).toBe('/signup');
+        expect(queriedProviders()).toBe(false);
+      });
+
+      it('does not read providers while prompt=create is not acted on', async () => {
+        await configureAuthenticationMethods(noOwnMethods);
+        addProvider();
+
+        expect(await outcome()).toBe('/login');
+        expect(queriedProviders()).toBe(false);
+      });
+    });
+
+    it.each([
+      ['login create', 'login%20create'],
+      ['consent create', 'consent%20create'],
+      ['create login', 'create%20login'],
+      ['create create', 'create%20create'],
+    ])('sends %s to the sign-up page, and keeps the other value', async (_label, prompt) => {
+      await enablePromptCreate();
+
+      const url = destination(await app.request(`${base}&prompt=${prompt}`, {}, env));
+
+      expect(url.pathname).toBe('/signup');
+      expect(challengeOf(url).metadata.prompt).toBe(decodeURIComponent(prompt));
+    });
+
+    it.each(['none%20create', 'create%20none', 'none%20login%20create'])(
+      'rejects prompt=%s as invalid_request, as none with any other value',
+      async (prompt) => {
+        await enablePromptCreate();
+        const response = await app.request(`${base}&prompt=${prompt}`, {}, env);
+        expect(response.status).toBe(302);
+        expect(response.headers.get('Location')).toContain('error=invalid_request');
+      }
+    );
+
+    it('rejects none with create even when prompt=create is off', async () => {
+      const response = await app.request(`${base}&prompt=none%20create`, {}, env);
+      expect(response.headers.get('Location')).toContain('error=invalid_request');
+    });
+
+    it('does not take a longer value for create', async () => {
+      await enablePromptCreate();
+      expect(destination(await app.request(`${base}&prompt=created`, {}, env)).pathname).toBe(
+        '/login'
+      );
+    });
+
+    it.each([true, false])(
+      'sends a signed-in user to sign up without using the session (SSO enabled=%s)',
+      async (ssoEnabled) => {
+        await enablePromptCreate();
+        await configureClientSettings(env, { 'client.sso_enabled': ssoEnabled });
+        configureClientTrustPolicy(env);
+        seedSession(env);
+
+        const url = destination(
+          await app.request(
+            `${base}&prompt=create`,
+            { method: 'GET', headers: sessionHeaders() },
+            env
+          )
+        );
+
+        expect(url.pathname).toBe('/signup');
+        const challenge = challengeOf(url);
+        expect(challenge.type).toBe('login');
+        // Only an authentication made after this request completes it.
+        expect(challenge.metadata.fresh_sign_in_after).toEqual(expect.any(Number));
+        expect(challenge.metadata).not.toHaveProperty('sessionUserId');
+        expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+      }
+    );
+
+    it('sends login create from a signed-in user to sign up, not to re-authenticate', async () => {
+      await enablePromptCreate();
+      await configureClientSettings(env, { 'client.sso_enabled': true });
+      seedSession(env);
+
+      const url = destination(
+        await app.request(
+          `${base}&prompt=login%20create`,
+          { method: 'GET', headers: sessionHeaders() },
+          env
+        )
+      );
+
+      expect(url.pathname).toBe('/signup');
+      expect(challengeOf(url).type).toBe('login');
+    });
+
+    it('still checks an id_token_hint sent with prompt=create', async () => {
+      await enablePromptCreate();
+      await configureClientSettings(env, { 'client.sso_enabled': true });
+      seedSession(env);
+
+      const response = await app.request(
+        `${base}&prompt=create&id_token_hint=not-a-token`,
+        { method: 'GET', headers: sessionHeaders() },
+        env
+      );
+
+      // Not an ID token this server issued.
+      expect(response.status).toBe(302);
+      expect(response.headers.get('Location')).toContain('error=invalid_request');
+    });
+
+    it('keeps using the session for a signed-in user while prompt=create is off', async () => {
+      await configureClientSettings(env, { 'client.sso_enabled': true });
+      configureClientTrustPolicy(env);
+      seedSession(env);
+
+      const response = await app.request(
+        `${base}&prompt=create`,
+        { method: 'GET', headers: sessionHeaders() },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const url = new URL(response.headers.get('Location')!);
+      expect(url.origin + url.pathname).toBe('https://example.com/callback');
+      expect(url.searchParams.get('code')).toBeTruthy();
+    });
+
+    it('continues the request after the sign-up instead of sending the user to sign up again', async () => {
+      await enablePromptCreate();
+      configureClientTrustPolicy(env);
+      seedSession(env, 'new-user');
+      getChallengeMap(env).set('confirm_signup', {
+        id: 'confirm_signup',
+        tenantId: 'default',
+        type: 'reauth',
+        userId: 'new-user',
+        challenge: 'confirm_signup',
+        metadata: {
+          purpose: 'authorize_confirmation',
+          authTime: Math.floor(Date.now() / 1000),
+          sessionUserId: 'new-user',
+          browserBinding: 'signup-browser',
+        },
+      });
+
+      const response = await app.request(
+        `${base}&prompt=create&_confirmation_challenge=confirm_signup`,
+        {
+          method: 'GET',
+          headers: {
+            Cookie:
+              `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}; ` +
+              'authrim_authorize_confirmation=signup-browser',
+          },
+        },
+        env
+      );
+
+      const url = destination(response);
+      expect(url.origin + url.pathname).toBe('https://example.com/callback');
+      expect(url.searchParams.get('code')).toBeTruthy();
+      expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'new-user' })
+      );
+    });
+
+    it('does not send the user back to sign up once the consent that follows is confirmed', async () => {
+      await enablePromptCreate();
+      seedSession(env, 'new-user');
+      getChallengeMap(env).set('confirm_consent_after_signup', {
+        id: 'confirm_consent_after_signup',
+        tenantId: 'default',
+        type: 'consent',
+        userId: 'new-user',
+        challenge: 'confirm_consent_after_signup',
+        metadata: {
+          purpose: 'authorize_consent_confirmation',
+          consent_generation: 0,
+          sessionId: TEST_SESSION_ID,
+          browserBinding: 'consent-browser-binding',
+        },
+      });
+
+      const response = await app.request(
+        `${base}&prompt=create&_consent_confirmation_challenge=confirm_consent_after_signup`,
+        {
+          method: 'GET',
+          headers: {
+            Cookie:
+              `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}; ` +
+              'authrim_consent_confirmation=consent-browser-binding',
+          },
+        },
+        env
+      );
+
+      const url = destination(response);
+      expect(url.origin + url.pathname).toBe('https://example.com/callback');
+      expect(url.searchParams.get('code')).toBeTruthy();
+    });
+
+    it('opens the sign-up path the tenant set', async () => {
+      await enablePromptCreate();
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'settings:tenant:default:tenant',
+        JSON.stringify({ 'tenant.ui_register_path': '/join' })
+      );
+
+      const url = destination(await app.request(`${base}&prompt=create`, {}, env));
+
+      expect(url.origin + url.pathname).toBe('https://login.example.com/join');
+      expect(url.searchParams.get('challenge_id')).toBeTruthy();
+    });
+
+    describe('prompt values are whole, case-sensitive tokens', () => {
+      it.each([
+        ['create nonetheless', 'create%20nonetheless', '/signup'],
+        ['nonetheless create', 'nonetheless%20create', '/signup'],
+        ['create  login (two spaces)', 'create%20%20login', '/signup'],
+        ['a leading space', '%20create', '/signup'],
+        ['a trailing space', 'create%20', '/signup'],
+        ['nonecreate', 'nonecreate', '/login'],
+        ['xcreate', 'xcreate', '/login'],
+        ['createx', 'createx', '/login'],
+        ['CREATE', 'CREATE', '/login'],
+        ['Create', 'Create', '/login'],
+        ['create,login', 'create,login', '/login'],
+      ])('sends %s to %s', async (_label, prompt, path) => {
+        await enablePromptCreate();
+
+        const url = destination(await app.request(`${base}&prompt=${prompt}`, {}, env));
+
+        expect(url.pathname).toBe(path);
+      });
+
+      it.each([true, false])(
+        'ignores a value that only contains none (SSO enabled=%s): no login_required',
+        async (ssoEnabled) => {
+          await enablePromptCreate();
+          await configureClientSettings(env, { 'client.sso_enabled': ssoEnabled });
+          configureClientTrustPolicy(env);
+
+          // Without a session: the sign-in page, as for a request without the value.
+          const noSession = destination(await app.request(`${base}&prompt=nonetheless`, {}, env));
+          expect(noSession.pathname).toBe('/login');
+          expect(noSession.searchParams.get('error')).toBeNull();
+        }
+      );
+
+      it('uses the session of a signed-in user for a value that only contains none', async () => {
+        await configureClientSettings(env, { 'client.sso_enabled': true });
+        configureClientTrustPolicy(env);
+        seedSession(env);
+
+        const url = destination(
+          await app.request(
+            `${base}&prompt=nonetheless`,
+            { method: 'GET', headers: sessionHeaders() },
+            env
+          )
+        );
+
+        expect(url.origin + url.pathname).toBe('https://example.com/callback');
+        expect(url.searchParams.get('code')).toBeTruthy();
+        expect(url.searchParams.get('error')).toBeNull();
+      });
+
+      it('does not force re-authentication for a value that only contains login', async () => {
+        await configureClientSettings(env, { 'client.sso_enabled': true });
+        configureClientTrustPolicy(env);
+        seedSession(env);
+
+        const url = destination(
+          await app.request(
+            `${base}&prompt=loginnow`,
+            { method: 'GET', headers: sessionHeaders() },
+            env
+          )
+        );
+
+        expect(url.origin + url.pathname).toBe('https://example.com/callback');
+        expect(url.searchParams.get('code')).toBeTruthy();
+      });
+
+      it.each([
+        ['consent', '/consent'],
+        ['consentx', null],
+        ['xconsent', null],
+        ['CONSENT', null],
+      ])(
+        'asks for consent again only for the whole value consent (prompt=%s)',
+        async (prompt, consentPath) => {
+          await configureClientSettings(env, { 'client.sso_enabled': true });
+          configureClientTrustPolicy(env);
+          seedSession(env);
+
+          const url = destination(
+            await app.request(
+              `${base}&prompt=${prompt}`,
+              { method: 'GET', headers: sessionHeaders() },
+              env
+            )
+          );
+
+          if (consentPath) {
+            expect(url.origin + url.pathname).toBe(`https://login.example.com${consentPath}`);
+          } else {
+            expect(url.origin + url.pathname).toBe('https://example.com/callback');
+            expect(url.searchParams.get('code')).toBeTruthy();
+          }
+        }
+      );
+
+      it('still answers prompt=none with login_required, and rejects none with other values', async () => {
+        await configureClientSettings(env, { 'client.sso_enabled': true });
+        const noSession = await app.request(`${base}&prompt=none`, {}, env);
+        expect(noSession.headers.get('Location')).toContain('error=login_required');
+        for (const prompt of ['none%20login', 'none%20unknown', 'login%20none']) {
+          const response = await app.request(`${base}&prompt=${prompt}`, {}, env);
+          expect(response.headers.get('Location'), prompt).toContain('error=invalid_request');
+        }
+      });
+    });
+
+    describe("with the app's own sign-in UI (login_ui_url)", () => {
+      const clientUi = 'https://client-ui.example';
+      beforeEach(() => {
+        mockGetClient.mockResolvedValue({
+          client_id: 'test-client',
+          client_secret: 'test-secret',
+          redirect_uris: ['https://example.com/callback'],
+          grant_types: ['authorization_code'],
+          response_types: ['code'],
+          scope: 'openid profile email',
+          token_endpoint_auth_method: 'client_secret_basic',
+          login_ui_url: clientUi,
+        });
+      });
+      const tenantPaths = (paths: Record<string, unknown>) =>
+        (env.SETTINGS as unknown as MockKVNamespace).put(
+          'settings:tenant:default:tenant',
+          JSON.stringify(paths)
+        );
+
+      it('opens the tenant sign-up path on the app UI when both are set', async () => {
+        await enablePromptCreate();
+        await tenantPaths({ 'tenant.ui_register_path': '/join' });
+
+        const url = destination(await app.request(`${base}&prompt=create`, {}, env));
+
+        expect(url.origin + url.pathname).toBe(`${clientUi}/join`);
+        expect(url.searchParams.get('challenge_id')).toBeTruthy();
+      });
+
+      it('opens the default sign-up path on the app UI when the tenant set none', async () => {
+        await enablePromptCreate();
+
+        const url = destination(await app.request(`${base}&prompt=create`, {}, env));
+
+        expect(url.origin + url.pathname).toBe(`${clientUi}/signup`);
+      });
+
+      it.each(['//evil.example', '/x?y=1', '/\\evil.example', 'join'])(
+        'falls back to the default sign-up path on the app UI for the tenant value %s',
+        async (value) => {
+          await enablePromptCreate();
+          await tenantPaths({ 'tenant.ui_register_path': value });
+
+          const url = destination(await app.request(`${base}&prompt=create`, {}, env));
+
+          expect(url.origin + url.pathname).toBe(`${clientUi}/signup`);
+        }
+      );
+
+      it("opens the tenant's sign-in path on the app UI: the app UI replaces the base URL only", async () => {
+        await tenantPaths({ 'tenant.ui_login_path': '/signin' });
+
+        const url = destination(await app.request(`${base}`, {}, env));
+
+        expect(url.origin + url.pathname).toBe(`${clientUi}/signin`);
+      });
+
+      it('opens the default sign-in path on the app UI when the tenant set none', async () => {
+        const url = destination(await app.request(`${base}`, {}, env));
+
+        expect(url.origin + url.pathname).toBe(`${clientUi}/login`);
+      });
+
+      it.each(['//evil.example', '/x?y=1', '/\\evil.example', 'signin'])(
+        'falls back to the default sign-in path on the app UI for the tenant value %s',
+        async (value) => {
+          await tenantPaths({ 'tenant.ui_login_path': value });
+
+          const url = destination(await app.request(`${base}`, {}, env));
+
+          expect(url.origin + url.pathname).toBe(`${clientUi}/login`);
+        }
+      );
+
+      // Re-authentication and consent are not sent to the app's UI (only sign-in and sign-up
+      // are): they open on the tenant's UI, with the tenant's path. Whether an app's own UI also
+      // takes them is a separate decision, since it may not implement those pages.
+      it("keeps re-authentication on the tenant's UI, with the tenant's path", async () => {
+        await tenantPaths({ 'tenant.ui_reauth_path': '/again' });
+        configureClientTrustPolicy(env);
+        seedSession(env);
+
+        const response = await app.request(
+          `${base}&prompt=login`,
+          { headers: { Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}` } },
+          env
+        );
+
+        const url = destination(response);
+        expect(url.origin + url.pathname).toBe('https://login.example.com/again');
+      });
+    });
+
+    it('opens the sign-up path on the tenant UI base URL', async () => {
+      await enablePromptCreate();
+      env.ALLOWED_ORIGINS = 'https://accounts.example.com';
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'settings:tenant:default:tenant',
+        JSON.stringify({
+          'tenant.ui_base_url': 'https://accounts.example.com',
+          'tenant.ui_register_path': '/join',
+        })
+      );
+
+      const url = destination(await app.request(`${base}&prompt=create`, {}, env));
+
+      expect(url.origin + url.pathname).toBe('https://accounts.example.com/join');
+    });
+
+    it.each([
+      '//evil.example',
+      '/\\evil.example',
+      '/x?y=1',
+      '/x#y',
+      'signup',
+      'https://evil.example/',
+    ])('falls back to the default sign-up path for the unusable value %s', async (value) => {
+      await enablePromptCreate();
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'settings:tenant:default:tenant',
+        JSON.stringify({ 'tenant.ui_register_path': value })
+      );
+
+      const url = destination(await app.request(`${base}&prompt=create`, {}, env));
+
+      expect(url.origin + url.pathname).toBe('https://login.example.com/signup');
+    });
+
+    it('answers temporarily_unavailable when no sign-in UI is configured', async () => {
+      await enablePromptCreate();
+      delete (env as { UI_URL?: string }).UI_URL;
+
+      const response = await app.request(`${base}&prompt=create`, {}, env);
+
+      expect(response.status).toBe(302);
+      expect(response.headers.get('Location')).toContain('error=temporarily_unavailable');
+      expect(getChallengeMap(env).size).toBe(0);
+    });
+
+    it('sends a PAR request with prompt=create to the sign-up page', async () => {
+      await enablePromptCreate();
+      const requestUri = 'urn:ietf:params:oauth:request_uri:par_prompt_create';
+      const parStore = createMockPARRequestStore({
+        client_id: 'test-client',
+        response_type: 'code',
+        redirect_uri: 'https://example.com/callback',
+        scope: 'openid',
+        state: 'par-create',
+        prompt: 'create',
+        code_challenge: 'a'.repeat(43),
+        code_challenge_method: 'S256',
+      });
+      env.PAR_REQUEST_STORE = parStore as unknown as Env['PAR_REQUEST_STORE'];
+
+      const url = destination(
+        await app.request(
+          `/authorize?client_id=test-client&request_uri=${encodeURIComponent(requestUri)}`,
+          {},
+          env
+        )
+      );
+
+      expect(url.pathname).toBe('/signup');
+      expect(challengeOf(url).metadata).toMatchObject({
+        prompt: 'create',
+        authorization_request_source: 'par',
+        par_request_uri: requestUri,
+      });
+    });
+
+    it('sends a signed request object with prompt=create to the sign-up page', async () => {
+      await enablePromptCreate();
+      const keyPair = await generateKeyPair('RS256');
+      const publicJwk = {
+        ...(await exportJWK(keyPair.publicKey)),
+        kid: 'jar-prompt-create-key',
+        alg: 'RS256',
+        use: 'sig',
+      };
+      mockGetClient.mockResolvedValue({
+        client_id: 'test-client',
+        client_secret_hash: 'confidential-client-secret-hash',
+        redirect_uris: ['https://example.com/callback'],
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+        scope: 'openid',
+        token_endpoint_auth_method: 'private_key_jwt',
+        jwks: { keys: [publicJwk] },
+      });
+      await configureClientSettings(env, { 'client.sso_enabled': true });
+      configureClientTrustPolicy(env);
+      seedSession(env, 'jar-create-user');
+
+      const requestObject = await new SignJWT({
+        client_id: 'test-client',
+        response_type: 'code',
+        redirect_uri: 'https://example.com/callback',
+        scope: 'openid',
+        state: 'jar-create-state',
+        prompt: 'create',
+      })
+        .setProtectedHeader({ alg: 'RS256', kid: publicJwk.kid })
+        .setIssuer('test-client')
+        .setAudience('https://test.example.com')
+        .setIssuedAt()
+        .setExpirationTime('5m')
+        .sign(keyPair.privateKey);
+
+      const url = destination(
+        await app.request(
+          `/authorize?client_id=test-client&request=${encodeURIComponent(requestObject)}`,
+          { method: 'GET', headers: sessionHeaders() },
+          env
+        )
+      );
+
+      expect(url.pathname).toBe('/signup');
+      expect(challengeOf(url).metadata).toMatchObject({
+        prompt: 'create',
+        state: 'jar-create-state',
+      });
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it('sends a POSTed authorization request with prompt=create to the sign-up page', async () => {
+      await enablePromptCreate();
+      const response = await app.request(
+        '/authorize',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            response_type: 'code',
+            client_id: 'test-client',
+            redirect_uri: 'https://example.com/callback',
+            scope: 'openid',
+            state: 'post-create',
+            prompt: 'create',
+          }),
+        },
+        env
+      );
+
+      expect(destination(response).pathname).toBe('/signup');
+    });
+  });
+
+  describe('identity assurance (IAL enforcement)', () => {
+    const NOW = Date.now();
+    const authorizeUrl = (extra = '', scope = 'openid') =>
+      `/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=${encodeURIComponent(scope)}&state=ial-state&code_challenge=${'a'.repeat(43)}&code_challenge_method=S256${extra}`;
+
+    const ev = (level: string, overrides: Record<string, unknown> = {}) => ({
+      id: `ev-${level}`,
+      assurance_framework: 'nist_800_63',
+      assurance_level: level,
+      verified_at: NOW - 1000,
+      expires_at: null,
+      revoked_at: null,
+      ...overrides,
+    });
+
+    /**
+     * An account database answering the evidence read with the given rows (or failing it), and the
+     * reads it saw.
+     */
+    function useEvidence(rows: Array<Record<string, unknown>> | 'fail') {
+      const accountDb = createMockDB();
+      const prepare = vi.mocked(accountDb.prepare);
+      const basePrepare = prepare.getMockImplementation()!;
+      const reads: string[] = [];
+      prepare.mockImplementation((sql: string) => {
+        const statement = basePrepare(sql);
+        if (sql.includes('assurance_evidence')) {
+          reads.push(sql);
+          if (rows === 'fail') {
+            vi.mocked(statement.all).mockRejectedValue(new Error('account database is down'));
+          } else {
+            vi.mocked(statement.all).mockResolvedValue({ results: rows } as never);
+          }
+        }
+        return statement;
+      });
+      mockResolveAccountDataContextFromHono.mockImplementation(async (c, userId) => {
+        const context = {
+          tenantId: 'default',
+          accountId: userId,
+          legacyUserId: userId,
+          coreDb: accountDb,
+          piiDb: accountDb,
+          coreBindingRef: 'DB_ACCOUNT',
+          piiBindingRef: 'DB_ACCOUNT',
+          coreResidencyPartition: 'default',
+          piiResidencyPartition: 'default',
+          accountRouteGeneration: 1,
+          userCacheScope: { tenantId: 'default', accountRouteGeneration: 1 },
+          piiCacheMode: 'disabled',
+        };
+        c.set('accountDataContext', context);
+        return context;
+      });
+      return reads;
+    }
+
+    function clientWithMinimum(minimum_ial: string | undefined) {
+      mockGetClient.mockResolvedValue({
+        client_id: 'test-client',
+        client_secret: 'test-secret',
+        redirect_uris: ['https://example.com/callback'],
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+        scope: 'openid profile email payroll',
+        token_endpoint_auth_method: 'client_secret_basic',
+        ...(minimum_ial ? { minimum_ial } : {}),
+      });
+    }
+
+    async function setAssurance(values: Record<string, unknown>) {
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'settings:tenant:default:assurance',
+        JSON.stringify(values)
+      );
+    }
+
+    function request(url: string) {
+      return app.request(
+        url,
+        {
+          method: 'GET',
+          headers: { Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}` },
+        },
+        env
+      );
+    }
+
+    const outcome = (response: Response) => new URL(response.headers.get('Location')!);
+
+    beforeEach(async () => {
+      env.UI_URL = 'https://login.example.com';
+      await configureClientSettings(env, { 'client.sso_enabled': true });
+      configureClientTrustPolicy(env);
+      seedSession(env);
+      clientWithMinimum(undefined);
+    });
+
+    afterEach(() => {
+      mockResolveAccountDataContextFromHono.mockImplementation(async (c, userId) => {
+        const context = {
+          tenantId: 'default',
+          accountId: userId,
+          legacyUserId: userId,
+          coreDb: c.env.DB,
+          piiDb: c.env.DB,
+          coreBindingRef: 'DB',
+          piiBindingRef: 'DB',
+          coreResidencyPartition: 'default',
+          piiResidencyPartition: 'default',
+          accountRouteGeneration: 1,
+          userCacheScope: { tenantId: 'default', accountRouteGeneration: 1 },
+          piiCacheMode: 'disabled',
+        };
+        c.set('accountDataContext', context);
+        return context;
+      });
+    });
+
+    it('changes nothing, and reads no evidence, when nothing is configured', async () => {
+      const reads = useEvidence([]);
+
+      const response = await request(authorizeUrl());
+
+      expect(outcome(response).searchParams.get('code')).toBeTruthy();
+      expect(reads).toEqual([]);
+    });
+
+    it('reads no evidence for a scope the map does not name', async () => {
+      const reads = useEvidence([]);
+      await setAssurance({
+        'assurance.enabled': true,
+        'assurance.scope_ial_requirements': '{"payroll":"IAL2"}',
+      });
+
+      const response = await request(authorizeUrl('', 'openid profile'));
+
+      expect(outcome(response).searchParams.get('code')).toBeTruthy();
+      expect(reads).toEqual([]);
+    });
+
+    it('ignores the scope map, and reads no evidence, while assurance is off', async () => {
+      const reads = useEvidence([]);
+      await setAssurance({
+        'assurance.enabled': false,
+        'assurance.scope_ial_requirements': '{"payroll":"IAL2"}',
+      });
+
+      const response = await request(authorizeUrl('', 'openid payroll'));
+
+      expect(outcome(response).searchParams.get('code')).toBeTruthy();
+      expect(reads).toEqual([]);
+    });
+
+    it('refuses a person below the client minimum, with assurance off', async () => {
+      clientWithMinimum('IAL2');
+      useEvidence([]);
+
+      const response = await request(authorizeUrl());
+
+      const location = outcome(response);
+      expect(location.origin + location.pathname).toBe('https://example.com/callback');
+      expect(location.searchParams.get('error')).toBe('access_denied');
+      expect(location.searchParams.get('state')).toBe('ial-state');
+      expect(location.searchParams.get('code')).toBeNull();
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it('refuses with access_denied for prompt=none too, not login_required', async () => {
+      clientWithMinimum('IAL2');
+      useEvidence([ev('IAL1')]);
+
+      const response = await request(authorizeUrl('&prompt=none'));
+
+      expect(outcome(response).searchParams.get('error')).toBe('access_denied');
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it('issues a code to a person at or above the client minimum, reading the evidence once', async () => {
+      clientWithMinimum('IAL2');
+      const reads = useEvidence([ev('IAL2')]);
+
+      const response = await request(authorizeUrl());
+
+      expect(outcome(response).searchParams.get('code')).toBeTruthy();
+      expect(reads).toHaveLength(1);
+    });
+
+    it('does not count evidence that is revoked, expired or not yet verified', async () => {
+      clientWithMinimum('IAL2');
+      useEvidence([
+        ev('IAL2', { id: 'a', revoked_at: NOW - 10 }),
+        ev('IAL2', { id: 'b', expires_at: NOW - 10 }),
+        ev('IAL2', { id: 'c', verified_at: NOW + 60_000 }),
+      ]);
+
+      const response = await request(authorizeUrl());
+
+      expect(outcome(response).searchParams.get('error')).toBe('access_denied');
+    });
+
+    it('applies the scope map for the requested scopes while assurance is on', async () => {
+      useEvidence([]);
+      await setAssurance({
+        'assurance.enabled': true,
+        'assurance.scope_ial_requirements': '{"payroll":"IAL2"}',
+      });
+
+      const response = await request(authorizeUrl('', 'openid payroll'));
+
+      expect(outcome(response).searchParams.get('error')).toBe('access_denied');
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it('takes the higher of the scope map and the client minimum', async () => {
+      clientWithMinimum('IAL3');
+      useEvidence([ev('IAL2')]);
+      await setAssurance({
+        'assurance.enabled': true,
+        'assurance.scope_ial_requirements': '{"payroll":"IAL2"}',
+      });
+
+      const response = await request(authorizeUrl('', 'openid payroll'));
+
+      expect(outcome(response).searchParams.get('error')).toBe('access_denied');
+    });
+
+    it('answers temporarily_unavailable when the evidence cannot be read, never IAL1', async () => {
+      clientWithMinimum('IAL2');
+      useEvidence('fail');
+
+      const response = await request(authorizeUrl());
+
+      // At the authorization endpoint temporarily_unavailable is an OAuth error code returned to the
+      // client by redirect (like the account data failure in the same handler), not an HTTP 503.
+      expect(response.status).toBe(302);
+      const location = outcome(response);
+      expect(location.origin + location.pathname).toBe('https://example.com/callback');
+      expect(location.searchParams.get('error')).toBe('temporarily_unavailable');
+      expect(location.searchParams.get('state')).toBe('ial-state');
+      expect(location.searchParams.get('code')).toBeNull();
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it('returns that error in the form_post shape too, with no code', async () => {
+      clientWithMinimum('IAL2');
+      useEvidence('fail');
+
+      const response = await request(authorizeUrl('&response_mode=form_post'));
+
+      expect(response.status).toBe(200);
+      const html = await response.text();
+      expect(html).toContain('temporarily_unavailable');
+      expect(html).not.toContain('name="code"');
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it('refuses before a step-up or re-authentication that could not help', async () => {
+      clientWithMinimum('IAL2');
+      useEvidence([]);
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+
+      const response = await request(authorizeUrl());
+
+      expect(outcome(response).searchParams.get('error')).toBe('access_denied');
+      expect(outcome(response).pathname).not.toBe('/reauth');
+    });
+
+    it.each([
+      ['prompt=login', '&prompt=login'],
+      ['an exceeded max_age', '&max_age=0'],
+    ])(
+      'sends the user to re-authenticate for %s first, judging IAL on the user who comes back',
+      async (_label, query) => {
+        clientWithMinimum('IAL2');
+        const reads = useEvidence([]);
+
+        const response = await request(authorizeUrl(query));
+
+        // The session's user may not be the one who re-authenticates, so the old session is not
+        // judged: the request goes to re-authenticate, with no evidence read and no code.
+        expect(outcome(response).pathname).toBe('/reauth');
+        expect(reads).toEqual([]);
+        expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+      }
+    );
+
+    describe.each([
+      ['prompt=login', '&prompt=login'],
+      ['an exceeded max_age', '&max_age=0'],
+    ])('after the re-authentication for %s returns', (_label, query) => {
+      async function returnFromReauth() {
+        getChallengeMap(env).set('ial_reauth_return', {
+          id: 'ial_reauth_return',
+          tenantId: 'default',
+          type: 'reauth',
+          userId: 'test-user',
+          challenge: 'ial_reauth_return',
+          metadata: {
+            purpose: 'authorize_confirmation',
+            authTime: 1_700_000_100,
+            sessionUserId: 'test-user',
+            browserBinding: 'ial-reauth-browser',
+          },
+        });
+        return app.request(
+          `/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=ial-reauth${query}&_confirmation_challenge=ial_reauth_return`,
+          {
+            method: 'GET',
+            headers: { Cookie: 'authrim_authorize_confirmation=ial-reauth-browser' },
+          },
+          env
+        );
+      }
+
+      it('refuses a user below the client minimum with access_denied', async () => {
+        clientWithMinimum('IAL2');
+        const reads = useEvidence([ev('IAL1')]);
+
+        const response = await returnFromReauth();
+
+        expect(outcome(response).searchParams.get('error')).toBe('access_denied');
+        expect(outcome(response).searchParams.get('state')).toBe('ial-reauth');
+        expect(reads).toHaveLength(1);
+        expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+      });
+
+      it('issues a code to a user at the client minimum', async () => {
+        clientWithMinimum('IAL2');
+        useEvidence([ev('IAL2')]);
+
+        const response = await returnFromReauth();
+
+        expect(outcome(response).searchParams.get('code')).toBeTruthy();
+        expect(outcome(response).searchParams.get('error')).toBeNull();
+      });
+    });
+
+    it('judges the user who comes back from a login or re-authentication', async () => {
+      clientWithMinimum('IAL2');
+      const reads = useEvidence([]);
+      getChallengeMap(env).set('ial_login_confirmation', {
+        id: 'ial_login_confirmation',
+        tenantId: 'default',
+        type: 'reauth',
+        userId: 'test-user',
+        challenge: 'ial_login_confirmation',
+        metadata: {
+          purpose: 'authorize_confirmation',
+          browserBinding: 'ial-login-browser',
+          authTime: 1_700_000_100,
+          sessionUserId: 'test-user',
+          authorization_request: {
+            source: 'frontchannel',
+            authorization_server: 'default',
+            integrity_protected: false,
+            issuer: 'https://test.example.com',
+            response_type: 'code',
+            client_id: 'test-client',
+            redirect_uri: 'https://example.com/callback',
+            scope: 'openid',
+            state: 'ial-login',
+            code_challenge: 'a'.repeat(43),
+            code_challenge_method: 'S256',
+          },
+        },
+      });
+
+      const response = await app.request(
+        '/authorize?_confirmation_challenge=ial_login_confirmation',
+        { method: 'GET', headers: { Cookie: 'authrim_authorize_confirmation=ial-login-browser' } },
+        env
+      );
+
+      expect(outcome(response).searchParams.get('error')).toBe('access_denied');
+      expect(outcome(response).searchParams.get('state')).toBe('ial-login');
+      expect(reads).toHaveLength(1);
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it('applies the scope map to the scopes of a pushed authorization request', async () => {
+      useEvidence([]);
+      await setAssurance({
+        'assurance.enabled': true,
+        'assurance.scope_ial_requirements': '{"payroll":"IAL2"}',
+      });
+      const requestUri = 'urn:ietf:params:oauth:request_uri:par_ial_scope';
+      env.PAR_REQUEST_STORE = createMockPARRequestStore({
+        client_id: 'test-client',
+        response_type: 'code',
+        redirect_uri: 'https://example.com/callback',
+        scope: 'openid payroll',
+        state: 'par-ial',
+        code_challenge: 'a'.repeat(43),
+        code_challenge_method: 'S256',
+      }) as unknown as Env['PAR_REQUEST_STORE'];
+
+      const response = await request(
+        `/authorize?client_id=test-client&request_uri=${encodeURIComponent(requestUri)}`
+      );
+
+      expect(outcome(response).searchParams.get('error')).toBe('access_denied');
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it('applies the scope map to the scopes of a signed request object', async () => {
+      useEvidence([]);
+      await setAssurance({
+        'assurance.enabled': true,
+        'assurance.scope_ial_requirements': '{"payroll":"IAL2"}',
+      });
+      const keyPair = await generateKeyPair('RS256', { extractable: true });
+      const publicJwk = {
+        ...(await exportJWK(keyPair.publicKey)),
+        kid: 'ial-jar-key',
+        alg: 'RS256',
+        use: 'sig',
+      };
+      mockGetClient.mockResolvedValue({
+        client_id: 'test-client',
+        client_secret_hash: 'confidential-client-secret-hash',
+        redirect_uris: ['https://example.com/callback'],
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+        scope: 'openid payroll',
+        token_endpoint_auth_method: 'private_key_jwt',
+        jwks: { keys: [publicJwk] },
+      });
+      const requestObject = await new SignJWT({
+        client_id: 'test-client',
+        response_type: 'code',
+        redirect_uri: 'https://example.com/callback',
+        // The query string asks for less than the signed object does.
+        scope: 'openid payroll',
+        state: 'jar-ial',
+      })
+        .setProtectedHeader({ alg: 'RS256', kid: publicJwk.kid })
+        .setIssuer('test-client')
+        .setAudience('https://test.example.com')
+        .setIssuedAt()
+        .setExpirationTime('5m')
+        .sign(keyPair.privateKey);
+
+      const response = await request(
+        `/authorize?client_id=test-client&scope=openid&request=${encodeURIComponent(requestObject)}`
+      );
+
+      expect(outcome(response).searchParams.get('error')).toBe('access_denied');
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('assurance (AAL enforcement)', () => {
+    const STEP_UP_SESSION_ID = 'g1:apac:3:session_step-up';
+    // When the step-up began (milliseconds), and the session its authentication made, after it.
+    const STEP_UP_STARTED_AT = Date.now() - 30_000;
+    const AFTER_STEP_UP = Date.now();
+    const authorizeUrl = (extra = '') =>
+      `/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=aal-state&code_challenge=${'a'.repeat(43)}&code_challenge_method=S256${extra}`;
+
+    async function setAssurance(values: Record<string, unknown>) {
+      await (env.SETTINGS as unknown as MockKVNamespace).put(
+        'settings:tenant:default:assurance',
+        JSON.stringify(values)
+      );
+    }
+
+    function seedSessionData(
+      id: string,
+      data: Record<string, unknown>,
+      userId = 'test-user',
+      createdAt = Date.now() - 60000
+    ) {
+      getSessionMap(env).set(id, {
+        id,
+        userId,
+        createdAt,
+        expiresAt: Date.now() + 3600000,
+        data: { authTime: Math.floor(Date.now() / 1000) - 60, ...data },
+      });
+    }
+
+    async function request(
+      url: string,
+      cookies: string[] = [`authrim_session=${encodeURIComponent(TEST_SESSION_ID)}`]
+    ) {
+      return app.request(url, { method: 'GET', headers: { Cookie: cookies.join('; ') } }, env);
+    }
+
+    beforeEach(async () => {
+      env.UI_URL = 'https://login.example.com';
+      await configureClientSettings(env, { 'client.sso_enabled': true });
+      configureClientTrustPolicy(env);
+    });
+
+    it('changes nothing while assurance is off', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'], acr: 'urn:mace:incommon:iap:bronze' });
+      await setAssurance({ 'assurance.default_aal': 'AAL2' });
+
+      const response = await request(authorizeUrl());
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('code')).toBeTruthy();
+      const stored = getAuthCodeStore(env).storeCodeRpc.mock.calls.at(-1)?.[0];
+      expect(stored).toMatchObject({ acr: 'urn:mace:incommon:iap:bronze', amr: ['pwd'] });
+      expect(stored).not.toHaveProperty('aal');
+    });
+
+    it('issues the acr and AAL of a session that meets the requirement', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['passkey'], acr: 'urn:mace:incommon:iap:bronze' });
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+
+      const response = await request(authorizeUrl());
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('code')).toBeTruthy();
+      expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
+        expect.objectContaining({ acr: 'urn:authrim:aal:2', aal: 'AAL2' })
+      );
+    });
+
+    it('steps up a session below the required AAL through re-authentication', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] });
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+
+      const response = await request(authorizeUrl());
+
+      expect(response.status).toBe(302);
+      const location = new URL(response.headers.get('Location')!);
+      expect(location.origin + location.pathname).toBe('https://login.example.com/reauth');
+      expect(location.searchParams.get('required_aal')).toBe('AAL2');
+      expect(getChallengeMap(env).get(location.searchParams.get('challenge_id')!)).toMatchObject({
+        type: 'reauth',
+        metadata: expect.objectContaining({
+          assurance_step_up: {
+            prior_session_id: TEST_SESSION_ID,
+            required_aal: 'AAL2',
+            issued_at: expect.any(Number),
+          },
+        }),
+      });
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it('answers login_required for prompt=none below the required AAL', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] });
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+
+      const response = await request(authorizeUrl('&prompt=none'));
+
+      const location = new URL(response.headers.get('Location')!);
+      expect(location.searchParams.get('error')).toBe('login_required');
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it('fails an essential acr request naming no value Authrim issues', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['passkey'] });
+      await setAssurance({ 'assurance.enabled': true });
+      const claims = encodeURIComponent(
+        JSON.stringify({ id_token: { acr: { essential: true, values: ['urn:other:acr'] } } })
+      );
+
+      const response = await request(authorizeUrl(`&claims=${claims}`));
+
+      const location = new URL(response.headers.get('Location')!);
+      expect(location.searchParams.get('error')).toBe('unmet_authentication_requirements');
+    });
+
+    function seedStepUpConfirmation(id: string, priorSessionId: string) {
+      getChallengeMap(env).set(id, {
+        id,
+        tenantId: 'default',
+        type: 'reauth',
+        userId: 'test-user',
+        challenge: id,
+        metadata: {
+          purpose: 'authorize_confirmation',
+          authTime: Math.floor(Date.now() / 1000),
+          sessionUserId: 'test-user',
+          browserBinding: `${id}-browser`,
+          assurance_step_up: {
+            prior_session_id: priorSessionId,
+            required_aal: 'AAL2',
+            issued_at: STEP_UP_STARTED_AT,
+          },
+          authorization_request: {
+            source: 'frontchannel',
+            authorization_server: 'default',
+            integrity_protected: false,
+            response_type: 'code',
+            client_id: 'test-client',
+            redirect_uri: 'https://example.com/callback',
+            scope: 'openid',
+            state: 'aal-state',
+            code_challenge: 'a'.repeat(43),
+            code_challenge_method: 'S256',
+          },
+        },
+      });
+    }
+
+    it("combines the earlier session's password with the TOTP of the step-up", async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] });
+      seedSessionData(
+        STEP_UP_SESSION_ID,
+        { amr: ['otp', 'totp'], proven_at: AFTER_STEP_UP },
+        'test-user',
+        AFTER_STEP_UP
+      );
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+      seedStepUpConfirmation('step-up-ok', TEST_SESSION_ID);
+
+      const response = await request('/authorize?_confirmation_challenge=step-up-ok', [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+        'authrim_authorize_confirmation=step-up-ok-browser',
+      ]);
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('code')).toBeTruthy();
+      expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
+        expect.objectContaining({
+          acr: 'urn:authrim:aal:2',
+          aal: 'AAL2',
+          amr: ['pwd', 'otp', 'totp'],
+        })
+      );
+      expect((getSessionMap(env).get(STEP_UP_SESSION_ID) as { data: unknown }).data).toMatchObject({
+        amr: ['pwd', 'otp', 'totp'],
+        unverified_amr: [],
+        // The earlier session records no proof time: the combined evidence is never fresh again.
+        proven_at: 0,
+        // The step-up's own TOTP stays what a later re-authentication can take, with its time.
+        reauth_proven_amr: ['otp', 'totp'],
+        reauth_proven_at: AFTER_STEP_UP,
+      });
+    });
+
+    it('keeps what a concurrent step-up of the same session combined', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] });
+      seedSessionData(
+        STEP_UP_SESSION_ID,
+        { amr: ['otp', 'totp'], proven_at: AFTER_STEP_UP },
+        'test-user',
+        AFTER_STEP_UP
+      );
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+      seedStepUpConfirmation('step-up-race', TEST_SESSION_ID);
+      const store = (
+        env.SESSION_STORE as unknown as { get: () => Record<string, ReturnType<typeof vi.fn>> }
+      ).get();
+      const write = store.updateSessionDataRpc.getMockImplementation() as (
+        ...args: unknown[]
+      ) => Promise<unknown>;
+      // Between this request's read and its write, another step-up of the session wrote first.
+      store.updateSessionDataRpc.mockImplementationOnce(async (...args: unknown[]) => {
+        (getSessionMap(env).get(STEP_UP_SESSION_ID) as { data: Record<string, unknown> }).data = {
+          amr: ['did', 'otp', 'totp'],
+          unverified_amr: [],
+          proven_at: STEP_UP_STARTED_AT - 1,
+        };
+        return write(...args);
+      });
+
+      const response = await request('/authorize?_confirmation_challenge=step-up-race', [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+        'authrim_authorize_confirmation=step-up-race-browser',
+      ]);
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('code')).toBeTruthy();
+      // The code reports this request's evidence; the session keeps both step-ups'.
+      expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
+        expect.objectContaining({ aal: 'AAL2', amr: ['pwd', 'otp', 'totp'] })
+      );
+      const data = (getSessionMap(env).get(STEP_UP_SESSION_ID) as { data: { amr: string[] } }).data;
+      expect([...data.amr].sort()).toEqual(['did', 'otp', 'pwd', 'totp']);
+      expect(data).toMatchObject({ unverified_amr: [], proven_at: 0 });
+      expect(store.updateSessionDataRpc).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps a re-authentication completed while the step-up was being recorded', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] });
+      seedSessionData(
+        STEP_UP_SESSION_ID,
+        { amr: ['otp', 'totp'], proven_at: AFTER_STEP_UP },
+        'test-user',
+        AFTER_STEP_UP
+      );
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+      seedStepUpConfirmation('step-up-reauth-race', TEST_SESSION_ID);
+      const store = (
+        env.SESSION_STORE as unknown as { get: () => Record<string, ReturnType<typeof vi.fn>> }
+      ).get();
+      const write = store.updateSessionDataRpc.getMockImplementation() as (
+        ...args: unknown[]
+      ) => Promise<unknown>;
+      // Between this request's read and its write, the account page re-authenticated the session.
+      store.updateSessionDataRpc.mockImplementationOnce(async (...args: unknown[]) => {
+        const session = getSessionMap(env).get(STEP_UP_SESSION_ID) as {
+          data: Record<string, unknown>;
+        };
+        session.data = {
+          ...session.data,
+          reauth_proven_amr: ['passkey'],
+          reauth_proven_at: AFTER_STEP_UP + 5_000,
+        };
+        return write(...args);
+      });
+
+      const response = await request('/authorize?_confirmation_challenge=step-up-reauth-race', [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+        'authrim_authorize_confirmation=step-up-reauth-race-browser',
+      ]);
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('code')).toBeTruthy();
+      const data = (getSessionMap(env).get(STEP_UP_SESSION_ID) as { data: { amr: string[] } }).data;
+      expect([...data.amr].sort()).toEqual(['otp', 'pwd', 'totp']);
+      expect(data).toMatchObject({
+        proven_at: 0,
+        // The newer re-authentication stands, not the step-up's older TOTP.
+        reauth_proven_amr: ['passkey'],
+        reauth_proven_at: AFTER_STEP_UP + 5_000,
+      });
+      expect(store.updateSessionDataRpc).toHaveBeenCalledTimes(2);
+    });
+
+    it('records the step-up while re-authentications keep updating the pair', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] });
+      seedSessionData(
+        STEP_UP_SESSION_ID,
+        { amr: ['otp', 'totp'], proven_at: AFTER_STEP_UP },
+        'test-user',
+        AFTER_STEP_UP
+      );
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+      seedStepUpConfirmation('step-up-reauth-churn', TEST_SESSION_ID);
+      const store = (
+        env.SESSION_STORE as unknown as { get: () => Record<string, ReturnType<typeof vi.fn>> }
+      ).get();
+      const write = store.updateSessionDataRpc.getMockImplementation() as (
+        ...args: unknown[]
+      ) => Promise<unknown>;
+      // Before every write, another account-page re-authentication records a newer pair.
+      let reauthAt = AFTER_STEP_UP;
+      store.updateSessionDataRpc.mockImplementation(async (...args: unknown[]) => {
+        reauthAt += 1_000;
+        const session = getSessionMap(env).get(STEP_UP_SESSION_ID) as {
+          data: Record<string, unknown>;
+        };
+        session.data = {
+          ...session.data,
+          reauth_proven_amr: ['email_code'],
+          reauth_proven_at: reauthAt,
+        };
+        return write(...args);
+      });
+
+      const response = await request('/authorize?_confirmation_challenge=step-up-reauth-churn', [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+        'authrim_authorize_confirmation=step-up-reauth-churn-browser',
+      ]);
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('code')).toBeTruthy();
+      const data = (getSessionMap(env).get(STEP_UP_SESSION_ID) as { data: { amr: string[] } }).data;
+      // The combined evidence is recorded, and the latest re-authentication stands.
+      expect([...data.amr].sort()).toEqual(['otp', 'pwd', 'totp']);
+      expect(data).toMatchObject({
+        proven_at: 0,
+        reauth_proven_amr: ['email_code'],
+        reauth_proven_at: reauthAt,
+      });
+    });
+
+    it('fails rather than stepping up again when the step-up still falls short', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] });
+      // An emailed code is never a second factor.
+      seedSessionData(
+        STEP_UP_SESSION_ID,
+        { amr: ['otp'], proven_at: AFTER_STEP_UP },
+        'test-user',
+        AFTER_STEP_UP
+      );
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+      seedStepUpConfirmation('step-up-short', TEST_SESSION_ID);
+
+      const response = await request('/authorize?_confirmation_challenge=step-up-short', [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+        'authrim_authorize_confirmation=step-up-short-browser',
+      ]);
+
+      const location = new URL(response.headers.get('Location')!);
+      expect(location.searchParams.get('error')).toBe('unmet_authentication_requirements');
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["another user's session", 'other-user', true],
+      ['an older session of the same user', 'test-user', false],
+    ])('does not count the evidence of %s as the step-up', async (_label, owner, fresh) => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] });
+      const data = { amr: ['otp', 'totp'] };
+      // A proof made 1 ms before the step-up began does not count either.
+      const provenAt = fresh ? AFTER_STEP_UP : STEP_UP_STARTED_AT - 1;
+      seedSessionData(STEP_UP_SESSION_ID, { ...data, proven_at: provenAt }, owner, provenAt);
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+      seedStepUpConfirmation('step-up-switched', TEST_SESSION_ID);
+
+      const response = await request('/authorize?_confirmation_challenge=step-up-switched', [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+        'authrim_authorize_confirmation=step-up-switched-browser',
+      ]);
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('error')).toBe(
+        'unmet_authentication_requirements'
+      );
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+      expect((getSessionMap(env).get(STEP_UP_SESSION_ID) as { data: unknown }).data).toMatchObject({
+        amr: ['otp', 'totp'],
+      });
+    });
+
+    it('keeps the upstream acr of the session stepped up from, so the next request agrees', async () => {
+      seedSessionData(TEST_SESSION_ID, {
+        amr: ['external_idp'],
+        upstream_acr: 'urn:mace:incommon:iap:silver',
+      });
+      seedSessionData(
+        STEP_UP_SESSION_ID,
+        { amr: ['otp', 'totp'], proven_at: AFTER_STEP_UP },
+        'test-user',
+        AFTER_STEP_UP
+      );
+      await setAssurance({
+        'assurance.enabled': true,
+        'assurance.default_aal': 'AAL2',
+        'assurance.upstream_acr_mappings': '{"urn:mace:incommon:iap:silver":"AAL2"}',
+      });
+      seedStepUpConfirmation('step-up-upstream', TEST_SESSION_ID);
+
+      await request('/authorize?_confirmation_challenge=step-up-upstream', [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+        'authrim_authorize_confirmation=step-up-upstream-browser',
+      ]);
+
+      expect((getSessionMap(env).get(STEP_UP_SESSION_ID) as { data: unknown }).data).toMatchObject({
+        upstream_acr: 'urn:mace:incommon:iap:silver',
+      });
+      const next = await request(authorizeUrl('&prompt=none'), [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+      ]);
+      expect(new URL(next.headers.get('Location')!).searchParams.get('code')).toBeTruthy();
+    });
+
+    it('aims for a voluntary acr_value before consent, never again on the way back from it', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['passkey'] });
+      await setAssurance({ 'assurance.enabled': true });
+      const voluntary = `&acr_values=${encodeURIComponent('urn:authrim:aal:3')}`;
+
+      const first = await request(authorizeUrl(voluntary));
+      expect(new URL(first.headers.get('Location')!).pathname).toBe('/reauth');
+
+      getChallengeMap(env).set('aal-consent', {
+        id: 'aal-consent',
+        tenantId: 'default',
+        type: 'consent',
+        userId: 'test-user',
+        challenge: 'aal-consent',
+        metadata: {
+          purpose: 'authorize_consent_confirmation',
+          consent_generation: 0,
+          sessionId: TEST_SESSION_ID,
+          browserBinding: 'aal-consent-browser',
+        },
+      });
+      const back = await request(
+        `${authorizeUrl(voluntary)}&_consent_confirmation_challenge=aal-consent`,
+        [
+          `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}`,
+          'authrim_consent_confirmation=aal-consent-browser',
+        ]
+      );
+      expect(new URL(back.headers.get('Location')!).searchParams.get('code')).toBeTruthy();
+      expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
+        expect.objectContaining({ acr: 'urn:authrim:aal:2', aal: 'AAL2' })
+      );
+    });
+
+    it('returns one of the essential values even when assurance claims are not included', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['passkey'], acr: 'urn:mace:incommon:iap:bronze' });
+      await setAssurance({ 'assurance.enabled': true, 'assurance.include_in_id_token': false });
+      const claims = encodeURIComponent(
+        JSON.stringify({ id_token: { acr: { essential: true, values: ['urn:authrim:aal:2'] } } })
+      );
+
+      await request(authorizeUrl(`&claims=${claims}`));
+      expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenLastCalledWith(
+        expect.objectContaining({ acr: 'urn:authrim:aal:2' })
+      );
+
+      // Without an essential request, the setting keeps the session's own acr.
+      await request(authorizeUrl());
+      expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenLastCalledWith(
+        expect.objectContaining({ acr: 'urn:mace:incommon:iap:bronze' })
+      );
+    });
+
+    it('answers an acr of another vocabulary with its own acr while no table maps it', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['passkey'] });
+      await setAssurance({ 'assurance.enabled': true });
+
+      await request(
+        authorizeUrl(`&acr_values=${encodeURIComponent('urn:mace:incommon:iap:silver')}`)
+      );
+
+      expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenLastCalledWith(
+        expect.objectContaining({ acr: 'urn:authrim:aal:2', aal: 'AAL2' })
+      );
+    });
+
+    it('returns an outbound-mapped acr asked for once the session meets its AAL', async () => {
+      const silver = 'urn:mace:incommon:iap:silver';
+      seedSessionData(TEST_SESSION_ID, { amr: ['passkey'] });
+      await setAssurance({
+        'assurance.enabled': true,
+        'assurance.outbound_acr_mappings': JSON.stringify({ [silver]: 'AAL2' }),
+      });
+
+      await request(authorizeUrl(`&acr_values=${encodeURIComponent(silver)}`));
+
+      expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenLastCalledWith(
+        expect.objectContaining({ acr: silver, aal: 'AAL2' })
+      );
+    });
+
+    it('steps up for an outbound-mapped acr like for its own value at that AAL', async () => {
+      const silver = 'urn:mace:incommon:iap:silver';
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] });
+      await setAssurance({
+        'assurance.enabled': true,
+        'assurance.outbound_acr_mappings': JSON.stringify({ [silver]: 'AAL2' }),
+      });
+
+      const response = await request(authorizeUrl(`&acr_values=${encodeURIComponent(silver)}`));
+
+      const location = new URL(response.headers.get('Location')!);
+      expect(location.pathname).toBe('/reauth');
+      expect(location.searchParams.get('required_aal')).toBe('AAL2');
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it('refuses an essential acr of another vocabulary while no table maps it', async () => {
+      const claims = encodeURIComponent(
+        JSON.stringify({
+          id_token: { acr: { essential: true, values: ['urn:mace:incommon:iap:silver'] } },
+        })
+      );
+      seedSessionData(TEST_SESSION_ID, { amr: ['passkey'] });
+      await setAssurance({ 'assurance.enabled': true });
+
+      const response = await request(authorizeUrl(`&claims=${claims}`));
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('error')).toBe(
+        'unmet_authentication_requirements'
+      );
+    });
+
+    it('answers an essential outbound-mapped acr with that value', async () => {
+      const silver = 'urn:mace:incommon:iap:silver';
+      const claims = encodeURIComponent(
+        JSON.stringify({ id_token: { acr: { essential: true, values: [silver] } } })
+      );
+      seedSessionData(TEST_SESSION_ID, { amr: ['passkey'] });
+      await setAssurance({
+        'assurance.enabled': true,
+        'assurance.include_in_id_token': false,
+        'assurance.outbound_acr_mappings': JSON.stringify({ [silver]: 'AAL2' }),
+      });
+
+      await request(authorizeUrl(`&claims=${claims}`));
+
+      expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenLastCalledWith(
+        expect.objectContaining({ acr: silver })
+      );
+    });
+
+    it("does not exempt a request from the default for another user's guest session", async () => {
+      // The confirmation names test-user; the cookie carries someone else's guest session.
+      seedSessionData(STEP_UP_SESSION_ID, { amr: ['anon'], is_guest_session: true }, 'guest-user');
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+      getChallengeMap(env).set('login-confirmation', {
+        id: 'login-confirmation',
+        tenantId: 'default',
+        type: 'reauth',
+        userId: 'test-user',
+        challenge: 'login-confirmation',
+        metadata: {
+          purpose: 'authorize_confirmation',
+          authTime: Math.floor(Date.now() / 1000),
+          sessionUserId: 'test-user',
+          browserBinding: 'login-confirmation-browser',
+          authorization_request: {
+            source: 'frontchannel',
+            authorization_server: 'default',
+            integrity_protected: false,
+            response_type: 'code',
+            client_id: 'test-client',
+            redirect_uri: 'https://example.com/callback',
+            scope: 'openid',
+            state: 'aal-state',
+            code_challenge: 'a'.repeat(43),
+            code_challenge_method: 'S256',
+          },
+        },
+      });
+
+      const response = await request('/authorize?_confirmation_challenge=login-confirmation', [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+        'authrim_authorize_confirmation=login-confirmation-browser',
+      ]);
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('code')).toBeNull();
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it('does not combine a session that does not record when its proof was made', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] });
+      // Made after the step-up began, but its proof may predate it (no proven_at).
+      seedSessionData(STEP_UP_SESSION_ID, { amr: ['otp', 'totp'] }, 'test-user', AFTER_STEP_UP);
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+      seedStepUpConfirmation('step-up-no-proof-time', TEST_SESSION_ID);
+
+      const response = await request('/authorize?_confirmation_challenge=step-up-no-proof-time', [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+        'authrim_authorize_confirmation=step-up-no-proof-time-browser',
+      ]);
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('error')).toBe(
+        'unmet_authentication_requirements'
+      );
+    });
+
+    it('does not count a proof made before the step-up, even in a session made after it', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['otp', 'totp'] });
+      // A Direct Auth artifact proven before the step-up began, redeemed after it.
+      seedSessionData(
+        STEP_UP_SESSION_ID,
+        { amr: ['pwd'], proven_at: STEP_UP_STARTED_AT - 1 },
+        'test-user',
+        AFTER_STEP_UP
+      );
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+      seedStepUpConfirmation('step-up-stale-proof', TEST_SESSION_ID);
+
+      const response = await request('/authorize?_confirmation_challenge=step-up-stale-proof', [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+        'authrim_authorize_confirmation=step-up-stale-proof-browser',
+      ]);
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('error')).toBe(
+        'unmet_authentication_requirements'
+      );
+    });
+
+    it('does not let a combined session pass for the authentication of a later step-up', async () => {
+      // An earlier password proof, combined with a fresh TOTP step-up.
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'], proven_at: STEP_UP_STARTED_AT - 10_000 });
+      seedSessionData(
+        STEP_UP_SESSION_ID,
+        { amr: ['otp', 'totp'], proven_at: AFTER_STEP_UP },
+        'test-user',
+        AFTER_STEP_UP
+      );
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+      seedStepUpConfirmation('first-step-up', TEST_SESSION_ID);
+      await request('/authorize?_confirmation_challenge=first-step-up', [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+        'authrim_authorize_confirmation=first-step-up-browser',
+      ]);
+      expect((getSessionMap(env).get(STEP_UP_SESSION_ID) as { data: unknown }).data).toMatchObject({
+        amr: ['pwd', 'otp', 'totp'],
+        proven_at: STEP_UP_STARTED_AT - 10_000,
+      });
+
+      // A later step-up cannot take that session as its own fresh authentication: nothing of the
+      // session it stepped up from is combined in.
+      const OTHER_PRIOR = 'g1:apac:3:session_other-prior';
+      seedSessionData(OTHER_PRIOR, { amr: ['did'] });
+      seedStepUpConfirmation('second-step-up', OTHER_PRIOR);
+      await request('/authorize?_confirmation_challenge=second-step-up', [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+        'authrim_authorize_confirmation=second-step-up-browser',
+      ]);
+      expect(
+        (getSessionMap(env).get(STEP_UP_SESSION_ID) as { data: { amr: string[] } }).data.amr
+      ).not.toContain('did');
+    });
+
+    it('does not step up again after a step-up that had no session to combine with', async () => {
+      seedSessionData(
+        STEP_UP_SESSION_ID,
+        { amr: ['pwd'], proven_at: AFTER_STEP_UP },
+        'test-user',
+        AFTER_STEP_UP
+      );
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+      seedStepUpConfirmation('step-up-sessionless', TEST_SESSION_ID);
+      const confirmation = getChallengeMap(env).get('step-up-sessionless') as {
+        metadata: { assurance_step_up: Record<string, unknown> };
+      };
+      delete confirmation.metadata.assurance_step_up.prior_session_id;
+
+      const response = await request('/authorize?_confirmation_challenge=step-up-sessionless', [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+        'authrim_authorize_confirmation=step-up-sessionless-browser',
+      ]);
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('error')).toBe(
+        'unmet_authentication_requirements'
+      );
+    });
+
+    it.each([
+      ['an assurance step-up', true],
+      ['a prompt=login re-authentication', false],
+    ])('takes no older session of the user as the result of %s', async (_label, stepUp) => {
+      // An old passkey session (AAL2 on its own), switched in after the re-authentication.
+      const OLD_PASSKEY_SESSION = 'g1:apac:3:session_old-passkey';
+      seedSessionData(OLD_PASSKEY_SESSION, {
+        amr: ['passkey'],
+        proven_at: STEP_UP_STARTED_AT - 60_000,
+      });
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] });
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+      seedStepUpConfirmation('reauth-swapped', TEST_SESSION_ID);
+      const confirmation = getChallengeMap(env).get('reauth-swapped') as {
+        metadata: Record<string, unknown>;
+      };
+      confirmation.metadata.reauth_issued_at = STEP_UP_STARTED_AT;
+      if (!stepUp) delete confirmation.metadata.assurance_step_up;
+
+      const response = await request('/authorize?_confirmation_challenge=reauth-swapped', [
+        `authrim_session=${encodeURIComponent(OLD_PASSKEY_SESSION)}`,
+        'authrim_authorize_confirmation=reauth-swapped-browser',
+      ]);
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('code')).toBeNull();
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["another user's session", 'other-user', STEP_UP_STARTED_AT + 1],
+      ['an older session of the same user', 'test-user', STEP_UP_STARTED_AT - 60_000],
+    ])('reports none of the methods of %s in the code', async (_label, owner, provenAt) => {
+      const SWAPPED_SESSION = 'g1:apac:3:session_swapped';
+      seedSessionData(
+        SWAPPED_SESSION,
+        { amr: ['passkey'], acr: 'urn:mace:incommon:iap:silver', proven_at: provenAt },
+        owner,
+        provenAt
+      );
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] });
+      // No mandatory level beyond the baseline: the request goes through.
+      await setAssurance({ 'assurance.enabled': true });
+      seedStepUpConfirmation('reauth-methods', TEST_SESSION_ID);
+      const confirmation = getChallengeMap(env).get('reauth-methods') as {
+        metadata: Record<string, unknown>;
+      };
+      confirmation.metadata.reauth_issued_at = STEP_UP_STARTED_AT;
+      delete confirmation.metadata.assurance_step_up;
+
+      const response = await request('/authorize?_confirmation_challenge=reauth-methods', [
+        `authrim_session=${encodeURIComponent(SWAPPED_SESSION)}`,
+        'authrim_authorize_confirmation=reauth-methods-browser',
+      ]);
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('code')).toBeTruthy();
+      expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'test-user',
+          amr: undefined,
+          acr: undefined,
+          aal: 'AAL0',
+        })
+      );
+    });
+
+    it.each([
+      ['a passkey proven 1 ms before it was asked for', ['passkey'], -1, false],
+      ['a passkey proven as it was asked for', ['passkey'], 0, true],
+      // An external IdP login records no proof time (the IdP's times are in its own clock).
+      ['an external IdP login', ['external_idp'], undefined, false],
+    ])(
+      'takes %s as the result of a re-authentication only when proven after it',
+      async (_label, amr, offset, accepted) => {
+        const REQUESTED_AT = STEP_UP_STARTED_AT;
+        const provenAt = offset === undefined ? undefined : REQUESTED_AT + offset;
+        const RESULT_SESSION = 'g1:apac:3:session_result';
+        seedSessionData(
+          RESULT_SESSION,
+          {
+            amr,
+            upstream_acr: 'urn:example:mfa',
+            ...(provenAt === undefined ? {} : { proven_at: provenAt }),
+          },
+          'test-user',
+          AFTER_STEP_UP
+        );
+        await setAssurance({
+          'assurance.enabled': true,
+          'assurance.default_aal': 'AAL2',
+          'assurance.upstream_acr_mappings': '{"urn:example:mfa":"AAL2"}',
+        });
+        seedStepUpConfirmation('reauth-result', TEST_SESSION_ID);
+        const confirmation = getChallengeMap(env).get('reauth-result') as {
+          metadata: Record<string, unknown>;
+        };
+        confirmation.metadata.reauth_issued_at = REQUESTED_AT;
+        delete confirmation.metadata.assurance_step_up;
+
+        const response = await request('/authorize?_confirmation_challenge=reauth-result', [
+          `authrim_session=${encodeURIComponent(RESULT_SESSION)}`,
+          'authrim_authorize_confirmation=reauth-result-browser',
+        ]);
+
+        const code = new URL(response.headers.get('Location')!).searchParams.get('code');
+        expect(Boolean(code)).toBe(accepted);
+      }
+    );
+
+    describe('FAL', () => {
+      const PAR_URI = 'urn:ietf:params:oauth:request_uri:par_fal';
+      const pushedUrl = `/authorize?client_id=test-client&request_uri=${encodeURIComponent(PAR_URI)}`;
+      function push(extra: Record<string, unknown>) {
+        env.PAR_REQUEST_STORE = createMockPARRequestStore({
+          client_id: 'test-client',
+          response_type: 'code',
+          redirect_uri: 'https://example.com/callback',
+          scope: 'openid',
+          state: 'aal-state',
+          code_challenge: 'a'.repeat(43),
+          code_challenge_method: 'S256',
+          ...extra,
+        }) as unknown as Env['PAR_REQUEST_STORE'];
+      }
+
+      it.each([
+        ['a front-channel request', undefined, false],
+        ['a pushed request without a signed request object', {}, false],
+        ['a pushed request with a signed request object', { request_object_signed: true }, true],
+      ])('at FAL3 takes %s only when pushed and signed', async (_label, pushed, accepted) => {
+        seedSessionData(TEST_SESSION_ID, { amr: ['passkey'] });
+        await setAssurance({ 'assurance.enabled': true, 'assurance.default_fal': 'FAL3' });
+        if (pushed) push(pushed);
+
+        const response = await request(pushed ? pushedUrl : authorizeUrl());
+
+        const location = new URL(response.headers.get('Location')!);
+        if (accepted) {
+          expect(location.searchParams.get('code')).toBeTruthy();
+          // The token endpoint checks this evidence at FAL3.
+          expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
+            expect.objectContaining({ pushedSignedRequest: true })
+          );
+        } else {
+          expect(location.searchParams.get('error')).toBe('invalid_request');
+          expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+        }
+      });
+
+      it('keeps that the pushed request was signed across the login', async () => {
+        await setAssurance({ 'assurance.enabled': true, 'assurance.default_fal': 'FAL3' });
+        push({ request_object_signed: true });
+
+        const response = await request(pushedUrl, []);
+
+        const challengeId = new URL(response.headers.get('Location')!).searchParams.get(
+          'challenge_id'
+        );
+        expect(getChallengeMap(env).get(challengeId!)).toMatchObject({
+          metadata: expect.objectContaining({
+            authorization_request_source: 'par',
+            authorization_request_signed: true,
+          }),
+        });
+      });
+
+      it('takes a pushed request as is while fal3_requires_par is off', async () => {
+        seedSessionData(TEST_SESSION_ID, { amr: ['passkey'] });
+        await setAssurance({
+          'assurance.enabled': true,
+          'assurance.default_fal': 'FAL3',
+          'assurance.fal3_requires_par': false,
+        });
+
+        const response = await request(authorizeUrl());
+
+        expect(new URL(response.headers.get('Location')!).searchParams.get('code')).toBeTruthy();
+        // A front-channel request carries no FAL3 evidence.
+        expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
+          expect.not.objectContaining({ pushedSignedRequest: true })
+        );
+      });
+
+      it.each([
+        ['FAL2', 'code token', 'unsupported_response_type'],
+        ['FAL2', 'code', null],
+        ['FAL1', 'code token', null],
+      ])(
+        'at %s with DPoP issues %s from the front channel unless it holds an access token',
+        async (fal, responseType, error) => {
+          seedSessionData(TEST_SESSION_ID, { amr: ['passkey'] });
+          await setAssurance({ 'assurance.enabled': true, 'assurance.default_fal': fal });
+          mockGetClient.mockResolvedValue({
+            client_id: 'test-client',
+            client_secret: 'test-secret',
+            redirect_uris: ['https://example.com/callback'],
+            grant_types: ['authorization_code', 'implicit'],
+            response_types: ['code', 'code token'],
+            scope: 'openid profile email',
+            token_endpoint_auth_method: 'client_secret_basic',
+          });
+
+          const response = await request(
+            authorizeUrl(`&nonce=n-1`).replace(
+              'response_type=code',
+              `response_type=${encodeURIComponent(responseType)}`
+            )
+          );
+
+          const location = new URL(response.headers.get('Location')!.replace('#', '?'));
+          if (error) {
+            expect(location.searchParams.get('error')).toBe(error);
+          } else {
+            // Not refused for its FAL (whatever else the test environment makes of it).
+            expect(location.searchParams.get('error_description') ?? '').not.toContain('FAL');
+          }
+        }
+      );
+    });
+
+    it('records for access tokens only the methods the authentication proved', async () => {
+      // A passkey registered after a directory login: in the session, not proven.
+      seedSessionData(TEST_SESSION_ID, {
+        amr: ['pwd', 'directory', 'passkey'],
+        unverified_amr: ['passkey'],
+      });
+      await setAssurance({ 'assurance.enabled': true });
+
+      await request(authorizeUrl());
+
+      expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
+        expect.objectContaining({
+          amr: ['pwd', 'directory', 'passkey'],
+          aal: 'AAL1',
+          assuranceAmr: ['pwd', 'directory'],
+        })
+      );
+    });
+
+    it('records the acr of the AAL reached for access tokens, not a lower one asked for', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['passkey'] });
+      await setAssurance({ 'assurance.enabled': true });
+
+      await request(authorizeUrl(`&acr_values=${encodeURIComponent('urn:authrim:aal:1')}`));
+
+      expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
+        expect.objectContaining({
+          // The ID token answers the request; the access token reports what was reached.
+          acr: 'urn:authrim:aal:1',
+          aal: 'AAL2',
+          assuranceAcr: 'urn:authrim:aal:2',
+        })
+      );
+    });
+
+    it('records the acr of the AAL reached for access tokens, whatever ID tokens get', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['passkey'], acr: 'urn:mace:incommon:iap:bronze' });
+      await setAssurance({ 'assurance.enabled': true, 'assurance.include_in_id_token': false });
+
+      await request(authorizeUrl());
+
+      expect(getAuthCodeStore(env).storeCodeRpc).toHaveBeenCalledWith(
+        expect.objectContaining({
+          acr: 'urn:mace:incommon:iap:bronze',
+          aal: 'AAL2',
+          assuranceAcr: 'urn:authrim:aal:2',
+        })
+      );
+    });
+
+    it('records when a re-authentication was asked for', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] });
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+
+      const response = await request(authorizeUrl());
+
+      const challengeId = new URL(response.headers.get('Location')!).searchParams.get(
+        'challenge_id'
+      );
+      expect(getChallengeMap(env).get(challengeId!)).toMatchObject({
+        metadata: expect.objectContaining({ reauth_issued_at: expect.any(Number) }),
+      });
+    });
+
+    it('stops when the session ends before the step-up is recorded', async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] });
+      seedSessionData(
+        STEP_UP_SESSION_ID,
+        { amr: ['otp', 'totp'], proven_at: AFTER_STEP_UP },
+        'test-user',
+        AFTER_STEP_UP
+      );
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+      seedStepUpConfirmation('step-up-ended', TEST_SESSION_ID);
+      const store = (
+        env.SESSION_STORE as unknown as { get: () => Record<string, ReturnType<typeof vi.fn>> }
+      ).get();
+      store.updateSessionDataRpc.mockResolvedValueOnce(null);
+
+      const response = await request('/authorize?_confirmation_challenge=step-up-ended', [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+        'authrim_authorize_confirmation=step-up-ended-browser',
+      ]);
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('error')).toBe(
+        'login_required'
+      );
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    it("does not take another user's session as the one stepped up from", async () => {
+      seedSessionData(TEST_SESSION_ID, { amr: ['pwd'] }, 'other-user');
+      seedSessionData(
+        STEP_UP_SESSION_ID,
+        { amr: ['otp', 'totp'], proven_at: AFTER_STEP_UP },
+        'test-user',
+        AFTER_STEP_UP
+      );
+      await setAssurance({ 'assurance.enabled': true, 'assurance.default_aal': 'AAL2' });
+      seedStepUpConfirmation('step-up-other', TEST_SESSION_ID);
+
+      const response = await request('/authorize?_confirmation_challenge=step-up-other', [
+        `authrim_session=${encodeURIComponent(STEP_UP_SESSION_ID)}`,
+        'authrim_authorize_confirmation=step-up-other-browser',
+      ]);
+
+      expect(new URL(response.headers.get('Location')!).searchParams.get('error')).toBe(
+        'unmet_authentication_requirements'
+      );
     });
   });
 });

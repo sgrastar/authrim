@@ -52,7 +52,6 @@ function createAuthenticationMethodsResponse(cacheTTL = 180) {
 		},
 		ui: {
 			theme: 'default',
-			variant: 'default',
 			branding: {
 				logoUrl: null,
 				brandName: 'Authrim'

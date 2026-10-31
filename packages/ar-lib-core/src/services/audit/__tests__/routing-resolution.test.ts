@@ -101,4 +101,51 @@ describe('audit routing resolution', () => {
     expect(eventResolved.primaryStore).toBe('d1-core');
     expect(piiResolved.primaryStore).toBe('pii-postgres');
   });
+  it('applies target-free retention rules without changing storage or forwarding targets', () => {
+    const config: AuditStorageConfig = {
+      ...DEFAULT_AUDIT_STORAGE_CONFIG,
+      routingRules: [
+        {
+          name: 'other-tenant',
+          priority: 0,
+          enabled: true,
+          conditions: { tenantId: 'tenant-b' },
+          retention: { eventLogRetentionDays: 1 },
+        },
+        {
+          name: 'disabled',
+          priority: 0,
+          enabled: false,
+          conditions: {},
+          retention: { piiLogRetentionDays: 1 },
+        },
+        {
+          name: 'app',
+          priority: 1,
+          enabled: true,
+          conditions: { tenantId: 'tenant-a', clientId: 'app' },
+          retention: { eventLogRetentionDays: 7 },
+        },
+        {
+          name: 'tenant',
+          priority: 2,
+          enabled: true,
+          conditions: { tenantId: 'tenant-a' },
+          retention: { eventLogRetentionDays: 30, piiLogRetentionDays: 365 },
+        },
+      ],
+    };
+    const resolved = resolveAuditRoutingTargets(config, {
+      tenantId: 'tenant-a',
+      logType: 'event',
+      clientId: 'app',
+    });
+    expect(resolved).toEqual({
+      primaryStore: 'd1-core',
+      archiveStores: [],
+      forwardingSinks: [],
+      retention: { eventLogRetentionDays: 7, piiLogRetentionDays: 365 },
+      matchedRuleNames: ['app', 'tenant'],
+    });
+  });
 });

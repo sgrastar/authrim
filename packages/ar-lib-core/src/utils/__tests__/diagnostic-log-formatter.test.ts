@@ -145,4 +145,46 @@ describe('diagnostic-log-formatter', () => {
     expect(output).toContain('token_validation_issuer-check');
     expect(output).toContain('auth_decision_deny');
   });
+
+  describe('naming which side wrote an entry', () => {
+    const labelled = logs.map((entry, index) => ({
+      ...entry,
+      source: index === 0 ? ('sdk' as const) : ('server' as const),
+    })) as DiagnosticLogEntry[];
+
+    it('leaves the source out unless asked, so an export is what it always was', () => {
+      const formatted = toOIDFFormatBatch(labelled, { sortMode: 'timeline' });
+      for (const entry of formatted) expect(entry).not.toHaveProperty('source');
+      expect(formatAsText(labelled, { sortMode: 'timeline' })).not.toContain('Source:');
+      expect(JSON.stringify(formatted)).toBe(
+        JSON.stringify(toOIDFFormatBatch(logs, { sortMode: 'timeline' }))
+      );
+    });
+
+    it('shows the source of each entry when asked, in one timeline', () => {
+      const formatted = toOIDFFormatBatch(labelled, { sortMode: 'timeline', includeSource: true });
+      expect(formatted.map((entry) => entry.source)).toEqual(['sdk', 'server', 'server']);
+      const text = formatAsText(labelled, { sortMode: 'timeline', includeSource: true });
+      expect(text).toContain('Source: sdk');
+      expect(text).toContain('Source: server');
+    });
+
+    it('leaves an entry with no source unlabelled', () => {
+      const formatted = toOIDFFormatBatch(logs, { sortMode: 'timeline', includeSource: true });
+      for (const entry of formatted) expect(entry).not.toHaveProperty('source');
+    });
+  });
+
+  it('includes the token hash of a token validation entry, so exports can be matched on it', () => {
+    const withHash = logs.map((entry) =>
+      entry.category === 'token-validation' ? { ...entry, tokenHash: 'abcdef012345' } : entry
+    ) as DiagnosticLogEntry[];
+    const formatted = toOIDFFormatBatch(withHash, { sortMode: 'timeline' });
+    const token = formatted.find((entry) => entry.category === 'token-validation');
+    expect(token?.details.tokenHash).toBe('abcdef012345');
+    const without = toOIDFFormatBatch(logs, { sortMode: 'timeline' });
+    expect(
+      without.find((entry) => entry.category === 'token-validation')?.details
+    ).not.toHaveProperty('tokenHash', expect.anything());
+  });
 });

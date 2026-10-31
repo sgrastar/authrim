@@ -1,6 +1,12 @@
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import type { Context } from 'hono';
 import { setCookie } from 'hono/cookie';
 import type { Env, TotpCredential, TotpProfile } from '@authrim/ar-lib-core';
+import {
+  accountAuthenticationDenialReason,
+  signInAttemptFailureRecorder,
+  signInAttemptInteractionMetadata,
+} from './sign-in-attempt-recording';
 import {
   AR_ERROR_CODES,
   AUTH_EVENTS,
@@ -30,9 +36,11 @@ import {
   profileForTotpPreset,
   publishEvent,
   resolvePostLoginRedirectUrl,
+  resolveTotpAttemptLimit,
   resolveAccountDataContextFromHono,
   verifyTotpCode,
   type AuthEventData,
+  checkEmailRegistration,
 } from '@authrim/ar-lib-core';
 import { resolveSessionTtl } from './session-ttl';
 import {
@@ -46,11 +54,21 @@ import {
 } from './direct-auth';
 import { verifyHumanVerificationForAction } from './human-verification';
 import {
+  isDeletedDestinationRouteError,
   provisionTenantD1EmailAccount,
   resolveTenantD1EmailAccountRoute,
-  usesTenantD1AccountStorage,
+  usesRoutedAccountStorage,
 } from './account-provisioning';
 import { timeAuthRequestDiagnosticOperation } from './request-diagnostics';
+import { invitationHolderForEmail } from '@authrim/ar-lib-core/services/invitation-auth-core';
+import {
+  completeSignupInvitation,
+  invitationDatabase,
+  signupInvitationErrorResponse,
+  signupInvitationFromMetadata,
+  startSignupInvitation,
+  type SignupInvitationStart,
+} from './invitation-redemption';
 
 const TOTP_LOGIN_CHALLENGE_TTL_SECONDS = 5 * 60;
 const TOTP_SIGNUP_CHALLENGE_TTL_SECONDS = 10 * 60;
@@ -89,6 +107,10 @@ interface TotpSignupChallenge {
     period?: TotpProfile['period'];
     window?: TotpProfile['window'];
     custom_fields?: Record<string, unknown>;
+    invite_id?: string;
+    invite_reservation_id?: string;
+    /** The invitation email-code step proved the sign-up controls this email. */
+    email_verified_by_invitation?: boolean;
   };
 }
 
@@ -271,16 +293,21 @@ async function rateLimitTotpLogin(
   if (!limiter) return null;
   const id = limiter.idFromName(`totp-login:${tenantId}`);
   const stub = limiter.get(id);
-  const result = await stub.incrementRpc(key, {
-    windowSeconds: 15 * 60,
-    maxRequests: 10,
+  // The tenant's limit (rate_limit.totp_max_requests per rate_limit.totp_window; 10 per 15
+  // minutes by default).
+  const limit = await resolveTotpAttemptLimit(c.env, tenantId);
+  // The loadTest profile does not raise it: this limit is what keeps authenticator-app codes from
+  // being guessed. A conformance run raises it for its tenant through this setting instead.
+  const result = await stub.incrementRpc(key, limit);
+  if (result.allowed) return null;
+  // retry_after also in error_details, which the SDK keeps on the errors it raises.
+  return createErrorResponse(c, AR_ERROR_CODES.RATE_LIMIT_EXCEEDED, {
+    variables: { retry_after: result.retryAfter },
+    extensions: {
+      retry_after: result.retryAfter,
+      error_details: { retry_after: result.retryAfter },
+    },
   });
-  if (!result.allowed) {
-    return createErrorResponse(c, AR_ERROR_CODES.RATE_LIMIT_EXCEEDED, {
-      variables: { retry_after: result.retryAfter },
-    });
-  }
-  return null;
 }
 
 function getClientIp(c: Context<{ Bindings: Env }>): string {
@@ -340,8 +367,18 @@ export async function totpSignupOptionsHandler(c: Context<{ Bindings: Env }>) {
       authorization_challenge_id?: unknown;
       human_verification_response?: unknown;
       cf_turnstile_response?: unknown;
+      invite_token?: unknown;
+      invitation_email_proof?: unknown;
     }>();
     const email = normalizeSignupEmail(body.email);
+    if (
+      body.invite_token !== undefined &&
+      (typeof body.invite_token !== 'string' || !body.invite_token)
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'invite_token' },
+      });
+    }
     if (!email) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
         variables: { field: 'email' },
@@ -406,15 +443,46 @@ export async function totpSignupOptionsHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    const accountRoute = await resolveTenantD1EmailAccountRoute(c, email);
+    // A recently deleted account's address where the tenant blocks re-registration: answered as
+    // an address that has an account, after the same lookups (a lookup that fails on a route
+    // cached from before the deletion is passed over for it); checked again at activation.
+    const registration = await checkEmailRegistration(c.env, { tenantId, email });
+    // A check that could not be made fails every address alike, in use or not.
+    if (registration === 'unavailable') {
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    }
+    const blocked = registration === 'blocked';
+    const accountRoute = await resolveTenantD1EmailAccountRoute(c, email).catch(
+      (error: unknown) => {
+        if (blocked && isDeletedDestinationRouteError(error)) return 'not_found' as const;
+        throw error;
+      }
+    );
     const runtimeUsers =
       accountRoute === 'not_found' ? null : createCanonicalRuntimeUserStore(c, tenantId);
     const existingUser = await runtimeUsers?.findByEmail(email, { includeInactive: true });
-    if (existingUser) {
+    if (existingUser || blocked) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
 
-    const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
+    // An invitation is checked and one use reserved for this sign-up (held by its email, so
+    // starting again keeps it) before any account exists; activation applies it to the account
+    // the activation creates.
+    let signupInvitation: Extract<SignupInvitationStart, { ok: true }> | null = null;
+    if (typeof body.invite_token === 'string') {
+      const started = await startSignupInvitation(c, {
+        token: body.invite_token,
+        tenantId,
+        email,
+        holder: await invitationHolderForEmail(email),
+        emailProof:
+          typeof body.invitation_email_proof === 'string' ? body.invitation_email_proof : undefined,
+      });
+      if (!started.ok) return signupInvitationErrorResponse(c, started.reason);
+      signupInvitation = started;
+    }
+
+    const userId = await generateUserIdFromSettings(c.env, tenantId, c.env);
     const profile = await resolveTotpProfile(c.env, tenantId);
     const secret = generateTotpSecret();
     const encrypted = await encryptValue(
@@ -468,6 +536,12 @@ export async function totpSignupOptionsHandler(c: Context<{ Bindings: Env }>) {
         period: profile.period,
         window: profile.window,
         custom_fields: customFieldValidation.values,
+        ...(signupInvitation
+          ? {
+              ...signupInvitation.reservation,
+              email_verified_by_invitation: signupInvitation.emailVerified,
+            }
+          : {}),
       },
     });
 
@@ -565,9 +639,22 @@ export async function totpSignupActivateHandler(c: Context<{ Bindings: Env }>) {
       });
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_SESSION_EXPIRED);
     }
+    // Checked again (the address may have been deleted since the sign-up started), and answered as
+    // an address in use, after the same steps (a lookup that fails on a route cached from before
+    // the deletion is passed over for it).
+    const registration = await checkEmailRegistration(c.env, { tenantId, email: signupEmail });
+    if (registration === 'unavailable') {
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    }
+    const blocked = registration === 'blocked';
     activationStage = 'account_route';
-    const tenantD1 = usesTenantD1AccountStorage(c);
-    const accountRoute = await resolveTenantD1EmailAccountRoute(c, signupEmail);
+    const tenantD1 = usesRoutedAccountStorage(c);
+    const accountRoute = await resolveTenantD1EmailAccountRoute(c, signupEmail).catch(
+      (error: unknown) => {
+        if (blocked && isDeletedDestinationRouteError(error)) return 'not_found' as const;
+        throw error;
+      }
+    );
     let runtimeUsers: CanonicalRuntimeUserStore | null =
       accountRoute === 'not_found' ? null : createCanonicalRuntimeUserStore(c, tenantId);
     let runtimeUser = await runtimeUsers?.findById(userId, { includeInactive: true });
@@ -592,10 +679,12 @@ export async function totpSignupActivateHandler(c: Context<{ Bindings: Env }>) {
     const existingByEmail = await runtimeUsers?.findByEmail(signupEmail, {
       includeInactive: true,
     });
-    if (existingByEmail && existingByEmail.id !== userId) {
+    if ((existingByEmail && existingByEmail.id !== userId) || blocked) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
     if (!runtimeUser || runtimeUser.active !== 1) {
+      const signupEmailVerified =
+        runtimeUser?.email_verified === 1 || metadata.email_verified_by_invitation === true;
       const canonicalProfileFields = buildCanonicalProfileRuntimeUserFields({
         ...customFields,
         email: signupEmail,
@@ -616,7 +705,7 @@ export async function totpSignupActivateHandler(c: Context<{ Bindings: Env }>) {
           email: signupEmail,
           runtimeUser: {
             active: true,
-            emailVerified: runtimeUser?.email_verified === 1,
+            emailVerified: signupEmailVerified,
             userType: 'end_user',
             displayName: signupName,
             sourceRef: 'auth:totp',
@@ -644,7 +733,7 @@ export async function totpSignupActivateHandler(c: Context<{ Bindings: Env }>) {
           email: signupEmail,
           name: signupName,
           active: true,
-          emailVerified: runtimeUser?.email_verified === 1,
+          emailVerified: signupEmailVerified,
           userType: 'end_user',
           sourceRef: 'direct_auth_totp',
           piiFields: canonicalProfileFields.piiFields,
@@ -712,6 +801,17 @@ export async function totpSignupActivateHandler(c: Context<{ Bindings: Env }>) {
       await persistRegistrationFieldValuesFromEnv(c.env, tenantId, userId, customFields);
     }
 
+    // The use the options step reserved goes to the account this activation created.
+    const signupInvitation = signupInvitationFromMetadata(metadata);
+    if (signupInvitation) {
+      activationStage = 'invitation_apply';
+      await completeSignupInvitation(
+        { invitations: () => invitationDatabase(c, tenantId), assignments: authCtx.coreAdapter },
+        log,
+        { reservation: signupInvitation, tenantId, userId }
+      );
+    }
+
     activationStage = 'backup_codes';
     const backupCodes = await createBackupCodes(c, tenantId, userId, activated.id);
     if (backupCodes instanceof Response) return backupCodes;
@@ -729,7 +829,9 @@ export async function totpSignupActivateHandler(c: Context<{ Bindings: Env }>) {
         authorizationChallengeId,
         runtimeUser.id,
         authTime,
-        new URL(c.req.url).origin
+        new URL(c.req.url).origin,
+        'totp',
+        proofVerifiedAtMs
       );
       if ('error' in continuation) {
         return continuation.error;
@@ -751,6 +853,8 @@ export async function totpSignupActivateHandler(c: Context<{ Bindings: Env }>) {
         amr: ['otp', 'totp'],
         acr: defaultAcr,
         authTime,
+        // When the code was verified (milliseconds), for assurance step-ups.
+        proven_at: proofVerifiedAtMs,
         totp_credential_id: activated.id,
       },
       tenantId
@@ -942,7 +1046,7 @@ export async function totpLoginStartHandler(c: Context<{ Bindings: Env }>) {
       if (rateLimited) return rateLimited;
 
       let accountRouteAvailable = true;
-      if (usesTenantD1AccountStorage(c)) {
+      if (usesRoutedAccountStorage(c)) {
         if (boundUserId) {
           try {
             await resolveAccountDataContextFromHono(c, boundUserId);
@@ -979,6 +1083,8 @@ export async function totpLoginStartHandler(c: Context<{ Bindings: Env }>) {
 
       const challengeId = crypto.randomUUID();
       const challengeStore = await getChallengeStoreByChallengeId(c.env, challengeId, tenantId);
+      // The Flow interaction this attempt belongs to, once checked (for its failure records).
+      const attemptInteraction = await signInAttemptInteractionMetadata(c, tenantId);
       await timeAuthRequestDiagnosticOperation(c, 'auth_totp_challenge_store', () =>
         challengeStore.storeChallengeRpc({
           id: `totp_login:${challengeId}`,
@@ -993,6 +1099,7 @@ export async function totpLoginStartHandler(c: Context<{ Bindings: Env }>) {
             issued_at: Date.now(),
             authorization_challenge_id: authorizationChallengeId || undefined,
             usage,
+            ...attemptInteraction,
           },
         })
       );
@@ -1055,10 +1162,20 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         log.error('TOTP challenge consume failed', { action: 'challenge_consume' }, error as Error);
         return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
       }
+      // From here on a failure is recorded with the challenge's Flow interaction, if it has one.
+      const knownUserId =
+        challengeData.userId && challengeData.userId !== 'unknown' ? challengeData.userId : null;
+      const failed = signInAttemptFailureRecorder(
+        c,
+        tenantId,
+        challengeData.metadata,
+        'totp',
+        knownUserId
+      );
 
       const challengeUsage = challengeData.metadata?.usage === 'reauth' ? 'reauth' : 'login';
       if (!(await isTotpUsageAvailable(c.env, tenantId, challengeUsage))) {
-        return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+        return failed(createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE), 'method_disabled');
       }
       const boundAuthorizationChallengeId = challengeData.metadata?.authorization_challenge_id;
       if (
@@ -1066,13 +1183,20 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         boundAuthorizationChallengeId !== authorizationChallengeId
       ) {
         publishTotpFailure(c, tenantId, 'authorization_challenge_mismatch');
-        return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+        return failed(
+          createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE),
+          'challenge_mismatch',
+          knownUserId
+        );
       }
 
       const userId = challengeData.userId;
       if (!userId || userId === 'unknown') {
         publishTotpFailure(c, tenantId, 'credential_not_found');
-        return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+        return failed(
+          createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE),
+          'credential_not_found'
+        );
       }
 
       const encryptionKey = c.env.PII_ENCRYPTION_KEY;
@@ -1080,16 +1204,24 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         log.error('PII_ENCRYPTION_KEY must be configured for TOTP login', {
           action: 'login_verify',
         });
-        return createErrorResponse(c, AR_ERROR_CODES.CONFIG_MISSING_SECRET);
+        return failed(
+          createErrorResponse(c, AR_ERROR_CODES.CONFIG_MISSING_SECRET),
+          'service_unavailable',
+          userId
+        );
       }
 
-      if (usesTenantD1AccountStorage(c)) {
+      if (usesRoutedAccountStorage(c)) {
         try {
           await resolveAccountDataContextFromHono(c, userId);
         } catch (error) {
           if (error instanceof Error && error.message === 'account_data_route_not_found') {
             publishTotpFailure(c, tenantId, 'credential_not_found');
-            return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+            return failed(
+              createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE),
+              'credential_not_found',
+              userId
+            );
           }
           throw error;
         }
@@ -1107,7 +1239,11 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
 
       if (!accountAuthentication || credentials.length === 0) {
         publishTotpFailure(c, tenantId, 'credential_not_found');
-        return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+        return failed(
+          createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE),
+          'credential_not_found',
+          userId
+        );
       }
       let verifiedCredentialId: string | null = null;
       let verifiedTimeStep: number | null = null;
@@ -1147,17 +1283,25 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           );
         } catch (error) {
           if (!isAccountAuthenticationDeniedError(error)) {
-            return c.json(
-              {
-                error: 'temporarily_unavailable',
-                error_description: 'Authentication state unavailable.',
-              },
-              503,
-              { 'Retry-After': '1' }
+            return failed(
+              c.json(
+                {
+                  error: 'temporarily_unavailable',
+                  error_description: 'Authentication state unavailable.',
+                },
+                503,
+                { 'Retry-After': '1' }
+              ),
+              'service_unavailable',
+              userId
             );
           }
           publishTotpFailure(c, tenantId, 'replay_detected');
-          return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+          return failed(
+            createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE),
+            accountAuthenticationDenialReason(error),
+            userId
+          );
         }
         verifiedCredentialId = credential.id;
         verifiedTimeStep = acceptedTimeStep;
@@ -1167,7 +1311,11 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
 
       if (!verifiedCredentialId || verifiedTimeStep === null || proofVerifiedAtMs === null) {
         publishTotpFailure(c, tenantId, 'invalid_code');
-        return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+        return failed(
+          createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE),
+          'invalid_code',
+          userId
+        );
       }
 
       const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'totp');
@@ -1181,7 +1329,9 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           authorizationChallengeId,
           userId,
           authTime,
-          new URL(c.req.url).origin
+          new URL(c.req.url).origin,
+          'totp',
+          proofVerifiedAtMs
         );
         if ('error' in continuation) {
           return continuation.error;
@@ -1201,6 +1351,8 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
             amr: ['otp', 'totp'],
             acr: defaultAcr,
             authTime,
+            // When the code was verified (milliseconds), for assurance step-ups.
+            proven_at: proofVerifiedAtMs,
             totp_credential_id: verifiedCredentialId,
           },
           tenantId
@@ -1224,7 +1376,7 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       });
 
       c.executionCtx.waitUntil(
-        Promise.all([
+        samlDrAll([
           authCtx.repositories.totp.markUsed(verifiedCredentialId, userId, verifiedTimeStep),
           runtimeUsers.touchLastLogin(userId),
         ]).catch((error: unknown) => {

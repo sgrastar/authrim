@@ -1,9 +1,16 @@
 openapi: 3.2.0
 info:
   title: Authrim Discovery API
-  version: 0.4.1
+  version: 0.5.0
   summary: OIDC/OAuth metadata and JWKS endpoints.
-  description: Initial OpenAPI contract for `@authrim/ar-discovery`.
+  description: >
+    Initial OpenAPI contract for `@authrim/ar-discovery`.
+
+    When coordinated SAML DR export is enabled, every operation can additionally return HTTP 503
+    while source updates are paused or update admission is unavailable. This availability response
+    has Content-Type text/plain;charset=UTF-8, Cache-Control no-store, Retry-After 5, and the body
+    "Service temporarily unavailable" (no response body for HEAD). Clients may retry after the
+    indicated delay; a failed response does not establish whether an earlier write completed.
 servers:
   - url: https://{tenant_domain}
     variables:
@@ -42,9 +49,18 @@ paths:
       tags:
         - Discovery
       summary: Return OpenID Provider metadata.
+      description: >-
+        acr_values_supported lists the tenant's discovery.acr_values_supported and, with tenant
+        assurance enabled, the acr values Authrim issues for each AAL (urn:authrim:aal:1 to
+        urn:authrim:aal:3). With tenant assurance enabled, assurance.ial_assurance_values adds the
+        eduperson_assurance scope and claim. prompt_values_supported (none, login, consent, create)
+        is published only while the tenant has oauth.prompt_create_enabled on; it is absent
+        otherwise. Settings that cannot be read return 503 temporarily_unavailable.
       responses:
         '200':
           $ref: '#/components/responses/OidcProviderMetadata'
+        '503':
+          $ref: '#/components/responses/SettingsUnavailable'
   /.well-known/oauth-authorization-server:
     get:
       tags:
@@ -101,6 +117,19 @@ paths:
           $ref: '#/components/responses/JWKS'
 components:
   responses:
+    SettingsUnavailable:
+      description: Settings are temporarily unavailable.
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - error
+            properties:
+              error:
+                type: string
+              error_description:
+                type: string
     Ok:
       description: Successful JSON response.
       content:
@@ -362,6 +391,7 @@ components:
             enum: [RS256, ES256, PS256]
         backchannel_user_code_parameter_supported:
           type: boolean
+          description: The tenant's ciba.user_code_enabled (false by default).
         tls_client_certificate_bound_access_tokens:
           type: boolean
             - PS256

@@ -102,14 +102,43 @@ ID-Level → RBAC → ReBAC → ABAC/Computed
 
 RBAC provides hierarchical role-based access decisions with scoped role support.
 
-#### Role Hierarchy (Default)
+#### Admin roles (Admin console and Admin API)
 
-| Role | Priority | Scope | Description |
-|------|----------|-------|-------------|
-| `system_admin` | 1000 | Global | Full system access |
-| `distributor_admin` | 900 | Global | Distributor-level access |
-| `org_admin` | 800 | Org | Organization-level access |
-| `end_user` | - | Varies | Standard user role |
+The people who run Authrim use a separate set of roles, stored in `DB_ADMIN` (`admin_roles`) and
+unrelated to the roles of the service's own users below. They are defined once, in
+`packages/ar-lib-core/src/constants/admin-roles.ts`, and the names start with the reserved prefix
+`ar_`: a custom Admin role cannot be created with a name that starts with it.
+
+| Role | Level | Held through | What it is |
+|------|-------|--------------|------------|
+| `ar_super_admin` | 100 | a global assignment only | Every tenant and the platform. The only role that skips role checks. |
+| `ar_tenant_admin` | 80 | a tenant (or a global) assignment | One tenant: settings, apps, users, support operations, ReBAC, IP allow lists, and the admins and roles of that tenant. |
+| `ar_support` | 40 | a tenant assignment | Looks up users, unlocks accounts, ends sessions, asks for support operations (cannot approve or run them). |
+| `ar_viewer` | 20 | a tenant assignment | Reads; sees no secrets (client secrets, webhook payloads, full email recipients). |
+
+- `ar_tenant_admin` is never given `admin:*`: it holds the tenant's namespaces one by one, and none
+  of the platform-wide ones (control plane, database connections and routing, tenants and their
+  domains, backups, platform logging, break-glass).
+- A role can only be given to an account from below the giver's own level, so an `ar_tenant_admin`
+  gives `ar_support` and `ar_viewer`, and only an `ar_super_admin` adds another tenant admin.
+- Each tenant keeps at least one active `ar_tenant_admin` without an expiry: an operation that would
+  take the last one away answers `409 last_tenant_admin`.
+- The seed in the role migration (source `054_admin_roles_ar_prefix.sql`, shipped in the 0.5.0
+  Admin D1 release delta) is kept equal to the definition by a test.
+
+#### Preset roles of the service's users
+
+Only two roles are preset. Business roles (billing, support, per-department roles) are created by
+whoever runs Authrim, in the Admin API or the Admin console.
+
+| Role | Description |
+|------|-------------|
+| `admin` | Administrators of the service's own users. Full access in the default policy. |
+| `end_user` | Standard user role. |
+
+Names that start with `ar_` are reserved for the Admin roles above, and the preset names cannot be
+used for a new role. Organization and group features do not depend on a preset: a role created by
+the operator can be scoped to an organization like any other.
 
 ### Type Definitions
 
@@ -144,7 +173,7 @@ interface PolicySubject {
 
 ```typescript
 interface SubjectRole {
-  /** Role name (e.g., 'system_admin', 'org_admin', 'end_user') */
+  /** Role name (e.g., 'admin', 'end_user', or a role the operator created) */
   name: string;
 
   /** Scope of the role: 'global' | 'org' | 'resource' */
@@ -203,12 +232,12 @@ import {
 } from '@authrim/ar-lib-policy';
 
 // Check single role
-if (hasRole(subject, 'org_admin', { scope: 'org', scopeTarget: 'org:123' })) {
+if (hasRole(subject, 'billing_manager', { scope: 'org', scopeTarget: 'org:123' })) {
   // User is admin of organization 123
 }
 
 // Check any role (OR)
-if (hasAnyRole(subject, ['system_admin', 'org_admin'])) {
+if (hasAnyRole(subject, ['admin', 'billing_manager'])) {
   // User has at least one admin role
 }
 
@@ -217,9 +246,8 @@ if (hasAllRoles(subject, ['viewer', 'commenter'])) {
   // User has both roles
 }
 
-// Quick admin checks
-if (isSystemAdmin(subject)) { /* ... */ }
-if (isOrgAdmin(subject, 'org_123')) { /* ... */ }
+// Quick admin check (the preset `admin` role)
+if (isAdmin(subject)) { /* ... */ }
 
 // Get active roles
 const activeRoles = getActiveRoles(subject, { scope: 'org', scopeTarget: 'org:123' });
@@ -227,7 +255,7 @@ const activeRoles = getActiveRoles(subject, { scope: 'org', scopeTarget: 'org:12
 // Create subject from JWT claims
 const subject = subjectFromClaims({
   sub: 'user_123',
-  authrim_roles: ['end_user', 'org_admin'],
+  authrim_roles: ['end_user', 'billing_manager'],
   authrim_org_id: 'org_456',
   authrim_plan: 'professional'
 });
@@ -240,28 +268,11 @@ The default policy engine includes these built-in rules:
 ```typescript
 const defaultRules = [
   {
-    id: 'system_admin_full_access',
-    name: 'System Admin Full Access',
+    id: 'admin_full_access',
+    name: 'Admin Full Access',
     priority: 1000,
     effect: 'allow',
-    conditions: [{ type: 'has_role', params: { role: 'system_admin' } }]
-  },
-  {
-    id: 'distributor_admin_access',
-    name: 'Distributor Admin Access',
-    priority: 900,
-    effect: 'allow',
-    conditions: [{ type: 'has_role', params: { role: 'distributor_admin' } }]
-  },
-  {
-    id: 'org_admin_same_org',
-    name: 'Org Admin Same Organization',
-    priority: 800,
-    effect: 'allow',
-    conditions: [
-      { type: 'has_role', params: { role: 'org_admin' } },
-      { type: 'same_organization', params: {} }
-    ]
+    conditions: [{ type: 'has_role', params: { role: 'admin' } }]
   },
   {
     id: 'owner_full_access',

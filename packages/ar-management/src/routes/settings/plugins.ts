@@ -42,6 +42,9 @@ import {
   putTenantEmailSettings,
   invalidatePluginRuntimeCaches,
   bumpAuthenticationMethodsCacheRevision,
+  EXTERNAL_PLUGIN_EXECUTION_NOT_ALLOWED,
+  isExternalPluginExecutionAllowed,
+  humanVerificationConfigValid,
 } from '@authrim/ar-lib-core';
 import {
   maskSensitiveFieldsRecursive,
@@ -72,7 +75,13 @@ import {
   disableTenantHumanVerificationProvider,
   projectTenantHumanVerificationProvider,
 } from '../../human-verification-provider-projection';
+import {
+  checkGlobalHumanVerificationDisable,
+  HumanVerificationGuardUnavailableError,
+  humanVerificationSettingsRequiring,
+} from '../../human-verification-guards';
 import { writeAdminAuditLog } from '../../admin-shared';
+import { ExternalPluginGateUnavailableError } from '../../external-plugin-gate-sync';
 import {
   listProviderReprojectionStatus,
   markGlobalProviderDesiredRevision,
@@ -80,6 +89,7 @@ import {
 import {
   configureDynamicPluginWithControl,
   DynamicPluginResourcesPendingError,
+  ExternalPluginExecutionNotAllowedError,
   getDynamicPluginResourcePreparation,
   getDynamicPluginResourcePreparationForDisable,
   getDynamicPluginResourceProvisioning,
@@ -202,6 +212,12 @@ interface PluginStatus {
     state: 'pending' | 'blocked';
     kind: 'provisioning' | 'cleanup';
   };
+  /**
+   * Only on external (dynamic worker) plugins, for a tenant request: whether the tenant lets
+   * external plugin code run (`plugin.enabled`). When false the plugin cannot be enabled and
+   * none of its code runs.
+   */
+  externalExecutionAllowed?: boolean;
   hasTenantOverride?: boolean;
   loadedAt?: number;
   lastHealthCheck?: {
@@ -300,6 +316,24 @@ function getAdminAuth(c: Context<{ Bindings: Env }>): AdminAuthContext | null {
  */
 function getPluginKV(env: Env): KVNamespace | undefined {
   return env.SETTINGS;
+}
+
+function externalPluginExecutionNotAllowedResponse(
+  c: Context<{ Bindings: Env }>,
+  pluginId: string,
+  tenantId: string
+) {
+  return c.json(
+    {
+      error: EXTERNAL_PLUGIN_EXECUTION_NOT_ALLOWED,
+      error_description:
+        'External plugin execution is not allowed for this tenant (plugin.enabled). Turn plugin.enabled on in the tenant plugin settings first.',
+      setting: 'plugin.enabled',
+      plugin_id: pluginId,
+      tenant_id: tenantId,
+    },
+    403
+  );
 }
 
 type PluginTenantScope = 'tenant' | 'platform';
@@ -471,13 +505,18 @@ async function getPluginRegistry(
   kv: KVNamespace,
   env?: Env
 ): Promise<Record<string, PluginRegistryEntry>> {
-  let registry: Record<string, PluginRegistryEntry> = {};
+  // No prototype: a plugin id such as 'toString' or 'constructor' must not find an entry the
+  // registry does not hold (the lookups below are plain property reads).
+  let registry: Record<string, PluginRegistryEntry> = Object.create(null);
   try {
     const data = await kv.get('plugins:registry');
     if (data) {
       const parsed: unknown = JSON.parse(data);
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        registry = parsed as Record<string, PluginRegistryEntry>;
+        registry = Object.assign(
+          Object.create(null) as Record<string, PluginRegistryEntry>,
+          parsed as Record<string, PluginRegistryEntry>
+        );
       }
     }
   } catch {
@@ -980,6 +1019,10 @@ export async function listPluginsHandler(c: Context<{ Bindings: Env }>) {
 
   const registry = await getPluginRegistry(kv, c.env);
   const plugins: Array<PluginRegistryEntry & PluginStatus> = [];
+  const externalExecutionAllowed =
+    tenantId && Object.values(registry).some((entry) => entry.backendKind === 'dynamic_worker')
+      ? await isExternalPluginExecutionAllowed(c.env, tenantId, { fresh: true })
+      : undefined;
 
   for (const [pluginId, entry] of Object.entries(registry)) {
     const [dynamicStatus, provisioning] =
@@ -1029,6 +1072,9 @@ export async function listPluginsHandler(c: Context<{ Bindings: Env }>) {
       configured: resolved.configured,
       missingRequiredFields: resolved.missingRequiredFields,
       ...(provisioning ? { provisioning } : {}),
+      ...(entry.backendKind === 'dynamic_worker' && externalExecutionAllowed !== undefined
+        ? { externalExecutionAllowed }
+        : {}),
       lastHealthCheck,
     });
   }
@@ -1111,6 +1157,13 @@ export async function getPluginHandler(c: Context<{ Bindings: Env }>) {
       configured: resolved.configured,
       missingRequiredFields: resolved.missingRequiredFields,
       ...(provisioning ? { provisioning } : {}),
+      ...(entry.backendKind === 'dynamic_worker' && tenantId
+        ? {
+            externalExecutionAllowed: await isExternalPluginExecutionAllowed(c.env, tenantId, {
+              fresh: true,
+            }),
+          }
+        : {}),
       hasTenantOverride,
       lastHealthCheck,
     },
@@ -1340,6 +1393,18 @@ export async function updatePluginConfigHandler(c: Context<{ Bindings: Env }>) {
     });
   }
 
+  // A configuration the runner refuses to project (a key of spaces, a key past its length limit,
+  // a malformed hostname, an unsupported widget mode) is refused here instead of being saved as a
+  // provider that reports as configured and never verifies.
+  if (
+    BUILTIN_HUMAN_VERIFICATION_PROVIDER_IDS.has(pluginId) &&
+    !humanVerificationConfigValid(pluginId, newConfig)
+  ) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+      variables: { field: 'plugin configuration' },
+    });
+  }
+
   // Identify secret fields to encrypt
   const secretFields = body.secret_fields ?? identifySecretFields(newConfig);
 
@@ -1461,6 +1526,30 @@ export async function enablePluginHandler(c: Context<{ Bindings: Env }>) {
           : {}),
       }));
     } catch (error) {
+      if (error instanceof ExternalPluginExecutionNotAllowedError) {
+        log.info(
+          'Dynamic plugin enable refused: external plugin execution is not allowed',
+          buildPluginAuditLog('enable', adminId, { pluginId, tenantId })
+        );
+        return externalPluginExecutionNotAllowedResponse(c, pluginId, tenantId);
+      }
+      if (error instanceof ExternalPluginGateUnavailableError) {
+        log.warn(
+          'Dynamic plugin enable refused: the external plugin gate is unavailable',
+          buildPluginAuditLog('enable', adminId, { pluginId, tenantId })
+        );
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description:
+              'The external plugin gate or the plugin.enabled setting is unavailable, so the plugin was not enabled; try again.',
+            setting: 'plugin.enabled',
+            plugin_id: pluginId,
+            tenant_id: tenantId,
+          },
+          503
+        );
+      }
       if (!(error instanceof DynamicPluginResourcesPendingError)) throw error;
       log.info(
         'Dynamic plugin resource provisioning requested',
@@ -1648,6 +1737,107 @@ export async function disablePluginHandler(c: Context<{ Bindings: Env }>) {
       configured: true,
       missingRequiredFields: [],
     });
+  }
+
+  // A human verification provider stays on while a flow of the tenant requires it: switching it
+  // off would leave that flow with no widget and a server that refuses every attempt. Turn the
+  // required settings off first.
+  if (tenantId) {
+    let requiredBy: string[];
+    try {
+      requiredBy = await humanVerificationSettingsRequiring(c.env, tenantId, pluginId);
+    } catch (error) {
+      if (!(error instanceof HumanVerificationGuardUnavailableError)) throw error;
+      // The settings could not be read, so whether a flow requires the provider is not known:
+      // nothing is written.
+      return c.json(
+        {
+          error: 'temporarily_unavailable',
+          error_description:
+            'The tenant settings could not be read to check whether this human verification provider is required, so it was not disabled; try again.',
+          reason: 'settings_unavailable',
+          plugin_id: pluginId,
+        },
+        503
+      );
+    }
+    if (requiredBy.length > 0) {
+      log.info(
+        'Plugin disable refused: a flow requires this human verification provider',
+        buildPluginAuditLog('disable', adminId, { pluginId, tenantId, settings: requiredBy })
+      );
+      return c.json(
+        {
+          error: 'human_verification_provider_in_use',
+          error_description:
+            'This human verification provider is required by the tenant settings listed in settings. Turn those settings off before disabling the plugin.',
+          plugin_id: pluginId,
+          tenant_id: tenantId,
+          settings: requiredBy,
+        },
+        409
+      );
+    }
+  }
+
+  // The platform-wide switch takes the provider from every tenant that inherits it.
+  if (!tenantId) {
+    const check = await checkGlobalHumanVerificationDisable(c.env, pluginId);
+    if (check.outcome === 'in_use') {
+      log.info(
+        'Plugin disable refused: tenants require this human verification provider',
+        buildPluginAuditLog('disable', adminId, { pluginId, tenantCount: check.tenants.length })
+      );
+      return c.json(
+        {
+          error: 'human_verification_provider_in_use',
+          error_description:
+            'Tenants that inherit this platform setting require this human verification provider (see tenants). Turn their required settings off, or enable the plugin for them individually, before disabling it.',
+          plugin_id: pluginId,
+          tenants: check.tenants.slice(0, 20).map((tenant) => ({
+            tenant_id: tenant.tenantId,
+            settings: tenant.settings,
+          })),
+          tenant_count: check.tenants.length,
+        },
+        409
+      );
+    }
+    if (check.outcome === 'scope_too_large') {
+      return c.json(
+        {
+          error: 'human_verification_scope_too_large',
+          error_description:
+            'There are too many tenants to check whether any of them requires this human verification provider, so it was not disabled. Disable it per tenant instead.',
+          plugin_id: pluginId,
+        },
+        409
+      );
+    }
+    if (check.outcome === 'directory_unavailable') {
+      return c.json(
+        {
+          error: 'temporarily_unavailable',
+          error_description:
+            'The tenant directory is not configured in this environment, so the tenants cannot be checked and the human verification provider was not disabled. Retrying will not help; disable it per tenant instead.',
+          reason: 'tenant_directory_unavailable',
+          plugin_id: pluginId,
+        },
+        503
+      );
+    }
+    if (check.outcome === 'scope_unavailable') {
+      return c.json(
+        {
+          error: 'temporarily_unavailable',
+          error_description:
+            'The tenants could not be checked for use of this human verification provider, so it was not disabled; try again.',
+          reason: 'settings_unavailable',
+          plugin_id: pluginId,
+        },
+        503
+      );
+    }
   }
 
   const enableKey = tenantId

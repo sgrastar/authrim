@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en" dir="ltr" data-admin-theme="standard" data-scheme="light">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="robots" content="noindex, nofollow" />
+		<link rel="icon" href="%sveltekit.assets%/favicon.svg" type="image/svg+xml" />
+		<script>
+			// Apply the stored theme before first paint so the page never flashes the wrong
+			// brightness. Mirrors src/lib/ui/theme/theme-config.ts (checked by theme.test.ts).
+			(function () {
+				var root = document.documentElement;
+				var mode = 'system';
+				var look = 'standard';
+				try {
+					var m = localStorage.getItem('authrim-console-mode');
+					var l = localStorage.getItem('authrim-console-theme');
+					if (m === 'light' || m === 'dark' || m === 'system') mode = m;
+					if (l === 'standard' || l === 'swiss-grid' || l === 'frosted') look = l;
+				} catch (e) {}
+				var dark =
+					mode === 'dark' ||
+					(mode === 'system' &&
+						window.matchMedia &&
+						window.matchMedia('(prefers-color-scheme: dark)').matches);
+				root.setAttribute('data-admin-theme', look);
+				root.setAttribute('data-scheme', dark ? 'dark' : 'light');
+				if (mode !== 'system') root.setAttribute('data-theme', mode);
+			})();
+		</script>
+		%sveltekit.head%
+	</head>
+	<body data-sveltekit-preload-data="hover">
+		<div style="display: contents">%sveltekit.body%</div>
+	</body>
+</html>

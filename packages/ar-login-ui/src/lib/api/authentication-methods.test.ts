@@ -95,6 +95,46 @@ describe('authentication methods API', () => {
 		expect(authrimFetchMock).toHaveBeenCalledTimes(1);
 	});
 
+	it('does not keep a response whose cache TTL is 0, so the next request goes to the server', async () => {
+		const { fetchAuthenticationMethods } = await loadApi();
+		const respond = (cacheTTL: number) =>
+			new Response(JSON.stringify(createAuthenticationMethodsResponse(cacheTTL)), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			});
+		// A degraded answer (the server could not read part of the tenant's settings), then a full one.
+		authrimFetchMock.mockResolvedValueOnce(respond(0)).mockResolvedValueOnce(respond(180));
+
+		const degraded = await fetchAuthenticationMethods();
+		const recovered = await fetchAuthenticationMethods();
+
+		expect(degraded.data?.meta.cacheTTL).toBe(0);
+		expect(authrimFetchMock).toHaveBeenCalledTimes(2);
+		expect(recovered.data?.meta.cacheTTL).toBe(180);
+
+		// The full answer is kept as before.
+		await fetchAuthenticationMethods();
+		expect(authrimFetchMock).toHaveBeenCalledTimes(2);
+	});
+
+	it('does not fall back to a response whose cache TTL is 0 when the network then fails', async () => {
+		const { fetchAuthenticationMethods } = await loadApi();
+		authrimFetchMock
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify(createAuthenticationMethodsResponse(0)), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			)
+			.mockRejectedValueOnce(new Error('offline'));
+
+		await fetchAuthenticationMethods();
+		const failed = await fetchAuthenticationMethods();
+
+		expect(failed.data).toBeUndefined();
+		expect(failed.error).toBeDefined();
+	});
+
 	it('allows the HTTP cache on a fresh page request while retaining the in-memory TTL cache', async () => {
 		const { fetchAuthenticationMethods } = await loadApi();
 		authrimFetchMock.mockResolvedValueOnce(
@@ -165,5 +205,43 @@ describe('authentication methods API', () => {
 			})
 		);
 		await suspendedRequest;
+	});
+});
+
+describe('isHumanVerificationUnavailableFor', () => {
+	const base = createAuthenticationMethodsResponse().methods
+		.humanVerification as import('./authentication-methods').HumanVerificationMethod;
+	const required = { login: true, signup: false, reauth: true };
+
+	it.each([
+		['login', true],
+		['signup', false],
+		['reauth', true]
+	] as const)(
+		'is true for %s only when it requires verification the provider cannot give',
+		async (flow, expected) => {
+			const { isHumanVerificationUnavailableFor } = await loadApi();
+			expect(
+				isHumanVerificationUnavailableFor(
+					{ ...base, requiredFor: required, available: false, reason: 'provider_disabled' },
+					flow
+				)
+			).toBe(expected);
+		}
+	);
+
+	it('is false when the provider is available', async () => {
+		const { isHumanVerificationUnavailableFor } = await loadApi();
+		expect(
+			isHumanVerificationUnavailableFor(
+				{ ...base, requiredFor: required, available: true, reason: null },
+				'login'
+			)
+		).toBe(false);
+	});
+
+	it('is false for a server that does not send the fields', async () => {
+		const { isHumanVerificationUnavailableFor } = await loadApi();
+		expect(isHumanVerificationUnavailableFor(base, 'login')).toBe(false);
 	});
 });

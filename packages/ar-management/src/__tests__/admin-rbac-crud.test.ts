@@ -68,7 +68,7 @@ function organization(overrides: Record<string, unknown> = {}) {
     name: 'acme',
     display_name: 'Acme',
     plan: 'professional',
-    org_type: 'team',
+    org_type: 'department',
     is_active: 1,
     created_at: 100,
     updated_at: 1_700_000_000_000,
@@ -117,9 +117,9 @@ describe('admin RBAC organization and role CRUD', () => {
         search: '100%_team',
         is_active: 'true',
         plan: 'professional',
-        org_type: 'team',
+        org_type: 'department',
       },
-      ['tenant-a', '%100\\%\\_team%', '%100\\%\\_team%', 1, 'professional', 'team', 10, 10],
+      ['tenant-a', '%100\\%\\_team%', '%100\\%\\_team%', 1, 'professional', 'department', 10, 10],
     ],
     [{ is_active: 'false' }, ['tenant-a', 0, 20, 0]],
   ])('lists organizations with tenant filters %#', async (query, expectedBindings) => {
@@ -148,7 +148,9 @@ describe('admin RBAC organization and role CRUD', () => {
   });
 
   it.each([null, organization()])('gets organization result %#', async (org) => {
-    mocks.adapter.queryOne.mockResolvedValueOnce(org).mockResolvedValueOnce({ count: 3 });
+    mocks.adapter.queryOne.mockResolvedValueOnce(org);
+    // The member count, by organisation, from the account databases.
+    mocks.adapter.query.mockResolvedValueOnce([{ key: 'resource-1', count: 3 }]);
     const response = await adminOrganizationGetHandler(context());
     expect(response.status).toBe(org ? 200 : 404);
     if (org)
@@ -169,19 +171,19 @@ describe('admin RBAC organization and role CRUD', () => {
   });
 
   it.each([
-    [{ name: 'acme' }, 'free', 'team'],
+    [{ name: 'acme' }, 'free', 'enterprise'],
     [
       {
         name: 'acme',
         display_name: 'Acme',
         plan: 'enterprise',
-        org_type: 'partner',
+        org_type: 'distributor',
         metadata_json: '{}',
       },
       'enterprise',
-      'partner',
+      'distributor',
     ],
-    [{ name: 'acme', plan: 'invalid', org_type: 'invalid' }, 'free', 'team'],
+    [{ name: 'acme', plan: 'invalid', org_type: 'department' }, 'free', 'department'],
   ])('creates organization with normalized plan/type %#', async (body, plan, orgType) => {
     mocks.adapter.queryOne
       .mockResolvedValueOnce(null)
@@ -219,7 +221,7 @@ describe('admin RBAC organization and role CRUD', () => {
       name: 'new',
       display_name: '',
       plan: 'starter',
-      org_type: 'personal',
+      org_type: 'department',
       is_active: false,
       metadata_json: '',
     };
@@ -228,7 +230,7 @@ describe('admin RBAC organization and role CRUD', () => {
       .mockResolvedValueOnce(organization({ name: 'new', is_active: 0 }));
     expect((await adminOrganizationUpdateHandler(context({ body }))).status).toBe(200);
     expect(mocks.adapter.execute.mock.calls[0][1]).toEqual(
-      expect.arrayContaining(['new', '', 'starter', 'personal', 0, '', 'tenant-a', 'resource-1'])
+      expect.arrayContaining(['new', '', 'starter', 'department', 0, '', 'tenant-a', 'resource-1'])
     );
   });
 
@@ -242,7 +244,7 @@ describe('admin RBAC organization and role CRUD', () => {
   it('lists roles with assignment counts and timestamp normalization', async () => {
     mocks.adapter.query
       .mockResolvedValueOnce([role(), role({ id: 'role-2', is_system: 1, created_at: null })])
-      .mockResolvedValueOnce([{ role_id: 'role-1', count: 2 }]);
+      .mockResolvedValueOnce([{ key: 'role-1', count: 2 }]);
     await expect((await adminRolesListHandler(context())).json()).resolves.toMatchObject({
       roles: [
         { id: 'role-1', assignment_count: 2, is_system: false },
@@ -254,8 +256,10 @@ describe('admin RBAC organization and role CRUD', () => {
   it('gets role with inherited deduplicated permissions', async () => {
     mocks.adapter.queryOne
       .mockResolvedValueOnce(role({ parent_role_id: 'parent' }))
-      .mockResolvedValueOnce(role({ id: 'parent', permissions_json: '["audit:read","user:read"]' }))
-      .mockResolvedValueOnce({ count: 3 });
+      .mockResolvedValueOnce(
+        role({ id: 'parent', permissions_json: '["audit:read","user:read"]' })
+      );
+    mocks.adapter.query.mockResolvedValueOnce([{ key: 'resource-1', count: 3 }]);
     await expect((await adminRoleGetHandler(context())).json()).resolves.toMatchObject({
       role: {
         assignment_count: 3,
@@ -410,7 +414,8 @@ describe('admin RBAC organization and role CRUD', () => {
   });
 
   it('does not delete assigned custom roles', async () => {
-    mocks.adapter.queryOne.mockResolvedValueOnce(role()).mockResolvedValueOnce({ count: 2 });
+    mocks.adapter.queryOne.mockResolvedValueOnce(role());
+    mocks.adapter.query.mockResolvedValueOnce([{ key: 'resource-1', count: 2 }]);
     expect((await adminRoleDeleteHandler(context({ auth: adminAuth }))).status).toBe(409);
     expect(mocks.adapter.execute).not.toHaveBeenCalled();
   });

@@ -363,7 +363,6 @@ if [ "$OVERALL_SUCCESS" = true ]; then
     echo "     ./scripts/setup-dev.sh"
     echo "     ./scripts/setup-kv.sh"
     echo "     ./scripts/setup-d1.sh"
-    echo "     ./scripts/setup-durable-objects.sh"
     echo "  2. Deploy workers:"
     echo "     pnpm run deploy:retry"
 else

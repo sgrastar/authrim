@@ -18,6 +18,8 @@ import { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   getChallengeStoreByChallengeId,
+  readSAMLAuthorizationChallengeBinding,
+  isSAMLAuthorizationChallenge,
   getTenantIdFromContext,
   getLogger,
   getWebOriginRegistry,
@@ -73,6 +75,19 @@ export interface LoginChallengeWebOrigin {
   handoff_allowed: boolean;
   iframe_allowed: boolean;
   environment?: string;
+}
+
+/**
+ * What the Login UI is given for the challenge of a SAML request: no client (there is none) and no
+ * OIDC request. The SAML request and SP are in the Login UI's URL, which it sends with the Flow;
+ * the Flow checks them against the challenge.
+ */
+export interface SAMLLoginChallengeData {
+  challenge_id: string;
+  protocol: 'saml';
+  session_mode: LoginChallengeSessionMode;
+  handoff_methods: LoginChallengeHandoffMethod[];
+  web_origin_registry: { origins: LoginChallengeWebOrigin[] };
 }
 
 /**
@@ -299,6 +314,7 @@ export async function loginChallengeGetHandler(c: Context<{ Bindings: Env }>) {
 
     const typedChallengeData = challengeData as {
       id: string;
+      tenantId?: unknown;
       type: string;
       userId: string;
       metadata?: LoginChallengeMetadata;
@@ -325,6 +341,33 @@ export async function loginChallengeGetHandler(c: Context<{ Bindings: Env }>) {
         },
         400
       );
+    }
+
+    // The challenge of a SAML request (a re-authentication of a signed-in person) names no client.
+    // It is served only when it is wholly bound to this tenant and is a re-authentication.
+    if (isSAMLAuthorizationChallenge(metadata as Record<string, unknown>)) {
+      const binding = readSAMLAuthorizationChallengeBinding({
+        tenantId: typedChallengeData.tenantId,
+        metadata: metadata as Record<string, unknown>,
+      });
+      if (
+        !binding ||
+        binding.tenantId !== requestTenantId ||
+        typedChallengeData.type !== 'reauth'
+      ) {
+        return c.json(
+          { error: 'invalid_request', error_description: 'Invalid or expired challenge' },
+          400
+        );
+      }
+      const samlResponse: SAMLLoginChallengeData = {
+        challenge_id,
+        protocol: 'saml',
+        session_mode: 'managed_browser_session',
+        handoff_methods: ['cookie_session_finalize'],
+        web_origin_registry: { origins: [] },
+      };
+      return c.json(samlResponse);
     }
 
     // Type guard: ensure client_id exists

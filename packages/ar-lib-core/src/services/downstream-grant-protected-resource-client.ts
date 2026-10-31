@@ -1,7 +1,4 @@
-import type {
-  DownstreamGrantServiceAuthorizationInput,
-  DownstreamGrantServiceEvaluationResult,
-} from './downstream-elevation-grant';
+import type { DownstreamGrantServiceEvaluationResult } from './downstream-elevation-grant';
 import {
   DownstreamGrantClientError,
   exchangeAndEvaluateDownstreamGrant,

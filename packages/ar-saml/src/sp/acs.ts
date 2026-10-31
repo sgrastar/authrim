@@ -6,12 +6,15 @@
  */
 
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
+import type { DatabaseSource, Env } from '@authrim/ar-lib-core';
 import type { SAMLIdPConfig, SAMLAssertion, SAMLRequestData } from '@authrim/ar-lib-core';
 import {
   getSessionStoreForNewSession,
   type DatabaseAdapter,
   ensureDatabaseAdapter,
+  resolveAuthCorePersistenceAdapterFromEnv,
+  scheduleSignInAttemptFailureRecord,
+  type SignInAttemptReasonCode,
   requireAdminDatabaseAdapter,
   createErrorResponse,
   AR_ERROR_CODES,
@@ -37,7 +40,19 @@ import {
   type SessionEventData,
   // Audit Log
   createAuditLog,
+  updateProfileOnLogin,
+  readExternalProviderReauthPolicy,
+  readExternalProviderUsagePolicy,
+  resolveSessionTtl,
+  checkEmailRegistration,
 } from '@authrim/ar-lib-core';
+import {
+  applyExternalSignupInvitation,
+  externalSignupInvitationEmailCheck,
+  externalSignupInvitationRequirement,
+  releaseExternalSignupInvitation,
+  type ExternalSignupInvitationRequirement,
+} from '@authrim/ar-lib-core/services/external-signup-invitation';
 import { executeRuntimeMapping } from '@authrim/ar-lib-field-mapping/runtime';
 import type { SourceValueEnvelope } from '@authrim/ar-lib-field-mapping/contract';
 import { resolveSAMLTenantIdFromContext } from '../common/tenant';
@@ -58,7 +73,8 @@ import {
   hasSignature,
   type VerifiedXmlReference,
 } from '../common/signature';
-import { getIdPConfigByEntityId } from '../admin/providers';
+import { getIdPConfigByEntityId, getIdPUsageKeyByEntityId } from '../admin/providers';
+import { samlUsageUnavailableResponse } from './usage-gate';
 import { getSAMLLocalEntityIds } from '../common/entity-id';
 import { assertSAMLRelayStateSize, SAMLRelayStateTooLargeError } from '../common/relay-state';
 import {
@@ -67,7 +83,6 @@ import {
 } from './request-browser-binding';
 
 const SESSION_COOKIE_NAME = 'authrim_session';
-const SESSION_COOKIE_MAX_AGE_SECONDS = 3600;
 const SESSION_HANDOFF_TTL_SECONDS = 60;
 const SAML_SP_HANDOFF_AUDIENCE = 'saml_sp_cookie_handoff';
 const SAML_JIT_EMAIL_LINKING_POLICIES = new Set(['email_linking', 'jit_create_only', 'disabled']);
@@ -87,6 +102,38 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
   const tenantId = resolveSAMLTenantIdFromContext(c);
   const { issuerUrl, spEntityId } = await getSAMLLocalEntityIds(env, tenantId);
   let auditProviderId = 'unknown';
+  // The invitation use this sign-in's start reserved, until it goes to an account the ACS
+  // creates. Every other ending (an existing account, any refusal or failure) gives it back.
+  let unsettledInvitation: { inviteId: string; inviteReservationId: string } | null = null;
+  // The Flow interaction the sign-in's start checked (known once the request is consumed), and the
+  // account once found: a failed sign-in is recorded with them after the response.
+  let attemptInteractionId: string | null = null;
+  let attemptRequestId: string | null = null;
+  let attemptUserId: string | null = null;
+  const recordFailure = <T>(response: T, reasonCode: SignInAttemptReasonCode): T => {
+    scheduleSignInAttemptFailureRecord(
+      {
+        waitUntil: (promise) => c.executionCtx.waitUntil(promise),
+        core: () =>
+          resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-sign-in-attempt', { tenantId }),
+        env,
+        // The error's type only: a database error can quote what it was given.
+        onError: (recordError) =>
+          log.warn('Failed to record a failed sign-in attempt', {
+            errorType: recordError instanceof Error ? recordError.name : 'unknown',
+          }),
+      },
+      {
+        tenantId,
+        interactionId: attemptInteractionId,
+        method: 'saml',
+        reasonCode,
+        userId: attemptUserId,
+        ...(attemptRequestId ? { dedupeKey: attemptRequestId } : {}),
+      }
+    );
+    return response;
+  };
 
   try {
     // Parse POST data
@@ -150,20 +197,55 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
         log.error('InResponseTo validation failed', { inResponseTo });
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
+      unsettledInvitation = validatedRequest.context?.invitation ?? null;
+      attemptInteractionId = validatedRequest.context?.attemptInteractionId ?? null;
+      attemptRequestId = validatedRequest.requestId;
     } else if (await getStrictInResponseToSetting(env)) {
       log.error('SAML Response missing InResponseTo while strict mode is enabled', {});
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
-    const isFirstUse = await checkAndRecordBearerAssertionUse(
+    // The tenant's sign-in and sign-up switches for this IdP hold here, not only on the login
+    // screen: decided before the assertion is spent and before any account or session is made.
+    // A re-authentication has its own switch.
+    const reauthentication = validatedRequest?.context?.spReauthentication;
+    let usageKey: Awaited<ReturnType<typeof getIdPUsageKeyByEntityId>>;
+    let usagePolicy: { loginEnabled: boolean; signupEnabled: boolean };
+    try {
+      // Finding the IdP's record is part of reading its switches: failing is "unavailable" too.
+      usageKey = await getIdPUsageKeyByEntityId(env, tenantId, issuer);
+      usagePolicy = usageKey
+        ? await readExternalProviderUsagePolicy(env, tenantId, usageKey)
+        : { loginEnabled: true, signupEnabled: true };
+    } catch (error) {
+      log.warn(
+        'SAML IdP usage settings could not be read; refusing the sign-in',
+        {},
+        error as Error
+      );
+      return recordFailure(samlUsageUnavailableResponse(c), 'service_unavailable');
+    }
+    if (!reauthentication && !usagePolicy.loginEnabled) {
+      log.warn('SAML sign-in refused: the tenant turned sign-in off for this IdP', { issuer });
+      return recordFailure(
+        createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED),
+        'method_disabled'
+      );
+    }
+
+    const assertionUse = await checkAndRecordBearerAssertionUse(
       env,
       tenantId,
       issuer,
       assertion.id,
       assertion.subjectConfirmationData.notOnOrAfter
     );
-    if (!isFirstUse) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    if (assertionUse !== 'first_use') {
+      // The same refusal either way; the record tells a replay from a check that could not be made.
+      return recordFailure(
+        createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE),
+        assertionUse === 'replayed' ? 'replay_detected' : 'service_unavailable'
+      );
     }
 
     const authnContextClassRef = assertion.authnStatement?.authnContext?.authnContextClassRef;
@@ -173,18 +255,86 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
         issuer,
         authnContextClassRef: authnContextClassRef || 'missing',
       });
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+      return recordFailure(
+        createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE),
+        'assurance_not_met'
+      );
     }
 
     // Extract user information from assertion through the configured Field Mapping Set.
     const userInfo = await extractUserInfo(env, tenantId, spEntityId, assertion, idpConfig);
 
-    // Resolve the federated identity before applying any future attribute mapping.
-    const identityResolution = await findOrCreateUser(env, userInfo, idpConfig, tenantId);
+    // Resolve the federated identity before applying any future attribute mapping. An invitation
+    // the sign-in started from creates an account only for the email it names.
+    const invitationRequirement = unsettledInvitation
+      ? await externalSignupInvitationRequirement(
+          env,
+          await samlInvitationDatabase(env, tenantId),
+          {
+            tenantId,
+            inviteId: unsettledInvitation.inviteId,
+          }
+        )
+      : null;
+    const identityResolution = await findOrCreateUser(
+      env,
+      userInfo,
+      idpConfig,
+      tenantId,
+      usagePolicy.signupEnabled,
+      invitationRequirement
+    );
     const userId = identityResolution.userId;
+    attemptUserId = userId;
+    // The reserved use goes to the account created here, before its session is made.
+    if (
+      unsettledInvitation &&
+      identityResolution.action === 'jit_create' &&
+      identityResolution.accountCoreDb
+    ) {
+      const invitation = unsettledInvitation;
+      unsettledInvitation = null;
+      await applyExternalSignupInvitation(
+        () => samlInvitationDatabase(env, tenantId),
+        identityResolution.accountCoreDb,
+        log,
+        { ...invitation, tenantId, userId }
+      );
+    }
 
-    // Create session
-    const sessionId = await createSession(env, userId, tenantId);
+    // A sign-in that answers a re-authentication needs the IdP to show a new login made after
+    // Authrim asked for one (ForceAuthn): its AuthnInstant, within the usual clock skew.
+    let reauthProvenAt: number | undefined;
+    if (reauthentication) {
+      const proven = await provenSPReauthentication(
+        env,
+        tenantId,
+        reauthentication,
+        assertion.authnStatement?.authnInstant
+      );
+      if (proven === null) {
+        log.warn('SAML re-authentication was not shown to be a new login', {
+          issuer,
+          authnInstantPresent: Boolean(assertion.authnStatement?.authnInstant),
+        });
+        return recordFailure(
+          createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE),
+          'assurance_not_met'
+        );
+      }
+      reauthProvenAt = proven;
+    }
+
+    // Create session (session.default_ttl: SAML sign-in has no lifetime setting of its own)
+    const sessionTtl = await resolveSessionTtl(env, tenantId, 'default');
+    const sessionId = await createSession(
+      env,
+      userId,
+      tenantId,
+      sessionTtl.seconds,
+      authnContextClassRef,
+      reauthProvenAt
+    );
 
     // Publish SAML authentication success event (non-blocking)
     publishEvent(c, {
@@ -207,7 +357,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
       data: {
         sessionId,
         userId,
-        ttlSeconds: 3600,
+        ttlSeconds: sessionTtl.seconds,
       } satisfies SessionEventData,
     }).catch((err: unknown) => {
       log.error('Failed to publish session.user.created event', {}, err as Error);
@@ -246,7 +396,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     // Determine redirect URL
     let returnUrl = validatedRequest?.relayState || resolveSafeReturnUrl(env, tenantId, relayState);
     if (!returnUrl) {
-      const uiConfig = await getUIConfig(env);
+      const uiConfig = await getUIConfig(env, tenantId);
       returnUrl = uiConfig?.baseUrl ? `${uiConfig.baseUrl}/` : `${buildIssuerUrl(env, tenantId)}/`;
     }
 
@@ -255,7 +405,9 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
       tenantId,
       sessionId,
       userId,
-      returnUrl
+      returnUrl,
+      // Redeeming a sign-in's artifact checks the IdP's sign-in switch again.
+      reauthentication ? null : usageKey
     );
     if (handoffResponse) {
       if (inResponseTo) {
@@ -269,7 +421,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
 
     // Set session cookie and redirect
     const headers = new Headers({ Location: returnUrl });
-    headers.append('Set-Cookie', buildSessionCookie(sessionId));
+    headers.append('Set-Cookie', buildSessionCookie(sessionId, sessionTtl.seconds));
     if (inResponseTo) {
       headers.append('Set-Cookie', buildSAMLRequestBindingClearCookie(inResponseTo));
     }
@@ -279,6 +431,7 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     });
   } catch (error) {
     log.error('ACS Error', {}, error as Error);
+    recordFailure(undefined, samlSignInAttemptReason(error));
 
     if (error instanceof SamlProvisioningError) {
       scheduleSAMLIdentityResolutionFailureAudit(c, tenantId, auditProviderId, error);
@@ -300,6 +453,20 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
             }
           : undefined,
       });
+    }
+
+    if (error instanceof SamlRegistrationBlockedError) {
+      log.warn('SAML sign-up refused: re-registration of a deleted account is blocked', {
+        issuer: auditProviderId,
+      });
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
+    }
+
+    if (error instanceof SamlSignupDisabledError) {
+      log.warn('SAML sign-up refused: the tenant turned sign-up off for this IdP', {
+        issuer: auditProviderId,
+      });
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
     }
 
     if (error instanceof SamlAttributeMappingError) {
@@ -332,7 +499,30 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     });
 
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  } finally {
+    if (unsettledInvitation) {
+      await releaseExternalSignupInvitation(() => samlInvitationDatabase(env, tenantId), log, {
+        ...unsettledInvitation,
+        tenantId,
+      });
+    }
   }
+}
+
+/** Why a failed SAML sign-in failed, in the attempt records' closed vocabulary. */
+function samlSignInAttemptReason(error: unknown): SignInAttemptReasonCode {
+  if (error instanceof SamlRegistrationBlockedError || error instanceof SamlSignupDisabledError) {
+    return 'signup_disabled';
+  }
+  if (error instanceof SamlProvisioningError || error instanceof SamlAttributeMappingError) {
+    return 'provisioning_failed';
+  }
+  return 'service_unavailable';
+}
+
+/** Where invitations and their reservations are kept: the tenant metadata database. */
+function samlInvitationDatabase(env: Env, tenantId: string) {
+  return resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-invitation', { tenantId });
 }
 
 function scheduleSAMLIdentityResolutionFailureAudit(
@@ -388,7 +578,8 @@ async function createSessionHandoffResponse(
   tenantId: string,
   sessionId: string,
   userId: string,
-  returnUrl: string
+  returnUrl: string,
+  usageKey: { providerId: string; ids: string[] } | null
 ): Promise<Response | null> {
   const env = c.env;
   if (!shouldUseSessionHandoff(env, getRequestUrl(c), returnUrl)) {
@@ -412,6 +603,9 @@ async function createSessionHandoffResponse(
     };
     if (clientId) {
       metadata.client_id = clientId;
+    }
+    if (usageKey) {
+      metadata.external_provider_usage_key = usageKey;
     }
 
     await handoffStore.storeChallengeRpc({
@@ -458,8 +652,8 @@ function shouldUseSessionHandoff(env: Env, requestUrl: string, returnUrl: string
   );
 }
 
-function buildSessionCookie(sessionId: string): string {
-  return `${SESSION_COOKIE_NAME}=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_COOKIE_MAX_AGE_SECONDS}`;
+function buildSessionCookie(sessionId: string, maxAgeSeconds: number): string {
+  return `${SESSION_COOKIE_NAME}=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAgeSeconds}`;
 }
 
 function createHandoffToken(): string {
@@ -976,8 +1170,9 @@ function validateSubjectConfirmation(
 }
 
 /**
- * Check and record a bearer assertion ID to prevent replay.
- * Returns true if this is the first use, false if already used
+ * Check and record a bearer assertion ID to prevent replay: `first_use` when it is recorded now,
+ * `replayed` when it was used before, `unavailable` when the check could not be made (both of
+ * the latter refuse the assertion).
  */
 async function checkAndRecordBearerAssertionUse(
   env: Env,
@@ -985,7 +1180,7 @@ async function checkAndRecordBearerAssertionUse(
   idpEntityId: string,
   assertionId: string,
   notOnOrAfter?: string
-): Promise<boolean> {
+): Promise<'first_use' | 'replayed' | 'unavailable'> {
   try {
     const assertionExpiresAt = notOnOrAfter
       ? parseSAMLDateTimeMs(notOnOrAfter, 'SubjectConfirmationData NotOnOrAfter') +
@@ -1003,14 +1198,14 @@ async function checkAndRecordBearerAssertionUse(
 
     if (response.status === 409) {
       createLogger().module('SAML-SP-ACS').warn('Bearer assertion already used', { assertionId });
-      return false;
+      return 'replayed';
     }
-    return response.ok;
+    return response.ok ? 'first_use' : 'unavailable';
   } catch (error) {
     createLogger()
       .module('SAML-SP-ACS')
       .error('Bearer assertion replay validation unavailable', { assertionId }, error as Error);
-    return false;
+    return 'unavailable';
   }
 }
 
@@ -1066,7 +1261,7 @@ async function consumeInResponseTo(
     if (!response.ok) {
       return null;
     }
-    return (await response.json()) as SAMLRequestData;
+    return await response.json<SAMLRequestData>();
   } catch {
     return null;
   }
@@ -1207,7 +1402,26 @@ interface UserInfo {
   nameIdFormat: string;
   attributes: Record<string, string[]>;
   customClaims: Record<string, unknown>;
+  /** Standard profile claims the field mapping produced (`authrim.profile`), by claim name. */
+  profile: Record<string, string>;
 }
+
+/** An `authrim.profile` mapping target, as the standard profile claim a login may update. */
+const SAML_PROFILE_PATH_TO_CLAIM: Readonly<Record<string, string>> = {
+  name: 'name',
+  given_name: 'given_name',
+  family_name: 'family_name',
+  middle_name: 'middle_name',
+  nickname: 'nickname',
+  profile: 'profile',
+  picture: 'picture',
+  picture_url: 'picture',
+  website: 'website',
+  gender: 'gender',
+  birthdate: 'birthdate',
+  zoneinfo: 'zoneinfo',
+  locale: 'locale',
+};
 
 type SAMLIdentityResolutionAction = 'existing_link' | 'email_link' | 'jit_create';
 
@@ -1215,6 +1429,8 @@ interface SAMLIdentityResolution {
   userId: string;
   action: SAMLIdentityResolutionAction;
   linkedIdentityId?: string;
+  /** The created account's core database (jit_create), where its assignments are written. */
+  accountCoreDb?: DatabaseSource;
 }
 
 interface SAMLLinkedIdentityRow {
@@ -1237,7 +1453,8 @@ type SAMLIdentityResolutionFailureReason =
   | 'custom_claim_validation_failed'
   | 'account_provisioning_pending'
   | 'account_route_inconsistent'
-  | 'linked_identity_subject_conflict';
+  | 'linked_identity_subject_conflict'
+  | 'invitation_email_mismatch';
 
 class SamlProvisioningError extends Error {
   constructor(
@@ -1252,6 +1469,25 @@ class SamlProvisioningError extends Error {
   ) {
     super(message);
     this.name = 'SamlProvisioningError';
+  }
+}
+
+/**
+ * The address belongs to an account deleted within the retention period and the tenant blocks
+ * re-registration. Answered as sign-up turned off is, without saying the address was deleted.
+ */
+class SamlRegistrationBlockedError extends Error {
+  constructor() {
+    super('SAML sign-up refused for this address');
+    this.name = 'SamlRegistrationBlockedError';
+  }
+}
+
+/** The tenant turned sign-up off for the IdP, so a first sign-in cannot create the account. */
+class SamlSignupDisabledError extends Error {
+  constructor() {
+    super('SAML sign-up is turned off for this IdP');
+    this.name = 'SamlSignupDisabledError';
   }
 }
 
@@ -1277,6 +1513,7 @@ async function extractUserInfo(
     nameIdFormat: assertion.subject.nameIdFormat,
     attributes: {},
     customClaims: {},
+    profile: {},
   };
 
   // Build attributes map
@@ -1381,6 +1618,9 @@ function applySAMLInboundMappedValues(userInfo: UserInfo, values: SourceValueEnv
     if (value === undefined) continue;
     const namespace = mappedValue.sourceRef.namespace;
     const path = mappedValue.sourceRef.path;
+    if (namespace === 'authrim.profile' && Object.hasOwn(SAML_PROFILE_PATH_TO_CLAIM, path)) {
+      userInfo.profile[SAML_PROFILE_PATH_TO_CLAIM[path]] = value;
+    }
 
     if (path === 'email') {
       userInfo.email = value;
@@ -1437,7 +1677,9 @@ async function findOrCreateUser(
   env: Env,
   userInfo: UserInfo,
   idpConfig: SAMLIdPConfig,
-  tenantId: string
+  tenantId: string,
+  signupEnabled: boolean,
+  invitation?: ExternalSignupInvitationRequirement | null
 ): Promise<SAMLIdentityResolution> {
   const providerId = idpConfig.entityId;
   const providerUserKey = buildSAMLProviderUserKey(userInfo);
@@ -1472,6 +1714,25 @@ async function findOrCreateUser(
         'jit_disabled'
       );
     }
+    // Creating an account is a sign-up: decided before anything is written.
+    if (!signupEnabled) throw new SamlSignupDisabledError();
+    // An invitation that names an email creates an account only for that email (a SAML IdP's
+    // email is taken as verified, as the account it creates records).
+    if (
+      externalSignupInvitationEmailCheck(invitation, {
+        email: normalizedEmail,
+        emailVerified: true,
+      }) !== 'ok'
+    ) {
+      throw new SamlProvisioningError(
+        'This invitation is for another email address',
+        'invitation_email_mismatch'
+      );
+    }
+
+    const registration = await checkEmailRegistration(env, { tenantId, email: normalizedEmail });
+    if (registration === 'unavailable') throw new Error('saml_reregistration_check_unavailable');
+    if (registration === 'blocked') throw new SamlRegistrationBlockedError();
     return provisionSamlJitAccount(env, {
       tenantId,
       providerId,
@@ -1525,6 +1786,17 @@ async function findOrCreateUser(
       existingLink.id,
       Boolean(piiAdapter)
     );
+    // The user's profile from the IdP's attributes (after the field mapping), where the tenant
+    // turns updates on login on: the IdP's own fields, else the tenant's.
+    await updateProfileOnLogin({
+      env,
+      tenantId,
+      userId: activeUser.id,
+      // The standard profile claims the mapping produced, and the user's name as the login sets it.
+      claims: { ...userInfo.profile, ...(userInfo.name ? { name: userInfo.name } : {}) },
+      providerFields: idpConfig.profileUpdateFields,
+      users: runtimeUsers,
+    });
     return {
       userId: activeUser.id,
       action: 'existing_link',
@@ -1749,6 +2021,8 @@ async function provisionSamlJitAccount(
     runtimeUser,
   });
   if (provisioned.status === 202) {
+    // The sign-in fails here, and an invitation it carried is given back (the ACS has no
+    // continuation for an account created later).
     throw new SamlProvisioningError(
       'SAML account provisioning is still pending',
       'account_provisioning_pending'
@@ -1797,7 +2071,12 @@ async function provisionSamlJitAccount(
     providerId: input.providerId,
     providerUserKey: input.providerUserKey,
   });
-  return { userId: account.legacyUserId, action: 'jit_create', linkedIdentityId };
+  return {
+    userId: account.legacyUserId,
+    action: 'jit_create',
+    linkedIdentityId,
+    accountCoreDb: account.coreDb,
+  };
 }
 
 function buildSAMLProviderUserKey(userInfo: UserInfo): string {
@@ -1966,9 +2245,49 @@ async function createSAMLLinkedIdentity(params: {
 }
 
 /**
+ * Whether the IdP showed a new login made after Authrim asked for one (ForceAuthn): its
+ * AuthnInstant, within the usual clock skew, from an IdP the tenant still lets re-authenticate.
+ * Returns the proof's time (when Authrim asked, its own clock), or null.
+ */
+export async function provenSPReauthentication(
+  env: Env,
+  tenantId: string,
+  reauthentication: NonNullable<NonNullable<SAMLRequestData['context']>['spReauthentication']>,
+  authnInstant: string | undefined
+): Promise<number | null> {
+  // A request stored before the IdP's stable id was kept cannot be matched to its settings.
+  if (!reauthentication.providerId || !Array.isArray(reauthentication.providerIds)) return null;
+  const authnInstantMs = authnInstant ? new Date(authnInstant).getTime() : Number.NaN;
+  if (
+    !Number.isFinite(authnInstantMs) ||
+    authnInstantMs + DEFAULTS.CLOCK_SKEW_SECONDS * 1000 < reauthentication.requestedAt
+  ) {
+    return null;
+  }
+  try {
+    const policy = await readExternalProviderReauthPolicy(env, tenantId, {
+      providerId: reauthentication.providerId,
+      ids: reauthentication.providerIds,
+    });
+    // The proof counts from when Authrim asked, so a re-authentication asked for later (which a
+    // held-back response would otherwise complete) is not.
+    return policy.reauthEnabled ? reauthentication.requestedAt : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Create session for user (sharded)
  */
-async function createSession(env: Env, userId: string, tenantId: string): Promise<string> {
+async function createSession(
+  env: Env,
+  userId: string,
+  tenantId: string,
+  ttlSeconds: number,
+  authnContextClassRef?: string,
+  reauthProvenAt?: number
+): Promise<string> {
   const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(env, tenantId);
 
   const response = await sessionStore.fetch('https://session-store/session', {
@@ -1977,11 +2296,21 @@ async function createSession(env: Env, userId: string, tenantId: string): Promis
     body: JSON.stringify({
       sessionId,
       userId,
-      ttl: 3600, // 1 hour
+      ttl: ttlSeconds,
       tenantId,
       data: {
         amr: ['saml'],
         acr: 'urn:mace:incommon:iap:bronze',
+        // The IdP's AuthnContextClassRef, for the AAL assurance takes the login for
+        // (upstream_acr_mappings).
+        ...(authnContextClassRef ? { upstream_acr: authnContextClassRef } : {}),
+        // No proof time (proven_at): the AuthnInstant is in the IdP's own clock, so this login is
+        // never taken as the result of a step-up. It completes a re-authentication only when the
+        // IdP was asked for a new login (ForceAuthn) and showed one (reauth_proven_at, Authrim's
+        // clock). It can still be the session a step-up starts from.
+        ...(reauthProvenAt !== undefined
+          ? { reauth_proven_amr: ['saml'], reauth_proven_at: reauthProvenAt }
+          : {}),
       },
     }),
   });

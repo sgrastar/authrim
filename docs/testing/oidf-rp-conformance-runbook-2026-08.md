@@ -471,7 +471,7 @@ restored. Do not change production rate limits.
 The override endpoint is:
 
 ```text
-PUT /api/admin/settings/rate-limits/profile-override
+PUT /api/admin/rate-limits/profile-override
 {"profile":"loadTest","expires_in":3600}
 ```
 
@@ -479,7 +479,40 @@ Use an ephemeral `admin:*` token scoped to the conformance environment. After th
 testing window, clear it with:
 
 ```text
-DELETE /api/admin/settings/rate-limits/profile-override
+DELETE /api/admin/rate-limits/profile-override
+```
+
+The override does not raise the authenticator-app (TOTP) sign-in limit, which is
+counted per identifier and IP address (10 starts per 15 minutes by default) and is
+what keeps codes from being guessed. A run that signs one test user in many times
+raises it for the tenant under test only, through the Settings API.
+
+Before the run, read the tenant's current values and where they come from, and keep
+them for the restore:
+
+```text
+GET /api/admin/tenants/{tenantId}/settings/rate-limit
+```
+
+Then raise them (the highest values allowed are 100 starts per window and a
+60-second window):
+
+```text
+PATCH /api/admin/tenants/{tenantId}/settings/rate-limit
+{"ifMatch":"<version from GET>","set":{"rate_limit.totp_max_requests":100,"rate_limit.totp_window":60}}
+```
+
+A counter that has already started keeps the window it started with, so set the
+values before the run, and wait for any window already running for the test user
+(15 minutes by default) to end before relying on the shorter one.
+
+After the run, restore what the GET showed: set a key back to its previous value
+where the tenant had its own value, and clear only the keys the tenant had not set
+(clearing falls back to the platform value, the environment, then the default):
+
+```text
+PATCH /api/admin/tenants/{tenantId}/settings/rate-limit
+{"ifMatch":"<version from GET>","clear":["rate_limit.totp_max_requests","rate_limit.totp_window"]}
 ```
 
 ### 6. Dynamic RP attempted DCR after a discovery-only module

@@ -376,6 +376,6 @@
 	}
 
 	.turnstile-status.error {
-		color: var(--error);
+		color: var(--danger-fg);
 	}
 </style>

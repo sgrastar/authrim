@@ -75,6 +75,26 @@ describe('Cloudflare provisioning idempotency', () => {
         (call) => (call[1] as string[]).slice(0, 3).join(' ') === 'wrangler d1 create'
       )
     ).toHaveLength(1);
+    expect(
+      execaMock.mock.calls.find(
+        (call) => (call[1] as string[]).slice(0, 3).join(' ') === 'wrangler d1 create'
+      )?.[2]
+    ).toEqual(expect.objectContaining({ timeout: 120_000 }));
+  });
+
+  it('does not treat a timed-out create with a zero exit code as successful', async () => {
+    execaMock
+      .mockResolvedValueOnce(commandResult('[]'))
+      .mockResolvedValueOnce({ ...commandResult('partial Wrangler output'), timedOut: true });
+
+    await expect(createD1Database('test-authrim-core-db')).rejects.toThrow(
+      'creation outcome is ambiguous'
+    );
+    expect(
+      execaMock.mock.calls.filter(
+        (call) => (call[1] as string[]).slice(0, 3).join(' ') === 'wrangler d1 create'
+      )
+    ).toHaveLength(1);
   });
 
   it('fails closed when an ambiguous D1 create returns no immutable ID', async () => {
@@ -819,6 +839,13 @@ describe('Cloudflare provisioning idempotency', () => {
     expect(execaMock).toHaveBeenCalledOnce();
   });
 
+  it('never falls back to Wrangler when a Queue inventory is pinned to one account', async () => {
+    await expect(
+      listQueues({ accountId: '0123456789abcdef0123456789abcdef', requireIds: true })
+    ).rejects.toThrow('Pinned Cloudflare Queue inventory is unavailable');
+    expect(execaMock).not.toHaveBeenCalled();
+  });
+
   it('creates a Queue through the REST API and pins the returned queue_id', async () => {
     process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
     process.env.CLOUDFLARE_API_TOKEN = 'test-token';
@@ -884,6 +911,72 @@ describe('Cloudflare provisioning idempotency', () => {
     expect(onProviderIdentityIdentified).toHaveBeenCalledWith({ id: 'queue-rest-id' });
     expect(createAttempts).toBe(2);
     expect(execaMock).not.toHaveBeenCalled();
+  });
+
+  it('allows a Queue create response to outlast the default 30-second API deadline', async () => {
+    process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
+    process.env.CLOUDFLARE_API_TOKEN = 'test-token';
+    let queueExists = false;
+    const fetchMock = vi.fn(async (_rawUrl: string | URL, init: FetchInit = {}) => {
+      if (init.method === 'POST') {
+        // The default API deadline is 50 ms in tests. A slow but successful create must retain
+        // its response, since a lost queue_id leaves the provisioning checkpoint unresolved.
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        queueExists = true;
+        return new Response(
+          JSON.stringify({
+            success: true,
+            result: { queue_name: 'test-audit-queue', queue_id: 'queue-rest-id' },
+          }),
+          { status: 200 }
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          success: true,
+          result: queueExists
+            ? [{ queue_name: 'test-audit-queue', queue_id: 'queue-rest-id' }]
+            : [],
+          result_info: {
+            page: 1,
+            per_page: 1000,
+            total_count: queueExists ? 1 : 0,
+            total_pages: 1,
+          },
+        }),
+        { status: 200 }
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(createQueue('test-audit-queue', { allowExisting: false })).resolves.toEqual({
+      id: 'queue-rest-id',
+      name: 'test-audit-queue',
+      providerId: 'queue-rest-id',
+    });
+    expect(fetchMock.mock.calls.filter((call) => call[1]?.method === 'POST')).toHaveLength(1);
+  });
+
+  it('reports the original Queue transport failure when its create response has no ID', async () => {
+    process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
+    process.env.CLOUDFLARE_API_TOKEN = 'test-token';
+    const fetchMock = vi.fn(async (_rawUrl: string | URL, init: FetchInit = {}) => {
+      if (init.method === 'POST') throw new Error('fetch failed');
+      return new Response(
+        JSON.stringify({
+          success: true,
+          result: [],
+          result_info: { page: 1, per_page: 1000, total_count: 0, total_pages: 1 },
+        }),
+        { status: 200 }
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(createQueue('test-audit-queue', { allowExisting: false })).rejects.toThrow(
+      'returned no immutable queue ID (fetch failed)'
+    );
+    expect(fetchMock.mock.calls.filter((call) => call[1]?.method === 'POST')).toHaveLength(1);
   });
 
   it('fails closed when Wrangler stderr claims a Queue ID after a lost create response', async () => {

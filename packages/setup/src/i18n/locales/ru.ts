@@ -769,6 +769,29 @@ const ru: Translations = {
   'web.lightMode': 'Светлая',
   'web.systemMode': 'Системная',
 
+  // Web UI cloud platform selection
+  'web.platform.title': 'Выберите облачную платформу',
+  'web.platform.description': 'Выберите облако для настройки Authrim.',
+  'web.platform.cloudflareAction': 'Настроить в Cloudflare',
+  'web.platform.cloudflareDescription': 'Настройте Authrim на Cloudflare Workers.',
+  'web.platform.awsAction': 'Настроить в AWS',
+  'web.platform.development': 'В разработке',
+  'web.platform.awsScope': 'Пока поддерживается только SAML DR',
+  'web.platform.choose': 'Выбрать',
+  'web.platform.back': 'Вернуться к выбору облака',
+  'web.platform.awsTitle': 'Подготовить SAML DR в AWS',
+  'web.platform.awsDescription':
+    'Подготовьте среду восстановления SAML IdP на случай сбоя Cloudflare.',
+  'web.platform.awsGuide':
+    'Команды настройки AWS позволяют проверить предварительные требования и составить план развертывания. Настройка в браузере находится в разработке.',
+  'web.platform.awsPrerequisites':
+    'Подготовьте аккаунт AWS, регион и профиль для входа через выделенную роль.',
+  'web.platform.awsCommand': 'Команда проверки предварительных требований',
+  'web.platform.awsCommandNote':
+    'Замените идентификатор аккаунта и имя профиля на значения из ваших настроек AWS.',
+  'web.platform.targetPending': 'Не выбрано',
+  'web.platform.chooseCloudflare': 'Перейти к настройке Cloudflare',
+
   // Web UI Prerequisites
   'web.prereq.title': 'Подготовка',
   'web.prereq.checking': 'Проверка...',
@@ -1095,6 +1118,13 @@ const ru: Translations = {
   'web.comp.adminUi': 'Панель администратора',
   'web.comp.adminUiDesc':
     'Панель управления тенантами, клиентами, пользователями и системными настройками.',
+  'web.comp.adminUiVariant': 'Пакет интерфейса администратора',
+  'web.comp.adminUiLegacy': 'Текущий интерфейс администратора',
+  'web.comp.adminUiLegacyDesc':
+    'Интерфейс администратора, используемый сейчас, со всеми функциями.',
+  'web.comp.adminUiConsole': 'Консоль администратора (предпросмотр)',
+  'web.comp.adminUiConsoleDesc':
+    'Переработанная консоль администратора. Функции добавляются постепенно; ещё не перестроенные разделы показывают заглушку. Тот же URL и те же ключи доступа администраторов, что и у текущего интерфейса.',
 
   // Web UI Domain Row Labels
   'web.domain.loginUi': 'UI для входа',
@@ -1339,6 +1369,8 @@ const ru: Translations = {
   'web.status.adminNotConfigured': 'Администратор не настроен',
   'web.status.initializing': 'Инициализация...',
   'web.status.found': 'Найдено: {{count}}',
+  'web.status.serverUnreachable':
+    'Не удаётся подключиться к серверу Setup. Проверьте, что он всё ещё запущен в терминале, при необходимости перезапустите его и повторите попытку.',
   'web.status.operationInProgress':
     'Уже выполняется другая операция настройки. Дождитесь её завершения и повторите попытку.',
   'web.status.warning': 'Предупреждение:',

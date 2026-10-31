@@ -998,6 +998,7 @@ export function runReleaseMigrationsCli(): void {
       productVersion: version,
       previousManifest: previous,
       previousManifests: releaseHistory.map((release) => release.manifest),
+      refreshCurrentVersionFiles: true,
     });
     const publishedSameVersionPath = join(migrationsRoot, 'releases', `${version}.json`);
     if (
@@ -1016,6 +1017,7 @@ export function runReleaseMigrationsCli(): void {
     if (serializeReleaseMigrationManifest(actual) !== serializeReleaseMigrationManifest(expected)) {
       throw new Error('Draft migration manifest is stale. Run pnpm migrate:manifest.');
     }
+    validateReleaseMigrationManifestFiles(migrationsRoot, actual);
     if (args.requireReleaseCandidate) {
       validateReleaseCandidateForMain({ migrationsRoot, productVersion: version });
       console.log(`Release migration candidate ${version} is ready for main.`);

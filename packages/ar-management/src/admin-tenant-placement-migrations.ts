@@ -7,6 +7,7 @@ import {
   type AdminAuthContext,
   type ControlTenantPlacementMigrationView,
   type Env,
+  runTenantBackupCoveredEffect,
 } from '@authrim/ar-lib-core';
 import {
   TENANT_PLACEMENT_MIGRATION_STEPS,
@@ -200,7 +201,11 @@ export async function adminTenantPlacementMigrationStartHandler(
       }
       job = adopted;
     }
-    c.executionCtx?.waitUntil(processNextTenantPlacementMigration(c.env));
+    c.executionCtx?.waitUntil(
+      runTenantBackupCoveredEffect(c.env, { tenantId }, () =>
+        processNextTenantPlacementMigration(c.env)
+      )
+    );
     await createAuditLog(c.env, {
       tenantId,
       userId: requestedBy,

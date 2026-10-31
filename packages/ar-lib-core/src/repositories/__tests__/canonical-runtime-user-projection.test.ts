@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { DatabaseAdapter } from '../../db/adapter';
 import {
   CanonicalRuntimeUserProjectionRepository,
   CanonicalSensitiveValueResolver,
@@ -152,6 +153,293 @@ describe('CanonicalRuntimeUserProjectionRepository', () => {
     });
   });
 
+  describe('claimNames', () => {
+    function trackResolvedRefs(): string[] {
+      const resolved: string[] = [];
+      const inner = valueResolver;
+      valueResolver = {
+        async resolveValue(valueStorageRef, context) {
+          resolved.push(valueStorageRef);
+          return inner.resolveValue(valueStorageRef, context);
+        },
+      };
+      repository = new CanonicalRuntimeUserProjectionRepository(adapter, 'tenant-a', valueResolver);
+      return resolved;
+    }
+
+    it('looks up no sensitive value for claims stored inline', async () => {
+      seedActiveCanonicalUser();
+      const resolved = trackResolvedRefs();
+
+      const projection = await repository.findByLegacyUserId('user-1', {
+        claimNames: ['given_name'],
+      });
+
+      expect(projection?.given_name).toBe('Example');
+      expect(resolved).toEqual([]);
+      expect(projection?.email).toBeNull();
+      expect(projection?.phone_number).toBeNull();
+    });
+
+    it('resolves the contacts the full way when a contact-derived claim is asked for', async () => {
+      seedActiveCanonicalUser();
+      const resolved = trackResolvedRefs();
+
+      const projection = await repository.findByLegacyUserId('user-1', {
+        claimNames: ['email'],
+      });
+
+      expect(projection?.email).toBe('person@example.test');
+      expect(projection?.email_verified).toBe(1);
+      // Never the profile values or the other account's contacts of claims not asked for.
+      expect(resolved).not.toContain('pii://tenant-a/name/user-1');
+      expect(resolved).not.toContain('pii://tenant-a/address/user-1');
+      expect(resolved).not.toContain('pii://tenant-a/email/other-account');
+    });
+
+    it('reads no contact when no contact-derived claim is asked for', async () => {
+      seedActiveCanonicalUser();
+      const resolved = trackResolvedRefs();
+
+      const projection = await repository.findByLegacyUserId('user-1', {
+        claimNames: ['name', 'given_name'],
+      });
+
+      expect(projection?.email).toBeNull();
+      expect(projection?.phone_number).toBeNull();
+      expect(resolved).toEqual(['pii://tenant-a/name/user-1']);
+      expect(
+        adapter.getQueryLog().some((entry) => /FROM\s+contact_points\b/i.test(entry.sql))
+      ).toBe(false);
+    });
+
+    it('looks up only the profile value of the claim asked for', async () => {
+      seedActiveCanonicalUser();
+      const resolved = trackResolvedRefs();
+
+      const projection = await repository.findByLegacyUserId('user-1', {
+        claimNames: ['name'],
+      });
+
+      expect(projection?.name).toBe('Example Person');
+      expect(resolved).toEqual(['pii://tenant-a/name/user-1']);
+      expect(projection?.email).toBeNull();
+      expect(projection?.address_json).toBeNull();
+      expect(projection?.custom_attributes_json).toBeNull();
+    });
+
+    it('reads no profile or contact value when no standard claim is asked for', async () => {
+      seedActiveCanonicalUser();
+      const resolved = trackResolvedRefs();
+
+      const projection = await repository.findByLegacyUserId('user-1', { claimNames: [] });
+
+      expect(projection?.id).toBe('user-1');
+      expect(resolved).toEqual([]);
+    });
+
+    describe('a partial projection returns what the full one does', () => {
+      const contact = (overrides: Record<string, unknown>) => ({
+        tenant_id: 'tenant-a',
+        subject_id: 'subject-1',
+        purpose: 'primary',
+        normalized_hash: `hash-${String(overrides.id)}`,
+        display_label: 'masked',
+        is_primary: 1,
+        lifecycle_state: 'active',
+        created_at: 1_700_000_000,
+        updated_at: 1_700_000_000,
+        deleted_at: null,
+        ...overrides,
+      });
+      const profileEmail = {
+        id: 'profile-attribute-email',
+        tenant_id: 'tenant-a',
+        profile_id: 'profile-1',
+        catalog_entry_id: 'field.canonical.email',
+        value_type: 'string',
+        value_json: JSON.stringify('profile@example.test'),
+        value_storage_ref: null,
+        value_hash: null,
+        classification: 'internal',
+        purpose: 'profile',
+        is_primary: 0,
+        display_order: 9,
+        lifecycle_state: 'active',
+        created_at: 1_700_000_009,
+        updated_at: 1_700_000_009,
+        deleted_at: null,
+      };
+
+      /** Contacts, and the profile's own email, that decide which value and flag a claim has. */
+      const FIXTURES: Record<
+        string,
+        {
+          contacts: Record<string, unknown>[];
+          withProfileEmail?: boolean;
+          /** What a full projection returns (as before partial projections existed). */
+          full: Record<string, unknown>;
+        }
+      > = {
+        'account contacts of both types': {
+          full: {
+            email: 'person@example.test',
+            email_verified: 1,
+            phone_number: '+819012345678',
+            phone_number_verified: 0,
+          },
+          contacts: [
+            contact({
+              id: 'c-email',
+              account_id: 'account-1',
+              contact_type: 'email',
+              value_storage_ref: 'pii://tenant-a/email/user-1',
+              verification_state: 'verified',
+            }),
+            contact({
+              id: 'c-phone',
+              account_id: 'account-1',
+              contact_type: 'phone',
+              value_storage_ref: 'pii://tenant-a/phone/user-1',
+              verification_state: 'unverified',
+            }),
+          ],
+        },
+        "the account's phone only, with the subject's shared verified email": {
+          full: {
+            email: null,
+            email_verified: 0,
+            phone_number: '+819012345678',
+            phone_number_verified: 0,
+          },
+          contacts: [
+            contact({
+              id: 'c-phone',
+              account_id: 'account-1',
+              contact_type: 'phone',
+              value_storage_ref: 'pii://tenant-a/phone/user-1',
+              verification_state: 'unverified',
+            }),
+            contact({
+              id: 'c-shared-email',
+              account_id: null,
+              contact_type: 'email',
+              value_storage_ref: 'pii://tenant-a/email/user-1',
+              verification_state: 'verified',
+            }),
+          ],
+        },
+        "the account's web contact only, with the subject's shared verified email": {
+          full: { email: null, email_verified: 0, phone_number: null, phone_number_verified: 0 },
+          contacts: [
+            contact({
+              id: 'c-web',
+              account_id: 'account-1',
+              contact_type: 'web',
+              value_storage_ref: 'pii://tenant-a/web/user-1',
+              verification_state: 'verified',
+            }),
+            contact({
+              id: 'c-shared-email',
+              account_id: null,
+              contact_type: 'email',
+              value_storage_ref: 'pii://tenant-a/email/user-1',
+              verification_state: 'verified',
+            }),
+          ],
+        },
+        "the profile's own email, with a verified contact email": {
+          withProfileEmail: true,
+          full: {
+            email: 'profile@example.test',
+            email_verified: 0,
+            phone_number: null,
+            phone_number_verified: 0,
+          },
+          contacts: [
+            contact({
+              id: 'c-email',
+              account_id: 'account-1',
+              contact_type: 'email',
+              value_storage_ref: 'pii://tenant-a/email/user-1',
+              verification_state: 'verified',
+            }),
+          ],
+        },
+        'shared contacts only': {
+          full: {
+            email: 'person@example.test',
+            email_verified: 1,
+            phone_number: '+819012345678',
+            phone_number_verified: 1,
+          },
+          contacts: [
+            contact({
+              id: 'c-shared-email',
+              account_id: null,
+              contact_type: 'email',
+              value_storage_ref: 'pii://tenant-a/email/user-1',
+              verification_state: 'verified',
+            }),
+            contact({
+              id: 'c-shared-phone',
+              account_id: null,
+              contact_type: 'phone',
+              value_storage_ref: 'pii://tenant-a/phone/user-1',
+              verification_state: 'verified',
+            }),
+          ],
+        },
+      };
+
+      const CLAIM_FIELDS = {
+        email: 'email',
+        email_verified: 'email_verified',
+        phone_number: 'phone_number',
+        phone_number_verified: 'phone_number_verified',
+        name: 'name',
+        given_name: 'given_name',
+        family_name: 'family_name',
+        locale: 'locale',
+        zoneinfo: 'zoneinfo',
+        address: 'address_json',
+      } as const;
+
+      it.each(Object.entries(FIXTURES))('with %s', async (_name, fixture) => {
+        seedActiveCanonicalUser();
+        adapter.initTable('contact_points', 'id');
+        adapter.seed('contact_points', fixture.contacts);
+        if (fixture.withProfileEmail) adapter.seed('profile_attribute_values', [profileEmail]);
+
+        const full = await repository.findByLegacyUserId('user-1');
+        expect(full).toMatchObject(fixture.full);
+        const requests: Array<readonly string[]> = [
+          ...Object.keys(CLAIM_FIELDS).map((claim) => [claim]),
+          ['email', 'email_verified'],
+          ['phone_number', 'phone_number_verified'],
+          ['email_verified', 'phone_number_verified'],
+          ['email', 'phone_number_verified'],
+        ];
+        for (const claimNames of requests) {
+          const partial = await repository.findByLegacyUserId('user-1', { claimNames });
+          for (const claim of claimNames) {
+            const field = CLAIM_FIELDS[claim as keyof typeof CLAIM_FIELDS];
+            expect(partial?.[field], `${claimNames.join('+')} -> ${claim}`).toEqual(full?.[field]);
+          }
+        }
+      });
+    });
+
+    it('materializes everything without claimNames', async () => {
+      seedActiveCanonicalUser();
+      const resolved = trackResolvedRefs();
+
+      await repository.findByLegacyUserId('user-1');
+
+      expect(resolved.length).toBeGreaterThan(3);
+    });
+  });
+
   it('does not read legacy users_core or users_pii tables', async () => {
     seedActiveCanonicalUser();
 
@@ -183,7 +471,7 @@ describe('CanonicalRuntimeUserProjectionRepository', () => {
     expect(projection).toMatchObject({
       id: 'user-1',
       active: 0,
-      account_status: 'suspended',
+      status: 'suspended',
       suspended_at: 1_752_700_000,
       suspended_until: 1_752_786_400,
       locked_at: null,
@@ -216,6 +504,46 @@ describe('CanonicalRuntimeUserProjectionRepository', () => {
       last_login_at: lastLoginAt,
     });
   });
+
+  it('projects PostgreSQL bigint epoch strings without treating them as date strings', async () => {
+    seedActiveCanonicalUser();
+    const row = adapter.getById('identity_accounts', 'account-1');
+    if (!row) throw new Error('fixture_missing');
+    adapter.seed('identity_accounts', [
+      { ...row, created_at: '1700000000000', updated_at: '1700000000020' },
+    ]);
+    await expect(repository.findByLegacyUserId('user-1')).resolves.toMatchObject({
+      created_at: '2023-11-14T22:13:20.000Z',
+      updated_at: '2023-11-14T22:13:20.020Z',
+    });
+    adapter.seed('identity_accounts', [{ ...row, updated_at: '9007199254740993' }]);
+    await expect(repository.findByLegacyUserId('user-1')).rejects.toThrow(
+      'canonical_projection_timestamp_invalid'
+    );
+  });
+
+  it.each(['person@example.test', { formatted: 'Tokyo' }])(
+    'preserves PostgreSQL JSONB value %j',
+    async (value) => {
+      const queryOne = vi.fn(async (sql: string) => ({
+        value_json: sql.includes('value_json::text AS value_json') ? JSON.stringify(value) : value,
+      }));
+      const resolver = new CanonicalSensitiveValueResolver({
+        getType: () => 'postgres',
+        queryOne,
+      } as unknown as DatabaseAdapter);
+      const ref = encodeCanonicalSensitiveValueRef({
+        tenantId: 'tenant-a',
+        userId: 'user-1',
+        field: 'email',
+      });
+      await expect(resolver.resolveValue(ref, { tenantId: 'tenant-a' })).resolves.toEqual(value);
+      expect(queryOne).toHaveBeenCalledWith(
+        expect.stringContaining('value_json::text AS value_json'),
+        ['tenant-a', 'user-1', 'email']
+      );
+    }
+  );
 
   it('encodes and resolves canonical sensitive value storage refs through an explicit resolver', async () => {
     const piiAdapter = new MockDatabaseAdapter();

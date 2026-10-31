@@ -226,6 +226,20 @@ export function validateRegisteredClientAuthenticationMethod(
 }
 
 /**
+ * Whether the device authorization grant treats the client as public: only a client registered
+ * with `token_endpoint_auth_method` `none` is. Every other client, a legacy record with neither a
+ * method nor a secret included, authenticates as a confidential client (RFC 8628 section 3.1 and
+ * 3.4). The device authorization endpoint (which issues the codes) and the token endpoint's
+ * device_code grant (which redeems them) both decide with this one function, so a client that can
+ * be issued a code can also redeem it.
+ */
+export function isDeviceCodePublicClient(
+  client: Pick<ClientMetadata, 'token_endpoint_auth_method'>
+): boolean {
+  return client.token_endpoint_auth_method === 'none';
+}
+
+/**
  * Extract OAuth client authentication credentials from request parameters and Basic auth.
  */
 export function parseOAuthClientAuthenticationParams(

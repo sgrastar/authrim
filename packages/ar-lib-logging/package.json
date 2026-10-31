@@ -1,6 +1,6 @@
 {
   "name": "@authrim/ar-lib-logging",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "type": "module",
   "exports": {
     "./contract": {
@@ -38,6 +38,21 @@
       "types": "./dist/keys/index.d.ts",
       "default": "./src/keys/index.ts"
     },
+    "./iceberg": {
+      "import": "./dist/iceberg/index.js",
+      "types": "./dist/iceberg/index.d.ts",
+      "default": "./src/iceberg/index.ts"
+    },
+    "./iceberg/schema": {
+      "import": "./dist/iceberg/schema.js",
+      "types": "./dist/iceberg/schema.d.ts",
+      "default": "./src/iceberg/schema.ts"
+    },
+    "./iceberg/capabilities": {
+      "import": "./dist/iceberg/capabilities.js",
+      "types": "./dist/iceberg/capabilities.d.ts",
+      "default": "./src/iceberg/capabilities.ts"
+    },
     "./messaging": {
       "import": "./dist/messaging/index.js",
       "types": "./dist/messaging/index.d.ts",
@@ -52,16 +67,23 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "lint": "echo 'Logging package: lint skipped'",
+    "lint": "eslint src --pass-on-unpruned-suppressions",
+    "lint:prune-suppressions": "eslint src --prune-suppressions",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "hyparquet": "1.31.5",
+    "hyparquet-compressors": "1.1.2",
+    "hyparquet-writer": "0.17.0",
+    "icebird": "0.9.2"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260903.1",
     "@types/node": "^20.19.25",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.8",
-    "yaml": "2.8.3"
+    "vitest": "^4.1.12",
+    "yaml": "2.9.1"
   }
 }

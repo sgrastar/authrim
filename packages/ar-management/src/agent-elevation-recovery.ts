@@ -2,7 +2,9 @@ import {
   AdminAgentAccessRepository,
   reconcileStaleAgentElevations,
   type AgentElevationReconcileSummary,
+  type AdminAgentAuditWriter,
 } from '@authrim/ar-agent-access/core';
+import { createCloudflareAdminAgentAuditWriter } from '@authrim/ar-agent-access/platform/cloudflare/admin-agent-audit-writer';
 import {
   requireDedicatedAdminDatabaseAdapter,
   type DatabaseAdapter,
@@ -17,6 +19,7 @@ interface AgentElevationRecoveryLogger {
 }
 
 interface AgentElevationRecoveryOptions {
+  auditWriter?: AdminAgentAuditWriter;
   now?: () => number;
   createId?: () => string;
   reconcilerId?: string;
@@ -36,7 +39,7 @@ export async function recoverStaleAgentElevations(
   adapter: DatabaseAdapter,
   options: AgentElevationRecoveryOptions = {}
 ): Promise<AgentElevationReconcileSummary> {
-  const repository = new AdminAgentAccessRepository(adapter);
+  const repository = new AdminAgentAccessRepository(adapter, options.auditWriter);
   const summary = await reconcileStaleAgentElevations(
     {
       repository,
@@ -59,7 +62,9 @@ export async function processScheduledAgentElevationRecovery(
 ): Promise<AgentElevationReconcileSummary | null> {
   try {
     const adapter = requireDedicatedAdminDatabaseAdapter(env, 'agent-elevation-recovery');
-    const summary = await recoverStaleAgentElevations(adapter);
+    const summary = await recoverStaleAgentElevations(adapter, {
+      auditWriter: createCloudflareAdminAgentAuditWriter(env),
+    });
     log.info('Agent elevation recovery completed', { ...summary });
     return summary;
   } catch (error) {

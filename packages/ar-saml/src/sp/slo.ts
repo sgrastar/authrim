@@ -20,14 +20,13 @@ import {
   AR_ERROR_CODES,
   getUIConfig,
   buildUIUrl,
-  shouldUseBuiltinForms,
   createConfigurationError,
-  buildIssuerUrl,
   usesNakedDomainIssuer,
   getLogger,
   createLogger,
   createAuthContextFromHono,
   recordHybridUserSessionRevocationEpoch,
+  resolveSamlRequestTtlSeconds,
 } from '@authrim/ar-lib-core';
 import {
   parseLogoutResponseXml,
@@ -273,7 +272,11 @@ async function processLogoutRequest(
   }
 
   // Validate LogoutRequest
-  validateLogoutRequest(logoutRequest, issuerUrl);
+  validateLogoutRequest(
+    logoutRequest,
+    issuerUrl,
+    await resolveSamlRequestTtlSeconds(env, resolveSAMLTenantIdFromContext(c))
+  );
 
   // Terminate session by NameID
   await terminateSessionByNameId(c, env, logoutRequest.nameId, logoutRequest.sessionIndex);
@@ -484,7 +487,11 @@ async function processLogoutResponse(
 /**
  * Validate LogoutRequest from IdP
  */
-function validateLogoutRequest(logoutRequest: ParsedLogoutRequest, issuerUrl: string): void {
+function validateLogoutRequest(
+  logoutRequest: ParsedLogoutRequest,
+  issuerUrl: string,
+  requestTtlSeconds: number
+): void {
   // Check request is not expired
   const issueInstantMs = Date.parse(logoutRequest.issueInstant);
   if (!Number.isFinite(issueInstantMs)) {
@@ -492,7 +499,7 @@ function validateLogoutRequest(logoutRequest: ParsedLogoutRequest, issuerUrl: st
   }
   const nowMs = Date.now();
   const skewMs = DEFAULTS.CLOCK_SKEW_SECONDS * 1000;
-  const maxAge = DEFAULTS.REQUEST_VALIDITY_SECONDS * 1000;
+  const maxAge = requestTtlSeconds * 1000;
 
   if (issueInstantMs > nowMs + skewMs) {
     throw new SAMLLogoutMessageValidationError();
@@ -710,7 +717,7 @@ export async function initiateSPLogout(
     spEntityId: idpConfig.entityId,
     requestId,
     relayState: returnUrl,
-    ttlSeconds: DEFAULTS.REQUEST_VALIDITY_SECONDS,
+    ttlSeconds: await resolveSamlRequestTtlSeconds(env, resolvedTenantId),
   });
 
   // Build LogoutRequest
@@ -764,7 +771,6 @@ export async function initiateSPLogout(
 
 /**
  * Build logout complete URL based on UI config (for SP)
- * Supports conformance mode (built-in redirect) and external UI
  */
 type LogoutCompleteResultSP =
   | { type: 'redirect'; url: string }
@@ -776,14 +782,8 @@ async function buildLogoutCompleteUrlForSP(
 ): Promise<LogoutCompleteResultSP> {
   const tenantId = resolveSAMLTenantIdFromContext(c);
 
-  // Conformance mode: use built-in path
-  if (await shouldUseBuiltinForms(env)) {
-    const issuerUrl = buildIssuerUrl(env, tenantId);
-    return { type: 'redirect', url: `${issuerUrl}/logout-complete` };
-  }
-
-  // Normal mode: use UI config
-  const uiConfig = await getUIConfig(env);
+  // Use UI config
+  const uiConfig = await getUIConfig(env, tenantId);
   if (!uiConfig?.baseUrl) {
     return { type: 'error', response: c.json(createConfigurationError(), 500) };
   }

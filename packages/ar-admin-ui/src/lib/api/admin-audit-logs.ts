@@ -1,3 +1,4 @@
+import { logDetailQuery, type LogCursorPagination } from './log-pagination';
 /**
  * Admin Audit Logs API Client
  *
@@ -12,12 +13,14 @@ import { ACCOUNT_AUDIT_ACTIONS } from '$lib/admin/account-audit-action-label';
 /**
  * Pagination info
  */
-export interface Pagination {
+interface NumberedPagination {
 	page: number;
 	limit: number;
 	total: number;
 	totalPages: number;
 }
+
+export type Pagination = NumberedPagination | LogCursorPagination;
 
 /**
  * Audit log entry
@@ -46,6 +49,7 @@ export interface AuditLogListResponse {
  * Audit log list parameters
  */
 export interface AuditLogListParams {
+	cursor?: string;
 	page?: number;
 	limit?: number;
 	user_id?: string;
@@ -72,6 +76,10 @@ export const AUDIT_ACTION_TYPES = [
 	{ value: 'user.lock', label: 'User Locked' },
 	{ value: 'user.activate', label: 'User Activated' },
 	{ value: 'user.anonymized', label: 'User Anonymized (GDPR)' },
+	{
+		value: 'guest.resume_credentials.deactivated',
+		label: 'Guest Resume Credentials Deactivated'
+	},
 
 	// ── Client Management ──
 	{ value: 'client.created', label: 'Client Created' },
@@ -131,6 +139,7 @@ export const adminAuditLogsAPI = {
 	async list(params?: AuditLogListParams): Promise<AuditLogListResponse> {
 		const searchParams = new URLSearchParams();
 
+		if (params?.cursor) searchParams.set('cursor', params.cursor);
 		if (params?.page) searchParams.set('page', String(params.page));
 		if (params?.limit) searchParams.set('limit', String(params.limit));
 		if (params?.user_id) searchParams.set('user_id', params.user_id);
@@ -159,8 +168,10 @@ export const adminAuditLogsAPI = {
 	 *
 	 * Note: Backend returns the entry object directly (not wrapped in { entry: ... })
 	 */
-	async get(id: string): Promise<AuditLogEntry> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/audit-logs/${id}`);
+	async get(id: string, eventAt?: number): Promise<AuditLogEntry> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/audit-logs/${encodeURIComponent(id)}${logDetailQuery(eventAt)}`
+		);
 
 		if (!response.ok) {
 			if (response.status === 404) {

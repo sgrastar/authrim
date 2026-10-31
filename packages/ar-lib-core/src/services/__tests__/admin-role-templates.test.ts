@@ -23,6 +23,9 @@ describe('admin-role-templates', () => {
     const support = getBuiltinAdminRoleTemplates().find(
       (template) => template.key === 'support_readonly'
     );
+    // Account status without personal data, not the user detail that carries it.
+    expect(support?.permissions).toContain(ADMIN_PERMISSIONS.USERS_STATUS_READ);
+    expect(support?.permissions).not.toContain(ADMIN_PERMISSIONS.USERS_READ);
     expect(support?.permissions).toContain(ADMIN_PERMISSIONS.ADMIN_AUDIT_READ);
     expect(support?.permissions).toContain(ADMIN_PERMISSIONS.LOGGING_OVERVIEW_READ);
     expect(support?.permissions).toContain(ADMIN_PERMISSIONS.ADMIN_LOGGING_OVERVIEW_READ);

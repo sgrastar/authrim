@@ -1,3 +1,4 @@
+import type { AccountRegistrationState } from '../../services/guest-lifecycle';
 import type { DatabaseAdapter } from '../../db/adapter';
 import type {
   ContactPointRow,
@@ -57,8 +58,9 @@ export interface CanonicalRuntimeUserProjection {
   subject_id: string;
   account_id: string;
   account_type: string;
+  registration_state: AccountRegistrationState;
   lifecycle_state: string;
-  account_status: string;
+  status: string;
   suspended_at: number | null;
   suspended_until: number | null;
   locked_at: number | null;
@@ -92,6 +94,13 @@ export interface CanonicalRuntimeUserProjection {
 
 export interface CanonicalRuntimeUserProjectionOptions {
   includeInactive?: boolean;
+  /**
+   * Materialize only these standard user claims (name, email, phone_number, address, ...): the
+   * profile and contact values behind other claims are not read (no sensitive-value lookup for
+   * them), and custom attributes are left out. The projection is then partial: for a reader that
+   * needs only some attributes, such as an identity mapping's sources.
+   */
+  claimNames?: readonly string[];
 }
 
 const PROFILE_ATTRIBUTE_TO_RUNTIME_FIELD: Record<
@@ -153,6 +162,14 @@ const CUSTOM_ATTRIBUTES_CATALOG_IDS = new Set([
   'custom_attributes_json',
   'field.canonical.custom_attributes',
 ]);
+
+/** The claims whose value comes from the contacts (with the profile's own email or phone). */
+const CONTACT_DERIVED_CLAIMS = [
+  'email',
+  'email_verified',
+  'phone_number',
+  'phone_number_verified',
+] as const;
 
 const MAX_PARALLEL_SENSITIVE_VALUE_READS = 4;
 
@@ -248,8 +265,16 @@ function activeAccountClause(includeInactive: boolean | undefined): string {
     : " AND lifecycle_state = 'active' AND directory_publication_state = 'active'";
 }
 
-function unixToIso(value: number | null | undefined): string {
-  const timestamp = value ?? 0;
+function timestampNumber(value: number | string | null | undefined): number {
+  const timestamp = typeof value === 'string' ? Number(value) : (value ?? 0);
+  if (typeof value === 'string' && (!/^-?\d+$/.test(value) || !Number.isSafeInteger(timestamp))) {
+    throw new Error('canonical_projection_timestamp_invalid');
+  }
+  return timestamp;
+}
+
+function unixToIso(value: number | string | null | undefined): string {
+  const timestamp = timestampNumber(value);
   const absolute = Math.abs(timestamp);
   const milliseconds =
     absolute < 100_000_000_000
@@ -367,6 +392,13 @@ export class CanonicalRuntimeUserProjectionRepository {
       return null;
     }
 
+    const wanted = options?.claimNames ? new Set(options.claimNames) : null;
+    // The contact-derived claims (a value and its verified flag) come from the contacts and the
+    // profile's own value together: which of them is used is decided over all the contacts and
+    // the profile's email and phone, as in a full projection. So when any of them is asked for,
+    // that is resolved the full way; otherwise no contact is read.
+    const needsContacts =
+      !wanted || CONTACT_DERIVED_CLAIMS.some((claimName) => wanted.has(claimName));
     const [subject, profile, subjectContacts] = await Promise.all([
       this.adapter.queryOne<IdentitySubjectRow>(
         `SELECT *
@@ -383,13 +415,15 @@ export class CanonicalRuntimeUserProjectionRepository {
           LIMIT 1`,
         [account.primary_subject_id, this.tenantId]
       ),
-      this.adapter.query<ContactPointRow>(
-        `SELECT *
-           FROM contact_points
-          WHERE subject_id = ? AND tenant_id = ?${activeClause(false)}
-          ORDER BY is_primary DESC, created_at ASC`,
-        [account.primary_subject_id, this.tenantId]
-      ),
+      needsContacts
+        ? this.adapter.query<ContactPointRow>(
+            `SELECT *
+               FROM contact_points
+              WHERE subject_id = ? AND tenant_id = ?${activeClause(false)}
+              ORDER BY is_primary DESC, created_at ASC`,
+            [account.primary_subject_id, this.tenantId]
+          )
+        : Promise.resolve([] as ContactPointRow[]),
     ]);
     if (!subject) {
       return null;
@@ -397,7 +431,7 @@ export class CanonicalRuntimeUserProjectionRepository {
 
     const projection = this.emptyProjection(account, subject, profile);
     if (profile) {
-      await this.applyProfileAttributes(projection, subject, account, profile);
+      await this.applyProfileAttributes(projection, subject, account, profile, wanted);
     }
     await this.applyContactPoints(projection, subject, account, subjectContacts);
     return projection;
@@ -419,8 +453,9 @@ export class CanonicalRuntimeUserProjectionRepository {
       subject_id: subject.id,
       account_id: account.id,
       account_type: account.account_type,
+      registration_state: account.registration_state,
       lifecycle_state: account.lifecycle_state,
-      account_status: accountStatusFromMetadata(account.lifecycle_state, accountMetadataObject),
+      status: accountStatusFromMetadata(account.lifecycle_state, accountMetadataObject),
       suspended_at: toNumberOrNull(accountMetadataObject.suspended_at),
       suspended_until: toNumberOrNull(accountMetadataObject.suspended_until),
       locked_at: toNumberOrNull(accountMetadataObject.locked_at),
@@ -452,7 +487,9 @@ export class CanonicalRuntimeUserProjectionRepository {
       active: account.lifecycle_state === 'active' && subject.lifecycle_state === 'active' ? 1 : 0,
       custom_attributes_json: null,
       created_at: unixToIso(account.created_at),
-      updated_at: unixToIso(Math.max(account.updated_at, subject.updated_at)),
+      updated_at: unixToIso(
+        Math.max(timestampNumber(account.updated_at), timestampNumber(subject.updated_at))
+      ),
     };
   }
 
@@ -460,15 +497,30 @@ export class CanonicalRuntimeUserProjectionRepository {
     projection: CanonicalRuntimeUserProjection,
     subject: IdentitySubjectRow,
     account: IdentityAccountRow,
-    profile: ProfileRow
+    profile: ProfileRow,
+    wanted: ReadonlySet<string> | null
   ): Promise<void> {
-    const attributes = await this.adapter.query<ProfileAttributeValueRow>(
+    const allAttributes = await this.adapter.query<ProfileAttributeValueRow>(
       `SELECT *
          FROM profile_attribute_values
         WHERE profile_id = ? AND tenant_id = ?${activeClause(false)}
         ORDER BY display_order ASC, created_at ASC`,
       [profile.id, this.tenantId]
     );
+    // Only the values behind the claims asked for are resolved (a sensitive-value read each), and
+    // the profile's email and phone when a contact-derived claim is asked for: they take
+    // precedence over the contacts, so the contacts' values depend on them.
+    const contactDerived =
+      wanted !== null && CONTACT_DERIVED_CLAIMS.some((name) => wanted.has(name));
+    const attributes = wanted
+      ? allAttributes.filter((attribute) => {
+          const field = PROFILE_ATTRIBUTE_TO_RUNTIME_FIELD[attribute.catalog_entry_id];
+          return field
+            ? wanted.has(field) ||
+                (contactDerived && (field === 'email' || field === 'phone_number'))
+            : ADDRESS_CATALOG_IDS.has(attribute.catalog_entry_id) && wanted.has('address');
+        })
+      : allAttributes;
     const customAttributes: Record<string, unknown> = {};
 
     const values = await mapInBoundedBatches(attributes, (attribute) =>
@@ -556,8 +608,12 @@ export class CanonicalSensitiveValueResolver implements CanonicalRuntimeValueRes
     if (ref.tenantId !== context.tenantId) {
       throw new Error('canonical sensitive value ref tenant mismatch');
     }
+    // node-pg decodes JSONB before returning rows. Preserve the JSON text contract that
+    // parseJson uses (including JSON strings such as an email address).
+    const valueColumn =
+      this.adapter.getType?.() === 'postgres' ? 'value_json::text AS value_json' : 'value_json';
     const row = await this.adapter.queryOne<{ value_json: string | null }>(
-      `SELECT value_json
+      `SELECT ${valueColumn}
          FROM identity_sensitive_values
         WHERE tenant_id = ?
           AND owner_type = 'runtime_user'

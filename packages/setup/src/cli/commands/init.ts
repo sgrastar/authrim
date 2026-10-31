@@ -1,3 +1,29 @@
+import { loadPendingBootstrap } from '../../core/pending-control-bootstrap.js';
+import {
+  ensureLogArchiveTokens,
+  resolveLogArchiveTokenInput,
+} from '../../core/log-archive-token-issuance.js';
+import {
+  buildCloudflareBootstrapTemplateUrl,
+  buildCloudflareBootstrapTokenEndDate,
+} from '../../core/cloudflare-control-token-bootstrap.js';
+import {
+  logArchiveInputError,
+  logArchiveErrorMessage,
+  withLogArchiveCliErrors,
+} from '../../web/log-archive-input.js';
+import {
+  assertLogArchiveImplemented,
+  createLogArchiveConfig,
+  implementedLogArchiveModes,
+} from '../../core/log-archive-config.js';
+import { planLogArchive, hasCompleteLogArchiveState } from '../../core/log-archive.js';
+import {
+  publishLogArchiveSecrets,
+  loadIssuedLogArchiveAccountId,
+  stageLogArchiveSecrets,
+  assertLogArchiveManualEntryAllowed,
+} from '../../core/log-archive-secrets.js';
 /**
  * Init Command - Setup wizard for Authrim
  *
@@ -20,7 +46,12 @@ import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { execa } from 'execa';
-import { createDefaultConfig, parseConfig, type AuthrimConfig } from '../../core/config.js';
+import {
+  createDefaultConfig,
+  parseConfig,
+  type AdminUiVariant,
+  type AuthrimConfig,
+} from '../../core/config.js';
 import {
   generateAllSecrets,
   saveKeysToDirectory,
@@ -141,6 +172,7 @@ let cliCapabilitySummaryShown = false;
 type PendingEmailSecretFiles = PendingEmailSecretsInput;
 
 interface ExecuteSetupOptions {
+  logArchiveTokenInput?: ReturnType<typeof resolveLogArchiveTokenInput>;
   /**
    * The caller entered through the canonical interrupted-provisioning recovery path. Re-read
    * that config only after both setup operation locks are held so a pre-lock snapshot can never
@@ -254,7 +286,11 @@ export function buildProvisioningResourceSpec(config: AuthrimConfig): Provisioni
         queues: config.features.queue?.enabled === true ? getRequiredQueues(environment) : [],
         r2: getRequiredR2Buckets(environment, {
           includeFeatureBuckets: config.features.r2?.enabled === true,
+          logArchiveBucketName: config.logging?.archive.bucketName,
         }),
+        ...(config.logging?.archive
+          ? { logArchive: planLogArchive(environment, config.logging.archive) }
+          : {}),
         workers: Array.from(getEnabledComponents(config.components)).map((component) => ({
           binding: component,
           name: getWorkerName(environment, component),
@@ -287,6 +323,15 @@ async function hasCompleteProvisioningArtifacts(input: {
   lock: AuthrimLock;
   intent?: ProvisioningIntent;
 }): Promise<boolean> {
+  if (
+    !hasCompleteLogArchiveState({
+      environment: input.environment,
+      archive: input.config.logging?.archive,
+      resource: input.lock.logArchive,
+      checkpoints: input.intent?.resources,
+    })
+  )
+    return false;
   const paths = getEnvironmentPaths({ baseDir: input.baseDir, env: input.environment });
   if (
     !existsSync(paths.config) ||
@@ -318,6 +363,7 @@ async function hasCompleteProvisioningArtifacts(input: {
       : []),
     ...getRequiredR2Buckets(input.environment, {
       includeFeatureBuckets: input.config.features.r2?.enabled === true,
+      logArchiveBucketName: input.config.logging?.archive.bucketName,
     }).map((resource) => ({
       kind: 'r2' as const,
       ...resource,
@@ -705,6 +751,8 @@ async function isWSLEnvironment(): Promise<boolean> {
 // =============================================================================
 
 interface InitOptions {
+  yes?: boolean;
+  dryRun?: boolean;
   cli?: boolean;
   config?: string;
   keep?: string;
@@ -1213,6 +1261,33 @@ async function updateExistingSource(sourceDir: string, gitRef: string): Promise<
 // =============================================================================
 
 export async function initCommand(options: InitOptions): Promise<void> {
+  if (options.yes || options.dryRun) {
+    if (!options.config) throw new Error('noninteractive_setup_requires_config');
+    const config = parseConfig(JSON.parse(await readFile(resolve(options.config), 'utf-8')));
+    if (options.env && options.env !== 'prod' && options.env !== config.environment.prefix)
+      throw new Error('setup_config_environment_mismatch');
+    if (options.dryRun) {
+      console.log(
+        JSON.stringify(
+          {
+            dryRun: true,
+            logArchiveImplemented: Boolean(
+              config.logging?.archive &&
+              implementedLogArchiveModes().includes(config.logging.archive.mode)
+            ),
+            plan: buildProvisioningResourceSpec(config),
+          },
+          null,
+          2
+        )
+      );
+      return;
+    }
+    assertLogArchiveImplemented(config.logging?.archive);
+    await initI18n((options.lang as Locale | undefined) ?? detectSystemLocale());
+    await executeSetup(config, options.keep);
+    return;
+  }
   // Immediately show startup message to indicate the tool is running
   const version = getVersion();
   console.log('');
@@ -1916,6 +1991,7 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
 
   // Create configuration
   const config = createDefaultConfig(envPrefix);
+  const logArchiveSecrets = await promptLogArchive(config);
   config.tenant = {
     ...config.tenant,
     placementPolicy: resolveInitialTenantPlacement(options.tenantPlacement),
@@ -2002,7 +2078,9 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
   }
 
   // Run setup
-  await executeSetup(config, options.keep, emailConfig);
+  await executeSetup(config, options.keep, emailConfig, {
+    logArchiveTokenInput: logArchiveSecrets,
+  });
 }
 
 // =============================================================================
@@ -2249,6 +2327,7 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   console.log(chalk.blue('━━━ ' + t('components.title') + ' ━━━'));
   console.log(chalk.gray('  ' + t('components.note')));
   console.log('');
+  const adminUiVariant = await promptAdminUiVariant('legacy');
 
   // Step 6: Feature flags
   console.log('');
@@ -2445,6 +2524,7 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
 
   // Create configuration
   const config = createDefaultConfig(envPrefix);
+  const logArchiveSecrets = await promptLogArchive(config);
   config.controlPlane = { automaticProvisioning };
   config.database = {
     core: parseDbLocationNormal(coreDbLocation),
@@ -2462,6 +2542,7 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   };
   config.components = {
     ...config.components,
+    adminUiVariant,
     saml: true,
     async: true,
     vc: true,
@@ -2484,8 +2565,8 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
     challengeShards,
   };
   config.features = {
-    queue: { enabled: enableQueue },
-    r2: { enabled: enableR2 },
+    samlDrExport: config.features.samlDrExport,
+    ...resolveInitialLogStorageFeatures(config, { queue: enableQueue, r2: enableR2 }),
     pluginDynamicWorkers: config.features.pluginDynamicWorkers,
     email: {
       provider: emailConfigNormal.provider,
@@ -2563,10 +2644,10 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   console.log('');
   console.log(chalk.bold(t('config.featureFlags')));
   console.log(
-    `  ${t('features.queue')} ${enableQueue ? chalk.green(t('config.enabled')) : chalk.gray(t('config.disabled'))}`
+    `  ${t('features.queue')} ${config.features.queue.enabled ? chalk.green(t('config.enabled')) : chalk.gray(t('config.disabled'))}`
   );
   console.log(
-    `  ${t('features.r2')} ${enableR2 ? chalk.green(t('config.enabled')) : chalk.gray(t('config.disabled'))}`
+    `  ${t('features.r2')} ${config.features.r2.enabled ? chalk.green(t('config.enabled')) : chalk.gray(t('config.disabled'))}`
   );
   console.log('');
   console.log(chalk.bold(t('config.emailSettings')));
@@ -2643,7 +2724,9 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
     return;
   }
 
-  await executeSetup(config, options.keep, emailConfigNormal);
+  await executeSetup(config, options.keep, emailConfigNormal, {
+    logArchiveTokenInput: logArchiveSecrets,
+  });
 }
 
 // =============================================================================
@@ -2656,7 +2739,11 @@ async function executeSetup(
   pendingEmailSecrets?: PendingEmailSecretFiles,
   options: ExecuteSetupOptions = {}
 ): Promise<void> {
+  const archiveTokenInput =
+    options.logArchiveTokenInput ??
+    withLogArchiveCliErrors(getLocale(), () => resolveLogArchiveTokenInput(process.env));
   const outputDir = resolve(keepPath || '.');
+  assertLogArchiveImplemented(config.logging?.archive);
   const env = config.environment.prefix;
   let secrets: ReturnType<typeof generateAllSecrets> | null = null;
 
@@ -2771,6 +2858,53 @@ async function executeSetup(
       includeSecrets: false,
       storageType: 'external',
     };
+    if (config.logging?.archive && archiveTokenInput && !('bootstrapToken' in archiveTokenInput))
+      await withLogArchiveCliErrors(getLocale(), () =>
+        assertLogArchiveManualEntryAllowed(outputDir, env)
+      );
+    const prepareArchiveTokens = async () => {
+      const archive = config.logging?.archive;
+      if (!archive || !archiveTokenInput) return;
+      if ('bootstrapToken' in archiveTokenInput) {
+        const result = await withLogArchiveCliErrors(getLocale(), () =>
+          ensureLogArchiveTokens({
+            baseDir: outputDir,
+            environment: env,
+            accountId,
+            mode: archive.mode,
+            bootstrapToken: archiveTokenInput.bootstrapToken,
+            keysDir: getExternalKeysDir(env, keysBaseDir),
+          })
+        );
+        if (result.reused)
+          console.log(
+            getLocale() === 'ja'
+              ? '検証済みのログ用トークンを再利用します。'
+              : 'Reusing verified log archive tokens.'
+          );
+        if (result.warning) console.log(logArchiveErrorMessage(result.warning, getLocale()));
+      } else {
+        const error = logArchiveInputError({
+          mode: archive.mode,
+          ...archiveTokenInput,
+        });
+        if (error) throw new Error(logArchiveErrorMessage(error, getLocale()));
+        await withLogArchiveCliErrors(getLocale(), () =>
+          stageLogArchiveSecrets(outputDir, env, archiveTokenInput)
+        );
+      }
+    };
+    const archiveRecoveryPending =
+      config.logging?.archive && archiveTokenInput && 'bootstrapToken' in archiveTokenInput
+        ? await withLogArchiveCliErrors(getLocale(), () =>
+            loadPendingBootstrap({
+              baseDir: outputDir,
+              environment: env,
+              purpose: 'log-archive',
+            })
+          )
+        : null;
+    if (archiveRecoveryPending) await prepareArchiveTokens();
     const resourceSpec = buildProvisioningResourceSpec(config);
     let provisioningAttempt = existingIntent
       ? await beginOrResumeProvisioningIntent({
@@ -2843,6 +2977,9 @@ async function executeSetup(
     if (!provisionDecision.allowed) {
       throw new Error(environmentOperationBlockMessage(provisionDecision));
     }
+
+    // Completed provisioning returns above without replaying an obsolete bootstrap credential.
+    if (!archiveRecoveryPending) await prepareArchiveTokens();
 
     await assertLocalDeploymentCapacity({
       rootDir: outputDir,
@@ -2971,6 +3108,24 @@ async function executeSetup(
         createKV: true,
         createQueues: config.features.queue?.enabled,
         createR2: config.features.r2?.enabled,
+        logArchive: config.logging?.archive,
+        ...(config.logging?.archive
+          ? {
+              logArchiveCatalogSecrets: await publishLogArchiveSecrets(
+                outputDir,
+                env,
+                externalKeysDir,
+                config.logging.archive.mode,
+                config.logging.archive.objectEncryptionKeyVersion
+              ),
+              logArchiveIssuedForAccountId: await loadIssuedLogArchiveAccountId(
+                outputDir,
+                env,
+                config.logging.archive.mode,
+                externalKeysDir
+              ),
+            }
+          : {}),
         provisioningIntentResources: provisioningAttempt.intent.resources,
         databaseConfig: config.database,
         onProgress: (msg) => console.log(`  ${msg}`),
@@ -3777,7 +3932,36 @@ async function editComponents(config: AuthrimConfig): Promise<boolean> {
   console.log(`  Policy Engine: ${chalk.green('Enabled')} ${chalk.gray('(standard - always on)')}`);
   console.log('');
 
+  if (config.components.adminUi !== false) {
+    config.components.adminUiVariant = await promptAdminUiVariant(
+      config.components.adminUiVariant ?? 'legacy'
+    );
+  }
+
   return true;
+}
+
+/**
+ * Only one Admin UI is deployed per environment. The admin console fills the same Worker slot,
+ * so URL, BFF credentials and administrator passkeys stay the same when switching.
+ */
+async function promptAdminUiVariant(current: AdminUiVariant): Promise<AdminUiVariant> {
+  return select<AdminUiVariant>({
+    message: t('web.comp.adminUiVariant'),
+    choices: [
+      {
+        value: 'legacy',
+        name: t('web.comp.adminUiLegacy'),
+        description: t('web.comp.adminUiLegacyDesc'),
+      },
+      {
+        value: 'console',
+        name: t('web.comp.adminUiConsole'),
+        description: t('web.comp.adminUiConsoleDesc'),
+      },
+    ],
+    default: current,
+  });
 }
 
 // =============================================================================
@@ -3852,16 +4036,21 @@ async function editFeatures(config: AuthrimConfig): Promise<boolean> {
   console.log(`  Email:  ${chalk.cyan(config.features.email?.provider || 'none')}`);
   console.log('');
 
-  const queueEnabled = await confirm({
-    message:
-      'Enable Cloudflare Queues? Disabled by default. Free plan capacity is roughly 3,000 delivered messages/day; Authrim queues async audit fan-out, logging delivery retries, export build jobs, and rewrap retry jobs.',
-    default: config.features.queue?.enabled || false,
-  });
+  const queueEnabled =
+    config.logging?.archive.mode === 'pipeline'
+      ? true
+      : await confirm({
+          message:
+            'Enable Cloudflare Queues? Disabled by default. Free plan capacity is roughly 3,000 delivered messages/day; Authrim queues async audit fan-out, logging delivery retries, export build jobs, and rewrap retry jobs.',
+          default: config.features.queue?.enabled || false,
+        });
 
-  const r2Enabled = await confirm({
-    message: 'Enable Cloudflare R2 object storage?',
-    default: config.features.r2?.enabled ?? true,
-  });
+  const r2Enabled = config.logging?.archive
+    ? true
+    : await confirm({
+        message: 'Enable Cloudflare R2 object storage?',
+        default: config.features.r2?.enabled ?? true,
+      });
 
   const emailProvider = await select({
     message: 'Select email provider',
@@ -3875,6 +4064,9 @@ async function editFeatures(config: AuthrimConfig): Promise<boolean> {
     default: config.features.email?.provider || 'none',
   });
 
+  if (config.logging?.archive && !r2Enabled) throw new Error('log_archive_requires_r2');
+  if (config.logging?.archive.mode === 'pipeline' && !queueEnabled)
+    throw new Error('log_archive_requires_durable_queues');
   config.features.queue = { enabled: queueEnabled };
   config.features.r2 = { enabled: r2Enabled };
   config.features.email = {
@@ -4175,7 +4367,7 @@ async function editRuntimeProfiles(config: AuthrimConfig): Promise<boolean> {
           },
     archive: {
       type: 'r2' as const,
-      bucketRef: 'AUDIT_ARCHIVE',
+      bucketRef: 'LOG_ARCHIVE',
       prefix: 'logs/v1',
     },
     sinks: [
@@ -4258,4 +4450,145 @@ async function editSharding(config: AuthrimConfig): Promise<boolean> {
   config.sharding.refreshTokenShards = parseInt(refreshTokenShards, 10);
 
   return true;
+}
+
+/** Final feature assignment follows the archive selection, including a prior disabled R2 answer. */
+export function resolveInitialLogStorageFeatures(
+  config: AuthrimConfig,
+  previous: { queue: boolean; r2: boolean }
+) {
+  return {
+    queue: { enabled: previous.queue || config.logging?.archive.mode === 'pipeline' },
+    r2: { enabled: previous.r2 || !!config.logging?.archive },
+  };
+}
+
+async function promptLogArchive(
+  config: AuthrimConfig
+): Promise<ReturnType<typeof resolveLogArchiveTokenInput>> {
+  const modes = implementedLogArchiveModes();
+  if (modes.length === 0 || config.logging?.archive) return undefined;
+  const ja = getLocale() === 'ja';
+  console.log(
+    ja
+      ? 'ログをParquet・Icebergへ保存します。PipelineはWorkers Paidが必要で、検索反映には数分かかる場合があります。両方式でR2 Data Catalogと2つのAPIトークンが必要で、Setupから自動発行できます。'
+      : 'Store logs as Parquet managed by Iceberg. Pipelines requires Workers Paid and search visibility can lag by minutes. Both modes require R2 Data Catalog and two API tokens, which Setup can issue automatically.'
+  );
+  const mode = await select({
+    message: ja
+      ? 'ログの保存にCloudflare Pipelinesを使用しますか？'
+      : 'Use Cloudflare Pipelines for log storage?',
+    choices: [
+      {
+        value: 'pipeline' as const,
+        name: ja ? '使用する（ログ本体のDB保存なし）' : 'Use Pipelines (no log-body database copy)',
+        disabled: !modes.includes('pipeline'),
+      },
+      {
+        value: 'scheduled' as const,
+        name: ja
+          ? 'Pipelines を使わない（DB から定期出力）'
+          : 'Without Pipelines (scheduled export from the DB)',
+        disabled: !modes.includes('scheduled'),
+      },
+    ],
+  });
+  const dbRetentionDays =
+    mode === 'scheduled'
+      ? Number(
+          await input({
+            message: ja ? 'DBに保持する日数' : 'Days to retain logs in the database',
+            default: '7',
+            validate: (value) =>
+              (/^\d+$/u.test(value) && Number(value) >= 1 && Number(value) <= 3650) ||
+              'Enter a whole number from 1 to 3650',
+          })
+        )
+      : undefined;
+  config.logging = {
+    archive: createLogArchiveConfig(config.environment.prefix, mode, { dbRetentionDays }),
+  };
+  config.features.r2.enabled = true;
+  if (mode === 'pipeline') {
+    config.features.queue.enabled = true;
+    console.log(
+      ja
+        ? '送信の再試行に使うログ配信Queueも作成します。'
+        : 'Durable logging delivery queues will also be provisioned for retries.'
+    );
+  }
+  const fromEnvironment = withLogArchiveCliErrors(getLocale(), () =>
+    resolveLogArchiveTokenInput(process.env)
+  );
+  if (fromEnvironment) return fromEnvironment;
+  const source = await select({
+    message: ja ? 'Catalogトークンの用意方法' : 'How to supply Catalog tokens',
+    choices: [
+      {
+        value: 'automatic',
+        name: ja ? '自動発行（おすすめ）' : 'Issue automatically (recommended)',
+      },
+      { value: 'manual', name: ja ? '手入力' : 'Enter tokens manually' },
+    ],
+  });
+  if (source === 'automatic') {
+    const accountId = config.cloudflare?.accountId ?? (await getAccountId());
+    if (!accountId) throw new Error('log_archive_cloudflare_credentials_invalid');
+    console.log(
+      buildCloudflareBootstrapTemplateUrl({
+        accountId,
+        environment: config.environment.prefix,
+        ownership: 'account',
+        purpose: 'log-archive',
+      })
+    );
+    console.log(
+      (ja ? '一時トークンの有効期限の目安: ' : 'Recommended one-time token end date: ') +
+        buildCloudflareBootstrapTokenEndDate() +
+        ' (UTC)'
+    );
+    console.log(
+      ja
+        ? 'Account API Tokens Write権限だけを指定してください。Setupがログ専用トークンを作成して保存した後、一時トークンを失効します。Control用には別の一時トークンが必要です。'
+        : 'Use only Account API Tokens Write. Setup creates and stages log tokens, then revokes this token. Control requires a separate one-time token.'
+    );
+    const bootstrapToken = await password({
+      message: ja ? '一時Cloudflareトークン' : 'One-time Cloudflare token',
+      mask: '*',
+      validate: (value) =>
+        (value.trim().length >= 20 && !/\s/u.test(value.trim())) ||
+        logArchiveErrorMessage('log_archive_bootstrap_token_required', getLocale()),
+    });
+    return { bootstrapToken: bootstrapToken.trim() };
+  }
+  const readToken = await password({
+    message: ja
+      ? 'Catalog・Basin SQLの読取り専用API token'
+      : 'Read-only Catalog / Basin SQL API token',
+    mask: '*',
+    validate: (value) =>
+      Boolean(value.trim()) ||
+      logArchiveErrorMessage('log_archive_catalog_credentials_required', getLocale()),
+  });
+  const writeToken = await password({
+    message: ja ? 'Catalog書込み用の別API token' : 'Separate Catalog write API token',
+    mask: '*',
+    validate: (value) =>
+      (Boolean(value.trim()) && value.trim() !== readToken.trim()) ||
+      logArchiveErrorMessage('log_archive_distinct_catalog_credentials_required', getLocale()),
+  });
+  const sinkToken =
+    mode === 'pipeline'
+      ? await password({
+          message: ja
+            ? 'Pipeline Sink専用の別Catalog API token（Workerへ配布しません）'
+            : 'Separate Pipeline Sink Catalog API token (never uploaded to Workers)',
+          mask: '*',
+          validate: (value) =>
+            (Boolean(value.trim()) &&
+              ![readToken.trim(), writeToken.trim()].includes(value.trim())) ||
+            logArchiveErrorMessage('log_archive_distinct_sink_credential_required', getLocale()),
+        })
+      : undefined;
+  return { readToken, writeToken, ...(sinkToken ? { sinkToken } : {}) };
 }

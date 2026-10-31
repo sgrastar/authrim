@@ -46,6 +46,7 @@ import {
 } from '@authrim/ar-lib-logging/delivery';
 import {
   buildLogChunkObjectKey,
+  buildLogChunkRewrapObjectKey,
   defaultLogStorageShard,
   deriveLogChunkEncryptionKey,
   rewrapLogChunkObject,
@@ -66,8 +67,6 @@ import type { AuditQueueFanoutPlan, AuditQueueMessage, EventLogEntry, PIILogEntr
 import { sanitizeErrorMessage } from './utils';
 import { createLogger, type Logger } from '../../utils/logger';
 import { readR2ObjectTextWithLimit } from '../../utils/body-limits';
-import { createAuditPrimaryStorageAdapter } from './external-primary';
-import { resolveTenantRuntimeProfilesFromEnv } from '../runtime-profile-resolver';
 import { PLATFORM_DEFAULT_R2_ARCHIVE_DESTINATION_ID } from '../logging-runtime-policy';
 import {
   buildCanonicalAuditArchiveRecordFromEntry,
@@ -76,11 +75,22 @@ import {
 } from './canonical-format';
 import { safeFetch } from '../../utils/url-security';
 import { SqlLogChunkCatalogStore } from './logging-catalog-store';
-import { decryptObjectArtifact, encryptObjectArtifact } from '../object-artifact-crypto';
+import {
+  decryptObjectArtifact,
+  encryptObjectArtifact,
+  type EncryptedObjectArtifactEnvelope,
+} from '../object-artifact-crypto';
 import {
   InternalNotificationEventRepository,
   resolveLoggingNotificationRoutingPolicy,
 } from '../../repositories/admin/internal-notification-event';
+import type { ControlServiceBinding } from '../control-plane/control-plane-contracts';
+import { runTenantBackupCoveredEffect } from '../tenant-portability/covered-mutation';
+import { consumeLogIcebergMessage, type LogIcebergRuntimeEnv } from '../log-iceberg-runtime';
+import {
+  hasCapturingTenantBackupSnapshot,
+  persistRewrappedLogObjectGeneration,
+} from '../tenant-portability/r2-generation-retention';
 
 function fetchInputToUrl(input: Parameters<typeof fetch>[0]): string {
   if (typeof input === 'string') {
@@ -92,7 +102,11 @@ function fetchInputToUrl(input: Parameters<typeof fetch>[0]): string {
   return input.url;
 }
 
-type QueueStableIdPrefix = 'chk' | 'obj' | 'dlq' | 'lde';
+type QueueStableIdPrefix = 'batch' | 'chk' | 'obj' | 'dlq' | 'lde' | 'qpl';
+
+function stableTimestamp(value: number): number {
+  return Number.isFinite(value) && value >= 0 ? value : 0;
+}
 
 function queueMessageTimestamp(message: { timestamp?: Date }): number {
   const timestamp = message.timestamp instanceof Date ? message.timestamp.getTime() : 0;
@@ -111,8 +125,47 @@ async function createQueueStableLoggingId(
   return `${prefix}_${createUuidV7(queueMessageTimestamp(message), new Uint8Array(digest).slice(0, 10))}`;
 }
 
+async function createAuditFanoutStableLoggingId(
+  prefix: QueueStableIdPrefix,
+  body: AuditQueueMessage,
+  purpose: string
+): Promise<string> {
+  const source = [
+    body.type,
+    body.tenantId,
+    String(stableTimestamp(body.timestamp)),
+    ...body.entries
+      .map((entry) => `${entry.id}:${String(stableTimestamp(entry.createdAt))}`)
+      .sort(),
+  ].join('\u0000');
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(`${purpose}\u0000${source}`)
+  );
+  return `${prefix}_${createUuidV7(
+    stableTimestamp(body.timestamp),
+    new Uint8Array(digest).slice(0, 10)
+  )}`;
+}
+
+async function createPayloadStableLoggingId(
+  prefix: QueueStableIdPrefix,
+  createdAt: number,
+  purpose: string,
+  payloadId: string
+): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(`${purpose}\u0000${payloadId}`)
+  );
+  return `${prefix}_${createUuidV7(
+    stableTimestamp(createdAt),
+    new Uint8Array(digest).slice(0, 10)
+  )}`;
+}
+
 function getDefaultLoggingDeliveryPayloadBucket(env: AuditQueueConsumerEnv): R2Bucket | null {
-  return env.AUDIT_ARCHIVE ?? null;
+  return env.SENSITIVE_DETAILS ?? null;
 }
 
 const LOGGING_DELIVERY_PAYLOAD_MAX_BYTES = 5 * 1024 * 1024;
@@ -143,7 +196,9 @@ async function readLoggingDeliveryPayloadObjectText(
   } catch {
     throw new Error(`${errorPrefix}_too_large`);
   }
-  text = await decryptObjectArtifact(JSON.parse(text), {
+  const envelope = JSON.parse(text) as EncryptedObjectArtifactEnvelope;
+  if (envelope?.plane !== 'SENSITIVE_DETAILS') throw new Error(`${errorPrefix}_plane_invalid`);
+  text = await decryptObjectArtifact(envelope, {
     rootKeyHex: options.env.OBJECT_ENCRYPTION_ROOT_KEY,
     context: {
       tenantId: tenantContext,
@@ -155,7 +210,7 @@ async function readLoggingDeliveryPayloadObjectText(
   return { text, byteCount };
 }
 
-async function putEncryptedAuditArchivePayload(input: {
+async function putEncryptedLoggingDeliveryPayload(input: {
   env: AuditQueueConsumerEnv;
   bucket: R2Bucket;
   objectKey: string;
@@ -171,7 +226,7 @@ async function putEncryptedAuditArchivePayload(input: {
     Number.isSafeInteger(parsedKeyVersion) && parsedKeyVersion > 0 ? parsedKeyVersion : 1;
   const envelope = await encryptObjectArtifact(JSON.stringify(input.payload), {
     rootKeyHex: input.env.OBJECT_ENCRYPTION_ROOT_KEY,
-    plane: 'AUDIT_ARCHIVE',
+    plane: 'SENSITIVE_DETAILS',
     keyVersion,
     contentType: 'application/json',
     context: {
@@ -532,7 +587,7 @@ function serializeQueueBody(body: unknown): string {
   }
 }
 
-export interface AuditQueueConsumerEnv {
+export interface AuditQueueConsumerEnv extends LogIcebergRuntimeEnv {
   /** Core database (non-PII) for event_log */
   DB: DatabaseSource;
 
@@ -570,6 +625,18 @@ export interface AuditQueueConsumerEnv {
 
   /** Object encryption key version for archive chunk encryption */
   OBJECT_ENCRYPTION_KEY_VERSION?: string;
+
+  /** Enables fail-closed writer admission while tenant backup is installed. */
+  TENANT_BACKUP_WRAPPING_KEY?: string;
+
+  /** Control admission facade shared with synchronous Management writers. */
+  CONTROL?: Pick<
+    ControlServiceBinding,
+    | 'acquireTenantBackupMutationPermit'
+    | 'completeTenantBackupMutationPermit'
+    | 'acquireEnvironmentBackupMutationPermit'
+    | 'completeEnvironmentBackupMutationPermit'
+  >;
 }
 
 interface RuntimeDeliveryDestination {
@@ -587,8 +654,25 @@ interface RuntimeCredentialCacheEntry {
 }
 
 const RUNTIME_CREDENTIAL_CACHE_TTL_MS = 60_000;
+const DELIVERY_CLAIM_LEASE_MS = 60_000;
 const runtimeCredentialCache = new Map<string, RuntimeCredentialCacheEntry>();
 const tenantKeyCache = new Map<string, string>();
+
+function retryQueueMessage(message: Message<unknown>, error: unknown): void {
+  const retryAt =
+    error &&
+    typeof error === 'object' &&
+    (error as { name?: unknown }).name === 'LogChunkWriteClaimActiveError' &&
+    typeof (error as { retryAt?: unknown }).retryAt === 'number'
+      ? (error as { retryAt: number }).retryAt
+      : null;
+  if (retryAt !== null) {
+    const delaySeconds = Math.max(1, Math.ceil((retryAt - Date.now()) / 1000));
+    message.retry({ delaySeconds });
+    return;
+  }
+  message.retry();
+}
 
 type RuntimeLoggingDeliveryQueueBindingName =
   | 'LOGGING_DELIVERY_CRITICAL_QUEUE'
@@ -647,7 +731,9 @@ export async function processAuditQueue(
 
   for (const message of batch.messages) {
     try {
-      await processMessage(message, env, log);
+      await runTenantBackupCoveredEffect(env, { tenantId: message.body.tenantId }, () =>
+        processMessage(message, env, log)
+      );
 
       // IMPORTANT: Queues uses "first call wins" behavior.
       // ack() after retry() is ignored.
@@ -665,7 +751,7 @@ export async function processAuditQueue(
       });
 
       // Retry the message (goes to DLQ after max_retries)
-      message.retry();
+      retryQueueMessage(message, error);
     }
   }
 }
@@ -692,78 +778,7 @@ async function processMessage(
     return;
   }
 
-  if (type === 'event_log') {
-    const resolved = await resolveTenantRuntimeProfilesFromEnv(
-      env as unknown as Parameters<typeof resolveTenantRuntimeProfilesFromEnv>[0],
-      tenantId
-    );
-    if (!resolved.auditProfile.primary) {
-      logger.warn('audit_queue_primary_missing_for_legacy_message', {
-        tenantId,
-        auditProfileId: resolved.auditProfile.id,
-        type,
-      });
-      return;
-    }
-
-    const adapter = createAuditPrimaryStorageAdapter(
-      env as unknown as Record<string, unknown>,
-      resolved.auditProfile.primary,
-      'event',
-      { id: `queue-event:${resolved.auditProfile.id}` }
-    );
-    if (!adapter) {
-      throw new Error(`audit_queue_primary_unresolved:${resolved.auditProfile.id}:event`);
-    }
-
-    try {
-      const result = await adapter.writeEventLogBatch(entries as EventLogEntry[]);
-      if (!result.success) {
-        throw new Error(result.errorMessage ?? 'audit_queue_event_write_failed');
-      }
-    } finally {
-      await adapter.close();
-    }
-    return;
-  }
-  if (type === 'pii_log') {
-    const resolved = await resolveTenantRuntimeProfilesFromEnv(
-      env as unknown as Parameters<typeof resolveTenantRuntimeProfilesFromEnv>[0],
-      tenantId
-    );
-    if (!resolved.auditProfile.primary) {
-      logger.warn('audit_queue_primary_missing_for_legacy_message', {
-        tenantId,
-        auditProfileId: resolved.auditProfile.id,
-        type,
-      });
-      return;
-    }
-
-    const adapter = createAuditPrimaryStorageAdapter(
-      env as unknown as Record<string, unknown>,
-      resolved.auditProfile.primary,
-      'pii',
-      { id: `queue-pii:${resolved.auditProfile.id}` }
-    );
-    if (!adapter) {
-      throw new Error(`audit_queue_primary_unresolved:${resolved.auditProfile.id}:pii`);
-    }
-
-    try {
-      const result = await adapter.writePIILogBatch(entries as PIILogEntry[]);
-      if (!result.success) {
-        throw new Error(result.errorMessage ?? 'audit_queue_pii_write_failed');
-      }
-    } finally {
-      await adapter.close();
-    }
-    return;
-  }
-
-  {
-    throw new Error(`Unknown audit message type: ${type}`);
-  }
+  throw new Error('audit_queue_legacy_primary_message_not_supported');
 }
 
 function getR2BucketBinding(env: AuditQueueConsumerEnv, bucketRef: string): R2Bucket | null {
@@ -885,6 +900,7 @@ async function enqueueWrittenChunkForDelivery(input: {
   logType: LogType;
   plane: LogPlane;
   lane: LoggingDeliveryLane;
+  payloadId: string;
   env: AuditQueueConsumerEnv;
 }): Promise<RuntimeLoggingDeliveryEnqueueResult | null> {
   const destinationId = explicitDeliveryDestinationId(input.target);
@@ -896,7 +912,7 @@ async function enqueueWrittenChunkForDelivery(input: {
     {
       payload_type: 'delivery_fanout',
       schema_version: 1,
-      payload_id: `qpl_${crypto.randomUUID()}`,
+      payload_id: input.payloadId,
       tenant_key: input.tenantKey,
       lane: input.lane,
       created_at: input.result.createdAt,
@@ -917,6 +933,7 @@ async function enqueueHttpSinkBatchForDelivery(input: {
   tenantKey: string;
   logType: LogType;
   lane: LoggingDeliveryLane;
+  identity: { payloadId: string; batchId: string; createdAt: number };
   env: AuditQueueConsumerEnv;
 }): Promise<RuntimeLoggingDeliveryEnqueueResult | null> {
   const destinationId = explicitDeliveryDestinationId(input.target);
@@ -932,14 +949,12 @@ async function enqueueHttpSinkBatchForDelivery(input: {
     throw new Error(`HTTP sink URL not resolved: ${input.target.urlRef ?? 'missing_url'}`);
   }
 
-  const now = Date.now();
-  const payloadId = `qpl_${crypto.randomUUID()}`;
-  const batchId = `batch_${crypto.randomUUID()}`;
+  const { payloadId, batchId, createdAt } = input.identity;
   const bucket = getDefaultLoggingDeliveryPayloadBucket(input.env);
   if (!bucket) {
     throw new Error('logging_delivery_payload_bucket_unavailable');
   }
-  const partition = formatUtcPartition(now);
+  const partition = formatUtcPartition(createdAt);
   const objectKey = [
     'logging-delivery-payloads/v1',
     cleanR2ObjectKeySegment(input.tenantKey),
@@ -950,7 +965,7 @@ async function enqueueHttpSinkBatchForDelivery(input: {
     `${cleanR2ObjectKeySegment(payloadId)}.json`,
   ].join('/');
   const canonicalBatch = JSON.stringify(buildCanonicalAuditBatch(input.target, input.body, 'http'));
-  await putEncryptedAuditArchivePayload({
+  await putEncryptedLoggingDeliveryPayload({
     env: input.env,
     bucket,
     objectKey,
@@ -963,7 +978,7 @@ async function enqueueHttpSinkBatchForDelivery(input: {
       recordCount: String(input.body.entries.length),
       payloadId,
       batchId,
-      createdAt: String(now),
+      createdAt: String(createdAt),
     },
   });
 
@@ -974,7 +989,7 @@ async function enqueueHttpSinkBatchForDelivery(input: {
       payload_id: payloadId,
       tenant_key: input.tenantKey,
       lane: input.lane,
-      created_at: now,
+      created_at: createdAt,
       destination_id: destinationId,
       endpoint_url: endpointUrl,
       log_type: input.logType,
@@ -1084,6 +1099,7 @@ function emitLogpushSink(
   body: AuditQueueMessage
 ) {
   for (const entry of body.entries) {
+    // eslint-disable-next-line no-console -- the Logpush sink is Workers console output by design
     console.log(JSON.stringify(buildCanonicalAuditRecord(target, body, entry, 'logpush')));
   }
 }
@@ -1458,6 +1474,8 @@ async function processFanoutMessage(
   const body = message.body;
   const attemptCount = message.attempts;
   const fanout = body.fanout as AuditQueueFanoutPlan;
+  if (fanout?.archives.length || fanout?.sinks.some((target) => target.type !== 'http'))
+    throw new Error('audit_queue_legacy_archive_target_not_supported');
   const archives = fanout.archives;
   const tenantKey = await resolveTenantKeyForAuditFanout(body.tenantId, env);
   const logType = logTypeForAuditMessage(body);
@@ -1470,10 +1488,10 @@ async function processFanoutMessage(
     const lane = laneForLogPolicy(logType, 'archive');
     const destinationId = deliveryDestinationId(archive);
     const stablePurpose = `audit-fanout:${destinationId}`;
-    const stableCreatedAt = queueMessageTimestamp(message);
-    const chunkId = await createQueueStableLoggingId('chk', message, stablePurpose);
-    const objectCatalogId = await createQueueStableLoggingId('obj', message, stablePurpose);
-    const deliveryEventId = await createQueueStableLoggingId('lde', message, stablePurpose);
+    const stableCreatedAt = stableTimestamp(body.timestamp);
+    const chunkId = await createAuditFanoutStableLoggingId('chk', body, stablePurpose);
+    const objectCatalogId = await createAuditFanoutStableLoggingId('obj', body, stablePurpose);
+    const deliveryEventId = await createAuditFanoutStableLoggingId('lde', body, stablePurpose);
     try {
       const result = await writeArchiveTarget(archive, body, env, tenantKey, {
         chunkId,
@@ -1487,6 +1505,7 @@ async function processFanoutMessage(
         logType,
         plane: 'archive',
         lane,
+        payloadId: await createAuditFanoutStableLoggingId('qpl', body, stablePurpose),
         env,
       });
       await recordDeliveryEvent(deliveryEventStore, logger, {
@@ -1510,7 +1529,7 @@ async function processFanoutMessage(
       });
       if (enqueueResult && !enqueueResult.queued) {
         await recordDeliveryNotification(notificationRepository, logger, {
-          id: await createQueueStableLoggingId('lde', message, `${stablePurpose}:notification`),
+          id: await createAuditFanoutStableLoggingId('lde', body, `${stablePurpose}:notification`),
           tenantId: body.tenantId,
           tenantKey,
           destinationId,
@@ -1535,7 +1554,7 @@ async function processFanoutMessage(
       const errorClass = deliveryErrorClass(error, 'archive_delivery_failed');
       const metadata = targetMetadata(archive, fanout, body);
       await recordDeliveryEvent(deliveryEventStore, logger, {
-        id: await createQueueStableLoggingId('lde', message, `${stablePurpose}:failure`),
+        id: await createAuditFanoutStableLoggingId('lde', body, `${stablePurpose}:failure`),
         tenantKey,
         destinationId,
         logType,
@@ -1547,9 +1566,9 @@ async function processFanoutMessage(
         metadata,
       });
       await recordDeliveryNotification(notificationRepository, logger, {
-        id: await createQueueStableLoggingId(
+        id: await createAuditFanoutStableLoggingId(
           'lde',
-          message,
+          body,
           `${stablePurpose}:failure-notification`
         ),
         tenantId: body.tenantId,
@@ -1578,6 +1597,7 @@ async function processFanoutMessage(
   for (const sink of fanout.sinks) {
     const lane = laneForLogPolicy(logType, 'external_sink');
     const destinationId = deliveryDestinationId(sink);
+    const stablePurpose = `audit-fanout:${destinationId}`;
     if (sink.type === 'http') {
       const queuedSink = await enqueueHttpSinkBatchForDelivery({
         target: sink,
@@ -1585,6 +1605,11 @@ async function processFanoutMessage(
         tenantKey,
         logType,
         lane,
+        identity: {
+          payloadId: await createAuditFanoutStableLoggingId('qpl', body, stablePurpose),
+          batchId: await createAuditFanoutStableLoggingId('batch', body, stablePurpose),
+          createdAt: stableTimestamp(body.timestamp),
+        },
         env,
       });
       if (queuedSink) {
@@ -1598,6 +1623,7 @@ async function processFanoutMessage(
           delivery_queue_attempted_bindings: queuedSink.attemptedBindingNames,
         };
         await recordDeliveryEvent(deliveryEventStore, logger, {
+          id: await createAuditFanoutStableLoggingId('lde', body, `${stablePurpose}:${status}`),
           tenantKey,
           destinationId,
           logType,
@@ -1610,6 +1636,11 @@ async function processFanoutMessage(
         });
         if (status === 'retrying') {
           await recordDeliveryNotification(notificationRepository, logger, {
+            id: await createAuditFanoutStableLoggingId(
+              'lde',
+              body,
+              `${stablePurpose}:${status}:notification`
+            ),
             tenantId: body.tenantId,
             tenantKey,
             destinationId,
@@ -1627,35 +1658,86 @@ async function processFanoutMessage(
         }
         continue;
       }
+      const deliveryMetadata = targetMetadata(sink, fanout, body);
+      const deliveredEventId = await createAuditFanoutStableLoggingId(
+        'lde',
+        body,
+        `${stablePurpose}:delivered`
+      );
+      let deliveryClaimed = false;
+      let deliveryEmitted = false;
       let recordedFailure = false;
       try {
+        if (!deliveryEventStore) {
+          throw new Error('logging_delivery_claim_store_unavailable');
+        }
+        const claimNow = Date.now();
+        deliveryClaimed = await deliveryEventStore.claimEvent({
+          id: deliveredEventId,
+          tenantKey,
+          destinationId,
+          logType,
+          plane: 'external_sink',
+          lane,
+          attemptCount,
+          metadata: deliveryMetadata,
+          now: claimNow,
+          leaseUntil: claimNow + DELIVERY_CLAIM_LEASE_MS,
+        });
+        if (!deliveryClaimed) {
+          continue;
+        }
         const result = await deliverHttpSink(sink, body, env);
         const status: LoggingDeliveryStatus =
           result.status === 'delivered' ? 'delivered' : deliveryStatusForFailure(sinkFailureMode);
         const errorClass =
           result.status === 'delivered' ? null : `http_status_${String(result.httpStatus)}`;
         const metadata = {
-          ...targetMetadata(sink, fanout, body),
+          ...deliveryMetadata,
           http_status: result.httpStatus,
         };
-        await recordDeliveryEvent(deliveryEventStore, logger, {
-          tenantKey,
-          destinationId,
-          logType,
-          plane: 'external_sink',
-          lane,
-          status,
-          attemptCount,
-          errorClass,
-          nextRetryAt:
-            result.status === 'retrying' && result.retryDelayMs
-              ? Date.now() + result.retryDelayMs
-              : null,
-          metadata,
-        });
+        if (result.status === 'delivered') {
+          deliveryEmitted = true;
+          await deliveryEventStore.completeClaim({
+            id: deliveredEventId,
+            tenantKey,
+            destinationId,
+            logType,
+            plane: 'external_sink',
+            lane,
+            status: 'delivered',
+            attemptCount,
+            metadata,
+          });
+          deliveryClaimed = false;
+        } else {
+          await deliveryEventStore.releaseClaim(deliveredEventId);
+          deliveryClaimed = false;
+          await recordDeliveryEvent(deliveryEventStore, logger, {
+            id: await createAuditFanoutStableLoggingId('lde', body, `${stablePurpose}:${status}`),
+            tenantKey,
+            destinationId,
+            logType,
+            plane: 'external_sink',
+            lane,
+            status,
+            attemptCount,
+            errorClass,
+            nextRetryAt:
+              result.status === 'retrying' && result.retryDelayMs
+                ? Date.now() + result.retryDelayMs
+                : null,
+            metadata,
+          });
+        }
         if (result.status !== 'delivered') {
           recordedFailure = true;
           await recordDeliveryNotification(notificationRepository, logger, {
+            id: await createAuditFanoutStableLoggingId(
+              'lde',
+              body,
+              `${stablePurpose}:${status}:notification`
+            ),
             tenantId: body.tenantId,
             tenantKey,
             destinationId,
@@ -1670,11 +1752,27 @@ async function processFanoutMessage(
           throw new Error(`HTTP sink delivery ${result.status}: ${result.httpStatus}`);
         }
       } catch (error) {
+        if (deliveryClaimed && deliveryEventStore) {
+          try {
+            if (deliveryEmitted) {
+              await deliveryEventStore.preserveEmittedClaim(deliveredEventId);
+            } else {
+              await deliveryEventStore.releaseClaim(deliveredEventId);
+            }
+          } catch (claimError) {
+            logger.warn('audit_http_delivery_claim_cleanup_failed', {
+              tenantId: body.tenantId,
+              auditProfileId: fanout.auditProfileId,
+              error: sanitizeErrorMessage(String(claimError)),
+            });
+          }
+        }
         if (!recordedFailure) {
           const status = deliveryStatusForFailure(sinkFailureMode);
           const errorClass = deliveryErrorClass(error, 'http_sink_delivery_failed');
-          const metadata = targetMetadata(sink, fanout, body);
+          const metadata = deliveryMetadata;
           await recordDeliveryEvent(deliveryEventStore, logger, {
+            id: await createAuditFanoutStableLoggingId('lde', body, `${stablePurpose}:${status}`),
             tenantKey,
             destinationId,
             logType,
@@ -1686,6 +1784,11 @@ async function processFanoutMessage(
             metadata,
           });
           await recordDeliveryNotification(notificationRepository, logger, {
+            id: await createAuditFanoutStableLoggingId(
+              'lde',
+              body,
+              `${stablePurpose}:${status}:notification`
+            ),
             tenantId: body.tenantId,
             tenantKey,
             destinationId,
@@ -1711,23 +1814,108 @@ async function processFanoutMessage(
       continue;
     }
 
+    const deliveryMetadata = targetMetadata(sink, fanout, body);
+    const deliveredEventId = await createAuditFanoutStableLoggingId(
+      'lde',
+      body,
+      `${stablePurpose}:delivered`
+    );
+    let logpushClaimed = false;
+    if (sink.type === 'logpush') {
+      if (!deliveryEventStore) {
+        if (sinkFailureMode === 'retry_until_ttl') {
+          throw new Error('logging_delivery_claim_store_unavailable');
+        }
+      } else {
+        const claimNow = Date.now();
+        try {
+          logpushClaimed = await deliveryEventStore.claimEvent({
+            id: deliveredEventId,
+            tenantKey,
+            destinationId,
+            logType,
+            plane: 'external_sink',
+            lane,
+            attemptCount,
+            metadata: deliveryMetadata,
+            now: claimNow,
+            leaseUntil: claimNow + DELIVERY_CLAIM_LEASE_MS,
+          });
+        } catch (error) {
+          logger.warn('audit_logpush_delivery_claim_failed', {
+            tenantId: body.tenantId,
+            auditProfileId: fanout.auditProfileId,
+            error: sanitizeErrorMessage(String(error)),
+          });
+          if (sinkFailureMode === 'retry_until_ttl') {
+            throw error;
+          }
+        }
+        if (!logpushClaimed) {
+          continue;
+        }
+      }
+    }
+
+    let sinkEmitted = false;
     try {
       await deliverSinkTarget(sink, body, env);
-      await recordDeliveryEvent(deliveryEventStore, logger, {
-        tenantKey,
-        destinationId,
-        logType,
-        plane: 'external_sink',
-        lane,
-        status: 'delivered',
-        attemptCount,
-        metadata: targetMetadata(sink, fanout, body),
-      });
+      sinkEmitted = true;
+      if (logpushClaimed && deliveryEventStore) {
+        await deliveryEventStore.completeClaim({
+          id: deliveredEventId,
+          tenantKey,
+          destinationId,
+          logType,
+          plane: 'external_sink',
+          lane,
+          status: 'delivered',
+          attemptCount,
+          metadata: deliveryMetadata,
+        });
+      } else {
+        await recordDeliveryEvent(deliveryEventStore, logger, {
+          id: deliveredEventId,
+          tenantKey,
+          destinationId,
+          logType,
+          plane: 'external_sink',
+          lane,
+          status: 'delivered',
+          attemptCount,
+          metadata: deliveryMetadata,
+        });
+      }
     } catch (error) {
+      if (logpushClaimed && deliveryEventStore && !sinkEmitted) {
+        try {
+          await deliveryEventStore.releaseClaim(deliveredEventId);
+        } catch (releaseError) {
+          logger.warn('audit_logpush_delivery_claim_release_failed', {
+            tenantId: body.tenantId,
+            auditProfileId: fanout.auditProfileId,
+            error: sanitizeErrorMessage(String(releaseError)),
+          });
+        }
+      } else if (logpushClaimed && sinkEmitted) {
+        try {
+          await deliveryEventStore?.preserveEmittedClaim(deliveredEventId);
+        } catch (preserveError) {
+          logger.warn('audit_logpush_emitted_claim_preservation_failed', {
+            tenantId: body.tenantId,
+            auditProfileId: fanout.auditProfileId,
+            error: sanitizeErrorMessage(String(preserveError)),
+          });
+        }
+        logger.warn('audit_logpush_delivery_completion_pending', {
+          tenantId: body.tenantId,
+          auditProfileId: fanout.auditProfileId,
+        });
+      }
       const status = deliveryStatusForFailure(sinkFailureMode);
       const errorClass = deliveryErrorClass(error, 'sink_delivery_failed');
-      const metadata = targetMetadata(sink, fanout, body);
       await recordDeliveryEvent(deliveryEventStore, logger, {
+        id: await createAuditFanoutStableLoggingId('lde', body, `${stablePurpose}:${status}`),
         tenantKey,
         destinationId,
         logType,
@@ -1736,9 +1924,14 @@ async function processFanoutMessage(
         status,
         attemptCount,
         errorClass,
-        metadata,
+        metadata: deliveryMetadata,
       });
       await recordDeliveryNotification(notificationRepository, logger, {
+        id: await createAuditFanoutStableLoggingId(
+          'lde',
+          body,
+          `${stablePurpose}:${status}:notification`
+        ),
         tenantId: body.tenantId,
         tenantKey,
         destinationId,
@@ -1748,7 +1941,7 @@ async function processFanoutMessage(
         status,
         attemptCount,
         errorClass,
-        metadata,
+        metadata: deliveryMetadata,
       });
       if (sinkFailureMode === 'retry_until_ttl') {
         throw error;
@@ -1761,96 +1954,6 @@ async function processFanoutMessage(
       });
     }
   }
-}
-
-/**
- * Batch insert event log entries with idempotent semantics.
- */
-async function batchUpsertEventLog(db: DatabaseSource, entries: EventLogEntry[]): Promise<void> {
-  if (entries.length === 0) {
-    return;
-  }
-
-  const adapter = ensureDatabaseAdapter(db, 'audit-queue-event');
-  await adapter.batch(
-    entries.map((e) => ({
-      sql: `INSERT INTO event_log (
-              id, tenant_id, event_type, event_category, result, severity,
-              error_code, error_message, anonymized_user_id, client_id,
-              session_id, request_id, duration_ms, details_r2_key, details_json,
-              retention_until, created_at
-            )
-            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-            WHERE NOT EXISTS (
-              SELECT 1 FROM event_log WHERE id = ?
-            )`,
-      params: [
-        e.id,
-        e.tenantId,
-        e.eventType,
-        e.eventCategory,
-        e.result,
-        e.severity,
-        e.errorCode ?? null,
-        e.errorMessage ?? null,
-        e.anonymizedUserId ?? null,
-        e.clientId ?? null,
-        e.sessionId ?? null,
-        e.requestId ?? null,
-        e.durationMs ?? null,
-        e.detailsR2Key ?? null,
-        e.detailsJson ?? null,
-        e.retentionUntil ?? null,
-        e.createdAt,
-        e.id,
-      ],
-    }))
-  );
-}
-
-/**
- * Batch insert PII log entries with idempotent semantics.
- */
-async function batchUpsertPIILog(db: DatabaseSource, entries: PIILogEntry[]): Promise<void> {
-  if (entries.length === 0) {
-    return;
-  }
-
-  const adapter = ensureDatabaseAdapter(db, 'audit-queue-pii');
-  await adapter.batch(
-    entries.map((e) => ({
-      sql: `INSERT INTO pii_log (
-              id, tenant_id, user_id, anonymized_user_id, change_type, affected_fields,
-              values_r2_key, values_encrypted, encryption_key_id, encryption_iv,
-              actor_user_id, actor_type, request_id, legal_basis, consent_reference,
-              retention_until, created_at
-            )
-            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-            WHERE NOT EXISTS (
-              SELECT 1 FROM pii_log WHERE id = ?
-            )`,
-      params: [
-        e.id,
-        e.tenantId,
-        e.userId,
-        e.anonymizedUserId,
-        e.changeType,
-        e.affectedFields,
-        e.valuesR2Key ?? null,
-        e.valuesEncrypted ?? null,
-        e.encryptionKeyId,
-        e.encryptionIv,
-        e.actorUserId ?? null,
-        e.actorType,
-        e.requestId ?? null,
-        e.legalBasis ?? null,
-        e.consentReference ?? null,
-        e.retentionUntil,
-        e.createdAt,
-        e.id,
-      ],
-    }))
-  );
 }
 
 // =============================================================================
@@ -1876,25 +1979,26 @@ export async function processDLQQueue(
 
   for (const message of batch.messages) {
     try {
-      const now = queueMessageTimestamp(message);
-      const timestamp = new Date(now).toISOString();
-      const tenantKey = await deriveTenantKeyFromTenantId(
-        message.body.tenantId,
-        env.LOGGING_TENANT_KEY_SALT
-      );
-      const logType = logTypeForAuditMessage(message.body);
-      const lane = laneForLogPolicy(logType, 'delivery_event');
-      const destinationId = 'queue:AUDIT_DLQ';
-      const dlqItemId = await createQueueStableLoggingId('dlq', message, 'audit-dlq');
-      const partition = formatUtcPartition(now);
-      const payloadObjectRef =
-        `dlq/tenant_key=${tenantKey}/yyyy=${partition.year}/mm=${partition.month}` +
-        `/dd=${partition.day}/${dlqItemId}.json`;
+      await runTenantBackupCoveredEffect(env, { tenantId: message.body.tenantId }, async () => {
+        const now = queueMessageTimestamp(message);
+        const timestamp = new Date(now).toISOString();
+        const tenantKey = await deriveTenantKeyFromTenantId(
+          message.body.tenantId,
+          env.LOGGING_TENANT_KEY_SALT
+        );
+        const logType = logTypeForAuditMessage(message.body);
+        const lane = laneForLogPolicy(logType, 'delivery_event');
+        const destinationId = 'queue:AUDIT_DLQ';
+        const dlqItemId = await createQueueStableLoggingId('dlq', message, 'audit-dlq');
+        const partition = formatUtcPartition(now);
+        const payloadObjectRef =
+          `dlq/tenant_key=${tenantKey}/yyyy=${partition.year}/mm=${partition.month}` +
+          `/dd=${partition.day}/${dlqItemId}.json`;
 
-      // Save to R2 for recovery
-      const archiveBucket = env.AUDIT_ARCHIVE ?? null;
-      if (archiveBucket) {
-        await putEncryptedAuditArchivePayload({
+        // Save to R2 for recovery
+        const archiveBucket = env.SENSITIVE_DETAILS;
+        if (!archiveBucket) throw new Error('audit_dlq_payload_bucket_unavailable');
+        await putEncryptedLoggingDeliveryPayload({
           env,
           bucket: archiveBucket,
           objectKey: payloadObjectRef,
@@ -1926,55 +2030,54 @@ export async function processDLQQueue(
           attemptCount: message.attempts,
           now,
         });
-      }
 
-      await recordDeliveryEvent(deliveryEventStore, log, {
-        id: await createQueueStableLoggingId('lde', message, 'audit-dlq'),
-        tenantKey,
-        destinationId,
-        logType,
-        plane: 'delivery_event',
-        lane,
-        status: 'dlq',
-        attemptCount: message.attempts,
-        errorClass: 'audit_message_failed_permanently',
-        metadata: {
-          dlq_item_id: archiveBucket ? dlqItemId : null,
-          payload_object_ref: archiveBucket ? payloadObjectRef : null,
-          payload_type: 'audit_queue_message',
-          schema_version: 1,
-          record_count: message.body.entries.length,
-        },
-      });
-      await recordDeliveryNotification(notificationRepository, log, {
-        id: await createQueueStableLoggingId('lde', message, 'audit-dlq:notification'),
-        tenantId: message.body.tenantId,
-        tenantKey,
-        destinationId,
-        logType,
-        plane: 'delivery_event',
-        lane,
-        status: 'dlq',
-        attemptCount: message.attempts,
-        errorClass: 'audit_message_failed_permanently',
-        metadata: {
-          dlq_item_id: archiveBucket ? dlqItemId : null,
-          payload_object_ref: archiveBucket ? payloadObjectRef : null,
-          payload_type: 'audit_queue_message',
-          schema_version: 1,
-          record_count: message.body.entries.length,
-        },
-      });
+        await recordDeliveryEvent(deliveryEventStore, log, {
+          id: await createQueueStableLoggingId('lde', message, 'audit-dlq'),
+          tenantKey,
+          destinationId,
+          logType,
+          plane: 'delivery_event',
+          lane,
+          status: 'dlq',
+          attemptCount: message.attempts,
+          errorClass: 'audit_message_failed_permanently',
+          metadata: {
+            dlq_item_id: dlqItemId,
+            payload_object_ref: payloadObjectRef,
+            payload_type: 'audit_queue_message',
+            schema_version: 1,
+            record_count: message.body.entries.length,
+          },
+        });
+        await recordDeliveryNotification(notificationRepository, log, {
+          id: await createQueueStableLoggingId('lde', message, 'audit-dlq:notification'),
+          tenantId: message.body.tenantId,
+          tenantKey,
+          destinationId,
+          logType,
+          plane: 'delivery_event',
+          lane,
+          status: 'dlq',
+          attemptCount: message.attempts,
+          errorClass: 'audit_message_failed_permanently',
+          metadata: {
+            dlq_item_id: dlqItemId,
+            payload_object_ref: payloadObjectRef,
+            payload_type: 'audit_queue_message',
+            schema_version: 1,
+            record_count: message.body.entries.length,
+          },
+        });
 
-      // Log for alerting
-      log.error('audit_message_failed_permanently', {
-        messageId: message.id,
-        tenantId: message.body.tenantId,
-        type: message.body.type,
-        entryCount: message.body.entries.length,
-        attempts: message.attempts,
+        // Log for alerting
+        log.error('audit_message_failed_permanently', {
+          messageId: message.id,
+          tenantId: message.body.tenantId,
+          type: message.body.type,
+          entryCount: message.body.entries.length,
+          attempts: message.attempts,
+        });
       });
-
       message.ack();
     } catch (error) {
       // R2 save failed, retry
@@ -1982,7 +2085,7 @@ export async function processDLQQueue(
         messageId: message.id,
         error: sanitizeErrorMessage(String(error)),
       });
-      message.retry();
+      retryQueueMessage(message, error);
     }
   }
 }
@@ -1994,7 +2097,7 @@ async function writeUnsupportedLoggingDeliveryPayloadToDlq(input: {
   logger: Logger;
 }): Promise<void> {
   const { message, parseResult, env, logger } = input;
-  const archiveBucket = env.AUDIT_ARCHIVE ?? null;
+  const archiveBucket = env.SENSITIVE_DETAILS ?? null;
   const now = queueMessageTimestamp(message);
   const tenantKey = parseResult.tenantKey ?? 'unknown_tenant_key';
   const lane = parseResult.lane ?? 'default';
@@ -2016,7 +2119,7 @@ async function writeUnsupportedLoggingDeliveryPayloadToDlq(input: {
     throw new Error('logging_delivery_unsupported_payload_dlq_bucket_unavailable');
   }
 
-  await putEncryptedAuditArchivePayload({
+  await putEncryptedLoggingDeliveryPayload({
     env,
     bucket: archiveBucket,
     objectKey: payloadObjectRef,
@@ -2155,6 +2258,13 @@ async function deleteLoggingDeliveryPayloadObject(input: {
     return;
   }
   try {
+    if (
+      input.env.DB_ADMIN &&
+      (await hasCapturingTenantBackupSnapshot(
+        ensureDatabaseAdapter(input.env.DB_ADMIN, 'logging-payload-backup-retention')
+      ))
+    )
+      return;
     await bucket.delete(normalizeR2ObjectRef(input.objectRef));
   } catch (error) {
     // Delivery has already reached a terminal state. Do not redeliver only because cleanup failed;
@@ -2798,26 +2908,52 @@ async function processHttpSinkBatchDeliveryPayload(input: {
   const deliveryEventStore = createDeliveryEventStore(env);
   const notificationRepository = createInternalNotificationRepository(env);
   const attemptCount = Math.max(1, message.attempts);
-  const body = await readHttpSinkBatchBody(payload, env);
-  const destination = await loadLoggingDestinationForDelivery(env, payload.destination_id).catch(
-    () => null
+  const deliveredEventId = await createPayloadStableLoggingId(
+    'lde',
+    payload.created_at,
+    `http-sink:${payload.destination_id}`,
+    payload.payload_id
   );
-  const providerConfig = parseJsonObject(destination?.provider_config);
-  const credentialPlaintext = await resolveRuntimeCredentialSecret({
-    env,
-    credentialRef: destination?.credential_ref,
-    credentialVersion: destination?.credential_version,
-  });
-  const auth = buildRuntimeHttpSinkAuth({ providerConfig, credentialPlaintext });
   const metadataBase = {
     payload_id: payload.payload_id,
     batch_id: payload.batch_id,
     record_count: payload.record_count,
-    byte_count: body.byteCount,
-    body_object_ref: body.objectRef,
+    body_object_ref: payload.body_object_ref ?? null,
   };
+  let deliveryClaimed = false;
+  let deliveryEmitted = false;
 
   try {
+    if (!deliveryEventStore) {
+      throw new Error('logging_delivery_claim_store_unavailable');
+    }
+    const claimNow = Date.now();
+    deliveryClaimed = await deliveryEventStore.claimEvent({
+      id: deliveredEventId,
+      tenantKey: payload.tenant_key,
+      destinationId: payload.destination_id,
+      logType: payload.log_type,
+      plane: payload.plane,
+      lane: payload.lane,
+      attemptCount,
+      metadata: metadataBase,
+      now: claimNow,
+      leaseUntil: claimNow + DELIVERY_CLAIM_LEASE_MS,
+    });
+    if (!deliveryClaimed) {
+      return 'ack';
+    }
+    const body = await readHttpSinkBatchBody(payload, env);
+    const destination = await loadLoggingDestinationForDelivery(env, payload.destination_id).catch(
+      () => null
+    );
+    const providerConfig = parseJsonObject(destination?.provider_config);
+    const credentialPlaintext = await resolveRuntimeCredentialSecret({
+      env,
+      credentialRef: destination?.credential_ref,
+      credentialVersion: destination?.credential_version,
+    });
+    const auth = buildRuntimeHttpSinkAuth({ providerConfig, credentialPlaintext });
     const result = await deliverHttpSinkBatch({
       endpointUrl: payload.endpoint_url,
       body: body.body,
@@ -2841,22 +2977,42 @@ async function processHttpSinkBatchDeliveryPayload(input: {
     const errorClass = status === 'delivered' ? null : `http_status_${String(result.httpStatus)}`;
     const metadata = {
       ...metadataBase,
+      byte_count: body.byteCount,
+      body_object_ref: body.objectRef,
       http_status: result.httpStatus,
       redacted_headers: result.redactedHeaders,
     };
-    await recordDeliveryEvent(deliveryEventStore, logger, {
-      tenantKey: payload.tenant_key,
-      destinationId: payload.destination_id,
-      logType: payload.log_type,
-      plane: payload.plane,
-      lane: payload.lane,
-      status,
-      attemptCount,
-      errorClass,
-      nextRetryAt:
-        status === 'retrying' && result.retryDelayMs ? Date.now() + result.retryDelayMs : null,
-      metadata,
-    });
+    if (status === 'delivered') {
+      deliveryEmitted = true;
+      await deliveryEventStore.completeClaim({
+        id: deliveredEventId,
+        tenantKey: payload.tenant_key,
+        destinationId: payload.destination_id,
+        logType: payload.log_type,
+        plane: payload.plane,
+        lane: payload.lane,
+        status: 'delivered',
+        attemptCount,
+        metadata,
+      });
+      deliveryClaimed = false;
+    } else {
+      await deliveryEventStore.releaseClaim(deliveredEventId);
+      deliveryClaimed = false;
+      await recordDeliveryEvent(deliveryEventStore, logger, {
+        tenantKey: payload.tenant_key,
+        destinationId: payload.destination_id,
+        logType: payload.log_type,
+        plane: payload.plane,
+        lane: payload.lane,
+        status,
+        attemptCount,
+        errorClass,
+        nextRetryAt:
+          status === 'retrying' && result.retryDelayMs ? Date.now() + result.retryDelayMs : null,
+        metadata,
+      });
+    }
     if (status !== 'delivered') {
       await recordDeliveryNotification(notificationRepository, logger, {
         tenantId: payload.tenant_key,
@@ -2881,6 +3037,20 @@ async function processHttpSinkBatchDeliveryPayload(input: {
     }
     return status === 'retrying' ? 'retry' : 'ack';
   } catch (error) {
+    if (deliveryClaimed && deliveryEventStore) {
+      try {
+        if (deliveryEmitted) {
+          await deliveryEventStore.preserveEmittedClaim(deliveredEventId);
+        } else {
+          await deliveryEventStore.releaseClaim(deliveredEventId);
+        }
+      } catch (claimError) {
+        logger.warn('logging_http_delivery_claim_cleanup_failed', {
+          payloadId: payload.payload_id,
+          error: sanitizeErrorMessage(String(claimError)),
+        });
+      }
+    }
     const errorClass = deliveryErrorClass(error, 'http_sink_delivery_failed');
     const retryDelayMs = computeHttpSinkRetryDelayMs({ attempt: attemptCount });
     const metadata = {
@@ -2949,6 +3119,14 @@ async function processDeliveryFanoutPayload(input: {
     object_key: payload.object_key,
     record_count: payload.record_count,
   };
+  const deliveredEventId = await createPayloadStableLoggingId(
+    'lde',
+    payload.created_at,
+    `delivery-fanout:${payload.destination_id}`,
+    payload.payload_id
+  );
+  let deliveryClaimed = false;
+  let deliveryEmitted = false;
 
   try {
     const isLegacyPlatformDefaultArchive =
@@ -2994,6 +3172,26 @@ async function processDeliveryFanoutPayload(input: {
         record_count: payload.record_count,
         created_at: payload.created_at,
       });
+      if (!deliveryEventStore) {
+        throw new Error('logging_delivery_claim_store_unavailable');
+      }
+      const claimNow = Date.now();
+      deliveryClaimed = await deliveryEventStore.claimEvent({
+        id: deliveredEventId,
+        tenantKey: payload.tenant_key,
+        destinationId: payload.destination_id,
+        logType: payload.log_type,
+        plane: payload.plane,
+        lane: payload.lane,
+        attemptCount,
+        objectCatalogId: payload.catalog_id,
+        metadata: metadataBase,
+        now: claimNow,
+        leaseUntil: claimNow + DELIVERY_CLAIM_LEASE_MS,
+      });
+      if (!deliveryClaimed) {
+        return 'ack';
+      }
       const result = await deliverHttpSinkBatch({
         endpointUrl,
         body,
@@ -3021,20 +3219,39 @@ async function processDeliveryFanoutPayload(input: {
         http_status: result.httpStatus,
         redacted_headers: result.redactedHeaders,
       };
-      await recordDeliveryEvent(deliveryEventStore, logger, {
-        tenantKey: payload.tenant_key,
-        destinationId: payload.destination_id,
-        logType: payload.log_type,
-        plane: payload.plane,
-        lane: payload.lane,
-        status,
-        attemptCount,
-        errorClass,
-        objectCatalogId: payload.catalog_id,
-        nextRetryAt:
-          status === 'retrying' && result.retryDelayMs ? Date.now() + result.retryDelayMs : null,
-        metadata,
-      });
+      if (status === 'delivered') {
+        deliveryEmitted = true;
+        await deliveryEventStore.completeClaim({
+          id: deliveredEventId,
+          tenantKey: payload.tenant_key,
+          destinationId: payload.destination_id,
+          logType: payload.log_type,
+          plane: payload.plane,
+          lane: payload.lane,
+          status: 'delivered',
+          attemptCount,
+          objectCatalogId: payload.catalog_id,
+          metadata,
+        });
+        deliveryClaimed = false;
+      } else {
+        await deliveryEventStore.releaseClaim(deliveredEventId);
+        deliveryClaimed = false;
+        await recordDeliveryEvent(deliveryEventStore, logger, {
+          tenantKey: payload.tenant_key,
+          destinationId: payload.destination_id,
+          logType: payload.log_type,
+          plane: payload.plane,
+          lane: payload.lane,
+          status,
+          attemptCount,
+          errorClass,
+          objectCatalogId: payload.catalog_id,
+          nextRetryAt:
+            status === 'retrying' && result.retryDelayMs ? Date.now() + result.retryDelayMs : null,
+          metadata,
+        });
+      }
       if (status !== 'delivered') {
         await recordDeliveryNotification(notificationRepository, logger, {
           tenantId: payload.tenant_key,
@@ -3073,6 +3290,20 @@ async function processDeliveryFanoutPayload(input: {
 
     throw new Error(`logging_delivery_destination_provider_unsupported:${destination.provider}`);
   } catch (error) {
+    if (deliveryClaimed && deliveryEventStore) {
+      try {
+        if (deliveryEmitted) {
+          await deliveryEventStore.preserveEmittedClaim(deliveredEventId);
+        } else {
+          await deliveryEventStore.releaseClaim(deliveredEventId);
+        }
+      } catch (claimError) {
+        logger.warn('logging_http_delivery_claim_cleanup_failed', {
+          payloadId: payload.payload_id,
+          error: sanitizeErrorMessage(String(claimError)),
+        });
+      }
+    }
     const errorClass = deliveryErrorClass(error, 'delivery_fanout_failed');
     const retryDelayMs = computeHttpSinkRetryDelayMs({ attempt: attemptCount });
     const metadata = {
@@ -3219,7 +3450,11 @@ async function processRewrapChunkDeliveryPayload(input: {
 
   const object = await adapter.queryOne<LoggingRewrapCatalogRow>(
     `SELECT id, tenant_key, log_type, plane, object_key,
-            (SELECT chunk_id FROM log_chunk_record_index WHERE object_catalog_id = log_object_catalog.id LIMIT 1) AS chunk_id,
+            -- Archived row chunks have no record index; their catalog row carries the chunk id.
+            COALESCE(
+              (SELECT chunk_id FROM log_chunk_record_index WHERE object_catalog_id = log_object_catalog.id LIMIT 1),
+              log_object_catalog.chunk_id
+            ) AS chunk_id,
             object_kind, status,
             record_count, byte_count, checksum_sha256, compression, encryption_scope, key_version
      FROM log_object_catalog
@@ -3270,6 +3505,31 @@ async function processRewrapChunkDeliveryPayload(input: {
     await completeSkipped('object_not_rewrappable');
     return 'ack';
   }
+  const targetObjectKey = buildLogChunkRewrapObjectKey({
+    tenantKey: object.tenant_key,
+    objectCatalogId: object.id,
+    rewrapJobId: job.id,
+    keyVersion: job.to_version,
+  });
+  if (object.key_version === job.to_version && object.object_key === targetObjectKey) {
+    const now = Date.now();
+    await completeLoggingRewrapJob({
+      adapter,
+      job,
+      status: 'succeeded',
+      completedAt: now,
+      metadata: {
+        ...metadataBase,
+        object_key: targetObjectKey,
+        from_version: job.from_version,
+        to_version: job.to_version,
+        byte_count: object.byte_count,
+        checksum_sha256: object.checksum_sha256,
+        resumed_after_catalog_commit: true,
+      },
+    });
+    return 'ack';
+  }
   if (object.key_version !== job.from_version) {
     await completeSkipped('object_key_version_mismatch');
     return 'ack';
@@ -3290,6 +3550,7 @@ async function processRewrapChunkDeliveryPayload(input: {
       bucket: env.AUDIT_ARCHIVE,
       objectCatalogId: object.id,
       objectKey: object.object_key,
+      targetObjectKey,
       chunkId: object.chunk_id,
       tenantKey: object.tenant_key,
       logType: object.log_type,
@@ -3320,37 +3581,24 @@ async function processRewrapChunkDeliveryPayload(input: {
       maxBytes: object.byte_count,
       catalogUpdater: {
         updateRewrappedObject: async (update) => {
-          await adapter.execute(
-            `UPDATE log_object_catalog
-             SET byte_count = ?, checksum_sha256 = ?, encryption_scope = ?,
-                 key_version = ?, committed_at = ?
-             WHERE id = ? AND status = ?`,
-            [
-              update.byteCount,
-              update.checksumSha256,
-              update.encryptionScope,
-              update.keyVersion,
-              update.updatedAt,
-              update.objectCatalogId,
-              'committed',
-            ]
-          );
+          await persistRewrappedLogObjectGeneration(adapter, {
+            retirementId: `log-rewrap:${job.id}`,
+            tenantKey: object.tenant_key,
+            objectCatalogId: update.objectCatalogId,
+            previousObjectKey: update.previousObjectKey,
+            objectKey: update.objectKey,
+            keyRegistryId: job.key_registry_id,
+            previousKeyVersion: job.from_version,
+            recordCount: object.record_count,
+            byteCount: update.byteCount,
+            checksumSha256: update.checksumSha256,
+            encryptionScope: update.encryptionScope,
+            keyVersion: update.keyVersion,
+            updatedAt: update.updatedAt,
+          });
         },
       },
     });
-
-    await adapter.execute(
-      `UPDATE logging_key_versions
-       SET stale_count = CASE WHEN stale_count > 0 THEN stale_count - 1 ELSE 0 END
-       WHERE key_registry_id = ? AND version = ?`,
-      [job.key_registry_id, job.from_version]
-    );
-    await adapter.execute(
-      `UPDATE logging_key_versions
-       SET usage_count = usage_count + ?
-       WHERE key_registry_id = ? AND version = ?`,
-      [object.record_count, job.key_registry_id, job.to_version]
-    );
     await completeLoggingRewrapJob({
       adapter,
       job,
@@ -3358,7 +3606,7 @@ async function processRewrapChunkDeliveryPayload(input: {
       completedAt: result.updatedAt,
       metadata: {
         ...metadataBase,
-        object_key: object.object_key,
+        object_key: result.objectKey,
         from_version: job.from_version,
         to_version: job.to_version,
         byte_count: result.byteCount,
@@ -3619,14 +3867,30 @@ export async function processLoggingDeliveryQueue(
 
   for (const message of batch.messages) {
     try {
+      if (
+        message.body &&
+        typeof message.body === 'object' &&
+        'payload_type' in message.body &&
+        message.body.payload_type === 'iceberg_ingest'
+      ) {
+        await runTenantBackupCoveredEffect(
+          { ...env, TENANT_BACKUP_WRAPPING_KEY: 'required' },
+          { environment: true },
+          () => consumeLogIcebergMessage(message.body, env)
+        );
+        message.ack();
+        continue;
+      }
       const parseResult = parseLoggingDeliveryQueuePayload(message.body);
       if (!parseResult.ok && shouldDlqUnsupportedQueuePayload(parseResult)) {
-        await writeUnsupportedLoggingDeliveryPayloadToDlq({
-          message,
-          parseResult,
-          env,
-          logger: log,
-        });
+        await runTenantBackupCoveredEffect(env, { environment: true }, () =>
+          writeUnsupportedLoggingDeliveryPayloadToDlq({
+            message,
+            parseResult,
+            env,
+            logger: log,
+          })
+        );
         log.warn('logging_delivery_payload_unsupported_schema_dlq', {
           messageId: message.id,
           payloadType: parseResult.payloadType,
@@ -3650,6 +3914,14 @@ export async function processLoggingDeliveryQueue(
         continue;
       }
 
+      if (
+        parseResult.payload.payload_type === 'chunk_write' ||
+        parseResult.payload.payload_type === 'rewrap_chunk' ||
+        parseResult.payload.payload_type === 'log_chunk_delivery'
+      ) {
+        throw new Error('logging_delivery_legacy_log_chunk_not_supported');
+      }
+
       parsedMessages.push({ message, payload: parseResult.payload });
     } catch (error) {
       log.error('logging_delivery_queue_message_failed', {
@@ -3662,22 +3934,26 @@ export async function processLoggingDeliveryQueue(
   }
 
   if (sensitiveDetailChunkWrites.length > 0) {
-    await processSensitiveDetailChunkWritePayloadBatch({
-      items: sensitiveDetailChunkWrites,
-      env,
-      logger: log,
-    });
+    await runTenantBackupCoveredEffect(env, { environment: true }, () =>
+      processSensitiveDetailChunkWritePayloadBatch({
+        items: sensitiveDetailChunkWrites,
+        env,
+        logger: log,
+      })
+    );
   }
 
   for (const { message, payload } of parsedMessages) {
     try {
       if (payload.payload_type === 'chunk_write') {
-        const result = await processChunkWritePayload({
-          payload,
-          message,
-          env,
-          logger: log,
-        });
+        const result = await runTenantBackupCoveredEffect(env, { environment: true }, () =>
+          processChunkWritePayload({
+            payload,
+            message,
+            env,
+            logger: log,
+          })
+        );
         if (result === 'retry') {
           message.retry();
         } else {
@@ -3687,12 +3963,14 @@ export async function processLoggingDeliveryQueue(
       }
 
       if (payload.payload_type === 'http_sink_batch') {
-        const result = await processHttpSinkBatchDeliveryPayload({
-          payload,
-          message,
-          env,
-          logger: log,
-        });
+        const result = await runTenantBackupCoveredEffect(env, { environment: true }, () =>
+          processHttpSinkBatchDeliveryPayload({
+            payload,
+            message,
+            env,
+            logger: log,
+          })
+        );
         if (result === 'retry') {
           message.retry();
         } else {
@@ -3705,12 +3983,14 @@ export async function processLoggingDeliveryQueue(
         payload.payload_type === 'delivery_fanout' ||
         payload.payload_type === 'log_chunk_delivery'
       ) {
-        const result = await processDeliveryFanoutPayload({
-          payload,
-          message,
-          env,
-          logger: log,
-        });
+        const result = await runTenantBackupCoveredEffect(env, { environment: true }, () =>
+          processDeliveryFanoutPayload({
+            payload,
+            message,
+            env,
+            logger: log,
+          })
+        );
         if (result === 'retry') {
           message.retry();
         } else {
@@ -3720,12 +4000,14 @@ export async function processLoggingDeliveryQueue(
       }
 
       if (payload.payload_type === 'dlq_replay') {
-        const result = await processDlqReplayDeliveryPayload({
-          payload,
-          message,
-          env,
-          logger: log,
-        });
+        const result = await runTenantBackupCoveredEffect(env, { environment: true }, () =>
+          processDlqReplayDeliveryPayload({
+            payload,
+            message,
+            env,
+            logger: log,
+          })
+        );
         if (result === 'retry') {
           message.retry();
         } else {
@@ -3735,12 +4017,14 @@ export async function processLoggingDeliveryQueue(
       }
 
       if (payload.payload_type === 'rewrap_chunk') {
-        const result = await processRewrapChunkDeliveryPayload({
-          payload,
-          message,
-          env,
-          logger: log,
-        });
+        const result = await runTenantBackupCoveredEffect(env, { environment: true }, () =>
+          processRewrapChunkDeliveryPayload({
+            payload,
+            message,
+            env,
+            logger: log,
+          })
+        );
         if (result === 'retry') {
           message.retry();
         } else {
@@ -3756,7 +4040,7 @@ export async function processLoggingDeliveryQueue(
         attempts: message.attempts,
         error: sanitizeErrorMessage(String(error)),
       });
-      message.retry();
+      retryQueueMessage(message, error);
     }
   }
 }

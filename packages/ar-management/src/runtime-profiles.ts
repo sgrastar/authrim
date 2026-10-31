@@ -1,4 +1,5 @@
-import { z } from 'zod';
+import { DatabaseSettingsCanonicalStore } from '@authrim/ar-lib-core/services/settings-canonical-store';
+import { legacyUrlString, z } from './zod';
 import type { Context } from 'hono';
 import type {
   AdminAuthContext,
@@ -18,6 +19,7 @@ import {
   loadEnvironmentProfileDefaultsFromEnv,
   loadTenantProfileOverridesFromEnv,
   purgeTenantRuntimeRegistrySnapshot,
+  requireDedicatedAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
 import { validateAuditOperationalConstraints } from './audit-ops-policy';
 import {
@@ -70,11 +72,9 @@ const AuditTargetSchema = z
     }),
     z.object({
       type: z.literal('http'),
-      url: z
-        .string()
-        .url()
+      url: legacyUrlString()
         .refine((value) => value.startsWith('https://'), {
-          message: 'HTTP audit targets must use https URLs',
+          error: 'HTTP audit targets must use https URLs',
         })
         .optional(),
       urlRef: z.string().min(1).optional(),
@@ -91,13 +91,13 @@ const AuditTargetSchema = z
       !value.connectionRef
     ) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'Database audit targets require bindingRef or connectionRef',
       });
     }
     if (value.type === 'http' && !value.url && !value.urlRef) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'HTTP audit targets require url or urlRef',
       });
     }
@@ -157,11 +157,9 @@ const AuditProfileBodySchema = z
           z
             .object({
               type: z.literal('http'),
-              url: z
-                .string()
-                .url()
+              url: legacyUrlString()
                 .refine((value) => value.startsWith('https://'), {
-                  message: 'HTTP audit targets must use https URLs',
+                  error: 'HTTP audit targets must use https URLs',
                 })
                 .optional(),
               urlRef: z.string().min(1).optional(),
@@ -173,7 +171,7 @@ const AuditProfileBodySchema = z
             .superRefine((value, ctx) => {
               if (!value.url && !value.urlRef) {
                 ctx.addIssue({
-                  code: z.ZodIssueCode.custom,
+                  code: 'custom',
                   message: 'HTTP audit targets require url or urlRef',
                 });
               }
@@ -207,7 +205,7 @@ const RuntimeProfileDefaultsBodySchema = z
   })
   .strict()
   .refine((value) => value.auditProfileId !== undefined || value.residencyProfileId !== undefined, {
-    message: 'At least one default profile ID must be provided',
+    error: 'At least one default profile ID must be provided',
   });
 
 const RuntimeRegistryEmergencyPurgeBodySchema = z
@@ -234,6 +232,10 @@ function createInfrastructureSettingsManager(env: Env) {
     },
     kv: env.SETTINGS ?? null,
     cacheTTL: 0,
+    // Platform documents are saved through the canonical store, as the Settings API saves them.
+    canonicalStore: new DatabaseSettingsCanonicalStore(
+      requireDedicatedAdminDatabaseAdapter(env, 'settings-canonical')
+    ),
   });
   manager.registerCategory(INFRASTRUCTURE_CATEGORY_META);
   return manager;
@@ -770,7 +772,7 @@ export async function adminTenantRuntimeRegistryEmergencyPurgeHandler(
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (message === 'tenant_runtime_registry_purge_requires_system_admin') {
+    if (message === 'tenant_runtime_registry_purge_requires_super_admin') {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS, {
         variables: { resource: 'tenant_runtime_registry_snapshot' },
       });

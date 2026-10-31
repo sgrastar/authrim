@@ -1,6 +1,14 @@
 import type { Translation } from '../i18n-types';
 
 const completion = {
+	error_rateLimited: 'Terlalu banyak percobaan. Tunggu sebentar, lalu coba lagi.',
+	error_rateLimitedRetryAfter: 'Terlalu banyak percobaan. Coba lagi dalam sekitar {minutes} menit.',
+	error_unregisteredPostLogoutRedirectUri:
+		'Anda telah keluar. Anda tidak dapat dikembalikan ke aplikasi karena alamat kembalinya tidak terdaftar. Buka kembali aplikasi secara manual.',
+	error_invalidIdTokenHint:
+		'Anda telah keluar. Anda tidak dapat dikembalikan ke aplikasi karena permintaan keluarnya tidak dapat diverifikasi. Buka kembali aplikasi secara manual.',
+	error_idTokenHintRequired:
+		'Anda telah keluar. Anda tidak dapat dikembalikan ke aplikasi karena permintaan keluarnya tidak lengkap. Buka kembali aplikasi secara manual.',
 	common_logoAlt: 'Logo',
 	common_footerLinks: 'Tautan footer',
 	common_selectOption: 'Pilih opsi',
@@ -39,7 +47,7 @@ const completion = {
 	emailCode_title: 'Periksa email Anda',
 	emailCode_subtitle: 'Kami telah mengirim kode verifikasi ke',
 	emailCode_instructions:
-		'Masukkan kode 6 digit dari email Anda. Kode akan kedaluwarsa dalam 5 menit.',
+		'Masukkan kode 6 digit dari email Anda. Masa berlaku kode tercantum di email.',
 	emailCode_codeLabel: 'Kode verifikasi',
 	emailCode_resendSuccess: 'Kode berhasil dikirim',
 	emailCode_success: 'Verifikasi berhasil. Anda sedang dialihkan...',
@@ -87,7 +95,7 @@ const completion = {
 	device_subtitle: 'Masukkan kode yang ditampilkan di perangkat Anda',
 	device_codeLabel: 'Kode verifikasi',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint: 'Masukkan kode 8 karakter dari perangkat Anda (format: XXXX-XXXX)',
+	device_codeHint: 'Masukkan kode yang ditampilkan di perangkat Anda',
 	device_verifyButton: 'Verifikasi kode',
 	device_confirmTitle: 'Otorisasi perangkat',
 	device_requestedPermissions: 'Izin yang diminta',
@@ -100,6 +108,13 @@ const completion = {
 	device_errorApproveFailed: 'Gagal menyetujui perangkat',
 	device_errorDenyFailed: 'Gagal menolak permintaan perangkat',
 	device_errorInvalidRedirect: 'URL pengalihan tidak valid diterima dari server',
+	device_errorConsentWithdrawn:
+		'Permintaan ini dibuat sebelum Anda mencabut akses aplikasi ini. Mulai lagi di perangkat untuk mendapatkan kode baru.',
+	device_errorTryAgain:
+		'Keputusan Anda tidak dapat disimpan saat ini dan tidak ada yang berubah. Coba lagi sebentar lagi.',
+	device_errorTooManyAttempts: 'Terlalu banyak percobaan. Tunggu sebentar, lalu coba lagi.',
+	device_errorOutcomeUnknown:
+		'Kami tidak dapat memastikan apakah keputusan Anda tersimpan. Periksa perangkat, atau masukkan kode lagi.',
 	ciba_title: 'Permintaan autentikasi',
 	ciba_subtitle: 'Aplikasi meminta persetujuan Anda',
 	ciba_noPendingRequests: 'Tidak ada permintaan autentikasi tertunda',
@@ -119,6 +134,18 @@ const completion = {
 	ciba_errorGeneric: 'Terjadi kesalahan',
 	ciba_errorApproveFailed: 'Gagal menyetujui permintaan',
 	ciba_errorDenyFailed: 'Gagal menolak permintaan',
+	ciba_errorConsentWithdrawn:
+		'Permintaan ini dibuat sebelum Anda mencabut akses aplikasi ini. Mulai lagi dari aplikasi.',
+	ciba_errorRequestGone: 'Permintaan ini sudah kedaluwarsa atau sudah dijawab.',
+	error_authorizationRequestExpired:
+		'Permintaan masuk sudah kedaluwarsa. Mulai lagi dari aplikasi.',
+	ciba_errorTryAgain:
+		'Keputusan Anda tidak dapat disimpan saat ini dan tidak ada yang berubah. Coba lagi sebentar lagi.',
+	ciba_errorTooManyAttempts: 'Terlalu banyak percobaan. Tunggu sebentar, lalu coba lagi.',
+	ciba_errorOutcomeUnknown:
+		'Kami tidak dapat memastikan apakah jawaban Anda tersimpan. Muat ulang untuk melihat permintaan yang masih menunggu.',
+	ciba_errorNoLongerWaiting:
+		'Kami tidak dapat memastikan jawaban Anda, tetapi permintaan ini sudah tidak menunggu.',
 	reauth_title: 'Verifikasi identitas Anda',
 	reauth_subtitle: 'Demi keamanan, autentikasi ulang untuk melanjutkan',
 	reauth_verifyWithPasskey: 'Verifikasi dengan Passkey',

@@ -1,5 +1,3 @@
-import { DEFAULTS } from '../common/constants';
-
 const SAML_REQUEST_BINDING_COOKIE_PREFIX = '__Host-authrim_saml_request_';
 const AUTHRIM_SAML_REQUEST_ID_PATTERN = /^_[0-9a-f]{32}$/;
 
@@ -10,9 +8,13 @@ function getSAMLRequestBindingCookieName(requestId: string): string {
   return `${SAML_REQUEST_BINDING_COOKIE_PREFIX}${requestId}`;
 }
 
-export function buildSAMLRequestBindingCookie(requestId: string): string {
+/**
+ * The cookie that ties a browser to the AuthnRequest it started. It lasts as long as the request
+ * does (`federation.saml_request_ttl`), which the caller passes in seconds.
+ */
+export function buildSAMLRequestBindingCookie(requestId: string, maxAgeSeconds: number): string {
   const name = getSAMLRequestBindingCookieName(requestId);
-  return `${name}=1; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=${DEFAULTS.REQUEST_VALIDITY_SECONDS}`;
+  return `${name}=1; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=${Math.floor(maxAgeSeconds)}`;
 }
 
 export function buildSAMLRequestBindingClearCookie(requestId: string): string {

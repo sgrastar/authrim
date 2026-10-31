@@ -1,3 +1,4 @@
+import { runTenantBackupCoveredMutation } from '../../tenant-backup-writer';
 /**
  * Settings History API Handlers
  *
@@ -20,6 +21,7 @@
 
 import type { Context } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
+import { hasPlatformAuthorityForTenantEdit } from './settings-authorization';
 import {
   createAuthContextFromHono,
   createSettingsHistoryManager,
@@ -36,6 +38,7 @@ import {
   getScopedCategoryMeta,
   type CategoryName,
   type SettingScopeLevel,
+  ADMIN_ROLES,
 } from '@authrim/ar-lib-core';
 
 // =============================================================================
@@ -80,8 +83,8 @@ function checkRolePermission(
   scopeLevel: SettingScopeLevel,
   action: 'view' | 'edit'
 ): boolean {
-  // super_admin and system_admin always have access
-  if (userRoles.includes('super_admin') || userRoles.includes('system_admin')) {
+  // The super admin always has access
+  if (userRoles.includes(ADMIN_ROLES.SUPER_ADMIN)) {
     return true;
   }
 
@@ -96,30 +99,19 @@ function checkRolePermission(
 
 /**
  * Check if user can access a specific tenant's data
- * super_admin, system_admin and distributor_admin can access any tenant
- * org_admin can only access their own tenant
+ * The super admin and the tenant admin can access the tenant they hold the role for
  */
 function canAccessTenant(adminAuth: AdminAuthContext | undefined, tenantId: string): boolean {
   if (!adminAuth) return false;
 
   const userRoles = adminAuth.roles;
 
-  // super_admin, system_admin and distributor_admin can access any tenant
-  if (
-    userRoles.includes('super_admin') ||
-    userRoles.includes('system_admin') ||
-    userRoles.includes('distributor_admin')
-  ) {
+  if (userRoles.includes(ADMIN_ROLES.SUPER_ADMIN) || userRoles.includes(ADMIN_ROLES.TENANT_ADMIN)) {
     return true;
   }
 
-  // org_admin can only access their own tenant
-  if (userRoles.includes('org_admin')) {
-    return adminAuth.org_id === tenantId;
-  }
-
   // viewer with tenant association
-  if (userRoles.includes('viewer')) {
+  if (userRoles.includes(ADMIN_ROLES.VIEWER)) {
     return !adminAuth.org_id || adminAuth.org_id === tenantId;
   }
 
@@ -418,7 +410,10 @@ export async function rollbackSettings(c: SettingsContext) {
   const adminAuth = c.get('adminAuth');
   const userRoles = adminAuth?.roles || [];
 
-  if (!checkRolePermission(userRoles, category as CategoryName, 'tenant', 'edit')) {
+  if (
+    !checkRolePermission(userRoles, category as CategoryName, 'tenant', 'edit') ||
+    !hasPlatformAuthorityForTenantEdit(adminAuth, category as CategoryName)
+  ) {
     return c.json(
       { error: 'forbidden', error_description: 'Insufficient permissions to rollback settings' },
       403
@@ -455,100 +450,111 @@ export async function rollbackSettings(c: SettingsContext) {
     );
   }
 
-  // Get actor info from context (set by admin auth middleware)
-  const actorId = c.get('adminUser')?.id;
+  return runTenantBackupCoveredMutation({
+    env: c.env,
+    scope: 'environment',
+    run: async () => {
+      // Get actor info from context (set by admin auth middleware)
+      const actorId = c.get('adminUser')?.id;
 
-  try {
-    const historyManager = getHistoryManager(c);
+      try {
+        const historyManager = getHistoryManager(c);
 
-    // Publish rollback started event
-    publishEvent(c as unknown as BaseContext, {
-      type: SETTINGS_EVENTS.ROLLBACK_STARTED,
-      tenantId,
-      data: {
-        category,
-        targetVersion: body.targetVersion,
-        actorId,
-        changeSource: 'admin_api',
-      } satisfies SettingsEventData,
-    }).catch((err: unknown) => {
-      log.warn(
-        'Failed to publish event',
-        { event: SETTINGS_EVENTS.ROLLBACK_STARTED },
-        err as Error
-      );
-    });
+        // Publish rollback started event
+        await publishEvent(c as unknown as BaseContext, {
+          type: SETTINGS_EVENTS.ROLLBACK_STARTED,
+          tenantId,
+          data: {
+            category,
+            targetVersion: body.targetVersion,
+            actorId,
+            changeSource: 'admin_api',
+          } satisfies SettingsEventData,
+        }).catch((err: unknown) => {
+          log.warn(
+            'Failed to publish event',
+            { event: SETTINGS_EVENTS.ROLLBACK_STARTED },
+            err as Error
+          );
+        });
 
-    const result = await historyManager.rollback(
-      category,
-      {
-        targetVersion: body.targetVersion,
-        actorId,
-        actorType: 'admin',
-        changeReason: body.reason,
-      },
-      async () => getCurrentSnapshot(c, category),
-      async (snapshot) => applySnapshot(c, category, snapshot)
-    );
+        const result = await historyManager.rollback(
+          category,
+          {
+            targetVersion: body.targetVersion,
+            actorId,
+            actorType: 'admin',
+            changeReason: body.reason,
+          },
+          async () => getCurrentSnapshot(c, category),
+          async (snapshot) => applySnapshot(c, category, snapshot)
+        );
 
-    // Publish rollback completed event
-    publishEvent(c as unknown as BaseContext, {
-      type: SETTINGS_EVENTS.ROLLBACK_COMPLETED,
-      tenantId,
-      data: {
-        category,
-        currentVersion: result.currentVersion,
-        targetVersion: body.targetVersion,
-        actorId,
-        changeSource: 'admin_api',
-      } satisfies SettingsEventData,
-    }).catch((err: unknown) => {
-      log.warn(
-        'Failed to publish event',
-        { event: SETTINGS_EVENTS.ROLLBACK_COMPLETED },
-        err as Error
-      );
-    });
+        // Publish rollback completed event
+        await publishEvent(c as unknown as BaseContext, {
+          type: SETTINGS_EVENTS.ROLLBACK_COMPLETED,
+          tenantId,
+          data: {
+            category,
+            currentVersion: result.currentVersion,
+            targetVersion: body.targetVersion,
+            actorId,
+            changeSource: 'admin_api',
+          } satisfies SettingsEventData,
+        }).catch((err: unknown) => {
+          log.warn(
+            'Failed to publish event',
+            { event: SETTINGS_EVENTS.ROLLBACK_COMPLETED },
+            err as Error
+          );
+        });
 
-    log.info('Settings rolled back', {
-      category,
-      previousVersion: result.previousVersion,
-      targetVersion: body.targetVersion,
-      currentVersion: result.currentVersion,
-    });
+        log.info('Settings rolled back', {
+          category,
+          previousVersion: result.previousVersion,
+          targetVersion: body.targetVersion,
+          currentVersion: result.currentVersion,
+        });
 
-    return c.json({
-      success: true,
-      category,
-      previousVersion: result.previousVersion,
-      currentVersion: result.currentVersion,
-      restoredFromVersion: body.targetVersion,
-    });
-  } catch (error) {
-    // Publish rollback failed event
-    publishEvent(c as unknown as BaseContext, {
-      type: SETTINGS_EVENTS.ROLLBACK_FAILED,
-      tenantId,
-      data: {
-        category,
-        targetVersion: body.targetVersion,
-        actorId,
-        changeSource: 'admin_api',
-        errorMessage: error instanceof Error ? error.message : 'Unknown error',
-      } satisfies SettingsEventData,
-    }).catch((err: unknown) => {
-      log.warn('Failed to publish event', { event: SETTINGS_EVENTS.ROLLBACK_FAILED }, err as Error);
-    });
+        return c.json({
+          success: true,
+          category,
+          previousVersion: result.previousVersion,
+          currentVersion: result.currentVersion,
+          restoredFromVersion: body.targetVersion,
+        });
+      } catch (error) {
+        // Publish rollback failed event
+        await publishEvent(c as unknown as BaseContext, {
+          type: SETTINGS_EVENTS.ROLLBACK_FAILED,
+          tenantId,
+          data: {
+            category,
+            targetVersion: body.targetVersion,
+            actorId,
+            changeSource: 'admin_api',
+            errorMessage: error instanceof Error ? error.message : 'Unknown error',
+          } satisfies SettingsEventData,
+        }).catch((err: unknown) => {
+          log.warn(
+            'Failed to publish event',
+            { event: SETTINGS_EVENTS.ROLLBACK_FAILED },
+            err as Error
+          );
+        });
 
-    log.error('Rollback error', {}, error as Error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: error instanceof Error ? error.message : 'Failed to rollback settings',
-      },
-      500
-    );
-  }
+        log.error('Rollback error', {}, error as Error);
+        return c.json(
+          {
+            error: 'server_error',
+            error_description:
+              error instanceof Error ? error.message : 'Failed to rollback settings',
+          },
+          500
+        );
+      }
+    },
+  });
 }
 
 /**

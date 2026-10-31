@@ -6,6 +6,10 @@
  * - nanoid: NanoID (URL-safe, 21 chars, default for user IDs)
  */
 
+import { getTenantSettingsDocument, type TenantSettingsStores } from './tenant-settings';
+import { isValidPersistedUserId } from './persisted-user-id';
+export { isValidPersistedUserId } from './persisted-user-id';
+
 /**
  * Supported user ID formats
  */
@@ -25,8 +29,6 @@ const NANOID_LENGTH = 21;
  * NanoID alphabet for URL-safe IDs (same as nanoid default)
  */
 const NANOID_ALPHABET = 'useandom-26T198340PX75pxJACKVERYMINDBUSHWOLF_GQZbfghjklqvwyzrict';
-
-const PERSISTED_USER_ID_PATTERN = /^(?:[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}|[A-Za-z0-9_-]{21})$/u;
 
 /**
  * Generate a NanoID using Web Crypto API
@@ -91,11 +93,6 @@ export function isValidUserId(id: string, format?: UserIdFormat): boolean {
   return uuidPattern.test(id) || nanoidPattern.test(id);
 }
 
-/** Validate the legacy-safe and generated forms accepted at persisted runtime boundaries. */
-export function isValidPersistedUserId(id: unknown): id is string {
-  return typeof id === 'string' && PERSISTED_USER_ID_PATTERN.test(id);
-}
-
 /** Validate the canonical account ID derived from a persisted user ID. */
 export function isCanonicalAccountIdForUser(accountId: unknown, userId: unknown): boolean {
   return (
@@ -103,13 +100,6 @@ export function isCanonicalAccountIdForUser(accountId: unknown, userId: unknown)
     isValidPersistedUserId(userId) &&
     accountId === `account:${userId}`
   );
-}
-
-/**
- * KV namespace interface for user ID format retrieval
- */
-interface KVNamespace {
-  get(key: string): Promise<string | null>;
 }
 
 interface UserIdFormatEnv {
@@ -129,14 +119,14 @@ function requireTenantId(tenantId: string, context: string): string {
 }
 
 /**
- * Get user ID format from tenant settings in KV storage
+ * Get the user ID format from the tenant's settings (`tenant.user_id_format`)
  *
- * @param kv - The KV namespace (AUTHRIM_CONFIG)
+ * @param stores - The KV namespaces tenant settings live in (the worker's env)
  * @param tenantId - The tenant ID
  * @returns The configured user ID format, or default if not set
  */
 export async function getUserIdFormatFromSettings(
-  kv: KVNamespace | undefined,
+  stores: TenantSettingsStores | undefined,
   tenantId: string,
   env?: UserIdFormatEnv
 ): Promise<UserIdFormat> {
@@ -146,39 +136,41 @@ export async function getUserIdFormatFromSettings(
     return envFormat;
   }
 
-  if (!kv) {
+  if (!stores) {
     return DEFAULT_USER_ID_FORMAT;
   }
 
-  try {
-    const kvData = await kv.get(`settings:tenant:${normalizedTenantId}:tenant`);
-    if (kvData) {
-      const settings = JSON.parse(kvData) as Record<string, unknown>;
-      const format = parseUserIdFormat(settings['tenant.user_id_format']);
-      if (format) {
-        return format;
-      }
-    }
-  } catch {
-    // Fall back to default on any error
-  }
-
-  return DEFAULT_USER_ID_FORMAT;
+  const settings = await getTenantSettingsDocument(stores, normalizedTenantId, 'tenant', {
+    // Without the tenant's settings the fallback is at least as strict.
+    onUnreadable: 'empty',
+  });
+  return parseUserIdFormat(settings?.['tenant.user_id_format']) ?? DEFAULT_USER_ID_FORMAT;
 }
 
 /**
  * Generate a user ID based on tenant settings
  * Convenience function that reads the format from KV and generates the ID
  *
- * @param kv - The KV namespace (AUTHRIM_CONFIG)
+ * @param stores - The KV namespaces tenant settings live in (the worker's env)
  * @param tenantId - The tenant ID
  * @returns Generated user ID string
  */
 export async function generateUserIdFromSettings(
-  kv: KVNamespace | undefined,
+  stores: TenantSettingsStores | undefined,
   tenantId: string,
   env?: UserIdFormatEnv
 ): Promise<string> {
-  const format = await getUserIdFormatFromSettings(kv, tenantId, env);
+  const format = await getUserIdFormatFromSettings(stores, tenantId, env);
   return generateUserId(format);
+}
+
+/**
+ * Subject namespaces of tokens that no user account backs: clients (client credentials, token
+ * exchange), admin machine principals and admin delegations.
+ */
+export const NON_ACCOUNT_SUBJECT_PREFIXES = ['client:', 'machine:', 'admin_user:'] as const;
+
+/** Whether a token subject names a client or an admin principal rather than a user account. */
+export function isNonAccountSubject(subject: string): boolean {
+  return NON_ACCOUNT_SUBJECT_PREFIXES.some((prefix) => subject.startsWith(prefix));
 }

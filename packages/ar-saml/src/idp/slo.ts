@@ -20,14 +20,13 @@ import {
   AR_ERROR_CODES,
   getUIConfig,
   buildUIUrl,
-  shouldUseBuiltinForms,
   createConfigurationError,
   usesNakedDomainIssuer,
-  buildIssuerUrl,
   getLogger,
   createLogger,
   createAuthContextFromHono,
   recordHybridUserSessionRevocationEpoch,
+  resolveSamlRequestTtlSeconds,
 } from '@authrim/ar-lib-core';
 import {
   parseLogoutRequestXml,
@@ -261,7 +260,11 @@ async function processLogoutRequest(
   const { idpEntityId } = await getSAMLLocalEntityIds(env, tenantId);
 
   // Validate LogoutRequest
-  validateLogoutRequest(logoutRequest, issuerUrl);
+  validateLogoutRequest(
+    logoutRequest,
+    issuerUrl,
+    await resolveSamlRequestTtlSeconds(env, tenantId)
+  );
 
   // Get SP configuration
   const spConfig = await getSPConfig(env, tenantId, logoutRequest.issuer);
@@ -609,7 +612,11 @@ function validateLogoutResponseDestination(
 /**
  * Validate LogoutRequest
  */
-function validateLogoutRequest(logoutRequest: ParsedLogoutRequest, issuerUrl: string): void {
+function validateLogoutRequest(
+  logoutRequest: ParsedLogoutRequest,
+  issuerUrl: string,
+  requestTtlSeconds: number
+): void {
   // Check request is not expired
   const issueInstantMs = Date.parse(logoutRequest.issueInstant);
   if (!Number.isFinite(issueInstantMs)) {
@@ -617,7 +624,7 @@ function validateLogoutRequest(logoutRequest: ParsedLogoutRequest, issuerUrl: st
   }
   const nowMs = Date.now();
   const skewMs = DEFAULTS.CLOCK_SKEW_SECONDS * 1000;
-  const maxAge = DEFAULTS.REQUEST_VALIDITY_SECONDS * 1000;
+  const maxAge = requestTtlSeconds * 1000;
 
   if (issueInstantMs > nowMs + skewMs) {
     throw new SAMLLogoutMessageValidationError();
@@ -1093,7 +1100,6 @@ function appendQueryString(destination: string, query: string): string {
 
 /**
  * Build logout complete URL based on UI config
- * Supports conformance mode (built-in redirect) and external UI
  */
 type LogoutCompleteResult =
   | { type: 'redirect'; url: string }
@@ -1106,18 +1112,8 @@ async function buildLogoutCompleteUrl(
 ): Promise<LogoutCompleteResult> {
   const tenantId = resolveSAMLTenantIdFromContext(c);
 
-  // Conformance mode: use built-in path
-  if (await shouldUseBuiltinForms(env)) {
-    const issuerUrl = buildIssuerUrl(env, tenantId);
-    const url = new URL('/logout-complete', issuerUrl);
-    if (relayState) {
-      url.searchParams.set('relay_state', relayState);
-    }
-    return { type: 'redirect', url: url.toString() };
-  }
-
-  // Normal mode: use UI config
-  const uiConfig = await getUIConfig(env);
+  // Use UI config
+  const uiConfig = await getUIConfig(env, tenantId);
   if (!uiConfig?.baseUrl) {
     return { type: 'error', response: c.json(createConfigurationError(), 500) };
   }
@@ -1249,7 +1245,7 @@ export async function initiateIdPMultiSPLogoutBindingResponse(
     relayState: options.relayState,
     transactionId: options.transactionId,
     targets: targets.map((spConfig) => spConfig.entityId),
-    ttlSeconds: DEFAULTS.REQUEST_VALIDITY_SECONDS,
+    ttlSeconds: await resolveSamlRequestTtlSeconds(env, tenantId),
   });
 
   const response = await sendIdPLogoutRequestForTransactionTarget(env, {
@@ -1463,6 +1459,6 @@ async function storeIdPLogoutRequestState(
     spEntityId: spConfig.entityId,
     requestId: built.logoutRequestId,
     transactionId: options.transactionId,
-    ttlSeconds: DEFAULTS.REQUEST_VALIDITY_SECONDS,
+    ttlSeconds: await resolveSamlRequestTtlSeconds(env, built.tenantId),
   });
 }

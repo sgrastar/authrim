@@ -8,7 +8,8 @@ const { mockAdapter, mockAdminAdapter, mockGetTenantSettings, mockListTenantStor
       query: vi.fn(),
       queryOne: vi.fn(),
       execute: vi.fn(),
-    } satisfies Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'>,
+      batch: vi.fn(),
+    } satisfies Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute' | 'batch'>,
     mockAdminAdapter: {
       query: vi.fn(),
       queryOne: vi.fn(),
@@ -23,6 +24,35 @@ const { mockAdapter, mockAdminAdapter, mockGetTenantSettings, mockListTenantStor
 
 const { mockWriteAdminAuditLog } = vi.hoisted(() => ({
   mockWriteAdminAuditLog: vi.fn(),
+}));
+
+// Router tests stop at the durable coordinator boundary. Actual Core/Admin transactions, DO
+// lifecycle transitions and logout-page evidence are covered by support-ops-execute-job.test.ts.
+const execution = vi.hoisted(() => ({
+  create: vi.fn(),
+  remove: vi.fn(),
+  inline: vi.fn(),
+  preflight: vi.fn(),
+  job: null as {
+    jobId: string;
+    tenantId: string;
+    actionId: string;
+    actionableCount: number;
+  } | null,
+  actionStatus: 'running',
+  durableStatus: 'pending',
+  summary: {} as Record<string, unknown>,
+}));
+
+vi.mock('../support-ops-execute-job', () => ({
+  createSupportOpsExecuteJob: execution.create,
+  deleteSupportOpsExecuteJob: execution.remove,
+  processSupportOpsExecuteJobInline: execution.inline,
+}));
+
+vi.mock('../support-ops-execution-stores', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../support-ops-execution-stores')>()),
+  preflightSupportOpsExecutionStores: execution.preflight,
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -48,6 +78,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
             displayName: 'Users',
             minCount: 10,
             maxSnapshotCount: 10000,
+            maxSyncExecuteCount: 1000,
             table: 'users_core',
             idColumn: 'id',
             fields: {
@@ -145,15 +176,29 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       })
     ),
     getTenantIdFromContext: vi.fn(() => 'tenant-a'),
-    getTenantSettings: mockGetTenantSettings,
+    getTenantSettingsDocument: mockGetTenantSettings,
     ensureDatabaseAdapter: vi.fn(() => mockAdapter),
     listEnvironmentTenantDefaultStores: mockListTenantStores,
     requireDedicatedAdminDatabaseAdapter: vi.fn(() => mockAdminAdapter),
-    resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => mockAdapter),
+    resolveTenantMetadataContext: vi.fn(async () => ({
+      tenantId: 'tenant-a',
+      coreDb: mockAdapter,
+    })),
+    getTenantMetadataContextFromHono: vi.fn(() => ({
+      tenantId: 'tenant-a',
+      coreDb: mockAdapter,
+      route: {
+        registryRow: { database_id: 'physical-metadata' },
+        bindingRouteGeneration: 1,
+        shardId: 'metadata',
+        assignmentGeneration: 1,
+      },
+    })),
   };
 });
 
-vi.mock('../admin-shared', () => ({
+vi.mock('../admin-shared', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../admin-shared')>()),
   writeAdminAuditLog: mockWriteAdminAuditLog,
 }));
 
@@ -272,13 +317,50 @@ function createApp(permissions: string[] = ['admin:support_ops:*']) {
 describe('support operations admin router', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockAdapter.query.mockResolvedValue([]);
-    mockAdapter.queryOne.mockResolvedValue({ count: 0 });
-    mockAdapter.execute.mockResolvedValue({ rowsAffected: 0 });
-    mockAdminAdapter.query.mockResolvedValue([]);
-    mockAdminAdapter.queryOne.mockResolvedValue(null);
-    mockAdminAdapter.execute.mockResolvedValue({ rowsAffected: 1 });
-    mockGetTenantSettings.mockResolvedValue(null);
+    // Reset queued once-results too: execution no longer consumes the legacy account batch
+    // fixtures, and leftover answers must never become another test's snapshot targets.
+    mockAdapter.query.mockReset().mockResolvedValue([]);
+    mockAdapter.queryOne.mockReset().mockImplementation(async (sql: string) => {
+      if (sql.startsWith('SELECT status,result_summary_json')) {
+        return {
+          status: execution.actionStatus,
+          result_summary_json: JSON.stringify(
+            execution.actionStatus === 'running'
+              ? { job_id: execution.job?.jobId }
+              : execution.summary
+          ),
+        };
+      }
+      return { count: 0 };
+    });
+    mockAdapter.execute.mockReset().mockResolvedValue({ rowsAffected: 0 });
+    mockAdapter.batch.mockReset().mockResolvedValue([]);
+    mockAdminAdapter.query.mockReset().mockResolvedValue([]);
+    mockAdminAdapter.queryOne
+      .mockReset()
+      .mockImplementation(async (sql: string) =>
+        sql === 'SELECT status FROM admin_jobs WHERE tenant_id=? AND id=?'
+          ? { status: execution.durableStatus }
+          : null
+      );
+    mockAdminAdapter.execute.mockReset().mockResolvedValue({ rowsAffected: 1 });
+    mockGetTenantSettings.mockReset().mockResolvedValue(null);
+    execution.job = null;
+    execution.actionStatus = 'running';
+    execution.durableStatus = 'pending';
+    execution.summary = {};
+    execution.create
+      .mockReset()
+      .mockImplementation(async (_adapter: unknown, input: NonNullable<typeof execution.job>) => {
+        execution.job = input;
+      });
+    execution.remove.mockReset().mockResolvedValue(undefined);
+    execution.preflight.mockReset().mockResolvedValue(undefined);
+    execution.inline.mockReset().mockImplementation(async () => {
+      execution.actionStatus = 'completed';
+      execution.durableStatus = 'completed';
+      execution.summary = { succeeded_count: execution.job?.actionableCount, failed_count: 0 };
+    });
   });
 
   it('requires support operation permissions for registry access', async () => {
@@ -338,9 +420,117 @@ describe('support operations admin router', () => {
     const payload = (await response.json()) as Record<string, unknown>;
 
     expect(response.status).toBe(200);
-    expect(payload.matched_count).toBe(12);
-    expect(payload.actionable_count).toBe(12);
+    expect(payload.matched_count).toBe(10);
+    expect(payload.actionable_count).toBe(10);
     expect(payload.blocked_count).toBe(0);
+  });
+
+  it.each([
+    [0, 0],
+    [1, null],
+    [9, null],
+    [10, 10],
+    [11, 10],
+    [1000, 1000],
+    [1001, 1000],
+  ] as const)(
+    'keeps preview, risk, audit and aggregate counts consistent for %i',
+    async (count, shown) => {
+      mockAdapter.queryOne.mockResolvedValueOnce({ count }).mockResolvedValueOnce({ count });
+      const response = await createApp().request(
+        '/api/admin/support-ops/cohorts/preview',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ resource: 'User', intent: { action: 'suspend' } }),
+        },
+        {} as Env
+      );
+      const payload = (await response.json()) as Record<string, unknown>;
+      const counts = {
+        matched_count: shown,
+        actionable_count: shown,
+        blocked_count: 0,
+        privacy: { min_count: 10, count_exact: false, count_precision: 10 },
+      };
+      expect(response.status).toBe(200);
+      expect(payload).toMatchObject(counts);
+      expect(payload.risk).toMatchObject({
+        matched_count: shown,
+        risk_level: count >= 1000 ? 'medium' : 'low',
+        low_count_suppressed: shown === null,
+      });
+      expect(payload).not.toHaveProperty('targets');
+      const records = mockWriteAdminAuditLog.mock.calls as unknown as Array<
+        [unknown, { action: string; metadata?: Record<string, unknown> }]
+      >;
+      const audit = records.find(([, event]) => event.action === 'support_ops.cohort.preview')?.[1];
+      expect(audit?.metadata).toMatchObject({ counts });
+      expect(audit?.metadata).not.toHaveProperty('selector');
+
+      mockAdapter.query.mockResolvedValueOnce(count === 0 ? [] : [{ status: 'active', count }]);
+      const aggregate = await createApp().request(
+        '/api/admin/support-ops/aggregate',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ resource: 'User', group_by: ['status'] }),
+        },
+        {} as Env
+      );
+      const aggregateBody = (await aggregate.json()) as { groups: Array<{ count: number }> };
+      expect(aggregate.status).toBe(200);
+      expect(aggregateBody.groups.map((group) => group.count)).toEqual(
+        count === 0 || shown === null ? [] : [shown]
+      );
+    }
+  );
+
+  it('retains complementary suppression before bucketing a preview or its audit', async () => {
+    mockAdapter.queryOne.mockResolvedValueOnce({ count: 30 }).mockResolvedValueOnce({ count: 29 });
+    mockAdapter.query.mockResolvedValueOnce([{ block_reason: 'not_active' }]);
+    const response = await createApp().request(
+      '/api/admin/support-ops/cohorts/preview',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resource: 'User', intent: { action: 'suspend' } }),
+      },
+      {} as Env
+    );
+    const payload = (await response.json()) as Record<string, unknown>;
+    expect(response.status).toBe(200);
+    const counts = {
+      matched_count: null,
+      actionable_count: 20,
+      blocked_count: null,
+      blocked_reasons_suppressed: true,
+      privacy: { low_count_suppressed: true, count_exact: false, count_precision: 10 },
+    };
+    expect(payload).toMatchObject({ ...counts, blocked_reasons: [] });
+    expect(payload.risk).toMatchObject({ matched_count: null, low_count_suppressed: true });
+    const records = mockWriteAdminAuditLog.mock.calls as unknown as Array<
+      [unknown, { action: string; metadata?: Record<string, unknown> }]
+    >;
+    expect(
+      records.find(([, event]) => event.action === 'support_ops.cohort.preview')?.[1].metadata
+    ).toMatchObject({ counts });
+  });
+
+  it('does not read counts or write preview audit without the preview permission', async () => {
+    const response = await createApp([ADMIN_PERMISSIONS.SUPPORT_OPS_AGGREGATE_READ]).request(
+      '/api/admin/support-ops/cohorts/preview',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resource: 'User' }),
+      },
+      {} as Env
+    );
+    expect(response.status).toBe(403);
+    expect(mockAdapter.queryOne).not.toHaveBeenCalled();
+    expect(mockAdapter.query).not.toHaveBeenCalled();
+    expect(mockWriteAdminAuditLog).not.toHaveBeenCalled();
   });
 
   it('returns bucketed aggregate counts with complementary suppression', async () => {
@@ -445,6 +635,7 @@ describe('support operations admin router', () => {
     );
     const payload = (await response.json()) as Record<string, unknown>;
     const executedSql = mockAdapter.execute.mock.calls.map((call) => String(call[0]));
+    const jobSql = mockAdminAdapter.execute.mock.calls.map((call) => String(call[0]));
 
     expect(response.status).toBe(202);
     expect(payload.snapshot_status).toBe('pending');
@@ -452,8 +643,10 @@ describe('support operations admin router', () => {
     expect(executedSql.some((sql) => sql.includes('INSERT INTO support_operation_cohorts'))).toBe(
       true
     );
-    expect(executedSql.some((sql) => sql.includes('INSERT INTO admin_jobs'))).toBe(true);
-    const jobConfig = mockAdapter.execute.mock.calls.find((call) =>
+    // The job is kept in DB_ADMIN, where the scheduled run claims it.
+    expect(executedSql.some((sql) => sql.includes('INSERT INTO admin_jobs'))).toBe(false);
+    expect(jobSql.some((sql) => sql.includes('INSERT INTO admin_jobs'))).toBe(true);
+    const jobConfig = mockAdminAdapter.execute.mock.calls.find((call) =>
       String(call[0]).includes('INSERT INTO admin_jobs')
     )?.[1]?.[4] as string;
     expect(JSON.parse(jobConfig)).toEqual(
@@ -766,10 +959,7 @@ describe('support operations admin router', () => {
     mockAdminAdapter.query.mockResolvedValueOnce([approvalEntity()]);
     mockAdapter.execute
       .mockResolvedValueOnce({ rowsAffected: 1 })
-      .mockResolvedValueOnce({ rowsAffected: 1 })
-      .mockResolvedValueOnce({ rowsAffected: 12 })
       .mockResolvedValueOnce({ rowsAffected: 1 });
-
     const response = await createApp().request(
       '/api/admin/support-ops/actions/action-1/execute',
       { method: 'POST' },
@@ -779,6 +969,61 @@ describe('support operations admin router', () => {
 
     expect(response.status).toBe(200);
     expect(payload.status).toBe('completed');
+    expect(execution.create).toHaveBeenCalledWith(
+      mockAdminAdapter,
+      expect.objectContaining({
+        tenantId: 'tenant-a',
+        actionId: 'action-1',
+        cohortId: 'cohort-1',
+        executor: 'admin-1',
+        actionableCount: 12,
+        metadataIdentity: {
+          databaseId: 'physical-metadata',
+          bindingRouteGeneration: 1,
+          shardId: 'metadata',
+          assignmentGeneration: 1,
+        },
+      })
+    );
+    expect(execution.preflight).toHaveBeenCalledBefore(execution.create);
+    // The linked approval is persisted first; durable intent still precedes the running CAS.
+    expect(String(mockAdapter.execute.mock.calls[0]?.[0])).toContain("status = 'approved'");
+    expect(String(mockAdapter.execute.mock.calls[1]?.[0])).toContain("status='running'");
+    expect(execution.create.mock.invocationCallOrder[0]).toBeLessThan(
+      mockAdapter.execute.mock.invocationCallOrder[1] ?? Number.NEGATIVE_INFINITY
+    );
+    expect(execution.inline).toHaveBeenCalledWith(
+      expect.anything(),
+      'tenant-a',
+      execution.job?.jobId,
+      {
+        maxCallsPerRun: 400,
+        maxTargetsPerRun: 1000,
+      }
+    );
+    expect(mockAdapter.queryOne).toHaveBeenCalledWith(
+      'SELECT status,result_summary_json FROM support_operation_actions WHERE tenant_id=? AND id=?',
+      ['tenant-a', 'action-1'],
+      { consistencyClass: 'primary_required' }
+    );
+    expect(mockWriteAdminAuditLog).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'support_ops.action.execute',
+        resourceId: 'action-1',
+        result: 'success',
+        metadata: {
+          cohort_id: 'cohort-1',
+          resource: 'User',
+          action: 'suspend',
+          execution: 'job',
+          job_id: execution.job?.jobId,
+        },
+      })
+    );
+    // No per-account mutation is duplicated by the router.
+    expect(mockAdapter.batch).not.toHaveBeenCalled();
+    expect(payload.succeeded_count).toBe(12);
   });
 
   it('uses a conditional approved-to-running transition before execution', async () => {
@@ -797,6 +1042,7 @@ describe('support operations admin router', () => {
       expires_at: Date.now() + 60_000,
     });
     mockAdapter.execute.mockResolvedValueOnce({ rowsAffected: 0 });
+    execution.actionStatus = 'approved';
 
     const response = await createApp().request(
       '/api/admin/support-ops/actions/action-1/execute',
@@ -806,7 +1052,13 @@ describe('support operations admin router', () => {
     const executedSql = mockAdapter.execute.mock.calls.map((call) => String(call[0]));
 
     expect(response.status).toBe(409);
-    expect(executedSql[0]).toContain("status = 'approved'");
+    expect(executedSql[0]).toContain("status='approved'");
+    expect(execution.remove).toHaveBeenCalledWith(
+      mockAdminAdapter,
+      'tenant-a',
+      execution.job?.jobId
+    );
+    expect(execution.inline).not.toHaveBeenCalled();
     expect(executedSql.some((sql) => sql.includes('UPDATE users_core'))).toBe(false);
   });
 
@@ -845,35 +1097,194 @@ describe('support operations admin router', () => {
     expect(executedSql.some((sql) => sql.includes('UPDATE users_core'))).toBe(false);
   });
 
-  it('marks running actions failed when execution throws', async () => {
-    mockAdapter.queryOne.mockResolvedValueOnce({
-      id: 'action-1',
-      cohort_id: 'cohort-1',
-      resource: 'User',
-      action: 'suspend',
-      status: 'approved',
-      intended_action: 'suspend',
-      selector_hash: 'sha256:test',
-      matched_count: 12,
-      actionable_count: 12,
-      blocked_count: 0,
-      snapshot_status: 'completed',
-      expires_at: Date.now() + 60_000,
+  describe('durable execution HTTP outcomes', () => {
+    function approvedSuspend(actionableCount = 12) {
+      mockAdapter.queryOne.mockResolvedValueOnce({
+        id: 'action-1',
+        cohort_id: 'cohort-1',
+        resource: 'User',
+        action: 'suspend',
+        status: 'approved',
+        intended_action: 'suspend',
+        selector_hash: 'sha256:test',
+        matched_count: actionableCount,
+        actionable_count: actionableCount,
+        blocked_count: 0,
+        snapshot_status: 'completed',
+        expires_at: Date.now() + 60_000,
+      });
+      mockAdapter.execute.mockResolvedValue({ rowsAffected: 1 });
+    }
+
+    function execute(permissions?: string[]) {
+      return createApp(permissions).request(
+        '/api/admin/support-ops/actions/action-1/execute',
+        { method: 'POST' },
+        {} as Env
+      );
+    }
+
+    it('keeps incomplete inline work resumable without claiming failure or exposing internal state', async () => {
+      approvedSuspend();
+      execution.inline.mockImplementation(async () => undefined);
+
+      const response = await execute();
+      const payload = await response.json();
+
+      expect(response.status).toBe(202);
+      expect(payload).toEqual({
+        action_id: 'action-1',
+        status: 'running',
+        resource: 'User',
+        action: 'suspend',
+        cohort_id: 'cohort-1',
+        job_id: execution.job?.jobId,
+      });
+      expect(execution.remove).not.toHaveBeenCalled();
+      expect(
+        mockAdapter.execute.mock.calls.some((call) => String(call[0]).includes("status = 'failed'"))
+      ).toBe(false);
     });
-    mockAdapter.execute
-      .mockResolvedValueOnce({ rowsAffected: 1 })
-      .mockRejectedValueOnce(new Error('database unavailable'))
-      .mockResolvedValueOnce({ rowsAffected: 1 });
 
-    const response = await createApp().request(
-      '/api/admin/support-ops/actions/action-1/execute',
-      { method: 'POST' },
-      {} as Env
+    it.each([
+      ['completed', 'pending'],
+      ['running', 'completed'],
+      ['failed', 'pending'],
+    ])(
+      'requires both Core and durable final evidence before answering a terminal result: %s/%s',
+      async (actionStatus, durableStatus) => {
+        approvedSuspend();
+        execution.inline.mockImplementation(async () => {
+          execution.actionStatus = actionStatus;
+          execution.durableStatus = durableStatus;
+        });
+
+        expect((await execute()).status).toBe(202);
+        expect(execution.remove).not.toHaveBeenCalled();
+      }
     );
-    const executedSql = mockAdapter.execute.mock.calls.map((call) => String(call[0]));
 
-    expect(response.status).toBe(409);
-    expect(executedSql.some((sql) => sql.includes("SET status = 'failed'"))).toBe(true);
+    it('answers a confirmed durable failure without rewriting the coordinator outcome', async () => {
+      approvedSuspend();
+      execution.inline.mockImplementation(async () => {
+        execution.actionStatus = 'failed';
+        execution.durableStatus = 'failed';
+      });
+
+      const response = await execute();
+
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ error: 'execution_failed' });
+      expect(execution.remove).not.toHaveBeenCalled();
+      expect(mockAdapter.batch).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { actionableCount: 1000, attemptsInline: true },
+      { actionableCount: 1001, attemptsInline: false },
+    ])(
+      'retains the durable job at $actionableCount targets with inline attempt=$attemptsInline',
+      async ({ actionableCount, attemptsInline }) => {
+        approvedSuspend(actionableCount);
+        execution.inline.mockImplementation(async () => undefined);
+
+        const response = await execute();
+
+        expect(response.status).toBe(202);
+        expect(await response.json()).toEqual({
+          action_id: 'action-1',
+          status: 'running',
+          resource: 'User',
+          action: 'suspend',
+          cohort_id: 'cohort-1',
+          job_id: execution.job?.jobId,
+        });
+        expect(execution.create).toHaveBeenCalledTimes(1);
+        expect(execution.create).toHaveBeenCalledWith(
+          mockAdminAdapter,
+          expect.objectContaining({
+            tenantId: 'tenant-a',
+            actionId: 'action-1',
+            actionableCount,
+          })
+        );
+        if (attemptsInline) {
+          expect(execution.inline).toHaveBeenCalledTimes(1);
+          expect(execution.inline).toHaveBeenCalledWith(
+            expect.anything(),
+            'tenant-a',
+            execution.job?.jobId,
+            { maxCallsPerRun: 400, maxTargetsPerRun: 1000 }
+          );
+          expect(execution.create).toHaveBeenCalledBefore(execution.inline);
+        } else {
+          expect(execution.inline).not.toHaveBeenCalled();
+        }
+        expect(execution.remove).not.toHaveBeenCalled();
+        expect(mockAdapter.batch).not.toHaveBeenCalled();
+        expect(
+          mockAdapter.execute.mock.calls.some((call) =>
+            String(call[0]).includes("status = 'failed'")
+          )
+        ).toBe(false);
+      }
+    );
+
+    it('refuses execution-store preflight before action/job mutation or audit success', async () => {
+      approvedSuspend();
+      execution.preflight.mockRejectedValueOnce(new Error('missing account receipt schema'));
+
+      const response = await execute();
+
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({ error: 'execution_store_unavailable' });
+      expect(execution.create).not.toHaveBeenCalled();
+      expect(execution.inline).not.toHaveBeenCalled();
+      expect(mockAdapter.execute).not.toHaveBeenCalled();
+      expect(mockWriteAdminAuditLog).not.toHaveBeenCalled();
+    });
+
+    it('retains a durable intent when the Core action CAS response is uncertain', async () => {
+      approvedSuspend();
+      mockAdapter.execute.mockRejectedValueOnce(new Error('unknown commit result'));
+
+      const response = await execute();
+
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({ error: 'execution_state_unavailable' });
+      expect(execution.create).toHaveBeenCalledTimes(1);
+      expect(execution.remove).not.toHaveBeenCalled();
+      expect(execution.inline).not.toHaveBeenCalled();
+    });
+
+    it('redacts complementary partial outcome counts returned by the durable coordinator', async () => {
+      approvedSuspend();
+      execution.inline.mockImplementation(async () => {
+        execution.actionStatus = 'completed';
+        execution.durableStatus = 'completed';
+        execution.summary = { succeeded_count: 11, failed_count: 1 };
+      });
+
+      const response = await execute();
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        succeeded_count: null,
+        failed_count: null,
+        matched_count: 12,
+        attempted_count: 12,
+        privacy: { min_count: 10, low_count_suppressed: true },
+      });
+    });
+
+    it('checks execute permission before looking up an action or creating a job', async () => {
+      const response = await execute([ADMIN_PERMISSIONS.SUPPORT_OPS_ACTIONS_READ]);
+
+      expect(response.status).toBe(403);
+      expect(mockAdapter.queryOne).not.toHaveBeenCalled();
+      expect(execution.preflight).not.toHaveBeenCalled();
+      expect(execution.create).not.toHaveBeenCalled();
+    });
   });
 
   it('rejects self approval by default', async () => {
@@ -937,16 +1348,18 @@ describe('support operations admin router', () => {
       matched_count: 12,
       snapshot_cutoff: 1_700_000_000,
     };
+    // The job in DB_ADMIN; the cohort and its targets in the tenant's Core database.
+    mockAdminAdapter.query.mockResolvedValueOnce([
+      {
+        id: 'job-1',
+        tenant_id: 'tenant-a',
+        status: 'pending',
+        progress: JSON.stringify(progress),
+        config: JSON.stringify(config),
+      },
+    ]);
+    mockAdminAdapter.execute.mockResolvedValue({ rowsAffected: 1 });
     mockAdapter.query
-      .mockResolvedValueOnce([
-        {
-          id: 'job-1',
-          tenant_id: 'tenant-a',
-          status: 'pending',
-          progress: JSON.stringify(progress),
-          config: JSON.stringify(config),
-        },
-      ])
       .mockResolvedValueOnce([
         { target_id: 'user-1', block_reason: null },
         { target_id: 'user-2', block_reason: null },
@@ -955,30 +1368,36 @@ describe('support operations admin router', () => {
       .mockResolvedValueOnce([]);
     mockAdapter.queryOne.mockResolvedValueOnce({ count: 12 }).mockResolvedValueOnce({ count: 0 });
     mockAdapter.execute.mockResolvedValue({ rowsAffected: 1 });
+    mockAdapter.batch.mockResolvedValueOnce([{ rowsAffected: 1 }, { rowsAffected: 1 }]);
 
     await processPendingSupportOpsSnapshotJobs({} as Env);
 
+    const jobQuerySql = mockAdminAdapter.query.mock.calls.map((call) => String(call[0]));
+    const jobSql = mockAdminAdapter.execute.mock.calls.map((call) => String(call[0]));
     const querySql = mockAdapter.query.mock.calls.map((call) => String(call[0]));
-    const targetQueryParams = mockAdapter.query.mock.calls[1]?.[1] as unknown[];
+    const targetQueryParams = mockAdapter.query.mock.calls[0]?.[1] as unknown[];
     const executedSql = mockAdapter.execute.mock.calls.map((call) => String(call[0]));
-    expect(querySql[0]).toContain("status = 'pending'");
-    expect(querySql[0]).toContain("status = 'processing'");
-    expect(querySql[0]).toContain('updated_at < ?');
-    expect(querySql[1]).toContain('created_at <= ?');
-    expect(querySql[1]).toContain('updated_at <= ?');
+    expect(jobQuerySql[0]).toContain("status = 'pending'");
+    expect(jobQuerySql[0]).toContain("status = 'processing'");
+    expect(jobQuerySql[0]).toContain('updated_at < ?');
+    expect(querySql[0]).toContain('created_at <= ?');
+    expect(querySql[0]).toContain('updated_at <= ?');
     expect(targetQueryParams).toEqual(
       expect.arrayContaining([config.snapshot_cutoff, config.snapshot_cutoff])
     );
-    expect(executedSql.some((sql) => sql.includes("SET status = 'processing'"))).toBe(true);
-    expect(
-      executedSql.some((sql) => sql.includes('INSERT INTO support_operation_cohort_targets'))
-    ).toBe(true);
+    expect(jobSql.some((sql) => sql.includes("SET status = 'processing'"))).toBe(true);
+    // The page's targets, in one batch, each once.
+    const [inserts] = mockAdapter.batch.mock.calls[0]! as [Array<{ sql: string }>];
+    expect(inserts).toHaveLength(2);
+    expect(inserts[0]!.sql).toContain('INSERT INTO support_operation_cohort_targets');
+    expect(inserts[0]!.sql).toContain('ON CONFLICT (cohort_id, target_id) DO NOTHING');
     expect(
       executedSql.some(
         (sql) => sql.includes('UPDATE support_operation_cohorts') && sql.includes('completed')
       )
     ).toBe(true);
-    expect(executedSql.some((sql) => sql.includes("status = 'completed'"))).toBe(true);
+    expect(jobSql.some((sql) => sql.includes("status = 'completed'"))).toBe(true);
+    expect([...executedSql, ...querySql].some((sql) => sql.includes('admin_jobs'))).toBe(false);
   });
 
   it('marks snapshot jobs failed when selector compilation fails after claim', async () => {
@@ -992,7 +1411,7 @@ describe('support operations admin router', () => {
       matched_count: 12,
       snapshot_cutoff: 1_700_000_000,
     };
-    mockAdapter.query.mockResolvedValueOnce([
+    mockAdminAdapter.query.mockResolvedValueOnce([
       {
         id: 'job-1',
         tenant_id: 'tenant-a',
@@ -1001,14 +1420,16 @@ describe('support operations admin router', () => {
         config: JSON.stringify(config),
       },
     ]);
+    mockAdminAdapter.execute.mockResolvedValue({ rowsAffected: 1 });
     mockAdapter.execute.mockResolvedValue({ rowsAffected: 1 });
 
     await processPendingSupportOpsSnapshotJobs({} as Env);
 
+    const jobSql = mockAdminAdapter.execute.mock.calls.map((call) => String(call[0]));
     const executedSql = mockAdapter.execute.mock.calls.map((call) => String(call[0]));
-    expect(executedSql.some((sql) => sql.includes("SET status = 'processing'"))).toBe(true);
+    expect(jobSql.some((sql) => sql.includes("SET status = 'processing'"))).toBe(true);
     expect(
-      executedSql.some((sql) => sql.includes("SET status = 'failed'") && sql.includes('admin_jobs'))
+      jobSql.some((sql) => sql.includes("SET status = 'failed'") && sql.includes('admin_jobs'))
     ).toBe(true);
     expect(
       executedSql.some(

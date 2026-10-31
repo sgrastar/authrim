@@ -1,3 +1,4 @@
+import { LogArchiveLockSchema } from './log-archive-config.js';
 /**
  * Authrim Lock File Module
  *
@@ -11,7 +12,7 @@ import { open, writeFile, readFile, mkdir, rename, rm, link, lstat } from 'node:
 import { existsSync, lstatSync, readFileSync, rmSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
-import { z } from 'zod';
+import { legacyDatetimeString, z } from './zod.js';
 import type { DeletionWorkerIdentity, ProvisionedResources } from './cloudflare.js';
 import { getAuthrimRoot, getEnvironmentPaths, getLegacyPaths } from './paths.js';
 import { D1_DATABASES, KV_NAMESPACES, getD1DatabaseName, getKVNamespaceName } from './naming.js';
@@ -30,12 +31,12 @@ const KVResourceEntrySchema = ResourceEntrySchema.extend({
   previewId: z.string().optional(),
 });
 
-const CloudflareVersionIdSchema = z.string().uuid();
+const CloudflareVersionIdSchema = z.guid();
 const CloudflareScriptTagSchema = z.string().trim().min(1).max(256);
 
 const WorkerEntrySchema = z.object({
   name: z.string(),
-  deployedAt: z.string().datetime().optional(),
+  deployedAt: legacyDatetimeString().optional(),
   version: z.string().optional(),
   cloudflareVersionId: CloudflareVersionIdSchema.optional(),
   /** Cloudflare's immutable script identity. Unlike the script name, this changes on delete/recreate. */
@@ -47,13 +48,13 @@ const WorkerScriptOwnershipCheckpointSchema = z.discriminatedUnion('state', [
     name: z.string().min(1),
     cloudflareScriptTag: CloudflareScriptTagSchema,
     state: z.literal('provisional'),
-    updatedAt: z.string().datetime(),
+    updatedAt: legacyDatetimeString(),
   }),
   z.object({
     name: z.string().min(1),
     pendingCloudflareVersionId: CloudflareVersionIdSchema,
     state: z.literal('pending_tag'),
-    updatedAt: z.string().datetime(),
+    updatedAt: legacyDatetimeString(),
   }),
 ]);
 
@@ -78,36 +79,36 @@ const DnsOwnershipEntrySchema = z
     role: DnsOwnershipRoleSchema,
     state: z.enum(['mutation_pending', 'managed']),
     action: z.enum(['created', 'updated', 'adopted']),
-    operationId: z.string().uuid(),
+    operationId: z.guid(),
     zoneId: z.string().min(1).max(256),
     recordId: z.string().min(1).max(256).optional(),
     name: z.string().min(1).max(253),
     target: z.string().min(1).max(4096),
     marker: z.string().min(1).max(500).optional(),
     previous: DnsRecordRestoreSnapshotSchema.nullable().optional(),
-    updatedAt: z.string().datetime(),
+    updatedAt: legacyDatetimeString(),
   })
   .superRefine((entry, context) => {
     if (entry.state === 'managed' && !entry.recordId) {
-      context.addIssue({ code: z.ZodIssueCode.custom, message: 'dns_record_id_required' });
+      context.addIssue({ code: 'custom', message: 'dns_record_id_required' });
     }
     if (entry.action === 'adopted') {
       if (entry.state !== 'managed' || entry.marker !== undefined || entry.previous !== undefined) {
-        context.addIssue({ code: z.ZodIssueCode.custom, message: 'dns_adoption_invalid' });
+        context.addIssue({ code: 'custom', message: 'dns_adoption_invalid' });
       }
       return;
     }
     if (!entry.marker) {
-      context.addIssue({ code: z.ZodIssueCode.custom, message: 'dns_marker_required' });
+      context.addIssue({ code: 'custom', message: 'dns_marker_required' });
     }
     if (entry.action === 'created' && entry.previous !== null) {
-      context.addIssue({ code: z.ZodIssueCode.custom, message: 'dns_created_previous_invalid' });
+      context.addIssue({ code: 'custom', message: 'dns_created_previous_invalid' });
     }
     if (entry.action === 'updated') {
       if (!entry.previous) {
-        context.addIssue({ code: z.ZodIssueCode.custom, message: 'dns_previous_required' });
+        context.addIssue({ code: 'custom', message: 'dns_previous_required' });
       } else if (entry.recordId && entry.recordId !== entry.previous.id) {
-        context.addIssue({ code: z.ZodIssueCode.custom, message: 'dns_updated_identity_changed' });
+        context.addIssue({ code: 'custom', message: 'dns_updated_identity_changed' });
       }
     }
   });
@@ -129,8 +130,8 @@ const ReleaseUpdateStateSchema = z.object({
     .string()
     .regex(/^[a-f0-9]{64}$/u)
     .optional(),
-  startedAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
+  startedAt: legacyDatetimeString(),
+  updatedAt: legacyDatetimeString(),
   appliedTargets: z.array(z.string()).default([]),
   manualTargets: z.array(z.string()).default([]),
   controlOperationId: z
@@ -139,6 +140,8 @@ const ReleaseUpdateStateSchema = z.object({
     .optional(),
   controlCompletedTargets: z.number().int().nonnegative().optional(),
   controlTotalTargets: z.number().int().nonnegative().optional(),
+  /** Streams handed to Control; a retry keeps them so the artifact and operation stay the same. */
+  controlManagedStreamIds: z.array(z.string()).optional(),
   initialWorkerRedeployRequired: z.boolean().optional(),
 });
 
@@ -155,7 +158,7 @@ const SchemaTargetStateSchema = z.object({
     )
     .optional(),
   appliedBy: z.enum(['automatic', 'operator']),
-  updatedAt: z.string().datetime(),
+  updatedAt: legacyDatetimeString(),
 });
 
 const ControlSigningKeyFields = {
@@ -187,7 +190,7 @@ function validateControlKeyPrevious(
 ): void {
   const previous = [value.previousSlot, value.previousKeyId, value.previousFingerprint];
   if (previous.some((item) => item !== undefined) && previous.some((item) => item === undefined)) {
-    context.addIssue({ code: z.ZodIssueCode.custom, message: 'previous_key_metadata_incomplete' });
+    context.addIssue({ code: 'custom', message: 'previous_key_metadata_incomplete' });
     return;
   }
   if (
@@ -195,7 +198,7 @@ function validateControlKeyPrevious(
     value.previousKeyId === value.activeKeyId ||
     value.previousFingerprint === value.activeFingerprint
   ) {
-    context.addIssue({ code: z.ZodIssueCode.custom, message: 'previous_key_metadata_conflict' });
+    context.addIssue({ code: 'custom', message: 'previous_key_metadata_conflict' });
   }
 }
 
@@ -214,12 +217,12 @@ const ControlLookupHmacKeyStateSchema = z
     validateControlKeyPrevious(value, context);
     const previousMetadataPresent = value.previousSlot !== undefined;
     if (previousMetadataPresent !== (value.previousGeneration !== undefined)) {
-      context.addIssue({ code: z.ZodIssueCode.custom, message: 'previous_generation_incomplete' });
+      context.addIssue({ code: 'custom', message: 'previous_generation_incomplete' });
     } else if (
       value.previousGeneration !== undefined &&
       value.previousGeneration >= value.activeGeneration
     ) {
-      context.addIssue({ code: z.ZodIssueCode.custom, message: 'previous_generation_conflict' });
+      context.addIssue({ code: 'custom', message: 'previous_generation_conflict' });
     }
   });
 
@@ -234,12 +237,12 @@ export const TopologyUpdateKindSchema = z.literal('r2');
 const R2ResourceEntrySchema = z
   .object({
     name: z.string().min(1),
-    creationDate: z.string().datetime().optional(),
+    creationDate: legacyDatetimeString().optional(),
     ownershipMarkerKey: z
       .string()
       .regex(/^__authrim_setup__\/ownership-v1-[a-f0-9-]{36}\.json$/u)
       .optional(),
-    ownershipId: z.string().uuid().optional(),
+    ownershipId: z.guid().optional(),
   })
   .superRefine((value, context) => {
     const ownershipFieldCount = [
@@ -250,14 +253,14 @@ const R2ResourceEntrySchema = z
     // Name-only entries remain readable for pre-fix locks, but never authorize automatic
     // deletion. New entries must carry the complete provider generation + marker identity.
     if (ownershipFieldCount !== 0 && ownershipFieldCount !== 3) {
-      context.addIssue({ code: z.ZodIssueCode.custom, message: 'r2_ownership_incomplete' });
+      context.addIssue({ code: 'custom', message: 'r2_ownership_incomplete' });
     }
   });
 
 const PagesResourceEntrySchema = z.object({
   name: z.string().min(1),
   id: z.string().min(1),
-  createdOn: z.string().datetime(),
+  createdOn: legacyDatetimeString(),
 });
 
 const TopologyUpdateStateSchema = z.object({
@@ -267,8 +270,8 @@ const TopologyUpdateStateSchema = z.object({
   subject: z.string().min(1).optional(),
   configChecksum: z.string().regex(/^[a-f0-9]{64}$/u),
   authorizationTokenHash: z.string().regex(/^[a-f0-9]{64}$/u),
-  startedAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
+  startedAt: legacyDatetimeString(),
+  updatedAt: legacyDatetimeString(),
 });
 
 export const AuthrimLockSchema = z.object({
@@ -278,20 +281,21 @@ export const AuthrimLockSchema = z.object({
   schemaTargets: z.record(z.string(), SchemaTargetStateSchema).optional(),
   controlKeyState: ControlKeyStateSchema.optional(),
   topologyUpdate: TopologyUpdateStateSchema.optional(),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime().optional(),
+  createdAt: legacyDatetimeString(),
+  updatedAt: legacyDatetimeString().optional(),
   env: z.string(),
 
-  d1: z.record(ResourceEntrySchema).default({}),
-  kv: z.record(KVResourceEntrySchema).default({}),
-  queues: z.record(ResourceEntrySchema).optional(),
-  r2: z.record(R2ResourceEntrySchema).optional(),
+  d1: z.record(z.string(), ResourceEntrySchema).default({}),
+  kv: z.record(z.string(), KVResourceEntrySchema).default({}),
+  queues: z.record(z.string(), ResourceEntrySchema).optional(),
+  r2: z.record(z.string(), R2ResourceEntrySchema).optional(),
+  logArchive: LogArchiveLockSchema.optional(),
   /** Exact provider identities for retired Pages projects retained only for safe cleanup. */
-  pages: z.record(PagesResourceEntrySchema).optional(),
-  dns: z.record(DnsOwnershipRoleSchema, DnsOwnershipEntrySchema).optional(),
-  workers: z.record(WorkerEntrySchema).optional(),
+  pages: z.record(z.string(), PagesResourceEntrySchema).optional(),
+  dns: z.partialRecord(DnsOwnershipRoleSchema, DnsOwnershipEntrySchema).optional(),
+  workers: z.record(z.string(), WorkerEntrySchema).optional(),
   /** Crash-safe ownership evidence for scripts created before deployment health is verified. */
-  workerScriptOwnership: z.record(WorkerScriptOwnershipCheckpointSchema).optional(),
+  workerScriptOwnership: z.record(z.string(), WorkerScriptOwnershipCheckpointSchema).optional(),
 });
 
 export type AuthrimLock = z.infer<typeof AuthrimLockSchema>;
@@ -455,6 +459,10 @@ export function reconcileLockAfterResourceDeletion(
     kv: omitResourceNames(lock.kv, deleted.kv) ?? {},
     queues: omitResourceNames(lock.queues, deleted.queues),
     r2: omitResourceNames(lock.r2, deleted.r2),
+    logArchive:
+      lock.logArchive && deleted.r2.includes(lock.logArchive.bucketName)
+        ? undefined
+        : lock.logArchive,
     pages: omitResourceNames(lock.pages, deleted.pages ?? []),
     dns:
       deletedDnsNames.size > 0
@@ -539,6 +547,7 @@ export function createLockFile(env: string, resources: ProvisionedResources): Au
     }
   }
 
+  if (resources.logArchive) lock.logArchive = resources.logArchive;
   return lock;
 }
 
@@ -575,6 +584,7 @@ export function mergeProvisionedResourcesIntoLock(
     kv: provisioned.kv,
     queues: provisioned.queues,
     r2: provisioned.r2,
+    logArchive: provisioned.logArchive,
   });
 }
 
@@ -1952,8 +1962,10 @@ export function lockToResourceIds(lock: AuthrimLock): {
   kv: Record<string, { id: string; name: string }>;
   queues?: Record<string, { id: string; name: string }>;
   r2?: Record<string, { name: string }>;
+  logArchive?: AuthrimLock['logArchive'];
 } {
   return {
+    ...(lock.logArchive ? { logArchive: lock.logArchive } : {}),
     d1: lock.d1,
     kv: Object.fromEntries(
       Object.entries(lock.kv).map(([key, value]) => [key, { id: value.id, name: value.name }])
@@ -1978,6 +1990,7 @@ export function mergeLockFiles(existing: AuthrimLock, newData: Partial<AuthrimLo
     kv: { ...existing.kv, ...newData.kv },
     queues: { ...existing.queues, ...newData.queues },
     r2: { ...existing.r2, ...newData.r2 },
+    logArchive: newData.logArchive ?? existing.logArchive,
     pages: { ...existing.pages, ...newData.pages },
     workers: { ...existing.workers, ...newData.workers },
     updatedAt: new Date().toISOString(),

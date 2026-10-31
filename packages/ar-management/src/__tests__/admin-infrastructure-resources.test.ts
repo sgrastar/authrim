@@ -114,10 +114,19 @@ function createApp() {
   const app = new Hono<{ Bindings: Env; Variables: { adminAuth?: unknown; tenantId?: string } }>();
   app.use('*', async (c, next) => {
     c.set('tenantId', c.req.header('x-test-tenant-id') ?? 'tenant-a');
+    const permissions = (c.req.header('x-test-permissions') ?? '').split(',').filter(Boolean);
+    const roles = (c.req.header('x-test-roles') ?? 'ar_tenant_admin').split(',').filter(Boolean);
+    // A platform role in this fixture comes from a global assignment.
+    const global =
+      c.req.header('x-test-roles-global') !== 'false' &&
+      roles.some((role) => role === 'ar_super_admin' || role === 'ar_super_admin');
     c.set('adminAuth', {
       userId: 'admin-1',
-      permissions: (c.req.header('x-test-permissions') ?? '').split(',').filter(Boolean),
-      roles: (c.req.header('x-test-roles') ?? 'tenant_admin').split(',').filter(Boolean),
+      permissions,
+      roles,
+      globalRoles: global ? roles : [],
+      globalPermissions: global ? permissions : [],
+      tenantScope: global ? ['*'] : ['tenant-a'],
     });
     await next();
   });
@@ -257,7 +266,7 @@ describe('admin infrastructure resource routers', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-test-roles': 'system_admin',
+          'x-test-roles': 'ar_super_admin',
           'x-test-permissions': [
             ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_CREATE,
             ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_CREDENTIALS_WRITE,
@@ -296,7 +305,7 @@ describe('admin infrastructure resource routers', () => {
       '/api/admin/storage-destinations',
       {
         headers: {
-          'x-test-roles': 'tenant_admin',
+          'x-test-roles': 'ar_tenant_admin',
           'x-test-permissions': ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_LIST,
         },
       },
@@ -321,7 +330,7 @@ describe('admin infrastructure resource routers', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-test-roles': 'system_admin',
+          'x-test-roles': 'ar_super_admin',
           'x-test-permissions': ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_CREATE,
         },
         body: JSON.stringify({
@@ -340,6 +349,23 @@ describe('admin infrastructure resource routers', () => {
     expect(repoMocks.storage.createDestination).not.toHaveBeenCalled();
   });
 
+  it('rejects a platform role held for one tenant only: platform authority comes from a global assignment', async () => {
+    const app = createApp();
+    const response = await app.request(
+      '/api/admin/database-connections',
+      {
+        headers: {
+          'x-test-roles': 'ar_super_admin',
+          'x-test-roles-global': 'false',
+          'x-test-permissions': ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_LIST,
+        },
+      },
+      env
+    );
+
+    expect(response.status).toBe(403);
+  });
+
   it('rejects tenant admin storage destination creation even with create permission', async () => {
     const app = createApp();
     const response = await app.request(
@@ -348,7 +374,7 @@ describe('admin infrastructure resource routers', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-test-roles': 'tenant_admin',
+          'x-test-roles': 'ar_tenant_admin',
           'x-test-permissions': ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_CREATE,
         },
         body: JSON.stringify({
@@ -374,7 +400,7 @@ describe('admin infrastructure resource routers', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-test-roles': 'system_admin',
+          'x-test-roles': 'ar_super_admin',
           'x-test-permissions': ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_CREATE,
         },
         body: JSON.stringify({
@@ -409,7 +435,7 @@ describe('admin infrastructure resource routers', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-test-roles': 'system_admin',
+          'x-test-roles': 'ar_super_admin',
           'x-test-permissions': ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_CREATE,
         },
         body: JSON.stringify({
@@ -448,7 +474,7 @@ describe('admin infrastructure resource routers', () => {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          'x-test-roles': 'system_admin',
+          'x-test-roles': 'ar_super_admin',
           'x-test-permissions': ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_UPDATE,
         },
         body: JSON.stringify({
@@ -480,7 +506,7 @@ describe('admin infrastructure resource routers', () => {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          'x-test-roles': 'tenant_admin',
+          'x-test-roles': 'ar_tenant_admin',
           'x-test-permissions': ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_UPDATE,
         },
         body: JSON.stringify({
@@ -503,7 +529,7 @@ describe('admin infrastructure resource routers', () => {
       {
         headers: {
           'x-test-permissions': ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_LIST,
-          'x-test-roles': 'tenant_admin',
+          'x-test-roles': 'ar_tenant_admin',
         },
       },
       env
@@ -522,7 +548,7 @@ describe('admin infrastructure resource routers', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-test-roles': 'system_admin',
+          'x-test-roles': 'ar_super_admin',
           'x-test-permissions': ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_USAGE_READ,
         },
         body: JSON.stringify({
@@ -549,7 +575,7 @@ describe('admin infrastructure resource routers', () => {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'x-test-roles': 'system_admin',
+          'x-test-roles': 'ar_super_admin',
           'x-test-permissions': ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_CREDENTIALS_WRITE,
         },
         body: JSON.stringify({ credential: { secret: 'plain' } }),
@@ -571,7 +597,7 @@ describe('admin infrastructure resource routers', () => {
       {
         method: 'DELETE',
         headers: {
-          'x-test-roles': 'system_admin',
+          'x-test-roles': 'ar_super_admin',
           'x-test-permissions': [
             ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_DELETE,
             ADMIN_PERMISSIONS.ALL,
@@ -593,7 +619,7 @@ describe('admin infrastructure resource routers', () => {
       {
         method: 'POST',
         headers: {
-          'x-test-roles': 'system_admin',
+          'x-test-roles': 'ar_super_admin',
           'x-test-permissions': ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_TEST,
         },
       },
@@ -616,7 +642,7 @@ describe('admin infrastructure resource routers', () => {
       {
         headers: {
           'x-test-permissions': ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_LIST,
-          'x-test-roles': 'tenant_admin',
+          'x-test-roles': 'ar_tenant_admin',
         },
       },
       env
@@ -633,7 +659,7 @@ describe('admin infrastructure resource routers', () => {
       '/api/admin/database-connections',
       {
         headers: {
-          'x-test-roles': 'system_admin',
+          'x-test-roles': 'ar_super_admin',
           'x-test-permissions': ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_LIST,
         },
       },
@@ -672,7 +698,7 @@ describe('admin infrastructure resource routers', () => {
       '/api/admin/database-connections/setup-d1-admin',
       {
         headers: {
-          'x-test-roles': 'system_admin',
+          'x-test-roles': 'ar_super_admin',
           'x-test-permissions': ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_READ,
         },
       },
@@ -701,7 +727,7 @@ describe('admin infrastructure resource routers', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-test-roles': 'system_admin',
+          'x-test-roles': 'ar_super_admin',
           'x-test-permissions': [
             ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_CREATE,
             ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_CREDENTIALS_WRITE,
@@ -736,7 +762,7 @@ describe('admin infrastructure resource routers', () => {
       {
         method: 'POST',
         headers: {
-          'x-test-roles': 'system_admin',
+          'x-test-roles': 'ar_super_admin',
           'x-test-permissions': ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_TEST,
         },
       },
@@ -757,7 +783,7 @@ describe('admin infrastructure resource routers', () => {
       {
         method: 'POST',
         headers: {
-          'x-test-roles': 'system_admin',
+          'x-test-roles': 'ar_super_admin',
           'x-test-permissions': ADMIN_PERMISSIONS.DATABASE_ROUTING_SWITCH,
         },
       },

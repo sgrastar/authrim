@@ -24,6 +24,19 @@ async function resolveUserStoreAdapters(
   };
 }
 
+/**
+ * The store that holds a person's canonical identity: where their assurance evidence lives, read
+ * for an IAL requirement or an assurance attribute (and for nothing else).
+ */
+export async function getSamlUserCoreAdapter(
+  env: Env,
+  tenantId: string,
+  userId: string
+): Promise<DatabaseAdapter> {
+  const account = await resolveAccountDataContext(env, { tenantId, accountId: userId });
+  return ensureDatabaseAdapter(account.coreDb, 'saml-user-core');
+}
+
 function createCanonicalProjectionRepository(
   _env: Env,
   tenantId: string,

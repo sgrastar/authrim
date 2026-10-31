@@ -1,4 +1,5 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { renderPortableMigrationSql } from '@authrim/ar-lib-core/control-plane';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
@@ -87,10 +88,13 @@ function d1(database: DatabaseSync): D1Database {
 }
 
 function seed(database: DatabaseSync): void {
-  for (const filename of readdirSync(resolve(REPO_ROOT, 'migrations/control/d1'))
-    .filter((name) => name.endsWith('.sql'))
-    .sort()) {
-    database.exec(readFileSync(resolve(REPO_ROOT, 'migrations/control/d1', filename), 'utf8'));
+  for (const filename of ['001_0_5_0_control_baseline.sql']) {
+    database.exec(
+      renderPortableMigrationSql(
+        readFileSync(resolve(REPO_ROOT, 'migrations/control/d1', filename), 'utf8'),
+        'sqlite'
+      )
+    );
   }
   database.exec(`
     INSERT INTO control_environments (

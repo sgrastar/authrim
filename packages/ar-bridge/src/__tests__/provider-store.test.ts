@@ -305,6 +305,30 @@ describe('upstream provider store', () => {
       'tenant-a',
     ]);
   });
+  it.each([
+    ['follows the tenant without a list of its own', null, null],
+    ['keeps its own list', '["nickname","locale"]', ['nickname', 'locale']],
+    ['keeps an empty list (updates none)', '[]', []],
+    ['reads a list it cannot use as updating none', '{"name":true}', []],
+  ])('maps the profile update fields: %s', async (_label, stored, expected) => {
+    mocks.adapter.queryOne.mockResolvedValueOnce(dbRow({ profile_update_fields: stored }));
+    const result = await getProvider({} as never, 'tenant-a', 'provider-1');
+    expect(result?.profileUpdateFields).toEqual(expected);
+  });
+  it.each([
+    ['its own list', ['nickname'], '["nickname"]'],
+    ['an empty list', [], '[]'],
+    ['none (the tenant default)', null, null],
+  ])('stores %s as the profile update fields', async (_label, fields, stored) => {
+    await createProvider({} as never, provider({ profileUpdateFields: fields }));
+    const sql = mocks.adapter.execute.mock.calls[0][0] as string;
+    const values = mocks.adapter.execute.mock.calls[0][1] as unknown[];
+    const columns = sql
+      .slice(sql.indexOf('(') + 1, sql.indexOf(')'))
+      .split(',')
+      .map((column) => column.trim());
+    expect(values[columns.indexOf('profile_update_fields')]).toEqual(stored);
+  });
   it('propagates corrupt stored JSON instead of silently changing provider semantics', async () => {
     mocks.adapter.queryOne.mockResolvedValueOnce(dbRow({ attribute_mapping: '{' }));
     await expect(getProvider({} as never, 'tenant-a', 'provider-1')).rejects.toThrow();

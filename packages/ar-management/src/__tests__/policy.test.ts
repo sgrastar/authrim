@@ -14,7 +14,7 @@
  * - GET /api/admin/effective-policy/options - Get available options
  *
  * Security tests:
- * - RBAC authorization (system_admin, org_admin, admin)
+ * - RBAC authorization (ar_super_admin, org_admin, admin)
  * - Tenant isolation
  * - Client ownership validation via D1
  * - Optimistic locking (ifMatch)
@@ -23,7 +23,12 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Hono } from 'hono';
-import type { Env, TenantContract, ClientContract } from '@authrim/ar-lib-core';
+import {
+  createDefaultGuestClientPolicy,
+  type Env,
+  type TenantContract,
+  type ClientContract,
+} from '@authrim/ar-lib-core';
 
 // Use vi.hoisted to define mocks that will be used in vi.mock factory
 // CRITICAL: requireAnyRole and createLogger need default implementations
@@ -172,7 +177,11 @@ function createMockKV(options: {
       return JSON.stringify(value);
     }),
     put: vi.fn().mockImplementation(async (key: string, value: string) => {
-      storage.set(key, JSON.parse(value));
+      try {
+        storage.set(key, JSON.parse(value));
+      } catch {
+        storage.set(key, value);
+      }
       options.putCallback?.(key, value);
     }),
     delete: vi.fn().mockResolvedValue(undefined),
@@ -200,6 +209,7 @@ function createApp(options: {
   db?: D1Database;
   tenantId?: string;
   adminAuth?: { userId?: string; authMethod?: string; roles?: string[] };
+  env?: Record<string, string>;
 }) {
   const mockKV = options.kv === null ? undefined : (options.kv ?? createMockKV({}));
   const mockDB = options.db ?? createMockDB();
@@ -217,6 +227,7 @@ function createApp(options: {
       DB: mockDB,
       SETTINGS: mockKV,
       ENVIRONMENT: 'test',
+      ...options.env,
     };
     await next();
   });
@@ -607,12 +618,12 @@ describe('Policy API - Tenant Policy', () => {
       expect(body.message).toContain('Invalid profile type');
     });
 
-    it('allows ai_ephemeral when enabled by this tenant certification profile', async () => {
+    it("allows ai_ephemeral when this tenant's Settings API turns it on", async () => {
       const mockKV = createMockKV({
         getValues: {
           'test:contract:tenant:test-tenant': createTenantContract({ version: 1 }),
-          'settings:tenant:test-tenant:certification-profile': {
-            oidc: { aiEphemeralAuth: { enabled: true } },
+          'settings:tenant:test-tenant:feature-flags': {
+            'feature.enable_ai_ephemeral_auth': true,
           },
         },
       });
@@ -631,6 +642,46 @@ describe('Policy API - Tenant Policy', () => {
       expect(await parseJson(res)).toMatchObject({
         policy: { profile: 'ai_ephemeral', version: 2 },
       });
+    });
+
+    it('keeps ai_ephemeral refused when the Settings API turns it off, even if env enables it', async () => {
+      const mockKV = createMockKV({
+        getValues: {
+          'test:contract:tenant:test-tenant': createTenantContract({ version: 1 }),
+          'settings:tenant:test-tenant:feature-flags': {
+            'feature.enable_ai_ephemeral_auth': false,
+          },
+        },
+      });
+      const { app } = createApp({ kv: mockKV, env: { ENABLE_AI_EPHEMERAL_AUTH: 'true' } });
+
+      const res = await app.request('/api/admin/tenant-policy', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ policy: { profile: 'ai_ephemeral' }, ifMatch: '1' }),
+      });
+
+      expect(res.status).toBe(400);
+      expect(await parseJson(res)).toMatchObject({ error: 'feature_disabled' });
+    });
+
+    it('refuses ai_ephemeral when its setting cannot be read, even if env enables it', async () => {
+      const mockKV = createMockKV({
+        getValues: {
+          'test:contract:tenant:test-tenant': createTenantContract({ version: 1 }),
+          'settings:tenant:test-tenant:feature-flags': [],
+        },
+      });
+      const { app } = createApp({ kv: mockKV, env: { ENABLE_AI_EPHEMERAL_AUTH: 'true' } });
+
+      const res = await app.request('/api/admin/tenant-policy', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ policy: { profile: 'ai_ephemeral' }, ifMatch: '1' }),
+      });
+
+      expect(res.status).toBe(503);
+      expect(await parseJson(res)).toMatchObject({ error: 'temporarily_unavailable' });
     });
 
     it('should track status changes in history', async () => {
@@ -961,6 +1012,61 @@ describe('Policy API - Client Profile', () => {
       expect(res.status).toBe(409);
       const body = await parseJson(res);
       expect(body.currentVersion).toBe(5);
+    });
+
+    it('initializes the default tenant policy for a guest-only save', async () => {
+      const actual =
+        await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
+      mockCreatePolicyResolver.mockImplementation(actual.createPolicyResolver);
+      mockD1AdapterQueryOne.mockResolvedValue({
+        client_id: 'client-123',
+        tenant_id: 'test-tenant',
+      });
+      const mockKV = createMockKV({ getValues: {} });
+      const { app } = createApp({ kv: mockKV });
+      const res = await app.request('/api/admin/clients/client-123/profile', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ifMatch: '0',
+          profile: { guestAuth: { ...createDefaultGuestClientPolicy(), enabled: true } },
+        }),
+      });
+      expect(res.status).toBe(200);
+      const body = await parseJson(res);
+      expect(body.profile.guestAuth.enabled).toBe(true);
+      expect(mockKV.put).toHaveBeenCalledWith(
+        'cache:authentication-methods:v1:revision:tenant:test-tenant',
+        expect.any(String)
+      );
+      expect(mockKV.put).toHaveBeenCalledWith(
+        'test:contract:tenant:test-tenant',
+        expect.stringContaining('"preset":"b2c-standard"')
+      );
+      expect(mockKV.put).toHaveBeenCalledWith(
+        'test:contract:client:test-tenant:client-123',
+        expect.stringContaining('"enabled":true')
+      );
+    });
+
+    it('does not initialize a tenant policy after a failed policy read', async () => {
+      mockD1AdapterQueryOne.mockResolvedValue({
+        client_id: 'client-123',
+        tenant_id: 'test-tenant',
+      });
+      const mockKV = createMockKV({ getValues: {} });
+      vi.mocked(mockKV.get).mockRejectedValue(new Error('unavailable'));
+      const { app } = createApp({ kv: mockKV });
+      const res = await app.request('/api/admin/clients/client-123/profile', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ifMatch: '0',
+          profile: { guestAuth: createDefaultGuestClientPolicy() },
+        }),
+      });
+      expect(res.status).toBe(503);
+      expect(mockKV.put).not.toHaveBeenCalled();
     });
 
     it('should return 412 when tenant policy does not exist', async () => {

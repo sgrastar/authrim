@@ -91,129 +91,25 @@ When deploying for the first time, the script generates a one-time setup token f
 - After the first admin is created, the setup feature is permanently disabled
 - The script checks for `setup:completed` flag and refuses to generate a new token if setup is already done
 
-### setup-local-vars.sh
+### Remote environments: `@authrim/setup`
 
-Generate `.dev.vars` file for local development environment variables.
-
-**Usage:**
-
-```bash
-./scripts/setup-local-vars.sh
-```
-
-**What it does:**
-
-- Loads RSA keys from `.keys/` directory
-- Creates `.dev.vars` file with JWT keys
-- Optionally configures Resend API for email (magic links)
-- Sets local development configuration
-
-**Requirements:**
-
-- Requires `setup-keys.sh` to have been run first
-
-**Environment Variables:**
-
-- `PRIVATE_KEY_PEM` - JWT signing key
-- `PUBLIC_JWK_JSON` - JWT verification key
-- `KEY_ID` - JWT key identifier
-- `RESEND_API_KEY` (optional) - Resend email service API key
-- `EMAIL_FROM` (optional) - Sender email address for Cloudflare Email Service or Resend
-- `EMAIL_FROM_NAME` (optional) - Sender display name for Cloudflare bootstrap/local development
-
-### setup-local-wrangler.sh
-
-Generate `wrangler.toml` files for local development environment.
-
-**Usage:**
+The former `setup-remote-wrangler.sh` generator is retired. Remote environments are created,
+deployed, and updated with `@authrim/setup`, which provisions the Cloudflare resources and writes
+each package's `wrangler.toml` (`[env.<name>]` sections). Public API traffic enters through the
+Router Worker, as do the UIs when they share the API host. A UI on its own host (`sameAsApi: false`)
+is served by its UI Worker; its API calls still reach the Router, through the Login UI Worker's
+proxy, directly from the browser for a same-site Admin UI, or through the Admin UI Worker's BFF for
+a cross-site one (see `docs/getting-started/deployment.md`, Deployment Modes):
 
 ```bash
-./scripts/setup-local-wrangler.sh
+npx @authrim/setup                         # Web UI (recommended)
+npx @authrim/setup init --cli --env prod   # CLI: create an environment
+npx @authrim/setup deploy --env prod --yes # deploy its Workers
+npx @authrim/setup update --env prod --all --yes # later releases
 ```
 
-**What it does:**
-
-- Generates `wrangler.toml` for all worker packages
-- Sets ISSUER_URL to `http://localhost:8787` for local development
-- Configures Durable Objects bindings
-- Sets KV namespace placeholders (to be filled by setup-kv.sh)
-- Sets D1 database placeholders (to be filled by setup-d1.sh)
-
-**ISSUER_URL:**
-
-- Local: `http://localhost:8787`
-
-**Requirements:**
-
-- Requires `setup-keys.sh` to have been run first (for KEY_ID)
-
-### setup-remote-wrangler.sh
-
-Generate `wrangler.toml` files for remote Cloudflare Workers deployment.
-
-Supports two deployment modes with automatic routing configuration:
-
-**Usage:**
-
-```bash
-# Interactive mode (prompts for deployment mode)
-./scripts/setup-remote-wrangler.sh
-
-# Specify mode via CLI
-./scripts/setup-remote-wrangler.sh --mode=test|production
-./scripts/setup-remote-wrangler.sh --issuer-url=https://...
-```
-
-**Deployment Modes:**
-
-#### 1) Test Environment (workers.dev + Router Worker)
-
-- Uses Router Worker with Service Bindings
-- Unified endpoint: `https://authrim.{subdomain}.workers.dev`
-- All backend workers hidden (workers_dev=false)
-- Only Router Worker is public (workers_dev=true)
-- Automatically generates `packages/router/wrangler.toml`
-
-**When to use:**
-
-- Development and testing
-- Quick setup without custom domain
-- OpenID Connect compliant
-
-#### 2) Production Environment (Custom Domain + Cloudflare Routes)
-
-- Direct routing via Cloudflare Routes
-- Custom domain endpoint: `https://id.yourdomain.com`
-- Optimal performance (no extra router hop)
-- All workers use workers_dev=false
-- Automatically adds Cloudflare Routes to each worker
-- Removes router configuration (not needed)
-
-**When to use:**
-
-- Production deployments
-- Custom domain with Cloudflare DNS
-- Optimal performance required
-
-**What it does:**
-
-- Interactive deployment mode selection
-- workers.dev subdomain detection/input (for test mode)
-- ISSUER_URL configuration
-- UI_BASE_URL configuration (optional, for Device Flow)
-- Updates all worker wrangler.toml files
-- Configures Router Worker or Cloudflare Routes based on mode
-- Sets workers_dev appropriately for each worker
-
-**Configuration Examples:**
-
-- Test: `https://authrim.sgrastar.workers.dev` (Router Worker)
-- Production: `https://id.yourdomain.com` (Cloudflare Routes)
-
-**Requirements:**
-
-- Requires `setup-keys.sh` to have been run first (for KEY_ID)
-- For production mode: Cloudflare-managed domain required
+From a repository checkout, `pnpm run setup`, `pnpm run setup:init`, and `pnpm run setup:deploy`
+run the same tool. See [packages/setup/README.md](../packages/setup/README.md).
 
 ### setup-resend.sh
 
@@ -222,25 +118,19 @@ Configure Resend email service for sending magic link emails.
 **Usage:**
 
 ```bash
-./scripts/setup-resend.sh [--env=local|remote]
+./scripts/setup-resend.sh [--env=dev|staging|prod]
 ```
 
 **What it does:**
 
 - Prompts for Resend API key (optional)
 - Configures email sender address
-- For local: adds configuration to `.dev.vars`
-- For remote: uploads as Cloudflare Secrets
+- Uploads the key and sender as Cloudflare Secrets for a deployed environment
 
-**Environments:**
+**Environments:** deployed environments only (`--env=dev|staging|prod`). Local development
+(`pnpm setup:local`) does not send email: it writes one-time codes and magic links to the Worker log.
 
-- `local` - Stores in `.dev.vars` (for local development)
-- `remote` - Uploads to Cloudflare Secrets (for remote workers)
-
-**Optional:** This script is optional. Without Resend:
-
-- Magic links return URLs instead of sending emails
-- Useful for development and testing
+**Optional:** This script is optional.
 
 ### setup-kv.sh
 
@@ -260,14 +150,13 @@ Create and configure KV namespaces for Authrim.
 
 - Creates KV namespaces for the specified environment
 - Each namespace includes both production and preview versions
-- **Automatically initializes default settings** by calling `setup-default-settings.sh`
 - Updates wrangler.toml files with namespace IDs
 
 **KV Namespaces created:**
 
 - `{ENV}-CLIENTS_CACHE` - OAuth client metadata cache
 - `{ENV}-INITIAL_ACCESS_TOKENS` - Dynamic Client Registration tokens
-- `{ENV}-SETTINGS` - System settings (initialized with basic-op profile)
+- `{ENV}-SETTINGS` - Settings API documents (empty: every setting starts at its default)
 - `{ENV}-REBAC_CACHE`, `{ENV}-USER_CACHE`, `{ENV}-AUTHRIM_CONFIG`, `{ENV}-STATE_STORE`
 
 **Note:** Many KV stores have been migrated to Durable Objects for better consistency:
@@ -278,37 +167,26 @@ Create and configure KV namespaces for Authrim.
 - NONCE_STORE → DPoPJTIStore DO
 - RATE_LIMIT → RateLimiterCounter DO
 
-### setup-default-settings.sh
+### Initial settings
 
-Initialize default system settings in SETTINGS KV.
-
-**Usage:**
+Settings live in the Settings API (`/api/admin/platform/settings/*`,
+`/api/admin/tenants/:tenantId/settings/*`). A new deployment needs no initial settings: every
+setting starts at its default, and the defaults are the secure choice. To run the OpenID
+conformance tests, apply a certification profile after deploying. It applies to the tenant the
+API URL resolves to, and needs an Admin API bearer token allowed to change that tenant's
+settings:
 
 ```bash
-# Initialize with basic-op profile
-./scripts/setup-default-settings.sh --env=dev
+# List the profiles
+ADMIN_TOKEN=<token> ./scripts/switch-certification-profile.sh "" https://auth.example.com
 
-# Force overwrite existing settings
-./scripts/setup-default-settings.sh --env=prod --force
+# Apply one
+ADMIN_TOKEN=<token> ./scripts/switch-certification-profile.sh basic-op https://auth.example.com
 ```
 
-**What it does:**
-
-- Writes default system settings to SETTINGS KV
-- Uses "basic-op" certification profile as the base
-- Initializes FAPI, OIDC, and general configuration
-- Automatically called by `setup-kv.sh`
-
-**Default Configuration:**
-
-- Profile: basic-op (Standard OpenID Connect Provider)
-- FAPI: Disabled
-- PAR: Not required
-- Public Clients: Allowed
-- Authentication methods: All standard methods enabled
-- 'none' algorithm: Allowed (for testing)
-
-**Note:** This script is automatically called by `setup-kv.sh`. You only need to run it manually if you want to reset settings to defaults.
+Older deployments that saved settings through the endpoints the Settings API replaced
+(`system_settings`, `oauth:config:*` and the like) have them imported once by ar-management
+(`GET/POST /api/admin/platform/settings/legacy-import`; it runs from the scheduler as well).
 
 ### setup-d1.sh
 
@@ -329,27 +207,6 @@ Create and configure D1 databases for Authrim.
 - Creates D1 database (default: `authrim-users-db`, customizable)
 - Updates wrangler.toml files with D1 bindings
 - Optionally runs database migrations
-
-### setup-durable-objects.sh
-
-Deploy Durable Objects for session and state management.
-
-**Usage:**
-
-```bash
-# Deploy Durable Objects
-./scripts/setup-durable-objects.sh
-
-# Show information about DOs
-./scripts/setup-durable-objects.sh --info
-```
-
-**Durable Objects deployed:**
-
-- `SessionStore` - User session management with hot/cold storage
-- `AuthorizationCodeStore` - OAuth authorization code management
-- `RefreshTokenRotator` - Atomic refresh token rotation
-- `KeyManager` - Cryptographic key management
 
 ### setup-secrets.sh
 
@@ -695,60 +552,37 @@ Create GitHub issues for Phase 1 implementation tasks.
 
 ### Common Workflows
 
-#### Starting Fresh (Local Development)
+#### Local Development
+
+Local development no longer uses shell scripts: the setup CLI generates keys, Wrangler configs and
+seeded local databases, and runs every Worker under one `wrangler dev` session. No Cloudflare
+account is needed.
 
 ```bash
-# 1. Delete all local resources (if they exist)
-./scripts/delete-all.sh local
-
-# 2. Set up fresh local environment
-./scripts/setup-keys.sh                     # 1. Generate RSA keys
-./scripts/setup-local-vars.sh               # 2. Create .dev.vars with environment variables
-./scripts/setup-local-wrangler.sh           # 3. Generate wrangler.toml for local development
-./scripts/setup-kv.sh --env=dev             # 4. Create KV namespaces + initialize settings
-./scripts/setup-d1.sh                       # 5. Create D1 database
-./scripts/setup-durable-objects.sh          # 6. Deploy Durable Objects
-./scripts/setup-resend.sh --env=local       # 7. (Optional) Configure Resend for email
-
-# 3. Start local development
-pnpm run dev
+pnpm setup:local init      # keys, configs, local D1/KV, seed data
+pnpm dev                   # = pnpm setup:local up
+pnpm setup:local reset     # start over
 ```
 
-**Note:** `setup-kv.sh` automatically calls `setup-default-settings.sh` to initialize system settings with the basic-op profile.
+See [Development Guide](../docs/getting-started/development.md).
 
 #### Remote Environment Deployment
 
 ```bash
-# 1. Generate keys
-./scripts/setup-keys.sh
+# Create the environment: keys, Cloudflare resources, and wrangler configuration
+npx @authrim/setup init --cli --env prod
 
-# 2. Generate wrangler.toml for remote
-./scripts/setup-remote-wrangler.sh          # Prompts for ISSUER_URL (your remote endpoint)
+# Deploy its Workers (API and enabled UI Workers)
+npx @authrim/setup deploy --env prod --yes
 
-# 3. Create cloud resources
-./scripts/setup-kv.sh --env=prod            # Create KV namespaces + initialize settings
-./scripts/setup-d1.sh remote                # Create D1 database
-./scripts/setup-durable-objects.sh          # Deploy Durable Objects
-
-# 4. Upload secrets
-./scripts/setup-secrets.sh                  # Upload JWT keys to Cloudflare
-
-# 5. Deploy API workers
-pnpm run deploy:retry
-
-# 6. Deploy UI to Cloudflare Pages (with optional CORS configuration)
-./scripts/deploy-remote-ui.sh               # Deploy Login/Admin Pages
-                                            # Prompts for domain config (custom or pages.dev)
-                                            # Offers to configure CORS automatically
-
-# 7. (Optional) Configure email
-./scripts/setup-resend.sh --env=remote      # Configure Resend for email notifications
-
-# OR manually configure CORS if skipped in step 6
-./scripts/setup-remote-cors.sh              # Configure CORS for allowed origins
+# (Optional) Configure email
+./scripts/setup-resend.sh --env=remote
 ```
 
-**Note:** `setup-kv.sh` automatically initializes system settings with the basic-op profile. You can change the profile later using `./scripts/switch-certification-profile.sh`.
+After the first deployment, open the setup URL that `@authrim/setup` prints to create the first
+`ar_super_admin` with a Passkey.
+
+**Note:** Settings start at the Settings API defaults. To apply a certification profile, use `./scripts/switch-certification-profile.sh`.
 
 **Notes:**
 
@@ -896,44 +730,24 @@ For issues or questions:
 ### Local Development Environment
 
 ```
-setup-keys.sh
+pnpm setup:local init
     ↓
-setup-local-vars.sh
-    ↓
-setup-local-wrangler.sh
-    ↓
-setup-kv.sh --env=dev  ← Automatically calls setup-default-settings.sh
-    ↓
-setup-d1.sh / setup-durable-objects.sh
-    ↓
-setup-resend.sh --env=local (optional)
-    ↓
-pnpm run dev
+pnpm dev   (pnpm setup:local up)
 ```
 
 ### Remote Environment Deployment
 
 ```
-setup-keys.sh --setup-url=https://... --kv-namespace-id=xxx
+npx @authrim/setup init --cli --env <env>
     ↓
-setup-remote-wrangler.sh
+npx @authrim/setup deploy --env <env>
     ↓
-setup-kv.sh --env=prod  ← Automatically calls setup-default-settings.sh
-    ↓
-setup-d1.sh / setup-durable-objects.sh
-    ↓
-setup-secrets.sh
-    ↓
-pnpm run deploy:retry (API Workers)
-    ↓
-Open setup URL in browser → Create initial admin with Passkey
-    ↓
-deploy-remote-ui.sh (UI + optional CORS)
+Open the setup URL → create the initial admin with a Passkey
     ↓
 setup-resend.sh --env=remote (optional)
 ```
 
-**Note:** The `setup-keys.sh` script generates an initial admin setup token (valid for 1 hour). After deployment, open the setup URL to create the first `system_admin` account using Passkey authentication. This is a one-time operation - after the first admin is created, the setup feature is permanently disabled.
+**Note:** The `setup-keys.sh` script generates an initial admin setup token (valid for 1 hour). After deployment, open the setup URL to create the first `ar_super_admin` account using Passkey authentication. This is a one-time operation - after the first admin is created, the setup feature is permanently disabled.
 
 **Note:** The `setup-kv.sh` script now automatically initializes default system settings (FAPI, OIDC configuration) using the basic-op certification profile.
 

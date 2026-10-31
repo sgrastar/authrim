@@ -1,3 +1,4 @@
+import { runSamlDrCoveredFetch } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { Hono, type Context, type Next } from 'hono';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
@@ -121,26 +122,27 @@ function tokenRequestDiagnosticStartMiddleware() {
       await next();
     } finally {
       const state = getMiddlewareDiagnosticState(c);
-      if (!state) return;
-      recordMiddlewareDiagnosticSpan(c, 'token_handler_downstream');
-      state.spans.push({
-        name: 'token_total',
-        durationMs: roundDiagnosticDurationMs(performance.now() - state.startedAt),
-      });
-      const timing = state.spans
-        .map((span) => `${span.name};dur=${span.durationMs.toFixed(1)}`)
-        .join(', ');
-      c.res.headers.set('Server-Timing', timing);
-      c.res.headers.set('X-Authrim-Diagnostic-Session-Id', state.sessionId);
-      getLogger(c)
-        .module('TOKEN-REQUEST-TIMING')
-        .info('Token request middleware diagnostics', {
-          diagnosticSessionId: state.sessionId,
-          method: c.req.method,
-          path: c.req.path,
-          status: c.res.status,
-          timingMs: Object.fromEntries(state.spans.map((span) => [span.name, span.durationMs])),
+      if (state) {
+        recordMiddlewareDiagnosticSpan(c, 'token_handler_downstream');
+        state.spans.push({
+          name: 'token_total',
+          durationMs: roundDiagnosticDurationMs(performance.now() - state.startedAt),
         });
+        const timing = state.spans
+          .map((span) => `${span.name};dur=${span.durationMs.toFixed(1)}`)
+          .join(', ');
+        c.res.headers.set('Server-Timing', timing);
+        c.res.headers.set('X-Authrim-Diagnostic-Session-Id', state.sessionId);
+        getLogger(c)
+          .module('TOKEN-REQUEST-TIMING')
+          .info('Token request middleware diagnostics', {
+            diagnosticSessionId: state.sessionId,
+            method: c.req.method,
+            path: c.req.path,
+            status: c.res.status,
+            timingMs: Object.fromEntries(state.spans.map((span) => [span.name, span.durationMs])),
+          });
+      }
     }
   };
 }
@@ -282,6 +284,14 @@ app.onError((err, c) => {
 });
 
 // Export for Cloudflare Workers
+// Keep deferred effects inside the source-export admission permit.
+const unguardedFetch = app.fetch.bind(app);
+app.fetch = (request, env, context) =>
+  runSamlDrCoveredFetch(env, context, (coveredEnv, coveredContext) =>
+    Promise.resolve(unguardedFetch(request, coveredEnv, coveredContext))
+  );
+
+export const SAML_DR_WRITER_SURFACES = ['fetch'] as const;
 export default app;
 export { AgentDownscopeEntrypoint } from './entrypoints/AgentDownscopeEntrypoint';
 export { RuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';

@@ -1,20 +1,19 @@
 /**
- * Device Verification Handler (Minimal - for OIDC Conformance Test)
+ * Device Verification Handler (Minimal)
  * RFC 8628: Device User Authorization
  *
- * IMPORTANT: This is a minimal HTML form for OIDC conformance testing only.
- * For production use, configure UI_URL and redirect users to the external UI.
- * or use the headless JSON API at POST /api/device/verify
+ * IMPORTANT: This is a minimal HTML form. A submitted code is handed to the external UI
+ * (UI_URL) for authentication, or use the headless JSON API at POST /api/devices/verify.
  */
 
 import type { Context } from 'hono';
 import type { Env, DeviceCodeMetadata } from '@authrim/ar-lib-core';
 import {
   normalizeUserCode,
+  formatUserCode,
   validateUserCodeFormat,
   isMockAuthEnabled,
   getUIConfig,
-  shouldUseBuiltinForms,
   createConfigurationError,
   createErrorResponse,
   AR_ERROR_CODES,
@@ -23,10 +22,15 @@ import {
 } from '@authrim/ar-lib-core';
 import { html } from 'hono/html';
 import { resolveAsyncTenantId } from './tenant';
+import { checkUserCodeRateLimit, lookUpAndSettle } from './user-code-guard';
+
+const HTML_NOT_FOUND = 'Invalid or expired user code';
+const HTML_UNAVAILABLE = 'Device code verification is temporarily unavailable. Try again.';
+const HTML_BLOCKED = 'Too many failed attempts. Please try again later.';
 
 /**
  * GET /device
- * Minimal device verification form (Conformance test only)
+ * Minimal device verification form
  *
  * Note: In production, configure UI_URL and users will be redirected to external UI.
  */
@@ -41,17 +45,16 @@ export async function deviceVerifyHandler(c: Context<{ Bindings: Env }>) {
 }
 
 /**
- * Show minimal device verification form (Conformance test only)
+ * Show minimal device verification form
  */
 async function showMinimalVerificationForm(c: Context<{ Bindings: Env }>) {
   const userCodeParam = c.req.query('user_code');
   const error = c.req.query('error');
   const success = c.req.query('success');
 
-  // Note: For production, users are redirected to external UI in handleVerificationSubmission()
-  // This built-in form is only used when CONFORMANCE_MODE=true
+  // Note: users are redirected to the external UI in handleVerificationSubmission()
 
-  // Minimal HTML for conformance testing
+  // Minimal HTML
   const page = html`
     <!DOCTYPE html>
     <html lang="en">
@@ -72,8 +75,10 @@ async function showMinimalVerificationForm(c: Context<{ Bindings: Env }>) {
             name="user_code"
             value="${userCodeParam || ''}"
             placeholder="XXXX-XXXX"
-            maxlength="9"
-            pattern="[A-Z0-9]{4}-[A-Z0-9]{4}"
+            maxlength="24"
+            minlength="4"
+            autocapitalize="characters"
+            autocomplete="off"
             required
             autofocus
           />
@@ -102,64 +107,71 @@ async function handleVerificationSubmission(c: Context<{ Bindings: Env }>) {
     'Content-Type': 'application/json',
     'X-Authrim-Tenant-Id': tenantId,
   };
+  // The reservation held from the rate limit check until the lookup settles it (see
+  // user-code-guard.ts); released on every other way out, so no slot is left in flight.
+  let held: { release(): Promise<unknown> } | undefined;
   try {
+    const mockAuthEnabled = await isMockAuthEnabled(c.env);
+
     const body = await c.req.parseBody();
     let userCode = body.user_code as string;
 
-    if (!userCode) {
+    if (typeof userCode !== 'string' || !userCode) {
       return c.redirect('/device?error=User code is required');
     }
 
-    // Normalize and validate user code format
+    // Canonical form and a format check only (see device-verify-api.ts): the store decides.
+    // As in the APIs, a malformed code is not a guess at a real one and is not counted.
     userCode = normalizeUserCode(userCode);
 
     if (!validateUserCodeFormat(userCode)) {
       return c.redirect('/device?error=Invalid user code format');
     }
 
-    // Get device code metadata from DeviceCodeStore
-    const deviceCodeStoreId = c.env.DEVICE_CODE_STORE.idFromName(
-      buildDOInstanceName('device', tenantId)
-    );
-    const deviceCodeStore = c.env.DEVICE_CODE_STORE.get(deviceCodeStoreId);
-
-    const getResponse = await deviceCodeStore.fetch(
-      new Request('https://internal/get-by-user-code', {
-        method: 'POST',
-        headers: internalHeaders,
-        body: JSON.stringify({ user_code: userCode }),
-      })
-    );
-
-    const metadata: DeviceCodeMetadata | null = await getResponse.json();
-
-    if (!metadata) {
-      return c.redirect('/device?error=Invalid or expired user code');
+    // Get device code metadata from DeviceCodeStore. A store that cannot answer is neither "no
+    // such code" nor a failure to count.
+    // The same guard as the JSON APIs (user-code-guard.ts), BEFORE any code is looked up and only
+    // after the body is read: the per-IP failure budget is shared with POST /api/devices/lookup
+    // and /verify, an IP that is blocked there is blocked here, nothing slow that the client
+    // controls happens while a guess is reserved, and without a working limiter or store no code is
+    // read.
+    const rateLimit = await checkUserCodeRateLimit(c, tenantId, { mockAuthEnabled });
+    if (rateLimit.status === 'unavailable') {
+      return c.redirect(`/device?error=${HTML_UNAVAILABLE}`);
     }
+    if (rateLimit.status === 'blocked') {
+      return c.redirect(`/device?error=${HTML_BLOCKED}`);
+    }
+    held = rateLimit;
 
+    const lookup = await lookUpAndSettle(c, tenantId, userCode, rateLimit);
+    if (lookup.status === 'unavailable') {
+      return c.redirect(`/device?error=${HTML_UNAVAILABLE}`);
+    }
+    if (lookup.status === 'absent') {
+      return c.redirect(`/device?error=${HTML_NOT_FOUND}`);
+    }
+    const metadata: DeviceCodeMetadata = lookup.metadata;
+    const deviceCodeStore = c.env.DEVICE_CODE_STORE.get(
+      c.env.DEVICE_CODE_STORE.idFromName(buildDOInstanceName('device', tenantId))
+    );
+
+    // A code that is no longer pending answers like a code that does not exist, so this page does
+    // not tell an unauthenticated visitor more than that (the JSON APIs, which need a session,
+    // name the state).
     if (metadata.status !== 'pending') {
-      return c.redirect(`/device?error=This code has already been ${metadata.status}`);
+      return c.redirect(`/device?error=${HTML_NOT_FOUND}`);
     }
 
-    // Check if mock authentication is enabled (SECURITY: default is disabled)
-    const mockAuthEnabled = await isMockAuthEnabled(c.env);
-
+    // Mock authentication is enabled only in development (SECURITY: default is disabled)
     if (!mockAuthEnabled) {
       // Production mode: Redirect to proper authentication flow
-      // Check conformance mode first
-      if (await shouldUseBuiltinForms(c.env)) {
-        // Conformance mode: Show error (mock auth disabled, no real auth in conformance mode)
-        return c.redirect(
-          '/device?error=Authentication required. Enable mock auth for conformance testing.'
-        );
-      }
-
       // Check UI configuration
-      const uiConfig = await getUIConfig(c.env);
+      const uiConfig = await getUIConfig(c.env, tenantId);
       if (uiConfig?.baseUrl) {
         const deviceAuthPath = uiConfig.paths?.deviceAuthorize || '/device/authorize';
         const loginUrl = new URL(`${uiConfig.baseUrl}${deviceAuthPath}`);
-        loginUrl.searchParams.set('user_code', userCode);
+        loginUrl.searchParams.set('user_code', formatUserCode(userCode));
         // Add tenant_hint for UI branding (UX only, untrusted)
         if (tenantId) {
           loginUrl.searchParams.set('tenant_hint', tenantId);
@@ -167,7 +179,7 @@ async function handleVerificationSubmission(c: Context<{ Bindings: Env }>) {
         return c.redirect(loginUrl.toString());
       }
 
-      // No UI configured and conformance mode disabled - return configuration error
+      // No UI configured - return configuration error
       return c.json(createConfigurationError(), 500);
     }
 
@@ -189,7 +201,7 @@ async function handleVerificationSubmission(c: Context<{ Bindings: Env }>) {
     );
 
     if (!approveResponse.ok) {
-      const error = (await approveResponse.json()) as { error_description?: string };
+      const error = await approveResponse.json<{ error_description?: string }>();
       return c.redirect(`/device?error=${error.error_description || 'Approval failed'}`);
     }
 
@@ -197,5 +209,7 @@ async function handleVerificationSubmission(c: Context<{ Bindings: Env }>) {
   } catch (error) {
     log.error('Device verification error', {}, error as Error);
     return c.redirect('/device?error=An error occurred. Please try again.');
+  } finally {
+    await held?.release();
   }
 }

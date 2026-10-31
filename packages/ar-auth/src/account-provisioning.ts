@@ -1,16 +1,17 @@
 import type { Context } from 'hono';
 import {
-  anonymousDeviceLookupSubject,
+  directoryIdentityLookupSubject,
+  guestResumeCredentialLookupSubject,
   getChallengeStoreByChallengeId,
-  getTenantMetadataContextFromHono,
   getTenantIdFromContext,
+  getTenantMetadataContextFromHono,
   isCanonicalAccountIdForUser,
   isValidPersistedUserId,
   passkeyCredentialLookupSubject,
   resolveAccountDataContextFromHono,
   resolveAccountDataContextByIdentifierFromHono,
   type AccountDataContext,
-  type AuthAnonymousDeviceProvisioningInput,
+  type AuthGuestResumeCredentialProvisioningInput,
   type AuthAccountProvisioningFlow,
   type AuthAccountProvisioningInput,
   type CanonicalRuntimeUserWriteInput,
@@ -18,6 +19,7 @@ import {
   type Challenge,
   type Env,
   type StoreChallengeRequest,
+  usesRoutedAccountStorage as usesRoutedAccountStorageFor,
 } from '@authrim/ar-lib-core';
 
 const RESUME_TTL_SECONDS = 5 * 60;
@@ -49,17 +51,10 @@ export interface PublishPasskeyRouteInput {
   rpId: string;
 }
 
-export interface ProvisionAnonymousAccountInput {
+export interface ProvisionGuestAccountInput {
   tenantId: string;
   candidateUserId: string;
-  device: Omit<AuthAnonymousDeviceProvisioningInput, 'id'>;
-}
-
-export interface RemoveAnonymousDeviceRouteInput {
-  tenantId: string;
-  userId: string;
-  deviceId: string;
-  deviceIdHash: string;
+  resumeCredential: Omit<AuthGuestResumeCredentialProvisioningInput, 'id'>;
 }
 
 export interface AccountProvisioningResumeMetadata {
@@ -148,8 +143,8 @@ function resumeMetadata(value: unknown): AccountProvisioningResumeMetadata | nul
       'saml',
       'did',
       'test_stub',
-      'anonymous',
-      'anonymous_upgrade',
+      'guest',
+      'guest_upgrade',
     ].includes(metadata.flow) ||
     !isCanonicalAccountIdForUser(metadata.account_id, metadata.user_id) ||
     Object.keys(metadata).length !== 5
@@ -229,13 +224,13 @@ export async function resolvePasskeyAccountRoute(
   });
 }
 
-export async function resolveAnonymousAccountRoute(
+export async function resolveGuestAccountRoute(
   c: Context<{ Bindings: Env }>,
-  deviceIdHash: string
+  credentialHash: string
 ): Promise<AccountDataContext | null> {
   return resolveAccountDataContextByIdentifierFromHono(c, {
     indexKind: 'external_subject',
-    identifier: anonymousDeviceLookupSubject(deviceIdHash),
+    identifier: guestResumeCredentialLookupSubject(credentialHash),
   });
 }
 
@@ -279,43 +274,74 @@ export async function publishPasskeyRoute(
   return result.status;
 }
 
-export async function removeAnonymousDeviceRoute(
+export interface PublishDirectoryRouteInput {
+  tenantId: string;
+  userId: string;
+  connectorId: string;
+  directorySubject: string;
+}
+
+/**
+ * The account a directory identity's Lookup route (external_subject) names, attached to the
+ * request; null where the identity has no route.
+ */
+export async function resolveDirectoryAccountRoute(
   c: Context<{ Bindings: Env }>,
-  input: RemoveAnonymousDeviceRouteInput
-): Promise<201 | 202> {
-  if (!c.env.ACCOUNT_PROVISIONER?.removeAuthAnonymousDeviceRoute) {
-    throw new Error('account_provisioner_unavailable');
+  input: { connectorId: string; directorySubject: string }
+): Promise<AccountDataContext | null> {
+  try {
+    return await resolveAccountDataContextByIdentifierFromHono(c, {
+      indexKind: 'external_subject',
+      identifier: directoryIdentityLookupSubject(input),
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'account_data_route_not_found') return null;
+    throw error;
   }
+}
+
+/**
+ * Publish the Lookup route of a directory identity linked to the user's account, so that the
+ * directory sign-in finds the account by the identity. The link must already be in the account's
+ * Core database: the Control Plane publishes only a route whose link it finds there. A retry of
+ * the same link is the same operation.
+ */
+export async function publishDirectoryRoute(
+  c: Context<{ Bindings: Env }>,
+  input: PublishDirectoryRouteInput
+): Promise<201 | 202> {
+  if (!c.env.ACCOUNT_PROVISIONER) throw new Error('account_provisioner_unavailable');
   const account = await resolveAccountDataContextFromHono(c, input.userId);
   if (account.legacyUserId !== input.userId) {
-    throw new Error('anonymous_route_removal_account_mismatch');
+    throw new Error('directory_route_account_mismatch');
   }
-  anonymousDeviceLookupSubject(input.deviceIdHash);
-  const stableRequest = canonicalJson({
-    schemaVersion: 1,
-    tenantId: input.tenantId,
-    accountId: account.accountId,
-    userId: input.userId,
-    deviceId: input.deviceId,
-    deviceIdHash: input.deviceIdHash,
-  });
-  const operationId = `anonymous-route-remove-${input.deviceId}`;
-  const result = await c.env.ACCOUNT_PROVISIONER.removeAuthAnonymousDeviceRoute({
+  const digest = await sha256Hex(
+    canonicalJson({
+      schemaVersion: 1,
+      tenantId: input.tenantId,
+      accountId: account.accountId,
+      userId: input.userId,
+      connectorId: input.connectorId,
+      directorySubject: input.directorySubject,
+    })
+  );
+  const operationId = `directory-route-${digest.slice(0, 32)}`;
+  const result = await c.env.ACCOUNT_PROVISIONER.publishAuthDirectoryRoute({
     schemaVersion: 1,
     operationId,
-    idempotencyKey: `auth-anonymous-route-remove:${await sha256Hex(stableRequest)}`,
+    idempotencyKey: `auth-directory-route:${digest}`,
     tenantId: input.tenantId,
     accountId: account.accountId,
     userId: input.userId,
-    deviceId: input.deviceId,
-    deviceIdHash: input.deviceIdHash,
+    connectorId: input.connectorId,
+    directorySubject: input.directorySubject,
   });
   if (
     result.operationId !== operationId ||
     result.accountId !== account.accountId ||
     (result.status !== 201 && result.status !== 202)
   ) {
-    throw new Error('anonymous_route_removal_result_invalid');
+    throw new Error('directory_route_publication_result_invalid');
   }
   return result.status;
 }
@@ -405,16 +431,24 @@ export async function provisionAccount(
 // passkey accounts; the input validation is enforced by the management worker.
 export const provisionEmailAccount = provisionAccount;
 
-// Transitional symbol aliases for authentication handlers; all implementations route through
-// the Control Plane account provisioner above.
-export function usesTenantD1AccountStorage(c: Context<{ Bindings: Env }>): boolean {
-  const metadata = getTenantMetadataContextFromHono(c);
-  const legacyStorageProfileId = (
-    metadata as (typeof metadata & { storageProfileId?: string }) | undefined
-  )?.storageProfileId;
+/**
+ * Whether the tenant's accounts are routed to their own databases. One definition for every
+ * Worker: see usesRoutedAccountStorage in ar-lib-core (ar-management decides with it too).
+ */
+export function usesRoutedAccountStorage(c: Context<{ Bindings: Env }>): boolean {
+  return usesRoutedAccountStorageFor(getTenantMetadataContextFromHono(c));
+}
+
+/**
+ * The failure of an address lookup whose route (cached from before) points at an account that is
+ * no longer active there, such as one just deleted. Other failures (an unreachable store, a
+ * missing binding) are not.
+ */
+export function isDeletedDestinationRouteError(error: unknown): boolean {
   return (
-    metadata?.route?.allocationScope === 'tenant_exclusive' ||
-    legacyStorageProfileId === 'builtin:storage:tenant-d1'
+    error instanceof Error &&
+    error.message === 'lookup_destination_revalidation_failed' &&
+    error.cause === 'account_inactive'
   );
 }
 
@@ -422,7 +456,7 @@ export async function resolveTenantD1EmailAccountRoute(
   c: Context<{ Bindings: Env }>,
   email: string
 ): Promise<'not_required' | 'resolved' | 'not_found'> {
-  if (!usesTenantD1AccountStorage(c)) return 'not_required';
+  if (!usesRoutedAccountStorage(c)) return 'not_required';
   return resolveEmailAccountRoute(c, email);
 }
 
@@ -430,7 +464,7 @@ export async function resolveTenantD1PasskeyAccountRoute(
   c: Context<{ Bindings: Env }>,
   input: { credentialId: string; rpId: string }
 ): Promise<AccountDataContext | null> {
-  if (!usesTenantD1AccountStorage(c)) return null;
+  if (!usesRoutedAccountStorage(c)) return null;
   return resolvePasskeyAccountRoute(c, input);
 }
 
@@ -438,37 +472,38 @@ export async function publishTenantD1PasskeyRoute(
   c: Context<{ Bindings: Env }>,
   input: PublishPasskeyRouteInput
 ): Promise<201 | 202> {
-  if (!usesTenantD1AccountStorage(c)) return 201;
+  if (!usesRoutedAccountStorage(c)) return 201;
   return publishPasskeyRoute(c, input);
 }
 
 export const provisionTenantD1Account = provisionAccount;
 export const provisionTenantD1EmailAccount = provisionTenantD1Account;
 
-export async function provisionAnonymousAccount(
+export async function provisionGuestAccount(
   c: Context<{ Bindings: Env }>,
-  input: ProvisionAnonymousAccountInput
+  input: ProvisionGuestAccountInput
 ): Promise<ProvisionEmailAccountResult> {
   if (!c.env.ACCOUNT_PROVISIONER) throw new Error('account_provisioner_unavailable');
-  const externalSubject = anonymousDeviceLookupSubject(input.device.deviceIdHash);
-  const anonymousDevice: AuthAnonymousDeviceProvisioningInput = {
-    id: `anonymous-device-${input.device.deviceIdHash.slice(0, 32)}`,
-    ...input.device,
+  const externalSubject = guestResumeCredentialLookupSubject(input.resumeCredential.credentialHash);
+  const guestResumeCredential: AuthGuestResumeCredentialProvisioningInput = {
+    id: `guest-resume-${input.resumeCredential.credentialHash.slice(0, 32)}`,
+    ...input.resumeCredential,
   };
   const runtimeUser: ProvisioningRuntimeUser = {
     active: true,
     emailVerified: false,
-    userType: 'anonymous',
-    sourceRef: 'auth:anonymous',
+    userType: 'end_user',
+    registrationState: 'guest',
+    sourceRef: 'auth:guest',
     piiFields: {},
     sensitiveValues: {},
   };
   const stableRequest = canonicalJson({
     schemaVersion: 1,
     tenantId: input.tenantId,
-    flow: 'anonymous',
+    flow: 'guest',
     externalSubject,
-    anonymousDevice,
+    guestResumeCredential,
     runtimeUser,
   });
   const request: AuthAccountProvisioningInput = {
@@ -477,10 +512,10 @@ export async function provisionAnonymousAccount(
     idempotencyKey: `auth-account:${await sha256Hex(stableRequest)}`,
     tenantId: input.tenantId,
     candidateUserId: input.candidateUserId,
-    flow: 'anonymous',
+    flow: 'guest',
     email: null,
     externalSubject,
-    anonymousDevice,
+    guestResumeCredential,
     runtimeUser,
   };
   const result = await provisionAuthAccountWithReconciliation(c.env.ACCOUNT_PROVISIONER, request);
@@ -506,7 +541,7 @@ export async function provisionAnonymousAccount(
     metadata: {
       schema_version: 1,
       operation_id: result.operationId,
-      flow: 'anonymous',
+      flow: 'guest',
       account_id: result.accountId,
       user_id: result.userId,
     } satisfies AccountProvisioningResumeMetadata,
@@ -561,9 +596,7 @@ export async function accountProvisioningStatusHandler(c: Context<{ Bindings: En
     }
     return c.json({
       status: status.status,
-      ...(status.status === 'ready' && metadata.flow === 'anonymous'
-        ? { restart_required: true }
-        : {}),
+      ...(status.status === 'ready' && metadata.flow === 'guest' ? { restart_required: true } : {}),
       ...(status.status === 'pending' ? { retry_after_ms: 500 } : {}),
     });
   } catch {

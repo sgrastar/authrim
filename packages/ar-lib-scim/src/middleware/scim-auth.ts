@@ -398,9 +398,9 @@ export async function scimAuthMiddleware(c: Context<{ Bindings: Env }>, next: Ne
 
   try {
     // Validate token against stored SCIM tokens
-    const isValid = await validateScimToken(c.env, token, tenantId, log);
+    const tokenRef = await validateScimToken(c.env, token, tenantId, log);
 
-    if (!isValid) {
+    if (!tokenRef) {
       await recordFailedAttempt(c.env, clientIP, rateLimitConfig, log);
       logAuthAttempt(log, clientIP, false, 'invalid_token');
       await applyFailureDelay(
@@ -419,6 +419,10 @@ export async function scimAuthMiddleware(c: Context<{ Bindings: Env }>, next: Ne
       await clearFailedAttempts(c.env, clientIP, log);
     }
 
+    // Which token it was, for what a handler records on its behalf (such as the identity
+    // assurance it asserts); the key the token is stored under, never the token.
+    (c as unknown as { set(key: string, value: string): void }).set('scimTokenRef', tokenRef);
+
     // Token is valid, proceed to next middleware
     await next();
   } catch (error) {
@@ -428,7 +432,7 @@ export async function scimAuthMiddleware(c: Context<{ Bindings: Env }>, next: Ne
 }
 
 /**
- * Validate SCIM token
+ * Validate SCIM token. The token's reference (the hash it is stored under) when it is valid.
  *
  * This implementation checks against KV storage where SCIM tokens are stored.
  * You can customize this to use database or other storage.
@@ -438,7 +442,7 @@ async function validateScimToken(
   token: string,
   tenantId: string,
   log: Logger
-): Promise<boolean> {
+): Promise<string | null> {
   try {
     // Hash the token to match stored format
     const tokenHash = await hashToken(token);
@@ -449,7 +453,7 @@ async function validateScimToken(
     const storedToken = await env.INITIAL_ACCESS_TOKENS?.get(scimTokenKey(tenantId, tokenHash));
 
     if (!storedToken) {
-      return false;
+      return null;
     }
 
     // Parse token metadata
@@ -460,23 +464,23 @@ async function validateScimToken(
         tokenTenantId: tokenData.tenantId,
         requestTenantId: tenantId,
       });
-      return false;
+      return null;
     }
 
     // Check if token is expired
     if (tokenData.expiresAt && new Date(tokenData.expiresAt) < new Date()) {
-      return false;
+      return null;
     }
 
     // Check if token is enabled
     if (tokenData.enabled === false) {
-      return false;
+      return null;
     }
 
-    return true;
+    return tokenHash;
   } catch (error) {
     log.error('Token validation error', {}, error as Error);
-    return false;
+    return null;
   }
 }
 

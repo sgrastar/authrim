@@ -1,3 +1,8 @@
+import {
+  initializeCredentialStoreSchema,
+  VCI_INITIAL_SCHEMA,
+  VCI_PRIMARY_KEY_MIGRATION,
+} from '../../common/primary-key-schema.js';
 /**
  * Region-sharded SQLite coordinator for OpenID4VCI one-time state.
  *
@@ -165,45 +170,12 @@ export class CredentialOfferStoreV2 extends DurableObject<Env> {
   }
 
   private initializeSchema(): void {
-    this.ctx.storage.sql.exec(`
-      CREATE TABLE IF NOT EXISTS credential_offers (
-        id TEXT PRIMARY KEY,
-        tenant_id TEXT NOT NULL,
-        user_id TEXT NOT NULL,
-        credential_profile_id TEXT NOT NULL,
-        credential_profile_version INTEGER NOT NULL,
-        credential_profile_snapshot_hash TEXT NOT NULL,
-        credential_configuration_id TEXT NOT NULL,
-        mapping_version_id TEXT NOT NULL,
-        mapping_snapshot_hash TEXT NOT NULL,
-        claim_manifest_hash TEXT NOT NULL,
-        claims_json TEXT NOT NULL,
-        code_hash TEXT NOT NULL,
-        tx_code_hash TEXT,
-        status TEXT NOT NULL CHECK (status IN ('pending','processing','consumed','locked','expired')),
-        failed_attempts INTEGER NOT NULL DEFAULT 0,
-        max_attempts INTEGER NOT NULL DEFAULT 5,
-        reservation_id TEXT,
-        lease_expires_at INTEGER,
-        created_at INTEGER NOT NULL,
-        expires_at INTEGER NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS credential_offers_expiry_idx
-        ON credential_offers(status, expires_at);
-      CREATE TABLE IF NOT EXISTS proof_nonces (
-        id TEXT PRIMARY KEY,
-        tenant_id TEXT NOT NULL,
-        nonce_hash TEXT NOT NULL UNIQUE,
-        status TEXT NOT NULL CHECK (status IN ('issued','processing','consumed','expired')),
-        proof_fingerprint TEXT UNIQUE,
-        access_token_jti TEXT,
-        reservation_id TEXT,
-        lease_expires_at INTEGER,
-        created_at INTEGER NOT NULL,
-        expires_at INTEGER NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS proof_nonces_expiry_idx ON proof_nonces(status, expires_at);
-    `);
+    initializeCredentialStoreSchema(
+      this.ctx.storage,
+      VCI_INITIAL_SCHEMA,
+      VCI_PRIMARY_KEY_MIGRATION,
+      ['credential_offers', 'proof_nonces']
+    );
   }
 
   createOfferRpc(input: CreateCredentialOfferInput): CredentialOfferRecord {

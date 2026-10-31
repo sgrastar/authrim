@@ -1,7 +1,7 @@
+import { createArchiveTestConfig, generateArchiveTestWrangler } from './fixtures/log-archive.js';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { createDefaultConfig } from '../core/config.js';
 import {
   CORE_WORKER_COMPONENTS,
   D1_DATABASES,
@@ -15,7 +15,6 @@ import {
   parseWorkerCapabilityManifest,
   validateGeneratedWorkerCapabilities,
 } from '../core/worker-capabilities.js';
-import { generateWranglerConfig } from '../core/wrangler.js';
 
 const ROOT_DIR = fileURLToPath(new URL('../../../../', import.meta.url));
 
@@ -86,7 +85,7 @@ function maximalResourceIds() {
 }
 
 function deploymentConfig(prefix: string) {
-  const config = createDefaultConfig(prefix);
+  const config = createArchiveTestConfig(prefix);
   config.urls = {
     api: {
       custom: null,
@@ -249,6 +248,81 @@ describe('worker capability manifests', () => {
     );
   });
 
+  it('declares the Admin database UserInfo reads the identity mapping and Destination Profile from', async () => {
+    const [userinfo] = await loadWorkerCapabilityManifests({
+      baseDir: ROOT_DIR,
+      components: ['ar-userinfo'],
+    });
+
+    expect(userinfo?.manifest.bindings).toContainEqual(
+      expect.objectContaining({ name: 'DB_ADMIN', kind: 'd1', required: true })
+    );
+  });
+
+  it('requires the atomic rate limiter for every Worker whose routes are rate limited', async () => {
+    const components = [
+      'ar-auth',
+      'ar-token',
+      'ar-userinfo',
+      'ar-management',
+      'ar-bridge',
+      'ar-vc',
+      'ar-agent-access',
+    ] as const;
+    const manifests = await loadWorkerCapabilityManifests({
+      baseDir: ROOT_DIR,
+      components: [...components],
+    });
+
+    for (const compiled of manifests) {
+      expect(compiled.manifest.bindings, compiled.component).toContainEqual(
+        expect.objectContaining({
+          name: 'RATE_LIMITER',
+          kind: 'durable_object_namespace',
+          required: true,
+        })
+      );
+    }
+  });
+
+  it('binds the session-client store to every Worker that records or reads logout targets', async () => {
+    // Without the binding, session-client registration is a silent no-op and logout finds no
+    // relying party to notify, so Back-Channel, Front-Channel and webhook logout send nothing.
+    // Bridge (upstream back-channel logout) and Management (admin suspend / lock / session
+    // revocation) read the logout targets of the sessions they end.
+    const requiredComponents = ['ar-auth', 'ar-token', 'ar-bridge', 'ar-management'];
+    const manifests = await loadWorkerCapabilityManifests({
+      baseDir: ROOT_DIR,
+      components: CORE_WORKER_COMPONENTS,
+    });
+    const declaring = manifests.filter((compiled) =>
+      compiled.manifest.bindings.some((binding) => binding.name === 'SESSION_CLIENT_STORE')
+    );
+    expect(declaring.map((compiled) => compiled.component)).toEqual(
+      expect.arrayContaining(requiredComponents)
+    );
+
+    const config = deploymentConfig('logouttest');
+    for (const compiled of declaring) {
+      expect(compiled.manifest.bindings, compiled.component).toContainEqual({
+        name: 'SESSION_CLIENT_STORE',
+        kind: 'durable_object_namespace',
+        required: true,
+      });
+      if (compiled.component === 'ar-lib-core') continue;
+      const generated = generateArchiveTestWrangler(
+        compiled.component,
+        config,
+        maximalResourceIds()
+      );
+      expect(generated.durable_objects?.bindings, compiled.component).toContainEqual({
+        name: 'SESSION_CLIENT_STORE',
+        class_name: 'SessionClientStore',
+        script_name: 'logouttest-ar-lib-core',
+      });
+    }
+  });
+
   it('declares encrypted sensitive-detail storage for Bridge token refresh evidence', async () => {
     const [bridge] = await loadWorkerCapabilityManifests({
       baseDir: ROOT_DIR,
@@ -389,7 +463,7 @@ describe('worker capability manifests', () => {
     for (const component of CORE_WORKER_COMPONENTS) {
       const compiled = byComponent.get(component);
       if (!compiled) throw new Error(`missing_test_manifest:${component}`);
-      const generated = generateWranglerConfig(component, config, maximalResourceIds());
+      const generated = generateArchiveTestWrangler(component, config, maximalResourceIds());
       expect(() =>
         validateGeneratedWorkerCapabilities({ compiled, config: generated })
       ).not.toThrow();
@@ -401,7 +475,7 @@ describe('worker capability manifests', () => {
       baseDir: ROOT_DIR,
       components: ['ar-control'],
     });
-    const config = generateWranglerConfig('ar-control', deploymentConfig('strict'), {
+    const config = generateArchiveTestWrangler('ar-control', deploymentConfig('strict'), {
       d1: { CONTROL_DB: { id: 'control-id', name: 'strict-control' } },
       kv: {
         TENANT_RUNTIME_REGISTRY: { id: 'registry-id', name: 'strict-runtime-registry' },
@@ -422,7 +496,7 @@ describe('worker capability manifests', () => {
         ),
       },
     };
-    const validConfig = generateWranglerConfig('ar-control', deploymentConfig('strict'), {
+    const validConfig = generateArchiveTestWrangler('ar-control', deploymentConfig('strict'), {
       d1: { CONTROL_DB: { id: 'control-id', name: 'strict-control' } },
       kv: {
         TENANT_RUNTIME_REGISTRY: { id: 'registry-id', name: 'strict-runtime-registry' },
@@ -442,7 +516,7 @@ describe('worker capability manifests', () => {
       'worker_capability_undeclared_tenant_data_role:ar-control:TEST_TDB_USERS_JP_0001_CORE:tenant_core/users'
     );
 
-    const lookupConfig = generateWranglerConfig('ar-control', deploymentConfig('strict'), {
+    const lookupConfig = generateArchiveTestWrangler('ar-control', deploymentConfig('strict'), {
       d1: {
         CONTROL_DB: { id: 'control-id', name: 'strict-control' },
         TEST_TDB_LOOKUP_EXTRA_LOOKUP: { id: 'lookup-extra-id', name: 'strict-lookup-extra' },
@@ -467,7 +541,7 @@ describe('worker capability manifests', () => {
       baseDir: ROOT_DIR,
       components: ['ar-plugin-runner'],
     });
-    const config = generateWranglerConfig('ar-plugin-runner', deploymentConfig('strict'), {
+    const config = generateArchiveTestWrangler('ar-plugin-runner', deploymentConfig('strict'), {
       ...maximalResourceIds(),
       pluginRunnerResources: [
         {

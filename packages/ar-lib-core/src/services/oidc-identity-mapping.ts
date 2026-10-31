@@ -1,23 +1,38 @@
 import { executeRuntimeMapping } from '@authrim/ar-lib-field-mapping/runtime';
-import type { SourceValueEnvelope } from '@authrim/ar-lib-field-mapping/contract';
+import type { FieldRef, SourceValueEnvelope } from '@authrim/ar-lib-field-mapping/contract';
 import type { DatabaseAdapter } from '../db/adapter';
 import type { Env } from '../types/env';
 import type { OIDCIdentityMappingFieldMappingSelector } from '../types/oidc';
+import type { IdentityMappingFailureContext } from './identity-mapping-failures';
 import {
   createCustomClaimSchemaResolverFromSources,
   loadFeatureConfig,
 } from './custom-claims/resolver';
 import { resolveCustomClaimRuntimeSourcesFromEnv } from './custom-claims/runtime-sources';
 import { requireDedicatedAdminDatabaseAdapter } from './admin-database-adapter';
+import { PLATFORM_MAPPING_TENANT_ID } from './identity-mapping-owner';
+import { isNonAccountSubject } from '../utils/id';
 import {
   filterOidcClaimsByDestinationConsent,
   filterOidcClaimsWithoutDestinationProfile,
   isProtectedIdentityMappingDestinationClaim,
   loadDestinationProfileConsentDescriptor,
+  type OidcDestinationReleaseTrace,
 } from './destination-profile-consent';
 import {
+  resolveOidcIdentityMappingBinding,
+  type OidcIdentityMappingResolution,
+} from './identity-mapping-resolution';
+import {
+  IdentityMappingSelectionError,
+  type IdentityMappingSelection,
+} from './identity-mapping-selection';
+import {
+  IdentityMappingResolutionError,
+  type IdentityMappingTier,
+} from './identity-mapping-set-binding';
+import {
   assertRuntimeIdentityMappingReleaseSafety,
-  resolveRuntimeIdentityMappingBinding,
   type RuntimeIdentityMappingBinding,
 } from './identity-mapping-runtime-resolver';
 import {
@@ -28,15 +43,126 @@ import {
 } from './persistent-identifiers';
 
 export interface ApplyOIDCIdentityMappingInput {
+  /** The tenant Core database: the user's consent and attributes. Never read for a mapping. */
   adapter: DatabaseAdapter;
-  env?: Partial<Env>;
+  /**
+   * SETTINGS decides which Mapping Set applies (the tenant's and the platform's default); DB_ADMIN
+   * holds the set. A selection of none reads neither database, so it needs no DB_ADMIN; one that
+   * names a set fails without it (there is no fallback to `adapter`).
+   */
+  env: Partial<Env>;
+  /** The tenant the request is for. Consent, custom fields and identifiers stay with it. */
   tenantId: string;
   clientId: string;
   sectorIdentifier?: string | null;
+  /**
+   * The app's `identity_mapping`: its own Mapping Set, `{ mode: 'none' }`, or nothing (the tenant's
+   * default, else the platform's, else no mapping). What it does not name is never looked up by
+   * an activation's scope.
+   */
   selector?: OIDCIdentityMappingFieldMappingSelector | null;
   destinationSurface?: 'id_token' | 'userinfo';
   grantedScopes?: string[];
+  /**
+   * Set when the caller has already authorized the standard claims `claims` carries against the
+   * request (their scope, the claims parameter, the client's claims policy), as the authorization
+   * endpoint does for the ID token it issues. For those claims the Destination Profile counts
+   * the OIDC scope that releases the claim (email for email, ...) as granted, so a claim the
+   * claims parameter requested is not dropped for lacking it. A scope of the profile's own is
+   * still required; claims the mapping adds or whose value it replaced are held to the scopes;
+   * every other profile rule still applies.
+   */
+  claimsAuthorizedByRequest?: boolean;
+  /**
+   * The same, for only the claims named here (the caller authorized just these against the
+   * request, such as eduperson_assurance, which the authorization server computed after the
+   * scopes and the client's claims policy allowed it). Every other claim is held to the scopes as
+   * before. Ignored when `claimsAuthorizedByRequest` is set, which covers them all.
+   */
+  authorizedClaimNames?: readonly string[];
+  /**
+   * Set when the ID token is all the response gives the app (response_type=id_token carries no
+   * access token to call UserInfo with), so the claims the profile lists for UserInfo are
+   * released in it too, as OIDC Core 5.4 requires for the scope claims. Only for the id_token
+   * surface.
+   */
+  userInfoClaimsInIdToken?: boolean;
+  /**
+   * What the token or response carries: the claims the mapping starts from and the output keeps.
+   * The mapping reads these as sources too, but they depend on the scopes and the request, so a
+   * mapping that reads only them would derive another sub for the same user from one request to
+   * the next. `sourceAttributes` is the stable source.
+   */
   claims: Record<string, unknown>;
+  /**
+   * The user's attributes (standard claims) the mapping reads from, whatever `claims` carries, so
+   * the same user is mapped the same way on every path. Used only for the attributes the mapping
+   * reads that `claims` lacks, and only those are taken from it: nothing else is read or released.
+   * A function is called, with those attribute names, only when there are any, so a mapping that
+   * reads no attribute (or only claims already present) loads nothing. Null: the user has none.
+   */
+  sourceAttributes?:
+    | Record<string, unknown>
+    | ((names: string[]) => Promise<Record<string, unknown> | null>);
+  /** For an explanation: filled with what each step decided (see `OIDCReleaseTrace`). */
+  trace?: OIDCReleaseTrace;
+  /** Scalar failure coordinates for issuance; never a trace, claim value or account identifier. */
+  failureContext?: IdentityMappingFailureContext;
+  /**
+   * Read the settings that decide the Mapping Set past the cache (a view that must show a value
+   * just saved). An issuance leaves it unset.
+   */
+  fresh?: boolean;
+  /** For an explanation for a test user (see `OIDCReleaseFixture`). Never set by an issuance. */
+  fixture?: OIDCReleaseFixture;
+}
+
+/**
+ * What the release of claims decided, step by step, for an explanation (the Admin API's), never
+ * for an issuance. It holds names and decisions only: no value of a claim or an attribute.
+ */
+export interface OIDCReleaseTrace {
+  /** The selection the release made (the one its claims follow). */
+  selection?: IdentityMappingSelection;
+  /** The Mapping Set the selection named and how it was read; null for a selection of none. */
+  binding?: {
+    fieldMappingSetId: string;
+    fieldMappingVersionId: string;
+    ownerTenantId: string;
+    destinationProfileId: string | null;
+  } | null;
+  /**
+   * Each claim the mapping fills: the source attributes it reads, and whether the mapping gave it
+   * a value. `notEvaluated`: the value comes from a step the explanation did not run (a persistent
+   * identifier, for a test user).
+   */
+  mapping?: Array<{ claim: string; sources: string[]; produced: boolean; notEvaluated?: true }>;
+  /** The claims after the mapping and before the release filter: which have a value, and which an empty one. */
+  beforeRelease?: Record<string, 'present' | 'empty'>;
+  /** The Destination Profile's fields as the release filter judged them; absent without a profile. */
+  release?: OidcDestinationReleaseTrace;
+  /** Why the selection, or the reading of the set it chose, failed (the release then stops). */
+  resolutionFailure?: { code: string; tier?: IdentityMappingTier };
+}
+
+/**
+ * The subject is a made-up test user, not an account (an explanation of the release): only
+ * `sourceAttributes` are read for it, so nothing is looked up by its ID (no custom field, no
+ * consent record, no persistent identifier secret), and its selection of the Destination
+ * Profile's optional fields is the one given (`all` or `none`). A claim made from a persistent
+ * identifier is reported as not evaluated.
+ */
+export interface OIDCReleaseFixture {
+  consent: 'all' | 'none';
+}
+
+/**
+ * The placeholder a persistent identifier takes for a test user (never derived): new for each
+ * call, so no attribute a test user holds can be taken for it. A claim whose final value is it is
+ * reported as not evaluated, and its value is not judged by the profile.
+ */
+function fixturePersistentIdentifier(): string {
+  return `authrim:not-evaluated:${crypto.randomUUID()}`;
 }
 
 export interface ApplyOIDCIdentityMappingResult {
@@ -44,45 +170,80 @@ export interface ApplyOIDCIdentityMappingResult {
   binding: RuntimeIdentityMappingBinding | null;
 }
 
+/**
+ * The sub an app's ID tokens carry for a user: `claims.sub` (the user's id) unless the app's
+ * identity mapping issues another (pairwise or persistent identifiers, or one derived from the
+ * user's claims, which `claims` should then hold as at issuance). Only the subject is derived:
+ * the other fields' validation and release consent do not apply. A mapping that produces no sub
+ * leaves `claims.sub`.
+ */
+export async function deriveOIDCSubject(input: ApplyOIDCIdentityMappingInput): Promise<string> {
+  const userId = typeof input.claims.sub === 'string' ? input.claims.sub : '';
+  const { claims } = await applyOIDCIdentityMapping({ ...input, subjectOnly: true });
+  return typeof claims.sub === 'string' ? claims.sub : userId;
+}
+
 export async function applyOIDCIdentityMapping(
-  input: ApplyOIDCIdentityMappingInput
+  input: ApplyOIDCIdentityMappingInput & { subjectOnly?: boolean }
 ): Promise<ApplyOIDCIdentityMappingResult> {
-  let binding: RuntimeIdentityMappingBinding | null;
+  // Which Mapping Set applies is decided by what is named, never by an activation's scope: the
+  // app's own choice, else the tenant's default, else the platform's, else none. A level that is
+  // set and cannot be used fails here (the request is not answered without the mapping); a
+  // selection of none reads no database.
+  let resolution: OidcIdentityMappingResolution;
   try {
-    // Identity mapping catalogs, activations, and compiled snapshots are control-plane data in
-    // DB_ADMIN. Keep the supplied adapter only as a single-database compatibility fallback.
-    const mappingAdapter = input.env?.DB_ADMIN
-      ? requireDedicatedAdminDatabaseAdapter(input.env, 'oidc-identity-mapping')
-      : input.adapter;
-    binding = await resolveRuntimeIdentityMappingBinding(mappingAdapter, {
+    resolution = await resolveOidcIdentityMappingBinding({
+      env: input.env,
       tenantId: input.tenantId,
-      protocol: 'oidc',
-      role: 'op',
-      fieldMappingSetId: input.selector?.fieldMappingSetId,
-      fieldMappingVersionId: input.selector?.fieldMappingVersionId,
-      partnerEntityId: input.clientId,
       clientId: input.clientId,
+      clientSelector: input.selector,
+      ...(input.fresh ? { fresh: true } : {}),
     });
   } catch (error) {
-    if (!input.selector?.fieldMappingSetId) {
-      return {
-        claims: await applyOIDCDestinationFieldConsent(input, input.claims, null),
-        binding: null,
+    if (
+      input.failureContext &&
+      (error instanceof IdentityMappingSelectionError ||
+        error instanceof IdentityMappingResolutionError)
+    ) {
+      input.failureContext.code = error.code;
+      if (error.tier) input.failureContext.tier = error.tier;
+      if (error instanceof IdentityMappingResolutionError) input.failureContext.setId = error.setId;
+    }
+    if (
+      input.trace &&
+      (error instanceof IdentityMappingSelectionError ||
+        error instanceof IdentityMappingResolutionError)
+    ) {
+      // The code and level of the failure, before it becomes the release's error.
+      input.trace.resolutionFailure = {
+        code: error.code,
+        ...(error.tier ? { tier: error.tier } : {}),
       };
     }
-    throw error;
+    throw toOidcIdentityMappingRuntimeError(error, { clientId: input.clientId });
+  }
+  const { selection, binding } = resolution;
+  if (input.failureContext && selection.kind === 'bound') {
+    input.failureContext.tier = selection.tier;
+    input.failureContext.setId = selection.setId;
+  }
+  if (input.trace) {
+    input.trace.selection = selection;
+    input.trace.binding = binding
+      ? {
+          fieldMappingSetId: binding.fieldMappingSetId,
+          fieldMappingVersionId: binding.fieldMappingVersionId,
+          ownerTenantId: binding.tenantId,
+          destinationProfileId: binding.destinationProfileId ?? null,
+        }
+      : null;
   }
 
   if (!binding) {
-    if (input.selector?.fieldMappingSetId) {
-      throw new OIDCIdentityMappingRuntimeError(
-        'No active OIDC identity mapping binding found for selected policy',
-        {
-          code: 'policy.missing_identity_mapping_binding',
-          fieldMappingSetId: input.selector.fieldMappingSetId,
-          clientId: input.clientId,
-        }
-      );
+    if (input.subjectOnly) return { claims: input.claims, binding: null };
+    if (input.trace) {
+      input.trace.mapping = [];
+      input.trace.beforeRelease = tracePresence(input.claims);
     }
     return {
       claims: await applyOIDCDestinationFieldConsent(input, input.claims, null),
@@ -101,22 +262,39 @@ export async function applyOIDCIdentityMapping(
     );
   }
 
-  const destinationProfileAdapter = input.env?.DB_ADMIN
-    ? requireDedicatedAdminDatabaseAdapter(input.env, 'oidc-destination-profile-safety')
-    : input.adapter;
+  // The binding carries the tenant ID that owns the set: the calling tenant's, or the platform's.
+  // A mapping the platform owns releases into a Destination Profile the platform owns: the
+  // profile is looked up under its owner, so a profile a tenant owns is never taken for it.
+  const ownedByPlatform = binding.tenantId === PLATFORM_MAPPING_TENANT_ID;
+  const destinationProfileAdapter = requireDedicatedAdminDatabaseAdapter(
+    input.env,
+    'oidc-destination-profile-safety'
+  );
   const destinationDescriptor = await loadDestinationProfileConsentDescriptor(
     destinationProfileAdapter,
-    input.tenantId,
+    ownedByPlatform ? PLATFORM_MAPPING_TENANT_ID : input.tenantId,
     binding.destinationProfileId
   );
   if (destinationDescriptor?.destinationType === 'oidc') {
-    assertRuntimeIdentityMappingReleaseSafety(binding, destinationDescriptor.fields, true);
+    if (ownedByPlatform) {
+      // One mapping serves every tenant, so a source whose classification cannot be told is
+      // refused rather than let through.
+      assertRuntimeIdentityMappingReleaseSafety(binding, destinationDescriptor.fields, true, {
+        requireKnownSources: true,
+      });
+    } else {
+      assertRuntimeIdentityMappingReleaseSafety(binding, destinationDescriptor.fields, true);
+    }
   }
 
+  // The namespace the app's own selector names applies only where the app chose the set.
   const destinationNamespace =
-    input.selector?.destinationNamespace ?? binding.destinationNamespace ?? 'oidc.claim';
+    (selection.kind === 'bound' ? selection.selector?.destinationNamespace : undefined) ??
+    binding.destinationNamespace ??
+    'oidc.claim';
   const sourceClaims = await loadMappedCustomClaimSources(input, binding);
-  const persistentIdentifiers = await resolveOIDCPersistentIdentifiers(input, binding);
+  const placeholder = input.fixture ? fixturePersistentIdentifier() : null;
+  const persistentIdentifiers = await resolveOIDCPersistentIdentifiers(input, binding, placeholder);
   const runtimeResult = executeRuntimeMapping({
     catalog: binding.catalog,
     sourceValues: toOIDCSourceValues(sourceClaims, binding),
@@ -133,6 +311,22 @@ export async function applyOIDCIdentityMapping(
     },
   });
 
+  if (input.subjectOnly) {
+    // The last value wins, as issuance overwrites edge outputs with transform results.
+    let subject: unknown = input.claims.sub;
+    for (const value of runtimeResult.values) {
+      if (
+        value.sourceRef.side === 'destination' &&
+        value.sourceRef.namespace === destinationNamespace &&
+        value.sourceRef.path === 'sub'
+      ) {
+        subject = value.value;
+      }
+    }
+    assertMappedSubjectNotReserved(input, binding, subject);
+    return { claims: { sub: subject }, binding };
+  }
+
   if (runtimeResult.status === 'failed') {
     throw new OIDCIdentityMappingRuntimeError('OIDC identity mapping failed', {
       code: 'policy.identity_mapping_failed',
@@ -143,6 +337,7 @@ export async function applyOIDCIdentityMapping(
   }
 
   const mappedClaims = { ...input.claims };
+  const produced = new Set<string>();
   for (const value of runtimeResult.values) {
     if (value.sourceRef.side !== 'destination') {
       continue;
@@ -154,10 +349,30 @@ export async function applyOIDCIdentityMapping(
       continue;
     }
     mappedClaims[value.sourceRef.path] = value.value;
+    produced.add(value.sourceRef.path);
   }
+  // For a test user, the claims whose final value is still the placeholder of a persistent
+  // identifier (a later step that wrote another value over it is judged as usual).
+  const unevaluated = input.fixture
+    ? new Set(
+        Object.keys(mappedClaims).filter(
+          (claim) => mappedClaims[claim] === placeholder && produced.has(claim)
+        )
+      )
+    : undefined;
+  if (input.trace) {
+    input.trace.mapping = traceMappingTargets(
+      binding,
+      destinationNamespace,
+      produced,
+      unevaluated ?? new Set()
+    );
+    input.trace.beforeRelease = tracePresence(mappedClaims);
+  }
+  assertMappedSubjectNotReserved(input, binding, mappedClaims.sub);
 
   return {
-    claims: await applyOIDCDestinationFieldConsent(input, mappedClaims, binding),
+    claims: await applyOIDCDestinationFieldConsent(input, mappedClaims, binding, unevaluated),
     binding,
   };
 }
@@ -166,22 +381,37 @@ async function loadMappedCustomClaimSources(
   input: ApplyOIDCIdentityMappingInput,
   binding: RuntimeIdentityMappingBinding
 ): Promise<Record<string, unknown>> {
-  const claims = withCanonicalProfileAliases(input.claims);
-  if (!input.env) return claims;
+  let claims = withCanonicalProfileAliases(input.claims);
+  const referencedKeys = Array.from(new Set(mappingSourceRefs(binding).map((ref) => ref.path)));
+  const missingKeys = () =>
+    referencedKeys.filter((path) => !Object.prototype.hasOwnProperty.call(claims, path));
+
+  // The user's own attributes first: the same ones whatever this request's claims carry.
+  if (input.sourceAttributes && missingKeys().length > 0) {
+    const attributes = withCanonicalProfileAliases(
+      (typeof input.sourceAttributes === 'function'
+        ? await input.sourceAttributes(missingKeys())
+        : input.sourceAttributes) ?? {}
+    );
+    for (const key of missingKeys()) {
+      if (attributes[key] != null) claims = { ...claims, [key]: attributes[key] };
+    }
+  }
+
+  // A test user is its attributes alone: nothing is looked up by its ID.
+  if (input.fixture) return claims;
+
+  // The platform's mapping is saved without tenant-defined fields, so a key it reads that the
+  // claims lack is a standard one. Looking it up among the calling tenant's custom fields would
+  // let a tenant's field of the same name stand in for it.
+  if (binding.tenantId === PLATFORM_MAPPING_TENANT_ID) return claims;
   const subjectId = typeof input.claims.sub === 'string' ? input.claims.sub : '';
   if (!subjectId) return claims;
 
-  const referencedKeys = Array.from(
-    new Set(
-      binding.edges
-        .filter((edge) => edge.sourceRef.side === 'source')
-        .map((edge) => edge.sourceRef.path)
-        .filter((path) => path && !Object.prototype.hasOwnProperty.call(claims, path))
-    )
-  );
-  if (referencedKeys.length === 0) return claims;
+  const customKeys = missingKeys();
+  if (customKeys.length === 0) return claims;
 
-  const featureConfig = await loadFeatureConfig(input.env.AUTHRIM_CONFIG || null);
+  const featureConfig = await loadFeatureConfig(input.env as Env, input.tenantId);
   if (!featureConfig.enabled) return claims;
   const sources = await resolveCustomClaimRuntimeSourcesFromEnv(input.env as Env, input.tenantId, {
     accountId: subjectId,
@@ -193,7 +423,7 @@ async function loadMappedCustomClaimSources(
     cache: input.env.AUTHRIM_CONFIG || null,
     featureConfig,
   });
-  const custom = await resolver.resolveFieldValues(input.tenantId, subjectId, referencedKeys);
+  const custom = await resolver.resolveFieldValues(input.tenantId, subjectId, customKeys);
   return { ...claims, ...custom.claims };
 }
 
@@ -211,34 +441,100 @@ function withCanonicalProfileAliases(claims: Record<string, unknown>): Record<st
 async function applyOIDCDestinationFieldConsent(
   input: ApplyOIDCIdentityMappingInput,
   claims: Record<string, unknown>,
-  binding: RuntimeIdentityMappingBinding | null
+  binding: RuntimeIdentityMappingBinding | null,
+  unevaluated?: ReadonlySet<string>
 ): Promise<Record<string, unknown>> {
-  const profileId = binding?.destinationProfileId ?? input.selector?.destinationProfileId;
+  // Only a Mapping Set that was selected brings a Destination Profile. An app whose selector names
+  // only a profile (no set) never gets here: the selection fails for it (a selector of that older
+  // kind is not a choice), so the profile's gate is not dropped in silence.
+  const profileId = binding?.destinationProfileId;
   const subjectId = typeof input.claims.sub === 'string' ? input.claims.sub : '';
+  const authorizedClaimNames = input.authorizedClaimNames ?? [];
   if (!profileId) return filterOidcClaimsWithoutDestinationProfile(claims);
   if (!subjectId) {
     throw new OIDCIdentityMappingRuntimeError(
       'OIDC destination release requires a subject identifier',
       {
         code: 'policy.missing_destination_subject',
-        fieldMappingSetId: input.selector?.fieldMappingSetId,
+        fieldMappingSetId: binding?.fieldMappingSetId,
         clientId: input.clientId,
       }
     );
   }
   return filterOidcClaimsByDestinationConsent({
     coreAdapter: input.adapter,
-    adminAdapter: input.env?.DB_ADMIN
-      ? requireDedicatedAdminDatabaseAdapter(input.env, 'oidc-destination-profile-consent')
-      : input.adapter,
+    adminAdapter: requireDedicatedAdminDatabaseAdapter(
+      input.env,
+      'oidc-destination-profile-consent'
+    ),
     tenantId: input.tenantId,
     subjectId,
     clientId: input.clientId,
     profileId,
     surface: input.destinationSurface,
+    ...(input.userInfoClaimsInIdToken && input.destinationSurface === 'id_token'
+      ? { alsoSurfaces: ['userinfo' as const] }
+      : {}),
     grantedScopes: input.grantedScopes,
+    ...(input.fixture
+      ? { assumedConsent: input.fixture.consent, unevaluatedClaims: unevaluated ?? new Set() }
+      : {}),
+    ...(input.trace ? { trace: input.trace } : {}),
+    ...(input.claimsAuthorizedByRequest
+      ? { authorizedClaims: unchangedClaimNames(input.claims, claims) }
+      : authorizedClaimNames.length > 0
+        ? {
+            authorizedClaims: new Set(
+              [...unchangedClaimNames(input.claims, claims)].filter((name) =>
+                authorizedClaimNames.includes(name)
+              )
+            ),
+          }
+        : {}),
     claims,
   });
+}
+
+/**
+ * The claims the caller handed in that the mapping left with the value it was given. Only these
+ * are the ones the caller authorized; a claim the mapping replaced is the mapping's own output.
+ */
+function unchangedClaimNames(
+  authorized: Record<string, unknown>,
+  mapped: Record<string, unknown>
+): Set<string> {
+  const names = new Set<string>();
+  for (const [name, value] of Object.entries(authorized)) {
+    if (!Object.prototype.hasOwnProperty.call(mapped, name)) continue;
+    if (claimValuesEqual(mapped[name], value)) names.add(name);
+  }
+  return names;
+}
+
+/** Equal as JSON values are: arrays in order, object members in any order (address, say). */
+function claimValuesEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((item, index) => claimValuesEqual(item, right[index]))
+    );
+  }
+  if (left && right && typeof left === 'object' && typeof right === 'object') {
+    const leftEntries = Object.entries(left as Record<string, unknown>);
+    const rightRecord = right as Record<string, unknown>;
+    return (
+      leftEntries.length === Object.keys(rightRecord).length &&
+      leftEntries.every(
+        ([key, item]) =>
+          Object.prototype.hasOwnProperty.call(rightRecord, key) &&
+          claimValuesEqual(item, rightRecord[key])
+      )
+    );
+  }
+  return false;
 }
 
 interface OIDCPersistentIdentifierProfileRow {
@@ -253,11 +549,17 @@ interface OIDCPersistentIdentifierProfileRow {
 
 async function resolveOIDCPersistentIdentifiers(
   input: ApplyOIDCIdentityMappingInput,
-  binding: RuntimeIdentityMappingBinding
+  binding: RuntimeIdentityMappingBinding,
+  /** For a test user: the value every identifier takes instead of being derived. */
+  placeholder: string | null
 ): Promise<Record<string, string>> {
   const profileIds = findPersistentIdentifierProfileIds(binding, 'oidc_pairwise_sub');
   if (profileIds.length === 0) {
     return {};
+  }
+  // Not derived for a test user: no secret is read or created for it.
+  if (placeholder !== null) {
+    return Object.fromEntries(profileIds.map((id) => [id, placeholder]));
   }
 
   if (!input.env?.DB_ADMIN || !input.env.KEY_MANAGER) {
@@ -417,6 +719,93 @@ function isAudienceMode(value: string | null): value is PersistentIdentifierAudi
   return value === 'runtime' || value === 'saml_sp_entity_id' || value === 'oidc_sector_identifier';
 }
 
+/** Which claims have a value and which an empty one (null, '' or []); never the value. */
+function tracePresence(claims: Record<string, unknown>): Record<string, 'present' | 'empty'> {
+  const presence: Record<string, 'present' | 'empty'> = {};
+  for (const [claim, value] of Object.entries(claims)) {
+    if (value === undefined) continue;
+    presence[claim] =
+      value === null || value === '' || (Array.isArray(value) && value.length === 0)
+        ? 'empty'
+        : 'present';
+  }
+  return presence;
+}
+
+/**
+ * The claims a mapping fills in the namespace it releases into, with the source attributes each
+ * reads (through its edges, and through the edges a transform takes), and whether it gave a value.
+ */
+function traceMappingTargets(
+  binding: RuntimeIdentityMappingBinding,
+  destinationNamespace: string,
+  produced: ReadonlySet<string>,
+  unevaluated: ReadonlySet<string>
+): NonNullable<OIDCReleaseTrace['mapping']> {
+  const edgeSources = new Map(
+    binding.edges.map((edge) => [
+      edge.id,
+      edge.sourceRef.side === 'source' ? edge.sourceRef.path : '',
+    ])
+  );
+  const targets = new Map<string, { sources: Set<string> }>();
+  const target = (claim: string) => {
+    let entry = targets.get(claim);
+    if (!entry) {
+      entry = { sources: new Set() };
+      targets.set(claim, entry);
+    }
+    return entry;
+  };
+  const releases = (ref: { side: string; namespace: string; path: string }) =>
+    ref.side === 'destination' &&
+    ref.namespace === destinationNamespace &&
+    !isProtectedIdentityMappingDestinationClaim('oidc.claim', ref.path);
+  for (const edge of binding.edges) {
+    if (!releases(edge.targetRef)) continue;
+    const source = edgeSources.get(edge.id);
+    const entry = target(edge.targetRef.path);
+    if (source) entry.sources.add(source);
+  }
+  for (const step of binding.transforms ?? []) {
+    if (!releases(step.outputTargetRef)) continue;
+    const entry = target(step.outputTargetRef.path);
+    for (const edgeId of step.inputEdgeIds) {
+      const source = edgeSources.get(edgeId);
+      if (source) entry.sources.add(source);
+    }
+  }
+  return [...targets].map(([claim, entry]) => ({
+    claim,
+    sources: [...entry.sources].sort(),
+    produced: produced.has(claim),
+    ...(unevaluated.has(claim) ? { notEvaluated: true as const } : {}),
+  }));
+}
+
+/**
+ * Every source field a mapping reads, from the one place that decides it: the sources of its
+ * edges (which its transforms read through the edges they take) and the source fields its
+ * validation rules check. The attributes to load for a mapping, and the values it is handed,
+ * both come from this list, so a field a mapping reads cannot be left unloaded or unpassed.
+ */
+export function mappingSourceRefs(
+  binding: Pick<RuntimeIdentityMappingBinding, 'edges' | 'validationRules'>
+): FieldRef[] {
+  const refs: FieldRef[] = [];
+  const seen = new Set<string>();
+  const add = (ref: FieldRef) => {
+    if (ref.side !== 'source' || !ref.path) return;
+    const key = `${ref.namespace}:${ref.path}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    refs.push(ref);
+  };
+  for (const edge of binding.edges) add(edge.sourceRef);
+  for (const rule of binding.validationRules ?? []) add(rule.targetRef);
+  return refs;
+}
+
 function toOIDCSourceValues(
   claims: Record<string, unknown>,
   binding: RuntimeIdentityMappingBinding
@@ -429,15 +818,90 @@ function toOIDCSourceValues(
   const seen = new Set(
     values.map((value) => `${value.sourceRef.namespace}:${value.sourceRef.path}`)
   );
-  for (const edge of binding.edges) {
-    if (edge.sourceRef.side !== 'source') continue;
-    if (!Object.prototype.hasOwnProperty.call(claims, edge.sourceRef.path)) continue;
-    const key = `${edge.sourceRef.namespace}:${edge.sourceRef.path}`;
+  for (const ref of mappingSourceRefs(binding)) {
+    if (!Object.prototype.hasOwnProperty.call(claims, ref.path)) continue;
+    const key = `${ref.namespace}:${ref.path}`;
     if (seen.has(key)) continue;
-    values.push({ value: claims[edge.sourceRef.path], sourceRef: edge.sourceRef });
+    values.push({ value: claims[ref.path], sourceRef: ref });
     seen.add(key);
   }
   return values;
+}
+
+/**
+ * A mapped sub must not take a client or admin principal namespace (client:, machine:,
+ * admin_user:), which only those issuance paths use: a token with such a sub would be taken for a
+ * non-account subject.
+ */
+function assertMappedSubjectNotReserved(
+  input: ApplyOIDCIdentityMappingInput,
+  binding: RuntimeIdentityMappingBinding,
+  subject: unknown
+): void {
+  if (subject === input.claims.sub || typeof subject !== 'string') return;
+  if (!isNonAccountSubject(subject)) return;
+  throw new OIDCIdentityMappingRuntimeError('OIDC identity mapping produced a reserved subject', {
+    code: 'policy.identity_mapping_reserved_subject',
+    fieldMappingSetId: binding.fieldMappingSetId,
+    fieldMappingVersionId: binding.fieldMappingVersionId,
+    clientId: input.clientId,
+  });
+}
+
+/**
+ * The error the release of claims answers with for a failure of the selection or of reading the
+ * set it chose: 400 `invalid_client` / `invalid_client_metadata` for a configuration the app
+ * cannot be served with (the set it names is gone or inactive, its Destination Profile is not one,
+ * a default or the app's own choice is not a value), 500 for a database or settings that cannot be
+ * read. Anything else is returned as it is.
+ */
+export function toOidcIdentityMappingRuntimeError(
+  error: unknown,
+  context: { clientId?: string } = {}
+): unknown {
+  if (error instanceof IdentityMappingResolutionError) {
+    switch (error.code) {
+      case 'set_missing':
+      case 'set_inactive':
+        return new OIDCIdentityMappingRuntimeError(
+          'No active OIDC identity mapping binding found for selected policy',
+          {
+            code: 'policy.missing_identity_mapping_binding',
+            fieldMappingSetId: error.setId,
+            clientId: context.clientId,
+          }
+        );
+      case 'destination_profile_invalid':
+        return new OIDCIdentityMappingRuntimeError(
+          'OIDC identity mapping must reference exactly one Destination Profile',
+          {
+            code: 'policy.invalid_destination_profile_binding',
+            fieldMappingSetId: error.setId,
+            clientId: context.clientId,
+          }
+        );
+      default:
+        // The Admin database could not be read: not a fault of the app's configuration.
+        return error;
+    }
+  }
+  if (error instanceof IdentityMappingSelectionError) {
+    if (error.code === 'default_setting_invalid' || error.code === 'client_selector_invalid') {
+      return new OIDCIdentityMappingRuntimeError(
+        error.code === 'default_setting_invalid'
+          ? 'The default OIDC identity mapping is not usable'
+          : 'The OIDC identity mapping of the client is not usable',
+        {
+          code:
+            error.code === 'default_setting_invalid'
+              ? 'policy.invalid_default_identity_mapping'
+              : 'policy.invalid_client_identity_mapping',
+          clientId: context.clientId,
+        }
+      );
+    }
+  }
+  return error;
 }
 
 export class OIDCIdentityMappingRuntimeError extends Error {

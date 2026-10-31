@@ -139,24 +139,25 @@ export function inflateRawToStringLimited(
   label: string
 ): string {
   const decoder = new TextDecoder();
-  const inflator = new pako.Inflate({ raw: true, to: 'string', chunkSize: 16 * 1024 });
+  const inflator = new pako.Inflate({ raw: true, chunkSize: 16 * 1024 });
   let result = '';
 
-  inflator.onData = (chunk) => {
-    const text =
-      typeof chunk === 'string'
-        ? chunk
-        : decoder.decode(chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk));
+  const appendDecoded = (text: string): void => {
     if (result.length + text.length > maxInflatedChars) {
       throw new Error(`${label} exceeds maximum inflated size`);
     }
     result += text;
   };
 
-  inflator.push(compressed, true);
-  if (inflator.err) {
+  inflator.onData = (chunk) => {
+    appendDecoded(decoder.decode(chunk, { stream: true }));
+  };
+
+  const succeeded = inflator.push(compressed, true);
+  if (!succeeded || inflator.err) {
     throw new Error(inflator.msg || `Invalid compressed ${label}`);
   }
+  appendDecoded(decoder.decode());
 
   return result;
 }

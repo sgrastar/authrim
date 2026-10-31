@@ -1,4 +1,80 @@
 const adminOther = {
+	admin_registration_label: '登録区分',
+	admin_registration_guest: 'ゲスト',
+	admin_registration_registered: '登録済み',
+	admin_lifecycle_progressTitle: 'ゲストのライフサイクル状況',
+	admin_lifecycle_progressHelp:
+		'削除処理は毎時実行されます。試行結果は表示に遅延があり、30日間保持されます。更新して状況を確認してください。',
+	admin_lifecycle_refresh: '更新',
+	admin_lifecycle_progressError: '状況を取得できませんでした。更新してください。',
+	admin_lifecycle_subject: '主体',
+	admin_lifecycle_phase: '段階',
+	admin_lifecycle_due: '削除予定日時',
+	admin_lifecycle_delay: '期限超過（分）',
+	admin_lifecycle_attempt: '直近の試行',
+	admin_lifecycle_phaseValue:
+		'{phase|{active: ゲスト, upgrading: 昇格中, registered: 登録済み, deleting: 削除中, deleted: 削除済み}}',
+	admin_lifecycle_maintenanceValue:
+		'{state|{processing: 処理中, pending: 待機中, completed: 完了, retrying: 再試行待ち}}',
+	admin_lifecycle_noAccounts: 'ゲストのライフサイクル記録はありません。',
+	admin_lifecycle_loadMore: '続きを読み込む',
+	admin_retentionPreviewTitle: '既存ゲストへの保持期間の適用',
+	admin_retentionPreviewDescription:
+		'先に設定を保存し、100件ずつ影響を確認してください。表示した対象にのみ適用します。期限は作成日から計算し、確認後に変更・昇格・削除開始されたアカウントは除外します。プレビューは15分間有効です。',
+	admin_retentionPreviewButton: '既存ゲストへの影響を確認',
+	admin_retentionPreviewCounts:
+		'このページの対象は{count}件です。このうち{due}件は直ちに自動削除の対象になります。',
+	admin_retentionApplyButton: '表示中の{count}件に適用',
+	admin_retentionApplied: '適用{applied}件、変更なし{unchanged}件、除外{skipped}件。',
+	admin_retentionNextPage: '次の対象を確認',
+	admin_retentionAccount: 'アカウント',
+	admin_retentionBefore: '現在の削除予定',
+	admin_retentionAfter: '適用後の削除予定',
+	admin_retentionNoDeadline: '自動削除なし',
+	admin_retentionPreviewError:
+		'プレビューを取得できませんでした。現在の保存済み設定で再取得してください。',
+	admin_retentionApplyError:
+		'適用を完了できませんでした。プレビューの期限切れや設定変更がないか確認してください。一時的なエラーの場合は同じプレビューで再試行できます。',
+
+	admin_guestClientTitle: 'ゲストアクセス',
+	admin_guestClientDescription:
+		'このクライアントでゲストログインを許可します。テナントのゲストログイン設定も有効にする必要があります。',
+	admin_guestClientEnabled: 'ゲストログインを許可',
+	admin_guestClientScopes: 'ゲストに許可するスコープ',
+	admin_guestClientScopeHint:
+		'1行に1つ入力します。実際のリクエストと通常のクライアント設定でも許可されている必要があります。昇格時に既存の認可範囲を増やすことはありません。',
+	admin_guestClientScopesInvalid: 'openidを含め、有効なスコープ名を入力してください。',
+	admin_guestClientSave: 'ゲストアクセスを保存',
+	admin_guestClientSaved: 'ゲストアクセスを保存しました。',
+	admin_guestClientLoadError: 'ゲストアクセス設定を読み込めませんでした。',
+	admin_guestClientSaveError: 'ゲストアクセス設定を保存できませんでした。',
+	admin_guestClientConflict:
+		'クライアント設定が更新されました。再読み込みしてから保存してください。',
+	admin_guestClientTenantRequired: 'クライアント設定の保存前にテナントポリシーを設定してください。',
+
+	admin_guest_login_title: 'ゲストログイン',
+	admin_guest_login_description:
+		'ゲストの作成と再開を許可します。クライアントごとの許可も必要です。',
+	admin_guest_upgrade_methods: 'ゲストからの昇格に使用',
+	admin_guest_upgrade_methods_description:
+		'ログイン・新規登録とは独立した設定です。アカウントライフサイクルでも昇格が許可されている必要があります。',
+	admin_account_lifecycle_saved: 'アカウントライフサイクルの設定を保存しました。',
+	admin_lifecycle_title: 'アカウントライフサイクル',
+	admin_lifecycle_description: 'ゲストの保持期間と通常アカウントへの昇格を管理します。',
+	admin_lifecycle_new_only:
+		'保存した設定は新規作成するゲストにのみ適用されます。既存ゲストの削除予定日は変わりません。',
+	admin_lifecycle_delete: 'ゲストアカウントを自動削除',
+	admin_lifecycle_days: 'アカウント作成からの日数',
+	admin_lifecycle_delete_help:
+		'この期間を過ぎたゲストを毎時の処理で削除します。通常アカウントへの昇格で削除予定が解除されます。',
+	admin_lifecycle_upgrade: 'ゲストからの昇格を許可',
+	admin_lifecycle_hold: '昇格開始時の削除保留時間（分）',
+	admin_lifecycle_hold_help:
+		'1～60分で設定できます。保留はゲストごとに一度限りで、再試行しても延長されません。既定値は10分です。',
+	admin_lifecycle_other:
+		'通常アカウント（属性付きも含む）の自動削除は今回対象外です。機器・エージェントのポリシーは別に管理する予定です。',
+	admin_lifecycle_invalid: '日数は1～3650、保留時間は1～60の整数で入力してください。',
+
 	admin_settings_title: '設定',
 	admin_settings_page_title: '設定 - 管理ダッシュボード - Authrim',
 	admin_settings_description: 'システム設定、セキュリティポリシー、機能フラグを設定します',
@@ -229,6 +305,8 @@ const adminOther = {
 	admin_info_organizations: 'Organizations',
 	admin_info_roles: 'Roles',
 	admin_info_webhooks: 'Webhooks',
+	admin_theme_accent_not_applied:
+		'この色は適用されません（#rgb、#rrggbb、rgb() のいずれかで指定してください）。上位の設定か、テーマの既定のアクセント色が使われます。',
 	admin_theme_head_title: 'テーマ - Authrim Admin',
 	admin_theme_page_description_list:
 		'Login UIのテーマテンプレートを管理します。テンプレートを選び、編集可能なコピーを作成して使います。',
@@ -278,7 +356,7 @@ const adminOther = {
 	admin_theme_template_fullbleed_glass_description:
 		'全面ビジュアル背景と半透明のフォーム面を組み合わせます。',
 	admin_theme_template_classic_description:
-		'Light/Darkカラーバリアントで構成する従来のAuthrimデザインです。',
+		'温かみのあるライト／ダークの配色による、従来のAuthrimデザインです。',
 	admin_theme_preview_controls: 'テーマプレビュー操作',
 	admin_theme_preview_screen: 'プレビュー画面',
 	admin_theme_preview_color_mode: 'プレビューのカラーモード',
@@ -363,6 +441,9 @@ const adminOther = {
 	admin_authentication_methods_totp: '認証アプリ',
 	admin_authentication_methods_totp_description:
 		'TOTP認証アプリをログイン・登録・再認証・アカウント連携で使います。',
+	admin_authentication_methods_did: 'DID',
+	admin_authentication_methods_did_description:
+		'DID（did:web、did:key）を紐付けたアカウントが、チャレンジへの署名でログインできるようにします。ここで有効にしたテナントだけで使えます。',
 	admin_authentication_methods_totp_preset: 'TOTP preset',
 	admin_authentication_methods_totp_preset_compatible: 'Compatible',
 	admin_authentication_methods_totp_preset_strong: 'Strong',
@@ -394,6 +475,11 @@ const adminOther = {
 	admin_authentication_methods_login_enabled: 'ログイン',
 	admin_authentication_methods_signup_enabled: '新規登録',
 	admin_authentication_methods_reauth_enabled: '再認証',
+	admin_authentication_methods_reauth_without_auth_time: 'auth_time なしでも許可',
+	admin_authentication_methods_reauth_without_auth_time_hint:
+		'新しいログインを要求したことを根拠に、この IdP が日時を示さない（ID トークンに auth_time がない）再認証も受け付けます。証拠としては弱いため、auth_time を返せない IdP でだけオンにしてください。',
+	admin_authentication_methods_reauth_unavailable_oauth2:
+		'OAuth 2.0 の IdP は新しいログインの日時を示す ID トークンを返さないため、再認証には使えません。',
 	admin_authentication_methods_account_link_enabled: 'アカウントリンク対象',
 	admin_authentication_methods_configured: '外部Identity Provider',
 	admin_authentication_methods_empty: '外部Identity Providerは設定されていません。',

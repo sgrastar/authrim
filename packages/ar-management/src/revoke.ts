@@ -12,7 +12,7 @@ import {
   createAuthContextFromHono,
   getTenantIdFromContext,
   validateClientAssertion,
-  createOAuthConfigManager,
+  resolveEffectiveSettings,
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
@@ -24,10 +24,10 @@ import {
   // Shared utilities
   parseBasicAuth,
   getKeyByKid,
-  DeviceSecretRepository,
   createPhase1ErrorDetails,
 } from '@authrim/ar-lib-core';
 import { importJWK, decodeProtectedHeader, type CryptoKey } from 'jose';
+import { findRoutedDeviceSecret } from './device-secret-account';
 import { getRequestAwareIssuerUrl } from './request-issuer';
 import {
   evaluateDeviceSecretRevokePolicy,
@@ -51,6 +51,38 @@ function deviceSecretPolicyErrorResponse(
   );
 }
 
+/** 1 hour, the `oauth.access_token_expiry` default. */
+const DEFAULT_ACCESS_TOKEN_TTL_SECONDS = 3600;
+
+/** 1 year: the longest `oauth.refresh_token_expiry`. */
+const MAX_REVOCATION_LIFETIME_SECONDS = 31536000;
+
+/**
+ * How long a revocation must last: until the token itself expires (its `exp`), and at least as
+ * long as the client's access tokens can live (`oauth.access_token_expiry`), which covers the
+ * access tokens a refresh token's revocation also revokes. A setting changed after the token was
+ * issued therefore never ends a revocation early.
+ */
+function revocationLifetime(tokenPayload: Record<string, unknown>, accessLifetime: number): number {
+  const exp = tokenPayload.exp;
+  const remaining =
+    typeof exp === 'number' && Number.isFinite(exp) ? Math.ceil(exp - Date.now() / 1000) : 0;
+  // Bounded by the longest lifetime a token can be configured with (a refresh token's maximum).
+  return Math.min(Math.max(remaining, accessLifetime), MAX_REVOCATION_LIFETIME_SECONDS);
+}
+
+/** The access token lifetime the Settings API resolves for the client. */
+async function accessTokenLifetime(env: Env, tenantId: string, clientId: string): Promise<number> {
+  const value = (
+    await resolveEffectiveSettings(env, 'oauth', {
+      tenantId,
+      clientId,
+    })
+  )['oauth.access_token_expiry'];
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+    ? value
+    : DEFAULT_ACCESS_TOKEN_TTL_SECONDS;
+}
 /**
  * Token Revocation Endpoint Handler
  * https://tools.ietf.org/html/rfc7009
@@ -178,8 +210,21 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
 
   if (token_type_hint === 'device_secret') {
     const tenantId = getTenantIdFromContext(c);
-    const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
-    const deviceSecret = await deviceSecretRepo.findByRawSecret(token, tenantId);
+    // The secret lives in its owner's account database, which its route hint names.
+    let routedDeviceSecret: Awaited<ReturnType<typeof findRoutedDeviceSecret>>;
+    try {
+      // Revoked even while its owner is not active, so a reactivation does not revive it.
+      routedDeviceSecret = await findRoutedDeviceSecret(c.env, tenantId, token, {
+        includeInactiveOwner: true,
+      });
+    } catch (error) {
+      log.error('Failed to read the device secret to revoke', { action: 'revoke' }, error as Error);
+      return c.json(
+        { error: 'temporarily_unavailable', error_description: 'Device secret is unavailable' },
+        503
+      );
+    }
+    const deviceSecret = routedDeviceSecret?.deviceSecret ?? null;
     const nowMs = Date.now();
 
     if (
@@ -218,7 +263,7 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
 
     const revokeReason =
       deviceSecretPolicy.callerClass === 'native_public_client' ? 'logout' : 'token_revocation';
-    await deviceSecretRepo.revoke(deviceSecret.id, revokeReason, tenantId);
+    await routedDeviceSecret!.repository.revoke(deviceSecret.id, revokeReason, tenantId);
 
     log.info('Device secret revoke requested', {
       action: 'revoke',
@@ -324,9 +369,10 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
   // Token Revocation with Cascade Support (RFC 7009 Section 2.1)
   // When revoking refresh_token, SHOULD revoke related access tokens
   // =========================================================================
-  // P4: Use ConfigManager for TOKEN_EXPIRY (KV → env → default)
-  const configManager = createOAuthConfigManager(c.env);
-  const expiresIn = await configManager.getNumber('TOKEN_EXPIRY');
+  const expiresIn = revocationLifetime(
+    tokenPayload,
+    await accessTokenLifetime(c.env, tenantId, client_id)
+  );
 
   // P1: Helper function for cascade revocation
   const performCascadeRevocation = async (refreshTokenJti: string, familyId?: string) => {
@@ -577,8 +623,7 @@ export async function batchRevokeHandler(c: Context<{ Bindings: Env }>) {
   // Batch Revocation Processing
   // =========================================================================
 
-  const configManager = createOAuthConfigManager(c.env);
-  const expiresIn = await configManager.getNumber('TOKEN_EXPIRY');
+  const accessLifetime = await accessTokenLifetime(c.env, tenantId, client_id);
 
   // Process all tokens in parallel
   const results = await Promise.allSettled(
@@ -591,8 +636,35 @@ export async function batchRevokeHandler(c: Context<{ Bindings: Env }>) {
       try {
         if (item.token_type_hint === 'device_secret') {
           const tenantId = getTenantIdFromContext(c);
-          const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
-          await deviceSecretRepo.revokeByRawSecret(item.token, 'batch_token_revocation', tenantId);
+          // Revoked in its owner's account database, which its route hint names.
+          const routed = await findRoutedDeviceSecret(c.env, tenantId, item.token, {
+            includeInactiveOwner: true,
+          });
+          if (routed) {
+            // The caller may revoke only what the single /revoke lets it revoke (its own secrets,
+            // or its trust group's when allowlisted); another client's secret is left as it is.
+            const policy = evaluateDeviceSecretRevokePolicy(clientMetadata, {
+              clientId: routed.deviceSecret.client_id,
+              trustGroupId: routed.deviceSecret.trust_group_id,
+            });
+            if (!policy.allowed) {
+              getLogger(c)
+                .module('REVOKE')
+                .warn('Batch device secret revoke denied by caller policy', {
+                  action: 'batch_revoke',
+                  type: 'device_secret',
+                  clientId: client_id,
+                  callerClass: policy.callerClass,
+                  code: policy.code,
+                });
+              return { token_hint: tokenHint, status: 'invalid' };
+            }
+            await routed.repository.revoke(
+              routed.deviceSecret.id,
+              'batch_token_revocation',
+              tenantId
+            );
+          }
           return { token_hint: tokenHint, status: 'revoked' };
         }
 
@@ -603,6 +675,7 @@ export async function batchRevokeHandler(c: Context<{ Bindings: Env }>) {
         const userId = tokenPayload.sub as string;
         const version = typeof tokenPayload.rtv === 'number' ? tokenPayload.rtv : 1;
         const aud = tokenPayload.aud as string;
+        const expiresIn = revocationLifetime(tokenPayload, accessLifetime);
 
         if (!jti) {
           return { token_hint: tokenHint, status: 'invalid' };

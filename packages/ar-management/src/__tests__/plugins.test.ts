@@ -23,11 +23,14 @@ import type {
   Env,
 } from '@authrim/ar-lib-core';
 
+const { listTenantsMock } = vi.hoisted(() => ({ listTenantsMock: vi.fn() }));
+
 // Mock ar-lib-core functions
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    listEnvironmentTenantDefaultStores: listTenantsMock,
     scheduleAuditLogFromContext: vi.fn(),
     produceNotificationDelivery: vi.fn(async (env, input) => {
       try {
@@ -515,6 +518,23 @@ describe('Plugin Admin API - Get Plugin', () => {
       expect(body).toHaveProperty('error');
     });
 
+    it.each(['toString', 'constructor', 'hasOwnProperty', 'valueOf'])(
+      'should return 404 for the inherited property name %s, not a plugin',
+      async (name) => {
+        const kv = createMockKV({
+          getValues: {
+            'plugins:registry': JSON.stringify({ 'test-plugin': createPluginEntry() }),
+          },
+        });
+
+        const c = createMockContext({ params: { id: name }, kv });
+
+        const { status } = await getResponseData(await getPluginHandler(c));
+
+        expect(status).toBe(404);
+      }
+    );
+
     it('should mask sensitive fields in config', async () => {
       const registry = {
         'secret-plugin': createPluginEntry({ id: 'secret-plugin' }),
@@ -989,6 +1009,39 @@ describe('Plugin Admin API - Update Plugin Config', () => {
           siteKey: 'site-key',
           secretKey: 'secret-key',
           widgetMode: 'score',
+          failurePolicy: 'fail_closed',
+        },
+      },
+      {
+        pluginId: 'human-verification-cloudflare-turnstile',
+        config: { siteKey: 'site-key', secretKey: '   ', failurePolicy: 'fail_closed' },
+      },
+      {
+        pluginId: 'human-verification-hcaptcha',
+        config: { siteKey: ' \t ', secretKey: 'secret-key', failurePolicy: 'fail_closed' },
+      },
+      {
+        pluginId: 'human-verification-google-recaptcha',
+        config: { siteKey: 'site-key', secretKey: '  ', failurePolicy: 'fail_closed' },
+      },
+      {
+        pluginId: 'human-verification-cloudflare-turnstile',
+        config: {
+          siteKey: 'a'.repeat(2_049),
+          secretKey: 'secret-key',
+          failurePolicy: 'fail_closed',
+        },
+      },
+      {
+        pluginId: 'human-verification-hcaptcha',
+        config: { siteKey: 'site-key', secretKey: 'a'.repeat(8_193), failurePolicy: 'fail_closed' },
+      },
+      {
+        pluginId: 'human-verification-google-recaptcha',
+        config: {
+          siteKey: 'site-key',
+          secretKey: 'secret-key',
+          expectedHostname: 'https://not-a-hostname',
           failurePolicy: 'fail_closed',
         },
       },
@@ -1586,6 +1639,371 @@ describe('Plugin Admin API - Enable/Disable', () => {
         'plugins:enabled:notifier-cloudflare:tenant:tenant-1',
         'false'
       );
+    });
+  });
+
+  describe('PUT /api/admin/plugins/:id/disable for a human verification provider', () => {
+    const turnstile = 'human-verification-cloudflare-turnstile';
+    const settingsKey = 'settings:tenant:tenant-1:authentication-methods';
+
+    function setup(values: Record<string, string>, pluginId = turnstile) {
+      const kv = createMockKV({
+        getValues: {
+          'plugins:registry': JSON.stringify({
+            [turnstile]: createPluginEntry({ id: turnstile }),
+            'human-verification-hcaptcha': createPluginEntry({
+              id: 'human-verification-hcaptcha',
+            }),
+            'test-plugin': createPluginEntry({ id: 'test-plugin' }),
+          }),
+          [`plugins:enabled:${turnstile}:tenant:tenant-1`]: 'true',
+          ...values,
+        },
+      });
+      const configureHumanVerificationInstallation = vi.fn(async () => ({}));
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: pluginId },
+        tenantId: 'tenant-1',
+        body: {},
+        kv,
+        envOverrides: {
+          AUTHRIM_ENVIRONMENT_NAME: 'test',
+          PLUGIN_RUNNER: { configureHumanVerificationInstallation },
+        },
+      });
+      return { kv, c, configureHumanVerificationInstallation };
+    }
+
+    it.each([['login_enabled'], ['signup_enabled'], ['reauth_enabled']])(
+      'refuses with 409 while %s requires it, naming the setting',
+      async (flow) => {
+        const { kv, c, configureHumanVerificationInstallation } = setup({
+          [settingsKey]: JSON.stringify({
+            [`authentication-methods.human_verification.${flow}`]: true,
+          }),
+        });
+
+        const response = await disablePluginHandler(c);
+        const { body, status } = await getResponseData(response);
+
+        expect(status).toBe(409);
+        expect(body).toMatchObject({
+          error: 'human_verification_provider_in_use',
+          plugin_id: turnstile,
+          tenant_id: 'tenant-1',
+          settings: [`authentication-methods.human_verification.${flow}`],
+        });
+        expect(kv.put).not.toHaveBeenCalled();
+        expect(configureHumanVerificationInstallation).not.toHaveBeenCalled();
+      }
+    );
+
+    it('lists every setting that requires it', async () => {
+      const { c } = setup({
+        [settingsKey]: JSON.stringify({
+          'authentication-methods.human_verification.login_enabled': 'true',
+          'authentication-methods.human_verification.reauth_enabled': true,
+        }),
+      });
+      const { body } = await getResponseData(await disablePluginHandler(c));
+      expect(body.settings).toEqual([
+        'authentication-methods.human_verification.login_enabled',
+        'authentication-methods.human_verification.reauth_enabled',
+      ]);
+    });
+
+    it('treats a tenant that did not choose a provider as using Turnstile', async () => {
+      const { c } = setup({
+        [settingsKey]: JSON.stringify({
+          'authentication-methods.human_verification.login_enabled': true,
+        }),
+      });
+      const { status } = await getResponseData(await disablePluginHandler(c));
+      expect(status).toBe(409);
+    });
+
+    it('disables it once the required settings are off', async () => {
+      const { kv, c, configureHumanVerificationInstallation } = setup({
+        [settingsKey]: JSON.stringify({
+          'authentication-methods.human_verification.login_enabled': false,
+          'authentication-methods.human_verification.signup_enabled': 'false',
+        }),
+      });
+      await disablePluginHandler(c);
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({ success: true, pluginId: turnstile, enabled: false })
+      );
+      expect(kv.put).toHaveBeenCalledWith(`plugins:enabled:${turnstile}:tenant:tenant-1`, 'false');
+      expect(configureHumanVerificationInstallation).toHaveBeenCalledWith(
+        expect.objectContaining({ pluginId: turnstile, enabled: false })
+      );
+    });
+
+    it('disables it when the tenant has no settings at all', async () => {
+      const { kv, c } = setup({});
+      await disablePluginHandler(c);
+      expect(kv.put).toHaveBeenCalledWith(`plugins:enabled:${turnstile}:tenant:tenant-1`, 'false');
+    });
+
+    it('disables a provider the tenant does not use, whatever its flows require', async () => {
+      const { kv, c } = setup({
+        [settingsKey]: JSON.stringify({
+          'authentication-methods.human_verification.provider': 'human-verification-hcaptcha',
+          'authentication-methods.human_verification.login_enabled': true,
+        }),
+      });
+      await disablePluginHandler(c);
+      expect(kv.put).toHaveBeenCalledWith(`plugins:enabled:${turnstile}:tenant:tenant-1`, 'false');
+    });
+
+    it('refuses the provider the tenant chose, not the default', async () => {
+      const { c } = setup(
+        {
+          [settingsKey]: JSON.stringify({
+            'authentication-methods.human_verification.provider': 'human-verification-hcaptcha',
+            'authentication-methods.human_verification.login_enabled': true,
+          }),
+        },
+        'human-verification-hcaptcha'
+      );
+      const { status } = await getResponseData(await disablePluginHandler(c));
+      expect(status).toBe(409);
+    });
+
+    it('does not look at human verification settings for another plugin', async () => {
+      const { kv, c } = setup(
+        {
+          [settingsKey]: JSON.stringify({
+            'authentication-methods.human_verification.login_enabled': true,
+          }),
+        },
+        'test-plugin'
+      );
+      await disablePluginHandler(c);
+      expect(kv.put).toHaveBeenCalledWith('plugins:enabled:test-plugin:tenant:tenant-1', 'false');
+      expect(kv.get).not.toHaveBeenCalledWith(settingsKey);
+    });
+
+    it('refuses with 503 and writes nothing when the settings cannot be fetched', async () => {
+      const { kv, c, configureHumanVerificationInstallation } = setup({});
+      const original = kv.get as unknown as ReturnType<typeof vi.fn>;
+      const implementation = original.getMockImplementation() as (
+        key: string,
+        ...rest: unknown[]
+      ) => Promise<unknown>;
+      original.mockImplementation(async (key: string, ...rest: unknown[]) => {
+        if (key === 'settings:tenant:tenant-1:authentication-methods') throw new Error('kv down');
+        return implementation(key, ...rest);
+      });
+      const { body, status } = await getResponseData(await disablePluginHandler(c));
+      expect(status).toBe(503);
+      expect(body).toMatchObject({
+        error: 'temporarily_unavailable',
+        reason: 'settings_unavailable',
+        plugin_id: turnstile,
+      });
+      expect(kv.put).not.toHaveBeenCalled();
+      expect(configureHumanVerificationInstallation).not.toHaveBeenCalled();
+    });
+
+    it('can still disable it for a tenant whose settings cannot be read (the servers refuse them anyway)', async () => {
+      const { kv, c } = setup({ [settingsKey]: '{broken' });
+      await disablePluginHandler(c);
+      expect(kv.put).toHaveBeenCalledWith(`plugins:enabled:${turnstile}:tenant:tenant-1`, 'false');
+    });
+  });
+
+  describe('PUT /api/admin/platform/plugins/:id/disable for a human verification provider', () => {
+    const turnstile = 'human-verification-cloudflare-turnstile';
+    const requiresLogin = JSON.stringify({
+      'authentication-methods.human_verification.login_enabled': true,
+    });
+
+    function setup(values: Record<string, string>, tenantIds: string[], pluginId = turnstile) {
+      listTenantsMock.mockImplementation(
+        async (_env: unknown, options: { limit: number; afterTenantId?: string }) =>
+          tenantIds
+            .filter((tenantId) => tenantId > (options.afterTenantId ?? ''))
+            .slice(0, options.limit)
+            .map((tenantId) => ({ tenantId, store: {} }))
+      );
+      const kv = createMockKV({
+        getValues: {
+          'plugins:registry': JSON.stringify({
+            [turnstile]: createPluginEntry({ id: turnstile }),
+            'test-plugin': createPluginEntry({ id: 'test-plugin' }),
+          }),
+          [`plugins:enabled:${turnstile}`]: 'true',
+          ...values,
+        },
+      });
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: pluginId },
+        pluginTenantScope: 'platform',
+        body: {},
+        kv,
+      });
+      return { kv, c };
+    }
+
+    beforeEach(() => {
+      listTenantsMock.mockReset();
+    });
+
+    it('refuses with 409 while a tenant that inherits the flag requires it, naming the tenants', async () => {
+      const { kv, c } = setup(
+        {
+          'settings:tenant:tenant-a:authentication-methods': requiresLogin,
+          'settings:tenant:tenant-b:authentication-methods': requiresLogin,
+          // tenant-b keeps the provider on for itself, so the platform switch does not touch it.
+          [`plugins:enabled:${turnstile}:tenant:tenant-b`]: 'true',
+          // tenant-c requires nothing.
+          'settings:tenant:tenant-c:authentication-methods': JSON.stringify({}),
+        },
+        ['tenant-a', 'tenant-b', 'tenant-c']
+      );
+
+      const { body, status } = await getResponseData(await disablePluginHandler(c));
+
+      expect(status).toBe(409);
+      expect(body).toMatchObject({
+        error: 'human_verification_provider_in_use',
+        plugin_id: turnstile,
+        tenant_count: 1,
+        tenants: [
+          {
+            tenant_id: 'tenant-a',
+            settings: ['authentication-methods.human_verification.login_enabled'],
+          },
+        ],
+      });
+      expect(kv.put).not.toHaveBeenCalled();
+    });
+
+    it('disables it when no inheriting tenant requires it', async () => {
+      const { kv, c } = setup(
+        {
+          'settings:tenant:tenant-a:authentication-methods': requiresLogin,
+          [`plugins:enabled:${turnstile}:tenant:tenant-a`]: 'true',
+          'settings:tenant:tenant-b:authentication-methods': JSON.stringify({
+            'authentication-methods.human_verification.provider': 'human-verification-hcaptcha',
+            'authentication-methods.human_verification.login_enabled': true,
+          }),
+        },
+        ['tenant-a', 'tenant-b', 'tenant-c']
+      );
+      await disablePluginHandler(c);
+      expect(kv.put).toHaveBeenCalledWith(`plugins:enabled:${turnstile}`, 'false');
+    });
+
+    it('does not look at tenants when the platform flag is not on', async () => {
+      const { kv, c } = setup(
+        {
+          [`plugins:enabled:${turnstile}`]: 'false',
+          'settings:tenant:tenant-a:authentication-methods': requiresLogin,
+        },
+        ['tenant-a']
+      );
+      await disablePluginHandler(c);
+      expect(listTenantsMock).not.toHaveBeenCalled();
+      expect(kv.put).toHaveBeenCalledWith(`plugins:enabled:${turnstile}`, 'false');
+    });
+
+    it('does not look at tenants for another plugin', async () => {
+      const { kv, c } = setup({}, ['tenant-a'], 'test-plugin');
+      await disablePluginHandler(c);
+      expect(listTenantsMock).not.toHaveBeenCalled();
+      expect(kv.put).toHaveBeenCalledWith('plugins:enabled:test-plugin', 'false');
+    });
+
+    it('reads the tenants page by page and finds a tenant on a later page', async () => {
+      const tenantIds = Array.from(
+        { length: 150 },
+        (_, index) => `tenant-${String(index).padStart(3, '0')}`
+      );
+      const { c } = setup(
+        { 'settings:tenant:tenant-149:authentication-methods': requiresLogin },
+        tenantIds
+      );
+      const { body, status } = await getResponseData(await disablePluginHandler(c));
+      expect(status).toBe(409);
+      expect(body.tenants).toEqual([expect.objectContaining({ tenant_id: 'tenant-149' })]);
+      expect(listTenantsMock).toHaveBeenCalledTimes(2);
+      expect(listTenantsMock.mock.calls[1]?.[1]).toMatchObject({ afterTenantId: 'tenant-099' });
+    });
+
+    it('checks exactly 200 tenants', async () => {
+      const tenantIds = Array.from(
+        { length: 200 },
+        (_, index) => `tenant-${String(index).padStart(3, '0')}`
+      );
+      const { kv, c } = setup({}, tenantIds);
+      await disablePluginHandler(c);
+      expect(kv.put).toHaveBeenCalledWith(`plugins:enabled:${turnstile}`, 'false');
+    });
+
+    it('refuses on the safe side when there are more tenants than it can check', async () => {
+      const tenantIds = Array.from(
+        { length: 201 },
+        (_, index) => `tenant-${String(index).padStart(3, '0')}`
+      );
+      const { kv, c } = setup({}, tenantIds);
+      const { body, status } = await getResponseData(await disablePluginHandler(c));
+      expect(status).toBe(409);
+      expect(body).toMatchObject({ error: 'human_verification_scope_too_large' });
+      expect(kv.put).not.toHaveBeenCalled();
+    });
+
+    it('says when no tenant directory is configured (retrying will not help), without leaking more', async () => {
+      const { kv, c } = setup({}, []);
+      listTenantsMock.mockRejectedValue(new Error('environment_tenant_directory_unavailable'));
+      const { body, status } = await getResponseData(await disablePluginHandler(c));
+      expect(status).toBe(503);
+      expect(body).toMatchObject({
+        error: 'temporarily_unavailable',
+        reason: 'tenant_directory_unavailable',
+        plugin_id: turnstile,
+      });
+      expect(body.error_description).toMatch(/Retrying will not help/);
+      expect(JSON.stringify(body)).not.toMatch(/TENANT_RUNTIME_REGISTRY|environment_tenant/);
+      expect(kv.put).not.toHaveBeenCalled();
+    });
+
+    it('treats any other failure to list the tenants as worth retrying', async () => {
+      const { kv, c } = setup({}, []);
+      listTenantsMock.mockRejectedValue(new Error('d1 timeout'));
+      const { body, status } = await getResponseData(await disablePluginHandler(c));
+      expect(status).toBe(503);
+      expect(body).toMatchObject({ reason: 'settings_unavailable' });
+      expect(kv.put).not.toHaveBeenCalled();
+    });
+
+    it('asks for at most one tenant past the room left under the limit', async () => {
+      const tenantIds = Array.from(
+        { length: 201 },
+        (_, index) => `tenant-${String(index).padStart(3, '0')}`
+      );
+      const { c } = setup({}, tenantIds);
+      await disablePluginHandler(c);
+      expect(listTenantsMock.mock.calls.map((call) => call[1].limit)).toEqual([100, 100, 1]);
+    });
+
+    it('refuses on the safe side when a tenant settings read fails', async () => {
+      const { kv, c } = setup({}, ['tenant-a']);
+      const original = kv.get as unknown as ReturnType<typeof vi.fn>;
+      const implementation = original.getMockImplementation() as (
+        key: string,
+        ...rest: unknown[]
+      ) => Promise<unknown>;
+      original.mockImplementation(async (key: string, ...rest: unknown[]) => {
+        if (key === 'settings:tenant:tenant-a:authentication-methods') throw new Error('kv down');
+        return implementation(key, ...rest);
+      });
+      const { status } = await getResponseData(await disablePluginHandler(c));
+      expect(status).toBe(503);
+      expect(kv.put).not.toHaveBeenCalled();
     });
   });
 
@@ -3147,6 +3565,8 @@ describe('Plugin Admin API - Tenant Isolation', () => {
 });
 
 describe('Plugin Admin API - Approved Dynamic Workers', () => {
+  // The tenant allows external plugin code (plugin.enabled), which switching one on requires.
+  const EXTERNAL_PLUGINS_ALLOWED = { PLUGIN_ENABLED: 'true' };
   const approved: ApprovedDynamicPlugin = {
     pluginId: 'custom-a',
     capabilityManifestDigest: 'b'.repeat(64),
@@ -3160,6 +3580,15 @@ describe('Plugin Admin API - Approved Dynamic Workers', () => {
 
   function runner() {
     return {
+      setTenantExternalGate: vi.fn(async (input: { tenantId: string; allowed: boolean }) => ({
+        ...input,
+        generation: 1,
+      })),
+      getTenantExternalGate: vi.fn(async (input: { tenantId: string }) => ({
+        tenantId: input.tenantId,
+        allowed: false,
+        generation: 0,
+      })),
       listApprovedDynamicPlugins: vi.fn(async () => [approved]),
       getDynamicPluginInstallationStatus: vi.fn(
         async (): Promise<DynamicPluginInstallationStatus> => ({
@@ -3414,7 +3843,11 @@ describe('Plugin Admin API - Approved Dynamic Workers', () => {
       tenantId: 'tenant-a',
       body: {},
       kv,
-      envOverrides: { PLUGIN_RUNNER: service, CONTROL: controlService },
+      envOverrides: {
+        PLUGIN_RUNNER: service,
+        CONTROL: controlService,
+        ...EXTERNAL_PLUGINS_ALLOWED,
+      },
     };
 
     await enablePluginHandler(createMockContext({ method: 'PUT', ...common }));
@@ -3501,7 +3934,11 @@ describe('Plugin Admin API - Approved Dynamic Workers', () => {
       tenantId: 'tenant-a',
       body: { tenant_id: 'tenant-a', idempotency_key: 'uninstall-a', confirmation: 'DELETE' },
       kv: createMockKV({ getValues: { 'plugins:registry': '{}' } }),
-      envOverrides: { PLUGIN_RUNNER: service, CONTROL: controlService },
+      envOverrides: {
+        PLUGIN_RUNNER: service,
+        CONTROL: controlService,
+        ...EXTERNAL_PLUGINS_ALLOWED,
+      },
     });
 
     expect((await getResponseData(await uninstallPluginHandler(c))).status).toBe(400);
@@ -3565,7 +4002,11 @@ describe('Plugin Admin API - Approved Dynamic Workers', () => {
         ],
       },
       kv,
-      envOverrides: { PLUGIN_RUNNER: service, CONTROL: controlService },
+      envOverrides: {
+        PLUGIN_RUNNER: service,
+        CONTROL: controlService,
+        ...EXTERNAL_PLUGINS_ALLOWED,
+      },
     });
 
     const response = await enablePluginHandler(c);
@@ -3652,7 +4093,11 @@ describe('Plugin Admin API - Approved Dynamic Workers', () => {
       tenantId: 'tenant-a',
       body: {},
       kv: createMockKV({ getValues: { 'plugins:registry': '{}' } }),
-      envOverrides: { PLUGIN_RUNNER: service, CONTROL: controlService },
+      envOverrides: {
+        PLUGIN_RUNNER: service,
+        CONTROL: controlService,
+        ...EXTERNAL_PLUGINS_ALLOWED,
+      },
     });
 
     const result = await getResponseData(await enablePluginHandler(c));
@@ -3739,7 +4184,11 @@ describe('Plugin Admin API - Approved Dynamic Workers', () => {
       tenantId: 'tenant-a',
       body: {},
       kv: createMockKV({ getValues: { 'plugins:registry': '{}' } }),
-      envOverrides: { PLUGIN_RUNNER: service, CONTROL: controlService },
+      envOverrides: {
+        PLUGIN_RUNNER: service,
+        CONTROL: controlService,
+        ...EXTERNAL_PLUGINS_ALLOWED,
+      },
     });
 
     const result = await getResponseData(await enablePluginHandler(c));
@@ -3753,5 +4202,373 @@ describe('Plugin Admin API - Approved Dynamic Workers', () => {
       enabled: true,
     });
     expect(controlService.syncPluginDynamicWorkerObservedState).toHaveBeenCalledTimes(1);
+  });
+
+  describe('the tenant permission for external plugin code (plugin.enabled)', () => {
+    const closed = {
+      PLUGIN_ENABLED: 'false',
+    };
+
+    it('refuses to enable an external plugin while it is off, and starts nothing', async () => {
+      const service = runner();
+      const controlService = control();
+      const kv = createMockKV({ getValues: { 'plugins:registry': '{}' } });
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'custom-a' },
+        tenantId: 'tenant-a',
+        body: {},
+        kv,
+        envOverrides: { PLUGIN_RUNNER: service, CONTROL: controlService, ...closed },
+      });
+
+      const result = await getResponseData(await enablePluginHandler(c));
+
+      expect(result.status).toBe(403);
+      expect(result.body).toMatchObject({
+        error: 'external_plugin_execution_not_allowed',
+        setting: 'plugin.enabled',
+        plugin_id: 'custom-a',
+        tenant_id: 'tenant-a',
+      });
+      expect(result.body.error_description).toContain('plugin.enabled');
+      expect(controlService.validatePluginDynamicWorkerDesiredState).not.toHaveBeenCalled();
+      expect(controlService.preparePluginDynamicWorkerResources).not.toHaveBeenCalled();
+      expect(service.stageDynamicPluginActivation).not.toHaveBeenCalled();
+      expect(service.configureDynamicPluginInstallation).not.toHaveBeenCalled();
+      expect(kv.put).not.toHaveBeenCalled();
+    });
+
+    it('refuses to enable an external plugin when the tenant turned it off over an environment that is on', async () => {
+      const service = runner();
+      const kv = createMockKV({
+        getValues: {
+          'plugins:registry': '{}',
+          'settings:tenant:tenant-a:plugin': JSON.stringify({ 'plugin.enabled': false }),
+        },
+      });
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'custom-a' },
+        tenantId: 'tenant-a',
+        body: {},
+        kv,
+        envOverrides: { PLUGIN_RUNNER: service, CONTROL: control(), PLUGIN_ENABLED: 'true' },
+      });
+
+      expect((await getResponseData(await enablePluginHandler(c))).status).toBe(403);
+      expect(service.configureDynamicPluginInstallation).not.toHaveBeenCalled();
+    });
+
+    it('enables an external plugin once the tenant turned it on', async () => {
+      const service = runner();
+      const kv = createMockKV({
+        getValues: {
+          'plugins:registry': '{}',
+          'settings:tenant:tenant-a:plugin': JSON.stringify({ 'plugin.enabled': true }),
+        },
+      });
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'custom-a' },
+        tenantId: 'tenant-a',
+        body: {},
+        kv,
+        envOverrides: { PLUGIN_RUNNER: service, CONTROL: control(), ...closed },
+      });
+
+      const result = await getResponseData(await enablePluginHandler(c));
+
+      expect(result.status).toBe(200);
+      expect(result.body).toMatchObject({ pluginId: 'custom-a', enabled: true });
+      expect(service.configureDynamicPluginInstallation).toHaveBeenCalledTimes(1);
+    });
+
+    it('opens the runner gate for the tenant before it switches the installation on', async () => {
+      const service = runner();
+      const order: string[] = [];
+      service.setTenantExternalGate.mockImplementation(async (input) => {
+        order.push(`gate:${input.tenantId}:${input.allowed}`);
+        return { ...input, generation: 1 };
+      });
+      service.configureDynamicPluginInstallation.mockImplementation(async (input) => {
+        order.push(`install:${input.enabled}`);
+        return {
+          installationId: 'plugin-installation-v1-a',
+          tenantId: input.tenantId,
+          pluginId: input.pluginId,
+          state: input.enabled ? ('enabled' as const) : ('disabled' as const),
+          configVersion: 2,
+          pinnedVersionDigest: approved.activeVersionDigest,
+        };
+      });
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'custom-a' },
+        tenantId: 'tenant-a',
+        body: {},
+        kv: createMockKV({
+          getValues: {
+            'plugins:registry': '{}',
+            'settings:tenant:tenant-a:plugin': JSON.stringify({ 'plugin.enabled': true }),
+          },
+        }),
+        envOverrides: { PLUGIN_RUNNER: service, CONTROL: control(), ...closed },
+      });
+
+      expect((await getResponseData(await enablePluginHandler(c))).status).toBe(200);
+      expect(order).toEqual(['gate:tenant-a:true', 'install:true']);
+    });
+
+    it('answers 503 and enables nothing when the runner gate cannot be opened', async () => {
+      const service = runner();
+      service.setTenantExternalGate.mockRejectedValue(new Error('plugin_sync_internal_error'));
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'custom-a' },
+        tenantId: 'tenant-a',
+        body: {},
+        kv: createMockKV({ getValues: { 'plugins:registry': '{}' } }),
+        envOverrides: { PLUGIN_RUNNER: service, CONTROL: control(), PLUGIN_ENABLED: 'true' },
+      });
+
+      const result = await getResponseData(await enablePluginHandler(c));
+
+      expect(result.status).toBe(503);
+      expect(result.body).toMatchObject({
+        error: 'temporarily_unavailable',
+        setting: 'plugin.enabled',
+      });
+      expect(service.configureDynamicPluginInstallation).not.toHaveBeenCalled();
+    });
+
+    it('answers 503 and enables nothing when the plugin.enabled setting cannot be read', async () => {
+      const service = runner();
+      const kv = createMockKV({ getValues: { 'plugins:registry': '{}' } });
+      const registryGet = kv.get as unknown as ReturnType<typeof vi.fn>;
+      const original = registryGet.getMockImplementation() as (key: string) => Promise<unknown>;
+      registryGet.mockImplementation(async (key: string) => {
+        if (key.startsWith('settings:')) throw new Error('kv_unavailable');
+        return original(key);
+      });
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'custom-a' },
+        tenantId: 'tenant-a',
+        body: {},
+        kv,
+        envOverrides: { PLUGIN_RUNNER: service, CONTROL: control(), PLUGIN_ENABLED: 'true' },
+      });
+
+      expect((await getResponseData(await enablePluginHandler(c))).status).toBe(503);
+      expect(service.configureDynamicPluginInstallation).not.toHaveBeenCalled();
+    });
+
+    it('still disables and uninstalls an external plugin while it is off', async () => {
+      const service = runner();
+      const controlService = {
+        ...control(),
+        requestPluginResourceCleanup: vi.fn(async () => null),
+      };
+      const envOverrides = { PLUGIN_RUNNER: service, CONTROL: controlService, ...closed };
+      const kv = createMockKV({ getValues: { 'plugins:registry': '{}' } });
+
+      const disabled = await getResponseData(
+        await disablePluginHandler(
+          createMockContext({
+            method: 'PUT',
+            params: { id: 'custom-a' },
+            tenantId: 'tenant-a',
+            body: {},
+            kv,
+            envOverrides,
+          })
+        )
+      );
+      const uninstalled = await getResponseData(
+        await uninstallPluginHandler(
+          createMockContext({
+            method: 'POST',
+            params: { id: 'custom-a' },
+            tenantId: 'tenant-a',
+            body: {
+              tenant_id: 'tenant-a',
+              idempotency_key: 'uninstall-a',
+              confirmation: 'UNINSTALL',
+            },
+            kv,
+            envOverrides,
+          })
+        )
+      );
+
+      expect(disabled.status).toBe(200);
+      expect(uninstalled.status).toBe(200);
+      expect(service.configureDynamicPluginInstallation).toHaveBeenCalledTimes(2);
+    });
+
+    it('tells the list and the detail view whether external plugins may run, for external plugins only', async () => {
+      const builtin = createPluginEntry({ id: 'test-plugin' });
+      const kv = createMockKV({
+        getValues: { 'plugins:registry': JSON.stringify({ 'test-plugin': builtin }) },
+      });
+      const list = async (envOverrides: Record<string, unknown>) => {
+        const c = createMockContext({
+          tenantId: 'tenant-a',
+          kv,
+          envOverrides: { PLUGIN_RUNNER: runner(), ...envOverrides },
+        });
+        await listPluginsHandler(c);
+        return (c.json.mock.calls[0][0] as { plugins: Array<Record<string, unknown>> }).plugins;
+      };
+
+      const off = await list(closed);
+      expect(off.find((p) => p.id === 'custom-a')).toMatchObject({
+        externalExecutionAllowed: false,
+      });
+      expect(off.find((p) => p.id === 'test-plugin')).not.toHaveProperty(
+        'externalExecutionAllowed'
+      );
+
+      const getC = createMockContext({
+        params: { id: 'custom-a' },
+        tenantId: 'tenant-a',
+        kv: createMockKV({ getValues: { 'plugins:registry': '{}' } }),
+        envOverrides: { PLUGIN_RUNNER: runner(), PLUGIN_ENABLED: 'true' },
+      });
+      await getPluginHandler(getC);
+      expect(getC.json.mock.calls[0][0].status).toMatchObject({ externalExecutionAllowed: true });
+    });
+  });
+
+  describe('built-in plugins do not depend on plugin.enabled', () => {
+    // The tenant has switched external plugin code off in every way a tenant can.
+    const closed = {
+      PLUGIN_ENABLED: 'false',
+    };
+    const offDocument = {
+      'settings:tenant:tenant-1:plugin': JSON.stringify({ 'plugin.enabled': false }),
+    };
+
+    it('enables and disables a built-in email provider, a legacy KV plugin and no Runner dynamic call is made', async () => {
+      const registry = {
+        'notifier-cloudflare': createPluginEntry({ id: 'notifier-cloudflare' }),
+        'test-plugin': createPluginEntry({ id: 'test-plugin' }),
+      };
+      const configureNotificationInstallation = vi.fn(async (input) => ({
+        ...input,
+        state: input.enabled ? ('enabled' as const) : ('disabled' as const),
+        configVersion: 2,
+      }));
+      const service = {
+        configureNotificationInstallation,
+        resolveNotificationProviderOrder: vi.fn(async () => ({
+          tenantId: 'tenant-1',
+          channel: 'email' as const,
+          configVersion: 2,
+          state: 'enabled' as const,
+          installationIds: [],
+        })),
+        replaceNotificationProviderOrder: vi.fn(async (input) => ({
+          tenantId: input.tenantId,
+          channel: input.channel,
+          configVersion: input.expectedConfigVersion + 1,
+          state: 'disabled' as const,
+          installationIds: input.installationIds,
+        })),
+        configureDynamicPluginInstallation: vi.fn(),
+      };
+      const kv = createMockKV({
+        getValues: { 'plugins:registry': JSON.stringify(registry), ...offDocument },
+      });
+      const common = (id: string) => ({
+        params: { id },
+        tenantId: 'tenant-1',
+        body: {},
+        kv,
+        envOverrides: { AUTHRIM_ENVIRONMENT_NAME: 'test', PLUGIN_RUNNER: service, ...closed },
+      });
+
+      for (const id of ['notifier-cloudflare', 'test-plugin']) {
+        const on = await getResponseData(
+          await enablePluginHandler(createMockContext({ method: 'PUT', ...common(id) }))
+        );
+        expect(on.status, id).toBe(200);
+        expect(on.body, id).toMatchObject({ pluginId: id, enabled: true });
+        expect(kv.put).toHaveBeenCalledWith(`plugins:enabled:${id}:tenant:tenant-1`, 'true');
+      }
+      expect(configureNotificationInstallation).toHaveBeenCalledWith(
+        expect.objectContaining({ pluginId: 'notifier-cloudflare', enabled: true })
+      );
+
+      for (const id of ['notifier-cloudflare', 'test-plugin']) {
+        const off = await getResponseData(
+          await disablePluginHandler(createMockContext({ method: 'PUT', ...common(id) }))
+        );
+        expect(off.status, id).toBe(200);
+        expect(off.body, id).toMatchObject({ pluginId: id, enabled: false });
+        expect(kv.put).toHaveBeenCalledWith(`plugins:enabled:${id}:tenant:tenant-1`, 'false');
+      }
+      expect(service.configureDynamicPluginInstallation).not.toHaveBeenCalled();
+    });
+
+    it('enables and disables a built-in CAPTCHA provider', async () => {
+      const pluginId = 'human-verification-cloudflare-turnstile';
+      const configureHumanVerificationInstallation = vi.fn(async (input) => ({
+        ...input,
+        state: input.enabled ? ('enabled' as const) : ('disabled' as const),
+        configVersion: 2,
+      }));
+      const kv = createMockKV({
+        getValues: {
+          'plugins:registry': JSON.stringify({ [pluginId]: createPluginEntry({ id: pluginId }) }),
+          [`plugins:config:${pluginId}:tenant:tenant-1`]: JSON.stringify({
+            siteKey: 'tenant-site',
+            secretKey: 'tenant-secret',
+            failurePolicy: 'fail_closed',
+          }),
+          ...offDocument,
+        },
+      });
+      const envOverrides = {
+        AUTHRIM_ENVIRONMENT_NAME: 'test',
+        PLUGIN_RUNNER: { configureHumanVerificationInstallation },
+        ...closed,
+      };
+
+      const on = await getResponseData(
+        await enablePluginHandler(
+          createMockContext({
+            method: 'PUT',
+            params: { id: pluginId },
+            tenantId: 'tenant-1',
+            body: {},
+            kv,
+            envOverrides,
+          })
+        )
+      );
+      const off = await getResponseData(
+        await disablePluginHandler(
+          createMockContext({
+            method: 'PUT',
+            params: { id: pluginId },
+            tenantId: 'tenant-1',
+            body: {},
+            kv,
+            envOverrides,
+          })
+        )
+      );
+
+      expect(on.status).toBe(200);
+      expect(off.status).toBe(200);
+      expect(configureHumanVerificationInstallation).toHaveBeenCalledWith(
+        expect.objectContaining({ pluginId, enabled: true })
+      );
+      expect(configureHumanVerificationInstallation).toHaveBeenCalledWith(
+        expect.objectContaining({ pluginId, enabled: false })
+      );
+    });
   });
 });

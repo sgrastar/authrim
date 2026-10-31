@@ -169,7 +169,7 @@ PRAGMA synchronous = NORMAL;
 PRAGMA temp_store = MEMORY;
 
 CREATE TABLE IF NOT EXISTS identity_subjects (
-  id TEXT PRIMARY KEY,
+  id TEXT PRIMARY KEY NOT NULL,
   tenant_id TEXT NOT NULL,
   lifecycle_state TEXT NOT NULL DEFAULT 'active',
   subject_type TEXT NOT NULL DEFAULT 'person',
@@ -180,7 +180,7 @@ CREATE TABLE IF NOT EXISTS identity_subjects (
 );
 
 CREATE TABLE IF NOT EXISTS identity_accounts (
-  id TEXT PRIMARY KEY,
+  id TEXT PRIMARY KEY NOT NULL,
   tenant_id TEXT NOT NULL,
   account_type TEXT NOT NULL DEFAULT 'user',
   lifecycle_state TEXT NOT NULL DEFAULT 'active',
@@ -193,7 +193,7 @@ CREATE TABLE IF NOT EXISTS identity_accounts (
 );
 
 CREATE TABLE IF NOT EXISTS profiles (
-  id TEXT PRIMARY KEY,
+  id TEXT PRIMARY KEY NOT NULL,
   tenant_id TEXT NOT NULL,
   subject_id TEXT NOT NULL,
   profile_type TEXT NOT NULL DEFAULT 'person',
@@ -203,7 +203,7 @@ CREATE TABLE IF NOT EXISTS profiles (
 );
 
 CREATE TABLE IF NOT EXISTS contact_points (
-  id TEXT PRIMARY KEY,
+  id TEXT PRIMARY KEY NOT NULL,
   tenant_id TEXT NOT NULL,
   subject_id TEXT NOT NULL,
   account_id TEXT,
@@ -218,7 +218,7 @@ CREATE TABLE IF NOT EXISTS contact_points (
 );
 
 CREATE TABLE IF NOT EXISTS profile_attribute_values (
-  id TEXT PRIMARY KEY,
+  id TEXT PRIMARY KEY NOT NULL,
   tenant_id TEXT NOT NULL,
   profile_id TEXT NOT NULL,
   catalog_entry_id TEXT NOT NULL,
@@ -234,7 +234,7 @@ CREATE TABLE IF NOT EXISTS profile_attribute_values (
 );
 
 CREATE TABLE IF NOT EXISTS identity_sensitive_values (
-  id TEXT PRIMARY KEY,
+  id TEXT PRIMARY KEY NOT NULL,
   tenant_id TEXT NOT NULL,
   owner_type TEXT NOT NULL,
   owner_id TEXT NOT NULL,

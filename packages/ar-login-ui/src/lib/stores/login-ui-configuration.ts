@@ -24,7 +24,7 @@ export function applyAuthenticationMethodsToLoginUI(
 			document.documentElement.dir = toDocumentDirection(languageStore.defaultLocale);
 		}
 	}
-	themeStore.setTenantDefaults(authenticationMethods.ui.theme, authenticationMethods.ui.variant);
+	themeStore.setTenantDefaults(authenticationMethods.ui.theme);
 	loginUIPageStore.setFromUIConfig(authenticationMethods.ui);
 	brandingStore.set(
 		authenticationMethods.ui.branding.brandName || '',

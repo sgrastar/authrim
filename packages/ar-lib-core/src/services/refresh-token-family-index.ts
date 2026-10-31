@@ -42,9 +42,41 @@ export async function recordRefreshTokenFamilyIndex(
     return;
   }
 
+  // A rotation's update may have created the row meanwhile, with a later expiry: keep it.
   await adapter.execute(
     `INSERT INTO user_token_families (jti, tenant_id, user_id, client_id, generation, expires_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT (jti) DO NOTHING`,
+    [input.jti, input.tenantId, input.userId, input.clientId, input.generation, input.expiresAt]
+  );
+}
+
+/**
+ * Record where a rotation left a family's expiry, so revocation that looks for active families
+ * still finds it. Updates run in the background and may land in any order, even before the row
+ * from issuance: the row is created if missing, and its expiry only ever moves later (a later
+ * expiry than the family's only makes the index look further, which revocation tolerates). A row
+ * the index marks revoked or expired (expires_at 0) stays so.
+ */
+export async function updateRefreshTokenFamilyIndexExpiry(
+  db: DatabaseSource,
+  input: {
+    tenantId: string;
+    jti: string;
+    userId: string;
+    clientId: string;
+    generation: number;
+    expiresAt: number;
+  }
+): Promise<void> {
+  await getAdapter(db).execute(
+    `INSERT INTO user_token_families (jti, tenant_id, user_id, client_id, generation, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT (jti) DO UPDATE SET expires_at = excluded.expires_at
+     WHERE user_token_families.tenant_id = excluded.tenant_id
+       AND user_token_families.is_revoked = 0
+       AND user_token_families.expires_at > 0
+       AND user_token_families.expires_at < excluded.expires_at`,
     [input.jti, input.tenantId, input.userId, input.clientId, input.generation, input.expiresAt]
   );
 }
@@ -56,6 +88,8 @@ export async function listRefreshTokenFamiliesByUser(
     userId: string;
     clientId?: string | null;
     activeOnly?: boolean;
+    /** Not marked revoked, whatever the indexed expiry (a rotation may have moved it on unseen). */
+    unrevokedOnly?: boolean;
     nowMs?: number;
   }
 ): Promise<Array<Pick<RefreshTokenFamilyIndexRow, 'jti' | 'client_id' | 'generation'>>> {
@@ -72,6 +106,8 @@ export async function listRefreshTokenFamiliesByUser(
     conditions.push('is_revoked = 0');
     conditions.push('expires_at > ?');
     params.push(input.nowMs ?? Date.now());
+  } else if (input.unrevokedOnly) {
+    conditions.push('is_revoked = 0');
   }
 
   return adapter.query<Pick<RefreshTokenFamilyIndexRow, 'jti' | 'client_id' | 'generation'>>(
@@ -125,6 +161,32 @@ export async function revokeRefreshTokenFamiliesByUser(
 
   const result = await adapter.execute(sql, params);
   return result.rowsAffected;
+}
+
+/** Statement parameters stay well under D1's per-statement bound parameter limit. */
+const MARK_REVOKED_CHUNK_SIZE = 90;
+
+/** Mark exactly these families revoked: a family issued since they were listed stays findable. */
+export async function markRefreshTokenFamiliesRevoked(
+  db: DatabaseSource,
+  input: {
+    tenantId: string;
+    jtis: readonly string[];
+  }
+): Promise<number> {
+  const adapter = getAdapter(db);
+  let rowsAffected = 0;
+  for (let start = 0; start < input.jtis.length; start += MARK_REVOKED_CHUNK_SIZE) {
+    const chunk = input.jtis.slice(start, start + MARK_REVOKED_CHUNK_SIZE);
+    const result = await adapter.execute(
+      `UPDATE user_token_families
+       SET is_revoked = 1
+       WHERE tenant_id = ? AND jti IN (${chunk.map(() => '?').join(', ')})`,
+      [input.tenantId, ...chunk]
+    );
+    rowsAffected += result.rowsAffected;
+  }
+  return rowsAffected;
 }
 
 export async function getRefreshTokenFamilyGenerationStats(

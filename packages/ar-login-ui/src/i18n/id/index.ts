@@ -2,6 +2,32 @@ import { createTranslation } from '../create-translation';
 import completion from './completion';
 
 const id = createTranslation({
+	account_guestLogoutWarning:
+		'Setelah keluar, Anda tidak dapat kembali ke akun tamu ini. Daftar terlebih dahulu untuk mempertahankan akses ke akun dan data Anda. Tetap keluar?',
+	account_guestTitle: 'Daftarkan akun Anda',
+	account_guestDescription: 'Akun dan data Anda tetap sama setelah mendaftar.',
+	account_guestDue: 'Dapat dihapus otomatis mulai {date}.',
+	account_guestNoExpiry: 'Penghapusan otomatis tidak dijadwalkan.',
+	account_guestEmail: 'Alamat email',
+	account_guestSend: 'Daftar dengan email',
+	account_guestPasskey: 'Daftar dengan Passkey',
+	account_guestCode: 'Kode verifikasi',
+	account_guestConfirm: 'Konfirmasi pendaftaran',
+	account_guestPending:
+		'Pendaftaran sedang diproses. Anda dapat mencoba lagi untuk memeriksa penyelesaiannya.',
+	account_guestRetry: 'Coba lagi',
+	account_guestError:
+		'Pendaftaran tidak dapat diselesaikan. Periksa kode verifikasi atau coba lagi.',
+	account_guestCollision:
+		'Identitas ini sudah memiliki akun. Masuk ke akun tersebut secara terpisah. Akun tamu Anda tidak akan digabungkan.',
+	account_guestExistingLogin: 'Masuk ke akun yang sudah ada',
+	account_guestRegistered: 'Akun Anda telah terdaftar.',
+	account_guestChangeMethod: 'Pilih metode lain',
+	login_guestContinue: 'Lanjutkan sebagai tamu',
+	login_guestRetention:
+		'Akun tamu dapat dihapus otomatis {days} hari setelah dibuat. Daftarkan akun untuk terus menggunakannya.',
+	login_guestNoExpiry: 'Penghapusan otomatis tidak dijadwalkan untuk akun tamu baru.',
+
 	...completion,
 	app_subtitle: 'Identitas dan akses di mana saja.',
 	dialog_cancel: 'Batal',
@@ -68,6 +94,31 @@ const id = createTranslation({
 	account_delete: 'Hapus',
 	account_empty: 'Tidak ada item',
 	account_planned: 'Direncanakan',
+	account_socialEmpty: 'Tidak ada akun eksternal yang ditautkan.',
+	account_socialLinkHeading: 'Tautkan akun',
+	account_socialLinkWith: 'Tautkan {provider}',
+	account_socialNoProviders: 'Tidak ada penyedia lain yang dapat ditautkan.',
+	account_socialLinkedAt: 'Ditautkan {date}',
+	account_socialLastUsed: 'Terakhir digunakan: {date}',
+	account_socialUnlink: 'Putuskan tautan',
+	account_socialUnlinkConfirm:
+		'Putuskan tautan {provider}? Anda tidak akan bisa lagi login dengan akun tersebut.',
+	account_socialUnlinkConfirmAction: 'Putuskan tautan {provider}',
+	account_socialLinked: 'Akun berhasil ditautkan.',
+	account_socialUnlinked: 'Tautan akun berhasil diputuskan.',
+	account_socialErrorAlreadyLinked: 'Akun tersebut sudah ditautkan ke pengguna lain.',
+	account_socialErrorAlreadyLinkedHere: 'Penyedia tersebut sudah ditautkan ke akun Anda.',
+	account_socialErrorEmailNotVerified: 'Penyedia belum memverifikasi alamat email akun tersebut.',
+	account_socialErrorSessionExpired:
+		'Konfirmasi Anda kedaluwarsa sebelum penautan selesai. Konfirmasi lagi, lalu coba ulang.',
+	account_socialErrorCancelled: 'Penautan dibatalkan.',
+	account_socialErrorFailed: 'Akun tidak dapat ditautkan. Coba lagi.',
+	account_socialErrorLastMethod:
+		'Ini adalah metode login terakhir Anda. Tambahkan Passkey atau metode login lain terlebih dahulu.',
+	account_socialErrorInProgress:
+		'Perubahan lain pada metode login Anda sedang diproses. Coba lagi sebentar lagi.',
+	account_operationSocialLinked: 'Akun eksternal ditautkan',
+	account_operationSocialUnlinked: 'Tautan akun eksternal diputuskan',
 	account_passkeyUnsupported: 'Browser ini tidak mendukung pendaftaran Passkey.',
 	account_passkeyRegistrationCancelled:
 		'Pendaftaran Passkey dibatalkan atau kehabisan waktu. Coba lagi.',
@@ -101,12 +152,30 @@ const id = createTranslation({
 	account_reauthTotpCodePlaceholder: 'Kode 6 atau 8 digit',
 	account_actionFailed: 'Operasi gagal',
 	account_remainingLoginMethodRequired: 'Tambahkan metode login lain sebelum menghapus metode ini.',
+	account_activityIncomplete: 'Hasil aktivitas belum lengkap. Coba lagi nanti.',
+	account_activityLoadMore: 'Muat aktivitas sebelumnya',
 	account_activityTitle: 'Aktivitas',
 	account_operationNameUpdated: 'Nama diubah',
 	account_operationPasskeyCreated: 'Passkey ditambahkan',
 	account_operationPasskeyUpdated: 'Passkey diganti nama',
 	account_operationPasskeyDeleted: 'Passkey dihapus',
 	account_operationSessionRevoked: 'Sesi diakhiri',
+	account_operationGuestCreated: 'Akun tamu dibuat',
+	account_operationGuestUpgradeFailed: 'Pendaftaran tamu gagal',
+	account_operationGuestUpgradeStarted: 'Pendaftaran tamu dimulai',
+	account_operationGuestUpgraded: 'Akun tamu terdaftar',
+	account_operationEmailAdded: 'Email ditambahkan',
+	account_operationEmailChanged: 'Email diubah',
+	account_operationEmailReauthenticated: 'Diautentikasi ulang melalui email',
+	account_operationDeviceUpdated: 'Perangkat diganti nama',
+	account_operationDeviceUnlinked: 'Tautan perangkat diputuskan',
+	account_operationPasskeyReauthenticated: 'Diautentikasi ulang dengan Passkey',
+	account_operationTotpEnrollmentStarted: 'Penyiapan aplikasi autentikator dimulai',
+	account_operationTotpActivated: 'Aplikasi autentikator diaktifkan',
+	account_operationTotpUpdated: 'Aplikasi autentikator diganti nama',
+	account_operationTotpRemoved: 'Aplikasi autentikator dihapus',
+	account_operationTotpBackupCodesRegenerated: 'Kode cadangan dibuat ulang',
+	account_operationTotpReauthenticated: 'Diautentikasi ulang dengan aplikasi autentikator',
 	account_launcherTitle: 'Aplikasi saya',
 	account_launcherDescription: 'Cari dan buka aplikasi yang tersedia untuk Anda.',
 	account_launcherLoadFailed: 'Aplikasi tidak dapat dimuat.',
@@ -171,6 +240,8 @@ const id = createTranslation({
 	login_humanVerificationLoading: 'Memuat pemeriksaan keamanan...',
 	login_humanVerificationLoadFailed:
 		'Pemeriksaan keamanan tidak dapat dimuat. Muat ulang halaman dan coba lagi.',
+	login_humanVerificationUnavailable:
+		'Verifikasi manusia saat ini tidak tersedia. Hubungi administrator Anda.',
 	login_noMethodsAvailable:
 		'Tidak ada metode autentikasi yang aktif untuk organisasi ini. Hubungi administrator.',
 	login_passkeyPreparing: 'Menyiapkan autentikasi Passkey.',
@@ -264,6 +335,9 @@ const id = createTranslation({
 		'Penyedia eksternal mengembalikan kesalahan. Coba lagi nanti.',
 	login_extError_callbackFailed_title: 'Autentikasi gagal',
 	login_extError_callbackFailed_message: 'Terjadi kesalahan saat autentikasi. Coba lagi.',
+	login_extError_reauthNotProven_title: 'Masuk tidak terkonfirmasi',
+	login_extError_reauthNotProven_message:
+		'Penyedia masuk Anda tidak mengonfirmasi bahwa Anda masuk lagi. Masuk lagi atau pilih metode lain.',
 	login_extError_default_title: 'Kesalahan autentikasi',
 	login_extError_default_message: 'Terjadi kesalahan saat autentikasi eksternal.'
 });

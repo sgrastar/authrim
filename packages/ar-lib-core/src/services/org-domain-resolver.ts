@@ -16,6 +16,7 @@ import { ensureDatabaseAdapter } from '../db';
 import type { OrgDomainMapping, OrgDomainMappingRow } from '../types/policy-rules';
 import type { JITProvisioningConfig } from '../types/jit-config';
 import { createLogger } from '../utils/logger';
+import { findTenantOrganization, findTenantRole, type TenantRBACDatabases } from './tenant-rbac';
 
 const log = createLogger().module('ORG-DOMAIN-RESOLVER');
 
@@ -210,7 +211,10 @@ function rowToResolvedOrg(row: OrgDomainMappingRow): ResolvedOrganization {
 /**
  * Join a user to an organization
  *
- * @param db - Database source
+ * The organisation is a tenant setting (metadata database); the membership is the user's account
+ * data (account database). See services/tenant-rbac.ts.
+ *
+ * @param dbs - The tenant's metadata and the user's account database
  * @param userId - User ID to add
  * @param orgId - Organization ID to join
  * @param tenantId - Tenant ID for isolation
@@ -218,22 +222,19 @@ function rowToResolvedOrg(row: OrgDomainMappingRow): ResolvedOrganization {
  * @returns Join result
  */
 export async function joinOrganization(
-  db: DatabaseSource,
+  dbs: TenantRBACDatabases,
   userId: string,
   orgId: string,
   tenantId: string,
   membershipType: MembershipType = 'member'
 ): Promise<OrgJoinResult> {
-  const adapter = getAdapter(db);
+  const adapter = getAdapter(dbs.account);
   const membershipId = `mem_${crypto.randomUUID().replace(/-/g, '')}`;
   const now = Math.floor(Date.now() / 1000);
 
   try {
     // Check if organization exists
-    const orgCheck = await adapter.queryOne<{ id: string }>(
-      'SELECT id FROM organizations WHERE id = ? AND tenant_id = ?',
-      [orgId, tenantId]
-    );
+    const orgCheck = await findTenantOrganization(dbs.metadata, tenantId, orgId);
 
     if (!orgCheck) {
       return {
@@ -246,7 +247,7 @@ export async function joinOrganization(
 
     // Check if already a member
     const existingMember = await adapter.queryOne<{ id: string }>(
-      'SELECT id FROM org_memberships WHERE tenant_id = ? AND user_id = ? AND org_id = ?',
+      'SELECT id FROM subject_org_membership WHERE tenant_id = ? AND subject_id = ? AND org_id = ?',
       [tenantId, userId, orgId]
     );
 
@@ -261,7 +262,7 @@ export async function joinOrganization(
 
     // Create membership
     await adapter.execute(
-      `INSERT INTO org_memberships (id, tenant_id, user_id, org_id, membership_type, created_at, updated_at)
+      `INSERT INTO subject_org_membership (id, tenant_id, subject_id, org_id, membership_type, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [membershipId, tenantId, userId, orgId, membershipType, now, now]
     );
@@ -285,14 +286,14 @@ export async function joinOrganization(
 /**
  * Join a user to multiple organizations
  *
- * @param db - Database source
+ * @param dbs - The tenant's metadata and the user's account database
  * @param userId - User ID to add
  * @param orgs - Array of organizations to join
  * @param tenantId - Tenant ID for isolation
  * @returns Array of join results
  */
 export async function joinOrganizations(
-  db: DatabaseSource,
+  dbs: TenantRBACDatabases,
   userId: string,
   orgs: ResolvedOrganization[],
   tenantId: string
@@ -300,7 +301,7 @@ export async function joinOrganizations(
   const results: OrgJoinResult[] = [];
 
   for (const org of orgs) {
-    const result = await joinOrganization(db, userId, org.org_id, tenantId, org.membership_type);
+    const result = await joinOrganization(dbs, userId, org.org_id, tenantId, org.membership_type);
     results.push(result);
   }
 
@@ -310,7 +311,7 @@ export async function joinOrganizations(
 /**
  * Assign role to user after joining organization
  *
- * @param db - D1 database instance
+ * @param dbs - The tenant's metadata and the user's account database
  * @param userId - User ID
  * @param roleId - Role ID to assign
  * @param orgId - Organization ID (for scope)
@@ -318,22 +319,44 @@ export async function joinOrganizations(
  * @returns Assignment result
  */
 export async function assignRoleToUser(
-  db: DatabaseSource,
+  dbs: TenantRBACDatabases,
   userId: string,
   roleId: string,
   orgId: string,
   tenantId: string
 ): Promise<{ success: boolean; assignment_id?: string; error?: string }> {
-  const adapter = getAdapter(db);
+  return assignScopedRoleToUser(dbs, userId, roleId, 'org', `org:${orgId}`, tenantId);
+}
+
+/**
+ * Assign a role to a user at the given scope (JIT rules, domain mappings, default role)
+ *
+ * The role is a tenant setting (metadata database); the assignment is the user's account data
+ * (account database). See services/tenant-rbac.ts.
+ *
+ * @param dbs - The tenant's metadata and the user's account database
+ * @param userId - User ID
+ * @param roleId - Role ID to assign
+ * @param scopeType - Assignment scope type ('global', 'org', ...)
+ * @param scopeTarget - Assignment scope target (e.g. 'org:<id>')
+ * @param tenantId - Tenant ID
+ * @returns Assignment result
+ */
+export async function assignScopedRoleToUser(
+  dbs: TenantRBACDatabases,
+  userId: string,
+  roleId: string,
+  scopeType: string,
+  scopeTarget: string,
+  tenantId: string
+): Promise<{ success: boolean; assignment_id?: string; error?: string }> {
+  const adapter = getAdapter(dbs.account);
   const assignmentId = `ra_${crypto.randomUUID().replace(/-/g, '')}`;
   const now = Math.floor(Date.now() / 1000);
 
   try {
     // Check if role exists
-    const roleCheck = await adapter.queryOne<{ id: string }>(
-      'SELECT id FROM roles WHERE id = ? AND tenant_id = ?',
-      [roleId, tenantId]
-    );
+    const roleCheck = await findTenantRole(dbs.metadata, tenantId, { id: roleId });
 
     if (!roleCheck) {
       return {
@@ -346,8 +369,8 @@ export async function assignRoleToUser(
     // Check if already assigned
     const existing = await adapter.queryOne<{ id: string }>(
       `SELECT id FROM role_assignments
-       WHERE tenant_id = ? AND user_id = ? AND role_id = ? AND scope_type = 'org' AND scope_target = ?`,
-      [tenantId, userId, roleId, `org:${orgId}`]
+       WHERE tenant_id = ? AND subject_id = ? AND role_id = ? AND scope_type = ? AND scope_target = ?`,
+      [tenantId, userId, roleId, scopeType, scopeTarget]
     );
 
     if (existing) {
@@ -360,9 +383,9 @@ export async function assignRoleToUser(
 
     // Create assignment
     await adapter.execute(
-      `INSERT INTO role_assignments (id, tenant_id, user_id, role_id, scope_type, scope_target, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'org', ?, ?, ?)`,
-      [assignmentId, tenantId, userId, roleId, `org:${orgId}`, now, now]
+      `INSERT INTO role_assignments (id, tenant_id, subject_id, role_id, scope_type, scope_target, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [assignmentId, tenantId, userId, roleId, scopeType, scopeTarget, now, now]
     );
 
     return {
@@ -370,7 +393,7 @@ export async function assignRoleToUser(
       assignment_id: assignmentId,
     };
   } catch (error) {
-    log.error('Database error in assignRoleToUser', { roleId, userId, orgId }, error as Error);
+    log.error('Database error in assignScopedRoleToUser', { roleId, userId }, error as Error);
     return {
       success: false,
       // SECURITY: Do not expose internal error details

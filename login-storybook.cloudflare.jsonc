@@ -1,0 +1,18 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "authrim-login-storybook",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "assets": {
+    "directory": "./packages/ar-login-ui/storybook-static",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "none",
+  },
+  "routes": [
+    {
+      "pattern": "login.storybook.authrim.com",
+      "custom_domain": true,
+    },
+  ],
+}

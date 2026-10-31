@@ -108,15 +108,16 @@
 		width: 100%;
 		min-height: var(--auth-control-height, 0);
 		padding: var(--auth-control-padding-y, 12px) var(--auth-control-padding-x, 16px);
-		background: var(--bg-glass);
+		/* --control-surface and --surface-*: see Card; AccountShell sets them. */
+		background: var(--control-surface, var(--bg-glass));
 		border: 1px solid var(--border);
 		border-radius: var(--radius-md);
 		font-size: var(--auth-control-font-size, 0.9375rem);
 		font-family: var(--font-body);
 		color: var(--text-primary);
-		transition: all var(--transition-fast);
-		backdrop-filter: var(--blur-sm);
-		-webkit-backdrop-filter: var(--blur-sm);
+		transition: var(--surface-transition, all var(--transition-fast));
+		backdrop-filter: var(--surface-backdrop-filter, var(--blur-sm));
+		-webkit-backdrop-filter: var(--surface-backdrop-filter, var(--blur-sm));
 	}
 
 	.form-input.has-icon {

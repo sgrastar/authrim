@@ -6,8 +6,13 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { RefreshTokenRotator } from '../RefreshTokenRotator';
+import { RefreshTokenRotator, rotatedExpiry } from '../RefreshTokenRotator';
 import type { Env } from '../../types/env';
+
+vi.mock('@authrim/ar-lib-logging/iceberg/capabilities', async (original) => ({
+  ...(await original<typeof import('@authrim/ar-lib-logging/iceberg/capabilities')>()),
+  LOG_ARCHIVE_IMPLEMENTED_MODES: ['scheduled', 'pipeline'],
+}));
 
 // Mock DurableObjectState
 class MockDurableObjectState implements Partial<DurableObjectState> {
@@ -128,6 +133,35 @@ const createMockEnv = (): Env =>
   ({
     DB: createMockD1(),
     DB_PII: createMockD1(),
+    AUTHRIM_LOG_ARCHIVE_MODE: 'scheduled',
+    AUTHRIM_LOG_ARCHIVE_STORAGE_GENERATION: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    AUTHRIM_LOG_ARCHIVE_SCHEMA_VERSION: '1',
+    AUTHRIM_LOG_ARCHIVE_ACTIVATED_AT: '1970-01-01T00:00:00.000Z',
+    AUTHRIM_LOG_ARCHIVE_ACCOUNT_ID: 'a'.repeat(32),
+    AUTHRIM_LOG_ARCHIVE_BUCKET: 'archive-logs',
+    AUTHRIM_LOG_ARCHIVE_CATALOG_URI: `https://catalog.cloudflarestorage.com/${'a'.repeat(32)}/archive-logs`,
+    AUTHRIM_LOG_ARCHIVE_WAREHOUSE: `${'a'.repeat(32)}_archive-logs`,
+    AUTHRIM_LOG_ARCHIVE_NAMESPACE: 'authrim',
+    AUTHRIM_LOG_ARCHIVE_TABLE: 'logs_v1',
+    AUTHRIM_LOG_ARCHIVE_TABLE_UUID: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    AUTHRIM_LOG_ARCHIVE_PHYSICAL_FINGERPRINT: 'f'.repeat(64),
+    AUTHRIM_LOG_ARCHIVE_DB_RETENTION_DAYS: '7',
+    AUTHRIM_LOG_ARCHIVE_EXPORT_INTERVAL_MINUTES: '5',
+    OBJECT_ENCRYPTION_ROOT_KEY: 'ab'.repeat(32),
+    LOG_ARCHIVE_CONTENT_HMAC_KEY: 'cd'.repeat(32),
+    LOG_ARCHIVE_ROOT_KEYRING: JSON.stringify({
+      schema_version: 1,
+      current_version: 1,
+      roots: { 1: 'ab'.repeat(32) },
+    }),
+    LOG_ARCHIVE_WRITER: {
+      resolveTenantKey: async () => 'key-default',
+      writeRecords: async () => ({ stored: 1, queued: 0 }),
+    },
+    CONTROL: {
+      acquireTenantBackupMutationPermit: async () => ({ admitted: true }),
+      completeTenantBackupMutationPermit: async () => {},
+    },
   }) as unknown as Env;
 
 describe('RefreshTokenRotator V2', () => {
@@ -145,6 +179,44 @@ describe('RefreshTokenRotator V2', () => {
   afterEach(() => {
     vi.clearAllTimers();
     vi.useRealTimers();
+  });
+
+  describe('consent generation and revocation by family identity', () => {
+    const create = (jti: string, consentGeneration?: number) =>
+      rotator.createFamilyRpc({
+        jti,
+        userId: 'user-1',
+        clientId: 'client_1',
+        tenantId: 'default',
+        scope: 'openid',
+        ttl: 2592000,
+        generation: 1,
+        shardIndex: 0,
+        ...(consentGeneration !== undefined ? { consentGeneration } : {}),
+      });
+
+    it('records the consent generation the family was granted under', async () => {
+      await create('first-a', 3);
+
+      expect(await rotator.getFamilyRpc('user-1')).toMatchObject({ consent_generation: 3 });
+      await expect(create('first-b', -1)).rejects.toThrow('Invalid refresh token family input');
+    });
+
+    it('revokes the family only while it is the one issued with that JWT ID', async () => {
+      await create('first-a');
+      // A family issued since for the same user replaces it.
+      await create('first-b');
+
+      expect(await rotator.revokeFamilyIfFirstJtiRpc('user-1', 'first-a', 'consent_revoked')).toBe(
+        false
+      );
+      expect(await rotator.getFamilyRpc('user-1')).toMatchObject({ first_jti: 'first-b' });
+
+      expect(await rotator.revokeFamilyIfFirstJtiRpc('user-1', 'first-b', 'consent_revoked')).toBe(
+        true
+      );
+      expect(await rotator.getFamilyRpc('user-1')).toBeNull();
+    });
   });
 
   describe('Token Family Creation', () => {
@@ -445,6 +517,94 @@ describe('RefreshTokenRotator V2', () => {
       expect(rotation.resourceAudience).toEqual(['svc://api', 'svc://admin']);
     });
 
+    it('keeps how the user authenticated across rotations, only as well-formed fields', async () => {
+      await rotator.createFamilyRpc({
+        jti: 'context-jti',
+        userId: 'user_123',
+        clientId: 'client_1',
+        tenantId: 'default',
+        scope: 'openid',
+        ttl: 2592000,
+        authContext: {
+          auth_time: 1_700_000_000,
+          acr: 'urn:authrim:aal:2',
+          amr: ['passkey'],
+          assurance_auth_time: 1_700_000_000,
+          aal: 'AAL2',
+          assurance_acr: 'urn:authrim:aal:2',
+          assurance_amr: ['passkey'],
+          pushed_signed_request: true,
+          // Not part of the context, or not well-formed: dropped.
+          injected: 'x',
+          assurance_amr_extra: ['y'],
+        } as never,
+      });
+      await rotator.rotateRpc({
+        incomingVersion: 1,
+        incomingJti: 'context-jti',
+        userId: 'user_123',
+        clientId: 'client_1',
+        tenantId: 'default',
+      });
+
+      const validation = await rotator.validateRpc('user_123', 2, 'client_1');
+
+      expect(validation.family?.auth_context).toEqual({
+        auth_time: 1_700_000_000,
+        acr: 'urn:authrim:aal:2',
+        amr: ['passkey'],
+        assurance_auth_time: 1_700_000_000,
+        aal: 'AAL2',
+        assurance_acr: 'urn:authrim:aal:2',
+        assurance_amr: ['passkey'],
+        pushed_signed_request: true,
+      });
+    });
+
+    it('takes a token of a family made earlier for the user and client for no token', async () => {
+      const create = (jti: string, authContext?: Record<string, unknown>) =>
+        rotator.createFamilyRpc({
+          jti,
+          userId: 'user_123',
+          clientId: 'client_1',
+          tenantId: 'default',
+          scope: 'openid',
+          ttl: 2592000,
+          ...(authContext ? { authContext } : {}),
+        });
+      await create('earlier-family-jti');
+      // Made again for the same user and client: version 1 again, with FAL3 evidence.
+      await create('current-family-jti', { pushed_signed_request: true });
+
+      const earlier = await rotator.validateRpc('user_123', 1, 'client_1', 'earlier-family-jti');
+      const current = await rotator.validateRpc('user_123', 1, 'client_1', 'current-family-jti');
+
+      expect(earlier).toEqual({ valid: false });
+      expect(current.valid).toBe(true);
+      expect(current.family?.auth_context).toEqual({ pushed_signed_request: true });
+    });
+
+    it('stores no context whose fields are all malformed', async () => {
+      await rotator.createFamilyRpc({
+        jti: 'bad-context-jti',
+        userId: 'user_123',
+        clientId: 'client_1',
+        tenantId: 'default',
+        scope: 'openid',
+        ttl: 2592000,
+        authContext: {
+          auth_time: -1,
+          acr: 'x'.repeat(513),
+          amr: [1],
+          pushed_signed_request: 'true',
+        } as never,
+      });
+
+      const validation = await rotator.validateRpc('user_123', 1, 'client_1');
+
+      expect(validation.family).not.toHaveProperty('auth_context');
+    });
+
     it('should reject tenant mismatch on the same rotator instance', async () => {
       await rotator.createFamilyRpc({
         jti: 'tenant-bound-jti',
@@ -464,6 +624,99 @@ describe('RefreshTokenRotator V2', () => {
           tenantId: 'tenant-b',
         })
       ).rejects.toThrow('Tenant mismatch');
+    });
+  });
+
+  describe('lifetime model (sliding window and absolute limit)', () => {
+    const create = () =>
+      rotator.createFamilyRpc({
+        jti: 'jti-1',
+        userId: 'user_life',
+        clientId: 'client_1',
+        tenantId: 'default',
+        scope: 'openid offline_access',
+        ttl: 1000,
+      });
+    const rotate = (lifetime: { ttl: number; sliding: boolean; absoluteTtl: number | null }) =>
+      rotator.rotateRpc({
+        incomingVersion: 1,
+        incomingJti: 'jti-1',
+        userId: 'user_life',
+        clientId: 'client_1',
+        tenantId: 'default',
+        lifetime,
+      });
+
+    it('moves the expiry on by the lifetime when sliding', async () => {
+      await create();
+      vi.advanceTimersByTime(500_000);
+      const result = await rotate({ ttl: 1000, sliding: true, absoluteTtl: null });
+      expect(result.expiresIn).toBe(1000);
+    });
+
+    it('keeps the expiry when not sliding', async () => {
+      await create();
+      vi.advanceTimersByTime(500_000);
+      const result = await rotate({ ttl: 1000, sliding: false, absoluteTtl: null });
+      expect(result.expiresIn).toBe(500);
+    });
+
+    it('never slides past the absolute limit from the first issuance', async () => {
+      await create();
+      vi.advanceTimersByTime(500_000);
+      const result = await rotate({ ttl: 1000, sliding: true, absoluteTtl: 1200 });
+      expect(result.expiresIn).toBe(700);
+    });
+
+    it('ends a family whose absolute limit, enabled since, has passed', async () => {
+      await create();
+      vi.advanceTimersByTime(600_000);
+      await expect(rotate({ ttl: 1000, sliding: true, absoluteTtl: 500 })).rejects.toThrow(
+        'invalid_grant: Refresh token expired'
+      );
+      await expect(rotate({ ttl: 1000, sliding: true, absoluteTtl: null })).rejects.toThrow(
+        'invalid_grant: Token family not found'
+      );
+    });
+
+    it('returns the family’s new expiry and its first JWT ID for the index', async () => {
+      await create();
+      vi.advanceTimersByTime(500_000);
+      const result = await rotate({ ttl: 1000, sliding: true, absoluteTtl: null });
+      expect(result.expiresAt).toBe(Date.now() + 1_000_000);
+      expect(result.familyJti).toBe('jti-1');
+    });
+
+    it('applies the lifetime sent over HTTP as over RPC', async () => {
+      await create();
+      vi.advanceTimersByTime(500_000);
+      const response = await rotator.fetch(
+        new Request('http://localhost/rotate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            incomingVersion: 1,
+            incomingJti: 'jti-1',
+            userId: 'user_life',
+            clientId: 'client_1',
+            tenantId: 'default',
+            lifetime: { ttl: 1000, sliding: true, absoluteTtl: null },
+          }),
+        })
+      );
+      expect(response.status).toBe(200);
+      expect(((await response.json()) as { expiresIn: number }).expiresIn).toBe(1000);
+    });
+
+    it('keeps the expiry of a family recorded before the lifetime model', () => {
+      const now = 10_000_000;
+      expect(
+        rotatedExpiry(
+          { expires_at: now + 5_000 },
+          { ttl: 1000, sliding: true, absoluteTtl: null },
+          now
+        )
+      ).toBe(now + 5_000);
     });
   });
 

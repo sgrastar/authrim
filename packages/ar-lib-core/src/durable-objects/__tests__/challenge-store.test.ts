@@ -68,6 +68,8 @@ describe('ChallengeStore replay protection', () => {
       email: 'user@example.com',
       redirectUri: 'https://client.example/callback',
       metadata: { attempt: 1 },
+      // When it was stored: a redeemed proof keeps the time it was made.
+      createdAt: expect.any(Number),
     });
     await expect(
       store.consumeChallengeRpc({ id: 'challenge-1', tenantId: 'tenant-a', type: 'email_code' })
@@ -100,6 +102,27 @@ describe('ChallengeStore replay protection', () => {
       ).rejects.toThrow('Invalid tenant ID');
     }
   );
+
+  it('never keeps a challenge past the moment it must end by, whatever its TTL', async () => {
+    const { store } = createStore();
+    await store.storeChallenge({ ...challenge, ttl: 600, notAfterMs: Date.now() + 2000 });
+    await expect(store.getChallenge('challenge-1')).resolves.toMatchObject({
+      expiresAt: Date.now() + 2000,
+    });
+    vi.advanceTimersByTime(2001);
+    await expect(store.getChallenge('challenge-1')).resolves.toBeNull();
+
+    // A later end leaves the TTL in charge.
+    await store.storeChallenge({
+      ...challenge,
+      id: 'longer',
+      ttl: 5,
+      notAfterMs: Date.now() + 60_000,
+    });
+    await expect(store.getChallenge('longer')).resolves.toMatchObject({
+      expiresAt: Date.now() + 5000,
+    });
+  });
 
   it('removes expired challenges from cache and storage', async () => {
     const { store, storage } = createStore();
@@ -154,5 +177,89 @@ describe('ChallengeStore replay protection', () => {
         .status
     ).toBe(400);
     expect((await store.fetch(new Request('https://challenge.example/unknown'))).status).toBe(404);
+  });
+});
+
+describe('ChallengeStore leases', () => {
+  const lease = {
+    id: 'login-method-removal:user-1',
+    tenantId: 'tenant-a',
+    type: 'login_method_removal_lock' as const,
+    userId: 'user-1',
+    ttl: 60,
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+  });
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  it('claims an id only while no live lease holds it', async () => {
+    const { store } = createStore();
+
+    await expect(store.claimChallengeRpc({ ...lease, challenge: 'owner-a' })).resolves.toEqual({
+      claimed: true,
+    });
+    await expect(store.claimChallengeRpc({ ...lease, challenge: 'owner-b' })).resolves.toEqual({
+      claimed: false,
+    });
+  });
+
+  it('frees the id once its owner releases it, but not for another owner', async () => {
+    const { store } = createStore();
+    await store.claimChallengeRpc({ ...lease, challenge: 'owner-a' });
+
+    await expect(store.consumeChallengeRpc({ ...lease, challenge: 'owner-b' })).rejects.toThrow();
+    await expect(store.claimChallengeRpc({ ...lease, challenge: 'owner-b' })).resolves.toEqual({
+      claimed: false,
+    });
+
+    await store.consumeChallengeRpc({ ...lease, challenge: 'owner-a' });
+    await expect(store.claimChallengeRpc({ ...lease, challenge: 'owner-b' })).resolves.toEqual({
+      claimed: true,
+    });
+  });
+
+  it('tells the owner whether it still holds the lease with time to spare', async () => {
+    const { store } = createStore();
+    await store.claimChallengeRpc({ ...lease, challenge: 'owner-a' });
+    const held = (challenge: string, minRemainingMs = 10_000) =>
+      store.isClaimHeldRpc({ id: lease.id, tenantId: 'tenant-a', challenge, minRemainingMs });
+
+    await expect(held('owner-a')).resolves.toEqual({ held: true });
+    await expect(held('owner-b')).resolves.toEqual({ held: false });
+
+    vi.advanceTimersByTime(51_000);
+    await expect(held('owner-a')).resolves.toEqual({ held: false });
+    await expect(held('owner-a', 5_000)).resolves.toEqual({ held: true });
+
+    await store.consumeChallengeRpc({ ...lease, challenge: 'owner-a' });
+    await expect(held('owner-a', 0)).resolves.toEqual({ held: false });
+  });
+
+  it('frees the id once the lease lapses', async () => {
+    const { store } = createStore();
+    await store.claimChallengeRpc({ ...lease, challenge: 'owner-a' });
+
+    vi.advanceTimersByTime(61_000);
+
+    await expect(store.claimChallengeRpc({ ...lease, challenge: 'owner-b' })).resolves.toEqual({
+      claimed: true,
+    });
+  });
+
+  it('reads a lease persisted before the cache was lost', async () => {
+    const storage = new Storage();
+    await createStore(storage).store.claimChallengeRpc({ ...lease, challenge: 'owner-a' });
+
+    const { store: restarted } = createStore(storage);
+
+    await expect(restarted.claimChallengeRpc({ ...lease, challenge: 'owner-b' })).resolves.toEqual({
+      claimed: false,
+    });
   });
 });

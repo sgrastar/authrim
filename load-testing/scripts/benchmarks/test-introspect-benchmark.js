@@ -22,11 +22,14 @@
  * - False Positive/Negative: 0
  * - Token Exchange act claim consistency: 100%
  *
- * Note: strictValidation=true must be set before running tests
- *   curl -X PUT https://your-authrim.example.com/api/admin/settings/introspection-validation \
+ * Note: strict introspection (tokens.introspection_strict_validation) must be on before running
+ * tests. Read the platform's token settings for their version, then set it:
+ *   curl https://your-authrim.example.com/api/admin/platform/settings/tokens \
+ *     -H "Authorization: Bearer $ADMIN_MACHINE_ACCESS_TOKEN"
+ *   curl -X PATCH https://your-authrim.example.com/api/admin/platform/settings/tokens \
  *     -H "Authorization: Bearer $ADMIN_MACHINE_ACCESS_TOKEN" \
  *     -H "Content-Type: application/json" \
- *     -d '{"strictValidation": true}'
+ *     -d '{"ifMatch": "<version>", "set": {"tokens.introspection_strict_validation": true}}'
  *
  * Usage:
  * k6 run --env PRESET=rps300 scripts/test-introspect-benchmark.js

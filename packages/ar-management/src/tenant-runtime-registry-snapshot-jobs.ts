@@ -279,6 +279,7 @@ async function listAllActiveCoreRows(
 
 async function shouldPublishSnapshot(input: {
   repository: TenantDatabaseRegistryRepository;
+  snapshotStore: KVNamespace;
   tenantId: string;
   deploymentTarget: string | null;
   now: Date;
@@ -293,6 +294,14 @@ async function shouldPublishSnapshot(input: {
     input.deploymentTarget?.trim() || 'default'
   );
   if (!snapshot) {
+    return true;
+  }
+
+  if (
+    typeof snapshot.object_ref !== 'string' ||
+    !snapshot.object_ref ||
+    (await input.snapshotStore.get(snapshot.object_ref)) === null
+  ) {
     return true;
   }
 
@@ -350,6 +359,7 @@ export async function refreshTenantRuntimeRegistrySnapshots(
         synchronized ||
         (await shouldPublishSnapshot({
           repository,
+          snapshotStore: env.TENANT_RUNTIME_REGISTRY,
           tenantId,
           deploymentTarget,
           now,

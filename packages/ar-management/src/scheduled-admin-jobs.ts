@@ -1,4 +1,6 @@
+import { processPendingSupportOpsExecuteJobs } from './support-ops-execute-job';
 import type { Env } from '@authrim/ar-lib-core';
+import { processPendingIdentityMappingHistory } from './identity-mapping-history-maintenance';
 import { processPendingGenericAdminJobs } from './admin-job-executor';
 import { processPendingDataExportRequests } from './data-export';
 import { processLoggingStorageMaintenanceJobs } from './logging-storage-maintenance-jobs';
@@ -35,6 +37,11 @@ export async function processInteractiveAdminJobQueues(
   log: ScheduledJobLogger
 ): Promise<void> {
   try {
+    await processPendingIdentityMappingHistory(env, log);
+  } catch (jobsError) {
+    log.error('Identity mapping history reconciliation failed', {}, jobsError as Error);
+  }
+  try {
     await processPendingTenantDeletionJobs(env, log);
   } catch (jobsError) {
     log.error('Tenant deletion job processing failed', {}, jobsError as Error);
@@ -52,10 +59,21 @@ export async function processInteractiveAdminJobQueues(
     log.error('Data export job processing failed', {}, jobsError as Error);
   }
 
+  const supportOpsBudget = { remaining: 600 };
   try {
-    await processPendingSupportOpsSnapshotJobs(env, log);
+    await processPendingSupportOpsSnapshotJobs(
+      env,
+      log,
+      { maxQueriesPerRun: 200 },
+      supportOpsBudget
+    );
   } catch (jobsError) {
     log.error('Support Ops snapshot job processing failed', {}, jobsError as Error);
+  }
+  try {
+    await processPendingSupportOpsExecuteJobs(env, log, { maxCallsPerRun: 400 }, supportOpsBudget);
+  } catch (jobsError) {
+    log.error('Support Ops execute job processing failed', {}, jobsError as Error);
   }
 
   try {
@@ -89,6 +107,11 @@ export async function processScheduledAdminJobQueues(
   options: { skipLoggingStorageMaintenance?: boolean } = {}
 ): Promise<void> {
   try {
+    await processPendingIdentityMappingHistory(env, log);
+  } catch (jobsError) {
+    log.error('Identity mapping history reconciliation failed', {}, jobsError as Error);
+  }
+  try {
     await processPendingTenantDeletionJobs(env, log);
   } catch (jobsError) {
     log.error('Tenant deletion job processing failed', {}, jobsError as Error);
@@ -106,10 +129,21 @@ export async function processScheduledAdminJobQueues(
     log.error('Data export job processing failed', {}, jobsError as Error);
   }
 
+  const supportOpsBudget = { remaining: 600 };
   try {
-    await processPendingSupportOpsSnapshotJobs(env, log);
+    await processPendingSupportOpsSnapshotJobs(
+      env,
+      log,
+      { maxQueriesPerRun: 200 },
+      supportOpsBudget
+    );
   } catch (jobsError) {
     log.error('Support Ops snapshot job processing failed', {}, jobsError as Error);
+  }
+  try {
+    await processPendingSupportOpsExecuteJobs(env, log, { maxCallsPerRun: 400 }, supportOpsBudget);
+  } catch (jobsError) {
+    log.error('Support Ops execute job processing failed', {}, jobsError as Error);
   }
 
   try {

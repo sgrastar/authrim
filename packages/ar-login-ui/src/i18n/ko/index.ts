@@ -2,6 +2,30 @@ import { createTranslation } from '../create-translation';
 import completion from './completion';
 
 const ko = createTranslation({
+	account_guestLogoutWarning:
+		'로그아웃하면 이 게스트 계정으로 돌아올 수 없습니다. 계정과 데이터에 계속 접근하려면 먼저 등록하세요. 그래도 로그아웃하시겠습니까?',
+	account_guestTitle: '계정 등록',
+	account_guestDescription: '등록해도 같은 계정과 데이터를 그대로 유지합니다.',
+	account_guestDue: '{date}부터 자동 삭제 대상이 됩니다.',
+	account_guestNoExpiry: '자동 삭제가 설정되지 않았습니다.',
+	account_guestEmail: '이메일 주소',
+	account_guestSend: '이메일로 등록',
+	account_guestPasskey: 'Passkey로 등록',
+	account_guestCode: '인증 코드',
+	account_guestConfirm: '등록 완료',
+	account_guestPending: '등록을 처리하고 있습니다. 다시 시도하여 완료 여부를 확인할 수 있습니다.',
+	account_guestRetry: '다시 시도',
+	account_guestError: '등록을 완료할 수 없습니다. 인증 코드를 확인하거나 다시 시도하세요.',
+	account_guestCollision:
+		'이 인증 정보로 이미 등록된 계정이 있습니다. 해당 계정에 별도로 로그인하세요. 게스트 계정은 병합되지 않습니다.',
+	account_guestExistingLogin: '기존 계정에 로그인',
+	account_guestRegistered: '계정 등록이 완료되었습니다.',
+	account_guestChangeMethod: '다른 방법 선택',
+	login_guestContinue: '게스트로 계속하기',
+	login_guestRetention:
+		'게스트 계정은 생성 후 {days}일이 지나면 자동 삭제 대상이 됩니다. 계속 사용하려면 계정을 등록하세요.',
+	login_guestNoExpiry: '새 게스트 계정의 자동 삭제가 설정되지 않았습니다.',
+
 	...completion,
 	app_subtitle: '어디서나 가능한 아이덴티티 및 액세스',
 	dialog_cancel: '취소',
@@ -66,6 +90,31 @@ const ko = createTranslation({
 	account_delete: '삭제',
 	account_empty: '항목 없음',
 	account_planned: '예정',
+	account_socialEmpty: '연결된 외부 계정이 없습니다.',
+	account_socialLinkHeading: '계정 연결',
+	account_socialLinkWith: '{provider} 연결',
+	account_socialNoProviders: '연결할 수 있는 다른 제공자가 없습니다.',
+	account_socialLinkedAt: '{date}에 연결됨',
+	account_socialLastUsed: '마지막 사용: {date}',
+	account_socialUnlink: '연결 해제',
+	account_socialUnlinkConfirm:
+		'{provider} 연결을 해제할까요? 더 이상 이 계정으로 로그인할 수 없습니다.',
+	account_socialUnlinkConfirmAction: '{provider} 연결 해제',
+	account_socialLinked: '계정이 연결되었습니다.',
+	account_socialUnlinked: '계정 연결이 해제되었습니다.',
+	account_socialErrorAlreadyLinked: '이 계정은 이미 다른 사용자에게 연결되어 있습니다.',
+	account_socialErrorAlreadyLinkedHere: '이 제공자는 이미 계정에 연결되어 있습니다.',
+	account_socialErrorEmailNotVerified: '제공자가 이 계정의 이메일 주소를 확인하지 않았습니다.',
+	account_socialErrorSessionExpired:
+		'연결이 완료되기 전에 본인 확인이 만료되었습니다. 다시 확인한 후 재시도해 주세요.',
+	account_socialErrorCancelled: '연결이 취소되었습니다.',
+	account_socialErrorFailed: '계정을 연결할 수 없습니다. 다시 시도해 주세요.',
+	account_socialErrorLastMethod:
+		'마지막 남은 로그인 방법입니다. 먼저 Passkey 또는 다른 로그인 방법을 추가하세요.',
+	account_socialErrorInProgress:
+		'로그인 방법에 대한 다른 변경이 진행 중입니다. 잠시 후 다시 시도해 주세요.',
+	account_operationSocialLinked: '외부 계정 연결됨',
+	account_operationSocialUnlinked: '외부 계정 연결 해제됨',
 	account_passkeyUnsupported: '이 브라우저는 Passkey 등록을 지원하지 않습니다.',
 	account_passkeyRegistrationCancelled:
 		'Passkey 등록이 취소되었거나 시간이 초과되었습니다. 다시 시도해 주세요.',
@@ -99,12 +148,30 @@ const ko = createTranslation({
 	account_reauthTotpCodePlaceholder: '6자리 또는 8자리 코드',
 	account_actionFailed: '작업에 실패했습니다',
 	account_remainingLoginMethodRequired: '이 방법을 삭제하기 전에 다른 로그인 방법을 추가하세요.',
+	account_activityIncomplete: '활동 내역을 모두 불러오지 못했습니다. 나중에 다시 시도해 주세요.',
+	account_activityLoadMore: '이전 활동 불러오기',
 	account_activityTitle: '활동',
 	account_operationNameUpdated: '이름 변경됨',
 	account_operationPasskeyCreated: 'Passkey 추가됨',
 	account_operationPasskeyUpdated: 'Passkey 이름 변경됨',
 	account_operationPasskeyDeleted: 'Passkey 삭제됨',
 	account_operationSessionRevoked: '세션 종료됨',
+	account_operationGuestCreated: '게스트 계정 생성됨',
+	account_operationGuestUpgradeFailed: '게스트 등록 실패',
+	account_operationGuestUpgradeStarted: '게스트 등록 시작됨',
+	account_operationGuestUpgraded: '게스트 계정 등록됨',
+	account_operationEmailAdded: '이메일 추가됨',
+	account_operationEmailChanged: '이메일 변경됨',
+	account_operationEmailReauthenticated: '이메일로 다시 인증함',
+	account_operationDeviceUpdated: '기기 이름 변경됨',
+	account_operationDeviceUnlinked: '기기 연결 해제됨',
+	account_operationPasskeyReauthenticated: 'Passkey로 다시 인증함',
+	account_operationTotpEnrollmentStarted: '인증 앱 설정 시작됨',
+	account_operationTotpActivated: '인증 앱 활성화됨',
+	account_operationTotpUpdated: '인증 앱 이름 변경됨',
+	account_operationTotpRemoved: '인증 앱 삭제됨',
+	account_operationTotpBackupCodesRegenerated: '백업 코드 다시 생성됨',
+	account_operationTotpReauthenticated: '인증 앱으로 다시 인증함',
 	account_launcherTitle: '내 애플리케이션',
 	account_launcherDescription: '사용 가능한 애플리케이션을 검색하고 엽니다.',
 	account_launcherLoadFailed: '애플리케이션을 불러올 수 없습니다.',
@@ -169,6 +236,7 @@ const ko = createTranslation({
 	login_humanVerificationLoading: '보안 확인을 불러오는 중...',
 	login_humanVerificationLoadFailed:
 		'보안 확인을 불러올 수 없습니다. 페이지를 새로고침한 후 다시 시도하세요.',
+	login_humanVerificationUnavailable: '사람 확인을 현재 사용할 수 없습니다. 관리자에게 문의하세요.',
 	login_noMethodsAvailable:
 		'이 조직에서 사용할 수 있는 인증 방법이 없습니다. 관리자에게 문의하세요.',
 	login_passkeyPreparing: 'Passkey 인증을 준비하고 있습니다.',
@@ -256,6 +324,9 @@ const ko = createTranslation({
 		'외부 제공자가 오류를 반환했습니다. 나중에 다시 시도하세요.',
 	login_extError_callbackFailed_title: '인증 실패',
 	login_extError_callbackFailed_message: '인증 중 오류가 발생했습니다. 다시 시도하세요.',
+	login_extError_reauthNotProven_title: '로그인을 확인하지 못했습니다',
+	login_extError_reauthNotProven_message:
+		'로그인 제공자가 다시 로그인했음을 확인하지 않았습니다. 다시 로그인하거나 다른 방법을 선택하세요.',
 	login_extError_default_title: '인증 오류',
 	login_extError_default_message: '외부 인증 중 오류가 발생했습니다.'
 });

@@ -1,8 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { Env, OIDCProviderMetadata } from '@authrim/ar-lib-core';
-import { buildTenantSystemSettingsKey } from '@authrim/ar-lib-core';
+import { systemSettingsPlatformDocuments } from '@authrim/ar-lib-core/utils/system-settings-fields';
 import { clearDiscoveryMetadataCache, discoveryHandler } from '../discovery';
+
+/** Settings API documents of a scope holding an older `system_settings`-shaped document's values. */
+function documents(scope: string, document: Record<string, unknown>): Array<[string, string]> {
+  return Object.entries(systemSettingsPlatformDocuments(document)).map(([key, values]) => [
+    key.replace('settings:platform:', `settings:${scope}:`),
+    JSON.stringify(values),
+  ]);
+}
 
 function createApp(tenantId: string) {
   const app = new Hono<{ Bindings: Env }>();
@@ -14,22 +22,16 @@ function createApp(tenantId: string) {
   return app;
 }
 
-describe('tenant-scoped certification profiles', () => {
+describe('tenant-scoped protocol settings', () => {
   beforeEach(() => clearDiscoveryMetadataCache());
 
   it('enables FAPI metadata only for the configured tenant', async () => {
     const values = new Map<string, string>([
-      [
-        'system_settings',
-        JSON.stringify({ fapi: { enabled: false }, oidc: { requirePar: false } }),
-      ],
-      [
-        buildTenantSystemSettingsKey('fapi2'),
-        JSON.stringify({
-          fapi: { enabled: true },
-          oidc: { requirePar: true, responseTypesSupported: ['code'] },
-        }),
-      ],
+      ...documents('platform', { fapi: { enabled: false }, oidc: { requirePar: false } }),
+      ...documents('tenant:fapi2', {
+        fapi: { enabled: true },
+        oidc: { requirePar: true, responseTypesSupported: ['code'] },
+      }),
     ]);
     const settings = {
       get: vi.fn(async (key: string) => values.get(key) ?? null),
@@ -67,30 +69,27 @@ describe('tenant-scoped certification profiles', () => {
     expect(fapi.grant_types_supported).not.toContain('implicit');
     expect(standard.response_types_supported).toContain('code id_token token');
     expect(standard.grant_types_supported).toContain('implicit');
-    expect(settings.get).toHaveBeenCalledWith(buildTenantSystemSettingsKey('fapi2'));
-    expect(settings.get).toHaveBeenCalledWith(buildTenantSystemSettingsKey('default'));
+    expect(settings.get).toHaveBeenCalledWith('settings:tenant:fapi2:security');
+    expect(settings.get).toHaveBeenCalledWith('settings:tenant:default:security');
   });
 
   it('advertises only usable Message Signing algorithms and JARM modes for that tenant', async () => {
     const tenantId = 'fapi-message-signing';
-    const values = new Map<string, string>([
-      [
-        buildTenantSystemSettingsKey(tenantId),
-        JSON.stringify({
-          fapi: {
+    const values = new Map<string, string>(
+      documents(`tenant:${tenantId}`, {
+        fapi: {
+          enabled: true,
+          messageSigning: {
             enabled: true,
-            messageSigning: {
-              enabled: true,
-              requireSignedRequestObject: true,
-              requireJarm: true,
-              requestObjectSigningAlgorithms: ['ES256', 'PS256', 'EdDSA'],
-              authorizationSigningAlgorithms: ['ES256'],
-            },
+            requireSignedRequestObject: true,
+            requireJarm: true,
+            requestObjectSigningAlgorithms: ['ES256', 'PS256', 'EdDSA'],
+            authorizationSigningAlgorithms: ['ES256'],
           },
-          oidc: { requirePar: true, responseTypesSupported: ['code'] },
-        }),
-      ],
-    ]);
+        },
+        oidc: { requirePar: true, responseTypesSupported: ['code'] },
+      })
+    );
     const env = {
       BASE_DOMAIN: 'example.com',
       DEFAULT_TENANT_ID: 'default',

@@ -758,6 +758,26 @@ const ko: Translations = {
   'web.lightMode': '라이트',
   'web.systemMode': '시스템',
 
+  // Web UI cloud platform selection
+  'web.platform.title': '구축할 클라우드 선택',
+  'web.platform.description': 'Authrim을 구축할 클라우드를 선택하세요.',
+  'web.platform.cloudflareAction': 'Cloudflare에 구축',
+  'web.platform.cloudflareDescription': 'Cloudflare Workers에 Authrim을 설정합니다.',
+  'web.platform.awsAction': 'AWS에 구축',
+  'web.platform.development': '개발 중',
+  'web.platform.awsScope': '현재 SAML DR만 지원',
+  'web.platform.choose': '선택',
+  'web.platform.back': '클라우드 선택으로 돌아가기',
+  'web.platform.awsTitle': 'AWS에서 SAML DR 준비',
+  'web.platform.awsDescription': 'Cloudflare 장애에 대비해 SAML IdP 복구 환경을 준비합니다.',
+  'web.platform.awsGuide':
+    '현재 AWS 설정 명령으로 사전 확인과 배포 계획 작성을 진행할 수 있습니다. 브라우저에서의 구축 기능은 개발 중입니다.',
+  'web.platform.awsPrerequisites': 'AWS 계정, 리전, 전용 역할로 로그인할 프로필을 준비하세요.',
+  'web.platform.awsCommand': '사전 확인 명령',
+  'web.platform.awsCommandNote': '계정 ID와 프로필 이름을 사용 중인 AWS 설정으로 바꾸세요.',
+  'web.platform.targetPending': '선택 안 됨',
+  'web.platform.chooseCloudflare': 'Cloudflare 설정으로 이동',
+
   // Web UI Prerequisites
   'web.prereq.title': '준비',
   'web.prereq.checking': '확인 중...',
@@ -1075,6 +1095,12 @@ const ko: Translations = {
   'web.comp.loginUiDesc': '로그인, 가입, 동의 및 계정 관리 페이지.',
   'web.comp.adminUi': '관리자 UI',
   'web.comp.adminUiDesc': '테넌트, 클라이언트, 사용자 및 시스템 설정을 관리하는 관리 대시보드.',
+  'web.comp.adminUiVariant': '관리 UI 패키지',
+  'web.comp.adminUiLegacy': '현재 관리 UI',
+  'web.comp.adminUiLegacyDesc': '현재 사용 중인 관리 UI로, 모든 기능을 제공합니다.',
+  'web.comp.adminUiConsole': '관리 콘솔 (미리보기)',
+  'web.comp.adminUiConsoleDesc':
+    '새로 설계된 관리 콘솔입니다. 기능은 하나씩 추가되며 아직 다시 만들지 않은 항목은 준비 중으로 표시됩니다. 현재 관리 UI와 같은 URL과 관리자 패스키를 사용합니다.',
 
   // Web UI Domain Row Labels
   'web.domain.loginUi': '로그인 UI',
@@ -1316,6 +1342,8 @@ const ko: Translations = {
   'web.status.adminNotConfigured': '관리자 미구성',
   'web.status.initializing': '초기화 중...',
   'web.status.found': '{{count}}개 발견됨',
+  'web.status.serverUnreachable':
+    'Setup 서버에 연결할 수 없습니다. 터미널에서 서버가 계속 실행 중인지 확인하고, 필요하면 다시 시작한 뒤 재시도하세요.',
   'web.status.operationInProgress':
     '다른 설정 작업이 이미 진행 중입니다. 완료될 때까지 기다린 후 다시 시도하세요.',
   'web.status.warning': '경고:',

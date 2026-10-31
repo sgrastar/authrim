@@ -44,6 +44,25 @@ const STANDARD_CLAIM_NAMES = new Set([
   'phone_number_verified',
   'address',
   'updated_at',
+  'authrim_account_lifecycle',
+  // The grant a token was issued under: written by the authorization server only.
+  'authrim_consent_generation',
+  'authrim_consent_client_id',
+  'authrim_subject_issuer',
+  'authrim_subject_ref',
+  'authrim_subject_account',
+  'authrim_subject_principal',
+  'original_issuer',
+  // A person's identity assurance: computed from their evidence, never a custom attribute.
+  'eduperson_assurance',
+  'verified_claims',
+  // How Authrim tells a client or admin principal's token from a user's.
+  'token_use',
+  'client_id',
+  'actor_type',
+  'actor_id',
+  'actor_mode',
+  'grant_id',
 ]);
 
 export interface CustomClaimSchemaBase {

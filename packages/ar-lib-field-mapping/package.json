@@ -1,6 +1,6 @@
 {
   "name": "@authrim/ar-lib-field-mapping",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "type": "module",
   "exports": {
     "./contract": {
@@ -32,7 +32,8 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "lint": "echo 'field-mapping: lint skipped'",
+    "lint": "eslint src --pass-on-unpruned-suppressions",
+    "lint:prune-suppressions": "eslint src --prune-suppressions",
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rm -rf dist"
@@ -41,7 +42,7 @@
     "@cloudflare/workers-types": "^5.20260903.1",
     "@types/node": "^20.19.25",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.8",
-    "yaml": "2.8.3"
+    "vitest": "^4.1.12",
+    "yaml": "2.9.1"
   }
 }

@@ -5,9 +5,7 @@ import {
   downstreamGrantMiddleware,
   getDownstreamGrantMiddlewareContext,
   type DownstreamGrantHonoMiddlewareOptions,
-  type DownstreamGrantMiddlewareContextDecision,
   type DownstreamGrantServiceAuthorizationInput,
-  type DownstreamGrantServiceAuthorizationResult,
   type DownstreamGrantServiceAuthorizer,
   type DownstreamGrantServiceDecision,
   type DownstreamGrantServiceEvaluationResult,
@@ -165,9 +163,7 @@ export function createDownstreamGrantProtectedResourceMiddleware<Resource>(
     });
 
     const authorizationResponse = await authorizationMiddleware(c, async () => {
-      const decisionContext = getDownstreamGrantMiddlewareContext(
-        c
-      ) as DownstreamGrantMiddlewareContextDecision | null;
+      const decisionContext = getDownstreamGrantMiddlewareContext(c);
       const current = getStoredProtectedResourceContext<Resource>(c);
       if (!current || !decisionContext) {
         await next();

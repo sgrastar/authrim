@@ -9,6 +9,12 @@
 	import SanitizedHtml from '$lib/components/SanitizedHtml.svelte';
 	import TurnstileWidget from '$lib/components/TurnstileWidget.svelte';
 	import { sanitizeRuntimeConsentHtml } from '$lib/consent/runtime-consent-html';
+	import { withRequestedTotpCodeInput } from '$lib/authrim/runtime-code-input';
+	import {
+		authWidgetMethod as readAuthWidgetMethod,
+		isDisplayConditionMet,
+		shownEntryMethods
+	} from '$lib/runtime-screen-methods';
 	import { localizeRuntimeScreen } from '$lib/i18n/runtime-screen-localization';
 
 	type RuntimeField = {
@@ -71,6 +77,9 @@
 	type Props = {
 		screen: Record<string, unknown> | null;
 		disabled?: boolean;
+		guestEnabled?: boolean;
+		guestRetentionDescription?: string;
+		onGuestLogin?: () => void;
 		fieldValues?: Record<string, string | boolean>;
 		fieldErrors?: Record<string, string>;
 		authMethodMode?: 'login' | 'signup';
@@ -97,6 +106,12 @@
 		humanVerificationLoadingLabel?: string;
 		humanVerificationErrorLabel?: string;
 		emailVerificationProtocolEnabled?: boolean;
+		/** Enter in a code field verifies the code, as its verify button does. */
+		verifyCodeOnEnter?: boolean;
+		/** The email code and authenticator-app entries the screen really shows (read back). */
+		shownAuthMethods?: { emailCode: boolean; totp: boolean } | null;
+		/** Keys in the email fields; the page decides what Enter does there. */
+		onEmailKeydown?: (event: KeyboardEvent) => void;
 		onFieldValueChange?: (field: string, value: string | boolean) => void;
 		onAuthAction?: (method: AuthMethod, action?: AuthAction) => void;
 		onExternalProviderAction?: (providerId: string) => void;
@@ -108,6 +123,9 @@
 	let {
 		screen,
 		disabled = false,
+		guestEnabled = false,
+		guestRetentionDescription = '',
+		onGuestLogin,
 		fieldValues = {},
 		fieldErrors = {},
 		authMethodMode = 'login',
@@ -129,11 +147,14 @@
 		humanVerificationTheme = 'auto',
 		humanVerificationLanguage = 'auto',
 		humanVerificationToken = $bindable(''),
+		shownAuthMethods = $bindable(null),
 		humanVerificationResetKey = 0,
 		humanVerificationVisible = false,
 		humanVerificationLoadingLabel = $LL.login_humanVerificationLoading(),
 		humanVerificationErrorLabel = $LL.login_humanVerificationLoadFailed(),
 		emailVerificationProtocolEnabled = false,
+		verifyCodeOnEnter = false,
+		onEmailKeydown,
 		onFieldValueChange,
 		onAuthAction,
 		onExternalProviderAction,
@@ -179,7 +200,9 @@
 	function normalizeField(value: unknown): RuntimeField | null {
 		if (!isRecord(value)) return null;
 		const field = readString(value.field);
-		const label = readString(value.label) ?? field;
+		const label =
+			readString(value.label) ??
+			(value.block_type === 'guest_login_widget' ? $LL.login_guestContinue() : field);
 		if (!field || !label) return null;
 		return {
 			field,
@@ -245,11 +268,38 @@
 	});
 	const localizedScreen = $derived(localizeRuntimeScreen(screen, activeLocale));
 	const normalizedScreen = $derived(normalizeScreen(localizedScreen));
-	const renderedFields = $derived(normalizedScreen?.fields ?? []);
+	const renderedFields = $derived(
+		withRequestedTotpCodeInput(
+			normalizedScreen?.fields ?? [],
+			fieldValues,
+			{
+				field: 'code.totp',
+				label: '',
+				required: false,
+				block_id: 'code.totp',
+				block_type: 'code_input_widget',
+				code_input_mode: 'totp'
+			},
+			shouldRenderField
+		)
+	);
 	const primaryHeadingField = $derived(
 		renderedFields.find((field) => field.block_type === 'heading') ?? null
 	);
 	const renderedSections = $derived(buildLayoutSections(renderedFields));
+	// What the sections really draw, for the page to decide what Enter in the email field does.
+	const shownEntries = $derived(
+		shownEntryMethods(
+			renderedSections.flatMap((section) => section.items),
+			authMethodAvailable
+		)
+	);
+	$effect(() => {
+		shownAuthMethods = shownEntries;
+		return () => {
+			shownAuthMethods = null;
+		};
+	});
 	const hasConsentWidget = $derived(
 		renderedFields.some((field) => field.block_type === 'consent_widget')
 	);
@@ -274,18 +324,7 @@
 	}
 
 	function authWidgetMethod(field: RuntimeField): AuthMethod {
-		const method = field.auth_method ?? 'passkey';
-		if (
-			method === 'mail_otp' ||
-			method === 'mail_otp_totp' ||
-			method === 'totp' ||
-			method === 'external_idp' ||
-			method === 'directory_password' ||
-			method === 'passkey'
-		) {
-			return method;
-		}
-		return 'passkey';
+		return readAuthWidgetMethod(field);
 	}
 
 	function authMethodAvailable(method: AuthMethod): boolean {
@@ -306,18 +345,13 @@
 	}
 
 	function shouldRenderField(field: RuntimeField): boolean {
-		const condition = field.display_condition;
-		if (!condition || condition.mode === 'always') return true;
-		if (condition.mode === 'hidden') return false;
-		if (condition.mode === 'feature_enabled') {
-			return condition.feature ? authMethodAvailable(condition.feature) : false;
-		}
-		return true;
+		return isDisplayConditionMet(field, authMethodAvailable);
 	}
 
 	function shouldRenderLayoutField(field: RuntimeField): boolean {
 		if (!shouldRenderField(field)) return false;
 		const blockType = field.block_type ?? 'identity_field';
+		if (blockType === 'guest_login_widget') return guestEnabled && authMethodMode === 'login';
 		if (blockType === 'auth_widget') {
 			return authMethodAvailable(authWidgetMethod(field));
 		}
@@ -328,6 +362,29 @@
 	}
 
 	const defaultAuthWidgetLabels = {
+		guest: new Set([
+			'Endelea kama mgeni',
+			'Kontynuuj jako gość',
+			'Tiếp tục với tư cách khách',
+			'እንደ እንግዳ ይቀጥሉ',
+			'ゲストとして続ける',
+			'Continua come ospite',
+			'Продолжить как гость',
+			'以访客身份继续',
+			'Continuar como convidado',
+			'以訪客身分繼續',
+			'المتابعة كضيف',
+			'অতিথি হিসেবে চালিয়ে যান',
+			'अतिथि के रूप में जारी रखें',
+			'Als Gast fortfahren',
+			'게스트로 계속하기',
+			'Lanjutkan sebagai tamu',
+			'Continuer en tant qu’invité',
+			'Continuar como invitado',
+			'Continue as a guest',
+			'ดำเนินการต่อในฐานะผู้เยี่ยมชม',
+			'Misafir olarak devam et'
+		]),
 		loginPasskey: new Set([
 			'Sign in with Passkey',
 			'Passkeyでサインイン',
@@ -518,6 +575,11 @@
 
 	function authButtonDisabled(method: AuthMethod): boolean {
 		return disabled || !consentReady || !authMethodAvailable(method);
+	}
+
+	function verifyCodeFromKeyboard(method: AuthMethod) {
+		if (authButtonDisabled(method) || authMethodBusy(method)) return;
+		onAuthAction?.(method, 'verify_code');
 	}
 
 	function codeInputMethod(field: RuntimeField): 'mail_otp' | 'totp' {
@@ -766,10 +828,10 @@
 					{/each}
 				</div>
 			{:else if !destinationFieldConsent?.fields.length}
-				<span class="runtime-checkbox-row">
+				<label class="runtime-checkbox-row">
 					<input {disabled} type="checkbox" />
 					<span>{$LL.consent_items_required_title()}</span>
-				</span>
+				</label>
 			{/if}
 		</div>
 	{:else if blockType === 'divider'}
@@ -812,12 +874,30 @@
 					label={field.label || $LL.login_totpCodeLabel()}
 					digitLabel={(position) => $LL.emailCode_digitLabel({ position })}
 					onValueChange={(nextValue) => onFieldValueChange?.(codeInputFieldName(method), nextValue)}
+					onEnter={verifyCodeOnEnter ? () => verifyCodeFromKeyboard(method) : undefined}
 				/>
 			</div>
 			{#if method === 'mail_otp'}
 				<div class="runtime-code-progress" aria-hidden="true">
 					<span style={mailOtpProgressStyle()}></span>
 				</div>
+			{/if}
+			<!-- The main action comes first, then the way back (the Tab order follows). -->
+			<button
+				class="runtime-auth-button"
+				type="button"
+				disabled={authButtonDisabled(method) || authMethodBusy(method)}
+				onclick={() => onAuthAction?.(method, 'verify_code')}
+			>
+				<span class="i-ph-check-circle"></span>
+				{method === 'mail_otp' ? $LL.emailCode_verifyButton() : $LL.login_totpVerify()}
+			</button>
+			{#if fieldErrors[method === 'mail_otp' ? 'mail_otp_code' : 'totp_code']}
+				<small class="runtime-screen-error"
+					>{fieldErrors[method === 'mail_otp' ? 'mail_otp_code' : 'totp_code']}</small
+				>
+			{/if}
+			{#if method === 'mail_otp'}
 				<div class="runtime-code-actions">
 					<button
 						class="runtime-auth-button secondary"
@@ -851,21 +931,20 @@
 					{$LL.common_backToLogin()}
 				</button>
 			{/if}
-			<button
-				class="runtime-auth-button"
-				type="button"
-				disabled={authButtonDisabled(method) || authMethodBusy(method)}
-				onclick={() => onAuthAction?.(method, 'verify_code')}
-			>
-				<span class="i-ph-check-circle"></span>
-				{method === 'mail_otp' ? $LL.emailCode_verifyButton() : $LL.login_totpVerify()}
-			</button>
-			{#if fieldErrors[method === 'mail_otp' ? 'mail_otp_code' : 'totp_code']}
-				<small class="runtime-screen-error"
-					>{fieldErrors[method === 'mail_otp' ? 'mail_otp_code' : 'totp_code']}</small
-				>
-			{/if}
 		</div>
+	{:else if blockType === 'guest_login_widget'}
+		{#if guestEnabled && authMethodMode === 'login'}
+			<div class="runtime-auth-widget">
+				<button class="runtime-auth-button" type="button" {disabled} onclick={onGuestLogin}
+					>{!field.label || defaultAuthWidgetLabels.guest.has(field.label)
+						? $LL.login_guestContinue()
+						: field.label}</button
+				>
+				{#if guestRetentionDescription}<p class="runtime-guest-retention">
+						{guestRetentionDescription}
+					</p>{/if}
+			</div>
+		{/if}
 	{:else if blockType === 'auth_widget'}
 		{@const method = authWidgetMethod(field)}
 		{#if authMethodAvailable(method)}
@@ -882,6 +961,7 @@
 							type="email"
 							name="email"
 							autocomplete="email"
+							onkeydown={onEmailKeydown}
 							oninput={(event) =>
 								onFieldValueChange?.('email', (event.currentTarget as HTMLInputElement).value)}
 						/>
@@ -1057,6 +1137,7 @@
 					type={isEmailIdentityField(field) ? 'email' : 'text'}
 					name={isEmailIdentityField(field) ? 'email' : undefined}
 					autocomplete={isEmailIdentityField(field) ? 'email' : undefined}
+					onkeydown={isEmailIdentityField(field) ? onEmailKeydown : undefined}
 					value={fieldStringValue(field)}
 					placeholder={field.placeholder || field.label}
 					oninput={(event) => setFieldValue(field, (event.currentTarget as HTMLInputElement).value)}
@@ -1151,7 +1232,7 @@
 
 	.runtime-screen-field strong {
 		margin-inline-start: 0.375rem;
-		color: var(--color-danger, #ef4444);
+		color: var(--danger-fg);
 		font-size: 0.75rem;
 	}
 
@@ -1160,7 +1241,7 @@
 		min-height: var(--auth-control-height, 0);
 		border: 1px solid var(--input-border, var(--border));
 		border-radius: var(--input-radius, var(--radius-lg, var(--radius-md)));
-		background: var(--input-bg, var(--bg-glass));
+		background: var(--bg-input);
 		color: var(--text-primary);
 		font: inherit;
 		font-weight: 500;
@@ -1185,6 +1266,12 @@
 		width: 100%;
 	}
 
+	.runtime-guest-retention {
+		margin: 0;
+		font-size: var(--auth-copy-size, 0.875rem);
+		line-height: 1.5;
+	}
+
 	.runtime-code-input-widget {
 		display: grid;
 		gap: var(--auth-widget-gap, 0.875rem);
@@ -1206,7 +1293,7 @@
 	.runtime-code-progress {
 		height: 0.5rem;
 		overflow: hidden;
-		border: 1px solid var(--border-color, var(--border));
+		border: 1px solid var(--border);
 		border-radius: var(--radius-full, 999px);
 		background: var(--bg-glass);
 	}
@@ -1276,7 +1363,7 @@
 	.runtime-screen-consent-widget {
 		display: grid;
 		gap: 0.75rem;
-		border: 1px solid var(--border-color, var(--border));
+		border: 1px solid var(--border);
 		border-radius: var(--radius-lg, var(--radius-md));
 		background: var(--card-bg-muted, var(--surface-muted, var(--bg-glass)));
 		color: var(--text-primary);
@@ -1373,7 +1460,7 @@
 		content: '';
 		flex: 1;
 		height: 1px;
-		background: var(--border-color, var(--border));
+		background: var(--border);
 	}
 
 	@media (max-width: 400px) {

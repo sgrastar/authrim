@@ -12,6 +12,7 @@
  * @packageDocumentation
  */
 
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
@@ -24,6 +25,7 @@ import {
   getLogger,
   getPrimaryTenantId,
   getTenantIdFromContext,
+  isReservedPlatformTenantId,
   // Contract provisioning
   TENANT_POLICY_PRESETS,
   type TenantContract,
@@ -45,7 +47,11 @@ import {
   type ControlTenantShardCapacityTarget,
   type ControlTenantRuntimeRouteObservation,
   seedBuiltinProfileClaimSchemas,
+  generateVersion,
+  requireDedicatedAdminDatabaseAdapter,
+  runTenantBackupCoveredEffect,
 } from '@authrim/ar-lib-core';
+import { DatabaseSettingsCanonicalStore } from '@authrim/ar-lib-core/services/settings-canonical-store';
 import { createOpaqueTenantKey } from './logging-tenant-key';
 import { materializeDisabledTenantEmailProviderOrder } from './notification-provider-projection';
 import {
@@ -85,7 +91,7 @@ async function syncTenantExistsCache(
   }
   await deleteTenantExistsCache(kv, tenantId);
 }
-import { z } from 'zod';
+import { z } from './zod';
 import {
   createSingleTenantMutationError,
   ensureSupportedTenantId,
@@ -291,6 +297,35 @@ function createAdapter(c: Context<{ Bindings: Env }>): DatabaseAdapter {
   return createD1Adapter(c.env.DB, 'tenant-inventory');
 }
 
+/**
+ * DB_ADMIN, where tenant lifecycle validation jobs are kept: the scheduled admin job run claims
+ * them there. Those created before were kept in the tenant inventory, never run; they are read
+ * there too, and moved here when retried.
+ */
+function createLifecycleJobsAdapter(c: Context<{ Bindings: Env }>): DatabaseAdapter {
+  return requireDedicatedAdminDatabaseAdapter(c.env, 'tenant-lifecycle-jobs');
+}
+
+interface TenantLifecycleJobRow {
+  id: string;
+  status: string;
+  progress: string | null;
+  result: string | null;
+  config: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  created_by: string;
+  attempt_count: number | null;
+  max_attempts: number | null;
+  next_run_at: number | null;
+  created_at: number;
+  updated_at: number;
+  completed_at: number | null;
+}
+
+const TENANT_LIFECYCLE_JOB_COLUMNS = `id, status, progress, result, config, error_code, error_message,
+            created_by, attempt_count, max_attempts, next_run_at, created_at, updated_at, completed_at`;
+
 function formatTenant(row: TenantRow) {
   return {
     id: row.id,
@@ -335,7 +370,8 @@ const CreateTenantSchema = z.object({
     .regex(
       TENANT_ID_REGEX,
       'id must start and end with a lowercase letter or digit (hyphens allowed in between)'
-    ),
+    )
+    .refine((id) => !isReservedPlatformTenantId(id), 'id is reserved'),
   name: z.string().min(1).max(200),
   tenant_code: z
     .string()
@@ -345,6 +381,7 @@ const CreateTenantSchema = z.object({
       TENANT_ID_REGEX,
       'tenant_code must start and end with a lowercase letter or digit (hyphens allowed in between)'
     )
+    .refine((code) => !isReservedPlatformTenantId(code), 'tenant_code is reserved')
     .optional(),
   description: z.string().max(500).optional(),
   isolation_policy: z.enum(['shared_pool', 'tenant_exclusive']).default('tenant_exclusive'),
@@ -361,6 +398,7 @@ const UpdateTenantSchema = z
         TENANT_ID_REGEX,
         'tenant_code must start and end with a lowercase letter or digit (hyphens allowed in between)'
       )
+      .refine((code) => !isReservedPlatformTenantId(code), 'tenant_code is reserved')
       .optional(),
     description: z.string().max(500).nullable().optional(),
   })
@@ -486,36 +524,43 @@ async function seedTenantDefaultSettings(env: Env, tenantId: string) {
     }
   })();
 
-  await Promise.all([
-    env.AUTHRIM_CONFIG?.put(
-      `settings:tenant:${tenantId}:tenant`,
-      JSON.stringify({
-        'tenant.allowed_origins': allowedOrigins,
-        'tenant.allowed_domains': allowedDomain,
-        'tenant.allowed_identifiers': allowedIdentifiers,
-      })
-    ),
+  const tenantSettings = {
+    'tenant.allowed_origins': allowedOrigins,
+    'tenant.allowed_domains': allowedDomain,
+    'tenant.allowed_identifiers': allowedIdentifiers,
+  };
+  const emailSettings = { strategy: 'priority_failover', providerOrder: [] };
+  const canonicalStore = new DatabaseSettingsCanonicalStore(
+    requireDedicatedAdminDatabaseAdapter(env, 'tenant-settings-seed')
+  );
+  const seedCanonical = async (category: string, data: Record<string, unknown>) => {
+    const scope = { type: 'tenant', id: tenantId } as const;
+    const version = generateVersion(data);
+    await canonicalStore.replace(category, scope, { data, version });
+    if (!env.SETTINGS) return;
+    await env.SETTINGS.put(`settings:tenant:${tenantId}:${category}`, JSON.stringify(data));
+    await canonicalStore.markProjected(category, scope, version);
+  };
+
+  await samlDrAll([
+    env.AUTHRIM_CONFIG?.put(`settings:tenant:${tenantId}:tenant`, JSON.stringify(tenantSettings)),
     env.AUTHRIM_CONFIG?.put(
       `settings:tenant:${tenantId}:email-settings`,
-      JSON.stringify({ strategy: 'priority_failover', providerOrder: [] })
+      JSON.stringify(emailSettings)
     ),
     materializeDisabledTenantEmailProviderOrder(env, tenantId),
-    env.SETTINGS?.put(
-      `settings:tenant:${tenantId}:login-ui`,
-      JSON.stringify({ 'login-ui.brand_name': tenantId })
-    ),
-    env.SETTINGS?.put(`settings:tenant:${tenantId}:tenant-discovery-ui`, JSON.stringify({})),
-    env.SETTINGS?.put(`settings:tenant:${tenantId}:authentication-methods`, JSON.stringify({})),
-    env.SETTINGS?.put(
-      `settings:tenant:${tenantId}:directory-connectors`,
-      JSON.stringify({
-        enabled: false,
-        default_connector_id: 'campus',
-        auto_provision: false,
-        connectors: [],
-      })
-    ),
-    env.SETTINGS?.put(`settings:tenant:${tenantId}:login-entry`, JSON.stringify({})),
+    seedCanonical('tenant', tenantSettings),
+    seedCanonical('email-settings', emailSettings),
+    seedCanonical('login-ui', { 'login-ui.brand_name': tenantId }),
+    seedCanonical('tenant-discovery-ui', {}),
+    seedCanonical('authentication-methods', {}),
+    seedCanonical('directory-connectors', {
+      enabled: false,
+      default_connector_id: 'campus',
+      auto_provision: false,
+      connectors: [],
+    }),
+    seedCanonical('login-entry', {}),
   ]);
 }
 
@@ -835,24 +880,46 @@ export async function activateProvisionedTenantLifecycle(input: {
   tenantAdapter: DatabaseAdapter;
   tenantId: string;
   now: number;
+  /** Internal DR mutation-fence deadline; evaluated again by each actual database statement. */
+  admissionDeadlineMs?: number;
 }): Promise<void> {
+  const deadline = input.admissionDeadlineMs;
+  if (deadline !== undefined && (!Number.isSafeInteger(deadline) || deadline < 1))
+    throw new Error('tenant_provisioning_lifecycle_commit_failed');
+  const timed = (database: DatabaseAdapter) => {
+    if (deadline === undefined) return { sql: '', params: [] as unknown[] };
+    const type = database.getType();
+    if (!['d1', 'postgres'].includes(type))
+      throw new Error('tenant_provisioning_lifecycle_commit_failed');
+    const clock =
+      type === 'postgres'
+        ? 'GREATEST(?,CAST(FLOOR(EXTRACT(EPOCH FROM clock_timestamp())*1000) AS BIGINT))'
+        : "MAX(?,CAST(ROUND((julianday('now')-2440587.5)*86400000) AS INTEGER))";
+    return { sql: ` AND ? > ${clock}`, params: [deadline, input.now * 1000] };
+  };
+  const platformGuard = timed(input.platformAdapter),
+    tenantGuard = timed(input.tenantAdapter);
   await input.platformAdapter.execute(
-    "UPDATE tenants SET lifecycle_state = 'active', updated_at = ? WHERE id = ? AND lifecycle_state = 'provisioning'",
-    [input.now, input.tenantId]
+    "UPDATE tenants SET lifecycle_state = 'active', updated_at = ? WHERE id = ? AND lifecycle_state = 'provisioning'" +
+      platformGuard.sql,
+    [input.now, input.tenantId, ...platformGuard.params]
   );
   // Runtime destination validation reads this row, so it is the final activation commit.
   await input.tenantAdapter.execute(
-    "UPDATE tenants SET lifecycle_state = 'active', updated_at = ? WHERE id = ? AND lifecycle_state = 'provisioning'",
-    [input.now, input.tenantId]
+    "UPDATE tenants SET lifecycle_state = 'active', updated_at = ? WHERE id = ? AND lifecycle_state = 'provisioning'" +
+      tenantGuard.sql,
+    [input.now, input.tenantId, ...tenantGuard.params]
   );
   const [tenantRow, platformRow] = await Promise.all([
     input.tenantAdapter.queryOne<{ lifecycle_state: string }>(
-      'SELECT lifecycle_state FROM tenants WHERE id = ?',
-      [input.tenantId]
+      'SELECT lifecycle_state FROM tenants WHERE id = ?' + tenantGuard.sql,
+      [input.tenantId, ...tenantGuard.params],
+      { consistencyClass: 'primary_required' }
     ),
     input.platformAdapter.queryOne<{ lifecycle_state: string }>(
-      'SELECT lifecycle_state FROM tenants WHERE id = ?',
-      [input.tenantId]
+      'SELECT lifecycle_state FROM tenants WHERE id = ?' + platformGuard.sql,
+      [input.tenantId, ...platformGuard.params],
+      { consistencyClass: 'primary_required' }
     ),
   ]);
   if (tenantRow?.lifecycle_state !== 'active' || platformRow?.lifecycle_state !== 'active') {
@@ -1157,7 +1224,11 @@ export async function beginTenantProvisioning(
       existingOperation.status === 'running' ||
       existingOperation.status === 'waiting_retry'
     ) {
-      c.executionCtx?.waitUntil(processNextTenantProvisioning(c.env));
+      c.executionCtx?.waitUntil(
+        runTenantBackupCoveredEffect(c.env, { tenantId: input.id }, () =>
+          processNextTenantProvisioning(c.env)
+        )
+      );
     }
     return { tenant, operation: existingOperation };
   }
@@ -1238,7 +1309,11 @@ export async function beginTenantProvisioning(
     [input.id]
   );
   if (!tenant) throw new Error('tenant_provisioning_draft_missing');
-  c.executionCtx?.waitUntil(processNextTenantProvisioning(c.env));
+  c.executionCtx?.waitUntil(
+    runTenantBackupCoveredEffect(c.env, { tenantId: input.id }, () =>
+      processNextTenantProvisioning(c.env)
+    )
+  );
   return { tenant, operation };
 }
 
@@ -1292,7 +1367,7 @@ async function deleteKvPrefix(kv: KVNamespace | undefined, prefix: string): Prom
     cursor = page.list_complete ? undefined : page.cursor;
   } while (cursor);
   for (let offset = 0; offset < keys.length; offset += 25) {
-    await Promise.all(keys.slice(offset, offset + 25).map((key) => kv.delete(key)));
+    await samlDrAll(keys.slice(offset, offset + 25).map((key) => kv.delete(key)));
   }
 }
 
@@ -1307,7 +1382,10 @@ async function deleteKvPrefix(kv: KVNamespace | undefined, prefix: string): Prom
 export async function adminTenantsListHandler(c: Context<{ Bindings: Env }>) {
   try {
     const adminAuth = getAdminAuth(c);
-    const hasPlatformAuthority = hasPlatformTenantManagementAuthority(adminAuth);
+    const hasPlatformAuthority = hasPlatformTenantManagementAuthority(
+      adminAuth,
+      ADMIN_PERMISSIONS.SETTINGS_READ
+    );
     const scopedTenantIds = hasPlatformAuthority ? [] : getTenantInventoryScope(adminAuth);
 
     if (!hasPlatformAuthority && scopedTenantIds.length === 0) {
@@ -1430,7 +1508,9 @@ export async function adminTenantProvisioningStatusHandler(c: Context<{ Bindings
     });
   }
   if (['queued', 'waiting_retry', 'running'].includes(operation.status)) {
-    c.executionCtx?.waitUntil(processNextTenantProvisioning(c.env));
+    c.executionCtx?.waitUntil(
+      runTenantBackupCoveredEffect(c.env, { tenantId }, () => processNextTenantProvisioning(c.env))
+    );
   }
   return c.json(await formatTenantProvisioningStatus(c.env, operation));
 }
@@ -1624,18 +1704,18 @@ async function executeTenantLifecycleCommand(
   }
 
   const adapter = createAdapter(c);
-  const existingJob = await adapter.queryOne<{
-    id: string;
-    status: string;
-    progress: string | null;
-    config: string | null;
-  }>(
-    `SELECT id, status, progress, config FROM admin_jobs
-      WHERE tenant_id = ? AND job_type = 'tenants/lifecycle-validation'
-        AND json_extract(config, '$.idempotency_key') = ?
-      ORDER BY created_at DESC LIMIT 1`,
-    [id, idempotencyKey]
-  );
+  const jobsAdapter = createLifecycleJobsAdapter(c);
+  let existingJob: TenantLifecycleJobRow | null = null;
+  for (const store of [jobsAdapter, adapter]) {
+    existingJob = await store.queryOne<TenantLifecycleJobRow>(
+      `SELECT ${TENANT_LIFECYCLE_JOB_COLUMNS} FROM admin_jobs
+        WHERE tenant_id = ? AND job_type = 'tenants/lifecycle-validation'
+          AND json_extract(config, '$.idempotency_key') = ?
+        ORDER BY created_at DESC LIMIT 1`,
+      [id, idempotencyKey]
+    );
+    if (existingJob) break;
+  }
   if (existingJob) {
     const existingConfig = existingJob.config
       ? (JSON.parse(existingJob.config) as Record<string, unknown>)
@@ -1735,37 +1815,91 @@ async function executeTenantLifecycleCommand(
     ? { stage: 'queued', checks: [] }
     : { stage: 'completed', checks: [], transitioned_to: nextState };
 
+  // The tenant moves first, then its job is kept in DB_ADMIN (another database: no transaction
+  // spans both). A job not kept moves the tenant back, so the same request can be sent again;
+  // the validation never runs for a move that did not happen, as its job is kept only after it.
+  const update = await adapter.execute(
+    'UPDATE tenants SET lifecycle_state = ?, updated_at = ? WHERE id = ? AND lifecycle_state = ? AND updated_at = ?',
+    [nextState, nowTs, id, tenant.lifecycle_state, tenant.updated_at]
+  );
+  if (update.rowsAffected === 0) {
+    return c.json(
+      { error: 'lifecycle_conflict', error_description: 'Tenant lifecycle changed concurrently' },
+      409
+    );
+  }
   try {
-    await adapter.transaction(async (tx) => {
-      const update = await tx.execute(
-        'UPDATE tenants SET lifecycle_state = ?, updated_at = ? WHERE id = ? AND lifecycle_state = ? AND updated_at = ?',
-        [nextState, nowTs, id, tenant.lifecycle_state, tenant.updated_at]
-      );
-      if (update.rowsAffected === 0) throw new Error('lifecycle_conflict');
-      await tx.execute(
-        `INSERT INTO admin_jobs (
+    await jobsAdapter.execute(
+      `INSERT INTO admin_jobs (
         id, tenant_id, job_type, status, progress, config, created_by,
         created_at, updated_at, estimated_completion, attempt_count, max_attempts
       ) VALUES (?, ?, 'tenants/lifecycle-validation', ?, ?, ?, ?, ?, ?, ?, 0, 3)`,
-        [
-          jobId,
-          id,
-          status,
-          JSON.stringify(progress),
-          JSON.stringify(config),
-          adminAuth?.actorId ?? adminAuth?.userId ?? 'unknown',
-          nowTs,
-          nowTs,
-          transition.async ? nowTs + 300 : nowTs,
-        ]
-      );
-    });
+      [
+        jobId,
+        id,
+        status,
+        JSON.stringify(progress),
+        JSON.stringify(config),
+        adminAuth?.actorId ?? adminAuth?.userId ?? 'unknown',
+        nowTs,
+        nowTs,
+        transition.async ? nowTs + 300 : nowTs,
+      ]
+    );
   } catch (error) {
-    if (error instanceof Error && error.message === 'lifecycle_conflict') {
-      return c.json(
-        { error: 'lifecycle_conflict', error_description: 'Tenant lifecycle changed concurrently' },
-        409
+    // Unless the tenant moved again meanwhile.
+    const movedBack = await adapter
+      .execute(
+        'UPDATE tenants SET lifecycle_state = ?, updated_at = ? WHERE id = ? AND lifecycle_state = ? AND updated_at = ?',
+        [tenant.lifecycle_state, tenant.updated_at, id, nextState, nowTs]
+      )
+      .then(
+        (result) => result.rowsAffected > 0,
+        () => false
       );
+    if (!movedBack) {
+      // Not moved back: the tenant stays as this command moved it, with no job (never more open
+      // than it was: only a validation job activates a tenant), or another command moved it
+      // since, or its state could not be read. Recorded as observed: a restore validation is
+      // requested again from restore_validating, any other command again from the state shown.
+      const current = await adapter
+        .queryOne<{
+          lifecycle_state: TenantLifecycleState;
+          updated_at: number;
+        }>('SELECT lifecycle_state, updated_at FROM tenants WHERE id = ?', [id])
+        .catch(() => null);
+      const moveStands = current?.lifecycle_state === nextState && current.updated_at === nowTs;
+      getLogger(c)
+        .module('ADMIN-TENANTS')
+        .error(
+          'Tenant lifecycle job not kept, and the tenant not moved back',
+          {
+            tenantId: id,
+            command,
+            sourceState: tenant.lifecycle_state,
+            nextState,
+            observedState: current?.lifecycle_state ?? null,
+          },
+          error as Error
+        );
+      // The cache follows only a state this command is known to have left; otherwise it is
+      // dropped, so the next request reads the tenant inventory.
+      await (
+        moveStands
+          ? syncTenantExistsCache(c.env.AUTHRIM_CONFIG, id, nextState)
+          : deleteTenantExistsCache(c.env.AUTHRIM_CONFIG, id)
+      ).catch(() => undefined);
+      await createAuditLogFromContext(c, `tenant.lifecycle.${command}`, 'tenant', id, {
+        job_id: null,
+        job_kept: false,
+        move_stands: moveStands,
+        source_state: tenant.lifecycle_state,
+        target_state: nextState,
+        observed_state: current?.lifecycle_state ?? null,
+        reason: parsed.data.reason,
+        break_glass: parsed.data.break_glass,
+        idempotency_key: idempotencyKey,
+      }).catch(() => undefined);
     }
     throw error;
   }
@@ -1810,30 +1944,23 @@ export async function adminTenantLifecycleJobsHandler(c: Context<{ Bindings: Env
   const blocked = await ensureSupportedTenantId(c, id);
   if (blocked) return blocked;
 
-  const adapter = createAdapter(c);
-  const jobs = await adapter.query<{
-    id: string;
-    status: string;
-    progress: string | null;
-    result: string | null;
-    config: string | null;
-    error_message: string | null;
-    attempt_count: number | null;
-    max_attempts: number | null;
-    next_run_at: number | null;
-    created_at: number;
-    updated_at: number;
-    completed_at: number | null;
-  }>(
-    `SELECT id, status, progress, result, config, error_message, attempt_count, max_attempts,
-            next_run_at, created_at, updated_at, completed_at
-       FROM admin_jobs
-      WHERE tenant_id = ? AND job_type = 'tenants/lifecycle-validation'
-      ORDER BY created_at DESC LIMIT 20`,
-    [id]
-  );
+  // DB_ADMIN's jobs, and those kept in the tenant inventory before (none of them in both).
+  const byId = new Map<string, TenantLifecycleJobRow>();
+  for (const store of [createLifecycleJobsAdapter(c), createAdapter(c)]) {
+    const rows = await store.query<TenantLifecycleJobRow>(
+      `SELECT ${TENANT_LIFECYCLE_JOB_COLUMNS}
+         FROM admin_jobs
+        WHERE tenant_id = ? AND job_type = 'tenants/lifecycle-validation'
+        ORDER BY created_at DESC, id ASC LIMIT 20`,
+      [id]
+    );
+    for (const row of rows) if (!byId.has(row.id)) byId.set(row.id, row);
+  }
+  const jobs = [...byId.values()]
+    .sort((a, b) => b.created_at - a.created_at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    .slice(0, 20);
   return c.json({
-    jobs: jobs.map((job) => ({
+    jobs: jobs.map(({ created_by: _createdBy, error_code: _errorCode, ...job }) => ({
       ...job,
       progress: job.progress ? (JSON.parse(job.progress) as unknown) : null,
       result: job.result ? (JSON.parse(job.result) as unknown) : null,
@@ -1850,12 +1977,26 @@ export async function adminTenantLifecycleJobRetryHandler(c: Context<{ Bindings:
   const blocked = await ensureSupportedTenantId(c, id);
   if (blocked) return blocked;
 
-  const adapter = createAdapter(c);
-  const job = await adapter.queryOne<{ id: string; status: string; config: string | null }>(
-    `SELECT id, status, config FROM admin_jobs
-      WHERE id = ? AND tenant_id = ? AND job_type = 'tenants/lifecycle-validation'`,
-    [jobId, id]
-  );
+  const inventoryAdapter = createAdapter(c);
+  const jobsAdapter = createLifecycleJobsAdapter(c);
+  const findJob = (store: DatabaseAdapter) =>
+    store.queryOne<TenantLifecycleJobRow>(
+      `SELECT ${TENANT_LIFECYCLE_JOB_COLUMNS} FROM admin_jobs
+        WHERE id = ? AND tenant_id = ? AND job_type = 'tenants/lifecycle-validation'`,
+      [jobId, id]
+    );
+  const removeLegacyJob = () =>
+    inventoryAdapter.execute(
+      `DELETE FROM admin_jobs
+        WHERE id = ? AND tenant_id = ? AND job_type = 'tenants/lifecycle-validation'
+          AND status IN ('failed', 'partial_failure')`,
+      [jobId, id]
+    );
+  const movedJob = await findJob(jobsAdapter);
+  const legacyJob = await findJob(inventoryAdapter);
+  // Moved by a retry that stopped before removing it from the inventory: removed now.
+  if (movedJob && legacyJob) await removeLegacyJob();
+  const job = movedJob ?? legacyJob;
   if (!job) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
       variables: { resource: 'tenant lifecycle job' },
@@ -1872,14 +2013,37 @@ export async function adminTenantLifecycleJobRetryHandler(c: Context<{ Bindings:
   }
 
   const nowTs = Math.floor(Date.now() / 1000);
-  await adapter.execute(
-    `UPDATE admin_jobs
-        SET status = 'pending', progress = ?, result = NULL, error_code = NULL,
-            error_message = NULL, attempt_count = 0, next_run_at = ?,
-            dead_lettered_at = NULL, completed_at = NULL, updated_at = ?
-      WHERE id = ? AND tenant_id = ? AND status IN ('failed', 'partial_failure')`,
-    [JSON.stringify({ stage: 'retry_queued', checks: [] }), nowTs, nowTs, jobId, id]
-  );
+  const retryProgress = JSON.stringify({ stage: 'retry_queued', checks: [] });
+  if (!movedJob && legacyJob) {
+    // Kept in the tenant inventory, where it never ran: moved to DB_ADMIN, pending, and removed
+    // from the inventory (so the job is in one store only).
+    await jobsAdapter.execute(
+      `INSERT OR IGNORE INTO admin_jobs (
+        id, tenant_id, job_type, status, progress, config, created_by,
+        created_at, updated_at, attempt_count, max_attempts, next_run_at
+      ) VALUES (?, ?, 'tenants/lifecycle-validation', 'pending', ?, ?, ?, ?, ?, 0, 3, ?)`,
+      [
+        jobId,
+        id,
+        retryProgress,
+        legacyJob.config,
+        legacyJob.created_by,
+        legacyJob.created_at,
+        nowTs,
+        nowTs,
+      ]
+    );
+    await removeLegacyJob();
+  } else {
+    await jobsAdapter.execute(
+      `UPDATE admin_jobs
+          SET status = 'pending', progress = ?, result = NULL, error_code = NULL,
+              error_message = NULL, attempt_count = 0, next_run_at = ?,
+              dead_lettered_at = NULL, completed_at = NULL, updated_at = ?
+        WHERE id = ? AND tenant_id = ? AND status IN ('failed', 'partial_failure')`,
+      [retryProgress, nowTs, nowTs, jobId, id]
+    );
+  }
   await createAuditLogFromContext(c, 'tenant.lifecycle.validation_retry_requested', 'tenant', id, {
     job_id: jobId,
     prior_status: job.status,
@@ -1940,7 +2104,11 @@ export async function adminTenantProvisioningRetryHandler(c: Context<{ Bindings:
         Math.floor(Date.now() / 1000)
       );
       if (!retried) throw new Error('tenant_provisioning_retry_conflict');
-      c.executionCtx?.waitUntil(processNextTenantProvisioning(c.env));
+      c.executionCtx?.waitUntil(
+        runTenantBackupCoveredEffect(c.env, { tenantId: id }, () =>
+          processNextTenantProvisioning(c.env)
+        )
+      );
       await createAuditLogFromContext(c, 'tenant.provisioning_retry.requested', 'tenant', id, {
         operation_id: retried.operationId,
       });
@@ -2052,7 +2220,7 @@ export async function adminTenantProvisioningCleanupHandler(c: Context<{ Binding
         "UPDATE tenants SET lifecycle_state = 'deleted', updated_at = ? WHERE id = ? AND lifecycle_state = 'provisioning'",
         [Math.floor(Date.now() / 1000), id]
       );
-      await Promise.all([
+      await samlDrAll([
         c.env.AUTHRIM_CONFIG?.delete(buildContractKey(c.env, 'tenant', id)),
         c.env.AUTHRIM_CONFIG?.delete(`settings:tenant:${id}:tenant`),
         c.env.AUTHRIM_CONFIG?.delete(`settings:tenant:${id}:email-settings`),

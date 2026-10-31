@@ -11,7 +11,7 @@
  * Phase A-6: Added Backchannel Logout sender integration
  * - Sends logout notifications to all RPs that have tokens for the session
  * - Uses waitUntil() for non-blocking sends
- * - Configurable via KV settings (LOGOUT_SETTINGS_KEY)
+ * - Configurable via the Settings API (session.* logout settings)
  *
  * @see https://openid.net/specs/openid-connect-rpinitiated-1_0.html
  * @see https://openid.net/specs/openid-connect-backchannel-1_0.html
@@ -19,14 +19,18 @@
 
 import { Context } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
-import type { Env } from '@authrim/ar-lib-core';
+import type { Env, Session } from '@authrim/ar-lib-core';
 import {
   timingSafeEqual,
   verifyClientSecretHash,
   validateIdTokenHint,
+  getIssuedIDTokenKeys,
+  importIssuedTokenKey,
   validatePostLogoutRedirectUri,
   validateLogoutParameters,
   getSessionStoreBySessionId,
+  revokeGuestResumeForSession,
+  GUEST_RESUME_COOKIE,
   recordHybridUserSessionRevocationEpoch,
   isShardedSessionId,
   createAuthContextFromHono,
@@ -34,23 +38,26 @@ import {
   resolveLogoutTargetsFromSessionClientStore,
   resolveSessionIdFromOidcSidStore,
   resolveLegacyLogoutTargetsFromOidcSidStore,
-  createBackchannelLogoutOrchestrator,
+  resolveLogoutIssuerWithRetry,
+  reportLogoutNotSent,
+  reportIncompleteLogouts,
+  reportLogoutTargetsUnavailable,
+  type LogoutIncomplete,
+  purgeEndedSessionsFromSessionClientStore,
+  sendBackchannelLogoutFanout,
+  sendLogoutWebhookFanout,
+  resolveLogoutConfig,
+  resolveLogoutWebhookConfig,
   DEFAULT_LOGOUT_CONFIG,
-  LOGOUT_SETTINGS_KEY,
+  DEFAULT_LOGOUT_WEBHOOK_CONFIG,
   buildFrontchannelLogoutIframes,
   generateFrontchannelLogoutHtml,
-  getFrontchannelLogoutConfig,
   BROWSER_STATE_COOKIE_NAME,
   // Native SSO device_secret revocation
   isNativeSSOEnabled,
   DEFAULT_DEVICE_SECRET_LOGOUT_SCOPE,
   normalizeDeviceSecretLogoutScope,
-  revokeDeviceSecretsForLogoutScope,
   type RevokeDeviceSecretsForLogoutScopeResult,
-  // Simple Logout Webhook (Authrim Extension)
-  createLogoutWebhookOrchestrator,
-  getLogoutWebhookConfig,
-  decryptValue,
   // Event System
   publishEvent,
   USER_EVENTS,
@@ -65,17 +72,21 @@ import {
   // Cookie Configuration
   getSessionCookieSameSite,
   getBrowserStateCookieSameSite,
+  resolvePresentedTokenAccount,
+  tokenSubjectAccountSource,
 } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
+import {
+  mergeDeviceSecretLogoutResults,
+  revokeSessionDeviceSecrets,
+} from './logout-device-secrets';
 import type {
-  BackchannelLogoutConfig,
-  LogoutSendResult,
   LogoutConfig,
+  LogoutWebhookConfig,
   SessionClientWithWebhook,
   SessionClientWithDetails,
-  LogoutWebhookSendResult,
 } from '@authrim/ar-lib-core';
-import { importJWK, jwtVerify, importPKCS8 } from 'jose';
+import { importJWK, jwtVerify } from 'jose';
 import type { JSONWebKeySet, CryptoKey, JWTPayload } from 'jose';
 
 /**
@@ -89,6 +100,36 @@ interface BackchannelLogoutEvents {
 const LOGOUT_CONFIRMATION_COOKIE_NAME = 'authrim_logout_confirmation';
 const LOGOUT_CONFIRMATION_TTL_SECONDS = 300;
 
+/**
+ * The answer to a logout that could not revoke a session's credentials or confirm session
+ * invalidation: cookies are kept so the caller can retry. Null for any other error.
+ */
+function signOutUnavailableResponse(
+  c: Context<{ Bindings: Env }>,
+  error: unknown
+): Response | null {
+  if (!(error instanceof Error)) return null;
+  if (error.message === 'guest_resume_revocation_failed') {
+    return c.json(
+      {
+        error: 'temporarily_unavailable',
+        error_description: 'Guest sign-out could not be completed',
+      },
+      503
+    );
+  }
+  if (
+    error.message === 'device_secret_revocation_failed' ||
+    error.message === 'session_invalidation_failed'
+  ) {
+    return c.json(
+      { error: 'temporarily_unavailable', error_description: 'Sign-out could not be completed' },
+      503
+    );
+  }
+  return null;
+}
+
 function escapeLogoutHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -96,6 +137,25 @@ function escapeLogoutHtml(value: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+/**
+ * The page a confirmed logout answers with: it moves on to `redirectUrl` at once (a meta refresh,
+ * which needs no script), with a link for a browser that does not follow it. The refresh takes
+ * the rest of its content as the URL, so the escaped URL needs no quoting.
+ */
+export function renderLogoutContinuationPage(redirectUrl: string): string {
+  const url = escapeLogoutHtml(redirectUrl);
+  return `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="refresh" content="0;url=${url}"><title>Signed out</title></head>
+<body>
+  <main>
+    <h1>Signed out</h1>
+    <p><a href="${url}">Continue</a></p>
+  </main>
+</body>
+</html>`;
 }
 
 function renderLogoutConfirmationForm(
@@ -140,51 +200,36 @@ interface LogoutTokenPayload extends JWTPayload {
 const moduleLogger = createLogger().module('LOGOUT');
 
 /**
- * Import a PEM-encoded RSA private key for JWT signing
- *
- * @param pem - PEM-encoded private key
- * @returns CryptoKey for signing
+ * The tenant's back-channel, front-channel and session management settings (`session.*`, as the
+ * Settings API resolves them). When they cannot be read, the code defaults apply.
  */
-async function importPrivateKeyPem(pem: string): Promise<CryptoKey> {
-  return (await importPKCS8(pem, 'RS256')) as CryptoKey;
+async function getLogoutConfig(env: Env, tenantId: string): Promise<LogoutConfig> {
+  try {
+    return await resolveLogoutConfig(env, tenantId);
+  } catch (error) {
+    moduleLogger.warn('Logout settings could not be read', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return DEFAULT_LOGOUT_CONFIG;
+  }
 }
 
 /**
- * Get Logout Configuration
- *
- * Priority: KV → defaults
- *
- * @param env - Environment bindings
- * @returns LogoutConfig
+ * The tenant's logout webhook settings; null when they cannot be read (not the same as off: the
+ * apps with a webhook are then not told, and that is recorded).
  */
-async function getLogoutConfig(env: Env): Promise<LogoutConfig> {
-  // Try KV first
-  if (env.SETTINGS) {
-    try {
-      const kvConfig = await env.SETTINGS.get(LOGOUT_SETTINGS_KEY);
-      if (kvConfig) {
-        const parsed = JSON.parse(kvConfig);
-        return {
-          backchannel: {
-            ...DEFAULT_LOGOUT_CONFIG.backchannel,
-            ...(parsed.backchannel || {}),
-          },
-          frontchannel: {
-            ...DEFAULT_LOGOUT_CONFIG.frontchannel,
-            ...(parsed.frontchannel || {}),
-          },
-          session_management: {
-            ...DEFAULT_LOGOUT_CONFIG.session_management,
-            ...(parsed.session_management || {}),
-          },
-        };
-      }
-    } catch {
-      // Ignore KV errors, use defaults
-    }
+async function getLogoutWebhookConfig(
+  env: Env,
+  tenantId: string
+): Promise<LogoutWebhookConfig | null> {
+  try {
+    return await resolveLogoutWebhookConfig(env, tenantId);
+  } catch (error) {
+    moduleLogger.warn('Logout webhook settings could not be read', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
   }
-
-  return DEFAULT_LOGOUT_CONFIG;
 }
 
 /**
@@ -291,49 +336,12 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     let clientId: string | undefined;
     let sid: string | undefined;
 
-    // Helper function to get public key from KeyManager via RPC
-    // Matches the key by 'kid' from the JWT header
+    // The key that signed the id_token_hint: any algorithm Authrim signs ID tokens with, the key
+    // its kid names in the tenant's OIDC JWKS.
     const getPublicKey = async (): Promise<CryptoKey> => {
-      const tenantId = getTenantIdFromContext(c);
-      const keyManagerId = c.env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
-      const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
-
-      const keys = await keyManager.getAllPublicKeysRpc();
-
-      if (!keys || keys.length === 0) {
-        throw new Error('No keys in JWKS');
-      }
-
-      const jwks = { keys } as JSONWebKeySet;
-
-      // Extract kid from id_token_hint header if available
-      let targetKid: string | undefined;
-      if (idTokenHint) {
-        try {
-          const headerPart = idTokenHint.split('.')[0];
-          const header = JSON.parse(atob(headerPart.replace(/-/g, '+').replace(/_/g, '/')));
-          targetKid = header.kid;
-        } catch {
-          // If we can't parse the header, fall back to first key
-        }
-      }
-
-      // Find the matching key by kid, or use the first key as fallback
-      let key;
-      if (targetKid) {
-        key = jwks.keys.find((k) => k.kid === targetKid);
-        if (!key) {
-          // SECURITY: Do not expose kid value in error to prevent key enumeration
-          throw new Error('Key verification failed');
-        }
-      } else {
-        key = jwks.keys[0];
-        if (!key) {
-          throw new Error('Key verification failed');
-        }
-      }
-
-      return (await importJWK(key)) as CryptoKey;
+      if (!idTokenHint) throw new Error('Key verification failed');
+      const keys = await getIssuedIDTokenKeys(c.env, getTenantIdFromContext(c));
+      return (await importIssuedTokenKey(keys, idTokenHint)).key;
     };
 
     // ========================================
@@ -349,7 +357,21 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       });
 
       if (idTokenResult.valid) {
-        userId = idTokenResult.userId;
+        // The user the hint names, for the account-wide parts of the logout (a global device
+        // revocation, say): its sealed account reference when an identity mapping chose its sub,
+        // else its sub when it shows that is the user's id. A hint that shows neither (its sub may
+        // be a mapped identifier equal to another user's id) names no one; the logout still ends
+        // the sessions it can find.
+        const hintAccount = await resolvePresentedTokenAccount(
+          c.env,
+          getTenantIdFromContext(c),
+          (idTokenResult.payload ?? {}) as Record<string, unknown>
+        );
+        if (hintAccount.ok) {
+          userId = hintAccount.userId;
+        } else {
+          log.warn('id_token_hint does not name an account', { reason: hintAccount.reason });
+        }
         clientId = idTokenResult.clientId;
         sid = idTokenResult.sid;
         idTokenValid = true;
@@ -384,6 +406,8 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       webhookClients: SessionClientWithWebhook[];
     };
     const sessionsToNotify: SessionNotificationTarget[] = [];
+    // Sessions whose clients could not be read: they are not told, and their records are kept.
+    const targetReadFailed = new Set<string>();
 
     const collectSessionData = async (sessId: string, fallbackUserId?: string) => {
       // Avoid duplicate work if the same session is encountered twice
@@ -407,6 +431,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
             error: (error as Error).message,
             action: 'Logout',
           });
+          targetReadFailed.add(sessId);
           return null;
         });
         const targetClients = storeTargets ?? {
@@ -439,6 +464,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
           log.debug('No logout clients found for session', { sessionId: sessId });
         }
       } catch (error) {
+        targetReadFailed.add(sessId);
         log.warn('Failed to load session data', {
           sessionId: sessId,
           error: (error as Error).message,
@@ -453,28 +479,6 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       idTokenValid,
     });
 
-    if (sessionId && isShardedSessionId(sessionId)) {
-      try {
-        // Collect session info before deletion (pass userId from id_token_hint as fallback)
-        await collectSessionData(sessionId, userId);
-
-        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantId);
-        const deleted = await sessionStore.invalidateSessionRpc(sessionId);
-
-        if (deleted) {
-          deletedSessions.push(sessionId);
-          log.info('Cookie session deleted', { sessionId: sessionId.substring(0, 30) });
-        } else {
-          log.warn('Failed to delete cookie session', { sessionId });
-        }
-      } catch (error) {
-        log.warn('Failed to route to session store', {
-          sessionId,
-          error: (error as Error).message,
-        });
-      }
-    }
-
     // Resolve the RP-specific OIDC sid to the internal OP session key. The two
     // identifiers deliberately occupy different namespaces.
     let hintedSessionId: string | null = null;
@@ -488,6 +492,77 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
             });
             return null;
           });
+    }
+
+    // Native SSO device secrets of a session the logout ends are revoked before the session ends:
+    // the session names their user (and so, where accounts are routed, their database), and a
+    // failure keeps the session, so that the logout can be retried instead of leaving the secrets
+    // usable. The id_token_hint's client narrows only the session the hint is for.
+    const nativeSSOEnabled = await isNativeSSOEnabled(c.env);
+    const revokeEndingSessionDeviceSecrets = async (
+      endingSessionId: string,
+      session: Session | null
+    ): Promise<void> => {
+      // A session already gone has nothing of its own left to revoke: a hint alone (perhaps old)
+      // must not widen a revocation to the user's newer devices.
+      if (!nativeSSOEnabled || !session) return;
+      const result = await revokeSessionDeviceSecrets(c, {
+        tenantId,
+        issuer,
+        sessionId: endingSessionId,
+        userId: session.userId || userId,
+        clientId: endingSessionId === hintedSessionId ? clientId : undefined,
+        scope: logoutScope,
+        reason: 'logout',
+        callerAuthMode: 'session',
+      }).catch((error: unknown) => {
+        log.error('Failed to revoke device secrets', {}, error as Error);
+        throw new Error('device_secret_revocation_failed');
+      });
+      deviceSecretLogoutResult = mergeDeviceSecretLogoutResults(deviceSecretLogoutResult, result);
+      if (result.revokedDeviceSecrets > 0 || result.revokedInstallations > 0) {
+        log.info('Revoked device secrets', {
+          revokedCount: result.revokedDeviceSecrets,
+          revokedInstallations: result.revokedInstallations,
+          logoutScope: result.scope,
+          trustGroupId: result.trustGroupId,
+          targetClientId: result.clientId,
+          action: 'NativeSSO',
+        });
+      }
+    };
+
+    if (sessionId && isShardedSessionId(sessionId)) {
+      try {
+        // Collect session info before deletion (pass userId from id_token_hint as fallback)
+        await collectSessionData(sessionId, userId);
+
+        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantId);
+        const cookieSession = (await sessionStore.getSessionRpc(sessionId).catch(() => {
+          throw new Error('guest_resume_revocation_failed');
+        })) as Session | null;
+        await revokeGuestResumeForSession(c, cookieSession);
+        await revokeEndingSessionDeviceSecrets(sessionId, cookieSession);
+        const deleted = await sessionStore
+          .invalidateSessionRpc(sessionId)
+          .catch((error: unknown) => {
+            throw new Error('session_invalidation_failed', { cause: error });
+          });
+
+        if (deleted) {
+          deletedSessions.push(sessionId);
+          log.info('Cookie session deleted', { sessionId: sessionId.substring(0, 30) });
+        } else {
+          log.warn('Failed to delete cookie session', { sessionId });
+        }
+      } catch (error) {
+        const unavailable = signOutUnavailableResponse(c, error);
+        if (unavailable) return unavailable;
+        log.warn('Failed to route to session store', {
+          sessionId,
+          error: (error as Error).message,
+        });
+      }
     }
 
     // Before the SID namespace migration, code-flow associations were stored in
@@ -544,7 +619,16 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         }
 
         const { stub: sessionStore } = getSessionStoreBySessionId(c.env, hintedSessionId, tenantId);
-        const deleted = await sessionStore.invalidateSessionRpc(hintedSessionId);
+        const hintedSession = (await sessionStore.getSessionRpc(hintedSessionId).catch(() => {
+          throw new Error('guest_resume_revocation_failed');
+        })) as Session | null;
+        await revokeGuestResumeForSession(c, hintedSession);
+        await revokeEndingSessionDeviceSecrets(hintedSessionId, hintedSession);
+        const deleted = await sessionStore
+          .invalidateSessionRpc(hintedSessionId)
+          .catch((error: unknown) => {
+            throw new Error('session_invalidation_failed', { cause: error });
+          });
 
         if (deleted) {
           deletedSessions.push(hintedSessionId);
@@ -554,6 +638,8 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
           log.debug('Session from id_token_hint not found or already deleted', { sid });
         }
       } catch (error) {
+        const unavailable = signOutUnavailableResponse(c, error);
+        if (unavailable) return unavailable;
         log.warn('Failed to route to session store for sid', {
           sid,
           error: (error as Error).message,
@@ -565,47 +651,6 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       deletedSessionsCount: deletedSessions.length,
       sessionsToNotifyCount: sessionsToNotify.length,
     });
-
-    // ========================================
-    // Step 2.4: Revoke Native SSO device_secrets for deleted sessions
-    // ========================================
-    // When a session is invalidated, all associated device_secrets should also be revoked
-    // to prevent continued Native SSO token exchange from other apps
-    if (deletedSessions.length > 0) {
-      const nativeSSOEnabled = await isNativeSSOEnabled(c.env);
-      if (nativeSSOEnabled) {
-        try {
-          deviceSecretLogoutResult = await revokeDeviceSecretsForLogoutScope({
-            adapter: authCtx.coreAdapter,
-            tenantId,
-            sessionIds: deletedSessions,
-            userId,
-            clientId,
-            scope: logoutScope,
-            reason: 'logout',
-            callerAuthMode: 'session',
-          });
-
-          if (
-            deviceSecretLogoutResult.revokedDeviceSecrets > 0 ||
-            deviceSecretLogoutResult.revokedInstallations > 0
-          ) {
-            log.info('Revoked device secrets', {
-              revokedCount: deviceSecretLogoutResult.revokedDeviceSecrets,
-              revokedInstallations: deviceSecretLogoutResult.revokedInstallations,
-              logoutScope: deviceSecretLogoutResult.scope,
-              trustGroupId: deviceSecretLogoutResult.trustGroupId,
-              targetClientId: deviceSecretLogoutResult.clientId,
-              sessionCount: deletedSessions.length,
-              action: 'NativeSSO',
-            });
-          }
-        } catch (error) {
-          // Log but don't fail logout if device_secret revocation fails
-          log.error('Failed to revoke device secrets', {}, error as Error);
-        }
-      }
-    }
 
     // ========================================
     // Step 2.4.1: Publish user.logout and session.user.destroyed events
@@ -690,99 +735,62 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     // ========================================
     // Use waitUntil() to send notifications without blocking the response
     // Get logout config for both backchannel and frontchannel
-    const logoutConfig = await getLogoutConfig(c.env);
+    const logoutConfig = await getLogoutConfig(c.env, getTenantIdFromContext(c));
 
-    if (deletedSessions.length > 0 && c.executionCtx) {
-      c.executionCtx.waitUntil(
-        (async () => {
-          try {
-            if (!logoutConfig.backchannel.enabled) {
-              log.debug('Backchannel logout is disabled', { action: 'BackchannelLogout' });
-              return;
-            }
+    // The logout tokens and webhooks carry the tenant's canonical issuer, not one made from the
+    // host this request came in on. The lookup starts here (tried again a few times if it fails)
+    // and the sending, after the response, waits for it. When it still fails there is no other
+    // issuer to sign with: nothing is sent, and the apps not told are recorded (see below).
+    const logoutIssuer =
+      deletedSessions.length > 0 && c.executionCtx
+        ? resolveLogoutIssuerWithRetry(c.env, tenantId, { log })
+        : null;
 
-            // Get signing key for logout tokens
-            const tenantId = getTenantIdFromContext(c);
-            const keyManagerId = c.env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
-            const keyManager = c.env.KEY_MANAGER.get(keyManagerId);
-            const keys = await keyManager.getAllPublicKeysRpc();
+    // The notices below read nothing more from the SessionClientStore (the targets were collected
+    // before the sessions ended); the ended sessions' records are removed once they have finished.
+    const logoutFanouts: Promise<unknown>[] = [];
+    // What the notices could not send before sending (no signing key, unreadable settings, ...).
+    const incompleteNotices: LogoutIncomplete[] = [];
+    const onIncomplete = (incomplete: LogoutIncomplete) => incompleteNotices.push(incomplete);
+    // Read once for the webhook notice and for the report of what was not sent.
+    const logoutWebhookConfig = logoutIssuer ? getLogoutWebhookConfig(c.env, tenantId) : null;
 
-            if (!keys || keys.length === 0) {
-              log.error('No signing keys available', { action: 'BackchannelLogout' });
-              return;
-            }
-
-            // Get the private key from KeyManager
-            const activeKey = await keyManager.getActiveKeyWithPrivateRpc();
-
-            if (!activeKey || !activeKey.privatePEM) {
-              log.error('No private key available', { action: 'BackchannelLogout' });
-              return;
-            }
-
-            const kid = activeKey.kid;
-
-            // Import private key for signing
-            const privateKey = await importPrivateKeyPem(activeKey.privatePEM);
-
-            // Create orchestrator
-            const kv = c.env.SETTINGS || c.env.STATE_STORE;
-            const orchestrator = createBackchannelLogoutOrchestrator(kv);
-
-            // Send logout notifications for each deleted session
-            const allResults: LogoutSendResult[] = [];
-
-            for (const {
-              sessionId: sessId,
-              userId: sessUserId,
-              backchannelClients,
-            } of sessionsToNotify) {
-              if (backchannelClients.length === 0) {
-                log.debug('No clients to notify for session', {
-                  sessionId: sessId,
-                  action: 'BackchannelLogout',
-                });
-                continue;
-              }
-
-              log.info('Sending logout notifications', {
-                sessionId: sessId,
-                clientCount: backchannelClients.length,
-                action: 'BackchannelLogout',
-              });
-
-              const results = await orchestrator.sendToAll(
-                backchannelClients,
-                {
-                  issuer,
-                  userId: sessUserId,
-                  sessionId: sessId,
-                  privateKey,
-                  kid,
-                },
-                logoutConfig.backchannel
-              );
-
-              allResults.push(...results);
-            }
-
-            // Log summary
-            const succeeded = allResults.filter((r) => r.success).length;
-            const failed = allResults.filter((r) => !r.success).length;
-            log.info('Backchannel logout completed', {
-              succeeded,
-              failed,
-              action: 'BackchannelLogout',
+    if (logoutIssuer && c.executionCtx) {
+      const backchannelFanout = (async () => {
+        // The retry budget counts from when this work starts: loading keys uses it too.
+        const startedAt = Date.now();
+        const tokenIssuer = await logoutIssuer;
+        if (!tokenIssuer) return;
+        await sendBackchannelLogoutFanout(c.env, {
+          tenantId,
+          issuer: tokenIssuer,
+          sessions: sessionsToNotify,
+          config: logoutConfig.backchannel,
+          startedAt,
+          log,
+          onIncomplete,
+          // A final failure with on_failure 'error' (alert) is written to the audit log.
+          onAlert: async (details) => {
+            await createAuditLog(c.env, {
+              tenantId,
+              userId: details.userId,
+              action: 'backchannel_logout.failed',
+              resource: 'session',
+              resourceId: details.sessionId,
+              // Sent from the server after the response: no client request applies.
+              ipAddress: '',
+              userAgent: '',
+              metadata: JSON.stringify({
+                client_id: details.clientId,
+                attempts: details.attempts,
+              }),
+              severity: 'warning',
             });
-          } catch (error) {
-            log.error(
-              'Error sending notifications',
-              { action: 'BackchannelLogout' },
-              error as Error
-            );
-          }
-        })()
-      );
+          },
+        });
+      })();
+      logoutFanouts.push(backchannelFanout);
+      c.executionCtx.waitUntil(backchannelFanout);
     }
 
     // ========================================
@@ -790,89 +798,83 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     // ========================================
     // Use waitUntil() to send webhook notifications without blocking the response
     // This is an Authrim extension for clients that don't support OIDC Back-Channel Logout
-    if (deletedSessions.length > 0 && c.executionCtx) {
+    if (logoutIssuer && c.executionCtx) {
+      const webhookFanout = (async () => {
+        const webhookConfig = await logoutWebhookConfig;
+        const webhookIssuer = await logoutIssuer;
+        if (!webhookIssuer) return;
+        if (!webhookConfig) {
+          // Not known whether the webhook is on: the apps with a webhook are not told.
+          onIncomplete({
+            kind: 'webhook',
+            sessionIds: sessionsToNotify
+              .filter((session) => session.webhookClients.length > 0)
+              .map((session) => session.sessionId),
+            reason: 'webhook_settings_unavailable',
+          });
+          return;
+        }
+        await sendLogoutWebhookFanout(c.env, {
+          issuer: webhookIssuer,
+          sessions: sessionsToNotify,
+          config: webhookConfig,
+          log,
+          onIncomplete,
+        });
+      })();
+      logoutFanouts.push(webhookFanout);
+      c.executionCtx.waitUntil(webhookFanout);
+    }
+
+    // ========================================
+    // Step 2.7: Remove the ended sessions from the SessionClientStore (async)
+    // ========================================
+    // Only after both notices have finished (with their retries): a removal before them would
+    // leave a later read of the targets with nothing. A failed removal does not touch the notices'
+    // results; the store's expiry removes what it leaves. A session whose notice did not get as
+    // far as sending (no issuer, no signing key, unreadable settings or clients, the sending
+    // broke off) is not removed: its records stay until they expire. The apps that were not told
+    // are made visible to the admin (the failure list and the audit log).
+    if (logoutIssuer && c.executionCtx) {
       c.executionCtx.waitUntil(
         (async () => {
-          try {
-            // Get webhook configuration from KV
-            const webhookConfig = await getLogoutWebhookConfig(c.env.SETTINGS);
-
-            if (!webhookConfig.enabled) {
-              log.debug('Logout webhook is disabled', { action: 'LogoutWebhook' });
-              return;
-            }
-
-            // Check if we have any webhook clients to notify
-            const hasWebhookClients = sessionsToNotify.some((s) => s.webhookClients.length > 0);
-            if (!hasWebhookClients) {
-              log.debug('No webhook clients to notify', { action: 'LogoutWebhook' });
-              return;
-            }
-
-            // Get encryption key for decrypting webhook secrets
-            const encryptionKey = c.env.RP_TOKEN_ENCRYPTION_KEY || c.env.PII_ENCRYPTION_KEY;
-            if (!encryptionKey) {
-              log.error('No encryption key for decrypting webhook secrets', {
-                action: 'LogoutWebhook',
-              });
-              return;
-            }
-
-            // Create secret decryption function
-            // SECURITY: Wrap decryption in try-catch to avoid leaking key info in errors
-            const decryptSecret = async (encrypted: string): Promise<string> => {
-              try {
-                const result = await decryptValue(encrypted, encryptionKey);
-                return result.decrypted;
-              } catch {
-                // SECURITY: Do not expose decryption error details
-                log.error('Failed to decrypt webhook secret', { action: 'LogoutWebhook' });
-                throw new Error('Decryption failed');
-              }
-            };
-
-            // Create orchestrator
-            const kv = c.env.SETTINGS || c.env.STATE_STORE;
-            const orchestrator = createLogoutWebhookOrchestrator(kv);
-
-            // Send webhook notifications for each deleted session
-            const allResults: LogoutWebhookSendResult[] = [];
-
-            for (const {
-              sessionId: sessId,
-              userId: sessUserId,
-              webhookClients,
-            } of sessionsToNotify) {
-              if (webhookClients.length === 0) {
-                continue;
-              }
-
-              log.info('Sending webhook notifications', {
-                sessionId: sessId,
-                clientCount: webhookClients.length,
-                action: 'LogoutWebhook',
-              });
-
-              const results = await orchestrator.sendToAll(
-                webhookClients,
-                {
-                  issuer,
-                  userId: sessUserId,
-                  sessionId: sessId,
-                },
-                webhookConfig,
-                decryptSecret
-              );
-
-              allResults.push(...results);
-            }
-
-            // Log summary
-            const succeeded = allResults.filter((r) => r.success).length;
-            const failed = allResults.filter((r) => !r.success).length;
-            log.info('Logout webhook completed', { succeeded, failed, action: 'LogoutWebhook' });
-          } catch (error) {
-            log.error('Error sending notifications', { action: 'LogoutWebhook' }, error as Error);
+          // Sessions whose apps could not be looked up were not told either: counted for the admin.
+          await reportLogoutTargetsUnavailable(c.env, {
+            tenantId,
+            trigger: 'user_logout',
+            sessionCount: targetReadFailed.size,
+            log,
+          });
+          if (!(await logoutIssuer)) {
+            const webhookConfig = await logoutWebhookConfig;
+            await reportLogoutNotSent(c.env, {
+              tenantId,
+              trigger: 'user_logout',
+              sessions: sessionsToNotify,
+              backchannelEnabled: logoutConfig.backchannel.enabled,
+              // Settings that cannot be read: report the webhook apps too.
+              webhookEnabled: webhookConfig ? webhookConfig.enabled : true,
+              log,
+            });
+            return;
+          }
+          await Promise.allSettled(logoutFanouts);
+          if (incompleteNotices.length > 0) {
+            await reportIncompleteLogouts(c.env, {
+              tenantId,
+              trigger: 'user_logout',
+              sessions: sessionsToNotify,
+              incomplete: incompleteNotices,
+              log,
+            });
+          }
+          const kept = new Set<string>([
+            ...targetReadFailed,
+            ...incompleteNotices.flatMap((incomplete) => incomplete.sessionIds),
+          ]);
+          const removable = deletedSessions.filter((sessionId) => !kept.has(sessionId));
+          if (removable.length > 0) {
+            await purgeEndedSessionsFromSessionClientStore(c.env, tenantId, removable);
           }
         })()
       );
@@ -880,6 +882,13 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
 
     // Step 3: Clear session cookies immediately (both session and browser state)
     // SameSite must match the original cookie setting for proper deletion
+    setCookie(c, GUEST_RESUME_COOKIE, '', {
+      path: '/',
+      httpOnly: true,
+      secure: true,
+      sameSite: 'Lax',
+      maxAge: 0,
+    });
     setCookie(c, 'authrim_session', '', {
       path: '/',
       httpOnly: true,
@@ -1087,17 +1096,28 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       }
     }
 
-    // Step 6: Redirect to post-logout URI (no frontchannel clients)
-    // IMPORTANT: Hono's c.redirect() creates a new Response that doesn't include
-    // headers set via setCookie(). We need to manually add the Set-Cookie header
-    // to ensure the session cookie is properly cleared in the browser.
-    const response = c.redirect(redirectUrl, 302);
-
-    // Clone the response and add the Set-Cookie headers (need append for multiple cookies)
+    // Step 6: Send the browser on to the post-logout URI (no frontchannel clients)
+    // This answers the confirmation form's POST, and browsers apply that page's form-action
+    // ('self') to the redirects that follow a form submission: a 302 to the RP (or to a logged-out
+    // or error page served from another origin) would be aborted. A same-origin page that moves
+    // on by itself ends the form submission here, as the frontchannel page above does.
+    // The response is built by hand: Set-Cookie headers set via setCookie() are not carried over
+    // to a Response made here, so the cookies are cleared explicitly below.
     // SameSite is determined dynamically based on origin configuration
     const sessionSameSiteRedirect = getSessionCookieSameSite(c.env);
     const browserStateSameSiteRedirect = getBrowserStateCookieSameSite(c.env);
-    const headers = new Headers(response.headers);
+    const headers = new Headers({
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'Content-Security-Policy':
+        "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'no-referrer',
+    });
+    headers.append(
+      'Set-Cookie',
+      `${GUEST_RESUME_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`
+    );
     headers.append(
       'Set-Cookie',
       `authrim_session=; Path=/; HttpOnly; Secure; SameSite=${sessionSameSiteRedirect}; Max-Age=0`
@@ -1111,13 +1131,20 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       `${LOGOUT_CONFIRMATION_COOKIE_NAME}=; Path=/logout; HttpOnly; Secure; SameSite=Strict; Max-Age=0`
     );
 
-    return new Response(response.body, {
-      status: response.status,
+    return new Response(renderLogoutContinuationPage(redirectUrl), {
+      status: 200,
       headers,
     });
   } catch (error) {
     log.error('Front-channel logout error', {}, error as Error);
     // Even on error, try to clear session cookies
+    setCookie(c, GUEST_RESUME_COOKIE, '', {
+      path: '/',
+      httpOnly: true,
+      secure: true,
+      sameSite: 'Lax',
+      maxAge: 0,
+    });
     setCookie(c, 'authrim_session', '', {
       path: '/',
       httpOnly: true,
@@ -1353,8 +1380,27 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const userId = logoutClaims.sub as string;
+    // The logout token's sub is the one the app's ID tokens carry, which an identity mapping may
+    // have chosen (and which may equal another user's id); a logout token has no sealed account
+    // reference. So the user is the one whose session its sid names, and a token without a sid
+    // must show its sub is the user's id to end every session of that user.
+    let userId: string | undefined;
     const sessionId = logoutClaims.sid as string | undefined;
+    if (!sessionId) {
+      if (tokenSubjectAccountSource(logoutClaims as Record<string, unknown>) !== 'sub') {
+        log.warn('Back-channel logout token without sid does not name an account', {
+          action: 'BackchannelLogout',
+        });
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'logout_token must contain sid claim',
+          },
+          400
+        );
+      }
+      userId = logoutClaims.sub as string;
+    }
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
     let deviceSecretLogoutResult: RevokeDeviceSecretsForLogoutScopeResult | undefined;
@@ -1366,50 +1412,31 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       // Invalidate specific session using sharded routing via RPC
       try {
         const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantId);
-        const deleted = await sessionStore.invalidateSessionRpc(sessionId);
-
-        if (deleted) {
-          sessionDeleted = true;
-        } else {
-          log.warn('Failed to delete session', { sessionId, action: 'BackchannelLogout' });
-        }
-      } catch (error) {
-        log.warn('Failed to route to session store for back-channel logout', {
-          sessionId,
-          error: (error as Error).message,
-          action: 'BackchannelLogout',
-        });
-      }
-    } else if (sessionId) {
-      // Legacy non-sharded session ID - cannot route
-      log.warn('Cannot delete legacy session format', { sessionId, action: 'BackchannelLogout' });
-    } else {
-      // A subject-only logout cannot locate every shard, so advance the user's
-      // revocation epoch. SessionStore checks this epoch on active-session reads.
-      await recordHybridUserSessionRevocationEpoch(c.env, authCtx.coreAdapter, tenantId, userId);
-      sessionDeleted = true;
-      log.info('Invalidated all user sessions by revocation epoch', {
-        userId,
-        action: 'BackchannelLogout',
-      });
-    }
-
-    // Revoke Native SSO device_secrets for the deleted session
-    if (sessionDeleted && sessionId) {
-      const nativeSSOEnabled = await isNativeSSOEnabled(c.env);
-      if (nativeSSOEnabled) {
-        try {
-          deviceSecretLogoutResult = await revokeDeviceSecretsForLogoutScope({
-            adapter: authCtx.coreAdapter,
+        const session = (await sessionStore.getSessionRpc(sessionId).catch(() => {
+          throw new Error('guest_resume_revocation_failed');
+        })) as Session | null;
+        await revokeGuestResumeForSession(c, session);
+        userId = session?.userId;
+        // The session's Native SSO device secrets, revoked before it ends (see the RP-initiated
+        // logout above): a failure keeps the session for the RP's retry.
+        if (session && (await isNativeSSOEnabled(c.env))) {
+          deviceSecretLogoutResult = await revokeSessionDeviceSecrets(c, {
             tenantId,
-            sessionIds: [sessionId],
+            issuer,
+            sessionId,
             userId,
             clientId,
             scope: DEFAULT_DEVICE_SECRET_LOGOUT_SCOPE,
             reason: 'logout',
             callerAuthMode: 'backchannel',
+          }).catch((error: unknown) => {
+            log.error(
+              'Failed to revoke device secrets',
+              { action: 'BackchannelLogout' },
+              error as Error
+            );
+            throw new Error('device_secret_revocation_failed');
           });
-
           if (
             deviceSecretLogoutResult.revokedDeviceSecrets > 0 ||
             deviceSecretLogoutResult.revokedInstallations > 0
@@ -1424,14 +1451,44 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
               action: 'BackchannelLogout',
             });
           }
-        } catch (error) {
-          log.error(
-            'Failed to revoke device secrets',
-            { action: 'BackchannelLogout' },
-            error as Error
-          );
         }
+        const deleted = await sessionStore
+          .invalidateSessionRpc(sessionId)
+          .catch((error: unknown) => {
+            throw new Error('session_invalidation_failed', { cause: error });
+          });
+
+        if (deleted) {
+          sessionDeleted = true;
+        } else {
+          log.warn('Failed to delete session', { sessionId, action: 'BackchannelLogout' });
+        }
+      } catch (error) {
+        const unavailable = signOutUnavailableResponse(c, error);
+        if (unavailable) return unavailable;
+        log.warn('Failed to route to session store for back-channel logout', {
+          sessionId,
+          error: (error as Error).message,
+          action: 'BackchannelLogout',
+        });
       }
+    } else if (sessionId) {
+      // Legacy non-sharded session ID - cannot route
+      log.warn('Cannot delete legacy session format', { sessionId, action: 'BackchannelLogout' });
+    } else {
+      // A subject-only logout cannot locate every shard, so advance the user's
+      // revocation epoch. SessionStore checks this epoch on active-session reads.
+      await recordHybridUserSessionRevocationEpoch(
+        c.env,
+        authCtx.coreAdapter,
+        tenantId,
+        userId as string
+      );
+      sessionDeleted = true;
+      log.info('Invalidated all user sessions by revocation epoch', {
+        userId,
+        action: 'BackchannelLogout',
+      });
     }
 
     // Publish events for backchannel logout (non-blocking)
@@ -1444,7 +1501,7 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         tenantId: tenantIdForEvent,
         data: {
           sessionId,
-          userId,
+          userId: userId ?? '',
           reason: 'logout',
         } satisfies UserEventData,
       }).catch((err) => {
@@ -1461,7 +1518,7 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         tenantId: tenantIdForEvent,
         data: {
           sessionId,
-          userId,
+          userId: userId ?? '',
           reason: 'logout',
         } satisfies SessionEventData,
       }).catch((err) => {
@@ -1483,7 +1540,7 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       // Schedule audit log with waitUntil to ensure it completes after response
       const auditPromise = createAuditLog(c.env, {
         tenantId: tenantIdForEvent,
-        userId,
+        userId: userId ?? '',
         action: 'user.logout',
         resource: 'session',
         resourceId: sessionId,

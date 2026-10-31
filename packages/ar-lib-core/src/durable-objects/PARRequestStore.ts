@@ -59,6 +59,10 @@ export interface PARRequestData {
   cancel_uri?: string;
   /** RFC 8707 target resource, when the journey requires an exact resource binding. */
   resource?: string;
+  /** The pushed request carried a request object the client signed (verified at the PAR endpoint). */
+  request_object_signed?: boolean;
+  /** The pushed request carried a request object encrypted to this tenant (decrypted at PAR). */
+  request_object_encrypted?: boolean;
   createdAt?: number;
   expiresAt?: number;
   consumed?: boolean;
@@ -400,7 +404,7 @@ export class PARRequestStore extends DurableObject<Env> {
     try {
       // POST /request - Store new PAR request
       if (path === '/request' && request.method === 'POST') {
-        const body = (await request.json()) as Partial<StorePARRequest>;
+        const body = await request.json<Partial<StorePARRequest>>();
 
         if (!body.requestUri || !body.data || !body.data.tenant_id || !body.ttl) {
           return new Response(
@@ -425,7 +429,7 @@ export class PARRequestStore extends DurableObject<Env> {
 
       // POST /request/consume - Consume PAR request (atomic)
       if (path === '/request/consume' && request.method === 'POST') {
-        const body = (await request.json()) as Partial<ConsumePARRequest>;
+        const body = await request.json<Partial<ConsumePARRequest>>();
 
         if (!body.requestUri || !body.tenant_id || !body.client_id) {
           return new Response(

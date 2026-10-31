@@ -106,7 +106,6 @@
 <div
 	class="login-ui-theme-boundary"
 	data-theme={themeStore.mode}
-	data-variant={themeStore.currentVariant}
 	data-login-theme={loginUIPageStore.themeTemplate}
 	data-page-layout={loginUIPageStore.layout}
 	data-font-family={loginUIPageStore.fontFamily}
@@ -131,6 +130,7 @@
 	data-branding-loaded={brandingStore.isLoaded ? '' : undefined}
 	style:--login-page-background-color={loginUIPageStore.backgroundColor || undefined}
 	style:--login-accent-color={loginUIPageStore.accentColor || undefined}
+	style:--login-accent-text={loginUIPageStore.accentTextColor || undefined}
 	style:--login-title-color={loginUIPageStore.titleColor || undefined}
 	style:--login-text-color={loginUIPageStore.textColor || undefined}
 	style:--login-copy-color={loginUIPageStore.copyColor || undefined}

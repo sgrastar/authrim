@@ -122,12 +122,21 @@ interface PasskeyRow {
   credential_id: string;
   rp_id: string | null;
   public_key: string;
-  counter: number;
+  counter: number | string;
   transports: string | null;
   device_name: string | null;
   aaguid: string | null;
-  created_at: number;
-  last_used_at: number | null;
+  created_at: number | string;
+  last_used_at: number | string | null;
+}
+
+function storedPasskeyInteger(value: number | string, field: string): number {
+  const parsed =
+    typeof value === 'string' && /^(0|[1-9][0-9]*)$/u.test(value) ? Number(value) : value;
+  if (typeof parsed !== 'number' || !Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new Error(`Invalid stored passkey ${field}`);
+  }
+  return parsed;
 }
 
 function requireTenantId(tenantId: string, context: string): string {
@@ -319,7 +328,7 @@ export class PasskeyRepository {
       return null;
     }
 
-    if (!Number.isInteger(newCounter) || newCounter < 0) {
+    if (!Number.isSafeInteger(newCounter) || newCounter < 0) {
       throw new Error(`Invalid counter: ${newCounter} must be a non-negative integer.`);
     }
 
@@ -513,12 +522,13 @@ export class PasskeyRepository {
       credential_id: row.credential_id,
       rp_id: row.rp_id ?? null,
       public_key: row.public_key,
-      counter: row.counter,
+      counter: storedPasskeyInteger(row.counter, 'counter'),
       transports,
       device_name: row.device_name,
       aaguid: row.aaguid ?? null,
-      created_at: row.created_at,
-      last_used_at: row.last_used_at,
+      created_at: storedPasskeyInteger(row.created_at, 'created_at'),
+      last_used_at:
+        row.last_used_at === null ? null : storedPasskeyInteger(row.last_used_at, 'last_used_at'),
     };
   }
 }

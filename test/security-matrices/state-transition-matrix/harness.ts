@@ -325,11 +325,20 @@ function createStateProxiedStub<TInstance extends object>(
 
 import type { MemoryDatabaseAdapter, ExecuteResult } from '../fixtures/d1-adapter';
 
+interface D1RunResultLike {
+  success: boolean;
+  meta: {
+    changes: number;
+    last_row_id?: number | bigint;
+    duration?: number;
+  };
+}
+
 export interface D1StatementLike {
   bind(...params: unknown[]): D1StatementLike;
   first<T = unknown>(options?: unknown): Promise<T | null>;
   all<T = unknown>(options?: unknown): Promise<{ results: T[]; success: boolean; meta?: unknown }>;
-  run(options?: unknown): Promise<ExecuteResult>;
+  run(options?: unknown): Promise<D1RunResultLike | ExecuteResult>;
   raw<T = unknown>(options?: unknown): Promise<T[]>;
 }
 
@@ -345,6 +354,12 @@ interface D1PreparedLike {
  * adapter + ledger.
  */
 export class D1DatabaseLike {
+  private readonly logObjectCatalog = new Map<string, Record<string, unknown>>();
+  private readonly loggingDeliveryClaims = new Map<
+    string,
+    { status: string; errorClass: string | null; leaseUntil: number | null }
+  >();
+
   constructor(
     private readonly adapter: MemoryDatabaseAdapter,
     private readonly recordParams = false,
@@ -368,6 +383,9 @@ export class D1DatabaseLike {
             params: safeSerializableParams(params),
           });
         }
+        if (query.includes('FROM log_object_catalog') && query.includes('WHERE id = ?')) {
+          return (self.logObjectCatalog.get(String(params[0])) ?? null) as T | null;
+        }
         return self.adapter.queryOne<T>(query, params);
       },
       all: async <T = unknown>() => {
@@ -385,7 +403,145 @@ export class D1DatabaseLike {
             params: safeSerializableParams(params),
           });
         }
-        return self.adapter.execute(query, params);
+        const result = await self.adapter.execute(query, params);
+        if (
+          query.includes('INSERT INTO logging_delivery_events') &&
+          query.includes("'delivery_in_progress'")
+        ) {
+          const id = String(params[0]);
+          const claimed = !self.loggingDeliveryClaims.has(id);
+          if (claimed) {
+            self.loggingDeliveryClaims.set(id, {
+              status: 'retrying',
+              errorClass: 'delivery_in_progress',
+              leaseUntil: Number(params[10]),
+            });
+          }
+          return { success: result.success, meta: { changes: claimed ? 1 : 0 } };
+        }
+        if (query.includes('UPDATE logging_delivery_events')) {
+          if (query.includes("SET status = 'delivered'")) {
+            const id = String(params[4]);
+            const claim = self.loggingDeliveryClaims.get(id);
+            const changed =
+              claim?.status === 'retrying' && claim.errorClass === 'delivery_in_progress';
+            if (changed && claim) {
+              Object.assign(claim, { status: 'delivered', errorClass: null, leaseUntil: null });
+            }
+            return { success: result.success, meta: { changes: changed ? 1 : 0 } };
+          }
+          if (query.includes("error_class = 'delivery_emission_uncertain'")) {
+            const id = String(params[1]);
+            const claim = self.loggingDeliveryClaims.get(id);
+            const changed =
+              claim?.status === 'retrying' && claim.errorClass === 'delivery_in_progress';
+            if (changed && claim) {
+              Object.assign(claim, {
+                errorClass: 'delivery_emission_uncertain',
+                leaseUntil: null,
+              });
+            }
+            return { success: result.success, meta: { changes: changed ? 1 : 0 } };
+          }
+          if (query.includes("error_class = 'delivery_in_progress'")) {
+            const id = String(params[10]);
+            const now = Number(params[11]);
+            const claim = self.loggingDeliveryClaims.get(id);
+            const changed =
+              claim?.status === 'retrying' &&
+              claim.errorClass === 'delivery_in_progress' &&
+              claim.leaseUntil !== null &&
+              claim.leaseUntil <= now;
+            if (changed && claim) {
+              claim.leaseUntil = Number(params[8]);
+            }
+            return { success: result.success, meta: { changes: changed ? 1 : 0 } };
+          }
+        }
+        if (
+          query.includes('DELETE FROM logging_delivery_events') &&
+          query.includes("error_class = 'delivery_in_progress'")
+        ) {
+          const id = String(params[0]);
+          const claim = self.loggingDeliveryClaims.get(id);
+          const changed =
+            claim?.status === 'retrying' && claim.errorClass === 'delivery_in_progress';
+          if (changed) self.loggingDeliveryClaims.delete(id);
+          return { success: result.success, meta: { changes: changed ? 1 : 0 } };
+        }
+        if (query.includes('INSERT INTO log_object_catalog')) {
+          const id = String(params[0]);
+          const claimed = !self.logObjectCatalog.has(id);
+          if (claimed) {
+            self.logObjectCatalog.set(id, {
+              id,
+              tenant_key: params[1],
+              log_type: params[2],
+              plane: params[3],
+              surface: params[4],
+              object_key: params[5],
+              object_kind: params[6],
+              status: params[7],
+              record_count: params[8],
+              byte_count: params[9],
+              checksum_sha256: params[10],
+              compression: params[11],
+              encryption_scope: params[12],
+              key_version: params[13],
+              created_at: params[14],
+              committed_at: params[15],
+            });
+          }
+          return { success: result.success, meta: { changes: claimed ? 1 : 0 } };
+        }
+        if (query.includes('UPDATE log_object_catalog')) {
+          let id: string;
+          let changed = false;
+          if (query.includes("SET status = 'committed'")) {
+            id = String(params[3]);
+            const row = self.logObjectCatalog.get(id);
+            if (row?.status === 'pending') {
+              Object.assign(row, {
+                status: 'committed',
+                byte_count: params[0],
+                checksum_sha256: params[1],
+                committed_at: params[2],
+              });
+              changed = true;
+            }
+          } else if (query.includes("SET status = 'orphan_candidate'")) {
+            id = String(params[1] ?? params[0]);
+            const row = self.logObjectCatalog.get(id);
+            if (row?.status === 'pending') {
+              Object.assign(row, { status: 'orphan_candidate' });
+              changed = true;
+            }
+          } else if (query.includes("SET status = 'pending'")) {
+            id = String(params[1]);
+            const row = self.logObjectCatalog.get(id);
+            if (row?.status === 'orphan_candidate') {
+              Object.assign(row, {
+                status: 'pending',
+                checksum_sha256: null,
+                committed_at: params[0],
+              });
+              changed = true;
+            }
+          } else if (query.includes('(committed_at IS NULL OR committed_at <= ?)')) {
+            id = String(params[1]);
+            const row = self.logObjectCatalog.get(id);
+            const currentLease = row?.committed_at;
+            if (
+              row?.status === 'pending' &&
+              (currentLease === null || Number(currentLease) <= Number(params[2]))
+            ) {
+              Object.assign(row, { committed_at: params[0] });
+              changed = true;
+            }
+          }
+          return { success: result.success, meta: { changes: changed ? 1 : 0 } };
+        }
+        return result;
       },
       raw: async <T = unknown>() => self.adapter.query<T>(query, params),
     };

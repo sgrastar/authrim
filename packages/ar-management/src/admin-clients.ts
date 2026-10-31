@@ -1,3 +1,4 @@
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
@@ -27,12 +28,16 @@ import {
   type WebOriginRegistryDocument,
   type WebOriginRegistryWritePayload,
   DEFAULT_ASC_ALLOWED_TRANSFORMED_CLAIMS,
-  loadDestinationProfileConsentDescriptor,
   requireAdminDatabaseAdapter,
-  resolveRuntimeIdentityMappingBinding,
+  validateOidcMappingSetReference,
+  type DatabaseAdapter,
   type AttributeReleaseConsentPolicy,
   type ClaimReleasePolicy,
   buildContractKey,
+  resolveTokenExchangeCeilingRefusal,
+  IAL_LEVELS,
+  type IAL,
+  type AdminAuthContext,
 } from '@authrim/ar-lib-core';
 import {
   parseClientStringArray,
@@ -47,6 +52,22 @@ import {
   ensureActiveTenantDiscoveryAliasDirectory,
   resolveTenantDiscoveryAliasDirectoryInput,
 } from './tenant-alias-directory';
+import { refuseIDTokenSigningAlgorithm } from './id-token-signing-policy';
+import { OIDC_SIGNING_ALGORITHMS } from '@authrim/ar-lib-core/utils/oidc-signing';
+import { REDIRECT_URI_POLICY_DESCRIPTION, redirectUriRefusedByPolicy } from './redirect-uri-policy';
+import {
+  abortIdentityMappingLevelHistory,
+  finalizeIdentityMappingLevelHistoryFromReceipt,
+  identityMappingLevelHistoryChoicesEqual,
+  normalizeIdentityMappingLevelHistoryChoice,
+  prepareIdentityMappingLevelHistory,
+  type IdentityMappingLevelHistoryRow,
+} from '@authrim/ar-lib-core/services/identity-mapping-level-history';
+import {
+  ackIdentityMappingClientHistoryReceipt,
+  readIdentityMappingClientHistoryReceipt,
+} from '@authrim/ar-lib-core/services/identity-mapping-client-history-receipt';
+import { runTenantBackupCoveredMutation } from './tenant-backup-writer';
 
 type AdminClientApplicationType = 'web' | 'native' | 'spa' | 'service';
 type AdminBrowserPublicClientMode = 'strict' | 'cookie_fallback';
@@ -59,6 +80,8 @@ type AdminTokenEndpointAuthMethod =
   | 'private_key_jwt';
 
 interface AdminOIDCIdentityMappingSelector {
+  /** `none`: the app takes no mapping, whatever the tenant's and the platform's defaults say. */
+  mode?: 'none';
   fieldMappingSetId?: string;
   fieldMappingVersionId?: string;
   destinationNamespace?: string;
@@ -81,6 +104,8 @@ const VALID_BROWSER_REFRESH_TOKEN_POLICIES = new Set<AdminBrowserRefreshTokenPol
   'disabled',
   'dpop_bound',
 ]);
+// The IALs of NIST SP 800-63A; the service's own list, so the API accepts what runtime enforces.
+const VALID_MINIMUM_IALS = new Set<IAL>(IAL_LEVELS);
 const VALID_CLIENT_CHANNELS = new Set<AdminClientChannel>(['browser', 'native', 'server']);
 const VALID_CLAIM_RELEASE_POLICIES = new Set<ClaimReleasePolicy>([
   'scope_required',
@@ -107,8 +132,8 @@ const VALID_TOKEN_ENDPOINT_AUTH_METHODS = new Set<AdminTokenEndpointAuthMethod>(
   'client_secret_post',
   'private_key_jwt',
 ]);
-const VALID_ID_TOKEN_SIGNING_ALGORITHMS = new Set(['RS256', 'ES256']);
-const VALID_USERINFO_SIGNING_ALGORITHMS = new Set(['none', 'RS256', 'ES256']);
+const VALID_ID_TOKEN_SIGNING_ALGORITHMS = new Set<string>(OIDC_SIGNING_ALGORITHMS);
+const VALID_USERINFO_SIGNING_ALGORITHMS = new Set<string>(['none', ...OIDC_SIGNING_ALGORITHMS]);
 const UNSUPPORTED_LEGACY_CLIENT_FIELDS = new Set([
   'app_suite',
   'trust_group_id',
@@ -121,7 +146,7 @@ async function deleteKvPrefix(kv: KVNamespace | undefined, prefix: string): Prom
   do {
     const page = await kv.list({ prefix, cursor, limit: 1000 });
     for (let offset = 0; offset < page.keys.length; offset += 25) {
-      await Promise.all(page.keys.slice(offset, offset + 25).map(({ name }) => kv.delete(name)));
+      await samlDrAll(page.keys.slice(offset, offset + 25).map(({ name }) => kv.delete(name)));
     }
     cursor = page.list_complete ? undefined : page.cursor;
   } while (cursor);
@@ -132,7 +157,7 @@ async function deleteClientOwnedConfiguration(
   tenantId: string,
   clientId: string
 ): Promise<void> {
-  await Promise.all([
+  await samlDrAll([
     deleteKvPrefix(env.SETTINGS, `settings:client:${tenantId}:${clientId}:`),
     env.AUTHRIM_CONFIG?.delete(buildContractKey(env, 'client', tenantId, clientId)),
   ]);
@@ -263,6 +288,22 @@ function validateOptionalEnumField<T extends string>(
   return { ok: true, value: value as T };
 }
 
+/**
+ * minimum_ial: absent leaves it, null removes it, IAL1 to IAL3 sets it. An empty string is refused
+ * rather than read as null, so a stray empty value can never remove a client's minimum.
+ */
+function validateMinimumIal(
+  value: unknown
+): { ok: true; value: IAL | null | undefined } | { ok: false; error: string } {
+  if (value === '') {
+    return {
+      ok: false,
+      error: `minimum_ial must be one of ${IAL_LEVELS.join(', ')}, or null to remove it`,
+    };
+  }
+  return validateOptionalEnumField(value, 'minimum_ial', VALID_MINIMUM_IALS);
+}
+
 function validateOptionalBooleanField(
   value: unknown,
   field: string
@@ -293,7 +334,61 @@ function validateOptionalStrictBooleanField(
 }
 
 function isLoopbackRedirectHost(hostname: string): boolean {
-  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+  // URL.hostname writes an IPv6 address in brackets.
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '[::1]' ||
+    hostname === '::1'
+  );
+}
+
+/**
+ * A response refusing redirect URIs the tenant's policy does not allow (security.https_redirect_only,
+ * as authorize applies it), or null.
+ */
+/**
+ * An Agent Access connection (agent:* scopes): it signs in through the Admin Agent OAuth flow,
+ * which takes a loopback redirect as a local MCP client's (RFC 8252), not through authorize.
+ */
+function isAgentAccessConnection(...scopeSources: unknown[]): boolean {
+  return scopeSources.some((source) =>
+    (Array.isArray(source) ? source : typeof source === 'string' ? source.split(/\s+/u) : []).some(
+      // As the scope validation will read it (trimmed).
+      (scope) => typeof scope === 'string' && scope.trim().startsWith('agent:')
+    )
+  );
+}
+
+async function redirectUriPolicyResponse(
+  c: Context<{ Bindings: Env }>,
+  input: {
+    redirectUris: readonly string[] | undefined;
+    applicationType: unknown;
+    clientId?: string;
+  }
+): Promise<Response | null> {
+  let refused: string | null;
+  try {
+    refused = await redirectUriRefusedByPolicy(c.env, getTenantIdFromContext(c), input);
+  } catch (error) {
+    getLogger(c)
+      .module('ADMIN-CLIENT')
+      .error('Redirect URI policy could not be read', {}, error as Error);
+    return c.json(
+      { error: 'server_error', error_description: 'Redirect URI policy is unavailable' },
+      503
+    );
+  }
+  return refused
+    ? c.json(
+        {
+          error: 'invalid_request',
+          error_description: `${REDIRECT_URI_POLICY_DESCRIPTION}: ${refused}`,
+        },
+        400
+      )
+    : null;
 }
 
 function validateRedirectUriList(
@@ -474,7 +569,7 @@ function validateOptionalClaimsParameterPolicyField(
   return { ok: true, value: policy };
 }
 
-function validateOptionalIdentityMappingSelectorField(
+export function validateOptionalIdentityMappingSelectorField(
   value: unknown,
   field: string
 ):
@@ -492,6 +587,39 @@ function validateOptionalIdentityMappingSelectorField(
 
   const source = value as Record<string, unknown>;
   const selector: AdminOIDCIdentityMappingSelector = {};
+  if (source.mode !== undefined && source.mode !== null) {
+    // The explicit opt-out: the whole choice. A Mapping Set beside it would be two answers.
+    if (source.mode !== 'none') {
+      return { ok: false, error: `${field}.mode must be "none"` };
+    }
+    const beside = [
+      'fieldMappingSetId',
+      'fieldMappingVersionId',
+      'destinationNamespace',
+      'sourceProfileId',
+      'destinationProfileId',
+      'policySetId',
+      'policyVersionId',
+    ].find((key) => {
+      const raw = source[key];
+      return raw !== undefined && raw !== null && !(typeof raw === 'string' && raw.trim() === '');
+    });
+    if (beside) {
+      return {
+        ok: false,
+        error: `${field}.mode "none" cannot be combined with ${field}.${beside}`,
+      };
+    }
+    return { ok: true, value: { mode: 'none' } };
+  }
+  // A selector of the older kind (a Destination Profile and no Mapping Set) is not a choice: the
+  // release fails for an app that holds one, so it is not saved, whatever the spelling.
+  if (source.destination_profile_id !== undefined && source.destination_profile_id !== null) {
+    return {
+      ok: false,
+      error: `${field}.destination_profile_id is not accepted; name a Mapping Set (fieldMappingSetId) or use { "mode": "none" }`,
+    };
+  }
   for (const key of [
     'fieldMappingSetId',
     'fieldMappingVersionId',
@@ -606,42 +734,76 @@ function parseIdentityMappingSelectorField(
   return validation.ok ? (validation.value ?? null) : null;
 }
 
+/** Why an app's Mapping Set choice cannot be saved, as the response that says so. */
+interface IdentityMappingSelectorProblem {
+  status: 400 | 404 | 503;
+  error: 'invalid_request' | 'not_found' | 'temporarily_unavailable';
+  description: string;
+}
+
 async function validateOIDCIdentityMappingSelector(
   env: Env,
   tenantId: string,
   selector: AdminOIDCIdentityMappingSelector | null | undefined
-): Promise<string | null> {
+): Promise<IdentityMappingSelectorProblem | null> {
   if (selector === undefined || selector === null) return null;
+  // The opt-out names no Mapping Set, so there is nothing to check.
+  if (selector.mode === 'none') return null;
   if (!selector.fieldMappingSetId) {
-    return 'identity_mapping.fieldMappingSetId is required';
+    return {
+      status: 400,
+      error: 'invalid_request',
+      description: 'identity_mapping.fieldMappingSetId is required',
+    };
   }
 
+  let adminAdapter: DatabaseAdapter | null = null;
   try {
-    const adminAdapter = requireAdminDatabaseAdapter(env, 'oidc-client-identity-mapping');
-    const binding = await resolveRuntimeIdentityMappingBinding(adminAdapter, {
-      tenantId,
-      protocol: 'oidc',
-      role: 'op',
-      fieldMappingSetId: selector.fieldMappingSetId,
-      fieldMappingVersionId: selector.fieldMappingVersionId,
-    });
-    if (!binding) {
-      return 'identity_mapping.fieldMappingSetId must reference an active compiled Mapping Set';
-    }
-    if (binding.destinationProfileIds.length !== 1 || !binding.destinationProfileId) {
-      return 'The active Mapping Set must reference exactly one OIDC Destination Profile';
-    }
-    const descriptor = await loadDestinationProfileConsentDescriptor(
-      adminAdapter,
-      tenantId,
-      binding.destinationProfileId
-    );
-    if (!descriptor || descriptor.destinationType !== 'oidc') {
-      return 'The active Mapping Set must reference an active OIDC Destination Profile';
-    }
-    return null;
+    adminAdapter = requireAdminDatabaseAdapter(env, 'oidc-client-identity-mapping');
   } catch {
-    return 'Unable to validate identity_mapping against the active Mapping Set';
+    // Left null: the shared check answers `admin_database_unavailable`.
+  }
+  // The same check as the tenant's and the platform's default Mapping Set. The platform's own sets
+  // may be chosen too: the release of claims reads a set under its owner.
+  const result = await validateOidcMappingSetReference({
+    adminAdapter,
+    contextTenantId: tenantId,
+    scope: 'client',
+    setId: selector.fieldMappingSetId,
+    versionId: selector.fieldMappingVersionId,
+  });
+  if (result.ok) return null;
+  switch (result.code) {
+    case 'set_missing':
+      return {
+        status: 404,
+        error: 'not_found',
+        description:
+          'identity_mapping.fieldMappingSetId does not reference a Mapping Set available to this tenant',
+      };
+    case 'set_inactive':
+      return {
+        status: 400,
+        error: 'invalid_request',
+        description:
+          'identity_mapping.fieldMappingSetId must reference an active compiled Mapping Set',
+      };
+    case 'destination_profile_invalid':
+      return {
+        status: 400,
+        error: 'invalid_request',
+        description:
+          'The active Mapping Set must reference exactly one active OIDC Destination Profile',
+      };
+    case 'platform_set_unsafe':
+      return { status: 400, error: 'invalid_request', description: result.message };
+    default:
+      return {
+        status: 503,
+        error: 'temporarily_unavailable',
+        description:
+          'Unable to validate identity_mapping against the active Mapping Set; try again',
+      };
   }
 }
 
@@ -780,6 +942,35 @@ function webOriginRegistryFromAllowedOrigins(
  * Create a new OAuth client.
  * POST /admin/clients
  */
+/**
+ * What the tenant's token exchange ceilings (tokens.exchange_delegation_enabled and
+ * tokens.exchange_impersonation_enabled) mean for a client saved with token exchange on: its
+ * delegation_mode cannot be used until the tenant allows it, and token exchange refuses it
+ * meanwhile. This is a warning, not a validation error: clients and tenant settings are set in
+ * any order (setup, tenant import), and the ceiling itself is enforced when tokens are exchanged.
+ */
+async function tokenExchangeCeilingWarnings(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  client: { token_exchange_allowed?: unknown; delegation_mode?: unknown }
+): Promise<{ code: string; setting: string; message: string }[]> {
+  if (client.token_exchange_allowed !== true && client.token_exchange_allowed !== 1) return [];
+  const mode =
+    typeof client.delegation_mode === 'string' && client.delegation_mode
+      ? client.delegation_mode
+      : 'delegation';
+  const refusal = await resolveTokenExchangeCeilingRefusal(c.env, tenantId, mode);
+  return refusal
+    ? [
+        {
+          code: 'token_exchange_not_allowed_by_tenant',
+          setting: refusal.setting,
+          message: refusal.message,
+        },
+      ]
+    : [];
+}
+
 export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
   try {
     const body = await c.req.json<{
@@ -813,6 +1004,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       allowed_redirect_origins?: string[];
       web_origin_registry?: WebOriginRegistryWritePayload | null;
       require_pkce?: boolean;
+      minimum_ial?: string | null;
       application_type?: string;
       // Admin/API "application_group" maps to the internal trust_group security boundary.
       trust_group?: string | null;
@@ -889,6 +1081,13 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
         400
       );
     }
+    const createRedirectPolicy = isAgentAccessConnection(body.scope, body.requestable_scopes)
+      ? null
+      : await redirectUriPolicyResponse(c, {
+          redirectUris: redirectUrisValidation.value,
+          applicationType: body.application_type ?? 'web',
+        });
+    if (createRedirectPolicy) return createRedirectPolicy;
 
     const grantTypesValidation = validateGrantTypes(body.grant_types, 'grant_types', [
       GRANT_TYPES.AUTHORIZATION_CODE,
@@ -927,6 +1126,17 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
         {
           error: 'invalid_request',
           error_description: requirePkceValidation.error,
+        },
+        400
+      );
+    }
+
+    const minimumIalValidation = validateMinimumIal(body.minimum_ial);
+    if (!minimumIalValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: minimumIalValidation.error,
         },
         400
       );
@@ -1357,7 +1567,10 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       identityMappingValidation.value
     );
     if (identityMappingError) {
-      return c.json({ error: 'invalid_request', error_description: identityMappingError }, 400);
+      return c.json(
+        { error: identityMappingError.error, error_description: identityMappingError.description },
+        identityMappingError.status
+      );
     }
     const isPublicClient = tokenEndpointAuthMethodValidation.value === 'none';
     const clientSecret = isPublicClient
@@ -1417,6 +1630,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       default_resource: defaultResourceValidation.value,
       allowed_redirect_origins: validatedAllowedOrigins,
       require_pkce: requirePkceValidation.value ?? false,
+      minimum_ial: minimumIalValidation.value ?? null,
     });
 
     let webOriginRegistry: WebOriginRegistryDocument = { origins: [] };
@@ -1568,6 +1782,8 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       client_name: client.client_name,
     });
 
+    const tokenExchangeWarnings = await tokenExchangeCeilingWarnings(c, tenantId, client);
+
     return c.json(
       {
         client: {
@@ -1639,9 +1855,11 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
           default_resource: client.default_resource,
           web_origin_registry: webOriginRegistry,
           require_pkce: client.require_pkce,
+          minimum_ial: client.minimum_ial ?? null,
           created_at: client.created_at,
           updated_at: client.updated_at,
         },
+        ...(tokenExchangeWarnings.length > 0 && { warnings: tokenExchangeWarnings }),
       },
       201
     );
@@ -1806,8 +2024,39 @@ export async function adminClientGetHandler(c: Context<{ Bindings: Env }>) {
 }
 
 export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
+  return adminClientUpdateWithHistoryContext(c);
+}
+
+/** Internal call only: request JSON cannot select a history origin or replace the CAS version. */
+export async function adminClientUpdateWithHistoryContext(
+  c: Context<{ Bindings: Env }>,
+  internal: {
+    clientId?: string;
+    readBody?: () => Promise<Record<string, unknown>>;
+    expectedUpdatedAt?: number;
+    via?: 'restore';
+    restoreAudit?: { restoredFrom: string; reason?: string };
+  } = {}
+): Promise<Response> {
+  return runTenantBackupCoveredMutation({
+    env: c.env,
+    tenantId: getTenantIdFromContext(c),
+    run: () => executeAdminClientUpdate(c, internal),
+  });
+}
+
+async function executeAdminClientUpdate(
+  c: Context<{ Bindings: Env }>,
+  internal: {
+    clientId?: string;
+    readBody?: () => Promise<Record<string, unknown>>;
+    expectedUpdatedAt?: number;
+    via?: 'restore';
+    restoreAudit?: { restoredFrom: string; reason?: string };
+  }
+) {
   try {
-    const clientId = c.req.param('id')!;
+    const clientId = internal.clientId ?? c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
     const existingClient = await authCtx.repositories.client.findByClientId(clientId);
@@ -1822,7 +2071,7 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const body = await c.req.json();
+    const body = internal.readBody ? await internal.readBody() : await c.req.json();
     const unsupportedLegacyField = findUnsupportedLegacyClientField(
       body as Record<string, unknown>
     );
@@ -1866,6 +2115,7 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       allowed_redirect_origins,
       web_origin_registry,
       require_pkce,
+      minimum_ial,
       initiate_login_uri,
       login_ui_url,
       application_type,
@@ -1904,6 +2154,13 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
         400
       );
     }
+    const idTokenAlgorithmError = await refuseIDTokenSigningAlgorithm(
+      c,
+      tenantId,
+      idTokenSigningAlgorithmValidation.value,
+      'invalid_request'
+    );
+    if (idTokenAlgorithmError) return idTokenAlgorithmError;
     const userInfoSigningAlgorithmValidation = validateOptionalEnumField(
       userinfo_signed_response_alg,
       'userinfo_signed_response_alg',
@@ -1990,6 +2247,33 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
         400
       );
     }
+    // The URIs, type and scopes the client will have (a null clears a value: it is not the stored
+    // one): a change of any is checked against the policy, an Agent Access connection excepted.
+    if (
+      (redirect_uris !== undefined ||
+        application_type !== undefined ||
+        body.scope !== undefined ||
+        body.requestable_scopes !== undefined) &&
+      !isAgentAccessConnection(
+        body.scope !== undefined ? body.scope : existingClient.scope,
+        body.requestable_scopes !== undefined
+          ? body.requestable_scopes
+          : // Stored as a JSON array.
+            parseClientStringArray(existingClient.requestable_scopes, [])
+      )
+    ) {
+      const updateRedirectPolicy = await redirectUriPolicyResponse(c, {
+        redirectUris:
+          redirectUrisValidation.value ?? parseClientStringArray(existingClient.redirect_uris, []),
+        // An explicit null clears the type, which then reads as web.
+        applicationType:
+          application_type !== undefined
+            ? (application_type ?? 'web')
+            : (existingClient.application_type ?? 'web'),
+        clientId,
+      });
+      if (updateRedirectPolicy) return updateRedirectPolicy;
+    }
 
     const grantTypesValidation = validateGrantTypes(grant_types, 'grant_types');
     if (!grantTypesValidation.ok) {
@@ -2040,6 +2324,17 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
         {
           error: 'invalid_request',
           error_description: requirePkceValidation.error,
+        },
+        400
+      );
+    }
+
+    const minimumIalValidation = validateMinimumIal(minimum_ial);
+    if (!minimumIalValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: minimumIalValidation.error,
         },
         400
       );
@@ -2183,7 +2478,10 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       identityMappingValidation.value
     );
     if (identityMappingError) {
-      return c.json({ error: 'invalid_request', error_description: identityMappingError }, 400);
+      return c.json(
+        { error: identityMappingError.error, error_description: identityMappingError.description },
+        identityMappingError.status
+      );
     }
 
     const attributeReleaseConsentValidation = validateOptionalAttributeReleaseConsentPolicyField(
@@ -2470,6 +2768,7 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       asc_allowed_transformed_claims,
       allowed_redirect_origins,
       require_pkce,
+      minimum_ial,
       initiate_login_uri,
       login_ui_url,
       application_type,
@@ -2506,75 +2805,206 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    const expectedUpdatedAt = c.get('agentExpectedClientUpdatedAt' as never) as number | undefined;
-    const updatedClient = hasClientUpdates
-      ? await authCtx.repositories.client.update(
+    const agentExpectedUpdatedAt = c.get('agentExpectedClientUpdatedAt' as never) as
+      | number
+      | undefined;
+    const mappingChanged =
+      identityMappingValidation.value !== undefined &&
+      !identityMappingLevelHistoryChoicesEqual(
+        'client',
+        existingClient.identity_mapping,
+        identityMappingValidation.value
+      );
+    const expectedUpdatedAt =
+      internal.expectedUpdatedAt ??
+      agentExpectedUpdatedAt ??
+      (identityMappingValidation.value !== undefined ? existingClient.updated_at : undefined);
+    if (
+      internal.expectedUpdatedAt !== undefined &&
+      existingClient.updated_at !== internal.expectedUpdatedAt
+    ) {
+      return c.json({ error: 'conflict', reason: 'version_conflict' }, 409);
+    }
+    let history: IdentityMappingLevelHistoryRow | undefined;
+    let historyAdmin: DatabaseAdapter | undefined;
+    if (mappingChanged) {
+      try {
+        const adminAuth = c.get('adminAuth' as never) as AdminAuthContext | undefined;
+        historyAdmin = requireAdminDatabaseAdapter(c.env, 'identity-mapping-client-history');
+        history = await prepareIdentityMappingLevelHistory(historyAdmin, {
+          id: crypto.randomUUID(),
+          tenantId,
+          tier: 'client',
           clientId,
+          before: normalizeIdentityMappingLevelHistoryChoice(
+            'client',
+            existingClient.identity_mapping
+          ),
+          after: normalizeIdentityMappingLevelHistoryChoice(
+            'client',
+            identityMappingValidation.value
+          ),
+          actorId: adminAuth?.actorId ?? adminAuth?.userId ?? 'system',
+          actorType: adminAuth?.actorType ?? 'human',
+          via: internal.via ?? 'client',
+          sourceVersion: String(expectedUpdatedAt),
+          now: Math.max(Date.now(), existingClient.updated_at + 1),
+        });
+      } catch {
+        return c.json(
           {
-            client_name,
-            description: descriptionValidation.value,
-            redirect_uris: redirectUrisValidation.value,
-            grant_types: grantTypesValidation.value,
-            response_types,
-            token_endpoint_auth_method: tokenEndpointAuthMethodValidation.value,
-            scope,
-            logo_uri,
-            client_uri,
-            policy_uri,
-            tos_uri,
-            is_trusted,
-            skip_consent,
-            allow_claims_without_scope,
-            claims_parameter_policy: claimsParameterPolicyValidation.value,
-            identity_mapping: identityMappingValidation.value,
-            attribute_release_consent: attributeReleaseConsentValidation.value,
-            asc_enabled: ascEnabledValidation.value ?? undefined,
-            asc_protected_request_required:
-              ascProtectedRequestRequiredValidation.value ?? undefined,
-            asc_sao_enabled: ascSaoEnabledValidation.value ?? undefined,
-            asc_transformed_claims_enabled:
-              ascTransformedClaimsEnabledValidation.value ?? undefined,
-            asc_allowed_transformed_claims: ascAllowedTransformedClaimsValidation.value,
-            allowed_redirect_origins: validatedAllowedOrigins,
-            require_pkce: requirePkceValidation.value,
-            initiate_login_uri,
-            login_ui_url,
-            application_type: applicationTypeValidation.value,
-            trust_group: trustGroupValidation.value,
-            browser_public_client_mode: browserPublicClientModeValidation.value,
-            browser_refresh_token_policy: browserRefreshTokenPolicyValidation.value,
-            native_sso_enabled: nativeSsoEnabledValidation.value,
-            native_channel_allowed: nativeChannelAllowedValidation.value,
-            allowed_channels: allowedChannelsValidation.value,
-            device_secret_revoke_enabled: deviceSecretRevokeEnabledValidation.value,
-            device_secret_revoke_trust_groups: deviceSecretRevokeTrustGroupsValidation.value,
-            device_secret_introspection_enabled: deviceSecretIntrospectionEnabledValidation.value,
-            device_secret_introspection_trust_groups:
-              deviceSecretIntrospectionTrustGroupsValidation.value,
-            token_exchange_allowed,
-            allowed_subject_token_clients: allowedSubjectTokenClientsValidation.value,
-            allowed_token_exchange_resources: allowedTokenExchangeResourcesValidation.value,
-            delegation_mode,
-            client_credentials_allowed,
-            allowed_scopes: allowedScopesValidation.value,
-            requestable_scopes: requestableScopesValidation.value,
-            default_scope,
-            default_audience,
-            default_resource: defaultResourceValidation.value,
-            id_token_signed_response_alg: idTokenSigningAlgorithmValidation.value,
-            userinfo_signed_response_alg: userInfoSigningAlgorithmValidation.value,
+            error: 'temporarily_unavailable',
+            error_description: 'The change history could not be prepared',
           },
-          expectedUpdatedAt === undefined ? undefined : { expectedUpdatedAt }
-        )
-      : existingClient;
+          503
+        );
+      }
+    }
+    const finalizeHistory = async (): Promise<void> => {
+      if (!history || !historyAdmin) return;
+      const receipt = await readIdentityMappingClientHistoryReceipt(
+        authCtx.coreAdapter,
+        tenantId,
+        history.id
+      );
+      if (!receipt) throw new Error('history_receipt_missing');
+      if (
+        receipt.actorId !== history.actor_id ||
+        receipt.actorType !== history.actor_type ||
+        receipt.via !== history.via ||
+        receipt.bulkId !== history.bulk_id
+      )
+        throw new Error('history_receipt_mismatch');
+      await finalizeIdentityMappingLevelHistoryFromReceipt(c.env, historyAdmin, {
+        historyId: receipt.historyId,
+        tenantId: receipt.tenantId,
+        clientId: receipt.clientId,
+        before: JSON.parse(receipt.beforeJson) as Record<string, unknown> | null,
+        after: JSON.parse(receipt.afterJson) as Record<string, unknown> | null,
+        expectedSourceVersion: String(receipt.expectedUpdatedAt),
+        sourceVersion: receipt.sourceVersion,
+      });
+      await ackIdentityMappingClientHistoryReceipt(authCtx.coreAdapter, tenantId, history.id);
+      await historyAdmin.execute(
+        `UPDATE identity_mapping_level_history SET receipt_acknowledged_at=?
+          WHERE tenant_id=? AND id=? AND status='committed'`,
+        [Date.now(), tenantId, history.id]
+      );
+    };
+    let updatedClient: typeof existingClient | null;
+    try {
+      updatedClient = hasClientUpdates
+        ? await authCtx.repositories.client.update(
+            clientId,
+            {
+              client_name,
+              description: descriptionValidation.value,
+              redirect_uris: redirectUrisValidation.value,
+              grant_types: grantTypesValidation.value,
+              response_types,
+              token_endpoint_auth_method: tokenEndpointAuthMethodValidation.value,
+              scope,
+              logo_uri,
+              client_uri,
+              policy_uri,
+              tos_uri,
+              is_trusted,
+              skip_consent,
+              allow_claims_without_scope,
+              claims_parameter_policy: claimsParameterPolicyValidation.value,
+              identity_mapping: identityMappingValidation.value,
+              attribute_release_consent: attributeReleaseConsentValidation.value,
+              asc_enabled: ascEnabledValidation.value ?? undefined,
+              asc_protected_request_required:
+                ascProtectedRequestRequiredValidation.value ?? undefined,
+              asc_sao_enabled: ascSaoEnabledValidation.value ?? undefined,
+              asc_transformed_claims_enabled:
+                ascTransformedClaimsEnabledValidation.value ?? undefined,
+              asc_allowed_transformed_claims: ascAllowedTransformedClaimsValidation.value,
+              allowed_redirect_origins: validatedAllowedOrigins,
+              require_pkce: requirePkceValidation.value,
+              minimum_ial: minimumIalValidation.value,
+              initiate_login_uri,
+              login_ui_url,
+              application_type: applicationTypeValidation.value,
+              trust_group: trustGroupValidation.value,
+              browser_public_client_mode: browserPublicClientModeValidation.value,
+              browser_refresh_token_policy: browserRefreshTokenPolicyValidation.value,
+              native_sso_enabled: nativeSsoEnabledValidation.value,
+              native_channel_allowed: nativeChannelAllowedValidation.value,
+              allowed_channels: allowedChannelsValidation.value,
+              device_secret_revoke_enabled: deviceSecretRevokeEnabledValidation.value,
+              device_secret_revoke_trust_groups: deviceSecretRevokeTrustGroupsValidation.value,
+              device_secret_introspection_enabled: deviceSecretIntrospectionEnabledValidation.value,
+              device_secret_introspection_trust_groups:
+                deviceSecretIntrospectionTrustGroupsValidation.value,
+              token_exchange_allowed,
+              allowed_subject_token_clients: allowedSubjectTokenClientsValidation.value,
+              allowed_token_exchange_resources: allowedTokenExchangeResourcesValidation.value,
+              delegation_mode,
+              client_credentials_allowed,
+              allowed_scopes: allowedScopesValidation.value,
+              requestable_scopes: requestableScopesValidation.value,
+              default_scope,
+              default_audience,
+              default_resource: defaultResourceValidation.value,
+              id_token_signed_response_alg: idTokenSigningAlgorithmValidation.value,
+              userinfo_signed_response_alg: userInfoSigningAlgorithmValidation.value,
+            },
+            expectedUpdatedAt === undefined
+              ? undefined
+              : {
+                  expectedUpdatedAt,
+                  ...(history
+                    ? {
+                        identityMappingHistoryReceipt: {
+                          historyId: history.id,
+                          tenantId,
+                          clientId,
+                          beforeJson: history.before_json,
+                          afterJson: history.after_json,
+                          actorId: history.actor_id,
+                          actorType: history.actor_type,
+                          via: internal.via ?? 'client',
+                          bulkId: history.bulk_id,
+                          createdAt: history.created_at,
+                        },
+                      }
+                    : {}),
+                }
+          )
+        : existingClient;
+      if (history && historyAdmin) {
+        if (updatedClient) await finalizeHistory();
+        else {
+          // A missing receipt on the primary proves this operation did not commit a body write.
+          const receipt = await readIdentityMappingClientHistoryReceipt(
+            authCtx.coreAdapter,
+            tenantId,
+            history.id
+          );
+          if (receipt) throw new Error('history_commit_result_unknown');
+          await abortIdentityMappingLevelHistory(historyAdmin, history.id, tenantId);
+        }
+      }
+    } catch {
+      // The Core RPC may have committed before its response was lost. Keep the pending row and
+      // its non-expiring receipt for reconciliation; never repeat the client update here.
+      return c.json(
+        { error: 'temporarily_unavailable', ...(history ? { operation_id: history.id } : {}) },
+        503
+      );
+    }
 
     if (hasClientUpdates && !updatedClient && expectedUpdatedAt !== undefined) {
       return c.json(
         {
-          error: 'precondition_failed',
-          error_description: 'The client changed after the Agent plan validated it',
+          error: agentExpectedUpdatedAt !== undefined ? 'precondition_failed' : 'conflict',
+          ...(agentExpectedUpdatedAt !== undefined
+            ? { error_description: 'The client changed after the Agent plan validated it' }
+            : { reason: 'version_conflict' }),
         },
-        412
+        agentExpectedUpdatedAt !== undefined ? 412 : 409
       );
     }
 
@@ -2624,17 +3054,47 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       );
     });
 
+    // A change of the identity assurance a client requires is recorded with the new value.
+    const minimumIalChange =
+      minimumIalValidation.value !== undefined
+        ? { minimum_ial: updatedClient?.minimum_ial ?? null }
+        : {};
     await createAuditLogFromContext(c, 'client.updated', 'client', clientId, {
       client_name: updatedClient?.client_name,
+      ...minimumIalChange,
+      ...(internal.restoreAudit
+        ? {
+            restored_from: internal.restoreAudit.restoredFrom,
+            ...(internal.restoreAudit.reason
+              ? { restore_reason: internal.restoreAudit.reason }
+              : {}),
+          }
+        : {}),
     });
     scheduleAdminAuditLog(c, 'client.updated', clientId, 'success', {
       client_name: updatedClient?.client_name,
+      ...minimumIalChange,
+      ...(internal.restoreAudit
+        ? {
+            restored_from: internal.restoreAudit.restoredFrom,
+            ...(internal.restoreAudit.reason
+              ? { restore_reason: internal.restoreAudit.reason }
+              : {}),
+          }
+        : {}),
     });
+
+    // Only an update that touches token exchange is told what the tenant's ceilings mean for it.
+    const tokenExchangeWarnings =
+      updatedClient && (token_exchange_allowed !== undefined || delegation_mode !== undefined)
+        ? await tokenExchangeCeilingWarnings(c, tenantId, updatedClient)
+        : [];
 
     if (updatedClient) {
       const { client_secret_hash: _excluded, ...clientWithoutHash } = updatedClient;
       return c.json({
         success: true,
+        ...(tokenExchangeWarnings.length > 0 && { warnings: tokenExchangeWarnings }),
         client: {
           ...clientWithoutHash,
           redirect_uris: parseClientStringArray(updatedClient.redirect_uris, []),

@@ -2,7 +2,11 @@ import { existsSync, statSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDefaultConfig, type AuthrimConfig } from '../core/config.js';
+import type { AuthrimConfig } from '../core/config.js';
+import {
+  createArchiveTestConfig as createDefaultConfig,
+  archiveLockFixture,
+} from './fixtures/log-archive.js';
 import { generateAllSecrets, saveKeysToDirectory } from '../core/keys.js';
 import { createLockFile, type AuthrimLock } from '../core/lock.js';
 import { WORKER_COMPONENTS, type WorkerComponent } from '../core/naming.js';
@@ -53,7 +57,7 @@ beforeAll(async () => {
   generatedKeysDir = join(fixtureRoot, 'keys');
 
   config = createDefaultConfig(env);
-  config.cloudflare.accountId = 'fixture-account-id';
+  config.cloudflare.accountId = 'a'.repeat(32);
   config.urls = {
     api: { custom: null, auto: 'https://test-ar-router.workers.dev' },
     loginUi: { custom: null, auto: 'https://test-ar-login-ui.workers.dev', sameAsApi: false },
@@ -101,8 +105,7 @@ beforeAll(async () => {
     r2: [
       { binding: 'MIGRATION_RELEASES', name: 'test-migration-releases' },
       { binding: 'PLUGIN_BUNDLES', name: 'test-plugin-bundles' },
-      { binding: 'DIAGNOSTIC_LOGS', name: 'test-diagnostic-logs' },
-      { binding: 'AUDIT_ARCHIVE', name: 'test-audit-archive' },
+      { binding: 'LOG_ARCHIVE', name: config.logging!.archive.bucketName },
       { binding: 'EXPORT_ARTIFACTS', name: 'test-export-artifacts' },
       { binding: 'IMPORT_ARTIFACTS', name: 'test-import-artifacts' },
       { binding: 'PUBLIC_ASSETS', name: 'test-public-assets' },
@@ -110,6 +113,7 @@ beforeAll(async () => {
     ],
   });
 
+  lock.logArchive = archiveLockFixture(config);
   const resourceIds = buildResourceIdsFromLock(lock);
   for (const component of WORKER_COMPONENTS) {
     generatedWrangler.set(
@@ -148,8 +152,7 @@ describe('generated environment logging and Control Plane contract', () => {
     );
     expect(Object.keys(lock.r2 ?? {}).sort()).toEqual(
       expect.arrayContaining([
-        'DIAGNOSTIC_LOGS',
-        'AUDIT_ARCHIVE',
+        'LOG_ARCHIVE',
         'EXPORT_ARTIFACTS',
         'IMPORT_ARTIFACTS',
         'PUBLIC_ASSETS',
@@ -168,8 +171,7 @@ describe('generated environment logging and Control Plane contract', () => {
     );
     expect(bindingNames(management, '[[env.test.r2_buckets]]')).toEqual(
       expect.arrayContaining([
-        'DIAGNOSTIC_LOGS',
-        'AUDIT_ARCHIVE',
+        'LOG_ARCHIVE',
         'EXPORT_ARTIFACTS',
         'IMPORT_ARTIFACTS',
         'PUBLIC_ASSETS',
@@ -183,8 +185,11 @@ describe('generated environment logging and Control Plane contract', () => {
     });
 
     for (const component of ['ar-auth', 'ar-token', 'ar-saml', 'ar-vc', 'ar-async']) {
-      expect(bindingNames(readWrangler(component), '[[env.test.r2_buckets]]')).toContain(
-        'DIAGNOSTIC_LOGS'
+      expect(bindingNames(readWrangler(component), '[[env.test.services]]')).toContain(
+        'LOG_ARCHIVE_WRITER'
+      );
+      expect(bindingNames(readWrangler(component), '[[env.test.r2_buckets]]')).not.toEqual(
+        expect.arrayContaining(['DIAGNOSTIC_LOGS', 'AUDIT_ARCHIVE'])
       );
     }
 

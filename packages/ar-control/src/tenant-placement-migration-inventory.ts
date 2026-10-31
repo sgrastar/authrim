@@ -68,12 +68,20 @@ export interface TenantMigrationInventoryResult {
 const COMMON_SPECIAL_RULES: Readonly<Record<string, TenantMigrationOwnershipRule>> = {
   authrim_control_plane_shard_metadata: { kind: 'shard_local' },
   authrim_migrations: { kind: 'shard_local' },
+  migration_metadata: { kind: 'shard_local' },
   tenant_database_migration_state: { kind: 'shard_local' },
   tenant_placement_migration_captures: { kind: 'shard_local' },
   tenant_placement_migration_outbox: { kind: 'shard_local' },
+  tenant_backup_snapshots: { kind: 'shard_local' },
+  tenant_backup_preimages: { kind: 'shard_local' },
+  tenant_backup_restore_targets: { kind: 'shard_local' },
 };
 
 const CORE_SPECIAL_RULES: Readonly<Record<string, TenantMigrationOwnershipRule>> = {
+  statement_consent_guards: { kind: 'shard_local' },
+  statement_consent_retention_permits: { kind: 'shard_local' },
+  statement_consent_projection_jobs: { kind: 'tenant_column', column: 'tenant_id' },
+  guest_core_mutation_epoch: { kind: 'shard_local' },
   tenants: { kind: 'tenant_row', column: 'id' },
   did_document_cache: { kind: 'global_reference' },
   directory_auth_release_advisories: { kind: 'global_reference' },
@@ -119,6 +127,7 @@ const CORE_SPECIAL_RULES: Readonly<Record<string, TenantMigrationOwnershipRule>>
 };
 
 const PII_SPECIAL_RULES: Readonly<Record<string, TenantMigrationOwnershipRule>> = {
+  guest_pii_mutation_epoch: { kind: 'shard_local' },
   pairwise_subject_identifiers: {
     kind: 'parent',
     foreignKeyColumn: 'user_id',

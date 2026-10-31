@@ -67,7 +67,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         userId: 'admin-1',
         actorType: 'human',
         authMethod: 'session',
-        roles: ['tenant_admin'],
+        roles: ['ar_tenant_admin'],
         tenantId: 'tenant-a',
         permissions: (c.req.header('x-test-permissions') ?? '').split(',').filter(Boolean),
       });
@@ -81,6 +81,16 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       findPrincipalById = mocks.findPrincipalById;
       getPrincipalPermissions = mocks.getPrincipalPermissions;
       getPrincipalTenantScopes = mocks.getPrincipalTenantScopes;
+      // The snapshot read, composed from the per-table mocks this file sets up.
+      async loadPrincipalGrantSnapshot(principalId: string) {
+        const principal = await mocks.findPrincipalById(principalId);
+        if (!principal) return null;
+        const [permissions, tenantScopes] = await Promise.all([
+          mocks.getPrincipalPermissions(principalId),
+          mocks.getPrincipalTenantScopes(principalId),
+        ]);
+        return { principal, permissions, tenantScopes };
+      }
     },
   };
 });

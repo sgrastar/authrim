@@ -102,6 +102,11 @@ export interface HumanVerificationMethod {
 	loginEnabled: boolean;
 	signupEnabled: boolean;
 	reauthEnabled: boolean;
+	/** Per flow: the tenant's settings ask for human verification (absent from older servers). */
+	requiredFor?: { login: boolean; signup: boolean; reauth: boolean };
+	/** The provider can verify a token (it is enabled and configured); absent from older servers. */
+	available?: boolean;
+	reason?: 'provider_disabled' | 'provider_unconfigured' | 'settings_unreadable' | null;
 	failurePolicy: HumanVerificationFailurePolicy;
 	widget: {
 		actionPrefix: string;
@@ -111,7 +116,20 @@ export interface HumanVerificationMethod {
 	};
 }
 
+/**
+ * The flow asks for human verification but the provider cannot verify (disabled, or without
+ * credentials): the server refuses every attempt and no widget can be shown, so the screen has to
+ * say so instead of failing without a word.
+ */
+export function isHumanVerificationUnavailableFor(
+	humanVerification: HumanVerificationMethod,
+	flow: 'login' | 'signup' | 'reauth'
+): boolean {
+	return humanVerification.requiredFor?.[flow] === true && humanVerification.available === false;
+}
+
 export interface AuthenticationMethods {
+	guest?: { enabled: boolean; deletionAfterDays: number | null };
 	passkey: PasskeyMethod;
 	emailCode: EmailCodeMethod;
 	totp: TotpMethod;
@@ -122,7 +140,6 @@ export interface AuthenticationMethods {
 
 export interface LoginUIConfig {
 	theme: string;
-	variant: string;
 	themeTemplate?: 'classic' | 'meridian' | 'split-brand-panel' | 'fullbleed-glass';
 	branding: {
 		logoUrl: string | null;
@@ -293,9 +310,13 @@ export async function fetchAuthenticationMethodsForClient(
 
 			const result = data as AuthenticationMethodsResponse;
 
-			cachedResponse = result;
-			const expiry = Date.now() + (result.meta.cacheTTL || 180) * 1000;
-			cachedResponses.set(cacheKey, { response: result, expiry });
+			// A TTL of 0 is the server saying not to keep this answer (it is incomplete): neither the
+			// TTL cache nor the fallback for a failed request may hold it.
+			if (result.meta.cacheTTL !== 0) {
+				cachedResponse = result;
+				const expiry = Date.now() + (result.meta.cacheTTL ?? 180) * 1000;
+				cachedResponses.set(cacheKey, { response: result, expiry });
+			}
 
 			return { data: result };
 		} catch {

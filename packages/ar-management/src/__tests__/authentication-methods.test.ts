@@ -55,6 +55,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 import { Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import { deriveEncryptionKey, encryptSecretFields } from '@authrim/ar-lib-plugin';
+import { externalSignupProviderIds } from '@authrim/ar-lib-core';
 import { getAuthenticationMethodsHandler } from '../authentication-methods';
 
 // =============================================================================
@@ -207,7 +208,8 @@ describe('Authentication Methods API', () => {
       const body = (await res.json()) as any;
 
       expect(body.ui.theme).toBe('light');
-      expect(body.ui.variant).toBe('beige');
+      // The colour variants are gone: a value stored before is not served.
+      expect(body.ui).not.toHaveProperty('variant');
       expect(body.ui.branding.brandName).toBe('Authrim');
       expect(body.ui.branding.logoUrl).toBeNull();
       expect(body.ui.branding.faviconUrl).toBeNull();
@@ -527,14 +529,15 @@ describe('Authentication Methods API', () => {
   });
 
   // ===========================================================================
-  // Method enable/disable via system settings
+  // Method enable/disable via the tenant's settings
   // ===========================================================================
 
   describe('method toggling via SETTINGS KV', () => {
-    it('should disable passkey when advanced.passkeyEnabled is false', async () => {
+    it('should disable passkey when the tenant turns it off', async () => {
       const settingsKV = createMockKV({
-        system_settings: JSON.stringify({
-          advanced: { passkeyEnabled: false, magicLinkEnabled: true },
+        'settings:tenant:default:authentication-methods': JSON.stringify({
+          'authentication-methods.passkey.enabled': false,
+          'authentication-methods.email_otp.enabled': true,
         }),
       });
       const { app, mockEnv } = createTestApp({ settingsKV });
@@ -547,10 +550,11 @@ describe('Authentication Methods API', () => {
       expect(body.methods.emailCode.enabled).toBe(true);
     });
 
-    it('should disable emailCode when advanced.magicLinkEnabled is false', async () => {
+    it('should disable emailCode when the tenant turns it off', async () => {
       const settingsKV = createMockKV({
-        system_settings: JSON.stringify({
-          advanced: { passkeyEnabled: true, magicLinkEnabled: false },
+        'settings:tenant:default:authentication-methods': JSON.stringify({
+          'authentication-methods.passkey.enabled': true,
+          'authentication-methods.email_otp.enabled': false,
         }),
       });
       const { app, mockEnv } = createTestApp({ settingsKV });
@@ -615,8 +619,9 @@ describe('Authentication Methods API', () => {
 
     it('should enable directory password from directory connector settings without exposing connector secrets', async () => {
       const settingsKV = createMockKV({
-        system_settings: JSON.stringify({
-          advanced: { passkeyEnabled: false, magicLinkEnabled: false },
+        'settings:tenant:default:authentication-methods': JSON.stringify({
+          'authentication-methods.passkey.enabled': false,
+          'authentication-methods.email_otp.enabled': false,
         }),
         'settings:tenant:default:directory-connectors': JSON.stringify({
           enabled: true,
@@ -656,8 +661,9 @@ describe('Authentication Methods API', () => {
 
     it('should enable directory password from outbound relay directory connector settings', async () => {
       const settingsKV = createMockKV({
-        system_settings: JSON.stringify({
-          advanced: { passkeyEnabled: false, magicLinkEnabled: false },
+        'settings:tenant:default:authentication-methods': JSON.stringify({
+          'authentication-methods.passkey.enabled': false,
+          'authentication-methods.email_otp.enabled': false,
         }),
         'settings:tenant:default:directory-connectors': JSON.stringify({
           enabled: true,
@@ -765,8 +771,234 @@ describe('Authentication Methods API', () => {
         signupEnabled: false,
         reauthEnabled: false,
         failurePolicy: 'fail_closed',
+        required: true,
+        requiredFor: { login: true, signup: false, reauth: false },
+        available: true,
+        reason: null,
       });
       expect(JSON.stringify(body)).not.toContain('0x4AAAAAA_secret_key');
+    });
+
+    describe('a flow that requires human verification when the provider cannot serve it', () => {
+      const TURNSTILE = 'human-verification-cloudflare-turnstile';
+      const config = JSON.stringify({ siteKey: 'site-key', secretKey: 'secret-key' });
+
+      async function fetchMethods(values: Record<string, string>) {
+        const { app, mockEnv } = createTestApp({ settingsKV: createMockKV(values) });
+        const res = await app.request(
+          '/api/auth/authentication-methods',
+          { method: 'GET' },
+          mockEnv
+        );
+        expect(res.status).toBe(200);
+        return ((await res.json()) as any).methods.humanVerification;
+      }
+
+      const loginRequired = JSON.stringify({
+        'authentication-methods.human_verification.login_enabled': true,
+      });
+
+      it('says the provider is disabled when its plugin was disabled', async () => {
+        const hv = await fetchMethods({
+          'settings:tenant:default:authentication-methods': loginRequired,
+          [`plugins:enabled:${TURNSTILE}:tenant:default`]: 'false',
+          [`plugins:config:${TURNSTILE}:tenant:default`]: config,
+        });
+        expect(hv).toMatchObject({
+          enabled: false,
+          loginEnabled: false,
+          siteKey: null,
+          required: true,
+          requiredFor: { login: true, signup: false, reauth: false },
+          available: false,
+          reason: 'provider_disabled',
+        });
+      });
+
+      it('says the provider is disabled when its plugin was never enabled (unset is off, as in the plugin admin API)', async () => {
+        const hv = await fetchMethods({
+          'settings:tenant:default:authentication-methods': loginRequired,
+          [`plugins:config:${TURNSTILE}:tenant:default`]: config,
+        });
+        expect(hv).toMatchObject({
+          siteKey: null,
+          required: true,
+          available: false,
+          reason: 'provider_disabled',
+        });
+      });
+
+      it('says the provider is unconfigured when it is enabled but has no credentials', async () => {
+        const hv = await fetchMethods({
+          'settings:tenant:default:authentication-methods': loginRequired,
+          [`plugins:enabled:${TURNSTILE}:tenant:default`]: 'true',
+        });
+        expect(hv).toMatchObject({
+          enabled: true,
+          loginEnabled: true,
+          siteKey: null,
+          required: true,
+          available: false,
+          reason: 'provider_unconfigured',
+        });
+      });
+
+      it('honours a global enable, and a tenant disable over it', async () => {
+        const base = {
+          'settings:tenant:default:authentication-methods': loginRequired,
+          [`plugins:config:${TURNSTILE}:tenant:default`]: config,
+        };
+        await expect(
+          fetchMethods({ ...base, [`plugins:enabled:${TURNSTILE}`]: 'true' })
+        ).resolves.toMatchObject({ available: true, siteKey: 'site-key' });
+        await expect(
+          fetchMethods({
+            ...base,
+            [`plugins:enabled:${TURNSTILE}`]: 'true',
+            [`plugins:enabled:${TURNSTILE}:tenant:default`]: 'false',
+          })
+        ).resolves.toMatchObject({ available: false, reason: 'provider_disabled' });
+      });
+
+      it.each(['{bad', '[]', 'null', '"text"'])(
+        'says the settings are unreadable when the document is %s, as the servers refuse then',
+        async (document) => {
+          const { app, mockEnv } = createTestApp({
+            settingsKV: createMockKV({
+              'settings:tenant:default:authentication-methods': document,
+              [`plugins:enabled:${TURNSTILE}:tenant:default`]: 'true',
+              [`plugins:config:${TURNSTILE}:tenant:default`]: config,
+            }),
+          });
+          const res = await app.request(
+            '/api/auth/authentication-methods',
+            { method: 'GET' },
+            mockEnv
+          );
+          expect(res.status).toBe(200);
+          const body = (await res.json()) as any;
+          expect(body.methods.humanVerification).toMatchObject({
+            enabled: false,
+            siteKey: null,
+            required: true,
+            requiredFor: { login: true, signup: true, reauth: true },
+            available: false,
+            reason: 'settings_unreadable',
+          });
+          // The rest of the response is still there.
+          expect(body.methods.passkey).toBeDefined();
+          expect(body.methods.external).toBeDefined();
+        }
+      );
+
+      it('says the settings are unreadable when the KV read throws', async () => {
+        const settingsKV = createMockKV({});
+        const get = settingsKV.get as unknown as ReturnType<typeof vi.fn>;
+        const original = get.getMockImplementation() as
+          | ((key: string, ...rest: unknown[]) => Promise<unknown>)
+          | undefined;
+        get.mockImplementation(async (key: string, ...rest: unknown[]) => {
+          if (key === 'settings:tenant:default:authentication-methods') throw new Error('kv down');
+          return original ? original(key, ...rest) : null;
+        });
+        const { app, mockEnv } = createTestApp({ settingsKV });
+        const res = await app.request(
+          '/api/auth/authentication-methods',
+          { method: 'GET' },
+          mockEnv
+        );
+        const body = (await res.json()) as any;
+        expect(body.methods.humanVerification).toMatchObject({
+          available: false,
+          reason: 'settings_unreadable',
+        });
+      });
+
+      it.each([
+        ['a secret key of spaces', { siteKey: 'site-key', secretKey: '   ' }],
+        ['a site key of spaces', { siteKey: ' \t', secretKey: 'secret-key' }],
+        ['no secret key', { siteKey: 'site-key' }],
+        [
+          'a fail_open policy (the runner never takes one)',
+          { siteKey: 'site-key', secretKey: 'secret-key', failurePolicy: 'fail_open' },
+        ],
+        [
+          'a site key past the runner limit',
+          { siteKey: 'a'.repeat(2_049), secretKey: 'secret-key' },
+        ],
+        [
+          'a secret key past the runner limit',
+          { siteKey: 'site-key', secretKey: 'a'.repeat(8_193) },
+        ],
+        [
+          'a hostname the runner refuses',
+          { siteKey: 'site-key', secretKey: 'secret-key', expectedHostname: 'not a host' },
+        ],
+        [
+          'a widget mode Turnstile does not support',
+          { siteKey: 'site-key', secretKey: 'secret-key', widgetMode: 'checkbox' },
+        ],
+      ])('says the provider is unconfigured with %s', async (_name, credentials) => {
+        const hv = await fetchMethods({
+          'settings:tenant:default:authentication-methods': loginRequired,
+          [`plugins:enabled:${TURNSTILE}:tenant:default`]: 'true',
+          [`plugins:config:${TURNSTILE}:tenant:default`]: JSON.stringify(credentials),
+        });
+        expect(hv).toMatchObject({
+          siteKey: null,
+          available: false,
+          reason: 'provider_unconfigured',
+        });
+      });
+
+      it('returns the site key without surrounding spaces', async () => {
+        const hv = await fetchMethods({
+          'settings:tenant:default:authentication-methods': loginRequired,
+          [`plugins:enabled:${TURNSTILE}:tenant:default`]: 'true',
+          [`plugins:config:${TURNSTILE}:tenant:default`]: JSON.stringify({
+            siteKey: '  site-key ',
+            secretKey: 'secret-key',
+          }),
+        });
+        expect(hv).toMatchObject({ siteKey: 'site-key', available: true });
+      });
+
+      it('reports requiredFor per flow, whatever the provider state', async () => {
+        const hv = await fetchMethods({
+          'settings:tenant:default:authentication-methods': JSON.stringify({
+            'authentication-methods.human_verification.signup_enabled': 'true',
+            'authentication-methods.human_verification.reauth_enabled': true,
+          }),
+        });
+        expect(hv.requiredFor).toEqual({ login: false, signup: true, reauth: true });
+        expect(hv.required).toBe(true);
+      });
+
+      it('requires nothing, and reports a usable provider as available, by default', async () => {
+        const hv = await fetchMethods({
+          [`plugins:enabled:${TURNSTILE}:tenant:default`]: 'true',
+          [`plugins:config:${TURNSTILE}:tenant:default`]: config,
+        });
+        expect(hv).toMatchObject({
+          enabled: false,
+          required: false,
+          requiredFor: { login: false, signup: false, reauth: false },
+          available: true,
+          reason: null,
+        });
+      });
+
+      it('picks the provider the same way the server does (trimmed, default when blank)', async () => {
+        const hv = await fetchMethods({
+          'settings:tenant:default:authentication-methods': JSON.stringify({
+            'authentication-methods.human_verification.provider': '   ',
+            'authentication-methods.human_verification.login_enabled': true,
+          }),
+          [`plugins:enabled:${TURNSTILE}:tenant:default`]: 'true',
+          [`plugins:config:${TURNSTILE}:tenant:default`]: config,
+        });
+        expect(hv).toMatchObject({ provider: 'turnstile', available: true, siteKey: 'site-key' });
+      });
     });
 
     it('should expose selected reCAPTCHA provider metadata without the secret key', async () => {
@@ -782,7 +1014,7 @@ describe('Authentication Methods API', () => {
           secretKey: 'recaptcha-secret-key',
           widgetMode: 'score',
           scoreThreshold: 0.7,
-          failurePolicy: 'fail_open',
+          failurePolicy: 'fail_closed',
         }),
       });
       const { app, mockEnv } = createTestApp({ settingsKV });
@@ -908,12 +1140,88 @@ describe('Authentication Methods API', () => {
         startMode: 'oauth_redirect',
         startUrl: '/api/external/google/start',
         iconName: 'globe',
+        reauthEnabled: true,
       });
       expect(body.methods.external.providers[1]).toMatchObject({
         id: 'github',
         type: 'oauth2',
         startMode: 'oauth_redirect',
+        // No ID token dates a new login, so it cannot answer a re-authentication.
+        reauthEnabled: false,
       });
+    });
+
+    it.each([
+      // Every use turned off: not offered at all.
+      [false, 0],
+      [true, 1],
+    ])(
+      "applies a configured provider's saved usage named by its full id (login %s)",
+      async (loginEnabled, count) => {
+        const id = `p-${'x'.repeat(300)}`;
+        const settingsKV = createMockKV({
+          'settings:tenant:default:authentication-methods': JSON.stringify({
+            'authentication-methods.external_providers': JSON.stringify([
+              { id, name: 'Configured', type: 'vc', enabled: true, startUrl: '/vp/login' },
+            ]),
+            'authentication-methods.external_provider_usage': JSON.stringify([
+              {
+                id: 'corp',
+                providerId: id,
+                loginEnabled,
+                signupEnabled: false,
+                reauthEnabled: false,
+                accountLinkEnabled: false,
+              },
+            ]),
+          }),
+        });
+        const { app, mockEnv } = createTestApp({ settingsKV });
+
+        const res = await app.request(
+          '/api/auth/authentication-methods',
+          { method: 'GET' },
+          mockEnv
+        );
+        const body = (await res.json()) as any;
+
+        expect(body.methods.external.providers).toHaveLength(count);
+      }
+    );
+
+    it("never applies another provider's saved usage that once had the same slug", async () => {
+      const externalIdp = createMockExternalIdp({
+        providers: [
+          { id: 'ggl-123', name: 'Google', slug: 'google', providerType: 'oidc', enabled: true },
+        ],
+      });
+      // Saved for an earlier provider that was then called "google".
+      const settingsKV = createMockKV({
+        'settings:tenant:default:authentication-methods': JSON.stringify({
+          'authentication-methods.external_provider_usage': JSON.stringify([
+            {
+              id: 'google',
+              providerId: 'old-provider',
+              loginEnabled: false,
+              signupEnabled: false,
+              reauthEnabled: false,
+            },
+          ]),
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ externalIdp, settingsKV });
+
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+
+      expect(body.methods.external.providers).toHaveLength(1);
+      expect(body.methods.external.providers[0]).toMatchObject({
+        id: 'google',
+        loginEnabled: true,
+        reauthEnabled: true,
+      });
+      // The stable id used for matching stays internal.
+      expect(body.methods.external.providers[0]).not.toHaveProperty('stableId');
     });
 
     it('should include enabled SAML IdP providers as external login providers', async () => {
@@ -946,6 +1254,144 @@ describe('Authentication Methods API', () => {
           startUrl: '/saml/sp/login?idp=saml-idp-1',
         })
       );
+    });
+
+    describe('the tenant SAML switch', () => {
+      const samlRows = () =>
+        mockResolveAuthCorePersistenceAdapterFromEnv.mockResolvedValue({
+          query: vi.fn(async () => [{ id: 'saml-idp-1', name: 'Campus SAML', config_json: '{}' }]),
+        });
+      const federationKV = (federation: Record<string, unknown>) =>
+        createMockKV({ 'settings:tenant:default:federation': JSON.stringify(federation) });
+      const providersOf = async (settingsKV?: KVNamespace) => {
+        const { app, mockEnv } = createTestApp({ settingsKV });
+        const res = await app.request(
+          '/api/auth/authentication-methods',
+          { method: 'GET' },
+          mockEnv
+        );
+        const body = await res.json<{
+          methods?: { external?: { providers?: Array<{ id: string }> } };
+        }>();
+        return {
+          res,
+          body,
+          providers: body.methods?.external?.providers ?? [],
+        };
+      };
+
+      it('lists SAML providers while SAML is on, set or by default', async () => {
+        samlRows();
+        expect((await providersOf()).providers.map((p) => p.id)).toContain('saml:saml-idp-1');
+        expect(
+          (await providersOf(federationKV({ 'federation.saml_enabled': true }))).providers.map(
+            (p) => p.id
+          )
+        ).toContain('saml:saml-idp-1');
+      });
+
+      it('lists no SAML provider (name, id or icon) while SAML is off', async () => {
+        samlRows();
+        const { body, providers } = await providersOf(
+          federationKV({ 'federation.saml_enabled': false })
+        );
+        expect(providers.map((p) => p.id)).not.toContain('saml:saml-idp-1');
+        expect(JSON.stringify(body)).not.toContain('Campus SAML');
+      });
+
+      it('lists no SAML provider configured as an external login either while SAML is off', async () => {
+        samlRows();
+        const settings = {
+          'federation.saml_enabled': false,
+        };
+        const kv = createMockKV({
+          'settings:tenant:default:federation': JSON.stringify(settings),
+          'settings:tenant:default:authentication-methods': JSON.stringify({
+            'authentication-methods.external_providers': [
+              {
+                id: 'configured-saml',
+                name: 'Configured SAML',
+                type: 'saml',
+                startMode: 'saml_sp',
+                startUrl: '/saml/sp/login?idp=configured',
+                enabled: true,
+              },
+              {
+                id: 'wallet-vp',
+                name: 'Wallet',
+                type: 'vc',
+                startMode: 'url',
+                startUrl: '/vp/login',
+                enabled: true,
+              },
+            ],
+          }),
+        });
+        const { providers } = await providersOf(kv);
+        expect(providers.map((p) => p.id)).toEqual(['wallet-vp']);
+      });
+
+      it('follows a change of the switch made on the same KV without waiting for the settings cache', async () => {
+        samlRows();
+        const kv = createMockKV();
+        const first = await providersOf(kv);
+        expect(first.providers.map((p) => p.id)).toContain('saml:saml-idp-1');
+
+        // The admin turns SAML off (the Settings API writes this document).
+        await kv.put(
+          'settings:tenant:default:federation',
+          JSON.stringify({ 'federation.saml_enabled': false })
+        );
+        expect((await providersOf(kv)).providers.map((p) => p.id)).not.toContain('saml:saml-idp-1');
+
+        await kv.put(
+          'settings:tenant:default:federation',
+          JSON.stringify({ 'federation.saml_enabled': true })
+        );
+        expect((await providersOf(kv)).providers.map((p) => p.id)).toContain('saml:saml-idp-1');
+      });
+
+      it('answers a degraded response with no-store for the browser, the CDN and the router', async () => {
+        samlRows();
+        const base = createMockKV();
+        const kv = {
+          ...base,
+          get: vi.fn(async (key: string) => {
+            if (key === 'settings:tenant:default:federation') throw new Error('KV unavailable');
+            return base.get(key);
+          }),
+        } as unknown as KVNamespace;
+        const { res } = await providersOf(kv);
+        expect(res.status).toBe(200);
+        expect(res.headers.get('Cache-Control')).toBe('no-store');
+        expect(res.headers.get('Cloudflare-CDN-Cache-Control')).toBe('no-store');
+        expect(res.headers.get('Cache-Tag')).toBeNull();
+        expect(res.headers.get('X-Authrim-Authentication-Methods-Client-TTL')).toBe('0');
+      });
+
+      it('still answers a complete response with the normal cache headers', async () => {
+        samlRows();
+        const { res } = await providersOf();
+        expect(res.headers.get('Cache-Control')).toMatch(/^public, max-age=\d+$/);
+      });
+
+      it('lists no SAML provider, and does not cache that answer, when the switch cannot be read', async () => {
+        samlRows();
+        const edgeCache = createMockEdgeCache();
+        (globalThis as unknown as { caches: unknown }).caches = { default: edgeCache };
+        const base = createMockKV();
+        const kv = {
+          ...base,
+          get: vi.fn(async (key: string) => {
+            if (key === 'settings:tenant:default:federation') throw new Error('KV unavailable');
+            return base.get(key);
+          }),
+        } as unknown as KVNamespace;
+        const { res, providers } = await providersOf(kv);
+        expect(res.status).toBe(200);
+        expect(providers.map((p) => p.id)).not.toContain('saml:saml-idp-1');
+        expect(edgeCache.put).not.toHaveBeenCalled();
+      });
     });
 
     it('should normalize legacy URL providers to managed OAuth redirect mode', async () => {
@@ -1112,14 +1558,278 @@ describe('Authentication Methods API', () => {
   });
 
   // ===========================================================================
+  // The sign-up page and the prompt=create prediction
+  // ===========================================================================
+
+  describe('providers offered for sign-up match the prompt=create prediction', () => {
+    type Bridge = { id: string; slug?: string; enabled?: boolean };
+    const named = (id: string, slug?: string, enabled = true): Bridge => ({ id, slug, enabled });
+    const usageOf = (...entries: Array<Record<string, unknown>>) => entries;
+    const allOff = {
+      loginEnabled: false,
+      signupEnabled: false,
+      reauthEnabled: false,
+      accountLinkEnabled: false,
+    };
+
+    const many = Array.from({ length: 22 }, (_, i) => named(`prov-${i}`, `slug-${i}`));
+    const cases: Array<[string, Bridge[], unknown]> = [
+      ['no saved usage', [named('a', 'alpha'), named('b', 'beta')], undefined],
+      ['no saved usage, providers without a slug', [named('a'), named('b')], undefined],
+      ['an empty list', [named('a', 'alpha')], []],
+      ['an empty text', [named('a', 'alpha')], ''],
+      ['a text that is not JSON', [named('a', 'alpha')], 'not json'],
+      [
+        'a text holding a list',
+        [named('a', 'alpha')],
+        JSON.stringify(usageOf({ providerId: 'a', signupEnabled: true })),
+      ],
+      [
+        'a value that is not a list',
+        [named('a', 'alpha')],
+        { providerId: 'a', signupEnabled: false },
+      ],
+      [
+        'sign-up off by provider id',
+        [named('a', 'alpha'), named('b', 'beta')],
+        usageOf({ providerId: 'a', loginEnabled: true, signupEnabled: false }),
+      ],
+      [
+        'sign-up off by provider id, on for the other',
+        [named('a', 'alpha'), named('b', 'beta')],
+        usageOf(
+          { providerId: 'a', loginEnabled: true, signupEnabled: false },
+          { providerId: 'b', loginEnabled: false, signupEnabled: true }
+        ),
+      ],
+      [
+        'sign-up off by an older entry naming the slug',
+        [named('a', 'alpha'), named('b', 'beta')],
+        usageOf({ id: 'alpha', loginEnabled: true, signupEnabled: 'false' }),
+      ],
+      [
+        'sign-up off by an older entry naming the id of a provider without a slug',
+        [named('a'), named('b')],
+        usageOf({ id: 'a', loginEnabled: true, signupEnabled: false }),
+      ],
+      [
+        "another provider's entry that once had the slug",
+        [named('a', 'alpha')],
+        usageOf({ id: 'alpha', providerId: 'old', ...allOff }),
+      ],
+      [
+        'every use of the only entry off',
+        [named('a', 'alpha'), named('b', 'beta')],
+        usageOf({ providerId: 'a', ...allOff }),
+      ],
+      [
+        'sign-up on in an entry whose other uses are off',
+        [named('a', 'alpha')],
+        usageOf({ providerId: 'a', ...allOff, signupEnabled: true }),
+      ],
+      [
+        'only a SAML entry',
+        [named('a', 'alpha')],
+        usageOf({ id: 'saml:x', loginEnabled: true, signupEnabled: true }),
+      ],
+      [
+        'two entries for one provider, on then off (the page keeps the last)',
+        [named('a', 'alpha'), named('b', 'beta')],
+        usageOf(
+          { providerId: 'a', loginEnabled: true, signupEnabled: true },
+          { providerId: 'a', loginEnabled: true, signupEnabled: false }
+        ),
+      ],
+      [
+        'two entries for one provider, both on',
+        [named('a', 'alpha'), named('b', 'beta')],
+        usageOf(
+          { providerId: 'a', loginEnabled: true, signupEnabled: true },
+          { providerId: 'a', loginEnabled: false, signupEnabled: true }
+        ),
+      ],
+      [
+        'two entries for one provider, both off',
+        [named('a', 'alpha'), named('b', 'beta')],
+        usageOf(
+          { providerId: 'a', loginEnabled: true, signupEnabled: false },
+          { providerId: 'a', loginEnabled: true, signupEnabled: false }
+        ),
+      ],
+      [
+        'two older entries for one slug, on then off',
+        [named('a', 'alpha'), named('b', 'beta')],
+        usageOf(
+          { id: 'alpha', loginEnabled: true, signupEnabled: true },
+          { id: 'alpha', loginEnabled: true, signupEnabled: false }
+        ),
+      ],
+      [
+        'an entry by provider id off, an older entry by slug on',
+        [named('a', 'alpha'), named('b', 'beta')],
+        usageOf(
+          { providerId: 'a', loginEnabled: true, signupEnabled: false },
+          { id: 'alpha', loginEnabled: true, signupEnabled: true }
+        ),
+      ],
+      ['a disabled provider', [named('a', 'alpha', false), named('b', 'beta')], undefined],
+      ['more providers than the page lists', many, undefined],
+      [
+        'more providers than the page lists, the last one named',
+        many,
+        usageOf({ providerId: 'prov-21', loginEnabled: true, signupEnabled: true }),
+      ],
+    ];
+
+    it.each(cases)('%s', async (_label, bridge, usage) => {
+      const externalIdp = createMockExternalIdp({
+        providers: bridge.map((p) => ({
+          id: p.id,
+          name: `Provider ${p.id}`,
+          slug: p.slug,
+          providerType: 'oidc',
+          enabled: p.enabled,
+        })),
+      });
+      const document: Record<string, unknown> = {};
+      if (usage !== undefined) {
+        document['authentication-methods.external_provider_usage'] = usage;
+      }
+      const settingsKV = createMockKV({
+        'settings:tenant:default:authentication-methods': JSON.stringify(document),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV, externalIdp });
+
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+      // What the sign-up page lists: the screen's own filter (ar-login-ui signup page).
+      const shown: string[] = body.methods.external.providers
+        .filter((p: any) => p.signupEnabled ?? p.enabled !== false)
+        .map((p: any) => p.id);
+      const screenOffersExternal = body.methods.external.enabled && shown.length > 0;
+
+      // The prediction for the same tenant, with every provider able to create accounts, so it
+      // answers only "does the page offer it".
+      const predict = () =>
+        externalSignupProviderIds({
+          authenticationMethods: document,
+          providers: bridge.map((p) => ({
+            id: p.id,
+            slug: p.slug ?? null,
+            enabled: p.enabled !== false,
+            jitProvisioning: true,
+          })),
+          jit: { enabled: true, allowedProviderIds: null },
+        }).map((id) => bridge.find((p) => p.id === id)?.slug ?? id);
+
+      if (!Array.isArray(usage) && typeof usage === 'object' && usage !== null) {
+        // Saved usage that is neither a list nor text: the page still lists the providers, but
+        // the prediction cannot understand it and refuses (prompt=create is then ignored).
+        expect(predict).toThrow();
+        return;
+      }
+      const predicted = predict();
+      expect(predicted).toEqual(shown);
+      expect(predicted.length > 0).toBe(screenOffersExternal);
+    });
+  });
+
+  describe('contradicting entries for one provider', () => {
+    // The bridge takes the first entry that applies, the page the last one saved for the same
+    // key. The prediction cannot tell which the page shows, so it counts neither provider: it
+    // may be stricter than the page, never looser.
+    it.each([
+      [
+        'off then on (by provider id)',
+        [
+          { providerId: 'a', loginEnabled: true, signupEnabled: false },
+          { providerId: 'a', loginEnabled: true, signupEnabled: true },
+        ],
+      ],
+      [
+        'on by provider id, off by an older entry naming the slug',
+        [
+          { providerId: 'a', loginEnabled: true, signupEnabled: true },
+          { id: 'alpha', loginEnabled: true, signupEnabled: false },
+        ],
+      ],
+      [
+        'on by an older entry naming the slug, off by one naming the id of a provider with a slug',
+        [
+          { id: 'alpha', loginEnabled: true, signupEnabled: true },
+          { id: 'a', loginEnabled: true, signupEnabled: false },
+        ],
+      ],
+    ])('the prediction counts nothing the page might hide: %s', async (_label, usage) => {
+      const externalIdp = createMockExternalIdp({
+        providers: [{ id: 'a', name: 'A', slug: 'alpha', providerType: 'oidc' }],
+      });
+      const document = { 'authentication-methods.external_provider_usage': usage };
+      const settingsKV = createMockKV({
+        'settings:tenant:default:authentication-methods': JSON.stringify(document),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV, externalIdp });
+
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+      const shown: string[] = body.methods.external.providers
+        .filter((p: any) => p.signupEnabled ?? p.enabled !== false)
+        .map((p: any) => p.id);
+      const predicted = externalSignupProviderIds({
+        authenticationMethods: document,
+        providers: [{ id: 'a', slug: 'alpha', enabled: true, jitProvisioning: true }],
+        jit: { enabled: true, allowedProviderIds: null },
+      });
+
+      // Contradicting entries: not counted, whichever the page shows.
+      expect(predicted).toEqual([]);
+      // And never the other way round: nothing predicted that the page hides.
+      for (const id of predicted) expect(shown).toContain(id === 'a' ? 'alpha' : id);
+    });
+  });
+
+  describe('where the page and the bridge read a saved usage entry differently', () => {
+    it('the prediction refuses a provider the page still lists (the safe side)', async () => {
+      // An older entry naming the provider's id while the provider has a slug: the page matches
+      // it by slug only and keeps the provider; the bridge (and the prediction) match both ids,
+      // so the bridge would refuse the sign-up.
+      const externalIdp = createMockExternalIdp({
+        providers: [{ id: 'uuid-1', name: 'Corp', slug: 'corp', providerType: 'oidc' }],
+      });
+      const document = {
+        'authentication-methods.external_provider_usage': [
+          { id: 'uuid-1', loginEnabled: true, signupEnabled: false },
+        ],
+      };
+      const settingsKV = createMockKV({
+        'settings:tenant:default:authentication-methods': JSON.stringify(document),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV, externalIdp });
+
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+      const shown = body.methods.external.providers.map((p: any) => p.id);
+      const predicted = externalSignupProviderIds({
+        authenticationMethods: document,
+        providers: [{ id: 'uuid-1', slug: 'corp', enabled: true, jitProvisioning: true }],
+        jit: { enabled: true, allowedProviderIds: null },
+      });
+
+      expect(shown).toEqual(['corp']);
+      expect(predicted).toEqual([]);
+    });
+  });
+
+  // ===========================================================================
   // All methods disabled → 503
   // ===========================================================================
 
   describe('no methods available', () => {
     it('should return 503 when all methods are disabled', async () => {
       const settingsKV = createMockKV({
-        system_settings: JSON.stringify({
-          advanced: { passkeyEnabled: false, magicLinkEnabled: false },
+        'settings:tenant:default:authentication-methods': JSON.stringify({
+          'authentication-methods.passkey.enabled': false,
+          'authentication-methods.email_otp.enabled': false,
         }),
       });
       // No EXTERNAL_IDP → no external login
@@ -1136,8 +1846,9 @@ describe('Authentication Methods API', () => {
 
     it('should log a warning when no methods are available', async () => {
       const settingsKV = createMockKV({
-        system_settings: JSON.stringify({
-          advanced: { passkeyEnabled: false, magicLinkEnabled: false },
+        'settings:tenant:default:authentication-methods': JSON.stringify({
+          'authentication-methods.passkey.enabled': false,
+          'authentication-methods.email_otp.enabled': false,
         }),
       });
       const { app, mockEnv } = createTestApp({ settingsKV });
@@ -1210,6 +1921,44 @@ describe('Authentication Methods API', () => {
       expect(body.ui.supportedLocales).toEqual(['en', 'de']);
       expect(body.ui.defaultLocale).toBe('de');
       expect(body.ui.primaryLocales).toEqual([]);
+    });
+
+    it.each(['hsl(220 80% 50%)', '#a1b2c3d4', 'yellow', 'rgb(300, 0, 0)', 'rgb(10%, 0%, 0%)'])(
+      'falls back to the platform accent when the tenant accent %s is not one the pages apply',
+      async (tenantAccent) => {
+        const settingsKV = createMockKV({
+          'settings:platform:login-ui': JSON.stringify({ 'login-ui.accent_color': '#2563eb' }),
+          'settings:tenant:default:login-ui': JSON.stringify({
+            'login-ui.accent_color': tenantAccent,
+          }),
+        });
+        const { app, mockEnv } = createTestApp({ settingsKV });
+
+        const res = await app.request(
+          '/api/auth/authentication-methods',
+          { method: 'GET' },
+          mockEnv
+        );
+        const body = (await res.json()) as any;
+
+        expect(res.status).toBe(200);
+        expect(body.ui.pageTemplate.accentColor).toBe('#2563eb');
+      }
+    );
+
+    it('keeps a tenant accent the pages apply over the platform accent', async () => {
+      const settingsKV = createMockKV({
+        'settings:platform:login-ui': JSON.stringify({ 'login-ui.accent_color': '#2563eb' }),
+        'settings:tenant:default:login-ui': JSON.stringify({
+          'login-ui.accent_color': 'rgba(22, 163, 74, 0.5)',
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV });
+
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+
+      expect(body.ui.pageTemplate.accentColor).toBe('rgba(22, 163, 74, 0.5)');
     });
 
     it('preserves manually configured primary languages instead of recalculating them', async () => {
@@ -1364,7 +2113,8 @@ describe('Authentication Methods API', () => {
       const body = (await res.json()) as any;
 
       expect(body.ui.theme).toBe('dark');
-      expect(body.ui.variant).toBe('navy');
+      // The colour variants are gone: a value stored before is not served.
+      expect(body.ui).not.toHaveProperty('variant');
       expect(body.ui.branding.brandName).toBe('My App');
       expect(body.ui.branding.logoUrl).toBe('https://example.com/logo.png');
       expect(body.ui.branding.faviconUrl).toBe('https://example.com/favicon.ico');
@@ -1432,35 +2182,28 @@ describe('Authentication Methods API', () => {
       ]);
     });
 
-    it('should fall back to legacy system_settings.loginUI', async () => {
+    it('no longer reads the older system_settings.loginUI', async () => {
       const settingsKV = createMockKV({
         system_settings: JSON.stringify({
           general: { siteName: 'Legacy App', logoUrl: 'https://legacy.com/logo.png' },
           loginUI: { theme: 'dark', variant: 'slate', supportedLocales: ['en'] },
+          advanced: { passkeyEnabled: false, magicLinkEnabled: true },
         }),
       });
-      // Empty configKV → no settings-v2
       const { app, mockEnv } = createTestApp({ settingsKV });
 
       const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
       const body = (await res.json()) as any;
 
-      expect(body.ui.theme).toBe('dark');
-      expect(body.ui.variant).toBe('slate');
-      expect(body.ui.branding.brandName).toBe('Legacy App');
-      expect(body.ui.branding.logoUrl).toBe('https://legacy.com/logo.png');
-      expect(body.ui.branding.faviconUrl).toBeNull();
-      expect(body.ui.supportedLocales).toEqual(['en']);
-      // Legacy fallback returns default appearance values
-      expect(body.ui.appearance.backgroundImageUrl).toBeNull();
-      expect(body.ui.appearance.customCss).toBeNull();
-      expect(body.ui.appearance.headerText).toBeNull();
-      expect(body.ui.appearance.footerText).toBeNull();
-      expect(body.ui.appearance.footerLinks).toEqual([]);
-      expect(body.ui.appearance.customBlocks).toEqual([]);
+      // The older values are imported (and reported for each tenant to set), not read here.
+      expect(body.ui.branding.brandName).not.toBe('Legacy App');
+      expect(body.ui.branding.logoUrl).not.toBe('https://legacy.com/logo.png');
+      expect(body.ui.supportedLocales).not.toEqual(['en']);
+      expect(body.methods.passkey.enabled).toBe(true);
+      expect(body.methods.emailCode.enabled).toBe(false);
     });
 
-    it('should prioritize settings-v2 over legacy settings', async () => {
+    it("uses the tenant's Login UI settings", async () => {
       const settingsKV = createMockKV({
         system_settings: JSON.stringify({
           general: { siteName: 'Legacy App' },
@@ -1478,7 +2221,8 @@ describe('Authentication Methods API', () => {
       const body = (await res.json()) as any;
 
       expect(body.ui.theme).toBe('dark');
-      expect(body.ui.variant).toBe('navy');
+      // The colour variants are gone: a value stored before is not served.
+      expect(body.ui).not.toHaveProperty('variant');
       expect(body.ui.branding.brandName).toBe('Settings V2 App');
     });
   });
@@ -1489,8 +2233,6 @@ describe('Authentication Methods API', () => {
 
   describe('error handling', () => {
     it('should gracefully handle KV read failure and return defaults', async () => {
-      // getSystemSettings catches KV errors internally and returns {}
-      // This results in default settings (passkey-only built-in methods)
       const settingsKV = {
         get: vi.fn(async () => {
           throw new Error('KV read failed');
@@ -1504,6 +2246,7 @@ describe('Authentication Methods API', () => {
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
 
+      expect(body.methods.guest.enabled).toBe(false);
       expect(body.methods.passkey.enabled).toBe(true);
       expect(body.methods.emailCode.enabled).toBe(false);
     });
@@ -1537,7 +2280,8 @@ describe('Authentication Methods API', () => {
       const body = (await res.json()) as any;
 
       expect(body.ui.theme).toBe('light');
-      expect(body.ui.variant).toBe('beige');
+      // The colour variants are gone: a value stored before is not served.
+      expect(body.ui).not.toHaveProperty('variant');
       expect(body.ui.appearance.footerLinks).toEqual([]);
       expect(body.ui.appearance.customBlocks).toEqual([]);
     });

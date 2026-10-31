@@ -13,7 +13,7 @@ import {
   listD1MigrationSqlFiles,
 } from '../core/cloudflare.js';
 import { createDefaultConfig } from '../core/config.js';
-import { generateReleaseMigrationManifest } from '../core/release-migrations.js';
+import { readReleaseMigrationManifest } from '../core/release-migrations.js';
 import { renderPortableMigrationSql } from '../core/sql-portability.js';
 import { BUILTIN_PROFILE_CLAIM_SCHEMAS } from '@authrim/ar-lib-core/services/custom-claims/schema-catalog';
 
@@ -50,32 +50,31 @@ const docsTestingDir = fileURLToPath(new URL('../../../../docs/testing', import.
 const sqliteMigrationApplyTimeoutMs = 20_000;
 
 function activeCoreMigrationFiles(): string[] {
-  return listD1MigrationSqlFiles(join(rootMigrationsDir, 'core/d1')).map(
-    (file) => `core/d1/${file}`
-  );
+  return ['001_0_5_0_core_baseline.sql'].map((file) => `core/d1/${file}`);
 }
 
 function activeAdminMigrationFiles(): string[] {
-  return listD1MigrationSqlFiles(join(rootMigrationsDir, 'admin/d1')).map(
-    (file) => `admin/d1/${file}`
-  );
+  return ['001_0_5_0_admin_baseline.sql'].map((file) => `admin/d1/${file}`);
 }
 
 function activePiiMigrationFiles(): string[] {
-  return listD1MigrationSqlFiles(join(rootMigrationsDir, 'pii/d1')).map((file) => `pii/d1/${file}`);
+  return ['001_0_5_0_pii_baseline.sql'].map((file) => `pii/d1/${file}`);
 }
 
 function activePluginRunnerMigrationFiles(): string[] {
-  return listD1MigrationSqlFiles(join(rootMigrationsDir, 'plugin-runner/d1')).map(
-    (file) => `plugin-runner/d1/${file}`
-  );
+  return ['001_0_5_0_plugin_runner_baseline.sql'].map((file) => `plugin-runner/d1/${file}`);
 }
 
+// Every file setup can send to D1 for this release: the fresh baselines and the 0.4.1 bridge
+// deltas. Static text checks use this list; schema tests apply the fresh baselines only.
 function activeD1MigrationFiles(): string[] {
   return [
     ...activeCoreMigrationFiles(),
+    'core/d1/002_0_5_0_core_delta.sql',
     ...activeAdminMigrationFiles(),
+    'admin/d1/002_0_5_0_admin_delta.sql',
     ...activePiiMigrationFiles(),
+    'pii/d1/002_0_5_0_pii_delta.sql',
   ];
 }
 
@@ -236,18 +235,28 @@ describe('buildDefaultCanonicalCatalogSeedSql', () => {
         buildDefaultCanonicalCatalogSeedSql(createDefaultConfig('dev'))
       );
 
-      expect(readSqlite(sqlite3Path, dbPath, 'SELECT COUNT(*) FROM field_catalogs;')).toBe('1');
-      expect(readSqlite(sqlite3Path, dbPath, 'SELECT COUNT(*) FROM field_catalog_versions;')).toBe(
-        '1'
-      );
-      expect(readSqlite(sqlite3Path, dbPath, 'SELECT COUNT(*) FROM field_catalog_entries;')).toBe(
-        '27'
-      );
+      // The tenant's catalog, and the platform's that migration 041 made (see
+      // platform-canonical-catalog-migration.test.ts).
+      const tenantOnly = "WHERE tenant_id <> 'platform'";
+      expect(
+        readSqlite(sqlite3Path, dbPath, `SELECT COUNT(*) FROM field_catalogs ${tenantOnly};`)
+      ).toBe('1');
       expect(
         readSqlite(
           sqlite3Path,
           dbPath,
-          "SELECT ui_group_label FROM field_catalog_entries WHERE stable_field_id = 'field.canonical.given_name';"
+          `SELECT COUNT(*) FROM field_catalog_versions ${tenantOnly};`
+        )
+      ).toBe('1');
+      expect(
+        readSqlite(sqlite3Path, dbPath, `SELECT COUNT(*) FROM field_catalog_entries ${tenantOnly};`)
+      ).toBe('27');
+      expect(readSqlite(sqlite3Path, dbPath, 'SELECT COUNT(*) FROM field_catalogs;')).toBe('2');
+      expect(
+        readSqlite(
+          sqlite3Path,
+          dbPath,
+          "SELECT ui_group_label FROM field_catalog_entries WHERE stable_field_id = 'field.canonical.given_name' AND tenant_id <> 'platform';"
         )
       ).toBe('Name');
     } finally {
@@ -598,11 +607,9 @@ describe('migration seed SQL portability', () => {
   it('seeds the eight built-ins during a manifest-based fresh install before the draft is finalized', () => {
     const sqlite3Path = findSqlite3();
     if (!sqlite3Path) return;
-    const manifest = generateReleaseMigrationManifest({
-      migrationsRoot: rootMigrationsDir,
-      productVersion: '0.4.0',
-      semanticBaselineSource: true,
-    });
+    const manifest = readReleaseMigrationManifest(
+      join(rootMigrationsDir, 'release-manifest.draft.json')
+    );
     const coreFiles = manifest.streams
       .find((stream) => stream.id === 'core-d1')
       ?.files.map((file) => `core/d1/${file.path}`);
@@ -1367,6 +1374,18 @@ describe('renderPortableMigrationSql', () => {
 INSERT INTO test_table (created_at_s, created_at_ms)
 VALUES (__AUTHRIM_NOW_EPOCH_SECONDS__, __AUTHRIM_NOW_EPOCH_MILLISECONDS__);
 `.trim();
+
+  it('renders precise event time without changing legacy migration time', () => {
+    const rendered = renderPortableMigrationSql(
+      '__AUTHRIM_NOW_PRECISE_EPOCH_MILLISECONDS__',
+      'sqlite'
+    );
+    expect(rendered).toContain("substr(strftime('%f', 'now'), 4, 3)");
+    expect(rendered).not.toContain('__AUTHRIM_');
+    expect(renderPortableMigrationSql('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', 'sqlite')).toBe(
+      '(unixepoch() * 1000)'
+    );
+  });
 
   it('renders sqlite expressions for D1 execution', () => {
     const rendered = renderPortableMigrationSql(sql, 'sqlite');

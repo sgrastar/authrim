@@ -8,8 +8,6 @@ import {
   hasAnyRole,
   hasAllRoles,
   isAdmin,
-  isSystemAdmin,
-  isOrgAdmin,
   getActiveRoles,
   subjectFromClaims,
 } from '../role-checker';
@@ -100,58 +98,20 @@ describe('role-checker', () => {
   });
 
   describe('isAdmin', () => {
-    it('should return true for system_admin', () => {
-      const roles: SubjectRole[] = [{ name: 'system_admin', scope: 'global' }];
-      expect(isAdmin(roles)).toBe(true);
-    });
-
-    it('should return true for distributor_admin', () => {
-      const roles: SubjectRole[] = [{ name: 'distributor_admin', scope: 'global' }];
-      expect(isAdmin(roles)).toBe(true);
-    });
-
-    it('should return true for org_admin', () => {
-      const roles: SubjectRole[] = [{ name: 'org_admin', scope: 'global' }];
-      expect(isAdmin(roles)).toBe(true);
-    });
-
-    it('should return true for admin', () => {
+    it('should return true for the preset admin role', () => {
       const roles: SubjectRole[] = [{ name: 'admin', scope: 'global' }];
       expect(isAdmin(roles)).toBe(true);
     });
 
-    it('should return false for non-admin roles', () => {
-      const roles: SubjectRole[] = [{ name: 'end_user', scope: 'global' }];
-      expect(isAdmin(roles)).toBe(false);
-    });
-  });
-
-  describe('isSystemAdmin', () => {
-    it('should return true for system_admin', () => {
-      const roles: SubjectRole[] = [{ name: 'system_admin', scope: 'global' }];
-      expect(isSystemAdmin(roles)).toBe(true);
+    it('should return false for end_user and for roles the operator created', () => {
+      expect(isAdmin([{ name: 'end_user', scope: 'global' }])).toBe(false);
+      expect(isAdmin([{ name: 'billing_manager', scope: 'global' }])).toBe(false);
     });
 
-    it('should return false for other admin types', () => {
-      const roles: SubjectRole[] = [{ name: 'org_admin', scope: 'global' }];
-      expect(isSystemAdmin(roles)).toBe(false);
-    });
-  });
-
-  describe('isOrgAdmin', () => {
-    it('should return true for org_admin without org check', () => {
-      const roles: SubjectRole[] = [{ name: 'org_admin', scope: 'global' }];
-      expect(isOrgAdmin(roles)).toBe(true);
-    });
-
-    it('should return true for scoped org_admin with matching org', () => {
-      const roles: SubjectRole[] = [{ name: 'org_admin', scope: 'org', scopeTarget: 'org:123' }];
-      expect(isOrgAdmin(roles, '123')).toBe(true);
-    });
-
-    it('should return false for scoped org_admin with non-matching org', () => {
-      const roles: SubjectRole[] = [{ name: 'org_admin', scope: 'org', scopeTarget: 'org:123' }];
-      expect(isOrgAdmin(roles, '456')).toBe(false);
+    it('should not read the retired preset names as admin', () => {
+      for (const name of ['system_admin', 'distributor_admin', 'org_admin']) {
+        expect(isAdmin([{ name, scope: 'global' }]), name).toBe(false);
+      }
     });
   });
 
@@ -195,7 +155,7 @@ describe('role-checker', () => {
       const claims = {
         sub: 'user_123',
         authrim_roles: ['admin', 'editor'],
-        authrim_user_type: 'enterprise_admin',
+        authrim_user_type: 'end_user',
         authrim_org_id: 'org_456',
         authrim_plan: 'professional',
         authrim_org_type: 'enterprise',
@@ -207,7 +167,7 @@ describe('role-checker', () => {
       expect(subject.roles).toHaveLength(2);
       expect(subject.roles[0]).toEqual({ name: 'admin', scope: 'global' });
       expect(subject.roles[1]).toEqual({ name: 'editor', scope: 'global' });
-      expect(subject.userType).toBe('enterprise_admin');
+      expect(subject.userType).toBe('end_user');
       expect(subject.orgId).toBe('org_456');
       expect(subject.plan).toBe('professional');
       expect(subject.orgType).toBe('enterprise');

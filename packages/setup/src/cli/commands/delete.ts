@@ -17,6 +17,7 @@ import {
   detectEnvironments,
   deleteEnvironment,
 } from '../../core/cloudflare.js';
+import { withAdoptedR2Ownership } from '../../core/r2-ownership-adoption.js';
 import { cleanupLocalEnvironmentArtifacts } from '../../core/environment-cleanup.js';
 import { cleanupSetupManagedControlTokens } from '../../core/control-token-environment-cleanup.js';
 import {
@@ -56,6 +57,7 @@ function updateOraSpinner(spinner: ReturnType<typeof ora>, message: string): voi
 export interface DeleteCommandOptions {
   env?: string;
   yes?: boolean;
+  adoptR2Ownership?: boolean;
   workers?: boolean;
   d1?: boolean;
   kv?: boolean;
@@ -360,6 +362,30 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
       knownKVResources,
       knownQueueResources,
       knownR2Resources,
+      adoptR2Ownership: options.adoptR2Ownership === true,
+      onR2OwnershipAdoption: async (candidates) => {
+        deleteSpinner?.stop();
+        console.log(chalk.yellow('\nR2 buckets verified by Setup ownership markers:'));
+        for (const candidate of candidates) {
+          console.log(
+            `  ${candidate.name} | ${candidate.binding} | ${candidate.creationDate} | ${candidate.ownershipId}`
+          );
+        }
+        const confirmed =
+          options.yes === true ||
+          (await confirm({
+            message: 'Adopt these R2 buckets into lock.json and delete them?',
+            default: false,
+          }));
+        deleteSpinner?.start();
+        return confirmed;
+      },
+      onR2OwnershipAdoptionPersist: async (candidates) => {
+        const adopted = withAdoptedR2Ownership(lock, env, candidates);
+        await saveLockFile(adopted, operationLock.lockFilePath);
+        lock = adopted;
+      },
+      knownLogArchiveResource: lock?.logArchive,
       knownPagesResources,
       ...(lock
         ? {

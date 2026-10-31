@@ -5,9 +5,14 @@
  * GET /saml/sp/login?idp=<idp_id>
  */
 
+import {
+  isUsableInvitationToken,
+  reserveExternalSignupInvitation,
+  type ExternalSignupInvitation,
+} from '@authrim/ar-lib-core/services/external-signup-invitation';
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import type { SAMLIdPConfig } from '@authrim/ar-lib-core';
+import type { SAMLIdPConfig, SAMLRequestContext } from '@authrim/ar-lib-core';
 import {
   createErrorResponse,
   AR_ERROR_CODES,
@@ -15,6 +20,12 @@ import {
   buildIssuerUrl,
   buildSAMLRequestStoreInstanceName,
   getLogger,
+  readAuthorizationChallengeKind,
+  readExternalProviderReauthPolicy,
+  readExternalProviderUsagePolicy,
+  resolveAuthCorePersistenceAdapterFromEnv,
+  resolveSignInAttemptInteraction,
+  resolveSamlRequestTtlSeconds,
   verifyHumanVerificationWithRunner,
 } from '@authrim/ar-lib-core';
 import * as pako from 'pako';
@@ -36,6 +47,7 @@ import {
 import { signRedirectBinding } from '../common/signature';
 import { getSAMLSigningMaterial, getSAMLSigningPolicy } from '../common/saml-signing-keys';
 import { getIdPConfig, listIdPConfigs } from '../admin/providers';
+import { samlUsageUnavailableResponse } from './usage-gate';
 import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
 import { getSAMLLocalEntityIds } from '../common/entity-id';
 import { assertSAMLRelayStateSize } from '../common/relay-state';
@@ -74,6 +86,9 @@ async function verifySPLoginHumanVerification(
 /**
  * Handle SP login initiation
  */
+/** How much longer than the request itself an invitation reservation lasts (the ACS round trip). */
+const SAML_INVITATION_RESERVATION_MARGIN_SECONDS = 60;
+
 export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Response> {
   const env = c.env;
   const log = getLogger(c).module('SAML-SP');
@@ -88,14 +103,23 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
 
     // Determine return URL with UI config fallback. Only local Authrim/Login UI origins are accepted.
     const requestedReturnUrl = c.req.query('return_url');
-    const uiConfig = await getUIConfig(env);
+    const uiConfig = await getUIConfig(env, tenantId);
     const defaultReturnUrl = uiConfig?.baseUrl ? `${uiConfig.baseUrl}/` : `${issuerUrl}/`;
     const returnUrl = resolveSafeReturnUrl(env, tenantId, requestedReturnUrl) ?? defaultReturnUrl;
 
     if (!idpId) {
       // Return list of available IdPs if no IdP specified
       const idps = await listIdPConfigs(env, tenantId);
-      return c.html(buildIdPSelectionPage(issuerUrl, idps, returnUrl));
+      return c.html(
+        buildIdPSelectionPage(
+          issuerUrl,
+          idps,
+          returnUrl,
+          c.req.query('authorization_challenge_id') || undefined,
+          c.req.query('invite_token'),
+          c.req.query('runtime_interaction_id')
+        )
+      );
     }
 
     // Get IdP configuration
@@ -106,21 +130,126 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
 
     const outboundIdpConfig = withSPInitiatedSsoEndpoint(idpConfig);
 
+    // A sign-in that answers an Authrim re-authentication asks the IdP for a new login
+    // (ForceAuthn), and only an IdP the tenant lets re-authenticate is asked.
+    let reauthentication: SAMLRequestContext['spReauthentication'];
+    const authorizationChallengeId = c.req.query('authorization_challenge_id');
+    if (authorizationChallengeId) {
+      const challengeKind = await readAuthorizationChallengeKind(
+        env,
+        tenantId,
+        authorizationChallengeId
+      );
+      if (!challengeKind) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+          variables: { field: 'authorization_challenge_id' },
+        });
+      }
+      if (challengeKind === 'reauth') {
+        const providerIds = [`saml:${idpId}`, idpId];
+        const policy = await readExternalProviderReauthPolicy(env, tenantId, {
+          providerId: idpId,
+          ids: providerIds,
+        });
+        if (!policy.reauthEnabled) {
+          return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
+        }
+        reauthentication = {
+          authorizationChallengeId,
+          requestedAt: Date.now(),
+          providerId: idpId,
+          providerIds,
+        };
+      }
+    }
+
+    // A sign-in starts only with an IdP the tenant lets sign people in (the login screen merely
+    // hides the others). A re-authentication has its own switch, checked above.
+    if (!reauthentication) {
+      let loginEnabled: boolean;
+      try {
+        loginEnabled = (
+          await readExternalProviderUsagePolicy(env, tenantId, {
+            providerId: idpId,
+            ids: [`saml:${idpId}`, idpId],
+          })
+        ).loginEnabled;
+      } catch (error) {
+        log.warn(
+          'SAML IdP usage settings could not be read; refusing the sign-in',
+          {},
+          error as Error
+        );
+        return samlUsageUnavailableResponse(c);
+      }
+      if (!loginEnabled) return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
+    }
+
     // Generate AuthnRequest
-    const authnRequestXml = buildAuthnRequest(issuerUrl, spEntityId, outboundIdpConfig);
+    const authnRequestXml = buildAuthnRequest(issuerUrl, spEntityId, outboundIdpConfig, {
+      forceAuthn: reauthentication !== undefined,
+    });
 
     // Store request in SAMLRequestStore for later validation
+    const requestTtlSeconds = await resolveSamlRequestTtlSeconds(env, tenantId);
     const requestId = authnRequestXml.match(/ID="([^"]+)"/)?.[1] || '';
     if (!requestId) {
       throw new Error('Generated SAML AuthnRequest is missing ID');
     }
+    // A sign-in started from an invitation reserves one use now, held by this request for as
+    // long as the IdP may take to answer it, so the ACS can apply it to the account it creates.
+    // A re-authentication creates no account, so it carries no invitation.
+    const inviteToken = c.req.query('invite_token');
+    let invitation: ExternalSignupInvitation | null = null;
+    if (inviteToken !== undefined && !reauthentication) {
+      if (!isUsableInvitationToken(inviteToken)) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+          variables: { field: 'invite_token' },
+        });
+      }
+      invitation = await reserveExternalSignupInvitation(
+        await resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-invitation', { tenantId }),
+        {
+          token: inviteToken,
+          tenantId,
+          holder: `saml:${requestId}`,
+          ttlSeconds: requestTtlSeconds + SAML_INVITATION_RESERVATION_MARGIN_SECONDS,
+        }
+      );
+      if (!invitation) {
+        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+      }
+    }
+    // The Flow interaction this sign-in belongs to, once checked a live interaction of the tenant:
+    // the ACS records the sign-in's failures with it.
+    // Best effort: a check that cannot be made leaves the sign-in unrecorded, never refused.
+    const requestedInteractionId = c.req.query('runtime_interaction_id');
+    const attemptInteractionId = requestedInteractionId
+      ? await (async () =>
+          resolveSignInAttemptInteraction(
+            await resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-sign-in-attempt', {
+              tenantId,
+            }),
+            { tenantId, interactionId: requestedInteractionId }
+          ))().catch(() => null)
+      : null;
+    const requestContext: SAMLRequestContext | undefined =
+      reauthentication || invitation || attemptInteractionId
+        ? {
+            ...(reauthentication ? { spReauthentication: reauthentication } : {}),
+            ...(invitation ? { invitation } : {}),
+            ...(attemptInteractionId ? { attemptInteractionId } : {}),
+          }
+        : undefined;
     await storeAuthnRequest(
       env,
       tenantId,
       requestId,
       spEntityId,
       outboundIdpConfig.entityId,
-      returnUrl
+      returnUrl,
+      requestTtlSeconds,
+      requestContext
     );
 
     // RelayState is limited by the SAML bindings; use the opaque request ID, not the return URL.
@@ -131,7 +260,10 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
     const response = outboundIdpConfig.allowedBindings.includes('redirect')
       ? await redirectToIdP(c, env, outboundIdpConfig, authnRequestXml, relayState)
       : postToIdP(outboundIdpConfig, authnRequestXml, relayState);
-    response.headers.append('Set-Cookie', buildSAMLRequestBindingCookie(requestId));
+    response.headers.append(
+      'Set-Cookie',
+      buildSAMLRequestBindingCookie(requestId, requestTtlSeconds)
+    );
     return response;
   } catch (error) {
     log.error('SP Login Error', {}, error as Error);
@@ -174,7 +306,8 @@ function withSPInitiatedSsoEndpoint(idpConfig: SAMLIdPConfig): SAMLIdPConfig {
 function buildAuthnRequest(
   issuerUrl: string,
   spEntityId: string,
-  idpConfig: SAMLIdPConfig
+  idpConfig: SAMLIdPConfig,
+  options: { forceAuthn?: boolean } = {}
 ): string {
   const acsUrl = `${issuerUrl}/saml/sp/acs`;
   const providerName = idpConfig.providerName?.trim() || 'Authrim';
@@ -190,6 +323,7 @@ function buildAuthnRequest(
   setAttribute(authnRequest, 'AssertionConsumerServiceURL', acsUrl);
   setAttribute(authnRequest, 'ProtocolBinding', BINDING_URIS.HTTP_POST);
   setAttribute(authnRequest, 'ProviderName', providerName);
+  if (options.forceAuthn) setAttribute(authnRequest, 'ForceAuthn', 'true');
 
   // Add namespace declarations
   addNamespaceDeclarations(authnRequest, {
@@ -224,7 +358,9 @@ async function storeAuthnRequest(
   requestId: string,
   spEntityId: string,
   idpEntityId: string,
-  returnUrl: string
+  returnUrl: string,
+  requestTtlSeconds: number,
+  context?: SAMLRequestContext
 ): Promise<void> {
   const samlRequestStoreId = env.SAML_REQUEST_STORE.idFromName(
     buildSAMLRequestStoreInstanceName(tenantId, 'sp', idpEntityId)
@@ -241,7 +377,8 @@ async function storeAuthnRequest(
       binding: 'post',
       type: 'authn_request',
       relayState: returnUrl,
-      expiresAt: Date.now() + 300 * 1000, // 5 minutes
+      ...(context ? { context } : {}),
+      expiresAt: Date.now() + requestTtlSeconds * 1000,
     }),
   });
 }
@@ -305,12 +442,31 @@ function postToIdP(
 function buildIdPSelectionPage(
   issuerUrl: string,
   idps: Array<{ id: string; name: string; entityId: string }>,
-  returnUrl: string
+  returnUrl: string,
+  authorizationChallengeId?: string,
+  inviteToken?: string,
+  runtimeInteractionId?: string
 ): string {
+  // A choice answering an authorization challenge (a re-authentication) keeps answering it, and
+  // a sign-in started from an invitation keeps its invitation.
+  const challenge =
+    (authorizationChallengeId
+      ? `&authorization_challenge_id=${encodeURIComponent(authorizationChallengeId)}`
+      : '') +
+    (isUsableInvitationToken(inviteToken)
+      ? `&invite_token=${encodeURIComponent(inviteToken)}`
+      : '');
+  // This is only an opaque navigation hint. The selected provider start checks its tenant,
+  // live state and expiry before storing it with the AuthnRequest.
+  const interactionId = runtimeInteractionId?.trim();
+  const interaction =
+    interactionId && /^[A-Za-z0-9_-]{1,128}$/u.test(interactionId)
+      ? `&runtime_interaction_id=${encodeURIComponent(interactionId)}`
+      : '';
   const idpLinks = idps
     .map(
       (idp) =>
-        `<li><a href="${issuerUrl}/saml/sp/login?idp=${encodeURIComponent(idp.id)}&return_url=${encodeURIComponent(returnUrl)}">${escapeHtml(idp.name)}</a></li>`
+        `<li><a href="${issuerUrl}/saml/sp/login?idp=${encodeURIComponent(idp.id)}&return_url=${encodeURIComponent(returnUrl)}${challenge}${interaction}">${escapeHtml(idp.name)}</a></li>`
     )
     .join('\n');
 

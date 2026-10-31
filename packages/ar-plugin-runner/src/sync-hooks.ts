@@ -1,4 +1,5 @@
 import type { Fetcher, WorkerLoader } from '@cloudflare/workers-types';
+import { ExternalGateClosedError } from './external-gate';
 import { readBoundedResponseBody } from './bounded-response';
 import type { PluginWorkerCodeResolver } from './dynamic-worker-code';
 import type { PluginInstallationResolver } from './dynamic-worker-backend';
@@ -182,6 +183,11 @@ export class DynamicWorkerSyncHookBackend implements SyncHookBackend {
       ) {
         throw new Error('plugin_host_interface_unavailable');
       }
+      // The resolution above checked the gate, then the code was fetched (which can wait): check
+      // again right before the Worker is launched. A closed gate is final, not retried.
+      if (!(await this.installations.isExternalGateOpen(input.payload.tenantId))) {
+        throw new ExternalGateClosedError();
+      }
       response = await this.loader
         .get(workerId, async () => ({
           ...workerCode,
@@ -205,7 +211,8 @@ export class DynamicWorkerSyncHookBackend implements SyncHookBackend {
           signal: AbortSignal.timeout(input.target.timeoutMs),
           redirect: 'manual',
         });
-    } catch {
+    } catch (error) {
+      if (error instanceof ExternalGateClosedError) throw new Error('plugin_sync_rejected');
       throw new Error('plugin_sync_transient_failure');
     }
     if (response.status !== 200) {

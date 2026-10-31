@@ -1,6 +1,6 @@
 import type { Context } from 'hono';
 import { getCookie } from 'hono/cookie';
-import type { Env, Session } from '@authrim/ar-lib-core';
+import type { AccountSession, Env, Session } from '@authrim/ar-lib-core';
 import {
   CanonicalRuntimeUserStore,
   createAccountAuthContextFromHono,
@@ -8,25 +8,18 @@ import {
   getLogger,
   getSessionStoreBySessionId,
   getTenantIdFromContext,
+  isAccountReauthFresh,
+  isLiveAccountSession,
   isShardedSessionId,
   resolveAccountDataContextFromHono,
+  resolveAccountReauthTtlSeconds,
+  toAccountSession,
 } from '@authrim/ar-lib-core';
 import { recordAccountOperation } from './account-operation-log';
 
-const REAUTH_TTL_SECONDS = 5 * 60;
 const MAX_NAME_LENGTH = 100;
 
-export type AccountSession = {
-  sessionId: string;
-  userId: string;
-  createdAt: number;
-  expiresAt: number;
-  authTime: number;
-  acr?: string;
-  amr?: string[];
-  userAgent?: string;
-  countryCode?: string;
-};
+export type { AccountSession } from '@authrim/ar-lib-core';
 
 function setNoStore(c: Context<{ Bindings: Env }>): void {
   c.header('Cache-Control', 'no-store');
@@ -44,25 +37,6 @@ function unauthorized(c: Context<{ Bindings: Env }>, description: string): Respo
   );
 }
 
-function normalizeSession(session: Session): AccountSession {
-  return {
-    sessionId: session.id,
-    userId: session.userId,
-    createdAt: session.createdAt,
-    expiresAt: session.expiresAt,
-    authTime:
-      typeof session.data?.authTime === 'number'
-        ? session.data.authTime
-        : Math.floor(session.createdAt / 1000),
-    ...(typeof session.data?.acr === 'string' && { acr: session.data.acr }),
-    ...(Array.isArray(session.data?.amr) && { amr: session.data.amr }),
-    ...(typeof session.data?.userAgent === 'string' && { userAgent: session.data.userAgent }),
-    ...(typeof session.data?.countryCode === 'string' && {
-      countryCode: session.data.countryCode,
-    }),
-  };
-}
-
 export async function requireAccountSession(
   c: Context<{ Bindings: Env }>
 ): Promise<AccountSession | Response> {
@@ -78,16 +52,11 @@ export async function requireAccountSession(
   try {
     const tenantId = getTenantIdFromContext(c);
     const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantId);
-    const session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
-
-    if (
-      !session ||
-      !session.userId ||
-      session.expiresAt <= Date.now() ||
-      (session.tenantId !== undefined && session.tenantId !== tenantId)
-    ) {
+    const stored = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
+    if (!isLiveAccountSession(stored, tenantId)) {
       return unauthorized(c, 'Session has expired or is invalid');
     }
+    const session = toAccountSession(stored);
 
     // Account-page handlers read account-scoped Core/PII data. Resolve the
     // user's routed account database once while validating the session so all
@@ -99,7 +68,7 @@ export async function requireAccountSession(
       await resolveAccountDataContextFromHono(c, session.userId);
     }
 
-    return normalizeSession(session);
+    return session;
   } catch (error) {
     const log = getLogger(c).module('ACCOUNT-PAGE');
     log.error('Account session validation failed', { action: 'session_validate' }, error as Error);
@@ -151,6 +120,7 @@ export async function getAccountProfileHandler(c: Context<{ Bindings: Env }>): P
   return c.json({
     profile: {
       user_id: accountSession.userId,
+      registration_state: user.registration_state,
       email: user.email,
       email_verified: user.email_verified === 1,
       name: user.name,
@@ -237,6 +207,7 @@ export async function updateAccountProfileHandler(
   return c.json({
     profile: {
       user_id: accountSession.userId,
+      registration_state: updatedUser?.registration_state ?? existingUser.registration_state,
       email: updatedUser?.email ?? existingUser.email,
       email_verified: (updatedUser?.email_verified ?? existingUser.email_verified) === 1,
       name: updatedUser?.name ?? name,
@@ -257,15 +228,13 @@ export async function getAccountReauthStatusHandler(
     return accountSession;
   }
 
-  const nowSeconds = Math.floor(Date.now() / 1000);
-  const expiresAt = accountSession.authTime + REAUTH_TTL_SECONDS;
-
+  const ttlSeconds = await resolveAccountReauthTtlSeconds(c.env, getTenantIdFromContext(c));
   return c.json({
     reauth: {
-      required: nowSeconds >= expiresAt,
+      required: !isAccountReauthFresh(accountSession.authTime, undefined, ttlSeconds),
       authenticated_at: accountSession.authTime,
-      expires_at: expiresAt,
-      ttl_seconds: REAUTH_TTL_SECONDS,
+      expires_at: accountSession.authTime + ttlSeconds,
+      ttl_seconds: ttlSeconds,
       methods: accountSession.amr ?? [],
     },
   });

@@ -1,500 +1,214 @@
-/**
- * Check Audit Service Unit Tests
- *
- * Tests for the permission check audit logging service.
- * Features tested:
- * - shouldLog(): Sampling logic for allow/deny events
- * - log(): Three logging modes (waitUntil, sync, queue)
- * - writeLog(): Database persistence
- * - processQueueMessage(): Queue consumer handling
- * - cleanupOldEntries(): Retention-based cleanup
- */
-
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { LogIcebergRowWrite } from '../services/log-iceberg-emitter';
+import type { LogIcebergRuntimeEnv } from '../services/log-iceberg-runtime';
+import type { ExecutionContext } from '@cloudflare/workers-types';
 import {
   CheckAuditService,
-  generateAuditId,
   DEFAULT_CHECK_AUDIT_CONFIG,
+  createCheckAuditService,
+  generateAuditId,
   type PermissionCheckAuditEntry,
-  type CheckAuditServiceConfig,
 } from '../services/check-audit-service';
-
-/**
- * Create a mock D1Database
- */
-function createMockDB() {
-  const run = vi.fn().mockResolvedValue({ meta: { changes: 0 } });
-  const bind = vi.fn().mockReturnValue({ run });
-  const prepare = vi.fn().mockReturnValue({ bind });
-
-  return {
-    prepare,
-    bind,
-    run,
-    _reset: () => {
-      run.mockReset().mockResolvedValue({ meta: { changes: 0 } });
-      bind.mockReset().mockReturnValue({ run });
-      prepare.mockReset().mockReturnValue({ bind });
-    },
-  };
+const { emit, errorLog } = vi.hoisted(() => ({
+  emit: vi.fn<(env: LogIcebergRuntimeEnv, input: LogIcebergRowWrite) => Promise<void>>(),
+  errorLog: vi.fn(),
+}));
+vi.mock('../services/log-iceberg-emitter', () => ({ emitLogIcebergRow: emit }));
+vi.mock('../utils/logger', () => ({
+  createLogger: () => ({ module: () => ({ error: errorLog }) }),
+}));
+const env: LogIcebergRuntimeEnv = { AUTHRIM_LOG_ARCHIVE_MODE: 'scheduled' };
+const entry = (patch: Partial<PermissionCheckAuditEntry> = {}): PermissionCheckAuditEntry => ({
+  id: 'audit-1',
+  tenantId: 'tenant-a',
+  subjectId: 'subject-a',
+  permission: 'documents:read',
+  allowed: false,
+  resolvedVia: ['direct'],
+  finalDecision: 'deny',
+  ...patch,
+});
+function context(waitUntil: (promise: Promise<unknown>) => void): ExecutionContext {
+  return { waitUntil, passThroughOnException: () => {}, props: {} };
 }
-
-/**
- * Create a mock Queue
- */
-function createMockQueue() {
-  const send = vi.fn().mockResolvedValue(undefined);
-  return { send };
+function written(): LogIcebergRowWrite {
+  const value = emit.mock.calls.at(-1)?.[1];
+  if (!value) throw new Error('Missing emitted audit');
+  return value;
 }
-
-/**
- * Create a mock ExecutionContext
- */
-function createMockExecutionContext() {
-  const waitUntil = vi.fn();
-  return { waitUntil };
-}
-
-/**
- * Create a test audit entry
- */
-function createTestEntry(
-  overrides?: Partial<PermissionCheckAuditEntry>
-): PermissionCheckAuditEntry {
-  return {
-    id: 'aud_test123',
-    tenantId: 'tenant_1',
-    subjectId: 'user_123',
-    permission: 'documents:read',
-    allowed: true,
-    resolvedVia: ['direct'],
-    finalDecision: 'allow',
-    ...overrides,
-  };
-}
-
-describe('CheckAuditService', () => {
-  let mockDB: ReturnType<typeof createMockDB>;
-
+describe('permission-check audit through the explicit storage writer', () => {
   beforeEach(() => {
-    mockDB = createMockDB();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-27T00:00:00.000Z'));
+    emit.mockReset().mockResolvedValue(undefined);
+    errorLog.mockReset();
   });
-
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
-
-  // ===========================================================================
-  // DEFAULT_CHECK_AUDIT_CONFIG
-  // ===========================================================================
-
-  describe('DEFAULT_CHECK_AUDIT_CONFIG', () => {
-    it('should have secure defaults', () => {
-      expect(DEFAULT_CHECK_AUDIT_CONFIG).toEqual({
-        mode: 'waitUntil',
-        logDeny: 'always',
-        logAllow: 'sample',
-        sampleRate: 0.01,
-        retentionDays: 90,
-      });
+  it('retains deny-all, one-percent allow sampling and 90-day defaults', () => {
+    expect(DEFAULT_CHECK_AUDIT_CONFIG).toEqual({
+      mode: 'waitUntil',
+      logDeny: 'always',
+      logAllow: 'sample',
+      sampleRate: 0.01,
+      retentionDays: 90,
     });
+    const service = new CheckAuditService(env);
+    expect(service.shouldLog(false)).toBe(true);
+    vi.spyOn(Math, 'random').mockReturnValue(0.009);
+    expect(service.shouldLog(true)).toBe(true);
+    vi.mocked(Math.random).mockReturnValue(0.01);
+    expect(service.shouldLog(true)).toBe(false);
+    service.updateConfig({ logAllow: 'always' });
+    expect(service.shouldLog(true)).toBe(true);
+    service.updateConfig({ logAllow: 'never' });
+    expect(service.shouldLog(true)).toBe(false);
+    expect(service.shouldLog(false)).toBe(true);
   });
-
-  // ===========================================================================
-  // shouldLog()
-  // ===========================================================================
-
-  describe('shouldLog()', () => {
-    it('should always log deny events when logDeny is "always"', () => {
-      const service = new CheckAuditService(mockDB as unknown as D1Database, {
-        logDeny: 'always',
-      });
-
-      expect(service.shouldLog(false)).toBe(true);
-    });
-
-    it('should always log allow events when logAllow is "always"', () => {
-      const service = new CheckAuditService(mockDB as unknown as D1Database, {
-        logAllow: 'always',
-      });
-
-      expect(service.shouldLog(true)).toBe(true);
-    });
-
-    it('should never log allow events when logAllow is "never"', () => {
-      const service = new CheckAuditService(mockDB as unknown as D1Database, {
-        logAllow: 'never',
-      });
-
-      expect(service.shouldLog(true)).toBe(false);
-    });
-
-    it('should sample allow events when logAllow is "sample"', () => {
-      const service = new CheckAuditService(mockDB as unknown as D1Database, {
-        logAllow: 'sample',
-        sampleRate: 0.5, // 50%
-      });
-
-      // Run many times and check that some are logged
-      let logged = 0;
-      for (let i = 0; i < 1000; i++) {
-        if (service.shouldLog(true)) {
-          logged++;
-        }
-      }
-
-      // Should be roughly 50% (with some variance)
-      expect(logged).toBeGreaterThan(400);
-      expect(logged).toBeLessThan(600);
-    });
-
-    it('should log all allow events with sampleRate 1.0', () => {
-      const service = new CheckAuditService(mockDB as unknown as D1Database, {
-        logAllow: 'sample',
-        sampleRate: 1.0,
-      });
-
-      // All should be logged
-      for (let i = 0; i < 10; i++) {
-        expect(service.shouldLog(true)).toBe(true);
-      }
-    });
-
-    it('should log no allow events with sampleRate 0.0', () => {
-      const service = new CheckAuditService(mockDB as unknown as D1Database, {
-        logAllow: 'sample',
-        sampleRate: 0.0,
-      });
-
-      // None should be logged
-      for (let i = 0; i < 10; i++) {
-        expect(service.shouldLog(true)).toBe(false);
-      }
-    });
+  it('does not produce a record when an allowed decision is excluded', async () => {
+    const waitUntil = vi.fn();
+    await new CheckAuditService(env, { logAllow: 'never' }).log(
+      entry({ allowed: true, finalDecision: 'allow' }),
+      context(waitUntil)
+    );
+    expect(emit).not.toHaveBeenCalled();
+    expect(waitUntil).not.toHaveBeenCalled();
   });
-
-  // ===========================================================================
-  // log() - waitUntil mode
-  // ===========================================================================
-
-  describe('log() - waitUntil mode', () => {
-    it('should use ctx.waitUntil when ExecutionContext is provided', async () => {
-      const service = new CheckAuditService(mockDB as unknown as D1Database, {
-        mode: 'waitUntil',
-        logAllow: 'always',
-      });
-
-      const ctx = createMockExecutionContext();
-      const entry = createTestEntry();
-
-      await service.log(entry, ctx as unknown as ExecutionContext);
-
-      expect(ctx.waitUntil).toHaveBeenCalledTimes(1);
-      expect(ctx.waitUntil).toHaveBeenCalledWith(expect.any(Promise));
-    });
-
-    it('should fallback to sync when no ExecutionContext provided', async () => {
-      const service = new CheckAuditService(mockDB as unknown as D1Database, {
-        mode: 'waitUntil',
-        logAllow: 'always',
-      });
-
-      const entry = createTestEntry();
-
-      await service.log(entry);
-
-      // Should have called prepare directly (sync fallback)
-      expect(mockDB.prepare).toHaveBeenCalled();
-    });
-
-    it('should not log when shouldLog returns false', async () => {
-      const service = new CheckAuditService(mockDB as unknown as D1Database, {
-        mode: 'waitUntil',
-        logAllow: 'never',
-      });
-
-      const ctx = createMockExecutionContext();
-      const entry = createTestEntry({ allowed: true });
-
-      await service.log(entry, ctx as unknown as ExecutionContext);
-
-      expect(ctx.waitUntil).not.toHaveBeenCalled();
-      expect(mockDB.prepare).not.toHaveBeenCalled();
-    });
-  });
-
-  // ===========================================================================
-  // log() - sync mode
-  // ===========================================================================
-
-  describe('log() - sync mode', () => {
-    it('should write directly to database', async () => {
-      const service = new CheckAuditService(mockDB as unknown as D1Database, {
-        mode: 'sync',
-        logAllow: 'always',
-      });
-
-      const entry = createTestEntry();
-
-      await service.log(entry);
-
-      expect(mockDB.prepare).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO'));
-      expect(mockDB.bind).toHaveBeenCalled();
-      expect(mockDB.run).toHaveBeenCalled();
-    });
-
-    it('should bind all entry fields correctly', async () => {
-      const service = new CheckAuditService(mockDB as unknown as D1Database, {
-        mode: 'sync',
-        logAllow: 'always',
-      });
-
-      const entry = createTestEntry({
-        id: 'aud_xyz',
-        tenantId: 'tenant_abc',
-        subjectId: 'user_456',
-        permission: 'projects:write',
+  it.each(['sync', 'queue'] as const)(
+    'submits one frozen record with explicit timestamps and expiry in %s mode',
+    async (mode) => {
+      const input = entry({
         permissionParsed: {
           type: 'type_level',
-          resource: 'projects',
-          action: 'write',
-          original: 'projects:write',
+          resource: 'documents',
+          action: 'read',
+          original: 'documents:read',
         },
-        allowed: false,
-        resolvedVia: ['role', 'computed'],
-        finalDecision: 'deny',
         reason: 'No matching role',
-        apiKeyId: 'key_123',
-        clientId: 'client_abc',
+        apiKeyId: 'key-a',
+        clientId: 'client-a',
+        requestId: 'request-a',
       });
-
-      await service.log(entry);
-
-      expect(mockDB.bind).toHaveBeenCalledWith(
-        'aud_xyz',
-        'tenant_abc',
-        'user_456',
-        'projects:write',
-        expect.any(String), // JSON stringified permissionParsed
-        0, // allowed = false -> 0
-        expect.any(String), // JSON stringified resolvedVia
-        'deny',
-        'No matching role',
-        'key_123',
-        'client_abc',
-        expect.any(Number) // checkedAt timestamp
-      );
-    });
+      await createCheckAuditService(env, { mode }).log(input);
+      expect(emit).toHaveBeenCalledTimes(1);
+      const output = written();
+      expect(output).toMatchObject({
+        tenantId: 'tenant-a',
+        sourceDataset: 'core.permission_check_audit',
+        eventAt: Date.now(),
+        expiresAt: Date.now() + 90 * 86400000,
+        overview: { result: 'deny', subject_id: 'subject-a', request_id: 'request-a' },
+      });
+      expect(output.row).toEqual({
+        id: 'audit-1',
+        tenant_id: 'tenant-a',
+        subject_id: 'subject-a',
+        permission: 'documents:read',
+        permission_json: JSON.stringify(input.permissionParsed),
+        allowed: 0,
+        resolved_via_json: '["direct"]',
+        final_decision: 'deny',
+        reason: 'No matching role',
+        api_key_id: 'key-a',
+        client_id: 'client-a',
+        checked_at: Date.now() / 1000,
+      });
+    }
+  );
+  it('uses configured retention and awaits the common durable writer', async () => {
+    let release: () => void = () => {};
+    const blocked = new Promise<void>((resolve) => (release = resolve));
+    emit.mockImplementation(async () => blocked);
+    let finished = false;
+    const running = new CheckAuditService(env, { mode: 'queue', retentionDays: 7 })
+      .log(entry())
+      .then(() => (finished = true));
+    await Promise.resolve();
+    expect(finished).toBe(false);
+    expect(written().expiresAt).toBe(Date.now() + 7 * 86400000);
+    release();
+    await running;
+    expect(finished).toBe(true);
   });
-
-  // ===========================================================================
-  // log() - queue mode
-  // ===========================================================================
-
-  describe('log() - queue mode', () => {
-    it('should send to queue when queue is configured', async () => {
-      const mockQueue = createMockQueue();
-      const service = new CheckAuditService(
-        mockDB as unknown as D1Database,
-        { mode: 'queue', logAllow: 'always' },
-        mockQueue as unknown as Queue
-      );
-
-      const entry = createTestEntry();
-
-      await service.log(entry);
-
-      expect(mockQueue.send).toHaveBeenCalledWith({
-        type: 'permission_check_audit',
-        entry,
-      });
-      expect(mockDB.prepare).not.toHaveBeenCalled();
-    });
-
-    it('should fallback to sync when queue is not configured', async () => {
-      const service = new CheckAuditService(mockDB as unknown as D1Database, {
-        mode: 'queue',
-        logAllow: 'always',
-      });
-
-      const entry = createTestEntry();
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
-      await service.log(entry);
-
-      // Should fallback to DB write
-      expect(mockDB.prepare).toHaveBeenCalled();
-
-      warnSpy.mockRestore();
-    });
+  it('handles a rejected waitUntil write without rejecting authorization', async () => {
+    emit.mockRejectedValueOnce(new Error('transport failed'));
+    const pending: Promise<unknown>[] = [];
+    await expect(
+      new CheckAuditService(env).log(
+        entry(),
+        context((promise) => pending.push(promise))
+      )
+    ).resolves.toBeUndefined();
+    expect(pending).toHaveLength(1);
+    await expect(pending[0]).resolves.toBeUndefined();
+    expect(errorLog).toHaveBeenCalledTimes(1);
   });
-
-  // ===========================================================================
-  // log() - error handling
-  // ===========================================================================
-
-  describe('log() - error handling', () => {
-    it('should not throw when database write fails', async () => {
-      mockDB.run.mockRejectedValue(new Error('DB write failed'));
-
-      const service = new CheckAuditService(mockDB as unknown as D1Database, {
-        mode: 'sync',
-        logAllow: 'always',
-      });
-
-      const entry = createTestEntry();
-
-      // Should not throw
-      await expect(service.log(entry)).resolves.toBeUndefined();
+  it('captures content and expiry before returning a waitUntil operation', async () => {
+    const input = entry();
+    let saved: LogIcebergRowWrite | undefined;
+    emit.mockImplementation(async (_env, record) => {
+      await Promise.resolve();
+      saved = record;
     });
-
-    it('should not throw when queue send fails', async () => {
-      const mockQueue = createMockQueue();
-      mockQueue.send.mockRejectedValue(new Error('Queue send failed'));
-
-      const service = new CheckAuditService(
-        mockDB as unknown as D1Database,
-        { mode: 'queue', logAllow: 'always' },
-        mockQueue as unknown as Queue
-      );
-
-      const entry = createTestEntry();
-
-      // Should not throw
-      await expect(service.log(entry)).resolves.toBeUndefined();
-    });
+    const pending: Promise<unknown>[] = [];
+    await new CheckAuditService(env).log(
+      input,
+      context((promise) => pending.push(promise))
+    );
+    input.resolvedVia.push('role');
+    input.subjectId = 'changed';
+    vi.setSystemTime(Date.now() + 86400000);
+    await Promise.all(pending);
+    expect(saved?.row.subject_id).toBe('subject-a');
+    expect(saved?.row.resolved_via_json).toBe('["direct"]');
+    expect(saved?.expiresAt).toBe(Date.parse('2026-10-27T00:00:00.000Z') + 90 * 86400000);
   });
-
-  // ===========================================================================
-  // processQueueMessage()
-  // ===========================================================================
-
-  describe('processQueueMessage()', () => {
-    it('should write entry to database for permission_check_audit messages', async () => {
-      const service = new CheckAuditService(mockDB as unknown as D1Database);
-
-      const entry = createTestEntry();
-      await service.processQueueMessage({
-        type: 'permission_check_audit',
-        entry,
-      });
-
-      expect(mockDB.prepare).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO'));
-      expect(mockDB.run).toHaveBeenCalled();
+  it.each(['sync', 'queue', 'waitUntil'] as const)(
+    'keeps %s transport failures from changing authorization',
+    async (mode) => {
+      emit.mockRejectedValueOnce(new Error('transport failed'));
+      await expect(new CheckAuditService(env, { mode }).log(entry())).resolves.toBeUndefined();
+      expect(errorLog).toHaveBeenCalledTimes(1);
+    }
+  );
+  it('handles preparation and execution-context failures without altering a decision', async () => {
+    const broken = entry();
+    Object.defineProperty(broken, 'subjectId', {
+      get() {
+        throw new Error('cannot prepare');
+      },
+      enumerable: true,
     });
-
-    it('should ignore non-permission_check_audit messages', async () => {
-      const service = new CheckAuditService(mockDB as unknown as D1Database);
-
-      await service.processQueueMessage({
-        type: 'other_type' as 'permission_check_audit',
-        entry: createTestEntry(),
-      });
-
-      expect(mockDB.prepare).not.toHaveBeenCalled();
-    });
+    await expect(new CheckAuditService(env).log(broken)).resolves.toBeUndefined();
+    expect(emit).not.toHaveBeenCalled();
+    await expect(
+      new CheckAuditService(env).log(
+        entry(),
+        context(() => {
+          throw new Error('context failed');
+        })
+      )
+    ).resolves.toBeUndefined();
+    expect(errorLog).toHaveBeenCalledTimes(2);
   });
-
-  // ===========================================================================
-  // updateConfig() and getConfig()
-  // ===========================================================================
-
-  describe('updateConfig() and getConfig()', () => {
-    it('should update config at runtime', () => {
-      const service = new CheckAuditService(mockDB as unknown as D1Database);
-
-      service.updateConfig({ logAllow: 'always', sampleRate: 0.5 });
-
-      const config = service.getConfig();
-      expect(config.logAllow).toBe('always');
-      expect(config.sampleRate).toBe(0.5);
-    });
-
-    it('should return a copy of config', () => {
-      const service = new CheckAuditService(mockDB as unknown as D1Database);
-
-      const config1 = service.getConfig();
-      config1.sampleRate = 0.99;
-
-      const config2 = service.getConfig();
-      expect(config2.sampleRate).not.toBe(0.99);
-    });
+  it('does not emit a record with invalid retention', async () => {
+    for (const retentionDays of [0, -1, 1.5, 3651])
+      await expect(
+        new CheckAuditService(env, { mode: 'sync', retentionDays }).log(entry())
+      ).resolves.toBeUndefined();
+    expect(emit).not.toHaveBeenCalled();
   });
-
-  // ===========================================================================
-  // cleanupOldEntries()
-  // ===========================================================================
-
-  describe('cleanupOldEntries()', () => {
-    it('should delete entries older than retention period', async () => {
-      mockDB.run.mockResolvedValue({ meta: { changes: 42 } });
-
-      const service = new CheckAuditService(mockDB as unknown as D1Database, {
-        retentionDays: 30,
-      });
-
-      const deleted = await service.cleanupOldEntries();
-
-      expect(deleted).toBe(42);
-      expect(mockDB.prepare).toHaveBeenCalledWith(
-        expect.stringContaining('DELETE FROM permission_check_audit')
-      );
-    });
-
-    it('should return 0 when retentionDays is not set', async () => {
-      const service = new CheckAuditService(mockDB as unknown as D1Database, {
-        retentionDays: undefined,
-      });
-
-      const deleted = await service.cleanupOldEntries();
-
-      expect(deleted).toBe(0);
-      expect(mockDB.prepare).not.toHaveBeenCalled();
-    });
-
-    it('should use correct cutoff timestamp', async () => {
-      vi.useFakeTimers();
-      vi.setSystemTime(new Date('2024-01-15T12:00:00Z'));
-
-      const service = new CheckAuditService(mockDB as unknown as D1Database, {
-        retentionDays: 30,
-      });
-
-      await service.cleanupOldEntries();
-
-      // 30 days = 2592000 seconds
-      // 2024-01-15 12:00:00 UTC = 1705320000
-      // Cutoff should be 1705320000 - 2592000 = 1702728000
-      const expectedCutoff = 1705320000 - 30 * 24 * 60 * 60;
-      expect(mockDB.bind).toHaveBeenCalledWith(expectedCutoff);
-
-      vi.useRealTimers();
-    });
+  it('returns independent configuration objects', () => {
+    const service = new CheckAuditService(env);
+    const copy = service.getConfig();
+    copy.sampleRate = 1;
+    expect(service.getConfig().sampleRate).toBe(0.01);
   });
-
-  // ===========================================================================
-  // generateAuditId()
-  // ===========================================================================
-
-  describe('generateAuditId()', () => {
-    it('should generate IDs with "aud_" prefix', () => {
-      const id = generateAuditId();
-      expect(id).toMatch(/^aud_/);
-    });
-
-    it('should generate unique IDs', () => {
-      const ids = new Set<string>();
-      for (let i = 0; i < 100; i++) {
-        ids.add(generateAuditId());
-      }
-      expect(ids.size).toBe(100);
-    });
-
-    it('should generate IDs of reasonable length', () => {
-      const id = generateAuditId();
-      // aud_ prefix (4) + timestamp (variable) + random (up to 8)
-      expect(id.length).toBeGreaterThan(10);
-      expect(id.length).toBeLessThan(30);
-    });
+  it('generates independent event IDs in the supported format', () => {
+    const ids = Array.from({ length: 1000 }, () => generateAuditId());
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids.every((id) => /^aud_[a-z0-9]+$/.test(id) && id.length < 64)).toBe(true);
   });
 });

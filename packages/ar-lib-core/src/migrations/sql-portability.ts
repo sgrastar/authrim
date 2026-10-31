@@ -2,6 +2,10 @@ export type MigrationSqlDialect = 'sqlite' | 'postgres' | 'mysql';
 
 export const PORTABLE_SQL_NOW_EPOCH_SECONDS = '__AUTHRIM_NOW_EPOCH_SECONDS__';
 export const PORTABLE_SQL_NOW_EPOCH_MILLISECONDS = '__AUTHRIM_NOW_EPOCH_MILLISECONDS__';
+export const PORTABLE_SQL_NOW_PRECISE_EPOCH_MILLISECONDS =
+  '__AUTHRIM_NOW_PRECISE_EPOCH_MILLISECONDS__';
+export const SQLITE_PRECISE_EPOCH_MILLISECONDS_EXPRESSION =
+  "(CAST(strftime('%s', 'now') AS INTEGER) * 1000 + CAST(substr(strftime('%f', 'now'), 4, 3) AS INTEGER))";
 
 type PortableSqlExpressions = {
   nowEpochSeconds: string;
@@ -30,7 +34,13 @@ export function getPortableSqlExpressions(dialect: MigrationSqlDialect): Portabl
 export function renderPortableMigrationSql(sql: string, dialect: MigrationSqlDialect): string {
   const expressions = getPortableSqlExpressions(dialect);
 
+  // Keep the legacy token's rendering immutable for existing migration artifacts.
+  const preciseMilliseconds =
+    dialect === 'sqlite'
+      ? SQLITE_PRECISE_EPOCH_MILLISECONDS_EXPRESSION
+      : expressions.nowEpochMilliseconds;
   return sql
+    .replaceAll(PORTABLE_SQL_NOW_PRECISE_EPOCH_MILLISECONDS, preciseMilliseconds)
     .replaceAll(PORTABLE_SQL_NOW_EPOCH_MILLISECONDS, expressions.nowEpochMilliseconds)
     .replaceAll(PORTABLE_SQL_NOW_EPOCH_SECONDS, expressions.nowEpochSeconds);
 }

@@ -25,13 +25,13 @@ import type { ARErrorCode, RFCErrorCode } from './codes';
 import { ErrorFactory } from './factory';
 import { serializeError, determineFormat } from './serializer';
 import { createLogger } from '../utils/logger';
+import { getTenantIdFromContext } from '../middleware/request-context';
+import {
+  resolveEffectiveSettingsWithSources,
+  type EffectiveSettingsEnv,
+} from '../services/effective-settings';
 
 const log = createLogger().module('ErrorMiddleware');
-
-// KV key constants for configuration
-const KV_KEY_LOCALE = 'error_locale';
-const KV_KEY_RESPONSE_FORMAT = 'error_response_format';
-const KV_KEY_ERROR_ID_MODE = 'error_id_mode';
 
 // Defaults
 const DEFAULT_LOCALE: ErrorLocale = 'en';
@@ -102,17 +102,18 @@ export class RFCError extends Error {
  */
 interface ErrorMiddlewareOptions {
   /**
-   * Default locale (can be overridden by KV)
+   * Default locale, used where the Settings API has no value
    */
   locale?: ErrorLocale;
 
   /**
-   * Default response format (can be overridden by KV or Accept header)
+   * Default response format, used where the Settings API has no value (the Accept header can
+   * still select Problem Details)
    */
   format?: ErrorResponseFormat;
 
   /**
-   * Default error ID mode (can be overridden by KV)
+   * Default error ID mode, used where the Settings API has no value
    */
   errorIdMode?: ErrorIdMode;
 
@@ -127,8 +128,91 @@ interface ErrorMiddlewareOptions {
   onError?: (error: unknown, c: Context) => void;
 }
 
+const RESPONSE_FORMATS: readonly ErrorResponseFormat[] = ['oauth', 'problem_details'];
+const ERROR_ID_MODES: readonly ErrorIdMode[] = ['all', '5xx', 'security_only', 'none'];
+const ERROR_LOCALES: readonly ErrorLocale[] = ['en', 'ja'];
+
 /**
- * Get error configuration from KV with fallback to defaults
+ * Tenants whose error settings could not be read recently, so error responses (which invalid
+ * requests produce in bulk) do not retry the read each time while a store is failing.
+ */
+const FAILED_READ_BACKOFF_MS = 10_000;
+const FAILED_READ_MAX_ENTRIES = 1000;
+const failedReads = new WeakMap<object, Map<string, number>>();
+
+function failuresFor(env: object): Map<string, number> {
+  let failures = failedReads.get(env);
+  if (!failures) {
+    failures = new Map();
+    failedReads.set(env, failures);
+  }
+  return failures;
+}
+
+function recentlyFailed(env: object, tenantId: string): boolean {
+  const failures = failuresFor(env);
+  const until = failures.get(tenantId);
+  if (until === undefined) return false;
+  if (Date.now() < until) return true;
+  failures.delete(tenantId);
+  return false;
+}
+
+function rememberFailure(env: object, tenantId: string): void {
+  const failures = failuresFor(env);
+  failures.delete(tenantId);
+  if (failures.size >= FAILED_READ_MAX_ENTRIES) {
+    const oldest = failures.keys().next().value;
+    if (oldest !== undefined) failures.delete(oldest);
+  }
+  failures.set(tenantId, Date.now() + FAILED_READ_BACKOFF_MS);
+}
+
+/**
+ * The tenant's `oauth.error_response_format`, `oauth.error_id_mode` and `oauth.error_locale`
+ * where they are set: as the Settings API resolves them (tenant, else the platform, else the
+ * older AUTHRIM_CONFIG values, else env). Null when they cannot be read, so an error response
+ * never fails on its own settings.
+ */
+async function readErrorSettings(c: Context): Promise<{
+  format?: ErrorResponseFormat;
+  errorIdMode?: ErrorIdMode;
+  locale?: ErrorLocale;
+} | null> {
+  if (!c.env) return null;
+  const env = c.env as EffectiveSettingsEnv;
+  // Failures are remembered per settings binding (one per deployment; one per test env).
+  const settingsBinding = (env.SETTINGS ?? env) as object;
+  let tenantId: string | undefined;
+  try {
+    tenantId = getTenantIdFromContext(c);
+    if (recentlyFailed(settingsBinding, tenantId)) return null;
+    // A document that cannot be read fails the whole read (defaults, then the backoff below).
+    const { values, sources } = await resolveEffectiveSettingsWithSources(env, 'oauth', {
+      tenantId,
+    });
+    // A value nobody set leaves the middleware's own default in place.
+    const configured = <T extends string>(key: string, allowed: readonly T[]): T | undefined => {
+      const value = values[key] as T;
+      return sources[key] !== 'default' && allowed.includes(value) ? value : undefined;
+    };
+    return {
+      format: configured('oauth.error_response_format', RESPONSE_FORMATS),
+      errorIdMode: configured('oauth.error_id_mode', ERROR_ID_MODES),
+      locale: configured('oauth.error_locale', ERROR_LOCALES),
+    };
+  } catch (error) {
+    if (tenantId !== undefined) rememberFailure(settingsBinding, tenantId);
+    log.warn('Error settings could not be read', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
+/**
+ * Get error configuration: the tenant's Settings API values where set, else the middleware
+ * options, else defaults.
  */
 async function getErrorConfig(
   c: Context,
@@ -138,38 +222,14 @@ async function getErrorConfig(
   format: ErrorResponseFormat;
   errorIdMode: ErrorIdMode;
 }> {
-  const env = (c.env ?? {}) as {
-    AUTHRIM_CONFIG?: { get: (key: string) => Promise<string | null> };
-  };
-
   let locale = options.locale || DEFAULT_LOCALE;
   let format = options.format || DEFAULT_RESPONSE_FORMAT;
   let errorIdMode = options.errorIdMode || DEFAULT_ERROR_ID_MODE;
 
-  if (env.AUTHRIM_CONFIG) {
-    try {
-      const [kvLocale, kvFormat, kvMode] = await Promise.all([
-        env.AUTHRIM_CONFIG.get(KV_KEY_LOCALE),
-        env.AUTHRIM_CONFIG.get(KV_KEY_RESPONSE_FORMAT),
-        env.AUTHRIM_CONFIG.get(KV_KEY_ERROR_ID_MODE),
-      ]);
-
-      if (kvLocale && (kvLocale === 'en' || kvLocale === 'ja')) {
-        locale = kvLocale;
-      }
-      if (kvFormat && (kvFormat === 'oauth' || kvFormat === 'problem_details')) {
-        format = kvFormat;
-      }
-      if (
-        kvMode &&
-        (kvMode === 'all' || kvMode === '5xx' || kvMode === 'security_only' || kvMode === 'none')
-      ) {
-        errorIdMode = kvMode as ErrorIdMode;
-      }
-    } catch {
-      // KV read error - use defaults
-    }
-  }
+  const settings = await readErrorSettings(c);
+  if (settings?.locale) locale = settings.locale;
+  if (settings?.format) format = settings.format;
+  if (settings?.errorIdMode) errorIdMode = settings.errorIdMode;
 
   return { locale, format, errorIdMode };
 }

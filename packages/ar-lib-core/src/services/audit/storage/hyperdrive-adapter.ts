@@ -72,34 +72,6 @@ function sanitizeIdentifier(identifier: string): string {
   return identifier;
 }
 
-function buildInsertIfNotExistsSql(
-  tableName: string,
-  columns: string[],
-  keyColumn: string,
-  rowCount: number
-): string {
-  const cteColumns = columns.join(', ');
-  const values = Array.from({ length: rowCount }, (_, idx) => {
-    const offset = idx * columns.length;
-    const placeholders = columns.map((_, columnIdx) => `$${offset + columnIdx + 1}`);
-    return `(${placeholders.join(', ')})`;
-  });
-  const selects = columns.map((column) => `incoming.${column}`).join(', ');
-
-  return `
-    WITH incoming (${cteColumns}) AS (
-      VALUES ${values.join(', ')}
-    )
-    INSERT INTO ${tableName} (${cteColumns})
-    SELECT ${selects}
-    FROM incoming
-    WHERE NOT EXISTS (
-      SELECT 1 FROM ${tableName} existing
-      WHERE existing.${keyColumn} = incoming.${keyColumn}
-    )
-  `;
-}
-
 /**
  * Hyperdrive audit storage adapter implementation.
  *
@@ -177,176 +149,16 @@ export class HyperdriveAuditAdapter implements IAuditStorageAdapter {
     return this.writeEventLogBatch([entry]);
   }
 
-  async writeEventLogBatch(entries: EventLogEntry[]): Promise<AuditWriteResult> {
-    if (entries.length === 0) {
-      return {
-        success: true,
-        entriesWritten: 0,
-        backend: this.id,
-        durationMs: 0,
-      };
-    }
-
-    const startTime = Date.now();
-
-    try {
-      const client = await this.getClient();
-
-      const values: unknown[] = [];
-      const columns = [
-        'id',
-        'tenant_id',
-        'event_type',
-        'event_category',
-        'result',
-        'severity',
-        'error_code',
-        'error_message',
-        'anonymized_user_id',
-        'client_id',
-        'session_id',
-        'request_id',
-        'duration_ms',
-        'details_r2_key',
-        'details_json',
-        'retention_until',
-        'created_at',
-      ] as const;
-
-      entries.forEach((e) => {
-        values.push(
-          e.id,
-          e.tenantId,
-          e.eventType,
-          e.eventCategory,
-          e.result,
-          e.severity,
-          e.errorCode ?? null,
-          e.errorMessage ?? null,
-          e.anonymizedUserId ?? null,
-          e.clientId ?? null,
-          e.sessionId ?? null,
-          e.requestId ?? null,
-          e.durationMs ?? null,
-          e.detailsR2Key ?? null,
-          e.detailsJson ?? null,
-          e.retentionUntil ?? null,
-          e.createdAt
-        );
-      });
-
-      const sql = buildInsertIfNotExistsSql(
-        `${this.schema}.event_log`,
-        [...columns],
-        'id',
-        entries.length
-      );
-
-      await client.query(sql, values);
-
-      return {
-        success: true,
-        entriesWritten: entries.length,
-        backend: this.id,
-        durationMs: Date.now() - startTime,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        entriesWritten: 0,
-        backend: this.id,
-        durationMs: Date.now() - startTime,
-        errorMessage: String(error),
-      };
-    }
+  async writeEventLogBatch(_entries: EventLogEntry[]): Promise<AuditWriteResult> {
+    throw new Error('audit_primary_storage_retired_use_configured_iceberg_mode');
   }
 
   async writePIILog(entry: PIILogEntry): Promise<AuditWriteResult> {
     return this.writePIILogBatch([entry]);
   }
 
-  async writePIILogBatch(entries: PIILogEntry[]): Promise<AuditWriteResult> {
-    if (entries.length === 0) {
-      return {
-        success: true,
-        entriesWritten: 0,
-        backend: this.id,
-        durationMs: 0,
-      };
-    }
-
-    const startTime = Date.now();
-
-    try {
-      const client = await this.getClient();
-
-      const values: unknown[] = [];
-      const columns = [
-        'id',
-        'tenant_id',
-        'user_id',
-        'anonymized_user_id',
-        'change_type',
-        'affected_fields',
-        'values_r2_key',
-        'values_encrypted',
-        'encryption_key_id',
-        'encryption_iv',
-        'actor_user_id',
-        'actor_type',
-        'request_id',
-        'legal_basis',
-        'consent_reference',
-        'retention_until',
-        'created_at',
-      ] as const;
-
-      entries.forEach((e) => {
-        values.push(
-          e.id,
-          e.tenantId,
-          e.userId,
-          e.anonymizedUserId,
-          e.changeType,
-          e.affectedFields,
-          e.valuesR2Key ?? null,
-          e.valuesEncrypted ?? null,
-          e.encryptionKeyId,
-          e.encryptionIv,
-          e.actorUserId ?? null,
-          e.actorType,
-          e.requestId ?? null,
-          e.legalBasis ?? null,
-          e.consentReference ?? null,
-          e.retentionUntil,
-          e.createdAt
-        );
-      });
-
-      const sql = buildInsertIfNotExistsSql(
-        `${this.schema}.pii_log`,
-        [...columns],
-        'id',
-        entries.length
-      );
-
-      await client.query(sql, values);
-
-      return {
-        success: true,
-        entriesWritten: entries.length,
-        backend: this.id,
-        durationMs: Date.now() - startTime,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        entriesWritten: 0,
-        backend: this.id,
-        durationMs: Date.now() - startTime,
-        errorMessage: String(error),
-      };
-    }
+  async writePIILogBatch(_entries: PIILogEntry[]): Promise<AuditWriteResult> {
+    throw new Error('audit_primary_storage_retired_use_configured_iceberg_mode');
   }
 
   // ---------------------------------------------------------------------------
@@ -364,7 +176,7 @@ export class HyperdriveAuditAdapter implements IAuditStorageAdapter {
       } else {
         return this.queryPIILog(client, options, startTime);
       }
-    } catch (error) {
+    } catch {
       return {
         eventEntries: options.logType === 'event' ? [] : undefined,
         piiEntries: options.logType === 'pii' ? [] : undefined,
@@ -711,52 +523,48 @@ export class HyperdriveAuditAdapter implements IAuditStorageAdapter {
     tenantId?: string,
     batchSize: number = 1000
   ): Promise<EventLogEntry[] | PIILogEntry[]> {
-    try {
-      const client = await this.getClient();
-      const table = logType === 'event' ? 'event_log' : 'pii_log';
-      const selectColumns =
-        logType === 'event'
-          ? `id, tenant_id, event_type, event_category, result, severity,
-             error_code, error_message, anonymized_user_id, client_id,
-             session_id, request_id, duration_ms, details_r2_key, details_json,
-             retention_until, created_at`
-          : `id, tenant_id, user_id, anonymized_user_id, change_type, affected_fields,
-             values_r2_key, values_encrypted, encryption_key_id, encryption_iv,
-             actor_user_id, actor_type, request_id, legal_basis, consent_reference,
-             retention_until, created_at`;
+    const client = await this.getClient();
+    const table = logType === 'event' ? 'event_log' : 'pii_log';
+    const selectColumns =
+      logType === 'event'
+        ? `id, tenant_id, event_type, event_category, result, severity,
+           error_code, error_message, anonymized_user_id, client_id,
+           session_id, request_id, duration_ms, details_r2_key, details_json,
+           retention_until, created_at`
+        : `id, tenant_id, user_id, anonymized_user_id, change_type, affected_fields,
+           values_r2_key, values_encrypted, encryption_key_id, encryption_iv,
+           actor_user_id, actor_type, request_id, legal_basis, consent_reference,
+           retention_until, created_at`;
 
-      let sql: string;
-      let params: unknown[];
-      if (tenantId) {
-        sql = `
-          SELECT ${selectColumns}
-          FROM ${this.schema}.${table}
-          WHERE retention_until < $1 AND tenant_id = $2
-          ORDER BY retention_until ASC, created_at ASC, id ASC
-          LIMIT $3
-        `;
-        params = [beforeTime, tenantId, batchSize];
-      } else {
-        sql = `
-          SELECT ${selectColumns}
-          FROM ${this.schema}.${table}
-          WHERE retention_until < $1
-          ORDER BY retention_until ASC, created_at ASC, id ASC
-          LIMIT $2
-        `;
-        params = [beforeTime, batchSize];
-      }
-
-      if (logType === 'event') {
-        const result = await client.query<EventLogDbRow>(sql, params);
-        return result.rows.map((row) => this.mapEventLogRow(row));
-      }
-
-      const result = await client.query<PIILogDbRow>(sql, params);
-      return result.rows.map((row) => this.mapPIILogRow(row));
-    } catch {
-      return [];
+    let sql: string;
+    let params: unknown[];
+    if (tenantId) {
+      sql = `
+        SELECT ${selectColumns}
+        FROM ${this.schema}.${table}
+        WHERE retention_until < $1 AND tenant_id = $2
+        ORDER BY retention_until ASC, created_at ASC, id ASC
+        LIMIT $3
+      `;
+      params = [beforeTime, tenantId, batchSize];
+    } else {
+      sql = `
+        SELECT ${selectColumns}
+        FROM ${this.schema}.${table}
+        WHERE retention_until < $1
+        ORDER BY retention_until ASC, created_at ASC, id ASC
+        LIMIT $2
+      `;
+      params = [beforeTime, batchSize];
     }
+
+    if (logType === 'event') {
+      const result = await client.query<EventLogDbRow>(sql, params);
+      return result.rows.map((row) => this.mapEventLogRow(row));
+    }
+
+    const result = await client.query<PIILogDbRow>(sql, params);
+    return result.rows.map((row) => this.mapPIILogRow(row));
   }
 
   private async deleteByRetentionInternal(
@@ -765,46 +573,42 @@ export class HyperdriveAuditAdapter implements IAuditStorageAdapter {
     tenantId?: string,
     batchSize: number = 1000
   ): Promise<number> {
-    try {
-      const client = await this.getClient();
-      const table = logType === 'event' ? 'event_log' : 'pii_log';
+    const client = await this.getClient();
+    const table = logType === 'event' ? 'event_log' : 'pii_log';
 
-      let sql: string;
-      let params: unknown[];
+    let sql: string;
+    let params: unknown[];
 
-      if (tenantId) {
-        sql = `
-          WITH doomed AS (
-            SELECT ctid
-            FROM ${this.schema}.${table}
-            WHERE retention_until < $1 AND tenant_id = $2
-            ORDER BY retention_until ASC, created_at ASC, id ASC
-            LIMIT $3
-          )
-          DELETE FROM ${this.schema}.${table}
-          WHERE ctid IN (SELECT ctid FROM doomed)
-        `;
-        params = [beforeTime, tenantId, batchSize];
-      } else {
-        sql = `
-          WITH doomed AS (
-            SELECT ctid
-            FROM ${this.schema}.${table}
-            WHERE retention_until < $1
-            ORDER BY retention_until ASC, created_at ASC, id ASC
-            LIMIT $2
-          )
-          DELETE FROM ${this.schema}.${table}
-          WHERE ctid IN (SELECT ctid FROM doomed)
-        `;
-        params = [beforeTime, batchSize];
-      }
-
-      const result = await client.query(sql, params);
-      return result.rowCount;
-    } catch {
-      return 0;
+    if (tenantId) {
+      sql = `
+        WITH doomed AS (
+          SELECT ctid
+          FROM ${this.schema}.${table}
+          WHERE retention_until < $1 AND tenant_id = $2
+          ORDER BY retention_until ASC, created_at ASC, id ASC
+          LIMIT $3
+        )
+        DELETE FROM ${this.schema}.${table}
+        WHERE ctid IN (SELECT ctid FROM doomed)
+      `;
+      params = [beforeTime, tenantId, batchSize];
+    } else {
+      sql = `
+        WITH doomed AS (
+          SELECT ctid
+          FROM ${this.schema}.${table}
+          WHERE retention_until < $1
+          ORDER BY retention_until ASC, created_at ASC, id ASC
+          LIMIT $2
+        )
+        DELETE FROM ${this.schema}.${table}
+        WHERE ctid IN (SELECT ctid FROM doomed)
+      `;
+      params = [beforeTime, batchSize];
     }
+
+    const result = await client.query(sql, params);
+    return result.rowCount;
   }
 
   // ---------------------------------------------------------------------------

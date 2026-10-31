@@ -109,7 +109,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         authMethod: c.req.header('X-Admin-Auth-Method') ?? 'session',
         tenantId: 'tenant-a',
         permissions: ['admin:approvals:write'],
-        roles: ['tenant_admin'],
+        roles: ['ar_tenant_admin'],
         hierarchyLevel: 50,
         mfaVerified: c.req.header('X-Admin-Mfa-Verified') !== 'false',
         sessionId: c.req.header('X-Admin-Session-Id') ?? 'admin-session-1',
@@ -434,7 +434,7 @@ describe('approval artifacts router', () => {
     });
     mockPasskeyRepo.updateCounter.mockResolvedValue(true);
     mockSessionRepo.setMfaVerified.mockResolvedValue(true);
-    (mockEnv.AUTHRIM_CONFIG!.get as any).mockResolvedValue(null);
+    (mockEnv.AUTHRIM_CONFIG!.get as any).mockReset().mockResolvedValue(null);
     (mockEnv.AUTHRIM_CONFIG!.put as any).mockResolvedValue(undefined);
     (mockEnv.AUTHRIM_CONFIG!.delete as any).mockResolvedValue(undefined);
     mockSwitchApprovalArtifactMethod.mockResolvedValue({
@@ -607,13 +607,6 @@ describe('approval artifacts router', () => {
         subject_id: 'customer-1',
         method: 'ciba',
         transport_channel: 'customer@example.com',
-      })
-    );
-    (mockEnv.AUTHRIM_CONFIG!.get as any).mockResolvedValueOnce(
-      JSON.stringify({
-        auth_req_id: 'g1:apac:1:cba_internal',
-        notification_count: 1,
-        last_notified_at: Date.now(),
       })
     );
     mockAssertApprovalCibaNotificationCooldown.mockRejectedValueOnce(
@@ -1041,6 +1034,9 @@ describe('approval artifacts router', () => {
         actor_subject_type: 'admin_user',
         actor_subject_id: 'admin-2',
       })
+    );
+    expect(mockWebAuthnFunctions.verifyAuthenticationResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ requireUserVerification: true })
     );
     expect(mockPasskeyRepo.findByCredentialId).toHaveBeenCalledWith('credential-1');
     expect(mockPasskeyRepo.updateCounter).toHaveBeenCalledWith('apk_1', 7);

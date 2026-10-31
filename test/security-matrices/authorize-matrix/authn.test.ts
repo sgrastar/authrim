@@ -5,6 +5,7 @@ import {
   createSecurityMatrixEnv,
   seedRegionShardConfig,
   TEST_ISSUER,
+  TEST_UI_URL,
   TEST_USER,
   type SecurityMatrixEnvKit,
 } from '../fixtures/env';
@@ -189,8 +190,9 @@ export function observationFromDecision(
       break;
     case 'challenge':
       observation.status = 302;
-      observation.locationOriginPath = `${TEST_ISSUER}${outcome.path}`;
-      observation.locationQueryKeys = ['challenge_id'];
+      observation.locationOriginPath = `${TEST_UI_URL}${outcome.path}`;
+      // tenant_hint and tenant_host are UI branding hints, never trusted by the server.
+      observation.locationQueryKeys = ['challenge_id', 'tenant_hint', 'tenant_host'];
       observation.hasChallengeId = true;
       observation.challengeType = outcome.challengeType;
       observation.challengeUserId = outcome.challengeType === 'login' ? 'anonymous' : TEST_USER;
@@ -634,7 +636,7 @@ async function createFreshKitApp(): Promise<{
 }> {
   const freshKit = await createSecurityMatrixEnv(new CallLedger());
   seedRegionShardConfig(freshKit);
-  (freshKit.env as unknown as Record<string, unknown>).ENABLE_CONFORMANCE_MODE = 'true';
+  (freshKit.env as unknown as Record<string, unknown>).UI_URL = TEST_UI_URL;
   return { kit: freshKit, app: createMatrixAuthorizeApp(freshKit) };
 }
 
@@ -647,7 +649,7 @@ describe('authorize-matrix authn protocol suite', () => {
     const ledger = new CallLedger();
     kit = await createSecurityMatrixEnv(ledger);
     seedRegionShardConfig(kit);
-    (kit.env as unknown as Record<string, unknown>).ENABLE_CONFORMANCE_MODE = 'true';
+    (kit.env as unknown as Record<string, unknown>).UI_URL = TEST_UI_URL;
     app = createMatrixAuthorizeApp(kit);
   });
 
@@ -762,10 +764,10 @@ describe('authorize-matrix authn protocol suite', () => {
     expect(trustedRun.observation.consentWrite).toBe(false);
   });
 
-  it('authn-boundary-004 tenant SSO lookup failure is ledger-observable and fails to default', async () => {
+  it('authn-boundary-004 an unreadable tenant OAuth document stops authorization with 503', async () => {
     expect.hasAssertions();
-    // tenantSso=failure behaves like the tenant default (disabled) while the failed KV
-    // read stays observable in the settings ledger.
+    // The document holds the tenant's SSO switch and its protocol settings: authorize reads the
+    // protocol settings first and stops, rather than going on without them.
     const row: Row = {
       clientSso: 'default',
       tenantSso: 'failure',
@@ -777,9 +779,36 @@ describe('authorize-matrix authn protocol suite', () => {
     const fresh = await createFreshKitApp();
     const run = await runAuthnRow(fresh.kit, fresh.app, row);
     expect(run.observation.tenantSsoReadFailed).toBe(true);
+    expect(run.observation.status).toBe(503);
+    expect(run.observation.error).toBe('temporarily_unavailable');
     expect(run.observation.codeIssued).toBe(false);
-    expect(run.observation.challengeType).toBe('login');
+    expect(run.observation.challengeType).toBeNull();
   });
+
+  it.each(['omitted', 'none'])(
+    'issues no code and saves no consent when OAuth settings fail with prompt=%s',
+    async (prompt) => {
+      const row: Row = {
+        clientSso: 'true',
+        tenantSso: 'failure',
+        session: 'active',
+        prompt,
+        maxAge: 'omitted',
+        consent: 'auto-grant',
+      };
+      const fresh = await createFreshKitApp();
+      const run = await runAuthnRow(fresh.kit, fresh.app, row);
+      expect(run.observation.error).toBe('temporarily_unavailable');
+      expect(run.observation.tenantSsoReadFailed).toBe(true);
+      expect(run.observation.consentLookup).toBe(false);
+      expect(run.observation.consentWrite).toBe(false);
+      expect(run.observation.codeIssued).toBe(false);
+      expect(run.observation.codePresent).toBe(false);
+      expect(run.observation.challengeType).toBeNull();
+      const expected = observationFromDecision(decideAuthn(row), row, sessionIdFor('active'));
+      expect(observationsMatch(run.observation, expected)).toBe(true);
+    }
+  );
 
   it('covers every legal 2-way tuple of the authn dimensions', () => {
     expect.hasAssertions();
@@ -883,7 +912,9 @@ describe('authorize-matrix authn protocol suite', () => {
           ? `challenge:${decision.outcome.challengeType}`
           : decision.outcome.kind === 'error-redirect'
             ? `error-redirect:${decision.outcome.error}`
-            : decision.outcome.kind;
+            : decision.outcome.kind === 'direct-error'
+              ? `direct-error:${decision.outcome.status}`
+              : decision.outcome.kind;
       if (!families.has(family)) families.set(family, entry);
     }
     const domains = [

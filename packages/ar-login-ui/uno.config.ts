@@ -16,13 +16,10 @@ export default defineConfig({
 		}),
 		presetAttributify(), // Allows using utilities as HTML attributes
 		presetIcons({
-			// Icon support - includes Heroicons and Phosphor Icons
+			// Icon support - Phosphor Icons only
 			scale: 1.2,
 			warn: false,
 			collections: {
-				// Heroicons (legacy support)
-				heroicons: () => import('@iconify-json/heroicons/icons.json').then((i) => i.default),
-				// Phosphor Icons (new design system)
 				ph: () => import('@iconify-json/ph/icons.json').then((i) => i.default)
 			}
 		}),

@@ -6,14 +6,26 @@
  */
 
 import { Context } from 'hono';
-import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
+import type {
+  DatabaseAdapter,
+  Env,
+  StatementConsentStores,
+  PreparedStatement,
+} from '@authrim/ar-lib-core';
 import {
   createAuthContextFromHono,
   getTenantIdFromContext,
+  lookupStatementDefinitions,
   getLogger,
   validateVersionFormat,
   activateVersion,
+  withdrawStatementConsent,
+  enqueueStatementConsentProjection,
 } from '@authrim/ar-lib-core';
+
+import { adminAccountCoreAdapter } from './admin-account-storage';
+import { getAdminAuth } from './admin-tenant-access';
+import { tenantRBACStores } from './rbac-account-stores';
 
 type PublicLinkUrlValidation =
   | { valid: true; value: string | null }
@@ -58,6 +70,16 @@ function invalidPublicLinkUrlResponse(c: Context, fieldName: string): Response {
   );
 }
 
+function immutableLocalizationResponse(c: Context): Response {
+  return c.json(
+    {
+      error: 'conflict',
+      error_description: 'Only draft versions allow localization changes; create a new version',
+    },
+    409
+  );
+}
+
 function isMissingLocalizationUserFacingColumnError(error: unknown): boolean {
   const message =
     error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
@@ -69,6 +91,26 @@ function isMissingLocalizationUserFacingColumnError(error: unknown): boolean {
       message.includes('no column named') ||
       message.includes('does not exist'))
   );
+}
+
+async function executeDraftLocalizationMutation(
+  adapter: DatabaseAdapter,
+  versionId: string,
+  tenantId: string,
+  now: number,
+  mutation: PreparedStatement
+) {
+  const results = await adapter.batch([
+    {
+      sql: `UPDATE consent_statement_versions SET updated_at=CASE WHEN updated_at>=? THEN updated_at+1 ELSE ? END
+        WHERE id=? AND tenant_id=? AND status='draft'`,
+      params: [now, now, versionId, tenantId],
+    },
+    mutation,
+  ]);
+  if (results.length !== 2 || results.some((r) => !r.success))
+    throw new Error('statement_consent_localization_result_unknown');
+  return results[1];
 }
 
 async function executeLocalizationUpsert(params: {
@@ -88,12 +130,50 @@ async function executeLocalizationUpsert(params: {
 }) {
   try {
     if (params.existing) {
-      await params.adapter.execute(
-        `UPDATE consent_statement_localizations
+      return await executeDraftLocalizationMutation(
+        params.adapter,
+        params.versionId,
+        params.tenantId,
+        params.now,
+        {
+          sql: `UPDATE consent_statement_localizations
          SET title = ?, description = ?, processing_purpose = ?, withdrawal_impact = ?,
              document_url = ?, inline_content = ?, updated_at = ?
-         WHERE version_id = ? AND language = ?`,
-        [
+         WHERE version_id = ? AND language = ? AND tenant_id = ?
+           AND EXISTS (SELECT 1 FROM consent_statement_versions v WHERE v.id=consent_statement_localizations.version_id
+             AND v.tenant_id=consent_statement_localizations.tenant_id AND v.status='draft')`,
+          params: [
+            params.title,
+            params.description,
+            params.processingPurpose,
+            params.withdrawalImpact,
+            params.documentUrl,
+            params.inlineContent,
+            params.now,
+            params.versionId,
+            params.language,
+            params.tenantId,
+          ],
+        }
+      );
+    }
+
+    return await executeDraftLocalizationMutation(
+      params.adapter,
+      params.versionId,
+      params.tenantId,
+      params.now,
+      {
+        sql: `INSERT INTO consent_statement_localizations
+       (id, tenant_id, version_id, language, title, description, processing_purpose,
+        withdrawal_impact, document_url, inline_content, created_at, updated_at)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+       WHERE EXISTS (SELECT 1 FROM consent_statement_versions WHERE id=? AND tenant_id=? AND status='draft')`,
+        params: [
+          params.id,
+          params.tenantId,
+          params.versionId,
+          params.language,
           params.title,
           params.description,
           params.processingPurpose,
@@ -101,71 +181,67 @@ async function executeLocalizationUpsert(params: {
           params.documentUrl,
           params.inlineContent,
           params.now,
+          params.now,
           params.versionId,
-          params.language,
-        ]
-      );
-      return;
-    }
-
-    await params.adapter.execute(
-      `INSERT INTO consent_statement_localizations
-       (id, tenant_id, version_id, language, title, description, processing_purpose,
-        withdrawal_impact, document_url, inline_content, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        params.id,
-        params.tenantId,
-        params.versionId,
-        params.language,
-        params.title,
-        params.description,
-        params.processingPurpose,
-        params.withdrawalImpact,
-        params.documentUrl,
-        params.inlineContent,
-        params.now,
-        params.now,
-      ]
+          params.tenantId,
+        ],
+      }
     );
   } catch (error) {
     if (!isMissingLocalizationUserFacingColumnError(error)) {
       throw error;
     }
     if (params.existing) {
-      await params.adapter.execute(
-        `UPDATE consent_statement_localizations
+      return await executeDraftLocalizationMutation(
+        params.adapter,
+        params.versionId,
+        params.tenantId,
+        params.now,
+        {
+          sql: `UPDATE consent_statement_localizations
          SET title = ?, description = ?, document_url = ?, inline_content = ?, updated_at = ?
-         WHERE version_id = ? AND language = ?`,
-        [
+         WHERE version_id = ? AND language = ? AND tenant_id = ?
+           AND EXISTS (SELECT 1 FROM consent_statement_versions v WHERE v.id=consent_statement_localizations.version_id
+             AND v.tenant_id=consent_statement_localizations.tenant_id AND v.status='draft')`,
+          params: [
+            params.title,
+            params.description,
+            params.documentUrl,
+            params.inlineContent,
+            params.now,
+            params.versionId,
+            params.language,
+            params.tenantId,
+          ],
+        }
+      );
+    }
+    return await executeDraftLocalizationMutation(
+      params.adapter,
+      params.versionId,
+      params.tenantId,
+      params.now,
+      {
+        sql: `INSERT INTO consent_statement_localizations
+       (id, tenant_id, version_id, language, title, description,
+        document_url, inline_content, created_at, updated_at)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+       WHERE EXISTS (SELECT 1 FROM consent_statement_versions WHERE id=? AND tenant_id=? AND status='draft')`,
+        params: [
+          params.id,
+          params.tenantId,
+          params.versionId,
+          params.language,
           params.title,
           params.description,
           params.documentUrl,
           params.inlineContent,
           params.now,
+          params.now,
           params.versionId,
-          params.language,
-        ]
-      );
-      return;
-    }
-    await params.adapter.execute(
-      `INSERT INTO consent_statement_localizations
-       (id, tenant_id, version_id, language, title, description,
-        document_url, inline_content, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        params.id,
-        params.tenantId,
-        params.versionId,
-        params.language,
-        params.title,
-        params.description,
-        params.documentUrl,
-        params.inlineContent,
-        params.now,
-        params.now,
-      ]
+          params.tenantId,
+        ],
+      }
     );
   }
 }
@@ -336,10 +412,10 @@ export async function adminConsentStatementUpdateHandler(c: Context<{ Bindings: 
       reconsent_interval_days?: number | null;
     }>();
 
-    const existing = await authCtx.coreAdapter.query(
-      `SELECT * FROM consent_statements WHERE id = ? AND tenant_id = ?`,
-      [id, tenantId]
-    );
+    const existing = await authCtx.coreAdapter.query<{
+      id: string;
+      retired_at: number | string | null;
+    }>(`SELECT * FROM consent_statements WHERE id = ? AND tenant_id = ?`, [id, tenantId]);
     if (existing.length === 0) {
       return c.json({ error: 'not_found', error_description: 'Statement not found' }, 404);
     }
@@ -369,7 +445,12 @@ export async function adminConsentStatementUpdateHandler(c: Context<{ Bindings: 
       params.push(body.display_order);
     }
     if (body.is_active !== undefined) {
-      sets.push('is_active = ?');
+      if (body.is_active && existing[0].retired_at != null)
+        return c.json(
+          { error: 'conflict', error_description: 'Retired statements cannot be reactivated' },
+          409
+        );
+      sets.push('is_active = CASE WHEN retired_at IS NULL THEN ? ELSE 0 END');
       params.push(body.is_active ? 1 : 0);
     }
     if (body.record_retention_days !== undefined) {
@@ -415,14 +496,20 @@ export async function adminConsentStatementUpdateHandler(c: Context<{ Bindings: 
       return c.json({ error: 'invalid_request', error_description: 'No fields to update' }, 400);
     }
 
+    sets.push('definition_generation = definition_generation + 1');
+    if (body.is_active === false) sets.push('closed_generation = closed_generation + 1');
     sets.push('updated_at = ?');
-    params.push(Date.now());
-    params.push(id);
-
-    await authCtx.coreAdapter.execute(
-      `UPDATE consent_statements SET ${sets.join(', ')} WHERE id = ?`,
-      params
-    );
+    const now = Date.now();
+    params.push(now, id, tenantId);
+    const result = await authCtx.coreAdapter.batch([
+      {
+        sql: `UPDATE consent_statements SET ${sets.join(', ')} WHERE id = ? AND tenant_id = ?`,
+        params,
+      },
+      enqueueStatementConsentProjection(tenantId, id, now),
+    ]);
+    if (result.length !== 2 || result.some((entry) => !entry.success))
+      throw new Error('statement_consent_definition_result_unknown');
 
     const updated = await authCtx.coreAdapter.query(
       `SELECT * FROM consent_statements WHERE id = ?`,
@@ -453,46 +540,86 @@ export async function adminConsentStatementDeleteHandler(c: Context<{ Bindings: 
       return c.json({ error: 'not_found', error_description: 'Statement not found' }, 404);
     }
 
-    await authCtx.coreAdapter.execute(
-      `DELETE FROM client_consent_overrides WHERE tenant_id = ? AND statement_id = ?`,
+    // Only an inactive, untouched definition proves it has never been active. A statement
+    // that was toggled back off has a nonzero generation and must retain its evidence.
+    const draft = await authCtx.coreAdapter.query<{ id: string }>(
+      `SELECT id FROM consent_statements d WHERE d.tenant_id=? AND d.id=?
+       AND d.is_active=0 AND d.definition_generation=0 AND d.retired_at IS NULL
+       AND NOT EXISTS (SELECT 1 FROM consent_statement_versions v WHERE v.tenant_id=d.tenant_id
+         AND v.statement_id=d.id AND (v.status<>'draft' OR v.content_hash IS NOT NULL))`,
       [tenantId, id]
     );
-    await authCtx.coreAdapter.execute(
-      `DELETE FROM tenant_consent_requirements WHERE tenant_id = ? AND statement_id = ?`,
-      [tenantId, id]
-    );
-    await authCtx.coreAdapter.execute(
-      `DELETE FROM consent_policy_items WHERE tenant_id = ? AND statement_id = ?`,
-      [tenantId, id]
-    );
-    await authCtx.coreAdapter.execute(
-      `DELETE FROM consent_item_history WHERE tenant_id = ? AND statement_id = ?`,
-      [tenantId, id]
-    );
-    await authCtx.coreAdapter.execute(
-      `DELETE FROM user_consent_records WHERE tenant_id = ? AND statement_id = ?`,
-      [tenantId, id]
-    );
-    await authCtx.coreAdapter.execute(
-      `DELETE FROM consent_statement_localizations
-        WHERE tenant_id = ?
-          AND version_id IN (
-            SELECT id FROM consent_statement_versions
-             WHERE tenant_id = ? AND statement_id = ?
-          )`,
-      [tenantId, tenantId, id]
-    );
-    await authCtx.coreAdapter.execute(
-      `DELETE FROM consent_statement_versions WHERE tenant_id = ? AND statement_id = ?`,
-      [tenantId, id]
-    );
-    await authCtx.coreAdapter.execute(
-      `DELETE FROM consent_statements WHERE id = ? AND tenant_id = ?`,
-      [id, tenantId]
-    );
+    if (draft.length) {
+      const stores = await tenantRBACStores(c, tenantId);
+      if (!stores.accounts.length) throw new Error('statement_consent_account_stores_unavailable');
+      let referenced = false;
+      // The registry bounds the store count. Each query counts at most one record/history row;
+      // a routing/read failure aborts deletion, and legacy metadata evidence is checked as well.
+      for (const account of new Set([authCtx.coreAdapter, ...stores.accounts])) {
+        const rows = await account.query<{ cnt: number | string }>(
+          `SELECT COUNT(*) AS cnt FROM (SELECT id FROM user_consent_records WHERE tenant_id=? AND statement_id=? LIMIT 1) r
+           UNION ALL SELECT COUNT(*) AS cnt FROM (SELECT id FROM consent_item_history WHERE tenant_id=? AND statement_id=? LIMIT 1) h`,
+          [tenantId, id, tenantId, id]
+        );
+        if (rows.length !== 2) throw new Error('statement_consent_reference_count_unknown');
+        referenced ||= rows.some((row) => Number(row.cnt) !== 0);
+      }
+      if (!referenced) {
+        const proof = `EXISTS (SELECT 1 FROM consent_statements d WHERE d.tenant_id=? AND d.id=?
+          AND d.is_active=0 AND d.definition_generation=0 AND d.retired_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM consent_statement_versions v WHERE v.tenant_id=d.tenant_id
+            AND v.statement_id=d.id AND (v.status<>'draft' OR v.content_hash IS NOT NULL)))`;
+        const result = await authCtx.coreAdapter.batch([
+          // Serialize with activation's parent-generation update before touching child bodies.
+          // PostgreSQL may abort a conflicting parent/version lock order; batch rollback keeps
+          // every body intact. Outer predicates are rechecked after a lock wait (EPQ).
+          {
+            sql: `UPDATE consent_statements SET updated_at=updated_at WHERE tenant_id=? AND id=?
+            AND is_active=0 AND definition_generation=0 AND retired_at IS NULL AND ${proof}`,
+            params: [tenantId, id, tenantId, id],
+          },
+          ...[
+            'client_consent_overrides',
+            'tenant_consent_requirements',
+            'consent_policy_items',
+          ].map((table) => ({
+            sql: `DELETE FROM ${table} WHERE tenant_id=? AND statement_id=? AND ${proof}`,
+            params: [tenantId, id, tenantId, id],
+          })),
+          {
+            sql: `DELETE FROM consent_statement_localizations WHERE tenant_id=? AND version_id IN
+              (SELECT id FROM consent_statement_versions WHERE tenant_id=? AND statement_id=?) AND ${proof}`,
+            params: [tenantId, tenantId, id, tenantId, id],
+          },
+          {
+            sql: `DELETE FROM consent_statement_versions WHERE tenant_id=? AND statement_id=? AND ${proof}`,
+            params: [tenantId, id, tenantId, id],
+          },
+          {
+            sql: `DELETE FROM consent_statements WHERE tenant_id=? AND id=? AND ${proof}`,
+            params: [tenantId, id, tenantId, id],
+          },
+        ]);
+        if (result.length !== 7 || result.some((entry) => !entry.success))
+          throw new Error('statement_consent_deletion_result_unknown');
+        if (result[6].rowsAffected === 1) return c.json({ success: true, disposition: 'deleted' });
+      }
+    }
 
-    log.info('Deleted consent statement', { action: 'delete', statementId: id });
-    return c.json({ success: true });
+    const now = Date.now();
+    const result = await authCtx.coreAdapter.batch([
+      {
+        sql: `UPDATE consent_statements SET is_active=0,retired_at=COALESCE(retired_at,?),
+          definition_generation=definition_generation+1,closed_generation=closed_generation+1,updated_at=?
+          WHERE tenant_id=? AND id=? AND retired_at IS NULL`,
+        params: [now, now, tenantId, id],
+      },
+      enqueueStatementConsentProjection(tenantId, id, now),
+    ]);
+    if (result.length !== 2 || result.some((entry) => !entry.success))
+      throw new Error('statement_consent_retirement_result_unknown');
+    log.info('Retired consent statement; evidence retained', { action: 'retire', statementId: id });
+    return c.json({ success: true, disposition: 'retired' });
   } catch (error) {
     log.error('Failed to delete consent statement', { action: 'delete' }, error as Error);
     return c.json({ error: 'server_error', error_description: 'Failed to delete statement' }, 500);
@@ -712,12 +839,12 @@ export async function adminConsentVersionUpdateHandler(c: Context<{ Bindings: En
       return c.json({ error: 'invalid_request', error_description: 'No fields to update' }, 400);
     }
 
-    sets.push('updated_at = ?');
-    params.push(Date.now());
-    params.push(vid);
+    sets.push('updated_at = CASE WHEN updated_at>=? THEN updated_at+1 ELSE ? END');
+    const now = Date.now();
+    params.push(now, now, vid, tenantId);
 
     await authCtx.coreAdapter.execute(
-      `UPDATE consent_statement_versions SET ${sets.join(', ')} WHERE id = ?`,
+      `UPDATE consent_statement_versions SET ${sets.join(', ')} WHERE id = ? AND tenant_id=? AND status='draft'`,
       params
     );
 
@@ -756,6 +883,14 @@ export async function adminConsentVersionActivateHandler(c: Context<{ Bindings: 
     return c.json(activated[0]);
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : 'Unknown error';
+    if (errMsg === 'document_changed')
+      return c.json(
+        {
+          error: 'document_changed',
+          error_description: 'Version changed during activation; retry',
+        },
+        409
+      );
     if (errMsg.includes('not found') || errMsg.includes('localization')) {
       return c.json({ error: 'invalid_request', error_description: errMsg }, 400);
     }
@@ -787,7 +922,7 @@ export async function adminConsentVersionDeleteHandler(c: Context<{ Bindings: En
     }
 
     await authCtx.coreAdapter.execute(
-      `DELETE FROM consent_statement_versions WHERE id = ? AND tenant_id = ?`,
+      `DELETE FROM consent_statement_versions WHERE id = ? AND tenant_id = ? AND status = 'draft'`,
       [vid, tenantId]
     );
 
@@ -855,15 +990,26 @@ export async function adminConsentLocalizationUpsertHandler(c: Context<{ Binding
       return invalidPublicLinkUrlResponse(c, documentUrl.fieldName);
     }
 
+    // The version must be one of this tenant's, and belong to the statement in the path.
+    const version = await authCtx.coreAdapter.query<{ id: string; status: string }>(
+      `SELECT id, status FROM consent_statement_versions WHERE id = ? AND statement_id = ? AND tenant_id = ?`,
+      [vid, c.req.param('sid')!, tenantId]
+    );
+    if (version.length === 0) {
+      return c.json({ error: 'not_found', error_description: 'Version not found' }, 404);
+    }
+
+    if (version[0].status !== 'draft') return immutableLocalizationResponse(c);
+
     const now = Date.now();
 
     // Check if existing
     const existing = await authCtx.coreAdapter.query(
-      `SELECT id FROM consent_statement_localizations WHERE version_id = ? AND language = ?`,
-      [vid, lang]
+      `SELECT id FROM consent_statement_localizations WHERE version_id = ? AND language = ? AND tenant_id = ?`,
+      [vid, lang, tenantId]
     );
 
-    await executeLocalizationUpsert({
+    const written = await executeLocalizationUpsert({
       adapter: authCtx.coreAdapter,
       existing: existing.length > 0,
       id: crypto.randomUUID(),
@@ -879,9 +1025,10 @@ export async function adminConsentLocalizationUpsertHandler(c: Context<{ Binding
       now,
     });
 
+    if (written.rowsAffected !== 1) return immutableLocalizationResponse(c);
     const result = await authCtx.coreAdapter.query(
-      `SELECT * FROM consent_statement_localizations WHERE version_id = ? AND language = ?`,
-      [vid, lang]
+      `SELECT * FROM consent_statement_localizations WHERE version_id = ? AND language = ? AND tenant_id = ?`,
+      [vid, lang, tenantId]
     );
 
     log.info('Upserted localization', {
@@ -908,10 +1055,34 @@ export async function adminConsentLocalizationDeleteHandler(c: Context<{ Binding
     const vid = c.req.param('vid')!;
     const lang = c.req.param('lang')!;
 
-    await authCtx.coreAdapter.execute(
-      `DELETE FROM consent_statement_localizations WHERE version_id = ? AND language = ? AND tenant_id = ?`,
-      [vid, lang, tenantId]
+    const version = await authCtx.coreAdapter.query<{ status: string }>(
+      'SELECT status FROM consent_statement_versions WHERE id=? AND statement_id=? AND tenant_id=?',
+      [vid, c.req.param('sid')!, tenantId]
     );
+    if (!version.length)
+      return c.json({ error: 'not_found', error_description: 'Version not found' }, 404);
+    if (version[0].status !== 'draft') return immutableLocalizationResponse(c);
+
+    const removed = await executeDraftLocalizationMutation(
+      authCtx.coreAdapter,
+      vid,
+      tenantId,
+      Date.now(),
+      {
+        sql: `DELETE FROM consent_statement_localizations WHERE version_id = ? AND language = ? AND tenant_id = ?
+           AND EXISTS (SELECT 1 FROM consent_statement_versions v WHERE v.id=consent_statement_localizations.version_id
+             AND v.tenant_id=consent_statement_localizations.tenant_id AND v.status='draft')`,
+        params: [vid, lang, tenantId],
+      }
+    );
+
+    if (removed.rowsAffected === 0) {
+      const latest = await authCtx.coreAdapter.query<{ status: string }>(
+        'SELECT status FROM consent_statement_versions WHERE id=? AND statement_id=? AND tenant_id=?',
+        [vid, c.req.param('sid')!, tenantId]
+      );
+      if (!latest.length || latest[0].status !== 'draft') return immutableLocalizationResponse(c);
+    }
 
     log.info('Deleted localization', {
       action: 'delete_localization',
@@ -1204,22 +1375,47 @@ export async function adminConsentOverrideDeleteHandler(c: Context<{ Bindings: E
 // User Consent Records (Admin View)
 // =============================================================================
 
+/**
+ * The databases a user's statement consents live in: the tenant's definitions in the metadata
+ * database, the user's records and history in the user's own account database. Null when the user
+ * has no account route, i.e. no consents.
+ */
+async function resolveUserConsentStores(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  userId: string
+): Promise<StatementConsentStores | null> {
+  const account = await adminAccountCoreAdapter(c, tenantId, userId);
+  return account ? { metadata: createAuthContextFromHono(c, tenantId).coreAdapter, account } : null;
+}
+
 /** GET /api/admin/users/:userId/consent-records */
 export async function adminUserConsentRecordsListHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('ADMIN_CONSENT');
   try {
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
     const userId = c.req.param('userId')!;
+    const stores = await resolveUserConsentStores(c, tenantId, userId);
+    if (!stores) return c.json({ records: [] });
 
-    const rows = await authCtx.coreAdapter.query(
-      `SELECT ucr.*, cs.slug, cs.category
-       FROM user_consent_records ucr
-       LEFT JOIN consent_statements cs ON ucr.statement_id = cs.id
-       WHERE ucr.tenant_id = ? AND ucr.user_id = ?
-       ORDER BY ucr.updated_at DESC`,
+    const records = await stores.account.query<Record<string, unknown> & { statement_id: string }>(
+      `SELECT * FROM user_consent_records
+       WHERE tenant_id = ? AND user_id = ?
+       ORDER BY updated_at DESC`,
       [tenantId, userId]
     );
+    // A record whose statement was removed is still listed: it is the evidence of an agreement.
+    const definitions = await lookupStatementDefinitions(
+      stores.metadata,
+      tenantId,
+      { statementIds: records.map((record) => record.statement_id), versionIds: [] },
+      'en'
+    );
+    const rows = records.map((record) => ({
+      ...record,
+      slug: definitions.statements.get(record.statement_id)?.slug ?? null,
+      category: definitions.statements.get(record.statement_id)?.category ?? null,
+    }));
 
     return c.json({ records: rows });
   } catch (error) {
@@ -1237,11 +1433,12 @@ export async function adminUserConsentHistoryHandler(c: Context<{ Bindings: Env 
   const log = getLogger(c).module('ADMIN_CONSENT');
   try {
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
     const userId = c.req.param('userId')!;
     const statementId = c.req.param('statementId')!;
+    const stores = await resolveUserConsentStores(c, tenantId, userId);
+    if (!stores) return c.json({ history: [] });
 
-    const rows = await authCtx.coreAdapter.query(
+    const rows = await stores.account.query(
       `SELECT * FROM consent_item_history
        WHERE tenant_id = ? AND user_id = ? AND statement_id = ?
        ORDER BY created_at DESC`,
@@ -1260,40 +1457,26 @@ export async function adminUserConsentWithdrawHandler(c: Context<{ Bindings: Env
   const log = getLogger(c).module('ADMIN_CONSENT');
   try {
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
     const userId = c.req.param('userId')!;
     const statementId = c.req.param('statementId')!;
-    const now = Date.now();
-
-    // Verify the record exists and is granted
-    const existing = await authCtx.coreAdapter.query<{
-      status: string;
-      version_id: string;
-      version: string;
-      expires_at: number | null;
-      withdrawal_allowed: number | null;
-      record_retention_days: number | null;
-      reconsent_interval_days: number | null;
-    }>(
-      `SELECT r.status, r.version_id, r.version, r.expires_at, s.withdrawal_allowed,
-              s.record_retention_days, s.reconsent_interval_days
-         FROM user_consent_records r
-         JOIN consent_statements s ON s.id = r.statement_id AND s.tenant_id = r.tenant_id
-        WHERE r.tenant_id = ? AND r.user_id = ? AND r.statement_id = ?`,
-      [tenantId, userId, statementId]
-    );
-
-    if (existing.length === 0) {
+    const auth = getAdminAuth(c);
+    const actorId = auth?.actorId ?? auth?.userId;
+    if (!actorId) return c.json({ error: 'access_denied' }, 403);
+    const stores = await resolveUserConsentStores(c, tenantId, userId);
+    if (!stores)
       return c.json({ error: 'not_found', error_description: 'Consent record not found' }, 404);
-    }
-
-    if (existing[0].status !== 'granted') {
+    const result = await withdrawStatementConsent(stores, tenantId, userId, statementId, {
+      env: c.env,
+      actor: { id: actorId, type: 'admin' },
+    });
+    if (result === 'missing')
+      return c.json({ error: 'not_found', error_description: 'Consent record not found' }, 404);
+    if (result === 'not_granted')
       return c.json(
         { error: 'invalid_request', error_description: 'Can only withdraw granted consent (D3)' },
         400
       );
-    }
-    if (existing[0].withdrawal_allowed === 0) {
+    if (result === 'withdrawal_forbidden')
       return c.json(
         {
           error: 'invalid_request',
@@ -1301,92 +1484,18 @@ export async function adminUserConsentWithdrawHandler(c: Context<{ Bindings: Env
         },
         400
       );
-    }
-
-    const recordRetentionDays =
-      existing[0].record_retention_days !== null ? Number(existing[0].record_retention_days) : null;
-    const reconsentIntervalDays =
-      existing[0].reconsent_interval_days !== null
-        ? Number(existing[0].reconsent_interval_days)
-        : null;
-    const retainUntil =
-      recordRetentionDays !== null && recordRetentionDays >= 0
-        ? now + recordRetentionDays * 24 * 60 * 60 * 1000
-        : null;
-
-    await authCtx.coreAdapter.execute(
-      `UPDATE user_consent_records
-       SET status = 'withdrawn', withdrawn_at = ?, retain_until = ?,
-           consent_settings_snapshot_at = ?, record_retention_days_snapshot = ?,
-           reconsent_interval_days_snapshot = ?, updated_at = ?
-       WHERE tenant_id = ? AND user_id = ? AND statement_id = ?`,
-      [
-        now,
-        retainUntil,
-        now,
-        recordRetentionDays,
-        reconsentIntervalDays,
-        now,
-        tenantId,
-        userId,
-        statementId,
-      ]
-    );
-    await authCtx.coreAdapter.execute(
-      `UPDATE consent_item_history
-          SET retain_until = ?,
-              consent_settings_snapshot_at = ?,
-              record_retention_days_snapshot = ?,
-              reconsent_interval_days_snapshot = ?
-        WHERE tenant_id = ?
-          AND user_id = ?
-          AND statement_id = ?
-          AND (retain_until IS NULL OR retain_until < ?)`,
-      [
-        retainUntil,
-        now,
-        recordRetentionDays,
-        reconsentIntervalDays,
-        tenantId,
-        userId,
-        statementId,
-        retainUntil,
-      ]
-    );
-
-    // Record in history
-    await authCtx.coreAdapter.execute(
-      `INSERT INTO consent_item_history
-       (id, tenant_id, user_id, statement_id, action,
-        version_id_before, version_id_after, version_before, version_after,
-        status_before, status_after, withdrawn_at, expires_at, retain_until,
-        consent_settings_snapshot_at, record_retention_days_snapshot,
-        reconsent_interval_days_snapshot,
-        metadata_json, created_at)
-       VALUES (?, ?, ?, ?, 'withdrawn', ?, ?, ?, ?, 'granted', 'withdrawn', ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        crypto.randomUUID(),
-        tenantId,
-        userId,
-        statementId,
-        existing[0].version_id,
-        existing[0].version_id,
-        existing[0].version,
-        existing[0].version,
-        now,
-        existing[0].expires_at,
-        retainUntil,
-        now,
-        recordRetentionDays,
-        reconsentIntervalDays,
-        JSON.stringify({ initiated_by: 'admin' }),
-        now,
-      ]
-    );
 
     log.info('Admin withdrew consent', { action: 'admin_withdraw', userId, statementId });
     return c.json({ success: true });
   } catch (error) {
+    if (error instanceof Error && error.message === 'statement_consent_atomic_backend_unsupported')
+      return c.json(
+        {
+          error: 'temporarily_unavailable',
+          error_description: 'Statement consent writes are unavailable on this database backend',
+        },
+        503
+      );
     log.error('Failed to withdraw consent', { action: 'admin_withdraw' }, error as Error);
     return c.json({ error: 'server_error', error_description: 'Failed to withdraw consent' }, 500);
   }

@@ -31,7 +31,6 @@ import { deployCommand, getDeployKeysDirHint } from './deploy.js';
 
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
 const HEX_DIGEST = /^[a-f0-9]{64}$/u;
-const LOOKUP_HMAC_TARGET_COUNT = 5;
 const WAIT_TIMEOUT_MS = 5 * 60 * 1000;
 const POLL_INTERVAL_MS = 5_000;
 const VERIFICATION_STATUS_KEYS = new Set([
@@ -48,6 +47,15 @@ export function lookupHmacRotationTargetComponents(): WorkerComponent[] {
     const secrets = SECRET_UPLOAD_PLAN[component] as readonly string[];
     return secrets.includes('LOOKUP_HMAC_KEY_SLOT_A') || secrets.includes('LOOKUP_HMAC_KEY_SLOT_B');
   });
+}
+
+/**
+ * How many Workers Control verifies a Lookup HMAC candidate on: one per Worker that holds a Lookup
+ * HMAC slot. Control's LOOKUP_HMAC_VERIFICATION_BINDINGS lists the same Workers; the
+ * lookup-consumer contract test keeps the two in step.
+ */
+export function lookupHmacVerificationTargetCount(): number {
+  return lookupHmacRotationTargetComponents().length;
 }
 
 export interface LookupHmacRotateOptions {
@@ -433,6 +441,33 @@ export function parseLookupHmacRotation(value: unknown): LookupHmacRotation {
   };
 }
 
+/** Control's minimum dual-write dwell (ar-control LOOKUP_HMAC_DUAL_WRITE_MIN_SECONDS). */
+export const LOOKUP_HMAC_DUAL_WRITE_DWELL_SECONDS = 120;
+const DWELL_RETRY_MS = 15_000;
+const DWELL_RETRIES = 8;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Calls `observe`, waiting and asking again while Control says the dwell is not over yet. */
+export async function observeGenerationAfterDwell<T>(
+  observe: () => Promise<T>,
+  wait: (ms: number) => Promise<void> = sleep
+): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await observe();
+    } catch (error) {
+      const dwell =
+        error instanceof Error &&
+        error.message.endsWith(':409:CONTROL_PLANE_LOOKUP_HMAC_DUAL_WRITE_DWELL_INCOMPLETE');
+      if (!dwell || attempt >= DWELL_RETRIES) throw error;
+      await wait(DWELL_RETRY_MS);
+    }
+  }
+}
+
 function createAdminClient(context: EnvironmentContext) {
   let cachedToken: { value: string; expiresAt: number } | null = null;
   const token = async () => {
@@ -523,6 +558,7 @@ export function parseLookupHmacVerificationStatus(
   }
   const status = value as Record<string, unknown>;
   const keys = Object.keys(status);
+  const LOOKUP_HMAC_TARGET_COUNT = lookupHmacVerificationTargetCount();
   if (
     keys.length !== VERIFICATION_STATUS_KEYS.size ||
     keys.some((key) => !VERIFICATION_STATUS_KEYS.has(key)) ||
@@ -600,7 +636,7 @@ export async function rotateLookupHmacKeyCommand(options: LookupHmacRotateOption
   const context = await loadEnvironment(options);
   console.log(chalk.bold('\nAuthrim Lookup HMAC key rotation\n'));
   console.log(`Environment: ${chalk.cyan(context.env)}`);
-  console.log(`Verification targets: ${chalk.cyan(LOOKUP_HMAC_TARGET_COUNT)}`);
+  console.log(`Verification targets: ${chalk.cyan(lookupHmacVerificationTargetCount())}`);
   if (options.dryRun) {
     console.log(
       chalk.yellow('Dry run only. No key, Control state, secret, or Worker was changed.')
@@ -669,6 +705,8 @@ export async function rotateLookupHmacKeyCommand(options: LookupHmacRotateOption
   );
 
   if (rotation.state === 'blocked') throw new Error('lookup_hmac_rotation_blocked');
+  // When this run activated dual-write (null: an earlier run did, at least as long ago).
+  let dualWriteSinceMs: number | null = null;
   if (rotation.state === 'distributing') {
     console.log(chalk.cyan('Deploying the inactive candidate slot...'));
     await deployRotationState(context, options);
@@ -683,6 +721,7 @@ export async function rotateLookupHmacKeyCommand(options: LookupHmacRotateOption
       'rotate-lookup-hmac:activate',
       async ({ context: lockedContext, lock, client }) => {
         const activated = await client.mutate(rotation, 'activate');
+        dualWriteSinceMs = Date.now();
         await refreshKeyState(lockedContext, lock);
         return activated;
       }
@@ -698,11 +737,28 @@ export async function rotateLookupHmacKeyCommand(options: LookupHmacRotateOption
       'rotate-lookup-hmac:verify-generation',
       async ({ client }) => waitForVerification(client, rotation.operationId, 'generation')
     );
+    // Control leaves dual-write only once every Worker can have dropped the state from before
+    // the activation from its cache. After this run's own activation, wait out what is left of
+    // that; a resumed run asks Control, which answers until it is over (retried below).
+    const dwellMs =
+      dualWriteSinceMs === null
+        ? 0
+        : LOOKUP_HMAC_DUAL_WRITE_DWELL_SECONDS * 1000 - (Date.now() - dualWriteSinceMs);
+    if (dwellMs > 0) {
+      console.log(
+        chalk.cyan(
+          `Keeping dual-write for ${Math.ceil(dwellMs / 1000)}s while Worker caches expire...`
+        )
+      );
+      await sleep(dwellMs);
+    }
     rotation = await withLockedLookupHmacMachineAccess(
       context,
       'rotate-lookup-hmac:observe-generation',
       async ({ context: lockedContext, lock, client }) => {
-        const observed = await client.mutate(rotation, 'observe-generation');
+        const observed = await observeGenerationAfterDwell(() =>
+          client.mutate(rotation, 'observe-generation')
+        );
         await refreshKeyState(lockedContext, lock);
         return observed;
       }

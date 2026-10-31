@@ -1,3 +1,7 @@
+import {
+  runSamlDrCoveredFetch,
+  type SamlDrWriterEnv,
+} from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { Hono, type Context, type Next } from 'hono';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { cors } from 'hono/cors';
@@ -10,9 +14,12 @@ import {
   csrfProtectionMiddleware,
   validateHostHeader,
   getDefaultTenantId,
+  AUTHENTICATION_METHODS_RESPONSE_SHAPE_VERSION,
   readAuthenticationMethodsCacheRevision,
   SELF_SERVICE_DEFAULTS,
   validateAccountPagePath,
+  BodyLimitExceededError,
+  readRequestBytesWithLimit,
 } from '@authrim/ar-lib-core';
 
 // Module-level logger for router (no Hono context available in error handler)
@@ -22,7 +29,7 @@ const log = createLogger().module('ROUTER');
  * Environment bindings for the Router Worker
  * Service Bindings to other workers
  */
-interface Env {
+interface Env extends SamlDrWriterEnv {
   // Service Bindings to specialized workers
   OP_DISCOVERY: Fetcher;
   OP_VC?: Fetcher;
@@ -81,6 +88,11 @@ interface Env {
   AUTHENTICATION_METHODS_ROUTER_CACHE_TTL?: string;
   /** Shared edge Cache API TTL for public authentication methods (seconds) */
   AUTHENTICATION_METHODS_EDGE_CACHE_TTL?: string;
+  /**
+   * Largest form body (bytes) the router buffers to look for an `access_token` field on
+   * Bearer-token canonical paths. Larger form bodies are rejected with 413.
+   */
+  ROUTER_FORM_BODY_MAX_BYTES?: string;
 }
 
 const LOGIN_UI_ASSET_PREFIX = '/_authrim_login';
@@ -126,6 +138,23 @@ const LOGIN_UI_PATHS = [
 ];
 
 const BEARER_TOKEN_TRANSPORT_UNSUPPORTED = 'bearer_token_transport_unsupported';
+const FORM_BODY_TOO_LARGE = 'request_body_too_large';
+
+// The router reads a form body before authentication, rate limiting and CSRF to reject
+// `access_token` form fields (RFC 6750 section 2.2), so the read must be bounded.
+// Explicit downstream form limits found: ar-auth and ar-management /api/admin 100 KiB,
+// ar-async device endpoints 64 KiB. Some paths (for example the /vp response form and /token)
+// have no explicit downstream limit, so the router's limit is the only bound there. The default
+// is above the explicit limits so the router is not the tighter bound for those requests, and is
+// small enough that one unauthenticated request buffers only about this much.
+const DEFAULT_ROUTER_FORM_BODY_MAX_BYTES = 256 * 1024;
+const MIN_ROUTER_FORM_BODY_MAX_BYTES = 4 * 1024;
+const MAX_ROUTER_FORM_BODY_MAX_BYTES = 1024 * 1024;
+// Paths whose form body is legitimately larger. Keep in step with the downstream
+// bodyLimit (ar-management: 5 MiB for the Login UI public asset upload).
+const ROUTER_FORM_BODY_UPLOAD_PATH_MAX_BYTES: Readonly<Record<string, number>> = {
+  '/api/admin/assets/login-ui': 5 * 1024 * 1024,
+};
 
 const accountPageSettingsCache = new Map<
   string,
@@ -150,10 +179,11 @@ const BEARER_TOKEN_CANONICAL_PATHS = [
   '/api/admin',
   '/api/auth',
   '/api/ciba',
-  '/api/device',
+  '/api/devices',
   '/api/internal',
   '/api/v1/auth/direct',
   '/api/sessions',
+  '/api/user',
   '/api/protected',
   '/mcp',
   '/vci',
@@ -170,6 +200,7 @@ const LOGIN_UI_INTERNAL_HEADERS = [
   'X-Authrim-Original-Host',
   'X-Authrim-Forwarded-Host',
   'X-Authrim-Browser-Origin',
+  'X-Authrim-Shared-Login-Host',
 ] as const;
 
 function sanitizePublicRouterRequest(request: Request): Request {
@@ -253,6 +284,25 @@ function bearerTokenTransportError(): Response {
     },
     {
       status: 400,
+      headers: {
+        'Cache-Control': 'no-store',
+        Pragma: 'no-cache',
+      },
+    }
+  );
+}
+
+function formBodyTooLargeError(): Response {
+  return Response.json(
+    {
+      error: 'invalid_request',
+      error_description: 'Request body exceeds the maximum allowed size for this endpoint.',
+      error_details: {
+        code: FORM_BODY_TOO_LARGE,
+      },
+    },
+    {
+      status: 413,
       headers: {
         'Cache-Control': 'no-store',
         Pragma: 'no-cache',
@@ -403,7 +453,7 @@ function buildAuthenticationMethodsRouterCacheRequest(input: {
 }): Request {
   const serviceUrl = new URL(input.serviceRequest.url);
   const url = new URL(
-    '/cache/authentication-methods/v3',
+    `/cache/authentication-methods/v3/shape-${AUTHENTICATION_METHODS_RESPONSE_SHAPE_VERSION}`,
     AUTHENTICATION_METHODS_ROUTER_CACHE_KEY_ORIGIN
   );
   url.searchParams.set('tenant', input.tenantId);
@@ -636,20 +686,74 @@ async function fetchAuthenticationMethodsWithRouterCache(
   });
 }
 
-async function requestHasFormBearerToken(request: Request): Promise<boolean> {
-  const contentType = request.headers.get('Content-Type')?.toLowerCase() ?? '';
+type FormBearerTokenInspection = 'absent' | 'present' | 'too_large';
+
+function resolveFormBodyMaxBytes(env: Env, path: string): number {
+  const uploadLimit = ROUTER_FORM_BODY_UPLOAD_PATH_MAX_BYTES[path];
+  if (uploadLimit !== undefined) {
+    return uploadLimit;
+  }
+  return readBoundedIntegerEnvValue(
+    env.ROUTER_FORM_BODY_MAX_BYTES,
+    DEFAULT_ROUTER_FORM_BODY_MAX_BYTES,
+    MIN_ROUTER_FORM_BODY_MAX_BYTES,
+    MAX_ROUTER_FORM_BODY_MAX_BYTES
+  );
+}
+
+function discardRequestBody(request: Request): void {
+  try {
+    void request.body?.cancel().catch(() => {});
+  } catch {
+    // The body may already be locked or released; there is nothing left to free.
+  }
+}
+
+/**
+ * Looks for an `access_token` field in a form body without reading much more than the limit.
+ *
+ * The inspection reads a clone, so the original request keeps its body for the downstream
+ * worker. The body is parsed with `Response.formData()` and the request's own Content-Type
+ * header, the same parser and media type handling the downstream worker uses, so a crafted
+ * Content-Type cannot make the router and the downstream read the body differently. The
+ * decision to inspect uses the same loose `includes()` match the downstream workers use, so it
+ * never skips a body they would treat as a form.
+ *
+ * Bytes are counted as they arrive (Content-Length is only an early hint) and the stream is
+ * cancelled once the limit is crossed. What is held is the limit plus the chunk that crossed
+ * it plus any chunks the stream had already prefetched (a few chunks, tens of KiB), and the
+ * clone's tee keeps a copy of the same bytes for the original branch. A body over the limit is
+ * never passed on.
+ */
+async function inspectFormBodyForBearerToken(
+  request: Request,
+  maxBytes: number
+): Promise<FormBearerTokenInspection> {
+  const contentTypeHeader = request.headers.get('Content-Type') ?? '';
+  const contentType = contentTypeHeader.toLowerCase();
   if (
     !contentType.includes('application/x-www-form-urlencoded') &&
     !contentType.includes('multipart/form-data')
   ) {
-    return false;
+    return 'absent';
   }
 
+  const inspected = request.clone();
   try {
-    const formData = await request.clone().formData();
-    return formData.has('access_token');
-  } catch {
-    return false;
+    const bytes = await readRequestBytesWithLimit(inspected, maxBytes);
+    const formData = await new Response(bytes, {
+      headers: { 'Content-Type': contentTypeHeader },
+    }).formData();
+    return formData.has('access_token') ? 'present' : 'absent';
+  } catch (error) {
+    if (error instanceof BodyLimitExceededError) {
+      discardRequestBody(inspected);
+      discardRequestBody(request);
+      return 'too_large';
+    }
+    // Unparseable or interrupted bodies are left to the downstream parser, which sees the
+    // same bytes and fails the same way.
+    return 'absent';
   }
 }
 
@@ -778,7 +882,8 @@ async function proxyToUiWorker(
   request: Request,
   baseUrl: string,
   path: string,
-  serviceBinding?: Fetcher
+  serviceBinding?: Fetcher,
+  sharedLoginHost = false
 ): Promise<Response> {
   if (!/^\/(?!\/)[a-zA-Z0-9._~!$&'()*+,;=:@%/-]*$/u.test(path)) {
     return Response.json(
@@ -797,6 +902,8 @@ async function proxyToUiWorker(
 
   const headers = new Headers(request.headers);
   headers.set('X-Authrim-Original-Host', new URL(request.url).host);
+  headers.delete('X-Authrim-Shared-Login-Host');
+  if (sharedLoginHost) headers.set('X-Authrim-Shared-Login-Host', 'true');
   const targetOrigin = targetUrl.origin;
 
   // Rewrite Origin/Referer so SvelteKit CSRF check passes
@@ -878,7 +985,13 @@ app.use('*', async (c, next) => {
     requestHost === loginUiHost &&
     !isLoginUiBackendProxyRequest(c.req.raw)
   ) {
-    return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path, c.env.LOGIN_UI_WORKER);
+    return proxyToUiWorker(
+      c.req.raw,
+      c.env.AR_LOGIN_UI_URL,
+      c.req.path,
+      c.env.LOGIN_UI_WORKER,
+      true
+    );
   }
 
   return next();
@@ -889,10 +1002,10 @@ app.use('*', async (c, next) => {
 // Skip for /session/check to allow iframe embedding (OIDC Session Management)
 // Skip for /logout to allow frontchannel logout iframes (OIDC Front-Channel Logout 1.0)
 app.use('*', async (c, next) => {
-  // Skip secure headers for /authorize and /flow endpoints (handled by op-auth worker with nonce-based CSP)
+  // Skip secure headers for /authorize (handled by op-auth worker with nonce-based CSP)
   // Skip for /session/check endpoint (OIDC Session Management iframe needs custom headers)
   // Skip for /logout endpoint (OIDC Front-Channel Logout needs to embed iframes)
-  // Skip for /logged-out and /logout-error (ar-auth returns inline-styled HTML pages)
+  // Skip for /logged-out (a Login UI page when the Login UI path proxy is enabled)
   // Skip for /admin-init-setup (needs unpkg.com CDN for WebAuthn library)
   // Skip for /api/ciba/test (development test page with inline scripts/styles)
   // Skip for UI proxy paths (SvelteKit uses inline styles/scripts and CDN fonts)
@@ -901,13 +1014,11 @@ app.use('*', async (c, next) => {
     path === '/authorize' ||
     path.startsWith('/authorize/') ||
     path === '/oauth/admin-agent/authorize' ||
-    path.startsWith('/flow/') ||
     path === '/session/check' ||
     path === '/logout' ||
     path.endsWith('/frontchannel-logout') ||
     path === '/logged-out' ||
     path === '/logout-complete' ||
-    path === '/logout-error' ||
     path.startsWith('/admin-init-setup') ||
     path === '/api/ciba/test' ||
     path.startsWith('/saml/') ||
@@ -990,7 +1101,11 @@ app.use('*', async (c, next) => {
       const tenantId =
         hostResult.valid && hostResult.tenantId ? hostResult.tenantId : getDefaultTenantId(c.env);
 
-      const kvData = await c.env.AUTHRIM_CONFIG.get(`settings:tenant:${tenantId}:tenant`);
+      // SETTINGS holds what the Settings API saves; AUTHRIM_CONFIG only the copy written when
+      // the tenant was created, which later edits do not update.
+      const kvData =
+        (await c.env.SETTINGS?.get(`settings:tenant:${tenantId}:tenant`)) ??
+        (await c.env.AUTHRIM_CONFIG.get(`settings:tenant:${tenantId}:tenant`));
       if (kvData) {
         const parsed = JSON.parse(kvData) as Record<string, unknown>;
         const kvValue = parsed['tenant.allowed_origins'];
@@ -1041,6 +1156,9 @@ app.use('*', async (c, next) => {
       'If-None-Match',
       'X-Tenant-Id',
       'X-Diagnostic-Session-Id',
+      'X-Authrim-Human-Verification-Action',
+      // The Flow interaction a sign-in attempt belongs to (its failures are recorded with it).
+      'X-Authrim-Interaction-Id',
       'Idempotency-Key',
       'Authrim-Step-Up-Receipt',
     ],
@@ -1076,8 +1194,15 @@ app.use('*', async (c, next) => {
     return bearerTokenTransportError();
   }
 
-  if (await requestHasFormBearerToken(c.req.raw)) {
+  const formInspection = await inspectFormBodyForBearerToken(
+    c.req.raw,
+    resolveFormBodyMaxBytes(c.env, c.req.path)
+  );
+  if (formInspection === 'present') {
     return bearerTokenTransportError();
+  }
+  if (formInspection === 'too_large') {
+    return formBodyTooLargeError();
   }
 
   return next();
@@ -1232,8 +1357,6 @@ app.all('/mcp', async (c) => {
 /**
  * Authorization endpoints - Route to OP_AUTH worker
  * - /authorize (GET/POST)
- * - /flow/login (GET/POST) - Login flow
- * - /flow/confirm (GET/POST) - Re-authentication confirmation
  * - /par (POST) - Pushed Authorization Request
  */
 app.all('/authorize/*', async (c) => {
@@ -1247,12 +1370,6 @@ app.get('/authorize', async (c) => {
 });
 
 app.post('/authorize', async (c) => {
-  const request = createServiceBindingRequest(c.req.raw);
-  return c.env.OP_AUTH.fetch(request);
-});
-
-// Login/Confirm flow endpoints
-app.all('/flow/*', async (c) => {
   const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });
@@ -1365,7 +1482,12 @@ app.get('/api/v1/invitations/validate', async (c) => {
   return c.env.OP_AUTH.fetch(request);
 });
 
-app.post('/api/v1/invitations/use', async (c) => {
+app.post('/api/v1/invitations/email-verification/send', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
+app.post('/api/v1/invitations/email-verification/verify', async (c) => {
   const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });
@@ -1455,12 +1577,21 @@ app.get('/session/check', async (c) => {
 
 /**
  * Logout endpoints - Route to OP_AUTH worker
- * - /logout - Front-channel logout
+ * - /logout (GET/POST) - RP-Initiated Logout: confirmation page (GET) and confirmed logout (POST)
  * - /logout/backchannel - Back-channel logout (RFC 8725)
  * - /logged-out - Post-logout landing page (success)
  * - /logout-error - Post-logout landing page (validation error)
  */
 app.get('/logout', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
+// The confirmation form rendered by GET /logout submits with POST /logout (confirmation token +
+// SameSite=Strict cookie), and OIDC RP-Initiated Logout 1.0 also lets an RP start logout with a
+// form POST. Unlike the back-channel endpoint this is browser-facing, so it stays behind the
+// router CSRF Origin/Referer check above.
+app.post('/logout', async (c) => {
   const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });
@@ -1487,7 +1618,7 @@ app.get('/logout-error', async (c) => {
  * Device Flow endpoints - Route to OP_ASYNC worker
  * - /device_authorization (POST) - RFC 8628: Device Authorization Grant
  * - /device (GET/POST) - User verification page (minimal HTML for OIDC conformance)
- * - /api/device/* - Headless JSON APIs for SvelteKit UI and WebSDK
+ * - /api/devices/* - Headless JSON APIs for the Login UI and WebSDK (lookup, verify)
  */
 app.post('/device_authorization', async (c) => {
   if (!c.env.OP_ASYNC) {
@@ -1513,7 +1644,7 @@ app.post('/device', async (c) => {
   return c.env.OP_ASYNC.fetch(request);
 });
 
-app.all('/api/device/*', async (c) => {
+app.all('/api/devices/*', async (c) => {
   if (!c.env.OP_ASYNC) {
     return notFoundResponse();
   }
@@ -1572,6 +1703,32 @@ app.delete('/clients/:client_id', async (c) => {
   return c.env.OP_MANAGEMENT.fetch(request);
 });
 
+// Public client configuration for SDK initialization (no authentication; OpenAPI `security: []`).
+// Read-only, so only GET is forwarded. The management Worker applies its own rate limit.
+app.get('/clients/:client_id/config', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_MANAGEMENT.fetch(request);
+});
+
+/**
+ * User self-service API (OP_MANAGEMENT): consent list/revocation and data export (GDPR Art. 7, 20).
+ * Authenticated by Bearer token or session cookie inside the handlers. The router CSRF check
+ * applies to cookie-authenticated requests (Bearer requests are skipped there, as everywhere).
+ * - /api/user/consents, /api/user/consents/:clientId
+ * - /api/user/data-export, /api/user/data-export/:id[/download], /api/user/data-export/artifacts/*
+ */
+for (const userSelfServicePath of [
+  '/api/user/consents',
+  '/api/user/consents/*',
+  '/api/user/data-export',
+  '/api/user/data-export/*',
+]) {
+  app.all(userSelfServicePath, async (c) => {
+    const request = createServiceBindingRequest(c.req.raw);
+    return c.env.OP_MANAGEMENT.fetch(request);
+  });
+}
+
 app.post('/introspect', async (c) => {
   const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
@@ -1600,6 +1757,11 @@ app.post('/revoke/batch', async (c) => {
  * because Hono's wildcard pattern matching doesn't guarantee more specific
  * patterns are matched first when using app.all().
  */
+app.all('/api/replication-backups/*', (c) => forwardReplicationExportControl(c.req.raw, c.env));
+app.all('/api/replication-environments/*', (c) =>
+  forwardReplicationExportControl(c.req.raw, c.env)
+);
+
 app.all('/api/admin/*', async (c) => {
   const path = c.req.path;
   const request = createServiceBindingRequest(c.req.raw);
@@ -2026,19 +2188,73 @@ app.onError((err, c) => {
 /** Private fetch entrypoint bound only by the Login UI Worker. */
 export class LoginUiBackendEntrypoint extends WorkerEntrypoint<Env> {
   fetch(request: Request): Promise<Response> {
-    const trustedRequest = validateLoginUiServiceBindingRequest(request);
-    if (!trustedRequest) {
-      return Promise.resolve(
-        Response.json(
-          {
-            error: 'access_denied',
-            error_description: 'Trusted Login UI service-binding request required.',
-          },
-          { status: 403 }
-        )
-      );
-    }
-    return Promise.resolve(app.fetch(trustedRequest, this.env, this.ctx));
+    return runSamlDrCoveredFetch(this.env, this.ctx, async (env, context) => {
+      const trustedRequest = validateLoginUiServiceBindingRequest(request);
+      if (!trustedRequest) {
+        return Promise.resolve(
+          Response.json(
+            {
+              error: 'access_denied',
+              error_description: 'Trusted Login UI service-binding request required.',
+            },
+            { status: 403 }
+          )
+        );
+      }
+      return Promise.resolve(app.fetch(trustedRequest, env, context));
+    });
+  }
+}
+
+/** Export control has no Router business-data effects; Management authenticates the scoped grant. */
+function isReplicationExportControlRequest(request: Request): boolean {
+  const path = new URL(request.url).pathname;
+  const id = '[A-Za-z0-9_.:-]{1,128}';
+  const base = `/api/replication-backups/${id}/exports`;
+  if (
+    request.method === 'GET' &&
+    new RegExp(`^/api/replication-environments/${id}/inventory$`).test(path)
+  )
+    return true;
+  return request.method === 'GET'
+    ? new RegExp(`^${base}/${id}(?:/export-receipt|/download)?$`).test(path)
+    : request.method === 'POST' &&
+        new RegExp(
+          `^${base}(?:/${id}/(?:key-challenges|start|key-challenges/${id}/accept))?$`
+        ).test(path);
+}
+
+async function forwardReplicationExportControl(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const denied = (status: number) =>
+    Response.json(
+      { error: 'backup_replication_request_denied' },
+      { status, headers: { 'Cache-Control': 'no-store' } }
+    );
+  if (
+    !isReplicationExportControlRequest(request) ||
+    url.protocol !== 'https:' ||
+    url.search ||
+    !/^Bearer [a-f0-9]{64}$/.test(request.headers.get('Authorization') ?? '') ||
+    !/^[A-Za-z0-9_.:-]{1,128}$/.test(request.headers.get('X-Tenant-Id') ?? '')
+  )
+    return denied(403);
+  try {
+    const body =
+      request.method === 'POST' ? await readRequestBytesWithLimit(request, 4096) : undefined;
+    const headers = new Headers(request.headers);
+    headers.delete('Cookie');
+    const forward = sanitizePublicRouterRequest(
+      new Request(request.url, {
+        method: request.method,
+        headers,
+        ...(body ? { body } : {}),
+        signal: request.signal,
+      })
+    );
+    return await env.OP_MANAGEMENT.fetch(createServiceBindingRequest(forward));
+  } catch (error) {
+    return denied(error instanceof BodyLimitExceededError ? 413 : 503);
   }
 }
 
@@ -2049,6 +2265,14 @@ export default {
     env: unknown,
     executionCtx?: ExecutionContext
   ): Response | Promise<Response> {
-    return app.fetch(sanitizePublicRouterRequest(request), env as Env, executionCtx);
+    if (isReplicationExportControlRequest(request))
+      return forwardReplicationExportControl(request, env as Env);
+    return runSamlDrCoveredFetch(env as Env, executionCtx, (coveredEnv, coveredContext) =>
+      Promise.resolve(app.fetch(sanitizePublicRouterRequest(request), coveredEnv, coveredContext))
+    );
   },
 };
+
+export const SAML_DR_WRITER_SURFACES = ['fetch', 'rpc:LoginUiBackendEntrypoint.fetch'] as const;
+export const SAML_DR_COORDINATOR_SURFACES = ['fetch.replication-export-control'] as const;
+export { RuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';

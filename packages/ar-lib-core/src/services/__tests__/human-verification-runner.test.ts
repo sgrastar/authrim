@@ -67,6 +67,20 @@ describe('verifyHumanVerificationWithRunner', () => {
     expect(runHumanVerification).not.toHaveBeenCalled();
   });
 
+  it('requires a token when the operation asks for one, checking it against the screen', async () => {
+    await expect(
+      verifyHumanVerificationWithRunner(env, {
+        tenantId: 'tenant-a',
+        action: 'signup',
+        alsoRequiredFor: ['login'],
+        responseToken: 'browser-token',
+      })
+    ).resolves.toEqual({ required: true, verified: true });
+    expect(runHumanVerification).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'signup', responseToken: 'browser-token' })
+    );
+  });
+
   it.each(['missing_token', 'disabled_provider', 'missing_runner', 'denied'])(
     'returns a safe denial for %s',
     async (failure) => {
@@ -94,6 +108,48 @@ describe('verifyHumanVerificationWithRunner', () => {
       ).resolves.toEqual({ required: true, verified: false });
     }
   );
+
+  it('refuses a provider nobody enabled (an unset flag is off, as in the plugin admin API)', async () => {
+    env.SETTINGS = kv({
+      'settings:tenant:tenant-a:authentication-methods': JSON.stringify({
+        'authentication-methods.human_verification.login_enabled': true,
+      }),
+    });
+    await expect(
+      verifyHumanVerificationWithRunner(env, {
+        tenantId: 'tenant-a',
+        action: 'login',
+        responseToken: 'browser-token',
+      })
+    ).resolves.toEqual({ required: true, verified: false });
+    expect(runHumanVerification).not.toHaveBeenCalled();
+  });
+
+  it('accepts a provider enabled globally, and lets a tenant flag override it', async () => {
+    const settings = {
+      'settings:tenant:tenant-a:authentication-methods': JSON.stringify({
+        'authentication-methods.human_verification.login_enabled': true,
+      }),
+    };
+    env.SETTINGS = kv({
+      ...settings,
+      'plugins:enabled:human-verification-cloudflare-turnstile': 'true',
+    });
+    const input = { tenantId: 'tenant-a', action: 'login' as const, responseToken: 'token' };
+    await expect(verifyHumanVerificationWithRunner(env, input)).resolves.toEqual({
+      required: true,
+      verified: true,
+    });
+    env.SETTINGS = kv({
+      ...settings,
+      'plugins:enabled:human-verification-cloudflare-turnstile': 'true',
+      'plugins:enabled:human-verification-cloudflare-turnstile:tenant:tenant-a': 'false',
+    });
+    await expect(verifyHumanVerificationWithRunner(env, input)).resolves.toEqual({
+      required: true,
+      verified: false,
+    });
+  });
 
   it('throws on malformed settings so every caller can fail closed', async () => {
     env.SETTINGS = kv({ 'settings:tenant:tenant-a:authentication-methods': '{invalid' });

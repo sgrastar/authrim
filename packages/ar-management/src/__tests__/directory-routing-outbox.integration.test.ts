@@ -154,6 +154,37 @@ async function publication(userId = 'user-a'): Promise<AccountDirectoryPublicati
   };
 }
 
+/**
+ * The runner side of the tenant gate for external plugin code (a compare-and-swap on its
+ * generation, as the runner does it): open unless the test says otherwise.
+ */
+function gateService(state = { allowed: true, generation: 1 }) {
+  return {
+    state,
+    getTenantExternalGate: vi.fn(async (input: { tenantId: string }) => ({
+      tenantId: input.tenantId,
+      ...state,
+    })),
+    setTenantExternalGate: vi.fn(
+      async (input: { tenantId: string; allowed: boolean; ifGeneration?: number }) => {
+        if (input.allowed) {
+          if (input.ifGeneration !== state.generation) {
+            throw new Error('plugin_dynamic_external_gate_generation_conflict');
+          }
+          if (!state.allowed) {
+            state.allowed = true;
+            state.generation += 1;
+          }
+        } else {
+          state.allowed = false;
+          state.generation += 1;
+        }
+        return { tenantId: input.tenantId, ...state };
+      }
+    ),
+  };
+}
+
 describe('directory routing outbox processor', () => {
   let tenantDatabase: DatabaseSync;
   let lookupDatabase: DatabaseSync;
@@ -297,6 +328,8 @@ describe('directory routing outbox processor', () => {
   function env(options: { includeLookup?: boolean } = {}): Env {
     return {
       AUTHRIM_ENVIRONMENT_NAME: 'test',
+      // The tenant allows external plugin code (plugin.enabled), which hook targets require.
+      PLUGIN_ENABLED: 'true',
       CONTROL: {
         listAccountDirectorySourceShards: vi.fn(async () => [
           {
@@ -387,6 +420,7 @@ describe('directory routing outbox processor', () => {
     const settings = new Map<string, string>();
     const workerEnv = env() as Env & Record<string, unknown>;
     workerEnv.PLUGIN_RUNNER = {
+      ...gateService(),
       resolveAccountEventInstallations,
     } as unknown as Env['PLUGIN_RUNNER'];
     workerEnv.SETTINGS = {
@@ -468,6 +502,7 @@ describe('directory routing outbox processor', () => {
     const settings = new Map<string, string>();
     const workerEnv = env() as Env & Record<string, unknown>;
     workerEnv.PLUGIN_RUNNER = {
+      ...gateService(),
       resolveAccountEventInstallations,
     } as unknown as Env['PLUGIN_RUNNER'];
     workerEnv.SETTINGS = {
@@ -497,6 +532,201 @@ describe('directory routing outbox processor', () => {
         .prepare(`SELECT status, attempt_count FROM account_lifecycle_event_outbox LIMIT 1`)
         .get()
     ).toEqual({ status: 'succeeded', attempt_count: 1 });
+  });
+
+  describe('external plugin code is allowed per tenant (plugin.enabled)', () => {
+    const installation = [
+      { installationId: 'installation-a', capability: 'hook.account.lifecycle' as const },
+    ];
+
+    async function arrangeEvent(
+      settings: Record<string, string>,
+      envOverrides: Record<string, unknown>,
+      gate = gateService()
+    ) {
+      insertOutbox();
+      await operationRepository().recordDirectoryOutcome({
+        publication: value,
+        outcome: 'succeeded',
+        now: NOW,
+      });
+      const resolveAccountEventInstallations = vi.fn(async () => installation);
+      const store = new Map<string, string>(Object.entries(settings));
+      const unreadable = { value: false };
+      const workerEnv = env() as Env & Record<string, unknown>;
+      Object.assign(workerEnv, envOverrides);
+      workerEnv.PLUGIN_RUNNER = {
+        ...gate,
+        resolveAccountEventInstallations,
+      } as unknown as Env['PLUGIN_RUNNER'];
+      workerEnv.SETTINGS = {
+        get: async (key: string) => {
+          if (unreadable.value && key.endsWith(':plugin')) throw new Error('kv_unavailable');
+          return store.get(key) ?? null;
+        },
+        put: async (key: string, value: string) => {
+          store.set(key, value);
+        },
+      } as unknown as Env['SETTINGS'];
+      const processAt = (now: number) =>
+        processAccountLifecycleEventForOperation(workerEnv, tenant.binding, {
+          tenantId: value.tenantId,
+          operationId: value.operationId,
+          now,
+        });
+      const snapshot = () => ({
+        resolveAccountEventInstallations,
+        event: tenantDatabase
+          .prepare(`SELECT status, plugin_targets_json FROM account_lifecycle_event_outbox LIMIT 1`)
+          .get(),
+        queued: tenantDatabase.prepare(`SELECT COUNT(*) AS count FROM plugin_hook_outbox`).get(),
+      });
+      return { processAt, snapshot, unreadable, gate };
+    }
+
+    async function completeEvent(
+      settings: Record<string, string>,
+      envOverrides: Record<string, unknown>
+    ) {
+      const { processAt, snapshot } = await arrangeEvent(settings, envOverrides);
+      await expect(processAt(NOW)).resolves.toBe(true);
+      return snapshot();
+    }
+
+    const pluginDoc = (enabled: boolean) => ({
+      'settings:tenant:tenant-a:plugin': JSON.stringify({ 'plugin.enabled': enabled }),
+    });
+
+    it.each([
+      ['by default (nothing set)', {}, { PLUGIN_ENABLED: undefined }],
+      ['by the environment variable', {}, { PLUGIN_ENABLED: 'false' }],
+      ['by the tenant value, over an environment variable that is on', pluginDoc(false), {}],
+    ])('queues no hook and resolves no target when it is off %s', async (_, settings, envs) => {
+      const { resolveAccountEventInstallations, event, queued } = await completeEvent(
+        settings,
+        envs
+      );
+
+      expect(resolveAccountEventInstallations).not.toHaveBeenCalled();
+      expect(event).toEqual({ status: 'succeeded', plugin_targets_json: '[]' });
+      expect(queued).toEqual({ count: 0 });
+    });
+
+    it('queues the hook when the tenant turned it on, over an environment variable that is off', async () => {
+      const { resolveAccountEventInstallations, event, queued } = await completeEvent(
+        pluginDoc(true),
+        { PLUGIN_ENABLED: 'false' }
+      );
+
+      expect(resolveAccountEventInstallations).toHaveBeenCalledTimes(1);
+      expect(event).toEqual({
+        status: 'succeeded',
+        plugin_targets_json: JSON.stringify(installation),
+      });
+      expect(queued).toEqual({ count: 1 });
+    });
+
+    it('holds the event back, queuing nothing, while the setting cannot be read, and decides once it can be', async () => {
+      const { processAt, snapshot, unreadable } = await arrangeEvent(pluginDoc(true), {});
+      unreadable.value = true;
+
+      await expect(processAt(NOW)).resolves.toBe(false);
+
+      // Not a decision: no snapshot is stored, no hook is queued, nothing was resolved, and the
+      // event is retried (it did not succeed).
+      const held = snapshot();
+      expect(held.resolveAccountEventInstallations).not.toHaveBeenCalled();
+      expect(held.event).toEqual({ status: 'retry', plugin_targets_json: null });
+      expect(held.queued).toEqual({ count: 0 });
+
+      unreadable.value = false;
+      await expect(processAt(NOW + 24 * 3600)).resolves.toBe(true);
+      const decided = snapshot();
+      expect(decided.resolveAccountEventInstallations).toHaveBeenCalledTimes(1);
+      expect(decided.event).toEqual({
+        status: 'succeeded',
+        plugin_targets_json: JSON.stringify(installation),
+      });
+      expect(decided.queued).toEqual({ count: 1 });
+    });
+
+    it('initializes a closed gate of an allowed tenant, then resolves the targets', async () => {
+      // The gate has no row yet (just migrated, restored, or a save whose gate write is pending),
+      // while the setting allows external plugins: "not initialized" is not "off".
+      const gate = gateService({ allowed: false, generation: 0 });
+      const { processAt, snapshot } = await arrangeEvent(pluginDoc(true), {}, gate);
+
+      await expect(processAt(NOW)).resolves.toBe(true);
+
+      expect(gate.setTenantExternalGate).toHaveBeenCalledWith({
+        tenantId: 'tenant-a',
+        allowed: true,
+        ifGeneration: 0,
+      });
+      expect(gate.state).toMatchObject({ allowed: true });
+      const done = snapshot();
+      expect(done.resolveAccountEventInstallations).toHaveBeenCalledTimes(1);
+      expect(done.event).toEqual({
+        status: 'succeeded',
+        plugin_targets_json: JSON.stringify(installation),
+      });
+      expect(done.queued).toEqual({ count: 1 });
+    });
+
+    it('does not write the gate of an allowed tenant whose gate is open already', async () => {
+      const gate = gateService({ allowed: true, generation: 3 });
+      const { processAt } = await arrangeEvent(pluginDoc(true), {}, gate);
+
+      await expect(processAt(NOW)).resolves.toBe(true);
+      expect(gate.setTenantExternalGate).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [
+        'the gate cannot be opened',
+        { setTenantExternalGate: vi.fn().mockRejectedValue(new Error('boom')) },
+      ],
+      [
+        'the open is refused as stale every time',
+        {
+          setTenantExternalGate: vi
+            .fn()
+            .mockRejectedValue(new Error('plugin_dynamic_external_gate_generation_conflict')),
+        },
+      ],
+      [
+        'the gate cannot be read',
+        { getTenantExternalGate: vi.fn().mockRejectedValue(new Error('boom')) },
+      ],
+    ])('retries the event, storing nothing, when %s', async (_, broken) => {
+      const gate = { ...gateService({ allowed: false, generation: 0 }), ...broken };
+      const { processAt, snapshot } = await arrangeEvent(pluginDoc(true), {}, gate);
+
+      await expect(processAt(NOW)).resolves.toBe(false);
+
+      const held = snapshot();
+      expect(held.resolveAccountEventInstallations).not.toHaveBeenCalled();
+      expect(held.event).toEqual({ status: 'retry', plugin_targets_json: null });
+      expect(held.queued).toEqual({ count: 0 });
+    });
+
+    it('stores [] for a tenant that turned it off even though its gate is closed and writable', async () => {
+      const gate = gateService({ allowed: false, generation: 0 });
+      const { processAt, snapshot } = await arrangeEvent(pluginDoc(false), {}, gate);
+
+      await expect(processAt(NOW)).resolves.toBe(true);
+
+      expect(snapshot().event).toEqual({ status: 'succeeded', plugin_targets_json: '[]' });
+      expect(gate.setTenantExternalGate).not.toHaveBeenCalled();
+    });
+
+    it('stores the empty list for good only when the setting was read and is off', async () => {
+      const { processAt, snapshot } = await arrangeEvent(pluginDoc(false), {});
+
+      await expect(processAt(NOW)).resolves.toBe(true);
+
+      expect(snapshot().event).toEqual({ status: 'succeeded', plugin_targets_json: '[]' });
+    });
   });
 
   it('does not let lifecycle event backlog consume the entire routing shard visit', async () => {
@@ -540,6 +770,7 @@ describe('directory routing outbox processor', () => {
     let nowMs = NOW * 1000;
     const workerEnv = env() as Env & Record<string, unknown>;
     workerEnv.PLUGIN_RUNNER = {
+      ...gateService(),
       resolveAccountEventInstallations: vi.fn(async () => {
         nowMs += 1600;
         return [];
@@ -621,6 +852,7 @@ describe('directory routing outbox processor', () => {
     });
     const workerEnv = env() as Env & Record<string, unknown>;
     workerEnv.PLUGIN_RUNNER = {
+      ...gateService(),
       resolveAccountEventInstallations: vi.fn(async () => []),
     } as unknown as Env['PLUGIN_RUNNER'];
     const settings = new Map<string, string>();

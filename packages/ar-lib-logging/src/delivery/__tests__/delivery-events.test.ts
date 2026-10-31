@@ -7,6 +7,85 @@ import {
 } from '../delivery-events';
 
 describe('SqlLoggingDeliveryEventStore', () => {
+  it('claims one delivery and rejects an active duplicate claim', async () => {
+    const executor = {
+      execute: vi
+        .fn()
+        .mockResolvedValueOnce({ rowsAffected: 1 })
+        .mockResolvedValueOnce({ rowsAffected: 0 })
+        .mockResolvedValueOnce({ rowsAffected: 0 }),
+    };
+    const store = new SqlLoggingDeliveryEventStore(executor);
+    const claim = {
+      id: 'lde_stable_logpush',
+      tenantKey: 'tk_abc',
+      destinationId: 'dest_logpush',
+      logType: 'audit' as const,
+      plane: 'external_sink' as const,
+      lane: 'critical' as const,
+      attemptCount: 1,
+      now: 1_700_000_000_000,
+      leaseUntil: 1_700_000_060_000,
+    };
+
+    await expect(store.claimEvent(claim)).resolves.toBe(true);
+    await expect(store.claimEvent(claim)).resolves.toBe(false);
+    expect(executor.execute).toHaveBeenLastCalledWith(
+      expect.stringContaining("error_class = 'delivery_in_progress'"),
+      expect.arrayContaining(['lde_stable_logpush', 1_700_000_000_000])
+    );
+  });
+
+  it('reclaims an expired delivery lease and completes it', async () => {
+    const executor = {
+      execute: vi
+        .fn()
+        .mockResolvedValueOnce({ rowsAffected: 0 })
+        .mockResolvedValueOnce({ rowsAffected: 1 })
+        .mockResolvedValueOnce({ rowsAffected: 1 })
+        .mockResolvedValueOnce({ rowsAffected: 1 }),
+    };
+    const store = new SqlLoggingDeliveryEventStore(executor);
+    const input = {
+      id: 'lde_stale_logpush',
+      tenantKey: 'tk_abc',
+      destinationId: 'dest_logpush',
+      logType: 'audit' as const,
+      plane: 'external_sink' as const,
+      lane: 'critical' as const,
+      attemptCount: 2,
+      metadata: { record_count: 1 },
+      now: 1_700_000_060_000,
+    };
+
+    await expect(store.claimEvent({ ...input, leaseUntil: 1_700_000_120_000 })).resolves.toBe(true);
+    await expect(store.completeClaim({ ...input, status: 'delivered' })).resolves.toBeUndefined();
+    expect(executor.execute).toHaveBeenCalledWith(
+      expect.stringContaining("SET status = 'delivered'"),
+      expect.arrayContaining(['lde_stale_logpush'])
+    );
+    expect(executor.execute).toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE logging_delivery_event_aggregates'),
+      expect.any(Array)
+    );
+  });
+
+  it('preserves an emitted claim without leaving a reclaim deadline', async () => {
+    const executor = { execute: vi.fn().mockResolvedValue({ rowsAffected: 1 }) };
+    const store = new SqlLoggingDeliveryEventStore(executor);
+
+    await store.preserveEmittedClaim('lde_uncertain_logpush', 1_700_000_060_000);
+
+    expect(executor.execute).toHaveBeenCalledWith(
+      expect.stringContaining("error_class = 'delivery_emission_uncertain'"),
+      [1_700_000_060_000, 'lde_uncertain_logpush']
+    );
+    expect(executor.execute).toHaveBeenCalledWith(
+      expect.stringContaining('next_retry_at = NULL'),
+      expect.any(Array)
+    );
+  });
+
   it('inserts delivery events with generated ids and JSON metadata', async () => {
     const executor = {
       execute: vi

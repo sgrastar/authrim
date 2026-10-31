@@ -83,6 +83,18 @@ const adminExternalIdp = {
 	admin_external_idp_auto_link_email_desc: '一致するemail addressを持つaccountを自動linkします',
 	admin_external_idp_jit_provisioning: 'JIT Provisioning',
 	admin_external_idp_jit_provisioning_desc: '初回login時に新しいuser accountを作成します',
+	admin_external_idp_profile_update_fields: 'ログイン時に更新するプロフィール項目',
+	admin_external_idp_profile_update_fields_desc:
+		'テナントで「ログイン時に更新」が有効なとき、この IdP からのログインで、リンク済みの利用者の選んだ項目を更新します。オフにすると、この IdP 用に項目を選べます。',
+	admin_external_idp_profile_update_fields_tenant_default: 'テナントの既定の項目を使う',
+	admin_external_idp_profile_update_fields_tenant_current: 'テナントの既定で更新する項目：',
+	admin_external_idp_profile_update_fields_tenant_loading: 'テナントの既定を読み込んでいます…',
+	admin_external_idp_profile_update_fields_tenant_failed:
+		'テナントの既定を読み込めませんでした。項目を選ぶには、ページを再読み込みしてください。',
+	admin_external_idp_profile_update_fields_tenant_empty:
+		'テナントの既定では、どの項目も更新しません。',
+	admin_external_idp_profile_update_fields_none:
+		'項目が選ばれていません。この IdP からのログインでは何も更新しません。',
 	admin_external_idp_require_email_verified: 'Require Email Verified',
 	admin_external_idp_require_email_verified_desc:
 		'確認済みemail addressを持つユーザーのみ許可します',

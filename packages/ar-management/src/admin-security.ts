@@ -1,3 +1,5 @@
+import { logCoverageHeaders } from './log-read-adapter';
+import { logQueryErrorResponse } from './log-archive-query';
 /**
  * Admin Security API Endpoints
  *
@@ -8,7 +10,7 @@
  * - GET  /api/admin/security/threats                  - List detected threats (Phase 2)
  *
  * Security:
- * - RBAC: tenant_admin or higher required
+ * - RBAC: ar_tenant_admin or higher required
  * - Rate limit: moderate profile
  * - Tenant isolation: All queries filtered by tenant_id
  *
@@ -26,7 +28,7 @@ import {
   createAuditLogFromContext,
   getLogger,
 } from '@authrim/ar-lib-core';
-import { z } from 'zod';
+import { z } from './zod';
 import {
   createAuditHotQueryUnsupportedResponse,
   getAuditHotQuerySqlSpec,
@@ -492,6 +494,8 @@ export async function adminSecurityAlertsListHandler(c: Context<{ Bindings: Env 
       },
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     const log = getLogger(c).module('ADMIN-SECURITY');
     log.error('Failed to list security alerts', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -603,6 +607,8 @@ export async function adminSecurityAlertAcknowledgeHandler(c: Context<{ Bindings
       acknowledged_by: acknowledgedBy,
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     const log = getLogger(c).module('ADMIN-SECURITY');
     log.error('Failed to acknowledge security alert', { alertId }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -817,6 +823,8 @@ export async function adminSecuritySuspiciousActivitiesHandler(c: Context<{ Bind
       },
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     const log = getLogger(c).module('ADMIN-SECURITY');
     log.error('Failed to list suspicious activities', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -1007,6 +1015,8 @@ export async function adminSecurityThreatsHandler(c: Context<{ Bindings: Env }>)
       },
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     const log = getLogger(c).module('ADMIN-SECURITY');
     log.error('Failed to list threats', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -1050,7 +1060,9 @@ export async function adminSecurityIpReputationHandler(c: Context<{ Bindings: En
 
     const { ip_addresses } = parseResult.data;
     const adapter = createAdapter(c, tenantId);
-    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId);
+    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId, {
+      onCoverage: logCoverageHeaders(c),
+    });
     if (!hotQuery.supported || !hotQuery.context) {
       return createAuditHotQueryUnsupportedResponse(c, hotQuery);
     }
@@ -1151,6 +1163,8 @@ export async function adminSecurityIpReputationHandler(c: Context<{ Bindings: En
       checked_at: new Date().toISOString(),
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     const log = getLogger(c).module('ADMIN-SECURITY');
     log.error('Failed to check IP reputation', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);

@@ -368,6 +368,14 @@ const adminSaml = {
 	admin_saml_detail_identity_mapping_policy_hint:
 		'Inbound/Outbound SAML属性変換に使うactiveなField Mapping Setを選択します。',
 	admin_saml_detail_identity_mapping_policy_link: 'Field Mapping Set設定を開く',
+	admin_saml_detail_minimum_ial: '本人確認の最低保証レベル（IAL）',
+	admin_saml_detail_minimum_ial_none: '指定なし',
+	admin_saml_detail_minimum_ial_hint:
+		'本人確認がこのレベル（NIST SP 800-63A の IAL）に達していない人には、このSPへのアサーションを発行しません。SP起点のSSOにはRequestDeniedを返し、IdP起点のSSOではエラーページを表示します。テナントのassuranceがoffでも適用されます。',
+	admin_saml_detail_minimum_aal: '認証の最低保証レベル（AAL）',
+	admin_saml_detail_minimum_aal_none: '指定なし',
+	admin_saml_detail_minimum_aal_hint:
+		'このレベル（NIST SP 800-63B の AAL）に達していないサインインは、一度だけ再認証に送られ、その要素は新しいサインインの要素と合わせて判定されます。それでも足りなければ、SPにはNoAuthnContextを返します（IdP起点のSSOではエラーページを表示します）。テナントのassuranceがoffでも適用されます。同梱のログインUIは、再認証ページで、同じユーザーとして、テナントが再認証に許可しているパスキー・メールコード・TOTP（サインインの設定ではなく再認証の設定で決まります）でもう一度認証するよう求めます。ステップアップの開始より前に証明されたセッションは数えません。',
 	admin_saml_detail_authn_request_signature: 'AuthnRequest署名検証',
 	admin_saml_detail_authn_request_signature_hint:
 		'SPから届くAuthnRequestの署名を必須にするかを制御します。通常はOptionalまたはRequiredを使い、Disabledは明示的な例外時だけ使ってください。',
@@ -376,7 +384,7 @@ const adminSaml = {
 		'SPから届くLogoutRequestの署名を必須にするかを制御します。デフォルトはRequiredです。',
 	admin_saml_detail_authn_context_mode: 'AuthnContext送信方式',
 	admin_saml_detail_authn_context_mode_hint:
-		'Assertionに入れるAuthnContextClassRefを、実際のログインセッションに合わせるか、固定値で送るかを選択します。',
+		'Assertionに入れるAuthnContextClassRefを、実際のログインセッションに合わせるか、固定値で送るか、到達した保証レベルに対応するclass refにするか（Assurance level。保証レベル設定の「SAML AuthnContext AAL」を参照）を選択します。',
 	admin_saml_detail_default_authn_context: '通常ログイン時のAuthnContext',
 	admin_saml_detail_default_authn_context_hint:
 		'固定送信または通常ログイン時に使うAuthnContextClassRefです。多くのSPではPasswordProtectedTransportを受け付けます。',
@@ -401,6 +409,7 @@ const adminSaml = {
 	admin_saml_detail_require_allowed: '許可値を要求',
 	admin_saml_detail_session_aware: 'Session aware',
 	admin_saml_detail_legacy_static: 'Legacy static',
+	admin_saml_detail_assurance_level: 'Assurance level',
 	admin_saml_detail_certificate_valid: '有効なX.509証明書',
 	admin_saml_detail_key_size: 'Key Size',
 	admin_saml_detail_bits: '{bits} bits',

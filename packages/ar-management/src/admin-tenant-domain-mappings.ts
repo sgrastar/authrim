@@ -1,7 +1,7 @@
 /**
  * Admin Tenant Domain Mappings API Endpoints
  *
- * Platform-level CRUD for tenant domain mappings (system_admin only).
+ * Platform-level CRUD for tenant domain mappings (ar_super_admin only).
  * Maps email domains (hashed) to specific tenants for signup auto-routing.
  *
  * - GET    /api/admin/platform/tenant-domain-mappings          - List mappings
@@ -32,7 +32,7 @@ import {
   calculateVerificationExpiry,
   isVerificationExpired,
 } from '@authrim/ar-lib-core';
-import { z } from 'zod';
+import { z } from './zod';
 
 // =============================================================================
 // Constants

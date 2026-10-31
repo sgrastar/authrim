@@ -760,6 +760,28 @@ const ja: Translations = {
   'web.lightMode': 'ライト',
   'web.systemMode': 'システム',
 
+  // Web UI cloud platform selection
+  'web.platform.title': '構築先を選択',
+  'web.platform.description': 'Authrimを構築するクラウドを選んでください。',
+  'web.platform.cloudflareAction': 'Cloudflareで構築',
+  'web.platform.cloudflareDescription': 'Cloudflare WorkersでAuthrimをセットアップします。',
+  'web.platform.awsAction': 'AWSで構築',
+  'web.platform.development': '開発中',
+  'web.platform.awsScope': '現在はSAML DR対応のみ',
+  'web.platform.choose': '選択する',
+  'web.platform.back': '構築先の選択に戻る',
+  'web.platform.awsTitle': 'AWSでSAML DRを準備',
+  'web.platform.awsDescription': 'Cloudflare障害時に備えるSAML IdPの復旧環境を準備します。',
+  'web.platform.awsGuide':
+    '現在はAWS用のセットアップコマンドで事前確認と計画作成を進められます。ブラウザからの構築は開発中です。',
+  'web.platform.awsPrerequisites':
+    'AWSアカウント、リージョン、専用ロールでログインするプロファイルを用意してください。',
+  'web.platform.awsCommand': '事前確認コマンド',
+  'web.platform.awsCommandNote':
+    'アカウントIDとプロファイル名を、ご利用のAWS設定に置き換えてください。',
+  'web.platform.targetPending': '未選択',
+  'web.platform.chooseCloudflare': 'Cloudflareのセットアップに進む',
+
   // Web UI Prerequisites
   'web.prereq.title': '準備',
   'web.prereq.checking': '確認中...',
@@ -1084,6 +1106,12 @@ const ja: Translations = {
   'web.comp.loginUiDesc': 'ログイン、登録、同意、アカウント管理ページ',
   'web.comp.adminUi': '管理UI',
   'web.comp.adminUiDesc': 'テナント、クライアント、ユーザー、システム設定を管理するダッシュボード',
+  'web.comp.adminUiVariant': '管理UIの種類',
+  'web.comp.adminUiLegacy': '現行の管理UI',
+  'web.comp.adminUiLegacyDesc': '現在使っている管理UIです。すべての機能があります。',
+  'web.comp.adminUiConsole': '新しい管理コンソール（プレビュー）',
+  'web.comp.adminUiConsoleDesc':
+    '作り直し中の管理コンソールです。機能は順に追加され、まだ作り直していない項目は準備中と表示されます。URLと管理者のパスキーは現行の管理UIと同じです。',
 
   // Web UI Domain Row Labels
   'web.domain.loginUi': 'ログインUI',
@@ -1329,6 +1357,8 @@ const ja: Translations = {
   'web.status.adminNotConfigured': '管理者未設定',
   'web.status.initializing': '初期化中...',
   'web.status.found': '{{count}}件検出',
+  'web.status.serverUnreachable':
+    'Setup サーバーに接続できません。起動しているターミナルで動作中か確認し、止まっていれば再起動してからやり直してください。',
   'web.status.operationInProgress':
     '別のセットアップ操作を実行中です。完了後にもう一度お試しください。',
   'web.status.warning': '警告：',

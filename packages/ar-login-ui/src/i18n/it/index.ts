@@ -1,6 +1,31 @@
 import { createTranslation } from '../create-translation';
 
 const it = createTranslation({
+	account_guestLogoutWarning:
+		'Dopo la disconnessione non potrai più accedere a questo account ospite. Registrati prima per mantenere l’accesso al tuo account e ai tuoi dati. Disconnettersi comunque?',
+	account_guestTitle: 'Registra il tuo account',
+	account_guestDescription: 'Con la registrazione mantieni lo stesso account e i tuoi dati.',
+	account_guestDue: 'L’account potrà essere eliminato automaticamente a partire da {date}.',
+	account_guestNoExpiry: 'Non è prevista alcuna eliminazione automatica.',
+	account_guestEmail: 'Indirizzo email',
+	account_guestSend: 'Registrati con l’email',
+	account_guestPasskey: 'Registrati con una passkey',
+	account_guestCode: 'Codice di verifica',
+	account_guestConfirm: 'Conferma registrazione',
+	account_guestPending: 'Registrazione in corso. Puoi riprovare per verificarne il completamento.',
+	account_guestRetry: 'Riprova',
+	account_guestError:
+		'Impossibile completare la registrazione. Controlla il codice di verifica o riprova.',
+	account_guestCollision:
+		'Esiste già un account per questa identità. Accedi a quell’account separatamente. Il tuo account ospite non verrà unito.',
+	account_guestExistingLogin: 'Accedi a un account esistente',
+	account_guestRegistered: 'Il tuo account è stato registrato.',
+	account_guestChangeMethod: 'Scegli un altro metodo',
+	login_guestContinue: 'Continua come ospite',
+	login_guestRetention:
+		'Gli account ospite possono essere eliminati automaticamente {days} giorni dopo la creazione. Registrati per continuare a usare il tuo account.',
+	login_guestNoExpiry: 'Non è prevista alcuna eliminazione automatica per i nuovi account ospite.',
+
 	app_title: 'Authrim',
 	app_subtitle: 'Identità e accesso ovunque.',
 	button_openDialog: 'Apri finestra di dialogo',
@@ -83,6 +108,31 @@ const it = createTranslation({
 	account_delete: 'Elimina',
 	account_empty: 'Nessun elemento',
 	account_planned: 'Pianificato',
+	account_socialEmpty: 'Nessun account esterno collegato.',
+	account_socialLinkHeading: 'Collega un account',
+	account_socialLinkWith: 'Collega {provider}',
+	account_socialNoProviders: 'Non ci sono altri provider disponibili da collegare.',
+	account_socialLinkedAt: 'Collegato il {date}',
+	account_socialLastUsed: 'Ultimo utilizzo: {date}',
+	account_socialUnlink: 'Scollega',
+	account_socialUnlinkConfirm: 'Scollegare {provider}? Non potrai più accedere con questo account.',
+	account_socialUnlinkConfirmAction: 'Scollega {provider}',
+	account_socialLinked: 'L’account è stato collegato.',
+	account_socialUnlinked: 'L’account è stato scollegato.',
+	account_socialErrorAlreadyLinked: 'Questo account è già collegato a un altro utente.',
+	account_socialErrorAlreadyLinkedHere: 'Questo provider è già collegato al tuo account.',
+	account_socialErrorEmailNotVerified:
+		'Il provider non ha verificato l’indirizzo email di questo account.',
+	account_socialErrorSessionExpired:
+		'La conferma è scaduta prima del completamento del collegamento. Conferma di nuovo e riprova.',
+	account_socialErrorCancelled: 'Collegamento annullato.',
+	account_socialErrorFailed: 'Impossibile collegare l’account. Riprova.',
+	account_socialErrorLastMethod:
+		'Questo è il tuo ultimo metodo di accesso. Aggiungi prima una passkey o un altro metodo di accesso.',
+	account_socialErrorInProgress:
+		'È in corso un’altra modifica ai tuoi metodi di accesso. Riprova tra poco.',
+	account_operationSocialLinked: 'Account esterno collegato',
+	account_operationSocialUnlinked: 'Account esterno scollegato',
 	account_passkeyUnsupported: 'Questo browser non supporta la registrazione delle passkey.',
 	account_passkeyRegistrationCancelled:
 		'La registrazione della passkey è stata annullata o è scaduta. Riprova.',
@@ -118,12 +168,30 @@ const it = createTranslation({
 	account_actionFailed: 'Operazione non riuscita',
 	account_remainingLoginMethodRequired:
 		'Aggiungi un altro metodo di accesso prima di eliminare questo.',
+	account_activityIncomplete: 'I risultati delle attività sono incompleti. Riprova più tardi.',
+	account_activityLoadMore: 'Carica attività precedenti',
 	account_activityTitle: 'Attività',
 	account_operationNameUpdated: 'Nome modificato',
 	account_operationPasskeyCreated: 'Passkey aggiunta',
 	account_operationPasskeyUpdated: 'Passkey rinominata',
 	account_operationPasskeyDeleted: 'Passkey eliminata',
 	account_operationSessionRevoked: 'Sessione terminata',
+	account_operationGuestCreated: 'Account ospite creato',
+	account_operationGuestUpgradeFailed: 'Registrazione ospite non riuscita',
+	account_operationGuestUpgradeStarted: 'Registrazione ospite avviata',
+	account_operationGuestUpgraded: 'Account ospite registrato',
+	account_operationEmailAdded: 'Email aggiunta',
+	account_operationEmailChanged: 'Email modificata',
+	account_operationEmailReauthenticated: 'Riautenticazione tramite email',
+	account_operationDeviceUpdated: 'Dispositivo rinominato',
+	account_operationDeviceUnlinked: 'Dispositivo scollegato',
+	account_operationPasskeyReauthenticated: 'Riautenticazione tramite passkey',
+	account_operationTotpEnrollmentStarted: 'Configurazione dell’app di autenticazione avviata',
+	account_operationTotpActivated: 'App di autenticazione attivata',
+	account_operationTotpUpdated: 'App di autenticazione rinominata',
+	account_operationTotpRemoved: 'App di autenticazione rimossa',
+	account_operationTotpBackupCodesRegenerated: 'Codici di recupero rigenerati',
+	account_operationTotpReauthenticated: 'Riautenticazione tramite app di autenticazione',
 	account_launcherTitle: 'Le mie applicazioni',
 	account_launcherDescription: 'Cerca e apri le applicazioni disponibili.',
 	account_launcherLoadFailed: 'Impossibile caricare le applicazioni.',
@@ -189,6 +257,8 @@ const it = createTranslation({
 	login_humanVerificationLoading: 'Caricamento del controllo di sicurezza...',
 	login_humanVerificationLoadFailed:
 		'Impossibile caricare il controllo di sicurezza. Ricarica la pagina e riprova.',
+	login_humanVerificationUnavailable:
+		'La verifica umana non è al momento disponibile. Contatta il tuo amministratore.',
 	login_noMethodsAvailable:
 		'Nessun metodo di autenticazione è attivo per questa organizzazione. Contatta l’amministratore.',
 	login_passkeyPreparing: 'Preparazione dell’autenticazione con passkey.',
@@ -269,7 +339,7 @@ const it = createTranslation({
 	emailCode_title: 'Controlla la tua email',
 	emailCode_subtitle: 'Abbiamo inviato un codice di verifica a',
 	emailCode_instructions:
-		'Inserisci il codice di 6 cifre ricevuto via email. Il codice scade tra 5 minuti.',
+		"Inserisci il codice di 6 cifre ricevuto via email. L'email indica per quanto tempo è valido.",
 	emailCode_codeLabel: 'Codice di verifica',
 	emailCode_verifyButton: 'Verifica',
 	emailCode_resendButton: 'Invia di nuovo il codice',
@@ -328,12 +398,19 @@ const it = createTranslation({
 		'Il server di autorizzazione non può elaborare temporaneamente la richiesta',
 	error_login_required: 'È necessario autenticarsi. Accedi per continuare.',
 	error_unknown: 'Si è verificato un errore sconosciuto',
+	error_rateLimited: 'Troppi tentativi. Attendi un po’ e poi riprova.',
+	error_rateLimitedRetryAfter: 'Troppi tentativi. Riprova tra circa {minutes} min.',
+	error_unregisteredPostLogoutRedirectUri:
+		'Sei uscito. Non è stato possibile tornare all’app perché il suo indirizzo di ritorno non è registrato. Riapri l’app manualmente.',
+	error_invalidIdTokenHint:
+		'Sei uscito. Non è stato possibile tornare all’app perché la sua richiesta di uscita non è stata verificata. Riapri l’app manualmente.',
+	error_idTokenHintRequired:
+		'Sei uscito. Non è stato possibile tornare all’app perché la sua richiesta di uscita era incompleta. Riapri l’app manualmente.',
 	device_title: 'Verifica del dispositivo',
 	device_subtitle: 'Inserisci il codice visualizzato sul dispositivo',
 	device_codeLabel: 'Codice di verifica',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint:
-		'Inserisci il codice di 8 caratteri visualizzato sul dispositivo (formato: XXXX-XXXX)',
+	device_codeHint: 'Inserisci il codice visualizzato sul dispositivo',
 	device_verifyButton: 'Verifica codice',
 	device_confirmTitle: 'Autorizza dispositivo',
 	device_requestedPermissions: 'Autorizzazioni richieste',
@@ -346,6 +423,13 @@ const it = createTranslation({
 	device_errorApproveFailed: 'Impossibile approvare il dispositivo',
 	device_errorDenyFailed: 'Impossibile negare la richiesta del dispositivo',
 	device_errorInvalidRedirect: 'Il server ha restituito un URL di reindirizzamento non valido',
+	device_errorConsentWithdrawn:
+		'Questa richiesta è stata fatta prima che revocassi l’accesso di questa app. Ricomincia dal dispositivo per ottenere un nuovo codice.',
+	device_errorTryAgain:
+		'Non è stato possibile salvare la tua decisione in questo momento e non è cambiato nulla. Riprova tra poco.',
+	device_errorTooManyAttempts: 'Troppi tentativi. Attendi un po’ e poi riprova.',
+	device_errorOutcomeUnknown:
+		'Non è stato possibile confermare se la tua decisione è stata salvata. Controlla il dispositivo o inserisci di nuovo il codice.',
 	ciba_title: 'Richiesta di autenticazione',
 	ciba_subtitle: 'Un’applicazione richiede la tua approvazione',
 	ciba_noPendingRequests: 'Nessuna richiesta di autenticazione in sospeso',
@@ -365,6 +449,17 @@ const it = createTranslation({
 	ciba_errorGeneric: 'Si è verificato un errore',
 	ciba_errorApproveFailed: 'Impossibile approvare la richiesta',
 	ciba_errorDenyFailed: 'Impossibile rifiutare la richiesta',
+	ciba_errorConsentWithdrawn:
+		'Questa richiesta è stata fatta prima che revocassi l’accesso di questa app. Ricomincia dall’app.',
+	ciba_errorRequestGone: 'Questa richiesta è scaduta o ha già ricevuto una risposta.',
+	error_authorizationRequestExpired: 'La richiesta di accesso è scaduta. Ricomincia dall’app.',
+	ciba_errorTryAgain:
+		'Non è stato possibile salvare la tua decisione in questo momento e non è cambiato nulla. Riprova tra poco.',
+	ciba_errorTooManyAttempts: 'Troppi tentativi. Attendi un po’ e poi riprova.',
+	ciba_errorOutcomeUnknown:
+		'Non è stato possibile confermare se la tua risposta è stata salvata. Aggiorna per vedere le richieste ancora in attesa.',
+	ciba_errorNoLongerWaiting:
+		'Non è stato possibile confermare la tua risposta, ma questa richiesta non è più in attesa.',
 	reauth_title: 'Verifica la tua identità',
 	reauth_subtitle: 'Per motivi di sicurezza, autenticati di nuovo per continuare',
 	reauth_verifyWithPasskey: 'Verifica con una passkey',
@@ -401,6 +496,9 @@ const it = createTranslation({
 	login_extError_callbackFailed_title: 'Autenticazione non riuscita',
 	login_extError_callbackFailed_message:
 		'Si è verificato un errore durante l’autenticazione. Riprova.',
+	login_extError_reauthNotProven_title: 'Accesso non confermato',
+	login_extError_reauthNotProven_message:
+		"Il tuo provider di accesso non ha confermato che hai effettuato di nuovo l'accesso. Accedi di nuovo o scegli un altro metodo.",
 	login_extError_default_title: 'Errore di autenticazione',
 	login_extError_default_message: 'Si è verificato un errore durante l’autenticazione esterna.',
 	login_signingInTo: 'Accesso a',

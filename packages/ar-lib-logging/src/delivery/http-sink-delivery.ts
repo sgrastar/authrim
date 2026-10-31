@@ -132,6 +132,7 @@ export async function deliverHttpSinkBatch(
   const headers = {
     'Content-Type': request.contentType ?? 'application/json',
     ...authHeaders.headers,
+    ...(request.deliveryId ? { 'X-Authrim-Delivery': request.deliveryId } : {}),
   };
   const response = await (request.fetcher ?? fetch)(url.toString(), {
     method,

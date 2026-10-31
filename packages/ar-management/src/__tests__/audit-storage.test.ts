@@ -11,8 +11,14 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
+import { createSettingsCanonicalD1 } from './helpers/settings-canonical-d1';
 import type { Env } from '@authrim/ar-lib-core';
-import { DEFAULT_AUDIT_PROFILE_ID, DEFAULT_AUDIT_STORAGE_CONFIG } from '@authrim/ar-lib-core';
+import {
+  DEFAULT_AUDIT_PROFILE_ID,
+  resolveTenantAuditRetentionFromEnv,
+  resolveAuditRoutingTargets,
+  DEFAULT_AUDIT_STORAGE_CONFIG,
+} from '@authrim/ar-lib-core';
 import {
   getAuditStorageConfig,
   updateAuditStorageConfig,
@@ -101,9 +107,24 @@ function createTestApp(
   app.get('/api/admin/settings/audit-storage/stats', getStorageStats);
 
   const mockEnv = {
+    AUTHRIM_LOG_ARCHIVE_MODE: 'scheduled',
+    AUTHRIM_LOG_ARCHIVE_STORAGE_GENERATION: 'storage-generation',
+    AUTHRIM_LOG_ARCHIVE_SCHEMA_VERSION: '1',
+    AUTHRIM_LOG_ARCHIVE_ACTIVATED_AT: '2026-10-01T00:00:00.000Z',
+    AUTHRIM_LOG_ARCHIVE_ACCOUNT_ID: 'a'.repeat(32),
+    AUTHRIM_LOG_ARCHIVE_BUCKET: 'test-logs',
+    AUTHRIM_LOG_ARCHIVE_WAREHOUSE: `${'a'.repeat(32)}_test-logs`,
+    AUTHRIM_LOG_ARCHIVE_CATALOG_URI: `https://catalog.cloudflarestorage.com/${'a'.repeat(32)}/test-logs`,
+    AUTHRIM_LOG_ARCHIVE_NAMESPACE: 'authrim',
+    AUTHRIM_LOG_ARCHIVE_TABLE: 'logs_v1',
+    AUTHRIM_LOG_ARCHIVE_TABLE_UUID: 'bba2d8f7-861e-4b6e-9df1-48faea8ae805',
+    AUTHRIM_LOG_ARCHIVE_PHYSICAL_FINGERPRINT: 'a'.repeat(64),
+    AUTHRIM_LOG_ARCHIVE_DB_RETENTION_DAYS: '7',
+    AUTHRIM_LOG_ARCHIVE_EXPORT_INTERVAL_MINUTES: '10',
     AUTHRIM_CONFIG: mockKV,
     SETTINGS: mockSettingsKV,
     DB: mockDB,
+    DB_ADMIN: createSettingsCanonicalD1(),
     AUDIT_QUEUE: {
       send: vi.fn(),
       sendBatch: vi.fn(),
@@ -122,1168 +143,265 @@ function createTestApp(
     ...options.extraEnv,
   } as unknown as Env;
 
-  return { app, mockEnv, mockKV, mockSettingsKV, mockDB };
+  return {
+    app,
+    mockEnv,
+    mockKV,
+    mockSettingsKV,
+    mockDB,
+    kvPut: vi.spyOn(mockKV, 'put'),
+    settingsPut: vi.spyOn(mockSettingsKV, 'put'),
+    dbBatch: vi.spyOn(mockDB, 'batch'),
+  };
 }
 
-describe('Audit Storage Configuration API', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+const PATH = '/api/admin/settings/audit-storage';
+const rule = (overrides: Record<string, unknown> = {}) => ({
+  name: 'tenant-retention',
+  priority: 10,
+  enabled: true,
+  conditions: { tenantId: 'tenant-a' },
+  retention: { eventLogRetentionDays: 30 },
+  ...overrides,
+});
+async function request(
+  f: ReturnType<typeof createTestApp>,
+  suffix = '',
+  method = 'GET',
+  body?: unknown
+) {
+  return f.app.request(
+    PATH + suffix,
+    {
+      method,
+      ...(body === undefined
+        ? {}
+        : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
+    },
+    f.mockEnv
+  );
+}
+describe('Setup-owned audit storage and editable retention', () => {
+  beforeEach(() => vi.clearAllMocks());
+  it.each(['', '/stats'])('reports only the new Setup configuration at %s', async (suffix) => {
+    const f = createTestApp({
+      kv: createMockKV({
+        audit_storage_config: JSON.stringify({
+          defaultEventBackend: 'wrong',
+          batchConfig: { maxBatchSize: 999 },
+        }),
+      }),
+    });
+    const res = await request(f, suffix);
+    expect(res.status).toBe(200);
+    const body: unknown = await res.json();
+    if (!body || typeof body !== 'object' || !('storage' in body))
+      throw new Error('storage response missing');
+    expect(body.storage).toMatchObject({
+      source: 'setup',
+      read_only: true,
+      mode: 'scheduled',
+      generation: 'storage-generation',
+      db_retention_days: 7,
+      export_interval_minutes: 10,
+      local_staging_only: false,
+    });
+    expect(JSON.stringify(body)).not.toContain('maxBatchSize');
+    expect(JSON.stringify(body)).not.toContain('defaultEventBackend');
+    expect(JSON.stringify(body)).not.toContain('total_logs');
+    expect(f.kvPut).not.toHaveBeenCalled();
   });
-
-  // ==========================================================================
-  // GET Storage Config
-  // ==========================================================================
-
-  describe('GET /api/admin/settings/audit-storage', () => {
-    it('should return default config when KV is empty', async () => {
-      const { app, mockEnv } = createTestApp();
-
-      const res = await app.request(
-        '/api/admin/settings/audit-storage',
-        { method: 'GET' },
-        mockEnv
-      );
-
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as any;
-
-      expect(body.storage.source).toBe('builtin');
-      expect(body.storage.profile_id).toBe(DEFAULT_AUDIT_PROFILE_ID);
-      expect(body.storage.available_profiles).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            id: DEFAULT_AUDIT_PROFILE_ID,
-            primaryType: 'd1',
-          }),
-        ])
-      );
-      expect(body.storage.config.defaultEventBackend).toBe('d1-core');
-      expect(body.storage.config.defaultPiiBackend).toBe('d1-pii');
-      expect(body.storage.config.batchConfig).toEqual(DEFAULT_AUDIT_STORAGE_CONFIG.batchConfig);
-      expect(body.retention.source).toBe('builtin');
-      expect(body.routing_rules.rules).toEqual([]);
-      expect(body.operational_policy.cleanup.mode).toBe('primary_delete_by_retention');
-      expect(body.operational_policy.retry.archiveDelivery).toBe('queue_retry_until_dlq');
-      expect(body.operational_policy.backpressure.mode).toBe('queue_fanout');
-      expect(body.operational_policy.eventFailurePolicy.mode).toBe('event_class');
-      expect(body.operational_policy.eventFailurePolicy.failOpenCategories).toContain('login');
-      expect(body.operational_policy.eventFailurePolicy.failClosedCategories).toContain(
-        'data_governance'
-      );
-      expect(body.operational_policy.queue.binding).toBe('AUDIT_QUEUE');
-      expect(body.operational_policy.queue.retryLimit).toBe(5);
-      expect(body.operational_policy.queue.archiveBackupStatus).toBe('configured');
-      expect(body.operational_policy.queue.dlqBehavior).toBe('cloudflare_managed');
-      expect(body.operational_policy.health).toMatchObject({
-        primaryTargetConfigured: true,
-        archiveTargetConfigured: true,
-        queueConfigured: true,
-        queueArchiveConfigured: true,
-        healthCheckMode: 'configuration_only',
-      });
-      expect(body.queue.audit_queue.status).toBe('configured');
+  it('reports pipeline without a DB retention or export schedule', async () => {
+    const f = createTestApp({
+      extraEnv: {
+        AUTHRIM_LOG_ARCHIVE_MODE: 'pipeline',
+        AUTHRIM_LOG_ARCHIVE_DB_RETENTION_DAYS: undefined,
+        AUTHRIM_LOG_ARCHIVE_EXPORT_INTERVAL_MINUTES: undefined,
+      },
     });
-
-    it('should merge legacy batch config while keeping runtime profile as the source of truth', async () => {
-      const customConfig = {
-        ...DEFAULT_AUDIT_STORAGE_CONFIG,
-        batchConfig: {
-          maxBufferSize: 250,
-          flushIntervalMs: 2500,
-          maxBatchSize: 50,
-        },
-      };
-
-      const mockKV = createMockKV({
-        audit_storage_config: JSON.stringify(customConfig),
-      });
-      const { app, mockEnv } = createTestApp({ kv: mockKV });
-
-      const res = await app.request(
-        '/api/admin/settings/audit-storage',
-        { method: 'GET' },
-        mockEnv
-      );
-
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as any;
-
-      expect(body.storage.source).toBe('builtin');
-      expect(body.storage.batch_config_source).toBe('kv');
-      expect(body.storage.config.defaultEventBackend).toBe('d1-core');
-      expect(body.storage.config.batchConfig).toEqual(customConfig.batchConfig);
-    });
-
-    it('should include backend types and constraints', async () => {
-      const { app, mockEnv } = createTestApp();
-
-      const res = await app.request(
-        '/api/admin/settings/audit-storage',
-        { method: 'GET' },
-        mockEnv
-      );
-      const body = (await res.json()) as any;
-
-      expect(body.backend_types).toHaveProperty('D1');
-      expect(body.backend_types).toHaveProperty('R2');
-      expect(body.backend_types).toHaveProperty('HYPERDRIVE');
-      expect(body.retention.constraints).toHaveProperty('min_event_log_retention_days');
-      expect(body.retention.constraints).toHaveProperty('max_event_log_retention_days');
+    expect(await (await request(f)).json()).toMatchObject({
+      storage: { mode: 'pipeline', db_retention_days: null, export_interval_minutes: null },
     });
   });
-
-  // ==========================================================================
-  // UPDATE Storage Config
-  // ==========================================================================
-
-  describe('PUT /api/admin/settings/audit-storage', () => {
-    it('should update defaultEventBackend', async () => {
-      const mockKV = createMockKV();
-      const { app, mockEnv, mockSettingsKV } = createTestApp({ kv: mockKV });
-
-      const res = await app.request(
-        '/api/admin/settings/audit-storage',
-        {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            defaultEventBackend: 'archive-only',
-            defaultPiiBackend: 'archive-only',
-            batchConfig: {
-              maxBufferSize: 120,
-            },
-          }),
-        },
-        mockEnv
-      );
-
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as any;
-
-      expect(body.success).toBe(true);
-      expect(body.source).toBe('runtime_profile');
-      expect(body.profile_id).toBe('managed:audit:settings-default');
-      expect(body.config.defaultEventBackend).toBe('archive-only');
-      expect(body.config.defaultPiiBackend).toBe('archive-only');
-      expect(mockSettingsKV.put).toHaveBeenCalled();
-      expect(mockKV.put).toHaveBeenCalled();
-    });
-
-    it('should accept a Hyperdrive backend when provided in the legacy backend list', async () => {
-      const { app, mockEnv } = createTestApp();
-
-      const res = await app.request(
-        '/api/admin/settings/audit-storage',
-        {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            backends: [
-              {
-                id: 'hyperdrive-audit',
-                type: 'HYPERDRIVE',
-                enabled: true,
-                priority: 1,
-                hyperdriveConfig: {
-                  binding: 'audit-hyperdrive',
-                  schema: 'public',
-                },
-              },
-            ],
-            defaultEventBackend: 'hyperdrive-audit',
-            defaultPiiBackend: 'hyperdrive-audit',
-          }),
-        },
-        mockEnv
-      );
-
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as any;
-      expect(body.config.defaultEventBackend).toBe('audit-hyperdrive');
-    });
-
-    it('rejects fan-out targets when AUDIT_QUEUE is unavailable', async () => {
-      const { app, mockEnv } = createTestApp({
-        extraEnv: {
-          AUDIT_QUEUE: undefined,
-        },
-      });
-
-      const res = await app.request(
-        '/api/admin/settings/audit-storage',
-        {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            backends: [
-              {
-                id: 'archive-r2',
-                type: 'R2',
-                enabled: true,
-                priority: 1,
-                r2Config: {
-                  binding: 'DIAGNOSTIC_LOGS',
-                  pathPrefix: 'audit/',
-                },
-              },
-            ],
-            defaultEventBackend: 'd1-core',
-            defaultPiiBackend: 'd1-pii',
-          }),
-        },
-        mockEnv
-      );
-
-      expect(res.status).toBe(400);
-      const body = (await res.json()) as any;
-      expect(body.error_description).toContain('AUDIT_QUEUE must be configured');
-    });
-
-    it('should switch the default audit profile without mutating the managed profile', async () => {
-      const mockKV = createMockKV({
-        'profile-registry:audit:archive-only': JSON.stringify({
-          id: 'archive-only',
-          kind: 'audit',
-          label: 'Archive Only',
-          builtin: false,
-          primary: null,
-          archive: {
-            type: 'r2',
-            bucketRef: 'DIAGNOSTIC_LOGS',
-            prefix: 'audit/',
-          },
-          sinks: [],
-        }),
-      });
-      const { app, mockEnv, mockSettingsKV, mockKV: authrimKv } = createTestApp({ kv: mockKV });
-
-      const res = await app.request(
-        '/api/admin/settings/audit-storage',
-        {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            auditProfileId: 'archive-only',
-          }),
-        },
-        mockEnv
-      );
-
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as any;
-      expect(body.success).toBe(true);
-      expect(body.profile_id).toBe('archive-only');
-      expect(body.config.defaultEventBackend).toBe('archive-only');
-      expect(mockSettingsKV.put).toHaveBeenCalled();
-      expect(authrimKv.put).not.toHaveBeenCalledWith(
-        'profile-registry:audit:managed:audit:settings-default',
-        expect.any(String)
-      );
-    });
-
-    it('should reject switching to a custom profile while also mutating storage targets', async () => {
-      const mockKV = createMockKV({
-        'profile-registry:audit:archive-only': JSON.stringify({
-          id: 'archive-only',
-          kind: 'audit',
-          label: 'Archive Only',
-          builtin: false,
-          primary: null,
-          archive: {
-            type: 'r2',
-            bucketRef: 'DIAGNOSTIC_LOGS',
-            prefix: 'audit/',
-          },
-          sinks: [],
-        }),
-      });
-      const { app, mockEnv } = createTestApp({ kv: mockKV });
-
-      const res = await app.request(
-        '/api/admin/settings/audit-storage',
-        {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            auditProfileId: 'archive-only',
-            defaultEventBackend: 'archive-only',
-          }),
-        },
-        mockEnv
-      );
-
-      expect(res.status).toBe(400);
-      const body = (await res.json()) as any;
-      expect(body.error).toBe('invalid_request');
-    });
-
-    it('should reject invalid backend', async () => {
-      const { app, mockEnv } = createTestApp();
-
-      const res = await app.request(
-        '/api/admin/settings/audit-storage',
-        {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            defaultEventBackend: 'invalid_backend',
-          }),
-        },
-        mockEnv
-      );
-
-      expect(res.status).toBe(400);
-      const body = (await res.json()) as any;
-
-      expect(body.error).toBe('invalid_request');
-    });
-
-    it('should return 500 when KV is not configured', async () => {
-      const app = new Hono<{ Bindings: Env }>();
-      app.put('/api/admin/settings/audit-storage', updateAuditStorageConfig);
-
-      const mockEnv = {} as unknown as Env;
-
-      const res = await app.request(
-        '/api/admin/settings/audit-storage',
-        {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ defaultEventBackend: 'd1' }),
-        },
-        mockEnv
-      );
-
-      expect(res.status).toBe(500);
+  it('reports local staging without implying a cold archive is connected', async () => {
+    const extraEnv: Record<string, unknown> = {
+      AUTHRIM_LOG_ARCHIVE_LOCAL_STAGING_ONLY: 'true',
+      ISSUER_URL: 'http://localhost:8787',
+    };
+    for (const key of [
+      'ACCOUNT_ID',
+      'BUCKET',
+      'WAREHOUSE',
+      'CATALOG_URI',
+      'NAMESPACE',
+      'TABLE',
+      'TABLE_UUID',
+      'PHYSICAL_FINGERPRINT',
+    ])
+      extraEnv['AUTHRIM_LOG_ARCHIVE_' + key] = undefined;
+    const f = createTestApp({ extraEnv });
+    expect(await (await request(f)).json()).toMatchObject({
+      storage: { mode: 'scheduled', local_staging_only: true },
     });
   });
-
-  // ==========================================================================
-  // Retention Config
-  // ==========================================================================
-
-  describe('GET /api/admin/settings/audit-storage/retention', () => {
-    it('should return default retention config', async () => {
-      const { app, mockEnv } = createTestApp();
-
-      const res = await app.request(
-        '/api/admin/settings/audit-storage/retention',
-        { method: 'GET' },
-        mockEnv
-      );
-
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as any;
-
-      expect(body.source).toBe('builtin');
-      expect(body.config.eventLogRetentionDays).toBe(90);
-      expect(body.config.piiLogRetentionDays).toBe(365);
-    });
-
-    it('should return runtime-profile retention config when a custom audit profile is active', async () => {
-      const customProfileId = 'custom-retention-profile';
-      const mockKV = createMockKV({
-        'profile-registry:audit:custom-retention-profile': JSON.stringify({
-          id: customProfileId,
-          kind: 'audit',
-          label: 'Custom Retention',
-          builtin: false,
-          primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
-          archive: null,
-          sinks: [],
-          retention: {
-            eventLogRetentionDays: 180,
-            piiLogRetentionDays: 730,
-            archiveBeforeDelete: true,
-          },
-        }),
-      });
-      const { app, mockEnv } = createTestApp({
-        kv: mockKV,
-        defaultAuditProfileId: customProfileId,
-      });
-
-      const res = await app.request(
-        '/api/admin/settings/audit-storage/retention',
-        { method: 'GET' },
-        mockEnv
-      );
-
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as any;
-
-      expect(body.source).toBe('runtime_profile');
-      expect(body.config.eventLogRetentionDays).toBe(180);
-      expect(body.config.archiveBeforeDelete).toBe(true);
-    });
+  it.each(['', '/stats'])('fails explicitly when new mode is absent at %s', async (suffix) => {
+    const f = createTestApp({ extraEnv: { AUTHRIM_LOG_ARCHIVE_MODE: undefined } });
+    expect((await request(f, suffix)).status).toBe(503);
+    expect(f.kvPut).not.toHaveBeenCalled();
   });
-
-  describe('PUT /api/admin/settings/audit-storage/retention', () => {
-    it('should update retention config', async () => {
-      const managedProfileId = 'managed:audit:settings-default';
-      const mockKV = createMockKV({
-        [`profile-registry:audit:${managedProfileId}`]: JSON.stringify({
-          id: managedProfileId,
-          kind: 'audit',
-          label: 'Managed Audit Profile',
-          builtin: false,
-          primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
-          archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
-          sinks: [],
-          retention: {
-            eventLogRetentionDays: 90,
-            piiLogRetentionDays: 365,
-            archiveBeforeDelete: false,
-          },
-        }),
-      });
-      const { app, mockEnv, mockSettingsKV } = createTestApp({ kv: mockKV });
-
-      const res = await app.request(
-        '/api/admin/settings/audit-storage/retention',
-        {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            eventLogRetentionDays: 180,
-            piiLogRetentionDays: 730,
-            archiveBeforeDelete: true,
-          }),
-        },
-        mockEnv
-      );
-
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as any;
-
-      expect(body.success).toBe(true);
-      expect(body.config.eventLogRetentionDays).toBe(180);
-      expect(body.config.archiveBeforeDelete).toBe(true);
-      expect(body.source).toBe('runtime_profile');
-      expect(body.profile_id).toBe('managed:audit:settings-default');
-      expect(mockKV.put).toHaveBeenCalled();
-      expect(mockSettingsKV.put).toHaveBeenCalled();
-    });
-
-    it('should reject invalid retention days', async () => {
-      const { app, mockEnv } = createTestApp();
-
-      const res = await app.request(
-        '/api/admin/settings/audit-storage/retention',
-        {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            eventLogRetentionDays: 0,
-          }),
-        },
-        mockEnv
-      );
-
-      expect(res.status).toBe(400);
-      const body = (await res.json()) as any;
-
-      // Error format: "must be between X and Y"
-      expect(body.error_description).toContain('must be between');
-    });
-
-    it('should reject retention days exceeding maximum', async () => {
-      const { app, mockEnv } = createTestApp();
-
-      const res = await app.request(
-        '/api/admin/settings/audit-storage/retention',
-        {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            eventLogRetentionDays: 10000,
-          }),
-        },
-        mockEnv
-      );
-
-      expect(res.status).toBe(400);
-      const body = (await res.json()) as any;
-
-      // Error format: "must be between X and Y"
-      expect(body.error_description).toContain('must be between');
-    });
-
-    it('rejects archiveBeforeDelete when no archive target is configured', async () => {
-      const primaryOnlyAuditProfileId = 'custom:audit:primary-only';
-      const { app, mockEnv } = createTestApp({
-        kv: createMockKV({
-          [`profile-registry:audit:${primaryOnlyAuditProfileId}`]: JSON.stringify({
-            id: primaryOnlyAuditProfileId,
-            kind: 'audit',
-            label: 'Primary Only Audit',
-            description: 'Test-only primary audit profile with no archive target.',
-            builtin: false,
-            version: 1,
-            primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
-            archive: null,
-            sinks: [],
-            retention: {
-              eventLogRetentionDays: 90,
-              piiLogRetentionDays: 365,
-              archiveBeforeDelete: false,
-              primaryDays: 90,
-              archiveDays: null,
-            },
-            archiveFailureMode: 'best_effort',
-            sinkFailureMode: 'best_effort',
-            backpressure: { mode: 'event_class', allowTenantOverride: true },
-          }),
-        }),
-        defaultAuditProfileId: primaryOnlyAuditProfileId,
-      });
-
-      const res = await app.request(
-        '/api/admin/settings/audit-storage/retention',
-        {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            archiveBeforeDelete: true,
-          }),
-        },
-        mockEnv
-      );
-
-      expect(res.status).toBe(400);
-      const body = (await res.json()) as any;
-      expect(body.error_description).toContain('archiveBeforeDelete requires an archive target');
-    });
+  it.each([
+    { defaultEventBackend: 'd1-core' },
+    { defaultPiiBackend: 'r2' },
+    { batchConfig: { maxBatchSize: 10 } },
+    { backends: [] },
+    { auditProfileId: 'builtin:audit:archive-only' },
+    {},
+  ])('rejects storage mutations without changing KV or profile: %j', async (body) => {
+    const f = createTestApp();
+    const adminPrepare = vi.spyOn(f.mockEnv.DB_ADMIN, 'prepare');
+    expect((await request(f, '', 'PUT', body)).status).toBe(501);
+    expect(f.kvPut).not.toHaveBeenCalled();
+    expect(f.settingsPut).not.toHaveBeenCalled();
+    expect(adminPrepare).not.toHaveBeenCalled();
   });
-
-  // ==========================================================================
-  // Routing Rules
-  // ==========================================================================
-
-  describe('GET /api/admin/settings/audit-storage/routing-rules', () => {
-    it('should return empty rules by default', async () => {
-      const { app, mockEnv } = createTestApp();
-
-      const res = await app.request(
-        '/api/admin/settings/audit-storage/routing-rules',
-        { method: 'GET' },
-        mockEnv
-      );
-
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as any;
-
-      expect(body.rules).toEqual([]);
-      expect(body.count).toBe(0);
+  it('does not claim a manual cleanup ran', async () => {
+    const f = createTestApp();
+    const res = await request(f, '/cleanup', 'POST', {});
+    expect(res.status).toBe(501);
+    expect(await res.json()).toMatchObject({
+      error: 'not_supported',
+      executed: false,
+      managed: true,
+      schedule: 'every_minute',
     });
-
-    it('should return stored routing rules', async () => {
-      const rules = [
-        {
-          name: 'EU Data',
-          priority: 10,
-          enabled: true,
-          conditions: { region: 'eu' },
-          backend: 'hyperdrive',
-        },
-      ];
-
-      const mockKV = createMockKV({
-        audit_routing_rules: JSON.stringify(rules),
-      });
-      const { app, mockEnv } = createTestApp({ kv: mockKV });
-
-      const res = await app.request(
-        '/api/admin/settings/audit-storage/routing-rules',
-        { method: 'GET' },
-        mockEnv
-      );
-
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as any;
-
-      expect(body.rules).toHaveLength(1);
-      expect(body.rules[0].name).toBe('EU Data');
-      expect(body.rules[0].targets).toEqual({ primaryStore: 'hyperdrive' });
-      expect(body.rules[0].backend).toBeUndefined();
-    });
+    expect(f.dbBatch).not.toHaveBeenCalled();
   });
-
-  describe('POST /api/admin/settings/audit-storage/routing-rules', () => {
-    it('should add a new routing rule', async () => {
-      const mockKV = createMockKV();
-      const { app, mockEnv } = createTestApp({ kv: mockKV });
-
-      const res = await app.request(
-        '/api/admin/settings/audit-storage/routing-rules',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: 'High Priority Tenant',
-            priority: 100,
-            enabled: true,
-            conditions: { tenantId: 'premium-tenant' },
-            targets: {
-              primaryStore: 'd1-core',
-              forwardingSinks: ['logpush-premium'],
-            },
-          }),
-        },
-        mockEnv
-      );
-
-      // addRoutingRule returns 200 not 201
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as any;
-
-      expect(body.success).toBe(true);
-      expect(body.rule.name).toBe('High Priority Tenant');
-      expect(body.rule.targets).toEqual({
-        primaryStore: 'd1-core',
-        forwardingSinks: ['logpush-premium'],
-      });
+  it('keeps the event and PII day settings in the audit profile', async () => {
+    const f = createTestApp();
+    const res = await request(f, '/retention', 'PUT', {
+      eventLogRetentionDays: 180,
+      piiLogRetentionDays: 730,
     });
-
-    it('should reject rule without name', async () => {
-      const { app, mockEnv } = createTestApp();
-
-      const res = await app.request(
-        '/api/admin/settings/audit-storage/routing-rules',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            priority: 100,
-            backend: 'd1-core',
-          }),
-        },
-        mockEnv
-      );
-
-      expect(res.status).toBe(400);
-      const body = (await res.json()) as any;
-
-      expect(body.error_description).toContain('name is required');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      success: true,
+      config: { eventLogRetentionDays: 180, piiLogRetentionDays: 730 },
     });
-
-    it('accepts legacy backend and normalizes it to targets.primaryStore', async () => {
-      const mockKV = createMockKV();
-      const { app, mockEnv, mockKV: kv } = createTestApp({ kv: mockKV });
-
-      const res = await app.request(
-        '/api/admin/settings/audit-storage/routing-rules',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: 'Legacy Backend Rule',
-            priority: 50,
-            enabled: true,
-            conditions: { logType: 'event' },
-            backend: 'd1-core',
-          }),
-        },
-        mockEnv
-      );
-
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as any;
-      expect(body.rule.targets).toEqual({ primaryStore: 'd1-core' });
-      expect(body.rule.backend).toBeUndefined();
-
-      const [, storedValue] = (kv.put as any).mock.calls.at(-1);
-      expect(JSON.parse(storedValue)).toEqual([
-        expect.objectContaining({
-          name: 'Legacy Backend Rule',
-          targets: { primaryStore: 'd1-core' },
-        }),
-      ]);
+    const after = await request(f, '/retention');
+    expect(await after.json()).toMatchObject({
+      config: { eventLogRetentionDays: 180, piiLogRetentionDays: 730 },
     });
-
-    it('rejects a rule when no targets are configured', async () => {
-      const { app, mockEnv } = createTestApp();
-
-      const res = await app.request(
-        '/api/admin/settings/audit-storage/routing-rules',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: 'No Target Rule',
-            priority: 100,
-            enabled: true,
-            conditions: { tenantId: 'tenant-1' },
-            targets: {},
-          }),
-        },
-        mockEnv
-      );
-
-      expect(res.status).toBe(400);
-      const body = (await res.json()) as any;
-      expect(body.error_description).toContain('at least one target is required');
-    });
+    expect(await f.mockKV.get('audit_storage_config')).toBeNull();
   });
-
-  describe('PUT /api/admin/settings/audit-storage/routing-rules', () => {
-    it('sorts and stores canonical target-based rules', async () => {
-      const mockKV = createMockKV();
-      const { app, mockEnv, mockKV: kv } = createTestApp({ kv: mockKV });
-
-      const res = await app.request(
-        '/api/admin/settings/audit-storage/routing-rules',
-        {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            rules: [
-              {
-                name: 'Archive First',
-                priority: 20,
-                enabled: true,
-                conditions: { logType: 'event' },
-                targets: { archiveStores: ['r2-archive'] },
-              },
-              {
-                name: 'Hot Path',
-                priority: 10,
-                enabled: true,
-                conditions: { tenantId: 'tenant-1' },
-                backend: 'd1-core',
-              },
-            ],
-          }),
-        },
-        mockEnv
-      );
-
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as any;
-      expect(body.rules.map((rule: any) => rule.name)).toEqual(['Hot Path', 'Archive First']);
-      expect(body.rules[0].targets).toEqual({ primaryStore: 'd1-core' });
-      expect(body.rules[1].targets).toEqual({ archiveStores: ['r2-archive'] });
-
-      const [, storedValue] = (kv.put as any).mock.calls.at(-1);
-      const stored = JSON.parse(storedValue);
-      expect(stored[0].backend).toBeUndefined();
-      expect(stored[0].targets).toEqual({ primaryStore: 'd1-core' });
-    });
+  it.each([
+    { archiveBeforeDelete: true },
+    { archiveBeforeDelete: false },
+    { minimumRetentionDays: 90 },
+    { eventLogRetentionDays: 0 },
+    { piiLogRetentionDays: 2556 },
+    { eventLogRetentionDays: 1.5 },
+    { piiLogRetentionDays: '30' },
+    {},
+  ])('rejects ineffective or invalid retention without any write: %j', async (body) => {
+    const f = createTestApp();
+    expect((await request(f, '/retention', 'PUT', body)).status).toBe(400);
+    expect(f.kvPut).not.toHaveBeenCalled();
+    expect(f.settingsPut).not.toHaveBeenCalled();
   });
-
-  describe('DELETE /api/admin/settings/audit-storage/routing-rules/:name', () => {
-    it('should delete an existing rule', async () => {
-      const rules = [
-        {
-          name: 'To Delete',
-          priority: 10,
-          enabled: true,
-          conditions: {},
-          targets: { primaryStore: 'd1-core' },
-        },
-        {
-          name: 'To Keep',
-          priority: 20,
-          enabled: true,
-          conditions: {},
-          targets: { primaryStore: 'd1-pii' },
-        },
-      ];
-
-      const mockKV = createMockKV({
-        audit_routing_rules: JSON.stringify(rules),
-      });
-      const { app, mockEnv } = createTestApp({ kv: mockKV });
-
-      // Use rule name, not id
-      const res = await app.request(
-        '/api/admin/settings/audit-storage/routing-rules/To Delete',
-        { method: 'DELETE' },
-        mockEnv
-      );
-
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as any;
-
-      expect(body.success).toBe(true);
-      expect(body.remaining_rules).toBe(1);
+  it('stores only conditions and days, preserving priority and applying tenant-scoped retention', async () => {
+    const f = createTestApp();
+    const rules = [
+      rule({
+        name: 'client',
+        priority: 1,
+        conditions: { tenantId: 'tenant-a', clientId: 'app' },
+        retention: { eventLogRetentionDays: 7 },
+      }),
+      rule(),
+    ];
+    expect((await request(f, '/routing-rules', 'PUT', { rules })).status).toBe(200);
+    const stored = JSON.parse(
+      (await f.mockKV.get('audit_routing_rules')) as string
+    ) as typeof rules;
+    expect(stored).toEqual(rules);
+    expect(stored.every((r) => !('targets' in r) && !('backend' in r))).toBe(true);
+    const profile = {
+      id: 'audit',
+      kind: 'audit' as const,
+      label: 'Audit',
+      primary: null,
+      archive: null,
+      sinks: [],
+    };
+    const a = await resolveTenantAuditRetentionFromEnv(f.mockEnv, 'tenant-a', {
+      auditProfile: profile,
     });
-
-    it('should return 404 for non-existent rule', async () => {
-      const mockKV = createMockKV({
-        audit_routing_rules: JSON.stringify([]),
-      });
-      const { app, mockEnv } = createTestApp({ kv: mockKV });
-
-      const res = await app.request(
-        '/api/admin/settings/audit-storage/routing-rules/nonexistent',
-        { method: 'DELETE' },
-        mockEnv
-      );
-
-      expect(res.status).toBe(404);
+    const b = await resolveTenantAuditRetentionFromEnv(f.mockEnv, 'tenant-b', {
+      auditProfile: profile,
     });
+    expect(a.event).toMatchObject({ days: 30, variesByRoute: true, source: 'delivery_plan' });
+    expect(b.event.days).toBe(90);
+    const app = resolveAuditRoutingTargets(
+      { ...DEFAULT_AUDIT_STORAGE_CONFIG, routingRules: stored },
+      { tenantId: 'tenant-a', logType: 'event', clientId: 'app' }
+    );
+    expect(app.retention.eventLogRetentionDays).toBe(7);
+    expect(app.archiveStores).toEqual([]);
   });
-
-  // ==========================================================================
-  // Retention Cleanup
-  // ==========================================================================
-
-  describe('POST /api/admin/settings/audit-storage/cleanup', () => {
-    it('should trigger retention cleanup', async () => {
-      const mockDB = createMockD1();
-      const { app, mockEnv } = createTestApp({ db: mockDB });
-
-      const res = await app.request(
-        '/api/admin/settings/audit-storage/cleanup',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({}),
-        },
-        mockEnv
-      );
-
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as any;
-
-      // This endpoint returns info about scheduled cleanup, not actual deletion
-      expect(body.success).toBe(true);
-      expect(body.profile_id).toBe(DEFAULT_AUDIT_PROFILE_ID);
-      expect(body.note).toBeDefined();
-      expect(body.scheduled_cleanup).toBeDefined();
-      expect(body.hot_query.status).toBe('supported');
-      expect(body.operational_policy.cleanup.primaryRetentionDeleteSupported).toBe(true);
+  it('creates, reads and deletes retention-only rules', async () => {
+    const f = createTestApp();
+    expect((await request(f, '/routing-rules', 'POST', rule())).status).toBe(200);
+    expect((await request(f, '/routing-rules', 'POST', rule())).status).toBe(400);
+    expect(await (await request(f, '/routing-rules')).json()).toMatchObject({
+      count: 1,
+      rules: [rule()],
     });
-
-    it('marks archive-only profiles as hot-query unsupported', async () => {
-      const mockKV = createMockKV({
-        'profile-registry:audit:archive-only': JSON.stringify({
-          id: 'archive-only',
-          kind: 'audit',
-          label: 'Archive Only',
-          builtin: false,
-          primary: null,
-          archive: {
-            type: 'r2',
-            bucketRef: 'DIAGNOSTIC_LOGS',
-            prefix: 'audit/',
-          },
-          sinks: [],
-        }),
-      });
-      const { app, mockEnv } = createTestApp({
-        kv: mockKV,
-        defaultAuditProfileId: 'archive-only',
-      });
-
-      const res = await app.request(
-        '/api/admin/settings/audit-storage/cleanup',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({}),
-        },
-        mockEnv
-      );
-
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as any;
-      expect(body.profile_id).toBe('archive-only');
-      expect(body.hot_query.status).toBe('not_supported');
-      expect(body.functions.event_log).toBeNull();
-      expect(body.operational_policy.cleanup.mode).toBe('archive_only');
-    });
-
-    it('marks postgres primary as supported when a Hyperdrive binding is resolved', async () => {
-      const mockKV = createMockKV({
-        'profile-registry:audit:pg-primary': JSON.stringify({
-          id: 'pg-primary',
-          kind: 'audit',
-          label: 'Postgres Primary',
-          builtin: false,
-          primary: {
-            type: 'postgres',
-            bindingRef: 'HYPERDRIVE_AUDIT_PRIMARY',
-            connectionRef: 'audit-primary',
-          },
-          archive: null,
-          sinks: [],
-        }),
-      });
-      const { app, mockEnv } = createTestApp({
-        kv: mockKV,
-        defaultAuditProfileId: 'pg-primary',
-        extraEnv: {
-          HYPERDRIVE_AUDIT_PRIMARY: {
-            connectionString: 'postgres://example',
-          },
-        },
-      });
-
-      const res = await app.request(
-        '/api/admin/settings/audit-storage/cleanup',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({}),
-        },
-        mockEnv
-      );
-
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as any;
-      expect(body.profile_id).toBe('pg-primary');
-      expect(body.hot_query.status).toBe('supported');
-      expect(body.functions.event_log).toBe(
-        'cleanupExpiredTenantEventLogs(db, tenantId, batchSize) / cleanupExpiredGlobalEventLogs(db, batchSize)'
-      );
-      expect(body.operational_policy.cleanup.mode).toBe('primary_delete_by_retention');
-    });
-
-    it('surfaces pending archive-before-delete enforcement as an operational warning', async () => {
-      const mockKV = createMockKV({
-        'profile-registry:audit:archive-before-delete': JSON.stringify({
-          id: 'archive-before-delete',
-          kind: 'audit',
-          label: 'Archive Before Delete',
-          builtin: false,
-          primary: {
-            type: 'd1',
-            bindingRef: 'DB',
-            dataset: 'event_log',
-          },
-          archive: {
-            type: 'r2',
-            bucketRef: 'DIAGNOSTIC_LOGS',
-            prefix: 'audit/',
-          },
-          sinks: [],
-          retention: {
-            eventLogRetentionDays: 90,
-            piiLogRetentionDays: 365,
-            archiveBeforeDelete: true,
-          },
-        }),
-      });
-      const { app, mockEnv } = createTestApp({
-        kv: mockKV,
-        defaultAuditProfileId: 'archive-before-delete',
-      });
-
-      const res = await app.request(
-        '/api/admin/settings/audit-storage/cleanup',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({}),
-        },
-        mockEnv
-      );
-
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as any;
-      expect(body.operational_policy.retention.archiveBeforeDelete).toBe(true);
-      expect(body.operational_policy.retention.archiveBeforeDeleteStatus).toBe('enforced');
-      expect(body.operational_policy.retention.note).toContain(
-        'Scheduled retention cleanup rewrites expiring records'
-      );
-      expect(body.operational_policy.warnings).toEqual([]);
-    });
+    expect((await request(f, '/routing-rules/tenant-retention', 'DELETE')).status).toBe(200);
+    expect(await f.mockKV.get('audit_routing_rules')).toBe('[]');
+    expect((await request(f, '/routing-rules/tenant-retention', 'DELETE')).status).toBe(404);
   });
-
-  // ==========================================================================
-  // Storage Stats
-  // ==========================================================================
-
-  describe('GET /api/admin/settings/audit-storage/stats', () => {
-    it('should return storage statistics', async () => {
-      const mockDB = createMockD1();
-      const { app, mockEnv } = createTestApp({ db: mockDB });
-
-      const res = await app.request(
-        '/api/admin/settings/audit-storage/stats',
-        { method: 'GET' },
-        mockEnv
-      );
-
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as any;
-
-      expect(body.profile_id).toBe(DEFAULT_AUDIT_PROFILE_ID);
-      expect(body.targets.primary).toBeDefined();
-      expect(body.targets.primary.type).toBe('d1');
-      expect(body.hot_query.status).toBe('supported');
-      expect(body.operational_policy.deliveryGuarantee.primary).toBe('sync_request_path');
-      expect(body.queue.audit_queue.retryLimit).toBe(5);
-      expect(body.queue.audit_queue.archiveBackupStatus).toBe('configured');
-    });
-
-    it('returns archive-only stats when the resolved audit profile has no primary store', async () => {
-      const mockKV = createMockKV({
-        'profile-registry:audit:archive-only': JSON.stringify({
-          id: 'archive-only',
-          kind: 'audit',
-          label: 'Archive Only',
-          builtin: false,
-          primary: null,
-          archive: {
-            type: 'r2',
-            bucketRef: 'DIAGNOSTIC_LOGS',
-            prefix: 'audit/',
-          },
-          sinks: [
-            {
-              type: 'logpush',
-              destinationRef: 'workers-logpush',
-              dataset: 'authrim_audit',
-            },
-          ],
-        }),
-      });
-      const { app, mockEnv } = createTestApp({
-        kv: mockKV,
-        defaultAuditProfileId: 'archive-only',
-      });
-
-      const res = await app.request(
-        '/api/admin/settings/audit-storage/stats',
-        { method: 'GET' },
-        mockEnv
-      );
-
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as any;
-      expect(body.profile_id).toBe('archive-only');
-      expect(body.targets.primary).toBeNull();
-      expect(body.targets.archive.type).toBe('r2');
-      expect(body.targets.sinks).toHaveLength(1);
-      expect(body.hot_query.status).toBe('not_supported');
-      expect(body.operational_policy.deliveryGuarantee.archive).toBe('best_effort');
-      expect(body.operational_policy.deliveryGuarantee.sink).toBe('best_effort');
-      expect(body.operational_policy.deliveryGuarantee.primary).toBe('none');
-    });
-
-    it('returns supported hot-query stats for postgres primary when a binding is configured', async () => {
-      const mockKV = createMockKV({
-        'profile-registry:audit:pg-primary': JSON.stringify({
-          id: 'pg-primary',
-          kind: 'audit',
-          label: 'Postgres Primary',
-          builtin: false,
-          primary: {
-            type: 'postgres',
-            bindingRef: 'HYPERDRIVE_AUDIT_PRIMARY',
-            connectionRef: 'audit-primary',
-          },
-          archive: null,
-          sinks: [],
-        }),
-      });
-      const { app, mockEnv } = createTestApp({
-        kv: mockKV,
-        defaultAuditProfileId: 'pg-primary',
-        extraEnv: {
-          HYPERDRIVE_AUDIT_PRIMARY: {
-            connectionString: 'postgres://example',
-          },
-        },
-      });
-
-      const res = await app.request(
-        '/api/admin/settings/audit-storage/stats',
-        { method: 'GET' },
-        mockEnv
-      );
-
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as any;
-      expect(body.profile_id).toBe('pg-primary');
-      expect(body.targets.primary.type).toBe('postgres');
-      expect(body.hot_query.status).toBe('supported');
-      expect(body.hot_query.supported).toBe(true);
-      expect(body.operational_policy.cleanup.primaryRetentionDeleteSupported).toBe(true);
-    });
-
-    it('returns pending runtime support for postgres primary without a binding', async () => {
-      const mockKV = createMockKV({
-        'profile-registry:audit:pg-primary': JSON.stringify({
-          id: 'pg-primary',
-          kind: 'audit',
-          label: 'Postgres Primary',
-          builtin: false,
-          primary: {
-            type: 'postgres',
-            bindingRef: 'HYPERDRIVE_AUDIT_PRIMARY',
-            connectionRef: 'audit-primary',
-          },
-          archive: null,
-          sinks: [],
-        }),
-      });
-      const { app, mockEnv } = createTestApp({
-        kv: mockKV,
-        defaultAuditProfileId: 'pg-primary',
-      });
-
-      const res = await app.request(
-        '/api/admin/settings/audit-storage/stats',
-        { method: 'GET' },
-        mockEnv
-      );
-
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as any;
-      expect(body.profile_id).toBe('pg-primary');
-      expect(body.hot_query.status).toBe('pending_runtime_support');
-      expect(body.hot_query.supported).toBe(false);
-      expect(body.operational_policy.cleanup.mode).toBe('pending_runtime_support');
-    });
-
-    it('returns supported hot-query status for mysql primary with a Hyperdrive binding', async () => {
-      const mockKV = createMockKV({
-        'profile-registry:audit:mysql-primary': JSON.stringify({
-          id: 'mysql-primary',
-          kind: 'audit',
-          label: 'MySQL Primary',
-          builtin: false,
-          primary: {
-            type: 'mysql',
-            bindingRef: 'HYPERDRIVE_AUDIT_PRIMARY_MYSQL',
-            connectionRef: 'audit-primary-mysql',
-          },
-          archive: null,
-          sinks: [],
-        }),
-      });
-      const { app, mockEnv } = createTestApp({
-        kv: mockKV,
-        defaultAuditProfileId: 'mysql-primary',
-        extraEnv: {
-          HYPERDRIVE_AUDIT_PRIMARY_MYSQL: {
-            connectionString: 'mysql://example',
-            host: 'mysql.example.com',
-            user: 'audit',
-            password: 'secret',
-            database: 'authrim',
-            port: 3306,
-          },
-        },
-      });
-
-      const res = await app.request(
-        '/api/admin/settings/audit-storage/stats',
-        { method: 'GET' },
-        mockEnv
-      );
-
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as any;
-      expect(body.profile_id).toBe('mysql-primary');
-      expect(body.targets.primary.type).toBe('mysql');
-      expect(body.hot_query.status).toBe('supported');
-      expect(body.hot_query.supported).toBe(true);
-      expect(body.operational_policy.cleanup.primaryRetentionDeleteSupported).toBe(true);
-    });
+  it.each([
+    { targets: {} },
+    { targets: { primaryStore: 'other' } },
+    { backend: 'd1-core' },
+    { retention: { archiveBeforeDelete: true } },
+    { retention: { minimumRetentionDays: 1 } },
+    { retention: {} },
+    { conditions: { logType: 'bad' } },
+    { conditions: { logType: ['event'] } },
+    { conditions: { region: 42 } },
+    { conditions: { region: 'EU' } },
+    { conditions: { region: ['EU'] } },
+  ])(
+    'rejects old targets and invalid retention on POST and PUT without storing %j',
+    async (override) => {
+      for (const method of ['POST', 'PUT']) {
+        const f = createTestApp();
+        expect(
+          (
+            await request(
+              f,
+              '/routing-rules',
+              method,
+              method === 'POST' ? rule(override) : { rules: [rule(override)] }
+            )
+          ).status
+        ).toBe(400);
+        expect(f.kvPut).not.toHaveBeenCalled();
+      }
+    }
+  );
+  it('accepts the explicit any-region condition', async () => {
+    const f = createTestApp();
+    expect(
+      (await request(f, '/routing-rules', 'POST', rule({ conditions: { region: '*' } }))).status
+    ).toBe(200);
+  });
+  it('does not overwrite unreadable stored rules or report them as an empty configuration', async () => {
+    const f = createTestApp({ kv: createMockKV({ audit_routing_rules: '{broken' }) });
+    expect((await request(f, '/routing-rules')).status).toBe(503);
+    expect((await request(f, '/routing-rules', 'POST', rule())).status).toBe(503);
+    expect((await request(f, '/routing-rules/name', 'DELETE')).status).toBe(503);
+    expect(f.kvPut).not.toHaveBeenCalled();
   });
 });

@@ -49,6 +49,12 @@ export interface LoginUiClientConfig {
   onProgress?: (message: string) => void;
   /** Optional tenant ID for tenant-scoped admin APIs */
   tenantId?: string;
+  /**
+   * Distinguishes this attempt's create request from earlier ones. The server replays the stored
+   * response for a repeated Idempotency-Key, including a failure, so a retry after a failed
+   * attempt (for example once a misconfiguration is fixed) needs a fresh key.
+   */
+  idempotencyKeySalt?: string;
   /** Retry delay override for tests/debugging */
   retryDelayMs?: number;
   /** Retry count override for tests/debugging */
@@ -187,13 +193,14 @@ const LOGIN_UI_CLIENT_NAME = 'Login UI';
 const LOGIN_UI_CLIENT_DESCRIPTION =
   'System-managed public OAuth client used by the built-in Authrim Login UI.';
 
-function buildCreateIdempotencyKey(loginUiUrl: string, tenantId?: string): string {
+function buildCreateIdempotencyKey(loginUiUrl: string, tenantId?: string, salt?: string): string {
   const digest = createHash('sha256')
     .update(
       JSON.stringify({
         operation: 'ensure-login-ui-client-v1',
         tenantId: tenantId?.trim() || 'default',
         loginUiOrigin: normalizeApiBaseUrl(loginUiUrl),
+        ...(salt ? { salt } : {}),
       })
     )
     .digest('hex')
@@ -220,7 +227,7 @@ function buildRedirectUris(loginUiUrl: string): string[] {
   ];
 }
 
-async function resolveAdminBearerToken(options: {
+export async function resolveAdminBearerToken(options: {
   apiBaseUrl: string;
   keysDir: string;
   adminBearerToken?: string;
@@ -342,7 +349,8 @@ async function createClient(
   apiBaseUrl: string,
   adminSecret: string,
   loginUiUrl: string,
-  tenantId?: string
+  tenantId?: string,
+  idempotencyKeySalt?: string
 ): Promise<string> {
   const redirectUris = buildRedirectUris(loginUiUrl);
 
@@ -352,7 +360,7 @@ async function createClient(
       Authorization: `Bearer ${adminSecret}`,
       'Content-Type': 'application/json',
       Accept: 'application/json',
-      'Idempotency-Key': buildCreateIdempotencyKey(loginUiUrl, tenantId),
+      'Idempotency-Key': buildCreateIdempotencyKey(loginUiUrl, tenantId, idempotencyKeySalt),
       ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}),
     },
     body: JSON.stringify(
@@ -392,6 +400,7 @@ export async function ensureLoginUiClient(
     adminBearerToken: providedAdminBearerToken,
     onProgress,
     tenantId,
+    idempotencyKeySalt,
     retryDelayMs = LOGIN_UI_CLIENT_RETRY_BASE_DELAY_MS,
     maxRetries = LOGIN_UI_CLIENT_MAX_RETRIES,
   } = config;
@@ -456,7 +465,8 @@ export async function ensureLoginUiClient(
             candidateApiBaseUrl,
             adminBearerToken,
             loginUiUrl,
-            tenantId
+            tenantId,
+            idempotencyKeySalt
           );
 
           onProgress?.(`Login UI client created: ${clientId}`);

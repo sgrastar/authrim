@@ -2,10 +2,11 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { Env, IntrospectionResponse, DelegatedWriteAudit } from '@authrim/ar-lib-core';
 import {
+  ACCESS_TOKEN_SUBJECT_ISSUER_CLAIM,
   buildRequestIssuerUrl,
   consumeStepUpReceipt,
   createDelegatedWriteEnvelopeErrorResponse,
-  createAuthContextFromHono,
+  createAccountAuthContextFromHono,
   createDownstreamGrantProtectedResourceMiddleware,
   createDownstreamGrantServiceAuthorizer,
   createPIIContextFromHono,
@@ -16,7 +17,9 @@ import {
   getPublicKeyByKid,
   getProductProtectedResourceDefinition,
   introspectTokenFromContext,
+  isNonAccountSubject,
   issueStepUpToken,
+  markIdempotentResponseRetryable,
   parseDelegatedWriteEnvelope,
   projectDownstreamGrantProtectedResource,
   readResponseTextWithLimit,
@@ -24,6 +27,9 @@ import {
   resolveAccountDataContextFromHono,
   resolveProductProtectedResourceAudience,
   StepUpFlowError,
+  SUBJECT_PRINCIPAL_CLAIM,
+  SUBJECT_REFERENCE_CLAIM,
+  tokenNamesNonAccountPrincipal,
   DelegatedWriteEnvelopeError,
   CanonicalRuntimeUserStore,
   type CanonicalRuntimeUserProjection,
@@ -277,7 +283,8 @@ async function loadProtectedCustomerProfileFromEnv(input: {
   userId: string;
 }): Promise<ProtectedCustomerProfileResource | null> {
   await resolveAccountDataContextFromHono(input.c, input.userId);
-  const authCtx = createAuthContextFromHono(input.c, input.tenantId);
+  // The account's own Core database, with its PII database: the account just resolved.
+  const authCtx = createAccountAuthContextFromHono(input.c, input.tenantId);
   const piiCtx = createPIIContextFromHono(input.c, input.tenantId);
   const runtimeUsers = new CanonicalRuntimeUserStore({
     coreAdapter: authCtx.coreAdapter,
@@ -527,7 +534,37 @@ async function validateDelegatedWriteActorFromContext(input: {
       401
     );
   }
+  if (!tokenSubjectIsLocalAccountId(actorId, claims)) {
+    return customerProfileWriteDenied();
+  }
   return { actorId, claims };
+}
+
+/**
+ * Whether the token's sub is itself the id of the local account it acts for, so it can be compared
+ * with a path user id. A mapped (pairwise or persistent) sub carries a sealed account reference, an
+ * externally asserted subject carries its issuer, a client or admin principal is not an account,
+ * and a delegated token (act) acts for someone other than its sub: none of these is an account id.
+ */
+function tokenSubjectIsLocalAccountId(sub: string, claims: Record<string, unknown>): boolean {
+  return (
+    claims[SUBJECT_REFERENCE_CLAIM] === undefined &&
+    claims[ACCESS_TOKEN_SUBJECT_ISSUER_CLAIM] === undefined &&
+    claims[SUBJECT_PRINCIPAL_CLAIM] === undefined &&
+    claims.act === undefined &&
+    !isNonAccountSubject(sub) &&
+    !tokenNamesNonAccountPrincipal(claims)
+  );
+}
+
+function customerProfileWriteDenied(): Response {
+  return noStoreJson(
+    {
+      error: 'access_denied',
+      error_description: 'The access token is not authorized to update this customer profile.',
+    },
+    403
+  );
 }
 
 function rejectProductElevationToken(actor: DelegatedWriteActorContext): Response | null {
@@ -547,6 +584,21 @@ function rejectProductElevationToken(actor: DelegatedWriteActorContext): Respons
   return null;
 }
 
+/**
+ * Authorizes the token actor against the path subject before any step-up token is issued.
+ *
+ * No delegated-write authority (scope, grant, RBAC permission) is defined for this route, so the
+ * only permitted subject is the actor itself. Step-up confirmation is an additional requirement on
+ * top of this check and never grants access to another subject. The response is the same whether
+ * or not the target exists.
+ */
+function authorizeCustomerProfileWriteSubject(
+  actor: DelegatedWriteActorContext,
+  subjectUserId: string
+): Response | null {
+  return actor.actorId === subjectUserId ? null : customerProfileWriteDenied();
+}
+
 async function updateProtectedCustomerProfileFromEnv(input: {
   c: Context<{ Bindings: Env }>;
   tenantId: string;
@@ -554,7 +606,8 @@ async function updateProtectedCustomerProfileFromEnv(input: {
   update: CustomerProfileUpdateInput;
 }): Promise<ProtectedCustomerProfileResource | null> {
   await resolveAccountDataContextFromHono(input.c, input.subjectUserId);
-  const authCtx = createAuthContextFromHono(input.c, input.tenantId);
+  // The account's own Core database, with its PII database: the account just resolved.
+  const authCtx = createAccountAuthContextFromHono(input.c, input.tenantId);
   const piiCtx = createPIIContextFromHono(input.c, input.tenantId);
   const runtimeUsers = new CanonicalRuntimeUserStore({
     coreAdapter: authCtx.coreAdapter,
@@ -830,10 +883,11 @@ export function createProtectedCustomerProfileRouter(
     if (c.req.method !== 'PATCH') {
       return next();
     }
+    const subjectUserId = c.req.param('userId');
     const validator = options.validateDelegatedWriteActor ?? validateDelegatedWriteActorFromContext;
     const actorResult = await validator({
       c,
-      subjectUserId: c.req.param('userId')!,
+      subjectUserId,
     });
     if (actorResult instanceof Response) {
       return actorResult;
@@ -842,6 +896,10 @@ export function createProtectedCustomerProfileRouter(
     if (elevationRejection) {
       return elevationRejection;
     }
+    const subjectRejection = authorizeCustomerProfileWriteSubject(actorResult, subjectUserId);
+    if (subjectRejection) {
+      return subjectRejection;
+    }
     (c as any).set('delegatedWriteActor', actorResult);
     (c as any).set('adminAuth', { userId: actorResult.actorId });
     return next();
@@ -849,7 +907,14 @@ export function createProtectedCustomerProfileRouter(
 
   router.patch(
     '/users/:userId',
-    requiredIdempotencyMiddleware({ ttlSeconds: 300, redactFields: [] }),
+    // Reserve the key before the handler runs: a step_up_required answer leaves the key retryable
+    // (bound to the body), and only the reservation keeps two retries from both writing.
+    requiredIdempotencyMiddleware({
+      ttlSeconds: 300,
+      redactFields: [],
+      reserveBeforeExecution: true,
+      failClosedOnStorageError: true,
+    }),
     async (c) => {
       const actor = (c as any).get('delegatedWriteActor') as DelegatedWriteActorContext | undefined;
       if (!actor) {
@@ -862,7 +927,11 @@ export function createProtectedCustomerProfileRouter(
         );
       }
 
-      const subjectUserId = c.req.param('userId')!;
+      const subjectUserId = c.req.param('userId');
+      const subjectRejection = authorizeCustomerProfileWriteSubject(actor, subjectUserId);
+      if (subjectRejection) {
+        return subjectRejection;
+      }
       const body = await c.req.json().catch(() => null);
       let envelope;
       try {
@@ -897,6 +966,9 @@ export function createProtectedCustomerProfileRouter(
           operationHash,
           ...(idempotencyKey ? { idempotencyKey } : {}),
         });
+        // Nothing was written: the client completes step-up and retries with this
+        // Idempotency-Key, so the idempotency middleware must not replay this response to it.
+        markIdempotentResponseRetryable(c);
         return createStepUpErrorResponse(
           {
             error: 'step_up_required',
@@ -918,6 +990,8 @@ export function createProtectedCustomerProfileRouter(
           receipt,
         });
       } catch (error) {
+        // A refused receipt writes nothing either; a later retry with a valid one must run.
+        markIdempotentResponseRetryable(c);
         if (error instanceof StepUpFlowError) {
           return stepUpFlowErrorToResponse(error);
         }

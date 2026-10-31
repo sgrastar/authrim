@@ -17,6 +17,7 @@ import {
   validateToken,
   normalizeRedirectUri,
   isRedirectUriRegistered,
+  redirectUriMatchOptionsFor,
 } from '../validation';
 import {
   clientIdArb,
@@ -318,32 +319,93 @@ describe('Redirect URI Registration Properties', () => {
     ).toBe(false);
   });
 
-  it('allows only the ephemeral port to vary for RFC 8252 loopback IP redirects', () => {
+  it('allows only the ephemeral port to vary for RFC 8252 loopback IP redirects of native apps', () => {
+    const native = { nativeLoopbackAnyPort: true };
     expect(
-      isRedirectUriRegistered('http://127.0.0.1:58848/callback/nonce', [
-        'http://127.0.0.1:58483/callback/nonce',
-      ])
+      isRedirectUriRegistered(
+        'http://127.0.0.1:58848/callback/nonce',
+        ['http://127.0.0.1:58483/callback/nonce'],
+        native
+      )
     ).toBe(true);
     expect(
-      isRedirectUriRegistered('http://[::1]:58848/callback/nonce?channel=codex', [
-        'http://[::1]:58483/callback/nonce?channel=codex',
-      ])
+      isRedirectUriRegistered(
+        'http://[::1]:58848/callback/nonce?channel=codex',
+        ['http://[::1]:58483/callback/nonce?channel=codex'],
+        native
+      )
     ).toBe(true);
     expect(
-      isRedirectUriRegistered('http://127.0.0.1:58848/callback/other', [
-        'http://127.0.0.1:58483/callback/nonce',
-      ])
+      isRedirectUriRegistered(
+        'http://127.0.0.1/callback/nonce',
+        ['http://127.0.0.1:58483/callback/nonce'],
+        native
+      )
+    ).toBe(true);
+    // Anything but the port must still match exactly.
+    for (const provided of [
+      'http://127.0.0.1:58848/callback/other',
+      'http://127.0.0.1:58848/callback/nonce?tenant=evil',
+      'http://127.0.0.1:58848/callback/nonce/',
+      'http://[::1]:58848/callback/nonce',
+      'http://127.0.0.2:58848/callback/nonce',
+      'https://127.0.0.1:58848/callback/nonce',
+      'http://user@127.0.0.1:58848/callback/nonce',
+      'http://127.0.0.1:58848/callback/nonce#frag',
+    ]) {
+      expect(
+        isRedirectUriRegistered(provided, ['http://127.0.0.1:58483/callback/nonce'], native),
+        provided
+      ).toBe(false);
+    }
+    expect(
+      isRedirectUriRegistered(
+        'http://127.0.0.1:58848/callback/nonce?tenant=evil',
+        ['http://127.0.0.1:58483/callback/nonce?tenant=good'],
+        native
+      )
     ).toBe(false);
     expect(
-      isRedirectUriRegistered('http://localhost:58848/callback/nonce', [
-        'http://localhost:58483/callback/nonce',
-      ])
+      isRedirectUriRegistered(
+        'http://localhost:58848/callback/nonce',
+        ['http://localhost:58483/callback/nonce'],
+        native
+      )
     ).toBe(false);
     expect(
-      isRedirectUriRegistered('https://127.0.0.1:58848/callback/nonce', [
-        'https://127.0.0.1:58483/callback/nonce',
-      ])
+      isRedirectUriRegistered(
+        'https://127.0.0.1:58848/callback/nonce',
+        ['https://127.0.0.1:58483/callback/nonce'],
+        native
+      )
     ).toBe(false);
+  });
+
+  it('matches loopback redirects of other clients exactly, port included', () => {
+    for (const options of [
+      undefined,
+      {},
+      redirectUriMatchOptionsFor({ application_type: 'web' }),
+      redirectUriMatchOptionsFor({}),
+    ]) {
+      expect(
+        isRedirectUriRegistered(
+          'http://127.0.0.1:58848/callback/nonce',
+          ['http://127.0.0.1:58483/callback/nonce'],
+          options
+        )
+      ).toBe(false);
+      expect(
+        isRedirectUriRegistered(
+          'http://127.0.0.1:58483/callback/nonce',
+          ['http://127.0.0.1:58483/callback/nonce'],
+          options
+        )
+      ).toBe(true);
+    }
+    expect(redirectUriMatchOptionsFor({ application_type: 'native' })).toEqual({
+      nativeLoopbackAnyPort: true,
+    });
   });
 
   it('accepts IPv4 and IPv6 loopback HTTP only when the caller enables it', () => {

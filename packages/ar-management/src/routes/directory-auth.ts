@@ -1,4 +1,5 @@
-import { z } from 'zod';
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
+import { z } from '../zod';
 import type { Context } from 'hono';
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 import {
@@ -44,6 +45,8 @@ import {
   type DirectoryAuthSupportBundleRow,
   type DirectoryAuthMigrationUserState,
   type DirectoryAuthSupportBundleRedactionLevel,
+  ADMIN_ROLES,
+  ADMIN_ROLE_GROUPS,
 } from '@authrim/ar-lib-core';
 import {
   applyDirectoryConnectorFleetPolicy,
@@ -68,12 +71,9 @@ const DIRECTORY_AUTH_EVIDENCE_EXPORT_PERMISSION =
   ADMIN_PERMISSIONS.DIRECTORY_AUTH_EVIDENCE_EXPORT_CREATE;
 const DIRECTORY_AUTH_MIGRATION_WRITE_PERMISSION = ADMIN_PERMISSIONS.DIRECTORY_AUTH_MIGRATION_WRITE;
 const DIRECTORY_AUTH_WRITE_PERMISSION = ADMIN_PERMISSIONS.DIRECTORY_AUTH_WRITE;
-const DIRECTORY_AUTH_TENANT_ADMIN_ROLES = new Set([
-  'system_admin',
-  'distributor_admin',
-  'tenant_admin',
-  'admin',
-]);
+const DIRECTORY_AUTH_TENANT_ADMIN_ROLES: ReadonlySet<string> = new Set(
+  ADMIN_ROLE_GROUPS.tenantAdmin
+);
 
 const EmailCodeFallbackModeSchema = z.enum([
   'migration_recovery',
@@ -215,9 +215,7 @@ function adminActorId(c: Context<{ Bindings: Env }>): string {
 
 function isElevatedAdmin(c: Context<{ Bindings: Env }>): boolean {
   const adminAuth = getAdminAuth(c);
-  return Boolean(
-    adminAuth?.roles.some((role) => role === 'system_admin' || role === 'super_admin')
-  );
+  return Boolean(adminAuth?.roles.some((role) => role === ADMIN_ROLES.SUPER_ADMIN));
 }
 
 async function requireTenantAccess(c: Context<{ Bindings: Env }>, tenantId: string) {
@@ -230,7 +228,7 @@ async function requireTenantAdminRole(c: Context<{ Bindings: Env }>, reason: str
   if (roles.some((role) => DIRECTORY_AUTH_TENANT_ADMIN_ROLES.has(role))) return null;
   return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS, {
     variables: {
-      required_role: 'tenant_admin',
+      required_role: ADMIN_ROLES.TENANT_ADMIN,
       reason,
     },
   });
@@ -736,7 +734,7 @@ export async function getDirectoryAuthOverviewHandler(c: Context<{ Bindings: Env
     supportBundles,
     configHistory,
     advisories,
-  ] = await Promise.all([
+  ] = await samlDrAll([
     listDirectoryAuthMigrationCampaigns(adapter, tenantId),
     listDirectoryAuthMigrationUserStates(adapter, tenantId, { limit: 20 }),
     ensureDirectoryAuthTenantPolicy(adapter, tenantId, adminActorId(c)),
@@ -785,7 +783,7 @@ export async function listDirectoryAuthMigrationCampaignsHandler(c: Context<{ Bi
 
   const adapter = coreAdapter(c, tenantId);
   await ensureDirectoryAuthDefaults(adapter, tenantId, adminActorId(c));
-  const [campaigns, tenantPolicy] = await Promise.all([
+  const [campaigns, tenantPolicy] = await samlDrAll([
     listDirectoryAuthMigrationCampaigns(adapter, tenantId),
     ensureDirectoryAuthTenantPolicy(adapter, tenantId, adminActorId(c)),
   ]);

@@ -1,4 +1,8 @@
 <script lang="ts">
+	import { LogPager } from '$lib/admin/log-pager.svelte';
+	import LogCursorPager from '$lib/components/admin/LogCursorPager.svelte';
+	const logPager = new LogPager();
+	let loadGeneration = 0;
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
@@ -16,7 +20,7 @@
 	import AdminPagination from '$lib/components/admin/AdminPagination.svelte';
 	import AdminSection from '$lib/components/admin/AdminSection.svelte';
 	import AdminToolbar from '$lib/components/admin/AdminToolbar.svelte';
-	import { formatAccountAuditAction } from '$lib/admin/account-audit-action-label';
+	import { formatGuestAwareAuditAction } from '$lib/admin/account-audit-action-label';
 	import {
 		adminEmailDeliveriesAPI,
 		type EmailDeliveryRecord
@@ -49,6 +53,7 @@
 	let loadedTenantId = $state('');
 
 	async function loadAuditLogs() {
+		const mine = ++loadGeneration;
 		loading = true;
 		error = '';
 
@@ -80,13 +85,18 @@
 				params.end_date = new Date(endDateParsed + 86399999).toISOString();
 			}
 
+			logPager.prepare(JSON.stringify([settingsContext.tenantId, { ...params, page: undefined }]));
+			params.cursor = logPager.cursor;
 			const response = await adminAuditLogsAPI.list(params);
+			if (mine !== loadGeneration) return;
 			entries = response.entries;
 			pagination = response.pagination;
+			logPager.info = 'mode' in response.pagination ? response.pagination : undefined;
 		} catch (err) {
+			if (mine !== loadGeneration) return;
 			error = err instanceof Error ? err.message : $LL.admin_audit_logs_load_failed();
 		} finally {
-			loading = false;
+			if (mine === loadGeneration) loading = false;
 		}
 	}
 
@@ -147,9 +157,9 @@
 		return new Date(isoString).toLocaleString();
 	}
 
-	function formatAction(action: string): string {
-		const accountAction = formatAccountAuditAction(action, getLocale());
-		if (accountAction) return accountAction;
+	function formatAction(action: string, metadata: Record<string, unknown> | null = null): string {
+		const guestAwareAction = formatGuestAwareAuditAction(action, metadata, getLocale());
+		if (guestAwareAction) return guestAwareAction;
 		switch (action) {
 			case 'user.login':
 				return $LL.admin_audit_logs_action_user_login();
@@ -247,7 +257,12 @@
 			return 'badge badge-danger';
 		}
 		// Success/Create/Login actions (green)
-		if (action.includes('create') || action.includes('queued') || action.includes('login')) {
+		if (
+			action.includes('create') ||
+			action.includes('queued') ||
+			action.includes('login') ||
+			action === 'account.guest.upgraded'
+		) {
 			return 'badge badge-success';
 		}
 		// Logout actions (light cyan/teal)
@@ -257,6 +272,7 @@
 		// Update/Change actions (blue)
 		if (
 			action.includes('update') ||
+			action === 'account.guest.upgrade_started' ||
 			action.includes('rotate') ||
 			action.includes('regenerate') ||
 			action.includes('replay') ||
@@ -435,15 +451,22 @@
 				<tbody>
 					{#each entries as entry (entry.id)}
 						<tr
-							onclick={() => goto(`/admin/audit-logs/${entry.id}`)}
-							onkeydown={(e) => e.key === 'Enter' && goto(`/admin/audit-logs/${entry.id}`)}
+							onclick={() =>
+								goto(
+									`/admin/audit-logs/${encodeURIComponent(entry.id)}?event_at=${Date.parse(entry.createdAt)}`
+								)}
+							onkeydown={(e) =>
+								e.key === 'Enter' &&
+								goto(
+									`/admin/audit-logs/${encodeURIComponent(entry.id)}?event_at=${Date.parse(entry.createdAt)}`
+								)}
 							tabindex="0"
 							role="button"
 						>
 							<td class="muted nowrap">{formatDateTime(entry.createdAt)}</td>
 							<td>
 								<span class={getActionBadgeClass(entry.action)}>
-									{formatAction(entry.action)}
+									{formatAction(entry.action, entry.metadata)}
 								</span>
 							</td>
 							<td class="mono">{truncateId(entry.userId)}</td>
@@ -465,7 +488,14 @@
 		</AdminSection>
 
 		<!-- Pagination -->
-		{#if pagination && pagination.totalPages > 1}
+		{#if logPager.info}
+			<LogCursorPager
+				pager={logPager}
+				label={$LL.admin_audit_logs_title()}
+				{loading}
+				reload={loadAuditLogs}
+			/>
+		{:else if pagination && 'totalPages' in pagination && pagination.totalPages > 1}
 			<AdminPagination
 				label={$LL.admin_audit_logs_title()}
 				info={$LL.admin_audit_logs_pagination({

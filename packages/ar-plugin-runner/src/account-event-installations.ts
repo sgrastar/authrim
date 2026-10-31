@@ -3,6 +3,7 @@ import type {
   AccountEventInstallation,
   ResolveAccountEventInstallationsInput,
 } from '@authrim/ar-lib-core';
+import { EXTERNAL_GATE_OPEN } from './external-gate';
 
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
 const CAPABILITY = 'hook.account.lifecycle' as const;
@@ -43,6 +44,7 @@ export class D1AccountEventInstallationResolver {
              ON builtin_policy.plugin_id = installation.plugin_id
             AND builtin_policy.capability = ?
           WHERE installation.tenant_id = ? AND installation.state = 'enabled'
+            AND ${EXTERNAL_GATE_OPEN}
             AND ((installation.backend_kind = 'dynamic_worker'
                   AND release.version_digest IS NOT NULL
                   AND manifest.plugin_id IS NOT NULL

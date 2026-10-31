@@ -76,7 +76,7 @@ function planStepInputSchema(tool: AgentToolDefinition): JsonObject {
   const schema = tool.inputSchema;
   const sourceProperties =
     schema.properties && typeof schema.properties === 'object' && !Array.isArray(schema.properties)
-      ? (schema.properties as JsonObject)
+      ? schema.properties
       : {};
   const properties = Object.fromEntries(
     Object.entries(sourceProperties).filter(([key]) => key !== 'resource_version')
@@ -231,7 +231,7 @@ export function assertNoRawSecrets(value: JsonValue, path = '$'): void {
     if (SECRET_KEY.test(key) && child !== null && child !== undefined) {
       throw new TypeError(`Raw secret field is forbidden at ${path}.${key}`);
     }
-    assertNoRawSecrets(child as JsonValue, `${path}.${key}`);
+    assertNoRawSecrets(child, `${path}.${key}`);
   }
 }
 

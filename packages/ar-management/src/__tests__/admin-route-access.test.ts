@@ -35,6 +35,11 @@ function createHarness(permissions: string[], roles: string[] = []) {
   registerDeclaredAdminRouteAccessMiddleware(app);
 
   app.get('/api/admin/users', (c) => c.json({ ok: true }));
+  app.get('/api/admin/identity-mapping/history', (c) => c.json({ ok: true }));
+  app.get('/api/admin/identity-mapping/failures', (c) => c.json({ ok: true }));
+  app.post('/api/admin/platform/identity-mapping/preview-default', (c) => c.json({ ok: true }));
+  app.post('/api/admin/identity-mapping/history/history-1/restore', (c) => c.json({ ok: true }));
+  app.get('/api/admin/investigations/subjects/subject-1/status', (c) => c.json({ ok: true }));
   app.get('/api/admin/email-deliveries', (c) => c.json({ ok: true }));
   app.get('/api/admin/users/user-1/email-deliveries', (c) => c.json({ ok: true }));
   app.get('/api/admin/users/user-1/support-context', (c) => c.json({ ok: true }));
@@ -42,6 +47,9 @@ function createHarness(permissions: string[], roles: string[] = []) {
   app.get('/api/admin/users/user-1/legal-holds', (c) => c.json({ ok: true }));
   app.post('/api/admin/users/user-1/legal-holds', (c) => c.json({ ok: true }));
   app.post('/api/admin/users/user-1/legal-holds/hold-1/release', (c) => c.json({ ok: true }));
+  app.get('/api/admin/users/user-1/assurance', (c) => c.json({ ok: true }));
+  app.post('/api/admin/users/user-1/assurance/evidence', (c) => c.json({ ok: true }));
+  app.post('/api/admin/users/user-1/assurance/evidence/ev-1/revoke', (c) => c.json({ ok: true }));
   app.delete('/api/admin/users/user-1', (c) => c.json({ ok: true }));
   app.post('/api/admin/users/user-1/totp/reset', (c) => c.json({ ok: true }));
   app.delete('/api/admin/users/user-1/roles/assignment-1', (c) => c.json({ ok: true }));
@@ -103,14 +111,48 @@ function createHarness(permissions: string[], roles: string[] = []) {
     c.json({ ok: true })
   );
   app.post('/api/admin/platform/control-plane/lookup-hmac/rotations', (c) => c.json({ ok: true }));
+  app.get('/api/admin/tenant-backups/operation-1', (c) => c.json({ ok: true }));
+  app.post('/api/admin/tenant-backups/exports', (c) => c.json({ ok: true }));
 
   return app;
 }
 
 describe('declared admin route access', () => {
+  it('declares history reads and lets the restore handler select the exact write permission', async () => {
+    const reader = createHarness([ADMIN_PERMISSIONS.SETTINGS_READ]);
+    const settingsWriter = createHarness([ADMIN_PERMISSIONS.SETTINGS_WRITE]);
+    const clientWriter = createHarness([ADMIN_PERMISSIONS.CLIENTS_UPDATE]);
+    const path = '/api/admin/identity-mapping/history/history-1/restore';
+    expect((await reader.request('/api/admin/identity-mapping/history')).status).toBe(200);
+    expect((await reader.request('/api/admin/identity-mapping/failures')).status).toBe(200);
+    expect((await clientWriter.request('/api/admin/identity-mapping/failures')).status).toBe(403);
+    const platformPreview = '/api/admin/platform/identity-mapping/preview-default';
+    expect((await reader.request(platformPreview, { method: 'POST' })).status).toBe(200);
+    expect((await clientWriter.request(platformPreview, { method: 'POST' })).status).toBe(403);
+    expect((await reader.request(path, { method: 'POST' })).status).toBe(403);
+    expect((await settingsWriter.request(path, { method: 'POST' })).status).toBe(200);
+    expect((await clientWriter.request(path, { method: 'POST' })).status).toBe(200);
+    expect((await clientWriter.request('/api/admin/identity-mapping/history')).status).toBe(403);
+  });
+
+  it('requires backup read access for inspection and backup management access for mutations', async () => {
+    const reader = createHarness([ADMIN_PERMISSIONS.BACKUPS_READ]);
+    const manager = createHarness([ADMIN_PERMISSIONS.BACKUPS_MANAGE]);
+
+    await expect(reader.request('/api/admin/tenant-backups/operation-1')).resolves.toMatchObject({
+      status: 200,
+    });
+    await expect(
+      reader.request('/api/admin/tenant-backups/exports', { method: 'POST' })
+    ).resolves.toMatchObject({ status: 403 });
+    await expect(
+      manager.request('/api/admin/tenant-backups/exports', { method: 'POST' })
+    ).resolves.toMatchObject({ status: 200 });
+  });
+
   it('restricts global R2 schedules and metrics to platform admin roles', () => {
     expect(findAdminRouteAccessRule('GET', '/api/admin/jobs/schedules')).toMatchObject({
-      roles: ['super_admin', 'system_admin'],
+      roles: ['ar_super_admin'],
     });
     expect(
       findAdminRouteAccessRule('GET', '/api/admin/jobs/schedules')?.permissions
@@ -119,7 +161,7 @@ describe('declared admin route access', () => {
   it('fails closed when an admin route has no declaration', async () => {
     const app = createHarness([ADMIN_PERMISSIONS.ALL]);
     const response = await app.request('/api/admin/undocumented', { method: 'POST' });
-    const body = (await response.json()) as { error: string };
+    const body: { error: string } = await response.json();
 
     expect(response.status).toBe(403);
     expect(body.error).toBe('insufficient_permissions');
@@ -225,6 +267,39 @@ describe('declared admin route access', () => {
     ).resolves.toMatchObject({ status: 200 });
   });
 
+  it('keeps identity assurance behind its own permissions', async () => {
+    const userWriter = createHarness([ADMIN_PERMISSIONS.USERS_READ, ADMIN_PERMISSIONS.USERS_WRITE]);
+    const reader = createHarness([ADMIN_PERMISSIONS.ACCOUNT_ASSURANCE_READ]);
+    const writer = createHarness([ADMIN_PERMISSIONS.ACCOUNT_ASSURANCE_WRITE]);
+    const path = '/api/admin/users/user-1/assurance';
+    expect((await userWriter.request(path)).status).toBe(403);
+    expect((await reader.request(path)).status).toBe(200);
+    for (const write of [`${path}/evidence`, `${path}/evidence/ev-1/revoke`]) {
+      expect((await userWriter.request(write, { method: 'POST' })).status, write).toBe(403);
+      expect((await reader.request(write, { method: 'POST' })).status, write).toBe(403);
+      expect((await writer.request(write, { method: 'POST' })).status, write).toBe(200);
+    }
+  });
+
+  it('gates the status-only investigation read on the status permission, which users:read includes', async () => {
+    const path = '/api/admin/investigations/subjects/subject-1/status';
+    expect(findAdminRouteAccessRule('GET', path)?.permissions).toEqual([
+      ADMIN_PERMISSIONS.USERS_STATUS_READ,
+    ]);
+    expect(findAdminRouteAccessRule('POST', path)).toBeNull();
+
+    const statusReader = createHarness([ADMIN_PERMISSIONS.USERS_STATUS_READ]);
+    const userReader = createHarness([ADMIN_PERMISSIONS.USERS_READ]);
+    const userWriter = createHarness([ADMIN_PERMISSIONS.USERS_WRITE]);
+    const sessionReader = createHarness([ADMIN_PERMISSIONS.SESSIONS_READ]);
+    expect((await statusReader.request(path)).status).toBe(200);
+    expect((await userReader.request(path)).status).toBe(200);
+    expect((await userWriter.request(path)).status).toBe(403);
+    expect((await sessionReader.request(path)).status).toBe(403);
+    // The status permission opens no user route that returns personal data.
+    expect((await statusReader.request('/api/admin/users')).status).toBe(403);
+  });
+
   it('uses the dedicated Agent settings permission ahead of the generic settings wildcard', async () => {
     expect(findAdminRouteAccessRule('GET', '/api/admin/settings/agent')?.permissions).toEqual([
       ADMIN_PERMISSIONS.AGENT_SETTINGS_READ,
@@ -328,10 +403,10 @@ describe('declared admin route access', () => {
   });
 
   it('keeps tenant cloning on the platform-admin tenant administration boundary', async () => {
-    const tenantWriter = createHarness([ADMIN_PERMISSIONS.SETTINGS_WRITE], ['tenant_admin']);
+    const tenantWriter = createHarness([ADMIN_PERMISSIONS.SETTINGS_WRITE], ['ar_tenant_admin']);
     const lifecycleWriter = createHarness(
       [ADMIN_PERMISSIONS.TENANT_LIFECYCLE_STANDARD],
-      ['system_admin']
+      ['ar_super_admin']
     );
 
     await expect(
@@ -471,7 +546,7 @@ describe('declared admin route access', () => {
     const evidenceExporter = createHarness([
       ADMIN_PERMISSIONS.DIRECTORY_AUTH_EVIDENCE_EXPORT_CREATE,
     ]);
-    const tenantAdmin = createHarness([], ['tenant_admin']);
+    const tenantAdmin = createHarness([], ['ar_tenant_admin']);
 
     await expect(
       reader.request('/api/admin/tenants/tenant-a/directory-auth/overview')

@@ -104,6 +104,10 @@ export interface QueryOptions {
  * - Future: DynamoDB, MySQL adapters
  */
 export interface DatabaseAdapter {
+  readonly groupInputMutations?: import('./group-input-mutations').GroupInputMutationCapability;
+  readonly accountGovernanceMutations?: import('./account-governance-mutations').AccountGovernanceMutationCapability;
+  /** Explicit replacement for trigger-dependent identity writes on portable backends. */
+  readonly protectedIdentityMutations?: import('./protected-identity-mutations').ProtectedIdentityMutationCapability;
   /**
    * Execute a SELECT query and return all results
    *
@@ -293,3 +297,49 @@ export function escapeLikePattern(pattern: string): string {
   // then escape % and _
   return pattern.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
 }
+
+export {
+  assertRecordLastLoginInput,
+  recordLastLoginStatement,
+  recordCanonicalLastLogin,
+} from './protected-identity-mutations';
+export type {
+  ProtectedIdentityMutationCapability,
+  RecordLastLoginInput,
+} from './protected-identity-mutations';
+
+export {
+  assertLegalHoldMutation,
+  createLegalHoldPlan,
+  releaseLegalHoldPlan,
+  legalHoldGuardStatement,
+  createAccountLegalHold,
+  releaseAccountLegalHold,
+} from './account-governance-mutations';
+export type {
+  CreateLegalHoldInput,
+  ReleaseLegalHoldInput,
+  AccountGovernanceMutationCapability,
+} from './account-governance-mutations';
+
+export {
+  accountDeletionPlan,
+  transitionCanonicalAccountDeletion,
+} from './account-governance-mutations';
+export type { AccountDeletionInput } from './account-governance-mutations';
+
+export { supportContextStatement, putAccountSupportContext } from './account-governance-mutations';
+export type { PutSupportContextInput } from './account-governance-mutations';
+
+export {
+  beginGroupBoundaryStatement,
+  settleGroupBoundaryStatement,
+  beginGroupInputBoundary,
+  settleGroupInputBoundary,
+} from './group-input-mutations';
+export type {
+  GroupInputMutationCapability,
+  BeginGroupInputBoundary,
+  GroupInputBoundaryScope,
+  GroupBoundaryOutcome,
+} from './group-input-mutations';

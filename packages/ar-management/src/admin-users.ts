@@ -5,7 +5,8 @@ import {
   CanonicalRuntimeUserProjectionRepository,
   CanonicalRuntimeUserWriter,
   CanonicalSensitiveValueResolver,
-  TombstoneRepository,
+  GuestLifecycleRepository,
+  resolveAccountRegistrationState,
   invalidateUserCache,
   getTenantIdFromContext,
   getTenantMetadataContextFromHono,
@@ -27,13 +28,20 @@ import {
   type UserEventData,
   validateCustomClaimWrite,
   persistCustomClaimWrite,
+  withGroupInputWrite,
   syncUserLifecycleState,
   getRequiredCustomClaimViolationStatuses,
   resolveCustomClaimRuntimeSourcesFromEnv,
   resolveCustomClaimRuntimeSourcesFromHono,
   resolveAccountDataContextFromHono,
-  transitionAccountAuthenticationState,
+  DefaultIALUnavailableError,
+  resolveTenantPolicyInitialAssurance,
   type CanonicalRuntimeUserProjection,
+  type InitialAssuranceEvidence,
+  checkEmailRegistration,
+  type PiiAccessLog,
+  deleteAnonymizationMappingStatement,
+  forgetCachedAnonymizedUserId,
 } from '@authrim/ar-lib-core';
 import { resolveAaguidAuthenticator } from '@authrim/ar-lib-core/webauthn/aaguid-metadata';
 import {
@@ -72,7 +80,23 @@ import {
   type CrossShardAccountListItem,
 } from './cross-shard-account-list';
 import { findActiveAccountLegalHold } from './account-legal-hold-guard';
+import { isInactiveAccountRouteError } from './account-route-errors';
+import {
+  ADMIN_USER_PII_FIELDS,
+  createAdminPiiAccessLog,
+  noteAdminPiiRead,
+  requestPiiStore,
+  scheduleAdminPiiAccessLog,
+} from './admin-pii-access-log';
+import {
+  prepareAccountTombstone,
+  TombstoneRetentionDaysInvalidError,
+  writeAccountTombstone,
+  type PreparedAccountTombstone,
+} from './account-tombstone-write';
 import { usesRoutedAccountStorage } from './tenant-routed-storage';
+import { adminActorIdFromContext, withAdminSessionEndLogout } from './admin-session-end';
+import { transitionEndingSessions } from './session-end-logout';
 
 type AdminRuntimeUserCore = {
   email_verified: boolean | number;
@@ -109,9 +133,10 @@ function resolveAdminPiiAdapter(
 function createCanonicalRuntimeUserWriter(
   c: Context<{ Bindings: Env }>,
   coreAdapter: DatabaseAdapter,
-  tenantId: string
+  tenantId: string,
+  accountPii?: DatabaseAdapter
 ): CanonicalRuntimeUserWriter {
-  const piiAdapter = resolveAdminPiiAdapter(c, tenantId);
+  const piiAdapter = accountPii ?? resolveAdminPiiAdapter(c, tenantId);
   if (!piiAdapter) throw new Error('admin_user_pii_database_required');
   return new CanonicalRuntimeUserWriter(
     new CanonicalIdentityRepository(coreAdapter, tenantId),
@@ -136,15 +161,27 @@ function createCanonicalRuntimeUserProjectionRepository(
   );
 }
 
+/**
+ * An unknown user has no Lookup route, so resolving its account databases fails before any query;
+ * answer that as the not-found the handler would give for a missing projection.
+ */
+function accountRouteNotFoundResponse(c: Context<{ Bindings: Env }>, error: unknown) {
+  if (!(error instanceof Error) || error.message !== 'account_data_route_not_found') return null;
+  return c.json(
+    {
+      error: 'not_found',
+      error_description: 'The requested resource was not found',
+    },
+    404
+  );
+}
+
 function userTypeFromAccountType(accountType: string): string {
   if (accountType === 'admin') {
     return 'admin';
   }
   if (accountType === 'service_account') {
     return 'm2m';
-  }
-  if (accountType === 'anonymous') {
-    return 'anonymous';
   }
   return 'end_user';
 }
@@ -278,10 +315,15 @@ function buildCanonicalPiiDeletionPatch(): Record<string, null> {
   };
 }
 
-function formatCanonicalAdminUser(
+async function formatCanonicalAdminUser(
+  core: DatabaseAdapter,
   projection: CanonicalRuntimeUserProjection,
   sessionLastLoginAt: number | null = null
 ) {
+  const lifecycle =
+    projection.account_type === 'user'
+      ? await new GuestLifecycleRepository(core, projection.tenant_id).get(projection.id)
+      : null;
   const address = addressPartsFromProjection(projection);
   const createdAt = Date.parse(projection.created_at);
   const updatedAt = Date.parse(projection.updated_at);
@@ -313,13 +355,21 @@ function formatCanonicalAdminUser(
     email_verified: projection.email_verified,
     phone_number_verified: projection.phone_number_verified,
     user_type: userTypeFromAccountType(projection.account_type),
+    ...(projection.account_type === 'user'
+      ? {
+          registration_state: resolveAccountRegistrationState(
+            projection.registration_state,
+            lifecycle?.phase
+          ),
+        }
+      : {}),
     is_active: projection.active,
     pii_partition: 'default',
-    pii_status: projection.account_status === 'deleted' ? 'deleted' : 'active',
+    pii_status: projection.status === 'deleted' ? 'deleted' : 'active',
     created_at: Number.isFinite(createdAt) ? createdAt : null,
     updated_at: Number.isFinite(updatedAt) ? updatedAt : null,
     last_login_at: toMilliseconds(lastLoginAt),
-    status: projection.account_status,
+    status: projection.status,
     suspended_at: toMilliseconds(projection.suspended_at),
     suspended_until: toMilliseconds(projection.suspended_until),
     locked_at: toMilliseconds(projection.locked_at),
@@ -367,6 +417,14 @@ function accountRouteAdapter(
   return ensureDatabaseAdapter(source, `admin-user-${partition}`);
 }
 
+/** Accounts an administrator may open; accounts being deleted or deleted are never shown. */
+const ADMIN_VISIBLE_LIFECYCLE_STATES: ReadonlySet<string> = new Set([
+  'active',
+  'deprovisioned',
+  'suspended',
+  'locked',
+]);
+
 async function projectCrossShardAdminUser(
   env: Env,
   tenantId: string,
@@ -378,8 +436,13 @@ async function projectCrossShardAdminUser(
     core,
     tenantId,
     new CanonicalSensitiveValueResolver(pii)
-  ).findByAccountId(item.id);
+  ).findByAccountId(item.id, { includeInactive: true });
   if (!projection || projection.id !== item.legacyUserId || projection.tenant_id !== tenantId) {
+    throw new Error('admin_user_route_projection_invalid');
+  }
+  // includeInactive lifts every lifecycle filter. The route search already left out accounts being
+  // deleted, but one may have started since, before its PII is erased: re-check what was read.
+  if (!ADMIN_VISIBLE_LIFECYCLE_STATES.has(projection.lifecycle_state)) {
     throw new Error('admin_user_route_projection_invalid');
   }
   const latestSession = await core.queryOne<{ last_login_at: number | null }>(
@@ -388,7 +451,7 @@ async function projectCrossShardAdminUser(
       WHERE tenant_id = ? AND user_id = ?`,
     [tenantId, projection.id]
   );
-  return formatCanonicalAdminUser(projection, latestSession?.last_login_at ?? null);
+  return formatCanonicalAdminUser(core, projection, latestSession?.last_login_at ?? null);
 }
 
 async function crossShardAdminUsersList(
@@ -401,14 +464,19 @@ async function crossShardAdminUsersList(
     verified?: string;
     piiStatus?: string;
     lifecycleState?: string;
-  }
+  },
+  accessLog: PiiAccessLog
 ) {
-  const exactSearch = Boolean(input.search);
+  const search = input.search ?? '';
+  const exactSearch = search !== '';
   const page = exactSearch
     ? {
         items: await new CrossShardAccountExactSearchService(c.env).find({
           tenantId: input.tenantId,
-          identifier: input.search!,
+          identifier: search,
+          // A user id is found whatever its state, so a suspended or locked user can be restored.
+          // Email search goes through the active-only Lookup index.
+          ...(search.includes('@') ? {} : { purpose: 'admin_view' as const }),
         }),
         nextCursor: null,
       }
@@ -417,13 +485,15 @@ async function crossShardAdminUsersList(
         limit: input.limit,
         cursor: input.cursor,
         accountType: 'user',
+        includeRestricted: true,
       });
-  const projected = await mapAdminUsersConcurrent(page.items, 4, (item) =>
-    projectCrossShardAdminUser(c.env, input.tenantId, item)
-  );
-  const users = exactSearch
+  const projected = await mapAdminUsersConcurrent(page.items, 4, async (item) => ({
+    item,
+    user: await projectCrossShardAdminUser(c.env, input.tenantId, item),
+  }));
+  const returned = exactSearch
     ? projected.filter(
-        (user) =>
+        ({ user }) =>
           (input.verified === undefined ||
             Boolean(user.email_verified) === (input.verified === 'true')) &&
           (input.piiStatus === undefined ||
@@ -431,6 +501,19 @@ async function crossShardAdminUsersList(
           (input.lifecycleState === undefined || user.lifecycle_state === input.lifecycleState)
       )
     : projected;
+  for (const { item, user } of returned) {
+    noteAdminPiiRead(
+      accessLog,
+      {
+        key: item.piiBindingRef,
+        adapter: accountRouteAdapter(c.env, item.piiBindingRef, 'pii'),
+      },
+      user.id,
+      user,
+      ADMIN_USER_PII_FIELDS
+    );
+  }
+  const users = returned.map(({ user }) => user);
   return {
     users,
     pagination: {
@@ -476,9 +559,10 @@ async function maybeSyncCanonicalRuntimeUserForAdmin(
     AdminRuntimeUserCore,
     'email_verified' | 'phone_number_verified' | 'user_type' | 'is_active'
   >,
-  userPII: AdminRuntimeUserPII | null
+  userPII: AdminRuntimeUserPII | null,
+  accountPii?: DatabaseAdapter
 ): Promise<void> {
-  await createCanonicalRuntimeUserWriter(c, coreAdapter, tenantId).syncFromRuntimeUser({
+  await createCanonicalRuntimeUserWriter(c, coreAdapter, tenantId, accountPii).syncFromRuntimeUser({
     userId,
     tenantId,
     active: Boolean(userCore.is_active),
@@ -762,6 +846,7 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
     const piiStatus = c.req.query('pii_status');
     const lifecycleState = c.req.query('lifecycle_state');
     const cursor = c.req.query('cursor');
+    const accessLog = createAdminPiiAccessLog(c, tenantId, 'admin.users.list');
     if (usesTenantD1Storage(c)) {
       if (
         !search &&
@@ -775,8 +860,9 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
           400
         );
       }
-      return c.json(
-        await crossShardAdminUsersList(c, {
+      const body = await crossShardAdminUsersList(
+        c,
+        {
           tenantId,
           limit,
           cursor,
@@ -784,8 +870,11 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
           verified,
           piiStatus,
           lifecycleState,
-        })
+        },
+        accessLog
       );
+      scheduleAdminPiiAccessLog(c, accessLog, tenantId);
+      return c.json(body);
     }
     const offset = (page - 1) * limit;
     const projectionRepository = createCanonicalRuntimeUserProjectionRepository(
@@ -862,11 +951,26 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
 
     const total = filteredUsers.length;
     const totalPages = Math.ceil(total / limit);
-    const formattedUsers = filteredUsers
-      .slice(offset, offset + limit)
-      .map((projection) =>
-        formatCanonicalAdminUser(projection, sessionLastLoginByUserId.get(projection.id) ?? null)
-      );
+    const formattedUsers = await Promise.all(
+      filteredUsers
+        .slice(offset, offset + limit)
+        .map((projection) =>
+          formatCanonicalAdminUser(
+            authCtx.coreAdapter,
+            projection,
+            sessionLastLoginByUserId.get(projection.id) ?? null
+          )
+        )
+    );
+
+    const piiAdapter = resolveAdminPiiAdapter(c, tenantId);
+    if (piiAdapter) {
+      const store = requestPiiStore(c, piiAdapter);
+      for (const user of formattedUsers) {
+        noteAdminPiiRead(accessLog, store, user.id, user, ADMIN_USER_PII_FIELDS);
+      }
+      scheduleAdminPiiAccessLog(c, accessLog, tenantId);
+    }
 
     return c.json({
       users: formattedUsers,
@@ -921,6 +1025,61 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
 }
 
 /**
+ * A suspended or locked user has no authentication route, so its request account context cannot be
+ * resolved. Read the account through its admin-view route instead, so an administrator can still
+ * open the user to restore it. Credentials and custom fields are not read for such a user.
+ */
+async function adminRestrictedUserDetail(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  userId: string
+) {
+  const matches = await new CrossShardAccountExactSearchService(c.env).find({
+    tenantId,
+    identifier: userId,
+    indexKind: 'account_id',
+    purpose: 'admin_view',
+  });
+  const item = matches[0];
+  if (matches.length !== 1 || !item || item.tenantId !== tenantId || item.legacyUserId !== userId) {
+    return c.json(
+      { error: 'not_found', error_description: 'The requested resource was not found' },
+      404
+    );
+  }
+  let user: Awaited<ReturnType<typeof projectCrossShardAdminUser>>;
+  try {
+    user = await projectCrossShardAdminUser(c.env, tenantId, item);
+  } catch (error) {
+    // Deletion began after the route search: the user is no longer visible.
+    if (error instanceof Error && error.message === 'admin_user_route_projection_invalid') {
+      return c.json(
+        { error: 'not_found', error_description: 'The requested resource was not found' },
+        404
+      );
+    }
+    throw error;
+  }
+  const accessLog = createAdminPiiAccessLog(c, tenantId, 'admin.users.get');
+  noteAdminPiiRead(
+    accessLog,
+    { key: item.piiBindingRef, adapter: accountRouteAdapter(c.env, item.piiBindingRef, 'pii') },
+    user.id,
+    user,
+    ADMIN_USER_PII_FIELDS
+  );
+  scheduleAdminPiiAccessLog(c, accessLog, tenantId);
+  return c.json({
+    user,
+    passkeys: [],
+    totp_credentials: [],
+    missing_required_fields: [],
+    customFields: [],
+    restricted: true,
+  });
+}
+
+/**
  * Get user details by ID.
  * GET /admin/users/:id
  */
@@ -930,7 +1089,12 @@ export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
     const tenantId = getTenantIdFromContext(c);
     const tenantD1 = usesTenantD1Storage(c);
     if (tenantD1) {
-      await resolveAccountDataContextFromHono(c, userId);
+      try {
+        await resolveAccountDataContextFromHono(c, userId);
+      } catch (error) {
+        if (!isInactiveAccountRouteError(error)) throw error;
+        return await adminRestrictedUserDetail(c, tenantId, userId);
+      }
     }
     const authCtx = tenantD1
       ? createAccountAuthContextFromHono(c, tenantId)
@@ -997,7 +1161,8 @@ export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
     });
     const missingRequiredFields = requiredViolations.users[0]?.missingRequiredFields ?? [];
 
-    const formattedUser = formatCanonicalAdminUser(
+    const formattedUser = await formatCanonicalAdminUser(
+      authCtx.coreAdapter,
       projection,
       latestSession?.last_login_at ?? null
     );
@@ -1023,6 +1188,19 @@ export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
       activated_at: toMilliseconds(credential.activated_at),
       last_used_at: toMilliseconds(credential.last_used_at),
     }));
+
+    const piiAdapter = resolveAdminPiiAdapter(c, tenantId);
+    if (piiAdapter) {
+      const accessLog = createAdminPiiAccessLog(c, tenantId, 'admin.users.get');
+      noteAdminPiiRead(
+        accessLog,
+        requestPiiStore(c, piiAdapter),
+        formattedUser.id,
+        formattedUser,
+        ADMIN_USER_PII_FIELDS
+      );
+      scheduleAdminPiiAccessLog(c, accessLog, tenantId);
+    }
 
     return c.json({
       user: formattedUser,
@@ -1055,7 +1233,10 @@ export async function adminUserTotpResetHandler(c: Context<{ Bindings: Env }>) {
   try {
     const userId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    // The user and its TOTP credentials live in the account's databases; the tenant metadata
+    // database does not hold them once accounts are routed.
+    await resolveAccountDataContextFromHono(c, userId);
+    const authCtx = createAccountAuthContextFromHono(c, tenantId);
     const projectionRepository = createCanonicalRuntimeUserProjectionRepository(
       c,
       authCtx.coreAdapter,
@@ -1089,6 +1270,8 @@ export async function adminUserTotpResetHandler(c: Context<{ Bindings: Env }>) {
 
     return c.json({ ok: true, deleted });
   } catch (error) {
+    const notFoundResponse = accountRouteNotFoundResponse(c, error);
+    if (notFoundResponse) return notFoundResponse;
     logSanitizedError('Admin user TOTP reset error', error);
     const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
     if (writeFenceResponse) return writeFenceResponse;
@@ -1130,6 +1313,24 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
       phone_number_verified,
       user_type,
     } = body;
+    if (body.registration_state !== undefined) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'registration_state is read-only; use the account upgrade flow',
+        },
+        400
+      );
+    }
+    if (body.user_type === 'anonymous') {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Guest accounts must be created through the guest login flow',
+        },
+        400
+      );
+    }
     const customFieldInput = extractCustomClaimInput(body, ADMIN_USER_CREATE_RESERVED_FIELDS);
 
     const emailValidation = normalizeAdminEmailInput(email);
@@ -1209,7 +1410,54 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const candidateUserId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
+    // The tenant's default IAL for accounts the organisation creates (recorded as evidence with
+    // the account). Not knowing it, the account is not created: it would lack the evidence.
+    let initialAssurance: InitialAssuranceEvidence | null;
+    try {
+      initialAssurance = await resolveTenantPolicyInitialAssurance(c.env, tenantId);
+    } catch (error) {
+      if (!(error instanceof DefaultIALUnavailableError)) throw error;
+      logSanitizedError(
+        'Default IAL could not be read for an administrator-created account',
+        error
+      );
+      c.header('Retry-After', '5');
+      return c.json(
+        {
+          error: 'temporarily_unavailable',
+          error_description: 'The default identity assurance level is unavailable; try again',
+        },
+        503
+      );
+    }
+
+    // An address of an account deleted within the retention period, where the tenant blocks
+    // re-registration: refused as an address already in use is, without saying it was deleted.
+    const registration = await checkEmailRegistration(c.env, {
+      tenantId,
+      email: normalizedEmail,
+    });
+    if (registration === 'unavailable') {
+      c.header('Retry-After', '5');
+      return c.json(
+        {
+          error: 'temporarily_unavailable',
+          error_description: 'Account creation is temporarily unavailable; try again',
+        },
+        503
+      );
+    }
+    if (registration === 'blocked') {
+      return c.json(
+        {
+          error: 'conflict',
+          error_description: 'Unable to create user with the provided information',
+        },
+        409
+      );
+    }
+
+    const candidateUserId = await generateUserIdFromSettings(c.env, tenantId, c.env);
     const requestHash = await hashAccountCreationRequest({
       ...body,
       email: normalizedEmail,
@@ -1253,6 +1501,7 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
                 picture: picture ?? null,
               },
             },
+            initialAssurance,
           });
           await persistCustomClaimWrite({
             db: context.tenantCoreUsers,
@@ -1303,11 +1552,17 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
     const createdProjection = await projectionRepository.findByLegacyUserId(
       result.operation.userId
     );
-    const createdUser = createdProjection ? formatCanonicalAdminUser(createdProjection) : null;
+    const createdUser = createdProjection
+      ? await formatCanonicalAdminUser(
+          ensureDatabaseAdapter(targets.tenantCoreUsers, 'admin-user-create-result-core'),
+          createdProjection
+        )
+      : null;
     if (!createdUser) throw new Error('account_creation_active_projection_missing');
 
     await createAuditLogFromContext(c, 'user.created', 'user', result.operation.userId, {
       user_type,
+      ...(initialAssurance ? { initial_ial: initialAssurance.level } : {}),
     });
     scheduleAdminAuditLog(c, 'user.created', result.operation.userId, 'success', {
       user_type,
@@ -1445,7 +1700,9 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
   try {
     const userId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
-    const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
+    const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId, {
+      accountId: userId,
+    });
     if (!customClaimSources.nonPiiDb || !customClaimSources.piiDb) {
       throw new Error('admin_user_custom_claim_sources_required');
     }
@@ -1463,12 +1720,25 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
       user_type?: string;
       [key: string]: string | boolean | number | null | undefined;
     }>();
+    if (body.registration_state !== undefined) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'registration_state is read-only; use the account upgrade flow',
+        },
+        400
+      );
+    }
     const customFieldInput = extractCustomClaimInput(body, ADMIN_USER_UPDATE_RESERVED_FIELDS);
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const projectionRepository = createCanonicalRuntimeUserProjectionRepository(
-      c,
-      authCtx.coreAdapter,
-      tenantId
+    const changedFields = Object.keys(body)
+      .filter((key) => body[key] !== undefined)
+      .sort();
+    const accountCore = ensureDatabaseAdapter(customClaimSources.nonPiiDb, 'admin-update-core');
+    const accountPii = ensureDatabaseAdapter(customClaimSources.piiDb, 'admin-update-pii');
+    const projectionRepository = new CanonicalRuntimeUserProjectionRepository(
+      accountCore,
+      tenantId,
+      new CanonicalSensitiveValueResolver(accountPii)
     );
     if (!projectionRepository) {
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -1484,6 +1754,21 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
           error_description: 'The requested resource was not found',
         },
         404
+      );
+    }
+
+    if (
+      body.user_type === 'anonymous' ||
+      (existingProjection.registration_state === 'guest' &&
+        typeof body.user_type === 'string' &&
+        body.user_type !== 'end_user')
+    ) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Registration changes require the account upgrade flow',
+        },
+        400
       );
     }
 
@@ -1540,58 +1825,63 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    if (hasCustomFieldChanges) {
-      await persistCustomClaimWrite({
-        db: customClaimSources.nonPiiDb,
-        dbPii: customClaimSources.piiDb,
-        schemaDb: customClaimSources.schemaDb,
-        tenantId,
-        userId,
-        validation: customFieldValidation,
-      });
-      await syncUserLifecycleState({
-        db: customClaimSources.nonPiiDb,
-        dbPii: customClaimSources.piiDb,
-        schemaDb: customClaimSources.schemaDb,
-        stateDb: authCtx.coreAdapter,
-        tenantId,
-        userId,
-        accountAuthenticationEnv: c.env,
-      });
-    }
-
-    await maybeSyncCanonicalRuntimeUserForAdmin(
-      c,
-      authCtx.coreAdapter,
-      tenantId,
-      userId,
-      {
-        email_verified: body.email_verified ?? Boolean(existingProjection.email_verified),
-        phone_number_verified:
-          body.phone_number_verified ?? Boolean(existingProjection.phone_number_verified),
-        user_type:
-          typeof body.user_type === 'string'
-            ? body.user_type
-            : userTypeFromAccountType(existingProjection.account_type),
-        is_active: Boolean(existingProjection.active),
-      },
-      {
-        email: existingProjection.email ?? '',
-        phone_number: body.phone_number ?? existingProjection.phone_number,
-        name: body.name ?? existingProjection.name,
-        given_name: body.given_name ?? existingProjection.given_name,
-        family_name: body.family_name ?? existingProjection.family_name,
-        nickname: body.nickname ?? existingProjection.nickname,
-        preferred_username: body.preferred_username ?? existingProjection.preferred_username,
-        picture: body.picture ?? existingProjection.picture,
+    await withGroupInputWrite(accountCore, tenantId, userId, 'admin:user-update', async () => {
+      if (hasCustomFieldChanges) {
+        await persistCustomClaimWrite({
+          db: customClaimSources.nonPiiDb,
+          dbPii: customClaimSources.piiDb,
+          schemaDb: customClaimSources.schemaDb,
+          tenantId,
+          userId,
+          validation: customFieldValidation,
+        });
+        await syncUserLifecycleState({
+          db: customClaimSources.nonPiiDb,
+          dbPii: customClaimSources.piiDb,
+          schemaDb: customClaimSources.schemaDb,
+          stateDb: accountCore,
+          tenantId,
+          userId,
+          accountAuthenticationEnv: c.env,
+        });
       }
-    );
+
+      await maybeSyncCanonicalRuntimeUserForAdmin(
+        c,
+        accountCore,
+        tenantId,
+        userId,
+        {
+          email_verified: body.email_verified ?? Boolean(existingProjection.email_verified),
+          phone_number_verified:
+            body.phone_number_verified ?? Boolean(existingProjection.phone_number_verified),
+          user_type:
+            typeof body.user_type === 'string'
+              ? body.user_type
+              : userTypeFromAccountType(existingProjection.account_type),
+          is_active: Boolean(existingProjection.active),
+        },
+        {
+          email: existingProjection.email ?? '',
+          phone_number: body.phone_number ?? existingProjection.phone_number,
+          name: body.name ?? existingProjection.name,
+          given_name: body.given_name ?? existingProjection.given_name,
+          family_name: body.family_name ?? existingProjection.family_name,
+          nickname: body.nickname ?? existingProjection.nickname,
+          preferred_username: body.preferred_username ?? existingProjection.preferred_username,
+          picture: body.picture ?? existingProjection.picture,
+        },
+        accountPii
+      );
+    });
 
     await invalidateUserCache(c.env, tenantId, userId);
     const updatedProjection = await projectionRepository.findByLegacyUserId(userId, {
       includeInactive: true,
     });
-    const updatedUser = updatedProjection ? formatCanonicalAdminUser(updatedProjection) : null;
+    const updatedUser = updatedProjection
+      ? await formatCanonicalAdminUser(accountCore, updatedProjection)
+      : null;
 
     const log = getLogger(c).module('ADMIN-USER');
     publishEvent(c, {
@@ -1606,15 +1896,21 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
 
     await createAuditLogFromContext(c, 'user.updated', 'user', userId, {
       user_type: updatedUser?.user_type,
+      registration_state: existingProjection.registration_state,
+      changed_fields: changedFields,
     });
     scheduleAdminAuditLog(c, 'user.updated', userId, 'success', {
       user_type: updatedUser?.user_type,
+      registration_state: existingProjection.registration_state,
+      changed_fields: changedFields,
     });
 
     return c.json({
       user: updatedUser,
     });
   } catch (error) {
+    const notFoundResponse = accountRouteNotFoundResponse(c, error);
+    if (notFoundResponse) return notFoundResponse;
     logSanitizedError('Admin user update error', error);
     const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
     if (writeFenceResponse) return writeFenceResponse;
@@ -1681,53 +1977,69 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
           409
         );
       }
-      const deletingVersionMs = Date.now();
-      await transitionAccountAuthenticationState(c.env, {
+      // A retry after the projection was erased has no address left; its tombstone, if any, was
+      // written by the first attempt.
+      const tombstoneInput = await prepareAccountTombstone(c.env, {
         tenantId,
-        userId,
-        lifecycle: 'deleting',
-        sourceVersionMs: deletingVersionMs,
-        operationId: crypto.randomUUID(),
-        revokeSessions: true,
+        email: projection?.email,
       });
-      const removals = await prepareAccountDirectoryRemoval(c.env, {
-        tenantId,
-        userId,
-        core,
-        pii,
-      });
-      const tombstones = new TombstoneRepository(pii);
-      if (!(await tombstones.findByUserId(tenantId, userId, pii))) {
-        await tombstones.createTombstone(
-          {
-            id: userId,
-            tenant_id: tenantId,
-            email_blind_index: null,
-            deleted_by: 'admin',
-            deletion_reason: 'admin_action',
-            retention_days: 90,
-            metadata: { source: 'admin_api' },
+      // The sessions the deletion ends: their relying parties are told after the response (each
+      // logout token carries the sub recorded with its session-client, not one read from the
+      // account being removed), also when a later step fails.
+      const deletingOperationId = crypto.randomUUID();
+      await withAdminSessionEndLogout(
+        c,
+        {
+          tenantId,
+          trigger: {
+            action: 'user.deleted',
+            operationId: deletingOperationId,
+            actorId: adminActorIdFromContext(c),
           },
-          pii
-        );
-      }
-      await eraseAccountPiiAfterDirectoryRemovalPrepared(pii, { tenantId, userId });
-      await new CanonicalRuntimeUserWriter(
-        new CanonicalIdentityRepository(core, tenantId),
-        pii
-      ).deleteRuntimeUser(userId);
-      await transitionAccountAuthenticationState(c.env, {
-        tenantId,
-        userId,
-        lifecycle: 'deleted',
-        sourceVersionMs: Math.max(Date.now(), deletingVersionMs + 1),
-        operationId: crypto.randomUUID(),
-        revokeSessions: true,
-      });
-      await markAccountDirectoryRemovalsReady(core, removals);
-      await attemptImmediateAccountDirectoryRemovals(c.env.ACCOUNT_DIRECTORY, removals);
+        },
+        async (ended) => {
+          const deletingVersionMs = Date.now();
+          await transitionEndingSessions(c.env, ended, {
+            tenantId,
+            userId,
+            lifecycle: 'deleting',
+            sourceVersionMs: deletingVersionMs,
+            operationId: deletingOperationId,
+          });
+          const removals = await prepareAccountDirectoryRemoval(c.env, {
+            tenantId,
+            userId,
+            core,
+            pii,
+          });
+          await writeAccountTombstone(pii, {
+            tenantId,
+            userId,
+            prepared: tombstoneInput,
+            deletedBy: 'admin',
+            reason: 'admin_action',
+            metadata: { source: 'admin_api' },
+          });
+          await eraseAccountPiiAfterDirectoryRemovalPrepared(pii, { tenantId, userId, core });
+          await new CanonicalRuntimeUserWriter(
+            new CanonicalIdentityRepository(core, tenantId),
+            pii
+          ).deleteRuntimeUser(userId);
+          await transitionEndingSessions(c.env, ended, {
+            tenantId,
+            userId,
+            lifecycle: 'deleted',
+            sourceVersionMs: Math.max(Date.now(), deletingVersionMs + 1),
+            operationId: crypto.randomUUID(),
+          });
+          await markAccountDirectoryRemovalsReady(core, removals);
+          await attemptImmediateAccountDirectoryRemovals(c.env.ACCOUNT_DIRECTORY, removals);
+        }
+      );
       await invalidateUserCache(c.env, tenantId, userId);
-      await createAuditLogFromContext(c, 'user.deleted', 'user', userId, {});
+      await createAuditLogFromContext(c, 'user.deleted', 'user', userId, {
+        registration_state: projection?.registration_state,
+      });
       scheduleAdminAuditLog(c, 'user.deleted', userId, 'success');
       return c.json({
         success: true,
@@ -1769,44 +2081,61 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const deletingVersionMs = Date.now();
-    await transitionAccountAuthenticationState(c.env, {
+    const tombstoneInput = await prepareAccountTombstone(c.env, {
       tenantId,
-      userId,
-      lifecycle: 'deleting',
-      sourceVersionMs: deletingVersionMs,
-      operationId: crypto.randomUUID(),
-      revokeSessions: true,
+      email: projection.email,
     });
-
-    const piiAdapter = resolveAdminPiiAdapter(c, tenantId);
-    if (piiAdapter) {
-      await new TombstoneRepository(piiAdapter).createTombstone(
-        {
-          id: userId,
-          tenant_id: tenantId,
-          email_blind_index: null,
-          deleted_by: 'admin',
-          deletion_reason: 'admin_action',
-          retention_days: 90,
-          metadata: {
-            source: 'admin_api',
-            timestamp: new Date().toISOString(),
-          },
+    // As above: the sessions the deletion ends are told after the response.
+    const deletingOperationId = crypto.randomUUID();
+    await withAdminSessionEndLogout(
+      c,
+      {
+        tenantId,
+        trigger: {
+          action: 'user.deleted',
+          operationId: deletingOperationId,
+          actorId: adminActorIdFromContext(c),
         },
-        piiAdapter
-      );
-    }
+      },
+      async (ended) => {
+        const deletingVersionMs = Date.now();
+        await transitionEndingSessions(c.env, ended, {
+          tenantId,
+          userId,
+          lifecycle: 'deleting',
+          sourceVersionMs: deletingVersionMs,
+          operationId: deletingOperationId,
+        });
 
-    await maybeDeleteCanonicalRuntimeUserForAdmin(c, authCtx.coreAdapter, tenantId, userId);
-    await transitionAccountAuthenticationState(c.env, {
-      tenantId,
-      userId,
-      lifecycle: 'deleted',
-      sourceVersionMs: Math.max(Date.now(), deletingVersionMs + 1),
-      operationId: crypto.randomUUID(),
-      revokeSessions: true,
-    });
+        const piiAdapter = resolveAdminPiiAdapter(c, tenantId);
+        if (piiAdapter) {
+          await writeAccountTombstone(piiAdapter, {
+            tenantId,
+            userId,
+            prepared: tombstoneInput,
+            deletedBy: 'admin',
+            reason: 'admin_action',
+            metadata: {
+              source: 'admin_api',
+              timestamp: new Date().toISOString(),
+            },
+          });
+          // The audit pseudonym, after the tombstone: a late audit write does not create it again.
+          const pseudonym = deleteAnonymizationMappingStatement(tenantId, userId);
+          await piiAdapter.execute(pseudonym.sql, pseudonym.params);
+          forgetCachedAnonymizedUserId(tenantId, userId);
+        }
+
+        await maybeDeleteCanonicalRuntimeUserForAdmin(c, authCtx.coreAdapter, tenantId, userId);
+        await transitionEndingSessions(c.env, ended, {
+          tenantId,
+          userId,
+          lifecycle: 'deleted',
+          sourceVersionMs: Math.max(Date.now(), deletingVersionMs + 1),
+          operationId: crypto.randomUUID(),
+        });
+      }
+    );
     await invalidateUserCache(c.env, tenantId, userId);
 
     const log = getLogger(c).module('ADMIN-USER');
@@ -1820,7 +2149,9 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
       log.error('Failed to publish user.deleted event', { action: 'publish_event' }, err as Error);
     });
 
-    await createAuditLogFromContext(c, 'user.deleted', 'user', userId, {});
+    await createAuditLogFromContext(c, 'user.deleted', 'user', userId, {
+      registration_state: projection?.registration_state,
+    });
     scheduleAdminAuditLog(c, 'user.deleted', userId, 'success');
 
     return c.json({
@@ -1849,15 +2180,21 @@ export async function adminUserRetryPiiHandler(c: Context<{ Bindings: Env }>) {
   try {
     const userId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const projectionRepository = createCanonicalRuntimeUserProjectionRepository(
-      c,
-      authCtx.coreAdapter,
-      tenantId
-    );
-    if (!projectionRepository) {
-      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    // Read and write the user in its account's databases, as the update handler does: once tenant
+    // D1 routing places accounts, the tenant metadata database does not hold the user.
+    const accountSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId, {
+      accountId: userId,
+    });
+    if (!accountSources.nonPiiDb || !accountSources.piiDb) {
+      throw new Error('admin_user_account_sources_required');
     }
+    const accountCore = ensureDatabaseAdapter(accountSources.nonPiiDb, 'admin-retry-pii-core');
+    const accountPii = ensureDatabaseAdapter(accountSources.piiDb, 'admin-retry-pii-pii');
+    const projectionRepository = new CanonicalRuntimeUserProjectionRepository(
+      accountCore,
+      tenantId,
+      new CanonicalSensitiveValueResolver(accountPii)
+    );
     const projection = await projectionRepository.findByLegacyUserId(userId, {
       includeInactive: true,
     });
@@ -1905,8 +2242,38 @@ export async function adminUserRetryPiiHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
+    // Setting another address: refused, as an address in use is, when it belongs to an account
+    // deleted within the retention period and the tenant blocks re-registration.
+    if (body.email.trim().toLowerCase() !== projection.email?.trim().toLowerCase()) {
+      const registration = await checkEmailRegistration(c.env, { tenantId, email: body.email });
+      if (registration === 'unavailable') {
+        c.header('Retry-After', '5');
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description: 'The email address cannot be checked now; try again',
+          },
+          503
+        );
+      }
+      if (registration === 'blocked') {
+        return c.json(
+          {
+            error: 'conflict',
+            error_description: 'Unable to update user with the provided information',
+          },
+          409
+        );
+      }
+    }
+
     const addressJson = buildAddressJsonFromAdminBody(body);
-    await createCanonicalRuntimeUserWriter(c, authCtx.coreAdapter, tenantId).syncFromRuntimeUser({
+    await createCanonicalRuntimeUserWriter(
+      c,
+      accountCore,
+      tenantId,
+      accountPii
+    ).syncFromRuntimeUser({
       userId,
       tenantId,
       active: Boolean(projection.active),
@@ -1957,6 +2324,8 @@ export async function adminUserRetryPiiHandler(c: Context<{ Bindings: Env }>) {
       pii_status: 'active',
     });
   } catch (error) {
+    const notFoundResponse = accountRouteNotFoundResponse(c, error);
+    if (notFoundResponse) return notFoundResponse;
     logSanitizedError('Admin user retry PII error', error);
     const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
     if (writeFenceResponse) return writeFenceResponse;
@@ -1979,15 +2348,21 @@ export async function adminUserDeletePiiHandler(c: Context<{ Bindings: Env }>) {
   try {
     const userId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const projectionRepository = createCanonicalRuntimeUserProjectionRepository(
-      c,
-      authCtx.coreAdapter,
-      tenantId
-    );
-    if (!projectionRepository) {
-      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    // The user, its legal holds, its tombstone and its PII all live in the account's databases,
+    // as for retry-PII; the tenant metadata database does not hold them once accounts are routed.
+    const accountSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId, {
+      accountId: userId,
+    });
+    if (!accountSources.nonPiiDb || !accountSources.piiDb) {
+      throw new Error('admin_user_account_sources_required');
     }
+    const accountCore = ensureDatabaseAdapter(accountSources.nonPiiDb, 'admin-delete-pii-core');
+    const accountPii = ensureDatabaseAdapter(accountSources.piiDb, 'admin-delete-pii-pii');
+    const projectionRepository = new CanonicalRuntimeUserProjectionRepository(
+      accountCore,
+      tenantId,
+      new CanonicalSensitiveValueResolver(accountPii)
+    );
     const projection = await projectionRepository.findByLegacyUserId(userId, {
       includeInactive: true,
     });
@@ -2002,7 +2377,7 @@ export async function adminUserDeletePiiHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const legalHold = await findActiveAccountLegalHold(authCtx.coreAdapter, tenantId, userId);
+    const legalHold = await findActiveAccountLegalHold(accountCore, tenantId, userId);
     if (legalHold) {
       return c.json(
         {
@@ -2022,30 +2397,44 @@ export async function adminUserDeletePiiHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const deletionReason = body.reason ?? 'user_request';
-    const retentionDays = body.retention_days ?? 90;
-    const piiAdapter = resolveAdminPiiAdapter(c, tenantId);
-    if (!piiAdapter) {
-      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-    }
-
-    await new TombstoneRepository(piiAdapter).createTombstone(
-      {
-        id: userId,
-        tenant_id: tenantId,
-        email_blind_index: null,
-        deleted_by: 'admin',
-        deletion_reason: deletionReason,
-        retention_days: retentionDays,
-        metadata: {
-          source: 'admin_api_pii_deletion',
-          timestamp: new Date().toISOString(),
-          user_active: true,
+    let tombstoneInput: PreparedAccountTombstone;
+    try {
+      tombstoneInput = await prepareAccountTombstone(c.env, {
+        tenantId,
+        email: projection.email,
+        retentionDays: body.retention_days,
+      });
+    } catch (error) {
+      if (!(error instanceof TombstoneRetentionDaysInvalidError)) throw error;
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'retention_days must be a whole number of days from 1 to 3650',
         },
-      },
-      piiAdapter
-    );
+        400
+      );
+    }
+    const retentionDays = tombstoneInput.retentionDays;
 
-    await createCanonicalRuntimeUserWriter(c, authCtx.coreAdapter, tenantId).syncFromRuntimeUser({
+    await writeAccountTombstone(accountPii, {
+      tenantId,
+      userId,
+      prepared: tombstoneInput,
+      deletedBy: 'admin',
+      reason: deletionReason,
+      metadata: {
+        source: 'admin_api_pii_deletion',
+        timestamp: new Date().toISOString(),
+        user_active: true,
+      },
+    });
+
+    await createCanonicalRuntimeUserWriter(
+      c,
+      accountCore,
+      tenantId,
+      accountPii
+    ).syncFromRuntimeUser({
       userId,
       tenantId,
       active: Boolean(projection.active),
@@ -2095,6 +2484,8 @@ export async function adminUserDeletePiiHandler(c: Context<{ Bindings: Env }>) {
       retention_days: retentionDays,
     });
   } catch (error) {
+    const notFoundResponse = accountRouteNotFoundResponse(c, error);
+    if (notFoundResponse) return notFoundResponse;
     logSanitizedError('Admin user delete PII error', error);
     const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
     if (writeFenceResponse) return writeFenceResponse;

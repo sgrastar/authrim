@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFile, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { getDomain } from 'tldts';
-import { z } from 'zod';
+import { z } from './zod.js';
 import {
   isPluginHostInterfaceId,
   type PluginHostInterfaceId,
@@ -458,7 +458,7 @@ export interface AggregatedExternalCapabilitySource {
 }
 
 function addIssue(context: z.RefinementCtx, path: Array<string | number>, message: string): void {
-  context.addIssue({ code: z.ZodIssueCode.custom, path, message });
+  context.addIssue({ code: 'custom', path, message });
 }
 
 function reportDuplicates(

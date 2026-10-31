@@ -1,18 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
+  revokeGuestResumeForSession,
   sessionStore,
   revokeDeviceSecretsForLogoutScope,
   listRefreshTokenFamiliesByUser,
   expireRefreshTokenFamiliesByUser,
   getRefreshTokenRotatorStubByJti,
-  revokeByJtiRpc,
+  revokeFamilyRpc,
+  createAuditLog,
+  tenantMetadataCore,
+  accountCore,
+  resolveAccountDataContextFromHono,
 } = vi.hoisted(() => {
   const rotatorStub = {
-    revokeByJtiRpc: vi.fn(),
+    revokeFamilyRpc: vi.fn(),
   };
 
   return {
+    revokeGuestResumeForSession: vi.fn(),
     sessionStore: {
       getSessionRpc: vi.fn(),
       invalidateSessionRpc: vi.fn(),
@@ -20,8 +26,20 @@ const {
     revokeDeviceSecretsForLogoutScope: vi.fn(),
     listRefreshTokenFamiliesByUser: vi.fn(),
     expireRefreshTokenFamiliesByUser: vi.fn(),
-    getRefreshTokenRotatorStubByJti: vi.fn(() => ({ stub: rotatorStub })),
-    revokeByJtiRpc: rotatorStub.revokeByJtiRpc,
+    getRefreshTokenRotatorStubByJti: vi.fn((_env: unknown, _clientId: string, jti: string) => ({
+      stub: rotatorStub,
+      resolution: { instanceName: `rotator:${jti}` },
+    })),
+    revokeFamilyRpc: rotatorStub.revokeFamilyRpc,
+    createAuditLog: vi.fn(),
+    // ar-token indexes refresh-token families in the user's account database.
+    tenantMetadataCore: { database: 'tenant-metadata', query: vi.fn(async () => []) },
+    accountCore: { database: 'account' },
+    resolveAccountDataContextFromHono: vi.fn(async (_c: unknown, userId: string) => ({
+      tenantId: 'tenant_test',
+      accountId: `account:${userId}`,
+      legacyUserId: userId,
+    })),
   };
 });
 
@@ -29,16 +47,13 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    revokeGuestResumeForSession,
     getSessionStoreBySessionId: vi.fn(() => ({ stub: sessionStore })),
     isShardedSessionId: vi.fn(() => true),
     getTenantIdFromContext: vi.fn(() => 'tenant_test'),
-    createAuthContextFromHono: vi.fn(() => ({ coreAdapter: {} })),
-    createAccountAuthContextFromHono: vi.fn(() => ({ coreAdapter: {} })),
-    resolveAccountDataContextFromHono: vi.fn(async (_c, userId: string) => ({
-      tenantId: 'tenant_test',
-      accountId: `account:${userId}`,
-      legacyUserId: userId,
-    })),
+    createAuthContextFromHono: vi.fn(() => ({ coreAdapter: tenantMetadataCore })),
+    createAccountAuthContextFromHono: vi.fn(() => ({ coreAdapter: accountCore })),
+    resolveAccountDataContextFromHono,
     isNativeSSOEnabled: vi.fn(async () => true),
     revokeDeviceSecretsForLogoutScope,
     listRefreshTokenFamiliesByUser,
@@ -51,6 +66,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         error: vi.fn(),
       }),
     })),
+    createAuditLog,
   };
 });
 
@@ -62,7 +78,7 @@ function createContext(body: Record<string, unknown>) {
   const responseHeaders = new Headers();
   const request = new Request('https://auth.example.com/api/v1/auth/direct/logout', {
     headers: {
-      Authorization: 'Bearer g1:global:0:session_test',
+      Cookie: 'authrim_session=g1:global:0:session_test; authrim_guest_resume=resume-secret',
     },
   });
 
@@ -75,6 +91,8 @@ function createContext(body: Record<string, unknown>) {
     env: {
       REFRESH_TOKEN_ROTATOR: {},
     },
+    // No tenant metadata route: accounts are not routed, device secrets are in the metadata DB.
+    get: (key: string) => (key === 'tenantId' ? 'tenant_test' : undefined),
     header: (name: string, value: string) => {
       responseHeaders.append(name, value);
     },
@@ -89,6 +107,7 @@ function createContext(body: Record<string, unknown>) {
 describe('Direct Auth logout scope', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    revokeGuestResumeForSession.mockResolvedValue(undefined);
     sessionStore.getSessionRpc.mockResolvedValue({
       id: 'g1:global:0:session_test',
       userId: 'user_123',
@@ -96,8 +115,11 @@ describe('Direct Auth logout scope', () => {
     sessionStore.invalidateSessionRpc.mockResolvedValue(undefined);
     revokeDeviceSecretsForLogoutScope.mockResolvedValue({
       scope: 'local',
+      tenantId: 'tenant_test',
+      sessionIds: [],
       revokedDeviceSecrets: 0,
       revokedInstallations: 0,
+      matchedInstallations: 0,
     });
     listRefreshTokenFamiliesByUser.mockResolvedValue([
       {
@@ -109,8 +131,9 @@ describe('Direct Auth logout scope', () => {
         jti: 'refresh-family-2',
       },
     ]);
-    revokeByJtiRpc.mockResolvedValue(undefined);
+    revokeFamilyRpc.mockResolvedValue(undefined);
     expireRefreshTokenFamiliesByUser.mockResolvedValue(undefined);
+    createAuditLog.mockResolvedValue(undefined);
   });
 
   it('defaults Direct Auth logout propagation to the current client', async () => {
@@ -166,15 +189,13 @@ describe('Direct Auth logout scope', () => {
       success: true,
       message: 'Logged out successfully',
     });
-    expect(listRefreshTokenFamiliesByUser).toHaveBeenCalledWith(
-      {},
-      {
-        tenantId: 'tenant_test',
-        userId: 'user_123',
-        activeOnly: true,
-        nowMs: expect.any(Number),
-      }
-    );
+    expect(resolveAccountDataContextFromHono).toHaveBeenCalledWith(expect.anything(), 'user_123');
+    expect(listRefreshTokenFamiliesByUser).toHaveBeenCalledWith(accountCore, {
+      tenantId: 'tenant_test',
+      userId: 'user_123',
+      activeOnly: true,
+      nowMs: expect.any(Number),
+    });
     expect(getRefreshTokenRotatorStubByJti).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
@@ -193,22 +214,116 @@ describe('Direct Auth logout scope', () => {
       'refresh-family-2',
       'tenant_test'
     );
-    expect(revokeByJtiRpc).toHaveBeenNthCalledWith(
-      1,
-      'refresh-family-1',
-      'direct_auth_revoke_tokens'
+    // By user in each rotator: the indexed JWT ID is the family's first, gone once rotated.
+    expect(revokeFamilyRpc).toHaveBeenCalledTimes(2);
+    expect(revokeFamilyRpc).toHaveBeenNthCalledWith(1, 'user_123', 'direct_auth_revoke_tokens');
+    expect(revokeFamilyRpc).toHaveBeenNthCalledWith(2, 'user_123', 'direct_auth_revoke_tokens');
+    expect(expireRefreshTokenFamiliesByUser).toHaveBeenCalledWith(accountCore, {
+      tenantId: 'tenant_test',
+      userId: 'user_123',
+    });
+  });
+
+  it('keeps the index when a rotator could not revoke, so a retry can find the family', async () => {
+    getRefreshTokenRotatorStubByJti.mockImplementation(
+      () =>
+        ({
+          stub: { revokeFamilyRpc },
+          resolution: { instanceName: 'rotator:shared' },
+        }) as never
     );
-    expect(revokeByJtiRpc).toHaveBeenNthCalledWith(
-      2,
-      'refresh-family-2',
-      'direct_auth_revoke_tokens'
+    revokeFamilyRpc.mockReset().mockRejectedValueOnce(new Error('unavailable'));
+    expireRefreshTokenFamiliesByUser.mockClear();
+    const { directLogoutHandler } = await import('../direct-auth');
+
+    const response = await directLogoutHandler(
+      createContext({ client_id: 'client-a', revoke_tokens: true }) as never
     );
-    expect(expireRefreshTokenFamiliesByUser).toHaveBeenCalledWith(
-      {},
-      {
+
+    expect(response.status).toBe(200);
+    expect(revokeFamilyRpc).toHaveBeenCalledWith('user_123', 'direct_auth_revoke_tokens');
+    expect(expireRefreshTokenFamiliesByUser).not.toHaveBeenCalled();
+    revokeFamilyRpc.mockReset().mockResolvedValue(undefined);
+  });
+
+  it('revokes the user’s family once in a rotator the index names twice', async () => {
+    getRefreshTokenRotatorStubByJti.mockImplementation(
+      () =>
+        ({
+          stub: { revokeFamilyRpc },
+          resolution: { instanceName: 'rotator:shared' },
+        }) as never
+    );
+    revokeFamilyRpc.mockClear();
+    const { directLogoutHandler } = await import('../direct-auth');
+
+    await directLogoutHandler(
+      createContext({ client_id: 'client-a', revoke_tokens: true }) as never
+    );
+
+    expect(revokeFamilyRpc).toHaveBeenCalledTimes(1);
+    expect(revokeFamilyRpc).toHaveBeenCalledWith('user_123', 'direct_auth_revoke_tokens');
+  });
+});
+
+describe('Direct Auth guest logout', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    sessionStore.getSessionRpc.mockResolvedValue({
+      id: 'session',
+      userId: 'guest',
+      tenantId: 'tenant_test',
+      data: { guest_resume_credential: true },
+    });
+    revokeGuestResumeForSession.mockResolvedValue(undefined);
+    sessionStore.invalidateSessionRpc.mockResolvedValue(undefined);
+  });
+  it('revokes the resume credential before invalidation and clears both browser cookies', async () => {
+    const { directLogoutHandler } = await import('../direct-auth');
+    const c = createContext({});
+    const response = await directLogoutHandler(c as never);
+    expect(response.status).toBe(200);
+    expect(revokeGuestResumeForSession).toHaveBeenCalledWith(
+      c,
+      expect.objectContaining({ userId: 'guest' })
+    );
+    expect(revokeGuestResumeForSession.mock.invocationCallOrder[0]).toBeLessThan(
+      sessionStore.invalidateSessionRpc.mock.invocationCallOrder[0]
+    );
+    expect(response.headers.get('set-cookie')).toContain('authrim_guest_resume=;');
+    expect(response.headers.get('set-cookie')).toContain('authrim_session=;');
+    expect(createAuditLog).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
         tenantId: 'tenant_test',
-        userId: 'user_123',
-      }
+        userId: 'guest',
+        action: 'user.logout',
+        resourceId: 'session',
+        metadata: expect.stringContaining('guest'),
+      })
     );
   });
+  it.each(['read', 'revoke', 'invalidate'])(
+    'preserves cookies and reports failure on %s failure',
+    async (stage) => {
+      const { directLogoutHandler } = await import('../direct-auth');
+      const failing =
+        stage === 'read'
+          ? sessionStore.getSessionRpc
+          : stage === 'revoke'
+            ? revokeGuestResumeForSession
+            : sessionStore.invalidateSessionRpc;
+      failing.mockRejectedValueOnce(new Error('unavailable'));
+      const response = await directLogoutHandler(createContext({}) as never);
+      expect(response.status).toBe(503);
+      expect(response.headers.get('set-cookie')).toBeNull();
+      if (stage !== 'invalidate') expect(sessionStore.invalidateSessionRpc).not.toHaveBeenCalled();
+      // Device secrets are revoked before the session ends (a retry revokes them again).
+      if (stage === 'invalidate') {
+        expect(revokeDeviceSecretsForLogoutScope).toHaveBeenCalledTimes(1);
+      } else {
+        expect(revokeDeviceSecretsForLogoutScope).not.toHaveBeenCalled();
+      }
+    }
+  );
 });

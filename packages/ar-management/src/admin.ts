@@ -1,14 +1,26 @@
+import { logCoverageHeaders, logDetailWindow, logPageRequest } from './log-read-adapter';
+import { logQueryErrorResponse } from './log-archive-query';
 /**
  * Admin API Endpoints
  * User management, client management, and statistics for administrative dashboard
  */
 
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { Context } from 'hono';
 import type { Env, Session } from '@authrim/ar-lib-core';
+import { getCanonicalAccountStatus, transitionAccountLifecycle } from './account-status';
+import { adminAccountCoreAdapter } from './admin-account-storage';
+import { withdrawOAuthClientConsent } from './oauth-client-consent-withdrawal';
+import {
+  adminActorIdFromContext,
+  startAdminSessionEndLogout,
+  withAdminSessionEndLogout,
+} from './admin-session-end';
+import { endedSessionsOf, transitionEndingSessions, type EndedSession } from './session-end-logout';
 import { getRefreshTokenRotatorStubByJti } from '@authrim/ar-lib-core/services/refresh-token-family-store';
 import {
   invalidateConsentCache,
-  revokeToken,
+  listOAuthClientConsentsWithClients,
   getSessionStoreForNewSession,
   getChallengeStoreByChallengeId,
   getTenantIdFromContext,
@@ -16,7 +28,6 @@ import {
   resolveAccountDataContextFromHono,
   createAuthContextFromHono,
   createAccountAuthContextFromHono,
-  hasPIIDatabase,
   generateId,
   type DatabaseAdapter,
   createErrorResponse,
@@ -42,12 +53,21 @@ import {
   // Write-Through KV Cache (Phase 3)
   readResponseTextWithLimit,
   CanonicalRuntimeUserStore,
-  buildTenantSystemSettingsKey,
+  ensureDatabaseAdapter,
+  isDatabaseSource,
+  LinkedIdentityRepository,
+  PasskeyRepository,
+  RoleRepository,
+  SubjectIdentifierRepository,
   getTenantMetadataContextFromHono,
+  resolveTenantAssignedDatabaseSourcesFromRegistry,
+  getAccountDataContextFromHono,
   resolveOtpAccountCoreDataContextByIdentifierFromHono,
   createDataTemporarilyUnavailableResponse,
   transitionAccountAuthenticationState,
+  readAccountAuthenticationState,
   produceNotificationDelivery,
+  SESSION_MAX_TTL_DEFINITION,
   type CanonicalOtpLoginUser,
 } from '@authrim/ar-lib-core';
 import {
@@ -67,13 +87,7 @@ import {
   getAuditTimeRange,
   type AuditHotQueryContext,
 } from './audit-hot-query';
-import {
-  getArchiveAuditEventById,
-  getAuditArchiveQuerySupport,
-  listArchiveAuditEvents,
-} from './audit-archive-query';
 import { getAuditJsonTextExpr } from './audit-sql-dialect';
-import { createLoggingTenantKeyResolver } from './logging-tenant-key';
 import {
   attemptImmediateAccountDirectoryRemovals,
   eraseAccountPiiAfterDirectoryRemovalPrepared,
@@ -82,18 +96,12 @@ import {
 } from './account-directory-removal-producer';
 import { timeManagementRequestDiagnosticOperation } from './request-diagnostics';
 import { findActiveAccountLegalHold } from './account-legal-hold-guard';
+import { prepareAccountTombstone, writeAccountTombstone } from './account-tombstone-write';
 import { usesRoutedAccountStorage } from './tenant-routed-storage';
+import { isInactiveAccountRouteError } from './account-route-errors';
+import { CrossShardAccountExactSearchService } from './cross-shard-account-list';
 
 const TOKEN_REGISTRATION_ERROR_BODY_MAX_BYTES = 64 * 1024;
-
-function isAuditLogStoreNotInitializedError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error ?? '');
-  return (
-    /no such table:\s*(event_log|audit_log)/i.test(message) ||
-    /relation\s+"?(event_log|audit_log)"?\s+does not exist/i.test(message) ||
-    /table\s+'?(event_log|audit_log)'?\s+doesn't exist/i.test(message)
-  );
-}
 
 function emptyAuditLogListResponse(page: number, limit: number) {
   return {
@@ -107,15 +115,20 @@ function emptyAuditLogListResponse(page: number, limit: number) {
   };
 }
 
-function parseJsonObject(value: string | null | undefined): Record<string, unknown> {
-  if (!value) return {};
+/**
+ * Resolve the user's account databases for this request. Returns false when the user has no
+ * account route (an unknown user); the tenant metadata database does not hold users.
+ */
+async function resolveAdminTargetAccount(
+  c: Context<{ Bindings: Env }>,
+  userId: string
+): Promise<boolean> {
   try {
-    const parsed = JSON.parse(value);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : {};
-  } catch {
-    return {};
+    await resolveAccountDataContextFromHono(c, userId);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && error.message === 'account_data_route_not_found') return false;
+    throw error;
   }
 }
 
@@ -125,93 +138,14 @@ async function findCanonicalRuntimeUser(
   userId: string,
   options?: { includeInactive?: boolean }
 ) {
-  const authCtx = createAuthContextFromHono(c, tenantId);
+  if (!(await resolveAdminTargetAccount(c, userId))) return null;
+  const authCtx = createAccountAuthContextFromHono(c, tenantId);
   const piiCtx = createPIIContextFromHono(c, tenantId);
   return new CanonicalRuntimeUserStore({
     coreAdapter: authCtx.coreAdapter,
     piiAdapter: piiCtx.defaultPiiAdapter,
     tenantId,
   }).findById(userId, options);
-}
-
-async function getCanonicalAccountStatus(
-  adapter: DatabaseAdapter,
-  tenantId: string,
-  userId: string
-): Promise<{ id: string; lifecycle_state: string; status: string } | null> {
-  const account = await adapter.queryOne<{
-    id: string;
-    lifecycle_state: string;
-    metadata_json: string | null;
-  }>(
-    'SELECT id, lifecycle_state, metadata_json FROM identity_accounts WHERE legacy_user_id = ? AND tenant_id = ?',
-    [userId, tenantId]
-  );
-  if (!account) return null;
-  const metadata = parseJsonObject(account.metadata_json);
-  return {
-    id: account.id,
-    lifecycle_state: account.lifecycle_state,
-    status:
-      typeof metadata.status === 'string'
-        ? metadata.status
-        : account.lifecycle_state === 'active'
-          ? 'active'
-          : account.lifecycle_state,
-  };
-}
-
-async function updateCanonicalAccountStatus(
-  adapter: DatabaseAdapter,
-  tenantId: string,
-  userId: string,
-  status: string,
-  metadataPatch: Record<string, unknown> = {},
-  now = Date.now()
-) {
-  const lifecycleState = status === 'active' ? 'active' : status;
-  const account = await adapter.queryOne<{ id: string; primary_subject_id: string | null }>(
-    'SELECT id, primary_subject_id FROM identity_accounts WHERE legacy_user_id = ? AND tenant_id = ?',
-    [userId, tenantId]
-  );
-  if (!account) return false;
-  await adapter.execute(
-    `UPDATE identity_accounts
-        SET lifecycle_state = ?,
-            metadata_json = json_set(COALESCE(metadata_json, '{}'), '$.status', ?),
-            updated_at = ?
-      WHERE id = ? AND tenant_id = ?`,
-    [lifecycleState, status, now, account.id, tenantId]
-  );
-  for (const [key, value] of Object.entries(metadataPatch)) {
-    await adapter.execute(
-      `UPDATE identity_accounts
-          SET metadata_json = json_set(COALESCE(metadata_json, '{}'), ?, ?), updated_at = ?
-        WHERE id = ? AND tenant_id = ?`,
-      [`$.${key}`, value, now, account.id, tenantId]
-    );
-  }
-  if (account.primary_subject_id) {
-    await adapter.execute(
-      'UPDATE identity_subjects SET lifecycle_state = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
-      [lifecycleState, now, account.primary_subject_id, tenantId]
-    );
-  }
-  return true;
-}
-
-async function auditHotTableExists(
-  context: AuditHotQueryContext,
-  tableName: 'audit_log' | 'event_log'
-): Promise<boolean> {
-  if (context.dialect !== 'sqlite') {
-    return true;
-  }
-  const table = await context.adapter.queryOne<{ name: string }>(
-    'SELECT name FROM sqlite_master WHERE type = ? AND name = ?',
-    ['table', tableName]
-  );
-  return Boolean(table?.name);
 }
 
 export {
@@ -264,90 +198,6 @@ function getCoreAdapter(
   return createAuthContextFromHono(c, tenantId).coreAdapter;
 }
 
-function formatArchiveAuditEntry(
-  entry: {
-    id: string;
-    anonymizedUserId?: string;
-    eventType: string;
-    eventCategory: string;
-    result: string;
-    severity: string;
-    errorCode?: string;
-    errorMessage?: string;
-    clientId?: string;
-    sessionId?: string;
-    requestId?: string;
-    detailsJson?: string;
-    createdAt: number;
-  },
-  userIdMap: Map<string, string>
-) {
-  let metadata: unknown = null;
-  let metadataObject: Record<string, unknown> | null = null;
-
-  if (entry.detailsJson) {
-    try {
-      metadata = JSON.parse(entry.detailsJson) as unknown;
-      if (metadata && typeof metadata === 'object' && !Array.isArray(metadata)) {
-        metadataObject = metadata as Record<string, unknown>;
-      }
-    } catch {
-      metadata = null;
-      metadataObject = null;
-    }
-  }
-
-  return {
-    id: entry.id,
-    userId: entry.anonymizedUserId ? (userIdMap.get(entry.anonymizedUserId) ?? null) : null,
-    action: entry.eventType,
-    resourceType:
-      typeof metadataObject?.resourceType === 'string'
-        ? metadataObject.resourceType
-        : typeof metadataObject?.resource_type === 'string'
-          ? metadataObject.resource_type
-          : entry.eventCategory,
-    resourceId:
-      typeof metadataObject?.resourceId === 'string'
-        ? metadataObject.resourceId
-        : typeof metadataObject?.resource_id === 'string'
-          ? metadataObject.resource_id
-          : (entry.clientId ?? null),
-    ipAddress:
-      typeof metadataObject?.ipAddress === 'string'
-        ? metadataObject.ipAddress
-        : typeof metadataObject?.ip_address === 'string'
-          ? metadataObject.ip_address
-          : null,
-    userAgent:
-      typeof metadataObject?.userAgent === 'string'
-        ? metadataObject.userAgent
-        : typeof metadataObject?.user_agent === 'string'
-          ? metadataObject.user_agent
-          : null,
-    clientId: entry.clientId ?? null,
-    sessionId: entry.sessionId ?? null,
-    requestId: entry.requestId ?? null,
-    result: entry.result,
-    severity: entry.severity,
-    errorCode: entry.errorCode ?? null,
-    errorMessage: entry.errorMessage ?? null,
-    metadata: metadata && typeof metadata === 'object' ? metadata : null,
-    createdAt: new Date(entry.createdAt).toISOString(),
-  };
-}
-
-async function buildArchiveAuditUserIdMap(
-  c: Context<{ Bindings: Env }>,
-  tenantId: string,
-  entries: Array<{ anonymizedUserId?: string }>
-) {
-  const anonymizedIds = [
-    ...new Set(entries.map((entry) => entry.anonymizedUserId).filter(Boolean)),
-  ] as string[];
-  return resolveAuditUserIdMap(c, tenantId, anonymizedIds);
-}
-
 async function resolveAuditUserAnonymizedId(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
@@ -357,11 +207,21 @@ async function resolveAuditUserAnonymizedId(
   const piiCtx = createPIIContextFromHono(c, tenantId);
   const row = await piiCtx.defaultPiiAdapter.queryOne<{ anonymized_user_id: string }>(
     'SELECT anonymized_user_id FROM user_anonymization_map WHERE tenant_id = ? AND user_id = ?',
-    [tenantId, userId]
+    [tenantId, userId],
+    { consistencyClass: 'primary_required' }
   );
   return row?.anonymized_user_id ?? null;
 }
 
+/** Anonymized IDs looked up per statement (D1 binds at most 100 parameters). */
+const AUDIT_USER_ID_MAP_CHUNK = 50;
+
+/**
+ * The users the anonymized IDs of audit entries stand for, from user_anonymization_map. Each
+ * account's mapping is in its own PII store, so the lookup goes to every PII store of the tenant.
+ * An ID whose mapping is gone (the user was deleted or anonymized) or cannot be read stays
+ * unresolved, and the entry is listed without a user.
+ */
 async function resolveAuditUserIdMap(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
@@ -371,19 +231,58 @@ async function resolveAuditUserIdMap(
     return new Map();
   }
 
-  const piiCtx = createPIIContextFromHono(c, tenantId);
-  const placeholders = anonymizedUserIds.map(() => '?').join(', ');
-  const rows = await piiCtx.defaultPiiAdapter.query<{
-    anonymized_user_id: string;
-    user_id: string;
-  }>(
-    `SELECT anonymized_user_id, user_id
-       FROM user_anonymization_map
-      WHERE tenant_id = ? AND anonymized_user_id IN (${placeholders})`,
-    [tenantId, ...anonymizedUserIds]
-  );
+  // The request's own account store (a list filtered by user), then all of the tenant's.
+  const stores: DatabaseAdapter[] = getAccountDataContextFromHono(c)
+    ? [createPIIContextFromHono(c, tenantId).defaultPiiAdapter]
+    : [];
+  try {
+    stores.push(
+      ...(
+        await resolveTenantAssignedDatabaseSourcesFromRegistry(c.env, {
+          tenantId,
+          role: 'tenant_pii',
+          dataRole: 'tenant_pii',
+        })
+      ).map((store) => ensureDatabaseAdapter(store.source, 'audit-user-map'))
+    );
+  } catch (error) {
+    getLogger(c)
+      .module('ADMIN')
+      .warn('Audit entries listed without some users: the PII stores could not be resolved', {
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
+  }
 
-  return new Map(rows.map((row) => [row.anonymized_user_id, row.user_id]));
+  const chunks: string[][] = [];
+  for (let index = 0; index < anonymizedUserIds.length; index += AUDIT_USER_ID_MAP_CHUNK) {
+    chunks.push(anonymizedUserIds.slice(index, index + AUDIT_USER_ID_MAP_CHUNK));
+  }
+  const results = await Promise.allSettled(
+    stores.flatMap((store) =>
+      chunks.map((chunk) =>
+        store.query<{ anonymized_user_id: string; user_id: string }>(
+          `SELECT anonymized_user_id, user_id
+             FROM user_anonymization_map
+            WHERE tenant_id = ? AND anonymized_user_id IN (${chunk.map(() => '?').join(', ')})`,
+          [tenantId, ...chunk],
+          { consistencyClass: 'primary_required' }
+        )
+      )
+    )
+  );
+  const userIds = new Map<string, string>();
+  for (const result of results) {
+    if (result.status === 'rejected') {
+      getLogger(c)
+        .module('ADMIN')
+        .warn('Audit entries listed without users: a PII store could not be read', {
+          errorType: result.reason instanceof Error ? result.reason.name : 'Unknown',
+        });
+      continue;
+    }
+    for (const row of result.value) userIds.set(row.anonymized_user_id, row.user_id);
+  }
+  return userIds;
 }
 
 function buildAuditResourceFilter(
@@ -438,131 +337,6 @@ function buildAuditResourceFilter(
 }
 
 // =============================================================================
-// Policy Configuration
-// =============================================================================
-
-/**
- * Policy feature flag names mapped to camelCase property names
- */
-const POLICY_FLAG_MAPPING: Record<string, string> = {
-  ENABLE_ABAC: 'enableAbac',
-  ENABLE_REBAC: 'enableRebac',
-  ENABLE_POLICY_LOGGING: 'enablePolicyLogging',
-  ENABLE_VERIFIED_ATTRIBUTES: 'enableVerifiedAttributes',
-  ENABLE_CUSTOM_RULES: 'enableCustomRules',
-  ENABLE_SD_JWT: 'enableSdJwt',
-  ENABLE_POLICY_EMBEDDING: 'enablePolicyEmbedding',
-};
-
-/**
- * KV key prefix for policy feature flags (matches policy-core/feature-flags.ts)
- */
-const POLICY_FLAGS_PREFIX = 'policy:flags:';
-
-/**
- * KV keys for policy claims configuration
- */
-const POLICY_CLAIMS_KEYS = {
-  ACCESS_TOKEN_CLAIMS: 'policy:claims:access_token',
-  ID_TOKEN_CLAIMS: 'policy:claims:id_token',
-};
-
-/**
- * Read policy feature flags from KV
- * Returns an object with flag values that have been set in KV
- */
-async function readPolicyFlagsFromKV(env: Env): Promise<Record<string, boolean>> {
-  const flags: Record<string, boolean> = {};
-
-  if (!env.SETTINGS) {
-    return flags;
-  }
-
-  for (const [kvKey, camelKey] of Object.entries(POLICY_FLAG_MAPPING)) {
-    try {
-      const value = await env.SETTINGS.get(`${POLICY_FLAGS_PREFIX}${kvKey}`);
-      if (value !== null) {
-        flags[camelKey] = value.toLowerCase() === 'true' || value === '1';
-      }
-    } catch {
-      // Skip on error
-    }
-  }
-
-  return flags;
-}
-
-/**
- * Read policy claims configuration from KV
- */
-async function readPolicyClaimsFromKV(env: Env): Promise<Record<string, string>> {
-  const claims: Record<string, string> = {};
-
-  if (!env.SETTINGS) {
-    return claims;
-  }
-
-  try {
-    const accessTokenClaims = await env.SETTINGS.get(POLICY_CLAIMS_KEYS.ACCESS_TOKEN_CLAIMS);
-    if (accessTokenClaims) {
-      claims.accessTokenClaims = accessTokenClaims;
-    }
-
-    const idTokenClaims = await env.SETTINGS.get(POLICY_CLAIMS_KEYS.ID_TOKEN_CLAIMS);
-    if (idTokenClaims) {
-      claims.idTokenClaims = idTokenClaims;
-    }
-  } catch {
-    // Skip on error
-  }
-
-  return claims;
-}
-
-/**
- * Sync policy settings to KV
- * Writes feature flags and claims to individual KV keys for runtime access
- */
-async function syncPolicyFlagsToKV(
-  env: Env,
-  policy: {
-    enableAbac?: boolean;
-    enableRebac?: boolean;
-    enablePolicyLogging?: boolean;
-    enableVerifiedAttributes?: boolean;
-    enableCustomRules?: boolean;
-    enableSdJwt?: boolean;
-    enablePolicyEmbedding?: boolean;
-    accessTokenClaims?: string;
-    idTokenClaims?: string;
-  }
-): Promise<void> {
-  if (!env.SETTINGS) {
-    return;
-  }
-
-  const writes: Promise<void>[] = [];
-
-  // Sync feature flags to individual KV keys
-  for (const [kvKey, camelKey] of Object.entries(POLICY_FLAG_MAPPING)) {
-    const value = policy[camelKey as keyof typeof policy];
-    if (typeof value === 'boolean') {
-      writes.push(env.SETTINGS.put(`${POLICY_FLAGS_PREFIX}${kvKey}`, value.toString()));
-    }
-  }
-
-  // Sync claims configuration
-  if (policy.accessTokenClaims !== undefined) {
-    writes.push(env.SETTINGS.put(POLICY_CLAIMS_KEYS.ACCESS_TOKEN_CLAIMS, policy.accessTokenClaims));
-  }
-  if (policy.idTokenClaims !== undefined) {
-    writes.push(env.SETTINGS.put(POLICY_CLAIMS_KEYS.ID_TOKEN_CLAIMS, policy.idTokenClaims));
-  }
-
-  await Promise.all(writes);
-}
-
-// =============================================================================
 // User Suspend/Lock API
 // =============================================================================
 
@@ -601,7 +375,7 @@ const LOCK_REASON_CODES = new Set([
  * Suspend a user account with reason code
  *
  * Security:
- * - RBAC: tenant_admin or higher
+ * - RBAC: ar_tenant_admin or higher
  * - Tenant isolation: operation scoped to tenant
  * - Audit: reason_code logged (not reason_detail for privacy)
  *
@@ -650,9 +424,10 @@ export async function adminUserSuspendHandler(c: Context<{ Bindings: Env }>) {
       }
     }
 
-    const adapter = getCoreAdapter(c, tenantId);
+    const accountAdapter = await adminAccountCoreAdapter(c, tenantId, userId);
+    if (!accountAdapter) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
 
-    const user = await getCanonicalAccountStatus(adapter, tenantId, userId);
+    const user = await getCanonicalAccountStatus(accountAdapter, tenantId, userId);
 
     if (!user) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
@@ -663,25 +438,48 @@ export async function adminUserSuspendHandler(c: Context<{ Bindings: Env }>) {
     const nowTs = Math.floor(lifecycleVersionMs / 1000);
     const expiresAt = body.duration_hours ? nowTs + body.duration_hours * 3600 : null;
 
-    await transitionAccountAuthenticationState(c.env, {
-      tenantId,
-      userId,
-      lifecycle: 'suspended',
-      sourceVersionMs: lifecycleVersionMs,
-      operationId: crypto.randomUUID(),
-      revokeSessions: true,
-    });
-    await updateCanonicalAccountStatus(
-      adapter,
-      tenantId,
-      userId,
-      'suspended',
-      {
-        suspended_at: nowTs,
-        suspended_until: expiresAt,
-      },
-      lifecycleVersionMs
-    );
+    const lifecycleOperationId = crypto.randomUUID();
+    // Sessions this transition ended: their relying parties are told after the response, also
+    // when a later step fails or the account turns out superseded.
+    const ended: EndedSession[] = [];
+    let lifecycle: Awaited<ReturnType<typeof transitionAccountLifecycle>>;
+    try {
+      lifecycle = await transitionAccountLifecycle(c.env, accountAdapter, {
+        tenantId,
+        userId,
+        lifecycle: 'suspended',
+        status: 'suspended',
+        metadataPatch: {
+          suspended_at: nowTs,
+          suspended_until: expiresAt,
+        },
+        versionMs: lifecycleVersionMs,
+        operationId: lifecycleOperationId,
+        revokeSessions: true,
+        onSessionsEnded: (sessionIds) => ended.push(...endedSessionsOf(userId, sessionIds)),
+      });
+    } finally {
+      await startAdminSessionEndLogout(c, {
+        tenantId,
+        sessions: ended,
+        trigger: {
+          action: 'user.suspend',
+          operationId: lifecycleOperationId,
+          actorId: adminActorIdFromContext(c),
+        },
+        log,
+      });
+    }
+    if (lifecycle === 'superseded') {
+      // Another status change of a newer (or the same) version got there first.
+      return c.json(
+        {
+          error: 'lifecycle_conflict',
+          error_description: 'The account status changed meanwhile; read it and try again',
+        },
+        409
+      );
+    }
 
     // AccountAuthState DO already rejects new authentication and advances the user session
     // revocation epoch. Token introspection also retains its status-based invalidation check.
@@ -699,7 +497,7 @@ export async function adminUserSuspendHandler(c: Context<{ Bindings: Env }>) {
     });
 
     // Store reason_detail to operational_logs if provided (encrypted, short retention)
-    if (body.reason_detail && c.env.PII_ENCRYPTION_KEY) {
+    if (body.reason_detail) {
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const adminAuth = (c as any).get('adminAuth') as { userId: string } | undefined;
@@ -709,35 +507,16 @@ export async function adminUserSuspendHandler(c: Context<{ Bindings: Env }>) {
         // Get retention days from tenant config (default: 90)
         const retentionDays = await getOperationalLogRetentionDays(c.env.AUTHRIM_CONFIG, tenantId);
 
-        await storeOperationalLog(
-          adapter,
-          {
-            inlineEncryptionKey: c.env.PII_ENCRYPTION_KEY,
-            objectStorage:
-              c.env.SENSITIVE_DETAILS && c.env.OBJECT_ENCRYPTION_ROOT_KEY
-                ? {
-                    bucket: c.env.SENSITIVE_DETAILS,
-                    rootKeyHex: c.env.OBJECT_ENCRYPTION_ROOT_KEY,
-                    keyVersion:
-                      Number.parseInt(c.env.OBJECT_ENCRYPTION_KEY_VERSION || '1', 10) || 1,
-                  }
-                : undefined,
-            runtimeLogging: {
-              env: c.env,
-              tenantKeyResolver: createLoggingTenantKeyResolver(adapter),
-            },
-          },
-          {
-            tenantId,
-            subjectType: 'user',
-            subjectId: userId,
-            actorId,
-            action: 'user.suspend',
-            reasonDetail: body.reason_detail,
-            requestId,
-            retentionDays,
-          }
-        );
+        await storeOperationalLog(c.env, {
+          tenantId,
+          subjectType: 'user',
+          subjectId: userId,
+          actorId,
+          action: 'user.suspend',
+          reasonDetail: body.reason_detail,
+          requestId,
+          retentionDays,
+        });
       } catch (opLogError) {
         // Non-blocking: log error but don't fail the main operation
         log.warn('Failed to store operational log for suspend', { userId }, opLogError as Error);
@@ -773,6 +552,8 @@ export async function adminUserSuspendHandler(c: Context<{ Bindings: Env }>) {
       },
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     logSanitizedError('Admin suspend user error', error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -783,7 +564,7 @@ export async function adminUserSuspendHandler(c: Context<{ Bindings: Env }>) {
  * Lock a user account (more severe than suspend)
  *
  * Security:
- * - RBAC: tenant_admin or higher
+ * - RBAC: ar_tenant_admin or higher
  * - Tenant isolation: operation scoped to tenant
  * - Audit: reason_code logged (not reason_detail for privacy)
  *
@@ -835,9 +616,10 @@ export async function adminUserLockHandler(c: Context<{ Bindings: Env }>) {
       unlockAtTs = Math.floor(unlockDate.getTime() / 1000);
     }
 
-    const adapter = getCoreAdapter(c, tenantId);
+    const accountAdapter = await adminAccountCoreAdapter(c, tenantId, userId);
+    if (!accountAdapter) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
 
-    const user = await getCanonicalAccountStatus(adapter, tenantId, userId);
+    const user = await getCanonicalAccountStatus(accountAdapter, tenantId, userId);
 
     if (!user) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
@@ -847,25 +629,48 @@ export async function adminUserLockHandler(c: Context<{ Bindings: Env }>) {
     const lifecycleVersionMs = Date.now();
     const nowTs = Math.floor(lifecycleVersionMs / 1000);
 
-    await transitionAccountAuthenticationState(c.env, {
-      tenantId,
-      userId,
-      lifecycle: 'locked',
-      sourceVersionMs: lifecycleVersionMs,
-      operationId: crypto.randomUUID(),
-      revokeSessions: true,
-    });
-    await updateCanonicalAccountStatus(
-      adapter,
-      tenantId,
-      userId,
-      'locked',
-      {
-        locked_at: nowTs,
-        locked_until: unlockAtTs,
-      },
-      lifecycleVersionMs
-    );
+    const lifecycleOperationId = crypto.randomUUID();
+    // Sessions this transition ended: their relying parties are told after the response, also
+    // when a later step fails or the account turns out superseded.
+    const ended: EndedSession[] = [];
+    let lifecycle: Awaited<ReturnType<typeof transitionAccountLifecycle>>;
+    try {
+      lifecycle = await transitionAccountLifecycle(c.env, accountAdapter, {
+        tenantId,
+        userId,
+        lifecycle: 'locked',
+        status: 'locked',
+        metadataPatch: {
+          locked_at: nowTs,
+          locked_until: unlockAtTs,
+        },
+        versionMs: lifecycleVersionMs,
+        operationId: lifecycleOperationId,
+        revokeSessions: true,
+        onSessionsEnded: (sessionIds) => ended.push(...endedSessionsOf(userId, sessionIds)),
+      });
+    } finally {
+      await startAdminSessionEndLogout(c, {
+        tenantId,
+        sessions: ended,
+        trigger: {
+          action: 'user.lock',
+          operationId: lifecycleOperationId,
+          actorId: adminActorIdFromContext(c),
+        },
+        log,
+      });
+    }
+    if (lifecycle === 'superseded') {
+      // Another status change of a newer (or the same) version got there first.
+      return c.json(
+        {
+          error: 'lifecycle_conflict',
+          error_description: 'The account status changed meanwhile; read it and try again',
+        },
+        409
+      );
+    }
 
     // Same account-wide DO session revocation and token status invalidation as suspension.
     const revokedTokens = body.revoke_tokens !== false ? -1 : 0; // -1 indicates implicit revocation via status
@@ -881,7 +686,7 @@ export async function adminUserLockHandler(c: Context<{ Bindings: Env }>) {
     });
 
     // Store reason_detail to operational_logs if provided (encrypted, short retention)
-    if (body.reason_detail && c.env.PII_ENCRYPTION_KEY) {
+    if (body.reason_detail) {
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const adminAuth = (c as any).get('adminAuth') as { userId: string } | undefined;
@@ -891,35 +696,16 @@ export async function adminUserLockHandler(c: Context<{ Bindings: Env }>) {
         // Get retention days from tenant config (default: 90)
         const retentionDays = await getOperationalLogRetentionDays(c.env.AUTHRIM_CONFIG, tenantId);
 
-        await storeOperationalLog(
-          adapter,
-          {
-            inlineEncryptionKey: c.env.PII_ENCRYPTION_KEY,
-            objectStorage:
-              c.env.SENSITIVE_DETAILS && c.env.OBJECT_ENCRYPTION_ROOT_KEY
-                ? {
-                    bucket: c.env.SENSITIVE_DETAILS,
-                    rootKeyHex: c.env.OBJECT_ENCRYPTION_ROOT_KEY,
-                    keyVersion:
-                      Number.parseInt(c.env.OBJECT_ENCRYPTION_KEY_VERSION || '1', 10) || 1,
-                  }
-                : undefined,
-            runtimeLogging: {
-              env: c.env,
-              tenantKeyResolver: createLoggingTenantKeyResolver(adapter),
-            },
-          },
-          {
-            tenantId,
-            subjectType: 'user',
-            subjectId: userId,
-            actorId,
-            action: 'user.lock',
-            reasonDetail: body.reason_detail,
-            requestId,
-            retentionDays,
-          }
-        );
+        await storeOperationalLog(c.env, {
+          tenantId,
+          subjectType: 'user',
+          subjectId: userId,
+          actorId,
+          action: 'user.lock',
+          reasonDetail: body.reason_detail,
+          requestId,
+          retentionDays,
+        });
       } catch (opLogError) {
         // Non-blocking: log error but don't fail the main operation
         log.warn('Failed to store operational log for lock', { userId }, opLogError as Error);
@@ -954,6 +740,8 @@ export async function adminUserLockHandler(c: Context<{ Bindings: Env }>) {
       },
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     logSanitizedError('Admin lock user error', error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -981,7 +769,7 @@ const ACTIVATE_REASON_CODES = new Set([
  * Activate (restore) a suspended or locked user account
  *
  * Security:
- * - RBAC: tenant_admin or higher
+ * - RBAC: ar_tenant_admin or higher
  * - Tenant isolation: operation scoped to tenant
  * - Audit: reason_code logged (not reason_detail for privacy)
  *
@@ -1018,17 +806,36 @@ export async function adminUserActivateHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    const adapter = getCoreAdapter(c, tenantId);
+    const accountAdapter = await adminAccountCoreAdapter(c, tenantId, userId);
+    if (!accountAdapter) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
 
     // Get current user state (verify tenant ownership)
-    const user = await getCanonicalAccountStatus(adapter, tenantId, userId);
+    const user = await getCanonicalAccountStatus(accountAdapter, tenantId, userId);
 
     if (!user) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    // Check if user is already active
-    if (user.status === 'active') {
+    // A deleted account, or one being deleted, is never activated (whatever its status says).
+    const authenticationLifecycle = (await readAccountAuthenticationState(c.env, tenantId, userId))
+      .lifecycle;
+    if (
+      ['deleting', 'deleted'].includes(user.lifecycle_state) ||
+      authenticationLifecycle === 'deleting' ||
+      authenticationLifecycle === 'deleted'
+    ) {
+      return c.json(
+        { error: 'invalid_request', error_description: 'Cannot activate a deleted user' },
+        400
+      );
+    }
+    // Already active, unless its authentication state still holds a restriction (one that
+    // crossed an activation): activating again settles both.
+    if (
+      user.status === 'active' &&
+      user.lifecycle_state === 'active' &&
+      (authenticationLifecycle === null || authenticationLifecycle === 'active')
+    ) {
       return c.json(
         {
           error: 'invalid_request',
@@ -1051,29 +858,34 @@ export async function adminUserActivateHandler(c: Context<{ Bindings: Env }>) {
 
     const previousStatus = user.status;
     const lifecycleVersionMs = Date.now();
+    const lifecycleOperationId = crypto.randomUUID();
     const nowTs = Math.floor(lifecycleVersionMs / 1000);
 
-    await updateCanonicalAccountStatus(
-      adapter,
+    const lifecycle = await transitionAccountLifecycle(c.env, accountAdapter, {
       tenantId,
       userId,
-      'active',
-      {
+      lifecycle: 'active',
+      status: 'active',
+      metadataPatch: {
         suspended_at: null,
         suspended_until: null,
         locked_at: null,
         locked_until: null,
       },
-      lifecycleVersionMs
-    );
-    await transitionAccountAuthenticationState(c.env, {
-      tenantId,
-      userId,
-      lifecycle: 'active',
-      sourceVersionMs: lifecycleVersionMs,
-      operationId: crypto.randomUUID(),
+      versionMs: lifecycleVersionMs,
+      operationId: lifecycleOperationId,
       revokeSessions: false,
     });
+    if (lifecycle === 'superseded') {
+      // Another status change of a newer (or the same) version got there first.
+      return c.json(
+        {
+          error: 'lifecycle_conflict',
+          error_description: 'The account status changed meanwhile; read it and try again',
+        },
+        409
+      );
+    }
 
     // Write audit log (reason_code only, not reason_detail for privacy)
     await createAuditLogFromContext(c, 'user.activate', 'user', userId, {
@@ -1082,7 +894,7 @@ export async function adminUserActivateHandler(c: Context<{ Bindings: Env }>) {
     });
 
     // Store reason_detail to operational_logs if provided (encrypted, short retention)
-    if (body.reason_detail && c.env.PII_ENCRYPTION_KEY) {
+    if (body.reason_detail) {
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const adminAuth = (c as any).get('adminAuth') as { userId: string } | undefined;
@@ -1092,35 +904,16 @@ export async function adminUserActivateHandler(c: Context<{ Bindings: Env }>) {
         // Get retention days from tenant config (default: 90)
         const retentionDays = await getOperationalLogRetentionDays(c.env.AUTHRIM_CONFIG, tenantId);
 
-        await storeOperationalLog(
-          adapter,
-          {
-            inlineEncryptionKey: c.env.PII_ENCRYPTION_KEY,
-            objectStorage:
-              c.env.SENSITIVE_DETAILS && c.env.OBJECT_ENCRYPTION_ROOT_KEY
-                ? {
-                    bucket: c.env.SENSITIVE_DETAILS,
-                    rootKeyHex: c.env.OBJECT_ENCRYPTION_ROOT_KEY,
-                    keyVersion:
-                      Number.parseInt(c.env.OBJECT_ENCRYPTION_KEY_VERSION || '1', 10) || 1,
-                  }
-                : undefined,
-            runtimeLogging: {
-              env: c.env,
-              tenantKeyResolver: createLoggingTenantKeyResolver(adapter),
-            },
-          },
-          {
-            tenantId,
-            subjectType: 'user',
-            subjectId: userId,
-            actorId,
-            action: 'user.activate',
-            reasonDetail: body.reason_detail,
-            requestId,
-            retentionDays,
-          }
-        );
+        await storeOperationalLog(c.env, {
+          tenantId,
+          subjectType: 'user',
+          subjectId: userId,
+          actorId,
+          action: 'user.activate',
+          reasonDetail: body.reason_detail,
+          requestId,
+          retentionDays,
+        });
       } catch (opLogError) {
         // Non-blocking: log error but don't fail the main operation
         log.warn('Failed to store operational log for activate', { userId }, opLogError as Error);
@@ -1148,6 +941,8 @@ export async function adminUserActivateHandler(c: Context<{ Bindings: Env }>) {
       reason_code: body.reason_code,
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     logSanitizedError('Admin activate user error', error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -1167,6 +962,64 @@ const ANONYMIZE_REASON_CODES = new Set([
   'legal_requirement', // Legal/regulatory requirement
   'consent_withdrawn', // Consent withdrawn
 ]);
+
+/** The databases an anonymization erases a user from. */
+interface AnonymizationTarget {
+  core: DatabaseAdapter;
+  pii: DatabaseAdapter;
+  /** Whether accounts are routed to their own databases (the core is then the account's). */
+  routed: boolean;
+}
+
+/**
+ * The databases of the user to anonymize. A routed tenant keeps the user in its account
+ * databases: an active account is found through its route; one an anonymization already moved
+ * to `deleting` (which account routes refuse: they resolve active accounts only) through the
+ * deletion lookup of the tenant's stores, so a failed anonymization can be finished. A suspended
+ * or locked account is `not_active`.
+ */
+async function anonymizationTarget(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  userId: string
+): Promise<AnonymizationTarget | 'not_found' | 'not_active'> {
+  if (!usesRoutedAccountStorage(getTenantMetadataContextFromHono(c))) {
+    return {
+      core: createAuthContextFromHono(c, tenantId).coreAdapter,
+      pii: createPIIContextFromHono(c, tenantId).defaultPiiAdapter,
+      routed: false,
+    };
+  }
+  try {
+    if (!(await resolveAdminTargetAccount(c, userId))) return 'not_found';
+    return {
+      core: createAccountAuthContextFromHono(c, tenantId).coreAdapter,
+      pii: createPIIContextFromHono(c, tenantId).defaultPiiAdapter,
+      routed: true,
+    };
+  } catch (error) {
+    if (!isInactiveAccountRouteError(error)) throw error;
+  }
+  const routes = await new CrossShardAccountExactSearchService(c.env).find({
+    tenantId,
+    identifier: userId,
+    purpose: 'account_delete_retry',
+  });
+  if (routes.length === 0) return 'not_active';
+  if (routes.length !== 1 || routes[0]!.legacyUserId !== userId) {
+    throw new Error('admin_anonymize_account_route_invalid');
+  }
+  const binding = (bindingRef: string) => {
+    const source = (c.env as unknown as Record<string, unknown>)[bindingRef];
+    if (!isDatabaseSource(source)) throw new Error('admin_anonymize_account_binding_unavailable');
+    return source;
+  };
+  return {
+    core: ensureDatabaseAdapter(binding(routes[0]!.coreBindingRef), 'admin-anonymize-core'),
+    pii: ensureDatabaseAdapter(binding(routes[0]!.piiBindingRef), 'admin-anonymize-pii'),
+    routed: true,
+  };
+}
 
 /**
  * POST /api/admin/users/:id/anonymize
@@ -1218,12 +1071,24 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    const target = await anonymizationTarget(c, tenantId, userId);
+    if (target === 'not_found')
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    if (target === 'not_active') {
+      return c.json(
+        {
+          error: 'account_not_active',
+          error_description:
+            'The account is not active; it cannot be anonymized while suspended or locked',
+        },
+        409
+      );
+    }
     const nowTs = Math.floor(Date.now() / 1000);
 
     const runtimeUsers = new CanonicalRuntimeUserStore({
-      coreAdapter: authCtx.coreAdapter,
-      piiAdapter: createPIIContextFromHono(c, tenantId).defaultPiiAdapter,
+      coreAdapter: target.core,
+      piiAdapter: target.pii,
       tenantId,
     });
     const user = await runtimeUsers.findById(userId, { includeInactive: true });
@@ -1241,7 +1106,7 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    const legalHold = await findActiveAccountLegalHold(authCtx.coreAdapter, tenantId, userId);
+    const legalHold = await findActiveAccountLegalHold(target.core, tenantId, userId);
 
     if (legalHold) {
       return c.json(
@@ -1255,11 +1120,16 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Generate user ID hash for audit trail (no way to recover original ID)
-    const encoder = new TextEncoder();
-    const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(userId + tenantId));
-    const userIdHash = Array.from(new Uint8Array(hashBuffer))
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('');
+    const anonymizedRef = async (id: string) => {
+      const hashBuffer = await crypto.subtle.digest(
+        'SHA-256',
+        new TextEncoder().encode(id + tenantId)
+      );
+      return Array.from(new Uint8Array(hashBuffer))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('');
+    };
+    const userIdHash = await anonymizedRef(userId);
 
     // Get admin actor ID
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1267,134 +1137,148 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
       | { adminId?: string; userId?: string }
       | undefined;
     const deletedBy = adminAuth?.adminId ?? adminAuth?.userId ?? 'unknown';
-    const deletingVersionMs = Date.now();
-    await transitionAccountAuthenticationState(c.env, {
-      tenantId,
-      userId,
-      lifecycle: 'deleting',
-      sourceVersionMs: deletingVersionMs,
-      operationId: crypto.randomUUID(),
-      revokeSessions: true,
-    });
-
-    let retentionUntil = nowTs + 90 * 24 * 60 * 60;
+    // Decided before the deletion changes anything: the email's keyed fingerprint (taken while
+    // the address is still there) and the tenant's retention for the record.
+    const tombstoneInput = await prepareAccountTombstone(c.env, { tenantId, email: user.email });
+    // Milliseconds, as tombstones keep it.
+    let retentionUntil = nowTs * 1000 + tombstoneInput.retentionDays * 24 * 60 * 60 * 1000;
     let tombstoneId: string | null = null;
 
-    if (!hasPIIDatabase(c)) {
-      throw new Error('account_directory_removal_pii_unavailable');
-    }
-    const removalPiiContext = createPIIContextFromHono(c, tenantId);
-    const directoryRemovals = await prepareAccountDirectoryRemoval(c.env, {
-      tenantId,
-      userId,
-      core: authCtx.coreAdapter,
-      pii: removalPiiContext.defaultPiiAdapter,
-    });
-
-    if (hasPIIDatabase(c)) {
-      const piiCtx = removalPiiContext;
-      const existingTombstone = await piiCtx.piiRepositories.tombstone.findByUserId(
+    // The sessions the anonymization ends: their relying parties are told after the response (each
+    // logout token carries the sub recorded with its session-client, not one read from the account
+    // being removed), also when a later step fails. Its audits name the user by the hash only.
+    const deletingOperationId = crypto.randomUUID();
+    await withAdminSessionEndLogout(
+      c,
+      {
         tenantId,
-        userId,
-        piiCtx.defaultPiiAdapter
-      );
+        trigger: {
+          action: 'user.anonymized',
+          operationId: deletingOperationId,
+          actorId: adminActorIdFromContext(c),
+          auditUserId: userIdHash,
+        },
+      },
+      async (ended) => {
+        const deletingVersionMs = Date.now();
+        await transitionEndingSessions(c.env, ended, {
+          tenantId,
+          userId,
+          lifecycle: 'deleting',
+          sourceVersionMs: deletingVersionMs,
+          operationId: deletingOperationId,
+        });
 
-      if (!existingTombstone) {
-        const tombstone = await piiCtx.piiRepositories.tombstone.createTombstone(
-          {
-            id: userId,
-            tenant_id: tenantId,
-            email_blind_index: null,
-            deleted_by: deletedBy,
-            deletion_reason: body.reason_code,
-            retention_days: 90,
+        const directoryRemovals = await prepareAccountDirectoryRemoval(c.env, {
+          tenantId,
+          userId,
+          core: target.core,
+          pii: target.pii,
+        });
+
+        {
+          const tombstone = await writeAccountTombstone(target.pii, {
+            tenantId,
+            userId,
+            prepared: tombstoneInput,
+            deletedBy,
+            reason: body.reason_code,
             metadata: {
               source: 'admin_user_anonymize',
               request_confirmed: true,
               user_id_hash: userIdHash,
             },
-          },
-          piiCtx.defaultPiiAdapter
+          });
+          tombstoneId = tombstone.id;
+          retentionUntil = tombstone.retention_until;
+          await eraseAccountPiiAfterDirectoryRemovalPrepared(
+            target.pii,
+            { tenantId, userId, core: target.core },
+            nowTs
+          );
+          await new LinkedIdentityRepository(target.pii).deleteByUserId(
+            tenantId,
+            userId,
+            target.pii
+          );
+          await new SubjectIdentifierRepository(target.pii).deleteByUserId(
+            tenantId,
+            userId,
+            target.pii
+          );
+        }
+
+        const sessions = await target.core.query<{ id: string }>(
+          'SELECT * FROM sessions WHERE tenant_id = ? AND user_id = ?',
+          [tenantId, userId]
         );
-        tombstoneId = tombstone.id;
-        retentionUntil = tombstone.retention_until;
-      } else {
-        tombstoneId = existingTombstone.id;
-        retentionUntil = existingTombstone.retention_until;
+        await samlDrAll(
+          sessions.map((session) =>
+            target.core.execute(
+              'DELETE FROM session_clients WHERE tenant_id = ? AND session_id = ?',
+              [tenantId, session.id]
+            )
+          )
+        );
+
+        await samlDrAll([
+          target.core.execute('DELETE FROM sessions WHERE tenant_id = ? AND user_id = ?', [
+            tenantId,
+            userId,
+          ]),
+          new PasskeyRepository(target.core, tenantId).deleteByUserId(userId),
+          // The user's roles and memberships, in its account database; and the roles SCIM gave
+          // it, which SCIM keeps in the tenant metadata database.
+          new RoleRepository(target.core, tenantId).removeAllRolesFromUser(userId),
+          target.routed
+            ? createAuthContextFromHono(c, tenantId).repositories.role.removeAllRolesFromUser(
+                userId
+              )
+            : null,
+          target.core.execute(
+            'DELETE FROM role_assignments WHERE tenant_id = ? AND subject_id = ?',
+            [tenantId, userId]
+          ),
+          target.core.execute(
+            'DELETE FROM subject_org_membership WHERE tenant_id = ? AND subject_id = ?',
+            [tenantId, userId]
+          ),
+        ]);
+
+        await runtimeUsers.deleteUser(userId);
+        await transitionEndingSessions(c.env, ended, {
+          tenantId,
+          userId,
+          lifecycle: 'deleted',
+          sourceVersionMs: Math.max(Date.now(), deletingVersionMs + 1),
+          operationId: crypto.randomUUID(),
+        });
+        await markAccountDirectoryRemovalsReady(target.core, directoryRemovals);
+        await attemptImmediateAccountDirectoryRemovals(c.env.ACCOUNT_DIRECTORY, directoryRemovals);
       }
-      await eraseAccountPiiAfterDirectoryRemovalPrepared(
-        piiCtx.defaultPiiAdapter,
-        { tenantId, userId },
-        nowTs
-      );
-      await piiCtx.piiRepositories.linkedIdentity.deleteByUserId(
-        tenantId,
-        userId,
-        piiCtx.defaultPiiAdapter
-      );
-      await piiCtx.piiRepositories.identifier.deleteByUserId(
-        tenantId,
-        userId,
-        piiCtx.defaultPiiAdapter
-      );
-    }
-
-    const sessions = await authCtx.coreAdapter.query<{ id: string }>(
-      'SELECT * FROM sessions WHERE tenant_id = ? AND user_id = ?',
-      [tenantId, userId]
-    );
-    await Promise.all(
-      sessions.map((session) =>
-        authCtx.coreAdapter.execute(
-          'DELETE FROM session_clients WHERE tenant_id = ? AND session_id = ?',
-          [tenantId, session.id]
-        )
-      )
     );
 
-    await Promise.all([
-      authCtx.coreAdapter.execute('DELETE FROM sessions WHERE tenant_id = ? AND user_id = ?', [
-        tenantId,
-        userId,
-      ]),
-      authCtx.repositories.passkey.deleteByUserId(userId),
-      authCtx.repositories.role.removeAllRolesFromUser(userId),
-      authCtx.coreAdapter.execute(
-        'DELETE FROM subject_org_membership WHERE tenant_id = ? AND subject_id = ?',
-        [tenantId, userId]
-      ),
-    ]);
-
-    await runtimeUsers.deleteUser(userId);
-    await transitionAccountAuthenticationState(c.env, {
-      tenantId,
-      userId,
-      lifecycle: 'deleted',
-      sourceVersionMs: Math.max(Date.now(), deletingVersionMs + 1),
-      operationId: crypto.randomUUID(),
-      revokeSessions: true,
-    });
-    await markAccountDirectoryRemovalsReady(authCtx.coreAdapter, directoryRemovals);
-    await attemptImmediateAccountDirectoryRemovals(c.env.ACCOUNT_DIRECTORY, directoryRemovals);
+    // The tombstone is keyed by the user id: the audits and the log name it by the same hash.
+    const tombstoneIdHash = tombstoneId === null ? null : await anonymizedRef(tombstoneId);
 
     // Step 6: Write audit log (user_id_hash only, no original ID)
     await createAuditLogFromContext(c, 'user.anonymized', 'user', userIdHash, {
       reason_code: body.reason_code,
-      tombstone_id: tombstoneId,
-      retention_until: new Date(retentionUntil * 1000).toISOString(),
+      tombstone_id: tombstoneIdHash,
+      retention_until: new Date(retentionUntil).toISOString(),
     });
 
     log.info('User anonymized', {
       action: 'user_anonymize',
       userIdHash,
       reasonCode: body.reason_code,
-      tombstoneId,
+      tombstoneIdHash,
     });
 
     // Admin Audit Log (use user_id_hash to preserve anonymization)
     scheduleAdminAuditLog(c, 'user.anonymized', userIdHash, 'success', {
       reason_code: body.reason_code,
-      tombstone_id: tombstoneId,
+      tombstone_id: tombstoneIdHash,
     });
 
     return c.json({
@@ -1403,10 +1287,12 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
       tombstone_id: tombstoneId,
       reason_code: body.reason_code,
       deleted_at: new Date(nowTs * 1000).toISOString(),
-      retention_until: new Date(retentionUntil * 1000).toISOString(),
+      retention_until: new Date(retentionUntil).toISOString(),
       message: 'User data has been permanently deleted',
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     logSanitizedError('Admin anonymize user error', error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -1419,12 +1305,15 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
 export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
-    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId);
 
     // Get query parameters
     const page = parseInt(c.req.query('page') || '1', 10);
     const limit = Math.min(parseInt(c.req.query('limit') || '20', 10), 100);
     const offset = (page - 1) * limit;
+    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId, {
+      onCoverage: logCoverageHeaders(c),
+      page: logPageRequest(c, tenantId, limit),
+    });
 
     // Filters
     const userId = c.req.query('user_id');
@@ -1435,51 +1324,11 @@ export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
     const endDate = c.req.query('end_date'); // ISO 8601 format
 
     if (!hotQuery.supported || !hotQuery.context) {
-      const archiveQuery = await getAuditArchiveQuerySupport(c.env, tenantId);
-      if (!archiveQuery.supported || !archiveQuery.context) {
-        return createAuditHotQueryUnsupportedResponse(c, hotQuery);
-      }
-
-      const startTimestamp = buildAuditTimestamp(startDate);
-      const endTimestamp = buildAuditTimestamp(endDate);
-      const anonymizedUserId = userId
-        ? await resolveAuditUserAnonymizedId(c, tenantId, userId)
-        : null;
-
-      if (userId && !anonymizedUserId) {
-        return c.json(emptyAuditLogListResponse(page, limit));
-      }
-
-      const archiveResult = await listArchiveAuditEvents(archiveQuery.context, {
-        tenantId,
-        page,
-        limit,
-        startTime: startTimestamp == null ? undefined : startTimestamp * 1000,
-        endTime: endTimestamp == null ? undefined : endTimestamp * 1000,
-        eventType: action ?? undefined,
-        anonymizedUserId: anonymizedUserId ?? undefined,
-        resourceType: resourceType ?? undefined,
-        resourceId: resourceId ?? undefined,
-      });
-
-      const userIdMap = await buildArchiveAuditUserIdMap(c, tenantId, archiveResult.entries);
-
-      return c.json({
-        entries: archiveResult.entries.map((entry) => formatArchiveAuditEntry(entry, userIdMap)),
-        pagination: {
-          page,
-          limit,
-          total: archiveResult.total,
-          totalPages: archiveResult.totalPages,
-        },
-      });
+      return createAuditHotQueryUnsupportedResponse(c, hotQuery);
     }
 
     const context = hotQuery.context;
     const { tableName, actionColumn, detailsColumn } = getAuditHotQuerySqlSpec(context);
-    if (!(await auditHotTableExists(context, tableName))) {
-      return c.json(emptyAuditLogListResponse(page, limit));
-    }
 
     // Build WHERE clause - tenant_id is always first for index usage
     const conditions: string[] = ['tenant_id = ?'];
@@ -1565,7 +1414,7 @@ export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
           severity
         FROM audit_log
         ${whereClause}
-        ORDER BY created_at DESC
+        ORDER BY created_at DESC, id DESC
         LIMIT ? OFFSET ?
       `;
 
@@ -1612,7 +1461,7 @@ export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
           created_at
         FROM event_log
         ${whereClause}
-        ORDER BY created_at DESC
+        ORDER BY created_at DESC, id DESC
         LIMIT ? OFFSET ?
       `;
 
@@ -1685,6 +1534,13 @@ export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
+    const archivePage = context.archiveRead?.pagination();
+    if (archivePage)
+      return c.json({
+        entries,
+        pagination: archivePage,
+        coverage: context.archiveRead?.coverage(),
+      });
     return c.json({
       entries,
       pagination: {
@@ -1695,11 +1551,8 @@ export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
       },
     });
   } catch (error) {
-    if (isAuditLogStoreNotInitializedError(error)) {
-      const page = parseInt(c.req.query('page') || '1', 10);
-      const limit = Math.min(parseInt(c.req.query('limit') || '20', 10), 100);
-      return c.json(emptyAuditLogListResponse(page, limit));
-    }
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     logSanitizedError('Admin audit log list error', error);
     return c.json(
       {
@@ -1719,7 +1572,10 @@ export async function adminAuditLogGetHandler(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
     const id = c.req.param('id')!;
-    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId);
+    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId, {
+      ...logDetailWindow(c),
+      onCoverage: logCoverageHeaders(c),
+    });
 
     if (!id) {
       return c.json(
@@ -1732,44 +1588,7 @@ export async function adminAuditLogGetHandler(c: Context<{ Bindings: Env }>) {
     }
 
     if (!hotQuery.supported || !hotQuery.context) {
-      const archiveQuery = await getAuditArchiveQuerySupport(c.env, tenantId);
-      if (!archiveQuery.supported || !archiveQuery.context) {
-        return createAuditHotQueryUnsupportedResponse(c, hotQuery);
-      }
-
-      const entry = await getArchiveAuditEventById(archiveQuery.context, tenantId, id);
-      if (!entry) {
-        return c.json(
-          {
-            error: 'not_found',
-            error_description: 'Audit log entry not found',
-          },
-          404
-        );
-      }
-
-      const userIdMap = await buildArchiveAuditUserIdMap(c, tenantId, [entry]);
-      const resolvedUserId = entry.anonymizedUserId
-        ? (userIdMap.get(entry.anonymizedUserId) ?? null)
-        : null;
-      let user = null;
-
-      if (resolvedUserId) {
-        const runtimeUser = await findCanonicalRuntimeUser(c, tenantId, resolvedUserId);
-        if (runtimeUser) {
-          user = {
-            id: runtimeUser.id,
-            email: runtimeUser.email,
-            name: runtimeUser.name,
-            picture: runtimeUser.picture,
-          };
-        }
-      }
-
-      return c.json({
-        ...formatArchiveAuditEntry(entry, userIdMap),
-        user,
-      });
+      return createAuditHotQueryUnsupportedResponse(c, hotQuery);
     }
 
     const context = hotQuery.context;
@@ -1934,7 +1753,13 @@ export async function adminAuditLogGetHandler(c: Context<{ Bindings: Env }>) {
     }
 
     if (resolvedUserId) {
-      const runtimeUser = await findCanonicalRuntimeUser(c, tenantId, resolvedUserId);
+      // The entry still answers when its user can no longer be read (suspended, locked).
+      const runtimeUser = await findCanonicalRuntimeUser(c, tenantId, resolvedUserId).catch(
+        (error: unknown) => {
+          if (isInactiveAccountRouteError(error)) return null;
+          throw error;
+        }
+      );
       if (runtimeUser) {
         user = {
           id: runtimeUser.id,
@@ -1950,386 +1775,13 @@ export async function adminAuditLogGetHandler(c: Context<{ Bindings: Env }>) {
       user,
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     logSanitizedError('Admin audit log get error', error);
     return c.json(
       {
         error: 'server_error',
         error_description: 'Failed to fetch audit log entry',
-      },
-      500
-    );
-  }
-}
-
-/**
- * GET /api/admin/settings
- * Get system settings
- */
-export async function adminSettingsGetHandler(c: Context<{ Bindings: Env }>) {
-  try {
-    const env = c.env as Env;
-
-    // Get settings from KV
-    const settingsJson = await env.SETTINGS?.get('system_settings');
-
-    // Default settings
-    const defaultSettings = {
-      general: {
-        siteName: 'Authrim',
-        logoUrl: '',
-        language: 'en',
-        timezone: 'UTC',
-      },
-      appearance: {
-        primaryColor: '#3B82F6',
-        secondaryColor: '#10B981',
-        fontFamily: 'Inter',
-      },
-      security: {
-        sessionTimeout: 86400, // 24 hours
-        mfaEnforced: false,
-        passwordMinLength: 8,
-        passwordRequireSpecialChar: true,
-      },
-      email: {
-        emailProvider: 'resend',
-        smtpHost: '',
-        smtpPort: 587,
-        smtpUsername: '',
-        smtpPassword: '',
-      },
-      advanced: {
-        accessTokenTtl: 3600, // 1 hour
-        idTokenTtl: 3600, // 1 hour
-        refreshTokenTtl: 2592000, // 30 days
-        passkeyEnabled: true,
-        magicLinkEnabled: false,
-      },
-      ciba: {
-        enabled: true,
-        defaultExpiresIn: 300, // 5 minutes
-        minExpiresIn: 60, // 1 minute
-        maxExpiresIn: 600, // 10 minutes
-        defaultInterval: 5, // 5 seconds
-        minInterval: 2, // 2 seconds
-        maxInterval: 60, // 60 seconds
-        supportedDeliveryModes: ['poll', 'ping', 'push'],
-        userCodeEnabled: true,
-        bindingMessageMaxLength: 140,
-        notificationsEnabled: false,
-        notificationProviders: {
-          email: false,
-          sms: false,
-          push: false,
-        },
-      },
-      oidc: {
-        // Discovery metadata configuration
-        requirePar: false, // Require Pushed Authorization Requests
-        claimsSupported: [
-          'sub',
-          'iss',
-          'aud',
-          'exp',
-          'iat',
-          'auth_time',
-          'nonce',
-          'acr',
-          'amr',
-          'azp',
-          'at_hash',
-          'c_hash',
-          'name',
-          'given_name',
-          'family_name',
-          'middle_name',
-          'nickname',
-          'preferred_username',
-          'profile',
-          'picture',
-          'website',
-          'email',
-          'email_verified',
-          'gender',
-          'birthdate',
-          'zoneinfo',
-          'locale',
-          'phone_number',
-          'phone_number_verified',
-          'address',
-          'updated_at',
-        ],
-        responseTypesSupported: ['code'], // Authorization code flow only by default
-        tokenEndpointAuthMethodsSupported: [
-          'client_secret_basic',
-          'client_secret_post',
-          'client_secret_jwt',
-          'private_key_jwt',
-          'none',
-        ],
-      },
-      fapi: {
-        // FAPI 2.0 Security Profile configuration
-        enabled: false, // FAPI 2.0 mode disabled by default
-        requireDpop: false, // Require DPoP (or MTLS) for sender-constrained tokens
-        allowPublicClients: true, // Allow public clients (disable for strict FAPI 2.0)
-      },
-      policy: {
-        // Policy system feature flags
-        enableAbac: false, // ABAC (Attribute-Based Access Control)
-        enableRebac: false, // ReBAC (Relationship-Based Access Control)
-        enablePolicyLogging: false, // Detailed policy evaluation logging
-        enableVerifiedAttributes: false, // Verified attributes checking
-        enableCustomRules: true, // Custom policy rules
-        enableSdJwt: false, // SD-JWT (Selective Disclosure JWT)
-        enablePolicyEmbedding: false, // Permission embedding in Access Token
-        // Token claims configuration
-        accessTokenClaims: 'roles,org_id,org_type', // Default claims for Access Token
-        idTokenClaims: 'roles,user_type,org_id,plan,org_type', // Default claims for ID Token
-      },
-      loginUI: {
-        theme: 'light',
-        variant: 'beige',
-        supportedLocales: [
-          'en',
-          'ja',
-          'zh-CN',
-          'zh-TW',
-          'es',
-          'pt',
-          'fr',
-          'de',
-          'ko',
-          'ru',
-          'id',
-          'ar',
-          'it',
-          'th',
-          'vi',
-          'hi',
-          'bn',
-          'tr',
-          'sw',
-          'am',
-          'pl',
-        ],
-      },
-    };
-
-    // Read policy feature flags from KV (dynamic overrides)
-    const policyFlags = await readPolicyFlagsFromKV(env);
-    const policyClaimsSettings = await readPolicyClaimsFromKV(env);
-
-    // Merge with stored settings if they exist
-    const settings = settingsJson
-      ? { ...defaultSettings, ...JSON.parse(settingsJson) }
-      : defaultSettings;
-
-    // Apply policy feature flags from KV (priority: KV > stored settings > defaults)
-    if (Object.keys(policyFlags).length > 0) {
-      settings.policy = {
-        ...settings.policy,
-        ...policyFlags,
-      };
-    }
-
-    // Apply policy claims settings from KV
-    if (Object.keys(policyClaimsSettings).length > 0) {
-      settings.policy = {
-        ...settings.policy,
-        ...policyClaimsSettings,
-      };
-    }
-
-    return c.json({ settings });
-  } catch (error) {
-    logSanitizedError('Admin settings get error', error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to fetch settings',
-      },
-      500
-    );
-  }
-}
-
-/**
- * PUT /api/admin/settings
- * Update system settings
- */
-export async function adminSettingsUpdateHandler(c: Context<{ Bindings: Env }>) {
-  try {
-    const env = c.env as Env;
-    const body = await c.req.json();
-
-    if (!body.settings) {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: 'Settings object is required',
-        },
-        400
-      );
-    }
-
-    // Validate settings structure
-    const allowedSections = [
-      'general',
-      'appearance',
-      'security',
-      'email',
-      'advanced',
-      'ciba',
-      'oidc',
-      'fapi',
-      'policy',
-      'loginUI',
-    ];
-    const settings = body.settings;
-
-    for (const section of Object.keys(settings)) {
-      if (!allowedSections.includes(section)) {
-        return c.json(
-          {
-            error: 'invalid_request',
-            error_description: `Invalid settings section: ${section}`,
-          },
-          400
-        );
-      }
-    }
-
-    // Store settings in KV
-    if (env.SETTINGS) {
-      await env.SETTINGS.put('system_settings', JSON.stringify(settings));
-
-      // Sync policy feature flags to individual KV keys
-      if (settings.policy) {
-        await syncPolicyFlagsToKV(env, settings.policy);
-      }
-    } else {
-      return c.json(
-        {
-          error: 'server_error',
-          error_description: 'Settings storage is not configured',
-        },
-        500
-      );
-    }
-
-    return c.json({
-      success: true,
-      message: 'Settings updated successfully',
-      settings,
-    });
-  } catch (error) {
-    logSanitizedError('Admin settings update error', error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to update settings',
-      },
-      500
-    );
-  }
-}
-
-/**
- * GET /api/admin/settings/profiles
- * List available certification profiles
- */
-export async function adminListCertificationProfilesHandler(c: Context<{ Bindings: Env }>) {
-  try {
-    const { listCertificationProfiles } = await import('./certification-profiles');
-    const profiles = listCertificationProfiles();
-    return c.json({ profiles });
-  } catch (error) {
-    logSanitizedError('Admin list profiles error', error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to list certification profiles',
-      },
-      500
-    );
-  }
-}
-
-/**
- * PUT /api/admin/settings/profile/:profileName
- * Apply a certification profile
- */
-export async function adminApplyCertificationProfileHandler(c: Context<{ Bindings: Env }>) {
-  try {
-    const env = c.env as Env;
-    const profileName = c.req.param('profileName')!;
-    const tenantId = getTenantIdFromContext(c);
-
-    if (!profileName) {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: 'Profile name is required',
-        },
-        400
-      );
-    }
-
-    const { getCertificationProfile } = await import('./certification-profiles');
-    const profile = getCertificationProfile(profileName);
-
-    if (!profile) {
-      return c.json(
-        {
-          error: 'not_found',
-          error_description: `Certification profile '${profileName}' not found`,
-        },
-        404
-      );
-    }
-
-    // Certification profiles are tenant-scoped. The legacy global settings remain
-    // deployment defaults and must not be mutated by a tenant profile switch.
-    const settingsKey = buildTenantSystemSettingsKey(tenantId);
-    const settingsJson = await env.SETTINGS?.get(settingsKey);
-    const currentSettings = settingsJson ? JSON.parse(settingsJson) : {};
-
-    // Merge profile settings with current settings
-    const updatedSettings = {
-      ...currentSettings,
-      ...profile.settings,
-    };
-
-    // Store updated settings
-    if (env.SETTINGS) {
-      await env.SETTINGS.put(settingsKey, JSON.stringify(updatedSettings));
-    } else {
-      return c.json(
-        {
-          error: 'server_error',
-          error_description: 'Settings storage is not configured',
-        },
-        500
-      );
-    }
-
-    return c.json({
-      success: true,
-      message: `Applied certification profile: ${profile.name}`,
-      profile: {
-        name: profile.name,
-        description: profile.description,
-      },
-      tenant_id: tenantId,
-      settings: updatedSettings,
-    });
-  } catch (error) {
-    logSanitizedError('Admin apply profile error', error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to apply certification profile',
       },
       500
     );
@@ -2372,6 +1824,8 @@ export async function adminSigningKeyGetHandler(c: Context<{ Bindings: Env }>) {
       publicJWK: keyData.publicJWK,
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     logSanitizedError('Admin signing key get error', error);
     return c.json(
       {
@@ -2541,6 +1995,8 @@ export async function adminTokenRegisterHandler(c: Context<{ Bindings: Env }>) {
       201
     );
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     logSanitizedError('Admin token register error', error);
     return c.json(
       {
@@ -2570,7 +2026,13 @@ export async function adminTestSessionCreateHandler(c: Context<{ Bindings: Env }
       ttl_seconds?: number;
     }>();
 
-    const { user_id, ttl_seconds = 3600 } = body;
+    const { user_id } = body;
+    // A test session lasts no longer than any session can (the highest session.max_ttl): what is
+    // kept for a session's lifetime, such as the relying parties it signed in to, relies on it.
+    const ttl_seconds = Math.min(
+      body.ttl_seconds ?? 3600,
+      Math.floor(SESSION_MAX_TTL_DEFINITION.maxMs / 1000)
+    );
 
     if (!user_id) {
       return c.json(
@@ -2618,6 +2080,8 @@ export async function adminTestSessionCreateHandler(c: Context<{ Bindings: Env }
         getTenantIdFromContext(c)
       );
     } catch (error) {
+      const incomplete = logQueryErrorResponse(c, error);
+      if (incomplete) return incomplete;
       logSanitizedError('Failed to create session', error);
       return c.json(
         {
@@ -2648,6 +2112,8 @@ export async function adminTestSessionCreateHandler(c: Context<{ Bindings: Env }
       201
     );
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     logSanitizedError('Admin test session create error', error);
     return c.json(
       {
@@ -2788,6 +2254,8 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
         );
         resolvedOtpUser = accountData.user;
       } catch (error) {
+        const incomplete = logQueryErrorResponse(c, error);
+        if (incomplete) return incomplete;
         if (error instanceof Error && error.message === 'account_data_route_not_found') {
           if (!createUser) {
             return c.json(
@@ -2940,6 +2408,8 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
       201
     );
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     const unavailableResponse = createDataTemporarilyUnavailableResponse(c, error);
     if (unavailableResponse) return unavailableResponse;
     logSanitizedError('Admin test email code error', error);
@@ -2976,8 +2446,8 @@ export async function adminUserConsentsListHandler(c: Context<{ Bindings: Env }>
     }
 
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
 
+    // findCanonicalRuntimeUser resolves the user's account databases for this request.
     const runtimeUser = await findCanonicalRuntimeUser(c, tenantId, userId, {
       includeInactive: true,
     });
@@ -2991,29 +2461,14 @@ export async function adminUserConsentsListHandler(c: Context<{ Bindings: Env }>
       );
     }
 
-    // Query consents with client info
-    const consentsResult = await authCtx.coreAdapter.query<{
-      id: string;
-      client_id: string;
-      scope: string;
-      selected_scopes: string | null;
-      granted_at: number;
-      expires_at: number | null;
-      privacy_policy_version: string | null;
-      tos_version: string | null;
-      consent_version: number | null;
-      client_name: string | null;
-      logo_uri: string | null;
-    }>(
-      `SELECT c.id, c.client_id, c.scope, c.selected_scopes, c.granted_at, c.expires_at,
-              c.privacy_policy_version, c.tos_version, c.consent_version,
-              oc.client_name, oc.logo_uri
-       FROM oauth_client_consents c
-       LEFT JOIN oauth_clients oc ON c.tenant_id = oc.tenant_id AND c.client_id = oc.client_id
-       WHERE c.user_id = ? AND c.tenant_id = ?
-       ORDER BY c.granted_at DESC`,
-      [userId, tenantId]
-    );
+    // Consents are stored with the user in its account database; client records are tenant
+    // metadata.
+    const consentsResult = await listOAuthClientConsentsWithClients({
+      accountCore: createAccountAuthContextFromHono(c, tenantId).coreAdapter,
+      tenantMetadata: getCoreAdapter(c, tenantId),
+      tenantId,
+      userId,
+    });
 
     const consents = consentsResult.map((row) => ({
       id: row.id,
@@ -3040,6 +2495,8 @@ export async function adminUserConsentsListHandler(c: Context<{ Bindings: Env }>
       total: consents.length,
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     logSanitizedError('Admin user consents list error', error);
     return c.json(
       {
@@ -3071,7 +2528,17 @@ export async function adminUserConsentRevokeHandler(c: Context<{ Bindings: Env }
     }
 
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    // Consents and their history are stored with the user in its account database.
+    if (!(await resolveAdminTargetAccount(c, userId))) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: 'Consent not found',
+        },
+        404
+      );
+    }
+    const authCtx = createAccountAuthContextFromHono(c, tenantId);
 
     // Check if consent exists
     const existingConsent = await authCtx.coreAdapter.query<{
@@ -3095,35 +2562,19 @@ export async function adminUserConsentRevokeHandler(c: Context<{ Bindings: Env }
 
     const consent = existingConsent[0];
     const previousScopes = consent.scope.split(' ');
-    const now = Date.now();
 
-    // Delete consent
-    await authCtx.coreAdapter.execute(
-      'DELETE FROM oauth_client_consents WHERE tenant_id = ? AND user_id = ? AND client_id = ?',
-      [tenantId, userId, clientId]
-    );
-
-    // Record in consent history
-    const historyId = crypto.randomUUID();
-    await authCtx.coreAdapter.execute(
-      `INSERT INTO consent_history (id, tenant_id, user_id, client_id, action, scopes_before, scopes_after, created_at)
-       VALUES (?, ?, ?, ?, 'revoked', ?, NULL, ?)`,
-      [historyId, tenantId, userId, clientId, JSON.stringify(previousScopes), now]
+    // Ends the tokens issued under the consent, then deletes it; a failure leaves the consent in
+    // place so that a retry can complete the withdrawal.
+    const { revokedAt: now, refreshTokenFamilies: familyCount } = await withdrawOAuthClientConsent(
+      c.env,
+      authCtx.coreAdapter,
+      { tenantId, userId, clientId, previousScopes }
     );
 
     // Invalidate consent cache
     await invalidateConsentCache(c.env, userId, tenantId, clientId);
 
     const log = getLogger(c).module('ADMIN');
-    // Add to revocation list
-    try {
-      const revocationKey = `consent_revoked:${userId}:${clientId}`;
-      const revocationTTL = 86400 * 90;
-      await revokeToken(c.env, revocationKey, revocationTTL, undefined, tenantId);
-    } catch (error) {
-      log.warn('Token revocation warning', { action: 'token_revocation', userId, clientId });
-    }
-
     // Publish consent.revoked event
     publishEvent(c, {
       type: CONSENT_EVENTS.REVOKED,
@@ -3144,7 +2595,12 @@ export async function adminUserConsentRevokeHandler(c: Context<{ Bindings: Env }
       );
     });
 
-    log.info('Revoked consent', { action: 'consent_revoke', userId, clientId });
+    log.info('Revoked consent', {
+      action: 'consent_revoke',
+      userId,
+      clientId,
+      refreshTokenFamilies: familyCount,
+    });
 
     await createAuditLogFromContext(c, 'consent.revoked', 'user', userId, {
       client_id: clientId,
@@ -3162,6 +2618,8 @@ export async function adminUserConsentRevokeHandler(c: Context<{ Bindings: Env }
       revokedAt: now,
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     logSanitizedError('Admin user consent revoke error', error);
     return c.json(
       {
@@ -3211,7 +2669,9 @@ export async function adminClientUsageHandler(c: Context<{ Bindings: Env }>) {
   const toTs = Math.floor(to.getTime() / 1000);
 
   try {
-    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId);
+    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId, {
+      onCoverage: logCoverageHeaders(c),
+    });
     if (!hotQuery.supported || !hotQuery.context) {
       return createAuditHotQueryUnsupportedResponse(c, hotQuery);
     }
@@ -3302,6 +2762,8 @@ export async function adminClientUsageHandler(c: Context<{ Bindings: Env }>) {
         : null,
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     const log = getLogger(c).module('ADMIN');
     log.error('Failed to get client usage statistics', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -3336,7 +2798,37 @@ export async function adminUserActivityLogHandler(c: Context<{ Bindings: Env }>)
   const toParam = c.req.query('to');
 
   try {
-    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId);
+    let activityCursor: { created_at: number; id: string } | undefined;
+    if (cursor) {
+      try {
+        const value: unknown = JSON.parse(atob(cursor));
+        if (
+          !value ||
+          typeof value !== 'object' ||
+          !('created_at' in value) ||
+          typeof value.created_at !== 'number' ||
+          !Number.isSafeInteger(value.created_at) ||
+          value.created_at < 0 ||
+          !('id' in value) ||
+          typeof value.id !== 'string' ||
+          !value.id ||
+          value.id.length > 256
+        )
+          throw new Error();
+        activityCursor = { created_at: value.created_at, id: value.id };
+      } catch {
+        return c.json(
+          { error: 'invalid_request', error_description: 'Invalid activity cursor.' },
+          400
+        );
+      }
+    }
+    // The existing activity cursor stays in the SQL predicate; request one extra row for it.
+    const hotQuery = await getAuditHotQuerySupport(c.env, tenantId, {
+      onCoverage: logCoverageHeaders(c),
+      page: { limit: limit + 1, scope: JSON.stringify([tenantId, c.req.path, userId]) },
+      storedCursorTime: activityCursor?.created_at,
+    });
     if (!hotQuery.supported || !hotQuery.context) {
       return createAuditHotQueryUnsupportedResponse(c, hotQuery);
     }
@@ -3374,7 +2866,7 @@ export async function adminUserActivityLogHandler(c: Context<{ Bindings: Env }>)
     // Build query
     let query = `
       SELECT id, ${actionColumn} as action, ${detailsColumn} as details, created_at
-      ${context.mode === 'legacy' ? ', ip_address, user_agent' : ', result, severity, error_code, error_message, client_id, session_id, request_id'}
+      ${context.mode === 'legacy' ? ', ip_address, user_agent' : ', ip_address, user_agent, result, severity, error_code, error_message, client_id, session_id, request_id'}
       FROM ${tableName}
       WHERE tenant_id = ?
         ${subjectFilterClause}
@@ -3409,14 +2901,9 @@ export async function adminUserActivityLogHandler(c: Context<{ Bindings: Env }>)
     }
 
     // Apply cursor (created_at based)
-    if (cursor) {
-      try {
-        const decoded = JSON.parse(atob(cursor)) as { created_at: number; id: string };
-        query += ' AND (created_at < ? OR (created_at = ? AND id < ?))';
-        bindings.push(decoded.created_at, decoded.created_at, decoded.id);
-      } catch {
-        // Invalid cursor, ignore
-      }
+    if (activityCursor) {
+      query += ' AND (created_at < ? OR (created_at = ? AND id < ?))';
+      bindings.push(activityCursor.created_at, activityCursor.created_at, activityCursor.id);
     }
 
     query += ' ORDER BY created_at DESC, id DESC LIMIT ?';
@@ -3485,6 +2972,8 @@ export async function adminUserActivityLogHandler(c: Context<{ Bindings: Env }>)
       },
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     const log = getLogger(c).module('ADMIN');
     log.error('Failed to get user activity log', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -3656,6 +3145,8 @@ export async function adminUserSendEmailHandler(c: Context<{ Bindings: Env }>) {
       created_at: new Date(nowTs * 1000).toISOString(),
     });
   } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     const log = getLogger(c).module('ADMIN');
     log.error('Failed to queue email', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);

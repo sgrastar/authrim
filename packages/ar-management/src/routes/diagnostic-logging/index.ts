@@ -30,7 +30,8 @@ diagnosticLoggingRouter.use('/*', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'moderate');
   const middleware = rateLimitMiddleware({
     ...profile,
-    endpoints: ['/diagnostic-logging/*'],
+    endpoints: ['/api/admin/diagnostic-logging/*'],
+    endpointClass: 'mgmt_admin_diagnostic_logging',
   });
   return middleware(c as any, next);
 });

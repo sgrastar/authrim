@@ -25,6 +25,12 @@ export const ADMIN_JOB_TYPE_REGISTRY = {
     creatableFromAdminApi: false,
     notes: 'Created by Support Ops cohort workflows.',
   },
+  'support-ops/action-execute': {
+    jobType: 'support-ops/action-execute',
+    processorStatus: 'scheduled',
+    creatableFromAdminApi: false,
+    notes: 'Created by approved Support Ops action workflows; private execution state is redacted.',
+  },
   'tenants/delete': {
     jobType: 'tenants/delete',
     processorStatus: 'scheduled',

@@ -57,7 +57,7 @@ Options:
   --base-dir <path>        Override repository base directory
   --ui-origin <origin>     UI origin to print in browser instructions
   --ttl-minutes <n>        Session lifetime, 1-${MAX_TTL_MINUTES} minutes (default: ${DEFAULT_TTL_MINUTES})
-  --role <name>            Existing admin role to assign (default: super_admin)
+  --role <name>            Existing admin role to assign (default: ar_super_admin)
   --scope <global|tenant>  Assignment scope (default: global)
   --email <email>          Override temporary admin email
   --name <name>            Temporary admin display name
@@ -74,7 +74,7 @@ Options:
 function parseArgs(argv: string[]): CliOptions {
   const options: CliOptions = {
     ttlMinutes: DEFAULT_TTL_MINUTES,
-    roleName: 'super_admin',
+    roleName: 'ar_super_admin',
     scopeType: 'global',
     name: 'Authrim UI Validation Admin',
     mode: 'remote',

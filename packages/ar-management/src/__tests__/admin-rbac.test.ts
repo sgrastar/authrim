@@ -8,7 +8,13 @@ const mocked = vi.hoisted(() => ({
   createPIIContextFromHono: vi.fn(),
   resolveAccountDataContextFromHono: vi.fn(),
   hasPIIDatabase: vi.fn(),
+  createAuditLogFromContext: vi.fn(async () => undefined),
+  invalidateUserCache: vi.fn(async () => undefined),
+  invalidateSubjectRBACCache: vi.fn(async () => undefined),
+  tenantCoreStores: vi.fn(),
 }));
+
+vi.mock('../compliance/tenant-stores', () => ({ tenantCoreStores: mocked.tenantCoreStores }));
 
 vi.mock('@authrim/ar-lib-core', async () => {
   const actual =
@@ -21,6 +27,9 @@ vi.mock('@authrim/ar-lib-core', async () => {
     createPIIContextFromHono: mocked.createPIIContextFromHono,
     resolveAccountDataContextFromHono: mocked.resolveAccountDataContextFromHono,
     hasPIIDatabase: mocked.hasPIIDatabase,
+    createAuditLogFromContext: mocked.createAuditLogFromContext,
+    invalidateUserCache: mocked.invalidateUserCache,
+    invalidateSubjectRBACCache: mocked.invalidateSubjectRBACCache,
     CanonicalRuntimeUserStore: class {
       async findById(userId: string) {
         if (userId !== 'user-1' && userId !== '_WdnkLInMNDz8yJNZUlzA') {
@@ -45,6 +54,7 @@ import {
   adminUserEffectivePermissionsHandler,
   adminUserRoleAssignHandler,
   adminUserRolesListHandler,
+  adminUserRoleRemoveHandler,
 } from '../admin-rbac';
 
 function createMockAdapter(
@@ -179,8 +189,8 @@ describe('admin-rbac schema alignment', () => {
           expect(sql).not.toContain('organization_members');
           expect(params).toEqual(['default', 'org-root', 'org-child']);
           return [
-            { org_id: 'org-root', count: 2 },
-            { org_id: 'org-child', count: 1 },
+            { key: 'org-root', count: 2 },
+            { key: 'org-child', count: 1 },
           ];
         }
 
@@ -206,37 +216,51 @@ describe('admin-rbac schema alignment', () => {
     });
   });
 
-  it('uses subject_org_membership and membership_type to resolve organization permissions', async () => {
+  it('derives effective permissions from tenant-wide role assignments, as tokens do', async () => {
     const coreAdapter = createMockAdapter({
-      queryOne: (sql, params) => {
-        return null;
-      },
-      query: (sql, params) => {
-        if (sql.includes('FROM user_roles ur')) {
-          return [];
-        }
-
-        if (sql.includes('FROM subject_org_membership om')) {
-          expect(sql).not.toContain('organization_members');
-          expect(sql).toContain('LEFT JOIN roles r ON r.name = om.membership_type');
-          expect(params).toEqual(['user-1', 'default']);
+      query: (sql) => {
+        if (sql.includes('FROM role_assignments')) {
           return [
             {
-              org_id: 'org-1',
-              org_name: 'Acme Org',
+              id: 'ra-1',
               role_id: 'role-admin',
-              role_name: 'Admin',
-              membership_type: 'admin',
-              joined_at: 1700000000,
+              scope_type: 'global',
+              scope_target: '',
+              expires_at: null,
+              assigned_by: null,
+              created_at: 1700000000,
+            },
+            {
+              id: 'ra-2',
+              role_id: 'role-editor',
+              scope_type: 'org',
+              scope_target: 'org:org-1',
+              expires_at: null,
+              assigned_by: null,
+              created_at: 1700000001,
             },
           ];
         }
-
-        if (sql.includes('SELECT permission FROM role_permissions WHERE role_id = ?')) {
-          expect(params).toEqual(['role-admin']);
-          return [{ permission: 'org:manage' }];
+        if (sql.includes('FROM roles')) {
+          return [
+            { id: 'role-admin', name: 'admin', permissions_json: '["org:manage"]' },
+            { id: 'role-editor', name: 'editor', permissions_json: '["doc:write"]' },
+          ];
         }
-
+        if (sql.includes('FROM subject_org_membership')) {
+          return [
+            {
+              id: 'm-1',
+              org_id: 'org-1',
+              membership_type: 'admin',
+              is_primary: 1,
+              created_at: 1700000000,
+            },
+          ];
+        }
+        if (sql.includes('FROM organizations')) {
+          return [{ id: 'org-1', name: 'Acme Org', org_type: 'enterprise', is_active: 1 }];
+        }
         return [];
       },
     });
@@ -251,19 +275,24 @@ describe('admin-rbac schema alignment', () => {
 
     const res = await adminUserEffectivePermissionsHandler(c);
     expect(res.status).toBe(200);
+    expect(mocked.resolveAccountDataContextFromHono).toHaveBeenCalledWith(c, 'user-1');
 
     const body = (await res.json()) as {
       permissions: Array<{ permission: string; source: string; source_name: string }>;
-      summary: { from_organizations: number };
+      roles: Array<{ role_name: string; scope: string }>;
+      organizations: Array<{ organization_name: string; role_name: string }>;
     };
-    expect(body.permissions).toContainEqual(
-      expect.objectContaining({
-        permission: 'org:manage',
-        source: 'organization',
-        source_name: 'Acme Org (Admin)',
-      })
-    );
-    expect(body.summary.from_organizations).toBe(1);
+    // The organisation-scoped role holds in its organisation only: not a tenant-wide permission.
+    expect(body.permissions).toEqual([
+      expect.objectContaining({ permission: 'org:manage', source: 'role', source_name: 'admin' }),
+    ]);
+    expect(body.roles).toEqual([
+      expect.objectContaining({ role_name: 'admin', scope: 'global' }),
+      expect.objectContaining({ role_name: 'editor', scope: 'org' }),
+    ]);
+    expect(body.organizations).toEqual([
+      expect.objectContaining({ organization_name: 'Acme Org', role_name: 'admin' }),
+    ]);
   });
 
   it('lists organization members with membership_type and tenant-scoped pii lookup', async () => {
@@ -279,18 +308,18 @@ describe('admin-rbac schema alignment', () => {
 
     const coreAdapter = createMockAdapter({
       queryOne: (sql, params) => {
-        if (sql.includes('SELECT id FROM organizations WHERE tenant_id = ? AND id = ?')) {
-          expect(params).toEqual(['default', 'org-1']);
-          return { id: 'org-1' };
-        }
-        if (sql.includes('COUNT(*) as count FROM subject_org_membership')) {
+        if (sql.includes('COUNT(*) AS count FROM subject_org_membership')) {
           expect(params).toEqual(['default', 'org-1']);
           return { count: 1 };
         }
         return null;
       },
       query: (sql, params) => {
-        if (sql.includes('FROM subject_org_membership m')) {
+        if (sql.includes('FROM organizations') && sql.includes('id IN')) {
+          expect(params).toEqual(['default', 'org-1']);
+          return [{ id: 'org-1', name: 'Org One' }];
+        }
+        if (sql.includes('FROM subject_org_membership')) {
           expect(params).toEqual(['default', 'org-1', 20, 0]);
           return [
             {
@@ -332,11 +361,14 @@ describe('admin-rbac schema alignment', () => {
 
   it('adds organization members with membership_type and tenant-scoped guards', async () => {
     const coreAdapter = createMockAdapter({
-      queryOne: (sql, params) => {
-        if (sql.includes('SELECT id FROM organizations WHERE id = ? AND tenant_id = ?')) {
-          expect(params).toEqual(['org-1', 'default']);
-          return { id: 'org-1' };
+      query: (sql, params) => {
+        if (sql.includes('FROM organizations') && sql.includes('id IN (?)')) {
+          expect(params).toEqual(['default', 'org-1']);
+          return [{ id: 'org-1' }];
         }
+        return [];
+      },
+      queryOne: (sql, params) => {
         if (sql.includes('SELECT subject_id FROM subject_org_membership')) {
           expect(params).toEqual(['default', 'org-1', 'user-1']);
           return null;
@@ -360,6 +392,8 @@ describe('admin-rbac schema alignment', () => {
 
     const res = await adminOrganizationMemberAddHandler(c);
     expect(res.status).toBe(201);
+    // The membership is written in the member's account database.
+    expect(mocked.resolveAccountDataContextFromHono).toHaveBeenCalledWith(c, 'user-1');
 
     const executeCalls = (coreAdapter.execute as any).mock.calls as Array<[string, unknown[]]>;
     expect(executeCalls).toContainEqual([
@@ -412,14 +446,146 @@ describe('admin-rbac schema alignment', () => {
     expect(coreAdapter.execute).toHaveBeenCalledWith(
       'DELETE FROM subject_org_membership WHERE tenant_id = ? AND org_id = ? AND subject_id = ?',
       ['default', 'org-1', 'user-1']
+    ); // Removing access is audited and drops the member's cached claims.
+    expect(mocked.createAuditLogFromContext).toHaveBeenCalledWith(
+      c,
+      'organization_membership.removed',
+      'organization',
+      'org-1',
+      { user_id: 'user-1' },
+      'info',
+      undefined,
+      undefined
     );
+    // An Admin API removal only warns about caches (they expire on their own).
+    expect(mocked.invalidateUserCache).toHaveBeenCalledWith(
+      expect.anything(),
+      'default',
+      'user-1',
+      {
+        throwOnFailure: false,
+      }
+    );
+  });
+
+  it('removes a role assignment of the user only, audits it and drops cached claims', async () => {
+    const coreAdapter = createMockAdapter({
+      queryOne: (sql) =>
+        sql.includes('FROM role_assignments')
+          ? { id: 'ra-1', role_id: 'role-1' }
+          : sql.includes('FROM roles WHERE tenant_id = ? AND id = ?')
+            ? { id: 'role-1', hierarchy_level: 10 }
+            : null,
+    });
+    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+    const rebacCache = { list: vi.fn(), delete: vi.fn() };
+    const c = createMockContext({
+      params: { id: 'user-1', assignmentId: 'ra-1' },
+      env: { REBAC_CACHE: rebacCache as never },
+    });
+    c.set('adminAuth', { userId: 'admin-1', hierarchyLevel: 50 });
+
+    const res = await adminUserRoleRemoveHandler(c);
+    expect(res.status).toBe(200);
+    expect(coreAdapter.execute).toHaveBeenCalledWith(
+      'DELETE FROM role_assignments WHERE tenant_id = ? AND id = ? AND subject_id = ?',
+      ['default', 'ra-1', 'user-1']
+    );
+    expect(mocked.createAuditLogFromContext).toHaveBeenCalledWith(
+      c,
+      'role_assignment.removed',
+      'role_assignment',
+      'ra-1',
+      { user_id: 'user-1' },
+      'info',
+      undefined,
+      undefined
+    );
+    expect(mocked.invalidateSubjectRBACCache).toHaveBeenCalledWith(rebacCache, 'default', 'user-1');
+  });
+
+  it('removes an assignment of a role the tenant no longer has', async () => {
+    const coreAdapter = createMockAdapter({
+      queryOne: (sql) =>
+        sql.includes('FROM role_assignments') ? { id: 'ra-1', role_id: 'role-deleted' } : null,
+    });
+    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+    const c = createMockContext({ params: { id: 'user-1', assignmentId: 'ra-1' } });
+    c.set('adminAuth', { userId: 'admin-1', hierarchyLevel: 1 });
+
+    const res = await adminUserRoleRemoveHandler(c);
+
+    expect(res.status).toBe(200);
+    expect(coreAdapter.execute).toHaveBeenCalledWith(
+      'DELETE FROM role_assignments WHERE tenant_id = ? AND id = ? AND subject_id = ?',
+      ['default', 'ra-1', 'user-1']
+    );
+  });
+
+  it("removes a suspended user's membership and role assignment from its account database", async () => {
+    // Account routes refuse a suspended account (of any type, with or without personal data);
+    // it is found in the user store that holds it.
+    mocked.resolveAccountDataContextFromHono.mockRejectedValue(
+      new Error('lookup_destination_revalidation_failed', { cause: 'account_inactive' })
+    );
+    const metadata = createMockAdapter();
+    const otherStore = createMockAdapter();
+    const account = createMockAdapter({
+      queryOne: (sql) =>
+        sql.includes('FROM identity_accounts')
+          ? { id: 'account:user-1' }
+          : sql.includes('FROM subject_org_membership')
+            ? { subject_id: 'user-1' }
+            : sql.includes('FROM role_assignments')
+              ? { id: 'ra-1', role_id: 'role-deleted' }
+              : null,
+    });
+    mocked.tenantCoreStores.mockResolvedValue([
+      { bindingRef: 'DB_USERS_0', adapter: otherStore },
+      { bindingRef: 'DB_USERS_1', adapter: account },
+    ]);
+    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter: metadata });
+    const env = {} as never;
+
+    const member = createMockContext({ params: { id: 'org-1', subjectId: 'user-1' }, env });
+    expect((await adminOrganizationMemberRemoveHandler(member)).status).toBe(200);
+    const role = createMockContext({ params: { id: 'user-1', assignmentId: 'ra-1' }, env });
+    role.set('adminAuth', { userId: 'admin-1', hierarchyLevel: 1 });
+    expect((await adminUserRoleRemoveHandler(role)).status).toBe(200);
+
+    expect(mocked.tenantCoreStores).toHaveBeenCalledWith(
+      expect.anything(),
+      'default',
+      expect.objectContaining({ accountsOfRoutedTenant: true })
+    );
+    expect(account.execute).toHaveBeenCalledWith(
+      'DELETE FROM subject_org_membership WHERE tenant_id = ? AND org_id = ? AND subject_id = ?',
+      ['default', 'org-1', 'user-1']
+    );
+    expect(account.execute).toHaveBeenCalledWith(
+      'DELETE FROM role_assignments WHERE tenant_id = ? AND id = ? AND subject_id = ?',
+      ['default', 'ra-1', 'user-1']
+    );
+    expect(metadata.execute).not.toHaveBeenCalled();
+    expect(otherStore.execute).not.toHaveBeenCalled();
+  });
+
+  it('answers not found when removing from an account the tenant does not have', async () => {
+    mocked.resolveAccountDataContextFromHono.mockRejectedValue(
+      new Error('account_data_route_not_found')
+    );
+    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter: createMockAdapter() });
+    const c = createMockContext({ params: { id: 'user-x', assignmentId: 'ra-1' } });
+    c.set('adminAuth', { userId: 'admin-1', hierarchyLevel: 1 });
+    expect((await adminUserRoleRemoveHandler(c)).status).toBe(404);
+    expect(mocked.tenantCoreStores).not.toHaveBeenCalled();
   });
 
   it('rejects assigning a role at the caller hierarchy level', async () => {
     const coreAdapter = createMockAdapter({
       queryOne: (sql, params) => {
-        if (sql.includes('SELECT * FROM roles WHERE id = ? AND tenant_id = ?')) {
-          expect(params).toEqual(['role-peer', 'default']);
+        if (sql.includes('FROM roles WHERE tenant_id = ? AND id = ?')) {
+          expect(params).toEqual(['default', 'role-peer']);
           return {
             id: 'role-peer',
             name: 'peer',
@@ -453,11 +619,41 @@ describe('admin-rbac schema alignment', () => {
     expect(coreAdapter.execute).not.toHaveBeenCalled();
   });
 
+  it.each([0, false])('rejects assigning a role that is not assignable (%s)', async (flag) => {
+    const coreAdapter = createMockAdapter({
+      queryOne: (sql) =>
+        sql.includes('FROM roles WHERE tenant_id = ? AND id = ?')
+          ? { id: 'role-fixed', name: 'fixed', hierarchy_level: 10, is_assignable: flag }
+          : null,
+    });
+
+    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+    mocked.hasPIIDatabase.mockReturnValue(true);
+    mocked.createPIIContextFromHono.mockReturnValue({ defaultPiiAdapter: createMockAdapter() });
+
+    const c = createMockContext({
+      params: { id: 'user-1' },
+      body: { role_id: 'role-fixed' },
+    });
+    c.set('adminAuth', {
+      userId: 'admin-1',
+      authMethod: 'session',
+      roles: ['admin'],
+      permissions: ['admin:roles:write'],
+      hierarchyLevel: 50,
+    });
+
+    const res = await adminUserRoleAssignHandler(c);
+
+    expect(res.status).toBe(403);
+    expect(coreAdapter.execute).not.toHaveBeenCalled();
+  });
+
   it('allows assigning a lower hierarchy role', async () => {
     const coreAdapter = createMockAdapter({
       queryOne: (sql, params) => {
-        if (sql.includes('SELECT * FROM roles WHERE id = ? AND tenant_id = ?')) {
-          expect(params).toEqual(['role-lower', 'default']);
+        if (sql.includes('FROM roles WHERE tenant_id = ? AND id = ?')) {
+          expect(params).toEqual(['default', 'role-lower']);
           return {
             id: 'role-lower',
             name: 'lower',

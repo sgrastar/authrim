@@ -289,15 +289,22 @@ describe('admin screens', () => {
     const overviewFields = screensByKey.get('account_overview')?.fields as Array<
       Record<string, unknown>
     >;
-    expect(overviewFields).toHaveLength(1);
-    expect(overviewFields[0]).toMatchObject({
+    expect(overviewFields).toHaveLength(2);
+    expect(
+      overviewFields.find((field) => field.block_type === 'account_upgrade_widget')
+    ).toMatchObject({ field: 'account.upgrade', order: 5 });
+    expect(
+      overviewFields.find((field) => field.field === 'heading.account_overview')
+    ).toMatchObject({
       field: 'heading.account_overview',
       label: 'Manage your account',
       required: false,
       block_type: 'heading',
       order: 10,
     });
-    expect(overviewFields[0]).not.toHaveProperty('text');
+    expect(
+      overviewFields.find((field) => field.field === 'heading.account_overview')
+    ).not.toHaveProperty('text');
     for (const screenKey of [
       'code_input',
       'consent',
@@ -324,7 +331,12 @@ describe('admin screens', () => {
         .slice(1)
         .filter((field) => field.block_type !== 'identity_field')
         .map((field) => field.field)
-    ).toEqual(loginFields.slice(1).map((field) => field.field));
+    ).toEqual(
+      loginFields
+        .slice(1)
+        .filter((field) => field.block_type !== 'guest_login_widget')
+        .map((field) => field.field)
+    );
     expect(registrationFields.find((field) => field.field === 'email')).toBeUndefined();
     expect(
       registrationFields.find((field) => field.field === 'preferred_username')

@@ -12,6 +12,7 @@ import {
   type PluginResourceBindingDescriptor,
   type PluginResourceKind,
 } from './resource-bindings';
+import { D1TenantExternalGateStore, EXTERNAL_GATE_OPEN } from './external-gate';
 
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
 const SAFE_CAPABILITY = /^[a-z][a-z0-9_.:-]{0,127}$/u;
@@ -91,6 +92,33 @@ export class D1PluginInstallationResolver
 {
   constructor(private readonly db: D1Database) {}
 
+  /**
+   * Whether the tenant's gate for external plugin code is open right now. Called right before an
+   * external Worker is launched (after its code was fetched, which can take a while): a gate
+   * closed in the meantime stops the launch.
+   */
+  async isExternalGateOpen(tenantId: string): Promise<boolean> {
+    return (await new D1TenantExternalGateStore(this.db).get(tenantId)).allowed;
+  }
+
+  private async gateUninitialized(
+    tenantId: string,
+    pluginInstallationId: string
+  ): Promise<boolean> {
+    const found = await primary(this.db)
+      .prepare(
+        `SELECT 1 AS found FROM plugin_runner_installations installation
+          WHERE installation.installation_id = ? AND installation.tenant_id = ?
+            AND installation.state = 'enabled' AND installation.backend_kind = 'dynamic_worker'
+            AND NOT EXISTS (
+              SELECT 1 FROM plugin_runner_tenant_external_gates gate
+               WHERE gate.tenant_id = installation.tenant_id)`
+      )
+      .bind(pluginInstallationId, tenantId)
+      .first<{ found: number }>();
+    return found !== null;
+  }
+
   async resolveBackend(input: {
     tenantId: string;
     pluginInstallationId: string;
@@ -125,6 +153,7 @@ export class D1PluginInstallationResolver
             AND builtin_policy.capability = ?
           WHERE installation.installation_id = ? AND installation.tenant_id = ?
             AND installation.state = 'enabled'
+            AND ${EXTERNAL_GATE_OPEN}
             AND ((installation.backend_kind = 'dynamic_worker' AND dynamic_policy.capability IS NOT NULL)
               OR (installation.backend_kind = 'in_process' AND builtin_policy.capability IS NOT NULL))`
       )
@@ -180,6 +209,7 @@ export class D1PluginInstallationResolver
             AND policy.capability = ?
           WHERE installation.installation_id = ? AND installation.tenant_id = ?
             AND installation.state = 'enabled'
+            AND ${EXTERNAL_GATE_OPEN}
             AND installation.backend_kind = 'dynamic_worker'`
       )
       .bind(input.capability, input.pluginInstallationId, input.tenantId)
@@ -308,12 +338,19 @@ export class D1PluginInstallationResolver
             AND builtin_policy.capability = ?
           WHERE installation.installation_id = ? AND installation.tenant_id = ?
             AND installation.state = 'enabled'
+            AND ${EXTERNAL_GATE_OPEN}
             AND ((installation.backend_kind = 'dynamic_worker'
                   AND dynamic_policy.capability IS NOT NULL)
               OR (installation.backend_kind = 'in_process' AND builtin_policy.capability IS NOT NULL))`
       )
       .bind(input.capability, input.capability, input.pluginInstallationId, input.tenantId)
       .first<PolicyRow>();
+    if (!row && (await this.gateUninitialized(input.tenantId, input.pluginInstallationId))) {
+      // An enabled external installation whose tenant has no gate row at all: the gate was never
+      // written (just migrated, restored), which is not the tenant switching external code off.
+      // Retry, with the outbox's usual backoff and budget, until the reconciliation has written it.
+      throw new Error('plugin_gate_uninitialized');
+    }
     if (!row || !SAFE_ID.test(row.plugin_id) || row.failure_policy !== 'retry_async') {
       throw new Error('plugin_policy_unavailable');
     }

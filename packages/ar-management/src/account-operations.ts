@@ -1,14 +1,18 @@
+import { createLogReadAdapter, logCoverageHeaders, logPageRequest } from './log-read-adapter';
+import { logQueryErrorResponse } from './log-archive-query';
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import { createAuthContextFromHono, getTenantIdFromContext } from '@authrim/ar-lib-core';
+import {
+  createAuthContextFromHono,
+  createPIIContextFromHono,
+  getTenantIdFromContext,
+} from '@authrim/ar-lib-core';
 import { requireAccountSession } from './account-page';
 
 type AccountOperationRow = {
   id: string;
   action: string;
-  resource_type: string | null;
-  resource_id: string | null;
-  metadata_json: string | null;
+  details_json: string | null;
   created_at: number;
 };
 
@@ -51,26 +55,53 @@ export async function listAccountOperationsHandler(
   const tenantId = getTenantIdFromContext(c);
   const authCtx = createAuthContextFromHono(c, tenantId);
   const limit = normalizeLimit(c.req.query('limit'));
-  const rows = await authCtx.coreAdapter.query<AccountOperationRow>(
-    `SELECT id, action, resource_type, resource_id, metadata_json, created_at
-       FROM audit_log
-      WHERE tenant_id = ? AND user_id = ? AND action LIKE 'account.%'
-      ORDER BY created_at DESC
+  try {
+    const page = logPageRequest(c, tenantId, limit);
+    const logRead = createLogReadAdapter({
+      env: c.env,
+      tenantId,
+      adapter: authCtx.coreAdapter,
+      dataset: 'core.event_log',
+      includePendingDeliveries: false,
+      onCoverage: logCoverageHeaders(c),
+      page: { ...page, scope: JSON.stringify([page.scope, accountSession.userId]) },
+    });
+    // Session validation has already established the account's routed PII context.
+    // Read its current pseudonym only; never create or restore an erased mapping.
+    const pii = createPIIContextFromHono(c, tenantId).defaultPiiAdapter;
+    const subject = await pii.queryOne<{ anonymized_user_id: string }>(
+      'SELECT anonymized_user_id FROM user_anonymization_map WHERE tenant_id = ? AND user_id = ?',
+      [tenantId, accountSession.userId],
+      { consistencyClass: 'primary_required' }
+    );
+    const rows = await logRead.adapter.query<AccountOperationRow>(
+      `SELECT id, event_type AS action, details_json, created_at
+       FROM event_log
+      WHERE tenant_id = ? AND anonymized_user_id = ? AND event_type LIKE 'account.%'
+      ORDER BY created_at DESC, id DESC
       LIMIT ?`,
-    [tenantId, accountSession.userId, limit]
-  );
+      [tenantId, subject?.anonymized_user_id ?? null, limit]
+    );
 
-  return c.json({
-    operations: rows.map((row) => {
-      const metadata = parseMetadata(row.metadata_json);
-      return {
-        id: row.id,
-        action: row.action,
-        resource_type: row.resource_type,
-        resource_id: row.resource_id,
-        created_at: row.created_at,
-        ...(metadata && { metadata }),
-      };
-    }),
-  });
+    return c.json({
+      coverage: logRead.coverage(),
+      ...(logRead.pagination() ? { pagination: logRead.pagination() } : {}),
+      operations: rows.map((row) => {
+        const details = parseMetadata(row.details_json);
+        const { source: _source, resourceType, resourceId, ...metadata } = details ?? {};
+        return {
+          id: row.id,
+          action: row.action,
+          resource_type: typeof resourceType === 'string' ? resourceType : null,
+          resource_id: typeof resourceId === 'string' ? resourceId : null,
+          created_at: Math.floor(row.created_at / 1000),
+          ...(details && { metadata }),
+        };
+      }),
+    });
+  } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
+    throw error;
+  }
 }

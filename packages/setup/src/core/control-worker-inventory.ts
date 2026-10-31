@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { executeD1Command } from './cloudflare.js';
+import type { AdminUiVariant } from './config.js';
+import { resolveUiPackageDir } from './ui-deployment.js';
 import {
   WORKER_BINDING_KINDS,
   WORKER_DATA_ROLES,
@@ -33,6 +35,14 @@ export interface ControlEnvironmentBootstrapInput {
   automaticProvisioning?: boolean;
 }
 
+/**
+ * Packages that deploy into another component's Worker slot. Their generated `wrangler.toml`
+ * describes the slot, and their capability manifest is read from their own package.
+ */
+const SLOT_OF_SOURCE_PACKAGE: Readonly<Record<string, WorkerInventoryComponent>> = {
+  'ar-admin-console': 'ar-admin-ui',
+};
+
 export async function compileControlWorkerInventoryFromArtifacts(input: {
   baseDir: string;
   environmentId: string;
@@ -41,16 +51,22 @@ export async function compileControlWorkerInventoryFromArtifacts(input: {
   artifactPaths: readonly string[];
   deploymentTarget?: string;
 }): Promise<DesiredWorkerInventoryRecord[]> {
-  const manifests = await loadWorkerCapabilityManifests({
-    baseDir: input.baseDir,
-    components: input.components,
-  });
+  const packageDirs: Partial<Record<WorkerInventoryComponent, string>> = {};
   const pathsByComponent = new Map(
     input.artifactPaths.map((path) => {
       const artifactName = basename(path, '.toml');
-      return [artifactName === 'wrangler' ? basename(dirname(path)) : artifactName, path];
+      if (artifactName !== 'wrangler') return [artifactName, path];
+      const packageName = basename(dirname(path));
+      const slot = SLOT_OF_SOURCE_PACKAGE[packageName];
+      if (slot) packageDirs[slot] = dirname(path);
+      return [slot ?? packageName, path];
     })
   );
+  const manifests = await loadWorkerCapabilityManifests({
+    baseDir: input.baseDir,
+    components: input.components,
+    packageDirs,
+  });
   const generatedArtifactHashes: Record<string, string> = {};
   for (const component of input.components) {
     const path = pathsByComponent.get(component);
@@ -521,6 +537,8 @@ export async function registerUiWorkerInventoryFromArtifacts(input: {
   environmentBootstrap: ControlEnvironmentBootstrapInput;
   registeredBy: string;
   disableMissing?: boolean;
+  /** Which package filled the Admin UI slot in this deployment. */
+  adminUiVariant?: AdminUiVariant;
   onProgress?: (message: string) => void;
 }): Promise<ControlWorkerInventoryRegistrationPlan> {
   const records = await compileControlWorkerInventoryFromArtifacts({
@@ -529,7 +547,7 @@ export async function registerUiWorkerInventoryFromArtifacts(input: {
     environmentName: input.environmentName,
     components: input.components,
     artifactPaths: input.components.map((component) =>
-      join(input.baseDir, 'packages', component, 'wrangler.toml')
+      join(resolveUiPackageDir(input.baseDir, component, input.adminUiVariant), 'wrangler.toml')
     ),
     deploymentTarget: 'ui',
   });

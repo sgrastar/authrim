@@ -6,8 +6,9 @@
 
 import type { CIBARequestMetadata } from '../types/oidc';
 import { jwtVerify, createLocalJWKSet, errors as joseErrors } from 'jose';
-import type { JWK, JWTVerifyResult, JWTPayload as JoseJWTPayload, JWTHeaderParameters } from 'jose';
+import type { JWK, JWTPayload as JoseJWTPayload } from 'jose';
 import { createLogger } from './logger';
+import { randomCharacters, type RandomBytesSource } from './unbiased-random';
 
 const log = createLogger().module('CIBA');
 
@@ -157,25 +158,14 @@ export function generateAuthReqId(): string {
  *
  * @returns User code string (format: XXXX-XXXX)
  */
-export function generateCIBAUserCode(): string {
+export function generateCIBAUserCode(source?: RandomBytesSource): string {
   const charset = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
   const codeLength = 8;
   const separatorPosition = 4;
 
-  let code = '';
-  const randomBytes = new Uint8Array(codeLength);
-  crypto.getRandomValues(randomBytes);
-
-  for (let i = 0; i < codeLength; i++) {
-    const index = randomBytes[i] % charset.length;
-    code += charset[index];
-
-    if (i === separatorPosition - 1 && i < codeLength - 1) {
-      code += '-';
-    }
-  }
-
-  return code;
+  // Rejection sampling: `byte % 31` alone would favour the first 8 characters of the set
+  const characters = randomCharacters(charset, codeLength, source);
+  return `${characters.slice(0, separatorPosition)}-${characters.slice(separatorPosition)}`;
 }
 
 /**
@@ -246,26 +236,47 @@ export function parseLoginHint(loginHint: string): {
   return { type: 'username', value: loginHint };
 }
 
+/** Limits on the binding_message of a request; what is omitted keeps the code default. */
+export interface BindingMessageLimits {
+  /** Longest binding_message, in UTF-16 code units (`ciba.max_binding_message_length`). */
+  maxLength?: number;
+  /** A request without a binding_message is refused (`ciba.binding_message_required`). */
+  required?: boolean;
+}
+
 /**
  * Validate binding message format
  * Should be human-readable and not too long
  *
  * @param bindingMessage - Binding message to validate
+ * @param limits - Tenant limits (default: 140 characters, not required)
  * @returns Validation result with error if invalid
  */
-export function validateBindingMessage(bindingMessage?: string): {
+export function validateBindingMessage(
+  bindingMessage?: string,
+  limits: BindingMessageLimits = {}
+): {
   valid: boolean;
   error?: string;
 } {
-  // Empty or undefined is valid
+  // Empty or undefined is valid unless the tenant requires one
   if (!bindingMessage) {
-    return { valid: true };
+    return limits.required
+      ? { valid: false, error: 'binding_message is required' }
+      : { valid: true };
   }
 
-  if (bindingMessage.length > CIBA_CONSTANTS.MAX_BINDING_MESSAGE_LENGTH) {
+  // A message of only whitespace shows the user nothing: it is missing where one is required.
+  // (The message itself is neither trimmed nor stored differently.)
+  if (limits.required && bindingMessage.trim() === '') {
+    return { valid: false, error: 'binding_message is required' };
+  }
+
+  const maxLength = limits.maxLength ?? CIBA_CONSTANTS.MAX_BINDING_MESSAGE_LENGTH;
+  if (bindingMessage.length > maxLength) {
     return {
       valid: false,
-      error: `Binding message too long (max ${CIBA_CONSTANTS.MAX_BINDING_MESSAGE_LENGTH} characters)`,
+      error: `Binding message too long (max ${maxLength} characters)`,
     };
   }
 
@@ -658,15 +669,27 @@ export async function validateCIBALoginHintToken(
  * @param params - Request parameters
  * @returns Validation result
  */
-export function validateCIBARequest(params: {
-  scope?: string;
-  login_hint?: string;
-  login_hint_token?: string;
-  id_token_hint?: string;
-  binding_message?: string;
-  user_code?: string;
-  requested_expiry?: number;
-}): { valid: boolean; error?: string; error_description?: string } {
+function isWellFormedUnicode(value: string): boolean {
+  try {
+    encodeURIComponent(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function validateCIBARequest(
+  params: {
+    scope?: string;
+    login_hint?: string;
+    login_hint_token?: string;
+    id_token_hint?: string;
+    binding_message?: string;
+    user_code?: string;
+    requested_expiry?: number;
+  },
+  bindingMessageLimits: BindingMessageLimits = {}
+): { valid: boolean; error?: string; error_description?: string } {
   const hintCount = [params.login_hint, params.login_hint_token, params.id_token_hint].filter(
     (hint) => typeof hint === 'string' && hint.length > 0
   ).length;
@@ -679,6 +702,16 @@ export function validateCIBARequest(params: {
     };
   }
 
+  // A login_hint addresses the request to its user (the approval page lists requests by it), so
+  // it must be well-formed Unicode: a lone surrogate cannot be matched or indexed.
+  if (params.login_hint && !isWellFormedUnicode(params.login_hint)) {
+    return {
+      valid: false,
+      error: 'invalid_request',
+      error_description: 'login_hint must be well-formed Unicode',
+    };
+  }
+
   // Scope is required
   if (!params.scope) {
     return {
@@ -688,16 +721,14 @@ export function validateCIBARequest(params: {
     };
   }
 
-  // Validate binding message if provided
-  if (params.binding_message) {
-    const bindingValidation = validateBindingMessage(params.binding_message);
-    if (!bindingValidation.valid) {
-      return {
-        valid: false,
-        error: 'invalid_binding_message',
-        error_description: bindingValidation.error,
-      };
-    }
+  // Validate the binding message: its length when sent, its presence when the tenant requires it
+  const bindingValidation = validateBindingMessage(params.binding_message, bindingMessageLimits);
+  if (!bindingValidation.valid) {
+    return {
+      valid: false,
+      error: 'invalid_binding_message',
+      error_description: bindingValidation.error,
+    };
   }
 
   // CIBA Core defines requested_expiry as any positive integer. The server may

@@ -11,8 +11,7 @@ describe('audit log runtime boundary', () => {
 
     expect(source).not.toContain('unifiedAuditServiceCache');
     expect(source).not.toMatch(/WeakMap<[^>]*IAuditService/u);
-    expect(source).toContain(
-      'const primaryAdapterCache = new Map<string, IAuditStorageAdapter | null>();'
-    );
+    expect(source).not.toContain('primaryAdapterCache');
+    expect(source).not.toContain('UPDATE event_log');
   });
 });

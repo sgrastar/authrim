@@ -1,3 +1,4 @@
+import { runSamlDrCoveredOperation } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { derivePluginInstallationId, type RuntimeSmokeEntrypointProps } from '@authrim/ar-lib-core';
 import { splitMigrationSql } from '@authrim/ar-lib-core/control-plane';
@@ -370,17 +371,19 @@ export class PluginD1ResourceAccess extends WorkerEntrypoint<
   }
 
   async run(sql: unknown, params?: unknown): Promise<{ changes: number }> {
-    const props = await authorizeResource(this.env, this.ctx.props, 'd1');
-    assertWriteAccess(props);
-    const statement = primary(asD1(this.env[props.hostBindingRef])).prepare(
-      sqlStatement(sql, 'write')
-    );
-    const result = await statement.bind(...sqlParams(params)).run();
-    const changes = Number(result.meta?.changes ?? 0);
-    if (result.success !== true || !Number.isSafeInteger(changes) || changes < 0) {
-      throw new Error('plugin_dynamic_resource_query_failed');
-    }
-    return { changes };
+    return runSamlDrCoveredOperation(this.env, this.ctx, async (env) => {
+      const props = await authorizeResource(env, this.ctx.props, 'd1');
+      assertWriteAccess(props);
+      const statement = primary(asD1(env[props.hostBindingRef])).prepare(
+        sqlStatement(sql, 'write')
+      );
+      const result = await statement.bind(...sqlParams(params)).run();
+      const changes = Number(result.meta?.changes ?? 0);
+      if (result.success !== true || !Number.isSafeInteger(changes) || changes < 0) {
+        throw new Error('plugin_dynamic_resource_query_failed');
+      }
+      return { changes };
+    });
   }
 }
 
@@ -398,18 +401,22 @@ export class PluginKvResourceAccess extends WorkerEntrypoint<
   }
 
   async put(inputKey: unknown, inputValue: unknown): Promise<void> {
-    const props = await authorizeResource(this.env, this.ctx.props, 'kv_namespace');
-    assertWriteAccess(props);
-    if (typeof inputValue !== 'string' || byteLength(inputValue) > MAX_VALUE_BYTES) {
-      throw new Error('plugin_dynamic_resource_value_invalid');
-    }
-    await asKv(this.env[props.hostBindingRef]).put(key(inputKey), inputValue);
+    return runSamlDrCoveredOperation(this.env, this.ctx, async (env) => {
+      const props = await authorizeResource(env, this.ctx.props, 'kv_namespace');
+      assertWriteAccess(props);
+      if (typeof inputValue !== 'string' || byteLength(inputValue) > MAX_VALUE_BYTES) {
+        throw new Error('plugin_dynamic_resource_value_invalid');
+      }
+      await asKv(env[props.hostBindingRef]).put(key(inputKey), inputValue);
+    });
   }
 
   async delete(input: unknown): Promise<void> {
-    const props = await authorizeResource(this.env, this.ctx.props, 'kv_namespace');
-    assertWriteAccess(props);
-    await asKv(this.env[props.hostBindingRef]).delete(key(input));
+    return runSamlDrCoveredOperation(this.env, this.ctx, async (env) => {
+      const props = await authorizeResource(env, this.ctx.props, 'kv_namespace');
+      assertWriteAccess(props);
+      await asKv(env[props.hostBindingRef]).delete(key(input));
+    });
   }
 
   async list(input: unknown) {
@@ -450,23 +457,27 @@ export class PluginR2ResourceAccess extends WorkerEntrypoint<
   }
 
   async put(inputKey: unknown, inputValue: unknown): Promise<{ etag: string }> {
-    const props = await authorizeResource(this.env, this.ctx.props, 'r2_bucket');
-    assertWriteAccess(props);
-    if (
-      (typeof inputValue !== 'string' && !(inputValue instanceof Uint8Array)) ||
-      byteLength(inputValue) > MAX_VALUE_BYTES
-    ) {
-      throw new Error('plugin_dynamic_resource_value_invalid');
-    }
-    const object = await asR2(this.env[props.hostBindingRef]).put(key(inputKey), inputValue);
-    if (!object) throw new Error('plugin_dynamic_resource_write_failed');
-    return { etag: object.etag };
+    return runSamlDrCoveredOperation(this.env, this.ctx, async (env) => {
+      const props = await authorizeResource(env, this.ctx.props, 'r2_bucket');
+      assertWriteAccess(props);
+      if (
+        (typeof inputValue !== 'string' && !(inputValue instanceof Uint8Array)) ||
+        byteLength(inputValue) > MAX_VALUE_BYTES
+      ) {
+        throw new Error('plugin_dynamic_resource_value_invalid');
+      }
+      const object = await asR2(env[props.hostBindingRef]).put(key(inputKey), inputValue);
+      if (!object) throw new Error('plugin_dynamic_resource_write_failed');
+      return { etag: object.etag };
+    });
   }
 
   async delete(input: unknown): Promise<void> {
-    const props = await authorizeResource(this.env, this.ctx.props, 'r2_bucket');
-    assertWriteAccess(props);
-    await asR2(this.env[props.hostBindingRef]).delete(key(input));
+    return runSamlDrCoveredOperation(this.env, this.ctx, async (env) => {
+      const props = await authorizeResource(env, this.ctx.props, 'r2_bucket');
+      assertWriteAccess(props);
+      await asR2(env[props.hostBindingRef]).delete(key(input));
+    });
   }
 
   async list(input: unknown) {
@@ -752,3 +763,11 @@ export class PluginResourceControlService {
     };
   }
 }
+
+export const SAML_DR_WRITER_SURFACES = [
+  'rpc:PluginD1ResourceAccess.run',
+  'rpc:PluginKvResourceAccess.put',
+  'rpc:PluginKvResourceAccess.delete',
+  'rpc:PluginR2ResourceAccess.put',
+  'rpc:PluginR2ResourceAccess.delete',
+] as const;

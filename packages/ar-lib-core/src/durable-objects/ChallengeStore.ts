@@ -63,10 +63,15 @@ export type ChallengeType =
   | 'direct_passkey_register_map' // Challenge ID to userId mapping for register
   | 'direct_email_code' // Direct Auth email code challenge
   | 'account_provisioning_resume' // Opaque handle for asynchronous account creation
+  | 'direct_email_send_resume' // An email-code send left provisioning its account, resumed once as itself
   | 'external_idp_provisioning_resume' // Browser-bound external IdP JIT continuation
   | 'email_verification_protocol' // Browser/provider email ownership verification nonce
   | 'passkey_reauth' // Account Page passkey re-authentication challenge
-  | 'account_email_reauth'; // Account Page email code re-authentication challenge
+  | 'account_email_reauth' // Account Page email code re-authentication challenge
+  | 'external_idp_link_intent' // Account Page request to link an external account (one use)
+  | 'login_method_removal_lock' // Serialises an account's removals of sign-in methods
+  | 'invitation_email_code' // Code sent to the email an invitation names
+  | 'invitation_email_proof'; // Proof that a sign-up controls the email its invitation names
 
 /**
  * Challenge metadata
@@ -95,6 +100,11 @@ export interface StoreChallengeRequest {
   userId: string;
   challenge: string;
   ttl: number; // Time to live in seconds
+  /**
+   * Never to outlast this moment (milliseconds), whatever the TTL: what the challenge continues
+   * ends then, counted where it is stored rather than where the request was made.
+   */
+  notAfterMs?: number;
   email?: string;
   redirectUri?: string;
   metadata?: Record<string, unknown>;
@@ -125,6 +135,8 @@ export interface ConsumeChallengeResponse {
   email?: string;
   redirectUri?: string;
   metadata?: Record<string, unknown>;
+  /** When the challenge was stored (milliseconds). */
+  createdAt?: number;
 }
 
 /**
@@ -183,6 +195,48 @@ export class ChallengeStore extends DurableObject<Env> {
    */
   async consumeChallengeRpc(request: ConsumeChallengeRequest): Promise<ConsumeChallengeResponse> {
     return this.consumeChallenge(request);
+  }
+
+  /**
+   * RPC: Store a challenge only when no live (unexpired, unconsumed) one has this id, so it can
+   * serve as a short lease. Atomic within the DO: no other request runs between the check and the
+   * write.
+   */
+  async claimChallengeRpc(request: StoreChallengeRequest): Promise<{ claimed: boolean }> {
+    assertValidTenantId(request.tenantId);
+    const existing =
+      this.challengeCache.get(request.id) ??
+      (await this.ctx.storage.get<Challenge>(this.buildChallengeKey(request.id)));
+    if (existing && !existing.consumed && existing.expiresAt > Date.now()) {
+      return { claimed: false };
+    }
+    await this.storeChallenge(request);
+    return { claimed: true };
+  }
+
+  /**
+   * RPC: Whether the lease `id` is still held by `challenge` (its owner) with at least
+   * `minRemainingMs` left, so the owner can stop before a write it no longer guards.
+   */
+  async isClaimHeldRpc(request: {
+    id: string;
+    tenantId: string;
+    challenge: string;
+    minRemainingMs: number;
+  }): Promise<{ held: boolean }> {
+    assertValidTenantId(request.tenantId);
+    const existing =
+      this.challengeCache.get(request.id) ??
+      (await this.ctx.storage.get<Challenge>(this.buildChallengeKey(request.id)));
+    return {
+      held: Boolean(
+        existing &&
+        !existing.consumed &&
+        existing.tenantId === request.tenantId &&
+        existing.challenge === request.challenge &&
+        existing.expiresAt - Date.now() >= request.minRemainingMs
+      ),
+    };
   }
 
   /**
@@ -306,7 +360,10 @@ export class ChallengeStore extends DurableObject<Env> {
       redirectUri: request.redirectUri,
       metadata: request.metadata,
       createdAt: now,
-      expiresAt: now + request.ttl * 1000,
+      expiresAt:
+        typeof request.notAfterMs === 'number'
+          ? Math.min(now + request.ttl * 1000, request.notAfterMs)
+          : now + request.ttl * 1000,
       consumed: false,
     };
 
@@ -391,6 +448,7 @@ export class ChallengeStore extends DurableObject<Env> {
       email: challenge.email,
       redirectUri: challenge.redirectUri,
       metadata: challenge.metadata,
+      createdAt: challenge.createdAt,
     };
   }
 
@@ -455,7 +513,7 @@ export class ChallengeStore extends DurableObject<Env> {
     try {
       // POST /challenge - Store new challenge
       if (path === '/challenge' && request.method === 'POST') {
-        const body = (await request.json()) as Partial<StoreChallengeRequest>;
+        const body = await request.json<Partial<StoreChallengeRequest>>();
 
         if (!body.id || !body.type || !body.userId || !body.challenge || !body.ttl) {
           return new Response(
@@ -480,7 +538,7 @@ export class ChallengeStore extends DurableObject<Env> {
 
       // POST /challenge/consume - Consume challenge (atomic)
       if (path === '/challenge/consume' && request.method === 'POST') {
-        const body = (await request.json()) as Partial<ConsumeChallengeRequest>;
+        const body = await request.json<Partial<ConsumeChallengeRequest>>();
 
         // Note: challenge field is optional - it's only validated if provided
         if (!body.id || !body.type) {

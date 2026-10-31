@@ -1,3 +1,4 @@
+import { recordingAdminAgentAuditWriter } from './helpers/admin-audit-writer';
 import type { DatabaseAdapter } from '@authrim/ar-lib-core/db/adapter';
 import { describe, expect, it, vi } from 'vitest';
 import { AgentBulkRepository } from '../repositories/agent-bulk-repository';
@@ -79,7 +80,7 @@ function repository(rows: unknown[]) {
     queryOne: vi.fn().mockResolvedValue(planRow),
     query: vi.fn().mockResolvedValue(rows),
   } as unknown as DatabaseAdapter;
-  return new AgentBulkRepository(adapter);
+  return new AgentBulkRepository(adapter, recordingAdminAgentAuditWriter);
 }
 
 describe('AgentBulkRepository rollout ordering', () => {

@@ -1,10 +1,39 @@
+vi.mock('../core/log-archive-readiness.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../core/log-archive-readiness.js')>();
+  return {
+    ...actual,
+    waitForLogArchiveReadiness: vi.fn(
+      async (input: Parameters<typeof actual.waitForLogArchiveReadiness>[0]) => ({
+        ...input.attempt,
+        state: 'ready' as const,
+        mode: input.archive.mode,
+        generation: input.archive.storageGeneration,
+        schemaVersion: input.archive.schemaVersion,
+        keyVersion: input.archive.objectEncryptionKeyVersion,
+        tableUuid: input.owned.activation.tableUuid,
+        physicalFingerprint: input.owned.activation.schemaSpecFingerprint,
+        eventId: `log_archive_probe_v1:${input.attempt.attemptId}:${input.archive.objectEncryptionKeyVersion}`,
+        snapshotId: '123',
+        checkedAt: new Date().toISOString(),
+      })
+    ),
+  };
+});
+vi.mock('@authrim/ar-lib-logging/iceberg/capabilities', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@authrim/ar-lib-logging/iceberg/capabilities')>()),
+  LOG_ARCHIVE_IMPLEMENTED_MODES: ['pipeline', 'scheduled'],
+}));
 import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getRequiredR2Buckets } from '../core/cloudflare.js';
-import { createDefaultConfig } from '../core/config.js';
+import { CloudflareTokenBootstrapError } from '../core/cloudflare-control-token-bootstrap.js';
+import {
+  createArchiveTestConfig as createDefaultConfig,
+  archiveLockFixture,
+} from './fixtures/log-archive.js';
 import { generateAllSecrets, saveKeysToDirectory } from '../core/keys.js';
 import { acquireDeployConfigLock } from '../core/lock.js';
 import {
@@ -15,6 +44,10 @@ import {
   getKVNamespaceName,
 } from '../core/naming.js';
 import { getEnvironmentPaths } from '../core/paths.js';
+import {
+  beginOrResumeProvisioningIntent,
+  recordProvisioningResourceCreateIssued,
+} from '../core/provisioning-intent.js';
 import { stagePendingControlBootstrap } from '../core/pending-control-bootstrap.js';
 import {
   calculateReleaseManifestChecksum,
@@ -38,6 +71,7 @@ const listQueuesMock = vi.hoisted(() => vi.fn());
 const listR2BucketsMock = vi.hoisted(() => vi.fn());
 const provisionR2BucketsMock = vi.hoisted(() => vi.fn());
 const assertR2BucketOwnershipForUseMock = vi.hoisted(() => vi.fn());
+const createR2BucketOwnershipVerifierMock = vi.hoisted(() => vi.fn());
 const assertR2BucketOwnershipIdentityMock = vi.hoisted(() => vi.fn());
 const listWorkersMock = vi.hoisted(() => vi.fn());
 const getAccountIdMock = vi.hoisted(() => vi.fn());
@@ -80,6 +114,7 @@ const registerExternalCapabilitiesMock = vi.hoisted(() => vi.fn());
 const publishDynamicPluginWorkerBundlesMock = vi.hoisted(() => vi.fn());
 const queryD1RowsMock = vi.hoisted(() => vi.fn());
 const completeControlTokenBootstrapMock = vi.hoisted(() => vi.fn());
+const preflightCloudflareBootstrapTokenMock = vi.hoisted(() => vi.fn());
 const hasReadyControlTokenBootstrapMock = vi.hoisted(() => vi.fn());
 const advanceReadyControlTokenGenerationMock = vi.hoisted(() => vi.fn());
 const checkpointReadyControlTokenGenerationForRedeployMock = vi.hoisted(() => vi.fn());
@@ -87,9 +122,14 @@ const commitReadyControlTokenGenerationRedeployMock = vi.hoisted(() => vi.fn());
 const initializeControlKeyStateMock = vi.hoisted(() => vi.fn());
 const reconcileLocalControlKeyFilesMock = vi.hoisted(() => vi.fn());
 const loadControlGeneratedKeyStateMock = vi.hoisted(() => vi.fn());
+// Control's current Lookup HMAC state as the Web deploy paths read it fresh before deploying.
+const resolveDeployLookupHmacStateMock = vi.hoisted(() =>
+  vi.fn(async () => ({ activeSlot: 'B' as const, activeFingerprint: 'b'.repeat(64) }))
+);
 const loadControlStagedSigningKeysMock = vi.hoisted(() => vi.fn());
 const projectControlGeneratedKeyStateMock = vi.hoisted(() => vi.fn());
 const listPendingControlOperatorOperationsMock = vi.hoisted(() => vi.fn());
+const getActiveReleaseRolloutHandoffStatusMock = vi.hoisted(() => vi.fn());
 const listPendingPluginControlOperatorOperationsMock = vi.hoisted(() => vi.fn());
 const listPendingPluginControlCleanupOperationsMock = vi.hoisted(() => vi.fn());
 const listPendingTenantDisasterRecoveryOperatorOperationsMock = vi.hoisted(() => vi.fn());
@@ -183,6 +223,7 @@ vi.mock('../core/cloudflare.js', async (importOriginal) => {
     listR2Buckets: listR2BucketsMock,
     provisionR2Buckets: provisionR2BucketsMock,
     assertR2BucketOwnershipForUse: assertR2BucketOwnershipForUseMock,
+    createR2BucketOwnershipVerifier: createR2BucketOwnershipVerifierMock,
     assertR2BucketOwnershipIdentity: assertR2BucketOwnershipIdentityMock,
     listWorkers: listWorkersMock,
     getAccountId: getAccountIdMock,
@@ -197,6 +238,15 @@ vi.mock('../core/cloudflare.js', async (importOriginal) => {
     seedRuntimeProfiles: seedRuntimeProfilesMock,
     ensureWildcardDnsForMultiTenant: ensureWildcardDnsForMultiTenantMock,
     queryD1Rows: queryD1RowsMock,
+  };
+});
+
+vi.mock('../core/cloudflare-control-token-bootstrap.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../core/cloudflare-control-token-bootstrap.js')>();
+  return {
+    ...actual,
+    preflightCloudflareBootstrapToken: preflightCloudflareBootstrapTokenMock,
   };
 });
 
@@ -272,6 +322,7 @@ vi.mock('../core/control-generated-state.js', () => ({
   loadControlGeneratedKeyState: loadControlGeneratedKeyStateMock,
   loadControlStagedSigningKeys: loadControlStagedSigningKeysMock,
   projectControlGeneratedKeyState: projectControlGeneratedKeyStateMock,
+  resolveDeployLookupHmacState: resolveDeployLookupHmacStateMock,
 }));
 
 vi.mock('../core/notification-provider-bootstrap.js', () => ({
@@ -329,6 +380,10 @@ vi.mock('../core/control-token-bootstrap-orchestrator.js', async (importOriginal
   };
 });
 
+vi.mock('../core/release-rollout-handoff.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../core/release-rollout-handoff.js')>()),
+  getActiveReleaseRolloutHandoffStatus: getActiveReleaseRolloutHandoffStatusMock,
+}));
 vi.mock('../core/control-operator-operations.js', () => ({
   listPendingControlOperatorOperations: listPendingControlOperatorOperationsMock,
   listPendingPluginControlOperatorOperations: listPendingPluginControlOperatorOperationsMock,
@@ -551,6 +606,7 @@ async function writeEnvironment(env: string) {
     join(envDir, 'lock.json'),
     `${JSON.stringify(
       {
+        logArchive: archiveLockFixture(config),
         version: '1.0.0',
         productVersion: '0.2.0',
         env,
@@ -594,6 +650,13 @@ async function writeEnvironment(env: string) {
         ),
         r2: {
           MIGRATION_RELEASES: { name: `${env}-migration-releases` },
+          LOG_ARCHIVE: {
+            name: `${env}-log-archive`,
+            creationDate: '2026-10-27T00:00:00.000Z',
+            ownershipId: '11111111-1111-4111-8111-111111111111',
+            ownershipMarkerKey:
+              '__authrim_setup__/ownership-v1-11111111-1111-4111-8111-111111111111.json',
+          },
         },
         schemaTargets: Object.fromEntries(
           [
@@ -959,6 +1022,10 @@ describe('setup web worker update API', () => {
     provisionR2BucketsMock.mockReset();
     assertR2BucketOwnershipForUseMock.mockReset();
     assertR2BucketOwnershipForUseMock.mockResolvedValue(undefined);
+    createR2BucketOwnershipVerifierMock.mockReset();
+    createR2BucketOwnershipVerifierMock.mockImplementation(
+      async (identity) => () => assertR2BucketOwnershipForUseMock(identity)
+    );
     assertR2BucketOwnershipIdentityMock.mockReset();
     assertR2BucketOwnershipIdentityMock.mockResolvedValue(undefined);
     listWorkersMock.mockReset();
@@ -1002,6 +1069,8 @@ describe('setup web worker update API', () => {
     publishDynamicPluginWorkerBundlesMock.mockReset();
     queryD1RowsMock.mockReset();
     completeControlTokenBootstrapMock.mockReset();
+    preflightCloudflareBootstrapTokenMock.mockReset();
+    preflightCloudflareBootstrapTokenMock.mockResolvedValue('account');
     hasReadyControlTokenBootstrapMock.mockReset();
     advanceReadyControlTokenGenerationMock.mockReset();
     checkpointReadyControlTokenGenerationForRedeployMock.mockReset();
@@ -1012,6 +1081,8 @@ describe('setup web worker update API', () => {
     loadControlStagedSigningKeysMock.mockReset();
     projectControlGeneratedKeyStateMock.mockReset();
     listPendingControlOperatorOperationsMock.mockReset();
+    getActiveReleaseRolloutHandoffStatusMock.mockReset();
+    getActiveReleaseRolloutHandoffStatusMock.mockResolvedValue(null);
     listPendingPluginControlOperatorOperationsMock.mockReset();
     listPendingPluginControlCleanupOperationsMock.mockReset();
     listPendingTenantDisasterRecoveryOperatorOperationsMock.mockReset();
@@ -1163,6 +1234,7 @@ describe('setup web worker update API', () => {
         { name: `${environment}-import-artifacts` },
         { name: `${environment}-export-artifacts` },
         { name: `${environment}-sensitive-details` },
+        { name: `${environment}-log-archive` },
       ])
     );
     queryD1RowsMock.mockImplementation(async (_databaseName, sql: string) =>
@@ -1511,6 +1583,103 @@ describe('setup web worker update API', () => {
       status: 'resumable',
       canResume: true,
       resumeFrom: 'database_migrations',
+    });
+  });
+
+  it('retries a provisioned environment when token preflight failed before a release checkpoint', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    const configPath = join(tempDir!, '.authrim', env, 'config.json');
+    const config = JSON.parse(await readFile(configPath, 'utf-8'));
+    config.controlPlane.automaticProvisioning = true;
+    await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
+    const lockPath = join(tempDir!, '.authrim', env, 'lock.json');
+    const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
+    delete lock.productVersion;
+    delete lock.releaseUpdate;
+    lock.workers = {};
+    await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+
+    const response = await createApiRoutes().request('/deploy/recovery/test');
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      status: 'resumable',
+      canResume: true,
+      requiresRecreate: false,
+      requiresBootstrapToken: true,
+      resumeFrom: 'database_migrations',
+      reasonCode: 'provisioning_complete_deploy_not_started',
+    });
+  });
+
+  it('blocks a provisioned-only retry when a locked Cloudflare resource is missing', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    const lockPath = join(tempDir!, '.authrim', env, 'lock.json');
+    const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
+    delete lock.productVersion;
+    delete lock.releaseUpdate;
+    lock.workers = {};
+    await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+    listD1DatabasesMock.mockResolvedValue(
+      (await listD1DatabasesMock.getMockImplementation()!()).filter(
+        (database: { uuid: string }) => database.uuid !== 'core-id'
+      )
+    );
+
+    const response = await createApiRoutes().request('/deploy/recovery/test');
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      canResume: false,
+      reasonCode: 'cloudflare_resource_checkpoint_mismatch',
+    });
+  });
+
+  it('blocks Web resume while an initial D1 create has no immutable ID', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    const lockPath = join(tempDir!, '.authrim', env, 'lock.json');
+    const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
+    delete lock.productVersion;
+    lock.releaseUpdate = {
+      targetVersion: '0.2.0',
+      phase: 'schema_applied',
+      manifestChecksum: Object.values(lock.schemaTargets)[0]?.manifestChecksum,
+      startedAt: '2026-05-18T00:00:00.000Z',
+      updatedAt: '2026-05-18T00:00:00.000Z',
+      appliedTargets: [],
+      manualTargets: [],
+    };
+    await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+    const binding = 'TEST_TDB_PII_BOOTSTRAP_PII';
+    const name = 'test-authrim-tenant-pii-bootstrap-db';
+    const intent = await beginOrResumeProvisioningIntent({
+      baseDir: tempDir!,
+      environment: env,
+      accountId: '98edc9b77724418e61ae577980a7369b',
+      resourceSpec: { purpose: 'initial_control_plane_tenant_shards', resources: [] },
+    });
+    await recordProvisioningResourceCreateIssued({
+      baseDir: tempDir!,
+      environment: env,
+      expectedIntentId: intent.intent.id,
+      resource: { kind: 'd1', binding, name },
+    });
+
+    const response = await createApiRoutes().request('/deploy/recovery/test');
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      status: 'blocked',
+      canResume: false,
+      reasonCode: 'initial_d1_identity_recovery_required',
+      recoveryBinding: binding,
+      recoveryName: name,
+      recoveryCommand: `pnpm run setup recover-initial-d1 --env test --binding ${binding} --database-id <uuid>`,
     });
   });
 
@@ -2976,7 +3145,9 @@ describe('setup web worker update API', () => {
   it('offers CLI adoption when every required legacy R2 bucket still exists', async () => {
     const env = 'test';
     await writeEnvironment(env);
-    const requiredBuckets = getRequiredR2Buckets(env);
+    const requiredBuckets = getRequiredR2Buckets(env, {
+      logArchiveBucketName: `${env}-log-archive`,
+    });
     const lockPath = join(tempDir!, '.authrim', env, 'lock.json');
     const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
     lock.r2 = Object.fromEntries(
@@ -3041,6 +3212,7 @@ describe('setup web worker update API', () => {
     const configPath = join(tempDir!, '.authrim', env, 'config.json');
     const config = JSON.parse(await readFile(configPath, 'utf-8'));
     config.environment.prefix = 'other';
+    config.logging.archive.bucketName = `${config.environment.prefix}-log-archive`;
     await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
 
     const token = generateSessionToken();
@@ -3067,7 +3239,7 @@ describe('setup web worker update API', () => {
     const configPath = join(tempDir!, '.authrim', env, 'config.json');
     const config = createDefaultConfig(env);
     config.controlPlane.automaticProvisioning = true;
-    config.cloudflare.accountId = 'account-id';
+    config.cloudflare.accountId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
     config.components.loginUi = false;
     config.components.adminUi = false;
     await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
@@ -3359,6 +3531,7 @@ describe('setup web worker update API', () => {
 
     const lockPath = join(tempDir!, '.authrim', env, 'lock.json');
     const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
+    lock.logArchive = archiveLockFixture(config);
     const manifest = JSON.parse(
       await readFile(join(tempDir!, 'migrations', 'releases', '0.2.0.json'), 'utf-8')
     );
@@ -3448,7 +3621,7 @@ describe('setup web worker update API', () => {
     const configPath = join(tempDir!, '.authrim', env, 'config.json');
     const config = createDefaultConfig(env);
     config.controlPlane.automaticProvisioning = true;
-    config.cloudflare.accountId = 'account-id';
+    config.cloudflare.accountId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
     config.components.loginUi = false;
     config.components.adminUi = false;
     await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
@@ -3511,6 +3684,141 @@ describe('setup web worker update API', () => {
     expect(lock.releaseUpdate?.phase).toBe('workers_deployed');
   });
 
+  it('logs child token capability probes when initial Web deployment fails', async () => {
+    const env = 'headless';
+    await writeEnvironment(env);
+    await markEnvironmentProvisioned(env);
+    await writeDraftManifest('0.2.0');
+    await rm(join(tempDir!, 'packages'), { recursive: true, force: true });
+    const configPath = join(tempDir!, '.authrim', env, 'config.json');
+    const config = createDefaultConfig(env);
+    config.controlPlane.automaticProvisioning = true;
+    config.cloudflare.accountId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    config.components.loginUi = false;
+    config.components.adminUi = false;
+    await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
+    resolveMissingUiWorkerBindingTargetsMock.mockResolvedValue({
+      loginUi: false,
+      adminUi: false,
+    });
+    deployAllMock.mockImplementation(async (_options, components) => ({
+      totalComponents: components.length,
+      successCount: components.length,
+      failedCount: 0,
+      results: components.map((component, index) => ({
+        component,
+        workerName: `${env}-${component}`,
+        version: '0.2.0',
+        cloudflareVersionId: `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+        deployedAt: '2026-07-22T01:00:00.000Z',
+        success: true,
+      })),
+    }));
+    preflightCloudflareBootstrapTokenMock.mockResolvedValueOnce('user');
+    completeControlTokenBootstrapMock.mockRejectedValueOnce(
+      new CloudflareTokenBootstrapError('cloudflare_child_token_capability_invalid', false, {
+        issuedFor: 'd1',
+        probes: { d1: 'denied', workers: 'allowed', kv: 'denied', r2: 'denied' },
+      })
+    );
+
+    const app = createApiRoutes();
+    const response = await app.request('/deploy', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': generateSessionToken(),
+        Origin: 'http://localhost',
+      },
+      body: JSON.stringify({
+        env,
+        skipBuild: true,
+        runMigrations: true,
+        bootstrapToken: 'bootstrap-token-should-not-appear-in-logs',
+        tokenOwnership: 'account',
+      }),
+    });
+
+    const responseBody = await response.json();
+    expect(preflightCloudflareBootstrapTokenMock).toHaveBeenCalledWith({
+      accountId: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      token: 'bootstrap-token-should-not-appear-in-logs',
+    });
+    expect(completeControlTokenBootstrapMock).toHaveBeenCalledOnce();
+    expect(completeControlTokenBootstrapMock.mock.calls[0]?.[0]).toMatchObject({
+      ownership: 'user',
+    });
+    expect(responseBody).toMatchObject({
+      success: false,
+      error: 'cloudflare_child_token_capability_invalid',
+      capabilityDiagnostic: {
+        issuedFor: 'd1',
+        probes: { d1: 'denied', workers: 'allowed', kv: 'denied', r2: 'denied' },
+      },
+    });
+    const log = await readFile(responseBody.logPath, 'utf-8');
+    expect(log).toContain(
+      'Scoped token capability mismatch (d1): d1=denied, workers=allowed, kv=denied, r2=denied'
+    );
+    expect(log).toContain('Cloudflare bootstrap token ownership detected as user');
+    expect(log).not.toContain('bootstrap-token-should-not-appear-in-logs');
+    const status = await (await app.request('/deploy/status')).json();
+    expect(status.progress).toContain(
+      'Scoped token capability mismatch (d1): d1=denied, workers=allowed, kv=denied, r2=denied'
+    );
+  });
+
+  it('rejects a bootstrap token without token-management read access before deploying Workers', async () => {
+    const env = 'headless';
+    await writeEnvironment(env);
+    await markEnvironmentProvisioned(env);
+    await writeDraftManifest('0.2.0');
+    const configPath = join(tempDir!, '.authrim', env, 'config.json');
+    const config = createDefaultConfig(env);
+    config.controlPlane.automaticProvisioning = true;
+    config.cloudflare.accountId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
+    preflightCloudflareBootstrapTokenMock.mockRejectedValueOnce(
+      new CloudflareTokenBootstrapError(
+        'cloudflare_token_api_http_403',
+        false,
+        undefined,
+        false,
+        'list_permission_groups'
+      )
+    );
+
+    const response = await createApiRoutes().request('/deploy', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': generateSessionToken(),
+        Origin: 'http://localhost',
+      },
+      body: JSON.stringify({
+        env,
+        skipBuild: true,
+        runMigrations: true,
+        bootstrapToken: 'bootstrap-token-should-not-appear-in-logs',
+        tokenOwnership: 'account',
+      }),
+    });
+
+    const responseBody = await response.json();
+    expect(response.status).toBe(500);
+    expect(responseBody).toMatchObject({
+      success: false,
+      error: 'cloudflare_token_api_http_403',
+      tokenApiOperation: 'list_permission_groups',
+    });
+    expect(deployAllMock).not.toHaveBeenCalled();
+    const log = await readFile(responseBody.logPath, 'utf-8');
+    expect(log).toContain(
+      'Cloudflare token API operation failed: list_permission_groups (cloudflare_token_api_http_403)'
+    );
+    expect(log).not.toContain('bootstrap-token-should-not-appear-in-logs');
+  });
+
   it('retries temporary setup machine-access cleanup and verifies only after it succeeds', async () => {
     const env = 'headless';
     await writeEnvironment(env);
@@ -3520,7 +3828,7 @@ describe('setup web worker update API', () => {
     const configPath = join(tempDir!, '.authrim', env, 'config.json');
     const config = createDefaultConfig(env);
     config.controlPlane.automaticProvisioning = true;
-    config.cloudflare.accountId = 'account-id';
+    config.cloudflare.accountId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
     config.components.loginUi = false;
     config.components.adminUi = false;
     await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
@@ -3616,7 +3924,7 @@ describe('setup web worker update API', () => {
     expect(reconcileWorkerCronTriggersMock).toHaveBeenCalledWith(
       expect.objectContaining({
         env,
-        cloudflareAccountId: 'account-id',
+        cloudflareAccountId: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
         workerScriptOwnership: expect.objectContaining({
           assertBeforeMutation: expect.any(Function),
         }),
@@ -3645,7 +3953,7 @@ describe('setup web worker update API', () => {
     const configPath = join(tempDir!, '.authrim', env, 'config.json');
     const config = createDefaultConfig(env);
     config.controlPlane.automaticProvisioning = true;
-    config.cloudflare.accountId = 'account-id';
+    config.cloudflare.accountId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
     config.components.loginUi = false;
     config.components.adminUi = false;
     await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
@@ -4063,6 +4371,54 @@ describe('setup web worker update API', () => {
       operation,
     });
     expect(executeSetupControlOperatorWorkerBindingsMock).not.toHaveBeenCalled();
+  });
+
+  it('provisions a shard before a stopped update hands off to Control, only without a rollout', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    const lockPath = join(tempDir!, '.authrim', env, 'lock.json');
+    const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
+    lock.releaseUpdate = {
+      targetVersion: lock.productVersion,
+      phase: 'control_handoff',
+      manifestChecksum: 'a'.repeat(64),
+      startedAt: '2026-09-04T00:00:00.000Z',
+      updatedAt: '2026-09-04T00:00:00.000Z',
+    };
+    await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+    const operation = {
+      operationId: 'provision-shard-1',
+      environmentId: env,
+      operationKind: 'provision_shard',
+      status: 'blocked',
+      currentStep: 'create_d1',
+    } as const;
+    listPendingControlOperatorOperationsMock.mockResolvedValue([operation]);
+    executeSetupControlOperatorCreateMock.mockResolvedValue({ state: 'waiting_retry' });
+    const execute = () =>
+      createApiRoutes().request('/control/pending-operations/execute', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Session-Token': generateSessionToken(),
+          Origin: 'http://localhost',
+        },
+        body: JSON.stringify({ environmentId: env, operationId: operation.operationId }),
+      });
+
+    getActiveReleaseRolloutHandoffStatusMock.mockResolvedValueOnce({ operationId: 'rollout-1' });
+    const withRollout = await execute();
+    expect(withRollout.status).toBe(409);
+    await expect(withRollout.json()).resolves.toMatchObject({
+      errorCode: 'control_provision_release_update_in_progress',
+    });
+    getActiveReleaseRolloutHandoffStatusMock.mockRejectedValueOnce(new Error('d1_unavailable'));
+    expect((await execute()).status).toBe(409);
+    expect(executeSetupControlOperatorCreateMock).not.toHaveBeenCalled();
+
+    const withoutRollout = await execute();
+    expect(withoutRollout.status, await withoutRollout.clone().text()).toBe(200);
+    expect(executeSetupControlOperatorCreateMock).toHaveBeenCalledOnce();
   });
 
   it('blocks Web Control execution while a release mutation is incomplete', async () => {
@@ -4926,7 +5282,8 @@ describe('setup web worker update API', () => {
     await expect(response.json()).resolves.toMatchObject({ success: true });
     expect(loadDeploySecretsFromKeysMock).toHaveBeenCalledWith(
       expect.any(String),
-      expect.arrayContaining(['ar-auth'])
+      expect.arrayContaining(['ar-auth']),
+      expect.objectContaining({ env, rootDir: tempDir })
     );
     expect(saveMasterWranglerConfigsMock).toHaveBeenCalledWith(
       expect.any(Object),
@@ -4994,7 +5351,11 @@ describe('setup web worker update API', () => {
     await expect(readFile(responseBody.logPath, 'utf-8')).resolves.toContain(
       'Deploying component: ar-auth'
     );
-    expect(loadDeploySecretsFromKeysMock).toHaveBeenCalledWith(expect.any(String), ['ar-auth']);
+    expect(loadDeploySecretsFromKeysMock).toHaveBeenCalledWith(
+      expect.any(String),
+      ['ar-auth'],
+      expect.objectContaining({ env, rootDir: tempDir })
+    );
     expect(deployAllMock).toHaveBeenCalledWith(
       expect.objectContaining({
         env,
@@ -5006,8 +5367,49 @@ describe('setup web worker update API', () => {
           FLOW_RUNTIME_HMAC_SECRET: 'flow-runtime-secret',
           PLUGIN_ENCRYPTION_KEY: 'plugin-encryption-key',
         }),
+        // Control's current Lookup HMAC state, read fresh, not the local lock's copy.
+        lookupHmacSlots: ['B'],
+        lookupHmacFingerprints: { B: 'b'.repeat(64) },
       }),
       ['ar-auth']
+    );
+    expect(resolveDeployLookupHmacStateMock).toHaveBeenCalledWith(
+      expect.objectContaining({ environmentId: env })
+    );
+  });
+
+  it('does not read the remote Control database for a dry-run component deploy', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    await saveKeysToDirectory(generateAllSecrets('test-key'), { keysBaseDir: tempDir!, env });
+    deployAllMock.mockResolvedValue({
+      totalComponents: 1,
+      successCount: 1,
+      failedCount: 0,
+      results: [
+        {
+          success: true,
+          component: 'ar-auth',
+          workerName: 'test-ar-auth',
+          version: '0.2.0',
+          deployedAt: '2026-06-18T00:00:00.000Z',
+        },
+      ],
+    });
+    resolveDeployLookupHmacStateMock.mockClear();
+
+    const response = await createApiRoutes().request('/deploy/component/ar-auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Session-Token': generateSessionToken() },
+      body: JSON.stringify({ env, skipBuild: true, dryRun: true }),
+    });
+
+    expect(response.status).toBe(200);
+    // A dry run deploys nothing: it plans with the lock's key state, not a fresh remote read.
+    expect(resolveDeployLookupHmacStateMock).not.toHaveBeenCalled();
+    expect(deployAllMock).toHaveBeenCalledWith(
+      expect.objectContaining({ dryRun: true }),
+      expect.arrayContaining(['ar-auth'])
     );
   });
 

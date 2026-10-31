@@ -1,3 +1,5 @@
+import { transitionCanonicalAccountDeletion } from '../../db/account-governance-mutations';
+import type { AccountRegistrationState } from '../../services/guest-lifecycle';
 import type { DatabaseAdapter, PreparedStatement, TransactionContext } from '../../db/adapter';
 import {
   accountDirectoryOutboxId,
@@ -6,11 +8,19 @@ import {
 } from '../../services/lookup-directory/publication';
 import { createLogger } from '../../utils/logger';
 import { generateId, getCurrentTimestamp } from '../base';
+import {
+  IAL_FRAMEWORK,
+  IAL_FRAMEWORK_PENDING,
+  assuranceEvidenceId,
+  initialAssuranceEvidenceId,
+  SUBJECT_UPDATED_AT_FORWARD_SQL,
+  type InitialAssuranceEvidence,
+} from '../../services/identity-assurance';
 
 const log = createLogger().module('CANONICAL-IDENTITY');
 
 export type IdentitySubjectType = 'person' | 'service_account' | 'agent' | string;
-export type IdentityAccountType = 'user' | 'admin' | 'service_account' | 'anonymous' | string;
+export type IdentityAccountType = 'user' | 'admin' | 'service_account' | string;
 export type IdentityLifecycleState =
   | 'active'
   | 'inactive'
@@ -83,6 +93,7 @@ export interface IdentityAccountRow {
   id: string;
   tenant_id: string;
   account_type: IdentityAccountType;
+  registration_state: AccountRegistrationState;
   lifecycle_state: IdentityLifecycleState;
   legacy_user_id: string | null;
   primary_subject_id: string | null;
@@ -244,16 +255,23 @@ export interface AssuranceEvidenceRow {
   id: string;
   tenant_id: string;
   subject_id: string | null;
-  account_id: string | null;
   binding_id: string | null;
+  /** How the identity was proofed or who asserted it (admin_attestation, scim, import, tenant_policy, …). */
   evidence_type: string;
-  assurance_level: string;
-  evidence_ref: string | null;
+  /** Who recorded it: `admin:<id>`, `scim:<token ref>`, `import:<job>`, `tenant_policy`. */
   issuer_ref: string | null;
-  issued_at: number | null;
+  /** The framework the level is under (`nist_800_63` for an IAL). */
+  assurance_framework: string | null;
+  assurance_level: string | null;
+  /** A hash of the proofing record kept elsewhere, never the record itself. */
+  evidence_hash: string | null;
+  evidence_storage_ref: string | null;
+  /** When the identity was proofed (epoch ms). */
+  verified_at: number | null;
   expires_at: number | null;
   revoked_at: number | null;
-  metadata_json: string | null;
+  /** Who revoked it (`admin:<id>`, `scim:<token ref>`, …). */
+  revoked_by: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -327,6 +345,7 @@ export interface CreateIdentityAccountInput {
   id?: string;
   tenant_id?: string;
   account_type?: IdentityAccountType;
+  registration_state?: AccountRegistrationState;
   lifecycle_state?: IdentityLifecycleState;
   legacy_user_id?: string | null;
   primary_subject_id?: string | null;
@@ -458,20 +477,31 @@ export interface CreateIdentityResolutionCandidateInput {
   expires_at?: number | null;
 }
 
+/**
+ * A source of evidence: an evidence type and who asserted it (an issuer). With `anyIssuer`, the
+ * source is the whole type (every CSV import, whichever job), and `issuerRef` is who a
+ * replacement is recorded as.
+ */
+export interface AssuranceEvidenceSource {
+  evidenceType: string;
+  issuerRef: string;
+  anyIssuer?: boolean;
+}
+
 export interface CreateAssuranceEvidenceInput {
+  /** A deterministic id makes the write idempotent: an id already recorded is left as it is. */
   id?: string;
   tenant_id?: string;
-  subject_id?: string | null;
-  account_id?: string | null;
+  subject_id: string;
   binding_id?: string | null;
   evidence_type: string;
-  assurance_level: string;
-  evidence_ref?: string | null;
   issuer_ref?: string | null;
-  issued_at?: number | null;
+  assurance_framework?: string | null;
+  assurance_level?: string | null;
+  evidence_hash?: string | null;
+  evidence_storage_ref?: string | null;
+  verified_at?: number | null;
   expires_at?: number | null;
-  revoked_at?: number | null;
-  metadata?: JsonObject | null;
 }
 
 export interface CreateValueProvenanceInput {
@@ -640,6 +670,7 @@ export class CanonicalIdentityRepository {
       id: accountId,
       tenant_id: resolveTenantId(this.tenantId, accountInput.tenant_id),
       account_type: accountInput.account_type ?? 'user',
+      registration_state: accountInput.registration_state ?? 'registered',
       lifecycle_state: accountInput.lifecycle_state ?? 'active',
       legacy_user_id: accountInput.legacy_user_id ?? null,
       primary_subject_id: subjectId,
@@ -708,14 +739,15 @@ export class CanonicalIdentityRepository {
       },
       {
         sql: `INSERT INTO identity_accounts (
-          id, tenant_id, account_type, lifecycle_state, legacy_user_id, primary_subject_id,
+          id, tenant_id, account_type, registration_state, lifecycle_state, legacy_user_id, primary_subject_id,
           display_label, metadata_json, directory_publication_state, account_route_generation,
           created_at, updated_at, deleted_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         params: [
           account.id,
           account.tenant_id,
           account.account_type,
+          account.registration_state,
           account.lifecycle_state,
           account.legacy_user_id,
           account.primary_subject_id,
@@ -748,9 +780,9 @@ export class CanonicalIdentityRepository {
       },
       {
         sql: `UPDATE identity_subjects
-                 SET primary_account_id = ?, updated_at = ?
+                 SET primary_account_id = ?, ${SUBJECT_UPDATED_AT_FORWARD_SQL}
                WHERE id = ? AND tenant_id = ?`,
-        params: [accountId, now, subjectId, this.tenantId],
+        params: [accountId, now, now, subjectId, this.tenantId],
       },
     ];
     if (profile) {
@@ -851,9 +883,9 @@ export class CanonicalIdentityRepository {
     const deletedAt = lifecycleState === 'deleted' || lifecycleState === 'deleting' ? now : null;
     const result = await this.adapter.execute(
       `UPDATE identity_subjects
-          SET lifecycle_state = ?, updated_at = ?, deleted_at = ?
+          SET lifecycle_state = ?, ${SUBJECT_UPDATED_AT_FORWARD_SQL}, deleted_at = ?
         WHERE id = ? AND tenant_id = ?`,
-      [lifecycleState, now, deletedAt, subjectId, this.tenantId]
+      [lifecycleState, now, now, deletedAt, subjectId, this.tenantId]
     );
     return result.rowsAffected > 0;
   }
@@ -870,9 +902,17 @@ export class CanonicalIdentityRepository {
       input.lifecycleState === 'deleted' || input.lifecycleState === 'deleting' ? now : null;
     const result = await this.adapter.execute(
       `UPDATE identity_subjects
-          SET lifecycle_state = ?, display_label = ?, updated_at = ?, deleted_at = ?
+          SET lifecycle_state = ?, display_label = ?, ${SUBJECT_UPDATED_AT_FORWARD_SQL}, deleted_at = ?
         WHERE id = ? AND tenant_id = ?`,
-      [input.lifecycleState, input.displayLabel ?? null, now, deletedAt, subjectId, this.tenantId]
+      [
+        input.lifecycleState,
+        input.displayLabel ?? null,
+        now,
+        now,
+        deletedAt,
+        subjectId,
+        this.tenantId,
+      ]
     );
     return result.rowsAffected > 0;
   }
@@ -895,13 +935,14 @@ export class CanonicalIdentityRepository {
 
   async findAccountByLegacyUserId(
     legacyUserId: string,
-    options?: { includeInactive?: boolean }
+    options?: { includeInactive?: boolean; consistencyClass?: 'primary_required' }
   ): Promise<IdentityAccountRow | null> {
     return this.adapter.queryOne<IdentityAccountRow>(
       `SELECT *
          FROM identity_accounts
         WHERE legacy_user_id = ? AND tenant_id = ?${activeClause(options?.includeInactive)}`,
-      [legacyUserId, this.tenantId]
+      [legacyUserId, this.tenantId],
+      options?.consistencyClass ? { consistencyClass: options.consistencyClass } : undefined
     );
   }
 
@@ -910,6 +951,14 @@ export class CanonicalIdentityRepository {
     lifecycleState: IdentityLifecycleState
   ): Promise<boolean> {
     const now = getCurrentTimestamp();
+    if (lifecycleState === 'deleted' || lifecycleState === 'deleting') {
+      return transitionCanonicalAccountDeletion(this.adapter, {
+        tenantId: this.tenantId,
+        accountId,
+        state: lifecycleState,
+        now,
+      });
+    }
     const deletedAt = lifecycleState === 'deleted' || lifecycleState === 'deleting' ? now : null;
     const result = await this.adapter.execute(
       `UPDATE identity_accounts
@@ -1620,55 +1669,275 @@ export class CanonicalIdentityRepository {
     return result.rowsAffected > 0;
   }
 
+  /**
+   * Records evidence. An id already recorded is left as it is and the stored evidence returned; an
+   * id recorded for another subject is an error.
+   */
   async createAssuranceEvidence(
     input: CreateAssuranceEvidenceInput
   ): Promise<AssuranceEvidenceRow> {
-    const id = input.id ?? generateId();
+    const row = this.assuranceEvidenceRow(input, getCurrentTimestamp());
+    await this.adapter.batch([
+      { sql: ASSURANCE_EVIDENCE_INSERT, params: assuranceEvidenceParams(row) },
+      this.subjectVersionBump(row.subject_id, row.created_at),
+    ]);
+    const stored = await this.findAssuranceEvidence(row.id);
+    if (!stored || stored.subject_id !== row.subject_id) {
+      throw new Error('assurance_evidence_id_conflict');
+    }
+    return stored;
+  }
+
+  /**
+   * Records the evidence an account is created with (the tenant's default, or what the source
+   * that provisions it asserts), in force at once: the account's creation is what is audited. It
+   * is named by the tenant, subject and source, so a retried creation records it once, and
+   * evidence revoked since is never brought back by one.
+   */
+  async recordInitialAssurance(
+    subjectId: string,
+    evidence: InitialAssuranceEvidence
+  ): Promise<AssuranceEvidenceRow> {
+    return this.createAssuranceEvidence({
+      id: evidence.contentId
+        ? await assuranceEvidenceId(evidence.contentId.kind, [
+            this.tenantId,
+            subjectId,
+            ...evidence.contentId.parts,
+          ])
+        : await initialAssuranceEvidenceId(this.tenantId, subjectId, evidence),
+      subject_id: subjectId,
+      evidence_type: evidence.evidenceType,
+      issuer_ref: evidence.issuerRef,
+      assurance_framework: IAL_FRAMEWORK,
+      assurance_level: evidence.level,
+      verified_at: evidence.verifiedAt,
+      expires_at: evidence.expiresAt ?? null,
+    });
+  }
+
+  /**
+   * The evidence one source (an evidence type and issuer, or every issuer of the type when
+   * `anyIssuer`) has in force for an account, newest first, found by the account's user id. Read from the primary store: it decides what a write
+   * that follows must replace.
+   */
+  async listActiveAssuranceEvidenceFromSource(
+    legacyUserId: string,
+    source: AssuranceEvidenceSource
+  ): Promise<AssuranceEvidenceRow[]> {
+    const rows = await this.adapter.query<AssuranceEvidenceRow>(
+      `SELECT e.*
+         FROM identity_accounts a
+         JOIN assurance_evidence e
+           ON e.tenant_id = a.tenant_id AND e.subject_id = a.primary_subject_id
+        WHERE a.tenant_id = ? AND a.legacy_user_id = ?
+          AND e.evidence_type = ?${source.anyIssuer ? '' : ' AND e.issuer_ref = ?'}
+          AND e.revoked_at IS NULL
+        ORDER BY e.created_at DESC, e.id DESC`,
+      [
+        this.tenantId,
+        legacyUserId,
+        source.evidenceType,
+        ...(source.anyIssuer ? [] : [source.issuerRef]),
+      ],
+      { consistencyClass: 'primary_required' }
+    );
+    return rows.map(normalizeAssuranceEvidenceRow);
+  }
+
+  /** A subject's evidence, newest first; revoked evidence only when asked for. */
+  async listAssuranceEvidenceForSubject(
+    subjectId: string,
+    options?: { includeRevoked?: boolean }
+  ): Promise<AssuranceEvidenceRow[]> {
+    const rows = await this.adapter.query<AssuranceEvidenceRow>(
+      `SELECT *
+         FROM assurance_evidence
+        WHERE tenant_id = ? AND subject_id = ?${options?.includeRevoked ? '' : ' AND revoked_at IS NULL'}
+        ORDER BY created_at DESC, id DESC`,
+      [this.tenantId, subjectId]
+    );
+    return rows.map(normalizeAssuranceEvidenceRow);
+  }
+
+  async findAssuranceEvidence(evidenceId: string): Promise<AssuranceEvidenceRow | null> {
+    const row = await this.adapter.queryOne<AssuranceEvidenceRow>(
+      'SELECT * FROM assurance_evidence WHERE tenant_id = ? AND id = ?',
+      [this.tenantId, evidenceId]
+    );
+    return row ? normalizeAssuranceEvidenceRow(row) : null;
+  }
+
+  /**
+   * Revokes one piece of evidence, recording who revoked it. Whether it was revoked here (false
+   * when it already was, or is not found).
+   */
+  async revokeAssuranceEvidence(
+    evidenceId: string,
+    revokedBy: string,
+    at: number = getCurrentTimestamp()
+  ): Promise<boolean> {
+    const [result] = await this.adapter.batch([
+      {
+        sql: `UPDATE assurance_evidence SET revoked_at = ?, revoked_by = ?, updated_at = ?
+               WHERE tenant_id = ? AND id = ? AND revoked_at IS NULL`,
+        params: [at, revokedBy, at, this.tenantId, evidenceId],
+      },
+      this.subjectVersionBumpOfEvidence(evidenceId, at),
+    ]);
+    return (result?.rowsAffected ?? 0) > 0;
+  }
+
+  /**
+   * Puts evidence recorded as pending (`IAL_FRAMEWORK_PENDING`) in force under the NIST framework.
+   * Whether it was put in force here.
+   */
+  async activateAssuranceEvidence(evidenceId: string): Promise<boolean> {
     const now = getCurrentTimestamp();
-    const tenantId = resolveTenantId(this.tenantId, input.tenant_id);
-    const row: AssuranceEvidenceRow = {
-      id,
-      tenant_id: tenantId,
-      subject_id: input.subject_id ?? null,
-      account_id: input.account_id ?? null,
+    const [result] = await this.adapter.batch([
+      {
+        sql: `UPDATE assurance_evidence SET assurance_framework = ?, updated_at = ?
+               WHERE tenant_id = ? AND id = ? AND assurance_framework = ?`,
+        params: [IAL_FRAMEWORK, now, this.tenantId, evidenceId, IAL_FRAMEWORK_PENDING],
+      },
+      this.subjectVersionBumpOfEvidence(evidenceId, now),
+    ]);
+    return (result?.rowsAffected ?? 0) > 0;
+  }
+
+  /**
+   * Replaces what one source asserts for a subject: its evidence still in force is revoked and
+   * `input` (if any) recorded, in one batch. A source is an evidence type and issuer, such as
+   * the SCIM client that provisions the person.
+   *
+   * Replacements of one subject are serialised (the subject row is locked first), so two at once
+   * never both leave their evidence in force. A replacement whose evidence id is already recorded
+   * changes nothing: a retried or late one never revokes what it, or a later one, recorded.
+   */
+  async replaceAssuranceEvidenceFromSource(
+    subjectId: string,
+    source: AssuranceEvidenceSource,
+    input: Omit<CreateAssuranceEvidenceInput, 'subject_id' | 'evidence_type' | 'issuer_ref'> | null
+  ): Promise<AssuranceEvidenceRow | null> {
+    const now = getCurrentTimestamp();
+    const row = input
+      ? this.assuranceEvidenceRow(
+          {
+            ...input,
+            subject_id: subjectId,
+            evidence_type: source.evidenceType,
+            issuer_ref: source.issuerRef,
+          },
+          now
+        )
+      : null;
+    const statements: PreparedStatement[] = [
+      // Takes the subject's row lock (PostgreSQL) and moves the person's version.
+      this.subjectVersionBump(subjectId, now),
+      {
+        // With evidence to record, nothing is revoked once its id is recorded (by anyone: the id
+        // is the table's key), so a retried or late replacement changes nothing.
+        sql: `UPDATE assurance_evidence SET revoked_at = ?, revoked_by = ?, updated_at = ?
+               WHERE tenant_id = ? AND subject_id = ? AND evidence_type = ?${
+                 source.anyIssuer ? '' : ' AND issuer_ref = ?'
+               }
+                 AND revoked_at IS NULL${
+                   row ? ' AND NOT EXISTS (SELECT 1 FROM assurance_evidence WHERE id = ?)' : ''
+                 }`,
+        params: [
+          now,
+          source.issuerRef,
+          now,
+          this.tenantId,
+          subjectId,
+          source.evidenceType,
+          ...(source.anyIssuer ? [] : [source.issuerRef]),
+          ...(row ? [row.id] : []),
+        ],
+      },
+    ];
+    // A plain insert: an id taken meanwhile (by anyone) fails the whole batch, revocations and
+    // all, rather than leaving only the revocations.
+    if (row) {
+      statements.push({
+        sql: ASSURANCE_EVIDENCE_INSERT_STRICT,
+        params: assuranceEvidenceParams(row),
+      });
+    }
+    let failure: unknown = null;
+    try {
+      const results = await this.adapter.batch(statements);
+      if (results.length !== statements.length || results.some((result) => !result.success)) {
+        failure = new Error('assurance_evidence_replace_failed');
+      }
+    } catch (error) {
+      failure = error;
+    }
+    if (!row) {
+      if (failure) throw failure;
+      return null;
+    }
+    // Recorded, here or by an earlier run of the same replacement: the stored evidence. Recorded
+    // for someone else: a conflict.
+    const stored = await this.findAssuranceEvidence(row.id);
+    if (stored && stored.subject_id === subjectId) return stored;
+    if (stored || !failure) throw new Error('assurance_evidence_id_conflict');
+    // Not stored for this tenant: the id is another's (the key is the id alone), or the batch failed.
+    const taken = await this.adapter.queryOne<{ id: string }>(
+      'SELECT id FROM assurance_evidence WHERE id = ?',
+      [row.id]
+    );
+    if (taken) throw new Error('assurance_evidence_id_conflict');
+    throw failure;
+  }
+
+  /**
+   * Moves the person's version (the subject's `updated_at`, which the SCIM resource version is
+   * made of) with a change of evidence, strictly forward even within one clock tick. It is part
+   * of the same batch as the change, so the version never lags behind it.
+   */
+  private subjectVersionBump(subjectId: string | null, at: number): PreparedStatement {
+    return {
+      sql: `UPDATE identity_subjects
+               SET ${SUBJECT_UPDATED_AT_FORWARD_SQL}
+             WHERE tenant_id = ? AND id = ?`,
+      params: [at, at, this.tenantId, subjectId],
+    };
+  }
+
+  private subjectVersionBumpOfEvidence(evidenceId: string, at: number): PreparedStatement {
+    return {
+      sql: `UPDATE identity_subjects
+               SET ${SUBJECT_UPDATED_AT_FORWARD_SQL}
+             WHERE tenant_id = ? AND id = (
+               SELECT subject_id FROM assurance_evidence WHERE tenant_id = ? AND id = ?
+             )`,
+      params: [at, at, this.tenantId, this.tenantId, evidenceId],
+    };
+  }
+
+  private assuranceEvidenceRow(
+    input: CreateAssuranceEvidenceInput,
+    now: number
+  ): AssuranceEvidenceRow {
+    return {
+      id: input.id ?? generateId(),
+      tenant_id: resolveTenantId(this.tenantId, input.tenant_id),
+      subject_id: input.subject_id,
       binding_id: input.binding_id ?? null,
       evidence_type: input.evidence_type,
-      assurance_level: input.assurance_level,
-      evidence_ref: input.evidence_ref ?? null,
       issuer_ref: input.issuer_ref ?? null,
-      issued_at: input.issued_at ?? null,
+      assurance_framework: input.assurance_framework ?? null,
+      assurance_level: input.assurance_level ?? null,
+      evidence_hash: input.evidence_hash ?? null,
+      evidence_storage_ref: input.evidence_storage_ref ?? null,
+      verified_at: input.verified_at ?? null,
       expires_at: input.expires_at ?? null,
-      revoked_at: input.revoked_at ?? null,
-      metadata_json: encodeJson(input.metadata),
+      revoked_at: null,
+      revoked_by: null,
       created_at: now,
       updated_at: now,
     };
-
-    await this.adapter.execute(
-      `INSERT INTO assurance_evidence (
-        id, tenant_id, subject_id, account_id, binding_id, evidence_type, assurance_level,
-        evidence_ref, issuer_ref, issued_at, expires_at, revoked_at, metadata_json,
-        created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        row.id,
-        row.tenant_id,
-        row.subject_id,
-        row.account_id,
-        row.binding_id,
-        row.evidence_type,
-        row.assurance_level,
-        row.evidence_ref,
-        row.issuer_ref,
-        row.issued_at,
-        row.expires_at,
-        row.revoked_at,
-        row.metadata_json,
-        row.created_at,
-        row.updated_at,
-      ]
-    );
-    return row;
   }
 
   async recordValueProvenance(input: CreateValueProvenanceInput): Promise<ValueProvenanceRow> {
@@ -1888,6 +2157,7 @@ export class CanonicalIdentityRepository {
       id,
       tenant_id: tenantId,
       account_type: input.account_type ?? 'user',
+      registration_state: input.registration_state ?? 'registered',
       lifecycle_state: input.lifecycle_state ?? 'active',
       legacy_user_id: input.legacy_user_id ?? null,
       primary_subject_id: input.primary_subject_id ?? null,
@@ -1902,14 +2172,15 @@ export class CanonicalIdentityRepository {
 
     await executor.execute(
       `INSERT INTO identity_accounts (
-        id, tenant_id, account_type, lifecycle_state, legacy_user_id, primary_subject_id,
+        id, tenant_id, account_type, registration_state, lifecycle_state, legacy_user_id, primary_subject_id,
         display_label, metadata_json, directory_publication_state, account_route_generation,
         created_at, updated_at, deleted_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         row.id,
         row.tenant_id,
         row.account_type,
+        row.registration_state,
         row.lifecycle_state,
         row.legacy_user_id,
         row.primary_subject_id,
@@ -2010,4 +2281,48 @@ export class CanonicalIdentityRepository {
     );
     return row;
   }
+}
+
+const ASSURANCE_EVIDENCE_INSERT_STRICT = `INSERT INTO assurance_evidence (
+    id, tenant_id, subject_id, binding_id, evidence_type, issuer_ref, assurance_framework,
+    assurance_level, evidence_hash, evidence_storage_ref, verified_at, expires_at, revoked_at,
+    revoked_by, created_at, updated_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+
+const ASSURANCE_EVIDENCE_INSERT = `${ASSURANCE_EVIDENCE_INSERT_STRICT}
+  ON CONFLICT(id) DO NOTHING`;
+
+function assuranceEvidenceParams(row: AssuranceEvidenceRow): unknown[] {
+  return [
+    row.id,
+    row.tenant_id,
+    row.subject_id,
+    row.binding_id,
+    row.evidence_type,
+    row.issuer_ref,
+    row.assurance_framework,
+    row.assurance_level,
+    row.evidence_hash,
+    row.evidence_storage_ref,
+    row.verified_at,
+    row.expires_at,
+    row.revoked_at,
+    row.revoked_by,
+    row.created_at,
+    row.updated_at,
+  ];
+}
+
+/** Times as numbers, whichever store the row came from (PostgreSQL returns BIGINT as text). */
+export function normalizeAssuranceEvidenceRow<T extends Partial<AssuranceEvidenceRow>>(row: T): T {
+  const time = (value: unknown) =>
+    value === null || value === undefined ? null : Number(value as number | string);
+  return {
+    ...row,
+    ...('verified_at' in row ? { verified_at: time(row.verified_at) } : {}),
+    ...('expires_at' in row ? { expires_at: time(row.expires_at) } : {}),
+    ...('revoked_at' in row ? { revoked_at: time(row.revoked_at) } : {}),
+    ...('created_at' in row ? { created_at: Number(row.created_at) } : {}),
+    ...('updated_at' in row ? { updated_at: Number(row.updated_at) } : {}),
+  };
 }

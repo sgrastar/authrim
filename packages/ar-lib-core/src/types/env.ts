@@ -11,6 +11,12 @@ import type { PARRequestStore } from '../durable-objects/PARRequestStore';
 import type { ChallengeStore } from '../durable-objects/ChallengeStore';
 import type { SAMLAggregateMetadataStore } from '../durable-objects/SAMLAggregateMetadataStore';
 import type { JWK } from 'jose';
+import type { LogIcebergSettingsEnv } from '../services/log-iceberg-config';
+import type { SAMLRuntimePorts } from './saml-runtime-ports';
+import type { AuthRuntimePorts } from './auth-runtime-ports';
+import type { RuntimeDataPorts } from './runtime-data-ports';
+import type { AuditRuntimePorts } from './audit-runtime-ports';
+import type { EventRuntimePorts } from './event-runtime-ports';
 import type { VCIssuerServiceBinding } from './vc-service';
 import type { ControlServiceBinding } from '../services/control-plane/control-plane-contracts';
 import type { AccountDirectoryServiceBinding } from '../services/lookup-directory/publication';
@@ -190,6 +196,36 @@ export interface ReplaceDynamicPluginCredentialsInput {
   credentials: Record<string, string>;
 }
 
+export interface PortableDynamicPluginResource {
+  logicalResourceId: string;
+  binding: string;
+  kind: 'd1' | 'kv_namespace' | 'r2_bucket';
+  access: 'read_only' | 'read_write';
+}
+
+export interface PortableDynamicPluginConfiguration {
+  tenantId: string;
+  sourceInstallationId: string;
+  pluginId: string;
+  versionDigest: string;
+  contractVersion: 1;
+  enabled: boolean;
+  credentials: Record<string, string>;
+  resources: PortableDynamicPluginResource[];
+  mutationScopes: string[];
+}
+
+export interface RestoreDynamicPluginBackupInput {
+  operationId: string;
+  configuration: PortableDynamicPluginConfiguration;
+}
+
+export interface RestoreDynamicPluginBackupResult {
+  installationId: string;
+  state: 'enabled' | 'disabled';
+  configVersion: number;
+}
+
 export interface PluginCredentialInput {
   configKey: string;
   destinationHost: string;
@@ -267,6 +303,14 @@ export interface AccountEventInstallation {
   capability: 'hook.account.lifecycle';
 }
 
+/** A tenant's gate for external (dynamic worker) plugin code in ar-plugin-runner. */
+export interface TenantExternalGate {
+  tenantId: string;
+  allowed: boolean;
+  /** Grows by one for each change of `allowed`; 0 when the tenant has no row (closed). */
+  generation: number;
+}
+
 export interface PluginRunnerServiceBinding {
   runHumanVerification(input: HumanVerificationHookInput): Promise<PluginRunnerDecisionResult>;
   runPolicyDecision(input: PolicyDecisionHookInput): Promise<PluginRunnerDecisionResult>;
@@ -300,6 +344,16 @@ export interface PluginRunnerServiceBinding {
   replaceDynamicPluginCredentials(
     input: ReplaceDynamicPluginCredentialsInput
   ): Promise<ReplacePluginCredentialsResult>;
+  exportDynamicPluginBackup(input: {
+    tenantId: string;
+    pluginId: string;
+  }): Promise<PortableDynamicPluginConfiguration | null>;
+  restoreDynamicPluginBackup(
+    input: RestoreDynamicPluginBackupInput
+  ): Promise<RestoreDynamicPluginBackupResult>;
+  verifyDynamicPluginBackup(input: {
+    configuration: PortableDynamicPluginConfiguration;
+  }): Promise<boolean>;
   replacePluginCredentials(
     input: ReplacePluginCredentialsInput
   ): Promise<ReplacePluginCredentialsResult>;
@@ -325,6 +379,28 @@ export interface PluginRunnerServiceBinding {
   resolveAccountEventInstallations(
     input: ResolveAccountEventInstallationsInput
   ): Promise<AccountEventInstallation[]>;
+  /**
+   * The runner-side enforcement point of the tenant's `plugin.enabled`: no external installation
+   * of the tenant is resolved for execution unless its gate is open (no row means closed).
+   */
+  setTenantExternalGate(input: {
+    tenantId: string;
+    allowed: boolean;
+    /**
+     * Required to open, and never with a close: the generation the opener read before it read the
+     * saved setting. A gate written since (any close advances it) refuses the open.
+     */
+    ifGeneration?: number;
+  }): Promise<TenantExternalGate>;
+  getTenantExternalGate(input: { tenantId: string }): Promise<TenantExternalGate>;
+  /**
+   * Tenants whose gate may not match their setting, by tenant id after `after`: those with an open
+   * gate, and those with an enabled external installation but no open gate.
+   */
+  listTenantExternalGateCandidates(input: {
+    limit?: number;
+    after?: string | null;
+  }): Promise<TenantExternalGate[]>;
 }
 
 /**
@@ -353,7 +429,25 @@ export interface PluginRunnerServiceBinding {
  * - API_: API settings
  * - PII_: PII encryption settings
  */
-export interface Env {
+export interface Env extends LogIcebergSettingsEnv {
+  LOG_ARCHIVE?: R2Bucket;
+  LOG_ARCHIVE_STREAM?: import('cloudflare:pipelines').Pipeline;
+  LOG_ARCHIVE_CATALOG_READ_TOKEN?: string;
+  LOG_ARCHIVE_CATALOG_WRITE_TOKEN?: string;
+  LOG_ARCHIVE_CONTENT_HMAC_KEY?: string;
+  /** Private log-only master history; never expose in config or API responses. */
+  LOG_ARCHIVE_ROOT_KEYRING?: string;
+  LOG_ARCHIVE_WRITER?: import('../services/log-iceberg-runtime').LogArchiveWriteServiceBinding;
+  /** Optional deployment-owned database routing. Cloudflare continues using its registry. */
+  RUNTIME_DATA_PORTS?: RuntimeDataPorts;
+  AUDIT_RUNTIME_PORTS?: AuditRuntimePorts;
+  EVENT_RUNTIME_PORTS?: EventRuntimePorts;
+  /** Optional narrow SAML IdP state/key ports for non-Worker runtimes. */
+  SAML_RUNTIME_PORTS?: SAMLRuntimePorts;
+  /** Optional tenant-scoped sign-in state ports for non-Worker runtimes. */
+  AUTH_RUNTIME_PORTS?: AuthRuntimePorts;
+  /** Setup-generated binding identity metadata; not a user-configurable backup option. */
+  AUTHRIM_FIXED_DATABASE_IDS?: string;
   // D1 Databases
   DB: D1Database; // Fixed platform metadata, profile registry, and non-PII audit store; never a tenant identity route
   PLATFORM_NOTIFICATION_DB?: D1Database; // Platform-owned notification intent store; never a tenant route
@@ -415,6 +509,9 @@ export interface Env {
   EXTERNAL_IDP?: Fetcher; // External IdP worker (ar-bridge) for social login and enterprise IdP
   CONTROL?: ControlServiceBinding; // Narrow Control Worker RPC facade for ar-management
   ACCOUNT_DIRECTORY?: AccountDirectoryServiceBinding; // Named ar-management directory coordinator RPC
+  GUEST_UPGRADE_READINESS?: {
+    read(tenantId: string): Promise<{ tenantId: string; email: boolean }>;
+  };
   ACCOUNT_PROVISIONER?: AuthAccountProvisioningServiceBinding; // Narrow ar-auth account-creation RPC
   SAML_ACCOUNT_PROVISIONER?: AuthAccountProvisioningServiceBinding &
     Pick<ExternalIdpAccountProvisioningServiceBinding, 'publishExternalIdpRoute'>;
@@ -449,13 +546,14 @@ export interface Env {
 
   // Core OAuth/OIDC Features
   ENABLE_REFRESH_TOKEN_ROTATION?: string; // "false" to disable token rotation (for load testing only!)
-  ENABLE_HTTP_REDIRECT?: string; // "true" to allow http:// redirect URIs for development
+  HTTPS_REDIRECT_ONLY?: string; // security.https_redirect_only: "false" allows a web app's http loopback (development)
   ALLOW_LOCALHOST?: string; // "true" or "1" to allow localhost origins in handoff verify (development only)
   ENABLE_STATE_REQUIRED?: string; // "true" to require state parameter (CSRF protection)
   ENABLE_USERINFO_REQUIRE_OPENID_SCOPE?: string; // "false" to allow UserInfo without openid scope (OAuth 2.0 compatibility)
   ENABLE_OPEN_REGISTRATION?: string; // "true" to allow registration without Initial Access Token
-  ENABLE_CONFORMANCE_MODE?: string; // "true" to enable built-in forms instead of external UI
+  ENABLE_CONFORMANCE_MODE?: string; // "true" to enable conformance-test-only behaviour (never in production)
   OAUTH_SSO_ENABLED?: string; // "true" to enable SSO (session sharing) at tenant level (default: "false")
+  OAUTH_PROMPT_CREATE_ENABLED?: string; // exactly "true" to act on prompt=create (sign-up page first) and list it in discovery (default: off)
   CLIENT_SSO_ENABLED?: string; // "true" to enable SSO (session sharing) at client level (default: "false")
   ENABLE_IFRAME_OIDC_AUTH?: string; // "true" to allow iframe-based OIDC auth after tenant/client origin opt-in
 
@@ -484,6 +582,7 @@ export interface Env {
 
   // Advanced OAuth Features
   ENABLE_HTTPS_REQUEST_URI?: string; // "true" to enable external HTTPS request_uri (SSRF risk, disabled by default)
+  FAPI_ALLOW_PUBLIC_CLIENTS?: string; // "false" to refuse public clients in FAPI mode (default: allowed)
   HTTPS_REQUEST_URI_ALLOWED_DOMAINS?: string; // Comma-separated list of allowed domains
   HTTPS_REQUEST_URI_TIMEOUT_MS?: string; // Fetch timeout in milliseconds (default: 5000)
   HTTPS_REQUEST_URI_MAX_SIZE_BYTES?: string; // Maximum response body size in bytes (default: 102400 = 100KB)
@@ -513,6 +612,16 @@ export interface Env {
   ENABLE_IDENTITY_STITCHING?: string; // "true" to enable automatic identity stitching
   ENABLE_IDENTITY_STITCHING_REQUIRE_VERIFIED_EMAIL?: string; // "false" to allow unverified emails (not recommended)
   RP_TOKEN_ENCRYPTION_KEY?: string; // Encryption key for external IdP tokens (32-byte hex string)
+  /** Experimental source capture remains unavailable until all writers can be verified. */
+  ENABLE_SAML_DR_EXPORT?: string;
+  /** Opt-in cross-provider writer authority. Partial configuration fails closed. */
+  AUTHRIM_REPLICATION_WRITER?: string;
+  AUTHRIM_REPLICATION_WRITER_SECRET?: string;
+  SAML_DR_MUTATION_CONTROL?: Pick<
+    ControlServiceBinding,
+    'acquireEnvironmentBackupMutationPermit' | 'completeEnvironmentBackupMutationPermit'
+  >;
+  TENANT_BACKUP_WRAPPING_KEY?: string; // Dedicated 32-byte hex key for temporary backup operation secrets
   ADMIN_CREDENTIAL_ENCRYPTION_KEY?: string; // Encryption key for Admin-managed external credentials
 
   // PII Encryption
@@ -539,8 +648,6 @@ export interface Env {
   // Token Introspection
   ENABLE_INTROSPECTION_STRICT_VALIDATION?: string; // "true" to enable strict audience/client_id validation
   INTROSPECTION_EXPECTED_AUDIENCE?: string; // Expected audience value (null = use ISSUER_URL)
-  ENABLE_INTROSPECTION_CACHE?: string; // "true" or "false" (default: "true")
-  INTROSPECTION_CACHE_TTL?: string; // Cache TTL in seconds (default: 60)
 
   // Multi-tenant Configuration
   // Multi-tenant mode is always enabled when BASE_DOMAIN is set.
@@ -563,9 +670,8 @@ export interface Env {
   DEFAULT_RESIDENCY_PROFILE_ID?: string; // Environment default residency profile pointer
   AUTHRIM_REGISTERED_SCHEMA_REFS?: string; // JSON list of setup-managed binding/connection release-stream registrations
 
-  // Mock/Anonymous Authentication
+  // Mock Authentication
   ENABLE_MOCK_AUTH?: string; // "true" to enable mock authentication (NEVER in production!)
-  ENABLE_ANONYMOUS_AUTH?: string; // "true" to enable device-based anonymous login
 
   // ID-JAG (draft-ietf-oauth-identity-assertion-authz-grant)
   ENABLE_ID_JAG?: string; // "true" to enable ID-JAG token type in Token Exchange
@@ -577,6 +683,11 @@ export interface Env {
   DEFAULT_AAL?: string; // Default Authentication Assurance Level (AAL1-3)
   DEFAULT_FAL?: string; // Default Federation Assurance Level (FAL1-3)
   DEFAULT_IAL?: string; // Default Identity Assurance Level (IAL1-3)
+  // Deleted accounts (settings account-lifecycle.deletion.*; KV takes precedence)
+  TOMBSTONE_HMAC_KEYRING?: string; // Secret: deleted emails' fingerprint keys (JSON keyring)
+  INVESTIGATION_SUBJECT_HMAC_KEYRING?: string; // Secret: failed sign-in attempts' subject hash keys (JSON keyring)
+  ACCOUNT_TOMBSTONE_RETENTION_DAYS?: string; // Days a deletion record is kept (1-3650, default 90)
+  ACCOUNT_TOMBSTONE_BLOCK_REREGISTRATION?: string; // 'true' blocks sign-up with a deleted address
 
   // ============================================================
   // Sharding Configuration (AUTHRIM_* prefix)
@@ -606,6 +717,7 @@ export interface Env {
   AUTHENTICATION_METHODS_CACHE_TTL?: string; // Browser/client TTL for public authentication methods (default: 60)
   AUTHENTICATION_METHODS_EDGE_CACHE_TTL?: string; // Edge Cache API TTL for public authentication methods (default: 86400)
   AUTHENTICATION_METHODS_ROUTER_CACHE_TTL?: string; // Router Cache API TTL for public authentication methods (default: edge TTL)
+  ROUTER_FORM_BODY_MAX_BYTES?: string; // Router: max form body bytes buffered to reject access_token fields (default: 262144, range 4096-1048576)
 
   // Unified Identity Mapping runtime cutover guard
   ENABLE_CANONICAL_IDENTITY_RUNTIME?: string; // "true" to read SCIM user runtime projection from canonical identity tables
@@ -636,7 +748,6 @@ export interface Env {
   KEY_ID?: string;
   PAIRWISE_SALT?: string; // Pairwise subject identifier salt (OIDC Core 8.1)
   OTP_HMAC_SECRET?: string; // Email OTP HMAC secret for code hashing
-  DEVICE_HMAC_SECRET?: string; // Device ID HMAC secret for anonymous authentication
   KEY_MANAGER_SECRET?: string; // Legacy HTTP compatibility only; new deployments use the DO RPC binding
   LOGGING_CURSOR_HMAC_SECRET?: string; // HMAC secret for opaque logging Admin API cursors
   LOOKUP_HMAC_KEY_SLOT_A?: string; // Dedicated Lookup blind-index HMAC key slot A

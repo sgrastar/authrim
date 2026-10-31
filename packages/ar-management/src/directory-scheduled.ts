@@ -1,7 +1,9 @@
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import {
   createEventDispatcherFromEnv,
   ensureDatabaseAdapter,
   isCanonicalAccountIdForUser,
+  getExternalPluginExecutionState,
   resolveAuthCorePersistenceAdapterFromEnv,
   validateAccountDirectoryPublication,
   validateAccountDirectoryRemovalPublication,
@@ -14,6 +16,8 @@ import {
 } from '@authrim/ar-lib-core';
 import { LOOKUP_VIRTUAL_BUCKET_COUNT } from '@authrim/ar-lib-core/services/lookup-directory/contract';
 import type { D1Database, D1DatabaseSession } from '@cloudflare/workers-types';
+import { getRunnerExternalGate, reconcileRunnerExternalGate } from './external-plugin-gate-sync';
+import { sweepExternalPluginGates } from './external-plugin-gate-sweep';
 import { AccountDirectoryCoordinator } from './account-directory-coordinator';
 import { activatePublishedAccountAuthenticationState } from './account-authentication-activation';
 import { AccountDirectoryRemovalCoordinator } from './account-directory-removal';
@@ -523,10 +527,34 @@ async function snapshotAccountEventTargets(
   if (!env.PLUGIN_RUNNER) throw new Error('account_lifecycle_plugin_runner_unavailable');
   let targetPromise = targetCache.get(claim.tenant_id);
   if (!targetPromise) {
-    targetPromise = env.PLUGIN_RUNNER.resolveAccountEventInstallations({
-      tenantId: claim.tenant_id,
-      eventType: 'account.created',
-    }).then((resolved) => pluginTargets(JSON.stringify(resolved)));
+    const runner = env.PLUGIN_RUNNER;
+    // Only external (dynamic worker) plugins hook account events. A tenant that does not allow
+    // external plugin code (`plugin.enabled`, off by default) gets no target at all: that is a
+    // decision, so the empty list is the snapshot of this event and turning the setting on later
+    // does not send it the account events it skipped. A setting that cannot be read is not a
+    // decision: the event is retried (nothing is stored, nothing runs) until it can be read.
+    // The runner applies its own tenant gate when it resolves the installations and when it runs
+    // a hook, so hooks already queued are not executed while the gate is closed.
+    targetPromise = getExternalPluginExecutionState(env, claim.tenant_id).then(async (state) => {
+      if (state === 'unreadable') throw new Error('account_lifecycle_plugin_settings_unavailable');
+      if (state === 'denied') return [];
+      // Allowed by the settings, but the runner's gate may not say so yet (the migration that
+      // added it just ran, the tenant was restored, or the write after a save is still pending):
+      // "not initialized" is not "off". Bring the gate in step with the saved setting now; if that
+      // cannot be done, retry the event rather than store an empty list for good. A saved "off"
+      // (the canonical setting, which the KV copy may lag) is the only thing that stores [].
+      const gate = await getRunnerExternalGate(env, claim.tenant_id, { requireRunner: true });
+      if (!gate?.allowed) {
+        if (!(await reconcileRunnerExternalGate(env, claim.tenant_id, { requireRunner: true }))) {
+          return [];
+        }
+      }
+      const resolved = await runner.resolveAccountEventInstallations({
+        tenantId: claim.tenant_id,
+        eventType: 'account.created',
+      });
+      return pluginTargets(JSON.stringify(resolved));
+    });
     targetCache.set(claim.tenant_id, targetPromise);
   }
   const encoded = JSON.stringify(await targetPromise);
@@ -1003,7 +1031,7 @@ export function createRoutingOutboxProcessor(
           adapter: ensureDatabaseAdapter(tenantCore, 'account-lifecycle-event'),
         });
       } catch {
-        await Promise.all(
+        await samlDrAll(
           events.map((event) =>
             releaseAccountLifecycleEventFailure(
               tenantCore.withSession('first-primary'),
@@ -1016,7 +1044,7 @@ export function createRoutingOutboxProcessor(
         processedRows += events.length;
         continue;
       }
-      await Promise.all(
+      await samlDrAll(
         events.map(async (event) => {
           const eventSession = tenantCore.withSession('first-primary');
           const nowSeconds = Math.floor(input.nowMs() / 1000);
@@ -1265,6 +1293,14 @@ export async function processScheduledDirectoryJobs(
   env: Env,
   log: DirectoryScheduledLogger
 ): Promise<DirectoryScheduledSummary> {
+  // Reconciling the gates for external plugin code does not depend on the directory, and a failure
+  // here must not stop the directory jobs below (or the other way round): it is tried again on the
+  // next run.
+  try {
+    await sweepExternalPluginGates(env, log);
+  } catch {
+    log.warn('External plugin gate reconciliation failed; retried on the next run');
+  }
   if (!env.LOOKUP_DB) {
     const summary: DirectoryScheduledSummary = { skipped: true, processedRows: 0, classes: [] };
     log.warn('Directory scheduled processing skipped because LOOKUP_DB is unavailable');

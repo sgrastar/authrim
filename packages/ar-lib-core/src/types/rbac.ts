@@ -18,7 +18,12 @@
  * - enterprise: Enterprise customer
  * - department: Internal department or sub-organization
  */
-export type OrganizationType = 'distributor' | 'enterprise' | 'department';
+export const ORGANIZATION_TYPES = ['distributor', 'enterprise', 'department'] as const;
+export type OrganizationType = (typeof ORGANIZATION_TYPES)[number];
+
+export function isOrganizationType(value: unknown): value is OrganizationType {
+  return (ORGANIZATION_TYPES as readonly unknown[]).includes(value);
+}
 
 /**
  * Plan/subscription tier
@@ -283,17 +288,10 @@ export interface RelationshipRow extends Omit<
  *
  * Types:
  * - end_user: Regular authenticated user
- * - anonymous: Device-based anonymous user (can be upgraded)
- * - distributor_admin: Distributor administrator
- * - enterprise_admin: Enterprise administrator
- * - system_admin: System administrator
+ *   Read registration_state from the lifecycle claim to distinguish human guests.
+ * - admin: An administrator account of the service's own users (the account type `admin`)
  */
-export type UserType =
-  | 'end_user'
-  | 'anonymous'
-  | 'distributor_admin'
-  | 'enterprise_admin'
-  | 'system_admin';
+export type UserType = 'end_user' | 'admin';
 
 // =============================================================================
 // Token Claims Extensions (Namespaced)
@@ -427,12 +425,11 @@ export const DEFAULT_ACCESS_TOKEN_CLAIMS: AccessTokenClaimKey[] = ['roles', 'org
 // =============================================================================
 
 /**
- * Default role identifiers
+ * Default role identifiers: the only preset roles of the service's own users. Business roles are
+ * created by whoever runs Authrim. (The people who run Authrim use the separate `ar_` Admin roles.)
  */
 export const DEFAULT_ROLES = {
-  SYSTEM_ADMIN: 'system_admin',
-  DISTRIBUTOR_ADMIN: 'distributor_admin',
-  ORG_ADMIN: 'org_admin',
+  ADMIN: 'admin',
   END_USER: 'end_user',
 } as const;
 
@@ -440,8 +437,6 @@ export const DEFAULT_ROLES = {
  * Default role IDs (as stored in database)
  */
 export const DEFAULT_ROLE_IDS = {
-  SYSTEM_ADMIN: 'role_system_admin',
-  DISTRIBUTOR_ADMIN: 'role_distributor_admin',
-  ORG_ADMIN: 'role_org_admin',
+  ADMIN: 'role_admin',
   END_USER: 'role_end_user',
 } as const;

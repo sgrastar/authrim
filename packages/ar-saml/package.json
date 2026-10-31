@@ -1,14 +1,21 @@
 {
   "name": "@authrim/ar-saml",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "type": "module",
   "private": true,
+  "exports": {
+    ".": "./src/index.ts",
+    "./idp-app": "./src/idp-app.ts",
+    "./idp-readiness": "./src/idp-readiness.ts",
+    "./src/*": "./src/*.ts"
+  },
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "test -n \"$DEPLOY_ENV\" && pnpm --dir ../.. exec tsx scripts/deploy-api.ts --env=\"$DEPLOY_ENV\" --component=ar-saml --mode=auto --concurrency=1",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "lint": "echo 'op-saml: lint skipped (uses root eslint config)'",
+    "lint": "eslint src --pass-on-unpruned-suppressions",
+    "lint:prune-suppressions": "eslint src --prune-suppressions",
     "test": "vitest run --fileParallelism=false",
     "test:property": "vitest run -c vitest.property.config.ts",
     "clean": "rm -rf dist"
@@ -18,19 +25,18 @@
     "@authrim/ar-lib-field-mapping": "workspace:*",
     "@xmldom/xmldom": "^0.8.15",
     "hono": "4.13.2",
-    "jose": "^6.2.9",
-    "pako": "^2.1.0",
+    "jose": "^6.2.13",
+    "pako": "^3.0.2",
     "saxes": "6.0.0",
     "xml-crypto": "^6.0.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260903.1",
-    "@types/pako": "^2.0.4",
-    "@vitest/ui": "^4.1.8",
+    "@vitest/ui": "^4.1.12",
     "fast-check": "^4.5.3",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.8",
-    "wrangler": "^4.110.0",
-    "yaml": "2.8.3"
+    "vitest": "^4.1.12",
+    "wrangler": "^4.152.0",
+    "yaml": "2.9.1"
   }
 }

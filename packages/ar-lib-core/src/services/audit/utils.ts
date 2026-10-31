@@ -157,6 +157,71 @@ export const SECRET_FIELD_NORMALIZED_BLACKLIST = new Set([
   'authorizationcode',
 ]);
 
+/**
+ * Keys naming a real user (normalized). event_log is the non-PII plane: the user is recorded only
+ * as anonymized_user_id, so a raw user identifier in event data never goes into its details.
+ */
+export const USER_IDENTIFIER_FIELD_NORMALIZED_BLACKLIST = new Set([
+  'userid',
+  'userids',
+  'sub',
+  'subjectid',
+  'accountid',
+  'legacyuserid',
+  'targetuserid',
+  'actoruserid',
+  'actorid',
+  'uid',
+  'subjectuserid',
+  'impersonateduserid',
+  'memberid',
+  'memberids',
+  // A SCIM externalId names the user in the customer's own directory.
+  'externalid',
+]);
+
+/**
+ * A typed reference to a user (`subject:<id>`, `user:<id>`, `account:<id>`), as relationship and
+ * principal references are written; such a value is dropped wherever it appears.
+ */
+const USER_REFERENCE_VALUE_PATTERN = /^(?:subject|user|account):/iu;
+
+/** How deep nested objects are searched for user identifiers. Deeper values are dropped. */
+const USER_IDENTIFIER_SCRUB_MAX_DEPTH = 8;
+
+const DROPPED = Symbol('dropped');
+
+function dropUserIdentifiers(
+  value: unknown,
+  depth: number,
+  piiFields: ReadonlySet<string>
+): unknown {
+  if (typeof value === 'string') return USER_REFERENCE_VALUE_PATTERN.test(value) ? DROPPED : value;
+  if (value === null || typeof value !== 'object') return value;
+  if (depth >= USER_IDENTIFIER_SCRUB_MAX_DEPTH) return DROPPED;
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => dropUserIdentifiers(item, depth + 1, piiFields))
+      .filter((item) => item !== DROPPED);
+  }
+  const out: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    const normalized = normalizeKey(key);
+    // Nested secrets and PII fields too (a session ID inside a context object is still the
+    // session cookie).
+    if (
+      piiFields.has(normalized) ||
+      USER_IDENTIFIER_FIELD_NORMALIZED_BLACKLIST.has(normalized) ||
+      SECRET_FIELD_NORMALIZED_BLACKLIST.has(normalized)
+    ) {
+      continue;
+    }
+    const kept = dropUserIdentifiers(item, depth + 1, piiFields);
+    if (kept !== DROPPED) out[key] = kept;
+  }
+  return out;
+}
+
 // =============================================================================
 // Event Details Sanitization
 // =============================================================================
@@ -167,7 +232,9 @@ export const SECRET_FIELD_NORMALIZED_BLACKLIST = new Set([
  * Rules:
  * 1. Remove fields marked as PII in tenant config
  * 2. Remove fields matching SECRET_FIELD_NORMALIZED_BLACKLIST (exact match, normalized)
- * 3. Remove query strings from request_path
+ * 3. Remove user identifiers (USER_IDENTIFIER_FIELD_NORMALIZED_BLACKLIST) and typed user
+ *    references (`subject:<id>`) at any depth, and nested secret and PII fields
+ * 4. Remove query strings from request_path
  *
  * @param details - Raw event details
  * @param tenantPiiConfig - Tenant PII configuration
@@ -183,10 +250,14 @@ export function sanitizeEventDetails(
     .map(([field]) => field);
 
   const sanitized = { ...details };
+  // Matched normalized, as the other lists are (ip_address, IpAddress and ipAddress alike).
+  const piiFieldSet: ReadonlySet<string> = new Set(piiFields.map(normalizeKey));
 
   // 1. Remove PII fields
-  for (const field of piiFields) {
-    delete sanitized[field];
+  for (const key of Object.keys(sanitized)) {
+    if (piiFieldSet.has(normalizeKey(key))) {
+      delete sanitized[key];
+    }
   }
 
   // 2. Remove secret fields (normalized exact-match)
@@ -196,7 +267,19 @@ export function sanitizeEventDetails(
     }
   }
 
-  // 3. Remove query string from request_path
+  // 3. Remove raw user identifiers and user references, nested ones included
+  for (const [key, value] of Object.entries(sanitized)) {
+    const kept = USER_IDENTIFIER_FIELD_NORMALIZED_BLACKLIST.has(normalizeKey(key))
+      ? DROPPED
+      : dropUserIdentifiers(value, 0, piiFieldSet);
+    if (kept === DROPPED) {
+      delete sanitized[key];
+    } else {
+      sanitized[key] = kept;
+    }
+  }
+
+  // 4. Remove query string from request_path
   if (typeof sanitized.requestPath === 'string') {
     sanitized.requestPath = sanitized.requestPath.split('?')[0];
   }
@@ -425,7 +508,7 @@ export function sanitizeErrorMessage(message: string): string {
   // 1. Remove secrets
   let sanitized = message
     // Bearer tokens
-    .replace(/Bearer\s+[A-Za-z0-9\-_\.]+/gi, 'Bearer [REDACTED]')
+    .replace(/Bearer\s+[A-Za-z0-9\-_.]+/gi, 'Bearer [REDACTED]')
     // JWTs (3-part base64url)
     .replace(/eyJ[A-Za-z0-9\-_]+\.eyJ[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]*/g, '[JWT_REDACTED]')
     // password=value or password: value

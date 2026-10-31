@@ -400,7 +400,7 @@ describe('Diagnostic Security Utilities', () => {
 
     it.each([
       ['192.0.2.123', '192.0.2.0/24'],
-      ['2001:db8:abcd:1::1', '2001:db8:abcd:1::/48'],
+      ['2001:db8:abcd:1::1', '2001:db8:abcd::/48'],
       ['invalid', 'invalid'],
     ])('masks IP %s as %s', (ip, masked) => expect(maskIp(ip)).toBe(masked));
 
@@ -412,11 +412,14 @@ describe('Diagnostic Security Utilities', () => {
       ['custom-agent', 'unknown'],
     ])('simplifies user agent %s', (ua, masked) => expect(maskUserAgent(ua)).toBe(masked));
 
-    it('returns the original object unchanged in full mode', async () => {
-      const entry = { category: 'http-request', query: { state: 'secret' } } as never;
-      await expect(
-        applyPrivacyModeToEntry(entry, { mode: 'full', secret: 'secret' })
-      ).resolves.toBe(entry);
+    it('leaves the detail that is neither a secret nor personal data as it is in full mode', async () => {
+      const entry = {
+        category: 'http-request',
+        query: { state: 'opaque-state', client_id: 'rp' },
+      } as never;
+      const result = await applyPrivacyModeToEntry(entry, { mode: 'full', secret: 'secret' });
+      expect(result).toEqual(entry);
+      expect(result).not.toBe(entry);
     });
 
     it('masks request secrets, PII, IPs, user agents, and body tokens', async () => {
@@ -442,7 +445,9 @@ describe('Diagnostic Security Utilities', () => {
       expect(masked.errorMessage).toContain('[EMAIL_REDACTED]');
       expect(masked.reason).toContain('[PHONE_REDACTED]');
       expect(masked.query.state).toContain('(hmac:');
-      expect(masked.bodySummary.code_verifier).toContain('(hmac:');
+      // a secret is a fingerprint, not a prefix and suffix of itself
+      expect(masked.bodySummary.code_verifier).toMatch(/^sha256:[0-9a-f]{12}$/);
+      expect(masked.bodySummary.code).toMatch(/^sha256:[0-9a-f]{12}$/);
       expect(masked.remoteAddress).toBe('192.0.2.0/24');
       expect(masked.headers['user-agent']).toBe('Firefox/120');
       expect(entry.query.state).toBe('state-secret');
@@ -508,7 +513,12 @@ describe('Diagnostic Security Utilities', () => {
         { category: 'token-validation', step, details, tokenHash: 'hash' } as never,
         { mode: 'masked', secret: 'secret' }
       )) as Record<string, any>;
-      expect(JSON.stringify(result.details)).toContain('(hmac:');
+      expect(JSON.stringify(result.details)).toMatch(
+        /\(hmac:|hmac:[0-9a-f]{8}|sha256:[0-9a-f]{12}/
+      );
+      for (const raw of [':"access"', ':"verifier"', ':"refresh"', ':"id"', ':"code"']) {
+        expect(JSON.stringify(result.details), raw).not.toContain(raw);
+      }
     });
 
     it('retains a non-sensitive UserInfo endpoint in masked mode', async () => {

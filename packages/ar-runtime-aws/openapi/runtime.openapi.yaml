@@ -1,0 +1,193 @@
+openapi: 3.2.0
+info:
+  title: Authrim AWS SAML Runtime
+  version: 0.5.0
+  description: >-
+    Readiness and browser login pages owned by the AWS SAML disaster recovery runtime.
+    The current login profile supports passkeys. Authentication and SAML operations
+    use the contracts owned by the Auth and SAML packages.
+    Requests must use a configured tenant origin. A conflicting Host header or
+    X-Tenant-Id header is rejected with 404. Login UI and Admin UI are independently
+    optional. The embedded-rehearsal login mode serves the two browser pages below.
+    External and disabled login modes do not serve local browser pages; disabled mode
+    also returns 404 for the interactive authentication routes. External mode uses the
+    imported public browser client and active registered HTTPS origin, with the existing
+    authentication origin, PKCE, and WebAuthn checks. An external Admin UI URL is metadata
+    only and does not deploy an Admin UI or Management API.
+servers:
+  - url: /
+security: []
+tags:
+  - name: Readiness
+  - name: Browser login
+paths:
+  /health/ready:
+    get:
+      operationId: getAwsSamlRuntimeReadiness
+      tags: [Readiness]
+      summary: Check whether the tenant can serve requests
+      description: >-
+        Checks the tenant's restored configuration, activation evidence, and database
+        availability. A successful response does not perform a login or verify an
+        external service provider connection. API-only deployments can report ready with
+        login disabled and without a Login UI client. This does not indicate that an
+        interactive login is available.
+      responses:
+        '200':
+          description: The tenant runtime is ready to serve requests.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    const: ready
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /login:
+    get:
+      operationId: getAwsSamlPasskeyLoginPage
+      tags: [Browser login]
+      summary: Show the passkey login page for a pending SAML request
+      description: >-
+        Available only in embedded-rehearsal login mode. External or disabled login
+        mode returns 404. Requires a ready tenant runtime and the SAML continuation
+        parameters below.
+        The browser starts the login interaction and submits passkey proof through
+        the same-origin authentication APIs. A successful page response does not
+        establish a session or prove that the supplied request or challenge is valid;
+        the authentication and SAML handlers validate them before completing login.
+      parameters:
+        - $ref: '#/components/parameters/SamlRequestId'
+        - $ref: '#/components/parameters/SamlSpEntityId'
+        - $ref: '#/components/parameters/ReturnTo'
+        - name: challenge_id
+          in: query
+          required: false
+          description: Login challenge identifier, when the continuation includes one.
+          schema:
+            $ref: '#/components/schemas/ContinuationIdentifier'
+      responses:
+        '200':
+          $ref: '#/components/responses/LoginPage'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /reauth:
+    get:
+      operationId: getAwsSamlPasskeyReauthenticationPage
+      tags: [Browser login]
+      summary: Show the passkey reauthentication page for a pending SAML request
+      description: >-
+        Available only in embedded-rehearsal login mode. External or disabled login
+        mode returns 404. Uses the same browser login flow as /login, but also requires
+        a challenge_id.
+        Rendering the page does not satisfy the challenge. The authentication and
+        SAML handlers enforce the challenge and continuation requirements before
+        completing reauthentication. The tenant runtime must be ready.
+      parameters:
+        - $ref: '#/components/parameters/SamlRequestId'
+        - $ref: '#/components/parameters/SamlSpEntityId'
+        - $ref: '#/components/parameters/ReturnTo'
+        - name: challenge_id
+          in: query
+          required: true
+          description: Required reauthentication challenge identifier.
+          schema:
+            $ref: '#/components/schemas/ContinuationIdentifier'
+      responses:
+        '200':
+          $ref: '#/components/responses/LoginPage'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+components:
+  parameters:
+    SamlRequestId:
+      name: saml_request_id
+      in: query
+      required: true
+      description: Identifier of the pending SAML authentication request.
+      schema:
+        $ref: '#/components/schemas/ContinuationIdentifier'
+    SamlSpEntityId:
+      name: saml_sp_entity_id
+      in: query
+      required: true
+      description: Entity ID of the service provider associated with the pending request.
+      schema:
+        $ref: '#/components/schemas/ContinuationIdentifier'
+    ReturnTo:
+      name: return_to
+      in: query
+      required: true
+      description: Selects the supported SAML continuation.
+      schema:
+        type: string
+        const: saml_sso
+  responses:
+    LoginPage:
+      description: HTML page that continues the same-origin passkey login flow.
+      headers:
+        Cache-Control:
+          schema:
+            type: string
+            const: no-store
+        Referrer-Policy:
+          schema:
+            type: string
+            const: no-referrer
+        X-Content-Type-Options:
+          schema:
+            type: string
+            const: nosniff
+        X-Frame-Options:
+          schema:
+            type: string
+            const: DENY
+      content:
+        text/html:
+          schema:
+            type: string
+    InvalidRequest:
+      description: A required continuation parameter is missing or invalid; error is invalid_request.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: The request does not match the configured tenant origin or headers; error is not_found.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unavailable:
+      description: The tenant runtime is not ready; error is temporarily_unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    ContinuationIdentifier:
+      type: string
+      minLength: 1
+      maxLength: 512
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum: [invalid_request, not_found, temporarily_unavailable]

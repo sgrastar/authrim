@@ -54,7 +54,68 @@ interface ReleaseRolloutHandoffRow extends Record<string, unknown> {
 export interface ReleaseRolloutHandoffPlan {
   operationId: string;
   streamIds: string[];
+  /** Canonical JSON of the bound target set, or null when the rollout carries none. */
+  expectedTargetsJson: string | null;
   statements: D1BatchStatement[];
+}
+
+/** One database Setup verified before the handoff, as Control identifies a snapshot target. */
+export interface ReleaseRolloutExpectedTarget {
+  streamId: string;
+  databaseId: string;
+}
+
+/** Stable code Control uses when its snapshot differs from the bound expected target set. */
+export const RELEASE_TARGET_SET_MISMATCH_CODE = 'release_target_set_mismatch';
+
+const SAFE_DATABASE_ID = /^[0-9A-Za-z][0-9A-Za-z._:-]{0,127}$/u;
+
+/**
+ * Canonical JSON of the target set Control must find in its snapshot, or null when none is bound.
+ * The form is sorted and duplicate-free so the same set always yields the same string and a
+ * re-created handoff can be compared byte for byte. `streamIds` restricts the streams a target
+ * may name; omit it to normalize a value read back from Control.
+ */
+export function canonicalizeExpectedTargets(
+  targets: readonly ReleaseRolloutExpectedTarget[] | null | undefined,
+  streamIds?: readonly string[]
+): string | null {
+  if (targets === null || targets === undefined) return null;
+  const unique = new Map<string, ReleaseRolloutExpectedTarget>();
+  for (const target of targets) {
+    if (
+      !target ||
+      typeof target.streamId !== 'string' ||
+      typeof target.databaseId !== 'string' ||
+      !SAFE_STREAM_ID.test(target.streamId) ||
+      (streamIds !== undefined && !streamIds.includes(target.streamId)) ||
+      !SAFE_DATABASE_ID.test(target.databaseId)
+    ) {
+      throw new Error('release_rollout_expected_targets_invalid');
+    }
+    unique.set(`${target.streamId}\0${target.databaseId}`, {
+      streamId: target.streamId,
+      databaseId: target.databaseId,
+    });
+  }
+  return JSON.stringify(
+    [...unique.entries()]
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+      .map(([, target]) => ({ streamId: target.streamId, databaseId: target.databaseId }))
+  );
+}
+
+function canonicalStoredExpectedTargets(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== 'string') throw new Error('release_rollout_expected_targets_invalid');
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error('release_rollout_expected_targets_invalid');
+  }
+  if (!Array.isArray(parsed)) throw new Error('release_rollout_expected_targets_invalid');
+  return canonicalizeExpectedTargets(parsed as ReleaseRolloutExpectedTarget[]);
 }
 
 function digest(value: string): string {
@@ -165,6 +226,19 @@ export function buildReleaseRolloutHandoffPlan(input: {
   artifact: MigrationReleaseArtifactPlan;
   manifest: ReleaseMigrationManifest;
   managedStreamIds: readonly string[];
+  /**
+   * The databases Setup verified before the handoff. Supplied only for a same-version draft append,
+   * whose Control snapshot must equal this set; every other rollout leaves it unset (no binding).
+   */
+  expectedTargets?: readonly ReleaseRolloutExpectedTarget[] | null;
+  /**
+   * Allow this call to re-arm a rollout that Control blocked with release_target_set_mismatch.
+   * Only the first handoff call of a Setup run that has just recomputed and re-verified
+   * `expectedTargets` against the lock may set it. Any later call of the same run (and every
+   * plain idempotent re-create) must leave a block in place: it would otherwise reuse a set that
+   * was verified before Control found the difference.
+   */
+  rearmBlockedTargetSetMismatch?: boolean;
   actorId: string;
   now?: number;
 }): ReleaseRolloutHandoffPlan {
@@ -200,6 +274,7 @@ export function buildReleaseRolloutHandoffPlan(input: {
   ) {
     throw new Error('release_rollout_managed_streams_invalid');
   }
+  const expectedTargetsJson = canonicalizeExpectedTargets(input.expectedTargets, streamIds);
   const now = input.now ?? Math.floor(Date.now() / 1000);
   if (!Number.isSafeInteger(now) || now < 1) throw new Error('release_rollout_time_invalid');
   const operationId = `op_release_rollout_${digest(
@@ -227,8 +302,9 @@ export function buildReleaseRolloutHandoffPlan(input: {
       sql: `INSERT INTO control_release_migration_rollouts (
         operation_id, environment_id, source_version, target_version, release_id,
         manifest_digest, manifest_r2_object_key, database_execution, worker_activation,
-        admin_mutation_mode, handoff_state, active_environment_key, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'requested', ?, ?, ?)
+        admin_mutation_mode, handoff_state, active_environment_key, created_at, updated_at,
+        expected_targets_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'requested', ?, ?, ?, ?)
       ON CONFLICT(operation_id) DO NOTHING`,
       params: [
         operationId,
@@ -244,6 +320,7 @@ export function buildReleaseRolloutHandoffPlan(input: {
         input.environmentId,
         now,
         now,
+        expectedTargetsJson,
       ],
     },
     ...[
@@ -278,6 +355,80 @@ export function buildReleaseRolloutHandoffPlan(input: {
         input.artifact.manifestObjectKey,
       ],
     });
+  }
+  if (expectedTargetsJson !== null && input.rearmBlockedTargetSetMismatch === true) {
+    // Control blocked this very rollout because its snapshot differed from the set Setup had
+    // verified (release_target_set_mismatch). Only a fresh Setup run that recomputed and
+    // re-verified the set may continue: it replaces the bound set and returns the rollout to
+    // 'requested' so Control takes a new snapshot. Control never does this on its own, and an
+    // operator target retry cannot, so a stale set is never reused. The operation is handed back
+    // with an already expired lease so the next reconciler pass claims it; the blocked step is
+    // restarted by that snapshot.
+    const blockedByMismatch = `EXISTS (
+      SELECT 1 FROM control_operations operation
+       WHERE operation.operation_id = ? AND operation.environment_id = ?
+         AND operation.status = 'blocked' AND operation.last_error_code = ?
+    )`;
+    const blockedByMismatchParams = [
+      operationId,
+      input.environmentId,
+      RELEASE_TARGET_SET_MISMATCH_CODE,
+    ];
+    statements.push(
+      {
+        sql: `INSERT OR IGNORE INTO control_audit_events (
+          event_id, environment_id, operation_id, event_type, actor_type, actor_id,
+          resource_kind, resource_id, outcome, redacted_payload_json, created_at
+        ) SELECT 'audit:' || rollout.operation_id || ':target-set-rearm:' || operation.attempt_count,
+                 rollout.environment_id, rollout.operation_id,
+                 'control.release_migration.target_set_rearmed', 'setup', ?,
+                 'release_migration_rollout', rollout.operation_id, 'succeeded', ?, ?
+            FROM control_release_migration_rollouts rollout
+            JOIN control_operations operation
+              ON operation.operation_id = rollout.operation_id
+             AND operation.environment_id = rollout.environment_id
+           WHERE rollout.operation_id = ? AND rollout.environment_id = ?
+             AND rollout.handoff_state = 'blocked' AND ${blockedByMismatch}`,
+        params: [
+          input.actorId,
+          JSON.stringify({
+            previous_error_code: RELEASE_TARGET_SET_MISMATCH_CODE,
+            expected_target_count: (JSON.parse(expectedTargetsJson) as unknown[]).length,
+          }),
+          now,
+          operationId,
+          input.environmentId,
+          ...blockedByMismatchParams,
+        ],
+      },
+      {
+        sql: `UPDATE control_release_migration_rollouts
+                 SET expected_targets_json = ?, handoff_state = 'requested',
+                     target_snapshot_at = NULL, updated_at = ?
+               WHERE operation_id = ? AND environment_id = ? AND handoff_state = 'blocked'
+                 AND ${blockedByMismatch}`,
+        params: [
+          expectedTargetsJson,
+          now,
+          operationId,
+          input.environmentId,
+          ...blockedByMismatchParams,
+        ],
+      },
+      {
+        sql: `UPDATE control_operations
+                 SET status = 'running', last_error_code = NULL, next_attempt_at = NULL,
+                     lock_owner = 'setup:target-set-rearm', lock_expires_at = 1, updated_at = ?
+               WHERE operation_id = ? AND environment_id = ? AND status = 'blocked'
+                 AND last_error_code = ?
+                 AND EXISTS (
+                   SELECT 1 FROM control_release_migration_rollouts rollout
+                    WHERE rollout.operation_id = control_operations.operation_id
+                      AND rollout.handoff_state = 'requested'
+                 )`,
+        params: [now, operationId, input.environmentId, RELEASE_TARGET_SET_MISMATCH_CODE],
+      }
+    );
   }
   statements.push({
     sql: `UPDATE control_operations
@@ -344,15 +495,17 @@ export function buildReleaseRolloutHandoffPlan(input: {
   statements.push({
     sql: `SELECT rollout.operation_id, rollout.target_version, rollout.release_id,
                  rollout.manifest_digest, rollout.manifest_r2_object_key,
+                 rollout.expected_targets_json,
                  COUNT(pin.stream_id) AS pin_count
             FROM control_release_migration_rollouts rollout
        LEFT JOIN control_operation_release_pins pin ON pin.operation_id = rollout.operation_id
            WHERE rollout.operation_id = ? AND rollout.environment_id = ?
         GROUP BY rollout.operation_id, rollout.target_version, rollout.release_id,
-                 rollout.manifest_digest, rollout.manifest_r2_object_key`,
+                 rollout.manifest_digest, rollout.manifest_r2_object_key,
+                 rollout.expected_targets_json`,
     params: [operationId, input.environmentId],
   });
-  return { operationId, streamIds, statements };
+  return { operationId, streamIds, expectedTargetsJson, statements };
 }
 
 export async function createReleaseRolloutHandoff(input: {
@@ -363,6 +516,8 @@ export async function createReleaseRolloutHandoff(input: {
   artifact: MigrationReleaseArtifactPlan;
   manifest: ReleaseMigrationManifest;
   managedStreamIds: readonly string[];
+  expectedTargets?: readonly ReleaseRolloutExpectedTarget[] | null;
+  rearmBlockedTargetSetMismatch?: boolean;
   actorId: string;
   now?: number;
   executeBatch?: D1BatchExecutor;
@@ -384,6 +539,12 @@ export async function createReleaseRolloutHandoff(input: {
     row.pin_count !== plan.streamIds.length
   ) {
     throw new Error('release_rollout_handoff_verification_failed');
+  }
+  // An existing handoff (same operation) keeps the target set it was created with. A different
+  // set, or the presence or absence of one, means the earlier handoff was prepared for another
+  // verification and must not be reused as if it matched this one.
+  if (canonicalStoredExpectedTargets(row.expected_targets_json) !== plan.expectedTargetsJson) {
+    throw new Error('release_rollout_expected_targets_mismatch');
   }
   return getReleaseRolloutHandoffStatus({
     controlDatabaseId: input.controlDatabaseId,
@@ -459,32 +620,153 @@ export async function getActiveReleaseRolloutHandoffStatus(input: {
   return parseStatus(rows[0]);
 }
 
+/**
+ * Blocked codes that Control's reconciler clears by itself on a later cron tick (see
+ * `resumeArtifactFormatBlockedRollouts`, `resumeProviderBlockedRollouts` and
+ * `resumeExecutorBlockedRollouts` in ar-control's release-migration-rollout-reconciler).
+ * Setup waits a bounded grace period for these instead of failing on the first read, because the
+ * block is often a leftover from the Control version that was running before this update
+ * deployed the new one. Every other code needs an operator and still fails immediately.
+ */
+export const CONTROL_AUTO_RESUMED_BLOCK_CODES: readonly string[] = [
+  // Resumed once a newer Control can read and validate the same content-addressed artifact.
+  'migration_artifact_manifest_invalid',
+  // Resumed once the target D1 database shows up in Control's observed resources.
+  'release_target_provider_database_unavailable',
+  // Resumed once a Control with a migration executor runs the cron.
+  'release_migration_executor_unavailable',
+];
+
+/** Control's reconciler runs every minute; 3 minutes covers at least 2-3 ticks after a deploy. */
+export const CONTROL_RESUME_GRACE_MS = 3 * 60 * 1000;
+
+export interface ReleaseRolloutWaitContext {
+  /** Set while setup waits for Control to resume a blocked rollout by itself. */
+  awaitingControlResume?: {
+    errorCode: string;
+    elapsedMs: number;
+    graceMs: number;
+  };
+}
+
+export function formatReleaseRolloutProgress(
+  status: ReleaseRolloutHandoffStatus,
+  context?: ReleaseRolloutWaitContext
+): string {
+  const waiting = context?.awaitingControlResume;
+  if (waiting) {
+    const elapsed = Math.floor(waiting.elapsedMs / 1000);
+    const grace = Math.floor(waiting.graceMs / 1000);
+    return `Control database rollout is blocked (${waiting.errorCode}); waiting for Control to resume it (${elapsed}s/${grace}s)`;
+  }
+  return `Control database rollout: ${status.completedTargets}/${status.totalTargets} (${status.phase})`;
+}
+
 export async function waitForReleaseRolloutAwaitingSetup(input: {
   controlDatabaseId: string;
   environmentId: string;
   operationId: string;
   timeoutMs?: number;
+  /** Grace period for a rollout blocked by a code Control resumes by itself. */
+  controlResumeGraceMs?: number;
   pollIntervalMs?: number;
   executeBatch?: D1BatchExecutor;
   sleep?: (milliseconds: number) => Promise<void>;
   clock?: () => number;
-  onProgress?: (status: ReleaseRolloutHandoffStatus) => void;
+  onProgress?: (status: ReleaseRolloutHandoffStatus, context?: ReleaseRolloutWaitContext) => void;
+  /**
+   * Runs the targets of a Control without a migration executor
+   * (`release_migration_executor_unavailable`): how many it took over, or, when none was due, the
+   * earliest retry time (seconds) of a target still backing off.
+   */
+  executeTargetsAsSetup?: () => Promise<{ claimed: number; nextAttemptAt: number | null }>;
 }): Promise<ReleaseRolloutHandoffStatus> {
   const timeoutMs = input.timeoutMs ?? 30 * 60 * 1000;
   const pollIntervalMs = input.pollIntervalMs ?? 5_000;
+  const controlResumeGraceMs = input.controlResumeGraceMs ?? CONTROL_RESUME_GRACE_MS;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) {
     throw new Error('release_rollout_wait_timeout_invalid');
   }
   if (!Number.isSafeInteger(pollIntervalMs) || pollIntervalMs < 1) {
     throw new Error('release_rollout_poll_interval_invalid');
   }
+  if (!Number.isSafeInteger(controlResumeGraceMs) || controlResumeGraceMs < 0) {
+    throw new Error('release_rollout_control_resume_grace_invalid');
+  }
   const sleep =
     input.sleep ??
     ((milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
   const clock = input.clock ?? Date.now;
-  const deadline = clock() + timeoutMs;
+  let deadline = clock() + timeoutMs;
+  // Grace is counted from the first blocked observation and reset whenever the rollout leaves
+  // the blocked state (or comes back with a different code).
+  let blockedSince: number | null = null;
+  let blockedCode: string | null = null;
   while (true) {
     const status = await getReleaseRolloutHandoffStatus(input);
+    if (status.phase !== 'blocked') {
+      if (blockedSince !== null) {
+        // Control resumed the rollout; give the resumed migration a full observation window
+        // rather than whatever was left of the one the blocked wait consumed.
+        deadline = Math.max(deadline, clock() + timeoutMs);
+      }
+      blockedSince = null;
+      blockedCode = null;
+    }
+    if (
+      status.phase === 'blocked' &&
+      status.lastErrorCode === 'release_migration_executor_unavailable' &&
+      input.executeTargetsAsSetup
+    ) {
+      const execution = await input.executeTargetsAsSetup();
+      if (execution.claimed > 0) {
+        // Setup ran the targets itself; Control's reconciler advances the rollout from here.
+        deadline = Math.max(deadline, clock() + timeoutMs);
+        blockedSince = null;
+        blockedCode = null;
+        continue;
+      }
+      if (execution.nextAttemptAt !== null) {
+        // A target backs off from an earlier failure: wait for it rather than for Control.
+        input.onProgress?.(status);
+        blockedSince = null;
+        blockedCode = null;
+        if (clock() >= deadline) return status;
+        await sleep(
+          Math.min(
+            pollIntervalMs,
+            Math.max(1, execution.nextAttemptAt * 1000 - clock()),
+            Math.max(1, deadline - clock())
+          )
+        );
+        continue;
+      }
+    }
+    if (status.phase === 'blocked') {
+      const code = status.lastErrorCode ?? 'unknown';
+      if (!CONTROL_AUTO_RESUMED_BLOCK_CODES.includes(code)) {
+        input.onProgress?.(status);
+        throw new Error(`release_rollout_blocked:${code}`);
+      }
+      if (blockedSince === null || blockedCode !== code) {
+        blockedSince = clock();
+        blockedCode = code;
+      }
+      const elapsedMs = clock() - blockedSince;
+      if (elapsedMs >= controlResumeGraceMs) {
+        input.onProgress?.(status);
+        throw new Error(
+          `release_rollout_blocked:${code} (Control did not resume the rollout within ` +
+            `${Math.round(controlResumeGraceMs / 1000)}s; check that the ar-control Worker is ` +
+            'deployed at the target version and its cron trigger is running, then run this update again)'
+        );
+      }
+      input.onProgress?.(status, {
+        awaitingControlResume: { errorCode: code, elapsedMs, graceMs: controlResumeGraceMs },
+      });
+      await sleep(Math.min(pollIntervalMs, Math.max(1, controlResumeGraceMs - elapsedMs)));
+      continue;
+    }
     input.onProgress?.(status);
     if (
       status.phase === 'awaiting_setup' ||
@@ -492,9 +774,6 @@ export async function waitForReleaseRolloutAwaitingSetup(input: {
       status.phase === 'completed'
     ) {
       return status;
-    }
-    if (status.phase === 'blocked') {
-      throw new Error(`release_rollout_blocked:${status.lastErrorCode ?? 'unknown'}`);
     }
     if (clock() >= deadline) return status;
     await sleep(Math.min(pollIntervalMs, Math.max(1, deadline - clock())));
@@ -645,4 +924,129 @@ export function completeReleaseRolloutHandoff(
   input: Omit<Parameters<typeof transitionReleaseRollout>[0], 'transition'>
 ): Promise<ReleaseRolloutHandoffStatus> {
   return transitionReleaseRollout({ ...input, transition: 'complete' });
+}
+
+export interface ReleaseRolloutTargetRow {
+  streamId: string;
+  databaseId: string | null;
+  state: string;
+}
+
+/** The Control rollout's own record of which databases it migrated (and their outcome). */
+export async function listReleaseRolloutTargets(input: {
+  controlDatabaseId: string;
+  environmentId: string;
+  operationId: string;
+  executeBatch?: D1BatchExecutor;
+}): Promise<ReleaseRolloutTargetRow[]> {
+  if (!SAFE_ENVIRONMENT_ID.test(input.environmentId)) {
+    throw new Error('release_rollout_environment_invalid');
+  }
+  if (!/^op_release_rollout_[a-f0-9]{32}$/u.test(input.operationId)) {
+    throw new Error('release_rollout_operation_id_invalid');
+  }
+  const results = await (input.executeBatch ?? executeD1Batch)(input.controlDatabaseId, [
+    {
+      sql: `SELECT stream_id, provider_database_id, state
+              FROM control_release_migration_targets
+             WHERE operation_id = ? AND environment_id = ?
+          ORDER BY stream_id, target_id`,
+      params: [input.operationId, input.environmentId],
+    },
+  ]);
+  return resultRows(results[0]).map((row) => {
+    if (
+      typeof row.stream_id !== 'string' ||
+      (row.provider_database_id !== null && typeof row.provider_database_id !== 'string') ||
+      typeof row.state !== 'string'
+    ) {
+      throw new Error('release_rollout_target_row_invalid');
+    }
+    return { streamId: row.stream_id, databaseId: row.provider_database_id, state: row.state };
+  });
+}
+
+/**
+ * Check that Control actually migrated every database Setup expects it to own. The expected set is
+ * fixed from the lock before the handoff; a database that Control dropped from its snapshot (for
+ * example a failed shard) or did not finish must stop Setup from recording it as migrated.
+ * Databases Control migrated beyond the expected set are reported but are not an error.
+ */
+export function verifyControlRolloutCoversTargets(input: {
+  expected: ReadonlyArray<{ databaseId: string; streamId: string }>;
+  rows: readonly ReleaseRolloutTargetRow[];
+}): { missing: string[]; unexpected: string[] } {
+  const key = (databaseId: string, streamId: string): string => `${databaseId}:${streamId}`;
+  const succeeded = new Set(
+    input.rows
+      .filter((row) => row.state === 'succeeded' && row.databaseId)
+      .map((row) => key(row.databaseId!, row.streamId))
+  );
+  const expected = new Set(input.expected.map((item) => key(item.databaseId, item.streamId)));
+  return {
+    missing: [...expected].filter((item) => !succeeded.has(item)).sort(),
+    unexpected: [...succeeded].filter((item) => !expected.has(item)).sort(),
+  };
+}
+
+export interface ControlSnapshotPreviewRow {
+  streamId: string;
+  databaseId: string | null;
+}
+
+/**
+ * Read-only preview of the databases Control will snapshot for a release rollout. It mirrors the
+ * reconciler's snapshot selection (tenant and lookup shards in an active status with a present D1)
+ * so Setup can compare Control's set with the lock's before any handoff exists.
+ */
+export async function listControlSnapshotPreview(input: {
+  controlDatabaseId: string;
+  environmentId: string;
+  executeBatch?: D1BatchExecutor;
+}): Promise<ControlSnapshotPreviewRow[]> {
+  if (!SAFE_ENVIRONMENT_ID.test(input.environmentId)) {
+    throw new Error('release_rollout_environment_invalid');
+  }
+  const results = await (input.executeBatch ?? executeD1Batch)(input.controlDatabaseId, [
+    {
+      sql: `SELECT CASE WHEN shard.data_role = 'tenant_pii' THEN 'pii-d1' ELSE 'core-d1' END
+                      AS stream_id,
+                    observed.provider_resource_id AS provider_database_id
+               FROM control_tenant_shards shard
+               JOIN control_desired_resources desired
+                 ON desired.desired_resource_id = shard.d1_desired_resource_id
+                AND desired.environment_id = shard.environment_id
+                AND desired.desired_state = 'present'
+          LEFT JOIN control_observed_resources observed
+                 ON observed.observed_resource_id = desired.observed_resource_id
+                AND observed.environment_id = desired.environment_id
+                AND observed.resource_kind = 'd1' AND observed.observed_state = 'present'
+              WHERE shard.environment_id = ?
+                AND shard.status IN ('requested', 'provisioning', 'ready', 'active', 'degraded')
+          UNION ALL
+             SELECT 'lookup-d1' AS stream_id,
+                    observed.provider_resource_id AS provider_database_id
+               FROM control_lookup_physical_shards shard
+               JOIN control_desired_resources desired
+                 ON desired.desired_resource_id = shard.d1_desired_resource_id
+                AND desired.environment_id = shard.environment_id
+                AND desired.desired_state = 'present'
+          LEFT JOIN control_observed_resources observed
+                 ON observed.observed_resource_id = desired.observed_resource_id
+                AND observed.environment_id = desired.environment_id
+                AND observed.resource_kind = 'd1' AND observed.observed_state = 'present'
+              WHERE shard.environment_id = ?
+                AND shard.status IN ('requested', 'provisioning', 'ready', 'active', 'draining')`,
+      params: [input.environmentId, input.environmentId],
+    },
+  ]);
+  return resultRows(results[0]).map((row) => {
+    if (
+      typeof row.stream_id !== 'string' ||
+      (row.provider_database_id !== null && typeof row.provider_database_id !== 'string')
+    ) {
+      throw new Error('release_rollout_snapshot_row_invalid');
+    }
+    return { streamId: row.stream_id, databaseId: row.provider_database_id };
+  });
 }

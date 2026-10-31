@@ -170,6 +170,47 @@ export interface ConditionTypeMetadata {
 }
 
 /**
+ * A condition form's starting values: empty lists and text, and numbers and switches unset
+ * (0 would be a real value, such as a date in 1970).
+ */
+export function initialConditionParams(typeInfo: ConditionTypeMetadata): Record<string, unknown> {
+	const params: Record<string, unknown> = {};
+	for (const param of typeInfo.params) {
+		if (param.type === 'string[]' || param.type === 'number[]') {
+			params[param.name] = [];
+		} else if (param.type === 'number' || param.type === 'boolean') {
+			params[param.name] = undefined;
+		} else {
+			params[param.name] = '';
+		}
+	}
+	return params;
+}
+
+/**
+ * The parameters to save from a condition form: optional ones left empty are left out (the
+ * server refuses an empty value where a real one is expected; an unset one keeps its default).
+ */
+export function conditionParamsForSave(
+	typeInfo: ConditionTypeMetadata | undefined,
+	values: Record<string, unknown>
+): Record<string, unknown> {
+	const params: Record<string, unknown> = {};
+	for (const [name, value] of Object.entries(values)) {
+		const required = typeInfo?.params.find((p) => p.name === name)?.required ?? true;
+		const empty =
+			value === undefined ||
+			value === null ||
+			value === '' ||
+			(typeof value === 'number' && Number.isNaN(value)) ||
+			(Array.isArray(value) && value.length === 0);
+		if (!required && empty) continue;
+		params[name] = value;
+	}
+	return params;
+}
+
+/**
  * Condition category
  */
 export interface ConditionCategory {
@@ -424,17 +465,17 @@ export function formatCondition(condition: PolicyCondition): string {
 		case 'same_organization':
 			return 'In same organization';
 		case 'attribute_equals':
-			return `${params.attribute} = "${params.value}"`;
+			return `${params.name} = "${params.value}"`;
 		case 'attribute_exists':
-			return `Has attribute "${params.attribute}"`;
+			return `Has attribute "${params.name}"`;
 		case 'attribute_in':
-			return `${params.attribute} in [${(params.values as string[]).join(', ')}]`;
+			return `${params.name} in [${(params.values as string[]).join(', ')}]`;
 		case 'time_in_range':
-			return `Time between ${params.start_hour}:00 - ${params.end_hour}:00`;
+			return `Time between ${params.startHour}:00 - ${params.endHour}:00`;
 		case 'day_of_week':
-			return `Day of week in [${(params.days as number[]).join(', ')}]`;
+			return `Day of week in [${(params.allowedDays as number[]).join(', ')}]`;
 		case 'valid_during':
-			return `Valid from ${params.start || 'now'} to ${params.end || '∞'}`;
+			return `Valid from ${params.from || 'now'} to ${params.to || '∞'}`;
 		case 'country_in':
 			return `Country in [${(params.countries as string[]).join(', ')}]`;
 		case 'country_not_in':
@@ -442,15 +483,15 @@ export function formatCondition(condition: PolicyCondition): string {
 		case 'ip_in_range':
 			return `IP in ${params.cidr}`;
 		case 'numeric_gt':
-			return `${params.attribute} > ${params.threshold}`;
+			return `${params.name} > ${params.value}`;
 		case 'numeric_gte':
-			return `${params.attribute} >= ${params.threshold}`;
+			return `${params.name} >= ${params.value}`;
 		case 'numeric_lt':
-			return `${params.attribute} < ${params.threshold}`;
+			return `${params.name} < ${params.value}`;
 		case 'numeric_lte':
-			return `${params.attribute} <= ${params.threshold}`;
+			return `${params.name} <= ${params.value}`;
 		case 'numeric_between':
-			return `${params.min} <= ${params.attribute} <= ${params.max}`;
+			return `${params.min} <= ${params.name} <= ${params.max}`;
 		case 'request_count_lt':
 			return `Request count < ${params.limit}`;
 		case 'request_count_lte':
@@ -492,6 +533,7 @@ export function createEmptyContext(): PolicyContext {
 		action: {
 			name: ''
 		},
-		timestamp: Math.floor(Date.now() / 1000)
+		// UNIX milliseconds, as the policy engine reads it.
+		timestamp: Date.now()
 	};
 }

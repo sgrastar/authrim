@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createEvidenceDb, type EvidenceDb } from './helpers/evidence-db';
 
 const mocks = vi.hoisted(() => ({
   sp: null as Record<string, unknown> | null,
@@ -8,7 +9,6 @@ const mocks = vi.hoisted(() => ({
   sessionResponse: new Response(null, { status: 404 }),
   sessionThrows: false,
   user: null as Record<string, unknown> | null,
-  builtin: false,
   uiConfig: undefined as { baseUrl: string; paths?: { login?: string } } | undefined,
   loginPolicy: 'ui_base_url' as 'ui_base_url' | 'tenant_host',
   nakedDomain: false,
@@ -16,7 +16,9 @@ const mocks = vi.hoisted(() => ({
   buildResponse: vi.fn(() => '<saml-response/>'),
   applySigning: vi.fn(async () => '<signed-response/>'),
   resolveNameId: vi.fn(async () => 'name-id'),
-  buildAttributes: vi.fn(() => [{ name: 'mail', values: ['user@example.test'] }]),
+  buildAttributes: vi.fn((_subject?: unknown, _config?: unknown) => [
+    { name: 'mail', values: ['user@example.test'] },
+  ]),
   filterDestination: vi.fn(
     async (input: {
       attributes: unknown[];
@@ -32,6 +34,14 @@ const mocks = vi.hoisted(() => ({
   ),
   coreExecute: vi.fn(async () => ({ rowsAffected: 1 })),
   enforceConsent: vi.fn(async () => undefined),
+  audit: vi.fn(async (_env: unknown, _entry: { metadata?: string }) => undefined),
+  assuranceSettings: {} as Record<string, unknown>,
+  evidenceAdapter: null as unknown,
+  coreAdapterError: null as Error | null,
+  getCoreAdapter: vi.fn(async () => {
+    if (mocks.coreAdapterError) throw mocks.coreAdapterError;
+    return mocks.evidenceAdapter;
+  }),
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -61,15 +71,17 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         return url.toString();
       }
     ),
-    shouldUseBuiltinForms: vi.fn(async () => mocks.builtin),
     usesNakedDomainIssuer: vi.fn(() => mocks.nakedDomain),
     resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => ({
       execute: mocks.coreExecute,
     })),
-    requireAdminDatabaseAdapter: vi.fn(() => ({})),
+    // Reads the Destination Profile (to give the mapping its destination catalog entries): none here.
+    requireAdminDatabaseAdapter: vi.fn(() => ({ queryOne: vi.fn(async () => null) })),
     resolveRuntimeIdentityMappingBinding: vi.fn(async () => mocks.runtimeBinding),
     filterSamlAttributesByDestinationConsentWithStatus: mocks.filterDestination,
     getLogger: () => ({ module: () => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn() }) }),
+    createAuditLog: mocks.audit,
+    resolveEffectiveSettings: vi.fn(async () => mocks.assuranceSettings),
   };
 });
 
@@ -84,6 +96,7 @@ vi.mock('../../common/session-cookie', () => ({
 
 vi.mock('../../common/user-store', () => ({
   getSamlUserInfoById: vi.fn(async () => mocks.user),
+  getSamlUserCoreAdapter: mocks.getCoreAdapter,
 }));
 
 vi.mock('../../common/idp-signing', () => ({
@@ -109,7 +122,14 @@ vi.mock('../assertion', () => ({ buildSAMLResponse: mocks.buildResponse }));
 vi.mock('../signing', () => ({ applySAMLResponseSigningPolicy: mocks.applySigning }));
 vi.mock('../attributes', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../attributes')>();
-  return { ...actual, buildSAMLAttributesForSP: mocks.buildAttributes };
+  return {
+    ...actual,
+    buildSAMLAttributesForSP: mocks.buildAttributes,
+    buildSAMLAttributesForSPWithDiagnostics: (subject: unknown, config: unknown) => ({
+      attributes: mocks.buildAttributes(subject, config),
+      optionalMissingAttributes: [],
+    }),
+  };
 });
 vi.mock('../attribute-release-consent', () => ({
   enforceSAMLAttributeReleaseConsent: mocks.enforceConsent,
@@ -178,7 +198,6 @@ describe('IdP-initiated SSO', () => {
     mocks.sessionResponse = new Response(null, { status: 404 });
     mocks.sessionThrows = false;
     mocks.user = null;
-    mocks.builtin = false;
     mocks.uiConfig = undefined;
     mocks.loginPolicy = 'ui_base_url';
     mocks.nakedDomain = false;
@@ -209,18 +228,18 @@ describe('IdP-initiated SSO', () => {
     expect(response.status).toBe(404);
   });
 
-  it('redirects unauthenticated users to builtin login when enabled', async () => {
-    mocks.builtin = true;
+  it('redirects unauthenticated users to the UI login', async () => {
+    mocks.uiConfig = { baseUrl: 'https://ui.example.test' };
     const response = await handleIdPInitiated(
       context('https://sp.example.test', consentTransactionId)
     );
     expect(response.status).toBe(302);
-    expect(response.headers.get('location')).toContain('/flow/login');
+    expect(response.headers.get('location')).toContain('https://ui.example.test/login');
     expect(response.headers.get('location')).toContain('return_to=');
   });
 
   it('preserves RelayState through the interactive login redirect', async () => {
-    mocks.builtin = true;
+    mocks.uiConfig = { baseUrl: 'https://ui.example.test' };
     const relayState = 'https://sp.example.test/home';
     const response = await handleIdPInitiated(
       context('https://sp.example.test', consentTransactionId, relayState)
@@ -281,9 +300,9 @@ describe('IdP-initiated SSO', () => {
     mocks.sharded = sharded;
     mocks.sessionThrows = throws;
     mocks.sessionResponse = response;
-    mocks.builtin = true;
+    mocks.uiConfig = { baseUrl: 'https://ui.example.test' };
     const result = await handleIdPInitiated(context('https://sp.example.test'));
-    expect(result.headers.get('location')).toContain('/flow/login');
+    expect(result.headers.get('location')).toContain('https://ui.example.test/login');
   });
 
   it('routes an authenticated IdP-initiated request through generic destination consent', async () => {
@@ -292,13 +311,13 @@ describe('IdP-initiated SSO', () => {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     });
-    mocks.builtin = true;
+    mocks.uiConfig = { baseUrl: 'https://ui.example.test' };
 
     const response = await handleIdPInitiated(context('https://sp.example.test'));
     const location = response.headers.get('location') ?? '';
 
     expect(response.status).toBe(302);
-    expect(location).toContain('/flow/login');
+    expect(location).toContain('https://ui.example.test/login');
     expect(location).toContain('saml_request_id=');
     expect(location).toContain('saml_sp_entity_id=https%3A%2F%2Fsp.example.test');
     expect(location).toContain('consent_tx%3D');
@@ -340,6 +359,120 @@ describe('IdP-initiated SSO', () => {
     const calls = mocks.buildResponse.mock.calls as unknown as Array<[Record<string, unknown>]>;
     expect(calls[0]?.[0]).not.toHaveProperty('inResponseTo');
     expect(mocks.applySigning).toHaveBeenCalled();
+  });
+
+  describe('assertion lifetime', () => {
+    async function lifetimeSeconds(
+      sp: Record<string, unknown>,
+      federation: Record<string, unknown> | null
+    ): Promise<number> {
+      mocks.cookieSessionId = 'session-id';
+      mocks.sessionResponse = new Response(JSON.stringify({ userId: 'user-a' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+      mocks.user = { id: 'user-a', email: 'user@example.test' };
+      mocks.sp = baseSp({ identityMapping: { catalog: { entries: [] } }, ...sp });
+      const ctx = context('https://sp.example.test', consentTransactionId);
+      (ctx as unknown as { env: Record<string, unknown> }).env.SETTINGS = {
+        get: vi.fn(async (key: string) =>
+          key === 'settings:tenant:tenant-a:federation' && federation
+            ? JSON.stringify(federation)
+            : null
+        ),
+      };
+      expect((await handleIdPInitiated(ctx)).status).toBe(200);
+      const input = (
+        mocks.buildResponse.mock.calls.at(-1) as unknown as [Record<string, string>]
+      )[0];
+      return (Date.parse(input.notOnOrAfter) - Date.parse(input.issueInstant)) / 1000;
+    }
+
+    it('is five minutes where nothing is set', async () => {
+      expect(await lifetimeSeconds({}, null)).toBe(300);
+    });
+
+    it("is the tenant's when the service provider has none", async () => {
+      expect(await lifetimeSeconds({}, { 'federation.saml_assertion_ttl': 120 })).toBe(120);
+    });
+
+    it("is the service provider's own when it has one", async () => {
+      expect(
+        await lifetimeSeconds(
+          { assertionValiditySeconds: 90 },
+          { 'federation.saml_assertion_ttl': 120 }
+        )
+      ).toBe(90);
+    });
+  });
+
+  describe('AuthnInstant', () => {
+    const MINUTE = 60_000;
+    /** An instant as the assertion states it (whole seconds, UTC). */
+    const stated = (ms: number) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
+
+    async function answeredWith(session: Record<string, unknown>) {
+      mocks.cookieSessionId = 'session-id';
+      mocks.sessionResponse = new Response(JSON.stringify({ userId: 'user-a', ...session }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+      mocks.user = { id: 'user-a', email: 'user@example.test' };
+      mocks.sp = baseSp({ identityMapping: { catalog: { entries: [] } } });
+      // Each answer is a new assertion: never the timing of an earlier request.
+      mocks.buildResponse.mockClear();
+      expect(
+        (await handleIdPInitiated(context('https://sp.example.test', consentTransactionId))).status
+      ).toBe(200);
+      expect(mocks.buildResponse).toHaveBeenCalledOnce();
+      return (
+        mocks.buildResponse.mock.calls.at(-1) as unknown as [
+          { authnInstant: string; issueInstant: string },
+        ]
+      )[0];
+    }
+
+    it('is the time of a fresh sign-in', async () => {
+      const provenAt = Date.now() - 4 * MINUTE;
+      const timing = await answeredWith({ data: { amr: ['pwd'], proven_at: provenAt } });
+      expect(timing.authnInstant).toBe(stated(provenAt));
+      expect(Date.parse(timing.authnInstant)).toBeLessThanOrEqual(Date.parse(timing.issueInstant));
+    });
+
+    it('stays the time of the sign-in when an old session is reused', async () => {
+      const provenAt = Date.now() - 5 * 3_600_000;
+      const timing = await answeredWith({ data: { amr: ['pwd'], proven_at: provenAt } });
+      expect(timing.authnInstant).toBe(stated(provenAt));
+      expect(timing.authnInstant).not.toBe(timing.issueInstant);
+    });
+
+    it('is the time of a re-authentication completed in the session after its sign-in', async () => {
+      const reauthAt = Date.now() - 2 * MINUTE;
+      const timing = await answeredWith({
+        data: {
+          amr: ['pwd', 'totp'],
+          proven_at: Date.now() - 5 * 3_600_000,
+          reauth_proven_amr: ['totp'],
+          reauth_proven_at: reauthAt,
+        },
+      });
+      expect(timing.authnInstant).toBe(stated(reauthAt));
+    });
+
+    it('falls back to the session login time, then its creation time, then the issue instant', async () => {
+      const authTime = Math.floor((Date.now() - 80 * MINUTE) / 1000);
+      expect((await answeredWith({ data: { amr: ['pwd'], authTime } })).authnInstant).toBe(
+        stated(authTime * 1000)
+      );
+
+      const createdAt = Date.now() - 30 * MINUTE;
+      expect(
+        (await answeredWith({ createdAt, data: { amr: ['external_idp'] } })).authnInstant
+      ).toBe(stated(createdAt));
+
+      const unknown = await answeredWith({ data: { amr: ['external_idp'] } });
+      expect(unknown.authnInstant).toBe(unknown.issueInstant);
+    });
   });
 
   it('includes RelayState in the response sent to the service provider', async () => {
@@ -436,5 +569,369 @@ describe('IdP-initiated SSO', () => {
       context('https://sp.example.test', consentTransactionId)
     );
     expect(response.status).toBe(500);
+  });
+});
+
+describe('IdP-initiated SSO and identity assurance', () => {
+  const IAL1_URI = 'https://example.org/assurance/IAL1';
+  const IAL2_URI = 'https://example.org/assurance/IAL2';
+  const EDU_PERSON_ASSURANCE = 'urn:oid:1.3.6.1.4.1.5923.1.1.1.11';
+  let evidence: EvidenceDb;
+
+  beforeAll(async () => {
+    evidence = await createEvidenceDb('user-a');
+  });
+
+  const sessionFor = (userId = 'user-a') => {
+    mocks.cookieSessionId = 'session-id';
+    mocks.sessionResponse = new Response(JSON.stringify({ userId, data: {} }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+  const auditedFailureKind = () =>
+    (JSON.parse(mocks.audit.mock.calls[0]?.[1].metadata ?? '{}') as { failure_kind?: string })
+      .failure_kind;
+  const eduMapping = () => ({
+    catalog: { entries: [] },
+    edges: [
+      {
+        id: 'edge.edu',
+        sourceRef: {
+          side: 'source',
+          namespace: 'authrim.profile',
+          path: 'edu_person_assurance',
+          catalogEntryId: 'system.identity.edu_person_assurance',
+        },
+        targetRef: {
+          side: 'destination',
+          namespace: 'saml.attribute',
+          path: EDU_PERSON_ASSURANCE,
+          catalogEntryId: 'field.saml.eduPersonAssurance',
+        },
+      },
+    ],
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    evidence.clearEvidence();
+    evidence.resetReads();
+    mocks.evidenceAdapter = evidence.adapter;
+    mocks.coreAdapterError = null;
+    mocks.sp = baseSp({ minimumIal: 'IAL2', identityMapping: { catalog: { entries: [] } } });
+    mocks.spList = [];
+    mocks.cookieSessionId = undefined;
+    mocks.sharded = true;
+    mocks.sessionThrows = false;
+    mocks.user = { id: 'user-a', email: 'user@example.test' };
+    mocks.uiConfig = { baseUrl: 'https://ui.example.test' };
+    mocks.loginPolicy = 'ui_base_url';
+    mocks.nakedDomain = false;
+    mocks.runtimeBinding = null;
+    mocks.assuranceSettings = {};
+    sessionFor();
+  });
+
+  describe('the SP minimum IAL', () => {
+    it('shows the error page and builds no assertion for a person below it', async () => {
+      evidence.addEvidence('ev-1', 'IAL1');
+      const response = await handleIdPInitiated(
+        context('https://sp.example.test', consentTransactionId, 'relay')
+      );
+
+      expect(response.status).toBe(403);
+      const body = await response.text();
+      expect(body).not.toContain('SAMLResponse');
+      expect(body).not.toMatch(/IAL|assurance/i);
+      expect(mocks.buildResponse).not.toHaveBeenCalled();
+      expect(mocks.applySigning).not.toHaveBeenCalled();
+      expect(mocks.resolveNameId).not.toHaveBeenCalled();
+      expect(mocks.filterDestination).not.toHaveBeenCalled();
+      expect(mocks.enforceConsent).not.toHaveBeenCalled();
+      expect(mocks.audit).toHaveBeenCalledOnce();
+      expect(auditedFailureKind()).toBe('identity_assurance_insufficient');
+    });
+
+    it('judges a signed-in person before sending them through the consent flow', async () => {
+      evidence.addEvidence('ev-1', 'IAL1');
+      const response = await handleIdPInitiated(context('https://sp.example.test'));
+      expect(response.status).toBe(403);
+      expect(response.headers.get('location')).toBeNull();
+    });
+
+    it('lets a person at the minimum on to the consent flow and then to the assertion', async () => {
+      evidence.addEvidence('ev-1', 'IAL2');
+      const toConsent = await handleIdPInitiated(context('https://sp.example.test'));
+      expect(toConsent.status).toBe(302);
+      expect(toConsent.headers.get('location')).toContain('https://ui.example.test/login');
+
+      const response = await handleIdPInitiated(
+        context('https://sp.example.test', consentTransactionId)
+      );
+      expect(response.status).toBe(200);
+      expect(await response.text()).toContain('SAMLResponse');
+      expect(mocks.buildResponse).toHaveBeenCalledOnce();
+    });
+
+    it('stops a person whose evidence was revoked after they passed the first check', async () => {
+      evidence.addEvidence('ev-1', 'IAL2');
+      expect(
+        (await handleIdPInitiated(context('https://sp.example.test'))).headers.get('location')
+      ).toContain('https://ui.example.test/login');
+      evidence.db
+        .prepare('UPDATE assurance_evidence SET revoked_at = ? WHERE id = ?')
+        .run(Date.now() - 1, 'ev-1');
+      const response = await handleIdPInitiated(
+        context('https://sp.example.test', consentTransactionId)
+      );
+      expect(response.status).toBe(403);
+      expect(mocks.buildResponse).not.toHaveBeenCalled();
+    });
+
+    it('does not take an unreadable minimum for none', async () => {
+      mocks.sp = baseSp({ minimumIal: 'bogus', identityMapping: { catalog: { entries: [] } } });
+      evidence.addEvidence('ev-1', 'IAL2');
+      const response = await handleIdPInitiated(
+        context('https://sp.example.test', consentTransactionId)
+      );
+      expect(response.status).toBe(403);
+      expect(mocks.buildResponse).not.toHaveBeenCalled();
+    });
+
+    it('refuses with a server error, not as a person below the minimum, when the evidence cannot be read', async () => {
+      evidence.addEvidence('ev-1', 'IAL3');
+      mocks.coreAdapterError = new Error('account_data_route_not_found');
+      const response = await handleIdPInitiated(
+        context('https://sp.example.test', consentTransactionId)
+      );
+      expect(response.status).toBe(500);
+      expect(mocks.buildResponse).not.toHaveBeenCalled();
+      expect(auditedFailureKind()).toBe('identity_assurance_unavailable');
+    });
+
+    it('sends a person who is not signed in to sign in, judging no one', async () => {
+      mocks.cookieSessionId = undefined;
+      const response = await handleIdPInitiated(
+        context('https://sp.example.test', consentTransactionId)
+      );
+      expect(response.status).toBe(302);
+      expect(evidence.evidenceReads()).toBe(0);
+      expect(mocks.getCoreAdapter).not.toHaveBeenCalled();
+    });
+
+    it('reads no evidence and changes nothing for an SP without a minimum', async () => {
+      mocks.sp = baseSp({ identityMapping: { catalog: { entries: [] } } });
+      evidence.addEvidence('ev-1', 'IAL1');
+      const response = await handleIdPInitiated(
+        context('https://sp.example.test', consentTransactionId)
+      );
+      expect(response.status).toBe(200);
+      expect(mocks.buildResponse).toHaveBeenCalledOnce();
+      expect(evidence.evidenceReads()).toBe(0);
+      expect(mocks.getCoreAdapter).not.toHaveBeenCalled();
+      expect(mocks.audit).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('the assurance attributes', () => {
+    beforeEach(() => {
+      mocks.sp = baseSp({ identityMapping: eduMapping() });
+      mocks.assuranceSettings = {
+        'assurance.enabled': true,
+        'assurance.ial_assurance_values': JSON.stringify({
+          IAL1: [IAL1_URI],
+          IAL2: [IAL2_URI, IAL1_URI],
+        }),
+      };
+    });
+    const subjectGivenToAttributeRelease = () =>
+      mocks.buildAttributes.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+
+    it('hands the values of the person’s IAL to the attribute release', async () => {
+      evidence.addEvidence('ev-1', 'IAL2');
+      await handleIdPInitiated(context('https://sp.example.test', consentTransactionId));
+      expect(mocks.buildResponse).toHaveBeenCalledOnce();
+      expect(subjectGivenToAttributeRelease().edu_person_assurance).toEqual([IAL1_URI, IAL2_URI]);
+      expect(evidence.evidenceReads()).toBe(1);
+    });
+
+    it('gives the attribute release the tenant, so a tenant-bound mapping binding matches', async () => {
+      evidence.addEvidence('ev-1', 'IAL2');
+      await handleIdPInitiated(context('https://sp.example.test', consentTransactionId));
+      const releaseConfig = mocks.buildAttributes.mock.calls.at(-1)?.[1] as { tenantId?: string };
+      expect(releaseConfig.tenantId).toEqual(expect.any(String));
+      expect(releaseConfig.tenantId).not.toBe('');
+    });
+
+    it('reads the evidence once for the minimum and the attribute together', async () => {
+      mocks.sp = baseSp({ identityMapping: eduMapping(), minimumIal: 'IAL2' });
+      evidence.addEvidence('ev-1', 'IAL2');
+      await handleIdPInitiated(context('https://sp.example.test', consentTransactionId));
+      expect(subjectGivenToAttributeRelease().edu_person_assurance).toEqual([IAL1_URI, IAL2_URI]);
+      expect(evidence.evidenceReads()).toBe(1);
+    });
+
+    it('reads nothing while assurance levels are off', async () => {
+      mocks.assuranceSettings = { 'assurance.enabled': false };
+      evidence.addEvidence('ev-1', 'IAL2');
+      await handleIdPInitiated(context('https://sp.example.test', consentTransactionId));
+      expect(mocks.buildResponse).toHaveBeenCalledOnce();
+      expect(subjectGivenToAttributeRelease()).not.toHaveProperty('edu_person_assurance');
+      expect(evidence.evidenceReads()).toBe(0);
+    });
+
+    it('releases no attribute, and still issues the assertion, when the evidence cannot be read', async () => {
+      mocks.coreAdapterError = new Error('account_data_route_not_found');
+      await handleIdPInitiated(context('https://sp.example.test', consentTransactionId));
+      expect(mocks.buildResponse).toHaveBeenCalledOnce();
+      expect(subjectGivenToAttributeRelease()).not.toHaveProperty('edu_person_assurance');
+    });
+  });
+});
+
+describe('IdP-initiated SSO and the SP minimum AAL', () => {
+  const AAL2_REF = 'https://example.org/profile/AAL2';
+  const sessionWith = (data: Record<string, unknown>) => {
+    mocks.cookieSessionId = 'session-id';
+    mocks.sessionResponse = new Response(JSON.stringify({ userId: 'user-a', data }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+  const auditedFailureKind = () =>
+    (JSON.parse(mocks.audit.mock.calls[0]?.[1].metadata ?? '{}') as { failure_kind?: string })
+      .failure_kind;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.sp = baseSp({ minimumAal: 'AAL2', identityMapping: { catalog: { entries: [] } } });
+    mocks.spList = [];
+    mocks.sharded = true;
+    mocks.sessionThrows = false;
+    mocks.user = { id: 'user-a', email: 'user@example.test' };
+    mocks.uiConfig = { baseUrl: 'https://ui.example.test' };
+    mocks.loginPolicy = 'ui_base_url';
+    mocks.nakedDomain = false;
+    mocks.runtimeBinding = null;
+    mocks.assuranceSettings = {};
+  });
+
+  it('shows the error page and builds no assertion for a session below it', async () => {
+    sessionWith({ amr: ['pwd'], proven_at: 1 });
+    const response = await handleIdPInitiated(
+      context('https://sp.example.test', consentTransactionId, 'relay')
+    );
+    expect(response.status).toBe(403);
+    const body = await response.text();
+    expect(body).not.toContain('SAMLResponse');
+    expect(body).not.toMatch(/AAL|assurance/i);
+    expect(mocks.buildResponse).not.toHaveBeenCalled();
+    expect(mocks.resolveNameId).not.toHaveBeenCalled();
+    expect(mocks.audit).toHaveBeenCalledOnce();
+    expect(auditedFailureKind()).toBe('authn_assurance_insufficient');
+  });
+
+  it('answers a session that reaches it', async () => {
+    sessionWith({ amr: ['pwd', 'totp'], proven_at: 1 });
+    const response = await handleIdPInitiated(
+      context('https://sp.example.test', consentTransactionId)
+    );
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain('SAMLResponse');
+    expect(mocks.buildResponse).toHaveBeenCalledOnce();
+  });
+
+  it('applies while assurance levels are off, as the SP setting does everywhere', async () => {
+    mocks.assuranceSettings = { 'assurance.enabled': false };
+    sessionWith({ amr: ['pwd'], proven_at: 1 });
+    const response = await handleIdPInitiated(
+      context('https://sp.example.test', consentTransactionId)
+    );
+    expect(response.status).toBe(403);
+  });
+
+  it('does not judge a session before the consent flow, which asks the person to sign in anyway', async () => {
+    sessionWith({ amr: ['pwd'], proven_at: 1 });
+    const response = await handleIdPInitiated(context('https://sp.example.test'));
+    expect(response.status).toBe(302);
+    expect(response.headers.get('location')).toContain('https://ui.example.test/login');
+  });
+
+  it('does not take an unreadable minimum for none', async () => {
+    mocks.sp = baseSp({ minimumAal: 'bogus', identityMapping: { catalog: { entries: [] } } });
+    sessionWith({ amr: ['pwd', 'totp'], proven_at: 1 });
+    const response = await handleIdPInitiated(
+      context('https://sp.example.test', consentTransactionId)
+    );
+    expect(response.status).toBe(403);
+    expect(mocks.buildResponse).not.toHaveBeenCalled();
+  });
+
+  it('refuses with a server error, not as a session below the minimum, when the settings cannot be read', async () => {
+    const lib = await import('@authrim/ar-lib-core');
+    vi.mocked(lib.resolveEffectiveSettings).mockRejectedValueOnce(new Error('settings down'));
+    sessionWith({ amr: ['pwd', 'totp'], proven_at: 1 });
+    const response = await handleIdPInitiated(
+      context('https://sp.example.test', consentTransactionId)
+    );
+    expect(response.status).toBe(500);
+    expect(mocks.buildResponse).not.toHaveBeenCalled();
+    expect(auditedFailureKind()).toBe('authn_assurance_unavailable');
+  });
+
+  it('reads nothing and changes nothing for an SP without a minimum', async () => {
+    const lib = await import('@authrim/ar-lib-core');
+    vi.mocked(lib.resolveEffectiveSettings).mockClear();
+    mocks.sp = baseSp({ identityMapping: { catalog: { entries: [] } } });
+    sessionWith({ amr: ['pwd'], proven_at: 1 });
+    const response = await handleIdPInitiated(
+      context('https://sp.example.test', consentTransactionId)
+    );
+    expect(response.status).toBe(200);
+    // The assurance settings are not read; the tenant's institution is, once, for every release.
+    expect(lib.resolveEffectiveSettings).not.toHaveBeenCalledWith(
+      expect.anything(),
+      'assurance',
+      expect.anything()
+    );
+    expect(mocks.audit).not.toHaveBeenCalled();
+  });
+
+  it('puts the class reference of the AAL reached in the assertion for an SP in assurance mode', async () => {
+    mocks.sp = baseSp({
+      authnContextClassRefMode: 'assurance',
+      identityMapping: { catalog: { entries: [] } },
+    });
+    mocks.assuranceSettings = {
+      'assurance.enabled': true,
+      'assurance.saml_authn_context_aal': JSON.stringify({ [AAL2_REF]: 'AAL2' }),
+    };
+    sessionWith({ amr: ['pwd', 'totp'], proven_at: 1 });
+    await handleIdPInitiated(context('https://sp.example.test', consentTransactionId));
+    expect(
+      (mocks.buildResponse.mock.calls.at(-1) as unknown as [{ authnContextClassRef: string }])[0]
+        .authnContextClassRef
+    ).toBe(AAL2_REF);
+  });
+  it('does not issue the static reference of a higher AAL than the sign-in reached', async () => {
+    const AAL3_REF = 'https://example.org/profile/AAL3';
+    mocks.sp = baseSp({
+      minimumAal: 'AAL1',
+      authnContextClassRefMode: 'legacy_static',
+      defaultAuthnContextClassRef: AAL3_REF,
+      identityMapping: { catalog: { entries: [] } },
+    });
+    mocks.assuranceSettings = {
+      'assurance.enabled': true,
+      'assurance.saml_authn_context_aal': JSON.stringify({ [AAL3_REF]: 'AAL3' }),
+    };
+    sessionWith({ amr: ['pwd'], proven_at: 1 });
+    const response = await handleIdPInitiated(
+      context('https://sp.example.test', consentTransactionId)
+    );
+    expect(response.status).toBe(403);
+    expect(mocks.buildResponse).not.toHaveBeenCalled();
+    expect(auditedFailureKind()).toBe('authn_assurance_insufficient');
   });
 });

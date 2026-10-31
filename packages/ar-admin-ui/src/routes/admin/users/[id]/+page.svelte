@@ -1,4 +1,5 @@
 <script lang="ts">
+	import AccountRegistrationState from '$lib/components/admin/AccountRegistrationState.svelte';
 	import { onMount } from 'svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 	import { page } from '$app/stores';
@@ -37,12 +38,13 @@
 	import AdminTabs, { type AdminTabItem } from '$lib/components/admin/AdminTabs.svelte';
 	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
 	import EmailDeliveryTable from '$lib/components/admin/EmailDeliveryTable.svelte';
+	import UserAssuranceSection from '$lib/components/admin/UserAssuranceSection.svelte';
 	import type { OrganizationNode } from '$lib/api/admin-organizations';
 	import { adminAuth } from '$lib/stores/admin-auth.svelte';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { sanitizeText, isValidUUID } from '$lib/utils';
 	import { normalizeTimestampMs } from '$lib/utils/timestamp';
-	import { formatAccountAuditAction } from '$lib/admin/account-audit-action-label';
+	import { formatGuestAwareAuditAction } from '$lib/admin/account-audit-action-label';
 
 	let user: User | null = $state(null);
 	let loading = $state(true);
@@ -107,7 +109,8 @@
 	const canReadAccountGovernance = $derived(
 		adminAuth.hasAnyPermission([
 			'admin:account_support_context:read',
-			'admin:account_legal_holds:read'
+			'admin:account_legal_holds:read',
+			'admin:account_assurance:read'
 		])
 	);
 	type TabId =
@@ -745,9 +748,12 @@
 			: `One-time code sent to ${email}. Used as a fallback if passkeys are unavailable.`;
 	}
 
-	function auditActionLabel(action: string): string {
-		const accountAction = formatAccountAuditAction(action, getLocale());
-		if (accountAction) return accountAction;
+	function auditActionLabel(
+		action: string,
+		metadata: Record<string, unknown> | null = null
+	): string {
+		const guestAwareAction = formatGuestAwareAuditAction(action, metadata, getLocale());
+		if (guestAwareAction) return guestAwareAction;
 		return action
 			.split('.')
 			.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
@@ -768,10 +774,20 @@
 		if (action.includes('failed') || action.includes('delete') || action.includes('revoke')) {
 			return 'badge badge-danger';
 		}
-		if (action.includes('login') || action.includes('create') || action.includes('issue')) {
+		if (
+			action.includes('login') ||
+			action.includes('create') ||
+			action.includes('issue') ||
+			action === 'account.guest.upgraded'
+		) {
 			return 'badge badge-success';
 		}
-		if (action.includes('update') || action.includes('refresh')) return 'badge badge-info';
+		if (
+			action.includes('update') ||
+			action.includes('refresh') ||
+			action === 'account.guest.upgrade_started'
+		)
+			return 'badge badge-info';
 		return 'badge badge-neutral';
 	}
 
@@ -1308,6 +1324,10 @@
 						<dd class="info-value">{sanitizeText(user.user_type || '-')}</dd>
 					</div>
 					<div class="account-info-row">
+						<dt>{$LL.admin_registration_label()}</dt>
+						<dd class="info-value"><AccountRegistrationState state={user.registration_state} /></dd>
+					</div>
+					<div class="account-info-row">
 						<dt>{$LL.admin_user_detail_role()}</dt>
 						<dd class="info-value role-chip-list">
 							{#each roleSummary() as role (role)}
@@ -1611,6 +1631,10 @@
 							{/each}
 						</tbody>
 					</AdminDataTable>
+				{:else if user.restricted}
+					<div class="empty-state">
+						<p class="empty-state-description">{$LL.admin_user_detail_restricted_credentials()}</p>
+					</div>
 				{:else}
 					<div class="empty-state">
 						<p class="empty-state-description">{$LL.admin_user_detail_no_passkeys()}</p>
@@ -1668,6 +1692,10 @@
 							{/each}
 						</tbody>
 					</AdminDataTable>
+				{:else if user.restricted}
+					<div class="empty-state">
+						<p class="empty-state-description">{$LL.admin_user_detail_restricted_credentials()}</p>
+					</div>
 				{:else}
 					<div class="empty-state">
 						<p class="empty-state-description">{$LL.admin_user_detail_no_totp()}</p>
@@ -1796,7 +1824,9 @@
 							<div class="user-audit-row">
 								<span class="user-audit-time">{formatIsoDateTime(entry.createdAt)}</span>
 								<div class="user-audit-detail">
-									<span class="user-detail-strong">{auditActionLabel(entry.action)}</span>
+									<span class="user-detail-strong"
+										>{auditActionLabel(entry.action, entry.metadata)}</span
+									>
 									<span class="muted"> - {auditResourceSummary(entry)}</span>
 								</div>
 								<span class={auditBadgeClass(entry.action)}>{entry.action}</span>
@@ -2015,6 +2045,13 @@
 								</div>
 							{/if}
 						</AdminSection>
+					{/if}
+
+					{#if adminAuth.hasPermission('admin:account_assurance:read')}
+						<UserAssuranceSection
+							{userId}
+							canWrite={adminAuth.hasPermission('admin:account_assurance:write')}
+						/>
 					{/if}
 				</div>
 			{/if}

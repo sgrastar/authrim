@@ -292,10 +292,13 @@ describe('generated server-surface smoke', () => {
       }
 
       if (url.endsWith('/api/admin/settings/audit-storage') && method === 'GET') {
-        return new Response(JSON.stringify({ storage: { backend: 'd1-core' } }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
+        return new Response(
+          JSON.stringify({ storage: { source: 'setup', read_only: true, mode: 'scheduled' } }),
+          {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }
+        );
       }
 
       if (url.endsWith('/api/admin/settings/audit-storage/retention') && method === 'GET') {
@@ -307,6 +310,9 @@ describe('generated server-surface smoke', () => {
 
       if (url.endsWith('/api/admin/settings/audit-storage/routing-rules') && method === 'POST') {
         const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+        expect(body).toMatchObject({ retention: { eventLogRetentionDays: 90 } });
+        expect(body).not.toHaveProperty('backend');
+        expect(body).not.toHaveProperty('targets');
         routingRules.push({ name: body.name });
         return new Response(JSON.stringify({ success: true, rule: { name: body.name } }), {
           status: 200,
@@ -329,7 +335,7 @@ describe('generated server-surface smoke', () => {
       }
 
       if (url.endsWith('/api/admin/settings/audit-storage/stats') && method === 'GET') {
-        return new Response(JSON.stringify({ stats: { total_logs: 1 } }), {
+        return new Response(JSON.stringify({ storage: { source: 'setup', mode: 'scheduled' } }), {
           status: 200,
           headers: { 'content-type': 'application/json' },
         });

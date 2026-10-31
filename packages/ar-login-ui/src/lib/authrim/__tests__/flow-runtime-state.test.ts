@@ -3,7 +3,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { FlowRuntimeStartResponse } from '$lib/api/flow-runtime';
 import {
+	clearExternalFlowRuntimeHandoff,
 	consumeFlowRuntimeState,
+	recordExternalFlowRuntimeHandoff,
+	peekFlowRuntimeState,
 	persistFlowRuntimeState,
 	updateFlowRuntimePostAuthRedirect
 } from '../flow-runtime-state';
@@ -56,5 +59,63 @@ describe('Flow runtime session state', () => {
 		expect(
 			sessionStorage.getItem(`${LOGIN_UI_SESSION_STORAGE_KEYS.flowRuntimeStatePrefix}missing`)
 		).toBeNull();
+	});
+
+	describe("the interaction an external provider's return resumes", () => {
+		const interactionKey = LOGIN_UI_SESSION_STORAGE_KEYS.externalFlowRuntimeInteractionId;
+		const kindKey = LOGIN_UI_SESSION_STORAGE_KEYS.externalFlowRuntimeKind;
+
+		it('records an open Flow for the callback to resume', () => {
+			expect(recordExternalFlowRuntimeHandoff(createFlow('interaction_open'), 'login')).toBe(true);
+
+			expect(sessionStorage.getItem(interactionKey)).toBe('interaction_open');
+			expect(sessionStorage.getItem(kindKey)).toBe('login');
+		});
+
+		it('does not resume an earlier, abandoned Flow when a later sign-in begins', () => {
+			// An external sign-in begun for Flow A and abandoned leaves its interaction behind ...
+			recordExternalFlowRuntimeHandoff(createFlow('interaction_a'), 'registration');
+			expect(sessionStorage.getItem(interactionKey)).toBe('interaction_a');
+
+			// ... and the next one clears it before anything else: when its Flow is complete or
+			// cannot be stored, the callback has nothing of Flow A to pick up.
+			clearExternalFlowRuntimeHandoff();
+
+			expect(sessionStorage.getItem(interactionKey)).toBeNull();
+			expect(sessionStorage.getItem(kindKey)).toBeNull();
+		});
+
+		it('replaces the earlier interaction with this one', () => {
+			recordExternalFlowRuntimeHandoff(createFlow('interaction_a'), 'registration');
+			recordExternalFlowRuntimeHandoff(createFlow('interaction_b'), 'login');
+
+			expect(sessionStorage.getItem(interactionKey)).toBe('interaction_b');
+			expect(sessionStorage.getItem(kindKey)).toBe('login');
+		});
+
+		it('forgets the interaction when asked to, and when there is no Flow', () => {
+			recordExternalFlowRuntimeHandoff(createFlow('interaction_a'), 'login');
+			clearExternalFlowRuntimeHandoff();
+			expect(sessionStorage.getItem(interactionKey)).toBeNull();
+
+			recordExternalFlowRuntimeHandoff(createFlow('interaction_a'), 'login');
+			expect(recordExternalFlowRuntimeHandoff(null, 'login')).toBe(true);
+			expect(sessionStorage.getItem(interactionKey)).toBeNull();
+		});
+	});
+
+	it('can be read without being removed, so a resume that fails for a moment can be tried again', () => {
+		persistFlowRuntimeState(createFlow('interaction_1'));
+
+		expect(peekFlowRuntimeState('interaction_1')).toMatchObject({
+			interaction_id: 'interaction_1'
+		});
+		expect(peekFlowRuntimeState('interaction_1')).toMatchObject({
+			interaction_id: 'interaction_1'
+		});
+		expect(consumeFlowRuntimeState('interaction_1')).toMatchObject({
+			interaction_id: 'interaction_1'
+		});
+		expect(peekFlowRuntimeState('interaction_1')).toBeNull();
 	});
 });

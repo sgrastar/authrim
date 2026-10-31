@@ -1,3 +1,4 @@
+import { resolveReplacementWebhookCore } from './account-webhook-replacement';
 import {
   createAuditLog,
   ensureDatabaseAdapter,
@@ -232,6 +233,8 @@ async function releaseOutboxFailure(
 function coordinator(env: Env, pii: DatabaseAdapter): IdentifierReplacementCoordinator {
   let lookupForBucket: Awaited<ReturnType<typeof createLookupBucketWriteResolver>> | null = null;
   return new IdentifierReplacementCoordinator({
+    webhookCoreForAccount: (tenantId, userId) =>
+      resolveReplacementWebhookCore(env, tenantId, userId),
     pii,
     lookupForBucket: async (bucket) => {
       lookupForBucket ??= await createLookupBucketWriteResolver(env);

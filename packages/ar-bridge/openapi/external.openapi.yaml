@@ -1,9 +1,233 @@
 openapi: 3.2.0
 info:
   title: Authrim External Identity Bridge API
-  version: 0.4.1
-  description: Browser continuation endpoints owned by the external identity bridge.
+  version: 0.5.0
+  description: >
+    Browser continuation endpoints owned by the external identity bridge.
+
+    When coordinated SAML DR export is enabled, every operation can additionally return HTTP 503
+    while source updates are paused or update admission is unavailable. This availability response
+    has Content-Type text/plain;charset=UTF-8, Cache-Control no-store, Retry-After 5, and the body
+    "Service temporarily unavailable" (no response body for HEAD). Clients may retry after the
+    indicated delay; a failed response does not establish whether an earlier write completed.
 paths:
+  /auth/external/{provider}/start:
+    get:
+      operationId: startExternalIdentityLogin
+      summary: Start external identity provider login
+      description: >-
+        Starts sign-in with the provider identified by its id or slug. Sign-in requires client_id,
+        code_challenge and code_challenge_method=S256. A one-use link_intent issued for the current
+        browser session starts account linking instead; runtime_interaction_id is ignored for
+        linking. The optional interaction association does not alter provider selection,
+        client redirect validation, PKCE, or the normal authorization redirect.
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          description: The configured provider's id or slug.
+          schema:
+            type: string
+        - name: client_id
+          in: query
+          description: Required for sign-in; not required for a validated account-link intent.
+          schema:
+            type: string
+        - name: code_challenge
+          in: query
+          description: The client's PKCE challenge, required for sign-in.
+          schema:
+            type: string
+        - name: code_challenge_method
+          in: query
+          description: Must be S256 for sign-in.
+          schema:
+            type: string
+        - name: redirect_uri
+          in: query
+          description: The post-login redirect, subject to the existing client and tenant validation.
+          schema:
+            type: string
+        - name: link_intent
+          in: query
+          description: One-use account-link intent bound to the current browser session.
+          schema:
+            type: string
+        - name: runtime_interaction_id
+          in: query
+          required: false
+          description: >-
+            Optional Flow interaction identifier for associating failed sign-in attempts with an
+            existing interaction of this tenant. The value is trimmed and used only when it names
+            an unexpired interaction in the created or active state. An absent, empty, malformed,
+            unknown, expired, or other-tenant value is ignored. If the interaction cannot be checked,
+            sign-in continues without this association. This parameter adds no rejection response
+            and does not change the existing sign-in redirects or errors.
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Redirects to the provider, the client callback, or the account-link result.
+          headers:
+            Location:
+              required: true
+              schema:
+                type: string
+        '400':
+          description: Existing sign-in validation failed, such as missing client PKCE or invalid human verification.
+        '403':
+          description: The provider is not permitted for the requested sign-in or re-authentication.
+        '404':
+          description: The provider is unknown or disabled, or a signup invitation is unavailable.
+        '429':
+          description: The authentication request rate limit was exceeded.
+        '500':
+          description: The external login could not be started.
+        '503':
+          description: Provider usage or re-authentication settings are temporarily unavailable.
+  /api/external/{provider}/start:
+    get:
+      operationId: startExternalIdentityLoginApiAlias
+      summary: Start external identity provider login
+      description: >-
+        Starts sign-in with the provider identified by its id or slug. Sign-in requires client_id,
+        code_challenge and code_challenge_method=S256. A one-use link_intent issued for the current
+        browser session starts account linking instead; runtime_interaction_id is ignored for
+        linking. The optional interaction association does not alter provider selection,
+        client redirect validation, PKCE, or the normal authorization redirect.
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          description: The configured provider's id or slug.
+          schema:
+            type: string
+        - name: client_id
+          in: query
+          description: Required for sign-in; not required for a validated account-link intent.
+          schema:
+            type: string
+        - name: code_challenge
+          in: query
+          description: The client's PKCE challenge, required for sign-in.
+          schema:
+            type: string
+        - name: code_challenge_method
+          in: query
+          description: Must be S256 for sign-in.
+          schema:
+            type: string
+        - name: redirect_uri
+          in: query
+          description: The post-login redirect, subject to the existing client and tenant validation.
+          schema:
+            type: string
+        - name: link_intent
+          in: query
+          description: One-use account-link intent bound to the current browser session.
+          schema:
+            type: string
+        - name: runtime_interaction_id
+          in: query
+          required: false
+          description: >-
+            Optional Flow interaction identifier for associating failed sign-in attempts with an
+            existing interaction of this tenant. The value is trimmed and used only when it names
+            an unexpired interaction in the created or active state. An absent, empty, malformed,
+            unknown, expired, or other-tenant value is ignored. If the interaction cannot be checked,
+            sign-in continues without this association. This parameter adds no rejection response
+            and does not change the existing sign-in redirects or errors.
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Redirects to the provider, the client callback, or the account-link result.
+          headers:
+            Location:
+              required: true
+              schema:
+                type: string
+        '400':
+          description: Existing sign-in validation failed, such as missing client PKCE or invalid human verification.
+        '403':
+          description: The provider is not permitted for the requested sign-in or re-authentication.
+        '404':
+          description: The provider is unknown or disabled, or a signup invitation is unavailable.
+        '429':
+          description: The authentication request rate limit was exceeded.
+        '500':
+          description: The external login could not be started.
+        '503':
+          description: Provider usage or re-authentication settings are temporarily unavailable.
+  /api/external/links:
+    get:
+      operationId: listLinkedExternalIdentities
+      summary: List the external accounts linked to the current account
+      security:
+        - authrimSession: []
+      responses:
+        '200':
+          description: The account's active linked external identities, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LinkedExternalIdentityList'
+        '401':
+          description: A valid Authrim session is required.
+        '500':
+          description: The session or the linked identities could not be read.
+    post:
+      operationId: startExternalIdentityLink
+      summary: Start linking an external account to the current account
+      description: >-
+        Requires a full (not guest) session authenticated within the tenant's re-authentication window (`self-service.reauth_ttl_seconds`, 60-1800 seconds, default 300). Returns the
+        external start URL with a one-use link intent bound to this session; the provider's answer
+        returns to the account page as `/account?social_link=linked` or
+        `/account?social_link=error&reason=already_linked|email_not_verified|session_expired|cancelled|failed`.
+        Linking never creates a session.
+      security:
+        - authrimSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - provider_id
+              properties:
+                provider_id:
+                  type: string
+                  minLength: 1
+                  maxLength: 256
+                  description: The provider's id or slug.
+      responses:
+        '200':
+          description: The URL the browser navigates to.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - authorization_url
+                properties:
+                  authorization_url:
+                    type: string
+                    format: uri
+        '400':
+          description: '`provider_id` is missing.'
+        '401':
+          description: A valid Authrim session is required.
+        '403':
+          description: >-
+            Re-authentication is required (`reauth_required`) or the session is a guest session
+            (`guest_registration_required`).
+        '404':
+          description: The provider is unknown or disabled.
+        '409':
+          description: An account from this provider is already linked (`already_linked`).
   /api/external/links/{id}:
     delete:
       operationId: unlinkExternalIdentity
@@ -29,11 +253,20 @@ paths:
               schema:
                 $ref: '#/components/schemas/ExternalIdentityUnlinkResponse'
         '400':
-          description: Unlinking would remove the account's final authentication method.
+          description: >-
+            Unlinking would remove the account's last way to sign in
+            (`remaining_login_method_required`).
         '401':
           description: A valid Authrim session is required.
+        '403':
+          description: >-
+            Re-authentication is required (`reauth_required`) or the session is a guest session
+            (`guest_registration_required`).
         '404':
           description: The linked identity or prior unlink operation does not exist for this account.
+        '409':
+          description: >-
+            Another removal of the account's sign-in methods is running (`operation_in_progress`).
         '500':
           description: The authority or durable cleanup operation could not be safely updated.
   /api/external/provisioning/status:
@@ -118,6 +351,255 @@ paths:
               schema:
                 type: string
                 format: uri
+  /handoff/verify:
+    post:
+      operationId: verifyExternalHandoff
+      summary: Exchange a handoff token for a DPoP-bound access token
+      description: >-
+        Redeems the one-time handoff artifact an external IdP login produced, for the client and
+        state it was bound to, and returns an access token bound to the DPoP proof's key. With
+        tenant assurance enabled and a default FAL of FAL3 (with fal3_requires_par), which needs
+        a pushed, signed authorization request a handed-off login never had, every request is
+        refused with unauthorized_client; assurance settings that cannot be read return 503
+        temporarily_unavailable. Neither refusal spends the artifact. The request must come from
+        an origin of the client's registered redirect URIs, given by Origin or, without it,
+        Referer; a request with neither, or from another origin, is refused with 403.
+      parameters:
+        - name: DPoP
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: Origin
+          in: header
+          description: The requesting origin; one of the client's registered redirect URI origins.
+          schema:
+            type: string
+        - name: Referer
+          in: header
+          description: Used for the origin when Origin is absent.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HandoffVerifyRequest'
+      responses:
+        '200':
+          description: A DPoP-bound access token (and, when included, the session and user).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request, DPoP proof or handoff, or the required FAL not met.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthError'
+        '401':
+          description: Unknown client, or an expired handoff session.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '403':
+          description: No Origin or Referer, or an origin the client has not registered.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '429':
+          description: Too many handoff attempts.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '500':
+          description: Internal error.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '503':
+          description: Assurance settings are temporarily unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthError'
+  /auth/external/handoff/verify:
+    post:
+      operationId: verifyExternalHandoffAuthPath
+      summary: Exchange a handoff token for a DPoP-bound access token (alternative path)
+      description: >-
+        Redeems the one-time handoff artifact an external IdP login produced, for the client and
+        state it was bound to, and returns an access token bound to the DPoP proof's key. With
+        tenant assurance enabled and a default FAL of FAL3 (with fal3_requires_par), which needs
+        a pushed, signed authorization request a handed-off login never had, every request is
+        refused with unauthorized_client; assurance settings that cannot be read return 503
+        temporarily_unavailable. Neither refusal spends the artifact. The request must come from
+        an origin of the client's registered redirect URIs, given by Origin or, without it,
+        Referer; a request with neither, or from another origin, is refused with 403.
+      parameters:
+        - name: DPoP
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: Origin
+          in: header
+          description: The requesting origin; one of the client's registered redirect URI origins.
+          schema:
+            type: string
+        - name: Referer
+          in: header
+          description: Used for the origin when Origin is absent.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HandoffVerifyRequest'
+      responses:
+        '200':
+          description: A DPoP-bound access token (and, when included, the session and user).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request, DPoP proof or handoff, or the required FAL not met.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthError'
+        '401':
+          description: Unknown client, or an expired handoff session.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '403':
+          description: No Origin or Referer, or an origin the client has not registered.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '429':
+          description: Too many handoff attempts.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '500':
+          description: Internal error.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '503':
+          description: Assurance settings are temporarily unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthError'
+  /api/external/handoff/verify:
+    post:
+      operationId: verifyExternalHandoffApiPath
+      summary: Exchange a handoff token for a DPoP-bound access token (alternative path)
+      description: >-
+        Redeems the one-time handoff artifact an external IdP login produced, for the client and
+        state it was bound to, and returns an access token bound to the DPoP proof's key. With
+        tenant assurance enabled and a default FAL of FAL3 (with fal3_requires_par), which needs
+        a pushed, signed authorization request a handed-off login never had, every request is
+        refused with unauthorized_client; assurance settings that cannot be read return 503
+        temporarily_unavailable. Neither refusal spends the artifact. The request must come from
+        an origin of the client's registered redirect URIs, given by Origin or, without it,
+        Referer; a request with neither, or from another origin, is refused with 403.
+      parameters:
+        - name: DPoP
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: Origin
+          in: header
+          description: The requesting origin; one of the client's registered redirect URI origins.
+          schema:
+            type: string
+        - name: Referer
+          in: header
+          description: Used for the origin when Origin is absent.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HandoffVerifyRequest'
+      responses:
+        '200':
+          description: A DPoP-bound access token (and, when included, the session and user).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request, DPoP proof or handoff, or the required FAL not met.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthError'
+        '401':
+          description: Unknown client, or an expired handoff session.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '403':
+          description: No Origin or Referer, or an origin the client has not registered.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '429':
+          description: Too many handoff attempts.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '500':
+          description: Internal error.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '503':
+          description: Assurance settings are temporarily unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthError'
 components:
   securitySchemes:
     authrimSession:
@@ -130,6 +612,62 @@ components:
       name: authrim_external_provisioning_<digest-prefix>
       description: Dynamically named HttpOnly browser-binding cookie.
   schemas:
+    HandoffVerifyRequest:
+      type: object
+      required:
+        - handoff_token
+        - state
+        - client_id
+      properties:
+        handoff_token:
+          type: string
+        state:
+          type: string
+        client_id:
+          type: string
+    OAuthError:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+        error_description:
+          type: string
+    LinkedExternalIdentityList:
+      type: object
+      additionalProperties: false
+      required:
+        - identities
+      properties:
+        identities:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - id
+              - providerId
+              - providerName
+              - linkedAt
+            properties:
+              id:
+                type: string
+              providerId:
+                type: string
+              providerName:
+                type: string
+              providerSlug:
+                type: string
+                description: The provider's slug, which the authentication-methods API uses as its id.
+              providerEmail:
+                type: string
+              linkedAt:
+                type: integer
+                description: Milliseconds since the epoch.
+              lastLoginAt:
+                type: integer
+                description: Milliseconds since the epoch.
     ExternalIdentityUnlinkResponse:
       type: object
       additionalProperties: false

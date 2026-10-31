@@ -1,9 +1,10 @@
-import { readFileSync } from 'node:fs';
+import { readRenderedMigrationSql } from '../../../../test/helpers/migration-source.mjs';
+
 import { resolve } from 'node:path';
 // @ts-expect-error node:sqlite is available in the required runtime but this package omits Node types.
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
-import { createD1Adapter, type LookupBlindIndex } from '@authrim/ar-lib-core';
+import { createD1Adapter, type DatabaseAdapter, type LookupBlindIndex } from '@authrim/ar-lib-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   IdentifierReplacementCoordinator,
@@ -110,16 +111,17 @@ describe('IdentifierReplacementCoordinator', () => {
     oldLookup = new DatabaseSync(':memory:');
     newLookup = new DatabaseSync(':memory:');
     pii.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/pii/d1/001_0_4_0_pii_baseline.sql'), 'utf8')
+      readRenderedMigrationSql(
+        resolve(REPO_ROOT, 'migrations/pii/d1/'),
+        '001_0_5_0_pii_baseline.sql'
+      )
     );
     for (const database of [oldLookup, newLookup]) {
       database.exec(
-        readFileSync(
-          resolve(REPO_ROOT, 'migrations/lookup/d1/001_0_4_0_lookup_baseline.sql'),
-          'utf8'
+        readRenderedMigrationSql(
+          resolve(REPO_ROOT, 'migrations/lookup/d1/'),
+          '001_0_4_0_lookup_baseline.sql'
         )
-          .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
-          .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
       );
     }
     pii
@@ -209,6 +211,10 @@ describe('IdentifierReplacementCoordinator', () => {
   ) {
     return new IdentifierReplacementCoordinator({
       pii: createD1Adapter(d1(pii), 'pii'),
+      webhookCoreForAccount: async () =>
+        ({
+          queryOne: async () => ({ id: 'canonical-account-a', registration_state: 'registered' }),
+        }) as unknown as DatabaseAdapter,
       lookupForBucket: async (bucket) => d1(bucket < 12 ? oldLookup : newLookup),
       revokeCredentials: revoke,
       enqueueOldIdentifierNotification,
@@ -226,6 +232,8 @@ describe('IdentifierReplacementCoordinator', () => {
   });
 
   it('switches PII in place and converges both HMAC generations before completion', async () => {
+    const timestamp = Date.UTC(2026, 8, 11, 12, 0, 0, 789);
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(timestamp);
     await expect(
       coordinator().resume({
         operationId: 'replacement-1',
@@ -233,6 +241,25 @@ describe('IdentifierReplacementCoordinator', () => {
         accountId: 'account-a',
       })
     ).resolves.toEqual({ state: 'completed' });
+    clock.mockRestore();
+    expect(pii.prepare('SELECT occurred_at FROM account_webhook_outbox').get()).toEqual({
+      occurred_at: timestamp,
+    });
+    expect(pii.prepare('SELECT event_type FROM account_webhook_outbox').all()).toEqual([
+      { event_type: 'account.email.changed' },
+    ]);
+    expect(
+      pii.prepare('SELECT email_before_json, email_after_json FROM account_webhook_snapshots').get()
+    ).toEqual({
+      email_before_json: JSON.stringify('old@example.test'),
+      email_after_json: JSON.stringify('new@example.test'),
+    });
+    await coordinator().resume({
+      operationId: 'replacement-1',
+      tenantId: 'tenant-a',
+      accountId: 'account-a',
+    });
+    expect(pii.prepare('SELECT id FROM account_webhook_outbox').all()).toHaveLength(1);
     expect(
       pii.prepare(`SELECT value_json FROM identity_sensitive_values WHERE id = 'email-1'`).get()
     ).toEqual({ value_json: JSON.stringify('new@example.test') });

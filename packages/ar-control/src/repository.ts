@@ -1795,7 +1795,9 @@ export class D1ControlRepository implements ControlRepository {
       verificationStep !== undefined &&
       ((persistedPhase === 'requested' &&
         (operation.status === 'queued' || operation.status === 'running') &&
-        databaseStep.status === 'queued' &&
+        // A rollout re-armed after a target-set mismatch keeps its blocked step until the next
+        // snapshot starts it again.
+        (databaseStep.status === 'queued' || databaseStep.status === 'blocked') &&
         setupStep.status === 'queued' &&
         verificationStep.status === 'queued') ||
         (persistedPhase === 'database_rollout' &&
@@ -1929,6 +1931,7 @@ export class D1ControlRepository implements ControlRepository {
             WHERE operation.operation_id = ? AND operation.environment_id = ?
               AND operation.operation_kind = 'release_migration_rollout'
               AND operation.status = 'blocked' AND rollout.handoff_state = 'blocked'
+              AND COALESCE(operation.last_error_code, '') <> 'release_target_set_mismatch'
               AND target.target_id = ? AND target.state = 'blocked'`
         )
         .bind(

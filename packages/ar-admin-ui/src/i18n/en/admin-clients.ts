@@ -86,6 +86,10 @@ const adminClients = {
 		'WebSDK and SPA token clients should use strict DPoP. Cookie fallback does not exchange OAuth codes in browser JavaScript.',
 	admin_client_detail_browser_refresh_hint:
 		'Public browser clients only receive refresh tokens when this is DPoP-bound.',
+	admin_client_detail_minimum_ial: 'Minimum identity assurance level',
+	admin_client_detail_minimum_ial_none: 'No minimum',
+	admin_client_detail_minimum_ial_hint:
+		'A person whose identity has not been proofed to this level (NIST SP 800-63A IAL) is refused by this client, whether or not assurance is on for the tenant.',
 	admin_client_detail_pkce_required: 'PKCE Required',
 	admin_client_detail_pkce_required_desc: 'Require PKCE for authorization requests',
 	admin_client_detail_par_required: 'PAR Required',
@@ -191,11 +195,13 @@ const adminClients = {
 	admin_client_detail_claims_parameter: 'Claims Parameter',
 	admin_client_detail_identity_mapping_section: 'Field Mapping',
 	admin_client_detail_identity_mapping_policy: 'OIDC claims Field Mapping Set',
-	admin_client_detail_identity_mapping_policy_default: 'Tenant default / no client override',
+	admin_client_detail_identity_mapping_policy_default:
+		'Follow the tenant default (no client override)',
+	admin_client_detail_identity_mapping_policy_none: 'No mapping (ignore the defaults)',
 	admin_client_detail_identity_mapping_policy_hint:
-		'Selects the active Field Mapping Set used for OIDC UserInfo and token claims for this client.',
+		'Selects the active Field Mapping Set used for the ID token, UserInfo and consent screen of this client. Following the tenant default uses the tenant default Mapping Set, else the platform default, else no mapping. A mapping is never applied just because it is activated.',
 	admin_client_detail_identity_mapping_policy_display_hint:
-		'Client override for OIDC field mapping. Empty uses tenant default activation.',
+		'Client override for OIDC field mapping. Empty follows the tenant default Mapping Set (else the platform default, else none).',
 	admin_client_detail_attribute_release_consent: 'Claim release consent',
 	admin_client_detail_attribute_release_consent_disabled: 'Do not ask before releasing claims',
 	admin_client_detail_attribute_release_consent_once: 'Ask the first time, then remember',

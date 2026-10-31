@@ -17,17 +17,20 @@ import type {
   TransactionContext,
 } from '../../db/adapter';
 
+/**
+ * An adapter that answers by the table a query reads: roles and role assignments are kept in
+ * different databases, so each test database holds only its own tables.
+ */
 class PolicyEmbeddingAdapter implements DatabaseAdapter {
-  constructor(
-    private readonly rows: Array<{
-      permissions_json: string;
-      scope_type: 'global' | 'org' | 'resource';
-      scope_target: string;
-    }>
-  ) {}
+  readonly queries: string[] = [];
 
-  async query<T>(): Promise<T[]> {
-    return this.rows as T[];
+  constructor(private readonly tables: { roles?: unknown[]; role_assignments?: unknown[] }) {}
+
+  async query<T>(sql: string): Promise<T[]> {
+    this.queries.push(sql);
+    if (sql.includes('FROM role_assignments')) return (this.tables.role_assignments ?? []) as T[];
+    if (sql.includes('FROM roles')) return (this.tables.roles ?? []) as T[];
+    return [];
   }
 
   async queryOne<T>(): Promise<T | null> {
@@ -60,6 +63,45 @@ class PolicyEmbeddingAdapter implements DatabaseAdapter {
   }
 
   async close(): Promise<void> {}
+}
+
+/**
+ * The metadata database holds the role definitions and the account database the subject's
+ * assignments of them. Each given row is a role with its permissions, assigned in the given scope.
+ */
+function grantsDatabases(
+  rows: Array<{
+    permissions_json: string;
+    scope_type: 'global' | 'org' | 'resource';
+    scope_target: string;
+  }>
+) {
+  const metadata = new PolicyEmbeddingAdapter({
+    roles: rows.map((row, index) => ({
+      id: `role-${index}`,
+      name: `role-${index}`,
+      display_name: null,
+      description: null,
+      permissions_json: row.permissions_json,
+      role_type: 'custom',
+      hierarchy_level: null,
+      is_assignable: 1,
+      is_system: 0,
+      parent_role_id: null,
+    })),
+  });
+  const account = new PolicyEmbeddingAdapter({
+    role_assignments: rows.map((row, index) => ({
+      id: `assignment-${index}`,
+      role_id: `role-${index}`,
+      scope_type: row.scope_type,
+      scope_target: row.scope_target,
+      expires_at: null,
+      assigned_by: null,
+      created_at: 1,
+    })),
+  });
+  return { metadata, account };
 }
 
 describe('parseScopeToActions', () => {
@@ -150,7 +192,12 @@ describe('isPolicyEmbeddingEnabled', () => {
     expect(result).toBe(false);
   });
 
-  it('should return false when env variable is not set', async () => {
+  const saved = (value: unknown) => async (key: string) =>
+    key === 'settings:platform:feature-flags'
+      ? JSON.stringify({ 'feature.enable_policy_embedding': value })
+      : null;
+
+  it('should return false when nothing is saved and env is not set', async () => {
     (mockSettings.get as ReturnType<typeof vi.fn>).mockResolvedValue(null);
 
     const result = await isPolicyEmbeddingEnabled({
@@ -158,11 +205,10 @@ describe('isPolicyEmbeddingEnabled', () => {
     });
 
     expect(result).toBe(false);
-    expect(mockSettings.get).toHaveBeenCalledWith('policy:flags:ENABLE_POLICY_EMBEDDING');
   });
 
-  it('should return true when KV value is "true"', async () => {
-    (mockSettings.get as ReturnType<typeof vi.fn>).mockResolvedValue('true');
+  it('should return true when the platform saved it on', async () => {
+    (mockSettings.get as ReturnType<typeof vi.fn>).mockImplementation(saved(true));
 
     const result = await isPolicyEmbeddingEnabled({
       SETTINGS: mockSettings as KVNamespace,
@@ -171,21 +217,12 @@ describe('isPolicyEmbeddingEnabled', () => {
     expect(result).toBe(true);
   });
 
-  it('should return true when KV value is "1"', async () => {
-    (mockSettings.get as ReturnType<typeof vi.fn>).mockResolvedValue('1');
+  it('should return false when the platform saved it off, even if env enables it', async () => {
+    (mockSettings.get as ReturnType<typeof vi.fn>).mockImplementation(saved(false));
 
     const result = await isPolicyEmbeddingEnabled({
       SETTINGS: mockSettings as KVNamespace,
-    });
-
-    expect(result).toBe(true);
-  });
-
-  it('should return false when KV value is "false"', async () => {
-    (mockSettings.get as ReturnType<typeof vi.fn>).mockResolvedValue('false');
-
-    const result = await isPolicyEmbeddingEnabled({
-      SETTINGS: mockSettings as KVNamespace,
+      ENABLE_POLICY_EMBEDDING: 'true',
     });
 
     expect(result).toBe(false);
@@ -202,7 +239,7 @@ describe('isPolicyEmbeddingEnabled', () => {
     expect(result).toBe(true);
   });
 
-  it('should fall back to env variable when KV throws error', async () => {
+  it('is off when the settings cannot be read, even if env enables it', async () => {
     (mockSettings.get as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('KV error'));
 
     const result = await isPolicyEmbeddingEnabled({
@@ -210,23 +247,13 @@ describe('isPolicyEmbeddingEnabled', () => {
       ENABLE_POLICY_EMBEDDING: 'true',
     });
 
-    expect(result).toBe(true);
-  });
-
-  it('should handle case-insensitive KV value', async () => {
-    (mockSettings.get as ReturnType<typeof vi.fn>).mockResolvedValue('TRUE');
-
-    const result = await isPolicyEmbeddingEnabled({
-      SETTINGS: mockSettings as KVNamespace,
-    });
-
-    expect(result).toBe(true);
+    expect(result).toBe(false);
   });
 });
 
 describe('evaluatePermissionEmbeddingForScope', () => {
   it('keeps resource-scoped permissions out of tenant-wide authrim_permissions', async () => {
-    const db = new PolicyEmbeddingAdapter([
+    const dbs = grantsDatabases([
       {
         permissions_json: JSON.stringify(['documents:read']),
         scope_type: 'resource',
@@ -235,7 +262,7 @@ describe('evaluatePermissionEmbeddingForScope', () => {
     ]);
 
     const embedding = await evaluatePermissionEmbeddingForScope(
-      db,
+      dbs,
       'user_123',
       'openid documents:read',
       { tenantId: 'tenant-a' }
@@ -251,8 +278,58 @@ describe('evaluatePermissionEmbeddingForScope', () => {
     ]);
   });
 
+  it('embeds at most the limit, tenant-wide permissions first', async () => {
+    const dbs = grantsDatabases([
+      {
+        permissions_json: JSON.stringify(['documents:*']),
+        scope_type: 'global',
+        scope_target: '',
+      },
+      {
+        permissions_json: JSON.stringify(['reports:read']),
+        scope_type: 'resource',
+        scope_target: 'report:r1',
+      },
+    ]);
+    const scope = 'documents:read documents:write reports:read';
+
+    const limited = await evaluatePermissionEmbeddingForScope(dbs, 'user_123', scope, {
+      tenantId: 'tenant-a',
+      maxPermissions: 2,
+    });
+    expect(limited).toEqual({
+      permissions: ['documents:read', 'documents:write'],
+      scopedPermissions: [],
+    });
+
+    const roomForScoped = await evaluatePermissionEmbeddingForScope(dbs, 'user_123', scope, {
+      tenantId: 'tenant-a',
+      maxPermissions: 3,
+    });
+    expect(roomForScoped.scopedPermissions).toHaveLength(1);
+  });
+
+  it('reads role definitions from the metadata database and assignments from the account database', async () => {
+    const dbs = grantsDatabases([
+      {
+        permissions_json: JSON.stringify(['documents:read']),
+        scope_type: 'global',
+        scope_target: '',
+      },
+    ]);
+
+    await evaluatePermissionEmbeddingForScope(dbs, 'user_123', 'documents:read', {
+      tenantId: 'tenant-a',
+    });
+
+    expect(dbs.account.queries).toHaveLength(1);
+    expect(dbs.account.queries[0]).toContain('FROM role_assignments');
+    expect(dbs.metadata.queries).toHaveLength(1);
+    expect(dbs.metadata.queries[0]).toContain('FROM roles');
+  });
+
   it('continues returning tenant-wide permissions through the legacy helper', async () => {
-    const db = new PolicyEmbeddingAdapter([
+    const dbs = grantsDatabases([
       {
         permissions_json: JSON.stringify(['documents:*']),
         scope_type: 'global',
@@ -261,7 +338,7 @@ describe('evaluatePermissionEmbeddingForScope', () => {
     ]);
 
     await expect(
-      evaluatePermissionsForScope(db, 'user_123', 'documents:read documents:write', {
+      evaluatePermissionsForScope(dbs, 'user_123', 'documents:read documents:write', {
         tenantId: 'tenant-a',
       })
     ).resolves.toEqual(['documents:read', 'documents:write']);

@@ -254,7 +254,9 @@ type TenantVanityLookupEnv = Partial<Env> & { tenantCoreDb?: DatabaseSource };
 
 export async function getPrimaryTenantVanityDomain(
   env: TenantVanityLookupEnv,
-  tenantId: string
+  tenantId: string,
+  /** strict: a lookup that fails throws, instead of reading as no domain (for admin views). */
+  options: { strict?: boolean } = {}
 ): Promise<TenantVanityDomain | null> {
   const kv = env.AUTHRIM_CONFIG;
   const cacheKey = tenantPrimaryVanityDomainCacheKey(tenantId);
@@ -312,6 +314,7 @@ export async function getPrimaryTenantVanityDomain(
       .catch(() => {});
     return mapped;
   } catch (error) {
+    if (options.strict) throw error;
     log.warn('Failed to load primary tenant vanity domain', { tenantId, error: String(error) });
     return null;
   }
@@ -320,8 +323,10 @@ export async function getPrimaryTenantVanityDomain(
 export async function buildCanonicalTenantIssuerUrl(
   env: TenantVanityLookupEnv,
   tenantId: string,
-  fallback: string
+  fallback: string,
+  /** strict: a lookup that fails throws, instead of reading as no primary domain. */
+  options: { strict?: boolean } = {}
 ): Promise<string> {
-  const primary = await getPrimaryTenantVanityDomain(env, tenantId);
+  const primary = await getPrimaryTenantVanityDomain(env, tenantId, options);
   return primary ? `https://${primary.hostname}` : fallback;
 }

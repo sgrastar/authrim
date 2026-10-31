@@ -1,3 +1,6 @@
+import { emitLogIcebergRow } from './log-iceberg-emitter';
+import type { LogIcebergRuntimeEnv } from './log-iceberg-runtime';
+import { samlDrAll } from './tenant-portability/saml-dr-writer';
 import type { DatabaseAdapter } from '../db/adapter';
 
 export type DirectoryAuthMigrationCampaignStatus =
@@ -991,6 +994,7 @@ export async function resetDirectoryAuthMigrationUserState(
 }
 
 export async function createDirectoryAuthMigrationTransaction(
+  env: LogIcebergRuntimeEnv,
   adapter: DatabaseAdapter,
   input: DirectoryAuthCreateTransactionInput
 ): Promise<DirectoryAuthMigrationTransactionRow> {
@@ -1039,7 +1043,7 @@ export async function createDirectoryAuthMigrationTransaction(
       row.blocked_reason,
     ]
   );
-  await appendDirectoryAuthMigrationTransactionEvent(adapter, {
+  await appendDirectoryAuthMigrationTransactionEvent(env, {
     tenantId: input.tenantId,
     transactionId: row.id,
     campaignId: row.campaign_id,
@@ -1072,6 +1076,7 @@ export async function getActiveDirectoryAuthMigrationTransaction(
 }
 
 export async function completeDirectoryAuthPasskeyEnrollment(
+  env: LogIcebergRuntimeEnv,
   adapter: DatabaseAdapter,
   input: DirectoryAuthCompletePasskeyEnrollmentInput
 ): Promise<boolean> {
@@ -1105,7 +1110,7 @@ export async function completeDirectoryAuthPasskeyEnrollment(
     );
   }
 
-  await appendDirectoryAuthMigrationTransactionEvent(adapter, {
+  await appendDirectoryAuthMigrationTransactionEvent(env, {
     tenantId: input.tenantId,
     transactionId: input.transactionId,
     campaignId: input.campaignId,
@@ -1119,6 +1124,7 @@ export async function completeDirectoryAuthPasskeyEnrollment(
 }
 
 export async function completeDirectoryAuthEmailCodeFallback(
+  env: LogIcebergRuntimeEnv,
   adapter: DatabaseAdapter,
   input: DirectoryAuthCompleteEmailCodeFallbackInput
 ): Promise<boolean> {
@@ -1154,7 +1160,7 @@ export async function completeDirectoryAuthEmailCodeFallback(
     );
   }
 
-  await appendDirectoryAuthMigrationTransactionEvent(adapter, {
+  await appendDirectoryAuthMigrationTransactionEvent(env, {
     tenantId: input.tenantId,
     transactionId: input.transactionId,
     campaignId: input.campaignId,
@@ -1188,26 +1194,34 @@ export async function markDirectoryAuthMigrationUserEnrolled(
 }
 
 export async function appendDirectoryAuthMigrationTransactionEvent(
-  adapter: DatabaseAdapter,
+  env: LogIcebergRuntimeEnv,
   input: DirectoryAuthAppendTransactionEventInput
 ): Promise<void> {
-  await adapter.execute(
-    `INSERT INTO directory_auth_migration_transaction_events (
-       id, tenant_id, transaction_id, campaign_id, user_id, event_type,
-       event_payload_json, request_id, created_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      createDirectoryAuthId('damte'),
-      input.tenantId,
-      input.transactionId,
-      input.campaignId ?? null,
-      input.userId ?? null,
-      input.eventType,
-      boundedJson(input.eventPayload ?? {}),
-      input.requestId ?? null,
-      input.now ?? Date.now(),
-    ]
-  );
+  const now = input.now ?? Date.now();
+  await emitLogIcebergRow(env, {
+    tenantId: input.tenantId,
+    sourceDataset: 'core.directory_auth_migration_transaction_events',
+    logType: 'normal',
+    eventAt: now,
+    expiresAt: null,
+    overview: {
+      action: input.eventType,
+      request_id: input.requestId ?? null,
+      subject_id: input.userId ?? null,
+      resource_id: input.transactionId,
+    },
+    row: {
+      id: createDirectoryAuthId('damte'),
+      tenant_id: input.tenantId,
+      transaction_id: input.transactionId,
+      campaign_id: input.campaignId ?? null,
+      user_id: input.userId ?? null,
+      event_type: input.eventType,
+      event_payload_json: boundedJson(input.eventPayload ?? {}),
+      request_id: input.requestId ?? null,
+      created_at: now,
+    },
+  });
 }
 
 export async function cleanupExpiredDirectoryAuthMigrationTransactions(
@@ -1364,7 +1378,7 @@ export async function cleanupExpiredDirectoryAuthMaintenance(
   now: number = Date.now()
 ): Promise<DirectoryAuthMaintenanceCleanupResult> {
   const [migrationTransactionsExpired, evidenceExportsExpired, supportBundlesExpired] =
-    await Promise.all([
+    await samlDrAll([
       cleanupExpiredDirectoryAuthMigrationTransactions(adapter, tenantId, now),
       cleanupExpiredDirectoryAuthEvidenceExports(adapter, tenantId, now),
       cleanupExpiredDirectoryAuthSupportBundles(adapter, tenantId, now),

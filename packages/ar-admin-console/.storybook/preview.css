@@ -1,0 +1,9 @@
+/*
+ * Docs pages keep Storybook's own light chrome, but every story preview on them is painted
+ * with the console surface of the selected theme and scheme. Without this, a dark story
+ * (light text) would be drawn on the white docs page.
+ */
+.sbdocs .docs-story {
+	background: var(--bg-page);
+	color: var(--text-primary);
+}

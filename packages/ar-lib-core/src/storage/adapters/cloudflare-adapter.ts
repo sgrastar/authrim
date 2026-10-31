@@ -13,7 +13,7 @@
  * - Other keys → KV storage (fallback)
  */
 
-import type { DatabaseAdapter, ExecuteResult } from '../../db/adapter';
+import type { DatabaseAdapter, ExecuteResult, PreparedStatement } from '../../db/adapter';
 import {
   CanonicalRuntimeUserStore,
   type CanonicalRuntimeUserProjection,
@@ -66,7 +66,11 @@ type SessionStoreRpcStub = {
     tenantId: string
   ): Promise<Session>;
   invalidateSessionRpc(sessionId: string): Promise<boolean>;
-  extendSessionRpc(sessionId: string, additionalSeconds: number): Promise<Session | null>;
+  extendSessionRpc(
+    sessionId: string,
+    additionalSeconds: number,
+    maxLifetimeMs?: number
+  ): Promise<Session | null>;
 };
 
 function toExecuteResult(result: D1Result): ExecuteResult {
@@ -541,7 +545,7 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
    * Set to KV storage (fallback) - DEPRECATED
    * @deprecated CLIENTS KV has been removed. Use D1+CLIENTS_CACHE instead.
    */
-  private async setToKV(key: string, value: string, ttl?: number): Promise<void> {
+  private async setToKV(key: string, _value: string, _ttl?: number): Promise<void> {
     throw new Error(
       `setToKV called with ${key} - CLIENTS KV is deprecated, use D1+CLIENTS_CACHE. ` +
         'If you need general KV storage, use env.KV or create a specific namespace.'
@@ -596,6 +600,22 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
     const result = await stmt.bind(...params).run();
     return result as D1Result;
   }
+
+  /** D1 owns atomicity; never emulate a protected batch with sequential execute calls. */
+  async batchCore(statements: PreparedStatement[]): Promise<ExecuteResult[]> {
+    const prepared = statements.map((statement) =>
+      this.env.DB.prepare(statement.sql).bind(...(statement.params ?? []))
+    );
+    return (await this.env.DB.batch(prepared)).map(toExecuteResult);
+  }
+
+  async batchPII(statements: PreparedStatement[]): Promise<ExecuteResult[]> {
+    if (!this.env.DB_PII) throw new Error('DB_PII is required but not configured');
+    const prepared = statements.map((statement) =>
+      this.env.DB_PII.prepare(statement.sql).bind(...(statement.params ?? []))
+    );
+    return (await this.env.DB_PII.batch(prepared)).map(toExecuteResult);
+  }
 }
 
 export class UserStore implements IUserStore {
@@ -603,6 +623,8 @@ export class UserStore implements IUserStore {
 
   private createCoreAdapter(): DatabaseAdapter {
     const adapter = {
+      getType: () => 'd1',
+      batch: (statements: PreparedStatement[]) => this.adapter.batchCore(statements),
       query: <T>(sql: string, params?: unknown[]) => this.adapter.query<T>(sql, params),
       queryOne: async <T>(sql: string, params?: unknown[]) => {
         const rows = await this.adapter.query<T>(sql, params);
@@ -618,6 +640,8 @@ export class UserStore implements IUserStore {
 
   private createPiiAdapter(): DatabaseAdapter {
     const adapter = {
+      getType: () => 'd1',
+      batch: (statements: PreparedStatement[]) => this.adapter.batchPII(statements),
       query: <T>(sql: string, params?: unknown[]) => this.adapter.queryPII<T>(sql, params ?? []),
       queryOne: async <T>(sql: string, params?: unknown[]) => {
         const rows = await this.adapter.queryPII<T>(sql, params ?? []);
@@ -944,7 +968,7 @@ export class SessionStore implements ISessionStore {
       session.data,
       this.adapter.getConfiguredTenantId()
     );
-    return result as Session;
+    return result;
   }
 
   async delete(sessionId: string): Promise<void> {

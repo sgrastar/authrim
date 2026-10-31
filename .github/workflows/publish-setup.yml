@@ -42,8 +42,10 @@ jobs:
       - name: Verify release migration candidate
         run: pnpm migrate:release:check
 
-      - name: Build
-        run: pnpm --filter @authrim/setup build
+      - name: Build npm launcher
+        # The npm package ships only the standalone launcher. Build the same entry
+        # point as prepack; the full source CLI uses workspace build dependencies.
+        run: pnpm --filter @authrim/setup run build:launcher
 
       - name: Run tests
         run: pnpm --filter @authrim/setup test

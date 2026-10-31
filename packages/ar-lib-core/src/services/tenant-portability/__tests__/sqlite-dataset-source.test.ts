@@ -1,0 +1,569 @@
+import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
+import { beforeEach, afterEach, expect, it } from 'vitest';
+import type { DatabaseAdapter } from '../../../db/adapter';
+import { readSqliteSnapshotDataset, readNextSqliteSnapshotChunk } from '../sqlite-dataset-source';
+import {
+  SQLITE_SNAPSHOT_SCHEMA,
+  sqliteSnapshotTriggers,
+  type SnapshotTableSchema,
+} from '../sqlite-snapshot';
+import { TENANT_BUNDLE_MAX_DATASET_CHUNK_BYTES } from '../bundle-codec';
+const schema: SnapshotTableSchema = {
+  table: 'accounts',
+  tenantColumn: 'tenant_id',
+  columns: ['tenant_id', 'id', 'value', 'amount', 'blob'],
+  primaryKey: ['tenant_id', 'id'],
+  uniqueKeys: [],
+};
+let db: DatabaseSync;
+let database: Pick<DatabaseAdapter, 'query' | 'queryOne'>;
+beforeEach(() => {
+  db = new DatabaseSync(':memory:');
+  db.exec(
+    `CREATE TABLE accounts(tenant_id TEXT NOT NULL,id TEXT NOT NULL,value TEXT,amount INTEGER,blob BLOB,PRIMARY KEY(tenant_id,id));${SQLITE_SNAPSHOT_SCHEMA}${sqliteSnapshotTriggers(schema)}`
+  );
+  database = {
+    async query<T>(sql: string, params: unknown[] = []) {
+      return db.prepare(sql).all(...(params as SQLInputValue[])) as T[];
+    },
+    async queryOne<T>(sql: string, params: unknown[] = []) {
+      return (db.prepare(sql).get(...(params as SQLInputValue[])) as T | undefined) ?? null;
+    },
+  };
+});
+afterEach(() => db.close());
+function source(tenantId = 'a') {
+  return readSqliteSnapshotDataset({
+    database,
+    schema,
+    snapshotId: 'snapshot',
+    tenantId,
+    signal: new AbortController().signal,
+  });
+}
+async function text(source: AsyncIterable<Uint8Array>) {
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  let value = '';
+  for await (const chunk of source) {
+    expect(chunk.length).toBeLessThanOrEqual(TENANT_BUNDLE_MAX_DATASET_CHUNK_BYTES);
+    value += decoder.decode(chunk, { stream: true });
+  }
+  return value + decoder.decode();
+}
+it('keeps T0 while login reads and registration, updates and deletion continue between pages', async () => {
+  for (let i = 0; i < 105; i++)
+    db.prepare("INSERT INTO accounts VALUES (?,?,?,9007199254740993,X'00ff')").run(
+      'a',
+      String(i).padStart(3, '0'),
+      'before'
+    );
+  db.exec(
+    "INSERT INTO accounts VALUES ('b','000','other',0,NULL); INSERT INTO tenant_backup_snapshots (id, tenant_id, state) VALUES ('snapshot','a','capturing');"
+  );
+  const generator = source();
+  const first = await generator.next();
+  expect(first.done).toBe(false);
+  db.exec(
+    "UPDATE accounts SET value='after' WHERE tenant_id='a'; DELETE FROM accounts WHERE tenant_id='a' AND id='104'; INSERT INTO accounts VALUES ('a','new','new',0,NULL);"
+  );
+  // Ordinary login reads and post-T0 registration use the live database while export reads COW.
+  expect(db.prepare("SELECT value FROM accounts WHERE tenant_id='a' AND id='000'").get()).toEqual({
+    value: 'after',
+  });
+  expect(db.prepare("SELECT value FROM accounts WHERE tenant_id='a' AND id='new'").get()).toEqual({
+    value: 'new',
+  });
+  const rows = (new TextDecoder().decode(first.value) + (await text(generator)))
+    .trim()
+    .split('\n')
+    .map((row) => JSON.parse(row));
+  expect(rows).toHaveLength(105);
+  for (const row of rows) {
+    expect(row.tenant_id).toEqual(['text', 'a']);
+    expect(row.value).toEqual(['text', 'before']);
+    expect(row.amount).toEqual(['integer', '9007199254740993']);
+    expect(row.blob).toEqual(['blob', '00FF']);
+  }
+});
+it('continues byte-limited pages and splits multibyte rows across codec chunks', async () => {
+  const value = '界'.repeat(1024 * 1024);
+  for (let i = 0; i < 3; i++)
+    db.prepare('INSERT INTO accounts VALUES (?,?,?,0,NULL)').run('a', String(i), value);
+  db.exec(
+    "INSERT INTO tenant_backup_snapshots (id, tenant_id, state) VALUES ('snapshot','a','capturing')"
+  );
+  const rows = (await text(source()))
+    .trim()
+    .split('\n')
+    .map((row) => JSON.parse(row));
+  expect(rows).toHaveLength(3);
+  expect(rows.map((row) => row.id[1])).toEqual(['0', '1', '2']);
+  expect(rows.every((row) => row.value[1] === value)).toBe(true);
+});
+it('does not mistake absent or invalidated snapshots for successful empty datasets', async () => {
+  await expect(text(source())).rejects.toThrow('backup_snapshot_unavailable');
+  db.exec(
+    "INSERT INTO accounts VALUES ('a','0','value',0,NULL); INSERT INTO tenant_backup_snapshots (id, tenant_id, state) VALUES ('snapshot','a','capturing')"
+  );
+  await expect(text(source('b'))).rejects.toThrow('backup_snapshot_unavailable');
+  const query = database.query;
+  database.query = async <T>(sql: string, params?: unknown[]) => {
+    const rows = await query<T>(sql, params);
+    db.exec("UPDATE tenant_backup_snapshots SET state='invalid'");
+    return rows;
+  };
+  await expect(text(source())).rejects.toThrow('backup_snapshot_unavailable');
+});
+it('stops on cancellation before reading storage', async () => {
+  const controller = new AbortController();
+  controller.abort();
+  await expect(
+    text(
+      readSqliteSnapshotDataset({
+        database,
+        schema,
+        snapshotId: 'snapshot',
+        tenantId: 'a',
+        signal: controller.signal,
+      })
+    )
+  ).rejects.toThrow();
+});
+it('streams expanded rows larger than the page budget without returning the full JSON to the Worker', async () => {
+  const value = '\u0001'.repeat(2 * 1024 * 1024);
+  db.prepare('INSERT INTO accounts VALUES (?,?,?,0,NULL)').run('a', '0', value);
+  db.exec(
+    "INSERT INTO tenant_backup_snapshots (id, tenant_id, state) VALUES ('snapshot','a','capturing')"
+  );
+  const query = database.query;
+  const queryOne = database.queryOne;
+  let fragments = 0;
+  database.query = async <T>(sql: string, params?: unknown[]) => {
+    const rows = await query<T>(sql, params);
+    for (const row of rows as { row_json?: unknown; row_type: string }[]) {
+      expect(row.row_json).toBeUndefined();
+      expect(row.row_type).toBe('blob');
+    }
+    return rows;
+  };
+  database.queryOne = async <T>(sql: string, params?: unknown[]) => {
+    const result = await queryOne<T>(sql, params);
+    if (sql.includes('AS fragment')) {
+      fragments++;
+      expect((result as { fragment: string }).fragment.length).toBeLessThanOrEqual(512 * 1024);
+    }
+    return result;
+  };
+  const rows = (await text(source()))
+    .trim()
+    .split('\n')
+    .map((row) => JSON.parse(row));
+  expect(rows).toHaveLength(1);
+  expect(rows[0].value).toEqual(['text', value]);
+  expect(fragments).toBeGreaterThan(8);
+});
+
+it('reads legacy JSON preimages alongside new binary live rows', async () => {
+  db.exec(
+    "INSERT INTO accounts VALUES ('a','0','before',0,NULL),('a','1','live',0,NULL); INSERT INTO tenant_backup_snapshots (id, tenant_id, state) VALUES ('snapshot','a','capturing');"
+  );
+  const legacy = {
+    tenant_id: ['text', 'a'],
+    id: ['text', '0'],
+    value: ['text', 'before'],
+    amount: ['integer', '0'],
+    blob: ['null', null],
+  };
+  db.prepare(
+    'INSERT INTO tenant_backup_preimages(snapshot_id,source_table,record_key,present,row_json) VALUES (?,?,?,?,?)'
+  ).run(
+    'snapshot',
+    'accounts',
+    JSON.stringify([
+      ['text', 'a'],
+      ['text', '0'],
+    ]),
+    1,
+    JSON.stringify(legacy)
+  );
+  db.exec("UPDATE accounts SET value='after' WHERE id='0'");
+  const rows = (await text(source()))
+    .trim()
+    .split('\n')
+    .map((row) => JSON.parse(row));
+  expect(rows.map((row) => row.value)).toEqual([
+    ['text', 'before'],
+    ['text', 'live'],
+  ]);
+});
+
+it('retries a capacity batch and preserves the original data', async () => {
+  const value = '界'.repeat(200000);
+  db.prepare("INSERT INTO accounts VALUES ('a','0',?,0,NULL)").run(value);
+  db.exec(
+    "INSERT INTO accounts VALUES ('a','1','second',0,NULL); INSERT INTO tenant_backup_snapshots(id,tenant_id,state) VALUES ('snapshot','a','capturing')"
+  );
+  const input = {
+    database,
+    schema,
+    snapshotId: 'snapshot',
+    tenantId: 'a',
+    signal: new AbortController().signal,
+  };
+  let cursor: string | null = null;
+  const bytes: Uint8Array[] = [];
+  for (let step = 0; step < 20; step++) {
+    const next = await readNextSqliteSnapshotChunk(input, cursor);
+    if (!next) break;
+    const retry = await readNextSqliteSnapshotChunk(input, cursor);
+    expect(retry).toEqual(next);
+    bytes.push(next.bytes);
+    cursor = next.nextCursor;
+    if (step === 0)
+      db.exec(
+        "UPDATE accounts SET value='changed'; DELETE FROM accounts WHERE id='1'; INSERT INTO accounts VALUES ('a','new','new',0,NULL)"
+      );
+  }
+  expect(bytes).toHaveLength(1);
+  async function* collected() {
+    yield* bytes;
+  }
+  const rows = (await text(collected()))
+    .trim()
+    .split('\n')
+    .map((row) => JSON.parse(row));
+  expect(rows.map((row) => row.value[1])).toEqual([value, 'second']);
+});
+it('returns small rows in 250-row batches instead of one storage roundtrip per row', async () => {
+  const insert = db.prepare("INSERT INTO accounts VALUES ('a',?,?,0,NULL)");
+  for (let index = 0; index < 600; index++) insert.run(String(index).padStart(3, '0'), 'value');
+  db.exec(
+    "INSERT INTO tenant_backup_snapshots(id,tenant_id,state) VALUES ('snapshot','a','capturing')"
+  );
+  const input = {
+    database,
+    schema,
+    snapshotId: 'snapshot',
+    tenantId: 'a',
+    signal: new AbortController().signal,
+  };
+  let cursor: string | null = null;
+  const batches: Uint8Array[] = [];
+  for (;;) {
+    const next = await readNextSqliteSnapshotChunk(input, cursor);
+    if (!next) break;
+    batches.push(next.bytes);
+    cursor = next.nextCursor;
+  }
+  expect(batches).toHaveLength(3);
+  expect(
+    new TextDecoder()
+      .decode(Uint8Array.from(batches.flatMap((batch) => [...batch])))
+      .trim()
+      .split('\n')
+  ).toHaveLength(600);
+});
+it('reads a large row by key and resumes inside it while omitted rows pile up before it', async () => {
+  const value = 'x'.repeat(2.5 * 1024 * 1024);
+  db.prepare("INSERT INTO accounts VALUES ('a','0','small',0,NULL)").run();
+  db.prepare("INSERT INTO accounts VALUES ('a','5',?,0,NULL)").run(value);
+  db.exec(
+    "INSERT INTO tenant_backup_snapshots (id, tenant_id, state) VALUES ('snapshot','a','capturing')"
+  );
+  // Rows written after T0 sort between the two T0 rows; more than a page of them each time.
+  const insertAfterT0 = (prefix: string) => {
+    const insert = db.prepare("INSERT INTO accounts VALUES ('a',?,'new',0,NULL)");
+    for (let i = 0; i < 150; i++) insert.run(`${prefix}${String(i).padStart(3, '0')}`);
+  };
+  insertAfterT0('1');
+  const input = {
+    database,
+    schema,
+    snapshotId: 'snapshot',
+    tenantId: 'a',
+    signal: new AbortController().signal,
+  };
+  const parts: Uint8Array[] = [];
+  let cursor: string | null = null;
+  let resumedInsideRow = false;
+  for (let call = 0; call < 50; call++) {
+    const chunk = await readNextSqliteSnapshotChunk(input, cursor);
+    if (!chunk) break;
+    parts.push(chunk.bytes);
+    cursor = chunk.nextCursor;
+    if ((JSON.parse(cursor) as { chunk: number }).chunk > 0) {
+      resumedInsideRow = true;
+      insertAfterT0(`2${call}`);
+    }
+  }
+  expect(resumedInsideRow).toBe(true);
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  const rows = (
+    parts.map((part) => decoder.decode(part, { stream: true })).join('') + decoder.decode()
+  )
+    .trim()
+    .split('\n')
+    .map((row) => JSON.parse(row));
+  expect(rows.map((row) => row.id)).toEqual([
+    ['text', '0'],
+    ['text', '5'],
+  ]);
+  expect(rows[1].value).toEqual(['text', value]);
+});
+
+it('refuses REAL primary key values instead of paging past rows it cannot position', async () => {
+  const measures: SnapshotTableSchema = {
+    table: 'measures',
+    tenantColumn: 'tenant_id',
+    columns: ['tenant_id', 'x'],
+    primaryKey: ['tenant_id', 'x'],
+    uniqueKeys: [],
+  };
+  db.exec(
+    `CREATE TABLE measures(tenant_id TEXT NOT NULL, x REAL NOT NULL, PRIMARY KEY(tenant_id, x));
+    ${sqliteSnapshotTriggers(measures)}
+    INSERT INTO measures VALUES ('a', -1e999), ('a', -2), ('a', 1.5);
+    INSERT INTO tenant_backup_snapshots (id, tenant_id, state) VALUES ('snapshot','a','capturing')`
+  );
+  const input = {
+    database,
+    schema: measures,
+    snapshotId: 'snapshot',
+    tenantId: 'a',
+    signal: new AbortController().signal,
+  };
+  await expect(text(readSqliteSnapshotDataset(input))).rejects.toThrow(
+    'backup_snapshot_unsupported_key_type'
+  );
+  const realPosition = JSON.stringify({
+    after: '[["text","a"],["real","-Inf"]]',
+    chunk: 0,
+    order: 'native',
+  });
+  await expect(readNextSqliteSnapshotChunk(input, realPosition)).rejects.toThrow(
+    'backup_snapshot_unsupported_key_type'
+  );
+});
+
+it('rejects a cursor past the current row instead of silently ending the dataset', async () => {
+  db.exec(
+    "INSERT INTO accounts VALUES ('a','0','value',0,NULL); INSERT INTO tenant_backup_snapshots(id,tenant_id,state) VALUES ('snapshot','a','capturing')"
+  );
+  const input = {
+    database,
+    schema,
+    snapshotId: 'snapshot',
+    tenantId: 'a',
+    signal: new AbortController().signal,
+  };
+  for (const cursor of ['null', '{}', '{"after":"","chunk":-1}', '{"after":"","chunk":999}'])
+    await expect(readNextSqliteSnapshotChunk(input, cursor)).rejects.toThrow('invalid_cursor');
+});
+
+it('crosses a long run of rows written after T0 in few queries and does not walk it twice', async () => {
+  // Time-ordered ids put every row written during capture after the T0 rows. Each page used to
+  // advance 100 omitted keys, so one call issued about one query per 100 of them and the next
+  // call walked the same run again. One export step shares one Worker subrequest budget.
+  const insert = db.prepare("INSERT INTO accounts VALUES ('a',?,'t0',0,NULL)");
+  for (let index = 0; index < 300; index++) insert.run(String(index).padStart(3, '0'));
+  db.exec(`INSERT INTO tenant_backup_snapshots(id,tenant_id,state) VALUES ('snapshot','a','capturing');
+    WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 20000)
+      INSERT INTO accounts SELECT 'a', printf('z%06d', i), 'new', 0, NULL FROM n;`);
+  let queries = 0;
+  const counted: Pick<DatabaseAdapter, 'query' | 'queryOne'> = {
+    async query<T>(sql: string, params: unknown[] = []) {
+      queries++;
+      return database.query<T>(sql, params);
+    },
+    async queryOne<T>(sql: string, params: unknown[] = []) {
+      queries++;
+      return database.queryOne<T>(sql, params);
+    },
+  };
+  const input = {
+    database: counted,
+    schema,
+    snapshotId: 'snapshot',
+    tenantId: 'a',
+    signal: new AbortController().signal,
+  };
+  let cursor: string | null = null;
+  const perCall: number[] = [];
+  const values: string[] = [];
+  for (;;) {
+    queries = 0;
+    const next = await readNextSqliteSnapshotChunk(input, cursor);
+    perCall.push(queries);
+    if (!next) break;
+    for (const row of new TextDecoder().decode(next.bytes).trim().split('\n'))
+      values.push((JSON.parse(row) as { value: [string, string] }).value[1]);
+    cursor = next.nextCursor;
+  }
+  expect(values).toEqual(Array.from({ length: 300 }, () => 't0'));
+  // The run of 20,000 omitted keys is crossed once, in scans that double up to 12,800 keys. A
+  // call stops near its query budget and hands the position to the next call.
+  expect(perCall.length).toBeLessThanOrEqual(4);
+  expect(Math.max(...perCall)).toBeLessThanOrEqual(28);
+  expect(perCall.reduce((sum, value) => sum + value, 0)).toBeLessThan(70);
+});
+
+it('returns positions without bytes while a filter drops every row, within the query budget', async () => {
+  const insert = db.prepare("INSERT INTO accounts VALUES ('a',?,'hidden',0,NULL)");
+  for (let index = 0; index < 3000; index++) insert.run(String(index).padStart(5, '0'));
+  db.exec(
+    "INSERT INTO tenant_backup_snapshots(id,tenant_id,state) VALUES ('snapshot','a','capturing')"
+  );
+  let queries = 0;
+  const counted: Pick<DatabaseAdapter, 'query' | 'queryOne'> = {
+    async query<T>(sql: string, params: unknown[] = []) {
+      queries++;
+      return database.query<T>(sql, params);
+    },
+    async queryOne<T>(sql: string, params: unknown[] = []) {
+      queries++;
+      return database.queryOne<T>(sql, params);
+    },
+  };
+  let cursor: string | null = null;
+  const perCall: number[] = [];
+  for (;;) {
+    queries = 0;
+    const next = await readNextSqliteSnapshotChunk(
+      {
+        database: counted,
+        schema,
+        snapshotId: 'snapshot',
+        tenantId: 'a',
+        signal: new AbortController().signal,
+        filterRow: async () => false,
+      },
+      cursor
+    );
+    perCall.push(queries);
+    if (!next) break;
+    expect(next.bytes).toHaveLength(0);
+    expect(next.nextCursor).not.toBe(cursor);
+    cursor = next.nextCursor;
+  }
+  // 3,000 dropped rows are 30 pages of one page query plus two snapshot checks; no call walks
+  // them all, and walking any page twice would push the total well past 120.
+  expect(perCall.length).toBeGreaterThan(2);
+  expect(Math.max(...perCall)).toBeLessThanOrEqual(28);
+  expect(perCall.reduce((sum, value) => sum + value, 0)).toBeLessThan(120);
+});
+
+it('refuses to resume a position recorded in the legacy record_key text order', async () => {
+  const insert = db.prepare("INSERT INTO accounts VALUES ('a',?,'value',0,NULL)");
+  for (const id of ['1', '2']) insert.run(id);
+  db.exec(
+    "INSERT INTO tenant_backup_snapshots(id,tenant_id,state) VALUES ('snapshot','a','capturing')"
+  );
+  const input = {
+    database,
+    schema,
+    snapshotId: 'snapshot',
+    tenantId: 'a',
+    signal: new AbortController().signal,
+  };
+  const legacy = JSON.stringify({ after: '[["text","a"],["text","1"]]', chunk: 0 });
+  await expect(readNextSqliteSnapshotChunk(input, legacy)).rejects.toThrow('invalid_cursor');
+  await expect(
+    readNextSqliteSnapshotChunk(input, JSON.stringify({ after: '', chunk: 1 }))
+  ).rejects.toThrow('invalid_cursor');
+  // The initial legacy position names no row, so it means the same start in either order.
+  const first = await readNextSqliteSnapshotChunk(input, JSON.stringify({ after: '', chunk: 0 }));
+  expect(JSON.parse(first?.nextCursor ?? '')).toEqual({
+    after: '[["text","a"],["text","2"]]',
+    chunk: 0,
+    order: 'native',
+  });
+});
+
+it('applies a deterministic row transform before resumable chunks are emitted', async () => {
+  db.prepare("INSERT INTO accounts VALUES ('a','0','source',0,NULL)").run();
+  db.exec(
+    "INSERT INTO tenant_backup_snapshots(id,tenant_id,state) VALUES ('snapshot','a','capturing')"
+  );
+  const input = {
+    database,
+    schema,
+    snapshotId: 'snapshot',
+    tenantId: 'a',
+    signal: new AbortController().signal,
+    transformRow: async (rowJson: string) =>
+      rowJson.replace('[\"text\",\"source\"]', '[\"text\",\"portable\"]'),
+  };
+  const first = await readNextSqliteSnapshotChunk(input, null);
+  const retry = await readNextSqliteSnapshotChunk(input, null);
+  expect(retry).toEqual(first);
+  expect(new TextDecoder().decode(first?.bytes)).toContain('["text","portable"]');
+  expect(await readNextSqliteSnapshotChunk(input, first?.nextCursor ?? null)).toBeNull();
+});
+
+it('omits filtered rows while preserving resumable progress and an empty dataset', async () => {
+  db.exec(`INSERT INTO accounts VALUES
+    ('a','0','omit',0,NULL),
+    ('a','1','keep',0,NULL),
+    ('a','2','omit',0,NULL);
+    INSERT INTO tenant_backup_snapshots(id,tenant_id,state) VALUES ('snapshot','a','capturing')`);
+  const input = {
+    database,
+    schema,
+    snapshotId: 'snapshot',
+    tenantId: 'a',
+    signal: new AbortController().signal,
+    filterRow: async (rowJson: string) => rowJson.includes('"keep"'),
+  };
+  const first = await readNextSqliteSnapshotChunk(input, null);
+  expect(new TextDecoder().decode(first?.bytes)).toContain('["text","keep"]');
+  expect(await readNextSqliteSnapshotChunk(input, first?.nextCursor ?? null)).toBeNull();
+  expect(
+    await readNextSqliteSnapshotChunk({ ...input, filterRow: async () => false }, null)
+  ).toBeNull();
+});
+
+it('streams only the installed logical partition from live rows and preimages', async () => {
+  const partitioned: SnapshotTableSchema = {
+    table: 'permissions',
+    tenantColumn: 'tenant_id',
+    columns: ['id', 'tenant_id', 'subject_type', 'value'],
+    primaryKey: ['id'],
+    uniqueKeys: [],
+    rowPartition: { column: 'subject_type', values: ['user', 'role', 'org'] },
+  };
+  db.exec(`CREATE TABLE permissions(
+      id TEXT PRIMARY KEY NOT NULL,
+      tenant_id TEXT NOT NULL,
+      subject_type TEXT NOT NULL,
+      value TEXT NOT NULL
+    );
+    ${sqliteSnapshotTriggers(partitioned)}
+    INSERT INTO permissions VALUES
+      ('u','a','user','user-before'),
+      ('r','a','role','role-before'),
+      ('o','a','org','org-before');
+    INSERT INTO tenant_backup_snapshots(id,tenant_id,state)
+      VALUES ('partition-snapshot','a','capturing');
+    UPDATE permissions SET value='changed' WHERE id IN ('u','r');`);
+  const read = (partitions: string[]) =>
+    text(
+      readSqliteSnapshotDataset({
+        database,
+        schema: partitioned,
+        snapshotId: 'partition-snapshot',
+        tenantId: 'a',
+        partitions,
+        signal: new AbortController().signal,
+      })
+    );
+  const settings = (await read(['role', 'org']))
+    .trim()
+    .split('\n')
+    .map((row) => JSON.parse(row));
+  const users = (await read(['user']))
+    .trim()
+    .split('\n')
+    .map((row) => JSON.parse(row));
+  expect(settings.map((row) => row.value[1]).sort()).toEqual(['org-before', 'role-before']);
+  expect(users.map((row) => row.value[1])).toEqual(['user-before']);
+});

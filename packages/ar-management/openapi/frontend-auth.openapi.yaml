@@ -1,9 +1,16 @@
 openapi: 3.2.0
 info:
   title: Authrim Frontend Auth Discovery API
-  version: 0.4.1
+  version: 0.5.0
   summary: Login UI discovery and grant bootstrap endpoints.
-  description: OpenAPI contract for frontend authentication discovery endpoints owned by the management Worker.
+  description: >
+    OpenAPI contract for frontend authentication discovery endpoints owned by the management Worker.
+
+    When coordinated SAML DR export is enabled, every operation can additionally return HTTP 503
+    while source updates are paused or update admission is unavailable. This availability response
+    has Content-Type text/plain;charset=UTF-8, Cache-Control no-store, Retry-After 5, and the body
+    "Service temporarily unavailable" (no response body for HEAD). Clients may retry after the
+    indicated delay; a failed response does not establish whether an earlier write completed.
 servers:
   - url: https://{tenant_domain}
     variables:
@@ -76,7 +83,12 @@ paths:
       description:
         Returns the enabled login methods and Login UI configuration for the current tenant,
         including passkey, email code, TOTP, directory password, human verification, SAML, and external
-        provider options when configured.
+        provider options when configured. methods.guest contains enabled (boolean) and deletionAfterDays
+        (integer or null). Guest login is advertised only when the tenant and the requested client
+        both explicitly permit it; without client_id it is disabled. deletionAfterDays describes
+        retention for newly created guests, not the actual deletion date of an existing account.
+        If guest settings are unavailable, guest login is omitted from available choices while
+        other authentication methods retain their existing fallback behavior.
       parameters:
         - name: client_id
           in: query
@@ -459,7 +471,6 @@ components:
                 providers: []
             ui:
               theme: light
-              variant: beige
               supportedLocales:
                 - en
                 - ja
@@ -489,7 +500,6 @@ components:
               allow_manual_tenant_entry: true
             ui:
               theme: light
-              variant: beige
               brand_name: Authrim
             single_tenant_mode: false
             is_common_entry_host: true
@@ -1178,6 +1188,59 @@ components:
             humanVerification:
               type: object
               additionalProperties: true
+              description: >-
+                Human verification (CAPTCHA) for the tenant. `required` / `requiredFor` say what the
+                tenant's settings ask for; `available` / `reason` say whether the provider can
+                verify a token. A flow in `requiredFor` while `available` is false cannot be
+                completed (the servers refuse it), so a client must say so instead of showing
+                no widget.
+              properties:
+                enabled:
+                  type: boolean
+                  description: The widget is shown for at least one flow.
+                provider:
+                  type: string
+                siteKey:
+                  type: string
+                  nullable: true
+                loginEnabled:
+                  type: boolean
+                  description: The widget is shown on the login screen.
+                signupEnabled:
+                  type: boolean
+                reauthEnabled:
+                  type: boolean
+                required:
+                  type: boolean
+                  description: At least one flow's settings ask for human verification.
+                requiredFor:
+                  type: object
+                  description: Per flow, whether the settings ask for human verification.
+                  properties:
+                    login:
+                      type: boolean
+                    signup:
+                      type: boolean
+                    reauth:
+                      type: boolean
+                available:
+                  type: boolean
+                  description: >-
+                    The provider can verify a token (its plugin is enabled and its
+                    configuration is one the runner accepts: both keys within their length limits,
+                    a well-formed hostname, a supported widget mode). A provider that was never enabled is not available.
+                reason:
+                  type: string
+                  nullable: true
+                  enum:
+                    - provider_disabled
+                    - provider_unconfigured
+                    - settings_unreadable
+                    - null
+                  description: >-
+                    Why the flows cannot be completed; null when the provider is available.
+                    settings_unreadable means the tenant's settings cannot be read, so the servers
+                    refuse every attempt; every flow is then reported as required.
             external:
               type: object
               additionalProperties: true

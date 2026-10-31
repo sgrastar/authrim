@@ -1,10 +1,12 @@
+import { runTenantBackupCoveredMutation } from '../../tenant-backup-writer';
 /**
  * Settings API v2
  *
  * Unified settings management with:
  * - URL-based scope (tenantId/clientId)
  * - PATCH for partial updates with optimistic locking
- * - env > KV > default priority
+ * - canonical tenant/client document > env > default priority
+ * - Workers KV projection for runtime readers
  * - Audit logging
  * - Version history and rollback support
  *
@@ -13,9 +15,7 @@
  * - GET/PATCH /api/admin/clients/:clientId/settings
  * - GET/PATCH /api/admin/platform/settings/:category
  * - GET /api/admin/settings/meta/:category
- * - POST /api/admin/settings/migrate (v1 → v2 migration)
- * - GET /api/admin/settings/migrate/status
- * - DELETE /api/admin/settings/migrate/lock
+ * - GET/POST /api/admin/platform/settings/legacy-import (one-time import of the older stores)
  *
  * History (Configuration Rollback):
  * - GET /api/admin/settings/:category/history - List version history
@@ -27,7 +27,7 @@
 
 import { Hono, type Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import migrateRouter from './migrate';
+import legacyImportRouter from './legacy-import';
 import {
   listSettingsHistory,
   getSettingsVersion,
@@ -36,14 +36,12 @@ import {
   compareSettingsVersions,
 } from './history';
 import {
-  createSettingsManager,
-  SettingsManager,
   type SettingScope,
   type SettingsPatchRequest,
-  type CategoryMeta,
   ConflictError,
   ALL_CATEGORY_META,
   CATEGORY_SCOPE_CONFIG,
+  settingsParentScopes,
   type CategoryName,
   type SettingScopeLevel,
   getScopedCategoryMeta,
@@ -58,39 +56,63 @@ import {
   createAuditLogFromContext,
   // Admin Auth
   type AdminAuthContext,
-  ADMIN_PERMISSIONS,
-  hasAdminPermission,
   ensureDatabaseAdapter,
   resolveAuthCorePersistenceAdapterFromEnv,
   getTenantIdFromContext,
-  parseTrustedRedirectOrigins,
-  validateAccountPagePath,
-  validatePostLoginRedirectUrl,
   validateLoginUICustomCss,
-  validateTrustedRedirectOrigins,
   bumpAuthenticationMethodsCacheRevision,
   resolveClientTrustPolicy,
+  getTenantMetadataContextFromHono,
+  ADMIN_ROLES,
+  requireSystemAdmin,
 } from '@authrim/ar-lib-core';
 import {
-  MAX_LOGIN_UI_PRIMARY_LOCALES,
-  isLoginUILocale,
-} from '@authrim/ar-lib-core/types/login-ui-languages';
+  categoryPatchNeedsState,
+  validateCategoryPatch,
+  validateCategoryPatchAt,
+  validatePlatformUIPatch,
+  validateTenantUIPaths,
+} from './patch-validation';
 import type { JsonObject, JsonValue } from '@authrim/ar-agent-access/core';
 import { ensureSupportedTenantId } from '../../single-tenant-guard';
 import { agentElevatedExecutionMiddleware } from '../../agent-elevated-execution';
-import { BUILTIN_HUMAN_VERIFICATION_PROVIDER_IDS } from '../../human-verification-provider-projection';
-import { markGlobalProviderDesiredRevision } from '../../provider-reprojection-jobs';
+import { identityMappingReferenceProblem } from './identity-mapping-reference';
+import { readPlatformIdentityMappingRelations } from '../../identity-mapping-platform-followers';
+import { parsePlatformSettingsPatch } from './platform-patch-guards';
+import { applyTenantSettingsChange } from './tenant-settings-apply';
+import { bulkApplyHandler, requireBulkApplyAuthority } from './bulk-apply';
+import { bulkApplyIdempotency } from './bulk-apply-idempotency';
+import {
+  canAccessTenant,
+  checkRolePermission,
+  hasClientSettingsPermission,
+  hasGlobalPlatformSettingsEdit,
+  hasPlatformAuthorityForTenantEdit,
+  hasTenantSettingsPermission,
+  isCategoryAllowedAtScope,
+  isCategoryWritableAtScope,
+} from './settings-authorization';
+import {
+  AUTHENTICATION_METHODS_CLIENT_CACHE_CATEGORIES,
+  AUTHENTICATION_METHODS_TENANT_CACHE_CATEGORIES,
+  errorResponse,
+  getSettingsManager,
+  invalidateAuthenticationMethodsCacheRevision,
+  log,
+  parsePatchRequest,
+  recordSettingsAuditFailure,
+  settingsKVKey,
+} from './settings-support';
+import {
+  findDeprecatedClientConsentSetting,
+  validateClientAppLoginPatch,
+  validateLoginUIPatch,
+  validatePostLoginRelatedPatch,
+  validateTenantUIPatch,
+} from './settings-validators';
 
-// Module-level logger for settings audit
-const log = createLogger().module('SETTINGS_AUDIT');
-const AUTHENTICATION_METHODS_TENANT_CACHE_CATEGORIES = new Set<CategoryName>([
-  'authentication-methods',
-  'login-ui',
-  'self-service',
-]);
-const AUTHENTICATION_METHODS_CLIENT_CACHE_CATEGORIES = new Set<CategoryName>(['login-ui']);
-const DEFAULT_HUMAN_VERIFICATION_PROVIDER = 'human-verification-cloudflare-turnstile';
-const HUMAN_VERIFICATION_SETTING_PREFIX = 'authentication-methods.human_verification.';
+export { canAccessTenant, hasGlobalPlatformSettingsEdit, hasTenantSettingsPermission };
+export { getSettingsManager };
 
 function settingValue(body: JsonObject, key: string): JsonValue | undefined {
   const set = body.set;
@@ -128,6 +150,14 @@ const AGENT_ELEVATED_SETTINGS = {
         [
           'scopeAALRequirements',
           parsedJsonObject(settingValue(body, 'assurance.scope_aal_requirements')),
+        ],
+        [
+          'upstreamAcrMappings',
+          parsedJsonObject(settingValue(body, 'assurance.upstream_acr_mappings')),
+        ],
+        [
+          'outboundAcrMappings',
+          parsedJsonObject(settingValue(body, 'assurance.outbound_acr_mappings')),
         ],
         ['includeInIdToken', settingValue(body, 'assurance.include_in_id_token')],
         ['includeInAccessToken', settingValue(body, 'assurance.include_in_access_token')],
@@ -167,7 +197,6 @@ const AGENT_ELEVATED_SETTINGS = {
         ['stateRequired', settingValue(body, 'oauth.state_required')],
         ['refreshTokenRotation', settingValue(body, 'oauth.refresh_token_rotation')],
         ['offlineAccessRequired', settingValue(body, 'oauth.offline_access_required')],
-        ['jarmEnabled', settingValue(body, 'oauth.jarm_enabled')],
       ]),
   },
   session: {
@@ -183,6 +212,65 @@ const AGENT_ELEVATED_SETTINGS = {
       ]),
   },
 } as const;
+
+/**
+ * The keys each elevated Tool binds. An agent's elevated PATCH may set only these, and may not
+ * clear or disable anything: what the approval did not bind is never written.
+ */
+const AGENT_ELEVATED_SETTING_KEYS: Record<keyof typeof AGENT_ELEVATED_SETTINGS, readonly string[]> =
+  {
+    assurance: [
+      'assurance.enabled',
+      'assurance.default_aal',
+      'assurance.default_fal',
+      'assurance.default_ial',
+      'assurance.scope_aal_requirements',
+      'assurance.upstream_acr_mappings',
+      'assurance.outbound_acr_mappings',
+      'assurance.include_in_id_token',
+      'assurance.include_in_access_token',
+      'assurance.fal2_requires_dpop',
+      'assurance.fal3_requires_par',
+    ],
+    security: [
+      'security.fapi_enabled',
+      'security.fapi_strict_dpop',
+      'security.fapi_allow_public_clients',
+    ],
+    tokens: [
+      'tokens.exchange_enabled',
+      'tokens.exchange_delegation_enabled',
+      'tokens.exchange_impersonation_enabled',
+    ],
+    oauth: [
+      'oauth.access_token_expiry',
+      'oauth.id_token_expiry',
+      'oauth.auth_code_ttl',
+      'oauth.state_required',
+      'oauth.refresh_token_rotation',
+      'oauth.offline_access_required',
+    ],
+    session: [
+      'session.default_ttl',
+      'session.max_ttl',
+      'session.refresh_default',
+      'session.backchannel_logout_token_exp',
+      'session.backchannel_on_failure',
+    ],
+  };
+
+/** Whether an elevated PATCH body writes only what the category's Tool binds. */
+export function agentElevatedSettingsBodyInScope(category: string, body: unknown): boolean {
+  const keys = AGENT_ELEVATED_SETTING_KEYS[category as keyof typeof AGENT_ELEVATED_SETTINGS];
+  if (!keys || !body || typeof body !== 'object' || Array.isArray(body)) return false;
+  const { set, clear, disable, ...rest } = body as Record<string, unknown>;
+  if (Object.keys(rest).some((field) => field !== 'ifMatch')) return false;
+  if (clear !== undefined && !(Array.isArray(clear) && clear.length === 0)) return false;
+  if (disable !== undefined && !(Array.isArray(disable) && disable.length === 0)) return false;
+  if (set === undefined) return true;
+  if (!set || typeof set !== 'object' || Array.isArray(set)) return false;
+  return Object.keys(set).every((key) => keys.includes(key));
+}
 
 export function buildAgentElevatedSettingsToolInput(
   category: string,
@@ -202,96 +290,20 @@ async function requireAgentSettingsElevation(
   if (!hasTenantSettingsPermission(adminAuth, category as CategoryName, 'edit')) return next();
   const definition = buildAgentElevatedSettingsToolInput(category, {});
   if (!definition) return next();
+  let body: unknown;
+  try {
+    body = await c.req.raw.clone().json();
+  } catch {
+    return c.json({ error: 'AGENT_ELEVATION_REQUEST_BODY_INVALID' }, 400);
+  }
+  if (!agentElevatedSettingsBodyInScope(category, body)) {
+    // The approval binds only the Tool's own fields: anything else would be written unapproved.
+    return c.json({ error: 'AGENT_ELEVATION_SETTINGS_OUT_OF_SCOPE' }, 400);
+  }
   return agentElevatedExecutionMiddleware(
     definition.operation,
     ({ body }) => buildAgentElevatedSettingsToolInput(category, body)!.input
   )(c as never, next);
-}
-
-// =============================================================================
-// Authorization Helper Functions
-// =============================================================================
-
-/**
- * Check if user has permission for a category at a given scope level
- */
-function checkRolePermission(
-  userRoles: string[],
-  category: CategoryName,
-  scopeLevel: SettingScopeLevel,
-  action: 'view' | 'edit'
-): boolean {
-  // super_admin and system_admin always have access
-  if (userRoles.includes('super_admin') || userRoles.includes('system_admin')) {
-    return true;
-  }
-
-  const scopedMeta = getScopedCategoryMeta(category);
-  const perms = scopedMeta.scopePermissions[scopeLevel];
-
-  if (action === 'edit') {
-    return perms.editRoles.some((role) => userRoles.includes(role));
-  }
-  return perms.viewRoles.some((role) => userRoles.includes(role));
-}
-
-function hasTenantSettingsPermission(
-  adminAuth: AdminAuthContext | undefined,
-  category: CategoryName,
-  action: 'view' | 'edit'
-): boolean {
-  if (!adminAuth) return false;
-  if (
-    adminAuth.actorType === 'agent' ||
-    adminAuth.actorType === 'machine' ||
-    adminAuth.authMethod === 'machine_access_token'
-  ) {
-    const granularEditPermission: Partial<Record<CategoryName, string>> = {
-      assurance: ADMIN_PERMISSIONS.SETTINGS_ASSURANCE_UPDATE,
-      security: ADMIN_PERMISSIONS.SETTINGS_SECURITY_UPDATE,
-      tokens: ADMIN_PERMISSIONS.SETTINGS_TOKEN_EXCHANGE_UPDATE,
-      oauth: ADMIN_PERMISSIONS.SETTINGS_OAUTH_UPDATE,
-      session: ADMIN_PERMISSIONS.SETTINGS_SESSION_UPDATE,
-      'login-ui': ADMIN_PERMISSIONS.SETTINGS_LOGIN_UI_UPDATE,
-    };
-    const required =
-      action === 'edit'
-        ? (granularEditPermission[category] ?? ADMIN_PERMISSIONS.SETTINGS_WRITE)
-        : ADMIN_PERMISSIONS.SETTINGS_READ;
-    return hasAdminPermission(adminAuth.permissions ?? [], required);
-  }
-  return checkRolePermission(adminAuth.roles, category, 'tenant', action);
-}
-
-function hasClientSettingsPermission(
-  adminAuth: AdminAuthContext | undefined,
-  category: CategoryName,
-  action: 'view' | 'edit'
-): boolean {
-  if (!adminAuth) return false;
-  if (
-    adminAuth.actorType === 'agent' ||
-    adminAuth.actorType === 'machine' ||
-    adminAuth.authMethod === 'machine_access_token'
-  ) {
-    const required =
-      action === 'edit' ? ADMIN_PERMISSIONS.SETTINGS_WRITE : ADMIN_PERMISSIONS.SETTINGS_READ;
-    return hasAdminPermission(adminAuth.permissions ?? [], required);
-  }
-  return checkRolePermission(adminAuth.roles, category, 'client', action);
-}
-
-/**
- * Check if a category is available at a given scope level
- */
-function isCategoryAllowedAtScope(category: CategoryName, scopeLevel: SettingScopeLevel): boolean {
-  const scopeConfig = CATEGORY_SCOPE_CONFIG[category];
-  return scopeConfig?.allowedScopes.includes(scopeLevel) ?? false;
-}
-
-function isCategoryWritableAtScope(category: CategoryName, scopeLevel: SettingScopeLevel): boolean {
-  const scopedMeta = getScopedCategoryMeta(category);
-  return scopedMeta.scopePermissions[scopeLevel].editRoles.length > 0;
 }
 
 /**
@@ -329,340 +341,6 @@ async function getClientTenantId(
   }
 }
 
-/**
- * Check if user can access a specific tenant's data
- * super_admin, system_admin and distributor_admin can access any tenant
- * org_admin can only access their own tenant
- */
-function canAccessTenant(adminAuth: AdminAuthContext | undefined, tenantId: string): boolean {
-  if (!adminAuth) return false;
-
-  if (adminAuth.actorType === 'agent') {
-    return adminAuth.tenantId === tenantId && adminAuth.tenantScope?.includes(tenantId) === true;
-  }
-
-  if (adminAuth.actorType === 'machine' || adminAuth.authMethod === 'machine_access_token') {
-    return (
-      adminAuth.tenantId === tenantId &&
-      (adminAuth.tenantScope?.includes(tenantId) === true ||
-        adminAuth.tenantScope?.includes('*') === true)
-    );
-  }
-
-  const userRoles = adminAuth.roles;
-
-  // super_admin, system_admin and distributor_admin can access any tenant
-  if (
-    userRoles.includes('super_admin') ||
-    userRoles.includes('system_admin') ||
-    userRoles.includes('distributor_admin')
-  ) {
-    return true;
-  }
-
-  // org_admin can only access their own tenant
-  if (userRoles.includes('org_admin')) {
-    // org_admin's org_id should match the tenantId
-    return adminAuth.org_id === tenantId;
-  }
-
-  // viewer with tenant association
-  if (userRoles.includes('viewer')) {
-    // Viewers can view if they have no org restriction or org matches
-    return !adminAuth.org_id || adminAuth.org_id === tenantId;
-  }
-
-  return false;
-}
-
-/**
- * Parse and sanitize PATCH request body
- */
-function parsePatchRequest(rawBody: unknown): SettingsPatchRequest {
-  if (typeof rawBody !== 'object' || rawBody === null) {
-    return { ifMatch: '' };
-  }
-
-  const body = rawBody as Record<string, unknown>;
-  return {
-    ifMatch: typeof body.ifMatch === 'string' ? body.ifMatch : '',
-    set: body.set && typeof body.set === 'object' ? sanitizeObject(body.set) : undefined,
-    clear: Array.isArray(body.clear)
-      ? body.clear.filter((k): k is string => typeof k === 'string')
-      : undefined,
-    disable: Array.isArray(body.disable)
-      ? body.disable.filter((k): k is string => typeof k === 'string')
-      : undefined,
-  };
-}
-
-function validateLoginUIPatch(body: SettingsPatchRequest): {
-  ok: boolean;
-  message?: string;
-  details?: Record<string, unknown>;
-} {
-  const supportedLocales = body.set?.['login-ui.supported_locales'];
-  const defaultLocale = body.set?.['login-ui.default_locale'];
-  const primaryLocales = body.set?.['login-ui.primary_locales'];
-  const showEnglishLanguageNames = body.set?.['login-ui.show_english_language_names'];
-  let parsedSupportedLocales: string[] | undefined;
-
-  if (supportedLocales !== undefined) {
-    if (typeof supportedLocales !== 'string') {
-      return { ok: false, message: 'login-ui.supported_locales must be a comma-separated string' };
-    }
-    parsedSupportedLocales = supportedLocales
-      .split(',')
-      .map((locale) => locale.trim())
-      .filter(Boolean);
-    if (
-      parsedSupportedLocales.length === 0 ||
-      new Set(parsedSupportedLocales).size !== parsedSupportedLocales.length ||
-      parsedSupportedLocales.some((locale) => !isLoginUILocale(locale))
-    ) {
-      return {
-        ok: false,
-        message: 'login-ui.supported_locales must contain one or more unique supported locales',
-      };
-    }
-  }
-
-  if (
-    defaultLocale !== undefined &&
-    (typeof defaultLocale !== 'string' || !isLoginUILocale(defaultLocale))
-  ) {
-    return { ok: false, message: 'login-ui.default_locale must be a supported locale' };
-  }
-  if (
-    typeof defaultLocale === 'string' &&
-    parsedSupportedLocales &&
-    !parsedSupportedLocales.includes(defaultLocale)
-  ) {
-    return { ok: false, message: 'login-ui.default_locale must be enabled in supported_locales' };
-  }
-
-  if (
-    primaryLocales !== undefined &&
-    primaryLocales !== null &&
-    (!Array.isArray(primaryLocales) ||
-      primaryLocales.length > MAX_LOGIN_UI_PRIMARY_LOCALES ||
-      new Set(primaryLocales).size !== primaryLocales.length ||
-      primaryLocales.some((locale) => !isLoginUILocale(locale)))
-  ) {
-    return {
-      ok: false,
-      message: `login-ui.primary_locales must be null or an array of up to ${MAX_LOGIN_UI_PRIMARY_LOCALES} unique supported locales`,
-    };
-  }
-
-  if (showEnglishLanguageNames !== undefined && typeof showEnglishLanguageNames !== 'boolean') {
-    return {
-      ok: false,
-      message: 'login-ui.show_english_language_names must be a boolean',
-    };
-  }
-
-  const customCss = body.set?.['login-ui.custom_css'];
-  if (customCss !== undefined) {
-    const validation = validateLoginUICustomCss(customCss);
-    if (!validation.valid) {
-      return {
-        ok: false,
-        message: validation.errors.join(' '),
-        details: { errors: validation.errors },
-      };
-    }
-    body.set!['login-ui.custom_css'] = validation.sanitizedCss ?? '';
-  }
-
-  const accountPages = body.set?.['login-ui.account_pages'];
-  if (accountPages !== undefined) {
-    if (typeof accountPages !== 'string' || accountPages.length > 2_000_000) {
-      return { ok: false, message: 'login-ui.account_pages must be a JSON string under 2 MB' };
-    }
-    try {
-      const document = JSON.parse(accountPages) as Record<string, unknown>;
-      if (
-        document.schema_version !== 'authrim.account_pages.v1' ||
-        !Array.isArray(document.pages)
-      ) {
-        throw new Error('Invalid account pages schema');
-      }
-      if (document.pages.length > 24) throw new Error('At most 24 account pages are allowed');
-      const pageIds = new Set<string>();
-      for (const rawPage of document.pages) {
-        if (!rawPage || typeof rawPage !== 'object' || Array.isArray(rawPage))
-          throw new Error('Invalid account page');
-        const page = rawPage as Record<string, unknown>;
-        if (
-          typeof page.id !== 'string' ||
-          !/^[a-z0-9_-]{1,96}$/u.test(page.id) ||
-          pageIds.has(page.id)
-        ) {
-          throw new Error('Account page IDs must be unique safe identifiers');
-        }
-        if (typeof page.name !== 'string' || !page.name.trim() || page.name.length > 80) {
-          throw new Error('Account page names must contain 1 to 80 characters');
-        }
-        if (
-          page.base_preset_id !== 'authrim-default' ||
-          typeof page.base_preset_version !== 'number' ||
-          !Number.isInteger(page.base_preset_version) ||
-          page.base_preset_version < 1
-        ) {
-          throw new Error('Invalid account page base preset');
-        }
-        if (
-          typeof page.published_version !== 'number' ||
-          !Number.isInteger(page.published_version) ||
-          page.published_version < 0 ||
-          typeof page.published_at !== 'string'
-        ) {
-          throw new Error('Invalid account page publication metadata');
-        }
-        pageIds.add(page.id);
-        for (const rawDefinition of [page.draft, page.published, page.rollback].filter(Boolean)) {
-          if (!rawDefinition || typeof rawDefinition !== 'object' || Array.isArray(rawDefinition))
-            throw new Error('Invalid account page definition');
-          const definition = rawDefinition as Record<string, unknown>;
-          if (!Array.isArray(definition.screens) || definition.screens.length > 32)
-            throw new Error('An account page may contain at most 32 screens');
-          const placementIds = new Set<string>();
-          const screenKeys = new Set<string>();
-          const snapshots = definition.screen_snapshots;
-          const stableTargets = new Set(
-            definition.screens
-              .filter(
-                (placement) =>
-                  Boolean(placement) &&
-                  typeof placement === 'object' &&
-                  !Array.isArray(placement) &&
-                  (placement as Record<string, unknown>).enabled !== false &&
-                  ((placement as Record<string, unknown>).condition === undefined ||
-                    (placement as Record<string, unknown>).condition === 'always')
-              )
-              .map((placement) => String((placement as Record<string, unknown>).id))
-          );
-          for (const rawPlacement of definition.screens) {
-            if (!rawPlacement || typeof rawPlacement !== 'object' || Array.isArray(rawPlacement))
-              throw new Error('Invalid screen placement');
-            const placement = rawPlacement as Record<string, unknown>;
-            if (
-              typeof placement.id !== 'string' ||
-              !/^[a-zA-Z0-9_-]{1,96}$/u.test(placement.id) ||
-              placementIds.has(placement.id)
-            )
-              throw new Error('Placement IDs must be unique');
-            if (
-              typeof placement.screen_key !== 'string' ||
-              !/^[a-z0-9_-]{1,96}$/u.test(placement.screen_key) ||
-              screenKeys.has(placement.screen_key)
-            )
-              throw new Error('Screen keys must be unique safe identifiers');
-            placementIds.add(placement.id);
-            screenKeys.add(placement.screen_key);
-            if (
-              placement.condition !== undefined &&
-              ![
-                'always',
-                'hidden',
-                'passkey_enabled',
-                'totp_enabled',
-                'external_idp_enabled',
-                'consent_records_available',
-                'multiple_sessions',
-              ].includes(String(placement.condition))
-            ) {
-              throw new Error('Invalid account page visibility condition');
-            }
-            if (placement.enabled !== false && snapshots !== undefined) {
-              if (!snapshots || typeof snapshots !== 'object' || Array.isArray(snapshots))
-                throw new Error('Published definitions require screen snapshots');
-              const snapshot = (snapshots as Record<string, unknown>)[placement.screen_key];
-              if (
-                !snapshot ||
-                typeof snapshot !== 'object' ||
-                Array.isArray(snapshot) ||
-                (snapshot as Record<string, unknown>).screen_kind !== 'account'
-              )
-                throw new Error(`Missing account screen snapshot for ${placement.screen_key}`);
-              const fields = (snapshot as Record<string, unknown>).fields;
-              if (!Array.isArray(fields)) throw new Error('Invalid account screen fields');
-              for (const rawField of fields) {
-                if (!rawField || typeof rawField !== 'object' || Array.isArray(rawField)) continue;
-                const field = rawField as Record<string, unknown>;
-                if (
-                  ![
-                    'layout_row',
-                    'heading',
-                    'text',
-                    'link',
-                    'divider',
-                    'account_profile_widget',
-                    'account_device_list_widget',
-                    'account_session_widget',
-                    'account_passkey_widget',
-                    'account_totp_widget',
-                    'account_consent_widget',
-                    'account_activity_widget',
-                    'account_social_account_widget',
-                    'account_launcher_widget',
-                  ].includes(String(field.block_type))
-                ) {
-                  throw new Error('Account screen snapshots contain an unsupported block type');
-                }
-                if (field.block_type !== 'link') continue;
-                if (typeof field.href !== 'string' || field.href.length > 2048) {
-                  throw new Error('Account screen links require a safe URL');
-                }
-                const href = field.href.trim();
-                let safe = /^#[a-zA-Z][\w-]*$/u.test(href) || /^\/(?!\/)/u.test(href);
-                if (!safe) {
-                  try {
-                    safe = new URL(href).protocol === 'https:';
-                  } catch {
-                    safe = false;
-                  }
-                }
-                if (!safe)
-                  throw new Error(
-                    'Account screen links only allow anchors, relative paths, or HTTPS'
-                  );
-                if (href.startsWith('#') && !stableTargets.has(href.slice(1))) {
-                  throw new Error(
-                    'Account screen anchor links must target an always-visible placement'
-                  );
-                }
-              }
-              const widgetCount = fields.filter(
-                (field) =>
-                  Boolean(field) &&
-                  typeof field === 'object' &&
-                  typeof (field as Record<string, unknown>).block_type === 'string' &&
-                  String((field as Record<string, unknown>).block_type).startsWith('account_')
-              ).length;
-              if (widgetCount > 1)
-                throw new Error('Account screens may contain at most one primary widget');
-            }
-          }
-        }
-      }
-      if (
-        document.default_page_id !== null &&
-        (typeof document.default_page_id !== 'string' || !pageIds.has(document.default_page_id))
-      )
-        throw new Error('The default account page must reference an existing page');
-    } catch (error) {
-      return {
-        ok: false,
-        message: error instanceof Error ? error.message : 'Invalid account pages JSON',
-      };
-    }
-  }
-
-  return { ok: true };
-}
-
 // Create the settings-v2 app with typed variables
 const settingsV2 = new Hono<{
   Bindings: Env;
@@ -671,574 +349,18 @@ const settingsV2 = new Hono<{
   };
 }>();
 
-/**
- * Get or create SettingsManager for the request
- */
-function getSettingsManager(
-  env: Env,
-  auditContext?: Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }, string>
-): SettingsManager {
-  const manager = createSettingsManager({
-    env: env as unknown as Record<string, string | undefined>,
-    kv: env.SETTINGS ?? null,
-    cacheTTL: 5000, // 5 seconds (as per plan)
-    auditCallback: async (event) => {
-      log.info('Settings change', {
-        action: event.event,
-        scope: event.scope,
-        scopeId: event.scopeId,
-        category: event.category,
-        actor: event.actor,
-        diff: event.diff,
-      });
-      if (auditContext) {
-        try {
-          await createAuditLogFromContext(
-            auditContext as unknown as Parameters<typeof createAuditLogFromContext>[0],
-            `settings.${event.event}`,
-            'settings',
-            `${event.scope}:${event.scopeId}:${event.category}`,
-            {
-              scope: event.scope,
-              scope_id: event.scopeId,
-              category: event.category,
-              actor: event.actor,
-              diff: sanitizeObject(event.diff),
-            }
-          );
-        } catch {
-          log.warn('Failed to mirror settings update audit', {
-            category: event.category,
-            scope: event.scope,
-            scopeId: event.scopeId,
-          });
-        }
-      }
-    },
-  });
-
-  // Register all known categories
-  for (const [, categoryMeta] of Object.entries(ALL_CATEGORY_META)) {
-    manager.registerCategory(categoryMeta);
-  }
-
-  return manager;
-}
-
-async function recordSettingsAuditFailure(
-  c: Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }, string>,
-  input: {
-    category: CategoryName;
-    scope: SettingScope;
-    reason: string;
-    metadata?: Record<string, unknown>;
-  }
-): Promise<void> {
-  const scopeId =
-    'id' in input.scope && typeof input.scope.id === 'string' ? input.scope.id : 'platform';
-  try {
-    await createAuditLogFromContext(
-      c as unknown as Parameters<typeof createAuditLogFromContext>[0],
-      'settings.patch.failure',
-      'settings',
-      `${input.scope.type}:${scopeId}:${input.category}`,
-      {
-        scope: input.scope.type,
-        scope_id: scopeId,
-        category: input.category,
-        result: 'failure',
-        reason: input.reason,
-        ...(input.metadata ? sanitizeObject(input.metadata) : {}),
-      },
-      'warning'
-    );
-  } catch {
-    log.warn('Failed to mirror settings failure audit', {
-      category: input.category,
-      scope: input.scope.type,
-      reason: input.reason,
-    });
-  }
-}
-
-/**
- * Error response helper
- */
-function errorResponse(
-  c: {
-    json: (data: unknown, status: number) => Response;
-  },
-  error: string,
-  message: string,
-  status: number,
-  details?: Record<string, unknown>
-) {
-  return c.json({ error, message, ...details }, status);
-}
-
-function settingsKVKey(category: string, scope: SettingScope): string {
-  if (scope.type === 'platform') {
-    return `settings:platform:${category}`;
-  }
-  if (scope.type === 'client') {
-    return `settings:client:${scope.tenantId}:${scope.id}:${category}`;
-  }
-  return `settings:${scope.type}:${scope.id}:${category}`;
-}
-
-async function invalidateAuthenticationMethodsCacheRevision(
-  c: { env: Env },
-  tenantId: string | null,
-  reason: string
-): Promise<void> {
-  try {
-    await bumpAuthenticationMethodsCacheRevision(c.env, tenantId);
-  } catch (error) {
-    log.warn('Failed to bump authentication methods cache revision', {
-      tenantId: tenantId ?? 'global',
-      reason,
-      error: error instanceof Error ? error.message : 'unknown_error',
-    });
-  }
-}
-
-async function readScopedSettingsRecord(
-  env: Env,
-  category: string,
-  scope: SettingScope
-): Promise<Record<string, unknown>> {
-  try {
-    const raw = await env.SETTINGS?.get(settingsKVKey(category, scope));
-    if (!raw) {
-      return {};
-    }
-    const parsed = JSON.parse(raw) as unknown;
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : {};
-  } catch {
-    return {};
-  }
-}
-
-function selectedHumanVerificationProvider(settings: Record<string, unknown>): string {
-  const value = settings[`${HUMAN_VERIFICATION_SETTING_PREFIX}provider`];
-  return typeof value === 'string' && BUILTIN_HUMAN_VERIFICATION_PROVIDER_IDS.has(value)
-    ? value
-    : DEFAULT_HUMAN_VERIFICATION_PROVIDER;
-}
-
-async function scheduleInheritedHumanVerificationProjection(
-  env: Env,
-  tenantId: string,
-  before: Record<string, unknown>,
-  after: Record<string, unknown>
-): Promise<void> {
-  if (!env.SETTINGS) return;
-  const providers = new Set([
-    selectedHumanVerificationProvider(before),
-    selectedHumanVerificationProvider(after),
-  ]);
-  for (const pluginId of providers) {
-    const override = await env.SETTINGS.get(`plugins:config:${pluginId}:tenant:${tenantId}`);
-    if (override === null) {
-      await markGlobalProviderDesiredRevision(env, pluginId);
-    }
-  }
-}
-
-async function ensureTenantAccountPageEnabled(env: Env, tenantId: string): Promise<void> {
-  if (!env.SETTINGS) {
-    return;
-  }
-  const scope: SettingScope = { type: 'tenant', id: tenantId };
-  const current = await readScopedSettingsRecord(env, 'self-service', scope);
-  if (current['self-service.account_page_enabled'] === true) {
-    return;
-  }
-  await env.SETTINGS.put(
-    settingsKVKey('self-service', scope),
-    JSON.stringify({
-      ...current,
-      'self-service.account_page_enabled': true,
-      'self-service.account_page_path':
-        typeof current['self-service.account_page_path'] === 'string'
-          ? current['self-service.account_page_path']
-          : '/account',
-    })
-  );
-}
-
-function parseStringArraySetting(value: unknown): string[] {
-  if (Array.isArray(value)) {
-    return value.filter((item): item is string => typeof item === 'string');
-  }
-  if (typeof value !== 'string' || !value.trim()) {
-    return [];
-  }
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    return Array.isArray(parsed)
-      ? parsed.filter((item): item is string => typeof item === 'string')
-      : [];
-  } catch {
-    return value
-      .split(/[\n,]/)
-      .map((item) => item.trim())
-      .filter(Boolean);
-  }
-}
-
-function validateAppLoginScope(value: unknown): boolean {
-  if (typeof value !== 'string') {
-    return false;
-  }
-  const scope = value.trim();
-  return (
-    scope.length > 0 &&
-    scope.length <= 512 &&
-    scope.split(/\s+/).every((part) => /^[\x21\x23-\x5B\x5D-\x7E]+$/.test(part)) &&
-    scope.split(/\s+/).includes('openid')
-  );
-}
-
-async function getAppLoginClientProfile(
-  env: Env,
-  tenantId: string,
-  clientId: string
-): Promise<{
-  clientId: string;
-  redirectUris: string[];
-  firstParty: boolean;
-  appLoginEnabled: boolean;
-} | null> {
-  const trimmedClientId = clientId.trim();
-  if (!trimmedClientId) {
-    return null;
-  }
-
-  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'settings-v2-app-login', {
-    tenantId,
-  });
-  const client = await adapter.queryOne<{
-    client_id: string;
-    redirect_uris: string | string[] | null;
-  }>('SELECT client_id, redirect_uris FROM oauth_clients WHERE tenant_id = ? AND client_id = ?', [
-    tenantId,
-    trimmedClientId,
-  ]);
-  if (!client) {
-    return null;
-  }
-
-  const [clientSettings, trustPolicy] = await Promise.all([
-    readScopedSettingsRecord(env, 'client', {
-      type: 'client',
-      tenantId,
-      id: trimmedClientId,
-    }),
-    resolveClientTrustPolicy(adapter, tenantId, 'oidc_client', trimmedClientId),
-  ]);
-
-  return {
-    clientId: client.client_id,
-    redirectUris: parseStringArraySetting(client.redirect_uris),
-    firstParty: trustPolicy?.first_party === true,
-    appLoginEnabled: clientSettings['client.app_login_enabled'] === true,
-  };
-}
-
-async function validateAppLoginTarget(
-  env: Env,
-  tenantId: string,
-  input: {
-    clientId: unknown;
-    redirectUri: unknown;
-    scope: unknown;
-    finalReturnTo: unknown;
-    trustedOrigins: readonly string[];
-  }
-): Promise<
-  | { ok: true }
-  | {
-      ok: false;
-      status: number;
-      error: string;
-      message: string;
-      details?: Record<string, unknown>;
-    }
-> {
-  if (typeof input.clientId !== 'string' || !input.clientId.trim()) {
-    return {
-      ok: false,
-      status: 400,
-      error: 'bad_request',
-      message: 'login-entry.app_login_client_id is required when App Login is selected',
-    };
-  }
-  if (typeof input.redirectUri !== 'string' || !input.redirectUri.trim()) {
-    return {
-      ok: false,
-      status: 400,
-      error: 'bad_request',
-      message: 'login-entry.app_login_redirect_uri is required when App Login is selected',
-    };
-  }
-  if (!validateAppLoginScope(input.scope)) {
-    return {
-      ok: false,
-      status: 400,
-      error: 'bad_request',
-      message: 'login-entry.app_login_scope must include openid and contain valid scope tokens',
-    };
-  }
+// A settings document that cannot be read answers 503 on every settings route, rather than the
+// generic 500 (or values that are not the effective ones).
+settingsV2.use('*', async (c, next) => {
+  await next();
   if (
-    input.finalReturnTo !== undefined &&
-    input.finalReturnTo !== '' &&
-    !validatePostLoginRedirectUrl(input.finalReturnTo, input.trustedOrigins)
+    c.error instanceof Error &&
+    (c.error.message === 'settings_read_failed' || c.error.message === 'settings_data_invalid')
   ) {
-    return {
-      ok: false,
-      status: 400,
-      error: 'bad_request',
-      message:
-        'login-entry.app_login_final_return_to must be empty, a non-reserved relative path, or a trusted HTTPS URL',
-    };
+    // A Settings API document that cannot be read: its values in effect are unknown.
+    c.res = errorResponse(c, 'temporarily_unavailable', 'Settings cannot be read', 503);
   }
-
-  const client = await getAppLoginClientProfile(env, tenantId, input.clientId);
-  if (!client) {
-    return {
-      ok: false,
-      status: 404,
-      error: 'not_found',
-      message: `App Login client "${input.clientId.trim()}" was not found in this tenant`,
-    };
-  }
-  if (!client.firstParty || !client.appLoginEnabled) {
-    return {
-      ok: false,
-      status: 400,
-      error: 'bad_request',
-      message:
-        'App Login target client must be same-tenant, first-party, and have App Login enabled in Client settings',
-      details: { clientId: client.clientId, resolutionLink: `/admin/clients/${client.clientId}` },
-    };
-  }
-  const redirectUri = input.redirectUri.trim();
-  if (!client.redirectUris.includes(redirectUri)) {
-    return {
-      ok: false,
-      status: 400,
-      error: 'bad_request',
-      message: 'login-entry.app_login_redirect_uri must be registered on the App Login client',
-      details: { clientId: client.clientId, resolutionLink: `/admin/clients/${client.clientId}` },
-    };
-  }
-
-  return { ok: true };
-}
-
-async function validateClientAppLoginPatch(
-  env: Env,
-  tenantId: string,
-  clientId: string,
-  body: SettingsPatchRequest
-): Promise<
-  | { ok: true }
-  | {
-      ok: false;
-      status: number;
-      error: string;
-      message: string;
-      details?: Record<string, unknown>;
-    }
-> {
-  const set = body.set ?? {};
-  const current = await readScopedSettingsRecord(env, 'client', {
-    type: 'client',
-    tenantId,
-    id: clientId,
-  });
-  const effectiveAppLoginEnabled =
-    set['client.app_login_enabled'] ?? current['client.app_login_enabled'] ?? false;
-  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'settings-v2-app-login', {
-    tenantId,
-  });
-  const trustPolicy = await resolveClientTrustPolicy(adapter, tenantId, 'oidc_client', clientId);
-  const effectiveFirstParty = trustPolicy?.first_party === true;
-  if (effectiveAppLoginEnabled === true && effectiveFirstParty !== true) {
-    return {
-      ok: false,
-      status: 400,
-      error: 'bad_request',
-      message: 'App Login can only be enabled for first-party clients',
-      details: { clientId, requiredPolicy: 'client_trust_policy.first_party' },
-    };
-  }
-
-  const disablesAppLogin =
-    set['client.app_login_enabled'] === false ||
-    body.disable?.includes('client.app_login_enabled') ||
-    body.clear?.includes('client.app_login_enabled');
-  if (!disablesAppLogin) {
-    return { ok: true };
-  }
-
-  const loginEntry = await readScopedSettingsRecord(env, 'login-entry', {
-    type: 'tenant',
-    id: tenantId,
-  });
-  if (
-    loginEntry['login-entry.post_login_behavior'] === 'app_login' &&
-    loginEntry['login-entry.app_login_client_id'] === clientId
-  ) {
-    return {
-      ok: false,
-      status: 400,
-      error: 'bad_request',
-      message:
-        'This client is used by Login UI App Login. Change /admin/login-ui#post-login before disabling First Party App or App Login.',
-      details: { resolutionLink: '/admin/login-ui#post-login' },
-    };
-  }
-
-  return { ok: true };
-}
-
-const DEPRECATED_CLIENT_CONSENT_SETTING_KEYS = new Set([
-  'client.consent_required',
-  'client.first_party',
-]);
-
-function findDeprecatedClientConsentSetting(body: SettingsPatchRequest): string | undefined {
-  const keys = [...Object.keys(body.set ?? {}), ...(body.disable ?? []), ...(body.clear ?? [])];
-  return keys.find((key) => DEPRECATED_CLIENT_CONSENT_SETTING_KEYS.has(key));
-}
-
-async function validatePostLoginRelatedPatch(
-  env: Env,
-  tenantId: string,
-  category: CategoryName,
-  body: SettingsPatchRequest
-): Promise<
-  | { ok: true }
-  | {
-      ok: false;
-      status: number;
-      error: string;
-      message: string;
-      details?: Record<string, unknown>;
-    }
-> {
-  const set = body.set ?? {};
-
-  if (category === 'security' && 'security.trusted_redirect_origins' in set) {
-    if (!validateTrustedRedirectOrigins(set['security.trusted_redirect_origins'])) {
-      return {
-        ok: false,
-        status: 400,
-        error: 'bad_request',
-        message: 'security.trusted_redirect_origins must contain HTTPS origins only',
-      };
-    }
-  }
-
-  if (category === 'self-service') {
-    if (
-      'self-service.account_page_path' in set &&
-      !validateAccountPagePath(set['self-service.account_page_path'])
-    ) {
-      return {
-        ok: false,
-        status: 400,
-        error: 'bad_request',
-        message:
-          'self-service.account_page_path must be a non-reserved relative path prefix such as /account',
-      };
-    }
-
-    const disablesAccountPage =
-      set['self-service.account_page_enabled'] === false ||
-      body.disable?.includes('self-service.account_page_enabled') ||
-      body.clear?.includes('self-service.account_page_enabled');
-    if (disablesAccountPage) {
-      const loginEntry = await readScopedSettingsRecord(env, 'login-entry', {
-        type: 'tenant',
-        id: tenantId,
-      });
-      if (loginEntry['login-entry.post_login_behavior'] === 'account') {
-        return {
-          ok: false,
-          status: 400,
-          error: 'bad_request',
-          message:
-            'Account Page cannot be disabled while Login UI post-login behavior is account. Change /admin/login-ui#post-login first.',
-          details: { resolutionLink: '/admin/login-ui#post-login' },
-        };
-      }
-    }
-  }
-
-  if (category === 'login-entry') {
-    const loginEntry = await readScopedSettingsRecord(env, 'login-entry', {
-      type: 'tenant',
-      id: tenantId,
-    });
-    const effectiveBehavior =
-      set['login-entry.post_login_behavior'] ?? loginEntry['login-entry.post_login_behavior'];
-    const effectiveRedirectUrl =
-      set['login-entry.post_login_redirect_url'] ??
-      loginEntry['login-entry.post_login_redirect_url'] ??
-      '/';
-    const security = await readScopedSettingsRecord(env, 'security', {
-      type: 'tenant',
-      id: tenantId,
-    });
-    const trustedOrigins = parseTrustedRedirectOrigins(
-      security['security.trusted_redirect_origins']
-    );
-    if (
-      effectiveBehavior === 'custom_url' &&
-      !validatePostLoginRedirectUrl(effectiveRedirectUrl, trustedOrigins)
-    ) {
-      return {
-        ok: false,
-        status: 400,
-        error: 'bad_request',
-        message:
-          'login-entry.post_login_redirect_url must be a non-reserved relative path or a trusted HTTPS URL',
-      };
-    }
-
-    if (effectiveBehavior === 'app_login') {
-      const validation = await validateAppLoginTarget(env, tenantId, {
-        clientId:
-          set['login-entry.app_login_client_id'] ??
-          loginEntry['login-entry.app_login_client_id'] ??
-          '',
-        redirectUri:
-          set['login-entry.app_login_redirect_uri'] ??
-          loginEntry['login-entry.app_login_redirect_uri'] ??
-          '',
-        finalReturnTo:
-          set['login-entry.app_login_final_return_to'] ??
-          loginEntry['login-entry.app_login_final_return_to'] ??
-          '',
-        scope:
-          set['login-entry.app_login_scope'] ??
-          loginEntry['login-entry.app_login_scope'] ??
-          'openid profile email',
-        trustedOrigins,
-      });
-      if (!validation.ok) {
-        return validation;
-      }
-    }
-  }
-
-  return { ok: true };
-}
+});
 
 // =============================================================================
 // Rate Limiting for Settings Endpoints
@@ -1323,7 +445,7 @@ settingsV2.get('/tenants/:tenantId/settings/:category', async (c) => {
 
   // Security Check 3: Validate user has permission for this category at tenant scope
   const adminAuth = c.get('adminAuth');
-  if (!hasTenantSettingsPermission(adminAuth, category, 'view')) {
+  if (!hasTenantSettingsPermission(adminAuth, category, 'view', tenantId)) {
     return errorResponse(c, 'forbidden', 'Insufficient permissions to view tenant settings', 403);
   }
 
@@ -1332,11 +454,13 @@ settingsV2.get('/tenants/:tenantId/settings/:category', async (c) => {
     return errorResponse(c, 'forbidden', 'Cannot access settings for this tenant', 403);
   }
 
-  const manager = getSettingsManager(c.env, c);
+  const manager = getSettingsManager(c.env, c, true, true);
   const scope: SettingScope = { type: 'tenant', id: tenantId };
 
   try {
-    const result = await manager.getAll(category, scope);
+    const result = await manager.getAll(category, scope, {
+      parents: settingsParentScopes(category, scope),
+    });
     return c.json(result);
   } catch (error) {
     if (error instanceof Error && error.message.includes('Unknown category')) {
@@ -1353,193 +477,14 @@ settingsV2.get('/tenants/:tenantId/settings/:category', async (c) => {
 settingsV2.patch(
   '/tenants/:tenantId/settings/:category',
   requireAgentSettingsElevation,
-  async (c) => {
-    const tenantId = c.req.param('tenantId')!;
-    const category = c.req.param('category')! as CategoryName;
-
-    // Security Check 1: Validate category exists
-    if (!ALL_CATEGORY_META[category]) {
-      return errorResponse(c, 'not_found', `Category "${category}" not found`, 404);
-    }
-
-    // Security Check 2: Validate category is available at tenant scope
-    if (!isCategoryAllowedAtScope(category, 'tenant')) {
-      return errorResponse(
-        c,
-        'bad_request',
-        `Category "${category}" is not available at tenant scope`,
-        400
-      );
-    }
-
-    // Security Check 3: Validate user has EDIT permission for this category at tenant scope
-    const adminAuth = c.get('adminAuth');
-    if (!hasTenantSettingsPermission(adminAuth, category, 'edit')) {
-      return errorResponse(c, 'forbidden', 'Insufficient permissions to edit tenant settings', 403);
-    }
-
-    // Security Check 4: Validate user can access this specific tenant
-    if (!canAccessTenant(adminAuth, tenantId)) {
-      return errorResponse(c, 'forbidden', 'Cannot modify settings for this tenant', 403);
-    }
-
-    const manager = getSettingsManager(c.env, c);
-    const scope: SettingScope = { type: 'tenant', id: tenantId };
-
-    try {
-      // Parse and sanitize request body (prevent prototype pollution)
-      const rawBody = await c.req.json();
-      const body = parsePatchRequest(rawBody);
-
-      // Validate ifMatch is provided
-      if (!body.ifMatch) {
-        await recordSettingsAuditFailure(c, { category, scope, reason: 'if_match_required' });
-        return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
-      }
-
-      if (category === 'login-ui') {
-        const loginUiValidation = validateLoginUIPatch(body);
-        if (!loginUiValidation.ok) {
-          await recordSettingsAuditFailure(c, {
-            category,
-            scope,
-            reason: 'login_ui_validation_failed',
-            metadata: loginUiValidation.details,
-          });
-          return errorResponse(
-            c,
-            'validation_failed',
-            loginUiValidation.message ?? 'Login UI settings are invalid',
-            400,
-            loginUiValidation.details
-          );
-        }
-      }
-
-      const postLoginValidation = await validatePostLoginRelatedPatch(
-        c.env,
-        tenantId,
-        category,
-        body
-      );
-      if (!postLoginValidation.ok) {
-        await recordSettingsAuditFailure(c, {
-          category,
-          scope,
-          reason: 'post_login_validation_failed',
-          metadata: postLoginValidation.details,
-        });
-        return errorResponse(
-          c,
-          postLoginValidation.error,
-          postLoginValidation.message,
-          postLoginValidation.status,
-          postLoginValidation.details
-        );
-      }
-
-      // Get actor from context (set by auth middleware)
-      const actor = adminAuth?.userId ?? 'unknown';
-      const authenticationMethodsBefore =
-        category === 'authentication-methods'
-          ? await readScopedSettingsRecord(c.env, category, scope)
-          : null;
-
-      const result = await manager.patch(category, scope, body, actor);
-
-      if (
-        category === 'login-entry' &&
-        body.set?.['login-entry.post_login_behavior'] === 'account' &&
-        result.applied.includes('login-entry.post_login_behavior')
-      ) {
-        await ensureTenantAccountPageEnabled(c.env, tenantId);
-      }
-
-      // Check if there were any rejections
-      const hasRejections = Object.keys(result.rejected).length > 0;
-      const hasApplied =
-        result.applied.length > 0 || result.cleared.length > 0 || result.disabled.length > 0;
-      const changedKeys = [...result.applied, ...result.cleared, ...result.disabled];
-
-      if (
-        authenticationMethodsBefore &&
-        changedKeys.some((key) => key.startsWith(HUMAN_VERIFICATION_SETTING_PREFIX))
-      ) {
-        const authenticationMethodsAfter = await readScopedSettingsRecord(c.env, category, scope);
-        await scheduleInheritedHumanVerificationProjection(
-          c.env,
-          tenantId,
-          authenticationMethodsBefore,
-          authenticationMethodsAfter
-        );
-      }
-
-      // Return appropriate status
-      // 200 OK if anything was applied (even with rejections)
-      // 400 Bad Request if everything was rejected
-      if (!hasApplied && hasRejections) {
-        await recordSettingsAuditFailure(c, {
-          category,
-          scope,
-          reason: 'validation_failed',
-          metadata: { rejected: result.rejected },
-        });
-        return c.json(
-          {
-            error: 'validation_failed',
-            message: 'All changes were rejected',
-            ...result,
-          },
-          400
-        );
-      }
-
-      if (hasApplied && AUTHENTICATION_METHODS_TENANT_CACHE_CATEGORIES.has(category)) {
-        await invalidateAuthenticationMethodsCacheRevision(c, tenantId, `tenant:${category}`);
-      }
-
-      return c.json(result);
-    } catch (error) {
-      // Handle JSON parse errors
-      if (error instanceof SyntaxError) {
-        await recordSettingsAuditFailure(c, { category, scope, reason: 'invalid_json' });
-        return errorResponse(c, 'bad_request', 'Invalid JSON body', 400);
-      }
-      if (error instanceof ConflictError) {
-        await recordSettingsAuditFailure(c, {
-          category,
-          scope,
-          reason: 'version_conflict',
-          metadata: { current_version: error.currentVersion },
-        });
-        return c.json(
-          {
-            error: 'conflict',
-            message: error.message,
-            currentVersion: error.currentVersion,
-          },
-          409
-        );
-      }
-      if (error instanceof Error) {
-        if (error.message.includes('Unknown category')) {
-          await recordSettingsAuditFailure(c, { category, scope, reason: 'unknown_category' });
-          return errorResponse(c, 'not_found', `Category "${category}" not found`, 404);
-        }
-        if (error.message.includes('read-only')) {
-          await recordSettingsAuditFailure(c, { category, scope, reason: 'read_only' });
-          return errorResponse(c, 'forbidden', error.message, 403);
-        }
-      }
-      await recordSettingsAuditFailure(c, {
-        category,
-        scope,
-        reason: 'unhandled_error',
-        metadata: { error_class: error instanceof Error ? error.name : 'unknown_error' },
-      });
-      throw error;
-    }
-  }
+  async (c) =>
+    applyTenantSettingsChange({
+      c,
+      adminAuth: c.get('adminAuth'),
+      tenantId: c.req.param('tenantId')!,
+      category: c.req.param('category')! as CategoryName,
+      readBody: () => c.req.json(),
+    })
 );
 
 // =============================================================================
@@ -1577,12 +522,14 @@ settingsV2.get('/clients/:clientId/settings', async (c) => {
     );
   }
 
-  const manager = getSettingsManager(c.env, c);
+  const manager = getSettingsManager(c.env, c, true, true);
   const scope = { type: 'client', id: clientId, tenantId: clientTenantId } as SettingScope;
 
   try {
     // Client settings are stored under a single category
-    const result = await manager.getAll('client', scope);
+    const result = await manager.getAll('client', scope, {
+      parents: settingsParentScopes('client', scope),
+    });
     return c.json(result);
   } catch (error) {
     if (error instanceof Error && error.message.includes('Unknown category')) {
@@ -1638,11 +585,13 @@ settingsV2.get('/clients/:clientId/settings/:category', async (c) => {
     );
   }
 
-  const manager = getSettingsManager(c.env, c);
+  const manager = getSettingsManager(c.env, c, true, true);
   const scope = { type: 'client', id: clientId, tenantId: clientTenantId } as SettingScope;
 
   try {
-    const result = await manager.getAll(category, scope);
+    const result = await manager.getAll(category, scope, {
+      parents: settingsParentScopes(category, scope),
+    });
     return c.json(result);
   } catch (error) {
     if (error instanceof Error && error.message.includes('Unknown category')) {
@@ -1683,115 +632,127 @@ settingsV2.patch('/clients/:clientId/settings', async (c) => {
     );
   }
 
-  const manager = getSettingsManager(c.env, c);
-  const scope = { type: 'client', id: clientId, tenantId: clientTenantId } as SettingScope;
+  return runTenantBackupCoveredMutation({
+    env: c.env,
+    tenantId: clientTenantId,
+    run: async () => {
+      const manager = getSettingsManager(c.env, c, true);
+      const scope = { type: 'client', id: clientId, tenantId: clientTenantId } as SettingScope;
 
-  try {
-    // Parse and sanitize request body (prevent prototype pollution)
-    const rawBody = await c.req.json();
-    const body = parsePatchRequest(rawBody);
+      try {
+        // Parse and sanitize request body (prevent prototype pollution)
+        const rawBody = await c.req.json();
+        const body = parsePatchRequest(rawBody);
 
-    if (!body.ifMatch) {
-      await recordSettingsAuditFailure(c, { category, scope, reason: 'if_match_required' });
-      return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
-    }
+        if (!body.ifMatch) {
+          await recordSettingsAuditFailure(c, { category, scope, reason: 'if_match_required' });
+          return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
+        }
 
-    const deprecatedConsentSetting = findDeprecatedClientConsentSetting(body);
-    if (deprecatedConsentSetting) {
-      await recordSettingsAuditFailure(c, {
-        category,
-        scope,
-        reason: 'deprecated_client_consent_setting',
-      });
-      return errorResponse(
-        c,
-        'bad_request',
-        `${deprecatedConsentSetting} is no longer supported; use Client Trust Policy`,
-        400
-      );
-    }
+        const deprecatedConsentSetting = findDeprecatedClientConsentSetting(body);
+        if (deprecatedConsentSetting) {
+          await recordSettingsAuditFailure(c, {
+            category,
+            scope,
+            reason: 'deprecated_client_consent_setting',
+          });
+          return errorResponse(
+            c,
+            'bad_request',
+            `${deprecatedConsentSetting} is no longer supported; use Client Trust Policy`,
+            400
+          );
+        }
 
-    const appLoginValidation = await validateClientAppLoginPatch(
-      c.env,
-      clientTenantId,
-      clientId,
-      body
-    );
-    if (!appLoginValidation.ok) {
-      await recordSettingsAuditFailure(c, {
-        category,
-        scope,
-        reason: 'app_login_validation_failed',
-        metadata: appLoginValidation.details,
-      });
-      return errorResponse(
-        c,
-        appLoginValidation.error,
-        appLoginValidation.message,
-        appLoginValidation.status,
-        appLoginValidation.details
-      );
-    }
+        const appLoginValidation = await validateClientAppLoginPatch(
+          c.env,
+          clientTenantId,
+          clientId,
+          body
+        );
+        if (!appLoginValidation.ok) {
+          await recordSettingsAuditFailure(c, {
+            category,
+            scope,
+            reason: 'app_login_validation_failed',
+            metadata: appLoginValidation.details,
+          });
+          return errorResponse(
+            c,
+            appLoginValidation.error,
+            appLoginValidation.message,
+            appLoginValidation.status,
+            appLoginValidation.details
+          );
+        }
 
-    const actor = adminAuth?.userId ?? 'unknown';
-    const result = await manager.patch('client', scope, body, actor);
+        const actor = adminAuth?.userId ?? 'unknown';
+        const result = await manager.patch('client', scope, body, actor, {
+          parents: settingsParentScopes('client', scope),
+        });
 
-    const hasRejections = Object.keys(result.rejected).length > 0;
-    const hasApplied =
-      result.applied.length > 0 || result.cleared.length > 0 || result.disabled.length > 0;
+        const hasRejections = Object.keys(result.rejected).length > 0;
+        const hasApplied =
+          result.applied.length > 0 || result.cleared.length > 0 || result.disabled.length > 0;
 
-    if (!hasApplied && hasRejections) {
-      await recordSettingsAuditFailure(c, {
-        category,
-        scope,
-        reason: 'validation_failed',
-        metadata: { rejected: result.rejected },
-      });
-      return c.json(
-        {
-          error: 'validation_failed',
-          message: 'All changes were rejected',
-          ...result,
-        },
-        400
-      );
-    }
+        if (!hasApplied && hasRejections) {
+          await recordSettingsAuditFailure(c, {
+            category,
+            scope,
+            reason: 'validation_failed',
+            metadata: { rejected: result.rejected },
+          });
+          return c.json(
+            {
+              error: 'validation_failed',
+              message: 'All changes were rejected',
+              ...result,
+            },
+            400
+          );
+        }
 
-    if (hasApplied && AUTHENTICATION_METHODS_CLIENT_CACHE_CATEGORIES.has(category)) {
-      await invalidateAuthenticationMethodsCacheRevision(c, clientTenantId, `client:${category}`);
-    }
+        if (hasApplied && AUTHENTICATION_METHODS_CLIENT_CACHE_CATEGORIES.has(category)) {
+          await invalidateAuthenticationMethodsCacheRevision(
+            c,
+            clientTenantId,
+            `client:${category}`
+          );
+        }
 
-    return c.json(result);
-  } catch (error) {
-    // Handle JSON parse errors
-    if (error instanceof SyntaxError) {
-      await recordSettingsAuditFailure(c, { category, scope, reason: 'invalid_json' });
-      return errorResponse(c, 'bad_request', 'Invalid JSON body', 400);
-    }
-    if (error instanceof ConflictError) {
-      await recordSettingsAuditFailure(c, {
-        category,
-        scope,
-        reason: 'version_conflict',
-        metadata: { current_version: error.currentVersion },
-      });
-      return c.json(
-        {
-          error: 'conflict',
-          message: error.message,
-          currentVersion: error.currentVersion,
-        },
-        409
-      );
-    }
-    await recordSettingsAuditFailure(c, {
-      category,
-      scope,
-      reason: 'unhandled_error',
-      metadata: { error_class: error instanceof Error ? error.name : 'unknown_error' },
-    });
-    throw error;
-  }
+        return c.json(result);
+      } catch (error) {
+        // Handle JSON parse errors
+        if (error instanceof SyntaxError) {
+          await recordSettingsAuditFailure(c, { category, scope, reason: 'invalid_json' });
+          return errorResponse(c, 'bad_request', 'Invalid JSON body', 400);
+        }
+        if (error instanceof ConflictError) {
+          await recordSettingsAuditFailure(c, {
+            category,
+            scope,
+            reason: 'version_conflict',
+            metadata: { current_version: error.currentVersion },
+          });
+          return c.json(
+            {
+              error: 'conflict',
+              message: error.message,
+              currentVersion: error.currentVersion,
+            },
+            409
+          );
+        }
+        await recordSettingsAuditFailure(c, {
+          category,
+          scope,
+          reason: 'unhandled_error',
+          metadata: { error_class: error instanceof Error ? error.name : 'unknown_error' },
+        });
+        throw error;
+      }
+    },
+  });
 });
 
 /**
@@ -1840,145 +801,183 @@ settingsV2.patch('/clients/:clientId/settings/:category', async (c) => {
     );
   }
 
-  const manager = getSettingsManager(c.env, c);
-  const scope = { type: 'client', id: clientId, tenantId: clientTenantId } as SettingScope;
+  return runTenantBackupCoveredMutation({
+    env: c.env,
+    tenantId: clientTenantId,
+    run: async () => {
+      const manager = getSettingsManager(c.env, c, true);
+      const scope = { type: 'client', id: clientId, tenantId: clientTenantId } as SettingScope;
 
-  try {
-    const rawBody = await c.req.json();
-    const body = parsePatchRequest(rawBody);
+      try {
+        const rawBody = await c.req.json();
+        const body = parsePatchRequest(rawBody);
 
-    if (!body.ifMatch) {
-      await recordSettingsAuditFailure(c, { category, scope, reason: 'if_match_required' });
-      return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
-    }
+        if (!body.ifMatch) {
+          await recordSettingsAuditFailure(c, { category, scope, reason: 'if_match_required' });
+          return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
+        }
 
-    if (category === 'client') {
-      const deprecatedConsentSetting = findDeprecatedClientConsentSetting(body);
-      if (deprecatedConsentSetting) {
+        if (category === 'client') {
+          const deprecatedConsentSetting = findDeprecatedClientConsentSetting(body);
+          if (deprecatedConsentSetting) {
+            await recordSettingsAuditFailure(c, {
+              category,
+              scope,
+              reason: 'deprecated_client_consent_setting',
+            });
+            return errorResponse(
+              c,
+              'bad_request',
+              `${deprecatedConsentSetting} is no longer supported; use Client Trust Policy`,
+              400
+            );
+          }
+        }
+
+        if (category === 'login-ui') {
+          const loginUiValidation = validateLoginUIPatch(body);
+          if (!loginUiValidation.ok) {
+            await recordSettingsAuditFailure(c, {
+              category,
+              scope,
+              reason: 'login_ui_validation_failed',
+              metadata: loginUiValidation.details,
+            });
+            return errorResponse(
+              c,
+              'validation_failed',
+              loginUiValidation.message ?? 'Login UI settings are invalid',
+              400,
+              loginUiValidation.details
+            );
+          }
+        }
+
+        // The device flow bounds are checked on the document the save leaves, like the tenant's:
+        // what the client does not set is what it inherits from its tenant.
+        const patchState = categoryPatchNeedsState(category)
+          ? await manager.getAll(category, scope, {
+              parents: settingsParentScopes(category, scope),
+            })
+          : null;
+        const categoryError = validateCategoryPatchAt(
+          category,
+          'client',
+          body,
+          patchState && { current: patchState.values, inherited: patchState.inherited.values }
+        );
+        if (categoryError) {
+          await recordSettingsAuditFailure(c, {
+            category,
+            scope,
+            reason: `${category.replace('-', '_')}_validation_failed`,
+          });
+          return errorResponse(c, 'validation_failed', categoryError, 400);
+        }
+
+        if (category === 'client') {
+          const appLoginValidation = await validateClientAppLoginPatch(
+            c.env,
+            clientTenantId,
+            clientId,
+            body
+          );
+          if (!appLoginValidation.ok) {
+            await recordSettingsAuditFailure(c, {
+              category,
+              scope,
+              reason: 'app_login_validation_failed',
+              metadata: appLoginValidation.details,
+            });
+            return errorResponse(
+              c,
+              appLoginValidation.error,
+              appLoginValidation.message,
+              appLoginValidation.status,
+              appLoginValidation.details
+            );
+          }
+        }
+
+        const actor = adminAuth?.userId ?? 'unknown';
+        const result = await manager.patch(category, scope, body, actor, {
+          parents: settingsParentScopes(category, scope),
+        });
+
+        const hasRejections = Object.keys(result.rejected).length > 0;
+        const hasApplied =
+          result.applied.length > 0 || result.cleared.length > 0 || result.disabled.length > 0;
+
+        if (!hasApplied && hasRejections) {
+          await recordSettingsAuditFailure(c, {
+            category,
+            scope,
+            reason: 'validation_failed',
+            metadata: { rejected: result.rejected },
+          });
+          return c.json(
+            {
+              error: 'validation_failed',
+              message: 'All changes were rejected',
+              ...result,
+            },
+            400
+          );
+        }
+
+        if (hasApplied && AUTHENTICATION_METHODS_CLIENT_CACHE_CATEGORIES.has(category)) {
+          await invalidateAuthenticationMethodsCacheRevision(
+            c,
+            clientTenantId,
+            `client:${category}`
+          );
+        }
+
+        return c.json(result);
+      } catch (error) {
+        if (error instanceof SyntaxError) {
+          await recordSettingsAuditFailure(c, { category, scope, reason: 'invalid_json' });
+          return errorResponse(c, 'bad_request', 'Invalid JSON body', 400);
+        }
+        if (error instanceof ConflictError) {
+          await recordSettingsAuditFailure(c, {
+            category,
+            scope,
+            reason: 'version_conflict',
+            metadata: { current_version: error.currentVersion },
+          });
+          return c.json(
+            {
+              error: 'conflict',
+              message: error.message,
+              currentVersion: error.currentVersion,
+            },
+            409
+          );
+        }
+        if (error instanceof Error && error.message.includes('Unknown category')) {
+          await recordSettingsAuditFailure(c, { category, scope, reason: 'unknown_category' });
+          return errorResponse(c, 'not_found', `Category "${category}" not found`, 404);
+        }
         await recordSettingsAuditFailure(c, {
           category,
           scope,
-          reason: 'deprecated_client_consent_setting',
+          reason: 'unhandled_error',
+          metadata: { error_class: error instanceof Error ? error.name : 'unknown_error' },
         });
-        return errorResponse(
-          c,
-          'bad_request',
-          `${deprecatedConsentSetting} is no longer supported; use Client Trust Policy`,
-          400
-        );
+        throw error;
       }
-    }
-
-    if (category === 'login-ui') {
-      const loginUiValidation = validateLoginUIPatch(body);
-      if (!loginUiValidation.ok) {
-        await recordSettingsAuditFailure(c, {
-          category,
-          scope,
-          reason: 'login_ui_validation_failed',
-          metadata: loginUiValidation.details,
-        });
-        return errorResponse(
-          c,
-          'validation_failed',
-          loginUiValidation.message ?? 'Login UI settings are invalid',
-          400,
-          loginUiValidation.details
-        );
-      }
-    }
-
-    if (category === 'client') {
-      const appLoginValidation = await validateClientAppLoginPatch(
-        c.env,
-        clientTenantId,
-        clientId,
-        body
-      );
-      if (!appLoginValidation.ok) {
-        await recordSettingsAuditFailure(c, {
-          category,
-          scope,
-          reason: 'app_login_validation_failed',
-          metadata: appLoginValidation.details,
-        });
-        return errorResponse(
-          c,
-          appLoginValidation.error,
-          appLoginValidation.message,
-          appLoginValidation.status,
-          appLoginValidation.details
-        );
-      }
-    }
-
-    const actor = adminAuth?.userId ?? 'unknown';
-    const result = await manager.patch(category, scope, body, actor);
-
-    const hasRejections = Object.keys(result.rejected).length > 0;
-    const hasApplied =
-      result.applied.length > 0 || result.cleared.length > 0 || result.disabled.length > 0;
-
-    if (!hasApplied && hasRejections) {
-      await recordSettingsAuditFailure(c, {
-        category,
-        scope,
-        reason: 'validation_failed',
-        metadata: { rejected: result.rejected },
-      });
-      return c.json(
-        {
-          error: 'validation_failed',
-          message: 'All changes were rejected',
-          ...result,
-        },
-        400
-      );
-    }
-
-    if (hasApplied && AUTHENTICATION_METHODS_CLIENT_CACHE_CATEGORIES.has(category)) {
-      await invalidateAuthenticationMethodsCacheRevision(c, clientTenantId, `client:${category}`);
-    }
-
-    return c.json(result);
-  } catch (error) {
-    if (error instanceof SyntaxError) {
-      await recordSettingsAuditFailure(c, { category, scope, reason: 'invalid_json' });
-      return errorResponse(c, 'bad_request', 'Invalid JSON body', 400);
-    }
-    if (error instanceof ConflictError) {
-      await recordSettingsAuditFailure(c, {
-        category,
-        scope,
-        reason: 'version_conflict',
-        metadata: { current_version: error.currentVersion },
-      });
-      return c.json(
-        {
-          error: 'conflict',
-          message: error.message,
-          currentVersion: error.currentVersion,
-        },
-        409
-      );
-    }
-    if (error instanceof Error && error.message.includes('Unknown category')) {
-      await recordSettingsAuditFailure(c, { category, scope, reason: 'unknown_category' });
-      return errorResponse(c, 'not_found', `Category "${category}" not found`, 404);
-    }
-    await recordSettingsAuditFailure(c, {
-      category,
-      scope,
-      reason: 'unhandled_error',
-      metadata: { error_class: error instanceof Error ? error.name : 'unknown_error' },
-    });
-    throw error;
-  }
+    },
+  });
 });
 
 // =============================================================================
 // Platform Settings Routes (Read-Only)
 // =============================================================================
+
+// The one-time import of the older stores (before the category routes, which would take its
+// path for a category).
+settingsV2.route('/', legacyImportRouter);
 
 /**
  * GET /api/admin/platform/settings/:category
@@ -2010,11 +1009,13 @@ settingsV2.get('/platform/settings/:category', async (c) => {
     return errorResponse(c, 'forbidden', 'Insufficient permissions to view platform settings', 403);
   }
 
-  const manager = getSettingsManager(c.env, c);
+  const manager = getSettingsManager(c.env, c, true, true);
   const scope: SettingScope = { type: 'platform' };
 
   try {
-    const result = await manager.getAll(category, scope);
+    const result = await manager.getAll(category, scope, {
+      parents: settingsParentScopes(category, scope),
+    });
     return c.json(result);
   } catch (error) {
     if (error instanceof Error && error.message.includes('Unknown category')) {
@@ -2050,9 +1051,11 @@ settingsV2.patch('/platform/settings/:category', (c) => {
     }
 
     const adminAuth = c.get('adminAuth');
-    const userRoles = adminAuth?.roles || [];
 
-    if (!checkRolePermission(userRoles, category, 'platform', 'edit')) {
+    // A platform setting reaches every tenant, so the role has to come from a global assignment:
+    // `roles` also holds what is given for one tenant only (an Admin of one tenant who is a
+    // ar_tenant_admin there must not change what every other tenant inherits).
+    if (!hasGlobalPlatformSettingsEdit(adminAuth, category)) {
       return errorResponse(
         c,
         'forbidden',
@@ -2061,98 +1064,188 @@ settingsV2.patch('/platform/settings/:category', (c) => {
       );
     }
 
-    const manager = getSettingsManager(c.env, c);
-    const scope: SettingScope = { type: 'platform' };
+    return runTenantBackupCoveredMutation({
+      env: c.env,
+      scope: 'environment',
+      run: async () => {
+        const manager = getSettingsManager(c.env, c, true);
+        const scope: SettingScope = { type: 'platform' };
 
-    try {
-      const rawBody = await c.req.json();
-      const body = parsePatchRequest(rawBody);
+        try {
+          const rawBody: unknown = await c.req.json();
+          const parsed = parsePlatformSettingsPatch(rawBody, category);
+          if (!parsed.ok) {
+            await recordSettingsAuditFailure(c, {
+              category,
+              scope,
+              reason: 'platform_patch_guard_invalid',
+            });
+            return errorResponse(c, 'bad_request', parsed.message, 400);
+          }
+          const body = parsed.body;
 
-      if (!body.ifMatch) {
-        await recordSettingsAuditFailure(c, { category, scope, reason: 'if_match_required' });
-        return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
-      }
+          if (!body.ifMatch) {
+            await recordSettingsAuditFailure(c, { category, scope, reason: 'if_match_required' });
+            return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
+          }
 
-      if (category === 'login-ui') {
-        const loginUiValidation = validateLoginUIPatch(body);
-        if (!loginUiValidation.ok) {
+          if (category === 'login-ui') {
+            const loginUiValidation = validateLoginUIPatch(body);
+            if (!loginUiValidation.ok) {
+              await recordSettingsAuditFailure(c, {
+                category,
+                scope,
+                reason: 'login_ui_validation_failed',
+                metadata: loginUiValidation.details,
+              });
+              return errorResponse(
+                c,
+                'validation_failed',
+                loginUiValidation.message ?? 'Login UI settings are invalid',
+                400,
+                loginUiValidation.details
+              );
+            }
+          }
+
+          const platformError =
+            category === 'tenant'
+              ? (validatePlatformUIPatch(body, c.env) ??
+                validateCategoryPatch(category, body, 'platform'))
+              : validateCategoryPatch(category, body, 'platform');
+          if (platformError) {
+            await recordSettingsAuditFailure(c, {
+              category,
+              scope,
+              reason: `${category}_validation_failed`,
+            });
+            return errorResponse(c, 'validation_failed', platformError, 400);
+          }
+
+          // The Mapping Set a default names must exist and be usable by every tenant (checked in
+          // the Admin database, which the form checks above do not reach).
+          if (category === 'identity-mapping') {
+            const mappingProblem = await identityMappingReferenceProblem(c.env, body, scope);
+            if (mappingProblem) {
+              await recordSettingsAuditFailure(c, {
+                category,
+                scope,
+                reason: mappingProblem.reason,
+              });
+              return mappingProblem.status === 503
+                ? errorResponse(c, 'temporarily_unavailable', mappingProblem.message, 503)
+                : errorResponse(c, 'validation_failed', mappingProblem.message, 400);
+            }
+          }
+
+          // This is a fresh, complete relation read immediately before the existing version CAS.
+          // It must finish before patch() can bootstrap the canonical document or project to KV.
+          if (parsed.expectedFollowing !== undefined) {
+            let currentFollowing: number;
+            try {
+              const relations = await readPlatformIdentityMappingRelations(c.env);
+              currentFollowing = relations.filter((row) => row.relation === 'following').length;
+            } catch {
+              await recordSettingsAuditFailure(c, {
+                category,
+                scope,
+                reason: 'identity_mapping_following_unavailable',
+              });
+              return errorResponse(
+                c,
+                'temporarily_unavailable',
+                'The complete tenant relation count is unavailable',
+                503
+              );
+            }
+            if (currentFollowing !== parsed.expectedFollowing) {
+              await recordSettingsAuditFailure(c, {
+                category,
+                scope,
+                reason: 'identity_mapping_following_conflict',
+                metadata: {
+                  expected_following: parsed.expectedFollowing,
+                  current_following: currentFollowing,
+                },
+              });
+              return errorResponse(
+                c,
+                'conflict',
+                'The number of following tenants has changed',
+                409,
+                {
+                  expected_following: parsed.expectedFollowing,
+                  current_following: currentFollowing,
+                }
+              );
+            }
+          }
+
+          const actor = adminAuth?.userId ?? 'unknown';
+          const result = await manager.patch(category, scope, body, actor, {
+            parents: settingsParentScopes(category, scope),
+          });
+          const hasRejections = Object.keys(result.rejected).length > 0;
+          const hasApplied =
+            result.applied.length > 0 || result.cleared.length > 0 || result.disabled.length > 0;
+
+          if (!hasApplied && hasRejections) {
+            await recordSettingsAuditFailure(c, {
+              category,
+              scope,
+              reason: 'validation_failed',
+              metadata: { rejected: result.rejected },
+            });
+            return c.json(
+              {
+                error: 'validation_failed',
+                message: 'All changes were rejected',
+                ...result,
+              },
+              400
+            );
+          }
+
+          if (hasApplied && AUTHENTICATION_METHODS_TENANT_CACHE_CATEGORIES.has(category)) {
+            await invalidateAuthenticationMethodsCacheRevision(c, null, `platform:${category}`);
+          }
+
+          return c.json(result);
+        } catch (error) {
+          if (error instanceof SyntaxError) {
+            await recordSettingsAuditFailure(c, { category, scope, reason: 'invalid_json' });
+            return errorResponse(c, 'bad_request', 'Invalid JSON body', 400);
+          }
+          if (error instanceof ConflictError) {
+            await recordSettingsAuditFailure(c, {
+              category,
+              scope,
+              reason: 'version_conflict',
+              metadata: { current_version: error.currentVersion },
+            });
+            return c.json(
+              {
+                error: 'conflict',
+                message: error.message,
+                currentVersion: error.currentVersion,
+              },
+              409
+            );
+          }
+          if (error instanceof Error && error.message.includes('Unknown category')) {
+            await recordSettingsAuditFailure(c, { category, scope, reason: 'unknown_category' });
+            return errorResponse(c, 'not_found', `Category "${category}" not found`, 404);
+          }
           await recordSettingsAuditFailure(c, {
             category,
             scope,
-            reason: 'login_ui_validation_failed',
-            metadata: loginUiValidation.details,
+            reason: 'unhandled_error',
+            metadata: { error_class: error instanceof Error ? error.name : 'unknown_error' },
           });
-          return errorResponse(
-            c,
-            'validation_failed',
-            loginUiValidation.message ?? 'Login UI settings are invalid',
-            400,
-            loginUiValidation.details
-          );
+          throw error;
         }
-      }
-
-      const actor = adminAuth?.userId ?? 'unknown';
-      const result = await manager.patch(category, scope, body, actor);
-      const hasRejections = Object.keys(result.rejected).length > 0;
-      const hasApplied =
-        result.applied.length > 0 || result.cleared.length > 0 || result.disabled.length > 0;
-
-      if (!hasApplied && hasRejections) {
-        await recordSettingsAuditFailure(c, {
-          category,
-          scope,
-          reason: 'validation_failed',
-          metadata: { rejected: result.rejected },
-        });
-        return c.json(
-          {
-            error: 'validation_failed',
-            message: 'All changes were rejected',
-            ...result,
-          },
-          400
-        );
-      }
-
-      if (hasApplied && AUTHENTICATION_METHODS_TENANT_CACHE_CATEGORIES.has(category)) {
-        await invalidateAuthenticationMethodsCacheRevision(c, null, `platform:${category}`);
-      }
-
-      return c.json(result);
-    } catch (error) {
-      if (error instanceof SyntaxError) {
-        await recordSettingsAuditFailure(c, { category, scope, reason: 'invalid_json' });
-        return errorResponse(c, 'bad_request', 'Invalid JSON body', 400);
-      }
-      if (error instanceof ConflictError) {
-        await recordSettingsAuditFailure(c, {
-          category,
-          scope,
-          reason: 'version_conflict',
-          metadata: { current_version: error.currentVersion },
-        });
-        return c.json(
-          {
-            error: 'conflict',
-            message: error.message,
-            currentVersion: error.currentVersion,
-          },
-          409
-        );
-      }
-      if (error instanceof Error && error.message.includes('Unknown category')) {
-        await recordSettingsAuditFailure(c, { category, scope, reason: 'unknown_category' });
-        return errorResponse(c, 'not_found', `Category "${category}" not found`, 404);
-      }
-      await recordSettingsAuditFailure(c, {
-        category,
-        scope,
-        reason: 'unhandled_error',
-        metadata: { error_class: error instanceof Error ? error.name : 'unknown_error' },
-      });
-      throw error;
-    }
+      },
+    });
   })();
 });
 
@@ -2251,9 +1344,18 @@ settingsV2.get('/settings/meta/:category/scope', async (c) => {
       permission = 'edit';
     } else if (perms.viewRoles.some((role) => userRoles.includes(role))) {
       permission = 'view';
-    } else if (userRoles.includes('system_admin')) {
-      // system_admin always has access
+    } else if (userRoles.includes(ADMIN_ROLES.SUPER_ADMIN)) {
+      // The super admin always has access
       permission = perms.editRoles.length > 0 ? 'edit' : 'view';
+    }
+
+    // A category only the platform may change for a tenant is read-only to the tenant's own admins.
+    if (
+      scope === 'tenant' &&
+      permission === 'edit' &&
+      !hasPlatformAuthorityForTenantEdit(adminAuth, category)
+    ) {
+      permission = 'view';
     }
 
     // Only include scopes the user can access
@@ -2276,7 +1378,6 @@ settingsV2.get('/settings/meta/:category/scope', async (c) => {
 // =============================================================================
 
 // Mount migration routes under /settings
-settingsV2.route('/settings', migrateRouter);
 
 // =============================================================================
 // Settings History Routes (Configuration Rollback)
@@ -2341,18 +1442,45 @@ settingsV2.get('/settings/:category/history/:version', getSettingsVersion);
  * POST /api/admin/settings/:category/rollback
  * Rollback to a previous version
  */
-settingsV2.post('/settings/:category/rollback', rollbackSettings);
+// Rollback and the current snapshot read and rewrite the legacy `settings:<category>:` keys of the
+// shared KV, which carry no tenant, so they are the platform's.
+settingsV2.post('/settings/:category/rollback', requireSystemAdmin(), rollbackSettings);
 
 /**
  * GET /api/admin/settings/:category/current
  * Get current settings for a category (for comparison with history)
  */
-settingsV2.get('/settings/:category/current', getCurrentSettings);
+settingsV2.get('/settings/:category/current', requireSystemAdmin(), getCurrentSettings);
 
 /**
  * GET /api/admin/settings/:category/compare
  * Compare two versions of settings
  */
 settingsV2.get('/settings/:category/compare', compareSettingsVersions);
+
+// =============================================================================
+// Bulk apply (the same settings for several tenants)
+// =============================================================================
+
+/**
+ * POST /api/admin/settings/bulk-apply
+ * Preview, or apply, the same settings to several tenants. Platform authority only (checked
+ * first, so a refused caller leaves no idempotency record), a strict rate limit, and a required
+ * Idempotency-Key: a repeat of the same request answers with the stored result, and the same key
+ * with another body is a conflict.
+ */
+settingsV2.post(
+  '/settings/bulk-apply',
+  requireBulkApplyAuthority,
+  async (c, next) => {
+    const profile = await getRateLimitProfileAsync(c.env, 'strict');
+    return rateLimitMiddleware({
+      ...profile,
+      endpoints: ['/api/admin/settings/bulk-apply'],
+    })(c as unknown as RateLimitContext, next);
+  },
+  bulkApplyIdempotency,
+  bulkApplyHandler
+);
 
 export default settingsV2;

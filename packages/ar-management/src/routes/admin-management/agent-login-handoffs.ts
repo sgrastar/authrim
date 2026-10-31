@@ -1,3 +1,4 @@
+import { createCloudflareAdminAgentAuditWriter } from '@authrim/ar-agent-access/platform/cloudflare/admin-agent-audit-writer';
 import { Hono, type Context } from 'hono';
 import {
   ADMIN_AGENT_LOGIN_HANDOFF_CODE_TTL_MS,
@@ -20,6 +21,7 @@ import {
   requireDedicatedAdminDatabaseAdapter,
   type AdminAuthContext,
   type Env,
+  ADMIN_ROLE_GROUPS,
 } from '@authrim/ar-lib-core';
 import type { AgentManagementEnv } from '../../agent-downscope-auth';
 
@@ -28,7 +30,7 @@ type AgentLoginHandoffContext = Context<{
   Variables: { adminAuth?: AdminAuthContext };
 }>;
 
-const REQUIRED_ADMIN_ROLES = ['super_admin', 'security_admin', 'admin', 'support', 'viewer'];
+const REQUIRED_ADMIN_ROLES = [...ADMIN_ROLE_GROUPS.anyAdmin];
 
 interface RootAdminSessionRow {
   id: string;
@@ -129,7 +131,10 @@ agentLoginHandoffsRouter.post('/:handoff_id/approve', async (c) => {
     c.env,
     'admin-agent-login-handoff-approval'
   );
-  const repository = new AdminAgentAccessRepository(database);
+  const repository = new AdminAgentAccessRepository(
+    database,
+    createCloudflareAdminAgentAuditWriter(c.env)
+  );
   const handoff = await repository.getLoginHandoffById(handoffId);
   if (!handoff || handoff.status !== 'pending' || handoff.expiresAt <= now) {
     return c.json(

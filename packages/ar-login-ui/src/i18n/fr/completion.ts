@@ -1,6 +1,14 @@
 import type { Translation } from '../i18n-types';
 
 const completion = {
+	error_rateLimited: 'Trop de tentatives. Patientez un moment, puis réessayez.',
+	error_rateLimitedRetryAfter: 'Trop de tentatives. Réessayez dans environ {minutes} min.',
+	error_unregisteredPostLogoutRedirectUri:
+		'Vous avez été déconnecté. Le retour vers l’application est impossible, car son adresse de retour n’est pas enregistrée. Rouvrez l’application vous-même.',
+	error_invalidIdTokenHint:
+		'Vous avez été déconnecté. Le retour vers l’application est impossible, car sa demande de déconnexion n’a pas pu être vérifiée. Rouvrez l’application vous-même.',
+	error_idTokenHintRequired:
+		'Vous avez été déconnecté. Le retour vers l’application est impossible, car sa demande de déconnexion était incomplète. Rouvrez l’application vous-même.',
 	common_logoAlt: 'Logo',
 	common_footerLinks: 'Liens du pied de page',
 	common_selectOption: 'Sélectionner une option',
@@ -42,7 +50,7 @@ const completion = {
 	emailCode_title: 'Consultez votre messagerie',
 	emailCode_subtitle: 'Nous avons envoyé un code de vérification à',
 	emailCode_instructions:
-		'Saisissez le code à 6 chiffres reçu par e-mail. Le code expirera dans 5 minutes.',
+		"Saisissez le code à 6 chiffres reçu par e-mail. L'e-mail indique sa durée de validité.",
 	emailCode_codeLabel: 'Code de vérification',
 	emailCode_resendSuccess: 'Code envoyé',
 	emailCode_success: 'Vérification terminée. Redirection en cours...',
@@ -92,7 +100,7 @@ const completion = {
 	device_subtitle: 'Saisissez le code affiché sur votre appareil',
 	device_codeLabel: 'Code de vérification',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint: 'Saisissez le code à 8 caractères de votre appareil (format : XXXX-XXXX)',
+	device_codeHint: 'Saisissez le code affiché sur votre appareil',
 	device_verifyButton: 'Vérifier le code',
 	device_confirmTitle: 'Autoriser l’appareil',
 	device_requestedPermissions: 'Autorisations demandées',
@@ -105,6 +113,13 @@ const completion = {
 	device_errorApproveFailed: 'Impossible d’approuver l’appareil',
 	device_errorDenyFailed: 'Impossible de refuser la demande de l’appareil',
 	device_errorInvalidRedirect: 'URL de redirection non valide reçue du serveur',
+	device_errorConsentWithdrawn:
+		'Cette demande a été faite avant que vous ne retiriez l’accès de cette application. Recommencez sur l’appareil pour obtenir un nouveau code.',
+	device_errorTryAgain:
+		'Votre décision n’a pas pu être enregistrée pour le moment et rien n’a été modifié. Réessayez dans un instant.',
+	device_errorTooManyAttempts: 'Trop de tentatives. Patientez un moment, puis réessayez.',
+	device_errorOutcomeUnknown:
+		'Nous n’avons pas pu confirmer l’enregistrement de votre décision. Vérifiez l’appareil ou saisissez à nouveau le code.',
 	ciba_title: 'Demande d’authentification',
 	ciba_subtitle: 'Une application demande votre approbation',
 	ciba_noPendingRequests: 'Aucune demande d’authentification en attente',
@@ -125,6 +140,18 @@ const completion = {
 	ciba_errorGeneric: 'Une erreur s’est produite',
 	ciba_errorApproveFailed: 'Impossible d’approuver la demande',
 	ciba_errorDenyFailed: 'Impossible de rejeter la demande',
+	ciba_errorConsentWithdrawn:
+		'Cette demande a été faite avant que vous ne retiriez l’accès de cette application. Recommencez depuis l’application.',
+	ciba_errorRequestGone: 'Cette demande a expiré ou a déjà reçu une réponse.',
+	error_authorizationRequestExpired:
+		'La demande de connexion a expiré. Recommencez depuis l’application.',
+	ciba_errorTryAgain:
+		'Votre décision n’a pas pu être enregistrée pour le moment et rien n’a été modifié. Réessayez dans un instant.',
+	ciba_errorTooManyAttempts: 'Trop de tentatives. Patientez un moment, puis réessayez.',
+	ciba_errorOutcomeUnknown:
+		'Nous n’avons pas pu confirmer l’enregistrement de votre réponse. Actualisez pour voir les demandes encore en attente.',
+	ciba_errorNoLongerWaiting:
+		'Nous n’avons pas pu confirmer votre réponse, mais cette demande n’est plus en attente.',
 	reauth_title: 'Vérifiez votre identité',
 	reauth_subtitle: 'Pour votre sécurité, authentifiez-vous à nouveau pour continuer',
 	reauth_verifyWithPasskey: 'Vérifier avec une Passkey',

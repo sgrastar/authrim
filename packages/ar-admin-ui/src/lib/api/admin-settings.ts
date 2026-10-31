@@ -24,9 +24,10 @@ function resolveTenantId(tenantId?: string): string {
 }
 
 /**
- * Setting value source (priority: env > kv > default)
+ * Setting value source: 'kv' is set at this scope, 'tenant' / 'platform' are inherited from
+ * that scope, then 'env', then 'default'.
  */
-export type SettingSource = 'env' | 'kv' | 'default';
+export type SettingSource = 'env' | 'kv' | 'default' | 'tenant' | 'platform';
 
 /**
  * Individual setting value with source tracking
@@ -112,33 +113,6 @@ export interface SettingsPatchResult {
 	version: string;
 }
 
-export interface UIPathConfig {
-	login: string;
-	consent: string;
-	reauth: string;
-	error: string;
-	device: string;
-	deviceAuthorize: string;
-	logoutComplete: string;
-	loggedOut: string;
-	register: string;
-}
-
-export interface UIPathMetadataItem {
-	label: string;
-	description: string;
-}
-
-export interface UIConfigResponse {
-	config: {
-		baseUrl: string | null;
-		paths: UIPathConfig;
-	};
-	source: 'kv' | 'env' | 'none';
-	defaults: UIPathConfig;
-	metadata: Record<keyof UIPathConfig, UIPathMetadataItem>;
-}
-
 /**
  * UI patch operation (for internal use)
  */
@@ -182,32 +156,6 @@ export interface TokenExchangeBooleanSetting {
 	value: boolean;
 	source: SettingSource;
 	default: boolean;
-}
-
-export interface TokenExchangeConfigResponse {
-	settings: {
-		enabled: TokenExchangeBooleanSetting;
-		allowedSubjectTokenTypes: {
-			value: string[];
-			source: SettingSource;
-			default: string[];
-			validOptions: string[];
-		};
-		maxResourceParams: {
-			value: number;
-			source: SettingSource;
-			default: number;
-			min: number;
-			max: number;
-		};
-		maxAudienceParams: {
-			value: number;
-			source: SettingSource;
-			default: number;
-			min: number;
-			max: number;
-		};
-	};
 }
 
 /**
@@ -401,81 +349,6 @@ export const adminSettingsAPI = {
 	}
 };
 
-export const adminTokenExchangeSettingsAPI = {
-	async getConfig(): Promise<TokenExchangeConfigResponse> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/token-exchange`, {
-			skipTenantHeader: true
-		});
-
-		if (!response.ok) {
-			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
-			throw new Error(
-				error.error_description || error.message || 'Failed to fetch token exchange settings'
-			);
-		}
-
-		return response.json();
-	},
-
-	async updateConfig(request: {
-		enabled: boolean;
-		allowedSubjectTokenTypes?: string[];
-		maxResourceParams?: number;
-		maxAudienceParams?: number;
-	}): Promise<TokenExchangeConfigResponse> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/token-exchange`, {
-			method: 'PUT',
-			includeJsonContentType: true,
-			skipTenantHeader: true,
-			body: JSON.stringify(request)
-		});
-
-		if (!response.ok) {
-			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
-			throw new Error(
-				error.error_description || error.message || 'Failed to update token exchange settings'
-			);
-		}
-
-		return response.json();
-	}
-};
-
-export const adminUiConfigAPI = {
-	async get(): Promise<UIConfigResponse> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/ui-config`, {
-			skipTenantHeader: true
-		});
-
-		if (!response.ok) {
-			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
-			throw new Error(error.error_description || error.message || 'Failed to fetch UI config');
-		}
-
-		return response.json();
-	},
-
-	async update(request: {
-		baseUrl: string | null;
-		paths: Partial<UIPathConfig>;
-	}): Promise<UIConfigResponse['config']> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/settings/ui-config`, {
-			method: 'PUT',
-			includeJsonContentType: true,
-			skipTenantHeader: true,
-			body: JSON.stringify(request)
-		});
-
-		if (!response.ok) {
-			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
-			throw new Error(error.error_description || error.message || 'Failed to update UI config');
-		}
-
-		const result = await response.json();
-		return result.config;
-	}
-};
-
 /**
  * Known category names for type safety
  */
@@ -514,9 +387,12 @@ export const CATEGORY_NAMES = [
 	'assurance',
 	// Check API Audit
 	'check-api-audit',
+	// Log storage (D1 retention before R2)
+	'log-storage',
 	// Login UI Customization
 	'login-ui',
 	'authentication-methods',
+	'account-lifecycle',
 	// Login Entry / Discovery
 	'login-entry',
 	'tenant-discovery-ui',

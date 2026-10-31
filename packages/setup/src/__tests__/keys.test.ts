@@ -5,6 +5,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   mkdirSync,
+  statSync,
   rmSync,
   existsSync,
   writeFileSync,
@@ -31,6 +32,8 @@ import {
   validateSetupMachinePublicKeyJwk,
   generateWranglerSecretCommands,
   ensureSupplementalKeyFiles,
+  isValidTombstoneHmacKeyring,
+  isValidInvestigationSubjectHmacKeyring,
 } from '../core/keys.js';
 import { AUTHRIM_KEYS_DIR, AUTHRIM_DIR, LEGACY_KEYS_DIR } from '../core/paths.js';
 
@@ -168,6 +171,8 @@ describe('generateAllSecrets', () => {
     expect(secrets.rpTokenEncryptionKey).toMatch(/^[a-f0-9]{64}$/);
     expect(secrets.piiEncryptionKey).toMatch(/^[a-f0-9]{64}$/);
     expect(secrets.objectEncryptionRootKey).toMatch(/^[a-f0-9]{64}$/);
+    expect(secrets.tenantBackupWrappingKey).toMatch(/^[a-f0-9]{64}$/);
+    expect(secrets.tenantBackupWrappingKey).not.toBe(secrets.objectEncryptionRootKey);
     expect(secrets.otpHmacSecret).toBeDefined();
     expect(secrets.loggingCursorHmacSecret).toBeDefined();
     expect(secrets.flowRuntimeHmacSecret).toBeDefined();
@@ -252,6 +257,16 @@ describe('saveKeysToDirectory with external keys', () => {
     expect(existsSync(join(keysDir, 'pii_encryption_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'object_encryption_root_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'otp_hmac_secret.txt'))).toBe(true);
+    expect(
+      isValidTombstoneHmacKeyring(
+        readFileSync(join(keysDir, 'tombstone_hmac_keyring.json'), 'utf-8')
+      )
+    ).toBe(true);
+    expect(
+      isValidInvestigationSubjectHmacKeyring(
+        readFileSync(join(keysDir, 'investigation_subject_hmac_keyring.json'), 'utf-8')
+      )
+    ).toBe(true);
     expect(existsSync(join(keysDir, 'logging_cursor_hmac_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'vc_transaction_code_hmac_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'vc_evidence_hmac_secret.txt'))).toBe(true);
@@ -622,6 +637,60 @@ describe('ensureSupplementalKeyFiles', () => {
     }
   });
 
+  it('keeps an existing tombstone keyring and refuses a malformed one', async () => {
+    const keysDir = join(testDir, AUTHRIM_KEYS_DIR, 'prod');
+    mkdirSync(keysDir, { recursive: true });
+    const keyPair = generateRsaKeyPair('legacy-key');
+    writeFileSync(join(keysDir, 'private.pem'), keyPair.privateKeyPem);
+    writeFileSync(join(keysDir, 'public.jwk.json'), JSON.stringify(keyPair.publicKeyJwk));
+    writeFileSync(join(keysDir, 'metadata.json'), JSON.stringify({ kid: 'legacy-key', files: {} }));
+    // A rotated keyring: generation 2 current, generation 1 still read.
+    const rotated = JSON.stringify({
+      current: 2,
+      keys: { '1': 'a'.repeat(43), '2': 'b'.repeat(43) },
+    });
+    writeFileSync(join(keysDir, 'tombstone_hmac_keyring.json'), rotated);
+
+    const result = await ensureSupplementalKeyFiles(keysDir);
+
+    expect(result.createdFiles).not.toContain(join(keysDir, 'tombstone_hmac_keyring.json'));
+    expect(readFileSync(join(keysDir, 'tombstone_hmac_keyring.json'), 'utf-8')).toBe(rotated);
+
+    writeFileSync(
+      join(keysDir, 'tombstone_hmac_keyring.json'),
+      JSON.stringify({ current: 3, keys: { '1': 'a'.repeat(43) } })
+    );
+    await expect(ensureSupplementalKeyFiles(keysDir)).rejects.toThrow(
+      /Invalid supplemental secret: .*tombstone_hmac_keyring\.json/u
+    );
+  });
+
+  it('keeps a rotated investigation keyring and refuses a malformed one', async () => {
+    const keysDir = join(testDir, AUTHRIM_KEYS_DIR, 'prod');
+    mkdirSync(keysDir, { recursive: true });
+    const keyPair = generateRsaKeyPair('legacy-key');
+    writeFileSync(join(keysDir, 'private.pem'), keyPair.privateKeyPem);
+    writeFileSync(join(keysDir, 'public.jwk.json'), JSON.stringify(keyPair.publicKeyJwk));
+    writeFileSync(join(keysDir, 'metadata.json'), JSON.stringify({ kid: 'legacy-key', files: {} }));
+    const path = join(keysDir, 'investigation_subject_hmac_keyring.json');
+    // Rotation adds a generation and makes it current; the old one is still read.
+    const rotated = JSON.stringify({
+      current: 2,
+      keys: { '1': 'c'.repeat(43), '2': 'd'.repeat(43) },
+    });
+    writeFileSync(path, rotated);
+
+    const result = await ensureSupplementalKeyFiles(keysDir);
+
+    expect(result.createdFiles).not.toContain(path);
+    expect(readFileSync(path, 'utf-8')).toBe(rotated);
+
+    writeFileSync(path, JSON.stringify({ current: 3, keys: { '1': 'c'.repeat(43) } }));
+    await expect(ensureSupplementalKeyFiles(keysDir)).rejects.toThrow(
+      /Invalid supplemental secret: .*investigation_subject_hmac_keyring\.json/u
+    );
+  });
+
   it('backfills keys required by deploy-time Admin Machine Access', async () => {
     const keysDir = join(testDir, AUTHRIM_KEYS_DIR, 'prod');
     mkdirSync(keysDir, { recursive: true });
@@ -632,7 +701,7 @@ describe('ensureSupplementalKeyFiles', () => {
 
     const result = await ensureSupplementalKeyFiles(keysDir);
 
-    expect(result.createdFiles).toHaveLength(24);
+    expect(result.createdFiles).toHaveLength(27);
     expect(existsSync(join(keysDir, 'object_encryption_root_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'pii_encryption_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'vc_transaction_code_hmac_secret.txt'))).toBe(true);
@@ -641,6 +710,14 @@ describe('ensureSupplementalKeyFiles', () => {
     expect(existsSync(join(keysDir, 'otp_hmac_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'logging_cursor_hmac_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'lookup_hmac_key_slot_a.txt'))).toBe(true);
+    // Deleted accounts' email fingerprints get their own keyring, apart from the lookup keys.
+    expect(JSON.parse(readFileSync(join(keysDir, 'tombstone_hmac_keyring.json'), 'utf-8'))).toEqual(
+      { current: 1, keys: { '1': expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u) } }
+    );
+    // Failed sign-in attempts' subject hashes get a keyring of the same shape.
+    expect(
+      JSON.parse(readFileSync(join(keysDir, 'investigation_subject_hmac_keyring.json'), 'utf-8'))
+    ).toEqual({ current: 1, keys: { '1': expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u) } });
     expect(existsSync(join(keysDir, 'flow_runtime_hmac_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'plugin_encryption_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'plugin_mutation_hmac_key.txt'))).toBe(true);
@@ -759,6 +836,33 @@ describe('ensureSupplementalKeyFiles', () => {
     expect(repairedMetadata.files.vcProfileContractHmacSecret).toContain(
       'vc_profile_contract_hmac_secret.txt'
     );
+  });
+
+  it('backfills the backup wrapping key once, keeps it private, and rejects corrupt existing keys', async () => {
+    const keysDir = join(testDir, AUTHRIM_KEYS_DIR, 'backup');
+    const secrets = generateAllSecrets('backup-fixture');
+    await saveKeysToDirectory(secrets, { targetDir: keysDir });
+    const file = join(keysDir, 'tenant_backup_wrapping_key.txt');
+    expect(readFileSync(file, 'utf-8')).toBe(secrets.tenantBackupWrappingKey);
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    rmSync(file);
+    const metadataPath = join(keysDir, 'metadata.json');
+    const oldMetadata = JSON.parse(readFileSync(metadataPath, 'utf-8'));
+    delete oldMetadata.files.tenantBackupWrappingKey;
+    writeFileSync(metadataPath, JSON.stringify(oldMetadata));
+    expect((await loadKeysFromDirectory(keysDir)).keyPair?.keyId).toBe('backup-fixture');
+    const first = await ensureSupplementalKeyFiles(keysDir);
+    expect(first.createdFiles).toContain(file);
+    const saved = readFileSync(file, 'utf-8');
+    expect(saved).toMatch(/^[a-f0-9]{64}$/);
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    await ensureSupplementalKeyFiles(keysDir);
+    expect(readFileSync(file, 'utf-8')).toBe(saved);
+    writeFileSync(file, 'truncated');
+    await expect(ensureSupplementalKeyFiles(keysDir)).rejects.toThrow(
+      'Invalid supplemental secret'
+    );
+    expect(readFileSync(file, 'utf-8')).toBe('truncated');
   });
 
   it('removes legacy static secret files and metadata references', async () => {

@@ -9,6 +9,8 @@
  * - Stores request/response pairs with SHA-256 body hash
  * - Returns cached response for duplicate requests
  * - Rejects conflicting body with same key (409 Conflict)
+ * - With reservation, keeps "act, then retry" errors (markIdempotentResponseRetryable) out of the
+ *   store: the key stays bound to the body and the same body may run again
  * - PII sanitization in cached responses
  * - Configurable TTL (default 24 hours)
  *
@@ -30,6 +32,7 @@ import { createLogger } from '../utils/logger';
 import { createPhase1ErrorDetails } from '../errors/details';
 import { readRequestBytesWithLimit } from '../utils/body-limits';
 import { readResponseTextWithLimit } from '../utils/url-security';
+import { isUniqueConstraintError } from '../utils/d1-retry';
 
 const log = createLogger().module('IDEMPOTENCY');
 const IDEMPOTENCY_REQUEST_BODY_MAX_BYTES = 1024 * 1024;
@@ -87,8 +90,39 @@ const DEFAULT_REDACT_FIELDS = [
  */
 const DEFAULT_TTL_SECONDS = 24 * 60 * 60;
 
-function isUniqueConstraintError(error: unknown): boolean {
-  return String(error).includes('UNIQUE constraint');
+const RETRYABLE_RESPONSE_CONTEXT_KEY = 'idempotencyResponseRetryable';
+
+/** response_status of a key whose handler is running (reserveBeforeExecution). */
+const IN_PROGRESS_STATUS = 425;
+/**
+ * response_status of a key whose last attempt was marked retryable: the row still binds the body
+ * hash but holds no outcome, so the next attempt with the same body may reserve it again.
+ * Not an HTTP status, so it never collides with a stored response.
+ */
+const RETRYABLE_STATUS = 0;
+const MAX_RESERVATION_ATTEMPTS = 3;
+const IN_PROGRESS_ERROR = {
+  error: 'idempotency_in_progress',
+  error_description: 'A request with this Idempotency-Key is still in progress',
+};
+const IN_PROGRESS_BODY = JSON.stringify(IN_PROGRESS_ERROR);
+const RETRYABLE_BODY = JSON.stringify({ retryable: true });
+
+/**
+ * Marks the current error response as "nothing was done; act, then retry with the same
+ * Idempotency-Key" (for example step_up_required, or a step-up receipt that was refused). With
+ * reserveBeforeExecution, the middleware then stores no outcome for the key: it keeps the key bound
+ * to the request body (a different body is still refused with 409) and releases the reservation,
+ * so the next attempt with the same body reserves the key again and reaches the handler. Without
+ * reserveBeforeExecution the mark is ignored and the response is stored as usual, because only the
+ * reservation keeps two attempts from running the handler at once.
+ *
+ * Call it only on a path that has performed no side effect. A success (status < 400) is always
+ * stored, whether or not it was marked.
+ */
+export function markIdempotentResponseRetryable(c: Context): void {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+  (c as any).set(RETRYABLE_RESPONSE_CONTEXT_KEY, true);
 }
 
 function returnStoredResponse(
@@ -96,10 +130,13 @@ function returnStoredResponse(
   entry: Pick<IdempotencyKeyEntry, 'response_body' | 'response_status'>
 ): Response {
   const status = entry.response_status as 200 | 201 | 202 | 400 | 404 | 409 | 425 | 500 | 503;
+  // An in-progress row's body names its owner; answer with the plain in-progress error.
+  const responseBody =
+    entry.response_status === IN_PROGRESS_STATUS ? IN_PROGRESS_BODY : entry.response_body;
   try {
-    return c.json(JSON.parse(entry.response_body), status);
+    return c.json(JSON.parse(responseBody), status);
   } catch {
-    return c.text(entry.response_body, status);
+    return c.text(responseBody, status);
   }
 }
 
@@ -182,6 +219,159 @@ function extractResourceId(path: string): string | null {
   // Match patterns like /users/:id/action or /clients/:id/action
   const match = path.match(/\/(?:users|clients)\/([^/]+)/);
   return match ? match[1] : null;
+}
+
+function isResponseMarkedRetryable(c: Context): boolean {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+  return (c as any).get(RETRYABLE_RESPONSE_CONTEXT_KEY) === true;
+}
+
+function idempotencyConflict(c: Context<{ Bindings: Env }>): Response {
+  return c.json(
+    {
+      error: 'idempotency_conflict',
+      error_description: 'Idempotency-Key already used with different request body',
+      error_details: createPhase1ErrorDetails('idempotency_conflict'),
+    },
+    409
+  );
+}
+
+function inProgress(c: Context<{ Bindings: Env }>): Response {
+  c.header('Retry-After', '2');
+  return returnStoredResponse(c, {
+    response_status: IN_PROGRESS_STATUS,
+    response_body: IN_PROGRESS_BODY,
+  });
+}
+
+/**
+ * The response_body of an in-progress row. It carries a per-reservation id so that only the
+ * request holding the reservation can release or finalize it.
+ */
+function createReservationBody(): string {
+  return JSON.stringify({ ...IN_PROGRESS_ERROR, reservation_id: crypto.randomUUID() });
+}
+
+/**
+ * Moves a key from one state to another for the same body; false when another request won. Leaving
+ * the in-progress state requires the reservation body, so a request whose reservation was replaced
+ * cannot touch the new owner's row.
+ */
+async function transitionReservation(
+  adapter: DatabaseAdapter,
+  input: {
+    keyId: string;
+    bodyHash: string;
+    to: number;
+    responseBody: string;
+    expiresAt: number;
+  } & ({ from: typeof RETRYABLE_STATUS } | { from: typeof IN_PROGRESS_STATUS; ownerBody: string })
+): Promise<boolean> {
+  const owned = input.from === IN_PROGRESS_STATUS;
+  const result = await adapter.execute(
+    `UPDATE idempotency_keys
+     SET response_status = ?, response_body = ?, expires_at = ?
+     WHERE id = ? AND body_hash = ? AND response_status = ${input.from}${
+       owned ? ' AND response_body = ?' : ''
+     }`,
+    [
+      input.to,
+      input.responseBody,
+      input.expiresAt,
+      input.keyId,
+      input.bodyHash,
+      ...(input.from === IN_PROGRESS_STATUS ? [input.ownerBody] : []),
+    ]
+  );
+  return result.rowsAffected === 1;
+}
+
+interface ReservationRow {
+  keyId: string;
+  tenantId: string;
+  actorId: string;
+  method: string;
+  path: string;
+  resourceId: string | null;
+  idempotencyKey: string;
+  bodyHash: string;
+}
+
+/**
+ * Atomically takes ownership of the key before the handler runs: inserts a new in-progress row, or
+ * re-reserves a row left retryable by an earlier attempt with the same body. Returns the response
+ * to send instead of running the handler, or the reservation body when this request owns the key.
+ * Never lets the handler run without a reservation: a key that keeps changing hands answers 425.
+ */
+async function reserveKey(input: {
+  c: Context<{ Bindings: Env }>;
+  adapter: DatabaseAdapter;
+  entry: IdempotencyKeyEntry | null;
+  row: ReservationRow;
+  ttlSeconds: number;
+}): Promise<{ response: Response } | { ownerBody: string }> {
+  const { c, adapter, row } = input;
+  const ownerBody = createReservationBody();
+  let entry = input.entry;
+  for (let attempt = 0; attempt < MAX_RESERVATION_ATTEMPTS; attempt += 1) {
+    const now = Math.floor(Date.now() / 1000);
+    if (entry && entry.body_hash !== row.bodyHash) return { response: idempotencyConflict(c) };
+    if (entry && entry.response_status !== RETRYABLE_STATUS) {
+      if (entry.response_status === IN_PROGRESS_STATUS) c.header('Retry-After', '2');
+      return { response: returnStoredResponse(c, entry) };
+    }
+    if (entry) {
+      const reserved = await transitionReservation(adapter, {
+        keyId: row.keyId,
+        bodyHash: row.bodyHash,
+        from: RETRYABLE_STATUS,
+        to: IN_PROGRESS_STATUS,
+        responseBody: ownerBody,
+        expiresAt: now + input.ttlSeconds,
+      });
+      if (reserved) return { ownerBody };
+    } else {
+      try {
+        await adapter.execute(
+          `INSERT INTO idempotency_keys
+           (id, tenant_id, actor_id, method, path, resource_id, idempotency_key, body_hash, response_status, response_body, created_at, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            row.keyId,
+            row.tenantId,
+            row.actorId,
+            row.method,
+            row.path,
+            row.resourceId,
+            row.idempotencyKey,
+            row.bodyHash,
+            IN_PROGRESS_STATUS,
+            ownerBody,
+            now,
+            now + input.ttlSeconds,
+          ]
+        );
+        return { ownerBody };
+      } catch (error) {
+        if (!isUniqueConstraintError(error)) throw error;
+      }
+    }
+    entry = await adapter.queryOne<IdempotencyKeyEntry>(
+      'SELECT * FROM idempotency_keys WHERE id = ? AND expires_at > ?',
+      [row.keyId, now]
+    );
+    if (!entry) {
+      // The conflicting row has expired but not been swept yet: an expired outcome no longer binds
+      // the key. An expired reservation is left alone: its handler may still be running.
+      await adapter.execute(
+        `DELETE FROM idempotency_keys
+         WHERE id = ? AND expires_at <= ? AND response_status <> ${IN_PROGRESS_STATUS}`,
+        [row.keyId, now]
+      );
+    }
+  }
+  return { response: inProgress(c) };
 }
 
 /**
@@ -297,72 +487,41 @@ export function idempotencyMiddleware(
             existingHash: existingEntry.body_hash.substring(0, 8),
             newHash: bodyHash.substring(0, 8),
           });
-          return c.json(
-            {
-              error: 'idempotency_conflict',
-              error_description: 'Idempotency-Key already used with different request body',
-              error_details: createPhase1ErrorDetails('idempotency_conflict'),
-            },
-            409
-          );
+          return idempotencyConflict(c);
         }
 
-        // Same body, return cached response
-        log.debug('Returning cached idempotent response', { keyId });
+        if (existingEntry.response_status !== RETRYABLE_STATUS) {
+          // Same body, return cached response
+          log.debug('Returning cached idempotent response', { keyId });
 
-        if (existingEntry.response_status === 425) c.header('Retry-After', '2');
-        return returnStoredResponse(c, existingEntry);
+          if (existingEntry.response_status === IN_PROGRESS_STATUS) c.header('Retry-After', '2');
+          return returnStoredResponse(c, existingEntry);
+        }
       }
 
-      const reservationTimestamp = Math.floor(Date.now() / 1000);
-      const reservationExpiresAt = reservationTimestamp + ttlSeconds;
+      let ownerBody: string | undefined;
       if (config?.reserveBeforeExecution) {
-        try {
-          await adapter.execute(
-            `INSERT INTO idempotency_keys
-             (id, tenant_id, actor_id, method, path, resource_id, idempotency_key, body_hash, response_status, response_body, created_at, expires_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              keyId,
-              tenantId,
-              actorId,
-              method,
-              normalizedPath,
-              resourceId,
-              idempotencyKey,
-              bodyHash,
-              425,
-              JSON.stringify({
-                error: 'idempotency_in_progress',
-                error_description: 'A request with this Idempotency-Key is still in progress',
-              }),
-              reservationTimestamp,
-              reservationExpiresAt,
-            ]
-          );
-        } catch (error) {
-          if (!isUniqueConstraintError(error)) throw error;
-          const winner = await adapter.queryOne<IdempotencyKeyEntry>(
-            'SELECT * FROM idempotency_keys WHERE id = ? AND expires_at > ?',
-            [keyId, reservationTimestamp]
-          );
-          if (!winner) throw error;
-          if (winner.body_hash !== bodyHash) {
-            return c.json(
-              {
-                error: 'idempotency_conflict',
-                error_description: 'Idempotency-Key already used with different request body',
-                error_details: createPhase1ErrorDetails('idempotency_conflict'),
-              },
-              409
-            );
-          }
-          if (winner.response_status === 425) c.header('Retry-After', '2');
-          return returnStoredResponse(c, winner);
-        }
+        const reservation = await reserveKey({
+          c,
+          adapter,
+          entry: existingEntry,
+          row: {
+            keyId,
+            tenantId,
+            actorId,
+            method,
+            path: normalizedPath,
+            resourceId,
+            idempotencyKey,
+            bodyHash,
+          },
+          ttlSeconds,
+        });
+        if ('response' in reservation) return reservation.response;
+        ownerBody = reservation.ownerBody;
       }
 
-      // No existing entry, proceed with request
+      // No stored outcome (no entry, or one left retryable), proceed with request
       // Restore the body for the handler (since we already read it)
       // Create a new request with the body
       const originalRequest = c.req.raw;
@@ -385,6 +544,29 @@ export function idempotencyMiddleware(
 
       // After handler execution, capture and store the response
       const response = c.res;
+
+      // An "act, then retry" error is not the outcome of the request: storing it would replay it
+      // to the retry that carries what the handler asked for. Keep the body binding, drop the
+      // reservation, and let the next attempt with the same body reserve the key again.
+      if (ownerBody !== undefined && response.status >= 400 && isResponseMarkedRetryable(c)) {
+        const released = await transitionReservation(adapter, {
+          keyId,
+          bodyHash,
+          from: IN_PROGRESS_STATUS,
+          ownerBody,
+          to: RETRYABLE_STATUS,
+          responseBody: RETRYABLE_BODY,
+          expiresAt: Math.floor(Date.now() / 1000) + ttlSeconds,
+        });
+        if (!released) {
+          throw new Error('Idempotency reservation was lost before release');
+        }
+        log.debug('Released idempotency key after retryable response', {
+          keyId,
+          status: response.status,
+        });
+        return;
+      }
 
       // Clone the response to read the body
       const clonedResponse = response.clone();
@@ -410,21 +592,28 @@ export function idempotencyMiddleware(
       // Store the idempotency key and response. A concurrent request may have
       // inserted the key after the initial SELECT, so handle UNIQUE races
       // explicitly instead of relying on dialect-specific upsert syntax.
-      const updateResult = await adapter.execute(
-        config?.reserveBeforeExecution
-          ? `UPDATE idempotency_keys
-             SET response_status = ?, response_body = ?, expires_at = ?
-             WHERE id = ? AND body_hash = ? AND response_status = 425`
-          : `UPDATE idempotency_keys
-             SET response_status = ?, response_body = ?, expires_at = ?
-             WHERE id = ?`,
-        config?.reserveBeforeExecution
-          ? [responseStatus, sanitizedBody, expiresAt, keyId, bodyHash]
-          : [responseStatus, sanitizedBody, expiresAt, keyId]
-      );
+      const stored =
+        ownerBody !== undefined
+          ? await transitionReservation(adapter, {
+              keyId,
+              bodyHash,
+              from: IN_PROGRESS_STATUS,
+              ownerBody,
+              to: responseStatus,
+              responseBody: sanitizedBody,
+              expiresAt,
+            })
+          : (
+              await adapter.execute(
+                `UPDATE idempotency_keys
+                 SET response_status = ?, response_body = ?, expires_at = ?
+                 WHERE id = ?`,
+                [responseStatus, sanitizedBody, expiresAt, keyId]
+              )
+            ).rowsAffected > 0;
 
-      if (updateResult.rowsAffected === 0) {
-        if (config?.reserveBeforeExecution) {
+      if (!stored) {
+        if (ownerBody !== undefined) {
           throw new Error('Idempotency reservation was lost before response storage');
         }
         try {
@@ -455,7 +644,13 @@ export function idempotencyMiddleware(
             'SELECT * FROM idempotency_keys WHERE id = ? AND expires_at > ?',
             [keyId, nowTs]
           );
-          if (!winner || winner.body_hash !== bodyHash) throw error;
+          if (
+            !winner ||
+            winner.body_hash !== bodyHash ||
+            winner.response_status === RETRYABLE_STATUS
+          ) {
+            throw error;
+          }
           return returnStoredResponse(c, winner);
         }
       }
@@ -495,13 +690,27 @@ export function requiredIdempotencyMiddleware(
 }
 
 /**
+ * How long cleanup keeps an expired in-progress reservation. Its handler may still be running, and
+ * deleting the row would let another attempt with the same key run the handler as well. A
+ * reservation abandoned by a crashed request blocks its key (425) for this long.
+ */
+export const IDEMPOTENCY_RESERVATION_RETENTION_SECONDS = 24 * 60 * 60;
+
+/**
+ * WHERE clause (after `tenant_id = ? AND`, if any) selecting the rows cleanup may delete; bind
+ * [now, now - IDEMPOTENCY_RESERVATION_RETENTION_SECONDS].
+ */
+export const EXPIRED_IDEMPOTENCY_KEYS_CONDITION = `expires_at < ? AND (response_status <> ${IN_PROGRESS_STATUS} OR expires_at < ?)`;
+
+/**
  * Cleanup expired idempotency keys
  * Should be called periodically by a scheduled worker
  */
 export async function cleanupExpiredIdempotencyKeys(adapter: DatabaseAdapter): Promise<number> {
   const nowTs = Math.floor(Date.now() / 1000);
-  const result = await adapter.execute('DELETE FROM idempotency_keys WHERE expires_at < ?', [
-    nowTs,
-  ]);
+  const result = await adapter.execute(
+    `DELETE FROM idempotency_keys WHERE ${EXPIRED_IDEMPOTENCY_KEYS_CONDITION}`,
+    [nowTs, nowTs - IDEMPOTENCY_RESERVATION_RETENTION_SECONDS]
+  );
   return result.rowsAffected;
 }

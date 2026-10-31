@@ -9,18 +9,19 @@ import type { Env, CIBARequestMetadata, ClientMetadata } from '@authrim/ar-lib-c
 import {
   generateAuthReqId,
   generateCIBAUserCode,
-  CIBA_CONSTANTS,
   validateCIBARequest,
   validateCIBARequestObject,
   validateCIBAIdTokenHint,
+  resolvePresentedTokenAccount,
   determineDeliveryMode,
-  calculatePollingInterval,
   parseLoginHint,
   getClientCached,
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
-  getJwksWithCache,
+  resolveCibaConfig,
+  type CibaConfig,
+  getIssuedIDTokenKeys,
   publishEvent,
   buildDOInstanceName,
   parseOAuthClientAuthenticationParams,
@@ -28,6 +29,7 @@ import {
 } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
 import { resolveAsyncTenantId } from './tenant';
+import { fal3Refusal } from './assurance';
 
 function invalidCIBAClientResponse(c: Context<{ Bindings: Env }>) {
   // CIBA error responses are a public protocol contract and may only contain
@@ -52,6 +54,23 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
       variables: { field: 'tenant context' },
     });
+  }
+  const assuranceRefusal = await fal3Refusal(c, tenantId);
+  if (assuranceRefusal) return assuranceRefusal;
+  // The tenant's CIBA limits. Settings that cannot be read stop the request like the assurance
+  // settings above: `binding_message_required` is a restriction, so defaults must not stand in.
+  let cibaConfig: CibaConfig;
+  try {
+    cibaConfig = await resolveCibaConfig(c.env, tenantId);
+  } catch (error) {
+    log.error('Failed to load CIBA settings', { action: 'ciba_settings' }, error as Error);
+    return c.json(
+      {
+        error: 'temporarily_unavailable',
+        error_description: 'CIBA settings are temporarily unavailable',
+      },
+      503
+    );
   }
   const requestIssuer = getRequestIssuer(c, tenantId);
 
@@ -177,15 +196,37 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const validation = validateCIBARequest({
-      scope,
-      login_hint,
-      login_hint_token,
-      id_token_hint,
-      binding_message,
-      user_code,
-      requested_expiry,
-    });
+    // user_code is accepted only while the tenant allows it (ciba.user_code_enabled), and
+    // discovery advertises the same switch. Refusing it, rather than ignoring it, tells a client
+    // that sends one that no user code protects its request. (An empty value counts as absent,
+    // as in the generated-code line below.) The OP never verifies a user code either way.
+    if (
+      !cibaConfig.userCodeEnabled &&
+      parameters.user_code !== undefined &&
+      parameters.user_code !== null &&
+      parameters.user_code !== ''
+    ) {
+      return c.json(
+        { error: 'invalid_request', error_description: 'user_code is not supported' },
+        400
+      );
+    }
+
+    const validation = validateCIBARequest(
+      {
+        scope,
+        login_hint,
+        login_hint_token,
+        id_token_hint,
+        binding_message,
+        user_code,
+        requested_expiry,
+      },
+      {
+        maxLength: cibaConfig.maxBindingMessageLength,
+        required: cibaConfig.bindingMessageRequired,
+      }
+    );
     if (!validation.valid) {
       return c.json(
         {
@@ -231,12 +272,11 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
     // Resolve and validate user identity from login hints
     // Priority: id_token_hint > login_hint_token > login_hint
     let resolvedSubjectId: string | undefined;
-    let resolvedLoginHint = login_hint;
 
     // Validate id_token_hint if provided (JWT signed by this server)
     if (id_token_hint) {
-      // Get JWKS for signature verification (this server's keys)
-      const { keys: jwksKeys } = await getJwksWithCache(c.env, tenantId);
+      // The keys this tenant signs ID tokens with (any algorithm an app's ID tokens may use)
+      const jwksKeys = await getIssuedIDTokenKeys(c.env, tenantId);
       const idTokenValidation = await validateCIBAIdTokenHint(id_token_hint, {
         issuerUrl: requestIssuer,
         jwks: { keys: jwksKeys },
@@ -246,7 +286,24 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
         return createErrorResponse(c, AR_ERROR_CODES.TOKEN_INVALID);
       }
 
-      resolvedSubjectId = idTokenValidation.subjectId;
+      // The user the hint was issued for: its sealed account reference when an identity mapping
+      // chose its sub, else its sub when it shows that is the user's id. A hint that shows
+      // neither (its sub may be a mapped identifier equal to another user's id) names no one.
+      const hintAccount = await resolvePresentedTokenAccount(
+        c.env,
+        tenantId,
+        (idTokenValidation.payload ?? {}) as Record<string, unknown>
+      );
+      if (!hintAccount.ok) {
+        if (hintAccount.reason === 'unavailable') {
+          log.error('Failed to open the id_token_hint account reference', {
+            action: 'validate_id_token_hint',
+          });
+          return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+        }
+        return createErrorResponse(c, AR_ERROR_CODES.TOKEN_INVALID);
+      }
+      resolvedSubjectId = hintAccount.userId;
       log.debug('Validated id_token_hint', {
         action: 'validate_id_token_hint',
         subjectId: resolvedSubjectId,
@@ -276,15 +333,15 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
     // Calculate expiration
     const now = Date.now();
     const expiresIn = Math.min(
-      Math.max(
-        requested_expiry ?? CIBA_CONSTANTS.DEFAULT_EXPIRES_IN,
-        CIBA_CONSTANTS.MIN_EXPIRES_IN
-      ),
-      CIBA_CONSTANTS.MAX_EXPIRES_IN
+      Math.max(requested_expiry ?? cibaConfig.expiresIn, cibaConfig.minExpiresIn),
+      cibaConfig.maxExpiresIn
     );
     // requested_expiry controls the auth_req_id lifetime, not the polling
     // interval. CIBA has no request parameter for choosing the interval.
-    const interval = calculatePollingInterval(null);
+    const interval = Math.min(
+      Math.max(cibaConfig.pollInterval, cibaConfig.minInterval),
+      cibaConfig.maxInterval
+    );
 
     // Create CIBA request metadata
     const metadata: CIBARequestMetadata = {
@@ -308,6 +365,11 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
       expires_at: now + expiresIn * 1000,
       poll_count: 0,
       interval,
+      // slow_down can raise this request's interval no higher than the tenant's limit of now
+      max_interval: cibaConfig.maxInterval,
+      // the poll governor reads these from the request, so a poll needs no settings read
+      slow_down_increment: cibaConfig.slowDownIncrement,
+      max_poll_count: cibaConfig.maxPollCount,
       token_issued: false,
       // Store resolved subject ID from JWT hint validation
       resolved_subject_id: resolvedSubjectId,

@@ -72,7 +72,7 @@ export interface ClientContract {
   tokens: ClientTokenConfig;
 
   // ========== Anonymous Authentication (architecture-decisions.md §17) ==========
-  anonymousAuth?: AnonymousAuthConfig;
+  guestAuth?: GuestAuthConfig;
 
   // ========== Metadata ==========
   metadata: ContractMetadata;
@@ -449,29 +449,13 @@ export type ClientValidationErrorCode =
 // =============================================================================
 
 /**
- * Device ID stability level.
- * Defines how stable the device identifier is expected to be.
- *
- * - session: Valid only within browser session (most ephemeral)
- * - installation: Changes on app reinstall or browser cache clear (default)
- * - device: Device-specific ID like IDFV (platform-dependent, most stable)
- */
-export type DeviceStability = 'session' | 'installation' | 'device';
-
-/**
  * Anonymous authentication configuration.
- * Controls device-based anonymous login and upgrade behavior.
+ * Browser guest authentication policy. Human guest retention is configured separately by the
+ * account lifecycle policy. This is configuration, not registration state.
  */
-export interface AnonymousAuthConfig {
+export interface GuestAuthConfig {
   /** Whether anonymous authentication is enabled for this client */
   enabled: boolean;
-
-  /**
-   * Anonymous user expiration in days.
-   * After this period of inactivity, the user may be cleaned up.
-   * null = never expires (must be manually deleted)
-   */
-  expiresInDays?: number | null;
 
   /**
    * Allowed scopes for anonymous users.
@@ -481,18 +465,9 @@ export interface AnonymousAuthConfig {
   allowedScopes: string[];
 
   /**
-   * Whether to preserve the user ID (sub) when upgrading to registered user.
-   * - true (default): Same ID is used, app data associations remain intact
-   * - false: New ID is generated, original ID stored in upgraded_from
+   * Guest upgrades preserve the user ID (sub). This setting must be true.
    */
   preserveSubOnUpgrade: boolean;
-
-  /**
-   * Device ID stability level.
-   * Used to set expectations about how long the device ID will persist.
-   * This affects user experience and data retention decisions.
-   */
-  deviceStability: DeviceStability;
 
   /**
    * Whether to allow prompt=none for anonymous sessions.
@@ -505,5 +480,5 @@ export interface AnonymousAuthConfig {
    * Allowed upgrade methods.
    * Defines which authentication methods can be used to upgrade.
    */
-  allowedUpgradeMethods?: ('email' | 'passkey' | 'social' | 'phone')[];
+  allowedUpgradeMethods?: ('email' | 'passkey')[];
 }

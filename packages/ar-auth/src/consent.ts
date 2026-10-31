@@ -2,11 +2,10 @@
  * OAuth Consent Screen Handler
  * Handles OAuth2/OIDC consent screen display and approval/denial
  *
- * Flow:
- * 1. GET /auth/consent?challenge_id=xxx - Show consent screen
- *    - Accept: application/json -> Returns JSON with RBAC data
- *    - Accept: text/html -> Returns HTML page (fallback)
- * 2. POST /auth/consent with { challenge_id, approved, ... } - Process consent
+ * JSON API used by the Login UI, which renders the consent screen:
+ * 1. GET /auth/consent?challenge_id=xxx - Returns consent screen data (JSON, with RBAC data)
+ * 2. POST /auth/consent with JSON { challenge_id, approved, ... } - Process consent and
+ *    return { redirect_url }
  *
  * Phase 2-B: Consent Screen Enhancement
  * - Organization info display
@@ -16,6 +15,7 @@
 
 import { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
+import type { AuthChallengeStoreRpc } from '@authrim/ar-lib-core/types/auth-runtime-ports';
 import type {
   ConsentScreenData,
   ConsentClientInfo,
@@ -45,7 +45,10 @@ import {
   createAuthContextFromHono,
   createPIIContextFromHono,
   getTenantIdFromContext,
-  createOAuthConfigManager,
+  getConsentDefaultExpirationDays,
+  getConsentExpirationEnabled,
+  getConsentGranularScopes,
+  getConsentVersioningEnabled,
   // Event System
   publishEvent,
   CONSENT_EVENTS,
@@ -56,13 +59,17 @@ import {
   recordConsentHistory,
   // Consent Management
   getConsentItemsForScreen,
+  StatementConsentAccountReadError,
+  type StatementConsentStores,
   processConsentItemDecisions,
   hashIpAddress,
   upsertOAuthClientConsent,
+  findOAuthClientConsentRevocation,
+  isOAuthClientConsentGenerationChanged,
   parseClaimsRequest,
   // Logger
   getLogger,
-  getTenantSystemSettings,
+  resolveProtocolSettings,
   resolveClientTrustPolicy,
   resolveAccountDataContextFromHono,
   generateSecureRandomString,
@@ -97,18 +104,15 @@ const SCOPE_DESCRIPTIONS: Record<string, { title: string; description: string }>
     title: 'Offline Access',
     description: 'Maintain access when you are offline',
   },
+  eduperson_assurance: {
+    title: 'Identity Assurance',
+    description: 'Share the assurance level of your verified identity',
+  },
 };
-
-/**
- * Check if the request accepts JSON
- */
-function acceptsJson(c: Context): boolean {
-  const accept = c.req.header('Accept') || '';
-  return accept.includes('application/json');
-}
 
 type SessionBoundConsentChallenge = {
   userId: string;
+  expiresAt?: number;
   metadata?: ConsentChallengeMetadata & { session_id?: unknown };
 };
 
@@ -176,7 +180,11 @@ async function createConsentConfirmationChallenge(
   tenantId: string,
   userId: string,
   sessionId: string,
-  authorizationRequest: Record<string, unknown>
+  authorizationRequest: Record<string, unknown>,
+  /** A re-authentication /authorize completed before sending the user here; it hands it back. */
+  confirmedReauth: unknown,
+  /** The user's consent withdrawal generation for the client when the consent was approved. */
+  consentGeneration: number
 ): Promise<{ id: string; browserBinding: string }> {
   const confirmationId = crypto.randomUUID();
   const browserBinding = generateSecureRandomString(32);
@@ -193,6 +201,8 @@ async function createConsentConfirmationChallenge(
       sessionId,
       browserBinding,
       authorization_request: authorizationRequest,
+      ...(confirmedReauth !== undefined ? { confirmed_reauth: confirmedReauth } : {}),
+      consent_generation: consentGeneration,
     },
   });
   return { id: confirmationId, browserBinding };
@@ -233,10 +243,8 @@ function collectRequestedClaimNames(claims: unknown): string[] {
 }
 
 /**
- * Get consent screen data and show consent UI
+ * Get consent screen data for the Login UI
  * GET /auth/consent?challenge_id=xxx
- *
- * Returns JSON if Accept: application/json, otherwise HTML
  */
 export async function consentGetHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('CONSENT');
@@ -343,38 +351,13 @@ export async function consentGetHandler(c: Context<{ Bindings: Env }>) {
     // Parse scopes
     const scopeDetails = parseScopesToInfo(scope);
 
-    // If JSON is accepted, return full consent screen data with RBAC info
-    if (acceptsJson(c)) {
-      return handleJsonConsentGet(c, {
-        challenge_id,
-        userId,
-        clientRow,
-        scopeDetails,
-        metadata,
-      });
-    }
-
-    let consentItems: ConsentScreenItem[] = [];
-    try {
-      consentItems = await loadConsentScreenItems(c, {
-        tenantId,
-        clientId: clientRow.client_id,
-        userId,
-        metadata,
-        language: 'en',
-        defaultLanguage: 'en',
-      });
-    } catch {
-      consentItems = [];
-    }
-
-    // Otherwise, return HTML (legacy fallback)
-    return renderHtmlConsent(c, {
+    // Return full consent screen data with RBAC info
+    return handleJsonConsentGet(c, {
       challenge_id,
+      userId,
       clientRow,
       scopeDetails,
-      client_id,
-      consentItems,
+      metadata,
     });
   } catch (error) {
     log.error('Consent get error', { action: 'get_consent' }, error as Error);
@@ -412,6 +395,11 @@ async function handleJsonConsentGet(
   const { challenge_id, userId, clientRow, scopeDetails, metadata } = params;
   const tenantId = getTenantIdFromContext(c);
   const authCtx = createAccountAuthContextFromHono(c, tenantId);
+  // Roles and organisations: defined in the tenant metadata database, assigned in the account's.
+  const rbacDbs = {
+    metadata: createAuthContextFromHono(c, tenantId).coreAdapter,
+    account: authCtx.coreAdapter,
+  };
 
   // Build client info
   const client: ConsentClientInfo = {
@@ -443,7 +431,7 @@ async function handleJsonConsentGet(
   }
 
   // Get RBAC data (organizations, roles)
-  const rbacData = await getConsentRBACData(authCtx.coreAdapter, userId, tenantId);
+  const rbacData = await getConsentRBACData(rbacDbs, userId, tenantId);
 
   // Parse feature flags from environment
   const features = parseConsentFeatureFlags(
@@ -469,15 +457,14 @@ async function handleJsonConsentGet(
 
   // If targeting a specific org, get roles for that org
   if (targetOrgId) {
-    roles = await getRolesInOrganization(authCtx.coreAdapter, userId, targetOrgId, tenantId);
+    roles = await getRolesInOrganization(rbacDbs, userId, targetOrgId, tenantId);
   }
 
   // Get consent settings
-  const configManager = createOAuthConfigManager(c.env);
 
   // Check versioning and re-consent requirements
-  const versioningEnabled = await configManager.getConsentVersioningEnabled();
-  const granularScopesEnabled = await configManager.getConsentGranularScopes();
+  const versioningEnabled = await getConsentVersioningEnabled(c.env);
+  const granularScopesEnabled = await getConsentGranularScopes(c.env);
 
   let versioningInfo:
     | {
@@ -491,8 +478,11 @@ async function handleJsonConsentGet(
     | undefined;
 
   if (versioningEnabled) {
-    // Get current policy versions
-    const currentVersions = await getCurrentPolicyVersions(authCtx.coreAdapter, tenantId);
+    // Policy versions are tenant metadata; the user's existing consent (read below) is account data.
+    const currentVersions = await getCurrentPolicyVersions(
+      createAuthContextFromHono(c, tenantId).coreAdapter,
+      tenantId
+    );
 
     // Check if re-consent is needed due to policy changes
     const reconsentCheck = await checkRequiresReconsent(
@@ -568,7 +558,7 @@ async function handleJsonConsentGet(
     }
 
     consentItems = await getConsentItemsForScreen(
-      authCtx.coreAdapter,
+      statementConsentStores(c, tenantId),
       tenantId,
       clientRow.client_id,
       userId,
@@ -584,6 +574,11 @@ async function handleJsonConsentGet(
     );
     consentManagementEnabled = mgmtEnabled || (consentItems?.length ?? 0) > 0;
   } catch (err) {
+    // The account's records are the only evidence of what was agreed to: when they cannot be
+    // read the screen neither asks again nor skips a required item.
+    if (err instanceof StatementConsentAccountReadError) {
+      return consentRecordsUnavailable(c, err);
+    }
     // Non-blocking: consent management items are optional
   }
 
@@ -612,27 +607,33 @@ async function handleJsonConsentGet(
 }
 
 /**
- * Escape HTML special characters to prevent XSS
+ * Statement definitions are the tenant's (metadata database); the subject's consent records live
+ * with the subject's account (resolved by the caller before this is used).
  */
-function escapeHtml(unsafe: string): string {
-  return unsafe
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
+function statementConsentStores(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string
+): StatementConsentStores {
+  return {
+    metadata: createAuthContextFromHono(c, tenantId).coreAdapter,
+    account: createAccountAuthContextFromHono(c, tenantId).coreAdapter,
+  };
 }
 
-function safeHttpsDisplayUrl(value: string | null | undefined): string | null {
-  if (!value) {
-    return null;
-  }
-  try {
-    const url = new URL(value);
-    return url.protocol === 'https:' ? url.toString() : null;
-  } catch {
-    return null;
-  }
+function consentRecordsUnavailable(
+  c: Context<{ Bindings: Env }>,
+  error: StatementConsentAccountReadError
+): Response {
+  getLogger(c)
+    .module('CONSENT')
+    .error('Consent records are unavailable', { action: 'consent_records_read' }, error);
+  return c.json(
+    {
+      error: 'temporarily_unavailable',
+      error_description: 'Consent records are temporarily unavailable',
+    },
+    503
+  );
 }
 
 async function loadConsentScreenItems(
@@ -646,10 +647,9 @@ async function loadConsentScreenItems(
     defaultLanguage?: string;
   }
 ): Promise<ConsentScreenItem[]> {
-  const authCtx = createAccountAuthContextFromHono(c, params.tenantId);
   const piiCtx = createPIIContextFromHono(c, params.tenantId);
   return getConsentItemsForScreen(
-    authCtx.coreAdapter,
+    statementConsentStores(c, params.tenantId),
     params.tenantId,
     params.clientId,
     params.userId,
@@ -665,304 +665,113 @@ async function loadConsentScreenItems(
   );
 }
 
-function parseConsentItemDecisionsFromForm(
-  body: Record<string, string | File | Array<string | File>>
-): Record<string, 'granted' | 'denied'> | undefined {
-  const decisions: Record<string, 'granted' | 'denied'> = {};
-  const prefix = 'consent_item_decision:';
-  for (const [key, value] of Object.entries(body)) {
-    if (!key.startsWith(prefix)) continue;
-    const rawValue = Array.isArray(value)
-      ? value.filter((item) => typeof item === 'string').at(-1)
-      : value;
-    if (rawValue !== 'granted' && rawValue !== 'denied') continue;
-    decisions[key.slice(prefix.length)] = rawValue;
-  }
-  return Object.keys(decisions).length > 0 ? decisions : undefined;
+type DisplayedStatementVersions = Record<
+  string,
+  { version_id: string; content_hash: string | null }
+>;
+function statementSnapshotsMatch(
+  items: ConsentScreenItem[],
+  displayed: DisplayedStatementVersions | undefined
+): boolean {
+  if (items.length === 0 && displayed === undefined) return true;
+  return Boolean(
+    displayed &&
+    typeof displayed === 'object' &&
+    !Array.isArray(displayed) &&
+    Object.keys(displayed).length === items.length &&
+    items.every((item) => {
+      const shown = displayed[item.statement_id];
+      return (
+        shown &&
+        typeof shown === 'object' &&
+        !Array.isArray(shown) &&
+        shown.version_id === item.version_id &&
+        Object.hasOwn(shown, 'content_hash') &&
+        shown.content_hash === (item.content_hash ?? null)
+      );
+    })
+  );
 }
 
-/**
- * Render HTML consent page (legacy fallback)
- * OIDC Dynamic OP conformance: displays logo_uri, policy_uri, tos_uri
- */
-function renderHtmlConsent(
+/** Refresh consent, never approval. Preserve the original challenge's expiry and session binding. */
+async function changedConsentDocument(
   c: Context<{ Bindings: Env }>,
-  params: {
-    challenge_id: string;
-    clientRow: {
-      client_id: string;
-      client_name: string | null;
-      logo_uri: string | null;
-      policy_uri: string | null;
-      tos_uri: string | null;
-    };
-    scopeDetails: ConsentScopeInfo[];
-    client_id: string;
-    consentItems?: ConsentScreenItem[];
+  pending: SessionBoundConsentChallenge,
+  consumed: boolean
+): Promise<Response> {
+  let details: Record<string, unknown> = { refresh_consent: true };
+  if (consumed) {
+    const remaining = Number(pending.expiresAt) - Date.now();
+    if (Number.isSafeInteger(pending.expiresAt) && remaining > 0) {
+      const id = crypto.randomUUID();
+      const store = (await getChallengeStoreByChallengeId(
+        c.env,
+        id,
+        getTenantIdFromContext(c)
+      )) as AuthChallengeStoreRpc;
+      await store.storeChallengeRpc({
+        id,
+        tenantId: getTenantIdFromContext(c),
+        type: 'consent',
+        userId: pending.userId,
+        challenge: id,
+        ttl: Math.ceil(remaining / 1000),
+        notAfterMs: pending.expiresAt,
+        metadata: { ...pending.metadata },
+      });
+      details = { consent_challenge_id: id };
+    } else details = { restart_required: true };
   }
-): Response {
-  const { challenge_id, clientRow, scopeDetails, client_id, consentItems = [] } = params;
-  const safeLogoUri = safeHttpsDisplayUrl(clientRow.logo_uri);
-  const safePolicyUri = safeHttpsDisplayUrl(clientRow.policy_uri);
-  const safeTosUri = safeHttpsDisplayUrl(clientRow.tos_uri);
-  const consentItemsHtml =
-    consentItems.length > 0
-      ? `<p>Additional consent is required:</p>
-    <ul class="scopes">
-      ${consentItems
-        .map((item) => {
-          const safeDocumentUrl = safeHttpsDisplayUrl(item.document_url);
-          const hiddenInput =
-            item.checkbox_mode === 'none'
-              ? `<input form="approve-consent-form" type="hidden" name="consent_item_decision:${escapeHtml(item.statement_id)}" value="granted">`
-              : `<input form="approve-consent-form" type="hidden" name="consent_item_decision:${escapeHtml(item.statement_id)}" value="denied">`;
-          const checkbox =
-            item.checkbox_mode === 'none'
-              ? ''
-              : `<label class="consent-checkbox">
-                   <input form="approve-consent-form" type="checkbox" name="consent_item_decision:${escapeHtml(item.statement_id)}" value="granted" ${
-                     item.checkbox_default_checked ? 'checked' : ''
-                   } ${item.is_required && item.enforcement === 'block' ? 'required' : ''}>
-                   <span>${item.is_required ? 'Required' : 'Optional'}</span>
-                 </label>`;
-          return `
-        <li class="scope-item">
-          ${hiddenInput}
-          <div class="scope-title">${escapeHtml(item.title)}</div>
-          <div class="scope-desc">${escapeHtml(item.description || item.slug)}</div>
-          ${safeDocumentUrl ? `<div class="scope-desc"><a href="${escapeHtml(safeDocumentUrl)}" target="_blank" rel="noopener noreferrer">Read document</a></div>` : ''}
-          ${checkbox}
-        </li>
-      `;
-        })
-        .join('')}
-    </ul>`
-      : '';
-
-  // Build client info section with logo (OIDC Dynamic OP conformance)
-  const clientInfoHtml = safeLogoUri
-    ? `<div class="client-logo-container">
-        <img src="${escapeHtml(safeLogoUri)}" alt="${escapeHtml(clientRow.client_name || 'Client')} logo" class="client-logo" onerror="this.style.display='none'">
-      </div>`
-    : '';
-
-  // Build links section for policy and ToS
-  const linksHtml =
-    safePolicyUri || safeTosUri
-      ? `<div class="client-links">
-        ${safePolicyUri ? `<a href="${escapeHtml(safePolicyUri)}" target="_blank" rel="noopener noreferrer">Privacy Policy</a>` : ''}
-        ${safeTosUri ? `<a href="${escapeHtml(safeTosUri)}" target="_blank" rel="noopener noreferrer">Terms of Service</a>` : ''}
-      </div>`
-      : '';
-
-  return c.html(`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Consent Required</title>
-  <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      min-height: 100vh;
-      margin: 0;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    }
-    .container {
-      background: white;
-      padding: 2rem;
-      border-radius: 8px;
-      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-      max-width: 500px;
-      width: 100%;
-    }
-    .client-logo-container {
-      text-align: center;
-      margin-bottom: 1rem;
-    }
-    .client-logo {
-      max-width: 120px;
-      max-height: 80px;
-      object-fit: contain;
-    }
-    h1 {
-      margin: 0 0 0.5rem 0;
-      font-size: 1.5rem;
-      color: #333;
-    }
-    .client-name {
-      margin: 0 0 1rem 0;
-      color: #667eea;
-      font-weight: 600;
-    }
-    .client-links {
-      margin-bottom: 1.5rem;
-      font-size: 0.8rem;
-    }
-    .client-links a {
-      color: #667eea;
-      text-decoration: none;
-      margin-right: 1rem;
-    }
-    .client-links a:hover {
-      text-decoration: underline;
-    }
-    p {
-      margin: 0 0 1.5rem 0;
-      color: #666;
-      line-height: 1.5;
-    }
-    .scopes {
-      list-style: none;
-      padding: 0;
-      margin: 0 0 1.5rem 0;
-    }
-    .scope-item {
-      padding: 0.75rem;
-      margin-bottom: 0.5rem;
-      background: #f5f5f5;
-      border-radius: 4px;
-    }
-    .scope-title {
-      font-weight: 600;
-      color: #333;
-    }
-    .scope-desc {
-      font-size: 0.875rem;
-      color: #666;
-      margin-top: 0.25rem;
-    }
-    .consent-checkbox {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      margin-top: 0.75rem;
-      color: #333;
-      font-size: 0.875rem;
-    }
-    .button-group {
-      display: flex;
-      gap: 1rem;
-    }
-    button {
-      flex: 1;
-      padding: 0.75rem;
-      border: none;
-      border-radius: 4px;
-      font-size: 1rem;
-      cursor: pointer;
-      transition: background 0.2s;
-    }
-    .approve {
-      background: #667eea;
-      color: white;
-    }
-    .approve:hover {
-      background: #5568d3;
-    }
-    .deny {
-      background: #e0e0e0;
-      color: #333;
-    }
-    .deny:hover {
-      background: #d0d0d0;
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    ${clientInfoHtml}
-    <h1>Consent Required</h1>
-    <p class="client-name">${escapeHtml(clientRow.client_name || client_id)}</p>
-    ${linksHtml}
-    <p>This application is requesting access to:</p>
-    <ul class="scopes">
-      ${scopeDetails
-        .map(
-          (s) => `
-        <li class="scope-item">
-          <div class="scope-title">${escapeHtml(s.title)}</div>
-          <div class="scope-desc">${escapeHtml(s.description)}</div>
-        </li>
-      `
-        )
-        .join('')}
-    </ul>
-    ${consentItemsHtml}
-    <div class="button-group">
-      <form method="POST" action="/auth/consent" style="flex: 1;">
-        <input type="hidden" name="challenge_id" value="${escapeHtml(challenge_id)}">
-        <input type="hidden" name="approved" value="false">
-        <button type="submit" class="deny">Deny</button>
-      </form>
-      <form id="approve-consent-form" method="POST" action="/auth/consent" style="flex: 1;">
-        <input type="hidden" name="challenge_id" value="${escapeHtml(challenge_id)}">
-        <input type="hidden" name="approved" value="true">
-        <button type="submit" class="approve">Approve</button>
-      </form>
-    </div>
-  </div>
-</body>
-</html>`);
+  return c.json(
+    {
+      error: 'document_changed',
+      error_description:
+        'Consent documents changed. Review the updated consent screen before submitting.',
+      error_details: details,
+    },
+    409
+  );
 }
 
 /**
  * Handle consent approval/denial
  * POST /auth/consent
  *
- * Supports both form data and JSON body:
- * - Form: challenge_id, approved, selected_org_id (optional)
- * - JSON: { challenge_id, approved, selected_org_id, acting_as_user_id, selected_scopes }
+ * JSON body only: { challenge_id, approved, selected_org_id, acting_as_user_id, selected_scopes,
+ * acknowledged_policy_versions, consent_item_decisions }. Responds with { redirect_url }.
  */
 export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('CONSENT');
 
   try {
-    // Determine content type and parse body
     const contentType = c.req.header('Content-Type') || '';
-    let challenge_id: string | undefined;
-    let approved: boolean;
-    let selected_org_id: string | undefined;
-    let acting_as_user_id: string | undefined;
-
-    let selected_scopes: string[] | undefined;
-    let acknowledged_policy_versions:
-      | { privacy_policy?: string; terms_of_service?: string }
-      | undefined;
-    let consent_item_decisions: Record<string, 'granted' | 'denied'> | undefined;
-
-    if (contentType.includes('application/json')) {
-      // Parse JSON body
-      const jsonBody = await c.req.json<{
-        challenge_id?: string;
-        approved?: boolean;
-        selected_org_id?: string;
-        acting_as_user_id?: string;
-        selected_scopes?: string[];
-        acknowledged_policy_versions?: { privacy_policy?: string; terms_of_service?: string };
-        consent_item_decisions?: Record<string, 'granted' | 'denied'>;
-      }>();
-      challenge_id = jsonBody.challenge_id;
-      approved = jsonBody.approved === true;
-      selected_org_id = jsonBody.selected_org_id;
-      acting_as_user_id = jsonBody.acting_as_user_id;
-      selected_scopes = jsonBody.selected_scopes;
-      acknowledged_policy_versions = jsonBody.acknowledged_policy_versions;
-      consent_item_decisions = jsonBody.consent_item_decisions;
-    } else {
-      // Parse form data
-      const body = await c.req.parseBody();
-      challenge_id = typeof body.challenge_id === 'string' ? body.challenge_id : undefined;
-      approved = body.approved === 'true';
-      selected_org_id = typeof body.selected_org_id === 'string' ? body.selected_org_id : undefined;
-      acting_as_user_id =
-        typeof body.acting_as_user_id === 'string' ? body.acting_as_user_id : undefined;
-      consent_item_decisions = parseConsentItemDecisionsFromForm(body);
-      // Form data doesn't support selected_scopes (use JSON for granular consent)
+    if (!contentType.includes('application/json')) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Content-Type must be application/json',
+        },
+        400
+      );
     }
+
+    const jsonBody = await c.req.json<{
+      challenge_id?: string;
+      approved?: boolean;
+      selected_org_id?: string;
+      acting_as_user_id?: string;
+      selected_scopes?: string[];
+      acknowledged_policy_versions?: { privacy_policy?: string; terms_of_service?: string };
+      consent_item_decisions?: Record<string, 'granted' | 'denied'>;
+      consent_item_versions?: DisplayedStatementVersions;
+    }>();
+    const challenge_id = jsonBody.challenge_id;
+    const approved = jsonBody.approved === true;
+    const selected_org_id = jsonBody.selected_org_id;
+    const acting_as_user_id = jsonBody.acting_as_user_id;
+    const selected_scopes = jsonBody.selected_scopes;
+    const acknowledged_policy_versions = jsonBody.acknowledged_policy_versions;
+    const consent_item_decisions = jsonBody.consent_item_decisions;
 
     if (!challenge_id) {
       return c.json(
@@ -999,6 +808,59 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     if (sessionError) return sessionError;
     const consentSessionId = pendingChallenge.metadata!.session_id as string;
 
+    // The consent withdrawal generation an approval is given under, read before the challenge is
+    // consumed so a failed read leaves the consent screen usable. The consent is recorded only
+    // while it is still current, and /authorize issues the code under it.
+    let consentGeneration = 0;
+    if (approved) {
+      const pendingClientId = pendingChallenge.metadata?.client_id;
+      if (typeof pendingClientId !== 'string' || pendingClientId.length === 0) {
+        return c.json(
+          { error: 'invalid_request', error_description: 'Invalid or expired challenge' },
+          400
+        );
+      }
+      try {
+        await resolveAccountDataContextFromHono(c, pendingChallenge.userId);
+        consentGeneration = (
+          await findOAuthClientConsentRevocation(
+            createAccountAuthContextFromHono(c, getTenantIdFromContext(c)).coreAdapter,
+            {
+              tenantId: getTenantIdFromContext(c),
+              userId: pendingChallenge.userId,
+              clientId: pendingClientId,
+            }
+          )
+        ).generation;
+      } catch (error) {
+        log.error('Failed to read consent withdrawals', { action: 'grant' }, error as Error);
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description: 'Consent state is temporarily unavailable',
+          },
+          503
+        );
+      }
+    }
+
+    if (
+      approved &&
+      pendingChallenge.metadata &&
+      typeof pendingChallenge.metadata.client_id === 'string'
+    ) {
+      const pendingItems = await loadConsentScreenItems(c, {
+        tenantId: getTenantIdFromContext(c),
+        clientId: pendingChallenge.metadata.client_id,
+        userId: pendingChallenge.userId,
+        metadata: pendingChallenge.metadata,
+        language: 'en',
+        defaultLanguage: 'en',
+      });
+      if (!statementSnapshotsMatch(pendingItems, jsonBody.consent_item_versions))
+        return await changedConsentDocument(c, pendingChallenge, false);
+    }
+
     let consumedChallengeData: {
       userId: string;
       metadata?: ConsentChallengeMetadata;
@@ -1024,7 +886,7 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     const metadata = consumedChallengeData.metadata || {};
     const userId = consumedChallengeData.userId;
 
-    // If denied, redirect with error
+    // If denied, return the error redirect for the Login UI to follow
     // User cancellation uses cancel_uri (Authrim Extension) if available
     if (!approved) {
       const tenantId = getTenantIdFromContext(c);
@@ -1063,12 +925,11 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
 
         let messageSigning: FAPI2MessageSigningConfig | undefined;
         try {
-          const settings = await getTenantSystemSettings(c.env.SETTINGS, tenantId, {
-            failOnError: true,
+          const settings = await resolveProtocolSettings(c.env, tenantId, {
+            clientId,
+            sections: ['fapi'],
           });
-          messageSigning = (
-            settings?.fapi as { messageSigning?: FAPI2MessageSigningConfig } | undefined
-          )?.messageSigning;
+          messageSigning = settings.fapi.messageSigning;
         } catch (error) {
           log.error(
             'Failed to load JARM settings for consent denial',
@@ -1099,11 +960,9 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
             isUserCancellation: true,
           }
         );
-        if (contentType.includes('application/json')) {
-          const location = response.headers.get('Location');
-          if (location) {
-            return c.json({ redirect_url: location });
-          }
+        const location = response.headers.get('Location');
+        if (location) {
+          return c.json({ redirect_url: location });
         }
         return response;
       }
@@ -1118,11 +977,8 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
         redirectUrl.searchParams.set('state', metadata.state as string);
       }
 
-      // For JSON requests, return redirect URL instead of redirecting
-      if (contentType.includes('application/json')) {
-        return c.json({ redirect_url: redirectUrl.toString() });
-      }
-      return c.redirect(redirectUrl.toString(), 302);
+      // The Login UI navigates to the returned URL
+      return c.json({ redirect_url: redirectUrl.toString() });
     }
 
     // Save consent via Adapter (database-agnostic)
@@ -1178,10 +1034,9 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Get settings for granular scopes and expiration
-    const configManager = createOAuthConfigManager(c.env);
-    const granularScopesEnabled = await configManager.getConsentGranularScopes();
-    const expirationEnabled = await configManager.getConsentExpirationEnabled();
-    const defaultExpirationDays = await configManager.getConsentDefaultExpirationDays();
+    const granularScopesEnabled = await getConsentGranularScopes(c.env);
+    const expirationEnabled = await getConsentExpirationEnabled(c.env);
+    const defaultExpirationDays = await getConsentDefaultExpirationDays(c.env);
 
     // Determine effective scope (granular scopes or all requested)
     let effectiveScope = requestedScope;
@@ -1225,12 +1080,15 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
       language: 'en',
       defaultLanguage: 'en',
     });
+    if (!statementSnapshotsMatch(consentItems, jsonBody.consent_item_versions))
+      return await changedConsentDocument(c, pendingChallenge, true);
     const targets = Object.fromEntries(
       consentItems.map((item) => [
         item.statement_id,
         {
           version_id: item.version_id,
           version: item.version,
+          content_hash: item.content_hash ?? null,
           withdrawal_allowed: item.withdrawal_allowed,
         },
       ])
@@ -1275,23 +1133,6 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     const privacyPolicyVersion = acknowledged_policy_versions?.privacy_policy || null;
     const tosVersion = acknowledged_policy_versions?.terms_of_service || null;
 
-    await upsertOAuthClientConsent(authCtx.coreAdapter, {
-      consentId,
-      userId,
-      clientId: client_id,
-      tenantId,
-      scope: effectiveScope,
-      selectedScopesJson,
-      grantedAt: now,
-      expiresAt,
-      privacyPolicyVersion,
-      tosVersion,
-      now,
-    });
-
-    // Invalidate consent cache so next check reflects updated consent
-    await invalidateConsentCache(c.env, userId, tenantId, client_id);
-
     // Process consent item decisions (consent management)
     if (consentItems.length > 0) {
       const hasBlockingConsentItems = consentItems.some(
@@ -1300,11 +1141,11 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
       try {
         const ipAddress = c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For') || '';
         const ipHash = ipAddress
-          ? await hashIpAddress(ipAddress, tenantId, c.env.KV ?? null)
+          ? await hashIpAddress(ipAddress, tenantId, c.env.KV ?? null, c.env)
           : undefined;
 
         await processConsentItemDecisions(
-          authCtx.coreAdapter,
+          statementConsentStores(c, tenantId),
           tenantId,
           userId,
           validConsentItemDecisions,
@@ -1314,7 +1155,8 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
             client_id,
           },
           ipHash,
-          targets
+          targets,
+          { env: c.env }
         );
 
         // Publish events for each decision
@@ -1342,6 +1184,20 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
           }
         }
       } catch (err) {
+        if (
+          err instanceof Error &&
+          ['document_changed', 'statement_consent_transition_rejected'].includes(err.message)
+        )
+          return await changedConsentDocument(c, pendingChallenge, true);
+        if (err instanceof Error && err.message === 'statement_consent_atomic_backend_unsupported')
+          return c.json(
+            {
+              error: 'temporarily_unavailable',
+              error_description:
+                'Statement consent writes are unavailable on this database backend',
+            },
+            503
+          );
         log.warn('Failed to process consent item decisions', { action: 'consent_items' });
         if (hasBlockingConsentItems) {
           return c.json(
@@ -1355,8 +1211,41 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
       }
     }
 
+    try {
+      await upsertOAuthClientConsent(authCtx.coreAdapter, {
+        consentId,
+        userId,
+        clientId: client_id,
+        tenantId,
+        scope: effectiveScope,
+        selectedScopesJson,
+        grantedAt: now,
+        expiresAt,
+        privacyPolicyVersion,
+        tosVersion,
+        now,
+        consentGeneration,
+      });
+    } catch (error) {
+      // The application's consent generation changed; approval must restart.
+      if (isOAuthClientConsentGenerationChanged(error)) {
+        return c.json(
+          {
+            error: 'consent_withdrawn',
+            error_description:
+              'Consent for this application changed while it was being approved. Start again.',
+          },
+          409
+        );
+      }
+      throw error;
+    }
+
+    // Invalidate consent cache so next check reflects updated consent
+    await invalidateConsentCache(c.env, userId, tenantId, client_id);
+
     // Check if versioning is enabled for history recording
-    const versioningEnabled = await configManager.getConsentVersioningEnabled();
+    const versioningEnabled = await getConsentVersioningEnabled(c.env);
 
     // Determine if this is a new consent or update
     // (We check by looking at consent_history or by the presence of policy versions)
@@ -1425,7 +1314,9 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
       tenantId,
       userId,
       consentSessionId,
-      authorizationRequest
+      authorizationRequest,
+      authorizationMetadata.confirmed_reauth,
+      consentGeneration
     );
     const redirectUrl = buildAuthorizeContinuationUrl(
       authorizationMetadata,
@@ -1434,9 +1325,7 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
       '_consent_confirmation_challenge'
     );
 
-    const response = contentType.includes('application/json')
-      ? c.json({ redirect_url: redirectUrl })
-      : c.redirect(redirectUrl, 302);
+    const response = c.json({ redirect_url: redirectUrl });
     response.headers.append(
       'Set-Cookie',
       `${CONSENT_CONFIRMATION_COOKIE_NAME}=${encodeURIComponent(
@@ -1447,6 +1336,11 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     );
     return response;
   } catch (error) {
+    // The screen's items are rebuilt on submit; unreadable account records are a temporary outage,
+    // not a failed submission, and nothing was recorded.
+    if (error instanceof StatementConsentAccountReadError) {
+      return consentRecordsUnavailable(c, error);
+    }
     log.error('Consent post error', { action: 'post_consent' }, error as Error);
     return c.json(
       {

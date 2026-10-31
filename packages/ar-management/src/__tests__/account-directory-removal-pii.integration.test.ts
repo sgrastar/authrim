@@ -1,3 +1,4 @@
+import { readMigrationSource } from '../../../../test/helpers/migration-source.mjs';
 // @ts-expect-error node:sqlite is available in the required runtime but this package omits Node types.
 import { DatabaseSync } from 'node:sqlite';
 import type {
@@ -8,6 +9,7 @@ import type {
   QueryOptions,
   TransactionContext,
 } from '@authrim/ar-lib-core';
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { eraseAccountPiiAfterDirectoryRemovalPrepared } from '../account-directory-removal-producer';
 
@@ -92,7 +94,24 @@ describe('account directory removal PII erasure', () => {
 
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
+    database.exec(
+      readMigrationSource(
+        new URL('../../../../migrations/pii/d1/', import.meta.url),
+        '002_guest_upgrade_operations.sql'
+      )
+    );
+    database.exec(
+      readMigrationSource(
+        new URL('../../../../migrations/pii/d1/', import.meta.url),
+        '004_account_webhook_snapshots.sql'
+      )
+    );
     database.exec(`
+      CREATE TABLE identity_accounts (id TEXT, tenant_id TEXT, legacy_user_id TEXT,
+        account_type TEXT, registration_state TEXT, lifecycle_state TEXT,
+        directory_publication_state TEXT);
+      INSERT INTO identity_accounts VALUES ('account:user-a', 'tenant-a', 'user-a',
+        'user', 'registered', 'active', 'active');
       CREATE TABLE identity_identifier_replacement_operations (
         operation_id TEXT PRIMARY KEY, tenant_id TEXT, account_id TEXT, state TEXT,
         error_code TEXT, lease_owner TEXT, lease_expires_at INTEGER,
@@ -119,7 +138,7 @@ describe('account directory removal PII erasure', () => {
       );
       CREATE TABLE identity_sensitive_values (
         id TEXT PRIMARY KEY, tenant_id TEXT, owner_type TEXT, owner_id TEXT,
-        value_json TEXT, lifecycle_state TEXT, updated_at INTEGER
+        value_key TEXT, value_json TEXT, lifecycle_state TEXT, updated_at INTEGER
       );
       CREATE TABLE linked_identities (
         id TEXT PRIMARY KEY, tenant_id TEXT, user_id TEXT
@@ -133,6 +152,15 @@ describe('account directory removal PII erasure', () => {
       CREATE TABLE subject_identifiers (
         id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, subject_id TEXT NOT NULL
       );
+      CREATE TABLE user_anonymization_map (
+        id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, user_id TEXT NOT NULL,
+        anonymized_user_id TEXT NOT NULL, created_at INTEGER NOT NULL,
+        UNIQUE(tenant_id, user_id)
+      );
+      INSERT INTO user_anonymization_map (id, tenant_id, user_id, anonymized_user_id, created_at)
+      VALUES ('map-a', 'tenant-a', 'user-a', 'anon-a', 1),
+             ('map-b', 'tenant-b', 'user-b', 'anon-b', 1),
+             ('map-a-other-tenant', 'tenant-b', 'user-a', 'anon-a2', 1);
       INSERT INTO users_pii (id, tenant_id) VALUES
         ('user-a', 'tenant-a'),
         ('user-b', 'tenant-b');
@@ -143,27 +171,57 @@ describe('account directory removal PII erasure', () => {
         ('subject-a', 'tenant-a', 'user-a'),
         ('subject-b', 'tenant-b', 'user-b');
     `);
+    database.exec(`INSERT INTO identity_sensitive_values
+      (id,tenant_id,owner_type,owner_id,value_key,value_json,lifecycle_state,updated_at)
+      VALUES ('email-a','tenant-a','runtime_user','user-a','email','"before@example.com"','active',1)`);
     adapter = new SqliteAdapter(database);
   });
 
   afterEach(() => database.close());
 
+  it('does not erase PII if its deletion snapshot cannot be persisted', async () => {
+    database.exec('DROP TABLE account_webhook_snapshots');
+    await expect(
+      eraseAccountPiiAfterDirectoryRemovalPrepared(
+        adapter,
+        { tenantId: 'tenant-a', userId: 'user-a', core: adapter },
+        100
+      )
+    ).rejects.toThrow();
+    expect(database.prepare('SELECT value_json FROM identity_sensitive_values').get()).toEqual({
+      value_json: '"before@example.com"',
+    });
+  });
+
   it('deletes both identifier models only for the requested tenant and user', async () => {
     await eraseAccountPiiAfterDirectoryRemovalPrepared(
       adapter,
-      { tenantId: 'tenant-a', userId: 'user-a' },
+      { tenantId: 'tenant-a', userId: 'user-a', core: adapter },
       100
     );
+    expect(
+      database.prepare('SELECT email_before_json FROM account_webhook_snapshots').get()
+    ).toEqual({
+      email_before_json: '"before@example.com"',
+    });
+    expect(database.prepare('SELECT value_json FROM identity_sensitive_values').get()).toEqual({
+      value_json: null,
+    });
     expect(database.prepare('SELECT id FROM subject_identifiers ORDER BY id').all()).toEqual([
       { id: 'subject-b' },
     ]);
     expect(
       database.prepare('SELECT id FROM pairwise_subject_identifiers ORDER BY id').all()
     ).toEqual([{ id: 'pairwise-b' }]);
+    // The audit pseudonym: the unified event log's records of the user no longer lead to it.
+    expect(database.prepare('SELECT id FROM user_anonymization_map ORDER BY id').all()).toEqual([
+      { id: 'map-a-other-tenant' },
+      { id: 'map-b' },
+    ]);
 
     await eraseAccountPiiAfterDirectoryRemovalPrepared(
       adapter,
-      { tenantId: 'tenant-a', userId: 'user-b' },
+      { tenantId: 'tenant-a', userId: 'user-b', core: adapter },
       101
     );
     expect(database.prepare('SELECT id FROM subject_identifiers ORDER BY id').all()).toEqual([

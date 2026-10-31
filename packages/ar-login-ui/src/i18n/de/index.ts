@@ -2,6 +2,32 @@ import { createTranslation } from '../create-translation';
 import completion from './completion';
 
 const de = createTranslation({
+	account_guestLogoutWarning:
+		'Nach dem Abmelden können Sie nicht zu diesem Gastkonto zurückkehren. Registrieren Sie sich zuerst, um den Zugriff auf Ihr Konto und Ihre Daten zu behalten. Trotzdem abmelden?',
+	account_guestTitle: 'Konto registrieren',
+	account_guestDescription: 'Bei der Registrierung bleiben Ihr Konto und Ihre Daten erhalten.',
+	account_guestDue: 'Ab {date} kann das Konto automatisch gelöscht werden.',
+	account_guestNoExpiry: 'Es ist keine automatische Löschung geplant.',
+	account_guestEmail: 'E-Mail-Adresse',
+	account_guestSend: 'Mit E-Mail-Adresse registrieren',
+	account_guestPasskey: 'Mit Passkey registrieren',
+	account_guestCode: 'Bestätigungscode',
+	account_guestConfirm: 'Registrierung abschließen',
+	account_guestPending:
+		'Die Registrierung wird verarbeitet. Versuchen Sie es erneut, um den Abschluss zu prüfen.',
+	account_guestRetry: 'Erneut versuchen',
+	account_guestError:
+		'Die Registrierung konnte nicht abgeschlossen werden. Prüfen Sie den Bestätigungscode oder versuchen Sie es erneut.',
+	account_guestCollision:
+		'Für diese Identität besteht bereits ein Konto. Melden Sie sich separat bei diesem Konto an. Ihr Gastkonto wird nicht zusammengeführt.',
+	account_guestExistingLogin: 'Bei einem bestehenden Konto anmelden',
+	account_guestRegistered: 'Ihr Konto wurde registriert.',
+	account_guestChangeMethod: 'Andere Methode wählen',
+	login_guestContinue: 'Als Gast fortfahren',
+	login_guestRetention:
+		'Gastkonten können {days} Tage nach ihrer Erstellung automatisch gelöscht werden. Registrieren Sie ein Konto, um es weiter zu nutzen.',
+	login_guestNoExpiry: 'Für neue Gastkonten ist keine automatische Löschung geplant.',
+
 	...completion,
 	app_subtitle: 'Identität und Zugriff überall.',
 	dialog_cancel: 'Abbrechen',
@@ -68,6 +94,33 @@ const de = createTranslation({
 	account_delete: 'Löschen',
 	account_empty: 'Keine Einträge',
 	account_planned: 'Geplant',
+	account_socialEmpty: 'Es sind keine externen Konten verknüpft.',
+	account_socialLinkHeading: 'Konto verknüpfen',
+	account_socialLinkWith: '{provider} verknüpfen',
+	account_socialNoProviders: 'Es sind keine weiteren Anbieter zum Verknüpfen verfügbar.',
+	account_socialLinkedAt: 'Verknüpft am {date}',
+	account_socialLastUsed: 'Zuletzt verwendet: {date}',
+	account_socialUnlink: 'Verknüpfung aufheben',
+	account_socialUnlinkConfirm:
+		'Verknüpfung mit {provider} aufheben? Sie können sich dann nicht mehr damit anmelden.',
+	account_socialUnlinkConfirmAction: 'Verknüpfung mit {provider} aufheben',
+	account_socialLinked: 'Das Konto wurde verknüpft.',
+	account_socialUnlinked: 'Die Verknüpfung des Kontos wurde aufgehoben.',
+	account_socialErrorAlreadyLinked:
+		'Dieses Konto ist bereits mit einem anderen Benutzer verknüpft.',
+	account_socialErrorAlreadyLinkedHere: 'Dieser Anbieter ist bereits mit Ihrem Konto verknüpft.',
+	account_socialErrorEmailNotVerified:
+		'Der Anbieter hat die E-Mail-Adresse dieses Kontos nicht bestätigt.',
+	account_socialErrorSessionExpired:
+		'Ihre Bestätigung ist abgelaufen, bevor die Verknüpfung abgeschlossen war. Bestätigen Sie erneut und versuchen Sie es noch einmal.',
+	account_socialErrorCancelled: 'Die Verknüpfung wurde abgebrochen.',
+	account_socialErrorFailed: 'Das Konto konnte nicht verknüpft werden. Versuchen Sie es erneut.',
+	account_socialErrorLastMethod:
+		'Dies ist Ihre letzte Anmeldemethode. Fügen Sie zuerst einen Passkey oder eine andere Anmeldemethode hinzu.',
+	account_socialErrorInProgress:
+		'Eine andere Änderung an Ihren Anmeldemethoden wird gerade ausgeführt. Versuchen Sie es gleich noch einmal.',
+	account_operationSocialLinked: 'Externes Konto verknüpft',
+	account_operationSocialUnlinked: 'Verknüpfung mit externem Konto aufgehoben',
 	account_passkeyUnsupported: 'Dieser Browser unterstützt die Passkey-Registrierung nicht.',
 	account_passkeyRegistrationCancelled:
 		'Die Passkey-Registrierung wurde abgebrochen oder ist abgelaufen. Versuchen Sie es erneut.',
@@ -105,12 +158,31 @@ const de = createTranslation({
 	account_actionFailed: 'Der Vorgang ist fehlgeschlagen',
 	account_remainingLoginMethodRequired:
 		'Fügen Sie eine weitere Anmeldemethode hinzu, bevor Sie diese löschen.',
+	account_activityIncomplete:
+		'Die Aktivitäten konnten nicht vollständig geladen werden. Bitte versuchen Sie es später erneut.',
+	account_activityLoadMore: 'Ältere Aktivitäten laden',
 	account_activityTitle: 'Aktivität',
 	account_operationNameUpdated: 'Name geändert',
 	account_operationPasskeyCreated: 'Passkey hinzugefügt',
 	account_operationPasskeyUpdated: 'Passkey umbenannt',
 	account_operationPasskeyDeleted: 'Passkey gelöscht',
 	account_operationSessionRevoked: 'Sitzung beendet',
+	account_operationGuestCreated: 'Gastkonto erstellt',
+	account_operationGuestUpgradeFailed: 'Gastregistrierung fehlgeschlagen',
+	account_operationGuestUpgradeStarted: 'Gastregistrierung gestartet',
+	account_operationGuestUpgraded: 'Gastkonto registriert',
+	account_operationEmailAdded: 'E-Mail-Adresse hinzugefügt',
+	account_operationEmailChanged: 'E-Mail-Adresse geändert',
+	account_operationEmailReauthenticated: 'Per E-Mail erneut authentifiziert',
+	account_operationDeviceUpdated: 'Gerät umbenannt',
+	account_operationDeviceUnlinked: 'Geräteverknüpfung aufgehoben',
+	account_operationPasskeyReauthenticated: 'Mit Passkey erneut authentifiziert',
+	account_operationTotpEnrollmentStarted: 'Einrichtung der Authentifizierungs-App gestartet',
+	account_operationTotpActivated: 'Authentifizierungs-App aktiviert',
+	account_operationTotpUpdated: 'Authentifizierungs-App umbenannt',
+	account_operationTotpRemoved: 'Authentifizierungs-App entfernt',
+	account_operationTotpBackupCodesRegenerated: 'Wiederherstellungscodes neu erstellt',
+	account_operationTotpReauthenticated: 'Mit Authentifizierungs-App erneut authentifiziert',
 	account_launcherTitle: 'Meine Anwendungen',
 	account_launcherDescription: 'Suchen und öffnen Sie die für Sie verfügbaren Anwendungen.',
 	account_launcherLoadFailed: 'Anwendungen konnten nicht geladen werden.',
@@ -177,6 +249,8 @@ const de = createTranslation({
 	login_humanVerificationLoading: 'Sicherheitsprüfung wird geladen...',
 	login_humanVerificationLoadFailed:
 		'Die Sicherheitsprüfung konnte nicht geladen werden. Laden Sie die Seite neu.',
+	login_humanVerificationUnavailable:
+		'Die Prüfung, ob Sie ein Mensch sind, ist derzeit nicht verfügbar. Wenden Sie sich an den Administrator.',
 	login_noMethodsAvailable:
 		'Für diesen Mandanten ist keine Authentifizierungsmethode aktiviert. Wenden Sie sich an den Administrator.',
 	login_passkeyPreparing: 'Passkey-Authentifizierung wird vorbereitet.',
@@ -272,6 +346,9 @@ const de = createTranslation({
 	login_extError_callbackFailed_title: 'Authentifizierung fehlgeschlagen',
 	login_extError_callbackFailed_message:
 		'Bei der Authentifizierung ist ein Fehler aufgetreten. Versuchen Sie es erneut.',
+	login_extError_reauthNotProven_title: 'Anmeldung nicht bestätigt',
+	login_extError_reauthNotProven_message:
+		'Ihr Anmeldeanbieter hat nicht bestätigt, dass Sie sich erneut angemeldet haben. Melden Sie sich erneut an oder wählen Sie eine andere Methode.',
 	login_extError_default_title: 'Authentifizierungsfehler',
 	login_extError_default_message: 'Bei der externen Authentifizierung ist ein Fehler aufgetreten.'
 });

@@ -7,6 +7,7 @@ import { browser } from '$app/environment';
 import { getAuthConfig } from '$lib/auth';
 import { getDiagnosticSessionId as getLoggerSessionId } from '$lib/stores/diagnostic';
 import { authrimFetch } from '$lib/authrim/fetch';
+import { APPROVAL_ENDPOINTS, approvalEndpointPath } from './approval-endpoints';
 import {
 	LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS,
 	LOGIN_UI_SESSION_STORAGE_KEYS
@@ -120,6 +121,8 @@ export interface APIError {
 	error_code?: string;
 	error_id?: string;
 	error_details?: Record<string, unknown>;
+	/** Seconds until another attempt is allowed, on a rate-limit error. */
+	retry_after?: number;
 	webauthn_signal?: {
 		unknown_credential?: boolean;
 	};
@@ -578,24 +581,95 @@ const loginUiDirectAuthHttp: HttpClient = {
 	}
 };
 
-function createDirectAuthClient(): DirectAuthBrowserSessionClient {
+/** Sign-up starts that accept an invitation (the SDK has no field for it). */
+const INVITATION_SIGNUP_START_PATHS = [
+	'/api/v1/auth/direct/passkey/signup/start',
+	'/api/auth/totp/signup/options'
+];
+
+/**
+ * Adds the invitation (and, when the tenant requires it, the proof of the invited email) to the
+ * body of a Passkey or authenticator-app signup start. The server reserves one use for the signup
+ * and applies it to the account that signup creates. A provisioning replay re-sends this body, so
+ * the invitation stays on it.
+ */
+function withSignupInvitation(invitation: {
+	inviteToken: string;
+	invitationEmailProof?: string;
+}): HttpClient {
+	const fields: Record<string, string> = { invite_token: invitation.inviteToken };
+	if (invitation.invitationEmailProof) {
+		fields.invitation_email_proof = invitation.invitationEmailProof;
+	}
+	return {
+		async fetch<T = unknown>(url: string, options: HttpOptions = {}): Promise<HttpResponse<T>> {
+			if (!INVITATION_SIGNUP_START_PATHS.some((path) => url.includes(path))) {
+				return loginUiDirectAuthHttp.fetch<T>(url, options);
+			}
+			if (typeof options.body !== 'string') {
+				throw new Error('Invalid signup request body');
+			}
+			const parsed: unknown = JSON.parse(options.body);
+			if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+				throw new Error('Invalid signup request body');
+			}
+			return loginUiDirectAuthHttp.fetch<T>(url, {
+				...options,
+				body: JSON.stringify({ ...parsed, ...fields })
+			});
+		}
+	};
+}
+
+function signupInvitationHttp(data: {
+	inviteToken?: string;
+	invitationEmailProof?: string;
+}): HttpClient | undefined {
+	return data.inviteToken
+		? withSignupInvitation({
+				inviteToken: data.inviteToken,
+				invitationEmailProof: data.invitationEmailProof
+			})
+		: undefined;
+}
+
+function createDirectAuthClient(
+	http: HttpClient = loginUiDirectAuthHttp
+): DirectAuthBrowserSessionClient {
 	const baseUrl = resolveApiBaseUrl();
 	return new DirectAuthBrowserSessionClient({
 		issuer: baseUrl,
 		baseUrl,
 		clientId: getAuthConfig().clientId,
-		http: loginUiDirectAuthHttp,
+		http,
 		crypto: loginUiCryptoProvider,
 		storage: loginUiDirectAuthStorage,
 		storageKeyPrefix: 'authrim:loginui:direct'
 	});
 }
 
-function directAuthRequestOptions() {
+/**
+ * Names the Flow interaction a sign-in attempt belongs to, at its start step, so the server can
+ * record the attempt's failures with it (it checks the interaction before keeping it).
+ */
+function signInAttemptInteractionHeaders(
+	interactionId: string | undefined
+): Record<string, string> {
+	return interactionId ? { 'X-Authrim-Interaction-Id': interactionId } : {};
+}
+
+function directAuthRequestOptions(extraHeaders: Record<string, string> = {}) {
 	return {
-		headers: Object.fromEntries(buildDiagnosticHeaders().entries()),
+		headers: { ...Object.fromEntries(buildDiagnosticHeaders().entries()), ...extraHeaders },
 		timeout: DEFAULT_API_TIMEOUT
 	};
+}
+
+/** Names the screen a human verification token came from, so the server checks it against that. */
+function humanVerificationScreenHeaders(
+	screen: 'login' | 'signup' | undefined
+): Record<string, string> {
+	return screen ? { 'X-Authrim-Human-Verification-Action': screen } : {};
 }
 
 async function withDirectAuthResult<T>(
@@ -616,9 +690,16 @@ function apiErrorFromDirectAuthError(error: unknown): APIError {
 			error.code === 'invalid_state' && /state is missing or expired/i.test(error.message)
 				? 'missing_pkce_state'
 				: (originalError ?? error.code);
+		// The seconds until another attempt, which rate-limit errors carry in error_details.
+		const errorDetails = error.details?.errorDetails;
+		const retryAfter =
+			errorDetails && typeof errorDetails === 'object'
+				? (errorDetails as { retry_after?: unknown }).retry_after
+				: undefined;
 		return {
 			error: code,
-			error_description: error.message
+			error_description: error.message,
+			...(typeof retryAfter === 'number' ? { retry_after: retryAfter } : {})
 		};
 	}
 	return {
@@ -998,6 +1079,31 @@ export const adminSessionsAPI = {
 /**
  * Auth API - Passkey
  */
+export const guestAPI = {
+	async login(
+		authorizationChallengeId: string,
+		humanVerificationResponse?: string
+	): Promise<{ data?: { success: boolean }; error?: APIError }> {
+		const response = await loginUiDirectAuthHttp.fetch<{ success: boolean } | APIError>(
+			`${resolveApiBaseUrl()}/api/auth/guest/login`,
+			{
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					...(authorizationChallengeId
+						? { authorizationChallengeId }
+						: { clientId: getAuthConfig().clientId }),
+					human_verification_response: humanVerificationResponse
+				}),
+				timeout: DEFAULT_API_TIMEOUT
+			}
+		);
+		return response.ok
+			? { data: response.data as { success: boolean } }
+			: { error: response.data as APIError };
+	}
+};
+
 export const passkeyAPI = {
 	/**
 	 * Get registration options for Passkey
@@ -1009,9 +1115,13 @@ export const passkeyAPI = {
 		custom_fields?: Record<string, unknown>;
 		authorizationChallengeId?: string;
 		human_verification_response?: string;
+		/** Applied by the server to the account this signup creates. */
+		inviteToken?: string;
+		/** Proof of the invited email, when the tenant requires one. */
+		invitationEmailProof?: string;
 	}) {
 		const response = await withDirectAuthResult(() =>
-			createDirectAuthClient().startPasskeySignup(
+			createDirectAuthClient(signupInvitationHttp(data)).startPasskeySignup(
 				{
 					email: data.email || undefined,
 					displayName: data.name,
@@ -1091,6 +1201,8 @@ export const passkeyAPI = {
 		email?: string;
 		authorizationChallengeId?: string;
 		human_verification_response?: string;
+		/** The Flow interaction this sign-in belongs to, when a Flow runs. */
+		runtimeInteractionId?: string;
 	}) {
 		const response = await withDirectAuthResult(() =>
 			createDirectAuthClient().startPasskeyLogin(
@@ -1099,7 +1211,7 @@ export const passkeyAPI = {
 					authorizationChallengeId: data.authorizationChallengeId,
 					humanVerificationResponse: data.human_verification_response
 				},
-				directAuthRequestOptions()
+				directAuthRequestOptions(signInAttemptInteractionHeaders(data.runtimeInteractionId))
 			)
 		);
 		if (response.data) {
@@ -1172,6 +1284,8 @@ export const emailCodeAPI = {
 		authorizationChallengeId?: string;
 		custom_fields?: Record<string, unknown>;
 		human_verification_response?: string;
+		/** The screen the human verification token was issued on. */
+		humanVerificationScreen?: 'login' | 'signup';
 		deferAuthorizationContinuation?: boolean;
 		runtimeInteractionId?: string;
 		emailVerification?: {
@@ -1197,7 +1311,7 @@ export const emailCodeAPI = {
 					authorizationChallengeId: data.authorizationChallengeId,
 					deferAuthorizationContinuation: data.deferAuthorizationContinuation === true
 				},
-				directAuthRequestOptions()
+				directAuthRequestOptions(humanVerificationScreenHeaders(data.humanVerificationScreen))
 			)
 		);
 
@@ -1288,14 +1402,19 @@ export const emailCodeAPI = {
  * Auth API - TOTP
  */
 export const totpAPI = {
-	async startLogin(data: { identifier?: string; authorizationChallengeId?: string }) {
+	async startLogin(data: {
+		identifier?: string;
+		authorizationChallengeId?: string;
+		/** The Flow interaction this sign-in belongs to, when a Flow runs. */
+		runtimeInteractionId?: string;
+	}) {
 		return withDirectAuthResult(() =>
 			createDirectAuthClient().startTotpLogin(
 				{
 					identifier: data.identifier,
 					authorizationChallengeId: data.authorizationChallengeId
 				},
-				directAuthRequestOptions()
+				directAuthRequestOptions(signInAttemptInteractionHeaders(data.runtimeInteractionId))
 			)
 		);
 	},
@@ -1326,9 +1445,13 @@ export const totpAPI = {
 		custom_fields?: Record<string, unknown>;
 		authorizationChallengeId?: string;
 		human_verification_response?: string;
+		/** Applied by the server to the account this signup creates. */
+		inviteToken?: string;
+		/** Proof of the invited email, when the tenant requires one. */
+		invitationEmailProof?: string;
 	}) {
 		return withDirectAuthResult(() =>
-			createDirectAuthClient().createTotpSignupOptions(
+			createDirectAuthClient(signupInvitationHttp(data)).createTotpSignupOptions(
 				{
 					email: data.email,
 					name: data.name,
@@ -1371,6 +1494,8 @@ export const directoryPasswordAPI = {
 		authorizationChallengeId?: string;
 		deferAuthorizationContinuation?: boolean;
 		human_verification_response?: string;
+		/** The Flow interaction this sign-in belongs to, when a Flow runs. */
+		runtimeInteractionId?: string;
 	}) {
 		const session = (await withDirectAuthResult(() =>
 			createDirectAuthClient().loginWithDirectoryPassword(
@@ -1382,7 +1507,7 @@ export const directoryPasswordAPI = {
 					deferAuthorizationContinuation: data.deferAuthorizationContinuation,
 					humanVerificationResponse: data.human_verification_response
 				},
-				directAuthRequestOptions()
+				directAuthRequestOptions(signInAttemptInteractionHeaders(data.runtimeInteractionId))
 			)
 		)) as {
 			data?:
@@ -1585,7 +1710,9 @@ interface LoginChallengeWebOrigin {
  */
 interface LoginChallengeData {
 	challenge_id: string;
-	client: LoginChallengeClientInfo;
+	/** `saml` for the challenge of a SAML request (a re-authentication), which names no client. */
+	protocol?: 'saml';
+	client?: LoginChallengeClientInfo;
 	scope?: string;
 	login_hint?: string;
 	oidc?: {
@@ -1672,187 +1799,25 @@ export const adminAuditLogAPI = {
 };
 
 /**
- * Admin API - Settings
- */
-export const adminSettingsAPI = {
-	/**
-	 * Get system settings
-	 */
-	async get() {
-		return apiFetch<{
-			settings: {
-				general: {
-					siteName: string;
-					logoUrl: string;
-					language: string;
-					timezone: string;
-				};
-				appearance: {
-					primaryColor: string;
-					secondaryColor: string;
-					fontFamily: string;
-				};
-				security: {
-					sessionTimeout: number;
-					mfaEnforced: boolean;
-					passwordMinLength: number;
-					passwordRequireSpecialChar: boolean;
-				};
-				email: {
-					emailProvider: 'resend' | 'cloudflare' | 'smtp';
-					smtpHost: string;
-					smtpPort: number;
-					smtpUsername: string;
-					smtpPassword: string;
-				};
-				advanced: {
-					accessTokenTtl: number;
-					idTokenTtl: number;
-					refreshTokenTtl: number;
-					passkeyEnabled: boolean;
-					magicLinkEnabled: boolean;
-				};
-				ciba?: {
-					enabled: boolean;
-					defaultExpiresIn: number;
-					minExpiresIn: number;
-					maxExpiresIn: number;
-					defaultInterval: number;
-					minInterval: number;
-					maxInterval: number;
-					supportedDeliveryModes: string[];
-					userCodeEnabled: boolean;
-					bindingMessageMaxLength: number;
-					notificationsEnabled: boolean;
-					notificationProviders?: {
-						email?: boolean;
-						sms?: boolean;
-						push?: boolean;
-					};
-				};
-				policy?: {
-					enableAbac: boolean;
-					enableRebac: boolean;
-					enablePolicyLogging: boolean;
-					enableVerifiedAttributes: boolean;
-					enableCustomRules: boolean;
-					enableSdJwt: boolean;
-					enablePolicyEmbedding: boolean;
-					accessTokenClaims: string;
-					idTokenClaims: string;
-				};
-			};
-		}>('/api/admin/settings');
-	},
-
-	/**
-	 * Update system settings
-	 */
-	async update(settings: {
-		general?: {
-			siteName?: string;
-			logoUrl?: string;
-			language?: string;
-			timezone?: string;
-		};
-		appearance?: {
-			primaryColor?: string;
-			secondaryColor?: string;
-			fontFamily?: string;
-		};
-		security?: {
-			sessionTimeout?: number;
-			mfaEnforced?: boolean;
-			passwordMinLength?: number;
-			passwordRequireSpecialChar?: boolean;
-		};
-		email?: {
-			emailProvider?: 'resend' | 'cloudflare' | 'smtp';
-			smtpHost?: string;
-			smtpPort?: number;
-			smtpUsername?: string;
-			smtpPassword?: string;
-		};
-		advanced?: {
-			accessTokenTtl?: number;
-			idTokenTtl?: number;
-			refreshTokenTtl?: number;
-			passkeyEnabled?: boolean;
-			magicLinkEnabled?: boolean;
-		};
-		ciba?: {
-			enabled?: boolean;
-			defaultExpiresIn?: number;
-			minExpiresIn?: number;
-			maxExpiresIn?: number;
-			defaultInterval?: number;
-			minInterval?: number;
-			maxInterval?: number;
-			supportedDeliveryModes?: string[];
-			userCodeEnabled?: boolean;
-			bindingMessageMaxLength?: number;
-			notificationsEnabled?: boolean;
-			notificationProviders?: {
-				email?: boolean;
-				sms?: boolean;
-				push?: boolean;
-			};
-		};
-		policy?: {
-			enableAbac?: boolean;
-			enableRebac?: boolean;
-			enablePolicyLogging?: boolean;
-			enableVerifiedAttributes?: boolean;
-			enableCustomRules?: boolean;
-			enableSdJwt?: boolean;
-			enablePolicyEmbedding?: boolean;
-			accessTokenClaims?: string;
-			idTokenClaims?: string;
-		};
-	}) {
-		return apiFetch<{
-			success: boolean;
-			message: string;
-			settings: Record<string, unknown>;
-		}>('/api/admin/settings', {
-			method: 'PUT',
-			body: JSON.stringify({ settings })
-		});
-	}
-};
-
-/**
  * Device Flow API
  * RFC 8628: OAuth 2.0 Device Authorization Grant
+ *
+ * Both calls need the signed-in user's session cookie; ar-async binds the decision to that user.
  */
 export const deviceFlowAPI = {
 	/**
-	 * Verify device code with user approval
+	 * Show which application a user code belongs to and what it asks for. Decides nothing.
 	 */
-	async verifyDeviceCode(userCode: string, approve: boolean = true) {
+	async lookup(userCode: string) {
 		return apiFetch<{
-			success: boolean;
-			message?: string;
-		}>('/api/devices/verify', {
-			method: 'POST',
-			body: JSON.stringify({
-				user_code: userCode,
-				approve
-			})
-		});
-	},
-
-	/**
-	 * Verify a device code and get device info
-	 */
-	async verify(userCode: string) {
-		return apiFetch<{
+			client_id: string;
 			client_name: string;
 			client_uri?: string;
 			logo_uri?: string;
 			scopes: string[];
-		}>('/api/devices/verify-code', {
-			method: 'POST',
+			expires_at: number;
+		}>(APPROVAL_ENDPOINTS.deviceLookup.path, {
+			method: APPROVAL_ENDPOINTS.deviceLookup.method,
 			body: JSON.stringify({ user_code: userCode }),
 			credentials: 'include'
 		});
@@ -1864,9 +1829,9 @@ export const deviceFlowAPI = {
 	async approve(userCode: string) {
 		return apiFetch<{
 			success: boolean;
-			redirect_url?: string;
-		}>('/api/devices/approve', {
-			method: 'POST',
+			message?: string;
+		}>(APPROVAL_ENDPOINTS.deviceDecide.path, {
+			method: APPROVAL_ENDPOINTS.deviceDecide.method,
 			body: JSON.stringify({ user_code: userCode, approve: true }),
 			credentials: 'include'
 		});
@@ -1878,89 +1843,85 @@ export const deviceFlowAPI = {
 	async deny(userCode: string) {
 		return apiFetch<{
 			success: boolean;
-		}>('/api/devices/approve', {
-			method: 'POST',
+			message?: string;
+		}>(APPROVAL_ENDPOINTS.deviceDecide.path, {
+			method: APPROVAL_ENDPOINTS.deviceDecide.method,
 			body: JSON.stringify({ user_code: userCode, approve: false }),
 			credentials: 'include'
 		});
 	}
 };
 
+/** A pending CIBA request of the signed-in user, as GET /api/ciba/pending lists it. */
+export interface CibaPendingRequest {
+	auth_req_id: string;
+	client_id: string;
+	client_name: string;
+	client_logo_uri: string | null;
+	scope: string;
+	binding_message: string | null;
+	user_code: string | null;
+	/** Epoch seconds (the API sends epoch milliseconds; getPending converts). */
+	created_at: number;
+	/** Epoch seconds (the API sends epoch milliseconds; getPending converts). */
+	expires_at: number;
+	status: string;
+}
+
+/** GET /api/ciba/pending as ar-async sends it: timestamps in epoch milliseconds. */
+type CibaPendingRequestWire = Omit<CibaPendingRequest, 'created_at' | 'expires_at'> & {
+	created_at: number;
+	expires_at: number;
+};
+
+/** Whole seconds, rounding the expiry down so a request never looks open after it closed. */
+function epochMillisecondsToSeconds(value: number): number {
+	return Math.floor(value / 1000);
+}
+
 /**
  * CIBA API
  * Client Initiated Backchannel Authentication
+ *
+ * Every call needs the signed-in user's session cookie; ar-async only shows and decides requests
+ * addressed to that user.
  */
 export const cibaAPI = {
 	/**
 	 * Get a specific CIBA request by ID
 	 */
 	async getData(requestId: string) {
-		const apiBaseUrl = import.meta.env.VITE_OP_API_URL || API_BASE_URL;
-		try {
-			const response = await fetch(`${apiBaseUrl}/api/ciba/requests/${requestId}`, {
-				method: 'GET',
-				headers: buildDiagnosticHeaders({ Accept: 'application/json' }),
-				credentials: 'include'
-			});
-			if (!response.ok) {
-				const errorData = await response.json().catch(() => ({}));
-				return {
-					error: {
-						error: errorData.error || 'ciba_error',
-						error_description: errorData.error_description || 'Failed to load CIBA request'
-					}
-				};
-			}
-			const data = await response.json();
-			return { data };
-		} catch {
-			return {
-				error: {
-					error: 'network_error',
-					error_description: 'Network error occurred'
-				}
-			};
-		}
+		return apiFetch<Record<string, unknown>>(
+			approvalEndpointPath(APPROVAL_ENDPOINTS.cibaDetails, { auth_req_id: requestId }),
+			{ method: APPROVAL_ENDPOINTS.cibaDetails.method, credentials: 'include' }
+		);
 	},
 
 	/**
 	 * Get pending CIBA requests for current user
 	 */
-	async getPending() {
-		const apiBaseUrl = import.meta.env.VITE_OP_API_URL || API_BASE_URL;
-		try {
-			const response = await fetch(`${apiBaseUrl}/api/ciba/requests/pending`, {
-				method: 'GET',
-				headers: buildDiagnosticHeaders({ Accept: 'application/json' }),
-				credentials: 'include'
-			});
-			if (!response.ok) {
-				const errorData = await response.json().catch(() => ({}));
-				return {
-					error: {
-						error: errorData.error || 'ciba_error',
-						error_description: errorData.error_description || 'Failed to load pending requests'
-					}
-				};
-			}
-			const data = await response.json();
-			return { data: data.requests || data };
-		} catch {
-			return {
-				error: {
-					error: 'network_error',
-					error_description: 'Network error occurred'
-				}
-			};
-		}
+	async getPending(): Promise<{ data?: CibaPendingRequest[]; error?: APIError }> {
+		const { data, error } = await apiFetch<{ requests?: CibaPendingRequestWire[] }>(
+			APPROVAL_ENDPOINTS.cibaPending.path,
+			{ method: APPROVAL_ENDPOINTS.cibaPending.method, credentials: 'include' }
+		);
+		if (error) return { error };
+		return {
+			data: (data?.requests ?? []).map((request) => ({
+				...request,
+				created_at: epochMillisecondsToSeconds(request.created_at),
+				expires_at: epochMillisecondsToSeconds(request.expires_at)
+			}))
+		};
 	},
 
 	/**
 	 * Approve a CIBA request
 	 */
 	async approve(requestId: string) {
-		return apiFetch<{ success: boolean }>(`/api/ciba/requests/${requestId}/approve`, {
-			method: 'POST',
+		return apiFetch<{ success: boolean; message?: string }>(APPROVAL_ENDPOINTS.cibaApprove.path, {
+			method: APPROVAL_ENDPOINTS.cibaApprove.method,
+			body: JSON.stringify({ auth_req_id: requestId }),
 			credentials: 'include'
 		});
 	},
@@ -1969,8 +1930,9 @@ export const cibaAPI = {
 	 * Reject a CIBA request
 	 */
 	async reject(requestId: string) {
-		return apiFetch<{ success: boolean }>(`/api/ciba/requests/${requestId}/reject`, {
-			method: 'POST',
+		return apiFetch<{ success: boolean; message?: string }>(APPROVAL_ENDPOINTS.cibaDeny.path, {
+			method: APPROVAL_ENDPOINTS.cibaDeny.method,
+			body: JSON.stringify({ auth_req_id: requestId }),
 			credentials: 'include'
 		});
 	}
@@ -2062,7 +2024,13 @@ export const externalIdpAPI = {
 		redirectUri?: string,
 		startUrl?: string,
 		startMode: 'oauth_redirect' | 'saml_sp' = 'oauth_redirect',
-		humanVerification?: { token?: string }
+		humanVerification?: { token?: string },
+		/** The /authorize challenge this sign-in answers (a re-authentication asks the IdP anew). */
+		authorizationChallengeId?: string,
+		/** The invitation a sign-up started from; applied only to an account the sign-in creates. */
+		inviteToken?: string,
+		/** The Flow interaction this sign-in belongs to (the server checks it), when a Flow runs. */
+		runtimeInteractionId?: string
 	): Promise<{
 		url: string;
 	}> {
@@ -2071,6 +2039,15 @@ export const externalIdpAPI = {
 
 		if (humanVerification?.token) {
 			targetUrl.searchParams.set('human_verification_response', humanVerification.token);
+		}
+		if (authorizationChallengeId) {
+			targetUrl.searchParams.set('authorization_challenge_id', authorizationChallengeId);
+		}
+		if (inviteToken) {
+			targetUrl.searchParams.set('invite_token', inviteToken);
+		}
+		if (runtimeInteractionId) {
+			targetUrl.searchParams.set('runtime_interaction_id', runtimeInteractionId);
 		}
 
 		if (startMode === 'saml_sp') {
@@ -2113,6 +2090,51 @@ export const externalIdpAPI = {
 		return {
 			url: targetUrl.toString()
 		};
+	}
+};
+
+// =============================================================================
+// Invitations
+// =============================================================================
+
+export interface InvitationValidation {
+	valid: true;
+	tenant_name: string;
+	invited_email: string | null;
+	/** A passkey or authenticator-app signup must first prove the invited email. */
+	email_verification_required: boolean;
+	expires_at: number;
+}
+
+export const invitationAPI = {
+	validate(token: string) {
+		return apiFetch<InvitationValidation>(
+			`/api/v1/invitations/validate?token=${encodeURIComponent(token)}`,
+			{ method: 'GET' }
+		);
+	},
+
+	/** Sends a code to the email the invitation names (the server picks the address). */
+	sendEmailCode(token: string) {
+		return apiFetch<{ verification_id: string; expires_in: number; masked_email: string }>(
+			'/api/v1/invitations/email-verification/send',
+			{ method: 'POST', body: JSON.stringify({ token }) }
+		);
+	},
+
+	/** Exchanges the code for a short-lived proof the signup start takes. */
+	verifyEmailCode(data: { token: string; verificationId: string; code: string }) {
+		return apiFetch<{ invitation_email_proof: string; expires_in: number }>(
+			'/api/v1/invitations/email-verification/verify',
+			{
+				method: 'POST',
+				body: JSON.stringify({
+					token: data.token,
+					verification_id: data.verificationId,
+					code: data.code
+				})
+			}
+		);
 	}
 };
 
@@ -2332,6 +2354,7 @@ export interface ConsentSubmission {
 	selected_org_id?: string;
 	acting_as_user_id?: string;
 	consent_item_decisions?: Record<string, 'granted' | 'denied'>;
+	consent_item_versions?: Record<string, { version_id: string; content_hash: string | null }>;
 }
 
 /**

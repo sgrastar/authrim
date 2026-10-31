@@ -1,8 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const lifecycleGate = vi.hoisted(() => vi.fn());
+const lifecycleRow = vi.hoisted(() => vi.fn());
+
 const challengeStore = {
   consumeChallengeRpc: vi.fn(),
   storeChallengeRpc: vi.fn(),
+  // Nothing is known about a challenge before it is consumed in these cases.
+  getChallengeRpc: vi.fn(async () => undefined),
 };
 
 const sessionStore = {
@@ -11,8 +16,10 @@ const sessionStore = {
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
+  lifecycleGate.mockImplementation(actual.assertGuestCredentialAuthenticationAllowed);
   return {
     ...actual,
+    assertGuestCredentialAuthenticationAllowed: lifecycleGate,
     CanonicalRuntimeUserStore: class {
       async findById(userId: string) {
         if (userId !== 'user_123') return null;
@@ -39,6 +46,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     })),
     getTenantIdFromContext: vi.fn(() => 'tenant_test'),
     createAuthContextFromHono: vi.fn(() => ({
+      coreAdapter: { queryOne: lifecycleRow },
       repositories: {
         userCore: {
           findById: vi.fn(async () => ({ id: 'user_123', is_active: true })),
@@ -46,7 +54,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       },
     })),
     createAccountAuthContextFromHono: vi.fn(() => ({
-      coreAdapter: {},
+      coreAdapter: { queryOne: lifecycleRow },
       repositories: {
         userCore: {
           findById: vi.fn(async () => ({ id: 'user_123', is_active: true })),
@@ -122,6 +130,7 @@ function createContext(body: Record<string, unknown>, env: Record<string, unknow
 describe('managed Direct Auth browser session finish', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    lifecycleRow.mockResolvedValue(null);
     sessionStore.createSessionRpc.mockResolvedValue({ id: 'sess_managed_browser' });
     challengeStore.storeChallengeRpc.mockResolvedValue(undefined);
   });
@@ -151,6 +160,121 @@ describe('managed Direct Auth browser session finish', () => {
       },
     });
     expect(challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
+  });
+
+  it.each(['active', 'upgrading', 'deleting', 'deleted'])(
+    'does not create a credential session in %s lifecycle state',
+    async (phase) => {
+      const verifier = 'verifier-for-managed-browser-session';
+      challengeStore.consumeChallengeRpc.mockResolvedValue({
+        challenge: await s256Challenge(verifier),
+        userId: 'user_123',
+        metadata: { client_id: 'login-ui', channel: 'browser', method: 'passkey' },
+      });
+      lifecycleRow.mockResolvedValue({ phase });
+      const { directSessionCreateHandler } = await import('../direct-auth');
+      const response = await directSessionCreateHandler(
+        createContext({
+          direct_auth_artifact: 'artifact_123',
+          client_id: 'login-ui',
+          code_verifier: verifier,
+          channel: 'browser',
+        }) as never
+      );
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(lifecycleGate).toHaveBeenCalledWith(expect.anything(), 'tenant_test', 'user_123');
+      expect(sessionStore.createSessionRpc).not.toHaveBeenCalled();
+    }
+  );
+  it.each([
+    [
+      'external_idp',
+      'urn:mace:incommon:iap:silver',
+      { upstream_acr: 'urn:mace:incommon:iap:silver' },
+    ],
+    ['passkey', 'urn:mace:incommon:iap:silver', {}],
+    ['external_idp', 'x'.repeat(1025), {}],
+  ])(
+    'keeps the upstream acr of a %s login only from an external IdP (%#)',
+    async (method, upstreamAcr, expected) => {
+      const codeVerifier = 'verifier-for-upstream-acr-session';
+      challengeStore.consumeChallengeRpc.mockResolvedValue({
+        challenge: await s256Challenge(codeVerifier),
+        userId: 'user_123',
+        metadata: { client_id: 'login-ui', channel: 'browser', method, upstream_acr: upstreamAcr },
+      });
+      const { directSessionCreateHandler } = await import('../direct-auth');
+      const response = await directSessionCreateHandler(
+        createContext({
+          direct_auth_artifact: 'artifact_123',
+          client_id: 'login-ui',
+          code_verifier: codeVerifier,
+          channel: 'browser',
+        }) as never
+      );
+      expect(response.status).toBe(200);
+      const data = sessionStore.createSessionRpc.mock.calls.at(-1)?.[3] as Record<string, unknown>;
+      expect(data.amr).toEqual([method]);
+      if ('upstream_acr' in expected) expect(data.upstream_acr).toBe(expected.upstream_acr);
+      else expect(data).not.toHaveProperty('upstream_acr');
+    }
+  );
+
+  it.each([
+    [{ proven_at: 1_700_000_000_123 }, { proven_at: 1_700_000_000_123 }],
+    // The artifact's storage time is not a proof time.
+    [{}, {}],
+  ])(
+    'records when the producer verified the authentication, not when it was stored (%#)',
+    async (extra, expected) => {
+      const codeVerifier = 'verifier-for-proven-at';
+      challengeStore.consumeChallengeRpc.mockResolvedValue({
+        challenge: await s256Challenge(codeVerifier),
+        userId: 'user_123',
+        createdAt: 1_800_000_000_000,
+        metadata: { client_id: 'login-ui', channel: 'browser', method: 'passkey', ...extra },
+      });
+      const { directSessionCreateHandler } = await import('../direct-auth');
+      await directSessionCreateHandler(
+        createContext({
+          direct_auth_artifact: 'artifact_123',
+          client_id: 'login-ui',
+          code_verifier: codeVerifier,
+          channel: 'browser',
+        }) as never
+      );
+      const data = sessionStore.createSessionRpc.mock.calls.at(-1)?.[3] as Record<string, unknown>;
+      if ('proven_at' in expected) expect(data.proven_at).toBe(expected.proven_at);
+      else expect(data).not.toHaveProperty('proven_at');
+    }
+  );
+
+  it.each([
+    // The IdP's times are in its own clock: an external IdP login records no proof time.
+    [{ upstream_auth_time: 1_700_000_000 }, {}],
+    [{ proven_at: 1_700_000_000_123 }, {}],
+    [{}, {}],
+  ])('records no proof time for an external IdP login (%#)', async (extra, expected) => {
+    const codeVerifier = 'verifier-for-upstream-auth-time';
+    challengeStore.consumeChallengeRpc.mockResolvedValue({
+      challenge: await s256Challenge(codeVerifier),
+      userId: 'user_123',
+      createdAt: 1_800_000_000_000,
+      metadata: { client_id: 'login-ui', channel: 'browser', method: 'external_idp', ...extra },
+    });
+    const { directSessionCreateHandler } = await import('../direct-auth');
+    await directSessionCreateHandler(
+      createContext({
+        direct_auth_artifact: 'artifact_123',
+        client_id: 'login-ui',
+        code_verifier: codeVerifier,
+        channel: 'browser',
+      }) as never
+    );
+    const data = sessionStore.createSessionRpc.mock.calls.at(-1)?.[3] as Record<string, unknown>;
+    if ('proven_at' in expected) expect(data.proven_at).toBe(expected.proven_at);
+    // Not the code's minting: the IdP login may be older.
+    else expect(data).not.toHaveProperty('proven_at');
   });
 
   it('redeems an artifact into a cookie session without returning token material', async () => {
@@ -221,7 +345,44 @@ describe('managed Direct Auth browser session finish', () => {
     context.get = vi.fn((key: string) => {
       if (key === 'tenantId') return 'tenant_test';
       if (key === 'tenantMetadataContext') {
-        return { tenantId: 'tenant_test', storageProfileId: 'builtin:storage:tenant-d1' };
+        return { tenantId: 'tenant_test', route: { allocationScope: 'tenant_exclusive' } };
+      }
+      return undefined;
+    }) as never;
+
+    const { directSessionCreateHandler } = await import('../direct-auth');
+    const response = await directSessionCreateHandler(context as never);
+
+    expect(response.status).toBe(200);
+    const core = await import('@authrim/ar-lib-core');
+    expect(core.resolveAccountDataContextFromHono).toHaveBeenCalledWith(context, 'user_123');
+  }, 15000);
+
+  it('resolves the account-scoped user store for a shared-pool artifact exchange', async () => {
+    const codeVerifier = 'verifier-for-shared-pool-session';
+    const codeChallenge = await s256Challenge(codeVerifier);
+    challengeStore.consumeChallengeRpc.mockResolvedValue({
+      challenge: codeChallenge,
+      userId: 'user_123',
+      metadata: {
+        client_id: 'login-ui',
+        channel: 'browser',
+        method: 'passkey_signup',
+      },
+    });
+    const context = createContext({
+      direct_auth_artifact: 'artifact_shared_pool',
+      client_id: 'login-ui',
+      code_verifier: codeVerifier,
+      channel: 'browser',
+    });
+    context.get = vi.fn((key: string) => {
+      if (key === 'tenantId') return 'tenant_test';
+      if (key === 'tenantMetadataContext') {
+        return {
+          tenantId: 'tenant_test',
+          route: { allocationScope: 'shared_pool' },
+        };
       }
       return undefined;
     }) as never;
@@ -353,6 +514,188 @@ describe('managed Direct Auth browser session finish', () => {
     expect(response.headers.get('set-cookie')).toContain('authrim_authorize_confirmation=');
   });
 
+  it('carries a re-authentication time and step-up into its confirmation', async () => {
+    const codeVerifier = 'verifier-for-reauth-continuation';
+    const stepUp = {
+      prior_session_id: 'g1:apac:3:session_prior',
+      required_aal: 'AAL2',
+      issued_at: 5,
+    };
+    challengeStore.consumeChallengeRpc
+      .mockResolvedValueOnce({
+        challenge: await s256Challenge(codeVerifier),
+        userId: 'user_123',
+        metadata: {
+          client_id: 'login-ui',
+          channel: 'browser',
+          method: 'passkey',
+          proven_at: Date.now(),
+          authorization_challenge_id: 'reauth_challenge_123',
+        },
+      })
+      .mockRejectedValueOnce(new Error('not a login challenge'))
+      .mockResolvedValueOnce({
+        userId: 'user_123',
+        metadata: {
+          response_type: 'code',
+          client_id: 'rp_web',
+          redirect_uri: 'https://rp.example.com/callback',
+          scope: 'openid',
+          state: 'state-123',
+          issuer: 'https://issuer.example.com',
+          sessionUserId: 'user_123',
+          reauth_issued_at: 1_700_000_000_000,
+          assurance_step_up: stepUp,
+        },
+      });
+    const { directSessionCreateHandler } = await import('../direct-auth');
+
+    const response = await directSessionCreateHandler(
+      createContext({
+        direct_auth_artifact: 'artifact_123',
+        client_id: 'login-ui',
+        code_verifier: codeVerifier,
+        channel: 'browser',
+      }) as never
+    );
+
+    expect(response.status).toBe(200);
+    expect(challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'reauth',
+        metadata: expect.objectContaining({
+          purpose: 'authorize_confirmation',
+          reauth_issued_at: 1_700_000_000_000,
+          assurance_step_up: stepUp,
+        }),
+      })
+    );
+  });
+
+  it.each([
+    // An external IdP login proves a re-authentication only once the bridge verified a renewal.
+    ['external_idp', { reauth_proven_amr: ['external_idp'], reauth_proven_at: Date.now() }, 200],
+    ['external_idp', {}, 403],
+    ['passkey_signup', {}, 403],
+  ] as const)(
+    're-authenticates from a %s artifact (%j) only when the method proves the user',
+    async (method, proof, status) => {
+      const codeVerifier = `verifier-for-${method}-reauth`;
+      challengeStore.consumeChallengeRpc
+        .mockResolvedValueOnce({
+          challenge: await s256Challenge(codeVerifier),
+          userId: 'user_123',
+          metadata: {
+            client_id: 'login-ui',
+            channel: 'browser',
+            method,
+            ...proof,
+            authorization_challenge_id: 'reauth_challenge_123',
+          },
+        })
+        .mockRejectedValueOnce(new Error('not a login challenge'))
+        .mockResolvedValueOnce({
+          userId: 'user_123',
+          metadata: {
+            response_type: 'code',
+            client_id: 'rp_web',
+            redirect_uri: 'https://rp.example.com/callback',
+            scope: 'openid',
+            state: 'state-123',
+            issuer: 'https://issuer.example.com',
+            sessionUserId: 'user_123',
+            reauth_issued_at: 1_700_000_000_000,
+          },
+        });
+      const { directSessionCreateHandler } = await import('../direct-auth');
+
+      const response = await directSessionCreateHandler(
+        createContext({
+          direct_auth_artifact: `artifact_${method}_${status}`,
+          client_id: 'login-ui',
+          code_verifier: codeVerifier,
+          channel: 'browser',
+        }) as never
+      );
+
+      expect(response.status).toBe(status);
+      if (status === 200) {
+        // The session keeps the verified renewal, to complete a re-authentication later too.
+        expect(sessionStore.createSessionRpc).toHaveBeenCalledWith(
+          expect.any(String),
+          'user_123',
+          expect.any(Number),
+          expect.objectContaining({
+            reauth_proven_amr: ['external_idp'],
+            reauth_proven_at: expect.any(Number),
+          }),
+          expect.anything()
+        );
+      }
+    }
+  );
+
+  it.each([
+    // Proven 100 ms before the re-authentication was asked for, in the same second.
+    [1_700_000_000_000 - 100, 403],
+    [1_700_000_000_000 + 100, 200],
+  ])(
+    'dates the session by its proof (%d) and judges a re-authentication by it',
+    async (provenAt, status) => {
+      const codeVerifier = `verifier-for-proof-${provenAt}`;
+      challengeStore.consumeChallengeRpc
+        .mockResolvedValueOnce({
+          challenge: await s256Challenge(codeVerifier),
+          userId: 'user_123',
+          metadata: {
+            client_id: 'login-ui',
+            channel: 'browser',
+            method: 'passkey',
+            proven_at: provenAt,
+            authorization_challenge_id: 'reauth_challenge_123',
+          },
+        })
+        .mockRejectedValueOnce(new Error('not a login challenge'))
+        .mockResolvedValueOnce({
+          userId: 'user_123',
+          metadata: {
+            response_type: 'code',
+            client_id: 'rp_web',
+            redirect_uri: 'https://rp.example.com/callback',
+            scope: 'openid',
+            state: 'state-123',
+            issuer: 'https://issuer.example.com',
+            sessionUserId: 'user_123',
+            reauth_issued_at: 1_700_000_000_000,
+          },
+        });
+      const { directSessionCreateHandler } = await import('../direct-auth');
+
+      const response = await directSessionCreateHandler(
+        createContext({
+          direct_auth_artifact: `artifact_proof_${provenAt}`,
+          client_id: 'login-ui',
+          code_verifier: codeVerifier,
+          channel: 'browser',
+        }) as never
+      );
+
+      expect(response.status).toBe(status);
+      if (status === 200) {
+        expect(sessionStore.createSessionRpc).toHaveBeenCalledWith(
+          expect.any(String),
+          'user_123',
+          expect.any(Number),
+          expect.objectContaining({
+            authTime: Math.floor(provenAt / 1000),
+            proven_at: provenAt,
+          }),
+          expect.anything()
+        );
+      }
+    }
+  );
+
   it('can resume an OAuth login challenge from artifact metadata when the request omits it', async () => {
     const codeVerifier = 'verifier-for-oauth-login-continuation-metadata';
     const codeChallenge = await s256Challenge(codeVerifier);
@@ -445,6 +788,99 @@ describe('managed Direct Auth browser session finish', () => {
         id: 'oauth_challenge_from_artifact',
       })
     );
+  });
+
+  describe('an artifact made for the browser session alone (the challenge of a SAML request)', () => {
+    const verifier = 'verifier-for-a-browser-session-only-artifact';
+    const markedArtifact = async () => ({
+      challenge: await s256Challenge(verifier),
+      userId: 'user_123',
+      metadata: {
+        client_id: 'login-ui',
+        channel: 'browser',
+        method: 'passkey',
+        proven_at: Date.now(),
+        authorization_challenge_id: 'saml_challenge_1',
+        browser_session_only: true,
+      },
+    });
+    const finish = async (extra: Record<string, unknown> = {}) => {
+      const { directSessionCreateHandler } = await import('../direct-auth');
+      return directSessionCreateHandler(
+        createContext({
+          direct_auth_artifact: 'artifact_123',
+          client_id: 'login-ui',
+          code_verifier: verifier,
+          channel: 'browser',
+          ...extra,
+        }) as never
+      );
+    };
+
+    it('does not continue at another challenge named by the request, and makes no session', async () => {
+      // An OIDC login challenge fetched before the sign-in, named in place of the SAML one.
+      challengeStore.consumeChallengeRpc.mockResolvedValueOnce(await markedArtifact());
+
+      const response = await finish({ authorization_challenge_id: 'oidc_login_challenge' });
+
+      expect(response.status).toBe(400);
+      expect(sessionStore.createSessionRpc).not.toHaveBeenCalled();
+      expect(challengeStore.consumeChallengeRpc).toHaveBeenCalledTimes(1);
+      expect(challengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+    });
+
+    it('does not continue at another challenge even when its own is gone', async () => {
+      challengeStore.consumeChallengeRpc
+        .mockResolvedValueOnce(await markedArtifact())
+        .mockRejectedValue(new Error('gone'));
+
+      const response = await finish();
+
+      expect(response.status).toBe(400);
+      expect(sessionStore.createSessionRpc).not.toHaveBeenCalled();
+      expect(challengeStore.consumeChallengeRpc).not.toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'oidc_login_challenge' })
+      );
+    });
+
+    it('still makes the session, with the continuation deferred, whichever challenge the request names', async () => {
+      challengeStore.consumeChallengeRpc.mockResolvedValueOnce(await markedArtifact());
+
+      const response = await finish({
+        defer_authorization_continuation: true,
+        authorization_challenge_id: 'saml_challenge_1',
+      });
+      const body = (await response.json()) as Record<string, unknown>;
+
+      expect(response.status).toBe(200);
+      expect(body).not.toHaveProperty('authorization');
+      expect(sessionStore.createSessionRpc).toHaveBeenCalledOnce();
+      expect(challengeStore.consumeChallengeRpc).toHaveBeenCalledTimes(1);
+    });
+
+    it('continues at the SSO endpoint for its own challenge', async () => {
+      challengeStore.consumeChallengeRpc.mockResolvedValueOnce(await markedArtifact());
+      challengeStore.getChallengeRpc.mockResolvedValueOnce({
+        tenantId: 'tenant_test',
+        type: 'reauth',
+        userId: 'user_123',
+        metadata: {
+          protocol: 'saml',
+          saml_request_id: '_request-1',
+          saml_sp_entity_id: 'https://sp.example.test/entity',
+          tenant_id: 'tenant_test',
+          sessionUserId: 'user_123',
+          reauth_issued_at: 1_000,
+        },
+      } as never);
+
+      const response = await finish({ authorization_challenge_id: 'saml_challenge_1' });
+      const body = (await response.json()) as Record<string, unknown>;
+
+      expect(response.status).toBe(200);
+      expect(body.redirect_url).toEqual(expect.stringContaining('/saml/idp/sso?'));
+      expect(challengeStore.consumeChallengeRpc).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('rejects non-browser channels for managed browser session finish', async () => {

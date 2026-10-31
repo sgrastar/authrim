@@ -1,3 +1,7 @@
+import {
+  runSamlDrCoveredFetch,
+  runSamlDrCoveredOperation,
+} from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { Fetcher } from '@cloudflare/workers-types';
 import { RuntimeSmokeEntrypoint as BaseRuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';
@@ -21,6 +25,7 @@ import type { PluginRunnerEnv, PluginRunnerRpcProps } from './types';
 import { createBuiltinHumanVerificationRegistry } from './builtin-human-verification';
 import { D1HumanVerificationInstallationStore } from './human-verification-installations';
 import { D1AccountEventInstallationResolver } from './account-event-installations';
+import { D1TenantExternalGateStore } from './external-gate';
 import { R2PluginWorkerCodeResolver } from './dynamic-worker-code';
 import { D1PluginInstallationResolver } from './installations';
 import type { PluginEgressContext } from './types';
@@ -37,6 +42,7 @@ import {
   type PluginResourceBindingDescriptor,
   type PluginResourceBindingProps,
 } from './resource-bindings';
+import { DynamicPluginTenantBackupService } from './tenant-backup';
 
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
 const SAFE_NAME = /^[a-z][a-z0-9_.:-]{0,127}$/u;
@@ -383,7 +389,9 @@ async function handleDynamicOutbound(
 
 export class PluginDynamicOutbound extends WorkerEntrypoint<PluginRunnerEnv, PluginEgressContext> {
   fetch(request: Request): Promise<Response> {
-    return handleDynamicOutbound(this.env, this.ctx.props, request);
+    return runSamlDrCoveredFetch(this.env, this.ctx, (env) =>
+      handleDynamicOutbound(env ?? this.env, this.ctx.props, request)
+    );
   }
 }
 
@@ -392,80 +400,86 @@ export class PluginAccountMetadataAccess extends WorkerEntrypoint<
   PluginEgressContext
 > {
   async write(input: unknown) {
-    try {
-      return await new PluginAccountMetadataService(this.env).write(this.ctx.props, input);
-    } catch (error) {
-      if (
-        error instanceof Error &&
-        /^(?:plugin_data_(?:input_invalid|scope_denied|account_unavailable|version_conflict|idempotency_conflict|idempotency_key_unavailable))$/u.test(
-          error.message
-        )
-      ) {
-        throw new Error(error.message);
+    return runSamlDrCoveredOperation(this.env, this.ctx, async (env) => {
+      try {
+        return await new PluginAccountMetadataService(env).write(this.ctx.props, input);
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          /^(?:plugin_data_(?:input_invalid|scope_denied|account_unavailable|version_conflict|idempotency_conflict|idempotency_key_unavailable))$/u.test(
+            error.message
+          )
+        ) {
+          throw new Error(error.message);
+        }
+        throw new Error('plugin_host_interface_unavailable');
       }
-      throw new Error('plugin_host_interface_unavailable');
-    }
+    });
   }
 }
 
 export class RuntimeSmokeEntrypoint extends BaseRuntimeSmokeEntrypoint {
   smokePluginResourceBindings(input: unknown) {
-    return new PluginResourceControlService(
-      this.env as PluginRunnerEnv,
-      this.ctx.props
-    ).reflectAndSmoke(input);
+    return runSamlDrCoveredOperation(this.env as PluginRunnerEnv, this.ctx, (env) =>
+      new PluginResourceControlService(env, this.ctx.props).reflectAndSmoke(input)
+    );
   }
+}
+
+export function createDynamicPluginHostInterfaces(
+  executionContext: ExecutionContext,
+  context: PluginEgressContext,
+  bindings: readonly PluginHostInterfaceBindingContract[],
+  resources: readonly PluginResourceBindingDescriptor[],
+  pluginId: string
+): Record<string, unknown> {
+  const loopback = executionContext as typeof executionContext & {
+    exports: {
+      PluginAccountMetadataAccess(options: { props: PluginEgressContext }): unknown;
+      PluginD1ResourceAccess(options: { props: PluginResourceBindingProps }): unknown;
+      PluginKvResourceAccess(options: { props: PluginResourceBindingProps }): unknown;
+      PluginR2ResourceAccess(options: { props: PluginResourceBindingProps }): unknown;
+    };
+  };
+  const resolved = resolvePluginHostInterfaceEnv(bindings, {
+    'authrim.account_metadata.v1': () =>
+      loopback.exports.PluginAccountMetadataAccess({ props: context }),
+  });
+  for (const resource of resources) {
+    if (Object.prototype.hasOwnProperty.call(resolved, resource.binding)) {
+      throw new Error('plugin_host_interface_binding_conflict');
+    }
+    const props: PluginResourceBindingProps = {
+      tenantId: context.tenantId,
+      pluginId,
+      installationId: context.pluginInstallationId,
+      ...resource,
+    };
+    resolved[resource.binding] =
+      resource.kind === 'd1'
+        ? loopback.exports.PluginD1ResourceAccess({ props })
+        : resource.kind === 'kv_namespace'
+          ? loopback.exports.PluginKvResourceAccess({ props })
+          : loopback.exports.PluginR2ResourceAccess({ props });
+  }
+  return resolved;
 }
 
 export default class PluginRunnerWorker extends WorkerEntrypoint<
   PluginRunnerEnv,
   PluginRunnerRpcProps
 > {
-  private dynamicOutbound(context: PluginEgressContext): Fetcher {
+  #coveredRpc<T>(operation: (env: PluginRunnerEnv) => Promise<T>): Promise<T> {
+    return runSamlDrCoveredOperation(this.env, this.ctx, (env) => rpcResult(() => operation(env)));
+  }
+
+  #dynamicOutbound(context: PluginEgressContext): Fetcher {
     const loopback = this.ctx as typeof this.ctx & {
       exports: {
         PluginDynamicOutbound(options: { props: PluginEgressContext }): Fetcher;
       };
     };
     return loopback.exports.PluginDynamicOutbound({ props: context });
-  }
-
-  private dynamicHostInterfaces(
-    context: PluginEgressContext,
-    bindings: readonly PluginHostInterfaceBindingContract[],
-    resources: readonly PluginResourceBindingDescriptor[],
-    pluginId: string
-  ): Record<string, unknown> {
-    const loopback = this.ctx as typeof this.ctx & {
-      exports: {
-        PluginAccountMetadataAccess(options: { props: PluginEgressContext }): unknown;
-        PluginD1ResourceAccess(options: { props: PluginResourceBindingProps }): unknown;
-        PluginKvResourceAccess(options: { props: PluginResourceBindingProps }): unknown;
-        PluginR2ResourceAccess(options: { props: PluginResourceBindingProps }): unknown;
-      };
-    };
-    const resolved = resolvePluginHostInterfaceEnv(bindings, {
-      'authrim.account_metadata.v1': () =>
-        loopback.exports.PluginAccountMetadataAccess({ props: context }),
-    });
-    for (const resource of resources) {
-      if (Object.prototype.hasOwnProperty.call(resolved, resource.binding)) {
-        throw new Error('plugin_host_interface_binding_conflict');
-      }
-      const props: PluginResourceBindingProps = {
-        tenantId: context.tenantId,
-        pluginId,
-        installationId: context.pluginInstallationId,
-        ...resource,
-      };
-      resolved[resource.binding] =
-        resource.kind === 'd1'
-          ? loopback.exports.PluginD1ResourceAccess({ props })
-          : resource.kind === 'kv_namespace'
-            ? loopback.exports.PluginKvResourceAccess({ props })
-            : loopback.exports.PluginR2ResourceAccess({ props });
-    }
-    return resolved;
   }
 
   fetch(_request: Request): Response {
@@ -480,63 +494,72 @@ export default class PluginRunnerWorker extends WorkerEntrypoint<
   }
 
   async scheduled(): Promise<void> {
-    await Promise.all([
-      new PluginRunnerScheduler(
-        this.env,
-        () => Math.floor(Date.now() / 1000),
-        (context) => this.dynamicOutbound(context),
-        (context, bindings, resources, pluginId) =>
-          this.dynamicHostInterfaces(context, bindings, resources, pluginId)
-      ).run(),
-      scanAndReportPluginBundleMetrics(this.env),
-    ]);
+    return runSamlDrCoveredOperation(this.env, this.ctx, async (env) => {
+      const effects = [
+        new PluginRunnerScheduler(
+          env,
+          () => Math.floor(Date.now() / 1000),
+          (context) => this.#dynamicOutbound(context),
+          (context, bindings, resources, pluginId) =>
+            createDynamicPluginHostInterfaces(this.ctx, context, bindings, resources, pluginId)
+        ).run(),
+        scanAndReportPluginBundleMetrics(env),
+      ];
+      if (env.ENABLE_SAML_DR_EXPORT !== 'true') {
+        await Promise.all(effects);
+        return;
+      }
+      const settled = await Promise.allSettled(effects);
+      const failed = settled.find((result) => result.status === 'rejected');
+      if (failed?.status === 'rejected') throw failed.reason;
+    });
   }
 
   runHumanVerification(input: unknown) {
-    return rpcResult(() => {
-      authorized(this.env, this.ctx.props, ['ar-auth', 'ar-bridge', 'ar-management', 'ar-saml']);
+    return this.#coveredRpc((env) => {
+      authorized(env, this.ctx.props, ['ar-auth', 'ar-bridge', 'ar-management', 'ar-saml']);
       return syncHookService(
-        this.env,
-        (context) => this.dynamicOutbound(context),
+        env,
+        (context) => this.#dynamicOutbound(context),
         (context, bindings, resources, pluginId) =>
-          this.dynamicHostInterfaces(context, bindings, resources, pluginId)
+          createDynamicPluginHostInterfaces(this.ctx, context, bindings, resources, pluginId)
       ).runHumanVerification(humanVerificationInput(input));
     });
   }
 
   runPolicyDecision(input: unknown) {
-    return rpcResult(() => {
-      authorized(this.env, this.ctx.props, ['ar-policy']);
+    return this.#coveredRpc((env) => {
+      authorized(env, this.ctx.props, ['ar-policy']);
       return syncHookService(
-        this.env,
-        (context) => this.dynamicOutbound(context),
+        env,
+        (context) => this.#dynamicOutbound(context),
         (context, bindings, resources, pluginId) =>
-          this.dynamicHostInterfaces(context, bindings, resources, pluginId)
+          createDynamicPluginHostInterfaces(this.ctx, context, bindings, resources, pluginId)
       ).runPolicyDecision(policyDecisionInput(input));
     });
   }
 
   runFlowHook(input: unknown) {
-    return rpcResult(() => {
-      authorized(this.env, this.ctx.props, ['ar-auth', 'ar-management']);
+    return this.#coveredRpc((env) => {
+      authorized(env, this.ctx.props, ['ar-auth', 'ar-management']);
       return syncHookService(
-        this.env,
-        (context) => this.dynamicOutbound(context),
+        env,
+        (context) => this.#dynamicOutbound(context),
         (context, bindings, resources, pluginId) =>
-          this.dynamicHostInterfaces(context, bindings, resources, pluginId)
+          createDynamicPluginHostInterfaces(this.ctx, context, bindings, resources, pluginId)
       ).runFlowHook(flowHookInput(input));
     });
   }
 
   deliverNotification(input: unknown) {
-    return rpcResult(() => {
-      authorized(this.env, this.ctx.props, ['ar-auth', 'ar-management']);
+    return this.#coveredRpc((env) => {
+      authorized(env, this.ctx.props, ['ar-auth', 'ar-management']);
       return new ImmediateNotificationDeliveryService(
-        this.env,
+        env,
         () => Math.floor(Date.now() / 1000),
-        (context) => this.dynamicOutbound(context),
+        (context) => this.#dynamicOutbound(context),
         (context, bindings, resources, pluginId) =>
-          this.dynamicHostInterfaces(context, bindings, resources, pluginId)
+          createDynamicPluginHostInterfaces(this.ctx, context, bindings, resources, pluginId)
       )
         .deliver(notificationDeliveryInput(input))
         .catch(() => 'pending' as const);
@@ -544,70 +567,70 @@ export default class PluginRunnerWorker extends WorkerEntrypoint<
   }
 
   replacePluginCredentials(input: unknown) {
-    return rpcResult(() => {
-      authorized(this.env, this.ctx.props, ['ar-management']);
+    return this.#coveredRpc((env) => {
+      authorized(env, this.ctx.props, ['ar-management']);
       return new D1PluginConfigStore(
-        this.env.PLUGIN_RUNNER_DB,
-        pluginEncryptionKeyringFromEnv(this.env),
-        this.env.PLUGIN_MUTATION_HMAC_KEY
+        env.PLUGIN_RUNNER_DB,
+        pluginEncryptionKeyringFromEnv(env),
+        env.PLUGIN_MUTATION_HMAC_KEY
       ).replaceCredentials(input);
     });
   }
 
   configureNotificationInstallation(input: unknown) {
-    return rpcResult(() => {
-      authorized(this.env, this.ctx.props, ['ar-management']);
-      return new D1NotificationInstallationStore(this.env.PLUGIN_RUNNER_DB).configure(input);
+    return this.#coveredRpc((env) => {
+      authorized(env, this.ctx.props, ['ar-management']);
+      return new D1NotificationInstallationStore(env.PLUGIN_RUNNER_DB).configure(input);
     });
   }
 
   configureHumanVerificationInstallation(input: unknown) {
-    return rpcResult(() => {
-      authorized(this.env, this.ctx.props, ['ar-management']);
+    return this.#coveredRpc((env) => {
+      authorized(env, this.ctx.props, ['ar-management']);
       return new D1HumanVerificationInstallationStore(
-        this.env.PLUGIN_RUNNER_DB,
-        pluginEncryptionKeyringFromEnv(this.env),
-        this.env.PLUGIN_MUTATION_HMAC_KEY
+        env.PLUGIN_RUNNER_DB,
+        pluginEncryptionKeyringFromEnv(env),
+        env.PLUGIN_MUTATION_HMAC_KEY
       ).configure(input);
     });
   }
 
   configureDynamicPluginInstallation(input: unknown) {
-    return rpcResult(() => {
-      authorized(this.env, this.ctx.props, ['ar-management']);
+    return this.#coveredRpc((env) => {
+      authorized(env, this.ctx.props, ['ar-management']);
       return new D1DynamicPluginInstallationStore(
-        this.env.PLUGIN_RUNNER_DB,
-        this.env.AUTHRIM_ENVIRONMENT_NAME
+        env.PLUGIN_RUNNER_DB,
+        env.AUTHRIM_ENVIRONMENT_NAME
       ).configure(input);
     });
   }
 
   stageDynamicPluginActivation(input: unknown) {
-    return rpcResult(() => {
-      authorized(this.env, this.ctx.props, ['ar-management']);
+    return this.#coveredRpc((env) => {
+      authorized(env, this.ctx.props, ['ar-management']);
       return new D1DynamicPluginInstallationStore(
-        this.env.PLUGIN_RUNNER_DB,
-        this.env.AUTHRIM_ENVIRONMENT_NAME
+        env.PLUGIN_RUNNER_DB,
+        env.AUTHRIM_ENVIRONMENT_NAME
       ).stageActivation(input);
     });
   }
 
   rolloutDynamicPluginInstallation(input: unknown) {
-    return rpcResult(() => {
-      authorized(this.env, this.ctx.props, ['ar-management']);
+    return this.#coveredRpc((env) => {
+      authorized(env, this.ctx.props, ['ar-management']);
       return new D1DynamicPluginInstallationStore(
-        this.env.PLUGIN_RUNNER_DB,
-        this.env.AUTHRIM_ENVIRONMENT_NAME
+        env.PLUGIN_RUNNER_DB,
+        env.AUTHRIM_ENVIRONMENT_NAME
       ).rollout(input);
     });
   }
 
   rolloutDynamicPluginBatch(input: unknown) {
-    return rpcResult(() => {
-      authorized(this.env, this.ctx.props, ['ar-management']);
+    return this.#coveredRpc((env) => {
+      authorized(env, this.ctx.props, ['ar-management']);
       return new D1DynamicPluginInstallationStore(
-        this.env.PLUGIN_RUNNER_DB,
-        this.env.AUTHRIM_ENVIRONMENT_NAME
+        env.PLUGIN_RUNNER_DB,
+        env.AUTHRIM_ENVIRONMENT_NAME
       ).rolloutBatch(input);
     });
   }
@@ -633,12 +656,12 @@ export default class PluginRunnerWorker extends WorkerEntrypoint<
   }
 
   replaceDynamicPluginCredentials(input: unknown) {
-    return rpcResult(async () => {
-      authorized(this.env, this.ctx.props, ['ar-management']);
+    return this.#coveredRpc(async (env) => {
+      authorized(env, this.ctx.props, ['ar-management']);
       const value = dynamicCredentialsInput(input);
       const installations = new D1DynamicPluginInstallationStore(
-        this.env.PLUGIN_RUNNER_DB,
-        this.env.AUTHRIM_ENVIRONMENT_NAME
+        env.PLUGIN_RUNNER_DB,
+        env.AUTHRIM_ENVIRONMENT_NAME
       );
       let status = await installations.status({
         tenantId: value.tenantId,
@@ -664,9 +687,9 @@ export default class PluginRunnerWorker extends WorkerEntrypoint<
         credentials: value.credentials,
       });
       return new D1PluginConfigStore(
-        this.env.PLUGIN_RUNNER_DB,
-        pluginEncryptionKeyringFromEnv(this.env),
-        this.env.PLUGIN_MUTATION_HMAC_KEY
+        env.PLUGIN_RUNNER_DB,
+        pluginEncryptionKeyringFromEnv(env),
+        env.PLUGIN_MUTATION_HMAC_KEY
       ).replaceCredentials({
         operationId: value.operationId,
         tenantId: value.tenantId,
@@ -677,10 +700,31 @@ export default class PluginRunnerWorker extends WorkerEntrypoint<
     });
   }
 
-  replaceNotificationProviderOrder(input: unknown) {
+  exportDynamicPluginBackup(input: unknown) {
     return rpcResult(() => {
       authorized(this.env, this.ctx.props, ['ar-management']);
-      return new D1NotificationProviderOrderStore(this.env.PLUGIN_RUNNER_DB).replace(input);
+      return new DynamicPluginTenantBackupService(this.env).export(input);
+    });
+  }
+
+  restoreDynamicPluginBackup(input: unknown) {
+    return this.#coveredRpc((env) => {
+      authorized(env, this.ctx.props, ['ar-management']);
+      return new DynamicPluginTenantBackupService(env).restore(input);
+    });
+  }
+
+  verifyDynamicPluginBackup(input: unknown) {
+    return rpcResult(() => {
+      authorized(this.env, this.ctx.props, ['ar-management']);
+      return new DynamicPluginTenantBackupService(this.env).verify(input);
+    });
+  }
+
+  replaceNotificationProviderOrder(input: unknown) {
+    return this.#coveredRpc((env) => {
+      authorized(env, this.ctx.props, ['ar-management']);
+      return new D1NotificationProviderOrderStore(env.PLUGIN_RUNNER_DB).replace(input);
     });
   }
 
@@ -709,16 +753,119 @@ export default class PluginRunnerWorker extends WorkerEntrypoint<
     });
   }
 
-  startPluginCredentialRotation(input: unknown) {
+  /**
+   * Opens or closes the tenant's gate for external plugin code (the projection of the tenant's
+   * `plugin.enabled`). Closing it stops every external installation of the tenant from being
+   * resolved for execution, whatever its own state is.
+   */
+  setTenantExternalGate(input: unknown) {
+    return this.#coveredRpc((env) => {
+      authorized(env, this.ctx.props, ['ar-management']);
+      // Opening names the generation the opener read (ifGeneration); closing takes none.
+      const raw = input as Record<string, unknown> | null;
+      const value = exactRecord(input, [
+        'tenantId',
+        'allowed',
+        ...(raw && typeof raw === 'object' && 'ifGeneration' in raw ? ['ifGeneration'] : []),
+      ]);
+      if (
+        typeof value.allowed !== 'boolean' ||
+        (value.allowed
+          ? !Number.isSafeInteger(value.ifGeneration) || (value.ifGeneration as number) < 0
+          : value.ifGeneration !== undefined)
+      ) {
+        throw new Error('plugin_dynamic_external_gate_input_invalid');
+      }
+      return new D1TenantExternalGateStore(env.PLUGIN_RUNNER_DB).set({
+        tenantId: id(value.tenantId),
+        allowed: value.allowed,
+        ...(value.allowed ? { ifGeneration: value.ifGeneration as number } : {}),
+      });
+    });
+  }
+
+  /**
+   * The tenants whose gate may not match their setting (see D1TenantExternalGateStore.listCandidates),
+   * for ar-management's periodic reconciliation. `limit` defaults to 50 (at most 200); `after` is the
+   * last tenant id of the previous page.
+   */
+  listTenantExternalGateCandidates(input: unknown) {
     return rpcResult(() => {
       authorized(this.env, this.ctx.props, ['ar-management']);
+      const raw = input as Record<string, unknown> | null;
+      const optional = raw && typeof raw === 'object' ? Object.keys(raw) : [];
+      const value = exactRecord(
+        input,
+        optional.filter((key) => key === 'limit' || key === 'after')
+      );
+      if (
+        (value.limit !== undefined && !Number.isSafeInteger(value.limit)) ||
+        (value.after !== undefined && value.after !== null && typeof value.after !== 'string')
+      ) {
+        throw new Error('plugin_dynamic_external_gate_input_invalid');
+      }
+      return new D1TenantExternalGateStore(this.env.PLUGIN_RUNNER_DB).listCandidates({
+        ...(value.limit === undefined ? {} : { limit: value.limit as number }),
+        after: (value.after as string | null) ?? null,
+      });
+    });
+  }
+
+  getTenantExternalGate(input: unknown) {
+    return rpcResult(() => {
+      authorized(this.env, this.ctx.props, ['ar-management']);
+      const value = exactRecord(input, ['tenantId']);
+      return new D1TenantExternalGateStore(this.env.PLUGIN_RUNNER_DB).get(id(value.tenantId));
+    });
+  }
+
+  startPluginCredentialRotation(input: unknown) {
+    return this.#coveredRpc((env) => {
+      authorized(env, this.ctx.props, ['ar-management']);
       const value = exactRecord(input, ['operationId']);
       return new D1PluginConfigReencryptor(
-        this.env.PLUGIN_RUNNER_DB,
-        pluginEncryptionKeyringFromEnv(this.env)
+        env.PLUGIN_RUNNER_DB,
+        pluginEncryptionKeyringFromEnv(env)
       ).start(id(value.operationId));
     });
   }
 }
 
 export { PluginD1ResourceAccess, PluginKvResourceAccess, PluginR2ResourceAccess };
+
+export const SAML_DR_WRITER_SURFACES = [
+  'scheduled',
+  'rpc:PluginRunnerWorker.runHumanVerification',
+  'rpc:PluginRunnerWorker.runPolicyDecision',
+  'rpc:PluginRunnerWorker.runFlowHook',
+  'rpc:PluginRunnerWorker.deliverNotification',
+  'rpc:PluginRunnerWorker.replacePluginCredentials',
+  'rpc:PluginRunnerWorker.configureNotificationInstallation',
+  'rpc:PluginRunnerWorker.configureHumanVerificationInstallation',
+  'rpc:PluginRunnerWorker.configureDynamicPluginInstallation',
+  'rpc:PluginRunnerWorker.stageDynamicPluginActivation',
+  'rpc:PluginRunnerWorker.rolloutDynamicPluginInstallation',
+  'rpc:PluginRunnerWorker.rolloutDynamicPluginBatch',
+  'rpc:PluginRunnerWorker.replaceDynamicPluginCredentials',
+  'rpc:PluginRunnerWorker.restoreDynamicPluginBackup',
+  'rpc:PluginRunnerWorker.replaceNotificationProviderOrder',
+  'rpc:PluginRunnerWorker.setTenantExternalGate',
+  'rpc:PluginRunnerWorker.startPluginCredentialRotation',
+  'rpc:PluginDynamicOutbound.fetch',
+  'rpc:PluginAccountMetadataAccess.write',
+  'rpc:RuntimeSmokeEntrypoint.smokePluginResourceBindings',
+] as const;
+
+// These methods only read plugin configuration; export/verification remain available while frozen.
+export const SAML_DR_READ_ONLY_SURFACES = [
+  'fetch',
+  'rpc:PluginRunnerWorker.encryptNotificationPayload',
+  'rpc:PluginRunnerWorker.exportDynamicPluginBackup',
+  'rpc:PluginRunnerWorker.getDynamicPluginInstallationStatus',
+  'rpc:PluginRunnerWorker.getTenantExternalGate',
+  'rpc:PluginRunnerWorker.listApprovedDynamicPlugins',
+  'rpc:PluginRunnerWorker.listTenantExternalGateCandidates',
+  'rpc:PluginRunnerWorker.resolveAccountEventInstallations',
+  'rpc:PluginRunnerWorker.resolveNotificationProviderOrder',
+  'rpc:PluginRunnerWorker.verifyDynamicPluginBackup',
+] as const;

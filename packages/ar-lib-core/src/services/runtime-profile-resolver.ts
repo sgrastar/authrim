@@ -1,9 +1,8 @@
 import { ensureDatabaseAdapter, type DatabaseSource } from '../db/adapter-source';
 import { createSettingsManager } from '../utils/settings-manager';
-import { getTenantSettings } from '../utils/tenant-settings';
+import { getTenantSettingsDocument } from '../utils/tenant-settings';
 import { INFRASTRUCTURE_CATEGORY_META } from '../types/settings/infrastructure';
 import type { InfrastructureSettings } from '../types/settings/infrastructure';
-import type { TenantSettings } from '../types/settings/tenant';
 import {
   DatabaseProfileRegistryBackend,
   KVProfileRegistryBackend,
@@ -56,13 +55,20 @@ function pickInfrastructureEnv(env: RuntimeProfileResolverEnv): Record<string, s
   };
 }
 
+/** `strict`: a platform document that cannot be read throws instead of reading as empty. */
+export interface RuntimeProfileReadOptions {
+  strict?: boolean;
+}
+
 export async function loadEnvironmentProfileDefaultsFromEnv(
-  env: RuntimeProfileResolverEnv
+  env: RuntimeProfileResolverEnv,
+  options: RuntimeProfileReadOptions = {}
 ): Promise<EnvironmentProfileDefaults> {
   const manager = createSettingsManager({
     env: pickInfrastructureEnv(env),
     kv: env.SETTINGS ?? null,
     cacheTTL: 0,
+    strictReads: options.strict === true,
   });
   manager.registerCategory(INFRASTRUCTURE_CATEGORY_META);
 
@@ -74,10 +80,8 @@ export async function loadTenantProfileOverridesFromEnv(
   env: RuntimeProfileResolverEnv,
   tenantId: string
 ): Promise<TenantProfileOverrides> {
-  const authrimSettings = await getTenantSettings(env.AUTHRIM_CONFIG, tenantId, 'tenant');
-  const fallbackSettings =
-    authrimSettings ?? (await getTenantSettings(env.SETTINGS, tenantId, 'tenant'));
-  return readTenantProfileOverrides(fallbackSettings ?? undefined);
+  const settings = await getTenantSettingsDocument(env, tenantId, 'tenant');
+  return readTenantProfileOverrides(settings ?? undefined);
 }
 
 export function createRuntimeProfileRegistryFromEnv(
@@ -100,10 +104,11 @@ export function createRuntimeProfileRegistryFromEnv(
 
 export async function resolveEffectiveProfileRefsFromEnv(
   env: RuntimeProfileResolverEnv,
-  tenantId: string
+  tenantId: string,
+  options: RuntimeProfileReadOptions = {}
 ): Promise<EffectiveProfileRefs> {
   const [defaults, overrides] = await Promise.all([
-    loadEnvironmentProfileDefaultsFromEnv(env),
+    loadEnvironmentProfileDefaultsFromEnv(env, options),
     loadTenantProfileOverridesFromEnv(env, tenantId),
   ]);
   return resolveEffectiveProfileRefs(defaults, overrides);
@@ -111,9 +116,10 @@ export async function resolveEffectiveProfileRefsFromEnv(
 
 export async function resolveTenantRuntimeProfilesFromEnv(
   env: RuntimeProfileResolverEnv,
-  tenantId: string
+  tenantId: string,
+  options: RuntimeProfileReadOptions = {}
 ): Promise<ResolvedRuntimeProfiles> {
-  const refs = await resolveEffectiveProfileRefsFromEnv(env, tenantId);
+  const refs = await resolveEffectiveProfileRefsFromEnv(env, tenantId, options);
   const registry = createRuntimeProfileRegistryFromEnv(env);
   return resolveRuntimeProfiles(registry, refs);
 }

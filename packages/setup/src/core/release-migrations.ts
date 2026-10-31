@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
-import { z } from 'zod';
+import { z } from './zod.js';
 import {
   MIGRATION_LOGICAL_ROLES,
   MIGRATION_MANIFEST_DIALECTS,
@@ -26,13 +26,14 @@ import { renderPortableMigrationSql } from './sql-portability.js';
 
 export const RELEASE_MIGRATION_MANIFEST_FORMAT_VERSION = 2 as const;
 export const DRAFT_RELEASE_MANIFEST_FILENAME = 'release-manifest.draft.json';
+export const DRAFT_APPEND_UPGRADE_PATH_KIND = 'draft_append' as const;
 const PRODUCT_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u;
 const ProductVersionSchema = z.string().regex(PRODUCT_VERSION_PATTERN);
 const MigrationPathSchema = z
   .string()
   .regex(/^[0-9A-Za-z][0-9A-Za-z._/-]*\.sql$/u)
   .refine((path) => !path.includes('..') && !path.includes('//'), {
-    message: 'Migration paths must remain inside their logical stream directory',
+    error: 'Migration paths must remain inside their logical stream directory',
   });
 
 export const ReleaseMigrationSupersededFileSchema = z.object({
@@ -64,7 +65,7 @@ const SemanticBaselineEvidenceSchema = z
     (evidence) =>
       new Set(evidence.streams.map((stream) => stream.id)).size === evidence.streams.length,
     {
-      message: 'Semantic baseline evidence stream IDs must be unique',
+      error: 'Semantic baseline evidence stream IDs must be unique',
     }
   );
 
@@ -81,7 +82,7 @@ export const ReleaseMigrationFileSchema = z.object({
   supersedes: z
     .array(ReleaseMigrationSupersededFileSchema)
     .refine((files) => new Set(files.map((file) => file.path)).size === files.length, {
-      message: 'Superseded migration paths must be unique',
+      error: 'Superseded migration paths must be unique',
     })
     .optional(),
 });
@@ -111,24 +112,27 @@ export const ReleaseMigrationStreamSchema = z
     }
   })
   .refine((stream) => new Set(stream.files.map((file) => file.path)).size === stream.files.length, {
-    message: 'Migration paths must be unique within a stream',
+    error: 'Migration paths must be unique within a stream',
   })
   .refine(
     (stream) =>
       stream.files.every((file, index) => index === 0 || stream.files[index - 1]!.path < file.path),
     {
-      message: 'Migration paths must be in strict lexicographic execution order',
+      error: 'Migration paths must be in strict lexicographic execution order',
     }
   );
 
 export const ReleaseMigrationUpgradePathSchema = z
   .object({
     fromProductVersion: ProductVersionSchema,
-    kind: z.enum(['delta', 'bridge']),
+    // `draft_append` is not a release upgrade path. It describes the tail of an unpublished
+    // development draft that is appended to an environment already installed at the same product
+    // version, and exists only in the Control artifact manifest that Setup derives at update time.
+    kind: z.enum(['delta', 'bridge', DRAFT_APPEND_UPGRADE_PATH_KIND]),
     streams: z.array(ReleaseMigrationStreamSchema),
   })
   .refine((path) => new Set(path.streams.map((stream) => stream.id)).size === path.streams.length, {
-    message: 'Release migration upgrade stream IDs must be unique',
+    error: 'Release migration upgrade stream IDs must be unique',
   });
 
 export const FreshInstallBaselineSchema = z.object({
@@ -146,7 +150,7 @@ export const ReleaseRolloutPolicySchema = z.object({
         .min(1)
         .max(100)
         .refine((versions) => new Set(versions).size === versions.length, {
-          message: 'Database-only compatible Worker versions must be unique',
+          error: 'Database-only compatible Worker versions must be unique',
         }),
     })
     .optional(),
@@ -169,26 +173,33 @@ export const ReleaseMigrationManifestSchema = z
   .refine(
     (manifest) =>
       new Set(manifest.streams.map((stream) => stream.id)).size === manifest.streams.length,
-    { message: 'Release migration stream IDs must be unique' }
+    { error: 'Release migration stream IDs must be unique' }
   )
   .refine(
     (manifest) =>
       new Set((manifest.upgradePaths ?? []).map((path) => path.fromProductVersion)).size ===
       (manifest.upgradePaths ?? []).length,
-    { message: 'Release migration upgrade source versions must be unique' }
+    { error: 'Release migration upgrade source versions must be unique' }
   )
   .refine(
     (manifest) =>
       new Set((manifest.acceptedMigrationHistory ?? []).map((stream) => stream.id)).size ===
       (manifest.acceptedMigrationHistory ?? []).length,
-    { message: 'Accepted migration history stream IDs must be unique' }
+    { error: 'Accepted migration history stream IDs must be unique' }
   )
   .refine(
     (manifest) =>
-      (manifest.upgradePaths ?? []).every(
-        (path) => compareProductVersions(path.fromProductVersion, manifest.productVersion) < 0
+      (manifest.upgradePaths ?? []).every((path) =>
+        path.kind === DRAFT_APPEND_UPGRADE_PATH_KIND
+          ? // A draft append starts at exactly the target version; every other path must start
+            // strictly below it, so published releases keep their upgrade-path constraint.
+            path.fromProductVersion === manifest.productVersion
+          : compareProductVersions(path.fromProductVersion, manifest.productVersion) < 0
       ),
-    { message: 'Release migration upgrade paths must start below the target version' }
+    {
+      error:
+        'Release migration upgrade paths must start below the target version (a draft append starts at it)',
+    }
   )
   .refine(
     (manifest) => {
@@ -209,7 +220,7 @@ export const ReleaseMigrationManifestSchema = z
       );
     },
     {
-      message:
+      error:
         'Fresh-install baseline must be the major/minor boundary for the manifest product series',
     }
   )
@@ -224,7 +235,7 @@ export const ReleaseMigrationManifestSchema = z
               baselineVersionFromPath(file.path) === manifest.freshInstallBaseline!.productVersion
           ).length === 1
       ),
-    { message: 'Fresh-install streams must contain exactly one selected series baseline' }
+    { error: 'Fresh-install streams must contain exactly one selected series baseline' }
   )
   .refine(
     (manifest) =>
@@ -233,7 +244,7 @@ export const ReleaseMigrationManifestSchema = z
           stream.files.every((file) => baselineVersionFromPath(file.path) === null)
         )
       ),
-    { message: 'Upgrade paths must not contain fresh-install baselines' }
+    { error: 'Upgrade paths must not contain fresh-install baselines' }
   );
 
 export type ReleaseMigrationFile = z.infer<typeof ReleaseMigrationFileSchema>;
@@ -263,6 +274,152 @@ export function assertDatabaseOnlyWorkerCompatibility(
   }
 }
 
+export type SameVersionDraftAppendResult =
+  | {
+      allowed: true;
+      /** Files beyond the recorded prefix, summed over every physical target. */
+      appendedFileCount: number;
+      /** True when any target is behind the draft or was checkpointed against this exact draft. */
+      hasForwardProgress: boolean;
+      /**
+       * Per stream, the files that at least one target of the stream has not recorded yet. Every
+       * target's recorded files are a prefix of the stream, so this is the suffix after the
+       * shortest recorded prefix. Streams without pending files are present with an empty list.
+       */
+      pendingFilesByStream: ReadonlyMap<string, ReleaseMigrationFile[]>;
+      /** Files the lock records as applied to each target; every one must also be in its database. */
+      recordedFilesByTarget: ReadonlyMap<string, Array<{ path: string; checksum: string }>>;
+    }
+  | { allowed: false; reason: SameVersionDraftAppendRejection };
+
+export type SameVersionDraftAppendRejection =
+  | 'not_draft'
+  | 'installed_version_mismatch'
+  | 'target_set_changed'
+  | 'target_evidence_missing'
+  | 'target_stream_changed'
+  | 'migration_file_removed_or_reordered'
+  | 'migration_file_changed'
+  | 'checkpoint_contradicts_manifest';
+
+/**
+ * Decide whether an unpublished development draft may grow at the product version an environment
+ * already runs. Only an exact, evidenced tail append is allowed: the lock must describe every
+ * current physical target, each target's recorded files must be a byte-identical prefix of the
+ * draft's stream for it, and the target set must be unchanged. Edits, removals, reordering,
+ * missing/legacy evidence and published manifests are rejected. Whether the version has been
+ * published is a separate, repository-level check (assertSameVersionDraftAppendUnpublished).
+ */
+export function evaluateSameVersionDraftAppend(input: {
+  manifest: ReleaseMigrationManifest;
+  manifestChecksum: string;
+  installedProductVersion?: string;
+  installedSchemaTargets?: AuthrimLock['schemaTargets'];
+  currentTargets?: readonly Pick<ReleaseMigrationPhysicalTarget, 'id' | 'streamId'>[];
+  targetManifestIsDraft?: boolean;
+}): SameVersionDraftAppendResult {
+  if (input.targetManifestIsDraft !== true) return { allowed: false, reason: 'not_draft' };
+  if (input.installedProductVersion !== input.manifest.productVersion) {
+    return { allowed: false, reason: 'installed_version_mismatch' };
+  }
+  const schemaTargets = input.installedSchemaTargets;
+  const currentTargets = input.currentTargets ?? [];
+  const schemaTargetEntries = Object.entries(schemaTargets ?? {});
+  const currentTargetIds = new Set(currentTargets.map((target) => target.id));
+  if (
+    currentTargets.length === 0 ||
+    currentTargetIds.size !== currentTargets.length ||
+    schemaTargetEntries.length !== currentTargets.length ||
+    !schemaTargetEntries.every(([targetId]) => currentTargetIds.has(targetId))
+  ) {
+    return { allowed: false, reason: 'target_set_changed' };
+  }
+
+  let hasForwardProgress = false;
+  let appendedFileCount = 0;
+  const shortestPrefixByStream = new Map<string, number>();
+  const recordedFilesByTarget = new Map<string, Array<{ path: string; checksum: string }>>();
+  for (const target of currentTargets) {
+    const state = schemaTargets?.[target.id];
+    if (
+      !target.streamId ||
+      !state ||
+      state.productVersion !== input.manifest.productVersion ||
+      !Array.isArray(state.files)
+    ) {
+      return { allowed: false, reason: 'target_evidence_missing' };
+    }
+    if (state.streamId !== target.streamId) {
+      return { allowed: false, reason: 'target_stream_changed' };
+    }
+    const stream = input.manifest.streams.find((candidate) => candidate.id === target.streamId);
+    if (!stream || state.files.length > stream.files.length) {
+      return { allowed: false, reason: 'migration_file_removed_or_reordered' };
+    }
+    for (let index = 0; index < state.files.length; index += 1) {
+      const installedFile = state.files[index]!;
+      const targetFile = stream.files[index]!;
+      if (installedFile.path !== targetFile.path) {
+        return { allowed: false, reason: 'migration_file_removed_or_reordered' };
+      }
+      if (installedFile.checksum !== targetFile.checksum) {
+        return { allowed: false, reason: 'migration_file_changed' };
+      }
+    }
+    // An empty record proves nothing about the database. Every fresh-install baseline file of the
+    // stream must lie inside the recorded prefix, which is identical to the stream's leading files
+    // (checked above), so the same names and checksums are recorded. Counting baselines would let a
+    // later, different-version baseline appended to the draft slip into the executable tail.
+    const recordedCount = state.files.length;
+    if (
+      recordedCount < (stream.files.length > 0 ? 1 : 0) ||
+      stream.files.some(
+        (file, index) => baselineVersionFromPath(file.path) !== null && index >= recordedCount
+      )
+    ) {
+      return { allowed: false, reason: 'target_evidence_missing' };
+    }
+    if (state.manifestChecksum === input.manifestChecksum) {
+      // A target checkpointed against this exact manifest must already contain its full stream; a
+      // shorter list would be contradictory evidence.
+      if (state.files.length !== stream.files.length) {
+        return { allowed: false, reason: 'checkpoint_contradicts_manifest' };
+      }
+      hasForwardProgress = true;
+    } else if (state.files.length < stream.files.length) {
+      hasForwardProgress = true;
+    }
+    appendedFileCount += stream.files.length - state.files.length;
+    recordedFilesByTarget.set(
+      target.id,
+      state.files.map((file) => ({ path: file.path, checksum: file.checksum }))
+    );
+    shortestPrefixByStream.set(
+      stream.id,
+      Math.min(shortestPrefixByStream.get(stream.id) ?? stream.files.length, state.files.length)
+    );
+  }
+
+  const pendingFilesByStream = new Map<string, ReleaseMigrationFile[]>();
+  for (const stream of input.manifest.streams) {
+    const pending = stream.files.slice(
+      shortestPrefixByStream.get(stream.id) ?? stream.files.length
+    );
+    // The executable tail never contains a fresh-install baseline.
+    if (pending.some((file) => baselineVersionFromPath(file.path) !== null)) {
+      return { allowed: false, reason: 'target_evidence_missing' };
+    }
+    pendingFilesByStream.set(stream.id, pending);
+  }
+  return {
+    allowed: true,
+    appendedFileCount,
+    hasForwardProgress,
+    pendingFilesByStream,
+    recordedFilesByTarget,
+  };
+}
+
 export function assertReleaseDatabaseCompatibility(input: {
   manifest: ReleaseMigrationManifest;
   manifestChecksum: string;
@@ -290,54 +447,15 @@ export function assertReleaseDatabaseCompatibility(input: {
   // be an exact prefix of that target's current stream. This deliberately excludes published
   // manifests, semantic baseline rewrites, missing legacy evidence, target-set changes, edits,
   // removals, and reordering.
-  const schemaTargets = input.installedSchemaTargets;
-  const currentTargets = input.currentTargets ?? [];
-  const schemaTargetEntries = Object.entries(schemaTargets ?? {});
-  const currentTargetIds = new Set(currentTargets.map((target) => target.id));
-  const appendOnlyDraftEvolution =
-    input.targetManifestIsDraft === true &&
-    input.installedProductVersion === input.manifest.productVersion &&
-    currentTargets.length > 0 &&
-    currentTargetIds.size === currentTargets.length &&
-    schemaTargetEntries.length === currentTargets.length &&
-    schemaTargetEntries.every(([targetId]) => currentTargetIds.has(targetId)) &&
-    (() => {
-      let hasForwardProgress = false;
-      for (const target of currentTargets) {
-        const state = schemaTargets?.[target.id];
-        if (
-          !target.streamId ||
-          !state ||
-          state.productVersion !== input.manifest.productVersion ||
-          state.streamId !== target.streamId ||
-          !Array.isArray(state.files)
-        ) {
-          return false;
-        }
-        const stream = input.manifest.streams.find((candidate) => candidate.id === target.streamId);
-        if (!stream || state.files.length > stream.files.length) return false;
-        for (let index = 0; index < state.files.length; index += 1) {
-          const installedFile = state.files[index];
-          const targetFile = stream.files[index];
-          if (
-            installedFile.path !== targetFile.path ||
-            installedFile.checksum !== targetFile.checksum
-          ) {
-            return false;
-          }
-        }
-        if (state.manifestChecksum === input.manifestChecksum) {
-          // A target checkpointed against this exact manifest must already contain its full
-          // stream; a shorter list would be contradictory evidence.
-          if (state.files.length !== stream.files.length) return false;
-          hasForwardProgress = true;
-        } else if (state.files.length < stream.files.length) {
-          hasForwardProgress = true;
-        }
-      }
-      return hasForwardProgress;
-    })();
-  if (appendOnlyDraftEvolution) return;
+  const evidence = evaluateSameVersionDraftAppend({
+    manifest: input.manifest,
+    manifestChecksum: input.manifestChecksum,
+    installedProductVersion: input.installedProductVersion,
+    installedSchemaTargets: input.installedSchemaTargets,
+    currentTargets: input.currentTargets,
+    targetManifestIsDraft: input.targetManifestIsDraft,
+  });
+  if (evidence.allowed && evidence.hasForwardProgress) return;
 
   throw new Error(
     `fresh_install_required:${input.installedProductVersion}:${input.manifest.productVersion}`
@@ -413,10 +531,24 @@ function previousFileByStreamAndPath(
   return previous;
 }
 
-function semanticBaselineProvenancePaths(migrationsRoot: string): ReadonlyMap<string, Set<string>> {
-  const evidencePath = join(migrationsRoot, 'semantic-baseline.evidence.json');
+function semanticBaselineProvenancePaths(
+  migrationsRoot: string,
+  baselineVersion: string
+): ReadonlyMap<string, Set<string>> {
+  // Only the installed baseline's sources have already run. The current evidence may also
+  // contain unpublished deltas absorbed into a newer fresh baseline; those still need a bridge.
+  const baselineEvidencePath = join(migrationsRoot, 'evidence', `${baselineVersion}.json`);
+  const evidencePath = existsSync(baselineEvidencePath)
+    ? baselineEvidencePath
+    : join(migrationsRoot, 'semantic-baseline.evidence.json');
   if (!existsSync(evidencePath)) return new Map();
   const raw = JSON.parse(readFileSync(evidencePath, 'utf-8')) as unknown;
+  const { productVersion } = z.object({ productVersion: ProductVersionSchema }).parse(raw);
+  if (compareProductVersions(productVersion, baselineVersion) > 0) {
+    // Without historical evidence, guessing which current sources are legacy could either
+    // reapply published SQL or omit an upgrade. Require the older evidence instead.
+    throw new Error(`semantic_baseline_provenance_missing:${baselineVersion}`);
+  }
   if (
     raw &&
     typeof raw === 'object' &&
@@ -499,6 +631,8 @@ export function generateReleaseMigrationManifest(input: {
   previousManifest?: ReleaseMigrationManifest;
   previousManifests?: readonly ReleaseMigrationManifest[];
   semanticBaselineSource?: boolean;
+  /** Draft generation only; published manifests are validated independently before writing. */
+  refreshCurrentVersionFiles?: boolean;
 }): ReleaseMigrationManifest {
   const history = [
     ...(input.previousManifests ?? []),
@@ -543,6 +677,29 @@ export function generateReleaseMigrationManifest(input: {
     };
   });
 
+  const earlierFiles = previousFileByStreamAndPath(
+    history.filter(
+      (manifest) => compareProductVersions(manifest.productVersion, input.productVersion) < 0
+    )
+  );
+  const refreshDraftFiles = (
+    streamId: string,
+    files: readonly ReleaseMigrationFile[]
+  ): ReleaseMigrationFile[] => {
+    if (!input.refreshCurrentVersionFiles) return [...files];
+    const discovered = new Map(
+      discoveredStreams
+        .find((stream) => stream.id === streamId)
+        ?.files.map((file) => [file.path, file])
+    );
+    return files.map((file) => {
+      // Prior release artifacts remain immutable, even when a draft refers to them.
+      if (earlierFiles.has(`${streamId}:${file.path}`)) return file;
+      const current = discovered.get(file.path);
+      return current && current.checksum !== file.checksum ? current : file;
+    });
+  };
+
   const priorRelease = history
     .filter((manifest) => compareProductVersions(manifest.productVersion, input.productVersion) < 0)
     .sort((a, b) => compareProductVersions(a.productVersion, b.productVersion))
@@ -568,7 +725,13 @@ export function generateReleaseMigrationManifest(input: {
     throw new Error(`fresh_install_baseline_required:${input.productVersion}`);
   }
 
-  const provenancePaths = semanticBaselineProvenancePaths(input.migrationsRoot);
+  const provenancePaths = semanticBaselineProvenancePaths(
+    input.migrationsRoot,
+    priorRelease?.freshInstallBaseline?.productVersion ??
+      priorRelease?.productVersion ??
+      sameVersion?.freshInstallBaseline?.productVersion ??
+      input.productVersion
+  );
   const newFilesByStream = new Map(
     discoveredStreams.map((stream) => [
       stream.id,
@@ -625,7 +788,10 @@ export function generateReleaseMigrationManifest(input: {
                 );
                 return streamWithFiles(
                   stream,
-                  mergeMigrationFiles(previous?.files ?? [], newFilesByStream.get(stream.id) ?? [])
+                  mergeMigrationFiles(
+                    refreshDraftFiles(stream.id, previous?.files ?? []),
+                    newFilesByStream.get(stream.id) ?? []
+                  )
                 );
               })
             : priorRelease && sameReleaseSeries(priorRelease.productVersion, input.productVersion)
@@ -643,7 +809,13 @@ export function generateReleaseMigrationManifest(input: {
                 })
               : discoveredStreams;
 
-  const previousUpgradePaths = sameVersion?.upgradePaths ?? [];
+  const previousUpgradePaths = (sameVersion?.upgradePaths ?? []).map((path) => ({
+    ...path,
+    streams: path.streams.map((stream) => ({
+      ...stream,
+      files: refreshDraftFiles(stream.id, stream.files),
+    })),
+  }));
   const directUpgradePath = priorRelease
     ? {
         fromProductVersion: priorRelease.productVersion,
@@ -656,7 +828,10 @@ export function generateReleaseMigrationManifest(input: {
             ?.streams.find((candidate) => candidate.id === stream.id);
           return streamWithFiles(
             stream,
-            mergeMigrationFiles(existing?.files ?? [], newFilesByStream.get(stream.id) ?? [])
+            mergeMigrationFiles(
+              refreshDraftFiles(stream.id, existing?.files ?? []),
+              newFilesByStream.get(stream.id) ?? []
+            )
           );
         }),
       }
@@ -698,12 +873,24 @@ export function resolveReleaseMigrationExecutionManifest(input: {
   targetManifest: ReleaseMigrationManifest;
   installedProductVersion?: string;
   availableManifests?: readonly ReleaseMigrationManifest[];
+  /**
+   * Evidence-checked tail of an unpublished draft that is being appended to an environment already
+   * installed at the same product version. Without it a same-version plan is empty, which keeps
+   * published releases from ever re-running anything.
+   */
+  sameVersionDraftAppend?: Extract<SameVersionDraftAppendResult, { allowed: true }>;
 }): ReleaseMigrationManifest {
   if (!input.installedProductVersion) return input.targetManifest;
   if (input.installedProductVersion === input.targetManifest.productVersion) {
+    const pending = input.sameVersionDraftAppend?.pendingFilesByStream;
     return ReleaseMigrationManifestSchema.parse({
       ...input.targetManifest,
-      streams: input.targetManifest.streams.map((stream) => ({ ...stream, files: [] })),
+      // Only the unrecorded tail is executed. The fresh-install baseline and every file already
+      // recorded for all targets stay out of the plan.
+      streams: input.targetManifest.streams.map((stream) => ({
+        ...stream,
+        files: pending?.get(stream.id) ?? [],
+      })),
       freshInstallBaseline: undefined,
       upgradePaths: undefined,
     });
@@ -761,11 +948,32 @@ export function buildReleaseMigrationArtifactManifest(input: {
   targetManifest: ReleaseMigrationManifest;
   installedProductVersion: string;
   availableManifests?: readonly ReleaseMigrationManifest[];
+  sameVersionDraftAppend?: Extract<SameVersionDraftAppendResult, { allowed: true }>;
 }): ReleaseMigrationManifest {
-  const execution = resolveReleaseMigrationExecutionManifest(input);
-  const kind = sameReleaseSeries(input.installedProductVersion, input.targetManifest.productVersion)
-    ? 'delta'
-    : 'bridge';
+  const sameVersion = input.installedProductVersion === input.targetManifest.productVersion;
+  if (sameVersion && !input.sameVersionDraftAppend) {
+    // A release never upgrades from itself; only an evidence-checked draft append may.
+    throw new Error(
+      `release_artifact_same_version_requires_draft_append:${input.installedProductVersion}`
+    );
+  }
+  // The artifact must not depend on which databases happen to be behind: a retry after a partial
+  // run has to rebuild the identical artifact (same digest, same Control operation). A draft append
+  // therefore carries every non-baseline file of the draft, and each database decides at execution
+  // time from its own recorded history which of them it still needs.
+  const execution = sameVersion
+    ? {
+        streams: input.targetManifest.streams.map((stream) => ({
+          ...stream,
+          files: stream.files.filter((file) => baselineVersionFromPath(file.path) === null),
+        })),
+      }
+    : resolveReleaseMigrationExecutionManifest(input);
+  const kind = sameVersion
+    ? DRAFT_APPEND_UPGRADE_PATH_KIND
+    : sameReleaseSeries(input.installedProductVersion, input.targetManifest.productVersion)
+      ? 'delta'
+      : 'bridge';
   const historySources = [input.targetManifest, ...(input.availableManifests ?? [])].filter(
     (manifest, index, manifests) =>
       compareProductVersions(manifest.productVersion, input.targetManifest.productVersion) <= 0 &&
@@ -826,7 +1034,19 @@ export function calculateReleaseManifestChecksum(manifest: ReleaseMigrationManif
 }
 
 export function readReleaseMigrationManifest(path: string): ReleaseMigrationManifest {
-  return ReleaseMigrationManifestSchema.parse(JSON.parse(readFileSync(path, 'utf-8')));
+  const manifest = ReleaseMigrationManifestSchema.parse(JSON.parse(readFileSync(path, 'utf-8')));
+  // Draft-append paths exist only in the Control artifact derived at update time. A repository
+  // manifest (published or draft) carrying one would let a same-version path look like a release.
+  if (
+    manifest.upgradePaths?.some(
+      (upgradePath) => upgradePath.kind === DRAFT_APPEND_UPGRADE_PATH_KIND
+    )
+  ) {
+    throw new Error(
+      `draft_append_upgrade_path_not_allowed_in_manifest_file:${manifest.productVersion}`
+    );
+  }
+  return manifest;
 }
 
 export function writeReleaseMigrationManifest(
@@ -868,6 +1088,7 @@ export function syncDraftReleaseMigrationManifest(input: {
     productVersion: input.productVersion,
     previousManifest,
     previousManifests: releaseManifests,
+    refreshCurrentVersionFiles: true,
   });
   const publishedSameVersion = join(
     input.migrationsRoot,
@@ -923,6 +1144,168 @@ export function assertProductVersionOpenForNewMigrations(
     throw new Error(
       `product_version_already_published:${productVersion}:bump the root package version before adding migrations`
     );
+  }
+}
+
+/** Config keys that mark a partial clone (objects may be fetched lazily from a promisor remote). */
+export const PARTIAL_CLONE_CONFIG_PATTERN =
+  '^(remote\\..*\\.(promisor|partialclonefilter)|extensions\\.partialclone)$';
+/** `GIT_NO_LAZY_FETCH` is honoured from this Git version. */
+const NO_LAZY_FETCH_MIN_GIT = [2, 45] as const;
+
+/** Whether the `git --version` output names a Git that honours `GIT_NO_LAZY_FETCH`. */
+export function gitSupportsNoLazyFetch(versionOutput: string): boolean {
+  const match = /(\d+)\.(\d+)/u.exec(versionOutput);
+  if (!match) return false;
+  const [major, minor] = [Number(match[1]), Number(match[2])];
+  return (
+    major > NO_LAZY_FETCH_MIN_GIT[0] ||
+    (major === NO_LAZY_FETCH_MIN_GIT[0] && minor >= NO_LAZY_FETCH_MIN_GIT[1])
+  );
+}
+
+/**
+ * Prove that the product version of a draft is still unpublished before more migrations are
+ * appended to environments that already run it.
+ *
+ * The decision uses the remote's own answer (`git ls-remote`) for the hash of `main` and for the
+ * version tag, never a possibly stale remote-tracking ref. When no such tag exists on the remote
+ * the version is unpublished and nothing local is touched, so a dry run stays read-only. When a tag
+ * exists, the commits are needed to decide whether it is reachable from the fetched `main` hash:
+ * they are fetched (without moving any branch or tag ref) unless `allowFetch` is false, and a
+ * shallow or otherwise incomplete history is refused rather than read as "unpublished".
+ */
+export function assertSameVersionDraftAppendUnpublished(input: {
+  migrationsRoot: string;
+  productVersion: string;
+  repositoryRoot?: string;
+  remote?: string;
+  mainBranch?: string;
+  /** False in a dry run: only read from the remote and fail when objects are missing locally. */
+  allowFetch?: boolean;
+}): void {
+  const repositoryRoot = input.repositoryRoot ?? dirname(input.migrationsRoot);
+  const remote = input.remote ?? 'origin';
+  const mainBranch = input.mainBranch ?? 'main';
+  const version = input.productVersion;
+  const unverifiable = (detail: string): Error =>
+    new Error(`draft_append_publication_unverifiable:${version}:${detail}`);
+  // Reads must never lazily fetch a missing object from a promisor remote (partial clone): that
+  // would write to the object database during a dry run.
+  const gitEnv = { ...process.env, GIT_NO_LAZY_FETCH: '1' };
+  const git = (args: string[], timeout = 120_000): string =>
+    execFileSync('git', args, {
+      cwd: repositoryRoot,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout,
+      env: gitEnv,
+    });
+  let partialCloneConfig = '';
+  try {
+    partialCloneConfig = git(['config', '--get-regexp', PARTIAL_CLONE_CONFIG_PATTERN]);
+  } catch {
+    partialCloneConfig = '';
+  }
+  if (partialCloneConfig.trim().length > 0) {
+    let versionOutput = '';
+    try {
+      versionOutput = git(['--version']);
+    } catch {
+      versionOutput = '';
+    }
+    if (!gitSupportsNoLazyFetch(versionOutput)) {
+      throw unverifiable(
+        `a partial clone needs Git ${NO_LAZY_FETCH_MIN_GIT[0]}.${NO_LAZY_FETCH_MIN_GIT[1]} or newer to be checked read-only`
+      );
+    }
+  }
+
+  const tagRefs = [`v${version}`, version].map((tag) => `refs/tags/${tag}`);
+  let listing: string;
+  try {
+    listing = git([
+      'ls-remote',
+      remote,
+      `refs/heads/${mainBranch}`,
+      ...tagRefs.flatMap((ref) => [ref, `${ref}^{}`]),
+    ]);
+  } catch {
+    throw unverifiable(`could not read ${remote}`);
+  }
+  const hashByRef = new Map<string, string>();
+  for (const line of listing.split(/\r?\n/u)) {
+    const [hash, ref] = line.trim().split(/\s+/u);
+    if (hash && ref) hashByRef.set(ref, hash);
+  }
+  const mainHash = hashByRef.get(`refs/heads/${mainBranch}`);
+  if (!mainHash) throw unverifiable(`${remote}/${mainBranch} was not found`);
+  const tagCommits = tagRefs.flatMap((ref) => {
+    const commit = hashByRef.get(`${ref}^{}`) ?? hashByRef.get(ref);
+    return commit ? [{ ref, commit }] : [];
+  });
+  // No release tag exists on the remote at all: unpublished, decided without any local state.
+  if (tagCommits.length === 0) return;
+
+  try {
+    if (git(['rev-parse', '--is-shallow-repository']).trim() === 'true') {
+      throw unverifiable('the repository is shallow, so tag reachability cannot be proven');
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('draft_append_')) throw error;
+    throw unverifiable('could not inspect the repository');
+  }
+  const hasCommit = (hash: string): boolean => {
+    try {
+      git(['cat-file', '-e', `${hash}^{commit}`]);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (![mainHash, ...tagCommits.map((tag) => tag.commit)].every(hasCommit)) {
+    if (input.allowFetch === false) {
+      throw unverifiable(`${remote} commits are not available locally; run without --dry-run`);
+    }
+    try {
+      // Objects only: an empty refmap stops the configured refspec from moving origin/main, and
+      // FETCH_HEAD is not written (Git 2.29+; an older Git fails here and the check fails closed).
+      git([
+        'fetch',
+        '--quiet',
+        '--no-tags',
+        '--no-write-fetch-head',
+        '--refmap=',
+        remote,
+        `refs/heads/${mainBranch}`,
+        ...tagRefs.filter((ref) => hashByRef.has(ref)),
+      ]);
+    } catch {
+      throw unverifiable(`could not fetch ${remote}/${mainBranch} and the release tag`);
+    }
+    if (![mainHash, ...tagCommits.map((tag) => tag.commit)].every(hasCommit)) {
+      throw unverifiable('the fetched history does not contain the release tag');
+    }
+  }
+  for (const { commit } of tagCommits) {
+    let reachable: boolean;
+    try {
+      execFileSync('git', ['merge-base', '--is-ancestor', commit, mainHash], {
+        cwd: repositoryRoot,
+        stdio: 'ignore',
+        env: gitEnv,
+      });
+      reachable = true;
+    } catch (error) {
+      const status = (error as { status?: number }).status;
+      if (status !== 1) throw unverifiable('could not compare the release tag with main');
+      reachable = false;
+    }
+    if (reachable) {
+      throw new Error(
+        `product_version_already_published:${version}:bump the root package version before adding migrations`
+      );
+    }
   }
 }
 

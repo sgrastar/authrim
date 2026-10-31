@@ -17,7 +17,7 @@ export const SAML_XML_LIMITS = {
 } as const;
 
 // Re-export types from xmldom for use in other modules
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+
 export type XMLDocument = ReturnType<DOMParser['parseFromString']>;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type XMLElement = any;

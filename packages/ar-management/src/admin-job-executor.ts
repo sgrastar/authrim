@@ -1,4 +1,13 @@
+import { prepareLogIcebergRowWrite } from '@authrim/ar-lib-core/services/log-iceberg-emitter';
+import {
+  adminAuditReceiptStatement,
+  confirmAdminAuditReceipt,
+} from '@authrim/ar-lib-core/services/admin-audit-receipts';
+import { createLogReadAdapter } from './log-read-adapter';
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
+import { SUPPORT_OPS_LOGOUT_JOB_TYPE } from './support-ops-job-evidence';
 import type {
+  AccountAuthenticationLifecycle,
   DatabaseAdapter,
   Env,
   ObjectClass,
@@ -7,6 +16,7 @@ import type {
 } from '@authrim/ar-lib-core';
 import {
   decryptObjectArtifact,
+  requireDedicatedAdminDatabaseAdapter,
   ensureDatabaseAdapter,
   emitRuntimeLogRecords,
   resolveAuthCorePersistenceAdapterFromEnv,
@@ -16,9 +26,34 @@ import {
   putTenantExistsCache,
   deleteTenantExistsCache,
   transitionAccountAuthenticationState,
+  transitionAccountAuthenticationStateEndingSessions,
+  readAccountAuthenticationState,
+  getTenantSettingsDocument,
+  SUBJECT_UPDATED_AT_FORWARD_SQL,
+  createAuditLog,
+  createLogger,
+  ADMIN_ROLES,
 } from '@authrim/ar-lib-core';
+import {
+  initializeFromAccount,
+  isLifecycleTransitionRefused,
+  transitionAccountLifecycle,
+} from './account-status';
 import { materializeEncryptedObjectArtifact } from './object-artifact-materialization';
+import {
+  auditSessionEndLogoutFailed,
+  auditSessionEndLogoutStarted,
+  endedSessionsOf,
+  enqueueSessionEndLogout,
+  processSessionEndLogoutJob,
+  sendAdminSessionEndLogout,
+  SESSION_END_LOGOUT_JOB_TYPE,
+  SESSION_REVOKE_LOGOUT_JOB_TYPE,
+  type EndedSession,
+} from './session-end-logout';
 import { createLoggingTenantKeyResolver } from './logging-tenant-key';
+import { accessSummaryRows, applyOrganizationBulkMembers, jobRBACStores } from './admin-job-rbac';
+import { removeOrganizationMembership } from './access-revocation';
 import { listScimTokens } from '@authrim/ar-lib-scim';
 
 type AdminJobStatus = 'processing' | 'completed' | 'partial_failure';
@@ -89,9 +124,17 @@ interface AdminJobProcessorResult {
   nextRunAt?: number | null;
 }
 
+/** Where a generic job's processor reads and writes. */
+interface AdminJobStores {
+  /** DB_ADMIN: admin_jobs, and the object catalog of job results and backup artifacts. */
+  jobs: DatabaseAdapter;
+  /** The job's tenant's Core database (resolved on first use): the tenant's own data. */
+  tenant: () => Promise<DatabaseAdapter>;
+}
+
 type AdminJobProcessor = (
   env: Env,
-  adapter: DatabaseAdapter,
+  stores: AdminJobStores,
   job: AdminJobRow
 ) => Promise<AdminJobProcessorResult>;
 
@@ -120,6 +163,7 @@ async function emitAdminJobRuntimeLog(
       tenantId: input.job.tenant_id,
       logType: 'job',
       surface: 'admin_job',
+      sourceDataset: 'runtime.admin_job_events',
       tenantKeyResolver: createLoggingTenantKeyResolver(adapter),
       records: [
         {
@@ -167,15 +211,47 @@ const GENERIC_ADMIN_JOB_TYPES = [
   'users/bulk-update',
   'reports/generate',
   'organizations/bulk-members',
+  SESSION_END_LOGOUT_JOB_TYPE,
+  SESSION_REVOKE_LOGOUT_JOB_TYPE,
+  SUPPORT_OPS_LOGOUT_JOB_TYPE,
 ] as const;
 
 type GenericAdminJobType = (typeof GENERIC_ADMIN_JOB_TYPES)[number];
+
+/**
+ * The lifecycle state of a job's tenant, as a scheduled run checks it before running the job: read
+ * in the tenant inventory (`DB`), where the lifecycle commands and tenant deletion move tenants.
+ * `missing` without a tenant row, `route_unavailable` when the inventory cannot be read.
+ */
+export async function readAdminJobTenantLifecycleState(
+  env: Env,
+  tenantId: string
+): Promise<string> {
+  try {
+    const inventory = ensureDatabaseAdapter(env.DB, 'management-generic-job-lifecycle');
+    const tenant = await inventory.queryOne<{ lifecycle_state: string }>(
+      'SELECT lifecycle_state FROM tenants WHERE id = ? LIMIT 1',
+      [tenantId]
+    );
+    return tenant?.lifecycle_state ?? 'missing';
+  } catch {
+    return 'route_unavailable';
+  }
+}
 
 export function isAdminJobAllowedForTenantLifecycle(
   lifecycleState: string,
   jobType: string
 ): boolean {
   if (lifecycleState === 'active') return true;
+  // Telling relying parties that sessions ended goes on whatever the tenant's state; a tenant
+  // whose state could not be read is retried (see processGenericAdminJob).
+  if (
+    jobType === SESSION_END_LOGOUT_JOB_TYPE ||
+    jobType === SESSION_REVOKE_LOGOUT_JOB_TYPE ||
+    jobType === SUPPORT_OPS_LOGOUT_JOB_TYPE
+  )
+    return lifecycleState !== 'missing';
   if (lifecycleState === 'deleting') {
     return jobType === 'tenant-database/export';
   }
@@ -206,9 +282,8 @@ interface TenantLifecycleValidationConfig {
   actor_id?: string | null;
 }
 
-async function writeTenantLifecycleJobAudit(
+export async function writeTenantLifecycleJobAudit(
   env: Env,
-  fallbackAdapter: DatabaseAdapter,
   job: AdminJobRow,
   input: {
     action: string;
@@ -218,38 +293,78 @@ async function writeTenantLifecycleJobAudit(
     error?: unknown;
   }
 ): Promise<void> {
-  const auditAdapter = ensureDatabaseAdapter(
-    env.DB_ADMIN ?? fallbackAdapter,
-    'tenant-lifecycle-job-audit'
-  );
   const config = job.config ? (JSON.parse(job.config) as TenantLifecycleValidationConfig) : null;
-  await auditAdapter.execute(
-    `INSERT INTO admin_audit_log (
-      id, tenant_id, admin_user_id, action, resource_type, resource_id,
-      result, error_code, error_message, severity, metadata_json, created_at
-    ) VALUES (?, ?, ?, ?, 'tenant', ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      crypto.randomUUID(),
-      job.tenant_id,
-      config?.actor_id ?? null,
-      input.action,
-      job.tenant_id,
-      input.result,
-      input.result === 'failure' ? 'tenant_lifecycle_validation_failed' : null,
-      input.error instanceof Error ? input.error.message : input.error ? String(input.error) : null,
-      input.severity,
-      JSON.stringify({ job_id: job.id, ...input.metadata }),
-      Date.now(),
-    ]
+  const recordedAt = Date.now();
+  const admin = requireDedicatedAdminDatabaseAdapter(env, 'tenant-lifecycle-job-audit');
+  const prepared = await prepareLogIcebergRowWrite(
+    env,
+    admin,
+    {
+      tenantId: job.tenant_id,
+      sourceDataset: 'admin.admin_audit_log',
+      logType: 'admin_audit',
+      eventAt: recordedAt,
+      expiresAt: null,
+      overview: {
+        action: input.action,
+        result: input.result,
+        severity: input.severity,
+        resource_id: job.tenant_id,
+        subject_id: config?.actor_id ?? null,
+      },
+      row: {
+        id: crypto.randomUUID(),
+        tenant_id: job.tenant_id,
+        admin_user_id: config?.actor_id ?? null,
+        action: input.action,
+        resource_type: 'tenant',
+        resource_id: job.tenant_id,
+        result: input.result,
+        error_code: input.result === 'failure' ? 'tenant_lifecycle_validation_failed' : null,
+        error_message:
+          input.error instanceof Error
+            ? input.error.message
+            : input.error
+              ? String(input.error)
+              : null,
+        severity: input.severity,
+        metadata_json: JSON.stringify({ job_id: job.id, ...input.metadata }),
+        created_at: recordedAt,
+      },
+    },
+    (record) => ({
+      where:
+        'EXISTS(SELECT 1 FROM admin_audit_receipts WHERE id=? AND tenant_id=? AND payload_hmac=?)',
+      params: [record.event_id, job.tenant_id, record.payload_hmac],
+    })
   );
+  try {
+    await admin.batch([
+      adminAuditReceiptStatement(prepared.record, job.tenant_id),
+      ...prepared.statements,
+    ]);
+  } catch (error) {
+    // Recover a lost acknowledgement only from this exact durable commit.
+    try {
+      await confirmAdminAuditReceipt(admin, prepared.record, job.tenant_id);
+    } catch {
+      throw error;
+    }
+  }
+  await confirmAdminAuditReceipt(admin, prepared.record, job.tenant_id);
+  // The scanner owns transport recovery after the pointer/row commit. A queue
+  // outage must not retry an already completed tenant lifecycle transition.
+  await prepared.dispatch().catch(() => {});
 }
 
 async function processTenantLifecycleValidationJob(
   env: Env,
-  adapter: DatabaseAdapter,
+  stores: AdminJobStores,
   job: AdminJobRow
 ): Promise<AdminJobProcessorResult> {
   const config = parseJsonConfig<TenantLifecycleValidationConfig>(job);
+  // The tenant inventory, where the lifecycle command moved the tenant (admin-tenants).
+  const adapter = ensureDatabaseAdapter(env.DB, 'tenant-lifecycle-inventory');
   const tenant = await adapter.queryOne<{ id: string; lifecycle_state: string }>(
     'SELECT id, lifecycle_state FROM tenants WHERE id = ?',
     [job.tenant_id]
@@ -302,10 +417,11 @@ async function processTenantLifecycleValidationJob(
   const issuer = env.BASE_DOMAIN ? `https://${job.tenant_id}.${env.BASE_DOMAIN}` : env.ISSUER_URL;
   if (!issuer) throw new Error('tenant_lifecycle_validation_issuer_missing');
   new URL(issuer);
-  if (!env.AUTHRIM_CONFIG) throw new Error('tenant_lifecycle_validation_kv_binding_missing');
-  const tenantSettingsRaw = await env.AUTHRIM_CONFIG.get(`settings:tenant:${job.tenant_id}:tenant`);
-  if (!tenantSettingsRaw) throw new Error('tenant_lifecycle_validation_tenant_settings_missing');
-  const tenantSettings = JSON.parse(tenantSettingsRaw) as Record<string, unknown>;
+  if (!env.SETTINGS && !env.AUTHRIM_CONFIG) {
+    throw new Error('tenant_lifecycle_validation_kv_binding_missing');
+  }
+  const tenantSettings = await getTenantSettingsDocument(env, job.tenant_id, 'tenant');
+  if (!tenantSettings) throw new Error('tenant_lifecycle_validation_tenant_settings_missing');
   if (typeof tenantSettings['tenant.allowed_identifiers'] !== 'string') {
     throw new Error('tenant_lifecycle_validation_discovery_settings_invalid');
   }
@@ -353,10 +469,11 @@ async function processTenantLifecycleValidationJob(
     checks.push({ id: 'r2', status: 'passed', evidence: 'temporary object round-trip succeeded' });
   }
 
-  const auditAdapter = ensureDatabaseAdapter(
-    env.DB_ADMIN ?? adapter,
-    'tenant-lifecycle-audit-probe'
-  );
+  const auditAdapter = createLogReadAdapter({
+    env,
+    tenantId: job.tenant_id,
+    dataset: 'admin.admin_audit_log',
+  }).adapter;
   await auditAdapter.queryOne('SELECT id FROM admin_audit_log WHERE tenant_id = ? LIMIT 1', [
     job.tenant_id,
   ]);
@@ -385,7 +502,7 @@ async function processTenantLifecycleValidationJob(
     await deleteTenantExistsCache(env.AUTHRIM_CONFIG, job.tenant_id);
   }
 
-  await writeTenantLifecycleJobAudit(env, adapter, job, {
+  await writeTenantLifecycleJobAudit(env, job, {
     action: 'tenant.lifecycle.validation_completed',
     result: 'success',
     severity: 'info',
@@ -450,6 +567,13 @@ const USER_BULK_UPDATE_COLUMNS = {
 } as const;
 
 const USER_BULK_FILTER_COLUMNS = {
+  registration_state: {
+    sql: "CASE WHEN account_type = 'user' THEN registration_state ELSE NULL END",
+    normalize(value: unknown): string {
+      if (value === 'guest' || value === 'registered') return value;
+      throw new Error('Invalid registration_state filter value');
+    },
+  },
   status: USER_BULK_UPDATE_COLUMNS.status,
   lifecycle_state: USER_BULK_UPDATE_COLUMNS.lifecycle_state,
   is_active: USER_BULK_UPDATE_COLUMNS.is_active,
@@ -495,6 +619,8 @@ export interface BulkUserUpdateConfig {
   dry_run?: boolean;
   batch_size?: number;
   result_delivery?: AdminJobResultDelivery;
+  /** The version of the job's status transitions, set by the server when the job is created. */
+  lifecycle_version_ms?: number;
 }
 
 interface BulkUserUpdateProgress {
@@ -773,6 +899,10 @@ export function validateBulkUserUpdateConfig(config: BulkUserUpdateConfig): void
   if (!Array.isArray(config.fields) || config.fields.length === 0) {
     throw new Error('fields must include at least one field');
   }
+  // Every field sets the account's status: one transition per job.
+  if (config.fields.length > 1) {
+    throw new Error('fields must include exactly one field (each sets the account status)');
+  }
   for (const field of config.fields) {
     const column = USER_BULK_UPDATE_COLUMNS[field as keyof typeof USER_BULK_UPDATE_COLUMNS];
     if (!column) throw new Error(`Unsupported user update field: ${field}`);
@@ -863,8 +993,8 @@ function normalizeTenantBackupRetentionDays(configValue: unknown, env: Env): num
 function assertTenantDatabaseRestoreDryRunApproval(
   config: TenantDatabaseRestoreDryRunConfig
 ): void {
-  if (!Array.isArray(config.actor_roles) || !config.actor_roles.includes('system_admin')) {
-    throw new Error('tenant_database_restore_dry_run_requires_system_admin');
+  if (!Array.isArray(config.actor_roles) || !config.actor_roles.includes(ADMIN_ROLES.SUPER_ADMIN)) {
+    throw new Error('tenant_database_restore_dry_run_requires_super_admin');
   }
   if (config.break_glass_confirmation !== TENANT_DATABASE_RESTORE_DRY_RUN_CONFIRMATION) {
     throw new Error('tenant_database_restore_dry_run_requires_break_glass_confirmation');
@@ -875,8 +1005,8 @@ function assertTenantDatabaseRestoreDryRunApproval(
 }
 
 function assertTenantDatabaseBackupPurgeApproval(config: TenantDatabasePurgeBackupConfig): void {
-  if (!Array.isArray(config.actor_roles) || !config.actor_roles.includes('system_admin')) {
-    throw new Error('tenant_database_backup_purge_requires_system_admin');
+  if (!Array.isArray(config.actor_roles) || !config.actor_roles.includes(ADMIN_ROLES.SUPER_ADMIN)) {
+    throw new Error('tenant_database_backup_purge_requires_super_admin');
   }
   if (config.break_glass_confirmation !== TENANT_DATABASE_BACKUP_PURGE_CONFIRMATION) {
     throw new Error('tenant_database_backup_purge_requires_break_glass_confirmation');
@@ -935,6 +1065,19 @@ function normalizeTenantBackupTables(
 
 function safeObjectKeySegment(value: string): string {
   return value.replace(/[^a-zA-Z0-9._=-]+/g, '_').slice(0, 160) || 'unknown';
+}
+
+/**
+ * The key prefixes under which a tenant database export job keeps its objects (manifest and
+ * tables): the manifest's key is built from the raw ids, the tables' from their safe segments.
+ */
+export function tenantBackupObjectKeyPrefixes(tenantId: string, jobId: string): string[] {
+  return [
+    ...new Set([
+      `exports/${tenantId}/tenant-backup/${jobId}/`,
+      `exports/${safeObjectKeySegment(tenantId)}/tenant-backup/${safeObjectKeySegment(jobId)}/`,
+    ]),
+  ];
 }
 
 function buildTenantTableObjectKey(
@@ -1198,7 +1341,7 @@ function countJsonlRows(content: string): number {
 
 async function processTenantDatabaseExportJob(
   env: Env,
-  adapter: DatabaseAdapter,
+  { jobs: adapter }: AdminJobStores,
   job: AdminJobRow
 ): Promise<AdminJobProcessorResult> {
   if (!env.EXPORT_ARTIFACTS) {
@@ -1354,7 +1497,7 @@ async function processTenantDatabaseExportJob(
 
 async function processTenantDatabaseRestoreDryRunJob(
   env: Env,
-  adapter: DatabaseAdapter,
+  { jobs: adapter }: AdminJobStores,
   job: AdminJobRow
 ): Promise<AdminJobProcessorResult> {
   if (!env.EXPORT_ARTIFACTS) {
@@ -1463,7 +1606,7 @@ async function processTenantDatabaseRestoreDryRunJob(
 
 async function processTenantDatabasePurgeBackupJob(
   _env: Env,
-  adapter: DatabaseAdapter,
+  { jobs: adapter }: AdminJobStores,
   job: AdminJobRow
 ): Promise<AdminJobProcessorResult> {
   const config = parseJsonConfig<TenantDatabasePurgeBackupConfig>(job);
@@ -1560,15 +1703,81 @@ async function processTenantDatabasePurgeBackupJob(
   };
 }
 
+/**
+ * The status a bulk update sets (its one field, normalized as validated): the authentication
+ * state, the account's status and lifecycle state (one value, as single-account changes set
+ * them), and the status timestamps those changes set (as of the transition).
+ */
+function bulkLifecycleTarget(
+  config: BulkUserUpdateConfig,
+  versionMs: number
+): {
+  authentication: AccountAuthenticationLifecycle;
+  state: string;
+  metadataPatch: Record<string, unknown>;
+} {
+  const field = config.fields[0] as keyof typeof USER_BULK_UPDATE_COLUMNS;
+  const normalized = USER_BULK_UPDATE_COLUMNS[field].normalize(config.values[field]);
+  const state =
+    field === 'is_active' ? (normalized === 1 ? 'active' : 'deprovisioned') : String(normalized);
+  const authentication: AccountAuthenticationLifecycle =
+    state === 'active' || state === 'suspended' || state === 'locked' ? state : 'inactive';
+  // As of the transition, so a retry sets the same.
+  const nowSeconds = Math.floor(versionMs / 1000);
+  const metadataPatch: Record<string, unknown> =
+    state === 'active'
+      ? { suspended_at: null, suspended_until: null, locked_at: null, locked_until: null }
+      : state === 'suspended'
+        ? { suspended_at: nowSeconds, suspended_until: null }
+        : state === 'locked'
+          ? { locked_at: nowSeconds, locked_until: null }
+          : {};
+  return { authentication, state, metadataPatch };
+}
+
+/** The version of a bulk update's transitions: fixed when the job was created. */
+function bulkLifecycleVersionMs(config: BulkUserUpdateConfig, job: AdminJobRow): number {
+  const stored = config.lifecycle_version_ms;
+  if (typeof stored === 'number' && Number.isSafeInteger(stored) && stored > 0) return stored;
+  // A job created before the version was stored: its creation time (seconds).
+  return job.created_at < 1e12 ? job.created_at * 1000 : job.created_at;
+}
+
+/**
+ * Keep the downstream logout for sessions a job ended as admin jobs (the scheduled run sends
+ * them). If they cannot be kept, they are sent now, once.
+ */
+async function keepSessionEndLogout(
+  env: Env,
+  tenantId: string,
+  sessions: EndedSession[],
+  trigger: Parameters<typeof enqueueSessionEndLogout>[1]['trigger']
+): Promise<void> {
+  if (sessions.length === 0) return;
+  let jobIds: string[] = [];
+  try {
+    jobIds = await enqueueSessionEndLogout(env, { tenantId, sessions, trigger });
+  } catch {
+    await sendAdminSessionEndLogout(env, { tenantId, sessions, trigger }).catch(() => undefined);
+  }
+  await auditSessionEndLogoutStarted(env, { tenantId, sessions, trigger, jobIds });
+}
+
 async function processBulkUserUpdateJob(
   env: Env,
-  adapter: DatabaseAdapter,
+  stores: AdminJobStores,
   job: AdminJobRow
 ): Promise<AdminJobProcessorResult> {
+  const adapter = await stores.tenant();
   const config = parseJsonConfig<BulkUserUpdateConfig>(job);
   validateBulkUserUpdateConfig(config);
   const filter = buildUserFilterWhere(job.tenant_id, config.filter);
-  const total = await countBulkUserUpdateTargets(adapter, job.tenant_id, config);
+  const previous = parseJsonProgress<BulkUserUpdateProgress>(job) ?? {};
+  // Counted once, when the job starts: accounts it updates may leave the filter.
+  const total =
+    typeof previous.total === 'number'
+      ? previous.total
+      : await countBulkUserUpdateTargets(adapter, job.tenant_id, config);
   const nowMs = Date.now();
 
   if (config.dry_run) {
@@ -1582,11 +1791,14 @@ async function processBulkUserUpdateJob(
     };
   }
 
-  const previous = parseJsonProgress<BulkUserUpdateProgress>(job) ?? {};
   const batchSize = Math.min(config.batch_size ?? DEFAULT_JOB_BATCH_SIZE, MAX_JOB_BATCH_SIZE);
   const cursor = typeof previous.cursor === 'string' ? previous.cursor : null;
-  const selectionClauses = [filter.whereSql];
-  const selectionParams = [...filter.params];
+  // The filter's accounts, and those this job already changed: an attempt that stopped after
+  // changing an account (which may then no longer match the filter) is finished by the retry.
+  const selectionClauses = [
+    `(${filter.whereSql} OR (tenant_id = ? AND json_extract(metadata_json, '$.lifecycle_operation_id') = ? || legacy_user_id))`,
+  ];
+  const selectionParams = [...filter.params, job.tenant_id, `bulk-job:${job.id}:`];
   if (cursor) {
     selectionClauses.push('legacy_user_id > ?');
     selectionParams.push(cursor);
@@ -1621,77 +1833,197 @@ async function processBulkUserUpdateJob(
     };
   }
 
-  const assignments: string[] = [];
-  const values: unknown[] = [];
-  for (const field of config.fields) {
-    const column = USER_BULK_UPDATE_COLUMNS[field as keyof typeof USER_BULK_UPDATE_COLUMNS];
-    const normalized = column.normalize(config.values[field]);
-    if (field === 'status') {
-      assignments.push(`metadata_json = json_set(COALESCE(metadata_json, '{}'), '$.status', ?)`);
-      values.push(normalized);
-    } else if (field === 'is_active') {
-      assignments.push('lifecycle_state = ?');
-      values.push(normalized === 1 ? 'active' : 'deprovisioned');
-    } else {
-      assignments.push(`${column.sql} = ?`);
-      values.push(normalized);
-    }
-  }
-  assignments.push('updated_at = ?');
-  values.push(nowMs);
-
   const ids = selected.map((row) => row.id);
-  const requestedStatus =
-    typeof config.values.status === 'string' ? config.values.status : undefined;
-  const requestedActive =
-    typeof config.values.is_active === 'boolean' ? config.values.is_active : undefined;
-  const targetLifecycle =
-    requestedActive === false
-      ? 'inactive'
-      : requestedActive === true || requestedStatus === 'active'
-        ? 'active'
-        : requestedStatus === 'suspended' || requestedStatus === 'locked'
-          ? requestedStatus
-          : null;
-  if (targetLifecycle && targetLifecycle !== 'active') {
-    await Promise.all(
-      ids.map((userId) =>
-        transitionAccountAuthenticationState(env, {
+  const versionMs = bulkLifecycleVersionMs(config, job);
+  const target = bulkLifecycleTarget(config, versionMs);
+  // This job's transition for each account (stable per job and account, with the version fixed
+  // when the job was created), so a retry finishes it and a newer status change is never
+  // overwritten. As every status change does it: an activation takes the accounts first and
+  // then their authentication state, anything else the authentication state first, so sign-in
+  // stays refused while the two disagree.
+  const operationPrefix = `bulk-job:${job.id}:`;
+  // Sessions this batch ended, for telling their relying parties.
+  const ended: EndedSession[] = [];
+  const revokeSessions = target.authentication !== 'active';
+  /** Each account's authentication state takes it, under the version given (else the job's). */
+  const authentication = (userIds: string[], versions?: Map<string, number>) =>
+    Promise.allSettled(
+      userIds.map(async (userId) => {
+        const transition = {
           tenantId: job.tenant_id,
           userId,
-          lifecycle: targetLifecycle,
-          sourceVersionMs: nowMs,
-          operationId: crypto.randomUUID(),
+          lifecycle: target.authentication,
+          sourceVersionMs: versions?.get(userId) ?? versionMs,
+          operationId: `${operationPrefix}${userId}`,
+          revokeSessions,
+        };
+        if (!revokeSessions) return transitionAccountAuthenticationState(env, transition);
+        const { state, endedSessionIds } = await transitionAccountAuthenticationStateEndingSessions(
+          env,
+          transition
+        );
+        ended.push(...endedSessionsOf(userId, endedSessionIds));
+        return state;
+      })
+    );
+  /** Accounts whose authentication state refused it: those this very job took before stand. */
+  const takenBefore = async (userIds: string[]) => {
+    const states = await Promise.all(
+      userIds.map(async (userId) => ({
+        userId,
+        state: await readAccountAuthenticationState(env, job.tenant_id, userId),
+      }))
+    );
+    return states.filter(
+      ({ userId, state }) =>
+        state.lifecycleOperationId === `${operationPrefix}${userId}` &&
+        state.lifecycle === target.authentication
+    );
+  };
+  const metadataPaths = [
+    "'$.status', ?",
+    "'$.lifecycle_version_ms', ?",
+    "'$.lifecycle_operation_id', ? || legacy_user_id",
+    ...Object.keys(target.metadataPatch).map((key) => `'$.${key}', ?`),
+  ];
+  const versionOf = `COALESCE(CAST(json_extract(metadata_json, '$.lifecycle_version_ms') AS INTEGER), 0)`;
+  const operationOf = `json_extract(metadata_json, '$.lifecycle_operation_id')`;
+  /** The accounts (and their subjects) take it while no newer transition did, or it is this one. */
+  const accounts = async (userIds: string[]) => {
+    if (userIds.length === 0) return;
+    const idPlaceholders = userIds.map(() => '?').join(', ');
+    await adapter.batch([
+      {
+        sql: `UPDATE identity_accounts
+                 SET lifecycle_state = ?,
+                     metadata_json = json_set(COALESCE(metadata_json, '{}'), ${metadataPaths.join(', ')}),
+                     updated_at = ?
+               WHERE tenant_id = ? AND legacy_user_id IN (${idPlaceholders})
+                 AND lifecycle_state NOT IN ('deleting', 'deleted')
+                 AND (${versionOf} < ? OR (${versionOf} = ? AND ${operationOf} = ? || legacy_user_id))`,
+        params: [
+          target.state,
+          target.state,
+          versionMs,
+          operationPrefix,
+          ...Object.values(target.metadataPatch),
+          nowMs,
+          job.tenant_id,
+          ...userIds,
+          versionMs,
+          versionMs,
+          operationPrefix,
+        ],
+      },
+      {
+        sql: `UPDATE identity_subjects SET lifecycle_state = ?, ${SUBJECT_UPDATED_AT_FORWARD_SQL}
+               WHERE tenant_id = ?
+                 AND lifecycle_state NOT IN ('deleting', 'deleted')
+                 AND id IN (
+                   SELECT primary_subject_id FROM identity_accounts
+                    WHERE tenant_id = ? AND legacy_user_id IN (${idPlaceholders})
+                      AND lifecycle_state = ?
+                      AND ${versionOf} = ? AND ${operationOf} = ? || legacy_user_id
+                 )`,
+        params: [
+          target.state,
+          nowMs,
+          nowMs,
+          job.tenant_id,
+          job.tenant_id,
+          ...userIds,
+          target.state,
+          versionMs,
+          operationPrefix,
+        ],
+      },
+    ]);
+  };
+  /** The accounts holding this job's transition, with the version each took it under. */
+  const accountsTaken = async (userIds: string[]) => {
+    if (userIds.length === 0) return [];
+    return adapter.query<{ id: string; version: number }>(
+      `SELECT legacy_user_id AS id, ${versionOf} AS version FROM identity_accounts
+        WHERE tenant_id = ? AND legacy_user_id IN (${userIds.map(() => '?').join(', ')})
+          AND ${operationOf} = ? || legacy_user_id`,
+      [job.tenant_id, ...userIds, operationPrefix]
+    );
+  };
+  const settle = async (
+    userIds: string[],
+    outcomes: PromiseSettledResult<unknown>[]
+  ): Promise<{ accepted: string[]; refused: string[] }> => {
+    const accepted: string[] = [];
+    const refused: string[] = [];
+    for (const [index, outcome] of outcomes.entries()) {
+      if (outcome.status === 'fulfilled') accepted.push(userIds[index]!);
+      else if (isLifecycleTransitionRefused(outcome.reason)) refused.push(userIds[index]!);
+      else throw outcome.reason;
+    }
+    return { accepted, refused };
+  };
+
+  let batchSucceeded = 0;
+  try {
+    if (target.authentication === 'active') {
+      // Authentication states not initialized yet start from the accounts as they are now (as a
+      // single activation does), not from the accounts this job is about to activate.
+      await samlDrAll(
+        ids.map((userId) => initializeFromAccount(env, adapter, job.tenant_id, userId))
+      );
+      await accounts(ids);
+      const tookRows = await accountsTaken(ids);
+      const took = tookRows.map((row) => row.id);
+      // Each under the version its account took it (an earlier attempt's, for a job started
+      // before versions were stored).
+      const versions = new Map(tookRows.map((row) => [row.id, Number(row.version)]));
+      const { accepted, refused } = await settle(took, await authentication(took, versions));
+      // An activation crossed by another transition keeps sign-in refused (activating again
+      // settles it). One whose state is active already (this job's earlier attempt, or a state
+      // initialized from the account that attempt activated) is done.
+      const active = await Promise.all(
+        refused.map(
+          async (userId) =>
+            (await readAccountAuthenticationState(env, job.tenant_id, userId)).lifecycle ===
+            'active'
+        )
+      );
+      batchSucceeded = accepted.length + active.filter(Boolean).length;
+    } else {
+      const { accepted, refused } = await settle(ids, await authentication(ids));
+      // Taken by an earlier attempt of this job (under the version it had then): finish those
+      // accounts under that version.
+      for (const { userId, state } of await takenBefore(refused)) {
+        await transitionAccountLifecycle(env, adapter, {
+          tenantId: job.tenant_id,
+          userId,
+          lifecycle: target.authentication,
+          status: target.state,
+          metadataPatch: target.metadataPatch,
+          versionMs: state.lifecycleVersionMs ?? versionMs,
+          operationId: `${operationPrefix}${userId}`,
           revokeSessions: true,
-        })
-      )
-    );
+        });
+      }
+      await accounts(accepted);
+      batchSucceeded = (await accountsTaken(ids)).length;
+    }
+  } finally {
+    // Also when a later step of the batch fails: these sessions ended (a retry of the batch ends
+    // none again).
+    await keepSessionEndLogout(env, job.tenant_id, ended, {
+      action: 'bulk_user_update',
+      operationId: job.id,
+    });
   }
-  const idPlaceholders = ids.map(() => '?').join(', ');
-  const updateResult = await adapter.execute(
-    `UPDATE identity_accounts SET ${assignments.join(', ')} WHERE tenant_id = ? AND legacy_user_id IN (${idPlaceholders})`,
-    [...values, job.tenant_id, ...ids]
-  );
-  if (targetLifecycle === 'active') {
-    await Promise.all(
-      ids.map((userId) =>
-        transitionAccountAuthenticationState(env, {
-          tenantId: job.tenant_id,
-          userId,
-          lifecycle: 'active',
-          sourceVersionMs: nowMs,
-          operationId: crypto.randomUUID(),
-          revokeSessions: false,
-        })
-      )
-    );
-  }
-  const batchSucceeded = updateResult.rowsAffected ?? selected.length;
   const processed = (previous.processed ?? 0) + selected.length;
   const succeeded = (previous.succeeded ?? 0) + batchSucceeded;
-  const failed = previous.failed ?? 0;
+  // Refused by a newer status change.
+  const failed = (previous.failed ?? 0) + (selected.length - batchSucceeded);
   const nextCursor = ids[ids.length - 1] ?? cursor;
-  const completed = selected.length < batchSize || processed >= total;
+  // Done once the cursor passes the last target: the count changes as accounts leave the filter
+  // (one this job set no longer matches it), so it cannot say when.
+  const completed = selected.length < batchSize;
   const progress = {
     total,
     processed,
@@ -1717,27 +2049,61 @@ async function processBulkUserUpdateJob(
   };
 }
 
+/**
+ * The tenant's admin jobs by type and status, from DB_ADMIN and from the tenant's Core database
+ * (the jobs a tenant's own workflows keep there, such as tenant deletion).
+ */
+async function countTenantAdminJobs(
+  adapters: DatabaseAdapter[],
+  tenantId: string,
+  fromTs: number,
+  toTs: number
+): Promise<Array<{ job_type: string; status: string; count: number }>> {
+  const counts = new Map<string, { job_type: string; status: string; count: number }>();
+  for (const adapter of adapters) {
+    const rows = await adapter.query<{ job_type: string; status: string; count: number }>(
+      `SELECT job_type, status, COUNT(*) as count
+         FROM admin_jobs
+        WHERE tenant_id = ? AND created_at >= ? AND created_at <= ?
+        GROUP BY job_type, status`,
+      [tenantId, fromTs, toTs]
+    );
+    for (const row of rows) {
+      const key = `${row.job_type}\u0000${row.status}`;
+      const entry = counts.get(key) ?? { job_type: row.job_type, status: row.status, count: 0 };
+      entry.count += Number(row.count);
+      counts.set(key, entry);
+    }
+  }
+  return [...counts.values()].sort(
+    (a, b) => compareText(a.job_type, b.job_type) || compareText(a.status, b.status)
+  );
+}
+
+function compareText(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 function toUnixSeconds(value: string): number {
   const ts = Date.parse(value);
   if (!Number.isFinite(ts)) throw new Error(`Invalid report date: ${value}`);
   return Math.floor(ts / 1000);
 }
 
-function toCsv(rows: Array<Record<string, unknown>>): string {
+/** Rows as CSV, with cells a spreadsheet would read as formulas made inert. */
+export function toCsv(rows: Array<Record<string, unknown>>): string {
   if (rows.length === 0) return '';
   const headers = Object.keys(rows[0] ?? {});
   const escape = (value: unknown) => {
     const rawText = value === null || value === undefined ? '' : String(value);
     const trimmed = rawText.trimStart();
+    // Text a spreadsheet would read as a formula (=, +, -, @, or a leading tab or CR) is made
+    // inert; a number is written as it is.
     const text =
-      trimmed.startsWith('=') ||
-      trimmed.startsWith('+') ||
-      trimmed.startsWith('@') ||
-      /^-\D/.test(trimmed) ||
-      /^[\t\r]/.test(rawText)
+      typeof value !== 'number' && (/^[=+\-@]/.test(trimmed) || /^[\t\r]/.test(rawText))
         ? `'${rawText}`
         : rawText;
-    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
   };
   return [
     headers.join(','),
@@ -1746,10 +2112,11 @@ function toCsv(rows: Array<Record<string, unknown>>): string {
 }
 
 async function processReportGenerateJob(
-  _env: Env,
-  adapter: DatabaseAdapter,
+  env: Env,
+  stores: AdminJobStores,
   job: AdminJobRow
 ): Promise<AdminJobProcessorResult> {
+  const adapter = await stores.tenant();
   const config = parseJsonConfig<ReportGenerateConfig>(job);
   const fromTs = toUnixSeconds(config.from_date);
   const toTs = toUnixSeconds(config.to_date);
@@ -1768,38 +2135,10 @@ async function processReportGenerateJob(
       );
       break;
     case 'access_summary':
-      rows = [
-        {
-          metric: 'organizations',
-          count:
-            (
-              await adapter.queryOne<{ count: number }>(
-                'SELECT COUNT(*) as count FROM organizations WHERE tenant_id = ?',
-                [job.tenant_id]
-              )
-            )?.count ?? 0,
-        },
-        {
-          metric: 'organization_memberships',
-          count:
-            (
-              await adapter.queryOne<{ count: number }>(
-                'SELECT COUNT(*) as count FROM subject_org_membership WHERE tenant_id = ?',
-                [job.tenant_id]
-              )
-            )?.count ?? 0,
-        },
-      ];
+      rows = await accessSummaryRows(await jobRBACStores(env, job.tenant_id), job.tenant_id);
       break;
     case 'compliance_audit':
-      rows = await adapter.query<Record<string, unknown>>(
-        `SELECT job_type, status, COUNT(*) as count
-           FROM admin_jobs
-          WHERE tenant_id = ? AND created_at >= ? AND created_at <= ?
-          GROUP BY job_type, status
-          ORDER BY job_type ASC, status ASC`,
-        [job.tenant_id, fromTs, toTs]
-      );
+      rows = await countTenantAdminJobs([stores.jobs, adapter], job.tenant_id, fromTs, toTs);
       break;
     case 'security_events':
       rows = await adapter.query<Record<string, unknown>>(
@@ -1846,72 +2185,56 @@ function normalizeMembershipType(role: string | undefined): 'member' | 'admin' |
 }
 
 async function processOrganizationBulkMembersJob(
-  _env: Env,
-  adapter: DatabaseAdapter,
+  env: Env,
+  _stores: AdminJobStores,
   job: AdminJobRow
 ): Promise<AdminJobProcessorResult> {
+  // Organisations are read in the tenant metadata database, memberships in each member's.
   const config = parseJsonConfig<OrganizationBulkMembersConfig>(job);
   const membershipType = normalizeMembershipType(config.role);
-  const org = await adapter.queryOne<{ id: string }>(
-    'SELECT id FROM organizations WHERE id = ? AND tenant_id = ?',
-    [config.organization_id, job.tenant_id]
-  );
-  if (!org) throw new Error('Organization does not belong to the job tenant');
-
-  let succeeded = 0;
-  let skipped = 0;
-  const failures: Array<{ user_id: string; error: string }> = [];
-  const nowTs = Math.floor(Date.now() / 1000);
-
-  for (const userId of config.user_ids) {
-    const user = await adapter.queryOne<{ id: string }>(
-      "SELECT legacy_user_id as id FROM identity_accounts WHERE legacy_user_id = ? AND tenant_id = ? AND lifecycle_state = 'active'",
-      [userId, job.tenant_id]
-    );
-    if (!user) {
-      failures.push({ user_id: userId, error: 'user_not_found' });
-      continue;
-    }
-
-    const existing = await adapter.queryOne<{ id: string }>(
-      `SELECT id FROM subject_org_membership
-       WHERE tenant_id = ? AND org_id = ? AND subject_id = ?`,
-      [job.tenant_id, config.organization_id, userId]
-    );
-
-    if (config.action === 'add') {
-      if (existing) {
-        failures.push({ user_id: userId, error: 'membership_already_exists' });
-        continue;
-      }
-      await adapter.execute(
-        `INSERT INTO subject_org_membership (
-          id, tenant_id, subject_id, org_id, membership_type, is_primary, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
-        [
-          crypto.randomUUID(),
-          job.tenant_id,
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const { succeeded, skipped, failures } = await applyOrganizationBulkMembers(
+    await jobRBACStores(env, job.tenant_id),
+    {
+      tenantId: job.tenant_id,
+      orgId: config.organization_id,
+      action: config.action,
+      membershipType,
+      userIds: config.user_ids,
+      nowSeconds,
+    },
+    // As the Admin API removes one: the member's cached claims are dropped and it is audited,
+    // once for this job and member however often the job runs.
+    (account, userId) =>
+      removeOrganizationMembership(
+        {
+          env,
+          tenantId: job.tenant_id,
+          adapter: account,
+          log: createLogger().module('ADMIN-JOBS'),
+          audit: (action, resource, resourceId, details, stable) =>
+            createAuditLog(env, {
+              tenantId: job.tenant_id,
+              userId: 'admin_job',
+              action,
+              resource,
+              resourceId,
+              ipAddress: 'internal',
+              userAgent: `admin-job:${job.job_type}`,
+              metadata: JSON.stringify({ ...details, admin_job_id: job.id }),
+              severity: 'info',
+              ...(stable ? { id: stable.id, createdAt: stable.at } : {}),
+            }),
+          onCacheFailure: 'warn',
+        },
+        {
           userId,
-          config.organization_id,
-          membershipType,
-          nowTs,
-          nowTs,
-        ]
-      );
-      succeeded += 1;
-      continue;
-    }
-
-    if (!existing) {
-      skipped += 1;
-      continue;
-    }
-    await adapter.execute(
-      'DELETE FROM subject_org_membership WHERE tenant_id = ? AND org_id = ? AND subject_id = ?',
-      [job.tenant_id, config.organization_id, userId]
-    );
-    succeeded += 1;
-  }
+          orgId: config.organization_id,
+          // The job's own time, the same on every run of it.
+          audit: { id: `${job.id}:org-member-removed:${userId}`, at: job.created_at * 1000 },
+        }
+      ).then(() => undefined)
+  );
 
   const total = config.user_ids.length;
   const failed = failures.length;
@@ -1933,6 +2256,9 @@ const ADMIN_JOB_PROCESSORS: Record<GenericAdminJobType, AdminJobProcessor> = {
   'tenant-database/restore-dry-run': processTenantDatabaseRestoreDryRunJob,
   'tenant-database/purge-backup': processTenantDatabasePurgeBackupJob,
   'users/bulk-update': processBulkUserUpdateJob,
+  [SESSION_END_LOGOUT_JOB_TYPE]: processSessionEndLogoutJob,
+  [SESSION_REVOKE_LOGOUT_JOB_TYPE]: processSessionEndLogoutJob,
+  [SUPPORT_OPS_LOGOUT_JOB_TYPE]: processSessionEndLogoutJob,
   'reports/generate': processReportGenerateJob,
   'organizations/bulk-members': processOrganizationBulkMembersJob,
 };
@@ -2080,15 +2406,30 @@ function buildFailureResult(job: AdminJobRow, error: unknown, attemptCount: numb
   });
 }
 
+/** The job types the scheduled admin job run handles (logout jobs have their own, every minute). */
+const SCHEDULED_GENERIC_ADMIN_JOB_TYPES = GENERIC_ADMIN_JOB_TYPES.filter(
+  (jobType) =>
+    jobType !== SESSION_END_LOGOUT_JOB_TYPE &&
+    jobType !== SESSION_REVOKE_LOGOUT_JOB_TYPE &&
+    jobType !== SUPPORT_OPS_LOGOUT_JOB_TYPE
+);
+
 export async function processPendingGenericAdminJobs(
   env: Env,
-  logger: AdminJobLogger
+  logger: AdminJobLogger,
+  options: {
+    jobTypes?: readonly GenericAdminJobType[];
+    limit?: number;
+    /** No job is started after this time (ms since the epoch). */
+    deadlineMs?: number;
+  } = {}
 ): Promise<void> {
   if (!env.DB_ADMIN) throw new Error('management_admin_jobs_database_unavailable');
   const adapter = ensureDatabaseAdapter(env.DB_ADMIN, 'management-generic-jobs');
   const nowTs = Math.floor(Date.now() / 1000);
   const staleCutoffTs = nowTs - 15 * 60;
-  const placeholders = GENERIC_ADMIN_JOB_TYPES.map(() => '?').join(', ');
+  const jobTypes = options.jobTypes ?? SCHEDULED_GENERIC_ADMIN_JOB_TYPES;
+  const placeholders = jobTypes.map(() => '?').join(', ');
   const jobs = await adapter.query<AdminJobRow>(
     `SELECT id, tenant_id, job_type, status, progress, config, created_at,
             COALESCE(attempt_count, 0) AS attempt_count,
@@ -2102,247 +2443,312 @@ export async function processPendingGenericAdminJobs(
           OR (status = 'processing' AND updated_at < ?)
         )
       ORDER BY created_at ASC
-      LIMIT 5`,
-    [DEFAULT_JOB_MAX_ATTEMPTS, ...GENERIC_ADMIN_JOB_TYPES, nowTs, nowTs, staleCutoffTs]
+      LIMIT ?`,
+    [DEFAULT_JOB_MAX_ATTEMPTS, ...jobTypes, nowTs, nowTs, staleCutoffTs, options.limit ?? 5]
   );
 
   for (const job of jobs) {
-    const processor = ADMIN_JOB_PROCESSORS[job.job_type as GenericAdminJobType];
-    if (!processor) continue;
+    if (options.deadlineMs !== undefined && Date.now() >= options.deadlineMs) break;
+    await processGenericAdminJob(env, adapter, logger, job, staleCutoffTs);
+  }
+}
 
-    if (!job.tenant_lifecycle_state) {
-      try {
-        const tenantAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
-          env,
-          'management-generic-job-lifecycle',
-          { tenantId: job.tenant_id }
-        );
-        const tenant = await tenantAdapter.queryOne<{ lifecycle_state: string }>(
-          'SELECT lifecycle_state FROM tenants WHERE id = ? LIMIT 1',
-          [job.tenant_id]
-        );
-        job.tenant_lifecycle_state = tenant?.lifecycle_state ?? 'missing';
-      } catch {
-        job.tenant_lifecycle_state = 'route_unavailable';
-      }
-    }
+/** Logout jobs run each minute, up to this many per run, started within this time. */
+const SESSION_END_LOGOUT_JOBS_PER_RUN = 25;
+const SESSION_END_LOGOUT_RUN_BUDGET_MS = 45_000;
 
-    if (
-      typeof job.tenant_lifecycle_state === 'string' &&
-      !isAdminJobAllowedForTenantLifecycle(job.tenant_lifecycle_state, job.job_type)
-    ) {
-      const blockedAt = Math.floor(Date.now() / 1000);
-      await adapter.execute(
-        `UPDATE admin_jobs
-            SET status = 'partial_failure', progress = ?, error_message = ?, completed_at = ?, updated_at = ?
-          WHERE id = ? AND tenant_id = ? AND status IN ('pending', 'processing')`,
-        [
-          JSON.stringify({ stage: 'blocked_by_tenant_lifecycle', processed: 0, failed: 1 }),
-          `tenant_lifecycle_blocked:${job.tenant_lifecycle_state}`,
-          blockedAt,
-          blockedAt,
-          job.id,
-          job.tenant_id,
-        ]
-      );
-      continue;
-    }
+/**
+ * The downstream logout jobs admin actions left (those not sent right after the admin response,
+ * and those to retry). Run every minute.
+ */
+export async function processPendingSessionEndLogoutJobs(
+  env: Env,
+  logger: AdminJobLogger
+): Promise<void> {
+  await processPendingGenericAdminJobs(env, logger, {
+    jobTypes: [
+      SESSION_END_LOGOUT_JOB_TYPE,
+      SESSION_REVOKE_LOGOUT_JOB_TYPE,
+      SUPPORT_OPS_LOGOUT_JOB_TYPE,
+    ],
+    limit: SESSION_END_LOGOUT_JOBS_PER_RUN,
+    deadlineMs: Date.now() + SESSION_END_LOGOUT_RUN_BUDGET_MS,
+  });
+}
 
-    const startedTs = Math.floor(Date.now() / 1000);
-    const transition = await adapter.execute(
+/**
+ * Claim and run one job now, outside the scheduled run (for work that should start at once, such
+ * as a downstream logout). Claimed as the scheduled run claims it, so the two never run it both;
+ * one not run to its end is retried by the scheduled run.
+ */
+export async function processGenericAdminJobNow(
+  env: Env,
+  logger: AdminJobLogger,
+  tenantId: string,
+  jobId: string
+): Promise<void> {
+  if (!env.DB_ADMIN) throw new Error('management_admin_jobs_database_unavailable');
+  const adapter = ensureDatabaseAdapter(env.DB_ADMIN, 'management-generic-jobs');
+  const job = await adapter.queryOne<AdminJobRow>(
+    `SELECT id, tenant_id, job_type, status, progress, config, created_at,
+            COALESCE(attempt_count, 0) AS attempt_count,
+            COALESCE(max_attempts, ?) AS max_attempts,
+            next_run_at
+       FROM admin_jobs
+      WHERE id = ? AND tenant_id = ? AND status = 'pending'`,
+    [DEFAULT_JOB_MAX_ATTEMPTS, jobId, tenantId]
+  );
+  if (!job) return;
+  await processGenericAdminJob(env, adapter, logger, job, Math.floor(Date.now() / 1000) - 15 * 60);
+}
+
+async function processGenericAdminJob(
+  env: Env,
+  adapter: DatabaseAdapter,
+  logger: AdminJobLogger,
+  job: AdminJobRow,
+  staleCutoffTs: number
+): Promise<void> {
+  const processor = ADMIN_JOB_PROCESSORS[job.job_type as GenericAdminJobType];
+  if (!processor) return;
+
+  job.tenant_lifecycle_state ??= await readAdminJobTenantLifecycleState(env, job.tenant_id);
+
+  if (
+    typeof job.tenant_lifecycle_state === 'string' &&
+    !isAdminJobAllowedForTenantLifecycle(job.tenant_lifecycle_state, job.job_type)
+  ) {
+    const blockedAt = Math.floor(Date.now() / 1000);
+    await adapter.execute(
       `UPDATE admin_jobs
-          SET status = 'processing', started_at = COALESCE(started_at, ?), updated_at = ?
-        WHERE id = ? AND tenant_id = ?
-          AND (
-            (status = 'pending' AND (next_run_at IS NULL OR next_run_at <= ?))
-            OR (status = 'processing' AND (next_run_at IS NOT NULL AND next_run_at <= ?))
-            OR (status = 'processing' AND updated_at < ?)
-          )`,
-      [startedTs, startedTs, job.id, job.tenant_id, startedTs, startedTs, staleCutoffTs]
+          SET status = 'partial_failure', progress = ?, error_message = ?, completed_at = ?, updated_at = ?
+        WHERE id = ? AND tenant_id = ? AND status IN ('pending', 'processing')`,
+      [
+        JSON.stringify({ stage: 'blocked_by_tenant_lifecycle', processed: 0, failed: 1 }),
+        `tenant_lifecycle_blocked:${job.tenant_lifecycle_state}`,
+        blockedAt,
+        blockedAt,
+        job.id,
+        job.tenant_id,
+      ]
     );
-    if (transition.rowsAffected === 0) continue;
-    await emitAdminJobRuntimeLog(env, adapter, logger, {
-      job,
-      status: 'processing',
-      eventAt: startedTs * 1000,
-      attemptCount: getAttemptCount(job),
-    });
+    return;
+  }
 
-    try {
-      const result = await processor(env, adapter, job);
-      if (result.status === 'processing') {
-        const continuationTs = Math.floor(Date.now() / 1000);
-        await adapter.execute(
-          `UPDATE admin_jobs
-              SET status = 'processing', progress = ?, next_run_at = ?, updated_at = ?
-            WHERE id = ? AND tenant_id = ?`,
-          [
-            JSON.stringify(result.progress),
-            result.nextRunAt ?? continuationTs,
-            continuationTs,
-            job.id,
-            job.tenant_id,
-          ]
-        );
-        logger.info('Generic admin job chunk completed', {
-          job_id: job.id,
-          tenant_id: job.tenant_id,
-          job_type: job.job_type,
-        });
-        await emitAdminJobRuntimeLog(env, adapter, logger, {
-          job,
-          status: 'processing',
-          eventAt: continuationTs * 1000,
-          attemptCount: getAttemptCount(job),
-          nextRunAt: result.nextRunAt ?? continuationTs,
-        });
-        continue;
-      }
+  const startedTs = Math.floor(Date.now() / 1000);
+  const transition = await adapter.execute(
+    // next_run_at is cleared: a claimed job no longer matches another run's claim.
+    `UPDATE admin_jobs
+        SET status = 'processing', started_at = COALESCE(started_at, ?), updated_at = ?,
+            next_run_at = NULL
+      WHERE id = ? AND tenant_id = ?
+        AND (
+          (status = 'pending' AND (next_run_at IS NULL OR next_run_at <= ?))
+          OR (status = 'processing' AND (next_run_at IS NOT NULL AND next_run_at <= ?))
+          OR (status = 'processing' AND updated_at < ?)
+        )`,
+    [startedTs, startedTs, job.id, job.tenant_id, startedTs, startedTs, staleCutoffTs]
+  );
+  if (transition.rowsAffected === 0) return;
+  await emitAdminJobRuntimeLog(env, adapter, logger, {
+    job,
+    status: 'processing',
+    eventAt: startedTs * 1000,
+    attemptCount: getAttemptCount(job),
+  });
 
-      const finalized = await finalizeGenericJobResult(env, adapter, job, result);
-      const completedTs = Math.floor(Date.now() / 1000);
+  try {
+    // Only jobs that go on whatever the tenant's state get here with it unread: retried.
+    if (job.tenant_lifecycle_state === 'route_unavailable') {
+      throw new Error('tenant_lifecycle_unavailable');
+    }
+    let tenantAdapter: Promise<DatabaseAdapter> | null = null;
+    const result = await processor(
+      env,
+      {
+        jobs: adapter,
+        tenant: () =>
+          (tenantAdapter ??= resolveAuthCorePersistenceAdapterFromEnv(
+            env,
+            'management-generic-job-tenant',
+            { tenantId: job.tenant_id }
+          )),
+      },
+      job
+    );
+    if (result.status === 'processing') {
+      const continuationTs = Math.floor(Date.now() / 1000);
       await adapter.execute(
         `UPDATE admin_jobs
-            SET status = ?, progress = ?, result = ?, result_r2_key = COALESCE(?, result_r2_key),
-                object_catalog_id = COALESCE(?, object_catalog_id),
-                next_run_at = NULL, completed_at = ?, updated_at = ?
+            SET status = 'processing', progress = ?, next_run_at = ?, updated_at = ?
           WHERE id = ? AND tenant_id = ?`,
         [
-          result.status,
           JSON.stringify(result.progress),
-          finalized.resultJson,
-          finalized.resultR2Key,
-          finalized.objectCatalogId,
-          completedTs,
-          completedTs,
+          result.nextRunAt ?? continuationTs,
+          continuationTs,
           job.id,
           job.tenant_id,
         ]
       );
-      logger.info('Generic admin job completed', {
+      logger.info('Generic admin job chunk completed', {
         job_id: job.id,
         tenant_id: job.tenant_id,
         job_type: job.job_type,
-        status: result.status,
       });
       await emitAdminJobRuntimeLog(env, adapter, logger, {
         job,
-        status: result.status,
-        eventAt: completedTs * 1000,
+        status: 'processing',
+        eventAt: continuationTs * 1000,
         attemptCount: getAttemptCount(job),
-        completedAt: completedTs,
-        objectCatalogId: finalized.objectCatalogId,
+        nextRunAt: result.nextRunAt ?? continuationTs,
       });
-    } catch (error) {
-      const failedTs = Math.floor(Date.now() / 1000);
-      const nextAttemptCount = getAttemptCount(job) + 1;
-      const maxAttempts = getMaxAttempts(job);
-      const exhausted = nextAttemptCount >= maxAttempts;
-      const nextRunAt = exhausted ? null : failedTs + getRetryDelaySeconds(nextAttemptCount - 1);
-      if (exhausted) {
+      return;
+    }
+
+    const finalized = await finalizeGenericJobResult(env, adapter, job, result);
+    const completedTs = Math.floor(Date.now() / 1000);
+    await adapter.execute(
+      `UPDATE admin_jobs
+          SET status = ?, progress = ?, result = ?, result_r2_key = COALESCE(?, result_r2_key),
+              object_catalog_id = COALESCE(?, object_catalog_id),
+              next_run_at = NULL, completed_at = ?, updated_at = ?
+        WHERE id = ? AND tenant_id = ?`,
+      [
+        result.status,
+        JSON.stringify(result.progress),
+        finalized.resultJson,
+        finalized.resultR2Key,
+        finalized.objectCatalogId,
+        completedTs,
+        completedTs,
+        job.id,
+        job.tenant_id,
+      ]
+    );
+    logger.info('Generic admin job completed', {
+      job_id: job.id,
+      tenant_id: job.tenant_id,
+      job_type: job.job_type,
+      status: result.status,
+    });
+    await emitAdminJobRuntimeLog(env, adapter, logger, {
+      job,
+      status: result.status,
+      eventAt: completedTs * 1000,
+      attemptCount: getAttemptCount(job),
+      completedAt: completedTs,
+      objectCatalogId: finalized.objectCatalogId,
+    });
+  } catch (error) {
+    const failedTs = Math.floor(Date.now() / 1000);
+    const nextAttemptCount = getAttemptCount(job) + 1;
+    const maxAttempts = getMaxAttempts(job);
+    const exhausted = nextAttemptCount >= maxAttempts;
+    const nextRunAt = exhausted ? null : failedTs + getRetryDelaySeconds(nextAttemptCount - 1);
+    if (exhausted) {
+      await adapter.execute(
+        `UPDATE admin_jobs
+            SET status = 'failed', error_message = ?, result = ?, attempt_count = ?,
+                max_attempts = COALESCE(max_attempts, ?), next_run_at = NULL,
+                dead_lettered_at = ?, completed_at = ?, updated_at = ?
+          WHERE id = ? AND tenant_id = ?`,
+        [
+          String(error),
+          buildFailureResult(job, error, nextAttemptCount),
+          nextAttemptCount,
+          maxAttempts,
+          failedTs,
+          failedTs,
+          failedTs,
+          job.id,
+          job.tenant_id,
+        ]
+      );
+    } else {
+      if (job.job_type === 'tenants/lifecycle-validation') {
+        const failureResult = JSON.parse(
+          buildFailureResult(job, error, nextAttemptCount)
+        ) as Record<string, unknown>;
         await adapter.execute(
           `UPDATE admin_jobs
-              SET status = 'failed', error_message = ?, result = ?, attempt_count = ?,
-                  max_attempts = COALESCE(max_attempts, ?), next_run_at = NULL,
-                  dead_lettered_at = ?, completed_at = ?, updated_at = ?
-            WHERE id = ? AND tenant_id = ?`,
+            SET status = 'pending', progress = ?, error_message = ?, attempt_count = ?,
+                max_attempts = COALESCE(max_attempts, ?), next_run_at = ?, updated_at = ?
+          WHERE id = ? AND tenant_id = ?`,
           [
+            JSON.stringify({
+              stage: 'validation_failed_retry_scheduled',
+              checks: failureResult.checks ?? [],
+            }),
             String(error),
-            buildFailureResult(job, error, nextAttemptCount),
             nextAttemptCount,
             maxAttempts,
-            failedTs,
-            failedTs,
+            nextRunAt,
             failedTs,
             job.id,
             job.tenant_id,
           ]
         );
       } else {
-        if (job.job_type === 'tenants/lifecycle-validation') {
-          const failureResult = JSON.parse(
-            buildFailureResult(job, error, nextAttemptCount)
-          ) as Record<string, unknown>;
-          await adapter.execute(
-            `UPDATE admin_jobs
-              SET status = 'pending', progress = ?, error_message = ?, attempt_count = ?,
+        await adapter.execute(
+          `UPDATE admin_jobs
+              SET status = 'pending', error_message = ?, attempt_count = ?,
                   max_attempts = COALESCE(max_attempts, ?), next_run_at = ?, updated_at = ?
             WHERE id = ? AND tenant_id = ?`,
-            [
-              JSON.stringify({
-                stage: 'validation_failed_retry_scheduled',
-                checks: failureResult.checks ?? [],
-              }),
-              String(error),
-              nextAttemptCount,
-              maxAttempts,
-              nextRunAt,
-              failedTs,
-              job.id,
-              job.tenant_id,
-            ]
-          );
-        } else {
-          await adapter.execute(
-            `UPDATE admin_jobs
-                SET status = 'pending', error_message = ?, attempt_count = ?,
-                    max_attempts = COALESCE(max_attempts, ?), next_run_at = ?, updated_at = ?
-              WHERE id = ? AND tenant_id = ?`,
-            [
-              String(error),
-              nextAttemptCount,
-              maxAttempts,
-              nextRunAt,
-              failedTs,
-              job.id,
-              job.tenant_id,
-            ]
-          );
-        }
+          [String(error), nextAttemptCount, maxAttempts, nextRunAt, failedTs, job.id, job.tenant_id]
+        );
       }
-      logger.error(
-        exhausted ? 'Generic admin job dead-lettered' : 'Generic admin job retry scheduled',
-        {
-          job_id: job.id,
-          tenant_id: job.tenant_id,
-          job_type: job.job_type,
+    }
+    logger.error(
+      exhausted ? 'Generic admin job dead-lettered' : 'Generic admin job retry scheduled',
+      {
+        job_id: job.id,
+        tenant_id: job.tenant_id,
+        job_type: job.job_type,
+        attempt_count: nextAttemptCount,
+        max_attempts: maxAttempts,
+        next_run_at: nextRunAt,
+      },
+      error as Error
+    );
+    if (
+      exhausted &&
+      (job.job_type === SESSION_END_LOGOUT_JOB_TYPE ||
+        job.job_type === SESSION_REVOKE_LOGOUT_JOB_TYPE ||
+        job.job_type === SUPPORT_OPS_LOGOUT_JOB_TYPE)
+    ) {
+      // Its relying parties may not have been told: the audit says so, with the job.
+      await auditSessionEndLogoutFailed(env, job, error);
+    }
+    if (job.job_type === 'tenants/lifecycle-validation') {
+      await writeTenantLifecycleJobAudit(env, job, {
+        action: exhausted
+          ? 'tenant.lifecycle.validation_failed'
+          : 'tenant.lifecycle.validation_retry_scheduled',
+        result: 'failure',
+        severity: 'error',
+        error,
+        metadata: {
           attempt_count: nextAttemptCount,
           max_attempts: maxAttempts,
           next_run_at: nextRunAt,
+          safe_state_preserved: true,
         },
-        error as Error
-      );
-      if (job.job_type === 'tenants/lifecycle-validation') {
-        await writeTenantLifecycleJobAudit(env, adapter, job, {
-          action: exhausted
-            ? 'tenant.lifecycle.validation_failed'
-            : 'tenant.lifecycle.validation_retry_scheduled',
-          result: 'failure',
-          severity: 'error',
-          error,
-          metadata: {
-            attempt_count: nextAttemptCount,
-            max_attempts: maxAttempts,
-            next_run_at: nextRunAt,
-            safe_state_preserved: true,
-          },
-        }).catch((auditError) => {
-          logger.error(
-            'Failed to write tenant lifecycle validation audit',
-            { job_id: job.id, tenant_id: job.tenant_id },
-            auditError as Error
-          );
-        });
-      }
-      await emitAdminJobRuntimeLog(env, adapter, logger, {
-        job,
-        status: exhausted ? 'failed' : 'retrying',
-        eventAt: failedTs * 1000,
-        attemptCount: nextAttemptCount,
-        nextRunAt,
-        completedAt: exhausted ? failedTs : null,
-        errorClass: error instanceof Error ? error.name : 'Error',
+      }).catch((auditError) => {
+        logger.error(
+          'Failed to write tenant lifecycle validation audit',
+          { job_id: job.id, tenant_id: job.tenant_id },
+          auditError as Error
+        );
       });
     }
+    await emitAdminJobRuntimeLog(env, adapter, logger, {
+      job,
+      status: exhausted ? 'failed' : 'retrying',
+      eventAt: failedTs * 1000,
+      attemptCount: nextAttemptCount,
+      nextRunAt,
+      completedAt: exhausted ? failedTs : null,
+      errorClass: error instanceof Error ? error.name : 'Error',
+    });
   }
 }

@@ -1,3 +1,5 @@
+import { samlDrAll, samlDrTrackEffect } from './tenant-portability/saml-dr-writer';
+import { validateAccountRegistrationStates } from './account-webhook-fields';
 /**
  * Event Dispatcher Service
  *
@@ -18,6 +20,7 @@
  */
 
 import type { KVNamespace } from '@cloudflare/workers-types';
+import type { Env } from '../types/env';
 import type { DatabaseAdapter } from '../db/adapter';
 import type {
   EventDispatcher as IEventDispatcher,
@@ -51,6 +54,8 @@ const log = createLogger().module('EVENT-DISPATCHER');
  * Configuration for EventDispatcher.
  */
 export interface EventDispatcherConfig {
+  /** Bindings for the single canonical audit writer. */
+  env: Env;
   /** Database adapter for audit logging */
   adapter: DatabaseAdapter;
   /** KV namespace for deduplication */
@@ -201,7 +206,7 @@ function classifyWebhookRuntimeLogError(result: {
  * ```
  */
 export class EventDispatcherImpl implements IEventDispatcher {
-  private readonly adapter: DatabaseAdapter;
+  private readonly env: Env;
   private readonly kv: KVNamespace;
   private readonly webhookRegistry: WebhookRegistryImpl;
   private readonly handlerRegistry: EventHandlerRegistryImpl;
@@ -215,7 +220,7 @@ export class EventDispatcherImpl implements IEventDispatcher {
   private readonly options: Required<EventDispatcherOptions>;
 
   constructor(config: EventDispatcherConfig) {
-    this.adapter = config.adapter;
+    this.env = config.env;
     this.kv = config.kv;
     this.webhookRegistry = config.webhookRegistry;
     this.handlerRegistry = config.handlerRegistry;
@@ -243,12 +248,19 @@ export class EventDispatcherImpl implements IEventDispatcher {
   /**
    * Publish a single event.
    */
-  async publish<T = Record<string, unknown>>(
+  publish<T = Record<string, unknown>>(
     payload: EventPublishPayload<T>,
     options?: EventPublishOptions
   ): Promise<EventPublishResult> {
-    const eventId = `evt_${crypto.randomUUID().replace(/-/g, '')}`;
-    const timestamp = Date.now();
+    return samlDrTrackEffect(this.publishOwned(payload, options));
+  }
+
+  private async publishOwned<T = Record<string, unknown>>(
+    payload: EventPublishPayload<T>,
+    options?: EventPublishOptions
+  ): Promise<EventPublishResult> {
+    const eventId = options?.durableEvent?.id ?? `evt_${crypto.randomUUID().replace(/-/g, '')}`;
+    const timestamp = options?.durableEvent?.occurredAt ?? Date.now();
     const errors: EventDeliveryError[] = [];
 
     // Initialize delivery summary
@@ -281,7 +293,7 @@ export class EventDispatcherImpl implements IEventDispatcher {
       // 2. Deduplication check
       const dedupKey = this.getDedupKey(payload.tenantId, options?.deduplicationKey ?? eventId);
 
-      const isDuplicate = await this.checkDeduplication(dedupKey);
+      const isDuplicate = !options?.durableEvent && (await this.checkDeduplication(dedupKey));
       if (isDuplicate) {
         return {
           eventId,
@@ -341,13 +353,15 @@ export class EventDispatcherImpl implements IEventDispatcher {
       };
 
       // 5. Set deduplication lock before processing
-      await this.setDeduplication(
-        dedupKey,
-        options?.deduplicationTtlSeconds ?? this.options.deduplicationTtlSeconds
-      );
+      if (!options?.durableEvent) {
+        await this.setDeduplication(
+          dedupKey,
+          options?.deduplicationTtlSeconds ?? this.options.deduplicationTtlSeconds
+        );
+      }
 
       // 6. Parallel delivery to handlers and webhooks
-      const [handlerResults, webhookResults] = await Promise.all([
+      const [handlerResults, webhookResults] = await samlDrAll([
         // Internal handlers
         options?.skipInternalHandlers
           ? { executed: 0, failed: 0, skipped: 0 }
@@ -356,7 +370,7 @@ export class EventDispatcherImpl implements IEventDispatcher {
         // Webhook delivery
         options?.skipWebhooks
           ? { sent: 0, failed: 0, skipped: 0 }
-          : this.deliverWebhooks(event, execContext, errors),
+          : this.deliverWebhooks(event, execContext, errors, options?.accountWebhookData),
       ]);
 
       delivery.handlers = handlerResults;
@@ -374,7 +388,8 @@ export class EventDispatcherImpl implements IEventDispatcher {
       }
 
       // 8. Build result
-      const success = errors.length === 0;
+      const success =
+        errors.length === 0 && (!options?.durableEvent || delivery.webhooks.skipped === 0);
       const publishResult: EventPublishResult = {
         eventId,
         success,
@@ -384,9 +399,11 @@ export class EventDispatcherImpl implements IEventDispatcher {
       };
 
       // 9. Execute After Hooks (fire-and-forget for async hooks)
-      this.executeAfterHooks(event, execContext, publishResult).catch((error) => {
-        log.error('After hook error', { eventId }, error as Error);
-      });
+      samlDrTrackEffect(this.executeAfterHooks(event, execContext, publishResult)).catch(
+        (error) => {
+          log.error('After hook error', { eventId }, error as Error);
+        }
+      );
 
       // 10. Return result
       return publishResult;
@@ -417,7 +434,7 @@ export class EventDispatcherImpl implements IEventDispatcher {
     options?: EventPublishOptions
   ): Promise<EventPublishResult[]> {
     // Process events concurrently
-    return Promise.all(events.map((event) => this.publish(event, options)));
+    return samlDrAll(events.map((event) => this.publish(event, options)));
   }
 
   // ===========================================================================
@@ -507,15 +524,29 @@ export class EventDispatcherImpl implements IEventDispatcher {
   private async deliverWebhooks(
     event: UnifiedEvent,
     context: ExecutionContext,
-    errors: EventDeliveryError[]
+    errors: EventDeliveryError[],
+    accountWebhookData?: EventPublishOptions['accountWebhookData']
   ): Promise<{ sent: number; failed: number; skipped: number }> {
+    // These remain internal/audit vocabulary, not subscription webhook events.
+    if (
+      ['user.created', 'user.updated', 'user.deleted'].includes(event.type) ||
+      /^account\.(?:guest|registered)\.(?:created|updated|deleted)$/.test(event.type) ||
+      /^account\.registration\.(?:promoted|demoted)$/.test(event.type)
+    ) {
+      return { sent: 0, failed: 0, skipped: 0 };
+    }
     // Find matching webhooks (tenant + optional client)
     const clientId = event.metadata?.actor?.type === 'client' ? event.metadata.actor.id : undefined;
-    const webhooks = await this.webhookRegistry.findByEventType(
-      event.tenantId,
-      event.type,
-      clientId
-    );
+    let webhooks = await this.webhookRegistry.findByEventType(event.tenantId, event.type, clientId);
+
+    webhooks = webhooks.filter((webhook) => {
+      if (!event.type.startsWith('account.')) return true;
+      const states = webhook.registrationStates ?? [];
+      return (
+        validateAccountRegistrationStates(states) &&
+        (!states.length || states.some((state) => state === event.data.registration_state))
+      );
+    });
 
     if (webhooks.length === 0) {
       return { sent: 0, failed: 0, skipped: 0 };
@@ -529,7 +560,9 @@ export class EventDispatcherImpl implements IEventDispatcher {
     for (let i = 0; i < webhooks.length; i += this.options.maxConcurrentWebhooks) {
       const batch = webhooks.slice(i, i + this.options.maxConcurrentWebhooks);
 
-      const results = await Promise.all(batch.map((webhook) => this.sendToWebhook(event, webhook)));
+      const results = await samlDrAll(
+        batch.map((webhook) => this.sendToWebhook(event, webhook, accountWebhookData))
+      );
 
       for (let j = 0; j < results.length; j++) {
         const result = results[j];
@@ -538,13 +571,17 @@ export class EventDispatcherImpl implements IEventDispatcher {
         if (result.success) {
           sent++;
           // Record success asynchronously
-          this.webhookRegistry.recordSuccess(webhook.id, webhook.tenantId).catch(() => {});
+          samlDrTrackEffect(this.webhookRegistry.recordSuccess(webhook.id, webhook.tenantId)).catch(
+            () => {}
+          );
         } else if (result.skipped) {
           skipped++;
         } else {
           failed++;
           // Record failure asynchronously
-          this.webhookRegistry.recordFailure(webhook.id, webhook.tenantId).catch(() => {});
+          samlDrTrackEffect(this.webhookRegistry.recordFailure(webhook.id, webhook.tenantId)).catch(
+            () => {}
+          );
 
           errors.push({
             target: 'webhook',
@@ -565,7 +602,8 @@ export class EventDispatcherImpl implements IEventDispatcher {
    */
   private async sendToWebhook(
     event: UnifiedEvent,
-    webhook: WebhookConfigWithScope
+    webhook: WebhookConfigWithScope,
+    accountWebhookData?: EventPublishOptions['accountWebhookData']
   ): Promise<{
     success: boolean;
     skipped?: boolean;
@@ -599,9 +637,15 @@ export class EventDispatcherImpl implements IEventDispatcher {
         type: event.type,
         timestamp: event.timestamp,
         tenantId: event.tenantId,
-        data: event.data,
+        data:
+          accountWebhookData && event.type.startsWith('account.')
+            ? await accountWebhookData(webhook)
+            : event.data,
       });
 
+      if (new TextEncoder().encode(payload).byteLength > this.options.maxPayloadSize) {
+        throw new Error('Webhook payload too large');
+      }
       // Send webhook
       const result = await sendWebhook({
         url: webhook.url,
@@ -668,14 +712,11 @@ export class EventDispatcherImpl implements IEventDispatcher {
 
     try {
       await emitRuntimeLogRecords({
-        env: {
-          ...this.runtimeLogging.env,
-          DB_ADMIN: this.runtimeLogging.env.DB_ADMIN ?? this.adapter,
-          LOGGING_INDEX_DB: this.adapter,
-        },
+        env: this.runtimeLogging.env,
         tenantId: webhook.tenantId || event.tenantId,
         logType: 'webhook',
         surface: 'webhook_delivery',
+        sourceDataset: 'runtime.webhook_delivery_events',
         planes: ['archive', 'external_sink'],
         tenantKeyResolver: this.runtimeLogging.tenantKeyResolver,
         records: [
@@ -754,7 +795,7 @@ export class EventDispatcherImpl implements IEventDispatcher {
 
     // Fire async hooks without waiting
     for (const hook of asyncHooks) {
-      hook.handler(event, result, context).catch((error) => {
+      samlDrTrackEffect(hook.handler(event, result, context)).catch((error) => {
         log.error('Async after hook failed', { hookId: hook.id }, error as Error);
       });
     }
@@ -779,9 +820,9 @@ export class EventDispatcherImpl implements IEventDispatcher {
     const resourceType = this.extractResourceType(event.type);
     const resourceId = (eventData?.clientId as string) ?? (eventData?.userId as string) ?? null;
     const auditId = `audit_${crypto.randomUUID().replace(/-/g, '')}`;
-    const createdAt = Math.floor(new Date(event.timestamp).getTime() / 1000);
+    const createdAt = new Date(event.timestamp).getTime();
 
-    await writeLegacyAuditLog(this.adapter, {
+    await writeLegacyAuditLog(this.env, {
       id: auditId,
       tenantId: event.tenantId,
       userId: event.metadata?.actor?.id ?? null,
@@ -812,7 +853,7 @@ export class EventDispatcherImpl implements IEventDispatcher {
    */
   private async executeWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
     return Promise.race([
-      promise,
+      samlDrTrackEffect(promise),
       new Promise<never>((_, reject) => {
         setTimeout(() => reject(new Error('Operation timed out')), timeoutMs);
       }),

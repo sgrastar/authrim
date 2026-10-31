@@ -1,3 +1,4 @@
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 /**
  * Direct Authentication API Handlers
  *
@@ -17,11 +18,24 @@
  * - No direct token return (artifact intermediate step)
  */
 
+import {
+  isAuthenticationMethodUsageEnabled,
+  type AuthenticationMethodUsage,
+} from './authentication-method-settings';
 import { Context } from 'hono';
 import { setCookie, getCookie, deleteCookie } from 'hono/cookie';
 import type { Env, Session } from '@authrim/ar-lib-core';
+import type { StoreCodeRequest } from '@authrim/ar-lib-core/durable-objects/AuthorizationCodeStore';
+import {
+  accountAuthenticationDenialReason,
+  signInAttemptFailureRecorder,
+  signInAttemptInteractionMetadata,
+} from './sign-in-attempt-recording';
 import { getRefreshTokenRotatorStubByJti } from '@authrim/ar-lib-core/services/refresh-token-family-store';
 import {
+  isAuthenticationMethodUsageAvailable,
+  revokeGuestResumeForSession,
+  GUEST_RESUME_COOKIE,
   isAllowedOrigin,
   parseAllowedOrigins,
   getSessionStoreBySessionId,
@@ -34,10 +48,15 @@ import {
   getTenantIdFromContext,
   buildDOKey,
   buildDOInstanceName,
-  getTenantSettings,
+  getTenantSettingsDocument,
+  resolveEffectiveSettings,
+  computeAAL,
+  sessionAssuranceEvidence,
+  aalToAcr,
   generateSecureRandomString,
   generateId,
   generateUserIdFromSettings,
+  assertGuestCredentialAuthenticationAllowed,
   createAuthContextFromHono,
   createAccountAuthContextFromHono,
   createPIIContextFromHono,
@@ -64,7 +83,6 @@ import {
   // Native SSO logout propagation
   isNativeSSOEnabled,
   normalizeDeviceSecretLogoutScope,
-  revokeDeviceSecretsForLogoutScope,
   // Refresh Token
   listRefreshTokenFamiliesByUser,
   expireRefreshTokenFamiliesByUser,
@@ -80,17 +98,32 @@ import {
   ensureDatabaseAdapter,
   getTenantMetadataContextFromHono,
   markOtpLoginEmailVerified,
+  withGroupInputWrite,
   resolveOtpAccountCoreDataContextByIdentifierFromHono,
   resolveAccountDataContextFromHono,
   type CanonicalOtpLoginUser,
   type DatabaseAdapter,
+  CREDENTIALS_SETTINGS_META,
+  resolveEmailCodeTtlSeconds,
+  resolveEmailSendLimit,
+  checkEmailRegistration,
 } from '@authrim/ar-lib-core';
 import {
-  applyInvitationAssignments,
-  consumeInvitationUse,
   findActiveInvitationByToken,
-  hasRemainingInvitationUses,
+  findInvitationReservation,
+  invitationHolderForEmail,
 } from '@authrim/ar-lib-core/services/invitation-auth-core';
+import {
+  bindSignupInvitation,
+  completeSignupInvitation,
+  invitationDatabase,
+  releaseSignupInvitation,
+  signupInvitationErrorResponse,
+  signupInvitationFromMetadata,
+  startSignupInvitation,
+  type SignupInvitationReservation,
+  type SignupInvitationStart,
+} from './invitation-redemption';
 
 import {
   generateRegistrationOptions,
@@ -121,37 +154,43 @@ import {
   validateRegistrationFieldSubmissionFromEnv,
 } from './registration-field-utils';
 import {
+  readDeclaredHumanVerificationScreen,
   verifyHumanVerificationForAction,
   type HumanVerificationAction,
 } from './human-verification';
 import { resolveSessionTtl } from './session-ttl';
+import {
+  continueSAMLChallenge,
+  isBrowserSessionOnlyChallenge,
+} from './saml-authorization-challenge';
 import { verifyEmailVerificationProtocol } from './email-verification-protocol';
 import {
   buildAuthorizeContinuationUrl,
   createAuthorizationRequestContinuation,
 } from './authorization-continuation';
 import {
+  isDeletedDestinationRouteError,
   publishTenantD1PasskeyRoute,
   provisionTenantD1EmailAccount,
   resolvePasskeyProvisioningResumeUserId,
   resolveTenantD1PasskeyAccountRoute,
   resolveTenantD1EmailAccountRoute,
-  usesTenantD1AccountStorage,
+  usesRoutedAccountStorage,
 } from './account-provisioning';
+import { getRequestIssuer } from './issuer';
+import { revokeSessionDeviceSecrets } from './logout-device-secrets';
 
 // ===== Constants =====
 
 const RP_NAME = 'Authrim';
 const CHALLENGE_TTL = 5 * 60; // 5 minutes
-const AUTH_CODE_TTL = 60; // 60 seconds
-const EMAIL_CODE_TTL = 5 * 60; // 5 minutes
+const AUTH_CODE_TTL = 60; // 60 seconds, when oauth.auth_code_ttl is not usable
 const REFRESH_TOKEN_TTL = 30 * 24 * 60 * 60; // 30 days
 const DIRECT_AUTH_GRANT_REDIRECT_URI = 'https://authrim.local/direct-auth/callback';
 
 type DirectAuthChannel = 'browser' | 'native' | 'server';
 
 type AuthorizationChallengeType = 'login' | 'reauth';
-type AuthenticationMethodUsage = 'login' | 'signup' | 'reauth' | 'account_link';
 
 export interface AuthorizationChallengeContinuation {
   redirectUrl: string;
@@ -163,17 +202,23 @@ interface AuthorizationChallengeData {
   metadata?: Record<string, unknown>;
 }
 
-interface AuthenticationMethodKVSettings {
-  'authentication-methods.passkey.enabled'?: boolean | string;
-  'authentication-methods.passkey.login_enabled'?: boolean | string;
-  'authentication-methods.passkey.signup_enabled'?: boolean | string;
-  'authentication-methods.passkey.reauth_enabled'?: boolean | string;
-  'authentication-methods.passkey.account_link_enabled'?: boolean | string;
-  'authentication-methods.email_otp.enabled'?: boolean | string;
-  'authentication-methods.email_otp.login_enabled'?: boolean | string;
-  'authentication-methods.email_otp.signup_enabled'?: boolean | string;
-  'authentication-methods.email_otp.reauth_enabled'?: boolean | string;
-  'authentication-methods.email_otp.account_link_enabled'?: boolean | string;
+async function guestCredentialDenial(
+  c: Context<{ Bindings: Env }>,
+  adapter: DatabaseAdapter,
+  tenantId: string,
+  userId: string
+): Promise<Response | null> {
+  try {
+    await assertGuestCredentialAuthenticationAllowed(adapter, tenantId, userId);
+    return null;
+  } catch (error) {
+    if (isAccountAuthenticationDeniedError(error))
+      return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
+    return c.json(
+      { error: 'temporarily_unavailable', error_description: 'Authentication state unavailable.' },
+      503
+    );
+  }
 }
 
 function isDirectAuthChannel(channel: unknown): channel is DirectAuthChannel {
@@ -225,65 +270,28 @@ export function isDirectAuthClientChannelAllowed(
   return true;
 }
 
-function normalizeBooleanSetting(value: unknown, fallback: boolean): boolean {
-  if (typeof value === 'boolean') return value;
-  if (typeof value === 'string') {
-    const normalized = value.trim().toLowerCase();
-    if (normalized === 'true') return true;
-    if (normalized === 'false') return false;
-  }
-  return fallback;
-}
-
-async function readAuthenticationMethodSettings(
-  env: Env,
-  tenantId: string
-): Promise<AuthenticationMethodKVSettings> {
-  const raw = await env.SETTINGS?.get(`settings:tenant:${tenantId}:authentication-methods`);
-  if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? (parsed as AuthenticationMethodKVSettings) : {};
-  } catch {
-    return {};
-  }
-}
-
-function methodUsageEnabled(
-  settings: AuthenticationMethodKVSettings,
-  method: 'passkey' | 'email_otp',
-  usage: AuthenticationMethodUsage
-): boolean {
-  const legacyEnabled = settings[`authentication-methods.${method}.enabled`];
-  const defaultEnabled = method === 'passkey';
-  const legacyFallback = normalizeBooleanSetting(legacyEnabled, defaultEnabled);
-  const key =
-    usage === 'account_link'
-      ? `authentication-methods.${method}.account_link_enabled`
-      : `authentication-methods.${method}.${usage}_enabled`;
-  return normalizeBooleanSetting(
-    settings[key as keyof AuthenticationMethodKVSettings],
-    legacyFallback
-  );
-}
-
-async function isAuthenticationMethodUsageEnabled(
-  env: Env,
-  tenantId: string,
-  method: 'passkey' | 'email_otp',
-  usage: AuthenticationMethodUsage
-): Promise<boolean> {
-  const settings = await readAuthenticationMethodSettings(env, tenantId);
-  return methodUsageEnabled(settings, method, usage);
-}
-
 async function rejectIfAuthenticationMethodDisabled(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
   method: 'passkey' | 'email_otp',
   usage: AuthenticationMethodUsage
 ): Promise<Response | null> {
-  const enabled = await isAuthenticationMethodUsageEnabled(c.env, tenantId, method, usage);
+  let enabled: boolean;
+  try {
+    // Strict: a method on by default (passkey) must not stay on because the switch that would
+    // turn it off could not be read.
+    enabled = await isAuthenticationMethodUsageEnabled(c.env, tenantId, method, usage, {
+      strict: true,
+    });
+  } catch {
+    return c.json(
+      {
+        error: 'temporarily_unavailable',
+        error_description: 'Authentication settings are unavailable.',
+      },
+      503
+    );
+  }
   if (enabled) return null;
   return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS, {
     extensions: {
@@ -327,7 +335,10 @@ type CredentialIDLike = string | ArrayBuffer | ArrayBufferView;
 async function getAllowedOriginsFromKV(env: Env, tenantId: string): Promise<string[]> {
   let allowedOriginsValue: string | undefined;
 
-  const settings = await getTenantSettings(env.AUTHRIM_CONFIG, tenantId, 'tenant');
+  const settings = await getTenantSettingsDocument(env, tenantId, 'tenant', {
+    // Without the tenant's settings the fallback is at least as strict.
+    onUnreadable: 'empty',
+  });
   if (settings && typeof settings['tenant.allowed_origins'] === 'string') {
     allowedOriginsValue = settings['tenant.allowed_origins'];
   }
@@ -430,7 +441,7 @@ function normalizeOriginHeaderValue(originHeader: string | undefined | null): st
   }
 }
 
-function getDirectAuthWebAuthnOrigin(
+export function getDirectAuthWebAuthnOrigin(
   c: Context<{ Bindings: Env }>,
   originHeader: string | undefined
 ): string | undefined {
@@ -512,73 +523,426 @@ function metadataString(metadata: Record<string, unknown>, key: string): string 
   return typeof value === 'string' && value ? value : undefined;
 }
 
+/**
+ * A method that can complete a re-authentication. Directory passwords and 'other' methods (DID,
+ * an external IdP, SAML) have no re-authentication switch of their own.
+ */
+export type ReauthProvenMethod = 'passkey' | 'email_otp' | 'totp' | 'directory_password' | 'other';
+
+/**
+ * The method a session's authentication proved, from its amr (methods recorded as unverified, such
+ * as a passkey only just registered, do not count).
+ */
+export function reauthProvenMethodFromAmr(
+  amr: readonly string[] | undefined,
+  unverifiedAmr: readonly string[] = []
+): ReauthProvenMethod | undefined {
+  const proven = (amr ?? []).filter((method) => !unverifiedAmr.includes(method));
+  if (proven.includes('totp')) return 'totp';
+  if (proven.includes('passkey')) return 'passkey';
+  if (
+    proven.some((m) => m === 'otp' || m === 'email_code' || m === 'email_verification_protocol')
+  ) {
+    return 'email_otp';
+  }
+  if (proven.includes('pwd')) return 'directory_password';
+  if (proven.some((m) => m === 'did' || m === 'external_idp' || m === 'saml')) return 'other';
+  return undefined;
+}
+
+/**
+ * auth_time has whole seconds: an undated sign-in in the same second as the challenge may read up
+ * to a second earlier than the challenge's millisecond time. Applies to auth_time only.
+ */
+const FRESH_SIGN_IN_CLOCK_SKEW_MS = 1000;
+
+function positiveSafeInteger(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
+/**
+ * What a session (or the artifact it is made from) proves for a re-authentication: its method and
+ * when that was proven (milliseconds), as one pair. A session proven by several methods records
+ * the one a re-authentication takes with its own time (reauth_proven_amr and reauth_proven_at,
+ * e.g. the email code of a directory fallback) apart from its oldest proof (proven_at, for
+ * assurance), so methods merged in later (an older TOTP) never borrow a newer method's time.
+ */
+export function reauthProofFromRecord(
+  record: Record<string, unknown> | undefined,
+  amr: readonly string[] | undefined,
+  unverifiedAmr: readonly string[] = []
+): { method?: ReauthProvenMethod; provenAtMs?: number } {
+  const reauthProvenAt = positiveSafeInteger(record?.reauth_proven_at);
+  const reauthProvenAmr = Array.isArray(record?.reauth_proven_amr)
+    ? record.reauth_proven_amr.filter((value): value is string => typeof value === 'string')
+    : undefined;
+  if (reauthProvenAt !== undefined && reauthProvenAmr) {
+    // The pair names only methods just proven (a passkey signed for it is no longer unverified).
+    const method = reauthProvenMethodFromAmr(reauthProvenAmr);
+    return method ? { method, provenAtMs: reauthProvenAt } : {};
+  }
+  const method = reauthProvenMethodFromAmr(amr, unverifiedAmr);
+  if (!method) return {};
+  // A login at an external IdP or by SAML proves a re-authentication only with the pair above: the
+  // bridge asked the IdP for a new login and verified that one happened. Otherwise the IdP may have
+  // answered from a session of its own, however old.
+  if (method === 'other' && (amr ?? []).some((m) => m === 'external_idp' || m === 'saml')) {
+    return {};
+  }
+  const provenAtMs = positiveSafeInteger(record?.proven_at);
+  return provenAtMs === undefined ? { method } : { method, provenAtMs };
+}
+
+/**
+ * What an authorization challenge demands of the proof that answers it: made after `issuedAt`
+ * (milliseconds). A re-authentication ('reauth') needs a proof the server dated; a sign-in for a
+ * client whose SSO is off ('login') accepts an undated proof by its auth_time.
+ */
+export interface AuthorizationChallengeFreshness {
+  kind: 'login' | 'reauth';
+  issuedAt: number;
+  /** The user a re-authentication was asked of: only a proof by that user answers it. */
+  subjectUserId?: string;
+  /**
+   * Set when the challenge was used (or is gone) and this is what its confirmation says: the user
+   * it was continued for, who alone may be given the result again.
+   */
+  confirmedFor?: string;
+  /**
+   * The challenge is gone and left no confirmation: nothing answers it (`issuedAt` is then never
+   * reached, so that no proof is old enough to count as new).
+   */
+  gone?: true;
+}
+
+/**
+ * Whether a proof is too old to answer the challenge. This is the one rule both the continuation
+ * and the Login UI runtime (which must not offer a session the continuation would refuse) apply.
+ */
+export function isProofOlderThanChallengeRequirement(
+  freshness: AuthorizationChallengeFreshness,
+  authTime: number,
+  provenAtMs?: number
+): boolean {
+  if (freshness.kind === 'reauth') {
+    // A proof of unknown time (a session or artifact that did not record one) cannot show it.
+    return provenAtMs === undefined || provenAtMs < freshness.issuedAt;
+  }
+  // A proof the server dated to the millisecond is compared exactly: one made before the challenge
+  // (the same instant counts as after) never answers it. Only an auth_time, which is kept in whole
+  // seconds, is given the skew of the second it was truncated to.
+  if (provenAtMs !== undefined) return provenAtMs < freshness.issuedAt;
+  return authTime * 1000 < freshness.issuedAt - FRESH_SIGN_IN_CLOCK_SKEW_MS;
+}
+
+async function authorizationConfirmationId(tenantId: string, challengeId: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(JSON.stringify(['authorize_confirmation', tenantId, challengeId]))
+  );
+  const hex = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join(
+    ''
+  );
+  // Shaped like the random identifiers it replaces.
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
+/**
+ * The confirmation an authorization challenge left when it was continued, if it is still there to
+ * be used: who it was made for, the binding that goes with the browser, and what the challenge
+ * asked of the proof. Read from the confirmation alone.
+ */
+async function loadAuthorizationConfirmation(
+  env: Env,
+  tenantId: string,
+  challengeId: string
+): Promise<{
+  id: string;
+  type: AuthorizationChallengeType;
+  userId: string;
+  issuer: string;
+  browserBinding: string;
+  metadata: Record<string, unknown>;
+} | null> {
+  // A store that cannot be read throws: that is not a confirmation that is not there.
+  const confirmationId = await authorizationConfirmationId(tenantId, challengeId);
+  const store = await getChallengeStoreByChallengeId(env, confirmationId, tenantId);
+  const confirmation = (await store.getChallengeRpc(confirmationId)) as {
+    tenantId?: string;
+    userId?: string;
+    consumed?: boolean;
+    metadata?: Record<string, unknown>;
+  } | null;
+  const metadata = confirmation?.metadata;
+  const binding = metadata?.browserBinding;
+  const type = metadata?.continuation_type;
+  const issuer = metadata?.continuation_issuer;
+  if (
+    !confirmation ||
+    !metadata ||
+    confirmation.tenantId !== tenantId ||
+    confirmation.consumed === true ||
+    typeof confirmation.userId !== 'string' ||
+    metadata.purpose !== 'authorize_confirmation' ||
+    metadata.source_challenge_id !== challengeId ||
+    typeof binding !== 'string' ||
+    (type !== 'login' && type !== 'reauth') ||
+    typeof issuer !== 'string'
+  ) {
+    return null;
+  }
+  return {
+    id: confirmationId,
+    type,
+    userId: confirmation.userId,
+    issuer,
+    browserBinding: binding,
+    metadata,
+  };
+}
+
+/** What the challenge asked of the proof, in the form of the challenge it came from. */
+function readConfirmationRequirement(
+  metadata: Record<string, unknown>
+): AuthorizationChallengeData {
+  const requirement = (metadata.continuation_requirement ?? {}) as Record<string, unknown>;
+  return {
+    userId:
+      typeof requirement.session_user_id === 'string' ? requirement.session_user_id : 'anonymous',
+    metadata: {
+      ...(typeof requirement.fresh_sign_in_after === 'number'
+        ? { fresh_sign_in_after: requirement.fresh_sign_in_after }
+        : {}),
+      ...(typeof requirement.reauth_issued_at === 'number'
+        ? { reauth_issued_at: requirement.reauth_issued_at }
+        : {}),
+      ...(typeof requirement.session_user_id === 'string'
+        ? { sessionUserId: requirement.session_user_id }
+        : {}),
+    },
+  };
+}
+
+/**
+ * The continuation an authorization challenge already gave, if its confirmation is still there to
+ * be used and was made for this user: the redirect and the binding that goes with the browser.
+ */
+async function readAuthorizationContinuation(
+  env: Env,
+  tenantId: string,
+  challengeId: string,
+  authenticatedUserId: string
+): Promise<{
+  type: AuthorizationChallengeType;
+  redirectUrl: string;
+  browserBinding: string;
+  requirement: AuthorizationChallengeData;
+} | null> {
+  const confirmation = await loadAuthorizationConfirmation(env, tenantId, challengeId);
+  if (!confirmation || confirmation.userId !== authenticatedUserId) return null;
+  return {
+    type: confirmation.type,
+    browserBinding: confirmation.browserBinding,
+    redirectUrl: buildAuthorizeContinuationUrl(
+      { issuer: confirmation.issuer },
+      confirmation.id,
+      confirmation.issuer
+    ),
+    requirement: readConfirmationRequirement(confirmation.metadata),
+  };
+}
+
 export async function consumeAuthorizationChallengeContinuation(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
   challengeId: string,
   authenticatedUserId: string,
   authTime: number,
-  fallbackIssuer: string
+  fallbackIssuer: string,
+  /**
+   * The method that proved the user. A re-authentication needs one (an unknown method, such as a
+   * just-registered passkey, cannot complete it) and requires its re-authentication switch.
+   */
+  provenMethod?: ReauthProvenMethod,
+  /** When the proof was verified (milliseconds), if known: freshness is then judged exactly. */
+  provenAtMs?: number
 ): Promise<AuthorizationChallengeContinuation | { error: Response }> {
   const env = c.env;
   const challengeStore = await getChallengeStoreByChallengeId(env, challengeId, tenantId);
+
+  const refuse = (status: number, error: string, description: string) => ({
+    error: new Response(JSON.stringify({ error, error_description: description }), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  });
+
+  /**
+   * Whether this proof may answer the challenge: the re-authentication method, the proof's age
+   * (a re-authentication, or a sign-in for a client whose SSO is off, is answered only by a proof
+   * made after it was asked for; a proof of unknown time falls back to its auth_time or, for a
+   * re-authentication, cannot show it) and the user a re-authentication was issued for.
+   */
+  const refusalFor = async (
+    kind: AuthorizationChallengeType,
+    challengeData: AuthorizationChallengeData
+  ): Promise<{ error: Response } | null> => {
+    if (
+      kind === 'reauth' &&
+      (!provenMethod ||
+        (provenMethod !== 'directory_password' &&
+          provenMethod !== 'other' &&
+          !(await isAuthenticationMethodUsageAvailable(env, tenantId, provenMethod, 'reauth', {
+            strict: true,
+          }).catch(() => false))))
+    ) {
+      return refuse(403, 'access_denied', 'This method cannot be used to re-authenticate');
+    }
+    const challengeMetadata = challengeData.metadata || {};
+    const freshSignInAfter = challengeMetadata.fresh_sign_in_after;
+    if (
+      kind === 'login' &&
+      typeof freshSignInAfter === 'number' &&
+      isProofOlderThanChallengeRequirement(
+        { kind: 'login', issuedAt: freshSignInAfter },
+        authTime,
+        provenAtMs
+      )
+    ) {
+      return refuse(403, 'login_required', 'Sign in again to continue to this application');
+    }
+    const reauthIssuedAt = challengeMetadata.reauth_issued_at;
+    if (
+      kind === 'reauth' &&
+      typeof reauthIssuedAt === 'number' &&
+      isProofOlderThanChallengeRequirement(
+        { kind: 'reauth', issuedAt: reauthIssuedAt },
+        authTime,
+        provenAtMs
+      )
+    ) {
+      return refuse(403, 'login_required', 'Authenticate again to complete the re-authentication');
+    }
+    const expectedUser =
+      kind === 'reauth'
+        ? metadataString(challengeMetadata, 'sessionUserId') || challengeData.userId
+        : undefined;
+    if (expectedUser && expectedUser !== authenticatedUserId) {
+      return refuse(
+        403,
+        'access_denied',
+        'Authenticated user does not match the re-authentication challenge'
+      );
+    }
+    return null;
+  };
+
+  // Judge the proof before the challenge is used up: a refused proof (an artifact older than the
+  // challenge, another user's session) must leave the challenge for the proof that answers it. A
+  // challenge's metadata never changes once stored, so what was read here is what is consumed;
+  // the consumed record is judged again all the same.
+  let preKind: AuthorizationChallengeType | undefined;
+  let stored:
+    | (AuthorizationChallengeData & { tenantId?: string; type?: string })
+    | null
+    | undefined;
+  try {
+    stored = (await challengeStore.getChallengeRpc(challengeId)) as typeof stored;
+  } catch {
+    // Not "no such challenge": consuming now could use it up for a proof that is then refused
+    // (an older artifact), so the caller tries again once the store answers.
+    return refuse(503, 'temporarily_unavailable', 'The authorization request could not be checked');
+  }
+  if (
+    stored &&
+    stored.tenantId === tenantId &&
+    (stored.type === 'login' || stored.type === 'reauth')
+  ) {
+    preKind = stored.type;
+    const refusal = await refusalFor(preKind, stored);
+    if (refusal) return refusal;
+    // The challenge of a SAML request is judged as above but continued by the SSO endpoint, not
+    // /authorize, and is not used up (see saml-authorization-challenge.ts).
+    const samlContinuation = continueSAMLChallenge(stored, tenantId);
+    if (samlContinuation) {
+      return samlContinuation.kind === 'continue'
+        ? { type: samlContinuation.type, redirectUrl: samlContinuation.redirectUrl }
+        : refuse(400, 'invalid_request', 'Authorization challenge is invalid or expired');
+    }
+  }
+
+  // A challenge already continued (or gone since) is continued again only to give the same result
+  // back: the earlier attempt may have ended, after the continuation was made, before its caller
+  // learned of it. What the confirmation says of itself is enough: it was made for one user, from
+  // this challenge, and expires shortly; the challenge need not still be there.
+  if (stored === null || (stored as { consumed?: boolean } | undefined)?.consumed === true) {
+    let repeated: Awaited<ReturnType<typeof readAuthorizationContinuation>>;
+    try {
+      repeated = await readAuthorizationContinuation(
+        env,
+        tenantId,
+        challengeId,
+        authenticatedUserId
+      );
+    } catch {
+      return refuse(
+        503,
+        'temporarily_unavailable',
+        'The authorization request could not be checked'
+      );
+    }
+    if (repeated) {
+      // The same terms as the first time, whatever has become of the challenge.
+      const repeatedRefusal = await refusalFor(repeated.type, repeated.requirement);
+      if (repeatedRefusal) return repeatedRefusal;
+      c.header(
+        'Set-Cookie',
+        `authrim_authorize_confirmation=${encodeURIComponent(repeated.browserBinding)}; Path=/authorize; HttpOnly; SameSite=${getSessionCookieSameSite(env)}; Secure; Max-Age=120`,
+        { append: true }
+      );
+      return { type: repeated.type, redirectUrl: repeated.redirectUrl };
+    }
+    return refuse(400, 'invalid_request', 'Authorization challenge is invalid or expired');
+  }
+
   let challengeData: AuthorizationChallengeData;
   let type: AuthorizationChallengeType;
-
+  const kinds: AuthorizationChallengeType[] =
+    preKind === 'reauth' ? ['reauth', 'login'] : ['login', 'reauth'];
   try {
     challengeData = (await challengeStore.consumeChallengeRpc({
       id: challengeId,
       tenantId,
-      type: 'login',
+      type: kinds[0],
       challenge: challengeId,
     })) as AuthorizationChallengeData;
-    type = 'login';
+    type = kinds[0];
   } catch {
     try {
       challengeData = (await challengeStore.consumeChallengeRpc({
         id: challengeId,
         tenantId,
-        type: 'reauth',
+        type: kinds[1],
         challenge: challengeId,
       })) as AuthorizationChallengeData;
-      type = 'reauth';
+      type = kinds[1];
     } catch {
-      return {
-        error: new Response(
-          JSON.stringify({
-            error: 'invalid_request',
-            error_description: 'Authorization challenge is invalid or expired',
-          }),
-          {
-            status: 400,
-            headers: { 'Content-Type': 'application/json' },
-          }
-        ),
-      };
+      return refuse(400, 'invalid_request', 'Authorization challenge is invalid or expired');
     }
   }
+
+  const consumedRefusal = await refusalFor(type, challengeData);
+  if (consumedRefusal) return consumedRefusal;
 
   const metadata = challengeData.metadata || {};
   const expectedUserId =
     type === 'reauth'
       ? metadataString(metadata, 'sessionUserId') || challengeData.userId
       : undefined;
-  if (expectedUserId && expectedUserId !== authenticatedUserId) {
-    return {
-      error: new Response(
-        JSON.stringify({
-          error: 'access_denied',
-          error_description: 'Authenticated user does not match the re-authentication challenge',
-        }),
-        {
-          status: 403,
-          headers: { 'Content-Type': 'application/json' },
-        }
-      ),
-    };
-  }
 
-  const confirmationId = crypto.randomUUID();
+  // The same authorization request has the same confirmation, so that a continuation made once can
+  // be read back (readAuthorizationContinuation) by an attempt that did not learn of it.
+  const confirmationId = await authorizationConfirmationId(tenantId, challengeId);
   const browserBinding = generateSecureRandomString(32);
   const confirmationStore = await getChallengeStoreByChallengeId(env, confirmationId, tenantId);
   await confirmationStore.storeChallengeRpc({
@@ -590,10 +954,34 @@ export async function consumeAuthorizationChallengeContinuation(
     ttl: 60,
     metadata: {
       purpose: 'authorize_confirmation',
+      source_challenge_id: challengeId,
+      // What a repeat of this continuation needs to give the same answer (see
+      // readAuthorizationContinuation).
+      continuation_type: type,
+      continuation_issuer: metadataString(metadata, 'issuer') || fallbackIssuer,
+      // What the proof had to be, so that giving the continuation again asks the same of whoever
+      // asks, whether or not the challenge is still there.
+      continuation_requirement: {
+        ...(typeof metadata.fresh_sign_in_after === 'number'
+          ? { fresh_sign_in_after: metadata.fresh_sign_in_after }
+          : {}),
+        ...(typeof metadata.reauth_issued_at === 'number'
+          ? { reauth_issued_at: metadata.reauth_issued_at }
+          : {}),
+        ...(expectedUserId ? { session_user_id: expectedUserId } : {}),
+      },
       authTime,
       sessionUserId: expectedUserId || authenticatedUserId,
       browserBinding,
       authorization_request: createAuthorizationRequestContinuation(metadata),
+      // An assurance step-up: authorize combines the earlier session's proven factors with this one.
+      ...(type === 'reauth' && metadata.assurance_step_up !== undefined
+        ? { assurance_step_up: metadata.assurance_step_up }
+        : {}),
+      // When the re-authentication was asked for: only a session proven after it is its result.
+      ...(type === 'reauth' && metadata.reauth_issued_at !== undefined
+        ? { reauth_issued_at: metadata.reauth_issued_at }
+        : {}),
     },
   });
   c.header(
@@ -630,6 +1018,203 @@ export async function readAuthorizationChallengeType(
   return null;
 }
 
+/**
+ * How long an emailed Direct Auth code lasts: the tenant's email code lifetime, but never past the
+ * authorization challenge it continues (a code outliving it could no longer finish the sign-in).
+ * `notAfterMs` is that challenge's end, to cap the stored code again when it is stored. A challenge
+ * that can no longer be read cannot be continued, so its code lasts no time at all (the same for
+ * every address).
+ */
+async function directEmailCodeLifetime(
+  env: Env,
+  tenantId: string,
+  authorizationChallengeId: string | undefined
+): Promise<{ ttlSeconds: number; notAfterMs?: number }> {
+  const configured = await resolveEmailCodeTtlSeconds(env, tenantId);
+  if (!authorizationChallengeId) return { ttlSeconds: configured };
+  let expiresAt: unknown;
+  try {
+    const challengeStore = await getChallengeStoreByChallengeId(
+      env,
+      authorizationChallengeId,
+      tenantId
+    );
+    const challenge = (await challengeStore.getChallengeRpc(authorizationChallengeId)) as {
+      expiresAt?: unknown;
+    } | null;
+    expiresAt = challenge?.expiresAt;
+  } catch {
+    expiresAt = undefined;
+  }
+  const notAfterMs = typeof expiresAt === 'number' ? expiresAt : Date.now();
+  return { ttlSeconds: remainingCodeSeconds(configured, notAfterMs), notAfterMs };
+}
+
+/** At most `ttlSeconds`, and no later than `notAfterMs` (at least a second, so it is stored). */
+function remainingCodeSeconds(ttlSeconds: number, notAfterMs: number | undefined): number {
+  if (notAfterMs === undefined) return ttlSeconds;
+  return Math.max(1, Math.min(ttlSeconds, Math.floor((notAfterMs - Date.now()) / 1000)));
+}
+
+/** The user a re-authentication challenge was issued for (null for a login challenge or none). */
+async function readAuthorizationChallengeReauthUser(
+  env: Env,
+  tenantId: string,
+  challengeId: string | undefined
+): Promise<string | null> {
+  if (!challengeId) return null;
+  try {
+    const challengeStore = await getChallengeStoreByChallengeId(env, challengeId, tenantId);
+    const challenge = (await challengeStore.getChallengeRpc(challengeId)) as {
+      tenantId?: string;
+      type?: string;
+      userId?: string;
+      metadata?: Record<string, unknown>;
+    } | null;
+    if (challenge?.tenantId !== tenantId || challenge.type !== 'reauth') return null;
+    const sessionUserId = challenge.metadata?.sessionUserId;
+    const userId =
+      typeof sessionUserId === 'string' && sessionUserId ? sessionUserId : challenge.userId;
+    return userId && userId !== 'anonymous' ? userId : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * What the challenge demands of the proof that answers it (a re-authentication, or a sign-in for a
+ * client whose SSO is off), or null for no challenge, another tenant's, or neither kind.
+ * Throws when the challenge cannot be read, so the caller can choose a safe path.
+ */
+export async function readAuthorizationChallengeFreshness(
+  env: Env,
+  tenantId: string,
+  challengeId: string | undefined | null
+): Promise<AuthorizationChallengeFreshness | null> {
+  if (!challengeId) return null;
+  const challengeStore = await getChallengeStoreByChallengeId(env, challengeId, tenantId);
+  const challenge = (await challengeStore.getChallengeRpc(challengeId)) as {
+    tenantId?: string;
+    type?: string;
+    userId?: string;
+    consumed?: boolean;
+    metadata?: Record<string, unknown>;
+  } | null;
+  if (!challenge || challenge.tenantId !== tenantId || challenge.consumed === true) {
+    // Used, or cleared away since: what it asked is what its confirmation (if it left one) says.
+    const confirmation = await loadAuthorizationConfirmation(env, tenantId, challengeId);
+    if (!confirmation) {
+      return { kind: 'login', issuedAt: Number.POSITIVE_INFINITY, gone: true };
+    }
+    const requirement = readConfirmationRequirement(confirmation.metadata);
+    const kind = confirmation.type;
+    const issuedAt =
+      kind === 'reauth'
+        ? requirement.metadata?.reauth_issued_at
+        : requirement.metadata?.fresh_sign_in_after;
+    return {
+      kind,
+      // A sign-in that asked for nothing newer asked for nothing.
+      issuedAt: typeof issuedAt === 'number' ? issuedAt : 0,
+      confirmedFor: confirmation.userId,
+      ...(requirement.userId !== 'anonymous' ? { subjectUserId: requirement.userId } : {}),
+    };
+  }
+  const kind = challenge.type === 'reauth' ? 'reauth' : challenge.type === 'login' ? 'login' : null;
+  if (!kind) return null;
+  const issuedAt =
+    kind === 'reauth'
+      ? challenge.metadata?.reauth_issued_at
+      : challenge.metadata?.fresh_sign_in_after;
+  if (typeof issuedAt !== 'number') return null;
+  const sessionUserId = challenge.metadata?.sessionUserId;
+  const subject =
+    kind === 'reauth'
+      ? typeof sessionUserId === 'string' && sessionUserId
+        ? sessionUserId
+        : challenge.userId
+      : undefined;
+  return {
+    kind,
+    issuedAt,
+    ...(subject && subject !== 'anonymous' ? { subjectUserId: subject } : {}),
+  };
+}
+
+/** How long an email-code send left provisioning its account may be resumed. */
+const DIRECT_EMAIL_SEND_RESUME_TTL_SECONDS = 5 * 60;
+
+/**
+ * The send a resume record stands for: the same address and PKCE, from the same client and
+ * screen (or none named), for the same authorization challenge (or none). Only that send, sent
+ * again once its account exists, may use it.
+ */
+async function directEmailSendResumeKey(input: {
+  tenantId: string;
+  email: string;
+  codeChallenge: string;
+  clientId: string;
+  screen: string;
+  authorizationChallengeId?: string;
+}): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(
+      JSON.stringify([
+        input.tenantId,
+        input.email,
+        input.codeChallenge,
+        input.clientId,
+        input.screen,
+        input.authorizationChallengeId ?? null,
+      ])
+    )
+  );
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/** Records that a send passed its checks (human verification included) as `usage`. */
+async function recordDirectEmailSendResume(
+  env: Env,
+  tenantId: string,
+  key: string,
+  usage: HumanVerificationAction
+): Promise<void> {
+  const id = `direct_email_send_resume:${key}`;
+  const challengeStore = await getChallengeStoreByChallengeId(env, id, tenantId);
+  await challengeStore.storeChallengeRpc({
+    id,
+    tenantId,
+    type: 'direct_email_send_resume',
+    userId: 'anonymous',
+    challenge: key,
+    ttl: DIRECT_EMAIL_SEND_RESUME_TTL_SECONDS,
+    metadata: { usage },
+  });
+}
+
+/** The usage of the send this one resumes, using its record up (once), or null. */
+async function consumeDirectEmailSendResume(
+  env: Env,
+  tenantId: string,
+  key: string
+): Promise<{ usage: HumanVerificationAction } | null> {
+  const id = `direct_email_send_resume:${key}`;
+  try {
+    const challengeStore = await getChallengeStoreByChallengeId(env, id, tenantId);
+    const record = (await challengeStore.consumeChallengeRpc({
+      id,
+      tenantId,
+      type: 'direct_email_send_resume',
+      challenge: key,
+    })) as { metadata?: { usage?: unknown } } | undefined;
+    const usage = record?.metadata?.usage;
+    return usage === 'signup' || usage === 'login' ? { usage } : null;
+  } catch {
+    return null;
+  }
+}
+
 async function resolveDirectStartTurnstileAction(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
@@ -653,7 +1238,7 @@ async function resolveDirectStartTurnstileAction(
   return challengeType;
 }
 
-async function validateDirectAuthClient(
+export async function validateDirectAuthClient(
   c: Context<{ Bindings: Env }>,
   clientId: string,
   channel: DirectAuthChannel,
@@ -801,15 +1386,45 @@ async function validateSession(
 }
 
 /**
- * Generate auth_code and store in ChallengeStore
+ * The tenant's assurance settings for a Direct Auth code, read before anything one-time (a
+ * challenge, a code, a new credential) is spent: settings that cannot be read stop the request
+ * with nothing lost, so it can be retried.
+ */
+async function readDirectAuthAssurance(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string
+): Promise<{ settings: Record<string, unknown> } | { error: Response }> {
+  try {
+    return { settings: await resolveEffectiveSettings(c.env, 'assurance', { tenantId }) };
+  } catch (error) {
+    getLogger(c)
+      .module('DIRECT-AUTH')
+      .error('Failed to load assurance settings', { action: 'assurance_settings' }, error as Error);
+    return {
+      error: c.json(
+        {
+          error: 'temporarily_unavailable',
+          error_description: 'Assurance settings are temporarily unavailable',
+        },
+        503
+      ),
+    };
+  }
+}
+
+/**
+ * Generate auth_code and store in ChallengeStore. Returns the code and its lifetime in seconds
+ * (`oauth.auth_code_ttl` for the client or tenant), which both stores and the response use.
  */
 async function generateAuthCode(
   env: Env,
   tenantId: string,
   userId: string,
   codeChallenge: string,
-  metadata?: Record<string, unknown>
-): Promise<string> {
+  metadata: Record<string, unknown> | undefined,
+  /** Read by the caller beforehand (readDirectAuthAssurance). */
+  assuranceSettings: Record<string, unknown>
+): Promise<{ code: string; expiresIn: number }> {
   const authCode = crypto.randomUUID();
   const clientId = typeof metadata?.client_id === 'string' ? metadata.client_id : undefined;
   const scope = typeof metadata?.scope === 'string' ? metadata.scope : 'openid profile email';
@@ -818,24 +1433,73 @@ async function generateAuthCode(
     throw new Error('Direct Auth artifact requires client_id binding');
   }
 
-  const authCodeStoreId = env.AUTH_CODE_STORE.idFromName(
-    buildDOInstanceName('auth-code', tenantId)
-  );
-  const authCodeStore = env.AUTH_CODE_STORE.get(authCodeStoreId);
-
-  await authCodeStore.storeCodeRpc({
-    code: authCode,
-    tenantId,
-    clientId,
-    redirectUri: DIRECT_AUTH_GRANT_REDIRECT_URI,
-    userId,
-    scope,
-    codeChallenge,
-    codeChallengeMethod: 'S256',
-    authTime:
-      typeof metadata?.auth_time === 'number' ? metadata.auth_time : Math.floor(Date.now() / 1000),
-    acr: 'urn:mace:incommon:iap:bronze',
-  });
+  const oauthSettings = await resolveEffectiveSettings(env, 'oauth', { tenantId, clientId });
+  // With assurance on, how the user authenticated goes with the code: the token endpoint enforces
+  // the AAL it reached and reports it (amr, the acr of that AAL) in its tokens.
+  const method = typeof metadata?.method === 'string' ? metadata.method : undefined;
+  const aal =
+    assuranceSettings['assurance.enabled'] === true
+      ? computeAAL(sessionAssuranceEvidence({ amr: method ? [method] : [] }))
+      : undefined;
+  const assuranceAcr = aal ? aalToAcr(aal) : null;
+  const configuredTtl = oauthSettings['oauth.auth_code_ttl'];
+  const maxCodesPerUser = oauthSettings['oauth.max_codes_per_user'];
+  // One lifetime for the code, its challenge and the response: a code must not outlive its
+  // challenge (the token exchange consumes both) or the other way round.
+  const expiresIn =
+    typeof configuredTtl === 'number' && Number.isSafeInteger(configuredTtl) && configuredTtl > 0
+      ? configuredTtl
+      : AUTH_CODE_TTL;
+  // The challenge of a SAML request finishes the browser session only: no code for /token is made.
+  const challengeIdOfArtifact =
+    typeof metadata?.authorization_challenge_id === 'string' && metadata.authorization_challenge_id
+      ? metadata.authorization_challenge_id
+      : undefined;
+  const browserSessionOnly = challengeIdOfArtifact
+    ? await isBrowserSessionOnlyChallenge(env, tenantId, challengeIdOfArtifact)
+    : false;
+  if (!browserSessionOnly) {
+    const codeRequest: StoreCodeRequest = {
+      code: authCode,
+      tenantId,
+      clientId,
+      ttlSeconds: expiresIn,
+      maxCodesPerUser: typeof maxCodesPerUser === 'number' ? maxCodesPerUser : undefined,
+      redirectUri: DIRECT_AUTH_GRANT_REDIRECT_URI,
+      userId,
+      scope,
+      codeChallenge,
+      codeChallengeMethod: 'S256',
+      authTime:
+        typeof metadata?.auth_time === 'number'
+          ? metadata.auth_time
+          : Math.floor(Date.now() / 1000),
+      // With assurance on and in ID tokens, the acr of the AAL reached (none for AAL0), as authorize
+      // gives; otherwise the fixed one Direct Auth has always given.
+      ...(aal && assuranceSettings['assurance.include_in_id_token'] === true
+        ? assuranceAcr
+          ? { acr: assuranceAcr }
+          : {}
+        : { acr: 'urn:mace:incommon:iap:bronze' }),
+      ...(aal
+        ? {
+            aal,
+            ...(method ? { amr: [method], assuranceAmr: [method] } : {}),
+            ...(assuranceAcr ? { assuranceAcr } : {}),
+          }
+        : {}),
+    };
+    if (env.AUTH_RUNTIME_PORTS) {
+      const codeStore = env.AUTH_RUNTIME_PORTS.authorizationCodes;
+      if (!codeStore) throw new Error('auth_runtime_authorization_code_store_unavailable');
+      await codeStore.store(codeRequest);
+    } else {
+      const authCodeStoreId = env.AUTH_CODE_STORE.idFromName(
+        buildDOInstanceName('auth-code', tenantId)
+      );
+      await env.AUTH_CODE_STORE.get(authCodeStoreId).storeCodeRpc(codeRequest);
+    }
+  }
 
   const challengeStore = await getChallengeStoreByChallengeId(env, authCode, tenantId);
 
@@ -845,14 +1509,17 @@ async function generateAuthCode(
     type: 'direct_auth_code',
     userId,
     challenge: codeChallenge, // Store code_challenge for verification
-    ttl: AUTH_CODE_TTL, // 60 seconds
+    ttl: expiresIn,
     metadata: {
       ...metadata,
       created_at: Date.now(),
+      // Set here, from the challenge as stored, never from the request: /token refuses the
+      // artifact, which only the browser session finish redeems.
+      ...(browserSessionOnly ? { browser_session_only: true } : {}),
     },
   });
 
-  return authCode;
+  return { code: authCode, expiresIn };
 }
 
 // ===== Passkey Login Handlers =====
@@ -911,6 +1578,17 @@ export async function directPasskeyLoginStartHandler(c: Context<{ Bindings: Env 
       turnstileAction
     );
     if (methodDisabledError) return methodDisabledError;
+    // A re-authentication may only prove the user it was asked of: a passkey login turned off must
+    // not be reachable through someone else's re-authentication challenge.
+    const reauthUserId =
+      turnstileAction === 'reauth'
+        ? await readAuthorizationChallengeReauthUser(c.env, tenantId, authorization_challenge_id)
+        : null;
+    if (turnstileAction === 'reauth' && !reauthUserId) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'authorization_challenge_id' },
+      });
+    }
     const turnstileError = await verifyHumanVerificationForAction(
       c,
       turnstileAction,
@@ -967,6 +1645,11 @@ export async function directPasskeyLoginStartHandler(c: Context<{ Bindings: Env 
         origin: webAuthnOrigin,
         rpID,
         authorization_challenge_id,
+        // The switch checked here is checked again before the session is created.
+        usage: turnstileAction,
+        ...(reauthUserId ? { reauth_user_id: reauthUserId } : {}),
+        // The Flow interaction this attempt belongs to, once checked (for its failure records).
+        ...(await signInAttemptInteractionMetadata(c, tenantId)),
       },
     });
 
@@ -1016,6 +1699,9 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
+    const assurance = await readDirectAuthAssurance(c, getTenantIdFromContext(c));
+    if ('error' in assurance) return assurance.error;
+
     // Consume challenge atomically
     const challengeStore = await getChallengeStoreByChallengeId(
       c.env,
@@ -1035,6 +1721,8 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
         origin: string;
         rpID: string;
         authorization_challenge_id?: string;
+        usage?: AuthenticationMethodUsage;
+        reauth_user_id?: string;
       };
     };
 
@@ -1047,6 +1735,22 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
     } catch {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_SESSION_EXPIRED);
     }
+    // From here on a failure is recorded with the challenge's Flow interaction, if it has one.
+    const failed = signInAttemptFailureRecorder(
+      c,
+      getTenantIdFromContext(c),
+      challengeData.metadata,
+      'passkey'
+    );
+
+    // Passkey sign-in may have been turned off since the challenge was issued.
+    const methodDisabledError = await rejectIfAuthenticationMethodDisabled(
+      c,
+      getTenantIdFromContext(c),
+      'passkey',
+      challengeData.metadata?.usage === 'reauth' ? 'reauth' : 'login'
+    );
+    if (methodDisabledError) return failed(methodDisabledError, 'method_disabled');
 
     // Verify PKCE
     const isValidPKCE = await verifyPKCE(
@@ -1054,10 +1758,10 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
       challengeData.metadata?.code_challenge || ''
     );
     if (!isValidPKCE) {
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+      return failed(createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE), 'challenge_mismatch');
     }
     if (challengeData.metadata?.channel !== channel) {
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+      return failed(createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE), 'challenge_mismatch');
     }
 
     // Get credential ID and lookup passkey
@@ -1072,9 +1776,12 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
         rpId: rpID,
       });
     } catch {
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
+      return failed(
+        createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED),
+        'service_unavailable'
+      );
     }
-    const accountScoped = usesTenantD1AccountStorage(c) && Boolean(accountRoute);
+    const accountScoped = Boolean(accountRoute);
     const authCtx = accountScoped
       ? createAccountAuthContextFromHono(c, tenantId)
       : createAuthContextFromHono(c, tenantId);
@@ -1106,13 +1813,28 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
         } satisfies AuthEventData,
       }).catch(() => {});
 
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED, {
-        extensions: {
-          webauthn_signal: {
-            unknown_credential: true,
+      return failed(
+        createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED, {
+          extensions: {
+            webauthn_signal: {
+              unknown_credential: true,
+            },
           },
-        },
-      });
+        }),
+        'credential_not_found'
+      );
+    }
+
+    // A re-authentication proves only the user it was asked of.
+    if (
+      challengeData.metadata?.usage === 'reauth' &&
+      challengeData.metadata.reauth_user_id !== passkey.user_id
+    ) {
+      return failed(
+        createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED),
+        'account_mismatch',
+        passkey.user_id
+      );
     }
 
     if (
@@ -1123,7 +1845,11 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
         credential.response.userHandle !== undefined &&
         !matchesPasskeyUserHandle(credential.response.userHandle, passkey.user_id))
     ) {
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
+      return failed(
+        createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED),
+        'account_mismatch',
+        passkey.user_id
+      );
     }
 
     // Verify authentication response
@@ -1146,19 +1872,29 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
           publicKey: publicKey,
           counter: passkey.counter as number,
         },
+        // Explicit (the library default): a sign-in without the user-verified flag is refused.
+        requireUserVerification: true,
       });
     } catch (error) {
       log.error('Authentication verification failed', {
         action: 'login_finish',
         errorType: error instanceof Error ? error.name : 'Unknown',
       });
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
+      return failed(
+        createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED),
+        'verification_failed',
+        passkey.user_id
+      );
     }
 
     const { verified, authenticationInfo } = verification;
 
     if (!verified) {
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
+      return failed(
+        createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED),
+        'verification_failed',
+        passkey.user_id
+      );
     }
 
     const proofVerifiedAtMs = Date.now();
@@ -1168,8 +1904,19 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
       passkey.user_id
     );
     if (!accountAuthentication) {
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
+      return failed(
+        createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED),
+        'account_unavailable',
+        passkey.user_id
+      );
     }
+    const guestDenial = await guestCredentialDenial(
+      c,
+      authCtx.coreAdapter,
+      tenantId,
+      passkey.user_id
+    );
+    if (guestDenial) return failed(guestDenial, 'guest_denied', passkey.user_id);
     try {
       await advancePasskeyAuthenticationState(
         c.env,
@@ -1185,20 +1932,28 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
       );
     } catch (error) {
       if (!isAccountAuthenticationDeniedError(error)) {
-        return c.json(
-          {
-            error: 'temporarily_unavailable',
-            error_description: 'Authentication state unavailable.',
-          },
-          503,
-          { 'Retry-After': '1' }
+        return failed(
+          c.json(
+            {
+              error: 'temporarily_unavailable',
+              error_description: 'Authentication state unavailable.',
+            },
+            503,
+            { 'Retry-After': '1' }
+          ),
+          'service_unavailable',
+          passkey.user_id
         );
       }
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
+      return failed(
+        createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED),
+        accountAuthenticationDenialReason(error),
+        passkey.user_id
+      );
     }
 
     c.executionCtx.waitUntil(
-      Promise.all([
+      samlDrAll([
         authCtx.repositories.passkey.mirrorCounterAfterAuth(
           passkey.id,
           authenticationInfo.newCounter
@@ -1213,7 +1968,7 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
     );
 
     // Generate auth_code
-    const authCode = await generateAuthCode(
+    const { code: authCode, expiresIn: authCodeExpiresIn } = await generateAuthCode(
       c.env,
       tenantId,
       passkey.user_id,
@@ -1226,8 +1981,12 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
         transaction_id: challengeData.metadata?.transaction_id || challenge_id,
         passkey_id: passkey.id,
         auth_time: authTime,
+        // When the assertion was verified (milliseconds): the session redeemed from this artifact
+        // was proven then, not when the artifact was stored or redeemed.
+        proven_at: proofVerifiedAtMs,
         authorization_challenge_id: challengeData.metadata?.authorization_challenge_id,
-      }
+      },
+      assurance.settings
     );
 
     // Publish success event
@@ -1243,7 +2002,7 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
 
     return c.json({
       direct_auth_artifact: authCode,
-      expires_in: AUTH_CODE_TTL,
+      expires_in: authCodeExpiresIn,
     });
   } catch (error) {
     const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
@@ -1276,6 +2035,7 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       scope?: string;
       authenticator_type?: 'platform' | 'cross-platform' | 'any';
       resident_key?: 'required' | 'preferred' | 'discouraged';
+      /** Accepted for compatibility and ignored: user verification is always required. */
       user_verification?: 'required' | 'preferred' | 'discouraged';
       custom_fields?: Record<string, unknown>;
       authorization_challenge_id?: string;
@@ -1283,6 +2043,8 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       cf_turnstile_response?: string;
       provisioning_token?: string;
       resume_user_id?: string;
+      invite_token?: string;
+      invitation_email_proof?: string;
     }>();
 
     const {
@@ -1295,13 +2057,14 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       scope,
       authenticator_type = 'any',
       resident_key = 'required',
-      user_verification = 'required',
       custom_fields,
       authorization_challenge_id,
       human_verification_response,
       cf_turnstile_response,
       provisioning_token,
       resume_user_id,
+      invite_token,
+      invitation_email_proof,
     } = body;
 
     if (!client_id || !code_challenge || code_challenge_method !== 'S256' || !channel) {
@@ -1335,16 +2098,23 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       ? await resolveDirectStartTurnstileAction(c, tenantId, authorization_challenge_id)
       : 'signup';
     if (typeof passkeySignupUsage !== 'string') return passkeySignupUsage.error;
+    // A sign-up whatever challenge it arrives with: a re-authentication cannot carry one, and a
+    // login challenge must not stand in for the sign-up switch.
+    if (passkeySignupUsage === 'reauth') {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'authorization_challenge_id' },
+      });
+    }
     const methodDisabledError = await rejectIfAuthenticationMethodDisabled(
       c,
       tenantId,
       'passkey',
-      passkeySignupUsage
+      'signup'
     );
     if (methodDisabledError) return methodDisabledError;
     const turnstileError = await verifyHumanVerificationForAction(
       c,
-      passkeySignupUsage,
+      'signup',
       human_verification_response ?? cf_turnstile_response
     );
     if (turnstileError) return turnstileError;
@@ -1370,14 +2140,34 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
     let user: { id: string; email: string | null; name: string | null } | null = null;
     const normalizedEmail =
       typeof email === 'string' && email.trim() ? email.trim().toLowerCase() : null;
-    const tenantD1 = usesTenantD1AccountStorage(c);
+    const routedAccountStorage = usesRoutedAccountStorage(c);
+    // The address of an account deleted within the tenant's retention period, where the tenant
+    // blocks re-registration: answered as an address that has an account, after the same lookups
+    // (a lookup that fails on a route cached from before the deletion is passed over for it). A
+    // resumed provisioning already passed the check.
+    const registration = resumedUserId
+      ? 'allowed'
+      : await checkEmailRegistration(c.env, { tenantId, email: normalizedEmail });
+    // A check that could not be made fails every address alike, in use or not.
+    if (registration === 'unavailable') {
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    }
+    const blocked = registration === 'blocked';
     // Passkey signup is discoverable and does not use email to identify the
     // account. Email is only used when the caller supplies it as optional
     // profile data or as an existing-account lookup hint.
+    if (invite_token !== undefined && (typeof invite_token !== 'string' || !invite_token)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'invite_token' },
+      });
+    }
     const accountRoute = normalizedEmail
-      ? await resolveTenantD1EmailAccountRoute(c, normalizedEmail)
+      ? await resolveTenantD1EmailAccountRoute(c, normalizedEmail).catch((error: unknown) => {
+          if (blocked && isDeletedDestinationRouteError(error)) return 'not_found' as const;
+          throw error;
+        })
       : 'not_required';
-    let runtimeUsers: CanonicalRuntimeUserStore | null = tenantD1
+    let runtimeUsers: CanonicalRuntimeUserStore | null = routedAccountStorage
       ? accountRoute === 'resolved'
         ? createCanonicalRuntimeUserStore(c, tenantId, { accountScoped: true })
         : null
@@ -1385,7 +2175,7 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
 
     if (normalizedEmail) {
       const existingUser = await runtimeUsers?.findByEmail(normalizedEmail);
-      if (existingUser) {
+      if (existingUser || blocked) {
         return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
       }
     }
@@ -1420,15 +2210,34 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       ...customFieldValidation.values,
     });
 
+    // An invitation is checked and one use reserved for this sign-up before its account exists;
+    // the reservation is recorded on the challenge and applied, when the passkey is registered,
+    // to the user the challenge names. A sign-up that gives an email holds the use by it, so a
+    // restart (a provisioning replay, a new start after the passkey prompt was closed) keeps it.
+    const newUserId = resumedUserId ?? (await generateUserIdFromSettings(c.env, tenantId, c.env));
+    let signupInvitation: Extract<SignupInvitationStart, { ok: true }> | null = null;
+    if (invite_token) {
+      const started = await startSignupInvitation(c, {
+        token: invite_token,
+        tenantId,
+        email: normalizedEmail,
+        holder: normalizedEmail
+          ? await invitationHolderForEmail(normalizedEmail)
+          : `user:${newUserId}`,
+        emailProof: invitation_email_proof,
+      });
+      if (!started.ok) return signupInvitationErrorResponse(c, started.reason);
+      signupInvitation = started;
+    }
+    const emailVerifiedByInvitation = signupInvitation?.emailVerified === true;
+
     if (!user) {
       // Create new user
-      const newUserId =
-        resumedUserId ?? (await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env));
       const defaultName = display_name || null;
       const preferredUsername = normalizedEmail?.split('@')[0] ?? newUserId;
       const provisioningRuntimeUser = {
         active: true as const,
-        emailVerified: false,
+        emailVerified: emailVerifiedByInvitation,
         userType: 'end_user',
         displayName: defaultName,
         sourceRef: 'auth:passkey',
@@ -1446,7 +2255,7 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       };
 
       try {
-        if (tenantD1) {
+        if (routedAccountStorage) {
           const provisioned = await provisionTenantD1EmailAccount(c, {
             tenantId,
             candidateUserId: newUserId,
@@ -1464,7 +2273,7 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
             email: normalizedEmail,
             name: defaultName,
             active: true,
-            emailVerified: false,
+            emailVerified: emailVerifiedByInvitation,
             userType: 'end_user',
             sourceRef: 'direct_auth_passkey',
             piiFields: canonicalProfileFields.piiFields,
@@ -1473,6 +2282,13 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
           });
         }
       } catch (piiError) {
+        // No account, so the reserved use goes back (a retry reserves again).
+        if (signupInvitation) {
+          await releaseSignupInvitation(invitationDatabase(c, tenantId), log, {
+            reservation: signupInvitation.reservation,
+            tenantId,
+          });
+        }
         const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, piiError);
         if (writeFenceResponse) return writeFenceResponse;
         log.error('Failed to create canonical runtime user', {
@@ -1484,9 +2300,17 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
 
       user ??= { id: newUserId, email: normalizedEmail, name: defaultName };
     }
+    // The reserved use now belongs to this account, and can only ever be applied to it.
+    if (signupInvitation) {
+      await bindSignupInvitation(c, log, {
+        reservation: signupInvitation.reservation,
+        tenantId,
+        userId: user.id,
+      });
+    }
 
     // Get existing passkeys for exclusion
-    const accountScoped = usesTenantD1AccountStorage(c);
+    const accountScoped = routedAccountStorage;
     const authCtx = accountScoped
       ? createAccountAuthContextFromHono(c, tenantId)
       : createAuthContextFromHono(c, tenantId);
@@ -1514,10 +2338,13 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
     const authenticatorSelection: {
       authenticatorAttachment?: 'platform' | 'cross-platform';
       residentKey: 'required' | 'preferred' | 'discouraged';
-      userVerification: 'required' | 'preferred' | 'discouraged';
+      userVerification: 'required';
     } = {
       residentKey: resident_key,
-      userVerification: user_verification,
+      // Always required, whatever `user_verification` the request names (still accepted, ignored):
+      // the finish step refuses a registration without the user-verified flag, so an option that
+      // allowed one would start what it cannot complete.
+      userVerification: 'required',
     };
 
     if (authenticator_type !== 'any') {
@@ -1564,6 +2391,7 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
         ...(Object.keys(customFieldValidation.values).length > 0
           ? { custom_fields: customFieldValidation.values }
           : {}),
+        ...(signupInvitation ? signupInvitation.reservation : {}),
       },
     });
 
@@ -1637,6 +2465,24 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
     // The challenge_id was stored in metadata during signup/start
     // Get tenantId for user lookup
     const tenantId = getTenantIdFromContext(c);
+    const assurance = await readDirectAuthAssurance(c, tenantId);
+    if ('error' in assurance) return assurance.error;
+
+    // Passkey sign-up may have been turned off since the challenge was issued. Decided before the
+    // challenge is consumed: a switch that is off, or settings that cannot be read for a moment,
+    // must not burn a challenge whose account the start already created (the retry would find the
+    // challenge gone, and a new start would conflict with that account). Turning the switch off
+    // between this check and the consume below is a race we accept: the Durable Object
+    // calls in between make it a short window (its length is not guaranteed), and the account and
+    // challenge came from a start made while sign-up was allowed.
+    failureStage = 'method_gate';
+    const methodDisabledError = await rejectIfAuthenticationMethodDisabled(
+      c,
+      tenantId,
+      'passkey',
+      'signup'
+    );
+    if (methodDisabledError) return methodDisabledError;
 
     // Look up userId from challenge_id mapping
     // We stored this mapping in signup/start using challenge_id-based sharding
@@ -1684,6 +2530,8 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
         rpID: string;
         custom_fields?: Record<string, unknown>;
         authorization_challenge_id?: string;
+        invite_id?: string;
+        invite_reservation_id?: string;
       };
     };
 
@@ -1722,6 +2570,7 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
         expectedChallenge: challengeData.challenge,
         expectedOrigin: origin,
         expectedRPID: rpID,
+        requireUserVerification: true,
       });
     } catch (error) {
       log.error('Registration verification failed', {
@@ -1749,10 +2598,10 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
 
     // Store passkey
     failureStage = 'account_context_resolve';
-    if (usesTenantD1AccountStorage(c)) {
+    if (usesRoutedAccountStorage(c)) {
       await resolveAccountDataContextFromHono(c, userId);
     }
-    const accountScoped = usesTenantD1AccountStorage(c);
+    const accountScoped = usesRoutedAccountStorage(c);
     const authCtx = accountScoped
       ? createAccountAuthContextFromHono(c, tenantId)
       : createAuthContextFromHono(c, tenantId);
@@ -1802,9 +2651,23 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
       }
     }
 
+    // The use the start reserved goes to the user this challenge was bound to.
+    const signupInvitation = signupInvitationFromMetadata(challengeData.metadata);
+    if (signupInvitation) {
+      failureStage = 'invitation_apply';
+      await completeSignupInvitation(
+        {
+          invitations: () => invitationDatabase(c, tenantId),
+          assignments: authCtx.coreAdapter,
+        },
+        log,
+        { reservation: signupInvitation, tenantId, userId, now: Math.floor(now / 1000) }
+      );
+    }
+
     // Generate auth_code
     failureStage = 'auth_code_issue';
-    const authCode = await generateAuthCode(
+    const { code: authCode, expiresIn: authCodeExpiresIn } = await generateAuthCode(
       c.env,
       tenantId,
       userId,
@@ -1818,12 +2681,13 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
         passkey_id: passkeyId,
         is_new_user: isNewUser,
         authorization_challenge_id: challengeData.metadata?.authorization_challenge_id,
-      }
+      },
+      assurance.settings
     );
 
     return c.json({
       direct_auth_artifact: authCode,
-      expires_in: AUTH_CODE_TTL,
+      expires_in: authCodeExpiresIn,
       is_new_user: isNewUser,
     });
   } catch (error) {
@@ -1854,6 +2718,8 @@ interface DirectEmailVerificationCompletionInput {
   transactionId: string;
   method: DirectEmailVerificationMethod;
   metadata: Record<string, unknown>;
+  /** Read before the challenge was spent (readDirectAuthAssurance). */
+  assuranceSettings: Record<string, unknown>;
 }
 
 interface EmailVerificationProtocolChallengeData {
@@ -1920,9 +2786,44 @@ async function completeDirectEmailVerification(
   c: Context<{ Bindings: Env }>,
   input: DirectEmailVerificationCompletionInput
 ): Promise<Response> {
-  const { tenantId, userId, trustedEmail, channel, transactionId, method, metadata } = input;
+  const {
+    tenantId,
+    userId,
+    trustedEmail,
+    channel,
+    transactionId,
+    method,
+    metadata,
+    assuranceSettings,
+  } = input;
   const log = getLogger(c).module('DIRECT-AUTH');
-  const tenantD1 = usesTenantD1AccountStorage(c);
+  // The code (or provider proof) was verified just before this was called.
+  const provenAtMs = Date.now();
+  // What the code was sent for still holds: the method's switch for that usage, and a
+  // re-authentication proves only the user it was asked of.
+  // An email code attempt's failures are recorded with its Flow interaction, if it has one.
+  const failed = signInAttemptFailureRecorder(
+    c,
+    tenantId,
+    method === 'email_code' ? metadata : null,
+    'email_code',
+    userId
+  );
+  const usage = metadata.usage;
+  if (usage !== 'login' && usage !== 'signup' && usage !== 'reauth') {
+    // Sent before the usage was recorded (or tampered with): ask for a new code.
+    return failed(createErrorResponse(c, AR_ERROR_CODES.AUTH_SESSION_EXPIRED), 'challenge_expired');
+  }
+  const disabled = await rejectIfAuthenticationMethodDisabled(c, tenantId, 'email_otp', usage);
+  if (disabled) return failed(disabled, 'method_disabled');
+  if (usage === 'reauth' && metadata.reauth_user_id !== userId) {
+    return failed(
+      createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE),
+      'account_mismatch',
+      userId
+    );
+  }
+  const tenantD1 = usesRoutedAccountStorage(c);
   let runtimeUser: CanonicalOtpLoginUser | null;
   let coreAdapter: DatabaseAdapter;
 
@@ -1946,100 +2847,76 @@ async function completeDirectEmailVerification(
   }
 
   if (!runtimeUser || runtimeUser.active !== 1) {
-    return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
+    return failed(
+      createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS),
+      'account_unavailable',
+      userId
+    );
   }
+
+  const guestDenial = await guestCredentialDenial(c, coreAdapter, tenantId, userId);
+  if (guestDenial) return failed(guestDenial, 'guest_denied', userId);
 
   const now = Date.now();
-  if (tenantD1) {
-    if (runtimeUser.email_verified !== 1) {
-      c.executionCtx.waitUntil(
-        markOtpLoginEmailVerified(coreAdapter, tenantId, userId, now).catch((error: unknown) => {
-          log.error(
-            'Failed to update user after direct OTP login',
-            { action: 'direct_email_user_update' },
-            error as Error
-          );
-        })
-      );
-    }
-  } else {
-    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
-    await runtimeUsers.markEmailVerifiedAndTouchLastLogin(userId, now);
-  }
-
   const isNewUser = now - Date.parse(runtimeUser.created_at) < 60000;
-
-  // Apply invitation role/org assignment if present.
-  const inviteId = metadataString(metadata, 'invite_id');
-  const inviteToken = metadataString(metadata, 'invite_token');
-
-  if (inviteId && inviteToken) {
-    const inviteNow = Math.floor(now / 1000);
-    try {
-      const invitation = await findActiveInvitationByToken(coreAdapter, inviteToken, inviteNow);
-      if (!invitation || invitation.id !== inviteId || invitation.tenant_id !== tenantId) {
-        log.warn('Invitation metadata no longer matches an active tenant invitation', {
-          invite_id: inviteId,
-          tenant_id: tenantId,
-        });
-      } else if (
-        !(await consumeInvitationUse(coreAdapter, invitation.id, invitation.tenant_id, inviteNow))
-      ) {
-        log.warn('Invitation use_count increment was skipped during email verification', {
-          invite_id: inviteId,
-          tenant_id: tenantId,
-        });
-      } else {
-        const assignmentResults = await applyInvitationAssignments(coreAdapter, {
-          userId,
-          tenantId,
-          roleId: invitation.role_id,
-          orgId: invitation.org_id,
-        });
-
-        if (invitation.role_id && !assignmentResults.roleAssignment?.success) {
-          log.warn('Failed to assign role from invitation', {
-            invite_id: inviteId,
-            tenant_id: tenantId,
-            error: assignmentResults.roleAssignment?.error,
-          });
+  await withGroupInputWrite(
+    coreAdapter,
+    tenantId,
+    userId,
+    'registration:direct-email',
+    async () => {
+      if (tenantD1) {
+        if (runtimeUser.email_verified !== 1) {
+          await markOtpLoginEmailVerified(coreAdapter, tenantId, userId, now);
         }
+      } else {
+        const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+        await runtimeUsers.markEmailVerifiedAndTouchLastLogin(userId, now);
+      }
 
-        if (invitation.org_id && !assignmentResults.orgMembership?.success) {
-          log.warn('Failed to assign organization from invitation', {
-            invite_id: inviteId,
-            tenant_id: tenantId,
-            error: assignmentResults.orgMembership?.error,
-          });
+      // The use the send reserved goes to the user the code was sent to, the account that send
+      // created (an existing account never carries a reservation).
+      const signupInvitation = signupInvitationFromMetadata(metadata);
+      if (signupInvitation) {
+        await completeSignupInvitation(
+          {
+            invitations: () => invitationDatabase(c, tenantId),
+            assignments: coreAdapter,
+          },
+          log,
+          { reservation: signupInvitation, tenantId, userId, now: Math.floor(now / 1000) }
+        );
+      }
+
+      // Save custom registration fields if present.
+      const customFieldsValue = metadata.custom_fields;
+      const customFields =
+        customFieldsValue &&
+        typeof customFieldsValue === 'object' &&
+        !Array.isArray(customFieldsValue)
+          ? (customFieldsValue as Record<string, unknown>)
+          : undefined;
+      if (customFields) {
+        try {
+          await persistRegistrationFieldValuesFromEnv(c.env, tenantId, userId, customFields);
+        } catch (persistError) {
+          log.warn(
+            'Failed to persist registration field values',
+            { action: 'registration_fields_persist' },
+            persistError as Error
+          );
         }
       }
-    } catch (inviteErr) {
-      log.warn('Failed to apply invitation assignments', {
-        error: String(inviteErr),
-        invite_id: inviteId,
-      });
     }
-  }
+  ).catch((error: unknown) => {
+    log.warn(
+      'Failed to settle registration attributes',
+      { action: 'registration_fields_persist' },
+      error as Error
+    );
+  });
 
-  // Save custom registration fields if present.
-  const customFieldsValue = metadata.custom_fields;
-  const customFields =
-    customFieldsValue && typeof customFieldsValue === 'object' && !Array.isArray(customFieldsValue)
-      ? (customFieldsValue as Record<string, unknown>)
-      : undefined;
-  if (customFields) {
-    try {
-      await persistRegistrationFieldValuesFromEnv(c.env, tenantId, userId, customFields);
-    } catch (persistError) {
-      log.warn(
-        'Failed to persist registration field values',
-        { action: 'registration_fields_persist' },
-        persistError as Error
-      );
-    }
-  }
-
-  const authCode = await generateAuthCode(
+  const { code: authCode, expiresIn: authCodeExpiresIn } = await generateAuthCode(
     c.env,
     tenantId,
     userId,
@@ -2051,9 +2928,12 @@ async function completeDirectEmailVerification(
       scope: metadataString(metadata, 'scope'),
       transaction_id: metadataString(metadata, 'transaction_id') || transactionId,
       is_new_user: isNewUser,
+      // When the email was proven (milliseconds), as the passkey artifact records it.
+      proven_at: provenAtMs,
       authorization_challenge_id: metadataString(metadata, 'authorization_challenge_id'),
       runtime_interaction_id: metadataString(metadata, 'runtime_interaction_id'),
-    }
+    },
+    assuranceSettings
   );
 
   if (method === 'email_code') {
@@ -2080,7 +2960,7 @@ async function completeDirectEmailVerification(
 
   return c.json({
     direct_auth_artifact: authCode,
-    expires_in: AUTH_CODE_TTL,
+    expires_in: authCodeExpiresIn,
     is_new_user: isNewUser,
   });
 }
@@ -2097,6 +2977,8 @@ async function tryEmailVerificationProtocol(
     challengeId: string | undefined;
     runtimeInteractionId: string | undefined;
     completionMetadata: Record<string, unknown>;
+    /** Read before the send limit was counted; none when no presentation came. */
+    assuranceSettings: Record<string, unknown> | undefined;
   }
 ): Promise<Response | null> {
   const {
@@ -2109,6 +2991,7 @@ async function tryEmailVerificationProtocol(
     challengeId,
     runtimeInteractionId,
     completionMetadata,
+    assuranceSettings,
   } = input;
 
   // The runtime interaction, browser challenge, user, and resulting managed session must all
@@ -2119,6 +3002,7 @@ async function tryEmailVerificationProtocol(
   }
 
   if (
+    !assuranceSettings ||
     channel !== 'browser' ||
     typeof presentationToken !== 'string' ||
     presentationToken.length === 0 ||
@@ -2229,6 +3113,7 @@ async function tryEmailVerificationProtocol(
       ...completionMetadata,
       runtime_interaction_id: runtimeInteractionId,
     },
+    assuranceSettings,
   });
 }
 
@@ -2321,23 +3206,14 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
     let tenantId = challengeTenantId;
     const routingCoreAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
 
-    // Invitation token routing: overrides all other tenant resolution
-    let inviteData: {
-      invite_id: string;
-      invite_token: string;
-      invite_role_id: string | null;
-      invite_org_id: string | null;
-      invited_email: string | null;
-    } | null = null;
-
+    // Invitation token routing: overrides all other tenant resolution. Whether the invitation still
+    // has a use for this sign-up is decided when its use is reserved, below.
+    let invitedTokenId: string | null = null;
     if (invite_token) {
       const nowTs = Math.floor(Date.now() / 1000);
       const invitation = await findActiveInvitationByToken(routingCoreAdapter, invite_token, nowTs);
 
       if (!invitation) {
-        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-      }
-      if (!hasRemainingInvitationUses(invitation)) {
         return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
       }
       // If invitation is restricted to a specific email, enforce it
@@ -2346,13 +3222,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       }
 
       tenantId = invitation.tenant_id;
-      inviteData = {
-        invite_id: invitation.id,
-        invite_token,
-        invite_role_id: invitation.role_id,
-        invite_org_id: invitation.org_id,
-        invited_email: invitation.invited_email,
-      };
+      invitedTokenId = invitation.id;
     }
 
     // A Flow interaction is tenant-bound before Direct Auth begins. Invitations must not move a
@@ -2362,20 +3232,31 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
-    const tenantD1 = usesTenantD1AccountStorage(c);
+    const tenantD1 = usesRoutedAccountStorage(c);
     if (tenantD1 && tenantId !== challengeTenantId) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
-    // Rate limiting
+    // An email verification presentation can complete the login here: its assurance settings are
+    // read before the send limit is counted, so settings that cannot be read cost nothing.
+    let presentationAssurance: Record<string, unknown> | undefined;
+    if (typeof email_verification_token === 'string' && email_verification_token.length > 0) {
+      const assurance = await readDirectAuthAssurance(c, tenantId);
+      if ('error' in assurance) return assurance.error;
+      presentationAssurance = assurance.settings;
+    }
+
+    // Rate limiting: the tenant's email send limit (rate_limit.email_max_requests per
+    // rate_limit.email_window; 3 per 15 minutes by default)
+    const emailSendLimit = await resolveEmailSendLimit(c.env, tenantId);
     const rateLimiterId = c.env.RATE_LIMITER.idFromName(
       buildDOKey('rate-limit', 'email-code', tenantId)
     );
     const rateLimiter = c.env.RATE_LIMITER.get(rateLimiterId);
 
     const rateLimitResult = await rateLimiter.incrementRpc(`direct_email_code:${normalizedEmail}`, {
-      windowSeconds: 15 * 60,
-      maxRequests: 3,
+      windowSeconds: emailSendLimit.windowSeconds,
+      maxRequests: emailSendLimit.maxRequests,
     });
 
     if (!rateLimitResult.allowed) {
@@ -2417,7 +3298,10 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
 
     let suppressEmailCodeSend = false;
 
-    let turnstileAction: HumanVerificationAction;
+    // The usage is what this code will do (sign up a new address, re-authenticate the user a
+    // re-authentication challenge names, or sign in), not merely the challenge's type: a login or
+    // re-authentication challenge must not carry a sign-up, nor someone else's re-authentication.
+    let challengeType: HumanVerificationAction | null = null;
     if (authorization_challenge_id) {
       const resolvedAction = await resolveDirectStartTurnstileAction(
         c,
@@ -2425,11 +3309,57 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         authorization_challenge_id
       );
       if (typeof resolvedAction !== 'string') return resolvedAction.error;
-      turnstileAction = resolvedAction;
-    } else {
-      turnstileAction = user ? 'login' : 'signup';
+      challengeType = resolvedAction;
     }
-    const emailCodeUsage = turnstileAction;
+    const reauthUserId =
+      challengeType === 'reauth'
+        ? await readAuthorizationChallengeReauthUser(c.env, tenantId, authorization_challenge_id)
+        : null;
+    // Every answer, a code sent or not, states the same lifetime; a stored code is capped again
+    // when it is stored, by the challenge it continues.
+    const emailCodeLifetime = await directEmailCodeLifetime(
+      c.env,
+      tenantId,
+      authorization_challenge_id
+    );
+    const emailCodeTtl = emailCodeLifetime.ttlSeconds;
+    // Answered like any other send, so the address's owner is not revealed; nothing else about the
+    // address is looked at (no human verification either, whose requirements depend on it).
+    if (challengeType === 'reauth' && (!user || !reauthUserId || user.id !== reauthUserId)) {
+      log.info('Suppressing email-code send for another user than the re-authentication', {
+        action: 'direct_email_code_send_suppressed',
+        reason: 'reauth_user_mismatch',
+      });
+      return acceptedEmailCodeSendResponse(c, normalizedEmail, emailCodeTtl);
+    }
+    // A send that left its account being provisioned is sent again once the account exists; it is
+    // still the send it was (a sign-up, already through its checks), not a new sign-in.
+    const declaredScreen = readDeclaredHumanVerificationScreen(c);
+    const resumeKey = await directEmailSendResumeKey({
+      tenantId,
+      email: normalizedEmail,
+      codeChallenge: code_challenge,
+      clientId: client_id,
+      screen: declaredScreen ?? 'unspecified',
+      ...(authorization_challenge_id
+        ? { authorizationChallengeId: authorization_challenge_id }
+        : {}),
+    });
+    const resumedSend =
+      user && challengeType !== 'reauth'
+        ? await consumeDirectEmailSendResume(c.env, tenantId, resumeKey)
+        : null;
+    const emailCodeUsage: HumanVerificationAction =
+      resumedSend?.usage ?? (!user ? 'signup' : challengeType === 'reauth' ? 'reauth' : 'login');
+    // The token is checked against the screen it came from (a re-authentication only ever takes
+    // its own screen's token). A client that does not say keeps the earlier inference. Whatever the
+    // screen, the setting for what the code does (signing up a new address) asks for a token too.
+    const turnstileAction: HumanVerificationAction =
+      challengeType === 'reauth'
+        ? 'reauth'
+        : (declaredScreen ?? challengeType ?? (user ? 'login' : 'signup'));
+    const turnstileAlsoRequiredFor: HumanVerificationAction[] =
+      emailCodeUsage === turnstileAction ? [] : [emailCodeUsage];
     const emailOtpEnabled = await isAuthenticationMethodUsageEnabled(
       c.env,
       tenantId,
@@ -2444,17 +3374,35 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         usage: emailCodeUsage,
       });
     }
-    const turnstileError = await verifyHumanVerificationForAction(
-      c,
-      turnstileAction,
-      human_verification_response ?? cf_turnstile_response
-    );
+    // A resumed send already passed human verification (its single-use token is spent).
+    const turnstileError = resumedSend
+      ? null
+      : await verifyHumanVerificationForAction(
+          c,
+          turnstileAction,
+          human_verification_response ?? cf_turnstile_response,
+          turnstileAlsoRequiredFor
+        );
     if (turnstileError) {
       suppressEmailCodeSend = true;
       log.info('Suppressing email-code send because human verification failed', {
         action: 'direct_email_code_send_suppressed',
         reason: 'human_verification',
         usage: turnstileAction,
+      });
+    }
+
+    // A recently deleted account's address where the tenant blocks re-registration: nothing is
+    // created or sent, and the reply is the usual one.
+    if (
+      !user &&
+      !suppressEmailCodeSend &&
+      (await checkEmailRegistration(c.env, { tenantId, email: normalizedEmail })) !== 'allowed'
+    ) {
+      suppressEmailCodeSend = true;
+      log.info('Suppressing email-code send because re-registration is not allowed', {
+        action: 'direct_email_code_send_suppressed',
+        reason: 'reregistration_not_allowed',
       });
     }
 
@@ -2481,7 +3429,46 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
     }
 
     if (suppressEmailCodeSend) {
-      return acceptedEmailCodeSendResponse(c, normalizedEmail);
+      return acceptedEmailCodeSendResponse(c, normalizedEmail, emailCodeTtl);
+    }
+
+    // An invitation is only for the account this sign-up creates. A new address reserves one use
+    // now (held by the address, so a resent code keeps it) and binds it to the account once that
+    // exists. An existing account takes the invitation only when it is that sign-up's own
+    // account: an unexpired use bound to it, or, for the resumed send of a sign-up whose account
+    // was still being provisioned, one not yet bound. Any other existing account signs in without
+    // it. Neither case changes the answer, so the answer does not tell whether the address has an
+    // account: a new address whose invitation has no use left gets the same answer, with no
+    // account created and no code sent.
+    let signupInvitation: SignupInvitationReservation | null = null;
+    if (invite_token && invitedTokenId) {
+      const holder = await invitationHolderForEmail(normalizedEmail);
+      const held = user
+        ? await findInvitationReservation(invitationDatabase(c, tenantId), {
+            invitationId: invitedTokenId,
+            tenantId,
+            holder,
+          })
+        : null;
+      const ownAccount =
+        user &&
+        held?.status === 'reserved' &&
+        held.expires_at > Math.floor(Date.now() / 1000) &&
+        (held.user_id === user.id || (held.user_id === null && resumedSend !== null));
+      if (!user || ownAccount) {
+        const started = await startSignupInvitation(c, {
+          token: invite_token,
+          tenantId,
+          email: normalizedEmail,
+          holder,
+          methodVerifiesEmail: true,
+        });
+        if (started.ok) {
+          signupInvitation = started.reservation;
+        } else if (!user) {
+          return acceptedEmailCodeSendResponse(c, normalizedEmail, emailCodeTtl);
+        }
+      }
     }
 
     const canonicalProfileFields = buildCanonicalProfileRuntimeUserFields({
@@ -2490,7 +3477,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
     });
 
     if (!user) {
-      const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
+      const userId = await generateUserIdFromSettings(c.env, tenantId, c.env);
       const preferredUsername = normalizedEmail.split('@')[0];
       const runtimeUser = {
         active: true as const,
@@ -2522,7 +3509,10 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
             email: normalizedEmail,
             runtimeUser,
           });
-          if (provisioned.status === 'pending') return provisioned.response;
+          if (provisioned.status === 'pending') {
+            await recordDirectEmailSendResume(c.env, tenantId, resumeKey, emailCodeUsage);
+            return provisioned.response;
+          }
           user = {
             id: provisioned.userId,
             email: normalizedEmail,
@@ -2543,12 +3533,27 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
           });
         }
       } catch (error) {
+        // No account, so the reserved use goes back (a retry reserves again).
+        if (signupInvitation) {
+          await releaseSignupInvitation(invitationDatabase(c, tenantId), log, {
+            reservation: signupInvitation,
+            tenantId,
+          });
+        }
         const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
         if (writeFenceResponse) return writeFenceResponse;
         return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
       }
 
       user ??= { id: userId, email: normalizedEmail, name: displayName };
+    }
+    // The reserved use now belongs to this account, and can only ever be applied to it.
+    if (signupInvitation) {
+      await bindSignupInvitation(c, log, {
+        reservation: signupInvitation,
+        tenantId,
+        userId: user.id,
+      });
     }
 
     const emailVerificationMetadata: Record<string, unknown> = {
@@ -2557,16 +3562,13 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       channel,
       scope,
       authorization_challenge_id,
+      // Checked again when the code is verified.
+      usage: emailCodeUsage,
+      ...(reauthUserId ? { reauth_user_id: reauthUserId } : {}),
       ...(boundRuntimeInteractionId ? { runtime_interaction_id: boundRuntimeInteractionId } : {}),
-      ...(inviteData
-        ? {
-            invite_id: inviteData.invite_id,
-            invite_token: inviteData.invite_token,
-            invite_role_id: inviteData.invite_role_id,
-            invite_org_id: inviteData.invite_org_id,
-            invite_tenant_id: tenantId,
-          }
-        : {}),
+      // The same interaction, once checked live in this tenant, for the attempt's failure records.
+      ...(await signInAttemptInteractionMetadata(c, tenantId, boundRuntimeInteractionId)),
+      ...(signupInvitation ?? {}),
       ...(Object.keys(customFieldValues).length > 0 ? { custom_fields: customFieldValues } : {}),
     };
 
@@ -2580,6 +3582,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       challengeId: email_verification_challenge_id,
       runtimeInteractionId: boundRuntimeInteractionId,
       completionMetadata: emailVerificationMetadata,
+      assuranceSettings: presentationAssurance,
     });
     if (emailVerificationResponse) return emailVerificationResponse;
 
@@ -2620,13 +3623,22 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       challengeStore = resolvedChallengeStore;
 
       failureStage = 'challenge_store';
+      // The store ends the code with the challenge it continues, however long storing takes.
+      const storedAtMs = Date.now();
+      const codeExpiresAtMs = Math.min(
+        storedAtMs + emailCodeTtl * 1000,
+        emailCodeLifetime.notAfterMs ?? Number.POSITIVE_INFINITY
+      );
       await challengeStore.storeChallengeRpc({
         id: `direct_email_code:${attemptId}`,
         tenantId: getTenantIdFromContext(c),
         type: 'direct_email_code',
         userId: user.id,
         challenge: codeHash,
-        ttl: EMAIL_CODE_TTL,
+        ttl: emailCodeTtl,
+        ...(emailCodeLifetime.notAfterMs !== undefined
+          ? { notAfterMs: emailCodeLifetime.notAfterMs }
+          : {}),
         email: normalizedEmail,
         metadata: {
           ...emailVerificationMetadata,
@@ -2645,7 +3657,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         notificationKind: 'auth.direct-email-code',
         accountId: user.id,
         idempotencyKey: `direct-email-code:${attemptId}`,
-        expiresAt: Math.floor(issuedAt / 1000) + EMAIL_CODE_TTL,
+        expiresAt: Math.floor(codeExpiresAtMs / 1000),
         payload: {
           channel: 'email',
           to: normalizedEmail,
@@ -2655,7 +3667,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
             name: user.name || undefined,
             email: normalizedEmail,
             code,
-            expiresInMinutes: EMAIL_CODE_TTL / 60,
+            expiresInMinutes: Math.max(1, Math.ceil((codeExpiresAtMs - Date.now()) / 60_000)),
             appName: 'Authrim',
             logoUrl: undefined,
           }),
@@ -2664,7 +3676,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
               name: user.name || undefined,
               email: normalizedEmail,
               code,
-              expiresInMinutes: EMAIL_CODE_TTL / 60,
+              expiresInMinutes: Math.max(1, Math.ceil((codeExpiresAtMs - Date.now()) / 60_000)),
               appName: 'Authrim',
             }),
           },
@@ -2685,12 +3697,12 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         failureStage,
         errorType: error instanceof Error ? error.name : 'Unknown',
       });
-      return acceptedEmailCodeSendResponse(c, normalizedEmail);
+      return acceptedEmailCodeSendResponse(c, normalizedEmail, emailCodeTtl);
     }
 
     return c.json({
       attempt_id: attemptId,
-      expires_in: EMAIL_CODE_TTL,
+      expires_in: emailCodeTtl,
       masked_email: maskEmail(normalizedEmail),
     });
   } catch (error) {
@@ -2717,10 +3729,15 @@ function maskEmail(email: string): string {
   return `${masked}@${domain}`;
 }
 
-function acceptedEmailCodeSendResponse(c: Context<{ Bindings: Env }>, normalizedEmail: string) {
+/** Answers a send that sent nothing exactly as one that did, its lifetime included. */
+function acceptedEmailCodeSendResponse(
+  c: Context<{ Bindings: Env }>,
+  normalizedEmail: string,
+  emailCodeTtl: number
+) {
   return c.json({
     attempt_id: crypto.randomUUID(),
-    expires_in: EMAIL_CODE_TTL,
+    expires_in: emailCodeTtl,
     masked_email: maskEmail(normalizedEmail),
   });
 }
@@ -2756,15 +3773,19 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
-    // Rate limit: Max 5 attempts per code
+    // Rate limit: Max 5 attempts per code. Assurance settings are read first, so settings that
+    // cannot be read cost no attempt.
     const tenantId = getTenantIdFromContext(c);
+    const assurance = await readDirectAuthAssurance(c, tenantId);
+    if ('error' in assurance) return assurance.error;
     const rateLimiterId = c.env.RATE_LIMITER.idFromName(
       buildDOKey('rate-limit', 'email-code-verify', tenantId)
     );
     const rateLimiter = c.env.RATE_LIMITER.get(rateLimiterId);
 
     const attemptResult = await rateLimiter.incrementRpc(`verify:${attempt_id}`, {
-      windowSeconds: EMAIL_CODE_TTL,
+      // As long as any code can last, so a code's five attempts never reset while it is valid.
+      windowSeconds: CREDENTIALS_SETTINGS_META['credentials.email_code_ttl'].max ?? 900,
       maxRequests: 5, // Max 5 attempts per code
     });
 
@@ -2800,6 +3821,14 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
     } catch {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
     }
+    // From here on a failure is recorded with the challenge's Flow interaction, if it has one.
+    const failed = signInAttemptFailureRecorder(
+      c,
+      tenantId,
+      challengeData.metadata,
+      'email_code',
+      challengeData.userId ?? null
+    );
 
     // Verify PKCE
     const isValidPKCE = await verifyPKCE(
@@ -2807,10 +3836,10 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
       challengeData.metadata?.code_challenge || ''
     );
     if (!isValidPKCE) {
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+      return failed(createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE), 'challenge_mismatch');
     }
     if (challengeData.metadata?.channel !== channel) {
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+      return failed(createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE), 'challenge_mismatch');
     }
 
     // Verify code hash
@@ -2819,7 +3848,10 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
       log.error('OTP_HMAC_SECRET must be configured for direct email-code verification', {
         action: 'direct_email_code_verify',
       });
-      return createErrorResponse(c, AR_ERROR_CODES.CONFIG_MISSING_SECRET);
+      return failed(
+        createErrorResponse(c, AR_ERROR_CODES.CONFIG_MISSING_SECRET),
+        'service_unavailable'
+      );
     }
     const isValidCode = await verifyEmailCodeHash(
       code,
@@ -2831,7 +3863,11 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
     );
 
     if (!isValidCode) {
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+      return failed(
+        createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE),
+        'invalid_code',
+        challengeData.userId
+      );
     }
 
     try {
@@ -2841,7 +3877,11 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
         type: 'direct_email_code',
       })) as typeof challengeData;
     } catch {
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+      return failed(
+        createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE),
+        'challenge_expired',
+        challengeData.userId
+      );
     }
 
     return completeDirectEmailVerification(c, {
@@ -2852,6 +3892,7 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
       transactionId: attempt_id,
       method: 'email_code',
       metadata: challengeData.metadata ?? {},
+      assuranceSettings: assurance.settings,
     });
   } catch (error) {
     const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
@@ -2942,6 +3983,7 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
       challenge: string;
       userId: string;
       metadata?: Record<string, unknown>;
+      createdAt?: number;
     };
 
     try {
@@ -3014,7 +4056,7 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
     }
 
     const tenantId = getTenantIdFromContext(c);
-    const accountScoped = usesTenantD1AccountStorage(c);
+    const accountScoped = usesRoutedAccountStorage(c);
     if (accountScoped) {
       await resolveAccountDataContextFromHono(c, artifactData.userId);
     }
@@ -3024,9 +4066,28 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
       return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
     }
 
+    const accountAuth = accountScoped
+      ? createAccountAuthContextFromHono(c, tenantId)
+      : createAuthContextFromHono(c, tenantId);
+    const guestDenial = await guestCredentialDenial(
+      c,
+      accountAuth.coreAdapter,
+      tenantId,
+      artifactData.userId
+    );
+    if (guestDenial) return guestDenial;
+
     const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'direct_auth');
     const now = Date.now();
-    const authTime = Math.floor(now / 1000);
+    // The session was authenticated when its artifact's proof was verified, not when it is
+    // redeemed; an artifact without one (an external IdP login) counts from now.
+    // A passkey only just registered (passkey_signup) proves nothing yet.
+    const reauthProof = reauthProofFromRecord(
+      metadata,
+      typeof metadata.method === 'string' ? [metadata.method] : []
+    );
+    const provenAtMs = directSessionProvenAt(metadata).proven_at;
+    const authTime = Math.floor((provenAtMs ?? now) / 1000);
     const amr = [typeof metadata.method === 'string' ? metadata.method : 'direct_auth'];
     const acr = 'urn:mace:incommon:iap:bronze';
 
@@ -3034,9 +4095,29 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
       typeof metadata.authorization_challenge_id === 'string'
         ? metadata.authorization_challenge_id
         : undefined;
+    // An artifact made for the browser session alone (the challenge of a SAML request) continues
+    // only at the challenge it was made for: another one named here (an OIDC login's, say) would
+    // turn a re-authentication into an ordinary sign-in. Whether that challenge is still there
+    // makes no difference to this; the session can still be made with the continuation deferred.
+    const browserSessionOnly = metadata.browser_session_only === true;
+    if (
+      browserSessionOnly &&
+      authorization_challenge_id &&
+      authorization_challenge_id !== artifactAuthorizationChallengeId
+    ) {
+      return c.json(
+        {
+          error: 'invalid_grant',
+          error_description: 'Direct Auth artifact authorization challenge binding mismatch',
+        },
+        400
+      );
+    }
     const effectiveAuthorizationChallengeId = defer_authorization_continuation
       ? undefined
-      : authorization_challenge_id || artifactAuthorizationChallengeId;
+      : browserSessionOnly
+        ? artifactAuthorizationChallengeId
+        : authorization_challenge_id || artifactAuthorizationChallengeId;
 
     let authorizationContinuation: AuthorizationChallengeContinuation | undefined;
     if (effectiveAuthorizationChallengeId) {
@@ -3046,7 +4127,9 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
         effectiveAuthorizationChallengeId,
         artifactData.userId,
         authTime,
-        new URL(c.req.url).origin
+        new URL(c.req.url).origin,
+        reauthProof.method,
+        reauthProof.provenAtMs
       );
       if ('error' in continuation) {
         return continuation.error;
@@ -3071,6 +4154,18 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
         direct_auth_channel: channel,
         ...(typeof metadata.runtime_interaction_id === 'string'
           ? { runtime_interaction_id: metadata.runtime_interaction_id }
+          : {}),
+        // When the authentication was proven, not when it is stored or redeemed: an assurance
+        // step-up counts only proof made after it began.
+        ...directSessionProvenAt(metadata),
+        // The method a re-authentication takes and when (a verified new upstream login).
+        ...directSessionReauthProof(metadata),
+        // An external IdP login's upstream acr (from its validated ID token), for assurance.
+        ...(metadata.method === 'external_idp' &&
+        typeof metadata.upstream_acr === 'string' &&
+        metadata.upstream_acr.length > 0 &&
+        metadata.upstream_acr.length <= 1024
+          ? { upstream_acr: metadata.upstream_acr }
           : {}),
       },
       tenantId
@@ -3163,7 +4258,6 @@ export async function directPasskeyRegisterStartHandler(c: Context<{ Bindings: E
   try {
     // Get session from cookie or Authorization header
     const sessionId = getSessionIdFromRequest(c);
-
     if (!sessionId) {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
     }
@@ -3179,15 +4273,11 @@ export async function directPasskeyRegisterStartHandler(c: Context<{ Bindings: E
       display_name?: string;
       authenticator_type?: 'platform' | 'cross-platform' | 'any';
       resident_key?: 'required' | 'preferred' | 'discouraged';
+      /** Accepted for compatibility and ignored: user verification is always required. */
       user_verification?: 'required' | 'preferred' | 'discouraged';
     }>();
 
-    const {
-      display_name,
-      authenticator_type = 'any',
-      resident_key = 'required',
-      user_verification = 'required',
-    } = body;
+    const { display_name, authenticator_type = 'any', resident_key = 'required' } = body;
 
     // Validate Origin header
     const originHeader = c.req.header('origin');
@@ -3201,10 +4291,16 @@ export async function directPasskeyRegisterStartHandler(c: Context<{ Bindings: E
     const originUrl = new URL(webAuthnOrigin);
     const rpID = originUrl.hostname;
 
-    // Get user info
+    // Get user info: from the account's own databases where accounts are routed.
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+    const accountScoped = usesRoutedAccountStorage(c);
+    if (accountScoped) {
+      await resolveAccountDataContextFromHono(c, session.userId);
+    }
+    const authCtx = accountScoped
+      ? createAccountAuthContextFromHono(c, tenantId)
+      : createAuthContextFromHono(c, tenantId);
+    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId, { accountScoped });
 
     const runtimeUser = await runtimeUsers.findById(session.userId);
     if (!runtimeUser) {
@@ -3236,10 +4332,13 @@ export async function directPasskeyRegisterStartHandler(c: Context<{ Bindings: E
     const authenticatorSelection: {
       authenticatorAttachment?: 'platform' | 'cross-platform';
       residentKey: 'required' | 'preferred' | 'discouraged';
-      userVerification: 'required' | 'preferred' | 'discouraged';
+      userVerification: 'required';
     } = {
       residentKey: resident_key,
-      userVerification: user_verification,
+      // Always required, whatever `user_verification` the request names (still accepted, ignored):
+      // the finish step refuses a registration without the user-verified flag, so an option that
+      // allowed one would start what it cannot complete.
+      userVerification: 'required',
     };
 
     if (authenticator_type !== 'any') {
@@ -3415,6 +4514,7 @@ export async function directPasskeyRegisterFinishHandler(c: Context<{ Bindings: 
         expectedChallenge: challengeData.challenge,
         expectedOrigin: origin,
         expectedRPID: rpID,
+        requireUserVerification: true,
       });
     } catch (error) {
       log.error('Registration verification failed', {
@@ -3442,10 +4542,10 @@ export async function directPasskeyRegisterFinishHandler(c: Context<{ Bindings: 
 
     // Store passkey
     const tenantId = getTenantIdFromContext(c);
-    if (usesTenantD1AccountStorage(c)) {
+    if (usesRoutedAccountStorage(c)) {
       await resolveAccountDataContextFromHono(c, userId);
     }
-    const accountScoped = usesTenantD1AccountStorage(c);
+    const accountScoped = usesRoutedAccountStorage(c);
     const authCtx = accountScoped
       ? createAccountAuthContextFromHono(c, tenantId)
       : createAuthContextFromHono(c, tenantId);
@@ -3513,6 +4613,44 @@ export async function directPasskeyRegisterFinishHandler(c: Context<{ Bindings: 
  *
  * Returns current session and user information.
  */
+function directSessionProvenAt(metadata: Record<string, unknown>): { proven_at?: number } {
+  // When its producer verified the authentication (proven_at). An external IdP login has none: the
+  // IdP's time is in its own clock (see the bridge callback). Unknown: never combined.
+  const proven = metadata.method === 'external_idp' ? undefined : metadata.proven_at;
+  return typeof proven === 'number' && Number.isSafeInteger(proven) && proven > 0
+    ? { proven_at: proven }
+    : {};
+}
+
+function directSessionReauthProof(metadata: Record<string, unknown>): {
+  reauth_proven_amr?: string[];
+  reauth_proven_at?: number;
+} {
+  const provenAt = positiveSafeInteger(metadata.reauth_proven_at);
+  const provenAmr = Array.isArray(metadata.reauth_proven_amr)
+    ? metadata.reauth_proven_amr.filter((value): value is string => typeof value === 'string')
+    : [];
+  return provenAt !== undefined && provenAmr.length > 0
+    ? { reauth_proven_amr: provenAmr, reauth_proven_at: provenAt }
+    : {};
+}
+
+/** Session data only Authrim reads (assurance evidence): never returned to the client. */
+const INTERNAL_SESSION_DATA_KEYS = [
+  'unverified_amr',
+  'upstream_acr',
+  'proven_at',
+  'reauth_proven_at',
+  'reauth_proven_amr',
+];
+
+function publicSessionData(data: Session['data']): Session['data'] {
+  if (!data) return data;
+  return Object.fromEntries(
+    Object.entries(data).filter(([key]) => !INTERNAL_SESSION_DATA_KEYS.includes(key))
+  ) as Session['data'];
+}
+
 export async function directSessionHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('DIRECT-AUTH');
 
@@ -3534,7 +4672,7 @@ export async function directSessionHandler(c: Context<{ Bindings: Env }>) {
 
     // Get user info
     const tenantId = getTenantIdFromContext(c);
-    const accountScoped = usesTenantD1AccountStorage(c);
+    const accountScoped = usesRoutedAccountStorage(c);
     if (accountScoped) {
       await resolveAccountDataContextFromHono(c, session.userId);
     }
@@ -3553,7 +4691,7 @@ export async function directSessionHandler(c: Context<{ Bindings: Env }>) {
         userId: session.userId,
         createdAt: session.createdAt,
         expiresAt: session.expiresAt,
-        data: session.data,
+        data: publicSessionData(session.data),
       },
       user: {
         id: runtimeUser.id,
@@ -3601,6 +4739,7 @@ export async function directLogoutHandler(c: Context<{ Bindings: Env }>) {
 
     // Get session from cookie or Authorization header
     const sessionId = getSessionIdFromRequest(c);
+    let logoutSession: Session | null = null;
 
     if (sessionId) {
       let session: Session | null = null;
@@ -3615,83 +4754,79 @@ export async function directLogoutHandler(c: Context<{ Bindings: Env }>) {
 
         try {
           session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
-        } catch (error) {
-          log.warn('Failed to load session before logout', {
-            action: 'logout_session_load',
-            errorType: error instanceof Error ? error.name : 'Unknown',
-          });
-        }
-
-        try {
+          logoutSession = session;
+          // Revoke the durable resume credential before losing the session that identifies it.
+          await revokeGuestResumeForSession(c, session);
+          // Likewise the session's Native SSO device secrets: the session names their user (and
+          // so, where accounts are routed, their database), and a failure keeps the session for a
+          // retry instead of answering a logout that left the secrets usable.
+          if (session && (await isNativeSSOEnabled(c.env))) {
+            const result = await revokeSessionDeviceSecrets(c, {
+              tenantId: getTenantIdFromContext(c),
+              issuer: getRequestIssuer(c),
+              sessionId,
+              userId: session.userId,
+              clientId: client_id,
+              scope: logoutScope,
+              reason: 'logout',
+              callerAuthMode: 'access_token',
+            });
+            if (result.revokedDeviceSecrets > 0 || result.revokedInstallations > 0) {
+              log.info('Revoked device secrets on Direct Auth logout', {
+                action: 'direct_logout_device_secret_revoke',
+                revokedCount: result.revokedDeviceSecrets,
+                revokedInstallations: result.revokedInstallations,
+                logoutScope: result.scope,
+                trustGroupId: result.trustGroupId,
+                targetClientId: result.clientId,
+              });
+            }
+          }
           await sessionStore.invalidateSessionRpc(sessionId);
         } catch (error) {
-          log.warn('Failed to invalidate session', {
-            action: 'logout_session_invalidate',
+          log.warn('Failed to revoke session during logout', {
+            action: 'logout_session_revoke',
             errorType: error instanceof Error ? error.name : 'Unknown',
           });
+          return c.json({ error: 'logout_unavailable' }, 503);
         }
       }
 
       const tenantId = getTenantIdFromContext(c);
-      const authCtx = createAuthContextFromHono(c, tenantId);
-
-      const nativeSSOEnabled = await isNativeSSOEnabled(c.env);
-      if (nativeSSOEnabled) {
-        try {
-          const result = await revokeDeviceSecretsForLogoutScope({
-            adapter: authCtx.coreAdapter,
-            tenantId,
-            sessionIds: [sessionId],
-            userId: session?.userId,
-            clientId: client_id,
-            scope: logoutScope,
-            reason: 'logout',
-            callerAuthMode: 'access_token',
-          });
-
-          if (result.revokedDeviceSecrets > 0 || result.revokedInstallations > 0) {
-            log.info('Revoked device secrets on Direct Auth logout', {
-              action: 'direct_logout_device_secret_revoke',
-              revokedCount: result.revokedDeviceSecrets,
-              revokedInstallations: result.revokedInstallations,
-              logoutScope: result.scope,
-              trustGroupId: result.trustGroupId,
-              targetClientId: result.clientId,
-            });
-          }
-        } catch (error) {
-          log.warn('Failed to revoke device secrets on logout', {
-            action: 'direct_logout_device_secret_revoke_error',
-            errorType: error instanceof Error ? error.name : 'Unknown',
-          });
-        }
-      }
 
       // Revoke refresh tokens for this user if requested
       if (revoke_tokens && c.env.REFRESH_TOKEN_ROTATOR) {
         try {
           if (session?.userId) {
-            // Query all active token families for this user from D1
+            // ar-token indexes the user's families in its account database, not tenant metadata.
+            await resolveAccountDataContextFromHono(c, session.userId);
+            const accountCore = createAccountAuthContextFromHono(c, tenantId).coreAdapter;
             // Find all active token families for this user
-            const families = await listRefreshTokenFamiliesByUser(authCtx.coreAdapter, {
+            const families = await listRefreshTokenFamiliesByUser(accountCore, {
               tenantId,
               userId: session.userId,
               activeOnly: true,
               nowMs: Date.now(),
             });
 
-            // Revoke each family in the RefreshTokenRotator
+            // Revoke the user's family in each RefreshTokenRotator the index names. By user, not
+            // by the indexed JWT ID: that is the family's first one, gone once it has rotated.
+            const revokedInstances = new Set<string>();
+            let revocationFailed = false;
             for (const family of families) {
               try {
-                const { stub: rotator } = getRefreshTokenRotatorStubByJti(
+                const { stub: rotator, resolution } = getRefreshTokenRotatorStubByJti(
                   c.env,
                   family.client_id,
                   family.jti,
                   getTenantIdFromContext(c)
                 );
-                await rotator.revokeByJtiRpc(family.jti, 'direct_auth_revoke_tokens');
+                if (revokedInstances.has(resolution.instanceName)) continue;
+                await rotator.revokeFamilyRpc(session.userId, 'direct_auth_revoke_tokens');
+                revokedInstances.add(resolution.instanceName);
               } catch (familyError) {
                 // Log but continue with other families
+                revocationFailed = true;
                 log.warn('Failed to revoke token family', {
                   action: 'revoke_token_family',
                   jti: family.jti,
@@ -3700,11 +4835,18 @@ export async function directLogoutHandler(c: Context<{ Bindings: Env }>) {
               }
             }
 
-            // Mark families as revoked in D1
-            await expireRefreshTokenFamiliesByUser(authCtx.coreAdapter, {
-              tenantId,
-              userId: session.userId,
-            });
+            // Mark families as revoked in D1, only when every rotator revoked: a family left
+            // live must stay findable, so that revoking again (or an admin) can still reach it.
+            if (revocationFailed) {
+              log.warn('Refresh token families left in the index for a retry', {
+                action: 'revoke_refresh_tokens_partial',
+              });
+            } else {
+              await expireRefreshTokenFamiliesByUser(accountCore, {
+                tenantId,
+                userId: session.userId,
+              });
+            }
 
             log.info('Revoked refresh tokens on logout', {
               action: 'revoke_refresh_tokens',
@@ -3721,6 +4863,55 @@ export async function directLogoutHandler(c: Context<{ Bindings: Env }>) {
         }
       }
     }
+
+    if (sessionId && logoutSession?.userId) {
+      const tenantId = getTenantIdFromContext(c);
+      const auditPromise = createAuditLog(c.env, {
+        tenantId,
+        userId: logoutSession.userId,
+        action: 'user.logout',
+        resource: 'session',
+        resourceId: logoutSession.id ?? sessionId,
+        ipAddress:
+          c.req.header('CF-Connecting-IP') ||
+          c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() ||
+          c.req.header('X-Real-IP') ||
+          'unknown',
+        userAgent: c.req.header('User-Agent') || 'unknown',
+        metadata: JSON.stringify({
+          method: 'direct',
+          client_id: client_id ?? null,
+          logout_scope: logoutScope,
+          is_guest_session:
+            logoutSession.data?.is_guest_session === true ||
+            logoutSession.data?.guest_resume_credential === true,
+        }),
+        severity: 'info',
+      }).catch((error) => {
+        log.error(
+          'Failed to create Direct Auth logout audit',
+          { action: 'audit_log' },
+          error as Error
+        );
+      });
+      try {
+        c.executionCtx.waitUntil(auditPromise);
+      } catch {
+        await auditPromise;
+      }
+      log.info('Direct Auth logout completed', {
+        action: 'logout',
+        tenantId,
+        userId: logoutSession.userId,
+        sessionId,
+      });
+    }
+
+    deleteCookie(c, GUEST_RESUME_COOKIE, {
+      path: '/',
+      secure: true,
+      sameSite: getSessionCookieSameSite(c.env),
+    });
 
     // Clear session cookie (SameSite must match when setting)
     deleteCookie(c, 'authrim_session', {

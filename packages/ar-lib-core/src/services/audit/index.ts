@@ -65,14 +65,20 @@ export {
   createAnonymizationService,
   batchGetAnonymizedUserIds,
   listAnonymizationMappings,
+  deleteAnonymizationMappingStatement,
 } from './anonymization';
+export {
+  ANONYMIZED_USER_ID_CACHE_MAX_ENTRIES,
+  ANONYMIZED_USER_ID_CACHE_TTL_MS,
+  forgetCachedAnonymizedUserId,
+} from './anonymized-user-id-cache';
 
 export type { IAnonymizationService } from './anonymization';
 
 // Audit Service
-export { AuditService, createAuditService } from './audit-service';
+export { AuditService, createAuditService, resolveAuditRetention } from './audit-service';
 
-export type { AuditServiceDependencies } from './audit-service';
+export type { AuditRetentionSource, AuditServiceDependencies } from './audit-service';
 export {
   AUDIT_FAIL_CLOSED_CATEGORIES,
   AUDIT_FAIL_OPEN_CATEGORIES,
@@ -172,17 +178,6 @@ export type {
   CanonicalAuditDeliveryChannel,
 } from './canonical-format';
 
-// Operational Logs (reason_detail storage with encryption)
-export {
-  storeOperationalLog,
-  getOperationalLog,
-  listOperationalLogs,
-  deleteUserOperationalLogs,
-} from './operational-logs';
-
-export type {
-  OperationalLogEntry,
-  StoreOperationalLogParams,
-  OperationalLogObjectStorageOptions,
-  OperationalLogStorageOptions,
-} from './operational-logs';
+// Operational reasons use the shared encrypted new-log backend.
+export { storeOperationalLog } from './operational-logs';
+export type { StoreOperationalLogParams } from './operational-logs';

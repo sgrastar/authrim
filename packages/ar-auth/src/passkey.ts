@@ -1,3 +1,4 @@
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 /**
  * WebAuthn/Passkey Handler
  * Implements Passkey registration and authentication using @simplewebauthn/server
@@ -7,14 +8,17 @@ import { Context } from 'hono';
 import { setCookie } from 'hono/cookie';
 import type { Env, Session } from '@authrim/ar-lib-core';
 import {
+  assertGuestCredentialAuthenticationAllowed,
+  isAuthenticationMethodUsageAvailable,
   isAllowedOrigin,
   parseAllowedOrigins,
+  getSessionStoreBySessionId,
   getSessionStoreForNewSession,
   getSessionClientMetadata,
   getChallengeStoreByChallengeId,
   getChallengeStoreByUserId,
   getTenantIdFromContext,
-  getTenantSettings,
+  getTenantSettingsDocument,
   generateUserIdFromSettings,
   createAuthContextFromHono,
   createAccountAuthContextFromHono,
@@ -43,6 +47,7 @@ import {
   advancePasskeyAuthenticationState,
   isAccountAuthenticationDeniedError,
   resolveAccountDataContextFromHono,
+  checkEmailRegistration,
 } from '@authrim/ar-lib-core';
 import {
   buildCanonicalProfileRuntimeUserFields,
@@ -50,14 +55,19 @@ import {
   validateRegistrationFieldSubmissionFromEnv,
 } from './registration-field-utils';
 import { resolveSessionTtl } from './session-ttl';
+import {
+  isAuthenticationMethodUsageEnabled,
+  type AuthenticationMethodUsage,
+} from './authentication-method-settings';
 import { timeAuthRequestDiagnosticOperation } from './request-diagnostics';
 import {
+  isDeletedDestinationRouteError,
   publishTenantD1PasskeyRoute,
   provisionTenantD1EmailAccount,
   resolvePasskeyProvisioningResumeUserId,
   resolveTenantD1PasskeyAccountRoute,
   resolveTenantD1EmailAccountRoute,
-  usesTenantD1AccountStorage,
+  usesRoutedAccountStorage,
 } from './account-provisioning';
 
 // ===== Module-level Logger for Helper Functions =====
@@ -82,6 +92,37 @@ import type {
 
 // WebAuthn transport types (matches PasskeyRepository.AuthenticatorTransport)
 type AuthenticatorTransport = 'usb' | 'nfc' | 'ble' | 'internal' | 'hybrid';
+
+/**
+ * Whether the tenant lets passkeys be used for `usage` on these endpoints (null: yes). The answer
+ * does not depend on any account, so refusing says nothing about who exists. Settings that cannot
+ * be read refuse too: passkeys are on unless the tenant turned them off, and an unreadable switch
+ * must not read as "not turned off".
+ */
+async function rejectIfPasskeyUsageDisabled(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  usage: AuthenticationMethodUsage
+): Promise<Response | null> {
+  let enabled: boolean;
+  try {
+    enabled = await isAuthenticationMethodUsageEnabled(c.env, tenantId, 'passkey', usage, {
+      strict: true,
+    });
+  } catch {
+    return c.json(
+      {
+        error: 'temporarily_unavailable',
+        error_description: 'Authentication settings are unavailable.',
+      },
+      503
+    );
+  }
+  if (enabled) return null;
+  return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS, {
+    extensions: { authentication_method: 'passkey', usage },
+  });
+}
 
 function createCanonicalRuntimeUserStore(
   c: Context<{ Bindings: Env }>,
@@ -124,7 +165,10 @@ interface RegistrationInfoCompat {
 async function getAllowedOriginsFromKV(env: Env, tenantId: string): Promise<string[]> {
   let allowedOriginsValue: string | undefined;
 
-  const settings = await getTenantSettings(env.AUTHRIM_CONFIG, tenantId, 'tenant');
+  const settings = await getTenantSettingsDocument(env, tenantId, 'tenant', {
+    // Without the tenant's settings the fallback is at least as strict.
+    onUnreadable: 'empty',
+  });
   if (settings && typeof settings['tenant.allowed_origins'] === 'string') {
     allowedOriginsValue = settings['tenant.allowed_origins'];
   }
@@ -255,6 +299,16 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
     }
 
+    // This endpoint only ever creates a new account (an address that has one is a conflict), so
+    // it is a sign-up: it works only where the tenant allows passkey sign-up. Decided before any
+    // account is looked up or created.
+    const signupDisabled = await rejectIfPasskeyUsageDisabled(
+      c,
+      getTenantIdFromContext(c),
+      'signup'
+    );
+    if (signupDisabled) return signupDisabled;
+
     const normalizedEmail =
       typeof email === 'string' && email.trim() ? email.trim().toLowerCase() : null;
 
@@ -319,10 +373,26 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
       ...customFieldValidation.values,
     });
 
+    // The address of an account deleted within the tenant's retention period, where the tenant
+    // blocks re-registration: answered as an address that has an account, after the same lookups
+    // (a lookup that fails on a route cached from before the deletion is passed over for it). A
+    // resumed provisioning already passed the check.
+    const registration = resumedUserId
+      ? 'allowed'
+      : await checkEmailRegistration(c.env, { tenantId, email: normalizedEmail });
+    // A check that could not be made fails every address alike, in use or not.
+    if (registration === 'unavailable') {
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    }
+    const blocked = registration === 'blocked';
+
     // Check if user exists in the canonical runtime user store.
-    const tenantD1 = usesTenantD1AccountStorage(c);
+    const tenantD1 = usesRoutedAccountStorage(c);
     const accountRoute = normalizedEmail
-      ? await resolveTenantD1EmailAccountRoute(c, normalizedEmail)
+      ? await resolveTenantD1EmailAccountRoute(c, normalizedEmail).catch((error: unknown) => {
+          if (blocked && isDeletedDestinationRouteError(error)) return 'not_found' as const;
+          throw error;
+        })
       : 'not_required';
     let runtimeUsers: CanonicalRuntimeUserStore | null = tenantD1
       ? accountRoute === 'resolved'
@@ -332,14 +402,13 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
     let user: { id: string; email: string | null; name: string | null } | null = null;
 
     const runtimeUser = normalizedEmail ? await runtimeUsers?.findByEmail(normalizedEmail) : null;
-    if (runtimeUser) {
+    if (runtimeUser || blocked) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
 
     // If user doesn't exist, create a new canonical runtime user.
     if (!user) {
-      const newUserId =
-        resumedUserId ?? (await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env));
+      const newUserId = resumedUserId ?? (await generateUserIdFromSettings(c.env, tenantId, c.env));
       const defaultName = name || null;
       const preferredUsername = normalizedEmail?.split('@')[0] ?? newUserId;
       const provisioningRuntimeUser = {
@@ -411,7 +480,7 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
     }
 
     // Get user's existing passkeys via Repository
-    const accountScoped = usesTenantD1AccountStorage(c) && Boolean(accountRoute);
+    const accountScoped = usesRoutedAccountStorage(c) && Boolean(accountRoute);
     const authCtx = accountScoped
       ? createAccountAuthContextFromHono(c, tenantId)
       : createAuthContextFromHono(c, tenantId);
@@ -513,6 +582,15 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       });
     }
 
+    // Completing a sign-up opens a session: sign-up may have been turned off since the options
+    // were issued.
+    const signupDisabled = await rejectIfPasskeyUsageDisabled(
+      c,
+      getTenantIdFromContext(c),
+      'signup'
+    );
+    if (signupDisabled) return signupDisabled;
+
     // Consume challenge from ChallengeStore DO (atomic operation, RPC)
     // This prevents parallel replay attacks
     // Use userId-based sharding (UUID, no PII) - must match the shard used during options generation
@@ -564,6 +642,7 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
         expectedChallenge: challengeData.challenge,
         expectedOrigin: origin,
         expectedRPID: rpID,
+        requireUserVerification: true,
       });
     } catch (error) {
       // PII Protection: Don't log full error
@@ -605,13 +684,27 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
     const tenantId = getTenantIdFromContext(c);
     const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'passkey_registration');
 
-    if (usesTenantD1AccountStorage(c)) {
+    if (usesRoutedAccountStorage(c)) {
       await resolveAccountDataContextFromHono(c, userId);
     }
 
     // Step 1: Create session using SessionStore Durable Object (FIRST, sharded) via RPC
     // This ensures that if session creation fails, we don't store the passkey
     const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env, tenantId);
+    // A registration that fails must not leave a session behind, not even one whose creation
+    // committed although its RPC failed. A fresh stub: a failed RPC can break the one it used.
+    const endRegistrationSession = async (): Promise<void> => {
+      try {
+        await getSessionStoreBySessionId(c.env, sessionId, tenantId).stub.invalidateSessionRpc(
+          sessionId
+        );
+      } catch (invalidateError) {
+        log.error('Failed to end the session of a failed passkey registration', {
+          action: 'session_invalidate',
+          errorType: invalidateError instanceof Error ? invalidateError.name : 'Unknown',
+        });
+      }
+    };
 
     let sessionData: { id: string };
     try {
@@ -622,6 +715,9 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
         {
           ...getSessionClientMetadata(c.req.raw),
           amr: ['passkey'],
+          // Registered with attestation none: no signature proves the key yet, so no assurance
+          // level counts this passkey until it signs in.
+          unverified_amr: ['passkey'],
           acr: 'urn:mace:incommon:iap:bronze',
         },
         tenantId
@@ -633,41 +729,51 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
         action: 'session_create',
         errorType: error instanceof Error ? error.name : 'Unknown',
       });
+      await endRegistrationSession();
       return createErrorResponse(c, AR_ERROR_CODES.SESSION_STORE_ERROR);
     }
 
-    // Step 2: Store passkey via the routed account database when tenant-exclusive storage is used.
-    const accountScoped = usesTenantD1AccountStorage(c);
-    const authCtx = accountScoped
-      ? createAccountAuthContextFromHono(c, tenantId)
-      : createAuthContextFromHono(c, tenantId);
-    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId, { accountScoped });
+    // Step 2: Store passkey in the account database where accounts are routed (either scope).
+    // The session is only for a registration that completes: if storing the passkey or reading
+    // the user back fails, the session just created is ended before the error is answered.
+    let updatedUser: Awaited<ReturnType<CanonicalRuntimeUserStore['findById']>>;
+    try {
+      const accountScoped = usesRoutedAccountStorage(c);
+      const authCtx = accountScoped
+        ? createAccountAuthContextFromHono(c, tenantId)
+        : createAuthContextFromHono(c, tenantId);
+      const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId, { accountScoped });
 
-    await authCtx.repositories.passkey.create({
-      id: passkeyId,
-      user_id: userId,
-      credential_id: credentialIDBase64URL,
-      rp_id: rpID,
-      public_key: publicKeyBase64,
-      counter,
-      transports: (credential.response.transports || []) as AuthenticatorTransport[],
-      device_name: deviceName || 'Unknown Device',
-      aaguid: regInfo.aaguid ?? null,
-    });
-    await publishTenantD1PasskeyRoute(c, {
-      tenantId,
-      userId,
-      passkeyId,
-      credentialId: credentialIDBase64URL,
-      rpId: rpID,
-    });
+      await authCtx.repositories.passkey.create({
+        id: passkeyId,
+        user_id: userId,
+        credential_id: credentialIDBase64URL,
+        rp_id: rpID,
+        public_key: publicKeyBase64,
+        counter,
+        transports: (credential.response.transports || []) as AuthenticatorTransport[],
+        device_name: deviceName || 'Unknown Device',
+        aaguid: regInfo.aaguid ?? null,
+      });
+      await publishTenantD1PasskeyRoute(c, {
+        tenantId,
+        userId,
+        passkeyId,
+        credentialId: credentialIDBase64URL,
+        rpId: rpID,
+      });
 
-    // Registration creates an authenticated session, so retain it as the user's first login.
-    await runtimeUsers.touchLastLogin(userId, now);
+      // Registration creates an authenticated session, so retain it as the user's first login.
+      await runtimeUsers.touchLastLogin(userId, now);
 
-    // Registering a passkey proves possession of the authenticator, not the email address.
-    // Keep email verification tied to email-code or explicit verification flows.
-    const updatedUser = await runtimeUsers.findById(userId, { includeInactive: true });
+      // Registering a passkey proves possession of the authenticator, not the email address.
+      // Keep email verification tied to email-code or explicit verification flows.
+      updatedUser = await runtimeUsers.findById(userId, { includeInactive: true });
+      if (!updatedUser) throw new Error('passkey_registration_user_not_found');
+    } catch (error) {
+      await endRegistrationSession();
+      throw error;
+    }
 
     const customFields = challengeData.metadata?.custom_fields;
     if (customFields) {
@@ -692,13 +798,13 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       message: 'Passkey registered successfully',
       userId: userId,
       user: {
-        id: updatedUser!.id,
-        email: updatedUser!.email,
-        name: updatedUser!.name,
-        email_verified: updatedUser!.email_verified,
-        created_at: updatedUser!.created_at,
-        updated_at: updatedUser!.updated_at,
-        last_login_at: updatedUser!.last_login_at,
+        id: updatedUser.id,
+        email: updatedUser.email,
+        name: updatedUser.name,
+        email_verified: updatedUser.email_verified,
+        created_at: updatedUser.created_at,
+        updated_at: updatedUser.updated_at,
+        last_login_at: updatedUser.last_login_at,
       },
     });
   } catch (error) {
@@ -844,7 +950,7 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
     } catch {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
     }
-    const accountScoped = usesTenantD1AccountStorage(c) && Boolean(accountRoute);
+    const accountScoped = usesRoutedAccountStorage(c) && Boolean(accountRoute);
     const authCtx = accountScoped
       ? createAccountAuthContextFromHono(c, tenantId)
       : createAuthContextFromHono(c, tenantId);
@@ -920,6 +1026,8 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           publicKey: publicKey,
           counter: passkey.counter as number,
         },
+        // Explicit (the library default): a sign-in without the user-verified flag is refused.
+        requireUserVerification: true,
       });
     } catch (error) {
       // Publish auth.passkey.failed event (non-blocking)
@@ -977,8 +1085,43 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
     if (!accountAuthenticationRecord) {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
     }
+    // The tenant's passkey sign-in switch governs its users (administrators sign in to the
+    // console through this endpoint whatever the tenant's end-user settings say).
+    if (accountAuthenticationRecord.accountType !== 'admin') {
+      let passkeyLogin: boolean;
+      try {
+        // Strict: a switch that cannot be read must not let a user in.
+        passkeyLogin = await isAuthenticationMethodUsageAvailable(
+          c.env,
+          tenantId,
+          'passkey',
+          'login',
+          { strict: true }
+        );
+      } catch {
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description: 'Authentication settings are unavailable.',
+          },
+          503
+        );
+      }
+      if (!passkeyLogin) {
+        return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS, {
+          extensions: { authentication_method: 'passkey', usage: 'login' },
+        });
+      }
+    }
     const authTime = Math.floor(proofVerifiedAtMs / 1000);
     try {
+      if (accountAuthenticationRecord.accountType !== 'admin') {
+        await assertGuestCredentialAuthenticationAllowed(
+          authCtx.coreAdapter,
+          tenantId,
+          passkey.user_id
+        );
+      }
       await timeAuthRequestDiagnosticOperation(c, 'auth_passkey_counter_advance', () =>
         advancePasskeyAuthenticationState(
           c.env,
@@ -1050,6 +1193,8 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           amr: ['passkey'],
           acr: 'urn:mace:incommon:iap:bronze',
           authTime,
+          // When the assertion was verified (milliseconds), for assurance step-ups.
+          proven_at: proofVerifiedAtMs,
         },
         tenantId
       )) as Session;
@@ -1064,7 +1209,7 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
     }
 
     c.executionCtx.waitUntil(
-      Promise.all([
+      samlDrAll([
         authCtx.repositories.passkey.mirrorCounterAfterAuth(
           passkey.id,
           authenticationInfo.newCounter

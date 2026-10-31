@@ -1,10 +1,7 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-// @ts-expect-error node:sqlite is available in the required runtime but this package omits Node types.
-import { DatabaseSync } from 'node:sqlite';
-import { fileURLToPath } from 'node:url';
 import type { DatabaseAdapter } from '@authrim/ar-lib-core';
+import { CanonicalIdentityRepository, CanonicalRuntimeUserWriter } from '@authrim/ar-lib-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { openGuestStore } from './helpers/guest-erasure-fixture';
 
 const mocks = vi.hoisted(() => ({
   adapter: null as DatabaseAdapter | null,
@@ -33,10 +30,10 @@ import {
   adminAccountSupportContextPutHandler,
 } from '../admin-account-governance';
 
-const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 type SqlValue = string | number | null | Uint8Array;
+type SqliteDatabase = ReturnType<typeof openGuestStore>['db'];
 
-function sqliteAdapter(database: DatabaseSync): DatabaseAdapter {
+function sqliteAdapter(database: SqliteDatabase): DatabaseAdapter {
   const values = (params: unknown[] = []): SqlValue[] =>
     params.map((value) => {
       if (
@@ -49,15 +46,25 @@ function sqliteAdapter(database: DatabaseSync): DatabaseAdapter {
       }
       throw new Error('unsupported_test_sql_value');
     });
+  const totalChanges = () => {
+    const row = database.prepare('SELECT total_changes() AS n').get();
+    const count = row && typeof row === 'object' && 'n' in row ? row.n : undefined;
+    if (typeof count !== 'number' || !Number.isSafeInteger(count) || count < 0)
+      throw new Error('invalid_test_sqlite_total_changes');
+    return count;
+  };
   const execute = async (sql: string, params: unknown[] = []) => {
-    const result = database.prepare(sql).run(...values(params));
+    const before = totalChanges();
+    database.prepare(sql).run(...values(params));
+    const aggregate = totalChanges() - before;
     return {
       success: true,
-      rowsAffected: Number(result.changes),
-      meta: { changes: result.changes },
+      rowsAffected: aggregate,
+      meta: { changes: aggregate },
     };
   };
   return {
+    getType: () => 'd1',
     query: async <T>(sql: string, params: unknown[] = []) =>
       database.prepare(sql).all(...values(params)) as T[],
     queryOne: async <T>(sql: string, params: unknown[] = []) =>
@@ -101,17 +108,14 @@ function context(input: {
 }
 
 describe('Admin account governance handlers', () => {
-  let database: DatabaseSync;
+  let database: SqliteDatabase;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    database = new DatabaseSync(':memory:');
+    // Governance now reads Guest admission columns; exercise the deployed migration
+    // stream and its guards rather than an obsolete baseline-only schema.
+    database = openGuestStore('core').db;
     database.exec('PRAGMA foreign_keys = ON');
-    database.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/core/d1/001_0_4_0_core_baseline.sql'), 'utf8')
-        .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
-        .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
-    );
     database.exec(
       `INSERT INTO identity_accounts (
          id, tenant_id, account_type, lifecycle_state, legacy_user_id, created_at, updated_at
@@ -121,6 +125,55 @@ describe('Admin account governance handlers', () => {
   });
 
   afterEach(() => database.close());
+
+  it('rejects held-account deletion at the writer before reaching PII', async () => {
+    const response = await adminAccountLegalHoldCreateHandler(
+      context({
+        idempotencyKey: 'hold-before-delete',
+        body: { reason_code: 'litigation' },
+      })
+    );
+    expect(response.status).toBe(201);
+    const pii = sqliteAdapter(database);
+    const piiRead = vi.spyOn(pii, 'queryOne');
+    const piiWrite = vi.spyOn(pii, 'execute');
+    const writer = new CanonicalRuntimeUserWriter(
+      new CanonicalIdentityRepository(sqliteAdapter(database), 'tenant-a'),
+      pii
+    );
+    await expect(writer.deleteRuntimeUser('user-a')).rejects.toThrow(
+      'account_deletion_not_admitted'
+    );
+    expect(piiRead).not.toHaveBeenCalled();
+    expect(piiWrite).not.toHaveBeenCalled();
+    expect(database.prepare('SELECT lifecycle_state FROM identity_accounts').get()).toEqual({
+      lifecycle_state: 'active',
+    });
+  });
+
+  it('rolls back the native D1 hold and projection when evidence insertion fails', async () => {
+    database.exec(
+      "CREATE TRIGGER synthetic_failure BEFORE INSERT ON legal_hold_projection_outbox BEGIN SELECT RAISE(ABORT,'synthetic'); END"
+    );
+    const response = await adminAccountLegalHoldCreateHandler(
+      context({
+        idempotencyKey: 'failed-hold-evidence',
+        body: { reason_code: 'litigation' },
+      })
+    );
+    expect(response.status).toBe(500);
+    expect(database.prepare('SELECT COUNT(*) AS count FROM legal_holds').get()).toEqual({
+      count: 0,
+    });
+    expect(database.prepare('SELECT COUNT(*) AS count FROM legal_hold_events').get()).toEqual({
+      count: 0,
+    });
+    expect(
+      database
+        .prepare('SELECT projection_state,projection_generation FROM account_legal_hold_states')
+        .get()
+    ).toEqual({ projection_state: 'inactive', projection_generation: 1 });
+  });
 
   it('creates and releases a hold idempotently without advancing projection gaps on retries', async () => {
     const createRequest = context({

@@ -6,7 +6,7 @@
  */
 
 import type { Context } from 'hono';
-import type { Env, CIBARequestMetadata } from '@authrim/ar-lib-core';
+import type { Env } from '@authrim/ar-lib-core';
 import {
   isMockAuthEnabled,
   createErrorResponse,
@@ -22,10 +22,17 @@ import {
 } from '@authrim/ar-lib-core';
 import { sendPingNotification } from '@authrim/ar-lib-core/notifications';
 import { resolveAsyncTenantId } from './tenant';
+import { resolvePingTimeoutMs } from './ciba-ping-timeout';
+import { cibaStoreUnavailable, readCibaRequest, sendCibaDecision } from './ciba-store';
 import {
   cibaRequestMatchesAuthenticatedUser,
   getAuthenticatedAsyncUser,
 } from './authenticated-session';
+import {
+  CONSENT_WITHDRAWN_DESCRIPTION,
+  readApprovalConsentWithdrawal,
+  requestPredatesConsentWithdrawal,
+} from './consent-withdrawal';
 
 /**
  * POST /api/ciba/approve
@@ -117,23 +124,15 @@ export async function cibaApproveHandler(c: Context<{ Bindings: Env }>) {
         );
 
     // First, verify the request exists and is pending
-    const getResponse = await cibaRequestStore.fetch(
-      new Request('https://internal/get-by-auth-req-id', {
-        method: 'POST',
-        headers: internalHeaders,
-        body: JSON.stringify({ auth_req_id: authReqId }),
-      })
-    );
-
-    if (!getResponse.ok) {
+    const read = await readCibaRequest(cibaRequestStore, internalHeaders, authReqId);
+    if (read.kind === 'unavailable') {
+      if (read.error) log.error('CIBA request store unavailable', {}, read.error as Error);
+      return cibaStoreUnavailable(c, 'The request cannot be read right now. Try again.');
+    }
+    if (read.kind === 'missing') {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
-
-    const metadata: CIBARequestMetadata | null = await getResponse.json();
-
-    if (!metadata) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-    }
+    const metadata = read.metadata;
 
     // Check if request is still pending
     if (metadata.status !== 'pending') {
@@ -163,31 +162,59 @@ export async function cibaApproveHandler(c: Context<{ Bindings: Env }>) {
     const finalUserId = authenticatedUser?.userId || userId || 'user_' + Date.now();
     const finalSub = authenticatedUser?.sub || sub || finalUserId;
 
-    // Approve the request
-    const approveResponse = await cibaRequestStore.fetch(
-      new Request('https://internal/approve', {
-        method: 'POST',
-        headers: internalHeaders,
-        body: JSON.stringify({
-          auth_req_id: authReqId,
-          user_id: finalUserId,
-          sub: finalSub,
-          nonce: nonce || null,
-        }),
-      })
-    );
+    // A request made before the user withdrew the client's consent cannot be approved: the client
+    // has to start again. The approval records the consent generation it is given under, so a
+    // withdrawal completing afterwards refuses it at the token endpoint.
+    let consentWithdrawal;
+    try {
+      consentWithdrawal = await readApprovalConsentWithdrawal(c, {
+        tenantId,
+        userId: finalSub,
+        clientId: metadata.client_id,
+      });
+    } catch (error) {
+      log.error('Failed to read consent withdrawals for a CIBA approval', {}, error as Error);
+      return c.json(
+        {
+          error: 'temporarily_unavailable',
+          error_description: 'Consent state is unavailable. Try again.',
+        },
+        503
+      );
+    }
+    if (requestPredatesConsentWithdrawal(metadata.created_at, consentWithdrawal)) {
+      return c.json(
+        { error: 'consent_withdrawn', error_description: CONSENT_WITHDRAWN_DESCRIPTION },
+        400
+      );
+    }
 
-    if (!approveResponse.ok) {
-      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    // Approve the request
+    const approved = await sendCibaDecision(cibaRequestStore, internalHeaders, 'approve', {
+      auth_req_id: authReqId,
+      user_id: finalUserId,
+      sub: finalSub,
+      nonce: nonce || null,
+      consent_generation: consentWithdrawal.generation,
+    });
+    if (!approved.ok) {
+      // The store did not confirm the approval; it may or may not have been saved.
+      if (approved.error)
+        log.error('CIBA request store failed to approve', {}, approved.error as Error);
+      return cibaStoreUnavailable(c, 'The approval could not be confirmed. Check the request.');
     }
 
     // Send ping mode notification if required
     if (metadata.delivery_mode === 'ping' && metadata.client_notification_endpoint) {
       try {
+        // Awaited inline: the approving person's request is held open until the client's endpoint
+        // answers or the tenant's ping timeout (ciba.ping_notification_timeout_ms) runs out.
+        const timeoutMs = await resolvePingTimeoutMs(c.env, tenantId, log);
         await sendPingNotification(
           metadata.client_notification_endpoint,
           metadata.client_notification_token!,
-          authReqId
+          authReqId,
+          { timeoutMs }
         );
       } catch (error) {
         log.error('Failed to send ping notification', {}, error as Error);

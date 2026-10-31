@@ -1,12 +1,18 @@
 openapi: 3.2.0
 info:
   title: Authrim SAML API
-  version: 0.4.1
+  version: 0.5.0
   summary: SAML protocol endpoints and SAML administration API.
   description: >
     Initial OpenAPI contract for `@authrim/ar-saml`. SAML XML and browser binding responses are
     represented at a high level; detailed SAML message schemas remain defined by the SAML
     specifications.
+
+    When coordinated SAML DR export is enabled, every operation can additionally return HTTP 503
+    while source updates are paused or update admission is unavailable. This availability response
+    has Content-Type text/plain;charset=UTF-8, Cache-Control no-store, Retry-After 5, and the body
+    "Service temporarily unavailable" (no response body for HEAD). Clients may retry after the
+    indicated delay; a failed response does not establish whether an earlier write completed.
 servers:
   - url: https://{tenant_domain}
     variables:
@@ -31,6 +37,16 @@ paths:
       tags:
         - SAML IdP
       summary: Return SAML IdP metadata XML.
+      description: >-
+        For a tenant that has set its institution (the institution.scopes and
+        institution.display_names settings, which only the platform can change), the
+        IDPSSODescriptor starts with md:Extensions holding one shibmd:Scope (xmlns:shibmd
+        urn:mace:shibboleth:metadata:1.0, regexp="false") per registered scope, and md:Organization
+        names the institution in each language it was given (the name and the display name are the
+        institution's name). A tenant that has set none gets the metadata it always had (no scope,
+        an organization named Authrim). The metadata is signed as before, with these in it, and its
+        ETag changes with them; a service provider may keep it for up to a day. If the tenant's
+        settings cannot be read the endpoint answers 500 rather than metadata without its scopes.
       responses:
         '200':
           $ref: '#/components/responses/Xml'
@@ -39,6 +55,26 @@ paths:
       tags:
         - SAML IdP
       summary: Handle IdP SSO redirect binding.
+      description: >-
+        While the tenant has registered institution scopes (institution.scopes), the attributes
+        eduPersonScopedAffiliation and eduPersonPrincipalName (recognised on what the mapping
+        produced, by whatever rule or transform: the name, friendly name or OID of the attribute,
+        the short forms eppn and epsa, the destination's catalog entry and path, and the fields the
+        value is read from, through transforms) are released only with values under one of those scopes: a value
+        under another scope, with nothing before or after the @, with more than one @, or empty,
+        is withheld, a value with no scope gets the default (the first scope), and if the settings cannot be read none is released. A required attribute left
+        without a value is answered as a missing required attribute. What was withheld is recorded
+        in the audit log as saml.attribute.withheld (attribute, reason code and the scope, never
+        a value). Values released as schacHomeOrganization or o are held to what the tenant registered: the former only when
+        it equals a registered scope, the latter only when it equals a registered name, whatever source
+        the mapping took it from (otherwise withheld, reason organization_not_registered). A tenant
+        that has registered neither a scope nor a name has no institution to name, so neither
+        attribute is released (withheld, reason institution_not_registered). A service provider
+        whose field mapping set maps the system sources Home
+        Organization (schac_home_organization) or Organization Name (organization_name) to an
+        attribute gets the default scope as schacHomeOrganization or the institution's English
+        name as o; nothing is added otherwise. A tenant that has set no scopes releases
+        eduPersonScopedAffiliation and eduPersonPrincipalName as before.
       responses:
         '200':
           $ref: '#/components/responses/Html'
@@ -93,9 +129,33 @@ paths:
       tags:
         - SAML SP
       summary: Start SAML SP login.
+      description: >-
+        With an idp parameter, creates an SP-initiated authentication request and starts the
+        configured redirect or POST binding. Without idp, returns the provider selection page.
+        A well-formed runtime_interaction_id is retained on its provider links as an opaque hint;
+        the selected start checks the interaction's tenant, live state and expiry again.
+      parameters:
+        - name: runtime_interaction_id
+          in: query
+          required: false
+          description: >-
+            Optional Flow interaction identifier for associating failed sign-in attempts with an
+            existing interaction of this tenant. The value is trimmed and used only when it names
+            an unexpired interaction in the created or active state. An absent, empty, malformed,
+            unknown, expired, or other-tenant value is ignored. If the interaction cannot be checked,
+            sign-in continues without this association. This parameter adds no rejection response
+            and does not change the existing sign-in redirects or errors.
+          schema:
+            type: string
       responses:
+        '200':
+          description: Provider selection page or an auto-submitting SAML POST-binding form.
+          content:
+            text/html:
+              schema:
+                type: string
         '302':
-          description: Redirect response.
+          description: Redirects to the selected identity provider using the SAML redirect binding.
   /saml/sp/acs:
     post:
       tags:
@@ -1175,12 +1235,99 @@ components:
           $ref: '#/components/schemas/SAMLMetadataRefreshPolicy'
         nameIdFormat:
           type: string
+        minimumIal:
+          description: >-
+            For a service provider (saml_sp): the lowest identity assurance level (NIST SP 800-63A
+            IAL) a person may have to sign in to it. A person below it gets no assertion: an
+            SP-initiated request is answered with a Responder/RequestDenied status (to the ACS URL,
+            signed as other error responses are, with the RelayState), an IdP-initiated sign-in with
+            the error page. If the person's evidence cannot be read, the answer is a Responder status
+            without a second-level code (SP-initiated) or a server error (IdP-initiated), never an
+            assertion. The answer does not say what level the person holds or the SP requires. Applies
+            whether or not tenant-wide assurance (assurance.enabled) is on, and does not use the
+            scope-to-IAL requirements, which are OAuth scopes. On create, absent or null sets none; on
+            update, absent leaves it, null removes it and an empty string is refused. Any value other
+            than IAL1, IAL2, IAL3 or null is refused with 400. A saml_idp provider refuses it. The
+            identity assurance values (eduPersonAssurance) and the IAL itself are released to an SP
+            through its Field Mapping Set (the system sources assurance_ial and edu_person_assurance),
+            not through this setting.
+          type:
+            - string
+            - 'null'
+          enum:
+            - IAL1
+            - IAL2
+            - IAL3
+            - null
+        minimumAal:
+          description: >-
+            For a service provider (saml_sp): the lowest authentication assurance level (NIST SP
+            800-63B AAL) a sign-in may have for it. A sign-in below it is sent to authenticate again
+            once (a step-up: the person is sent to the re-authentication page, which is given
+            force_authn, required_aal and a challenge_id, and
+            the factors of the session stepped up from are combined with the new sign-in's); if the person comes back
+            still below it, the SP-initiated request is answered with Responder/NoAuthnContext (to the
+            ACS URL, signed as other error responses are, with the RelayState), never sent again. A
+            passive request (IsPassive) is answered with Responder/NoPassive and is not sent. An
+            IdP-initiated sign-in below it gets the error page (it has no request to step up). The
+            answer does not say what level the sign-in reached or the SP requires. Applies whether or
+            not tenant-wide assurance (assurance.enabled) is on; the AAL a request's
+            RequestedAuthnContext asks for (assurance.saml_authn_context_aal) is added to it while
+            assurance is on, and the higher applies. On create, absent or null sets none; on update,
+            absent leaves it, null removes it and an empty string is refused. Any value other than
+            AAL1, AAL2, AAL3 or null is refused with 400. A saml_idp provider refuses it. The bundled
+            login UI carries the step-up out: the challenge_id given to the re-authentication page
+            (/reauth, as for an OIDC prompt=login) is a re-authentication for the person who is
+            signed in, bound to the AuthnRequest, the SP and the tenant, so the request is not
+            completed with the session the person already has; they authenticate again as the same
+            user with a method the tenant allows for re-authentication (passkey, email code or TOTP
+            whose authentication-methods re-authentication setting is on, whatever their sign-in
+            setting), and a session proven before the step-up began is never counted. A factor
+            proven in the same session beside its older one counts as the new factor and is combined
+            with the older, which stays old. A custom login UI has to do the same. The SP-initiated request is answered with
+            Responder/AuthnFailed when a ForceAuthn sign-in did not happen, or when the person comes
+            back from the re-authentication page with no session.
+          type:
+            - string
+            - 'null'
+          enum:
+            - AAL1
+            - AAL2
+            - AAL3
+            - null
+        authnContextClassRefMode:
+          description: >-
+            For a service provider (saml_sp): how the AuthnContextClassRef of an assertion is chosen.
+            legacy_static (the default when absent) is the SP's defaultAuthnContextClassRef or the
+            IdP's own; session is the class reference of the session's authentication; assurance is
+            the class reference that assurance.saml_authn_context_aal maps to the AAL the sign-in
+            reached (the strongest the sign-in meets, among those the request's Comparison accepts),
+            falling back to the static choice when that table has none that fits or the request names
+            references it does not list. Any other value is refused with 400.
+          type: string
+          enum:
+            - legacy_static
+            - session
+            - assurance
         metadataNameIdFormats:
           type: array
           items:
             type: string
         identityMapping:
           $ref: '#/components/schemas/SAMLIdentityMapping'
+        profileUpdateFields:
+          description: >-
+            For an IdP (saml_idp): the profile fields a login from it updates for a user already
+            linked to it, with external_idp.jit_update_on_login on. Null or absent follows the
+            tenant's external_idp.jit_update_fields; [] updates none. Names any of name,
+            given_name, family_name, middle_name, nickname, profile, picture, website, gender,
+            birthdate, zoneinfo and locale (after the field mapping), each once; any other value
+            is refused with 400.
+          type:
+            - array
+            - 'null'
+          items:
+            type: string
         attributeReleaseConsent:
           type: object
           additionalProperties: false

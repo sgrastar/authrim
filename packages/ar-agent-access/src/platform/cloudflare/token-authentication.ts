@@ -1,3 +1,4 @@
+import { createCloudflareAdminAgentAuditWriter } from './admin-agent-audit-writer';
 import {
   getPublicKeyByKid,
   hasAdminPermission,
@@ -189,7 +190,8 @@ export function createCloudflareAgentAccessTokenAuthenticator<
       overrides.createRepository ??
       ((env) =>
         new AdminAgentAccessRepository(
-          requireDedicatedAdminDatabaseAdapter(env, 'agent-access-mcp-authentication')
+          requireDedicatedAdminDatabaseAdapter(env, 'agent-access-mcp-authentication'),
+          createCloudflareAdminAgentAuditWriter(env)
         )),
   };
 

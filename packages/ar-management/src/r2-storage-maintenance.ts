@@ -1,12 +1,9 @@
 import {
-  createDiagnosticLogR2Adapter,
   createSettingsManager,
-  DIAGNOSTIC_LOGGING_CATEGORY_META,
   ensureDatabaseAdapter,
+  hasCapturingTenantBackupSnapshot,
   LOGIN_UI_CATEGORY_META,
-  listEnvironmentTenantDefaultStores,
   resolveTenantUserStoreSourcesFromEnv,
-  type DiagnosticLoggingSettings,
   type Env,
   type ControlR2BucketMetricView,
   type ControlR2BucketBinding,
@@ -16,14 +13,12 @@ import { cleanupOrphanedUserImportUploads } from './user-import-jobs';
 
 export const R2_STORAGE_MAINTENANCE_CRON = '0 */6 * * *';
 const SCHEDULE_STATE_PREFIX = 'jobs:scheduled-task-state:v1:';
-const DIAGNOSTIC_TENANT_CURSOR_KEY = 'jobs:r2-maintenance:diagnostic-tenant-cursor';
 const PUBLIC_ASSET_CURSOR_KEY = 'jobs:r2-maintenance:public-assets-cursor';
 const AUDIT_TRANSIENT_CURSOR_KEY = 'jobs:r2-maintenance:audit-transient-cursor';
 const R2_METRICS_KEY = 'jobs:r2-maintenance:metrics:v1';
 const R2_METRICS_SCAN_PREFIX = 'jobs:r2-maintenance:metrics-scan:v1:';
 const PUBLIC_ASSET_ORPHAN_GRACE_MS = 24 * 60 * 60 * 1000;
 const AUDIT_TRANSIENT_ORPHAN_GRACE_MS = 30 * 24 * 60 * 60 * 1000;
-const DIAGNOSTIC_TENANT_BATCH_SIZE = 16;
 const OBJECT_SCAN_BATCH_SIZE = 500;
 const SCHEDULED_TASK_LEASE_MS = 30 * 60 * 1000;
 
@@ -84,11 +79,6 @@ interface MetricScanAccumulator extends Omit<
   cursor: string | null;
 }
 
-interface DiagnosticRetentionCursor {
-  afterTenantId: string | null;
-  objectCursor: string | null;
-}
-
 interface AuditTransientCursor {
   prefixIndex: number;
   objectCursor: string | null;
@@ -102,9 +92,14 @@ const TASKS = [
   { id: 'r2_bucket_metrics_scan', name: 'R2 bucket metrics scan' },
   { id: 'logging_storage_maintenance', name: 'Logging storage maintenance' },
   { id: 'object_artifact_cleanup', name: 'Object artifact cleanup' },
+  { id: 'audit_retention', name: 'Log retention and delivery' },
+  { id: 'check_api_audit_retention', name: 'Check API audit retention' },
+  { id: 'user_tombstone_retention', name: 'Deleted user tombstone retention' },
+  { id: 'compliance_report_retention', name: 'Compliance report retention' },
 ] as const;
 
-type TaskId = (typeof TASKS)[number]['id'];
+export type ScheduledMaintenanceTaskId = (typeof TASKS)[number]['id'];
+type TaskId = ScheduledMaintenanceTaskId;
 
 const METRIC_BUCKETS = [
   'PUBLIC_ASSETS',
@@ -185,19 +180,86 @@ function stateKey(id: TaskId): string {
   return `${SCHEDULE_STATE_PREFIX}${id}`;
 }
 
-async function readTaskState(env: Env, id: TaskId): Promise<ScheduledTaskState | null> {
-  if (!env.AUTHRIM_CONFIG) return null;
-  return parseJson<ScheduledTaskState>(await env.AUTHRIM_CONFIG.get(stateKey(id)));
+// A run's start and its outcome are kept under separate keys: KV allows one write per key per
+// second, so writing both to one key fails for a task that finishes within a second.
+function startKey(id: TaskId): string {
+  return `${stateKey(id)}:started`;
 }
 
-async function writeTaskState(env: Env, state: ScheduledTaskState): Promise<void> {
+async function readTaskState(env: Env, id: TaskId): Promise<ScheduledTaskState | null> {
+  if (!env.AUTHRIM_CONFIG) return null;
+  const [rawState, rawStart] = await Promise.all([
+    env.AUTHRIM_CONFIG.get(stateKey(id)),
+    env.AUTHRIM_CONFIG.get(startKey(id)),
+  ]);
+  const state = parseJson<ScheduledTaskState>(rawState);
+  const startedAt = parseJson<{ startedAt?: unknown }>(rawStart)?.startedAt;
+  if (typeof startedAt === 'number' && startedAt > (state?.lastStartedAt ?? 0)) {
+    // Started after the last recorded outcome: running (or ended without recording it).
+    return {
+      id,
+      status: 'running',
+      lastStartedAt: startedAt,
+      lastCompletedAt: state?.lastCompletedAt ?? null,
+      lastErrorCode: null,
+      lastResult: state?.lastResult ?? null,
+    };
+  }
+  return state;
+}
+
+/** Records a state; a failure to record is logged, never the task's or the next tasks' failure. */
+async function writeTaskState(
+  env: Env,
+  state: ScheduledTaskState,
+  log: MaintenanceLogger
+): Promise<void> {
   if (!env.AUTHRIM_CONFIG) return;
-  await env.AUTHRIM_CONFIG.put(stateKey(state.id as TaskId), JSON.stringify(state));
+  try {
+    await env.AUTHRIM_CONFIG.put(stateKey(state.id as TaskId), JSON.stringify(state));
+  } catch (error) {
+    log.warn('Scheduled maintenance task state could not be recorded', {
+      taskId: state.id,
+      errorType: error instanceof Error ? error.name : 'Unknown',
+    });
+  }
+}
+
+async function recordTaskStart(
+  env: Env,
+  id: TaskId,
+  startedAt: number,
+  log: MaintenanceLogger
+): Promise<void> {
+  if (!env.AUTHRIM_CONFIG) return;
+  try {
+    await env.AUTHRIM_CONFIG.put(startKey(id), JSON.stringify({ startedAt }));
+  } catch (error) {
+    log.warn('Scheduled maintenance task start could not be recorded', {
+      taskId: id,
+      errorType: error instanceof Error ? error.name : 'Unknown',
+    });
+  }
 }
 
 function taskAvailability(env: Env, id: TaskId): { enabled: boolean; reason: string | null } {
   if (!env.AUTHRIM_CONFIG) {
     return { enabled: false, reason: 'AUTHRIM_CONFIG is not configured' };
+  }
+  if (id === 'check_api_audit_retention')
+    return {
+      enabled: false,
+      reason: 'Check API audit retention is managed by Iceberg maintenance',
+    };
+  // Business retention uses its existing schedule; Iceberg log lifecycle uses the minute tick.
+  if (
+    id === 'audit_retention' ||
+    id === 'user_tombstone_retention' ||
+    id === 'compliance_report_retention'
+  ) {
+    return env.DB_ADMIN
+      ? { enabled: true, reason: null }
+      : { enabled: false, reason: 'DB_ADMIN is not configured' };
   }
   if (env.AUTHRIM_R2_MAINTENANCE_CRON_ENABLED !== 'true') {
     return { enabled: false, reason: 'The setup-managed R2 maintenance cron is not enabled' };
@@ -216,9 +278,7 @@ function taskAvailability(env: Env, id: TaskId): { enabled: boolean; reason: str
       : { enabled: false, reason: 'Artifact R2 bindings are incomplete' };
   }
   if (id === 'r2_diagnostic_log_retention') {
-    return env.DIAGNOSTIC_LOGS
-      ? { enabled: true, reason: null }
-      : { enabled: false, reason: 'DIAGNOSTIC_LOGS is not configured' };
+    return { enabled: false, reason: 'Diagnostic retention is managed by Iceberg maintenance' };
   }
   if (id === 'r2_import_artifact_cleanup') {
     return env.IMPORT_ARTIFACTS
@@ -273,7 +333,8 @@ async function releaseTaskLease(env: Env, id: TaskId, token: string): Promise<vo
   ]);
 }
 
-async function runTrackedTask(
+/** Runs a maintenance task under its lease and records its state for the dashboard. */
+export async function runTrackedMaintenanceTask(
   env: Env,
   id: TaskId,
   operation: () => Promise<Record<string, unknown>>,
@@ -282,57 +343,72 @@ async function runTrackedTask(
   const availability = taskAvailability(env, id);
   if (!availability.enabled) {
     const previous = await readTaskState(env, id);
-    await writeTaskState(env, {
-      id,
-      status: 'disabled',
-      lastStartedAt: previous?.lastStartedAt ?? null,
-      lastCompletedAt: previous?.lastCompletedAt ?? null,
-      lastErrorCode: availability.reason,
-      lastResult: previous?.lastResult ?? null,
-    });
+    await writeTaskState(
+      env,
+      {
+        id,
+        status: 'disabled',
+        lastStartedAt: previous?.lastStartedAt ?? null,
+        lastCompletedAt: previous?.lastCompletedAt ?? null,
+        lastErrorCode: availability.reason,
+        lastResult: previous?.lastResult ?? null,
+      },
+      log
+    );
     return;
   }
 
   const startedAt = Date.now();
   const leaseToken = crypto.randomUUID();
-  if (!(await acquireTaskLease(env, id, leaseToken, startedAt))) {
+  let leased: boolean;
+  try {
+    leased = await acquireTaskLease(env, id, leaseToken, startedAt);
+  } catch (error) {
+    log.error(
+      'Scheduled maintenance task lease could not be taken',
+      { taskId: id },
+      error as Error
+    );
+    return;
+  }
+  if (!leased) {
     log.warn('R2 scheduled maintenance task skipped because another lease is active', {
       taskId: id,
     });
     return;
   }
-  const previous = await readTaskState(env, id);
-  await writeTaskState(env, {
-    id,
-    status: 'running',
-    lastStartedAt: startedAt,
-    lastCompletedAt: previous?.lastCompletedAt ?? null,
-    lastErrorCode: null,
-    lastResult: previous?.lastResult ?? null,
-  });
+  await recordTaskStart(env, id, startedAt, log);
   try {
     const result = await operation();
-    await writeTaskState(env, {
-      id,
-      status: 'succeeded',
-      lastStartedAt: startedAt,
-      lastCompletedAt: Date.now(),
-      lastErrorCode: null,
-      lastResult: result,
-    });
+    await writeTaskState(
+      env,
+      {
+        id,
+        status: 'succeeded',
+        lastStartedAt: startedAt,
+        lastCompletedAt: Date.now(),
+        lastErrorCode: null,
+        lastResult: result,
+      },
+      log
+    );
   } catch (error) {
     const rawErrorCode = error instanceof Error ? error.message : '';
     const errorCode = /^[a-z0-9][a-z0-9_:-]{0,127}$/u.test(rawErrorCode)
       ? rawErrorCode
       : `${id}_failed`;
-    await writeTaskState(env, {
-      id,
-      status: 'failed',
-      lastStartedAt: startedAt,
-      lastCompletedAt: Date.now(),
-      lastErrorCode: errorCode,
-      lastResult: error instanceof MaintenancePartialFailure ? error.result : null,
-    });
+    await writeTaskState(
+      env,
+      {
+        id,
+        status: 'failed',
+        lastStartedAt: startedAt,
+        lastCompletedAt: Date.now(),
+        lastErrorCode: errorCode,
+        lastResult: error instanceof MaintenancePartialFailure ? error.result : null,
+      },
+      log
+    );
     log.error('R2 scheduled maintenance task failed', { taskId: id, errorCode }, error as Error);
   } finally {
     try {
@@ -351,7 +427,7 @@ export async function runTrackedLoggingStorageMaintenance(
   operation: () => Promise<Record<string, unknown>>,
   log: MaintenanceLogger
 ): Promise<void> {
-  await runTrackedTask(env, 'logging_storage_maintenance', operation, log);
+  await runTrackedMaintenanceTask(env, 'logging_storage_maintenance', operation, log);
 }
 
 export async function runTrackedObjectArtifactCleanup(
@@ -359,95 +435,19 @@ export async function runTrackedObjectArtifactCleanup(
   operation: () => Promise<Record<string, unknown>>,
   log: MaintenanceLogger
 ): Promise<void> {
-  await runTrackedTask(env, 'object_artifact_cleanup', operation, log);
+  await runTrackedMaintenanceTask(env, 'object_artifact_cleanup', operation, log);
 }
 
-async function loadDiagnosticSettings(
-  env: Env,
-  tenantId: string
-): Promise<DiagnosticLoggingSettings> {
-  const manager = createSettingsManager({
-    env: env as unknown as Record<string, string | undefined>,
-    kv: env.SETTINGS ?? null,
-    cacheTTL: 0,
-  });
-  manager.registerCategory(DIAGNOSTIC_LOGGING_CATEGORY_META);
-  const result = await manager.getAll('diagnostic-logging', { type: 'tenant', id: tenantId });
-  return result.values as unknown as DiagnosticLoggingSettings;
+/** Diagnostic records carry immutable expires_at; shared Iceberg maintenance owns erasure. */
+export function diagnosticRetentionDays(value: number | null | undefined): number {
+  return Math.max(1, Math.min(3650, value ?? 30));
 }
 
-export async function cleanupDiagnosticLogs(env: Env): Promise<Record<string, unknown>> {
-  if (!env.DIAGNOSTIC_LOGS || !env.AUTHRIM_CONFIG) {
-    throw new Error('diagnostic_log_retention_unavailable');
-  }
-  const rawCursor = (await env.AUTHRIM_CONFIG.get(DIAGNOSTIC_TENANT_CURSOR_KEY))?.trim() ?? '';
-  const parsedCursor = parseJson<DiagnosticRetentionCursor>(rawCursor);
-  const cursor: DiagnosticRetentionCursor = parsedCursor ?? {
-    afterTenantId: rawCursor || null,
-    objectCursor: null,
-  };
-  let deleted = 0;
-  let scanned = 0;
-  let failures = 0;
-  for (let index = 0; index < DIAGNOSTIC_TENANT_BATCH_SIZE; index += 1) {
-    const tenants = await listEnvironmentTenantDefaultStores(env, {
-      limit: 1,
-      afterTenantId: cursor.afterTenantId ?? undefined,
-      concurrency: 1,
-    });
-    const tenant = tenants[0];
-    if (!tenant) {
-      await env.AUTHRIM_CONFIG.delete(DIAGNOSTIC_TENANT_CURSOR_KEY);
-      const result = { tenantsScanned: scanned, objectsDeleted: deleted, failures, cursor: null };
-      if (failures > 0) {
-        throw new MaintenancePartialFailure('diagnostic_log_retention_partial_failure', result);
-      }
-      return result;
-    }
-    scanned += 1;
-    try {
-      const settings = await loadDiagnosticSettings(env, tenant.tenantId);
-      const retentionDays = Math.max(
-        1,
-        Math.min(3650, settings['diagnostic-logging.retention_days'] ?? 30)
-      );
-      const adapter = createDiagnosticLogR2Adapter(env.DIAGNOSTIC_LOGS, {
-        pathPrefix: settings['diagnostic-logging.r2_path_prefix'] || 'diagnostic-logs',
-        tenantId: tenant.tenantId,
-        tenantKeySalt: env.LOGGING_TENANT_KEY_SALT,
-      });
-      const page = await adapter.deleteByRetentionPage(
-        Date.now() - retentionDays * 24 * 60 * 60 * 1000,
-        OBJECT_SCAN_BATCH_SIZE,
-        cursor.objectCursor ?? undefined
-      );
-      deleted += page.deleted;
-      if (page.cursor) {
-        cursor.objectCursor = page.cursor;
-        await env.AUTHRIM_CONFIG.put(DIAGNOSTIC_TENANT_CURSOR_KEY, JSON.stringify(cursor));
-        const result = {
-          tenantsScanned: scanned,
-          objectsDeleted: deleted,
-          failures,
-          cursor,
-        };
-        if (failures > 0) {
-          throw new MaintenancePartialFailure('diagnostic_log_retention_partial_failure', result);
-        }
-        return result;
-      }
-    } catch {
-      failures += 1;
-    }
-    cursor.afterTenantId = tenant.tenantId;
-    cursor.objectCursor = null;
-  }
-  await env.AUTHRIM_CONFIG.put(DIAGNOSTIC_TENANT_CURSOR_KEY, JSON.stringify(cursor));
-  const result = { tenantsScanned: scanned, objectsDeleted: deleted, failures, cursor };
-  if (failures > 0) {
-    throw new MaintenancePartialFailure('diagnostic_log_retention_partial_failure', result);
-  }
-  return result;
+export async function cleanupDiagnosticLogs(
+  _env: Env,
+  _log: MaintenanceLogger
+): Promise<Record<string, unknown>> {
+  throw new Error('diagnostic_retention_managed_by_iceberg');
 }
 
 function parseLoginUiAssetKey(
@@ -622,6 +622,9 @@ export async function cleanupOrphanedAuditTransientPayloads(
   };
   const cutoff = Date.now() - AUDIT_TRANSIENT_ORPHAN_GRACE_MS;
   const admin = ensureDatabaseAdapter(env.DB_ADMIN, 'audit-transient-orphan-cleanup');
+  if (await hasCapturingTenantBackupSnapshot(admin)) {
+    return { scanned: 0, deleted: 0, retained: 0, retainedActive: 0, cursor };
+  }
   let scanned = 0;
   let deleted = 0;
   let retainedActive = 0;
@@ -796,26 +799,31 @@ export async function scanR2Metrics(env: Env): Promise<Record<string, unknown>> 
 }
 
 export async function processR2StorageMaintenance(env: Env, log: MaintenanceLogger): Promise<void> {
-  await runTrackedTask(env, 'r2_diagnostic_log_retention', () => cleanupDiagnosticLogs(env), log);
-  await runTrackedTask(
+  await runTrackedMaintenanceTask(
+    env,
+    'r2_diagnostic_log_retention',
+    () => cleanupDiagnosticLogs(env, log),
+    log
+  );
+  await runTrackedMaintenanceTask(
     env,
     'r2_import_artifact_cleanup',
     async () => ({ ...(await cleanupOrphanedUserImportUploads(env, log)) }),
     log
   );
-  await runTrackedTask(
+  await runTrackedMaintenanceTask(
     env,
     'r2_public_asset_orphan_cleanup',
     () => cleanupOrphanedPublicAssets(env),
     log
   );
-  await runTrackedTask(
+  await runTrackedMaintenanceTask(
     env,
     'r2_audit_transient_orphan_cleanup',
     () => cleanupOrphanedAuditTransientPayloads(env),
     log
   );
-  await runTrackedTask(env, 'r2_bucket_metrics_scan', () => scanR2Metrics(env), log);
+  await runTrackedMaintenanceTask(env, 'r2_bucket_metrics_scan', () => scanR2Metrics(env), log);
 }
 
 export async function deleteTenantPublicAssets(env: Env, tenantId: string): Promise<number> {
@@ -838,29 +846,41 @@ export async function deleteTenantPublicAssets(env: Env, tenantId: string): Prom
   return deleted;
 }
 
+/** One scheduled maintenance task as the dashboard shows it. */
+export async function getScheduledMaintenanceTaskView(
+  env: Env,
+  id: ScheduledMaintenanceTaskId,
+  now = Date.now()
+): Promise<R2MaintenanceScheduleView> {
+  const task = TASKS.find((candidate) => candidate.id === id)!;
+  const availability = taskAvailability(env, task.id);
+  const state = await readTaskState(env, task.id);
+  return {
+    id: task.id,
+    name: task.name,
+    enabled: availability.enabled,
+    cron: task.id === 'audit_retention' ? '* * * * *' : R2_STORAGE_MAINTENANCE_CRON,
+    nextRunAt: availability.enabled
+      ? task.id === 'audit_retention'
+        ? (Math.floor(now / 60000) + 1) * 60000
+        : nextMaintenanceRunAt(now)
+      : null,
+    disabledReason: availability.reason,
+    status: availability.enabled ? (state?.status ?? 'never_run') : 'disabled',
+    lastStartedAt: state?.lastStartedAt ?? null,
+    lastCompletedAt: state?.lastCompletedAt ?? null,
+    lastErrorCode: state?.lastErrorCode ?? null,
+    lastResult: state?.lastResult ?? null,
+  };
+}
+
 export async function getR2MaintenanceDashboard(env: Env): Promise<{
   schedules: R2MaintenanceScheduleView[];
   storageMetrics: R2BucketOperationalMetric[];
 }> {
   const now = Date.now();
   const schedules = await Promise.all(
-    TASKS.map(async (task): Promise<R2MaintenanceScheduleView> => {
-      const availability = taskAvailability(env, task.id);
-      const state = await readTaskState(env, task.id);
-      return {
-        id: task.id,
-        name: task.name,
-        enabled: availability.enabled,
-        cron: R2_STORAGE_MAINTENANCE_CRON,
-        nextRunAt: availability.enabled ? nextMaintenanceRunAt(now) : null,
-        disabledReason: availability.reason,
-        status: availability.enabled ? (state?.status ?? 'never_run') : 'disabled',
-        lastStartedAt: state?.lastStartedAt ?? null,
-        lastCompletedAt: state?.lastCompletedAt ?? null,
-        lastErrorCode: state?.lastErrorCode ?? null,
-        lastResult: state?.lastResult ?? null,
-      };
-    })
+    TASKS.map((task) => getScheduledMaintenanceTaskView(env, task.id, now))
   );
   const localMetrics = env.AUTHRIM_CONFIG
     ? (parseJson<R2BucketOperationalMetric[]>(await env.AUTHRIM_CONFIG.get(R2_METRICS_KEY)) ?? [])

@@ -30,6 +30,10 @@ export interface AccessTokenClaims extends JWTPayload {
   claims?: string; // Requested claims (JSON string, per OIDC Core 5.5)
   claims_request_protected?: boolean; // Whether claims came from PAR or signed JAR
   cnf?: { jkt: string }; // DPoP confirmation (RFC 9449 Section 6)
+  authrim_consent_generation?: number; // Consent generation the user × client grant recorded
+  authrim_consent_client_id?: string; // Client consented to, when not client_id (Token Exchange)
+  authrim_subject_issuer?: string; // External issuer that asserted sub (JWT bearer, ID-JAG)
+  authrim_subject_principal?: string; // Client or admin principal a Token Exchange's subject named
 }
 
 /**
@@ -149,6 +153,12 @@ export interface VerifyTokenOptions {
    * Default: false
    */
   skipAudienceCheck?: boolean;
+
+  /**
+   * The signing algorithms accepted (default RS256, Authrim's access and refresh tokens). An ID
+   * token may use any of ISSUED_ID_TOKEN_ALGORITHMS.
+   */
+  algorithms?: readonly string[];
 }
 
 /**
@@ -167,7 +177,7 @@ export async function verifyToken(
   issuer: string,
   options: VerifyTokenOptions = {}
 ): Promise<JWTPayload> {
-  const { audience, skipAudienceCheck = false } = options;
+  const { audience, skipAudienceCheck = false, algorithms = ['RS256'] } = options;
 
   // SECURITY: Require audience by default to prevent accidental skipping
   if (!audience && !skipAudienceCheck) {
@@ -180,7 +190,7 @@ export async function verifyToken(
     issuer,
     // Only include audience in options if provided and not skipping
     ...(audience && !skipAudienceCheck && { audience }),
-    algorithms: ['RS256'],
+    algorithms: [...algorithms],
   });
 
   return payload;

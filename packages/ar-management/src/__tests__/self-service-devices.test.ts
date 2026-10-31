@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core';
+import { exportJWK, generateKeyPair } from 'jose';
+
+const securityRegressionIt =
+  process.env.AUTHRIM_SECURITY_REGRESSION_SUITE === 'true' ? it : it.skip;
 
 const {
   mockRepo,
@@ -11,6 +15,8 @@ const {
   mockGetTenantIdFromContext,
   mockCreateAuthContextFromHono,
   mockRecordAccountOperation,
+  mockAccountCoreAdapter,
+  mockResolveAccountDataContextFromHono,
 } = vi.hoisted(() => {
   const repo = {
     findByUserId: vi.fn(),
@@ -48,6 +54,9 @@ const {
       },
     }),
     mockRecordAccountOperation: vi.fn(),
+    /** The user's account database, distinct from the tenant metadata database ({}). */
+    mockAccountCoreAdapter: { database: 'account' },
+    mockResolveAccountDataContextFromHono: vi.fn(),
   };
 });
 
@@ -72,9 +81,13 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       device.installation_id ?? device.id,
     getTenantIdFromContext: mockGetTenantIdFromContext,
     createAuthContextFromHono: mockCreateAuthContextFromHono,
+    // The user's account database, where its devices are stored.
+    resolveAccountDataContextFromHono: mockResolveAccountDataContextFromHono,
+    createAccountAuthContextFromHono: () => ({ coreAdapter: mockAccountCoreAdapter }),
     getLogger: () => ({
       module: () => ({
         error: vi.fn(),
+        warn: vi.fn(),
       }),
     }),
   };
@@ -214,6 +227,7 @@ const targetInstallation = {
 describe('/me/devices handlers', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockResolveAccountDataContextFromHono.mockResolvedValue({});
     mockIntrospectTokenFromContext.mockResolvedValue({
       valid: true,
       claims: accessClaims,
@@ -410,6 +424,32 @@ describe('/me/devices handlers', () => {
     expect(body.error_details?.code).toBe('invalid_cursor');
   });
 
+  it("reads the user's devices from its account database", async () => {
+    mockRepo.findByUserId.mockResolvedValue([]);
+    const response = await listMyDevicesHandler(createMockContext());
+
+    expect(response.status).toBe(200);
+    expect(mockResolveAccountDataContextFromHono).toHaveBeenCalledWith(
+      expect.anything(),
+      'user-001'
+    );
+    const { DeviceSecretRepository, DeviceInstallationRepository } =
+      await import('@authrim/ar-lib-core');
+    expect(vi.mocked(DeviceSecretRepository).mock.calls[0]?.[0]).toBe(mockAccountCoreAdapter);
+    expect(vi.mocked(DeviceInstallationRepository).mock.calls[0]?.[0]).toBe(mockAccountCoreAdapter);
+  });
+
+  it.each([
+    ['no active account', 'lookup_destination_revalidation_failed', 401],
+    ['an unavailable account route', 'account_data_runtime_registry_unavailable', 503],
+  ])('refuses device access for %s', async (_label, code, status) => {
+    mockResolveAccountDataContextFromHono.mockRejectedValue(new Error(code));
+    const response = await deleteMyDeviceHandler(createMockContext({ params: { id: 'inst-1' } }));
+
+    expect(response.status).toBe(status);
+    expect(mockRepo.revoke).not.toHaveBeenCalled();
+  });
+
   it('caps list limit at 100', async () => {
     const manyDevices = Array.from({ length: 101 }, (_, index) => ({
       ...otherDevice,
@@ -575,5 +615,91 @@ describe('/me/devices handlers', () => {
       signed_out_required: false,
       status: 'completed',
     });
+  });
+});
+
+describe('/me/devices with a token whose sub is not an account id', () => {
+  // The resource's own token check (introspectToken), as deployed: a signed token, not a mock.
+  // One key pair for the block: the verification key is cached per tenant and key id.
+  const keyPair = generateKeyPair('RS256');
+  async function signedTokenSetup() {
+    const actual =
+      await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
+    const { privateKey, publicKey } = await keyPair;
+    const kv = {
+      get: async () => null,
+      put: async () => {},
+      delete: async () => {},
+    } as unknown as KVNamespace;
+    const env = {
+      ISSUER_URL: 'https://op.example.com',
+      PUBLIC_JWK_JSON: JSON.stringify(await exportJWK(publicKey)),
+      KEY_ID: 'kid-1',
+      REVOKED_TOKENS: kv,
+      NONCE_STORE: kv,
+    } as Partial<Env>;
+    mockIntrospectTokenFromContext.mockImplementation((c: ReturnType<typeof createMockContext>) =>
+      actual.introspectToken({
+        method: c.req.method,
+        url: c.req.url,
+        headers: c.req.raw.headers,
+        env: c.env,
+        tenantId: 'default',
+      })
+    );
+    const sign = async (claims: Record<string, unknown>) =>
+      (
+        await actual.createAccessToken(
+          {
+            iss: 'https://op.example.com',
+            aud: 'https://op.example.com',
+            scope: 'openid',
+            client_id: 'native-client-001',
+            ...claims,
+          } as Parameters<typeof actual.createAccessToken>[0],
+          privateKey as unknown as Parameters<typeof actual.createAccessToken>[1],
+          'kid-1',
+          3600
+        )
+      ).token;
+    return { env, sign };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockResolveAccountDataContextFromHono.mockResolvedValue({});
+    mockRepo.findByUserId.mockResolvedValue([]);
+    mockInstallationRepo.findByUserId.mockResolvedValue([]);
+  });
+
+  securityRegressionIt(
+    'does not act on the account a mapped sub equals when the token carries a sealed reference',
+    async () => {
+      // A Token Exchange of an ID token whose identity mapping chose "user-002", another user's
+      // account id: the token is user-001's, which only the authorization server can tell.
+      const { env, sign } = await signedTokenSetup();
+      const token = await sign({ sub: 'user-002', authrim_subject_ref: 'sr1.iv.ciphertext' });
+
+      const response = await listMyDevicesHandler(
+        createMockContext({ authHeader: `Bearer ${token}`, env })
+      );
+
+      expect(response.status).toBe(401);
+      expect(await response.json()).toMatchObject({ error: 'invalid_token' });
+      expect(mockResolveAccountDataContextFromHono).not.toHaveBeenCalled();
+      expect(mockRepo.findByUserId).not.toHaveBeenCalled();
+    }
+  );
+
+  it("acts on the account of a token whose sub is the user's id", async () => {
+    const { env, sign } = await signedTokenSetup();
+    const token = await sign({ sub: 'user-001' });
+
+    const response = await listMyDevicesHandler(
+      createMockContext({ authHeader: `Bearer ${token}`, env })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockRepo.findByUserId).toHaveBeenCalledWith('user-001', 'default', true);
   });
 });

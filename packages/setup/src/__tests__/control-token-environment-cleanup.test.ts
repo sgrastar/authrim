@@ -302,6 +302,102 @@ function expectNoProviderAccess(fake: ReturnType<typeof fakeAuthority>): void {
 }
 
 describe('setup-managed Control token environment cleanup', () => {
+  it('records absent authority only after verifying an uninitialized Control schema', async () => {
+    const baseDir = await root();
+    await writeEnvironmentConfig(baseDir, true);
+    const fake = fakeAuthority({});
+    const queryAuthoritySchema = vi.fn(async () => []);
+    await expect(
+      cleanupSetupManagedControlTokens({
+        baseDir,
+        environment: ENVIRONMENT,
+        controlDatabaseIdentifier: 'immutable-control-id',
+        dependencies: {
+          ...dependencies({
+            authority: fake.authority,
+            readAuthority: async () => {
+              throw new Error('no such table: control_environments: SQLITE_ERROR');
+            },
+          }),
+          queryAuthoritySchema,
+        },
+      })
+    ).resolves.toMatchObject({ status: 'not_required', reason: 'authority_absent' });
+    expect(queryAuthoritySchema).toHaveBeenCalledWith(
+      'immutable-control-id',
+      "SELECT name FROM sqlite_master WHERE name = 'control_environments' LIMIT 1"
+    );
+    expectNoProviderAccess(fake);
+    await expect(
+      loadControlTokenCleanupConclusion({ baseDir, environment: ENVIRONMENT })
+    ).resolves.toMatchObject({ reason: 'authority_absent' });
+  });
+
+  it('preserves recorded token targets when the Control schema is subsequently absent', async () => {
+    const baseDir = await root();
+    const checkpointPath = await persistIncompleteCheckpoint(baseDir);
+    const before = await readFile(checkpointPath, 'utf8');
+    const fake = fakeAuthority({});
+    await expect(
+      cleanupSetupManagedControlTokens({
+        baseDir,
+        environment: ENVIRONMENT,
+        controlDatabaseIdentifier: 'immutable-control-id',
+        dependencies: {
+          ...dependencies({
+            authority: fake.authority,
+            readAuthority: async () => {
+              throw new Error('no such table: control_environments');
+            },
+          }),
+          queryAuthoritySchema: vi.fn(async () => []),
+        },
+      })
+    ).rejects.toThrow('control_token_cleanup_authority_changed_manual_recovery_required');
+    expect(await readFile(checkpointPath, 'utf8')).toBe(before);
+    expectNoProviderAccess(fake);
+    await expect(
+      loadControlTokenCleanupConclusion({ baseDir, environment: ENVIRONMENT })
+    ).resolves.toBeNull();
+  });
+
+  it.each(['table_present', 'schema_query_failed', 'unauthorized'] as const)(
+    'keeps deletion blocked when authority is unavailable: %s',
+    async (scenario) => {
+      const baseDir = await root();
+      const fake = fakeAuthority({});
+      const queryAuthoritySchema = vi.fn(async () => {
+        if (scenario === 'schema_query_failed') throw new Error('Network unavailable');
+        return [{ name: 'control_environments' }];
+      });
+      await expect(
+        cleanupSetupManagedControlTokens({
+          baseDir,
+          environment: ENVIRONMENT,
+          controlDatabaseIdentifier: 'immutable-control-id',
+          dependencies: {
+            ...dependencies({
+              authority: fake.authority,
+              readAuthority: async () => {
+                throw new Error(
+                  scenario === 'unauthorized'
+                    ? 'Authentication error'
+                    : 'no such table: control_environments'
+                );
+              },
+            }),
+            queryAuthoritySchema,
+          },
+        })
+      ).rejects.toThrow('control_token_cleanup_authority_unavailable_manual_recovery_required');
+      expect(queryAuthoritySchema).toHaveBeenCalledTimes(scenario === 'unauthorized' ? 0 : 1);
+      expectNoProviderAccess(fake);
+      await expect(
+        loadControlTokenCleanupConclusion({ baseDir, environment: ENVIRONMENT })
+      ).resolves.toBeNull();
+    }
+  );
+
   it('skips Control D1 access when automatic provisioning was explicitly disabled', async () => {
     const baseDir = await root();
     await writeEnvironmentConfig(baseDir, false);

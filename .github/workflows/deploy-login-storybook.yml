@@ -1,0 +1,75 @@
+name: Deploy Login UI Storybook
+
+on:
+  push:
+    branches:
+      - develop
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-login-storybook
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and publish Login UI Storybook
+    if: github.repository == 'sgrastar/authrim' && github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout develop
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Verify Storybook source is available
+        run: |
+          if [ ! -f packages/ar-login-ui/package.json ]; then
+            echo '::error::Merge the Login UI Storybook source into develop before deploying Storybook.'
+            exit 1
+          fi
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@eae0cfeb286e66ffb5155f1a79b90583a127a68b # v2
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace dependencies
+        run: pnpm exec turbo run build --filter '@authrim/ar-login-ui^...'
+
+      - name: Build Storybook
+        run: pnpm --filter @authrim/ar-login-ui run build-storybook
+
+      - name: Verify static output
+        run: |
+          test -s packages/ar-login-ui/storybook-static/index.html
+          test -s packages/ar-login-ui/storybook-static/iframe.html
+          node -e "const fs = require('node:fs'); const index = JSON.parse(fs.readFileSync('packages/ar-login-ui/storybook-static/index.json', 'utf8')); if (!index.entries['introduction--docs']) throw new Error('Introduction docs are missing');"
+
+      - name: Validate deployment
+        run: pnpm exec wrangler deploy --config login-storybook.cloudflare.jsonc --dry-run
+
+      - name: Publish static Storybook
+        run: pnpm exec wrangler deploy --config login-storybook.cloudflare.jsonc
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Verify published Storybook
+        run: |
+          curl --fail --location --silent --show-error --connect-timeout 10 --max-time 30 --retry 60 --retry-max-time 600 --retry-all-errors --retry-delay 10 https://login.storybook.authrim.com/ --output /tmp/login-storybook-index.html
+          curl --fail --location --silent --show-error --connect-timeout 10 --max-time 30 --retry 60 --retry-max-time 600 --retry-all-errors --retry-delay 10 https://login.storybook.authrim.com/iframe.html --output /tmp/login-storybook-iframe.html
+          curl --fail --location --silent --show-error --connect-timeout 10 --max-time 30 --retry 60 --retry-max-time 600 --retry-all-errors --retry-delay 10 https://login.storybook.authrim.com/index.json --output /tmp/login-storybook-index.json
+          node -e "const fs = require('node:fs'); const index = JSON.parse(fs.readFileSync('/tmp/login-storybook-index.json', 'utf8')); if (!index.entries['introduction--docs']) throw new Error('Published Introduction docs are missing');"

@@ -1,3 +1,15 @@
+const lifecycleAudit = vi.hoisted(() => ({
+  prepare: vi.fn(),
+  confirm: vi.fn(),
+  dispatch: vi.fn(),
+}));
+vi.mock('@authrim/ar-lib-core/services/log-iceberg-emitter', () => ({
+  prepareLogIcebergRowWrite: lifecycleAudit.prepare,
+}));
+vi.mock('@authrim/ar-lib-core/services/admin-audit-receipts', async (original) => ({
+  ...(await original<typeof import('@authrim/ar-lib-core/services/admin-audit-receipts')>()),
+  confirmAdminAuditReceipt: lifecycleAudit.confirm,
+}));
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '@authrim/ar-lib-core';
 
@@ -10,12 +22,15 @@ const {
   mockResolveAuthCorePersistenceAdapterFromEnv,
   mockResolveTenantAssignedDatabaseSourcesFromRegistry,
   mockEmitRuntimeLogRecords,
+  mockTransition,
+  mockReadState,
 } = vi.hoisted(() => {
   const adapter = {
     query: vi.fn(),
     queryOne: vi.fn(),
     execute: vi.fn(),
-  } satisfies Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'>;
+    batch: vi.fn(),
+  } satisfies Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute' | 'batch'>;
   const createRuntimeAdapter = () =>
     ({
       query: vi.fn(),
@@ -32,6 +47,8 @@ const {
   const tenantMetadataAdapter = createRuntimeAdapter();
   return {
     mockAdapter: adapter,
+    mockTransition: vi.fn(),
+    mockReadState: vi.fn(),
     mockAdminDb: {},
     mockTenantCoreAdapter: tenantCoreAdapter,
     mockTenantPiiAdapter: tenantPiiAdapter,
@@ -60,20 +77,64 @@ const {
   };
 });
 
+const {
+  mockTransitionEndingSessions,
+  mockEnqueueSessionEndLogout,
+  mockSendSessionEndLogout,
+  mockAuditSessionEndLogout,
+} = vi.hoisted(() => ({
+  mockTransitionEndingSessions: vi.fn(),
+  mockEnqueueSessionEndLogout: vi.fn(),
+  mockSendSessionEndLogout: vi.fn(),
+  mockAuditSessionEndLogout: vi.fn(),
+}));
+
+vi.mock('../session-end-logout', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../session-end-logout')>()),
+  enqueueSessionEndLogout: mockEnqueueSessionEndLogout,
+  sendAdminSessionEndLogout: mockSendSessionEndLogout,
+  auditSessionEndLogoutStarted: mockAuditSessionEndLogout,
+}));
+
+// Organisations and memberships are read through the job's RBAC stores (tested on separate
+// databases in admin-job-rbac.test.ts); here they are all the one mock adapter.
+vi.mock('../admin-job-rbac', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../admin-job-rbac')>()),
+  jobRBACStores: vi.fn(async () => ({
+    metadata: mockAdapter,
+    accountOf: async () => mockAdapter,
+    accounts: async () => [mockAdapter],
+  })),
+}));
+
+vi.mock('../log-read-adapter', () => ({
+  createLogReadAdapter: () => ({ adapter: mockAdapter }),
+}));
+
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
     ensureDatabaseAdapter: vi.fn((source, partition) =>
-      partition === 'management-generic-jobs' || source === mockAdminDb
-        ? mockAdapter
-        : actual.ensureDatabaseAdapter(source, partition)
+      // The tenant inventory, where a scheduled run reads the tenant's lifecycle state.
+      partition === 'management-generic-job-lifecycle'
+        ? mockTenantMetadataAdapter
+        : partition === 'management-generic-jobs' || source === mockAdminDb
+          ? mockAdapter
+          : actual.ensureDatabaseAdapter(source, partition)
     ),
     resolveAuthCorePersistenceAdapterFromEnv: mockResolveAuthCorePersistenceAdapterFromEnv,
     resolveTenantAssignedDatabaseSourcesFromRegistry:
       mockResolveTenantAssignedDatabaseSourcesFromRegistry,
     emitRuntimeLogRecords: mockEmitRuntimeLogRecords,
-    transitionAccountAuthenticationState: vi.fn(async () => ({ lifecycle: 'suspended' })),
+    transitionAccountAuthenticationState: mockTransition,
+    transitionAccountAuthenticationStateEndingSessions: mockTransitionEndingSessions,
+    readAccountAuthenticationState: mockReadState,
+    initializeAccountAuthenticationFromAccount: vi.fn(async () => ({})),
+    findCanonicalAccountAuthenticationState: vi.fn(async () => ({
+      lifecycle: 'suspended',
+      sourceVersionMs: 2000,
+    })),
   };
 });
 
@@ -81,6 +142,8 @@ import { encryptObjectArtifact } from '@authrim/ar-lib-core';
 import {
   isAdminJobAllowedForTenantLifecycle,
   processPendingGenericAdminJobs as processPendingGenericAdminJobsImpl,
+  processPendingSessionEndLogoutJobs,
+  validateBulkUserUpdateConfig,
 } from '../admin-job-executor';
 
 function processPendingGenericAdminJobs(
@@ -156,6 +219,27 @@ describe('generic admin job executor', () => {
   };
 
   beforeEach(() => {
+    lifecycleAudit.dispatch.mockReset().mockResolvedValue(undefined);
+    lifecycleAudit.confirm.mockReset().mockResolvedValue(undefined);
+    lifecycleAudit.prepare
+      .mockReset()
+      .mockImplementation(
+        async (
+          _env: unknown,
+          _db: unknown,
+          input: { tenantId: string; row: { id: string }; eventAt: number }
+        ) => ({
+          record: {
+            event_id: input.row.id,
+            source_dataset: 'admin.admin_audit_log',
+            payload_hmac: 'a'.repeat(64),
+            event_at: input.eventAt,
+          },
+          statements: [],
+          dispatch: lifecycleAudit.dispatch,
+        })
+      );
+
     vi.clearAllMocks();
     vi.unstubAllGlobals();
     mockResolveAuthCorePersistenceAdapterFromEnv.mockImplementation(
@@ -163,9 +247,30 @@ describe('generic admin job executor', () => {
         partition === 'management-generic-job-lifecycle' ? mockTenantMetadataAdapter : mockAdapter
     );
     mockAdapter.query.mockReset();
+    mockAdapter.query.mockResolvedValue([]);
     mockAdapter.queryOne.mockReset();
     mockAdapter.execute.mockReset();
     mockAdapter.execute.mockResolvedValue({ rowsAffected: 1 });
+    mockAdapter.batch.mockReset();
+    mockAdapter.batch.mockImplementation(async (statements: unknown[]) =>
+      statements.map(() => ({ success: true, rowsAffected: 1 }))
+    );
+    mockTransition.mockReset();
+    mockTransition.mockResolvedValue({ lifecycle: 'suspended' });
+    // A transition that revokes sessions goes through the variant returning the ended sessions.
+    mockTransitionEndingSessions.mockReset();
+    mockTransitionEndingSessions.mockImplementation(async (env: unknown, input: unknown) => ({
+      state: await mockTransition(env, input),
+      endedSessionIds: [],
+    }));
+    mockEnqueueSessionEndLogout.mockReset();
+    mockEnqueueSessionEndLogout.mockResolvedValue(['logout-job-1']);
+    mockSendSessionEndLogout.mockReset();
+    mockSendSessionEndLogout.mockResolvedValue(null);
+    mockAuditSessionEndLogout.mockReset();
+    mockAuditSessionEndLogout.mockResolvedValue(undefined);
+    mockReadState.mockReset();
+    mockReadState.mockResolvedValue({ lifecycle: 'active', lifecycleOperationId: 'other' });
     mockEmitRuntimeLogRecords.mockReset();
     mockEmitRuntimeLogRecords.mockResolvedValue({ tenantKey: 'tk_test', targetResults: [] });
     mockTenantCoreAdapter.query.mockReset();
@@ -222,73 +327,85 @@ describe('generic admin job executor', () => {
     );
   });
 
-  it('completes lifecycle restore validation only after real storage and protocol probes', async () => {
-    const r2 = createMockR2Bucket();
-    const tenantSettings = JSON.stringify({
-      'tenant.allowed_identifiers': 'https://tenant-a.auth.example.com',
-    });
-    const kv = {
-      get: vi.fn(async () => tenantSettings),
-      put: vi.fn(async () => undefined),
-      delete: vi.fn(async () => undefined),
-    };
-    const tokenKv = {
-      list: vi.fn(async () => ({ keys: [] })),
-      get: vi.fn(async () => null),
-    };
-    mockAdapter.query.mockResolvedValueOnce([
-      {
-        id: 'job-lifecycle-restore',
-        tenant_id: 'tenant-a',
-        job_type: 'tenants/lifecycle-validation',
-        status: 'pending',
-        progress: null,
-        config: JSON.stringify({
-          command: 'restore-validate',
-          validation_kind: 'restore',
-          source_state: 'restore_pending',
-          target_state: 'active',
-          reason: 'restore completed',
-          idempotency_key: 'restore-key',
-          actor_id: 'admin-1',
-        }),
-        created_at: 1,
-        tenant_lifecycle_state: 'restore_validating',
-      },
-    ]);
-    mockAdapter.queryOne
-      .mockResolvedValueOnce({ id: 'tenant-a', lifecycle_state: 'restore_validating' })
-      .mockResolvedValueOnce({ ok: 1 })
-      .mockResolvedValueOnce({ id: 'lifecycle:job-lifecycle-restore', tenant_id: 'tenant-a' })
-      .mockResolvedValueOnce({ count: 1 })
-      .mockResolvedValueOnce({ id: 'audit-1' })
-      .mockResolvedValueOnce({ updated_at: 10 });
+  it.each([false, true])(
+    'completes lifecycle restore validation after probes (dispatch failure=%s)',
+    async (dispatchFails) => {
+      if (dispatchFails)
+        lifecycleAudit.dispatch.mockRejectedValueOnce(new Error('queue unavailable'));
+      const r2 = createMockR2Bucket();
+      const tenantSettings = JSON.stringify({
+        'tenant.allowed_identifiers': 'https://tenant-a.auth.example.com',
+      });
+      const kv = {
+        get: vi.fn(async () => tenantSettings),
+        put: vi.fn(async () => undefined),
+        delete: vi.fn(async () => undefined),
+      };
+      const tokenKv = {
+        list: vi.fn(async () => ({ keys: [] })),
+        get: vi.fn(async () => null),
+      };
+      mockAdapter.query.mockResolvedValueOnce([
+        {
+          id: 'job-lifecycle-restore',
+          tenant_id: 'tenant-a',
+          job_type: 'tenants/lifecycle-validation',
+          status: 'pending',
+          progress: null,
+          config: JSON.stringify({
+            command: 'restore-validate',
+            validation_kind: 'restore',
+            source_state: 'restore_pending',
+            target_state: 'active',
+            reason: 'restore completed',
+            idempotency_key: 'restore-key',
+            actor_id: 'admin-1',
+          }),
+          created_at: 1,
+          tenant_lifecycle_state: 'restore_validating',
+        },
+      ]);
+      mockAdapter.queryOne
+        .mockResolvedValueOnce({ id: 'tenant-a', lifecycle_state: 'restore_validating' })
+        .mockResolvedValueOnce({ ok: 1 })
+        .mockResolvedValueOnce({ id: 'lifecycle:job-lifecycle-restore', tenant_id: 'tenant-a' })
+        .mockResolvedValueOnce({ count: 1 })
+        .mockResolvedValueOnce({ id: 'audit-1' })
+        .mockResolvedValueOnce({ updated_at: 10 });
 
-    await processPendingGenericAdminJobs(
-      {
-        BASE_DOMAIN: 'auth.example.com',
-        AUTHRIM_CONFIG: kv,
-        INITIAL_ACCESS_TOKENS: tokenKv,
-        EXPORT_ARTIFACTS: r2.bucket,
-        DB_ADMIN: mockTenantCoreAdapter,
-      } as never,
-      logger
-    );
+      await processPendingGenericAdminJobs(
+        {
+          BASE_DOMAIN: 'auth.example.com',
+          AUTHRIM_CONFIG: kv,
+          INITIAL_ACCESS_TOKENS: tokenKv,
+          EXPORT_ARTIFACTS: r2.bucket,
+          DB_ADMIN: mockTenantCoreAdapter,
+          // The tenant inventory, where the lifecycle command moved the tenant.
+          DB: mockAdminDb,
+        } as never,
+        logger
+      );
 
-    expect(r2.put).toHaveBeenCalledOnce();
-    expect(kv.get).toHaveBeenCalledWith('settings:tenant:tenant-a:tenant');
-    expect(kv.put).toHaveBeenCalledWith('v1:tenant-exists:tenant-a', 'true', {
-      expirationTtl: 3600,
-    });
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('UPDATE tenants SET lifecycle_state = ?'),
-      expect.arrayContaining(['active', 'tenant-a', 'restore_validating'])
-    );
-    expect(mockTenantCoreAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining(['tenant.lifecycle.validation_completed'])
-    );
-  });
+      expect(mockAdapter.execute).toHaveBeenCalledWith(
+        expect.stringContaining('completed_at = ?'),
+        expect.arrayContaining(['completed'])
+      );
+      expect(r2.put).toHaveBeenCalledOnce();
+      expect(kv.get).toHaveBeenCalledWith('settings:tenant:tenant-a:tenant');
+      expect(kv.put).toHaveBeenCalledWith('v1:tenant-exists:tenant-a', 'true', {
+        expirationTtl: 3600,
+      });
+      expect(mockAdapter.execute).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE tenants SET lifecycle_state = ?'),
+        expect.arrayContaining(['active', 'tenant-a', 'restore_validating'])
+      );
+      expect(lifecycleAudit.prepare.mock.calls.at(-1)?.[2]).toMatchObject({
+        tenantId: 'tenant-a',
+        sourceDataset: 'admin.admin_audit_log',
+        row: { action: 'tenant.lifecycle.validation_completed' },
+      });
+    }
+  );
 
   it('keeps the safe lifecycle state and audits retry when a required probe fails', async () => {
     mockAdapter.query.mockResolvedValueOnce([
@@ -319,7 +436,11 @@ describe('generic admin job executor', () => {
       .mockResolvedValueOnce({ id: 'lifecycle:job-lifecycle-failure', tenant_id: 'tenant-a' });
 
     await processPendingGenericAdminJobs(
-      { BASE_DOMAIN: 'auth.example.com', DB_ADMIN: mockTenantCoreAdapter } as never,
+      {
+        BASE_DOMAIN: 'auth.example.com',
+        DB_ADMIN: mockTenantCoreAdapter,
+        DB: mockAdminDb,
+      } as never,
       logger
     );
 
@@ -331,10 +452,11 @@ describe('generic admin job executor', () => {
       expect.stringContaining("SET status = 'pending'"),
       expect.arrayContaining([expect.stringContaining('kv_binding_missing'), 1, 3])
     );
-    expect(mockTenantCoreAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_audit_log'),
-      expect.arrayContaining(['tenant.lifecycle.validation_retry_scheduled'])
-    );
+    expect(lifecycleAudit.prepare.mock.calls.at(-1)?.[2]).toMatchObject({
+      tenantId: 'tenant-a',
+      sourceDataset: 'admin.admin_audit_log',
+      row: { action: 'tenant.lifecycle.validation_retry_scheduled' },
+    });
   });
 
   it('exports tenant core and PII tables to encrypted backup artifacts', async () => {
@@ -560,7 +682,7 @@ describe('generic admin job executor', () => {
           progress: null,
           config: JSON.stringify({
             manifest_object_catalog_id: 'catalog-manifest',
-            actor_roles: ['system_admin'],
+            actor_roles: ['ar_super_admin'],
             break_glass_confirmation: 'VALIDATE_TENANT_DATABASE_RESTORE_DRY_RUN',
             reason: 'validate backup before restore planning',
           }),
@@ -645,7 +767,7 @@ describe('generic admin job executor', () => {
         progress: null,
         config: JSON.stringify({
           manifest_object_catalog_id: 'catalog-manifest',
-          actor_roles: ['tenant_admin'],
+          actor_roles: ['ar_tenant_admin'],
           break_glass_confirmation: 'VALIDATE_TENANT_DATABASE_RESTORE_DRY_RUN',
           reason: 'validate backup',
         }),
@@ -667,7 +789,7 @@ describe('generic admin job executor', () => {
     const finalUpdate = mockAdapter.execute.mock.calls.at(-1);
     expect(finalUpdate?.[0]).toEqual(expect.stringContaining("SET status = 'pending'"));
     expect((finalUpdate?.[1] as unknown[])[0]).toContain(
-      'tenant_database_restore_dry_run_requires_system_admin'
+      'tenant_database_restore_dry_run_requires_super_admin'
     );
   });
 
@@ -753,7 +875,7 @@ describe('generic admin job executor', () => {
         config: JSON.stringify({
           manifest_object_catalog_id: 'catalog-manifest',
           validation_mode: 'temporary_database_schema_import',
-          actor_roles: ['system_admin'],
+          actor_roles: ['ar_super_admin'],
           break_glass_confirmation: 'VALIDATE_TENANT_DATABASE_RESTORE_DRY_RUN',
           reason: 'validate future import path',
         }),
@@ -790,7 +912,7 @@ describe('generic admin job executor', () => {
         progress: null,
         config: JSON.stringify({
           source_export_job_id: 'job-backup',
-          actor_roles: ['system_admin'],
+          actor_roles: ['ar_super_admin'],
           break_glass_confirmation: 'PURGE_TENANT_DATABASE_BACKUP',
           reason: 'retention elapsed',
         }),
@@ -852,7 +974,7 @@ describe('generic admin job executor', () => {
         progress: null,
         config: JSON.stringify({
           source_export_job_id: 'job-backup',
-          actor_roles: ['system_admin'],
+          actor_roles: ['ar_super_admin'],
           break_glass_confirmation: 'PURGE_TENANT_DATABASE_BACKUP',
           reason: 'too early',
         }),
@@ -907,13 +1029,30 @@ describe('generic admin job executor', () => {
       expect.stringContaining("SET status = 'processing'"),
       expect.arrayContaining(['job-1', 'tenant-a'])
     );
-    expect(mockAdapter.execute).toHaveBeenNthCalledWith(
-      2,
-      expect.stringContaining(
-        "UPDATE identity_accounts SET metadata_json = json_set(COALESCE(metadata_json, '{}'), '$.status', ?), updated_at = ? WHERE tenant_id = ? AND legacy_user_id IN (?)"
-      ),
-      expect.arrayContaining(['suspended', expect.any(Number), 'tenant-a', 'user-1'])
+    // The authentication state first, then the account and its subject, as this job's transition
+    // (its version and an operation per account), taken only while no newer one was.
+    expect(mockTransition).toHaveBeenCalledWith(expect.anything(), {
+      tenantId: 'tenant-a',
+      userId: 'user-1',
+      lifecycle: 'suspended',
+      sourceVersionMs: 1000,
+      operationId: 'bulk-job:job-1:user-1',
+      revokeSessions: true,
+    });
+    const [statements] = mockAdapter.batch.mock.calls[0]! as [
+      Array<{ sql: string; params: unknown[] }>,
+    ];
+    expect(statements[0]!.sql).toContain('SET lifecycle_state = ?');
+    // An account being deleted, or deleted, is never set otherwise.
+    expect(statements[0]!.sql).toContain("lifecycle_state NOT IN ('deleting', 'deleted')");
+    expect(statements[0]!.sql).toContain("'$.lifecycle_operation_id', ? || legacy_user_id");
+    expect(statements[0]!.params).toEqual(
+      expect.arrayContaining(['suspended', 1000, 'bulk-job:job-1:', 'tenant-a', 'user-1'])
     );
+    expect(statements[1]!.sql).toContain('UPDATE identity_subjects SET lifecycle_state = ?');
+    // A subject being deleted is never set back, and only along with its account's change.
+    expect(statements[1]!.sql).toContain("lifecycle_state NOT IN ('deleting', 'deleted')");
+    expect(statements[1]!.params).toEqual(expect.arrayContaining(['suspended']));
     expect(mockAdapter.execute).toHaveBeenLastCalledWith(
       expect.stringContaining('SET status = ?, progress = ?, result = ?'),
       expect.arrayContaining([
@@ -924,6 +1063,200 @@ describe('generic admin job executor', () => {
         'tenant-a',
       ])
     );
+  });
+
+  it('tells the relying parties of the sessions a suspending bulk job ended', async () => {
+    mockAdapter.query.mockResolvedValueOnce([
+      {
+        id: 'job-1',
+        tenant_id: 'tenant-a',
+        job_type: 'users/bulk-update',
+        status: 'pending',
+        progress: null,
+        config: JSON.stringify({
+          fields: ['status'],
+          values: { status: 'suspended' },
+          filter: { lifecycle_state: 'active' },
+          dry_run: false,
+        }),
+        created_at: 1,
+      },
+    ]);
+    mockAdapter.query.mockResolvedValueOnce([{ id: 'user-1' }, { id: 'user-2' }]);
+    mockAdapter.queryOne.mockResolvedValue({ count: 2 });
+    mockTransitionEndingSessions.mockImplementation(
+      async (_env: unknown, input: { userId: string }) => ({
+        state: { lifecycle: 'suspended' },
+        endedSessionIds: [`${input.userId}-session`],
+      })
+    );
+
+    await processPendingGenericAdminJobs({} as never, logger);
+
+    // Kept as admin jobs for the scheduled run (no response to answer first).
+    expect(mockEnqueueSessionEndLogout).toHaveBeenCalledTimes(1);
+    expect(mockEnqueueSessionEndLogout).toHaveBeenCalledWith(expect.anything(), {
+      tenantId: 'tenant-a',
+      sessions: [
+        { userId: 'user-1', sessionId: 'user-1-session' },
+        { userId: 'user-2', sessionId: 'user-2-session' },
+      ],
+      trigger: { action: 'bulk_user_update', operationId: 'job-1' },
+    });
+    expect(mockSendSessionEndLogout).not.toHaveBeenCalled();
+    // The audit names the job that started the logout, for each user.
+    expect(mockAuditSessionEndLogout).toHaveBeenCalledWith(expect.anything(), {
+      tenantId: 'tenant-a',
+      sessions: [
+        { userId: 'user-1', sessionId: 'user-1-session' },
+        { userId: 'user-2', sessionId: 'user-2-session' },
+      ],
+      trigger: { action: 'bulk_user_update', operationId: 'job-1' },
+      jobIds: ['logout-job-1'],
+    });
+  });
+
+  it('runs logout jobs every minute, apart from the other admin jobs', async () => {
+    mockAdapter.query.mockResolvedValue([]);
+    await processPendingSessionEndLogoutJobs({ DB_ADMIN: mockAdminDb } as never, logger);
+    const [logoutSql, logoutParams] = mockAdapter.query.mock.calls.at(-1)! as [string, unknown[]];
+    expect(logoutSql).toContain('LIMIT ?');
+    expect(logoutParams).toContain('users/session-end-logout');
+    expect(logoutParams.at(-1)).toBe(25);
+
+    await processPendingGenericAdminJobs({} as never, logger);
+    const [, genericParams] = mockAdapter.query.mock.calls.at(-1)! as [string, unknown[]];
+    expect(genericParams).toContain('users/bulk-update');
+    expect(genericParams).not.toContain('users/session-end-logout');
+    expect(genericParams.at(-1)).toBe(5);
+  });
+
+  it('clears the run time when it claims a job, so no other run claims it too', async () => {
+    mockAdapter.query.mockResolvedValueOnce([
+      {
+        id: 'job-1',
+        tenant_id: 'tenant-a',
+        job_type: 'users/bulk-update',
+        status: 'pending',
+        progress: null,
+        config: JSON.stringify({
+          fields: ['status'],
+          values: { status: 'suspended' },
+          filter: { lifecycle_state: 'active' },
+          dry_run: true,
+        }),
+        created_at: 1,
+        next_run_at: 1,
+      },
+    ]);
+    mockAdapter.queryOne.mockResolvedValue({ count: 1 });
+
+    await processPendingGenericAdminJobs({} as never, logger);
+
+    const [claimSql] = mockAdapter.execute.mock.calls[0]! as [string];
+    expect(claimSql).toContain("SET status = 'processing'");
+    expect(claimSql).toContain('next_run_at = NULL');
+  });
+
+  it('sends the downstream logout at once when it cannot be kept as jobs', async () => {
+    mockAdapter.query.mockResolvedValueOnce([
+      {
+        id: 'job-1',
+        tenant_id: 'tenant-a',
+        job_type: 'users/bulk-update',
+        status: 'pending',
+        progress: null,
+        config: JSON.stringify({
+          fields: ['status'],
+          values: { status: 'suspended' },
+          filter: { lifecycle_state: 'active' },
+          dry_run: false,
+        }),
+        created_at: 1,
+      },
+    ]);
+    mockAdapter.query.mockResolvedValueOnce([{ id: 'user-1' }]);
+    mockAdapter.queryOne.mockResolvedValue({ count: 1 });
+    mockTransitionEndingSessions.mockResolvedValue({
+      state: { lifecycle: 'suspended' },
+      endedSessionIds: ['session-1'],
+    });
+    mockEnqueueSessionEndLogout.mockRejectedValueOnce(new Error('admin database unavailable'));
+
+    await processPendingGenericAdminJobs({} as never, logger);
+
+    expect(mockSendSessionEndLogout).toHaveBeenCalledWith(expect.anything(), {
+      tenantId: 'tenant-a',
+      sessions: [{ userId: 'user-1', sessionId: 'session-1' }],
+      trigger: { action: 'bulk_user_update', operationId: 'job-1' },
+    });
+  });
+
+  it('still tells the relying parties when a later step of the batch fails', async () => {
+    mockAdapter.query.mockResolvedValueOnce([
+      {
+        id: 'job-1',
+        tenant_id: 'tenant-a',
+        job_type: 'users/bulk-update',
+        status: 'pending',
+        progress: null,
+        config: JSON.stringify({
+          fields: ['status'],
+          values: { status: 'locked' },
+          filter: { lifecycle_state: 'active' },
+          dry_run: false,
+        }),
+        created_at: 1,
+      },
+    ]);
+    mockAdapter.query.mockResolvedValueOnce([{ id: 'user-1' }]);
+    mockAdapter.queryOne.mockResolvedValue({ count: 1 });
+    mockAdapter.batch.mockRejectedValueOnce(new Error('database unavailable'));
+    mockTransitionEndingSessions.mockResolvedValue({
+      state: { lifecycle: 'locked' },
+      endedSessionIds: ['session-1'],
+    });
+
+    await processPendingGenericAdminJobs({} as never, logger);
+
+    expect(mockEnqueueSessionEndLogout).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ sessions: [{ userId: 'user-1', sessionId: 'session-1' }] })
+    );
+  });
+
+  it('activating accounts in bulk ends no session and tells no one', async () => {
+    mockAdapter.query.mockResolvedValueOnce([
+      {
+        id: 'job-1',
+        tenant_id: 'tenant-a',
+        job_type: 'users/bulk-update',
+        status: 'pending',
+        progress: null,
+        config: JSON.stringify({
+          fields: ['is_active'],
+          values: { is_active: true },
+          filter: { lifecycle_state: 'deprovisioned' },
+          dry_run: false,
+        }),
+        created_at: 1,
+      },
+    ]);
+    mockAdapter.query.mockResolvedValueOnce([{ id: 'user-1' }]);
+    mockAdapter.query.mockImplementation(async (sql: string) =>
+      sql.includes('SELECT legacy_user_id AS id') ? [{ id: 'user-1', version: 1000 }] : []
+    );
+    mockAdapter.queryOne.mockResolvedValue({ count: 1 });
+    mockTransition.mockResolvedValue({ lifecycle: 'active' });
+
+    await processPendingGenericAdminJobs({} as never, logger);
+
+    expect(mockTransition).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId: 'user-1', lifecycle: 'active', revokeSessions: false })
+    );
+    expect(mockTransitionEndingSessions).not.toHaveBeenCalled();
+    expect(mockEnqueueSessionEndLogout).not.toHaveBeenCalled();
   });
 
   it('keeps bulk user update jobs processing across chunks', async () => {
@@ -961,6 +1294,233 @@ describe('generic admin job executor', () => {
         'tenant-a',
       ])
     );
+  });
+
+  it('activates with a numeric is_active as the job transition of its stored version', async () => {
+    mockAdapter.query
+      .mockResolvedValueOnce([
+        {
+          id: 'job-1',
+          tenant_id: 'tenant-a',
+          job_type: 'users/bulk-update',
+          status: 'pending',
+          progress: null,
+          config: JSON.stringify({
+            fields: ['is_active'],
+            values: { is_active: 1 },
+            lifecycle_version_ms: 1_800_000_000_123,
+          }),
+          created_at: 1,
+        },
+      ])
+      .mockResolvedValueOnce([{ id: 'user-1' }, { id: 'user-2' }]);
+    mockAdapter.queryOne.mockResolvedValue({ count: 2 });
+    // Both accounts take it; user-2's authentication state holds a newer transition, so its
+    // sign-in stays refused (activating it again settles it) and it counts as failed.
+    mockAdapter.query.mockImplementation(async (sql: string) =>
+      sql.includes('SELECT legacy_user_id AS id')
+        ? [
+            { id: 'user-1', version: 1_800_000_000_123 },
+            { id: 'user-2', version: 1_800_000_000_123 },
+          ]
+        : []
+    );
+    mockTransition.mockImplementation(async (_env: unknown, input: { userId: string }) => {
+      if (input.userId === 'user-2') throw new Error('account_authentication_lifecycle_stale');
+      return { lifecycle: 'active' };
+    });
+    // Its state holds that newer suspension.
+    mockReadState.mockImplementation(async (_env: unknown, _tenant: string, userId: string) => ({
+      lifecycle: userId === 'user-2' ? 'suspended' : 'active',
+    }));
+
+    await processPendingGenericAdminJobs({} as never, logger);
+
+    // The accounts first, with their subjects, then the authentication state.
+    const [statements] = mockAdapter.batch.mock.calls[0]! as [
+      Array<{ sql: string; params: unknown[] }>,
+    ];
+    expect(statements[0]!.params.slice(0, 2)).toEqual(['active', 'active']);
+    expect(statements[0]!.params).toEqual(expect.arrayContaining(['user-1', 'user-2']));
+    expect(statements[1]!.params[0]).toBe('active');
+    expect(mockAdapter.batch.mock.invocationCallOrder[0]).toBeLessThan(
+      mockTransition.mock.invocationCallOrder[0]!
+    );
+    expect(mockTransition).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        lifecycle: 'active',
+        sourceVersionMs: 1_800_000_000_123,
+        revokeSessions: false,
+      })
+    );
+    const completion = mockAdapter.execute.mock.calls.at(-1)!;
+    expect(String((completion[1] as unknown[])[1])).toContain('"failed":1');
+  });
+
+  it('completes only once the cursor passes the last target, as targets leave the filter', async () => {
+    // A job of 3 accounts in chunks of 2: after the first chunk only one account still matches
+    // the filter (the count drops), yet the job goes on until no target is left.
+    mockAdapter.query
+      .mockResolvedValueOnce([
+        {
+          id: 'job-1',
+          tenant_id: 'tenant-a',
+          job_type: 'users/bulk-update',
+          status: 'processing',
+          progress: JSON.stringify({
+            total: 3,
+            processed: 2,
+            succeeded: 2,
+            failed: 0,
+            cursor: 'user-2',
+          }),
+          config: JSON.stringify({
+            fields: ['status'],
+            values: { status: 'suspended' },
+            filter: { lifecycle_state: 'active' },
+            batch_size: 2,
+          }),
+          created_at: 1,
+        },
+      ])
+      .mockResolvedValueOnce([{ id: 'user-3' }])
+      .mockResolvedValue([{ id: 'user-3' }]);
+    mockAdapter.queryOne.mockResolvedValue({ count: 1 });
+
+    await processPendingGenericAdminJobs({} as never, logger);
+
+    const finalUpdate = mockAdapter.execute.mock.calls.at(-1)!;
+    expect(finalUpdate[0]).toEqual(
+      expect.stringContaining('SET status = ?, progress = ?, result = ?')
+    );
+    // The job's count stays the one it started with.
+    expect(String((finalUpdate[1] as unknown[])[1])).toContain('"total":3');
+    expect(String((finalUpdate[1] as unknown[])[1])).toContain('"processed":3');
+  });
+
+  it('finishes accounts an earlier attempt of the job took under another version', async () => {
+    mockAdapter.query
+      .mockResolvedValueOnce([
+        {
+          id: 'job-1',
+          tenant_id: 'tenant-a',
+          job_type: 'users/bulk-update',
+          status: 'pending',
+          progress: null,
+          config: JSON.stringify({ fields: ['status'], values: { status: 'suspended' } }),
+          created_at: 1,
+        },
+      ])
+      .mockResolvedValueOnce([{ id: 'user-1' }])
+      .mockResolvedValue([]);
+    mockAdapter.queryOne.mockResolvedValue({ count: 1 });
+    // The authentication state holds this job's transition from an earlier attempt (version 5000).
+    mockTransition.mockImplementation(async (_env: unknown, input: { sourceVersionMs: number }) => {
+      if (input.sourceVersionMs !== 5000) throw new Error('account_authentication_lifecycle_stale');
+      return {};
+    });
+    mockReadState.mockResolvedValue({
+      lifecycle: 'suspended',
+      lifecycleOperationId: 'bulk-job:job-1:user-1',
+      lifecycleVersionMs: 5000,
+    });
+    mockAdapter.queryOne.mockImplementation(async (sql: string) =>
+      sql.includes('primary_subject_id')
+        ? { id: 'account:user-1', primary_subject_id: 'subject:user-1' }
+        : { count: 1 }
+    );
+
+    await processPendingGenericAdminJobs({} as never, logger);
+
+    // The account is set under the version the authentication state took.
+    const statements = mockAdapter.batch.mock.calls.flatMap(
+      ([batch]) => batch as Array<{ sql: string; params: unknown[] }>
+    );
+    expect(
+      statements.some(
+        (statement) =>
+          statement.sql.includes('UPDATE identity_accounts') && statement.params.includes(5000)
+      )
+    ).toBe(true);
+  });
+
+  it('finishes an activation an earlier attempt took, under the version its account recorded', async () => {
+    mockAdapter.query
+      .mockResolvedValueOnce([
+        {
+          id: 'job-1',
+          tenant_id: 'tenant-a',
+          job_type: 'users/bulk-update',
+          status: 'pending',
+          progress: JSON.stringify({ total: 1, processed: 0, succeeded: 0, failed: 0 }),
+          config: JSON.stringify({
+            fields: ['is_active'],
+            values: { is_active: true },
+            filter: { lifecycle_state: 'deprovisioned' },
+          }),
+          created_at: 1,
+        },
+      ])
+      .mockResolvedValueOnce([{ id: 'user-1' }]);
+    mockAdapter.queryOne.mockResolvedValue({ count: 1 });
+    // The account took this job's activation in an earlier attempt, at version 5000 (a job made
+    // before versions were stored), and no longer matches the filter.
+    mockAdapter.query.mockImplementation(async (sql: string) =>
+      sql.includes('SELECT legacy_user_id AS id') ? [{ id: 'user-1', version: 5000 }] : []
+    );
+    mockTransition.mockResolvedValue({ lifecycle: 'active' });
+
+    await processPendingGenericAdminJobs({} as never, logger);
+
+    // Selected again although it left the filter, as an account this job changed.
+    const [selectSql, selectParams] = mockAdapter.query.mock.calls[1]!;
+    expect(selectSql).toContain("json_extract(metadata_json, '$.lifecycle_operation_id') = ?");
+    expect(selectParams).toContain('bulk-job:job-1:');
+    expect(mockTransition).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId: 'user-1', lifecycle: 'active', sourceVersionMs: 5000 })
+    );
+  });
+
+  it('initializes authentication states from the accounts before activating them', async () => {
+    mockAdapter.query
+      .mockResolvedValueOnce([
+        {
+          id: 'job-1',
+          tenant_id: 'tenant-a',
+          job_type: 'users/bulk-update',
+          status: 'pending',
+          progress: JSON.stringify({ total: 1 }),
+          config: JSON.stringify({ fields: ['status'], values: { status: 'active' } }),
+          created_at: 1,
+        },
+      ])
+      .mockResolvedValueOnce([{ id: 'user-1' }]);
+    mockAdapter.queryOne.mockResolvedValue({ count: 1 });
+    mockReadState.mockResolvedValue({ lifecycle: null });
+    const initialize = vi.mocked(
+      (await import('@authrim/ar-lib-core')).initializeAccountAuthenticationFromAccount
+    );
+
+    await processPendingGenericAdminJobs({} as never, logger);
+
+    expect(initialize).toHaveBeenCalledWith(expect.anything(), 'tenant-a', 'user-1', {
+      lifecycle: 'suspended',
+      sourceVersionMs: 2000,
+    });
+    expect(initialize.mock.invocationCallOrder[0]).toBeLessThan(
+      mockAdapter.batch.mock.invocationCallOrder[0]!
+    );
+  });
+
+  it('refuses a bulk update setting more than one status field', () => {
+    expect(() =>
+      validateBulkUserUpdateConfig({
+        fields: ['status', 'is_active'],
+        values: { status: 'active', is_active: true },
+      })
+    ).toThrow('exactly one field');
   });
 
   it('generates a tenant-scoped report result', async () => {

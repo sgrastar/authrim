@@ -12,7 +12,12 @@
 
 import { Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import { getFeatureFlag, getTenantIdFromContext } from '@authrim/ar-lib-core';
+import {
+  getFeatureFlag,
+  getTenantIdFromContext,
+  getTenantSettingsDocument,
+  readSettingsFlag,
+} from '@authrim/ar-lib-core';
 import type {
   FlowInitRequest,
   FlowInitResponse,
@@ -34,22 +39,11 @@ export const flowApi = new Hono<{ Bindings: Env }>();
  * Checks Settings Manager KV format first, then falls back to legacy flag format
  */
 async function isFlowEngineEnabled(env: Env, tenantId: string): Promise<boolean> {
-  // Check Settings Manager KV format first (settings:tenant:<tenantId>:feature-flags)
-  if (env.AUTHRIM_CONFIG) {
-    try {
-      const settingsKey = `settings:tenant:${tenantId}:feature-flags`;
-      const settingsJson = await env.AUTHRIM_CONFIG.get(settingsKey);
-      if (settingsJson) {
-        const settings = JSON.parse(settingsJson);
-        if (typeof settings === 'object' && settings !== null) {
-          if (settings['feature.enable_flow_engine'] === true) {
-            return true;
-          }
-        }
-      }
-    } catch {
-      // Fall through to legacy check
-    }
+  // Check the Settings API document first (settings:tenant:<tenantId>:feature-flags)
+  const settings = await getTenantSettingsDocument(env, tenantId, 'feature-flags');
+  const setting = readSettingsFlag(settings, 'feature.enable_flow_engine');
+  if (setting !== null) {
+    return setting;
   }
   // Legacy fallback: check flag:ENABLE_FLOW_ENGINE or env variable
   return getFeatureFlag('ENABLE_FLOW_ENGINE', env, false);

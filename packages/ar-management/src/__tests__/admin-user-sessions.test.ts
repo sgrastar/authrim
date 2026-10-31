@@ -1,4 +1,25 @@
+const piiLogRows = vi.hoisted(() => [] as Array<import('@authrim/ar-lib-core').PIIAuditLog>);
+vi.mock('../../../ar-lib-core/dist/repositories/pii/audit-log', async (original) => ({
+  ...(await original<typeof import('../../../ar-lib-core/dist/repositories/pii/audit-log')>()),
+  writePiiAccessAuditRows: async (
+    _env: unknown,
+    _tenantId: string,
+    rows: import('@authrim/ar-lib-core').PIIAuditLog[]
+  ) => {
+    piiLogRows.push(...structuredClone(rows));
+  },
+}));
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+type RuntimeUserFixture = {
+  id: string;
+  email?: string | null;
+  name?: string | null;
+  active?: number;
+  email_verified?: number;
+  phone_number_verified?: number;
+  picture?: string | null;
+};
 
 const {
   mockCoreAdapter,
@@ -12,7 +33,7 @@ const {
   mockIsShardedSessionId,
   mockDetectImageType,
   mockLogSanitizedError,
-  mockRecordHybridUserSessionRevocationEpoch,
+  mockRecordRevocationEndingSessions,
 } = vi.hoisted(() => {
   const logger = {
     module: vi.fn().mockReturnThis(),
@@ -34,14 +55,20 @@ const {
     mockGetLogger: vi.fn().mockReturnValue(logger),
     mockScheduleAdminAuditLog: vi.fn(),
     mockRuntimeUsers: {
-      findById: vi.fn(),
+      findById:
+        vi.fn<
+          (
+            userId: string,
+            options?: { includeInactive?: boolean }
+          ) => Promise<RuntimeUserFixture | null>
+        >(),
       syncUser: vi.fn(),
     },
     mockInvalidateUserCache: vi.fn(),
     mockIsShardedSessionId: vi.fn(),
     mockDetectImageType: vi.fn(),
     mockLogSanitizedError: vi.fn(),
-    mockRecordHybridUserSessionRevocationEpoch: vi.fn(),
+    mockRecordRevocationEndingSessions: vi.fn(),
   };
 });
 
@@ -64,7 +91,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getLogger: mockGetLogger,
     invalidateUserCache: mockInvalidateUserCache,
     isShardedSessionId: mockIsShardedSessionId,
-    recordHybridUserSessionRevocationEpoch: mockRecordHybridUserSessionRevocationEpoch,
+    recordUserSessionRevocationEndingSessions: mockRecordRevocationEndingSessions,
     createErrorResponse: vi.fn((c, code) =>
       c.json({ error: code }, code === actual.AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND ? 404 : 500)
     ),
@@ -75,6 +102,48 @@ vi.mock('../admin-shared', () => ({
   detectImageType: mockDetectImageType,
   logSanitizedError: mockLogSanitizedError,
   scheduleAdminAuditLog: mockScheduleAdminAuditLog,
+}));
+
+// The legacy unit suite tests HTTP formatting and side effects at an explicit owner/profile
+// seam. The routed real-SQL suite separately exercises actual owner resolution and repositories.
+vi.mock('../admin-account-storage', async () => {
+  const core = await import('@authrim/ar-lib-core');
+  const contact = async (_context: unknown, _tenant: string, userId: string) => {
+    const user = await mockRuntimeUsers.findById(userId, { includeInactive: true });
+    return user
+      ? {
+          email: user.email ?? null,
+          name: user.name ?? null,
+          store: {
+            key: 'tenant-default',
+            adapter: core.createPIIContextFromHono({} as never).defaultPiiAdapter,
+          },
+        }
+      : null;
+  };
+  return {
+    adminAccountCoreAdapter: async () => mockCoreAdapter,
+    adminAccountContact: contact,
+    adminAccountContacts: async (context: unknown, tenant: string, ids: string[]) => {
+      const contacts = new Map();
+      for (const id of new Set(ids)) {
+        const result = await contact(context, tenant, id);
+        if (result) contacts.set(id, result);
+      }
+      return contacts;
+    },
+  };
+});
+vi.mock('../account-status', async (original) => ({
+  ...(await original<typeof import('../account-status')>()),
+  getCanonicalAccountStatus: async () => {
+    const user = await mockRuntimeUsers.findById('user-1');
+    return user ? { id: 'account:user-1', lifecycle_state: 'active', status: 'active' } : null;
+  },
+}));
+vi.mock('../admin-session-end', async (original) => ({
+  ...(await original<typeof import('../admin-session-end')>()),
+  startAdminSessionEndLogout: vi.fn(async () => undefined),
 }));
 
 vi.mock('../request-issuer', () => ({
@@ -90,6 +159,8 @@ import {
   adminUserRevokeAllSessionsHandler,
   serveAvatarHandler,
 } from '../admin-user-sessions';
+import { createPIIContextFromHono } from '@authrim/ar-lib-core';
+import { startAdminSessionEndLogout } from '../admin-session-end';
 
 function createContext(
   options: {
@@ -131,17 +202,18 @@ function createContext(
 
 describe('admin user session revocation', () => {
   beforeEach(() => {
+    piiLogRows.length = 0;
+
     vi.clearAllMocks();
-    mockCoreAdapter.queryOne.mockResolvedValue(null);
-    mockCoreAdapter.query.mockResolvedValue([
-      { id: 'g1:apac:3:session_one' },
-      { id: 'legacy-session' },
-    ]);
-    mockCoreAdapter.execute.mockResolvedValue({ rowsAffected: 2 });
+    mockCoreAdapter.queryOne.mockReset().mockResolvedValue(null);
+    mockCoreAdapter.query
+      .mockReset()
+      .mockResolvedValue([{ id: 'g1:apac:3:session_one' }, { id: 'legacy-session' }]);
+    mockCoreAdapter.execute.mockReset().mockResolvedValue({ rowsAffected: 2 });
     mockSessionStore.invalidateSessionRpc.mockReset().mockResolvedValue(true);
-    mockGetSessionStoreBySessionId.mockReturnValue({ stub: mockSessionStore });
+    mockGetSessionStoreBySessionId.mockReset().mockReturnValue({ stub: mockSessionStore });
     mockCreateAuditLogFromContext.mockResolvedValue(undefined);
-    mockRuntimeUsers.findById.mockResolvedValue({
+    mockRuntimeUsers.findById.mockReset().mockResolvedValue({
       id: 'user-1',
       active: 1,
       email: 'person@example.com',
@@ -153,8 +225,11 @@ describe('admin user session revocation', () => {
     mockRuntimeUsers.syncUser.mockResolvedValue(undefined);
     mockInvalidateUserCache.mockResolvedValue(undefined);
     mockIsShardedSessionId.mockImplementation((id: string) => id.startsWith('g1:'));
-    mockSessionStore.getSessionRpc.mockResolvedValue(null);
-    mockRecordHybridUserSessionRevocationEpoch.mockResolvedValue(1_750_000_000_000);
+    mockSessionStore.getSessionRpc.mockReset().mockResolvedValue(null);
+    mockRecordRevocationEndingSessions.mockResolvedValue({
+      revokedAfterMs: 1_750_000_000_000,
+      endedSessionIds: [],
+    });
     mockDetectImageType.mockReturnValue({ extension: 'png', mimeType: 'image/png' });
   });
 
@@ -173,9 +248,8 @@ describe('admin user session revocation', () => {
       'tenant-1'
     );
     expect(mockSessionStore.invalidateSessionRpc).toHaveBeenCalledWith('g1:apac:3:session_one');
-    expect(mockRecordHybridUserSessionRevocationEpoch).toHaveBeenCalledWith(
+    expect(mockRecordRevocationEndingSessions).toHaveBeenCalledWith(
       expect.anything(),
-      mockCoreAdapter,
       'tenant-1',
       'user-1',
       expect.any(Number)
@@ -498,6 +572,48 @@ describe('admin user session revocation', () => {
       );
     });
 
+    it('records which personal fields of which user each listed session showed, without values', async () => {
+      const now = Math.floor(Date.now() / 1000);
+      const piiStore = {
+        batch: vi.fn(async (statements: unknown[]) => statements.map(() => ({}))),
+      };
+      vi.mocked(createPIIContextFromHono).mockReturnValue({
+        defaultPiiAdapter: piiStore,
+      } as never);
+      mockCoreAdapter.queryOne.mockResolvedValueOnce({ count: 1 });
+      mockCoreAdapter.query.mockResolvedValueOnce([
+        {
+          id: 's1',
+          user_id: 'user-1',
+          created_at: now - 100,
+          last_accessed_at: null,
+          expires_at: now + 100,
+          ip_address: '203.0.113.9',
+          user_agent: null,
+        },
+      ]);
+      const waitUntil = vi.fn();
+      const context = Object.assign(createContext(), { executionCtx: { waitUntil } });
+
+      try {
+        const response = await adminSessionsListHandler(context);
+        expect(response.status).toBe(200);
+        await Promise.all(waitUntil.mock.calls.map(([promise]) => promise));
+      } finally {
+        vi.mocked(createPIIContextFromHono).mockReturnValue({ defaultPiiAdapter: {} } as never);
+      }
+
+      expect(piiStore.batch).not.toHaveBeenCalled();
+      expect(piiLogRows).toHaveLength(1);
+      expect(piiLogRows[0].target_user_id).toBe('user-1');
+      expect(JSON.parse(piiLogRows[0].details!)).toMatchObject({
+        fields: ['user_email', 'user_name', 'ip_address'],
+        operation: 'admin.sessions.list',
+      });
+      expect(JSON.stringify(piiLogRows)).not.toContain('person@example.com');
+      expect(JSON.stringify(piiLogRows)).not.toContain('203.0.113.9');
+    });
+
     it.each([
       [{ status: 'expired' }, 'expires_at <= ?'],
       [{ active: 'false' }, 'expires_at <= ?'],
@@ -521,6 +637,24 @@ describe('admin user session revocation', () => {
       });
     });
 
+    it('does not disclose personal session facts when no account audit owner is available', async () => {
+      mockRuntimeUsers.findById.mockResolvedValueOnce(null);
+      mockCoreAdapter.queryOne.mockResolvedValueOnce({ count: 1 });
+      mockCoreAdapter.query.mockResolvedValueOnce([
+        {
+          id: 'legacy',
+          user_id: 'gone',
+          created_at: 100,
+          expires_at: 200,
+          ip_address: '192.0.2.10',
+          user_agent: 'Browser',
+        },
+      ]);
+      const response = await adminSessionsListHandler(createContext());
+      expect(response.status).toBe(500);
+      expect(JSON.stringify(await response.json())).not.toContain('192.0.2.10');
+    });
+
     it('returns server_error for session list failure', async () => {
       mockCoreAdapter.queryOne.mockRejectedValueOnce(new Error('D1 unavailable'));
       expect((await adminSessionsListHandler(createContext())).status).toBe(500);
@@ -534,6 +668,7 @@ describe('admin user session revocation', () => {
       mockSessionStore.getSessionRpc.mockResolvedValueOnce({
         id: 'g1:apac:3:s1',
         userId: 'user-1',
+        tenantId: 'tenant-1',
         createdAt: Date.now() - 1000,
         expiresAt: Date.now() + 60_000,
       });
@@ -601,20 +736,23 @@ describe('admin user session revocation', () => {
       const response = await adminSessionRevokeHandler(createContext({ id }));
       expect(response.status).toBe(200);
       expect(mockCoreAdapter.execute).toHaveBeenCalledWith(
-        'DELETE FROM sessions WHERE id = ? AND tenant_id = ?',
-        [id, 'tenant-1']
+        'DELETE FROM sessions WHERE id = ? AND tenant_id = ? AND user_id = ?',
+        [id, 'tenant-1', 'user-1']
       );
     });
 
-    it('continues D1 revocation when SessionStore routing throws', async () => {
-      mockCoreAdapter.queryOne.mockResolvedValueOnce({ id: 'g1:apac:3:s1', user_id: 'user-1' });
+    it('refuses to claim revocation when SessionStore ownership cannot be checked', async () => {
       mockGetSessionStoreBySessionId.mockImplementationOnce(() => {
         throw new Error('route failure');
       });
       expect((await adminSessionRevokeHandler(createContext({ id: 'g1:apac:3:s1' }))).status).toBe(
-        200
+        500
       );
-      expect(mockCoreAdapter.execute).toHaveBeenCalled();
+      expect(mockCoreAdapter.queryOne).not.toHaveBeenCalled();
+      expect(mockCoreAdapter.execute).not.toHaveBeenCalled();
+      expect(mockRuntimeUsers.findById).not.toHaveBeenCalled();
+      expect(startAdminSessionEndLogout).not.toHaveBeenCalled();
+      expect(mockSessionStore.invalidateSessionRpc).not.toHaveBeenCalled();
     });
 
     it('returns server_error for D1 revoke failure', async () => {
@@ -638,7 +776,7 @@ describe('admin user session revocation', () => {
         .mockResolvedValueOnce(false);
       const response = await adminUserRevokeAllSessionsHandler(createContext());
       await expect(response.json()).resolves.toMatchObject({ storeRevokedCount: 1 });
-      expect(mockRecordHybridUserSessionRevocationEpoch).toHaveBeenCalledOnce();
+      expect(mockRecordRevocationEndingSessions).toHaveBeenCalledOnce();
     });
 
     it('continues bulk revocation when one DO route fails and defaults missing row count to zero', async () => {

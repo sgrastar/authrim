@@ -1,6 +1,11 @@
 import type { DatabaseAdapter } from '../db/adapter';
 import { STANDARD_CLAIMS } from '../constants';
 import {
+  EDUPERSON_ASSURANCE_CLAIM,
+  OIDC_STANDARD_CLAIM_SCOPE,
+  VERIFIED_CLAIMS_CLAIM,
+} from '../utils/oidc-claims';
+import {
   assertRuntimeIdentityMappingReleaseSafety,
   type RuntimeIdentityMappingBinding,
 } from './identity-mapping-runtime-resolver';
@@ -27,6 +32,24 @@ export interface DestinationProfileConsentDescriptor {
   profileVersionId: string;
   destinationType: DestinationProfileConsentType;
   fields: DestinationProfileConsentField[];
+}
+
+/**
+ * What the release filter decided for each field of the Destination Profile, for an explanation of
+ * the release (never a value). `excludedBy`: the field is not in play for this call, because it is
+ * not listed for the surface or the scopes do not release it. `consent`: whether the user's
+ * selection lets an optional field through.
+ */
+export interface OidcDestinationReleaseTrace {
+  profileId: string;
+  fields: Array<{
+    claim: string;
+    required: boolean;
+    /** The scopes of which one releases the field (see `resolveOidcFieldRequiredScopes`). */
+    requiredScopes: string[];
+    excludedBy?: 'surface' | 'scope';
+    consent: 'not_required' | 'granted' | 'missing';
+  }>;
 }
 
 interface DestinationProfileRow {
@@ -98,10 +121,59 @@ export const INTROSPECTION_PROTOCOL_ENVELOPE_CLAIMS = new Set([
  * mapping output. OIDC `sub` is intentionally absent because pairwise and persistent subject
  * mapping is a supported feature. Introspection `sub` has the same identifier-mapping exception.
  */
+/**
+ * Claims recording the grant a token was issued under (its consent generation and client, the
+ * external issuer of its subject, the sealed reference to its account or the mark that its sub is
+ * the user's id). Authrim reads them back
+ * from tokens it signed, so only the authorization server writes them: no identity mapping
+ * output, custom claim or Destination Profile field may carry these names.
+ */
+export const AUTHORIZATION_SERVER_GRANT_CLAIMS = new Set([
+  'authrim_consent_generation',
+  'authrim_consent_client_id',
+  'authrim_subject_issuer',
+  'authrim_subject_ref',
+  'authrim_subject_account',
+  'authrim_subject_principal',
+  // An ID-JAG exchange's record of the IdP that issued its subject token.
+  'original_issuer',
+]);
+
+/**
+ * Claims by which Authrim tells a client or admin principal's token (client credentials, an admin
+ * machine, an admin agent delegation) from a user's: written by the authorization server only, so
+ * no identity mapping output may make an ID token look like one.
+ */
+export const AUTHORIZATION_SERVER_PRINCIPAL_CLAIMS = new Set([
+  'token_use',
+  'client_id',
+  'actor_type',
+  'actor_id',
+  'actor_mode',
+  'grant_id',
+]);
+
+/**
+ * The claims about a person's identity assurance (the assurance values of their IAL, and the
+ * verified claims proofing will back). The authorization server computes them from the person's
+ * evidence at the time they are released, in an ID token or UserInfo response, and nowhere else:
+ * no identity mapping output (in any namespace, introspection included), token claim rule or
+ * introspection response may carry these names, since a mapping that copied a user-editable
+ * attribute into one would let a person state their own assurance. A Destination Profile may list
+ * them as ID token and UserInfo fields, to decide which apps they are released to.
+ */
+export const AUTHORIZATION_SERVER_ASSURANCE_CLAIMS = new Set([
+  EDUPERSON_ASSURANCE_CLAIM,
+  VERIFIED_CLAIMS_CLAIM,
+]);
+
 export function isProtectedIdentityMappingDestinationClaim(
   namespace: string,
   path: string
 ): boolean {
+  if (AUTHORIZATION_SERVER_GRANT_CLAIMS.has(path)) return true;
+  if (AUTHORIZATION_SERVER_PRINCIPAL_CLAIMS.has(path)) return true;
+  if (AUTHORIZATION_SERVER_ASSURANCE_CLAIMS.has(path)) return true;
   if (namespace === 'introspection.claim') {
     return path !== 'sub' && INTROSPECTION_PROTOCOL_ENVELOPE_CLAIMS.has(path);
   }
@@ -109,6 +181,46 @@ export function isProtectedIdentityMappingDestinationClaim(
   // A tenant-configured namespace must not make the key less protected than the
   // namespace-independent consent filter that runs afterwards.
   return OIDC_PROTOCOL_ENVELOPE_CLAIMS.has(path);
+}
+
+/**
+ * The scopes of which an OIDC Destination Profile field needs one to be released.
+ *
+ * The field's own `requiredScopes` when it lists any. When it lists none, a standard claim needs
+ * the scope that releases it under OIDC Core 5.4 (email, email_verified: `email`; name and the
+ * other profile claims: `profile`; phone_number and its verified flag: `phone`; address:
+ * `address`), so an identity mapping that fills such a field (it reads the user's attributes, not
+ * only the claims the scopes released) cannot release it to a request that did not ask for it.
+ * `sub`, the protocol claims and custom claims name no such scope: with none listed they are
+ * released whatever the scopes.
+ *
+ * To release a standard claim whatever the scopes, list `openid` as its scope: every OIDC request
+ * carries it, so the field is always released. An empty list is not that choice.
+ */
+export function resolveOidcFieldRequiredScopes(
+  field: Pick<DestinationProfileConsentField, 'key' | 'requiredScopes'>
+): string[] {
+  if (field.requiredScopes.length > 0) return field.requiredScopes;
+  if (field.key === 'sub' || OIDC_PROTOCOL_ENVELOPE_CLAIMS.has(field.key)) return [];
+  const implied = Object.prototype.hasOwnProperty.call(OIDC_STANDARD_CLAIM_SCOPE, field.key)
+    ? OIDC_STANDARD_CLAIM_SCOPE[field.key]
+    : undefined;
+  return implied ? [implied] : [];
+}
+
+/**
+ * Whether an OIDC Destination Profile field is in play for a request with these scopes: the one
+ * judgement both the release filter and the consent step make, so the fields a user is asked
+ * about (and must agree to) are the fields that can be released. `sub` always is; with no scopes
+ * to judge by (null) every field is; otherwise the field's resolved required scopes decide.
+ */
+export function isOidcFieldApplicableToScopes(
+  field: Pick<DestinationProfileConsentField, 'key' | 'requiredScopes'>,
+  grantedScopes: ReadonlySet<string> | null
+): boolean {
+  if (field.key === 'sub' || grantedScopes === null) return true;
+  const requiredScopes = resolveOidcFieldRequiredScopes(field);
+  return requiredScopes.length === 0 || requiredScopes.some((scope) => grantedScopes.has(scope));
 }
 
 export function filterOidcClaimsWithoutDestinationProfile(
@@ -119,6 +231,9 @@ export function filterOidcClaimsWithoutDestinationProfile(
       ([key]) =>
         OIDC_PROTOCOL_ENVELOPE_CLAIMS.has(key) ||
         OIDC_STANDARD_CLAIMS.has(key) ||
+        // Computed from the person's evidence by the authorization server, after the request's
+        // scopes and claims parameter allowed it (never from a mapping: see above).
+        key === EDUPERSON_ASSURANCE_CLAIM ||
         key.startsWith('::')
     )
   );
@@ -191,8 +306,37 @@ export async function filterOidcClaimsByDestinationConsent(input: {
   clientId: string;
   profileId: string;
   surface?: 'id_token' | 'userinfo';
+  /**
+   * Surfaces whose fields are released on `surface` as well. For a response whose ID token is the
+   * only place the claims can go (response_type=id_token has no access token to call UserInfo
+   * with), the fields listed for `userinfo` are released in it.
+   */
+  alsoSurfaces?: ReadonlyArray<'id_token' | 'userinfo'>;
   grantedScopes?: string[];
+  /**
+   * Claims the caller has already authorized for this request, with the value it authorized (OIDC
+   * Core 5.4 scope, claims parameter, client policy). The OIDC scope that releases a standard
+   * claim (email for email, profile for name, ...) was judged there, so for these claims it counts
+   * as granted. Any other scope the field lists (a scope of the profile's own, say) still has to
+   * be granted, and so does every other rule of the profile (the field is listed, its surface, the
+   * user's selection). A claim the mapping adds, or whose value the mapping replaced, is not among
+   * them: the caller authorized another value, so it is held to the scopes.
+   */
+  authorizedClaims?: ReadonlySet<string>;
   claims: Record<string, unknown>;
+  /**
+   * For a made-up subject (an explanation for a test user): the user's selection is taken to be
+   * every optional field (`all`) or none, and no consent record is read for its ID.
+   */
+  assumedConsent?: 'all' | 'none';
+  /** Filled with what was decided for each field (an explanation; never a value). */
+  trace?: { release?: OidcDestinationReleaseTrace };
+  /**
+   * For an explanation: claims whose value is a placeholder for one the explanation did not
+   * derive (a test user's persistent identifier). Their values are not checked against the
+   * profile, which judges the real value.
+   */
+  unevaluatedClaims?: ReadonlySet<string>;
 }): Promise<Record<string, unknown>> {
   const descriptor = await loadDestinationProfileConsentDescriptor(
     input.adminAdapter,
@@ -213,19 +357,64 @@ export async function filterOidcClaimsByDestinationConsent(input: {
   }
 
   const grantedScopes = input.grantedScopes ? new Set(input.grantedScopes) : null;
-  const applicableFields = descriptor.fields.filter((field) => {
+  const exclusion = (field: DestinationProfileConsentField): 'surface' | 'scope' | null => {
     // `sub` is an OIDC protocol invariant. Legacy profiles may still carry narrower
     // surface or scope metadata, but runtime release must never make it conditional.
-    if (field.key === 'sub') return true;
-    if (input.surface && field.surfaces.length > 0 && !field.surfaces.includes(input.surface)) {
-      return false;
+    if (field.key === 'sub') return null;
+    if (
+      input.surface &&
+      field.surfaces.length > 0 &&
+      ![input.surface, ...(input.alsoSurfaces ?? [])].some((surface) =>
+        field.surfaces.includes(surface)
+      )
+    ) {
+      return 'surface';
     }
-    return (
-      grantedScopes === null ||
-      field.requiredScopes.length === 0 ||
-      field.requiredScopes.some((scope) => grantedScopes.has(scope))
-    );
-  });
+    const authorizedScope = input.authorizedClaims?.has(field.key)
+      ? OIDC_STANDARD_CLAIM_SCOPE[field.key]
+      : undefined;
+    return isOidcFieldApplicableToScopes(
+      field,
+      authorizedScope && grantedScopes
+        ? new Set([...grantedScopes, authorizedScope])
+        : grantedScopes
+    )
+      ? null
+      : 'scope';
+  };
+  // Judged per entry of the profile, as before (a profile may list a claim more than once).
+  const exclusions = descriptor.fields.map(exclusion);
+  const applicableFields = descriptor.fields.filter((_, index) => exclusions[index] === null);
+  const recordTrace = (selected: ReadonlySet<string> | null) => {
+    if (!input.trace) return;
+    input.trace.release = {
+      profileId: descriptor.profileId,
+      fields: descriptor.fields.map((field, index) => {
+        const excluded = exclusions[index];
+        return {
+          claim: field.key,
+          required: field.required,
+          // `sub` is released whatever its entry says (see `exclusion`).
+          requiredScopes: field.key === 'sub' ? [] : resolveOidcFieldRequiredScopes(field),
+          ...(excluded ? { excludedBy: excluded } : {}),
+          consent: field.required
+            ? ('not_required' as const)
+            : selected?.has(field.key)
+              ? ('granted' as const)
+              : ('missing' as const),
+        };
+      }),
+    };
+  };
+  // An assumed selection is recorded before the checks of the values, so an explanation shows
+  // the fields even when one of them fails the release.
+  const assumedSelection =
+    input.assumedConsent === undefined
+      ? undefined
+      : input.assumedConsent === 'all'
+        ? new Set(descriptor.fields.map((field) => field.key))
+        : null;
+  if (assumedSelection !== undefined) recordTrace(assumedSelection);
   const profileFields = new Map(applicableFields.map((field) => [field.key, field]));
   const filtered = Object.fromEntries(
     Object.entries(input.claims).filter(
@@ -241,19 +430,29 @@ export async function filterOidcClaimsByDestinationConsent(input: {
       'sub'
     );
   }
-  validateReleasedDestinationFields(applicableFields, filtered, 'OIDC');
+  validateReleasedDestinationFields(
+    input.unevaluatedClaims
+      ? applicableFields.filter((field) => !input.unevaluatedClaims?.has(field.key))
+      : applicableFields,
+    filtered,
+    'OIDC'
+  );
 
-  const selected = await loadSelectedDestinationFields({
-    coreAdapter: input.coreAdapter,
-    tenantId: input.tenantId,
-    subjectId: input.subjectId,
-    protocol: 'oidc',
-    recipientType: 'oidc_client',
-    recipientId: input.clientId,
-    profileId: descriptor.profileId,
-    profileVersionId: descriptor.profileVersionId,
-    jsonColumn: 'released_claims_json',
-  });
+  const selected =
+    assumedSelection !== undefined
+      ? assumedSelection && { fields: assumedSelection }
+      : await loadSelectedDestinationFields({
+          coreAdapter: input.coreAdapter,
+          tenantId: input.tenantId,
+          subjectId: input.subjectId,
+          protocol: 'oidc',
+          recipientType: 'oidc_client',
+          recipientId: input.clientId,
+          profileId: descriptor.profileId,
+          profileVersionId: descriptor.profileVersionId,
+          jsonColumn: 'released_claims_json',
+        });
+  if (assumedSelection === undefined) recordTrace(selected?.fields ?? null);
   if (!selected) {
     for (const field of applicableFields) {
       if (!field.required) delete filtered[field.key];
@@ -295,6 +494,7 @@ export async function filterIntrospectionClaimsByResourceServerProfile(input: {
   const grantedScopes = new Set(input.grantedScopes);
   const allowed = new Map(
     fields
+      .filter((field) => !AUTHORIZATION_SERVER_ASSURANCE_CLAIMS.has(field.key))
       .filter(
         (field) =>
           field.key === 'active' ||
@@ -400,6 +600,40 @@ export async function filterSamlAttributesByDestinationConsentWithStatus<
     input.tenantId,
     input.profileId
   );
+  return filterSamlAttributesByDestinationConsentDescriptorWithStatus({
+    coreAdapter: input.coreAdapter,
+    tenantId: input.tenantId,
+    subjectId: input.subjectId,
+    samlSpId: input.samlSpId,
+    profileId: input.profileId,
+    fieldPolicies: input.fieldPolicies,
+    releaseSafetyBinding: input.releaseSafetyBinding,
+    attributes: input.attributes,
+    descriptor,
+  });
+}
+
+/** The same release gate with a profile descriptor imported from a verified Admin snapshot. */
+export async function filterSamlAttributesByDestinationConsentDescriptorWithStatus<
+  T extends { name: string },
+>(input: {
+  coreAdapter: DatabaseAdapter;
+  tenantId: string;
+  subjectId: string;
+  samlSpId: string;
+  profileId: string;
+  fieldPolicies?: DestinationFieldReleasePolicies;
+  releaseSafetyBinding?: Pick<RuntimeIdentityMappingBinding, 'catalog' | 'edges'>;
+  attributes: T[];
+  descriptor: DestinationProfileConsentDescriptor | null;
+}): Promise<{
+  attributes: T[];
+  consentApplied: boolean;
+  consentRecordId?: string;
+  consentEvidence?: Record<string, unknown>;
+  consentCreatedAt?: number;
+}> {
+  const descriptor = input.descriptor;
   if (!descriptor) {
     throw new DestinationProfileReleaseValidationError(
       'SAML destination profile is unavailable',
@@ -412,8 +646,22 @@ export async function filterSamlAttributesByDestinationConsentWithStatus<
       'destination_profile_type_mismatch'
     );
   }
+  if (descriptor.profileId !== input.profileId || !descriptor.profileVersionId) {
+    throw new DestinationProfileReleaseValidationError(
+      'SAML destination profile does not match its selected version',
+      'destination_profile_unavailable'
+    );
+  }
   if (input.releaseSafetyBinding) {
-    assertRuntimeIdentityMappingReleaseSafety(input.releaseSafetyBinding, descriptor.fields, false);
+    // A SAML field is released only from a source whose classification is known.
+    assertRuntimeIdentityMappingReleaseSafety(
+      input.releaseSafetyBinding,
+      descriptor.fields,
+      false,
+      {
+        requireKnownSources: true,
+      }
+    );
   }
 
   const profileFields = new Set(descriptor.fields.map((field) => field.key));
@@ -498,7 +746,7 @@ async function loadSelectedDestinationFields(input: {
         AND decision IN ('accepted', 'selected', 'once', 'always')
         AND status = 'active'
         AND (expires_at IS NULL OR expires_at > ?)
-      ORDER BY created_at DESC
+      ORDER BY created_at DESC, id DESC
       LIMIT 1`,
     [
       input.tenantId,

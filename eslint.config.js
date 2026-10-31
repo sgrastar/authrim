@@ -3,6 +3,16 @@ import tseslint from '@typescript-eslint/eslint-plugin';
 import tsparser from '@typescript-eslint/parser';
 import globals from 'globals';
 
+// Packages whose tsconfig.json excludes their tests (so the build does not emit
+// them). tsconfig.eslint.json in each adds the tests back for type-aware lint.
+const PACKAGES_WITH_LINT_TSCONFIG = [
+  'ar-agent-access',
+  'ar-lib-core',
+  'ar-lib-logging',
+  'ar-lib-scim',
+  'ar-policy',
+];
+
 export default [
   // Ignore patterns
   {
@@ -21,11 +31,10 @@ export default [
         ecmaVersion: 'latest',
         sourceType: 'module',
         tsconfigRootDir: import.meta.dirname,
-        project: [
-          './packages/*/tsconfig.json',
-          './tools/*/tsconfig.json',
-          './test/scale-out-correctness-phase1/tsconfig.json',
-        ],
+        // Each file uses its nearest tsconfig.json. Listing every tsconfig here
+        // made typescript-eslint build a program per listed project until one
+        // contained the file (~4 GB RSS for a single file in a late package).
+        project: true,
       },
       globals: {
         ...globals.node,
@@ -58,12 +67,22 @@ export default [
     rules: {
       ...tseslint.configs['recommended'].rules,
       ...tseslint.configs['recommended-requiring-type-checking'].rules,
-      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+      // Same options as ar-vc and ar-lib-plugin: a leading _ marks an intentional
+      // unused binding (omitted destructured fields, unused arguments).
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+      ],
       '@typescript-eslint/explicit-function-return-type': 'off',
       '@typescript-eslint/explicit-module-boundary-types': 'off',
       '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/no-non-null-assertion': 'warn',
       '@typescript-eslint/require-await': 'off',
+      // typescript-eslint recommends turning these core rules off for TS: tsc
+      // already reports undefined names and invalid redeclarations, and the core
+      // rules flag ambient types (R2Bucket, RequestInit, ...) and overloads.
+      'no-undef': 'off',
+      'no-redeclare': 'off',
       // Disallow console.log - use structured logger instead
       // See docs/logging.md for migration guide
       'no-console': 'error',
@@ -93,4 +112,25 @@ export default [
       ],
     },
   },
+
+  // The structured logger's console sink, and the Node migration CLI whose
+  // output is its console report.
+  {
+    files: [
+      'packages/ar-lib-core/src/utils/logger.ts',
+      'packages/ar-lib-core/src/migrations/runner.ts',
+    ],
+    rules: {
+      'no-console': 'off',
+    },
+  },
+
+  ...PACKAGES_WITH_LINT_TSCONFIG.map((pkg) => ({
+    files: [`packages/${pkg}/src/**/*.ts`],
+    languageOptions: {
+      parserOptions: {
+        project: `./packages/${pkg}/tsconfig.eslint.json`,
+      },
+    },
+  })),
 ];

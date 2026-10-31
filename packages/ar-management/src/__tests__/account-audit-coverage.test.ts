@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest';
 const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 
 const AUDITED_MUTATION_ROUTES = [
+  'POST /api/account/guest-upgrade/start',
+  'POST /api/account/guest-upgrade/complete',
   'DELETE /api/account/devices/:id',
   'DELETE /api/account/passkeys/:id',
   'DELETE /api/account/sessions/:id',
@@ -37,6 +39,10 @@ const EPHEMERAL_MUTATION_ROUTES = [
 ] as const;
 
 const ACCOUNT_AUDIT_ACTIONS = [
+  'account.guest.created',
+  'account.guest.upgrade_failed',
+  'account.guest.upgrade_started',
+  'account.guest.upgraded',
   'account.device.unlinked',
   'account.device.updated',
   'account.email.added',
@@ -57,6 +63,8 @@ const ACCOUNT_AUDIT_ACTIONS = [
 ] as const;
 
 const AUDIT_PRODUCER_FILES = [
+  'packages/ar-auth/src/guest-login.ts',
+  'packages/ar-management/src/account-guest-upgrade.ts',
   'packages/ar-management/src/account-page.ts',
   'packages/ar-management/src/account-identifier-replacement.ts',
   'packages/ar-management/src/account-passkeys.ts',
@@ -94,11 +102,58 @@ describe('Account Page audit coverage', () => {
       'packages/ar-admin-ui/src/lib/admin/account-audit-action-label.ts'
     );
     const accountActivity = readRepositoryFile(
-      'packages/ar-login-ui/src/lib/components/account/AccountActivitySection.svelte'
+      'packages/ar-login-ui/src/lib/components/account/widgets/AccountActivityWidget.svelte'
     );
     for (const action of ACCOUNT_AUDIT_ACTIONS) {
       expect(adminLabels).toContain(`'${action}'`);
       expect(accountActivity).toContain(`'${action}'`);
+    }
+  });
+
+  it('keeps the external identity bridge account actions visible in Admin and Account Activity', () => {
+    const bridgeSource = [
+      'packages/ar-bridge/src/handlers/link.ts',
+      'packages/ar-bridge/src/handlers/callback.ts',
+      'packages/ar-bridge/src/services/link-intent.ts',
+    ]
+      .map(readRepositoryFile)
+      .join('\n');
+    const emitted = [
+      ...new Set(
+        [...bridgeSource.matchAll(/'(account\.social_account\.[a-z_]+)'/gu)].map((m) => m[1])
+      ),
+    ].sort();
+    expect(emitted).toEqual(['account.social_account.linked', 'account.social_account.unlinked']);
+
+    const adminLabels = readRepositoryFile(
+      'packages/ar-admin-ui/src/lib/admin/account-audit-action-label.ts'
+    );
+    const accountActivity = readRepositoryFile(
+      'packages/ar-login-ui/src/lib/components/account/widgets/AccountActivityWidget.svelte'
+    );
+    for (const action of emitted) {
+      expect(adminLabels).toContain(`'${action}'`);
+      expect(accountActivity).toContain(`'${action}'`);
+    }
+  });
+
+  it('records the names of fields changed by an administrator without copying field values', () => {
+    const source = readRepositoryFile('packages/ar-management/src/admin-users.ts');
+    expect(source).toContain('changed_fields: changedFields');
+    expect(source).toContain('registration_state: existingProjection.registration_state');
+  });
+
+  it('preserves guest registration context when the general Admin UI deletes an account', () => {
+    const source = readRepositoryFile('packages/ar-management/src/admin-users.ts');
+    const deleteAuditCalls = [
+      ...source.matchAll(
+        /createAuditLogFromContext\(c, 'user\.deleted', 'user', userId, \{([^}]*)\}\)/gu
+      ),
+    ];
+
+    expect(deleteAuditCalls).toHaveLength(2);
+    for (const call of deleteAuditCalls) {
+      expect(call[1]).toContain('registration_state: projection?.registration_state');
     }
   });
 });

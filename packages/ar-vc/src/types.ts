@@ -1,3 +1,4 @@
+import type { SamlDrWriterEnv } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 /**
  * VC Package Types
  *
@@ -10,12 +11,14 @@ import type { PresentationDefinition, DCQLQuery } from '@authrim/ar-lib-core';
 // Environment Bindings
 // =============================================================================
 
-export interface Env {
+export interface Env extends SamlDrWriterEnv {
   // D1 Database
   DB: D1Database;
   DB_ADMIN?: D1Database;
 
   // KV Namespace (same as other packages for shared config)
+  /** Settings API documents (tenant and platform settings). */
+  SETTINGS?: KVNamespace;
   AUTHRIM_CONFIG: KVNamespace;
 
   // Durable Objects

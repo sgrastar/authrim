@@ -3,7 +3,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { AuthrimConfigSchema, createDefaultConfig, parseConfig } from '../core/config.js';
+import {
+  AuthrimConfigSchema,
+  ComponentsConfigSchema,
+  createDefaultConfig,
+  parseConfig,
+} from '../core/config.js';
 
 describe('AuthrimConfigSchema', () => {
   it('enables the complete standard R2 topology by default', () => {
@@ -200,6 +205,7 @@ describe('createDefaultConfig', () => {
     expect(config.components.api).toBe(true);
     expect(config.components.loginUi).toBe(true);
     expect(config.components.adminUi).toBe(true);
+    expect(config.components.adminUiVariant).toBe('legacy');
     expect(config.components.saml).toBe(true);
     expect(config.components.async).toBe(true);
     expect(config.components.vc).toBe(true);
@@ -216,6 +222,23 @@ describe('createDefaultConfig', () => {
     const config = createDefaultConfig('staging');
 
     expect(config.environment.prefix).toBe('staging');
+  });
+});
+
+describe('components.adminUiVariant', () => {
+  it('defaults existing configs to the legacy Admin UI and accepts the admin console', () => {
+    const legacy = createDefaultConfig('dev');
+    expect(ComponentsConfigSchema.parse({}).adminUiVariant).toBe('legacy');
+    expect(
+      AuthrimConfigSchema.parse({
+        ...legacy,
+        components: { ...legacy.components, adminUiVariant: 'console' },
+      }).components.adminUiVariant
+    ).toBe('console');
+  });
+
+  it('rejects unknown Admin UI packages', () => {
+    expect(() => ComponentsConfigSchema.parse({ adminUiVariant: 'ar-admin-ui' })).toThrow();
   });
 });
 

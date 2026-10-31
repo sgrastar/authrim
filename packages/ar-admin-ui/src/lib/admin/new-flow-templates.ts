@@ -1246,6 +1246,7 @@ function createLoginPreviewEditorState(): LoginUiRuntimeContractPreview['editor'
 					authentication_profile_ref: 'default',
 					screen_ref: 'login',
 					outputs: [
+						{ id: 'guest', label: 'Guest' },
 						{ id: 'mail_otp', label: 'Email OTP' },
 						{ id: 'totp', label: 'Authenticator app' },
 						{ id: 'passkey', label: 'Passkey' }
@@ -1320,6 +1321,12 @@ function createLoginPreviewEditorState(): LoginUiRuntimeContractPreview['editor'
 			}
 		],
 		edges: [
+			{
+				id: 'authentication:guest->oidc-authorization-consent',
+				source: 'authentication',
+				source_handle: 'guest',
+				target: 'oidc-authorization-consent'
+			},
 			{
 				id: 'request:next->session-check',
 				source: 'request',
@@ -1399,6 +1406,7 @@ function createLoginPreviewEditorState(): LoginUiRuntimeContractPreview['editor'
 
 function createLoginNoConsentPreviewEditorState(): LoginUiRuntimeContractPreview['editor'] {
 	const authenticationOutputs = [
+		{ id: 'guest', label: 'Guest' },
 		{ id: 'mail_otp', label: 'Email OTP' },
 		{ id: 'totp', label: 'Authenticator app' },
 		{ id: 'passkey', label: 'Passkey' },
@@ -1511,6 +1519,7 @@ function createLoginNoConsentPreviewEditorState(): LoginUiRuntimeContractPreview
 
 function createSamlSpOidcRpPreviewEditorState(): LoginUiRuntimeContractPreview['editor'] {
 	const authenticationOutputs = [
+		{ id: 'guest', label: 'Guest' },
 		{ id: 'mail_otp', label: 'Email OTP' },
 		{ id: 'totp', label: 'Authenticator app' },
 		{ id: 'passkey', label: 'Passkey' },
@@ -1779,6 +1788,12 @@ function createPreviewEditorEdges(
 				target: 'consent'
 			},
 			{
+				id: 'authentication:guest->consent',
+				source: 'authentication',
+				source_handle: 'guest',
+				target: 'consent'
+			},
+			{
 				id: 'authentication:passkey->consent',
 				source: 'authentication',
 				source_handle: 'passkey',
@@ -1825,6 +1840,7 @@ function runtimeConfigForNode(
 	if (type === 'registration' || type === 'authentication') {
 		config.authentication_profile_ref = 'default';
 		config.outputs = [
+			...(type === 'authentication' ? [{ id: 'guest', label: 'Guest' }] : []),
 			{ id: 'mail_otp', label: 'Email OTP' },
 			{ id: 'totp', label: 'Authenticator app' },
 			{ id: 'passkey', label: 'Passkey' },

@@ -1,17 +1,22 @@
+import type { AccountDirectoryPublication } from '@authrim/ar-lib-core';
 import type { Context } from 'hono';
 import {
-  CanonicalRuntimeUserStore,
   AR_ERROR_CODES,
+  CanonicalRuntimeUserStore,
   createAccountAuthContextFromHono,
-  encodeCanonicalSensitiveValueRef,
   createLookupBlindIndexes,
   createPIIContextFromHono,
+  encodeCanonicalSensitiveValueRef,
+  type Env,
   getAccountDataContextFromHono,
   getLogger,
   getTenantIdFromContext,
+  isAccountReauthFresh,
   normalizeLookupEmail,
+  persistAccountEmailMutation,
   produceNotificationDelivery,
-  type Env,
+  resolveAccountReauthTtlSeconds,
+  checkEmailRegistration,
 } from '@authrim/ar-lib-core';
 import { requireAccountSession, type AccountSession } from './account-page';
 import { createLookupBucketWriteResolver } from './lookup-bucket-write-route';
@@ -25,7 +30,6 @@ import { IdentifierReplacementOperationRepository } from './identifier-replaceme
 import { publishAccountEmailAddition } from './account-identifier-addition';
 import { recordAccountOperation } from './account-operation-log';
 
-const REAUTH_TTL_SECONDS = 5 * 60;
 const CHALLENGE_TTL_SECONDS = 10 * 60;
 const CONSUMED_CHALLENGE_RECOVERY_TTL_SECONDS = 2 * 60 * 60;
 const ATTEMPT_LIMIT = 5;
@@ -99,8 +103,14 @@ function randomOtpCode(): string {
   return digits.join('');
 }
 
-function recentlyAuthenticated(session: AccountSession, now: number): boolean {
-  return session.authTime <= now && now < session.authTime + REAUTH_TTL_SECONDS;
+/** Whether the session was authenticated within the tenant's re-authentication window. */
+async function recentlyAuthenticated(
+  c: Context<{ Bindings: Env }>,
+  session: AccountSession,
+  now: number
+): Promise<boolean> {
+  const ttlSeconds = await resolveAccountReauthTtlSeconds(c.env, getTenantIdFromContext(c));
+  return isAccountReauthFresh(session.authTime, now, ttlSeconds);
 }
 
 function constantTimeHexEqual(left: string, right: string): boolean {
@@ -128,6 +138,7 @@ async function coordinatorFor(c: Context<{ Bindings: Env }>, tenantId: string) {
   const pii = createPIIContextFromHono(c, tenantId);
   const lookupForBucket = await createLookupBucketWriteResolver(c.env);
   return new IdentifierReplacementCoordinator({
+    webhookCoreForAccount: async () => auth.coreAdapter,
     pii: pii.defaultPiiAdapter,
     lookupForBucket,
     revokeCredentials: (input) =>
@@ -157,7 +168,7 @@ function emailAdditionOperationId(challengeId: string): string {
   return `account-email-addition:${challengeId.slice('identifier-replacement-'.length)}`;
 }
 
-async function addVerifiedAccountEmail(
+export async function addVerifiedAccountEmail(
   c: Context<{ Bindings: Env }>,
   input: {
     tenantId: string;
@@ -165,6 +176,7 @@ async function addVerifiedAccountEmail(
     challengeId: string;
     email: string;
     idempotencyKeySha256: string;
+    preparedPublication?: AccountDirectoryPublication;
   }
 ): Promise<string> {
   const accountData = getAccountDataContextFromHono(c);
@@ -189,14 +201,22 @@ async function addVerifiedAccountEmail(
     {
       tenantCoreUsers: auth.coreAdapter,
       directory: c.env.ACCOUNT_DIRECTORY,
+      preparedPublication: input.preparedPublication,
     }
   );
 
   const account = await auth.coreAdapter.queryOne<{
     id: string;
     primary_subject_id: string;
+    tenant_id: string;
+    legacy_user_id: string;
+    account_type: string;
+    registration_state: 'guest' | 'registered';
+    directory_publication_state: string;
+    lifecycle_state: string;
   }>(
-    `SELECT id, primary_subject_id FROM identity_accounts
+    `SELECT id, primary_subject_id, tenant_id, legacy_user_id, account_type, registration_state,
+       directory_publication_state, lifecycle_state FROM identity_accounts
       WHERE tenant_id = ? AND legacy_user_id = ? AND lifecycle_state = 'active'
       LIMIT 1`,
     [input.tenantId, input.accountId],
@@ -258,8 +278,12 @@ async function addVerifiedAccountEmail(
   ) {
     throw new Error('account_email_addition_contact_conflict');
   }
-  await pii.defaultPiiAdapter.execute(
-    `INSERT INTO identity_sensitive_values (
+  await persistAccountEmailMutation(
+    pii.defaultPiiAdapter,
+    account,
+    input.email,
+    {
+      sql: `INSERT INTO identity_sensitive_values (
        id, tenant_id, owner_type, owner_id, value_key, value_json, value_hash,
        classification, lifecycle_state, created_at, updated_at
      ) VALUES (?, ?, 'runtime_user', ?, 'email', ?, NULL, 'sensitive', 'active', ?, ?)
@@ -271,14 +295,16 @@ async function addVerifiedAccountEmail(
        updated_at = excluded.updated_at
      WHERE identity_sensitive_values.lifecycle_state <> 'active'
         OR identity_sensitive_values.value_json = excluded.value_json`,
-    [
-      `sensitive-value:${input.accountId}:email`,
-      input.tenantId,
-      input.accountId,
-      JSON.stringify(input.email),
-      now,
-      now,
-    ]
+      params: [
+        `sensitive-value:${input.accountId}:email`,
+        input.tenantId,
+        input.accountId,
+        JSON.stringify(input.email),
+        now,
+        now,
+      ],
+    },
+    true
   );
   const reflected = await pii.defaultPiiAdapter.queryOne<{ value_json: string }>(
     `SELECT value_json FROM identity_sensitive_values
@@ -300,7 +326,8 @@ export async function startAccountIdentifierReplacementHandler(
   const accountSession = await requireAccountSession(c);
   if (accountSession instanceof Response) return accountSession;
   const now = Math.floor(Date.now() / 1000);
-  if (!recentlyAuthenticated(accountSession, now)) {
+  if (accountSession.isGuestSession) return c.json({ error: 'guest_registration_required' }, 403);
+  if (!(await recentlyAuthenticated(c, accountSession, now))) {
     return c.json(
       {
         error: 'reauthentication_required',
@@ -570,7 +597,8 @@ export async function completeAccountIdentifierReplacementHandler(
   const accountSession = await requireAccountSession(c);
   if (accountSession instanceof Response) return accountSession;
   const now = Math.floor(Date.now() / 1000);
-  if (!recentlyAuthenticated(accountSession, now)) {
+  if (accountSession.isGuestSession) return c.json({ error: 'guest_registration_required' }, 403);
+  if (!(await recentlyAuthenticated(c, accountSession, now))) {
     return c.json(
       {
         error: 'reauthentication_required',
@@ -677,6 +705,21 @@ export async function completeAccountIdentifierReplacementHandler(
   if (!user) {
     return c.json({ error: 'not_found', error_description: 'Account was not found' }, 404);
   }
+  // A new address of an account deleted within the retention period, where the tenant blocks
+  // re-registration: answered as an address in use is, once the code to it is verified. An
+  // addition refuses one at once; a replacement's operation is recorded canceled, as its
+  // reservation conflict would leave it (below).
+  const registration = await checkEmailRegistration(c.env, { tenantId, email: newEmail });
+  if (registration === 'unavailable') {
+    c.header('Retry-After', '5');
+    return c.json(
+      { error: 'temporarily_unavailable', error_description: 'Try again shortly' },
+      503
+    );
+  }
+  if (challenge.operation_mode === 'addition' && registration === 'blocked') {
+    return c.json({ error: 'conflict', error_description: 'Email address is already in use' }, 409);
+  }
   if (challenge.operation_mode === 'addition') {
     if (user.email && normalizeLookupEmail(user.email) !== newEmail) {
       return c.json(
@@ -768,6 +811,11 @@ export async function completeAccountIdentifierReplacementHandler(
         recentReauthVerifiedAt: challenge.recent_reauth_verified_at,
       },
       verificationEvidence: { method: 'email_otp', verifiedAt: now },
+      // As an address in use ends: canceled before any reservation, with the permanent-failure
+      // code a reservation conflict leaves, written with the operation so it is never runnable.
+      ...(registration === 'blocked'
+        ? { canceledAs: 'identifier_replacement_permanent_failure' as const }
+        : {}),
     });
   } catch (error) {
     const active = await runtimePii.defaultPiiAdapter.queryOne<{ operation_id: string }>(

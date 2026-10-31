@@ -1,5 +1,6 @@
+import { renderPortableMigrationSql } from '@authrim/ar-lib-core/control-plane';
 import { createHash } from 'node:crypto';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
@@ -37,9 +38,7 @@ function digest(value: Uint8Array | string): string {
 }
 
 function renderSql(sql: string): string {
-  return sql
-    .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
-    .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()');
+  return renderPortableMigrationSql(sql, 'sqlite');
 }
 
 function asSqlValues(values: readonly unknown[] | undefined): SqlValue[] {
@@ -109,16 +108,13 @@ function releaseFixture(streamId: keyof typeof STREAM_DIRECTORIES): {
 } {
   const directory = STREAM_DIRECTORIES[streamId];
   const contract = migrationStreamContract(streamId);
-  const files = readdirSync(directory)
-    .filter((file) => /^\d+_.*\.sql$/u.test(file))
-    .sort()
-    .map((path) => {
-      const sql = renderSql(readFileSync(join(directory, path), 'utf8'));
-      return { path, checksum: digest(sql), sql };
-    });
+  const files = [`001_0_5_0_${contract.schemaFamily}_baseline.sql`].map((path) => {
+    const sql = renderSql(readFileSync(join(directory, path), 'utf8'));
+    return { path, checksum: digest(sql), sql };
+  });
   const manifest = `${JSON.stringify({
     formatVersion: 2,
-    productVersion: '0.4.0',
+    productVersion: '0.5.0',
     streams: [
       {
         id: contract.id,
@@ -132,17 +128,17 @@ function releaseFixture(streamId: keyof typeof STREAM_DIRECTORIES): {
   })}\n`;
   const manifestBytes = new TextEncoder().encode(manifest);
   const manifestDigest = digest(manifestBytes);
-  const manifestObjectKey = `releases/0.4.0/${manifestDigest}/manifest.json`;
+  const manifestObjectKey = `releases/0.5.0/${manifestDigest}/manifest.json`;
   const objects = new Map<string, Uint8Array>([[manifestObjectKey, manifestBytes]]);
   for (const file of files) {
     const bytes = new TextEncoder().encode(file.sql);
-    objects.set(`releases/0.4.0/${manifestDigest}/streams/${streamId}/${file.path}`, bytes);
+    objects.set(`releases/0.5.0/${manifestDigest}/streams/${streamId}/${file.path}`, bytes);
   }
   return {
     pin: {
       environmentId: 'env-test',
       streamId,
-      releaseId: '0.4.0',
+      releaseId: '0.5.0',
       manifestDigest,
       manifestObjectKey,
     },

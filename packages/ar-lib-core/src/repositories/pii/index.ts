@@ -36,5 +36,4 @@ export {
   type PIIAuditLog,
   type PIIAuditAction,
   type CreatePIIAuditLogInput,
-  type PIIAuditLogFilterOptions,
 } from './audit-log';

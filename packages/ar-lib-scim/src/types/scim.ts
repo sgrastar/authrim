@@ -14,6 +14,8 @@ export const SCIM_SCHEMAS = {
   USER: 'urn:ietf:params:scim:schemas:core:2.0:User',
   GROUP: 'urn:ietf:params:scim:schemas:core:2.0:Group',
   ENTERPRISE_USER: 'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User',
+  /** Authrim's extension: the identity assurance (IAL) a provisioning client asserts for a user. */
+  ASSURANCE_USER: 'urn:authrim:params:scim:schemas:extension:assurance:1.0:User',
   LIST_RESPONSE: 'urn:ietf:params:scim:api:messages:2.0:ListResponse',
   ERROR: 'urn:ietf:params:scim:api:messages:2.0:Error',
   PATCH_OP: 'urn:ietf:params:scim:api:messages:2.0:PatchOp',
@@ -137,6 +139,13 @@ export interface ScimUser {
       $ref?: string;
       displayName?: string;
     };
+  };
+
+  // Assurance Extension (optional; see utils/scim-assurance)
+  'urn:authrim:params:scim:schemas:extension:assurance:1.0:User'?: {
+    ial?: string;
+    verifiedAt?: string;
+    expiresAt?: string;
   };
 }
 

@@ -19,3 +19,6 @@ node_modules/
 # Other
 coverage/
 .turbo/
+
+# Generated API inventory uses one operation per line (also excluded by its package).
+packages/ar-admin-console/src/lib/settings/api-operations.ts

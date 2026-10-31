@@ -65,6 +65,7 @@ describe('WebAuthn Signal API helpers', () => {
 
 		const profile: AccountProfile = {
 			user_id: 'user-001',
+			registration_state: 'registered',
 			email: 'user@example.com',
 			email_verified: true,
 			name: 'Example User',

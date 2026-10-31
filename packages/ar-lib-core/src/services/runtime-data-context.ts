@@ -10,12 +10,15 @@ import {
   loadVerifiedLookupBucketAssignmentProvider,
   loadVerifiedLookupHmacKeyState,
   LookupRouteResolver,
+  LookupDirectoryRepository,
+  mergeRotatingLookupMemberships,
   resolveLookupHmacKeys,
   type ResolvedLookupHmacKeys,
   type ResolvedLookupMembership,
   type ResolvedLookupTarget,
   type LookupIdentifierKind,
 } from './lookup-directory';
+import { createD1ConsistencyRequest } from './control-plane';
 import {
   resolveTenantDatabaseSourceFromRegistry,
   type ResolvedTenantDatabaseSource,
@@ -57,6 +60,16 @@ export interface TenantMetadataContext {
   route: ResolvedTenantDatabaseSource;
 }
 
+/** A non-Cloudflare runtime has no D1 binding identity or registry row to expose. */
+export interface PortableTenantMetadataContext {
+  runtimeKind: 'portable';
+  tenantId: string;
+  coreDb: DatabaseSource;
+  route: Pick<ResolvedTenantDatabaseSource, 'allocationScope'>;
+}
+
+export type AnyTenantMetadataContext = TenantMetadataContext | PortableTenantMetadataContext;
+
 export interface AccountDataContext {
   tenantId: string;
   accountId: string;
@@ -88,14 +101,18 @@ export interface OtpAccountCoreDataContext extends AccountCoreDataContext {
   user: CanonicalOtpLoginUser;
 }
 
-interface AccountRouteResolutionBase {
+/** An account's Lookup membership resolved to its Core destination only. */
+interface AccountCoreRouteResolutionBase {
   resolver: LookupRouteResolver;
   membership: ResolvedLookupMembership;
   accountId: string;
   observedBindingRouteGenerations: Readonly<Record<string, number>>;
   coreResidency: string;
-  piiResidency: string;
   coreRoute: ResolvedTenantDatabaseSource;
+}
+
+interface AccountRouteResolutionBase extends AccountCoreRouteResolutionBase {
+  piiResidency: string;
   piiRoute: ResolvedTenantDatabaseSource;
 }
 
@@ -192,16 +209,18 @@ async function verifyShardMetadata(
   );
 }
 
-async function resolveAccountRouteBaseByIdentifier(
-  env: Env,
-  input: {
-    tenantId: string;
-    indexKind: LookupIdentifierKind;
-    identifier: string | { issuer: string; subject: string };
-    expectedAccountId?: string;
-    nowMs?: number;
-  }
-): Promise<AccountRouteResolutionBase> {
+type AccountRouteIdentifierInput = {
+  tenantId: string;
+  indexKind: LookupIdentifierKind;
+  identifier: string | { issuer: string; subject: string };
+  expectedAccountId?: string;
+  nowMs?: number;
+};
+
+type RouteTarget = ResolvedLookupMembership['routeProjection']['targets'][number];
+
+/** The tenant's one Lookup membership for the identifier, with the generations it observed. */
+async function resolveAccountMembershipByIdentifier(env: Env, input: AccountRouteIdentifierInput) {
   if (!SAFE_ID.test(input.tenantId)) throw new Error('account_data_tenant_id_invalid');
   const now = input.nowMs ?? Date.now();
   const runtime = requiredEnvironment(env);
@@ -228,63 +247,90 @@ async function resolveAccountRouteBaseByIdentifier(
     );
   }
   const membership = memberships[0];
-  const accountId = membership.accountId;
   const observedBindingRouteGenerations = Object.fromEntries(
     membership.routeProjection.targets.map((target) => [
       target.bindingRef,
       target.requiredBindingRouteGeneration,
     ])
   );
-  const coreResidency = membership.routeProjection.targets.find(
-    (target) => target.dataRole === 'tenant_core/users'
+  return { resolver, membership, accountId: membership.accountId, observedBindingRouteGenerations };
+}
+
+/** The route's target for a data role: the first residency the route names for it. */
+function routeTargetFor(
+  membership: ResolvedLookupMembership,
+  dataRole: 'tenant_core/users' | 'tenant_pii'
+): RouteTarget | null {
+  const residency = membership.routeProjection.targets.find(
+    (target) => target.dataRole === dataRole
   )?.residencyPartition;
-  const piiResidency = membership.routeProjection.targets.find(
-    (target) => target.dataRole === 'tenant_pii'
-  )?.residencyPartition;
-  if (!coreResidency || !piiResidency) throw new Error('account_data_route_incomplete');
-  const coreTarget = membership.routeProjection.targets.find(
-    (target) =>
-      target.dataRole === 'tenant_core/users' && target.residencyPartition === coreResidency
+  if (!residency) return null;
+  return (
+    membership.routeProjection.targets.find(
+      (target) => target.dataRole === dataRole && target.residencyPartition === residency
+    ) ?? null
   );
-  const piiTarget = membership.routeProjection.targets.find(
-    (target) => target.dataRole === 'tenant_pii' && target.residencyPartition === piiResidency
-  );
+}
+
+function resolveRouteTargetSource(
+  env: Env,
+  tenantId: string,
+  role: 'tenant_core' | 'tenant_pii',
+  target: RouteTarget
+) {
+  return resolveTenantDatabaseSourceFromRegistry(env, {
+    tenantId,
+    role,
+    dataRole: target.dataRole as 'tenant_core/users' | 'tenant_pii',
+    residencyPartition: target.residencyPartition,
+    shardId: target.shardId,
+    bindingRef: target.bindingRef,
+    requiredBindingRouteGeneration: target.requiredBindingRouteGeneration,
+  });
+}
+
+/**
+ * The account's route to its Core destination alone. The route must still be complete (name a
+ * PII destination too), but that destination's binding is not resolved, so a Core-only reader
+ * never reaches the PII store.
+ */
+async function resolveAccountCoreRouteBaseByIdentifier(
+  env: Env,
+  input: AccountRouteIdentifierInput
+): Promise<AccountCoreRouteResolutionBase> {
+  const base = await resolveAccountMembershipByIdentifier(env, input);
+  const coreTarget = routeTargetFor(base.membership, 'tenant_core/users');
+  if (!coreTarget || !routeTargetFor(base.membership, 'tenant_pii')) {
+    throw new Error('account_data_route_incomplete');
+  }
+  const coreRoute = await resolveRouteTargetSource(env, input.tenantId, 'tenant_core', coreTarget);
+  return { ...base, coreResidency: coreTarget.residencyPartition, coreRoute };
+}
+
+async function resolveAccountRouteBaseByIdentifier(
+  env: Env,
+  input: AccountRouteIdentifierInput
+): Promise<AccountRouteResolutionBase> {
+  const base = await resolveAccountMembershipByIdentifier(env, input);
+  const coreTarget = routeTargetFor(base.membership, 'tenant_core/users');
+  const piiTarget = routeTargetFor(base.membership, 'tenant_pii');
   if (!coreTarget || !piiTarget) throw new Error('account_data_route_incomplete');
   const [coreRoute, piiRoute] = await Promise.all([
-    resolveTenantDatabaseSourceFromRegistry(env, {
-      tenantId: input.tenantId,
-      role: 'tenant_core',
-      dataRole: 'tenant_core/users',
-      residencyPartition: coreTarget.residencyPartition,
-      shardId: coreTarget.shardId,
-      bindingRef: coreTarget.bindingRef,
-      requiredBindingRouteGeneration: coreTarget.requiredBindingRouteGeneration,
-    }),
-    resolveTenantDatabaseSourceFromRegistry(env, {
-      tenantId: input.tenantId,
-      role: 'tenant_pii',
-      dataRole: 'tenant_pii',
-      residencyPartition: piiTarget.residencyPartition,
-      shardId: piiTarget.shardId,
-      bindingRef: piiTarget.bindingRef,
-      requiredBindingRouteGeneration: piiTarget.requiredBindingRouteGeneration,
-    }),
+    resolveRouteTargetSource(env, input.tenantId, 'tenant_core', coreTarget),
+    resolveRouteTargetSource(env, input.tenantId, 'tenant_pii', piiTarget),
   ]);
 
   return {
-    resolver,
-    membership,
-    accountId,
-    observedBindingRouteGenerations,
-    coreResidency,
-    piiResidency,
+    ...base,
+    coreResidency: coreTarget.residencyPartition,
+    piiResidency: piiTarget.residencyPartition,
     coreRoute,
     piiRoute,
   };
 }
 
 async function resolveCoreAccountDestination(
-  base: AccountRouteResolutionBase,
+  base: AccountCoreRouteResolutionBase,
   tenantId: string,
   options: { otpTrustedEmail?: string } = {}
 ): Promise<{
@@ -379,7 +425,22 @@ async function resolveCoreAccountDestination(
       if (
         metadata?.binding_ref !== candidate.bindingRef ||
         metadata.data_role !== 'tenant_core/users' ||
-        metadata.residency_partition !== candidate.residencyPartition ||
+        metadata.residency_partition !== candidate.residencyPartition
+      ) {
+        return false;
+      }
+      // The shard is the one routed to; only the account there is gone or no longer active.
+      if (
+        account.value === null ||
+        (account.value.id === base.accountId &&
+          Number(account.value.account_route_generation) ===
+            base.membership.accountRouteGeneration &&
+          (account.value.lifecycle_state !== 'active' ||
+            account.value.directory_publication_state !== 'active'))
+      ) {
+        return 'account_inactive';
+      }
+      if (
         account.value?.id !== base.accountId ||
         account.value.lifecycle_state !== 'active' ||
         account.value.directory_publication_state !== 'active' ||
@@ -421,8 +482,15 @@ function piiCacheMode(env: Env): UserPiiCacheMode {
 export async function resolveTenantMetadataContext(
   env: Env,
   tenantId: string
-): Promise<TenantMetadataContext> {
+): Promise<AnyTenantMetadataContext> {
   if (!SAFE_ID.test(tenantId)) throw new Error('tenant_metadata_tenant_id_invalid');
+  if (env.RUNTIME_DATA_PORTS) {
+    const resolved = await env.RUNTIME_DATA_PORTS.resolveTenant(tenantId);
+    if (resolved.runtimeKind !== 'portable' || resolved.tenantId !== tenantId || !resolved.coreDb) {
+      throw new Error('tenant_metadata_context_conflict');
+    }
+    return resolved;
+  }
   const route = await resolveTenantDatabaseSourceFromRegistry(env, {
     tenantId,
     role: 'tenant_core',
@@ -437,6 +505,29 @@ export async function resolveTenantMetadataContext(
   };
 }
 
+/** The account's routed PII destination, revalidated there (the PII store holds no lifecycle). */
+function resolvePiiAccountDestination(
+  base: AccountRouteResolutionBase
+): Promise<ResolvedLookupTarget> {
+  return base.resolver.resolveTargetAndRevalidate({
+    membership: base.membership,
+    dataRole: 'tenant_pii',
+    residencyPartition: base.piiResidency,
+    observedBindingRouteGenerations: base.observedBindingRouteGenerations,
+    verifyAtDestination: (target) => {
+      if (
+        target.source !== base.piiRoute.source ||
+        target.bindingRef !== base.piiRoute.bindingRef ||
+        target.shardId !== base.piiRoute.shardId ||
+        target.requiredBindingRouteGeneration !== base.piiRoute.bindingRouteGeneration
+      ) {
+        return Promise.resolve(false);
+      }
+      return verifyShardMetadata(target, 'tenant_pii');
+    },
+  });
+}
+
 export async function resolveAccountDataContextByIdentifier(
   env: Env,
   input: {
@@ -447,27 +538,39 @@ export async function resolveAccountDataContextByIdentifier(
     nowMs?: number;
   }
 ): Promise<AccountDataContext> {
+  if (env.RUNTIME_DATA_PORTS) {
+    if (!SAFE_ID.test(input.tenantId)) throw new Error('account_data_tenant_id_invalid');
+    const resolved = await env.RUNTIME_DATA_PORTS.resolveAccount(input);
+    const expectedAccountId = input.expectedAccountId
+      ? normalizeAccountId(input.expectedAccountId)
+      : input.indexKind === 'account_id' && typeof input.identifier === 'string'
+        ? normalizeAccountId(input.identifier)
+        : undefined;
+    if (
+      resolved.tenantId !== input.tenantId ||
+      !resolved.accountId ||
+      resolved.accountId !== normalizeAccountId(resolved.accountId) ||
+      (expectedAccountId !== undefined && resolved.accountId !== expectedAccountId) ||
+      resolved.membership.tenantId !== input.tenantId ||
+      resolved.membership.accountId !== resolved.accountId ||
+      !resolved.coreDb ||
+      !resolved.piiDb
+    ) {
+      throw new Error('account_data_context_conflict');
+    }
+    return resolved;
+  }
   const base = await resolveAccountRouteBaseByIdentifier(env, input);
-  const [coreResolution, pii] = await Promise.all([
+  // Both are checked; a failure of the PII destination is reported before the core's, so that an
+  // inactive account is reported only where both destinations are the ones routed to.
+  const [coreSettled, piiSettled] = await Promise.allSettled([
     resolveCoreAccountDestination(base, input.tenantId),
-    base.resolver.resolveTargetAndRevalidate({
-      membership: base.membership,
-      dataRole: 'tenant_pii',
-      residencyPartition: base.piiResidency,
-      observedBindingRouteGenerations: base.observedBindingRouteGenerations,
-      verifyAtDestination: (target) => {
-        if (
-          target.source !== base.piiRoute.source ||
-          target.bindingRef !== base.piiRoute.bindingRef ||
-          target.shardId !== base.piiRoute.shardId ||
-          target.requiredBindingRouteGeneration !== base.piiRoute.bindingRouteGeneration
-        ) {
-          return Promise.resolve(false);
-        }
-        return verifyShardMetadata(target, 'tenant_pii');
-      },
-    }),
+    resolvePiiAccountDestination(base),
   ]);
+  if (piiSettled.status === 'rejected') throw piiSettled.reason;
+  if (coreSettled.status === 'rejected') throw coreSettled.reason;
+  const coreResolution = coreSettled.value;
+  const pii = piiSettled.value;
   const { target: core, account: accountRow } = coreResolution;
   const { membership, accountId } = base;
   const userCacheScope: UserCacheScope = {
@@ -492,12 +595,99 @@ export async function resolveAccountDataContextByIdentifier(
   };
 }
 
+/**
+ * Read the actual primary Lookup membership for a held DR boundary. Signed registry documents
+ * locate its shard; neither runtime membership caches nor KV route payloads are accepted as the
+ * account authority. The caller pins the returned targets to its sealed database inventory.
+ * Suspended/locked accounts are intentionally retained; this is not an authentication decision.
+ */
+export async function resolveAccountRouteForSamlDrSnapshot(
+  env: Env,
+  input: { tenantId: string; accountId: string; accountRouteGeneration: number; nowMs: number }
+): Promise<ResolvedLookupMembership['routeProjection']> {
+  if (
+    env.ENABLE_SAML_DR_EXPORT !== 'true' ||
+    env.RUNTIME_DATA_PORTS ||
+    !SAFE_ID.test(input.tenantId) ||
+    normalizeAccountId(input.accountId) !== input.accountId ||
+    !Number.isSafeInteger(input.accountRouteGeneration) ||
+    input.accountRouteGeneration < 1 ||
+    !Number.isSafeInteger(input.nowMs) ||
+    input.nowMs < 0
+  )
+    throw new Error('saml_dr_account_route_invalid');
+  const runtime = requiredEnvironment(env);
+  const verified = {
+    store: runtime.store,
+    environmentId: runtime.environmentId,
+    publicJwks: runtime.publicJwks,
+    now: Math.floor(input.nowMs / 1000),
+  };
+  const [state, assignments] = await Promise.all([
+    loadVerifiedLookupHmacKeyState(verified),
+    loadVerifiedLookupBucketAssignmentProvider(verified),
+  ]);
+  const keys = await resolveLookupHmacKeys({
+    state,
+    slotA: env.LOOKUP_HMAC_KEY_SLOT_A,
+    slotB: env.LOOKUP_HMAC_KEY_SLOT_B,
+  });
+  const indexes = await createLookupBlindIndexes('account_id', input.accountId, keys.readKeys);
+  const resultSets = await Promise.all(
+    indexes.map(async (index) => {
+      const assignment = await assignments.resolveActiveAssignment(index.virtualBucket);
+      if (
+        assignment.state !== 'active' ||
+        assignment.virtualBucket !== index.virtualBucket ||
+        !/^[A-Z][A-Z0-9_]{0,127}$/u.test(assignment.bindingRef)
+      )
+        throw new Error('saml_dr_account_route_invalid');
+      const binding = (env as unknown as Record<string, unknown>)[assignment.bindingRef] as
+        | D1Database
+        | undefined;
+      if (!binding || typeof binding.withSession !== 'function')
+        throw new Error('saml_dr_account_route_invalid');
+      return (
+        await new LookupDirectoryRepository(binding).findActiveMemberships(
+          index,
+          createD1ConsistencyRequest('primary_required')
+        )
+      ).memberships;
+    })
+  );
+  const memberships = mergeRotatingLookupMemberships(resultSets).filter(
+    (membership) =>
+      membership.tenantId === input.tenantId && membership.accountId === input.accountId
+  );
+  if (
+    memberships.length !== 1 ||
+    memberships[0].accountRouteGeneration !== input.accountRouteGeneration ||
+    memberships[0].routeProjection.accountRouteGeneration !== input.accountRouteGeneration
+  )
+    throw new Error('saml_dr_account_route_invalid');
+  return structuredClone(memberships[0].routeProjection);
+}
+
 export async function resolveAccountCoreDataContext(
   env: Env,
   input: { tenantId: string; accountId: string; nowMs?: number }
 ): Promise<AccountCoreDataContext> {
   const accountId = normalizeAccountId(input.accountId);
-  const base = await resolveAccountRouteBaseByIdentifier(env, {
+  if (env.RUNTIME_DATA_PORTS) {
+    if (!SAFE_ID.test(input.tenantId)) throw new Error('account_data_tenant_id_invalid');
+    const resolved = await env.RUNTIME_DATA_PORTS.resolveAccountCore({ ...input, accountId });
+    if (
+      resolved.tenantId !== input.tenantId ||
+      resolved.accountId !== accountId ||
+      resolved.membership.tenantId !== input.tenantId ||
+      resolved.membership.accountId !== accountId ||
+      !resolved.coreDb
+    ) {
+      throw new Error('account_data_context_conflict');
+    }
+    return resolved;
+  }
+  const base = await resolveAccountCoreRouteBaseByIdentifier(env, {
     tenantId: input.tenantId,
     indexKind: 'account_id',
     identifier: accountId,
@@ -546,7 +736,7 @@ export async function resolveOtpAccountCoreDataContextByIdentifier(
   if (input.indexKind === 'email_exact' && input.identifier.trim().toLowerCase() !== trustedEmail) {
     throw new Error('account_data_otp_email_route_mismatch');
   }
-  const base = await resolveAccountRouteBaseByIdentifier(env, {
+  const base = await resolveAccountCoreRouteBaseByIdentifier(env, {
     tenantId: input.tenantId,
     indexKind: input.indexKind,
     identifier,
@@ -588,6 +778,31 @@ export async function resolveAccountDataContext(
     expectedAccountId: accountId,
     nowMs: input.nowMs,
   });
+}
+
+/**
+ * The account's PII store, for its audit pseudonym (user_anonymization_map) only. Unlike an
+ * account context it also resolves while the account is not active (suspended, locked, being
+ * deleted), since the audits of those changes still name the user. The route and the PII
+ * destination are verified as for an account context; the Core account is not read.
+ */
+export async function resolveAccountPiiSourceForAudit(
+  env: Env,
+  input: { tenantId: string; accountId: string; nowMs?: number }
+): Promise<DatabaseSource> {
+  const accountId = normalizeAccountId(input.accountId);
+  if (env.RUNTIME_DATA_PORTS) {
+    if (!SAFE_ID.test(input.tenantId)) throw new Error('account_data_tenant_id_invalid');
+    return env.RUNTIME_DATA_PORTS.resolveAccountPiiForAudit({ ...input, accountId });
+  }
+  const base = await resolveAccountRouteBaseByIdentifier(env, {
+    tenantId: input.tenantId,
+    indexKind: 'account_id',
+    identifier: accountId,
+    expectedAccountId: accountId,
+    nowMs: input.nowMs,
+  });
+  return (await resolvePiiAccountDestination(base)).source;
 }
 
 export async function resolveAccountDataContextByIdentifierFromHono(
@@ -633,10 +848,53 @@ export async function resolveOtpAccountCoreDataContextByIdentifierFromHono(
 
 export function getTenantMetadataContextFromHono(
   c: HonoContext<{ Bindings: Env }>
-): TenantMetadataContext | undefined {
+): AnyTenantMetadataContext | undefined {
   return (c as unknown as { get(key: string): unknown }).get('tenantMetadataContext') as
-    | TenantMetadataContext
+    | AnyTenantMetadataContext
     | undefined;
+}
+
+/** Control-plane callers require a real registry identity and must reject a portable route. */
+export function getRegistryTenantMetadataRoute(
+  metadata: AnyTenantMetadataContext | undefined
+): ResolvedTenantDatabaseSource | undefined {
+  const route = metadata?.route;
+  if (!route) return undefined;
+  if (metadata && 'runtimeKind' in metadata && metadata.runtimeKind === 'portable') {
+    throw new Error('tenant_metadata_registry_route_required');
+  }
+  return route as ResolvedTenantDatabaseSource;
+}
+
+/**
+ * Whether the tenant's accounts are routed through Lookup to their own databases (the
+ * `tenant_core/users` and `tenant_pii` shards) instead of being kept in the tenant metadata
+ * database. Both allocation scopes route accounts. The registry resolves every tenant metadata
+ * context with a route in one of them (resolveTenantMetadataContext returns one or throws), so in
+ * a deployed Worker this is true exactly when the request resolved a tenant metadata context.
+ * A context without an allocation scope (only a single-database setup builds one) keeps its
+ * accounts in the metadata database. A scope this code does not know is refused rather than read
+ * as unrouted, which would send account reads and writes to the metadata database.
+ *
+ * This is the one definition: every Worker that chooses between the metadata database and the
+ * account databases decides with it (ar-auth and ar-management call it through their
+ * `usesRoutedAccountStorage` wrappers). It used to be three: ar-auth's tenant-exclusive-only
+ * check sent shared-pool tenants' passkey, email-code and TOTP requests to the metadata database.
+ */
+export function usesRoutedAccountStorage(metadata: AnyTenantMetadataContext | undefined): boolean {
+  const allocationScope = (metadata?.route as Partial<ResolvedTenantDatabaseSource> | undefined)
+    ?.allocationScope;
+  if (allocationScope === undefined || allocationScope === null) return false;
+  switch (allocationScope) {
+    case 'shared_pool':
+    case 'tenant_exclusive':
+      return true;
+    default: {
+      // A new allocation scope must be classified here before it compiles.
+      const unknownScope: never = allocationScope;
+      throw new Error('tenant_metadata_allocation_scope_invalid', { cause: unknownScope });
+    }
+  }
 }
 
 export function getAccountDataContextFromHono(

@@ -249,7 +249,7 @@ describe('SAML SLO Messages Property Tests', () => {
 
           // Then decode base64 and inflate
           const compressed = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
-          const inflated = pako.inflateRaw(compressed, { to: 'string' });
+          const inflated = pako.inflateRaw(compressed, { toText: true });
 
           expect(inflated).toBe(xml);
         }),

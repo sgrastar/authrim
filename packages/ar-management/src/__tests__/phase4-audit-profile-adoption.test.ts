@@ -1,43 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core';
+const writeAudit = vi.hoisted(() => vi.fn(async () => undefined));
+vi.mock('@authrim/ar-lib-core', async (original) => ({
+  ...(await original<typeof import('@authrim/ar-lib-core')>()),
+  createAuditLogFromContext: writeAudit,
+}));
 
-vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
-  return {
-    ...actual,
-    resolveTenantRuntimeProfilesFromEnv: vi.fn(async (env: Partial<Env>) => {
-      const auditProfileId = (env as Record<string, unknown>).DEFAULT_AUDIT_PROFILE_ID;
-      if (auditProfileId === 'builtin:audit:archive-only-logpush') {
-        return {
-          auditProfile: {
-            id: 'builtin:audit:archive-only-logpush',
-            kind: 'audit',
-            label: 'Archive Only + Logpush',
-            builtin: true,
-            primary: null,
-            archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
-            sinks: [],
-          },
-        };
-      }
-
-      return {
-        auditProfile: {
-          id: 'builtin:audit:standard',
-          kind: 'audit',
-          label: 'Standard Audit',
-          builtin: true,
-          primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
-          archive: null,
-          sinks: [],
-        },
-      };
-    }),
-  };
-});
+const readLogs = vi.hoisted(() => vi.fn());
+vi.mock('@authrim/ar-lib-core/services/log-iceberg-read', () => ({
+  readLogIcebergDataset: readLogs,
+  loadLogIcebergProtectedDetail: vi.fn(async () => null),
+}));
 
 import { adminSecurityIpReputationHandler } from '../admin-security';
-import { adminComplianceStatusHandler, adminDataRetentionStatusHandler } from '../admin-compliance';
 
 function createSqlAwareMockDB(
   handler: (
@@ -90,47 +65,65 @@ function createMockContext(options: {
       DB_PII: options.db,
       ...options.envOverrides,
     } as unknown as Env,
+    header: vi.fn(),
     json: vi.fn((body, status = 200) => new Response(JSON.stringify(body), { status })),
     get: vi.fn((key: string) => contextStore.get(key)),
     set: vi.fn((key: string, value: unknown) => contextStore.set(key, value)),
   } as any;
 }
 
-describe('Phase 4 audit profile adoption', () => {
-  it('uses event_log for IP reputation checks when the standard audit profile is active', async () => {
+describe('canonical audit dataset read', () => {
+  it('counts canonical event rows for IP reputation without querying former log tables', async () => {
+    const ip = '203.0.113.10';
+    const now = Date.now();
+    readLogs.mockResolvedValue({
+      rows: [
+        ...Array.from({ length: 3 }, (_, index) => ({
+          id: `failed-${index}`,
+          tenant_id: 'default',
+          event_type: 'auth.password.failed',
+          created_at: now,
+          details_json: JSON.stringify({ ip_address: ip }),
+        })),
+        {
+          id: 'rate-1',
+          tenant_id: 'default',
+          event_type: 'rate_limit.exceeded',
+          created_at: now,
+          details_json: JSON.stringify({ ip_address: ip }),
+        },
+        {
+          id: 'other-ip',
+          tenant_id: 'default',
+          event_type: 'auth.password.failed',
+          created_at: now,
+          details_json: JSON.stringify({ ip_address: '198.51.100.8' }),
+        },
+        {
+          id: 'too-old',
+          tenant_id: 'default',
+          event_type: 'auth.password.failed',
+          created_at: now - 2 * 86400000,
+          details_json: JSON.stringify({ ip_address: ip }),
+        },
+      ],
+      hasArchive: true,
+      consistency: 'snapshot',
+      pendingDeliveries: 0,
+    });
     const mockDB = createSqlAwareMockDB(async (sql, params, op) => {
-      if (
-        sql.includes('FROM event_log') &&
-        sql.includes("LIKE 'auth.%failed%'") &&
-        op === 'first'
-      ) {
-        expect(params[0]).toBe('default');
-        expect(params[1]).toBe('203.0.113.10');
-        return { count: 3 };
-      }
-
-      if (
-        sql.includes('FROM event_log') &&
-        sql.includes("= 'rate_limit.exceeded'") &&
-        op === 'first'
-      ) {
-        return { count: 1 };
-      }
-
+      expect(sql).not.toMatch(/FROM (?:event_log|audit_log)/);
       if (sql.includes('FROM ip_blocklist') && op === 'first') {
+        expect(params.slice(0, 2)).toEqual(['default', ip]);
         return null;
       }
-
-      return null;
+      throw new Error(`unexpected metadata SQL: ${sql}`);
     });
 
     const c = createMockContext({
       path: '/api/admin/security/ip-reputation',
       body: { ip_addresses: ['203.0.113.10'] },
       db: mockDB,
-      envOverrides: {
-        DEFAULT_AUDIT_PROFILE_ID: 'builtin:audit:standard',
-      },
     });
 
     const response = await adminSecurityIpReputationHandler(c);
@@ -144,6 +137,17 @@ describe('Phase 4 audit profile adoption', () => {
       }>;
     };
 
+    expect(writeAudit).toHaveBeenCalledWith(
+      expect.anything(),
+      'security.ip_reputation_check',
+      'security',
+      'default',
+      expect.objectContaining({ ip_count: 1, high_risk_count: 0 })
+    );
+    expect(readLogs).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ tenantId: 'default', sourceDataset: 'core.event_log' })
+    );
     expect(body.results).toEqual([
       expect.objectContaining({
         ip_address: '203.0.113.10',
@@ -155,92 +159,5 @@ describe('Phase 4 audit profile adoption', () => {
         },
       }),
     ]);
-  });
-
-  it('reports archive-only hot-query limits in compliance endpoints', async () => {
-    const mockDB = createSqlAwareMockDB(async (sql, _params, op) => {
-      if (sql.includes('SELECT settings FROM tenants') && op === 'first') {
-        return {
-          settings: JSON.stringify({
-            data_retention: {
-              enabled: true,
-              days: 365,
-              last_cleanup_at: null,
-              next_cleanup_at: null,
-            },
-            audit: { retention_days: 90 },
-            session: { retention_days: 30 },
-            security: { mfa_enforced: true },
-            compliance: { tombstone_retention_days: 2555 },
-          }),
-        };
-      }
-      if (
-        sql.includes('FROM users_core') &&
-        sql.includes("pii_status = 'deleted'") &&
-        op === 'first'
-      ) {
-        return { pending_deletions: 0 };
-      }
-      if (sql.includes('FROM signing_keys') && op === 'first') {
-        return { last_rotation: null };
-      }
-      if (sql.includes('FROM users') && sql.includes('mfa_enabled') && op === 'first') {
-        return { users_with_mfa: 1, users_without_mfa: 1 };
-      }
-      if (sql.includes('FROM roles') && op === 'first') {
-        return { active_roles: 1, users_with_roles: 1 };
-      }
-      if (sql.includes('FROM sessions') && op === 'first') {
-        return { total: 5, expired: 1, oldest_date: 1710000000 };
-      }
-      if (sql.includes('FROM tombstones') && op === 'first') {
-        return { total: 2, oldest_date: 1710000000 };
-      }
-      if (sql.includes('scheduled_deletion_at') && op === 'first') {
-        return { pending: 0 };
-      }
-      return null;
-    });
-
-    const envOverrides = {
-      DEFAULT_AUDIT_PROFILE_ID: 'builtin:audit:archive-only-logpush',
-      DB_ADMIN: mockDB,
-    } as Partial<Env>;
-
-    const complianceResponse = await adminComplianceStatusHandler(
-      createMockContext({
-        path: '/api/admin/compliance/status',
-        db: mockDB,
-        envOverrides,
-      })
-    );
-    expect(complianceResponse.status).toBe(200);
-    const complianceBody = (await complianceResponse.json()) as {
-      audit_log: { hot_query_status?: string; total_entries: number };
-    };
-    expect(complianceBody.audit_log.hot_query_status).toBe('not_supported');
-    expect(complianceBody.audit_log.total_entries).toBe(0);
-
-    const retentionResponse = await adminDataRetentionStatusHandler(
-      createMockContext({
-        path: '/api/admin/data-retention/status',
-        db: mockDB,
-        envOverrides,
-      })
-    );
-    expect(retentionResponse.status).toBe(200);
-    const retentionBody = (await retentionResponse.json()) as {
-      categories: Array<{ category: string; hot_query_status?: string; total_records: number }>;
-    };
-    expect(retentionBody.categories).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          category: 'audit_logs',
-          hot_query_status: 'not_supported',
-          total_records: 0,
-        }),
-      ])
-    );
   });
 });

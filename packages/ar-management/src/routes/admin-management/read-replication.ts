@@ -4,7 +4,7 @@ import {
   ADMIN_PERMISSIONS,
   adminAuthMiddleware,
   assertControlPlaneRecordIsSecretFree,
-  hasAdminPermission,
+  hasGlobalPlatformAuthority,
   type AdminAuthContext,
   type ControlReadReplicationStartRequest,
   type ControlReadReplicationStatusView,
@@ -54,13 +54,15 @@ function auth(c: AdminContext): AdminAuthContext {
   return c.get('adminAuth') as AdminAuthContext;
 }
 
-function hasPlatformAuthority(value: AdminAuthContext): boolean {
-  return (
-    hasAdminPermission(value.permissions ?? [], ADMIN_PERMISSIONS.ALL) ||
-    value.roles.includes('super_admin') ||
-    value.roles.includes('system_admin') ||
-    value.tenantScope?.includes('*') === true
-  );
+// Read replication is platform-wide, so the authority has to come from a global assignment. A
+// machine token needs the database connections permission of the operation, for every tenant.
+function hasPlatformAuthority(
+  value: AdminAuthContext,
+  permission:
+    | typeof ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_READ
+    | typeof ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_UPDATE
+): boolean {
+  return hasGlobalPlatformAuthority(value, permission);
 }
 
 function error(c: AdminContext, status: 400 | 403 | 409 | 503, code: string): Response {
@@ -153,7 +155,7 @@ function statusResponse(c: AdminContext, status: ControlReadReplicationStatusVie
 }
 
 readReplicationRouter.get('/', async (c) => {
-  if (!hasPlatformAuthority(auth(c))) {
+  if (!hasPlatformAuthority(auth(c), ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_READ)) {
     return error(c, 403, 'READ_REPLICATION_PLATFORM_AUTHORITY_REQUIRED');
   }
   const getStatus = controlStatusCapability(c.env);
@@ -167,7 +169,7 @@ readReplicationRouter.get('/', async (c) => {
 
 readReplicationRouter.put('/', async (c) => {
   const actor = auth(c);
-  if (!hasPlatformAuthority(actor)) {
+  if (!hasPlatformAuthority(actor, ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_UPDATE)) {
     return error(c, 403, 'READ_REPLICATION_PLATFORM_AUTHORITY_REQUIRED');
   }
   if (actor.actorType && actor.actorType !== 'human') {

@@ -53,7 +53,8 @@ export function isValidDownloadUrl(url: string): boolean {
 
 /**
  * Validate redirect URL from API responses (consent, device, reauth flows).
- * Allows same-origin or HTTPS external URLs.
+ * Allows same-origin or HTTPS external URLs (and, from a UI on a loopback address, http URLs on a
+ * loopback address: local development).
  * These are typically RP-registered redirect_uris validated by the backend,
  * but we add a client-side check as defense-in-depth.
  */
@@ -65,11 +66,28 @@ export function isValidRedirectUrl(url: string): boolean {
 		const parsed = new URL(url, window.location.origin);
 		// Same-origin is always allowed
 		if (parsed.origin === window.location.origin) return true;
-		// External URLs must use HTTPS
-		return parsed.protocol === 'https:';
+		// External URLs must use HTTPS ...
+		if (parsed.protocol === 'https:') return true;
+		// ... except between loopback origins: a UI served from this machine (local development)
+		// whose issuer is another port of it. The issuer's own address is what the backend gives
+		// for the continuation of an authorization request, and it is plain http there.
+		return (
+			parsed.protocol === 'http:' &&
+			isLoopbackHostname(parsed.hostname) &&
+			isLoopbackHostname(window.location.hostname)
+		);
 	} catch {
 		return false;
 	}
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+	return (
+		hostname === 'localhost' ||
+		hostname.endsWith('.localhost') ||
+		hostname === '127.0.0.1' ||
+		hostname === '[::1]'
+	);
 }
 
 /**

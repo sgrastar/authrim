@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '../../db/adapter';
-import { CanonicalRuntimeUserStore } from '../identity/canonical-runtime-user-store';
+import {
+  CanonicalRuntimeUserStore,
+  runtimeTimestampToIso,
+} from '../identity/canonical-runtime-user-store';
 
 function adapter(overrides: Partial<DatabaseAdapter> = {}): DatabaseAdapter {
   return {
@@ -16,7 +19,93 @@ function adapter(overrides: Partial<DatabaseAdapter> = {}): DatabaseAdapter {
   } as unknown as DatabaseAdapter;
 }
 
+describe('runtimeTimestampToIso unit boundaries', () => {
+  it.each([
+    [0, 0],
+    [1_700_000_000, 1_700_000_000_000],
+    [1_700_000_000_000, 1_700_000_000_000],
+    [1_700_000_000_000_000, 1_700_000_000_000],
+    [1_700_000_000_000_000_000, 1_700_000_000_000],
+    [99_999_999_999, 99_999_999_999_000],
+    [100_000_000_000, 100_000_000_000],
+    [100_000_000_001, 100_000_000_001],
+    [99_999_999_999_999, 99_999_999_999_999],
+    [100_000_000_000_000, 100_000_000_000],
+    [100_000_000_000_001, 100_000_000_000],
+    // Adjacent representable numbers around the nanosecond threshold (larger than MAX_SAFE_INTEGER).
+    [99_999_999_999_999_984, 99_999_999_999_999],
+    [100_000_000_000_000_000, 100_000_000_000],
+    [100_000_000_000_000_016, 100_000_000_000],
+    [-1_700_000_000, -1_700_000_000_000],
+    [-1_700_000_000_000, -1_700_000_000_000],
+  ])('normalizes numeric epoch %s to milliseconds %s', (timestamp, milliseconds) => {
+    expect(Date.parse(runtimeTimestampToIso(timestamp))).toBe(milliseconds);
+  });
+
+  it.each(['1700000000', '1700000000000', '1700000000000000'])(
+    'normalizes safe PostgreSQL int8 text %s',
+    (timestamp) => {
+      expect(Date.parse(runtimeTimestampToIso(timestamp))).toBe(1_700_000_000_000);
+    }
+  );
+  it.each(['', 'invalid', '1.5', '9007199254740993', '1700000000000000000'])(
+    'rejects malformed or unsafe PostgreSQL int8 text %s',
+    (timestamp) => {
+      expect(() => runtimeTimestampToIso(timestamp)).toThrow(
+        'canonical_account_authentication_timestamp_invalid'
+      );
+    }
+  );
+});
+
 describe('CanonicalRuntimeUserStore OTP fast path', () => {
+  it.each(['1700000000', '1700000000000'])(
+    'accepts PostgreSQL int8 timestamps %s',
+    async (timestamp) => {
+      const store = new CanonicalRuntimeUserStore({
+        tenantId: 'tenant-1',
+        coreAdapter: adapter({
+          queryOne: vi.fn(async () => ({
+            user_id: 'user-1',
+            account_type: 'end_user',
+            account_lifecycle_state: 'active',
+            subject_lifecycle_state: 'active',
+            directory_publication_state: 'active',
+            account_updated_at: timestamp,
+            subject_updated_at: timestamp,
+          })),
+        }),
+      });
+      await expect(store.findAccountAuthenticationState('user-1')).resolves.toMatchObject({
+        lifecycle: 'active',
+        sourceVersionMs: 1_700_000_000_000,
+      });
+    }
+  );
+
+  it.each(['not-a-time', '', '1.5', '9007199254740993'])(
+    'rejects invalid database timestamp %s',
+    async (timestamp) => {
+      const store = new CanonicalRuntimeUserStore({
+        tenantId: 'tenant-1',
+        coreAdapter: adapter({
+          queryOne: vi.fn(async () => ({
+            user_id: 'user-1',
+            account_type: 'end_user',
+            account_lifecycle_state: 'active',
+            subject_lifecycle_state: 'active',
+            directory_publication_state: 'active',
+            account_updated_at: timestamp,
+            subject_updated_at: timestamp,
+          })),
+        }),
+      });
+      await expect(store.findAccountAuthenticationState('user-1')).rejects.toThrow(
+        'canonical_account_authentication_timestamp_invalid'
+      );
+    }
+  );
+
   it('reads a Core-only account authentication state and normalizes restrictive lifecycle', async () => {
     const coreQueryOne = vi.fn(async () => ({
       user_id: 'user-1',
@@ -106,7 +195,7 @@ describe('CanonicalRuntimeUserStore OTP fast path', () => {
     const piiQueryOne = vi.fn();
     const store = new CanonicalRuntimeUserStore({
       tenantId: 'tenant-1',
-      coreAdapter: adapter({ queryOne: coreQueryOne, batch }),
+      coreAdapter: adapter({ queryOne: coreQueryOne, batch, getType: () => 'd1' }),
       piiAdapter: adapter({ queryOne: piiQueryOne }),
     });
 
@@ -119,12 +208,7 @@ describe('CanonicalRuntimeUserStore OTP fast path', () => {
       }),
       expect.objectContaining({
         sql: expect.stringContaining('UPDATE identity_accounts'),
-        params: [
-          JSON.stringify({ source: 'test', last_login_at: 1234 }),
-          1234,
-          'account:user-1',
-          'tenant-1',
-        ],
+        params: [1234, 1234, 1234, 'tenant-1', 'user-1', 'account:user-1', 1234],
       }),
     ]);
     expect(piiQueryOne).not.toHaveBeenCalled();

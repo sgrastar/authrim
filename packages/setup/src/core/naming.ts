@@ -77,6 +77,7 @@ export const DURABLE_OBJECTS = [
   { name: 'PERMISSION_CHANGE_HUB', className: 'PermissionChangeHub' },
   { name: 'FLOW_STATE_STORE', className: 'FlowStateStore' },
   { name: 'DEVICE_SECRET_ROUTE_STORE', className: 'DeviceSecretRouteStore' },
+  { name: 'USER_CODE_RATE_LIMITER', className: 'UserCodeRateLimiter' },
 ] as const;
 
 export type DurableObjectBinding = (typeof DURABLE_OBJECTS)[number];
@@ -136,7 +137,9 @@ export const WORKER_REQUIRED_DATA_ROLES: Record<
   'ar-management': ['tenant_core/default', 'tenant_core/users', 'tenant_pii', 'lookup'],
   'ar-agent-access': ['tenant_core/default', 'tenant_core/users'],
   'ar-router': [],
-  'ar-async': ['tenant_core/default', 'tenant_core/users', 'tenant_pii'],
+  // lookup: the device and CIBA approval APIs resolve the session's account through the lookup
+  // directory before reading the user and its consent withdrawals.
+  'ar-async': ['tenant_core/default', 'tenant_core/users', 'tenant_pii', 'lookup'],
   'ar-policy': ['tenant_core/default', 'tenant_core/users'],
   'ar-saml': ['tenant_core/default', 'tenant_core/users', 'tenant_pii', 'lookup'],
   'ar-bridge': ['tenant_core/default', 'tenant_core/users', 'tenant_pii', 'lookup'],
@@ -167,7 +170,9 @@ export function getBuiltinD1BindingsForComponent(
   if (component === 'ar-management') return ['DB', 'DB_PII', 'DB_ADMIN', 'LOOKUP_DB'];
   if (component === 'ar-auth') return ['DB', 'DB_PII', 'DB_ADMIN', 'LOOKUP_DB'];
   if (component === 'ar-token') return ['DB_ADMIN', 'LOOKUP_DB'];
-  if (component === 'ar-userinfo') return ['LOOKUP_DB'];
+  // DB_ADMIN: UserInfo applies the app's identity mapping and Destination Profile (control-plane
+  // data in the Admin database) so its claims match the ID token's.
+  if (component === 'ar-userinfo') return ['DB_ADMIN', 'LOOKUP_DB'];
   if (component === 'ar-bridge') return ['DB', 'DB_PII', 'DB_ADMIN', 'LOOKUP_DB'];
   if (component === 'ar-agent-access') return ['DB_ADMIN'];
   // Policy resolves tenant/account adapters from the request-scoped Runtime
@@ -176,7 +181,7 @@ export function getBuiltinD1BindingsForComponent(
   if (component === 'ar-policy') return [];
   if (component === 'ar-saml') return ['DB', 'DB_PII', 'DB_ADMIN', 'LOOKUP_DB'];
   if (component === 'ar-vc') return ['DB_ADMIN', 'LOOKUP_DB'];
-  if (component === 'ar-async') return [];
+  if (component === 'ar-async') return ['LOOKUP_DB'];
   return [];
 }
 
@@ -275,7 +280,7 @@ export const WORKER_DEPLOYMENT_DEPENDENCIES: Record<WorkerComponent, readonly Wo
   'ar-bridge': ['ar-lib-core', 'ar-plugin-runner'],
   'ar-discovery': ['ar-lib-core'],
   'ar-token': ['ar-lib-core'],
-  'ar-userinfo': ['ar-lib-core'],
+  'ar-userinfo': ['ar-lib-core', 'ar-management'],
   'ar-async': ['ar-lib-core'],
   'ar-policy': ['ar-lib-core', 'ar-plugin-runner'],
   'ar-saml': ['ar-lib-core', 'ar-plugin-runner'],
@@ -303,19 +308,10 @@ export const WORKER_DEPLOYMENT_DEPENDENCIES: Record<WorkerComponent, readonly Wo
  */
 export const DEPLOYMENT_LEVELS: WorkerComponent[][] = [
   ['ar-lib-core', 'ar-control', 'ar-plugin-runner'],
-  [
-    'ar-bridge',
-    'ar-discovery',
-    'ar-token',
-    'ar-userinfo',
-    'ar-async',
-    'ar-policy',
-    'ar-saml',
-    'ar-vc',
-  ],
+  ['ar-bridge', 'ar-discovery', 'ar-token', 'ar-async', 'ar-policy', 'ar-saml', 'ar-vc'],
   ['ar-auth'],
   ['ar-management'],
-  ['ar-agent-access'],
+  ['ar-agent-access', 'ar-userinfo'],
   ['ar-router'],
 ];
 

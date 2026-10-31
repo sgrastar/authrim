@@ -16,6 +16,9 @@
 	import { LL } from '$i18n/i18n-svelte';
 
 	const DEFAULT_BUILT_IN: AuthenticationMethodBuiltInSettings = {
+		guestLoginEnabled: false,
+		passkeyGuestUpgradeEnabled: true,
+		emailOtpGuestUpgradeEnabled: true,
 		passkeyLoginEnabled: true,
 		passkeySignupEnabled: true,
 		passkeyReauthEnabled: true,
@@ -28,6 +31,7 @@
 		totpSignupEnabled: false,
 		totpReauthEnabled: false,
 		totpAccountLinkEnabled: false,
+		didLoginEnabled: false,
 		totpPreset: 'compatible',
 		totpDefaultAcr: 'urn:authrim:aal:2'
 	};
@@ -186,7 +190,11 @@
 		providerId: string,
 		key: keyof Pick<
 			AuthenticationMethodExternalProviderUsage,
-			'loginEnabled' | 'signupEnabled' | 'reauthEnabled' | 'accountLinkEnabled'
+			| 'loginEnabled'
+			| 'signupEnabled'
+			| 'reauthEnabled'
+			| 'reauthAcceptWithoutAuthTime'
+			| 'accountLinkEnabled'
 		>,
 		value: boolean
 	) {
@@ -276,6 +284,35 @@
 		{/if}
 
 		<AdminSection
+			title={$LL.admin_guest_login_title()}
+			description={$LL.admin_guest_login_description()}
+		>
+			<ToggleSwitch
+				bind:checked={builtIn.guestLoginEnabled}
+				disabled={!canEdit || saving}
+				label={$LL.admin_guest_login_title()}
+			/>
+			<a class="guest-lifecycle-link" href="/admin/account-lifecycle"
+				>{$LL.admin_lifecycle_title()}</a
+			>
+		</AdminSection>
+		<AdminSection
+			title={$LL.admin_guest_upgrade_methods()}
+			description={$LL.admin_guest_upgrade_methods_description()}
+		>
+			<ToggleSwitch
+				bind:checked={builtIn.passkeyGuestUpgradeEnabled}
+				disabled={!canEdit || saving}
+				label={$LL.admin_authentication_methods_passkey()}
+			/>
+			<ToggleSwitch
+				bind:checked={builtIn.emailOtpGuestUpgradeEnabled}
+				disabled={!canEdit || saving}
+				label={$LL.admin_authentication_methods_email_otp()}
+			/>
+		</AdminSection>
+
+		<AdminSection
 			title={$LL.admin_authentication_methods_builtin_title()}
 			description={$LL.admin_authentication_methods_builtin_description()}
 		>
@@ -357,6 +394,23 @@
 						disabled={!canEdit}
 						size="sm"
 					/>
+				</div>
+
+				<div class="method-title">
+					<strong>{$LL.admin_authentication_methods_did()}</strong>
+					<span>{$LL.admin_authentication_methods_did_description()}</span>
+				</div>
+				<div class="method-cell unavailable">
+					<span>{$LL.admin_authentication_methods_not_applicable()}</span>
+				</div>
+				<div class="method-cell">
+					<ToggleSwitch bind:checked={builtIn.didLoginEnabled} disabled={!canEdit} size="sm" />
+				</div>
+				<div class="method-cell unavailable">
+					<span>{$LL.admin_authentication_methods_not_applicable()}</span>
+				</div>
+				<div class="method-cell unavailable">
+					<span>{$LL.admin_authentication_methods_not_applicable()}</span>
 				</div>
 
 				<div class="method-title">
@@ -459,14 +513,37 @@
 									updateExternalProviderUsage(provider.id, 'loginEnabled', checked)}
 							/>
 						</div>
-						<div class="method-cell">
+						<div class="method-cell reauth-cell">
 							<ToggleSwitch
 								checked={provider.reauthEnabled}
-								disabled={!canEdit || !provider.enabled}
+								disabled={!canEdit || !provider.enabled || provider.type === 'oauth2'}
 								size="sm"
 								onchange={(checked) =>
 									updateExternalProviderUsage(provider.id, 'reauthEnabled', checked)}
 							/>
+							{#if provider.type === 'oauth2'}
+								<span class="reauth-note">
+									{$LL.admin_authentication_methods_reauth_unavailable_oauth2()}
+								</span>
+							{:else if provider.type === 'oidc'}
+								<label
+									class="reauth-option"
+									title={$LL.admin_authentication_methods_reauth_without_auth_time_hint()}
+								>
+									<input
+										type="checkbox"
+										checked={provider.reauthAcceptWithoutAuthTime}
+										disabled={!canEdit || !provider.enabled || !provider.reauthEnabled}
+										onchange={(event) =>
+											updateExternalProviderUsage(
+												provider.id,
+												'reauthAcceptWithoutAuthTime',
+												event.currentTarget.checked
+											)}
+									/>
+									{$LL.admin_authentication_methods_reauth_without_auth_time()}
+								</label>
+							{/if}
 						</div>
 						<div class="method-cell">
 							<ToggleSwitch
@@ -550,6 +627,10 @@
 </AdminPageShell>
 
 <style>
+	.guest-lifecycle-link {
+		color: var(--text-primary);
+		text-decoration: underline;
+	}
 	:global(.admin-section) {
 		--section-margin-block: 10px;
 		--section-header-margin-bottom: 5px;
@@ -618,6 +699,25 @@
 	.method-cell {
 		display: flex;
 		align-items: center;
+	}
+
+	.reauth-cell {
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 6px;
+	}
+
+	.reauth-note,
+	.reauth-option {
+		color: var(--color-text-muted);
+		font-size: 0.75rem;
+		line-height: 1.4;
+	}
+
+	.reauth-option {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
 	}
 
 	.method-options {

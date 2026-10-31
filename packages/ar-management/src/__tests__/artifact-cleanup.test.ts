@@ -8,6 +8,7 @@ const {
 } = vi.hoisted(() => {
   const adapter = {
     query: vi.fn(),
+    queryOne: vi.fn(),
     execute: vi.fn(),
   };
 
@@ -48,7 +49,9 @@ describe('artifact cleanup', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAdapter.query.mockReset();
+    mockAdapter.queryOne.mockReset();
     mockAdapter.execute.mockReset();
+    mockAdapter.queryOne.mockResolvedValue(null);
     mockTombstoneObjectCatalogEntryForTenant.mockReset();
     mockListDeletedObjectCatalogObjectsForSystemCleanup.mockReset();
     mockPurgeDeletedObjectCatalogObjectsForSystemCleanup.mockReset();
@@ -223,5 +226,31 @@ describe('artifact cleanup', () => {
       'physical-1',
       'physical-2',
     ]);
+  });
+
+  it('defers physical object purge while a backup snapshot is capturing', async () => {
+    const deleteObject = vi.fn();
+    mockAdapter.queryOne.mockResolvedValue({ id: 'snapshot-active' });
+    mockListDeletedObjectCatalogObjectsForSystemCleanup.mockResolvedValue([
+      {
+        physicalId: 'physical-1',
+        catalogId: 'catalog-1',
+        tenantId: 'default',
+        bucketBinding: 'EXPORT_ARTIFACTS',
+        objectKey: 'exports/default/result.json',
+      },
+    ]);
+
+    await expect(
+      purgeDeletedObjectArtifacts(
+        { EXPORT_ARTIFACTS: { delete: deleteObject } as unknown as R2Bucket } as any,
+        mockAdapter as any,
+        logger
+      )
+    ).resolves.toBe(0);
+
+    expect(deleteObject).not.toHaveBeenCalled();
+    expect(mockListDeletedObjectCatalogObjectsForSystemCleanup).not.toHaveBeenCalled();
+    expect(mockPurgeDeletedObjectCatalogObjectsForSystemCleanup).not.toHaveBeenCalled();
   });
 });

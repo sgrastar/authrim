@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 
 const { mockAdapter, mockCreateAuthContextFromHono, mockGetOperationalLog, mockGrantRepo } =
@@ -10,12 +10,26 @@ const { mockAdapter, mockCreateAuthContextFromHono, mockGetOperationalLog, mockG
       execute: vi.fn(),
     } satisfies Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'>,
     mockCreateAuthContextFromHono: vi.fn(),
-    mockGetOperationalLog: vi.fn(),
+    mockGetOperationalLog: vi.fn<(...args: unknown[]) => Promise<Record<string, unknown> | null>>(),
     mockGrantRepo: {
       getElevationGrantByPublicId: vi.fn(),
       listActiveElevationGrants: vi.fn(),
     },
   }));
+
+vi.mock('../log-read-adapter', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../log-read-adapter')>();
+  return {
+    ...actual,
+    createLogReadAdapter: () => ({
+      adapter: mockAdapter,
+      hasArchive: () => true,
+      pagination: () => undefined,
+      coverage: () => undefined,
+    }),
+    readLogProtectedDetail: (env: unknown, input: unknown) => mockGetOperationalLog(env, input),
+  };
+});
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
@@ -23,7 +37,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ...actual,
     adminAuthMiddleware: vi.fn(
       (options?: { requirePermissions?: string[] }) =>
-        async (c: any, next: () => Promise<void>) => {
+        async (
+          c: Context<{ Bindings: Env; Variables: { adminAuth: unknown } }>,
+          next: () => Promise<void>
+        ) => {
           const permissions = (c.req.header('X-Admin-Permissions') || '')
             .split(',')
             .map((value: string) => value.trim())
@@ -33,7 +50,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
             authMethod: 'session',
             tenantId: 'tenant-a',
             permissions,
-            roles: ['tenant_admin'],
+            roles: ['ar_tenant_admin'],
             hierarchyLevel: 50,
             mfaVerified: true,
           });
@@ -68,7 +85,18 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 import { operationalLogsRouter } from '../routes/admin-management/operational-logs';
 
 const mockEnv = {
-  DB_ADMIN: {},
+  DB_ADMIN: {
+    query: async () => [],
+    queryOne: async () => null,
+    execute: async () => ({ success: true, rowsAffected: 0 }),
+    getType: () => 'sqlite',
+    transaction: async () => {
+      throw new Error('unused');
+    },
+    batch: async () => [],
+    isHealthy: async () => ({ healthy: true, latencyMs: 0, type: 'sqlite' }),
+    close: async () => {},
+  },
   PII_ENCRYPTION_KEY: 'test-key',
 } as unknown as Env;
 
@@ -83,6 +111,10 @@ describe('operational logs router', () => {
     vi.clearAllMocks();
     mockCreateAuthContextFromHono.mockReturnValue({ coreAdapter: mockAdapter });
     mockGrantRepo.listActiveElevationGrants.mockResolvedValue([]);
+    mockAdapter.queryOne.mockImplementation(async () => {
+      const value: unknown = await mockAdapter.query();
+      return Array.isArray(value) ? (value[0] as unknown) : null;
+    });
     mockAdapter.query.mockResolvedValue([
       {
         id: 'op-1',
@@ -174,12 +206,11 @@ describe('operational logs router', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { reason_detail: string };
     expect(body.reason_detail).toContain('immediate suspension');
-    expect(mockGetOperationalLog).toHaveBeenCalledWith(
-      mockAdapter,
-      expect.objectContaining({ inlineEncryptionKey: 'test-key' }),
-      'tenant-a',
-      'op-1'
-    );
+    expect(mockGetOperationalLog).toHaveBeenCalledWith(mockEnv, {
+      tenantId: 'tenant-a',
+      sourceDataset: 'core.operational_logs',
+      eventId: 'op-1',
+    });
   });
 
   it('returns operational log detail with a matching elevation grant', async () => {

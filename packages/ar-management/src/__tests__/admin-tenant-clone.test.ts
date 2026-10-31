@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 
 const mocks = vi.hoisted(() => ({
   source: { query: vi.fn(), queryOne: vi.fn(), execute: vi.fn() },
@@ -271,8 +271,18 @@ describe('admin tenant clone', () => {
             column
           )
       );
+    // Columns added after the baseline.
+    const addedColumns = readdirSync(new URL('core/d1/', migrationsUrl))
+      .filter((file) => file.endsWith('.sql'))
+      .flatMap((file) =>
+        [
+          ...readFileSync(new URL(`core/d1/${file}`, migrationsUrl), 'utf8').matchAll(
+            /ALTER TABLE oauth_clients ADD COLUMN ([a-z_][a-z0-9_]*)/giu
+          ),
+        ].map((match) => match[1]!.toLowerCase())
+      );
     expect(new Set([...OAUTH_CLIENT_CLONE_COLUMNS, ...OAUTH_CLIENT_NON_CLONE_COLUMNS])).toEqual(
-      new Set(schemaColumns)
+      new Set([...schemaColumns, ...addedColumns])
     );
     expect(
       OAUTH_CLIENT_CLONE_COLUMNS.filter((column) => OAUTH_CLIENT_NON_CLONE_COLUMNS.has(column))
@@ -303,7 +313,6 @@ describe('admin tenant clone', () => {
   it('removes destination-bound identities, keys, and uncopied resource references', () => {
     const context = {
       targetTenantId: 'destination',
-      targetTenantName: 'Destination',
       includeClients: false,
     };
 
@@ -325,10 +334,63 @@ describe('admin tenant clone', () => {
         )!
       )
     ).toEqual({
-      'tenant.default_id': 'destination',
-      'tenant.name': 'Destination',
+      // tenant.default_id and tenant.name are no longer settings (the tenant record holds the
+      // name): the source's stale values are dropped, not carried over or rewritten.
       'tenant.logo_uri': 'https://cdn.example/logo.svg',
     });
+
+    expect(
+      JSON.parse(
+        sanitizeCopiedSettingsValue(
+          'client',
+          JSON.stringify({
+            'client.sso_enabled': true,
+            // The app registration holds the default target: a source that still holds these as
+            // settings does not carry them over.
+            'client.default_audience': 'https://api.example.com',
+            'client.default_resource': 'https://api.example.com/',
+          }),
+          false,
+          context
+        )!
+      )
+    ).toEqual({ 'client.sso_enabled': true });
+
+    // The new DCR default target is an ordinary tenant setting and is copied.
+    expect(
+      JSON.parse(
+        sanitizeCopiedSettingsValue(
+          'dcr',
+          JSON.stringify({
+            'dcr.enabled': true,
+            'dcr.default_audience': 'https://api.example.com',
+            'dcr.default_resource': 'https://api.example.com/',
+          }),
+          false,
+          context
+        )!
+      )
+    ).toEqual({
+      'dcr.enabled': true,
+      'dcr.default_audience': 'https://api.example.com',
+      'dcr.default_resource': 'https://api.example.com/',
+    });
+
+    // The scopes and names say which institution the source speaks for: the copy is another
+    // tenant, which would otherwise be released under (and publish) the source's scopes.
+    expect(
+      JSON.parse(
+        sanitizeCopiedSettingsValue(
+          'institution',
+          JSON.stringify({
+            'institution.scopes': 'source.ac.jp',
+            'institution.display_names': '{"ja":"元","en":"Source"}',
+          }),
+          false,
+          context
+        )!
+      )
+    ).toEqual({});
 
     expect(
       JSON.parse(
@@ -339,17 +401,94 @@ describe('admin tenant clone', () => {
             'tokens.access_token_signing_key_id': 'source-access-key',
             'tokens.id_token_signing_key_id': 'source-id-key',
             'tokens.userinfo_signing_key_id': 'source-userinfo-key',
+            // The retired introspection cache: a source that still holds it does not carry it over.
+            'tokens.introspection_cache_ttl': 120,
           }),
           false,
           context
         )!
       )
     ).toEqual({
+      // Signing key ids are no longer settings: the source's are dropped, not carried over.
       'tokens.access_token_ttl': 300,
-      'tokens.access_token_signing_key_id': '',
-      'tokens.id_token_signing_key_id': '',
-      'tokens.userinfo_signing_key_id': '',
     });
+
+    expect(
+      JSON.parse(
+        sanitizeCopiedSettingsValue(
+          'plugin',
+          JSON.stringify({
+            'plugin.enabled': true,
+            // Retired plugin settings: a source that still holds them does not carry them over.
+            'plugin.memory_limit_mb': 256,
+            'plugin.notifier_console_enabled': true,
+            'plugin.execution_timeout_ms': 30000,
+            'plugin.auto_update_check': true,
+            'plugin.notifier_resend_enabled': true,
+          }),
+          false,
+          context
+        )!
+      )
+    ).toEqual({ 'plugin.enabled': true });
+
+    expect(
+      JSON.parse(
+        sanitizeCopiedSettingsValue(
+          'diagnostic-logging',
+          JSON.stringify({
+            'diagnostic-logging.filter_pii': false,
+            // Retired: tokens are never stored in clear text, so there is no switch.
+            'diagnostic-logging.filter_tokens': false,
+          }),
+          false,
+          context
+        )!
+      )
+    ).toMatchObject({ 'diagnostic-logging.filter_pii': false });
+    expect(
+      JSON.parse(
+        sanitizeCopiedSettingsValue(
+          'diagnostic-logging',
+          JSON.stringify({ 'diagnostic-logging.filter_tokens': false }),
+          false,
+          context
+        )!
+      )
+    ).not.toHaveProperty('diagnostic-logging.filter_tokens');
+
+    expect(
+      JSON.parse(
+        sanitizeCopiedSettingsValue(
+          'ciba',
+          JSON.stringify({
+            'ciba.expires_in': 120,
+            'ciba.user_code_enabled': true,
+            // Retired CIBA settings: a source that still holds them does not carry them over.
+            'ciba.auth_request_ttl': 120,
+            'ciba.notifier_default_timeout_ms': 2000,
+            'ciba.notifier_max_timeout_ms': 9000,
+            'ciba.notifier_retry_delay_base_ms': 500,
+          }),
+          false,
+          context
+        )!
+      )
+    ).toEqual({ 'ciba.expires_in': 120, 'ciba.user_code_enabled': true });
+
+    expect(
+      JSON.parse(
+        sanitizeCopiedSettingsValue(
+          'feature-flags',
+          JSON.stringify({
+            'feature.enable_abac': true,
+            'feature.introspection_cache_enabled': true,
+          }),
+          false,
+          context
+        )!
+      )
+    ).toEqual({ 'feature.enable_abac': true });
 
     expect(
       JSON.parse(
@@ -433,14 +572,13 @@ describe('admin tenant clone', () => {
         false,
         {
           targetTenantId: 'destination',
-          targetTenantName: 'Destination',
           includeClients: false,
         }
       )!
     ) as Record<string, unknown>;
 
     expect(copied['authentication-methods.directory_password.enabled']).toBe(false);
-    expect(copied['authentication-methods.directory_password.auto_provision']).toBe(false);
+    expect(copied).not.toHaveProperty('authentication-methods.directory_password.auto_provision');
     expect(copied['authentication-methods.human_verification.login_enabled']).toBe(false);
     expect(JSON.parse(String(copied['authentication-methods.totp.requirement_policy']))).toEqual({
       mode: 'required_for_selected',
@@ -512,6 +650,79 @@ describe('admin tenant clone', () => {
         resourceId: 'destination',
       })
     );
+  });
+
+  describe('the default Mapping Set of the identity-mapping category', () => {
+    const KEY = 'identity_mapping.oidc_default_set_id';
+    const copyContext = { targetTenantId: 'destination', includeClients: false };
+    const copy = (record: Record<string, unknown>, keptMappingSetIds?: string[]) =>
+      JSON.parse(
+        sanitizeCopiedSettingsValue('identity-mapping', JSON.stringify(record), false, {
+          ...copyContext,
+          keptMappingSetIds: keptMappingSetIds && new Set(keptMappingSetIds),
+        })!
+      );
+
+    it('drops a set ID unless it was found to be the platform’s', () => {
+      expect(copy({ [KEY]: 'set-source' })).toEqual({});
+      expect(copy({ [KEY]: 'set-source' }, [])).toEqual({});
+      // Only the set the document names counts.
+      expect(copy({ [KEY]: 'set-source' }, ['set-other'])).toEqual({});
+      expect(copy({ [KEY]: 'set-platform' }, ['set-platform'])).toEqual({ [KEY]: 'set-platform' });
+    });
+
+    it('drops the retired shadow comparison switch and keeps the default beside it', () => {
+      expect(
+        copy({ 'identity_mapping.shadow_compare_enabled': true, [KEY]: 'none' }, ['set-platform'])
+      ).toEqual({ [KEY]: 'none' });
+      expect(copy({ 'identity_mapping.shadow_compare_enabled': false })).toEqual({});
+    });
+
+    it('keeps none, which names no set, and drops a value that is not a string', () => {
+      expect(copy({ [KEY]: 'none' })).toEqual({ [KEY]: 'none' });
+      for (const value of [false, null, 1, {}, ['set-platform']]) {
+        expect(copy({ [KEY]: value }, ['set-platform']), JSON.stringify(value)).toEqual({});
+      }
+    });
+
+    const cloneWith = async (
+      setId: string,
+      owners: Record<string, string | null | Error>
+    ): Promise<string | undefined> => {
+      mocks.admin.queryOne.mockImplementation(async (sql: string, params?: unknown[]) => {
+        if (!sql.includes('FROM field_mapping_sets')) return null;
+        const owner = owners[String(params?.[0])];
+        if (owner instanceof Error) throw owner;
+        return owner ? { tenant_id: owner } : null;
+      });
+      const settings = kvNamespace({
+        'settings:tenant:source:identity-mapping': JSON.stringify({ [KEY]: setId }),
+      });
+      const response = await adminTenantCloneHandler(
+        context(
+          { id: 'destination', name: 'Destination' },
+          { SETTINGS: settings, AUTHRIM_CONFIG: kvNamespace(), ENVIRONMENT: 'test' }
+        )
+      );
+      expect(response.status).toBe(201);
+      return settings.values.get('settings:tenant:destination:identity-mapping');
+    };
+
+    it('copies a default that names a set the platform owns, and none', async () => {
+      expect(
+        JSON.parse((await cloneWith('set-platform', { 'set-platform': 'platform' }))!)
+      ).toEqual({ [KEY]: 'set-platform' });
+      expect(JSON.parse((await cloneWith('none', {}))!)).toEqual({ [KEY]: 'none' });
+    });
+
+    it.each([
+      ['a set the source tenant owns', { 'set-source': 'source' }],
+      ['a set another tenant owns', { 'set-source': 'tenant-b' }],
+      ['a set that cannot be found', {}],
+      ['a set whose owner cannot be looked up', { 'set-source': new Error('d1 unavailable') }],
+    ])('does not copy a default that names %s', async (_name, owners) => {
+      expect(JSON.parse((await cloneWith('set-source', owners))!)).toEqual({});
+    });
   });
 
   it('starts the Control-plane saga instead of reserving a preallocated clone slot', async () => {
@@ -731,8 +942,6 @@ describe('admin tenant clone', () => {
 
     expect(response.status).toBe(201);
     expect(JSON.parse(config.values.get('settings:tenant:destination:tenant')!)).toEqual({
-      'tenant.default_id': 'destination',
-      'tenant.name': 'Destination',
       'tenant.logo_uri': 'https://cdn.example/logo.svg',
     });
   });
@@ -1135,7 +1344,7 @@ describe('admin tenant clone', () => {
           },
           {
             admin_user_id: 'admin-two',
-            admin_role_id: 'role_security_admin',
+            admin_role_id: 'role_ar_tenant_admin',
             scope_type: 'tenant',
             scope_id: 'source',
             expires_at: null,
@@ -1144,7 +1353,7 @@ describe('admin tenant clone', () => {
           },
           {
             admin_user_id: 'admin-three',
-            admin_role_id: 'role_security_admin',
+            admin_role_id: 'role_ar_tenant_admin',
             scope_type: 'org',
             scope_id: 'source-org',
             expires_at: null,
@@ -1153,7 +1362,7 @@ describe('admin tenant clone', () => {
           },
           {
             admin_user_id: 'admin-four',
-            admin_role_id: 'role_security_admin',
+            admin_role_id: 'role_ar_tenant_admin',
             scope_type: 'tenant',
             scope_id: 'other-tenant',
             expires_at: null,
@@ -1191,7 +1400,7 @@ describe('admin tenant clone', () => {
     expect(assignmentCalls).toHaveLength(2);
     expect(assignmentCalls[0]?.[1]).not.toContain('source-custom-role');
     expect(assignmentCalls[0]?.[1]).toContain('destination');
-    expect(assignmentCalls[1]?.[1]).toContain('role_security_admin');
+    expect(assignmentCalls[1]?.[1]).toContain('role_ar_tenant_admin');
     const assignmentRead = mocks.admin.query.mock.calls.find(([sql]) =>
       String(sql).includes('FROM admin_role_assignments')
     );
@@ -1206,7 +1415,7 @@ describe('admin tenant clone', () => {
             id: 'parent-custom',
             name: 'parent',
             permissions_json: '[]',
-            inherits_from: 'role_security_admin',
+            inherits_from: 'role_ar_tenant_admin',
           },
           {
             id: 'child-custom',
@@ -1216,7 +1425,7 @@ describe('admin tenant clone', () => {
           },
         ];
       }
-      if (sql.includes('WHERE is_system = 1')) return [{ id: 'role_security_admin' }];
+      if (sql.includes('WHERE is_system = 1')) return [{ id: 'role_ar_tenant_admin' }];
       return [];
     });
 
@@ -1233,7 +1442,7 @@ describe('admin tenant clone', () => {
     );
     expect(updates).toHaveLength(2);
     expect(
-      updates.some(([, params]) => (params as unknown[]).includes('role_security_admin'))
+      updates.some(([, params]) => (params as unknown[]).includes('role_ar_tenant_admin'))
     ).toBe(true);
     expect(updates.flatMap(([, params]) => params as unknown[])).not.toContain('parent-custom');
   });
@@ -1358,6 +1567,31 @@ describe('admin tenant clone', () => {
     expect(response.status).toBe(400);
     expect(mocks.provision).not.toHaveBeenCalled();
   });
+
+  it.each(['platform', 'Platform', 'PLATFORM', ' platform', 'platform ', '\tplatform\n'])(
+    'rejects the reserved platform ID %j for the new tenant before reading the source',
+    async (id) => {
+      const response = await adminTenantCloneHandler(context({ id, name: 'Reserved' }, {}));
+
+      expect(response.status).toBe(400);
+      expect(mocks.source.queryOne).not.toHaveBeenCalled();
+      expect(mocks.beginProvisioning).not.toHaveBeenCalled();
+      expect(mocks.provision).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['platform', 'Platform', ' platform', 'platform '])(
+    'rejects the reserved platform tenant code %j before reading the source',
+    async (tenantCode) => {
+      const response = await adminTenantCloneHandler(
+        context({ id: 'destination', name: 'Reserved', tenant_code: tenantCode }, {})
+      );
+
+      expect(response.status).toBe(400);
+      expect(mocks.source.queryOne).not.toHaveBeenCalled();
+      expect(mocks.beginProvisioning).not.toHaveBeenCalled();
+    }
+  );
 
   it('rejects malformed JSON without provisioning a tenant', async () => {
     const c = context({}, {});
@@ -1609,7 +1843,9 @@ describe('admin tenant clone', () => {
     });
     const config = kvNamespace({
       'settings:tenant:source:plugin': JSON.stringify({
-        'plugin.notifier_resend_enabled': true,
+        'plugin.enabled': true,
+        // Retired: a source that still holds it does not carry it over.
+        'plugin.notifier_resend_enabled': false,
       }),
     });
 
@@ -1625,9 +1861,11 @@ describe('admin tenant clone', () => {
     );
 
     expect(response.status).toBe(201);
-    expect(config.values.get('settings:tenant:destination:plugin')).toBe(
-      config.values.get('settings:tenant:source:plugin')
-    );
+    // plugin.enabled travels with the plugin settings (they are confidential: only with
+    // secret_settings), so the copy allows external plugin code too; the retired key does not.
+    expect(JSON.parse(config.values.get('settings:tenant:destination:plugin')!)).toEqual({
+      'plugin.enabled': true,
+    });
     expect(settings.values.get('plugins:config:notifier-resend:tenant:destination')).toBe(
       settings.values.get('plugins:config:notifier-resend:tenant:source')
     );
@@ -1650,7 +1888,7 @@ describe('admin tenant clone', () => {
     });
     const config = kvNamespace({
       'settings:tenant:source:plugin': JSON.stringify({
-        'plugin.notifier_resend_enabled': true,
+        'plugin.enabled': true,
       }),
     });
 

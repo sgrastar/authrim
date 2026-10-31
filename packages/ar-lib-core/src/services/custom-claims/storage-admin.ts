@@ -155,7 +155,6 @@ export async function deleteStoredCustomClaimData(
   let failedUsers = 0;
   let lastProcessedId = '';
 
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     const batch = await piiAdapter.query<{
       owner_id: string;
@@ -261,7 +260,6 @@ export async function renameStoredCustomClaimData(
   let failedUsers = 0;
   let lastProcessedId = '';
 
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     const batch = await piiAdapter.query<{
       owner_id: string;

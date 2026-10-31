@@ -41,3 +41,35 @@ export function getDefaultDiscoveryMode(
 	if (methods.includes('wayf')) return 'wayf';
 	return 'tenant_slug';
 }
+
+export interface DiscoveryPageContext {
+	inviteToken?: string | null;
+	expectedTenantId?: string | null;
+	returnTo?: string | null;
+	loginHint?: string | null;
+}
+
+export interface DiscoveryActionContext {
+	expectedTenantId?: string | null;
+	returnTo?: string | null;
+	loginHint?: string;
+	emailChallengeId?: string;
+}
+
+/**
+ * The values the discovery forms post back. The form is a native POST to `/discover?/resolve`, so
+ * the page that renders after an action no longer has the original query: the action hands the
+ * carried return target back and it takes over from the page data.
+ */
+export function resolveDiscoveryHiddenFields(
+	data: DiscoveryPageContext,
+	form: DiscoveryActionContext | null | undefined
+) {
+	return {
+		inviteToken: data.inviteToken,
+		expectedTenantId: form?.expectedTenantId || data.expectedTenantId,
+		returnTo: form?.returnTo || data.returnTo,
+		loginHint: form?.loginHint || data.loginHint || '',
+		emailChallengeId: form?.emailChallengeId || ''
+	};
+}

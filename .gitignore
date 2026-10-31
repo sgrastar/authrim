@@ -23,6 +23,7 @@ docs/api/scalar.html
 .env.local
 .env.*.local
 .dev.vars
+.dev.vars.*
 
 # Editor directories and files
 .vscode/
@@ -35,6 +36,7 @@ docs/api/scalar.html
 .DS_Store
 /packages/ui/project.inlang/project_id
 private/
+AGENTS.md
 # Phase 2 planning docs are internal and live under private/docs.
 docs/proposals/phase2-loginui-sdk-workers.md
 
@@ -66,6 +68,8 @@ worker/
 # NEVER commit these — use the setup tool to export them as GitHub Secrets.
 # See docs/ci-cd-deployment.md for details.
 .authrim/
+# Local development environment (pnpm run setup local init)
+.authrim-local/
 
 # Logs
 logs/
@@ -85,6 +89,7 @@ packages/setup/.tmp-tests/
 .keys/
 /keys/
 .authrim-keys/
+.authrim_keys/
 *.pem
 *.key
 *.p12
@@ -120,6 +125,7 @@ setup_token*.txt
 
 # Monorepo / Turbo
 .turbo/
+.pnpm-store/
 packages/*/dist/
 packages/*/.wrangler/
 CLAUDE.md

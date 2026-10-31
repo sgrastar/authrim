@@ -55,6 +55,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
+      - name: Reject tracked internal files
+        run: bash scripts/check-private-files.sh
+
       - name: Setup pnpm
         uses: pnpm/action-setup@eae0cfeb286e66ffb5155f1a79b90583a127a68b # v2
         with:
@@ -69,12 +72,17 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Validate OpenAPI contracts
+        run: pnpm openapi:validate
+
       - name: Setup environment variables
         run: |
           echo "PUBLIC_API_BASE_URL=http://localhost:8786" > packages/ar-login-ui/.env
           echo "PUBLIC_API_BASE_URL=http://localhost:8786" > packages/ar-admin-ui/.env
 
       - name: Run linter
+        env:
+          NODE_OPTIONS: '--max-old-space-size=6144'
         run: pnpm run lint
 
   typecheck:
@@ -115,8 +123,106 @@ jobs:
         if: github.base_ref == 'main'
         run: pnpm migrate:release:check
 
-  api-tests:
-    name: API Tests with Coverage
+  # The API tests of the packages, one job per shard (scripts/ci-test-shards.mjs), so the workflow
+  # takes as long as its slowest shard instead of the sum of all packages. A shard that is still
+  # long is cut into parts with `vitest --shard` (PARTS in that script), one job per part. The
+  # entries below are checked against `node scripts/ci-test-shards.mjs matrix` by
+  # scripts/ci-test-shards.test.mjs. Each job hands its coverage on to the summary job, which merges
+  # the parts of a package back into one result.
+  api-package-tests:
+    name: API Tests (${{ matrix.id }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { shard: management, id: management-1, part: '1', vitestShard: '--shard=1/4' }
+          - { shard: management, id: management-2, part: '2', vitestShard: '--shard=2/4' }
+          - { shard: management, id: management-3, part: '3', vitestShard: '--shard=3/4' }
+          - { shard: management, id: management-4, part: '4', vitestShard: '--shard=4/4' }
+          - { shard: auth, id: auth, part: '', vitestShard: '' }
+          - { shard: core, id: core, part: '', vitestShard: '' }
+          - { shard: services, id: services, part: '', vitestShard: '' }
+    env:
+      TURBO_CONCURRENCY: 2
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@eae0cfeb286e66ffb5155f1a79b90583a127a68b # v2
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup environment variables
+        run: |
+          echo "PUBLIC_API_BASE_URL=http://localhost:8786" > packages/ar-login-ui/.env
+          echo "PUBLIC_API_BASE_URL=http://localhost:8786" > packages/ar-admin-ui/.env
+
+      - name: Check that every tested package belongs to a shard
+        run: node scripts/ci-test-shards.mjs check
+
+      # Turbo replays the build of a package whose inputs did not change (tests always run: they
+      # read files outside their package, such as the root migrations, that the cache key does not
+      # cover). A pull request restores the cache of its own earlier runs, so only the first run of
+      # a branch starts cold. The parts of a shard build the same things and share one cache entry:
+      # the first to finish saves it, the others only log that it exists.
+      - name: Restore Turbo cache
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: .turbo/cache
+          key: turbo-api-${{ matrix.shard }}-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            turbo-api-${{ matrix.shard }}-${{ runner.os }}-
+
+      - name: Run API tests with coverage
+        run: >-
+          AUTHRIM_SECURITY_REGRESSION_SUITE=true
+          pnpm exec turbo run test $(node scripts/ci-test-shards.mjs filters ${{ matrix.shard }})
+          -- --coverage ${{ matrix.vitestShard }}
+
+      # Staged under ci-coverage/packages/... so that downloading it into the workspace puts each
+      # file back where the summary script looks for it. The coverage of one part of a split
+      # package goes to coverage-parts/<part>/ instead, where scripts/ci-merge-coverage.mjs finds
+      # it (the parts of a package would otherwise overwrite each other).
+      - name: Collect package coverage
+        env:
+          PART: ${{ matrix.part }}
+        run: |
+          mkdir -p ci-coverage
+          for dir in packages/*/coverage; do
+            [ -d "$dir" ] || continue
+            if [ -n "$PART" ]; then
+              target="ci-coverage/$(dirname "$dir")/coverage-parts/$PART"
+            else
+              target="ci-coverage/$dir"
+            fi
+            mkdir -p "$target"
+            cp "$dir"/coverage-summary.json "$dir"/coverage-final.json "$target/" 2>/dev/null || true
+          done
+
+      - name: Upload package coverage
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: authrim-api-coverage-${{ matrix.id }}
+          path: ci-coverage
+          if-no-files-found: error
+          retention-days: 1
+
+  # The suites that run across packages (integration, security regressions, evidence checks). They
+  # do not depend on the package tests, so they run next to them.
+  api-suite-tests:
+    name: API Repository Suites
     runs-on: ubuntu-latest
     env:
       TURBO_CONCURRENCY: 2
@@ -150,8 +256,17 @@ jobs:
       - name: Prepare repository suite reports
         run: mkdir -p ci-reports
 
-      - name: Run API tests with coverage
-        run: AUTHRIM_SECURITY_REGRESSION_SUITE=true pnpm run test:coverage:api
+      - name: Restore Turbo cache
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: .turbo/cache
+          key: turbo-api-suites-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            turbo-api-suites-${{ runner.os }}-
+
+      # The suites run the packages' tests and import their built output.
+      - name: Build API packages
+        run: pnpm run build:api
 
       - name: Run canonical integration tests
         env:
@@ -171,17 +286,20 @@ jobs:
           AUTHRIM_TEST_REPORT: ${{ github.workspace }}/ci-reports/authrim-security-matrices.json
         run: pnpm run test:security-matrices
 
+      # Ledger, evidence files and independent checks (some run regression tests). The monthly
+      # report is written outside the repository: committing it stays a manual review step.
+      - name: Run ASVS evidence checks
+        run: >-
+          node scripts/asvs-check.mjs
+          --json-output ci-reports/asvs-coverage-summary.json
+          --report-root "$RUNNER_TEMP/asvs-reports"
+
       - name: Run Phase 1 scale-out correctness tests
         env:
           AUTHRIM_TEST_REPORT: ${{ github.workspace }}/ci-reports/authrim-scale-out-phase1-tests.json
         run: pnpm run test:scale-out-phase1
 
-      - name: Export compact package coverage summary
-        env:
-          AUTHRIM_COVERAGE_STATS_OUTPUT: ${{ github.workspace }}/ci-reports/authrim-package-coverage.json
-        run: node scripts/ci-pr-coverage-comment.mjs
-
-      - name: Upload API coverage and repository suite reports
+      - name: Upload repository suite reports
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: authrim-api-test-evidence
@@ -218,6 +336,12 @@ jobs:
 
       - name: Run UI tests
         run: pnpm run test:ui
+
+      - name: Install Playwright Chromium for admin console stories
+        run: pnpm --filter=@authrim/ar-admin-console exec playwright install --with-deps chromium
+
+      - name: Run admin console story tests (interactions + accessibility)
+        run: pnpm --filter=@authrim/ar-admin-console test:stories
 
   control-plane-tests:
     name: Tenant D1 Control Plane Tests
@@ -260,14 +384,108 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # The AWS runtime's PostgreSQL-backed tests (`*.postgres.test.ts`, the state-restore test and the
+  # local state-backend test) skip themselves unless their database variables are set, so the
+  # `services` shard never exercises them. This job runs them against a real PostgreSQL 17 with
+  # verified TLS: several of them require `sslmode=verify-full` against localhost, a CA file and a
+  # nonsuperuser administrator over TLS, and the DSQL probe test requires the database to be named
+  # `postgres`. A service container cannot be given a certificate, so the job starts the server
+  # itself (scripts/ci-postgres-tls.sh) and then fails if any selected test was skipped.
+  postgres-tests:
+    name: AWS Runtime PostgreSQL Tests
+    runs-on: ubuntu-latest
+    env:
+      TURBO_CONCURRENCY: 2
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@eae0cfeb286e66ffb5155f1a79b90583a127a68b # v2
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Restore Turbo cache
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: .turbo/cache
+          key: turbo-postgres-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            turbo-postgres-${{ runner.os }}-
+
+      # The tests import the built output of the runtime's dependencies, and two of them run the
+      # runtime's own built CLIs.
+      - name: Build the AWS runtime and its dependencies
+        run: pnpm exec turbo run build --filter=@authrim/ar-runtime-aws...
+
+      - name: Start PostgreSQL 17 with a disposable TLS CA
+        run: |
+          ca="$(scripts/ci-postgres-tls.sh "$RUNNER_TEMP/pg-tls")"
+          # The runtime's TLS URL check accepts `sslmode=verify-full` as the only parameter, so the
+          # CA is made known to Node itself instead of being named in the URL.
+          url="postgres://postgres:authrim-ci@localhost:5432/postgres?sslmode=verify-full"
+          {
+            echo "NODE_EXTRA_CA_CERTS=${ca}"
+            echo "AUTHRIM_TEST_DATABASE_CA=${ca}"
+            echo "AUTHRIM_AWS_TEST_DATABASE_URL=${url}"
+            echo "AUTHRIM_AWS_MAINTENANCE_TEST_DATABASE_URL=${url}"
+            echo "AUTHRIM_TEST_DATABASE_URL_NO_SSLMODE=${url%%\?*}"
+          } >> "$GITHUB_ENV"
+
+      # Every test file that reads one of the database variables, so a new gated test is picked up
+      # without editing this workflow and unrelated unit tests are not run twice. The files share
+      # one database, so they must not run in parallel. The replication initialization tests run
+      # separately below.
+      - name: Run the PostgreSQL-backed AWS runtime tests
+        working-directory: packages/ar-runtime-aws
+        run: |
+          files=()
+          while IFS= read -r file; do files+=("$file"); done < <(grep -rlE 'AUTHRIM_(AWS_)?TEST_DATABASE_URL|AUTHRIM_TEST_DATABASE_CA|AUTHRIM_AWS_MAINTENANCE_TEST_DATABASE_URL' src --include='*.test.ts' | grep -v '^src/replication/initialize' | sort)
+          echo "Selected ${#files[@]} test files"
+          pnpm exec vitest run --fileParallelism=false --reporter=default --reporter=json \
+            --outputFile="$RUNNER_TEMP/pg-vitest.json" "${files[@]}"
+
+      # These tests prove that an unencrypted connection to the same database cannot initialize
+      # it. They open that connection with `ssl: false`, which node-pg overrides with the URL's
+      # `sslmode`, so they must get the URL without `sslmode` (and their own CA file) and must not
+      # see the verify-full URL of the variable that takes precedence.
+      - name: Run the replication initialization tests with a plain URL
+        working-directory: packages/ar-runtime-aws
+        run: |
+          env -u AUTHRIM_AWS_TEST_DATABASE_URL \
+            AUTHRIM_TEST_DATABASE_URL="$AUTHRIM_TEST_DATABASE_URL_NO_SSLMODE" \
+            pnpm exec vitest run --fileParallelism=false --reporter=default --reporter=json \
+            --outputFile="$RUNNER_TEMP/pg-vitest-initialize.json" \
+            src/replication/initialize.postgres.test.ts src/replication/initialize-roles.postgres.test.ts
+
+      # A skipped test reports success, so a test that silently stops running must fail the job.
+      - name: Fail if any selected test was skipped
+        # The DynamoDB variants of the state contract need a local DynamoDB, which is not part of
+        # this job (the PostgreSQL variants of the same contract do run).
+        run: |
+          node scripts/ci-assert-no-skipped.mjs "$RUNNER_TEMP/pg-vitest.json" "dynamodb state contract"
+          node scripts/ci-assert-no-skipped.mjs "$RUNNER_TEMP/pg-vitest-initialize.json"
+
   coverage-summary:
     name: Repository Test Suites Summary
     runs-on: ubuntu-latest
     needs:
-      - api-tests
+      - api-package-tests
+      - api-suite-tests
       - control-plane-tests
       - lint
       - typecheck
+      - build
 
     steps:
       - name: Checkout code
@@ -279,10 +497,31 @@ jobs:
           name: authrim-api-test-evidence
           path: ci-reports
 
+      - name: Download package coverage
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: authrim-api-coverage-*
+          merge-multiple: true
+          path: .
+
+      - name: Merge the coverage of split packages
+        run: node scripts/ci-merge-coverage.mjs
+
+      - name: Export compact package coverage summary
+        env:
+          AUTHRIM_COVERAGE_STATS_OUTPUT: ${{ github.workspace }}/ci-reports/authrim-package-coverage.json
+        run: node scripts/ci-pr-coverage-comment.mjs
+
       - name: Download control-plane repository suite report
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: authrim-control-plane-test-evidence
+          path: ci-reports
+
+      - name: Download package build sizes
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: authrim-package-sizes
           path: ci-reports
 
       - name: Comment coverage summary
@@ -297,6 +536,7 @@ jobs:
           AUTHRIM_SCALE_OUT_PHASE1_REPORT: ci-reports/authrim-scale-out-phase1-tests.json
           AUTHRIM_CONTROL_PLANE_REPORT: ci-reports/authrim-control-plane-tests.json
           AUTHRIM_COVERAGE_STATS_REPORT: ci-reports/authrim-package-coverage.json
+          AUTHRIM_PACKAGE_SIZES_REPORT: ci-reports/authrim-package-sizes.json
         run: node scripts/ci-pr-coverage-comment.mjs
 
   build:
@@ -343,6 +583,28 @@ jobs:
         env:
           NODE_OPTIONS: '--max-old-space-size=4096'
 
+      - name: Build admin console
+        run: pnpm run build:admin-console
+        env:
+          NODE_OPTIONS: '--max-old-space-size=4096'
+
+      - name: Verify admin console dev mock is absent from the build
+        run: pnpm --filter=@authrim/ar-admin-console check:dev-mock-guard
+
+      - name: Test package size reporting
+        run: node --test scripts/ci-package-sizes.test.mjs scripts/ci-test-shards.test.mjs scripts/ci-merge-coverage.test.mjs
+
+      - name: Measure all package build sizes
+        run: node scripts/ci-package-sizes.mjs ci-reports/authrim-package-sizes.json
+
+      - name: Upload package build sizes
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: authrim-package-sizes
+          path: ci-reports/authrim-package-sizes.json
+          if-no-files-found: error
+          retention-days: 7
+
   format:
     name: Format Check
     runs-on: ubuntu-latest
@@ -375,9 +637,11 @@ jobs:
       - dependency-audit
       - lint
       - typecheck
-      - api-tests
+      - api-package-tests
+      - api-suite-tests
       - ui-tests
       - control-plane-tests
+      - postgres-tests
       - coverage-summary
       - build
       - format

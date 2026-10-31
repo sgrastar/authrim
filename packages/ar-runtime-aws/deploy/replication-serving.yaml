@@ -1,0 +1,547 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Authrim opt-in replicated SAML runtime - resolves the active immutable generation for
+  every request; requires pre-provisioned authority, PostgreSQL, storage and reviewed outbound HTTPS
+  connectivity.
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    arch:
+      Public HTTP API -> private SAML Lambda -> signed authority selection -> immutable generation
+      manifest and verified tenant runtime.
+    must:
+      - Do not enable discovery on existing standalone stacks implicitly.
+      - Private subnets must already reach the configured authority over reviewed HTTPS egress/NAT.
+      - Do not activate this deployment until all source writers are fenced and final generation
+        verification succeeds.
+      - This stack does not create NAT gateways, databases, secrets, DNS or synchronization
+        schedules.
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  PrivateSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Private subnets with access to the supplied database and Secrets Manager endpoint.
+  DatabaseSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Core/PII/state PostgreSQL group; review all attachments before adding scoped runtime ingress.
+  DatabasePort:
+    Type: Number
+    Default: 5432
+    MinValue: 1
+    MaxValue: 65535
+  SecretsEndpointSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Existing private Secrets Manager endpoint group; review attachments before deployment.
+  SecretKmsKeyArn:
+    Type: String
+    Default: ''
+    AllowedPattern: ^$|^arn:(aws|aws-cn|aws-us-gov):kms:[a-z0-9-]+:[0-9]{12}:key/[a-fA-F0-9-]+$
+  RuntimePermissionsBoundaryArn:
+    Type: String
+    AllowedPattern: ^arn:(aws|aws-cn|aws-us-gov):iam::[0-9]{12}:policy/[A-Za-z0-9/+=,.@_-]+$
+    Description: Existing boundary reviewed for this isolated runtime; no provisioning permissions.
+  ArtifactBucket:
+    Type: String
+    AllowedPattern: ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$
+  ArtifactKey:
+    Type: String
+    MinLength: 1
+    MaxLength: 1024
+  ArtifactObjectVersion:
+    Type: String
+    MinLength: 1
+    MaxLength: 1024
+    AllowedPattern: ^(?!null$).+$
+  ReservedConcurrency:
+    Type: Number
+    Default: 4
+    MinValue: 1
+    MaxValue: 32
+  DiscoverySecretArn:
+    Type: String
+    AllowedPattern: ^arn:(aws|aws-cn|aws-us-gov):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$
+    Description: Exact existing pinned discovery secret ARN in this account and region.
+  DiscoverySecretVersionId:
+    Type: String
+    AllowedPattern: ^[A-Za-z0-9-]{32,64}$
+  GenerationSecretNamePrefix:
+    Type: String
+    AllowedPattern: ^[A-Za-z0-9](?:[A-Za-z0-9/_+=.@-]{0,126}[A-Za-z0-9_+=.@-])?$
+    Description: Explicit generation secret name prefix; runtime can only read descendants in this
+      account and region.
+  GenerationBucket:
+    Type: String
+    AllowedPattern: ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$
+  GenerationObjectPrefix:
+    Type: String
+    AllowedPattern: ^[A-Za-z0-9!_.()-]+(?:/[A-Za-z0-9!_.()-]+)*$
+    Description: Exact object prefix without trailing slash for immutable generation manifests and ciphertext.
+  S3GatewayPrefixListId:
+    Type: String
+    AllowedPattern: ^pl-[a-f0-9]+$
+  SnapshotKmsKeyArn:
+    Type: String
+    Default: ''
+    AllowedPattern: ^$|^arn:(aws|aws-cn|aws-us-gov):kms:[a-z0-9-]+:[0-9]{12}:key/[a-fA-F0-9-]+$
+  AuthorityHttpsEgressCidr:
+    Type: String
+    AllowedPattern: ^(?:[0-9]{1,3}\.){3}[0-9]{1,3}/(?:[0-9]|[12][0-9]|3[0-2])$
+    Description:
+      Explicit reviewed destination CIDR for authority HTTPS; only TCP443 egress is allowed.
+      No default.
+  AuthorityNetworkPathReady:
+    Type: String
+    AllowedValues:
+      - 'true'
+    Description:
+      Explicit acknowledgement that supplied private subnets already have verified authority
+      HTTPS egress/NAT; this stack creates no route or NAT.
+  AuthStateTableArn:
+    Type: String
+    Default: ''
+    AllowedPattern: ^$|^arn:(aws|aws-cn|aws-us-gov):dynamodb:[a-z0-9-]+:[0-9]{12}:table/[A-Za-z0-9_.-]{3,255}$
+    Description: Exact selected auth-state table; empty preserves PostgreSQL state.
+  DynamoDbGatewayPrefixListId:
+    Type: String
+    Default: ''
+    AllowedPattern: ^$|^pl-[a-f0-9]+$
+  HttpApiId:
+    Type: String
+    AllowedPattern: ^[a-z0-9]+$
+    Description:
+      Dedicated existing empty HTTP API; configure the unchanged issuer domain/certificate
+      separately.
+Conditions:
+  HasSecretKmsKey:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: SecretKmsKeyArn
+          - ''
+  HasSnapshotKmsKey:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: SnapshotKmsKeyArn
+          - ''
+  HasAuthStateTable:
+    Fn::Not:
+      - Fn::Equals:
+          - Ref: AuthStateTableArn
+          - ''
+Resources:
+  ServingLogs:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Retains replicated SAML runtime diagnostics independently from function replacement.
+        must:
+          - Never log user data, passkeys, HMAC credentials or database connection strings.
+    Properties:
+      RetentionInDays: 30
+  AccessLogs:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Retains bounded HTTP outcomes without request bodies or caller addresses.
+        must:
+          - Do not add secret headers
+          - query strings or RPC payloads to access logs.
+    Properties:
+      RetentionInDays: 30
+  RuntimeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Metadata:
+      com.aws.cloudformation.Context:
+        why:
+          Restricts runtime to configured database, secret endpoint, object storage and explicitly
+          reviewed authority HTTPS egress.
+        must:
+          - No public ingress.
+          - Authority egress CIDR acknowledgement does not provision or verify a route.
+    Properties:
+      GroupDescription: Authrim replicated SAML runtime private network
+      VpcId:
+        Ref: VpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort:
+            Ref: DatabasePort
+          ToPort:
+            Ref: DatabasePort
+          DestinationSecurityGroupId:
+            Ref: DatabaseSecurityGroupId
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          DestinationSecurityGroupId:
+            Ref: SecretsEndpointSecurityGroupId
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          DestinationPrefixListId:
+            Ref: S3GatewayPrefixListId
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp:
+            Ref: AuthorityHttpsEgressCidr
+        - Fn::If:
+            - HasAuthStateTable
+            - IpProtocol: tcp
+              FromPort: 443
+              ToPort: 443
+              DestinationPrefixListId:
+                Ref: DynamoDbGatewayPrefixListId
+            - Ref: AWS::NoValue
+  DatabaseIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Allows only this replicated SAML runtime to reach the supplied PostgreSQL group.
+        must:
+          - Keep source bound to RuntimeSecurityGroup.
+    Properties:
+      GroupId:
+        Ref: DatabaseSecurityGroupId
+      IpProtocol: tcp
+      FromPort:
+        Ref: DatabasePort
+      ToPort:
+        Ref: DatabasePort
+      SourceSecurityGroupId:
+        Ref: RuntimeSecurityGroup
+  SecretEndpointIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Allows exact private secret reads from this serving runtime.
+        must:
+          - Keep source bound to RuntimeSecurityGroup and port to 443.
+    Properties:
+      GroupId:
+        Ref: SecretsEndpointSecurityGroupId
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      SourceSecurityGroupId:
+        Ref: RuntimeSecurityGroup
+  RuntimeRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Separates replicated serving from operator publishing and authority control permissions.
+        must:
+          - Read only configured discovery secret, generation secret prefix and immutable object
+            versions.
+          - Never create generation secrets, import data or administer the authority.
+    Properties:
+      Path: /authrim-replication/
+      PermissionsBoundary:
+        Ref: RuntimePermissionsBoundaryArn
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: replication-serving
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${ServingLogs}:*
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - Ref: DiscoverySecretArn
+                  - Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${GenerationSecretNamePrefix}/*
+              - Sid: LambdaVpcInterfaces
+                Effect: Allow
+                Action:
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DescribeSubnets
+                  - ec2:DeleteNetworkInterface
+                  - ec2:AssignPrivateIpAddresses
+                  - ec2:UnassignPrivateIpAddresses
+                Resource: '*'
+              - Effect: Allow
+                Action: s3:GetObjectVersion
+                Resource:
+                  Fn::Sub: arn:${AWS::Partition}:s3:::${GenerationBucket}/${GenerationObjectPrefix}/*
+                Condition:
+                  StringEquals:
+                    s3:ResourceAccount:
+                      Ref: AWS::AccountId
+              - Fn::If:
+                  - HasAuthStateTable
+                  - Effect: Allow
+                    Action:
+                      - dynamodb:GetItem
+                      - dynamodb:PutItem
+                      - dynamodb:UpdateItem
+                      - dynamodb:ConditionCheckItem
+                      - dynamodb:Query
+                      - dynamodb:Scan
+                      - dynamodb:DescribeTable
+                    Resource:
+                      Ref: AuthStateTableArn
+                  - Ref: AWS::NoValue
+  SecretKmsPolicy:
+    Type: AWS::IAM::Policy
+    Condition: HasSecretKmsKey
+    Metadata:
+      com.aws.cloudformation.Context:
+        why:
+          Decrypts discovery and generation credentials through Secrets Manager with exact key and scoped
+          ARN context.
+        must:
+          - Keep account, region and generation prefix fixed.
+    Properties:
+      PolicyName: authority-secret-key
+      Roles:
+        - Ref: RuntimeRole
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action: kms:Decrypt
+            Resource:
+              Ref: SecretKmsKeyArn
+            Condition:
+              StringEquals:
+                kms:ViaService:
+                  Fn::Sub: secretsmanager.${AWS::Region}.${AWS::URLSuffix}
+              StringLike:
+                kms:EncryptionContext:SecretARN:
+                  - Ref: DiscoverySecretArn
+                  - Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${GenerationSecretNamePrefix}/*
+  ServingFunction:
+    Type: AWS::Lambda::Function
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Runs the same SAML/Auth handlers with dynamic generation discovery; optional UIs remain
+          optional.
+        must:
+          - Check authority before every request; never fall back to a stale cached generation.
+          - Retain old in-flight runtime resources until their requests settle.
+          - No restore, schema initialization or credential publishing during startup.
+    Properties:
+      Runtime: nodejs24.x
+      Handler: lambda.handler
+      Role:
+        Fn::GetAtt:
+          - RuntimeRole
+          - Arn
+      Code:
+        S3Bucket:
+          Ref: ArtifactBucket
+        S3Key:
+          Ref: ArtifactKey
+        S3ObjectVersion:
+          Ref: ArtifactObjectVersion
+      MemorySize: 2048
+      Timeout: 30
+      ReservedConcurrentExecutions:
+        Ref: ReservedConcurrency
+      VpcConfig:
+        SecurityGroupIds:
+          - Ref: RuntimeSecurityGroup
+        SubnetIds:
+          Ref: PrivateSubnetIds
+      Environment:
+        Variables:
+          AUTHRIM_AWS_REPLICATION_DISCOVERY_SECRET_ARN:
+            Ref: DiscoverySecretArn
+          AUTHRIM_AWS_REPLICATION_DISCOVERY_SECRET_VERSION_ID:
+            Ref: DiscoverySecretVersionId
+          NODE_EXTRA_CA_CERTS: /var/task/certs/rds-ca.pem
+      LoggingConfig:
+        LogFormat: JSON
+        ApplicationLogLevel: WARN
+        SystemLogLevel: WARN
+        LogGroup:
+          Ref: ServingLogs
+      EphemeralStorage:
+        Size: 1024
+  DenyCodeVpcApis:
+    Type: AWS::IAM::Policy
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Lambda service manages interfaces while application code cannot invoke those APIs.
+        must:
+          - Retain the SourceFunctionArn denial when the function changes.
+    Properties:
+      PolicyName: deny-serving-code-vpc-apis
+      Roles:
+        - Ref: RuntimeRole
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Deny
+            Action:
+              - ec2:CreateNetworkInterface
+              - ec2:DescribeNetworkInterfaces
+              - ec2:DescribeSubnets
+              - ec2:DeleteNetworkInterface
+              - ec2:AssignPrivateIpAddresses
+              - ec2:UnassignPrivateIpAddresses
+            Resource: '*'
+            Condition:
+              ArnEquals:
+                lambda:SourceFunctionArn:
+                  Fn::GetAtt:
+                    - ServingFunction
+                    - Arn
+  Integration:
+    Type: AWS::ApiGatewayV2::Integration
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Routes login and SAML requests to the same runtime bundle after authority selection.
+        must:
+          - Keep the payload format compatible with the Lambda HTTP adapter.
+    Properties:
+      ApiId:
+        Ref: HttpApiId
+      IntegrationType: AWS_PROXY
+      IntegrationMethod: POST
+      IntegrationUri:
+        Fn::Sub: arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ServingFunction.Arn}/invocations
+      PayloadFormatVersion: '2.0'
+      TimeoutInMillis: 30000
+  ProxyRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Preserves application paths for the common authentication handlers.
+        must:
+          - Application tenant, origin and protocol checks remain responsible for every request.
+    Properties:
+      ApiId:
+        Ref: HttpApiId
+      RouteKey: ANY /{proxy+}
+      AuthorizationType: NONE
+      Target:
+        Fn::Sub: integrations/${Integration}
+  InvokePermission:
+    Type: AWS::Lambda::Permission
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Allows this dedicated API to invoke only the replicated SAML function.
+        must:
+          - Retain SourceAccount and exact HttpApiId scope.
+    Properties:
+      FunctionName:
+        Ref: ServingFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceAccount:
+        Ref: AWS::AccountId
+      SourceArn:
+        Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApiId}/*/*
+  Stage:
+    Type: AWS::ApiGatewayV2::Stage
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Publishes serving routes on the dedicated API with bounded traffic and outcome-only logs.
+        must:
+          - The supplied API must have no existing stage or route ownership conflict.
+          - Map each unchanged issuer domain to this stage separately before serving traffic.
+    Properties:
+      ApiId:
+        Ref: HttpApiId
+      StageName: $default
+      AutoDeploy: true
+      DefaultRouteSettings:
+        ThrottlingRateLimit: 50
+        ThrottlingBurstLimit: 100
+      AccessLogSettings:
+        DestinationArn:
+          Fn::GetAtt:
+            - AccessLogs
+            - Arn
+        Format: '{"requestId":"$context.requestId","status":"$context.status","responseLatency":"$context.responseLatency"}'
+  SnapshotKmsPolicy:
+    Type: AWS::IAM::Policy
+    Condition: HasSnapshotKmsKey
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Decrypts only the selected generation bucket via regional S3, including S3 Bucket Keys.
+        must:
+          - Retain exact KMS key and bucket encryption context.
+    Properties:
+      PolicyName: replication-snapshot-key
+      Roles:
+        - Ref: RuntimeRole
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action: kms:Decrypt
+            Resource:
+              Ref: SnapshotKmsKeyArn
+            Condition:
+              StringEquals:
+                kms:ViaService:
+                  Fn::Sub: s3.${AWS::Region}.${AWS::URLSuffix}
+              StringLike:
+                kms:EncryptionContext:aws:s3:arn:
+                  - Fn::Sub: arn:${AWS::Partition}:s3:::${GenerationBucket}
+                  - Fn::Sub: arn:${AWS::Partition}:s3:::${GenerationBucket}/${GenerationObjectPrefix}/*
+  RootRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Sends the root path through the same authority and issuer checks as nested routes.
+        must:
+          - Keep the root and proxy routes bound to the same serving integration.
+    Properties:
+      ApiId:
+        Ref: HttpApiId
+      RouteKey: ANY /
+      AuthorizationType: NONE
+      Target:
+        Fn::Sub: integrations/${Integration}
+Outputs:
+  FunctionArn:
+    Description: Replicated serving Lambda ARN; no issuer DNS changes are performed.
+    Value:
+      Fn::GetAtt:
+        - ServingFunction
+        - Arn
+  NetworkAcknowledgement:
+    Description: Operator-supplied prerequisite acknowledgement, not a connectivity test result.
+    Value:
+      Ref: AuthorityNetworkPathReady
+Rules:
+  AuthStateNetwork:
+    Assertions:
+      - Assert:
+          Fn::Or:
+            - Fn::And:
+                - Fn::Equals:
+                    - Ref: AuthStateTableArn
+                    - ''
+                - Fn::Equals:
+                    - Ref: DynamoDbGatewayPrefixListId
+                    - ''
+            - Fn::And:
+                - Fn::Not:
+                    - Fn::Equals:
+                        - Ref: AuthStateTableArn
+                        - ''
+                - Fn::Not:
+                    - Fn::Equals:
+                        - Ref: DynamoDbGatewayPrefixListId
+                        - ''
+        AssertDescription: Auth-state table and DynamoDB gateway prefix list must be configured together.

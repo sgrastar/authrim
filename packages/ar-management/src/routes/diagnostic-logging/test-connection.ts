@@ -1,7 +1,7 @@
 /**
- * Diagnostic Logging - R2 Connection Test
+ * Diagnostic Logging - Log Storage Connection Test
  *
- * Test R2 bucket connectivity for diagnostic logging.
+ * Test the configured Iceberg log storage connectivity for diagnostic logging.
  * POST /api/admin/diagnostic-logging/test-connection
  */
 
@@ -9,17 +9,16 @@ import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import { createDiagnosticLogR2Adapter, getTenantIdFromContext } from '@authrim/ar-lib-core';
 
-const DIAGNOSTIC_LOG_R2_BINDING = 'DIAGNOSTIC_LOGS';
+const DIAGNOSTIC_LOG_R2_BINDING = 'LOG_ARCHIVE';
 
 /**
- * Test R2 connection for diagnostic logging
+ * Test log storage connection for diagnostic logging
  *
  * POST /api/admin/diagnostic-logging/test-connection
  *
  * Request body:
  * {
- *   "r2BucketBinding": "DIAGNOSTIC_LOGS",
- *   "pathPrefix": "diagnostic-logs"
+ *   "tenantId": "tenant-id"
  * }
  *
  * Response:
@@ -27,51 +26,15 @@ const DIAGNOSTIC_LOG_R2_BINDING = 'DIAGNOSTIC_LOGS';
  *   "success": true,
  *   "healthy": true,
  *   "latencyMs": 123,
- *   "message": "R2 connection successful"
+ *   "message": "Log archive connection successful"
  * }
  */
 export async function testDiagnosticLogR2Connection(c: Context<{ Bindings: Env }>) {
   try {
-    const body = await c.req.json<{
-      r2BucketBinding?: string;
-      pathPrefix?: string;
-    }>();
-
     const tenantId = getTenantIdFromContext(c);
-    const bindingName = body.r2BucketBinding ?? DIAGNOSTIC_LOG_R2_BINDING;
-    const pathPrefix = body.pathPrefix ?? 'diagnostic-logs';
+    const bindingName = DIAGNOSTIC_LOG_R2_BINDING;
 
-    if (bindingName !== DIAGNOSTIC_LOG_R2_BINDING) {
-      return c.json(
-        {
-          success: false,
-          error: 'invalid_r2_binding',
-          message: 'Diagnostic logging connection tests only support the configured log bucket.',
-        },
-        400
-      );
-    }
-
-    // Get R2 bucket
-    const bucket = c.env.DIAGNOSTIC_LOGS;
-
-    if (!bucket) {
-      return c.json(
-        {
-          success: false,
-          error: 'r2_binding_not_found',
-          message: `R2 bucket binding "${bindingName}" not found in environment`,
-        },
-        404
-      );
-    }
-
-    // Create adapter
-    const adapter = createDiagnosticLogR2Adapter(bucket, {
-      pathPrefix,
-      tenantId,
-      tenantKeySalt: c.env.LOGGING_TENANT_KEY_SALT,
-    });
+    const adapter = createDiagnosticLogR2Adapter(c.env, { tenantId });
 
     // Test health
     const health = await adapter.isHealthy();
@@ -81,10 +44,9 @@ export async function testDiagnosticLogR2Connection(c: Context<{ Bindings: Env }
         success: true,
         healthy: true,
         latencyMs: health.latencyMs,
-        message: 'R2 connection successful',
+        message: 'Log archive connection successful',
         details: {
           bindingName,
-          pathPrefix,
           tenantId,
         },
       });
@@ -94,11 +56,10 @@ export async function testDiagnosticLogR2Connection(c: Context<{ Bindings: Env }
           success: false,
           healthy: false,
           latencyMs: health.latencyMs,
-          error: 'r2_health_check_failed',
-          message: health.errorMessage ?? 'R2 health check failed',
+          error: 'log_archive_health_check_failed',
+          message: health.errorMessage ?? 'Log archive health check failed',
           details: {
             bindingName,
-            pathPrefix,
             tenantId,
           },
         },

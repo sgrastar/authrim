@@ -13,6 +13,8 @@ import {
   lookupHmacRotationTargetComponents,
   type LookupHmacRotation,
   type PendingLookupHmacRotation,
+  lookupHmacVerificationTargetCount,
+  observeGenerationAfterDwell,
 } from '../cli/commands/lookup-hmac-rotate.js';
 
 const sourceSecret = 'source-secret';
@@ -106,6 +108,7 @@ describe('Lookup HMAC rotation command state', () => {
       'ar-token',
       'ar-userinfo',
       'ar-management',
+      'ar-async',
       'ar-saml',
       'ar-bridge',
       'ar-vc',
@@ -230,27 +233,28 @@ describe('Lookup HMAC rotation command state', () => {
     ).toThrow('lookup_hmac_rotation_control_state_mismatch');
   });
 
-  it('strictly validates rotation and exact five-target verification responses', () => {
+  it('strictly validates rotation and exact all-target verification responses', () => {
+    const targets = lookupHmacVerificationTargetCount();
     expect(parseLookupHmacRotation(rotation())).toEqual(rotation());
     expect(
       parseLookupHmacVerificationStatus(
         {
           phase: 'distribution',
-          expected: 5,
-          succeeded: 5,
+          expected: targets,
+          succeeded: targets,
           failed: 0,
           pending: [],
           complete: true,
         },
         'distribution'
       )
-    ).toEqual({ expected: 5, succeeded: 5, failed: 0, complete: true });
+    ).toEqual({ expected: targets, succeeded: targets, failed: 0, complete: true });
     expect(() =>
       parseLookupHmacVerificationStatus(
         {
           phase: 'generation',
-          expected: 5,
-          succeeded: 5,
+          expected: targets,
+          succeeded: targets,
           failed: 0,
           pending: [],
           complete: true,
@@ -262,8 +266,8 @@ describe('Lookup HMAC rotation command state', () => {
       parseLookupHmacVerificationStatus(
         {
           phase: 'distribution',
-          expected: 5,
-          succeeded: 4,
+          expected: targets,
+          succeeded: targets - 1,
           failed: 0,
           pending: [],
           complete: true,
@@ -271,5 +275,86 @@ describe('Lookup HMAC rotation command state', () => {
         'distribution'
       )
     ).toThrow('lookup_hmac_verification_status_invalid');
+  });
+
+  it('expects as many verification targets as Control verifies (one per Lookup HMAC holder)', async () => {
+    const verifier = await readFile(
+      new URL('../../../ar-control/src/lookup-hmac-candidate-verifier.ts', import.meta.url),
+      'utf8'
+    );
+    const bindings = verifier
+      .split('export const LOOKUP_HMAC_VERIFICATION_BINDINGS = {')[1]
+      .split('} as const')[0];
+    const controlTargets = [...bindings.matchAll(/'(ar-[a-z-]+)'\s*:/g)].length;
+
+    expect(lookupHmacVerificationTargetCount()).toBe(controlTargets);
+    // A complete status from Control for all of them is accepted; a stale fixed count is not.
+    expect(
+      parseLookupHmacVerificationStatus(
+        {
+          phase: 'generation',
+          expected: controlTargets,
+          succeeded: controlTargets,
+          failed: 0,
+          pending: [],
+          complete: true,
+        },
+        'generation'
+      )
+    ).toMatchObject({ complete: true });
+    expect(() =>
+      parseLookupHmacVerificationStatus(
+        { phase: 'generation', expected: 5, succeeded: 5, failed: 0, pending: [], complete: true },
+        'generation'
+      )
+    ).toThrow('lookup_hmac_verification_status_invalid');
+  });
+});
+
+describe('leaving dual-write', () => {
+  const dwell = () =>
+    new Error(
+      'lookup_hmac_admin_api_failed:409:CONTROL_PLANE_LOOKUP_HMAC_DUAL_WRITE_DWELL_INCOMPLETE'
+    );
+
+  it('asks again while Control keeps dual-write for Worker caches', async () => {
+    const waits: number[] = [];
+    let calls = 0;
+    const observed = await observeGenerationAfterDwell(
+      async () => {
+        calls += 1;
+        if (calls < 3) throw dwell();
+        return 'dual_read';
+      },
+      async (ms) => {
+        waits.push(ms);
+      }
+    );
+    expect(observed).toBe('dual_read');
+    expect(waits).toEqual([15_000, 15_000]);
+  });
+
+  it('gives up after a bounded number of tries, and does not retry other failures', async () => {
+    await expect(
+      observeGenerationAfterDwell(
+        async () => {
+          throw dwell();
+        },
+        async () => undefined
+      )
+    ).rejects.toThrow('DUAL_WRITE_DWELL_INCOMPLETE');
+    let calls = 0;
+    await expect(
+      observeGenerationAfterDwell(
+        async () => {
+          calls += 1;
+          throw new Error(
+            'lookup_hmac_admin_api_failed:409:CONTROL_PLANE_LOOKUP_HMAC_ROTATION_CONFLICT'
+          );
+        },
+        async () => undefined
+      )
+    ).rejects.toThrow('ROTATION_CONFLICT');
+    expect(calls).toBe(1);
   });
 });

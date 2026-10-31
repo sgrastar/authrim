@@ -30,6 +30,7 @@ const TOTP_LOGIN_ENABLED_KEY = 'authentication-methods.totp.login_enabled';
 const TOTP_SIGNUP_ENABLED_KEY = 'authentication-methods.totp.signup_enabled';
 const TOTP_REAUTH_ENABLED_KEY = 'authentication-methods.totp.reauth_enabled';
 const TOTP_ACCOUNT_LINK_ENABLED_KEY = 'authentication-methods.totp.account_link_enabled';
+const DID_LOGIN_ENABLED_KEY = 'authentication-methods.did.login_enabled';
 const TOTP_PRESET_KEY = 'authentication-methods.totp.preset';
 const TOTP_DEFAULT_ACR_KEY = 'authentication-methods.totp.default_acr';
 const LEGACY_TOTP_ENABLED_KEY = 'authentication-methods.totp.enabled';
@@ -73,10 +74,18 @@ export interface AuthenticationMethodExternalProviderUsage {
 	loginEnabled: boolean;
 	signupEnabled: boolean;
 	reauthEnabled: boolean;
+	/**
+	 * Accept a re-authentication whose new login the provider did not date (an ID token without
+	 * auth_time), on the strength of having asked for one. Weaker evidence; off unless turned on.
+	 */
+	reauthAcceptWithoutAuthTime: boolean;
 	accountLinkEnabled: boolean;
 }
 
 export interface AuthenticationMethodBuiltInSettings {
+	guestLoginEnabled: boolean;
+	passkeyGuestUpgradeEnabled: boolean;
+	emailOtpGuestUpgradeEnabled: boolean;
 	passkeyLoginEnabled: boolean;
 	passkeySignupEnabled: boolean;
 	passkeyReauthEnabled: boolean;
@@ -89,6 +98,7 @@ export interface AuthenticationMethodBuiltInSettings {
 	totpSignupEnabled: boolean;
 	totpReauthEnabled: boolean;
 	totpAccountLinkEnabled: boolean;
+	didLoginEnabled: boolean;
 	totpPreset: 'compatible' | 'strong';
 	totpDefaultAcr: string;
 }
@@ -210,6 +220,25 @@ function parseExternalProviderUsage(
 	return Object.fromEntries(entries);
 }
 
+/**
+ * A provider's saved usage: the entry naming its stable providerId, else an older entry without
+ * one matched by id (a slug can be renamed or reused). As the runtime reads it.
+ */
+function savedUsageFor(
+	usageById: Record<string, Partial<AuthenticationMethodExternalProviderUsage>>,
+	providerId: string,
+	ids: string[]
+): Partial<AuthenticationMethodExternalProviderUsage> {
+	const entries = Object.values(usageById);
+	return (
+		entries.find((entry) => entry.providerId === providerId) ??
+		entries.find(
+			(entry) => !entry.providerId && typeof entry.id === 'string' && ids.includes(entry.id)
+		) ??
+		{}
+	);
+}
+
 function safeParseArray<T>(value: string): T[] {
 	try {
 		const parsed = JSON.parse(value);
@@ -239,6 +268,8 @@ function normalizeSAMLProvider(
 		loginEnabled: provider.enabled,
 		signupEnabled: provider.enabled,
 		reauthEnabled: provider.enabled,
+		// A SAML IdP always dates its login (AuthnInstant).
+		reauthAcceptWithoutAuthTime: false,
 		accountLinkEnabled: provider.enabled
 	};
 }
@@ -250,7 +281,7 @@ function resolveExternalProviderUsages(
 ): AuthenticationMethodExternalProviderUsage[] {
 	const oauthProviders = providers.map((provider) => {
 		const id = providerAuthenticationMethodId(provider);
-		const saved = usageById[id] ?? usageById[provider.id] ?? {};
+		const saved = savedUsageFor(usageById, provider.id, [id, provider.id]);
 		const providerEnabled = provider.enabled !== false;
 		const defaultEnabled = providerEnabled;
 		const accountLinkAvailable = providerEnabled && provider.autoLinkEmail !== false;
@@ -264,7 +295,13 @@ function resolveExternalProviderUsages(
 			priority: provider.priority,
 			loginEnabled: providerEnabled && parseBoolean(saved.loginEnabled, defaultEnabled),
 			signupEnabled: providerEnabled && parseBoolean(saved.signupEnabled, defaultEnabled),
-			reauthEnabled: providerEnabled && parseBoolean(saved.reauthEnabled, defaultEnabled),
+			// A pure OAuth 2.0 provider returns no ID token to date a new login: never re-authenticates.
+			reauthEnabled:
+				providerEnabled &&
+				provider.providerType !== 'oauth2' &&
+				parseBoolean(saved.reauthEnabled, defaultEnabled),
+			reauthAcceptWithoutAuthTime:
+				provider.providerType === 'oidc' && parseBoolean(saved.reauthAcceptWithoutAuthTime, false),
 			accountLinkEnabled:
 				accountLinkAvailable && parseBoolean(saved.accountLinkEnabled, accountLinkAvailable)
 		};
@@ -274,7 +311,10 @@ function resolveExternalProviderUsages(
 		.filter((provider) => provider.providerType === 'saml_idp')
 		.map((provider, index) => {
 			const normalized = normalizeSAMLProvider(provider, providers.length + index);
-			const saved = usageById[normalized.id] ?? usageById[normalized.providerId] ?? {};
+			const saved = savedUsageFor(usageById, normalized.providerId, [
+				normalized.id,
+				normalized.providerId
+			]);
 			const defaultEnabled = normalized.enabled;
 			return {
 				...normalized,
@@ -300,6 +340,9 @@ function serializeExternalProviderUsages(
 			loginEnabled: provider.enabled && provider.loginEnabled,
 			signupEnabled: provider.enabled && provider.signupEnabled,
 			reauthEnabled: provider.enabled && provider.reauthEnabled,
+			...(provider.type === 'oidc'
+				? { reauthAcceptWithoutAuthTime: provider.reauthAcceptWithoutAuthTime }
+				: {}),
 			accountLinkEnabled: provider.enabled && provider.autoLinkEmail && provider.accountLinkEnabled
 		}))
 	);
@@ -361,6 +404,18 @@ export const adminAuthenticationMethodsAPI = {
 		return {
 			settings,
 			builtIn: {
+				guestLoginEnabled: parseBoolean(
+					settings.values['authentication-methods.guest.login_enabled'],
+					false
+				),
+				passkeyGuestUpgradeEnabled: parseBoolean(
+					settings.values['authentication-methods.passkey.guest_upgrade_enabled'],
+					true
+				),
+				emailOtpGuestUpgradeEnabled: parseBoolean(
+					settings.values['authentication-methods.email_otp.guest_upgrade_enabled'],
+					true
+				),
 				passkeyLoginEnabled: parseBoolean(
 					settings.values[PASSKEY_LOGIN_ENABLED_KEY],
 					legacyPasskeyEnabled
@@ -406,6 +461,9 @@ export const adminAuthenticationMethodsAPI = {
 					settings.values[TOTP_ACCOUNT_LINK_ENABLED_KEY],
 					legacyTotpEnabled
 				),
+				// On only for the boolean true, as sign-in reads it: a string or anything else shows as off,
+				// so saving other methods never rewrites it into a true.
+				didLoginEnabled: settings.values[DID_LOGIN_ENABLED_KEY] === true,
 				totpPreset: settings.values[TOTP_PRESET_KEY] === 'strong' ? 'strong' : 'compatible',
 				totpDefaultAcr:
 					typeof settings.values[TOTP_DEFAULT_ACR_KEY] === 'string' &&
@@ -446,6 +504,11 @@ export const adminAuthenticationMethodsAPI = {
 				{
 					ifMatch: settings.version,
 					set: {
+						'authentication-methods.guest.login_enabled': builtIn.guestLoginEnabled,
+						'authentication-methods.passkey.guest_upgrade_enabled':
+							builtIn.passkeyGuestUpgradeEnabled,
+						'authentication-methods.email_otp.guest_upgrade_enabled':
+							builtIn.emailOtpGuestUpgradeEnabled,
 						[PASSKEY_LOGIN_ENABLED_KEY]: builtIn.passkeyLoginEnabled,
 						[PASSKEY_SIGNUP_ENABLED_KEY]: builtIn.passkeySignupEnabled,
 						[PASSKEY_REAUTH_ENABLED_KEY]: builtIn.passkeyReauthEnabled,
@@ -458,6 +521,7 @@ export const adminAuthenticationMethodsAPI = {
 						[TOTP_SIGNUP_ENABLED_KEY]: builtIn.totpSignupEnabled,
 						[TOTP_REAUTH_ENABLED_KEY]: builtIn.totpReauthEnabled,
 						[TOTP_ACCOUNT_LINK_ENABLED_KEY]: builtIn.totpAccountLinkEnabled,
+						[DID_LOGIN_ENABLED_KEY]: builtIn.didLoginEnabled,
 						[TOTP_PRESET_KEY]: builtIn.totpPreset,
 						[TOTP_DEFAULT_ACR_KEY]: builtIn.totpDefaultAcr || 'urn:authrim:aal:2',
 						[HUMAN_VERIFICATION_PROVIDER_KEY]:

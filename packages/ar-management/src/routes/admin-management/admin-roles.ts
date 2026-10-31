@@ -4,7 +4,7 @@
  * Endpoints for managing Admin roles (stored in DB_ADMIN).
  * Includes role definitions and permission management.
  *
- * Requires super_admin role or admin:admin_roles:* permission.
+ * Requires the admin:admin_roles:* permission.
  */
 
 import { Hono } from 'hono';
@@ -23,11 +23,34 @@ import {
   adminAuthMiddleware,
   ADMIN_PERMISSIONS,
   hasAdminPermission,
+  hasGlobalAdminPermission,
   requireDedicatedAdminDatabaseAdapter,
+  ADMIN_ROLES,
+  allOfGuards,
   type AdminRole,
   type AdminRoleAssignmentScopeType,
 } from '@authrim/ar-lib-core';
 import { writeAdminAuditLog } from '../../admin-shared';
+import {
+  callerOutranks,
+  callerOutranksGlobally,
+  checkRoleInheritance,
+  mayGiveGlobally,
+  isRoleNameReserved,
+  isScopeAllowedForRole,
+  mayRemoveAssignment,
+  roleReachesGlobalAssignment,
+} from './admin-role-authority';
+import {
+  ensureTenantKeepsAdmin,
+  lastTenantAdminResponse,
+  tenantKeepsAdminGuard,
+} from './last-tenant-admin';
+import {
+  countActiveRoleHolders,
+  lastPlatformAdminResponse,
+  roleKeepsHolderGuard,
+} from './last-platform-admin';
 
 // Create router
 export const adminRolesRouter = new Hono<{
@@ -64,7 +87,7 @@ function canAccessRole(role: AdminRole, tenantId: string): boolean {
 }
 
 function isPlatformAdminRole(roleName: string | undefined): boolean {
-  return roleName === 'super_admin';
+  return roleName === ADMIN_ROLES.SUPER_ADMIN;
 }
 
 function mergeAvailableRoles(tenantRoles: AdminRole[], systemRoles: AdminRole[]): AdminRole[] {
@@ -114,26 +137,12 @@ function normalizeAssignmentScope(
   return null;
 }
 
-async function countActiveRoleAssignees(
+function countActiveRoleAssignees(
   adapter: ReturnType<typeof getAdminAdapter>,
   tenantId: string,
   roleId: string
 ): Promise<number> {
-  const now = Date.now();
-  const row = await adapter.queryOne<{ count: number }>(
-    `SELECT COUNT(DISTINCT au.id) as count
-     FROM admin_role_assignments ra
-     JOIN admin_users au
-       ON au.id = ra.admin_user_id
-      AND au.tenant_id = ra.tenant_id
-     WHERE ra.tenant_id = ?
-       AND ra.admin_role_id = ?
-       AND au.is_active = 1
-       AND au.status = 'active'
-       AND (ra.expires_at IS NULL OR ra.expires_at > ?)`,
-    [tenantId, roleId, now]
-  );
-  return Number(row?.count ?? 0);
+  return countActiveRoleHolders(adapter, tenantId, roleId, false);
 }
 
 /**
@@ -301,16 +310,19 @@ adminRolesRouter.post('/:id/assignments', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
     }
 
-    if (
-      normalizedScope.scopeType === 'global' &&
-      !hasAdminPermission(authContext.permissions || [], '*')
-    ) {
+    // The super admin is held through a global assignment only.
+    if (!isScopeAllowedForRole(role.name, normalizedScope.scopeType)) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+    }
+
+    if (normalizedScope.scopeType === 'global' && !hasGlobalAdminPermission(authContext, '*')) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
 
     if (
-      authContext.hierarchyLevel !== undefined &&
-      role.hierarchy_level >= authContext.hierarchyLevel
+      !callerOutranks(authContext, role.hierarchy_level) ||
+      (normalizedScope.scopeType === 'global' &&
+        !callerOutranksGlobally(authContext, role.hierarchy_level))
     ) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
@@ -400,9 +412,20 @@ adminRolesRouter.patch('/:id/assignments/:assignmentId', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
     }
 
+    if (!isScopeAllowedForRole(role.name, normalizedScope.scopeType)) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+    }
+
+    if (normalizedScope.scopeType === 'global' && !hasGlobalAdminPermission(authContext, '*')) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+    }
+
+    // Moving a global assignment to a tenant takes the global access away from the person: it is
+    // judged as removing it would be.
     if (
-      normalizedScope.scopeType === 'global' &&
-      !hasAdminPermission(authContext.permissions || [], '*')
+      assignment.scope_type === 'global' &&
+      normalizedScope.scopeType !== 'global' &&
+      !mayRemoveAssignment(authContext, 'global', role.hierarchy_level)
     ) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
@@ -413,6 +436,35 @@ adminRolesRouter.patch('/:id/assignments/:assignmentId', async (c) => {
       (!Number.isFinite(body.expires_at) || body.expires_at <= 0)
     ) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+    }
+
+    // The same rule as giving the role in the first place: only a role below the caller's own,
+    // and below the caller's global hierarchy for a global assignment.
+    if (
+      !callerOutranks(authContext, role.hierarchy_level) ||
+      (normalizedScope.scopeType === 'global' &&
+        !callerOutranksGlobally(authContext, role.hierarchy_level))
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+    }
+
+    // An expiry ends the assignment (now, or later by itself), so it is held to the rule for
+    // removing one.
+    const expiring =
+      role.name === ADMIN_ROLES.TENANT_ADMIN && typeof body.expires_at === 'number'
+        ? {
+            assignmentId,
+            // An expiry still to come keeps the account an administrator for now; only a permanent
+            // one that gains an expiry loses what it kept.
+            stillCurrent: body.expires_at > Date.now(),
+            newExpiresAt: body.expires_at,
+          }
+        : null;
+    if (expiring) {
+      const tenantAdminRefusal = await ensureTenantKeepsAdmin(c, adapter, tenantId, expiring);
+      if (tenantAdminRefusal) {
+        return tenantAdminRefusal;
+      }
     }
 
     const duplicate = await roleAssignmentRepo.assignmentExists({
@@ -426,14 +478,21 @@ adminRolesRouter.patch('/:id/assignments/:assignmentId', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
 
-    const updated = await roleAssignmentRepo.updateAssignment(assignmentId, {
-      scope_type: normalizedScope.scopeType,
-      scope_id: normalizedScope.scopeId,
-      expires_at: body.expires_at,
-    });
+    const updated = await roleAssignmentRepo.updateAssignment(
+      assignmentId,
+      {
+        scope_type: normalizedScope.scopeType,
+        scope_id: normalizedScope.scopeId,
+        expires_at: body.expires_at,
+      },
+      expiring ? tenantKeepsAdminGuard(tenantId, expiring) : undefined
+    );
 
     if (!updated) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+      // Gone, or the last administrator by the time the write ran: another request got there first.
+      return expiring && (await roleAssignmentRepo.getAssignment(assignmentId))
+        ? lastTenantAdminResponse(c)
+        : createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
     await createAuditLog(c, 'admin_role.assignment_update', assignmentId, 'success', {
@@ -480,17 +539,14 @@ adminRolesRouter.delete('/:id/assignments/:assignmentId', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
+    if (!mayRemoveAssignment(authContext, assignment.scope_type, role.hierarchy_level)) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+    }
+
     if (isPlatformAdminRole(role.name)) {
       const activeAssignees = await countActiveRoleAssignees(adapter, tenantId, id);
       if (activeAssignees <= 1) {
-        return c.json(
-          {
-            error: 'last_platform_admin',
-            error_description:
-              'At least one active platform administrator must remain. Assign another platform administrator before removing this role.',
-          },
-          409
-        );
+        return lastPlatformAdminResponse(c, 'role');
       }
 
       if (assignment.admin_user_id === authContext.userId) {
@@ -498,9 +554,31 @@ adminRolesRouter.delete('/:id/assignments/:assignmentId', async (c) => {
       }
     }
 
-    const removed = await roleAssignmentRepo.removeAssignmentById(assignmentId);
+    const tenantAdminRefusal = await ensureTenantKeepsAdmin(c, adapter, tenantId, {
+      assignmentId,
+    });
+    if (tenantAdminRefusal) {
+      return tenantAdminRefusal;
+    }
+
+    const removed = await roleAssignmentRepo.removeAssignmentById(
+      assignmentId,
+      allOfGuards(
+        isPlatformAdminRole(role.name) ? roleKeepsHolderGuard(tenantId, id, false) : undefined,
+        role.name === ADMIN_ROLES.TENANT_ADMIN
+          ? tenantKeepsAdminGuard(tenantId, { assignmentId })
+          : undefined
+      )
+    );
     if (!removed) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+      // Gone, or the last administrator by the time the write ran: another request got there first.
+      if (!(await roleAssignmentRepo.getAssignment(assignmentId))) {
+        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+      }
+      return isPlatformAdminRole(role.name) &&
+        (await countActiveRoleAssignees(adapter, tenantId, id)) <= 1
+        ? lastPlatformAdminResponse(c, 'role')
+        : lastTenantAdminResponse(c);
     }
 
     await createAuditLog(c, 'admin_role.assignment_remove', assignmentId, 'success', {
@@ -543,22 +621,33 @@ adminRolesRouter.post('/', async (c) => {
     }>();
 
     // Validate required fields
-    if (!body.name) {
+    if (!body.name || typeof body.name !== 'string') {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
     }
     if (!body.permissions || !Array.isArray(body.permissions)) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
     }
 
-    // Check if name already exists
+    // The reserved prefix belongs to the standard roles: Admin checks read their names as
+    // authority, so a custom role must not look like one.
+    if (isRoleNameReserved(body.name)) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+    }
+
+    // Check if name already exists. A system role's name is taken in every tenant.
     const existing = await roleRepo.findByName(tenantId, body.name);
     if (existing) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
+    const systemRoles = await roleRepo.getSystemRoles();
+    if (systemRoles.some((systemRole) => systemRole.name === body.name)) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
+    }
 
-    // Validate hierarchy level - can only create roles with lower hierarchy
+    // Validate hierarchy level - can only create roles with lower hierarchy. A caller whose
+    // hierarchy is unknown creates none.
     const hierarchyLevel = body.hierarchy_level ?? 0;
-    if (authContext.hierarchyLevel !== undefined && hierarchyLevel >= authContext.hierarchyLevel) {
+    if (!callerOutranks(authContext, hierarchyLevel)) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
 
@@ -572,6 +661,22 @@ adminRolesRouter.post('/', async (c) => {
       }
     }
 
+    // A new role has no assignment yet, so what it inherits is held to the caller's permissions.
+    const inheritance = await checkRoleInheritance(
+      roleRepo,
+      tenantId,
+      authContext,
+      body.inherits_from
+    );
+    if (!inheritance.ok) {
+      return createErrorResponse(
+        c,
+        inheritance.reason === 'forbidden'
+          ? AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS
+          : AR_ERROR_CODES.ADMIN_INVALID_REQUEST
+      );
+    }
+
     const role = await roleRepo.createRole({
       tenant_id: tenantId,
       name: body.name,
@@ -580,7 +685,7 @@ adminRolesRouter.post('/', async (c) => {
       permissions: body.permissions,
       hierarchy_level: hierarchyLevel,
       role_type: 'custom',
-      inherits_from: body.inherits_from,
+      inherits_from: body.inherits_from || null,
     });
 
     // Create audit log
@@ -637,26 +742,70 @@ adminRolesRouter.patch('/:id', async (c) => {
       inherits_from?: string | null;
     }>();
 
-    // Validate permissions if being updated
-    if (body.permissions) {
-      const myPermissions = authContext.permissions || [];
-      if (!hasAdminPermission(myPermissions, '*')) {
-        for (const perm of body.permissions) {
-          if (!hasAdminPermission(myPermissions, perm)) {
-            return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
-          }
-        }
-      }
+    if (
+      body.permissions !== undefined &&
+      (!Array.isArray(body.permissions) ||
+        body.permissions.some((permission) => typeof permission !== 'string'))
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+    }
+
+    // Only a role below the caller's own hierarchy can be changed, as only one can be created.
+    if (!callerOutranks(authContext, existing.hierarchy_level)) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
 
     // Validate hierarchy level if being updated
-    if (body.hierarchy_level !== undefined) {
-      if (
-        authContext.hierarchyLevel !== undefined &&
-        body.hierarchy_level >= authContext.hierarchyLevel
-      ) {
-        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+    if (body.hierarchy_level !== undefined && !callerOutranks(authContext, body.hierarchy_level)) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+    }
+
+    // What the role will inherit, when that changes.
+    let inheritedPermissions: string[] = [];
+    const inheritanceChanges =
+      body.inherits_from !== undefined && (body.inherits_from || null) !== existing.inherits_from;
+    if (inheritanceChanges) {
+      const inheritance = await checkRoleInheritance(
+        roleRepo,
+        tenantId,
+        authContext,
+        body.inherits_from,
+        id
+      );
+      if (!inheritance.ok) {
+        return createErrorResponse(
+          c,
+          inheritance.reason === 'forbidden'
+            ? AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS
+            : AR_ERROR_CODES.ADMIN_INVALID_REQUEST
+        );
       }
+      inheritedPermissions = inheritance.inheritedPermissions;
+    }
+
+    // Validate permissions if being updated
+    const grantedPermissions = [...(body.permissions ?? []), ...inheritedPermissions];
+    const myPermissions = authContext.permissions || [];
+    if (!grantedPermissions.every((perm) => hasAdminPermission(myPermissions, perm))) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+    }
+
+    // A role that a global assignment leads to, directly or by inheritance, takes effect for every
+    // tenant, so changing what it holds needs the permission from a global assignment, and what it
+    // is given has to be within the caller's global permissions.
+    // Its hierarchy is measured the same way: a global role reaching a high level would give that
+    // level in every tenant, so it is held to the caller's global hierarchy, not the sum.
+    if (
+      (body.permissions !== undefined ||
+        inheritanceChanges ||
+        body.hierarchy_level !== undefined) &&
+      (await roleReachesGlobalAssignment(adapter, tenantId, id)) &&
+      (!mayGiveGlobally(authContext, grantedPermissions) ||
+        !callerOutranksGlobally(authContext, existing.hierarchy_level) ||
+        (body.hierarchy_level !== undefined &&
+          !callerOutranksGlobally(authContext, body.hierarchy_level)))
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     }
 
     const role = await roleRepo.updateRole(id, {
@@ -664,7 +813,7 @@ adminRolesRouter.patch('/:id', async (c) => {
       description: body.description,
       permissions: body.permissions,
       hierarchy_level: body.hierarchy_level,
-      inherits_from: body.inherits_from,
+      inherits_from: body.inherits_from === undefined ? undefined : body.inherits_from || null,
     });
 
     if (!role) {
@@ -812,6 +961,10 @@ adminRolesRouter.get('/permissions/list', async (c) => {
     { key: ADMIN_PERMISSIONS.IP_ALLOWLIST_READ, description: 'View IP allowlist' },
     { key: ADMIN_PERMISSIONS.IP_ALLOWLIST_WRITE, description: 'Manage IP allowlist' },
     { key: ADMIN_PERMISSIONS.USERS_READ, description: 'View end users' },
+    {
+      key: ADMIN_PERMISSIONS.USERS_STATUS_READ,
+      description: 'View end-user account status without personal data',
+    },
     { key: ADMIN_PERMISSIONS.USERS_WRITE, description: 'Create and update end users' },
     { key: ADMIN_PERMISSIONS.USERS_SUSPEND, description: 'Suspend end users' },
     { key: ADMIN_PERMISSIONS.USERS_DELETE, description: 'Delete end users' },

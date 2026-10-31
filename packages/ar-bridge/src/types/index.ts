@@ -44,6 +44,12 @@ export interface UpstreamProvider {
   // - custom_fields.<field_key>
   // to populate Authrim custom claims from upstream provider claims.
   attributeMapping: Record<string, string>;
+  /**
+   * The profile fields a login from this provider updates (standard profile claim names, after
+   * attribute mapping), overriding the tenant's `external_idp.jit_update_fields`. Null or absent
+   * follows the tenant; an empty list updates none.
+   */
+  profileUpdateFields?: string[] | null;
   autoLinkEmail: boolean;
   jitProvisioning: boolean;
   requireEmailVerified: boolean;
@@ -155,6 +161,19 @@ export interface ExternalIdpAuthState {
   prompt?: string;
   /** Whether SSO is enabled for this authentication flow */
   enableSso?: boolean;
+  /** The Authrim re-authentication challenge this sign-in answers, if any */
+  reauthChallengeId?: string;
+  /** When Authrim asked the IdP for a new login for it (milliseconds, Authrim's clock) */
+  reauthRequestedAt?: number;
+  /** The invitation this sign-in started from, if any */
+  inviteId?: string;
+  /** The use of it the start reserved (applied only to an account the callback creates) */
+  inviteReservationId?: string;
+  /**
+   * The Flow interaction the sign-in belongs to, once the start step checked it is a live
+   * interaction of the tenant: the callback records the sign-in's failures with it.
+   */
+  attemptInteractionId?: string;
   expiresAt: number;
   createdAt: number;
 }
@@ -255,6 +274,11 @@ export interface HandleIdentityParams {
   tokens: TokenResponse;
   linkingUserId?: string;
   tenantId: string;
+  /**
+   * The invitation the sign-in started from. When it names an email, an account is created only
+   * for that email (and, when the tenant requires it, only when the provider verified it).
+   */
+  invitation?: { invitedEmail: string | null; requireVerifiedEmail: boolean };
 }
 
 export interface HandleIdentityReadyResult {
@@ -319,6 +343,8 @@ export interface LinkedIdentityListResponse {
     id: string;
     providerId: string;
     providerName: string;
+    /** The provider's slug, which the authentication-methods API uses as its id. */
+    providerSlug?: string;
     providerEmail?: string;
     linkedAt: number;
     lastLoginAt?: number;
@@ -392,6 +418,13 @@ export const ExternalIdPErrorCode = {
   ACR_VALUES_NOT_SATISFIED: 'acr_values_not_satisfied',
 
   /**
+   * A re-authentication asked the provider for a new login, and the provider did not show that
+   * one happened after the request (no recent auth_time / AuthnInstant), or the provider cannot be
+   * used to re-authenticate.
+   */
+  REAUTH_NOT_PROVEN: 'reauth_not_proven',
+
+  /**
    * Token revocation at the provider failed.
    * The identity was unlinked locally but tokens may still be valid at the provider.
    */
@@ -423,6 +456,36 @@ export const ExternalIdPErrorCode = {
    * Maps to OIDC error: login_required
    */
   POLICY_LOGIN_REQUIRED: 'policy_login_required',
+
+  /**
+   * The external account being linked already belongs to another Authrim account.
+   */
+  ACCOUNT_ALREADY_LINKED: 'account_already_linked',
+
+  /**
+   * The tenant turned sign-in off for this provider (external_provider_usage loginEnabled).
+   * Maps to OIDC error: access_denied
+   */
+  LOGIN_DISABLED: 'access_denied',
+
+  /**
+   * The tenant turned sign-up off for this provider (external_provider_usage signupEnabled), so a
+   * first sign-in cannot create the account.
+   */
+  SIGNUP_DISABLED: 'external_signup_disabled',
+
+  /**
+   * The sign-in started from an invitation that names another email than the provider's, so the
+   * account is not created.
+   */
+  INVITATION_EMAIL_MISMATCH: 'invitation_email_mismatch',
+
+  /**
+   * The tenant's provider usage settings could not be read, so neither sign-in nor sign-up is
+   * decided. Retrying may succeed.
+   * Maps to OIDC error: temporarily_unavailable
+   */
+  SETTINGS_UNAVAILABLE: 'temporarily_unavailable',
 } as const;
 
 export type ExternalIdPErrorCode = (typeof ExternalIdPErrorCode)[keyof typeof ExternalIdPErrorCode];

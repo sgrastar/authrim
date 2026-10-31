@@ -5,18 +5,16 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import { createErrorResponse, AR_ERROR_CODES, shouldUseBuiltinForms } from '@authrim/ar-lib-core';
+import { createErrorResponse, AR_ERROR_CODES } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
 import { resolveAsyncTenantId } from './tenant';
 
 /**
  * GET /ciba/test
- * Simple test page for CIBA flow
+ * Simple test page for CIBA flow (only when ENABLE_TEST_ENDPOINTS=true)
  */
 export async function cibaTestPageHandler(c: Context<{ Bindings: Env }>) {
-  const testEndpointsEnabled = c.env.ENABLE_TEST_ENDPOINTS === 'true';
-  const builtinFormsEnabled = await shouldUseBuiltinForms(c.env);
-  if (!testEndpointsEnabled && !builtinFormsEnabled) {
+  if (c.env.ENABLE_TEST_ENDPOINTS !== 'true') {
     return c.notFound();
   }
 

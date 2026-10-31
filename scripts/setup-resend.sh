@@ -31,7 +31,7 @@ echo ""
 # If environment not specified, prompt for it
 if [ -z "$ENV" ]; then
     echo "Select environment:"
-    echo "  1) local   (Local development with .dev.vars)"
+    echo "  1) local   (not supported: local development logs notifications instead)"
     echo "  2) dev     (Remote dev environment with Cloudflare Secrets)"
     echo "  3) staging (Remote staging environment with Cloudflare Secrets)"
     echo "  4) prod    (Remote production environment with Cloudflare Secrets)"
@@ -69,6 +69,15 @@ if [ -z "$ENV" ]; then
 fi
 
 echo "Environment: $ENV"
+
+if [ "$ENV" = "local" ]; then
+    echo ""
+    echo -e "${YELLOW}Local development does not send email.${NC}"
+    echo "'pnpm setup:local init' routes every notification to the Worker log, so one-time"
+    echo "codes and magic links appear in .authrim-local/<env>/logs/workers.log."
+    echo "To test a real provider, configure a deployed environment (--env=dev|staging|prod)."
+    exit 1
+fi
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "📧 Resend Email Configuration"
@@ -143,54 +152,8 @@ echo "   API Key: ${RESEND_API_KEY:0:10}...${RESEND_API_KEY: -5}"
 echo "   Email From: $EMAIL_FROM"
 echo ""
 
-# Apply configuration based on environment
-if [ "$ENV" = "local" ]; then
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "🔧 Updating Local Environment (.dev.vars)"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo ""
-
-    if [ ! -f ".dev.vars" ]; then
-        echo -e "${RED}❌ Error: .dev.vars file not found${NC}"
-        echo ""
-        echo "Please run setup-local-vars.sh first:"
-        echo "  ./scripts/setup-local-vars.sh"
-        echo ""
-        exit 1
-    fi
-
-    # Check if Resend config already exists
-    if grep -q "^RESEND_API_KEY=" ".dev.vars"; then
-        echo "⚠️  Resend configuration already exists in .dev.vars"
-        read -p "Overwrite? (y/N): " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            echo -e "${BLUE}❌ Update cancelled${NC}"
-            exit 0
-        fi
-
-        # Remove existing Resend configuration
-        sed -i '' '/^RESEND_API_KEY=/d' ".dev.vars"
-        sed -i '' '/^EMAIL_FROM=/d' ".dev.vars"
-    fi
-
-    # Append Resend configuration
-    cat >> .dev.vars << EOF
-
-# Resend Email Configuration
-RESEND_API_KEY="$RESEND_API_KEY"
-EMAIL_FROM="$EMAIL_FROM"
-EOF
-
-    echo -e "${GREEN}✅ Resend configuration added to .dev.vars${NC}"
-    echo ""
-    echo "📋 Updated file:"
-    echo "   • .dev.vars"
-    echo ""
-    echo "Changes will be applied on the next 'pnpm run dev'"
-    echo ""
-
-else
+# Apply configuration (deployed environments use Wrangler secrets)
+if true; then
     # Remote environment: use wrangler secrets
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "🔧 Uploading to Cloudflare Secrets - Environment: $ENV"
@@ -263,21 +226,11 @@ echo "   • Provider: Resend (https://resend.com)"
 echo "   • Status: ✅ Configured"
 echo ""
 echo "🔐 Security Notes:"
-if [ "$ENV" = "local" ]; then
-    echo "   • API key stored in .dev.vars (gitignored)"
-    echo "   • Never commit .dev.vars to version control"
-else
-    echo "   • API key stored as Cloudflare Secret"
-    echo "   • Email From stored as Cloudflare Environment Variable"
-    echo "   • Secrets are encrypted and never exposed in logs"
-fi
+echo "   • API key stored as Cloudflare Secret"
+echo "   • Email From stored as Cloudflare Environment Variable"
+echo "   • Secrets are encrypted and never exposed in logs"
 echo ""
 echo "Next steps:"
-if [ "$ENV" = "local" ]; then
-    echo "   1. Run 'pnpm run dev' to start local development"
-    echo "   2. Magic links will now send emails via Resend"
-else
-    echo "   1. Run 'pnpm run deploy -- --env=$ENV' to deploy with Resend support"
-    echo "   2. Magic links will send emails via Resend"
-fi
+echo "   1. Run 'pnpm run deploy -- --env=$ENV' to deploy with Resend support"
+echo "   2. Magic links will send emails via Resend"
 echo ""

@@ -5,6 +5,7 @@
  * OIDC Core 6.2: Request Object by Reference
  */
 
+import process from 'node:process';
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { Hono } from 'hono';
 import {
@@ -17,9 +18,21 @@ import {
 } from 'jose';
 import { authorizeHandler } from '../authorize';
 import type { Env } from '@authrim/ar-lib-core/types/env';
+import { systemSettingsPlatformDocuments } from '@authrim/ar-lib-core/utils/system-settings-fields';
 
+/** Save an older `system_settings` document's values as the platform's Settings API values. */
+async function putSystemSettings(
+  kv: { put(key: string, value: string): Promise<unknown> },
+  document: Record<string, unknown>
+): Promise<void> {
+  for (const [key, values] of Object.entries(systemSettingsPlatformDocuments(document))) {
+    await kv.put(key, JSON.stringify(values));
+  }
+}
+
+const nodeProcess = process as NodeJS.Process;
 const securityRegressionIt =
-  process.env.AUTHRIM_SECURITY_REGRESSION_SUITE === 'true' ? it : it.skip;
+  nodeProcess.env.AUTHRIM_SECURITY_REGRESSION_SUITE === 'true' ? it : it.skip;
 
 /** Error response type for authorization endpoint */
 interface ErrorResponse {
@@ -231,6 +244,97 @@ describe('HTTPS Request URI Security', () => {
       expect(error.get('error_description')).toContain('PAR');
     });
 
+    it('keeps HTTPS request_uri disabled when the Settings API says so, even if env enables it', async () => {
+      const settings = new MockKVNamespace();
+      await settings.put(
+        'settings:tenant:default:oauth',
+        JSON.stringify({ 'oauth.https_request_uri_enabled': false })
+      );
+      const env = {
+        ...mockEnv,
+        SETTINGS: settings as unknown as KVNamespace,
+        ENABLE_HTTPS_REQUEST_URI: 'true',
+      } as Env;
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&request_uri=https://malicious.com/request-object.jwt',
+        { method: 'GET' },
+        env
+      );
+
+      const error = getRedirectedOAuthError(response);
+      expect(error.get('error')).toBe('request_uri_not_supported');
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('keeps refusing every domain for a saved allowlist of empty entries, as env did', async () => {
+      const settings = new MockKVNamespace();
+      await settings.put(
+        'settings:tenant:default:oauth',
+        JSON.stringify({
+          'oauth.https_request_uri_enabled': true,
+          'oauth.https_request_uri_allowed_domains': ',',
+        })
+      );
+      const env = { ...mockEnv, SETTINGS: settings as unknown as KVNamespace } as Env;
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&request_uri=https://trusted.com/request.jwt',
+        { method: 'GET' },
+        env
+      );
+
+      const error = getRedirectedOAuthError(response);
+      expect(error.get('error_description')).toContain('not in the allowed list');
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('does not let an empty entry of the allowlist allow a host ending in a dot', async () => {
+      const settings = new MockKVNamespace();
+      await settings.put(
+        'settings:tenant:default:oauth',
+        JSON.stringify({
+          'oauth.https_request_uri_enabled': true,
+          'oauth.https_request_uri_allowed_domains': 'trusted.com,',
+        })
+      );
+      const env = { ...mockEnv, SETTINGS: settings as unknown as KVNamespace } as Env;
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&request_uri=https://evil.example./request.jwt',
+        { method: 'GET' },
+        env
+      );
+
+      const error = getRedirectedOAuthError(response);
+      expect(error.get('error_description')).toContain('not in the allowed list');
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('refuses HTTPS request_uri without fetching when its settings cannot be read', async () => {
+      const env = {
+        ...mockEnv,
+        SETTINGS: {
+          get: async (key: string) => {
+            if (key === 'settings:tenant:default:oauth') throw new Error('kv unavailable');
+            return null;
+          },
+        } as unknown as KVNamespace,
+        ENABLE_HTTPS_REQUEST_URI: 'true',
+        HTTPS_REQUEST_URI_ALLOWED_DOMAINS: 'malicious.com',
+      } as Env;
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&request_uri=https://malicious.com/request-object.jwt',
+        { method: 'GET' },
+        env
+      );
+
+      const error = getRedirectedOAuthError(response);
+      expect(error.get('error')).toBe('temporarily_unavailable');
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
     it('should preserve state when returning a request_uri error to a validated client', async () => {
       const response = await app.request(
         '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=state-123&request_uri=https://malicious.com/request-object.jwt',
@@ -257,7 +361,7 @@ describe('HTTPS Request URI Security', () => {
     });
 
     it('should not redirect a request_uri error for a client from another tenant', async () => {
-      mockGetClient.mockResolvedValueOnce({
+      mockGetClient.mockResolvedValue({
         client_id: 'test-client',
         tenant_id: 'other-tenant',
         redirect_uris: ['https://example.com/callback'],
@@ -275,6 +379,35 @@ describe('HTTPS Request URI Security', () => {
       expect(response.headers.get('location')).toBeNull();
       const body = (await response.json()) as ErrorResponse;
       expect(body.error).toBe('request_uri_not_supported');
+    });
+
+    it('refuses HTTPS request_uri for an unknown client without reading settings or fetching', async () => {
+      mockGetClient.mockResolvedValue(null);
+      const settingsKeys: string[] = [];
+      const env = {
+        ...mockEnv,
+        SETTINGS: {
+          get: async (key: string) => {
+            settingsKeys.push(key);
+            return null;
+          },
+        } as unknown as KVNamespace,
+        ENABLE_HTTPS_REQUEST_URI: 'true',
+        HTTPS_REQUEST_URI_ALLOWED_DOMAINS: 'malicious.com',
+      } as Env;
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=unknown-client&redirect_uri=https://example.com/callback&scope=openid&request_uri=https://malicious.com/request-object.jwt',
+        { method: 'GET' },
+        env
+      );
+
+      expect(response.status).toBe(400);
+      expect(response.headers.get('location')).toBeNull();
+      const body = (await response.json()) as ErrorResponse;
+      expect(body.error).toBe('request_uri_not_supported');
+      expect(settingsKeys).toEqual([]);
+      expect(mockFetch).not.toHaveBeenCalled();
     });
 
     it('should accept PAR URN even when HTTPS is disabled', async () => {
@@ -480,6 +613,68 @@ describe('HTTPS Request URI Security', () => {
       const error = getRedirectedOAuthError(response);
       expect(error.get('error_description')).not.toContain('too large');
     });
+
+    it('rejects an oversized streamed body without an unhandled rejection from cancelling it', async () => {
+      // A body with no Content-Length that streams past the limit, and whose cancel fails (the
+      // upstream connection is already gone).
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(150_000));
+        },
+        cancel() {
+          throw new Error('upstream connection reset');
+        },
+      });
+      mockFetch.mockResolvedValueOnce(new Response(body, { status: 200 }));
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      nodeProcess.on('unhandledRejection', onUnhandled);
+      try {
+        const response = await app.request(
+          '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&request_uri=https://external.com/request.jwt',
+          { method: 'GET' },
+          { ...mockEnv, ENABLE_HTTPS_REQUEST_URI: 'true' }
+        );
+        // Node reports an unhandled rejection once the microtask queue drains.
+        await new Promise((resolve) => setImmediate(resolve));
+        await new Promise((resolve) => setImmediate(resolve));
+
+        const error = getRedirectedOAuthError(response);
+        expect(error.get('error')).toBe('invalid_request_uri');
+        expect(error.get('error_description')).toContain('too large');
+        expect(unhandled).toEqual([]);
+      } finally {
+        nodeProcess.off('unhandledRejection', onUnhandled);
+      }
+    });
+
+    it('lets a saved size limit win over the environment variable', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: new Headers({ 'content-length': '150000' }), // 150KB
+        body: null,
+      });
+      const settings = new MockKVNamespace();
+      await settings.put(
+        'settings:tenant:default:oauth',
+        JSON.stringify({ 'oauth.https_request_uri_max_size': 102400 })
+      );
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&request_uri=https://external.com/request.jwt',
+        { method: 'GET' },
+        {
+          ...mockEnv,
+          SETTINGS: settings as unknown as KVNamespace,
+          ENABLE_HTTPS_REQUEST_URI: 'true',
+          HTTPS_REQUEST_URI_MAX_SIZE_BYTES: '200000',
+        } as Env
+      );
+
+      const error = getRedirectedOAuthError(response);
+      expect(error.get('error')).toBe('invalid_request_uri');
+      expect(error.get('error_description')).toContain('too large');
+    });
   });
 
   describe('Redirect Handling', () => {
@@ -620,6 +815,35 @@ describe('HTTPS Request URI Security', () => {
   });
 
   describe('Request Object Fetching', () => {
+    it('does not let an encrypted payload that is no request object stand in for one', async () => {
+      const encryptionKeyPair = await generateKeyPair('RSA-OAEP', {
+        extractable: true,
+        modulusLength: 2048,
+      });
+      const jwe = await new CompactEncrypt(new TextEncoder().encode('hello'))
+        .setProtectedHeader({ alg: 'RSA-OAEP', enc: 'A256GCM' })
+        .encrypt(encryptionKeyPair.publicKey);
+      const privatePEM = await exportPKCS8(encryptionKeyPair.privateKey);
+
+      const response = await app.request(
+        `/authorize?client_id=test-client&response_type=code&redirect_uri=${encodeURIComponent('https://example.com/callback')}&scope=openid&request=${encodeURIComponent(jwe)}`,
+        { method: 'GET' },
+        {
+          ...mockEnv,
+          KEY_MANAGER: {
+            idFromName: () => 'key-manager',
+            get: () => ({ getRequestObjectDecryptionKeyRpc: async () => ({ privatePEM }) }),
+          },
+        }
+      );
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual({
+        error: 'invalid_request_object',
+        error_description: 'Decrypted request object must be a JWT or JSON object',
+      });
+    });
+
     it('does not accept an encrypted unsigned JSON Request Object as authenticated input', async () => {
       const encryptionKeyPair = await generateKeyPair('RSA-OAEP', {
         extractable: true,
@@ -638,27 +862,33 @@ describe('HTTPS Request URI Security', () => {
         .setProtectedHeader({ alg: 'RSA-OAEP', enc: 'A256GCM' })
         .encrypt(encryptionKeyPair.publicKey);
 
-      // Negative control: the JWE and key are valid when the key retains its RSA-OAEP usage.
+      // Negative control: the JWE and key are valid.
       const locallyDecrypted = await compactDecrypt(jwe, encryptionKeyPair.privateKey);
       expect(JSON.parse(new TextDecoder().decode(locallyDecrypted.plaintext))).toEqual(
         directJsonClaims
       );
 
+      // The tenant's request object encryption key decrypts it: the bare JSON inside is not
+      // signed by the client (anyone can encrypt to the public key), so it counts as an
+      // unsigned request object, which this environment does not allow.
+      const privatePEM = await exportPKCS8(encryptionKeyPair.privateKey);
       const response = await app.request(
         `/authorize?client_id=test-client&request=${encodeURIComponent(jwe)}`,
         { method: 'GET' },
         {
           ...mockEnv,
-          PRIVATE_KEY_PEM: await exportPKCS8(encryptionKeyPair.privateKey),
+          KEY_MANAGER: {
+            idFromName: () => 'key-manager',
+            get: () => ({ getRequestObjectDecryptionKeyRpc: async () => ({ privatePEM }) }),
+          },
         }
       );
 
-      // Current code imports PRIVATE_KEY_PEM for RS256 signing, producing a CryptoKey that
-      // cannot perform RSA-OAEP decryption. The unsigned JSON branch is therefore unreachable.
       expect(response.status).toBe(400);
       await expect(response.json()).resolves.toEqual({
         error: 'invalid_request_object',
-        error_description: 'Failed to decrypt request object',
+        error_description:
+          'Unsigned request objects (alg=none) are not allowed in this environment',
       });
       expect(
         (mockEnv.CHALLENGE_STORE as unknown as ReturnType<typeof createMockChallengeStore>)
@@ -726,7 +956,8 @@ describe('HTTPS Request URI Security', () => {
           { method: 'GET' },
           {
             ...mockEnv,
-            ENABLE_CONFORMANCE_MODE: 'true',
+            // A configured Login UI, so a wrongly accepted request would show a login challenge.
+            UI_URL: 'https://login.example.com',
           }
         );
 
@@ -763,14 +994,11 @@ describe('HTTPS Request URI Security', () => {
       });
 
       const settings = new MockKVNamespace();
-      await settings.put(
-        'system_settings',
-        JSON.stringify({
-          oidc: {
-            allowNoneAlgorithm: true,
-          },
-        })
-      );
+      await putSystemSettings(settings, {
+        oidc: {
+          allowNoneAlgorithm: true,
+        },
+      });
 
       const response = await app.request(
         `/authorize?request=${encodeURIComponent(requestObject)}`,
@@ -990,14 +1218,11 @@ describe('HTTPS Request URI Security', () => {
       });
 
       const settings = new MockKVNamespace();
-      await settings.put(
-        'system_settings',
-        JSON.stringify({
-          oidc: {
-            allowNoneAlgorithm: true,
-          },
-        })
-      );
+      await putSystemSettings(settings, {
+        oidc: {
+          allowNoneAlgorithm: true,
+        },
+      });
       const envWithFeature = {
         ...mockEnv,
         ENABLE_HTTPS_REQUEST_URI: 'true',

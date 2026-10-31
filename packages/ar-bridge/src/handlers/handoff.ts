@@ -21,7 +21,11 @@ import {
   getSessionStoreForNewSession,
   isShardedSessionId,
   getTenantIdFromContext,
+  resolveEffectiveSettings,
+  falRequiresSignedPushedRequest,
   createAuthContextFromHono,
+  createAccountAuthContextFromHono,
+  resolveAccountDataContextFromHono,
   createPIIContextFromHono,
   CanonicalRuntimeUserStore,
   createErrorResponse,
@@ -35,6 +39,7 @@ import {
   createPhase1ErrorDetails,
   getSessionCookieSameSite,
   resolvePostLoginRedirectUrl,
+  readExternalProviderUsagePolicy,
 } from '@authrim/ar-lib-core';
 
 type HandoffInclude = {
@@ -103,7 +108,7 @@ function handoffOAuthError(
   c: Context<{ Bindings: Env }>,
   error: string,
   errorDescription: string,
-  status: 400 | 401 | 403 = 400,
+  status: 400 | 401 | 403 | 503 = 400,
   detailsCode?: 'dpop_proof_missing' | 'dpop_proof_invalid'
 ): Response {
   c.header('Cache-Control', 'no-store');
@@ -140,6 +145,24 @@ function parseHandoffInclude(c: Context<{ Bindings: Env }>): HandoffInclude | Re
     'Unsupported include parameter. Use include=session,user.',
     400
   );
+}
+
+/** The provider keys a sign-in's artifact carries, null where it names none, 'invalid' if malformed. */
+function parseExternalProviderUsageKey(
+  value: unknown
+): { providerId: string; ids: string[] } | null | 'invalid' {
+  if (value === undefined) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return 'invalid';
+  const { providerId, ids } = value as { providerId?: unknown; ids?: unknown };
+  if (
+    typeof providerId !== 'string' ||
+    providerId.length === 0 ||
+    !Array.isArray(ids) ||
+    !ids.every((id) => typeof id === 'string')
+  ) {
+    return 'invalid';
+  }
+  return { providerId, ids };
 }
 
 async function createHandoffSession(
@@ -285,6 +308,8 @@ async function createHandoffSession(
       aud: string;
       created_at: number;
       origin?: string;
+      /** The external provider that signed the user in, where the artifact comes from a sign-in. */
+      external_provider_usage_key?: unknown;
     };
   };
 
@@ -370,6 +395,36 @@ async function createHandoffSession(
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
   }
 
+  // 5b. An artifact from an external provider's sign-in is honoured only while the tenant still
+  // lets that provider sign people in (it may have been turned off since the sign-in), before any
+  // session is made.
+  const usageKey = parseExternalProviderUsageKey(handoffData.metadata?.external_provider_usage_key);
+  if (usageKey === 'invalid') {
+    return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+  }
+  if (usageKey) {
+    let loginEnabled: boolean;
+    try {
+      loginEnabled = (await readExternalProviderUsagePolicy(c.env, tenantId, usageKey))
+        .loginEnabled;
+    } catch (error) {
+      log.error('External provider usage settings are unavailable', {}, error as Error);
+      c.header('Retry-After', '1');
+      return handoffOAuthError(
+        c,
+        'temporarily_unavailable',
+        'Provider settings are unavailable',
+        503
+      );
+    }
+    if (!loginEnabled) {
+      log.warn('External provider sign-in was turned off before the handoff was redeemed', {
+        client_id,
+      });
+      return handoffOAuthError(c, 'access_denied', 'This provider cannot be used to sign in', 403);
+    }
+  }
+
   // 6. AS SSO session validation
   const asSessionId = handoffData.challenge;
 
@@ -391,10 +446,24 @@ async function createHandoffSession(
   // Use explicit type annotation after null check
   const asSession: Session = asSessionResult;
 
-  // 7. Get user information
+  // 7. Read the verified artifact user from the account that owns its Core and PII.
+  // Client definitions above remain in tenant metadata.
+  try {
+    await resolveAccountDataContextFromHono(c, handoffData.userId);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === 'lookup_destination_revalidation_failed' &&
+      error.cause === 'account_inactive'
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
+    }
+    throw error;
+  }
+  const accountAuth = createAccountAuthContextFromHono(c, tenantId);
   const piiCtx = createPIIContextFromHono(c, tenantId);
   const runtimeUsers = new CanonicalRuntimeUserStore({
-    coreAdapter: authCtx.coreAdapter,
+    coreAdapter: accountAuth.coreAdapter,
     piiAdapter: piiCtx.defaultPiiAdapter,
     tenantId,
   });
@@ -425,6 +494,21 @@ async function createHandoffSession(
       name: runtimeUser.name,
       amr: asSession.data?.amr || ['external_idp'],
       acr: asSession.data?.acr || 'urn:mace:incommon:iap:bronze',
+      // The assurance evidence of the AS session goes with its amr.
+      ...(asSession.data?.unverified_amr !== undefined
+        ? { unverified_amr: asSession.data.unverified_amr }
+        : {}),
+      ...(typeof asSession.data?.upstream_acr === 'string'
+        ? { upstream_acr: asSession.data.upstream_acr }
+        : {}),
+      // A verified new upstream login goes with it, to complete a re-authentication.
+      ...(Array.isArray(asSession.data?.reauth_proven_amr) &&
+      typeof asSession.data?.reauth_proven_at === 'number'
+        ? {
+            reauth_proven_amr: asSession.data.reauth_proven_amr,
+            reauth_proven_at: asSession.data.reauth_proven_at,
+          }
+        : {}),
       client_id,
       audience: 'rp', // Mark explicitly as an RP token
       source_session_id: asSessionId, // Record the AS SessionID (for audit)
@@ -503,6 +587,37 @@ export async function handleHandoffVerify(c: Context<{ Bindings: Env }>): Promis
       );
     }
     const dpopJkt = dpopValidation.jkt;
+
+    // Assurance FAL3 (fal3_requires_par) needs a pushed, signed authorization request, which an
+    // external IdP login handed off here never had: decided before the artifact is spent.
+    let fal3Required: boolean;
+    try {
+      fal3Required = falRequiresSignedPushedRequest(
+        await resolveEffectiveSettings(c.env, 'assurance', {
+          tenantId: getTenantIdFromContext(c),
+        })
+      );
+    } catch (error) {
+      log.error(
+        'Failed to load assurance settings',
+        { action: 'assurance_settings' },
+        error as Error
+      );
+      return handoffOAuthError(
+        c,
+        'temporarily_unavailable',
+        'Assurance settings are temporarily unavailable',
+        503
+      );
+    }
+    if (fal3Required) {
+      return handoffOAuthError(
+        c,
+        'unauthorized_client',
+        'A handoff does not meet the required federation assurance level (FAL3)',
+        400
+      );
+    }
 
     const handoffSession = await createHandoffSession(c, body, { dpopJkt });
     if (handoffSession instanceof Response) {

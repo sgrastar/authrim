@@ -1,3 +1,10 @@
+import {
+  logArchiveInputError,
+  logArchiveStagedChoice,
+  logArchiveErrorMessage,
+  LOG_ARCHIVE_ERROR_MESSAGES,
+} from './log-archive-input.js';
+import { implementedLogArchiveModes } from '../core/log-archive-config.js';
 /**
  * HTML Template for Authrim Setup Web UI
  *
@@ -18,6 +25,7 @@ import {
 } from '../core/wildcard-dns-manual-action.js';
 import { SETUP_WEB_FONT_FACE } from './ui-fonts.js';
 import { SETUP_WEB_UI_STYLE } from './ui-style.js';
+import { AWS_SETUP_SCRIPT, getAwsSetupMarkup } from './aws-setup-ui.js';
 
 const CLOUDFLARE_DNS_ADD_RECORD_IMAGE_DATA_URI = `data:image/png;base64,${readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), 'cloudflare-dns-add-record-example.png')
@@ -2282,6 +2290,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.deploymentIncomplete': 'Deployment incomplete',
           'web.envDetail.deploymentStatusUnknown': 'Status not verified',
           'web.envDetail.adminAccount': 'Admin Account',
+          'web.envDetail.adminStatusUnavailable': 'Could not confirm administrator registration. Refresh the environment details to retry. Registration remains disabled until the status is confirmed.',
           'web.envDetail.workerUpdateHint': 'Compare deployed and local builds',
           'web.envDetail.serviceSiteFallback': 'Service Site Binding',
           'web.envDetail.serviceSiteFallbackHint': 'Bind ar-router to your service Worker',
@@ -2423,6 +2432,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.deploymentIncomplete': 'デプロイ未完了',
           'web.envDetail.deploymentStatusUnknown': '状態未確認',
           'web.envDetail.adminAccount': '管理者アカウント',
+          'web.envDetail.adminStatusUnavailable': '管理者の登録状態を確認できませんでした。環境詳細を開き直して再確認してください。状態を確認できるまで登録操作はできません。',
           'web.envDetail.workerUpdateHint': 'デプロイ済みバージョンとローカルのビルドを比較',
           'web.envDetail.serviceSiteFallback': 'Service Site Binding',
           'web.envDetail.serviceSiteFallbackHint': 'ar-routerにサービス用Workerをbinding',
@@ -2932,6 +2942,7 @@ ${SETUP_WEB_UI_STYLE}</style>
       const envManagementSupplementalRows = {
         'web.envDetail.capacityTab': ['D1 容量', 'D1 容量', 'Capacidad D1', 'Capacidade D1', 'Capacité D1', 'D1-Kapazität', 'D1 용량', 'Емкость D1', 'Kapasitas D1'],
         'web.envDetail.capacityTitle': ['控制平面容量', '控制平面容量', 'Capacidad del plano de control', 'Capacidade do plano de controle', 'Capacité du plan de contrôle', 'Kapazität der Steuerungsebene', '컨트롤 플레인 용량', 'Емкость плоскости управления', 'Kapasitas control plane'],
+        'web.envDetail.adminStatusUnavailable': ['无法确认管理员注册状态。请重新打开环境详情重试。确认前无法注册。', '無法確認管理員註冊狀態。請重新開啟環境詳情重試。確認前無法註冊。', 'No se pudo confirmar el registro del administrador. Vuelve a abrir los detalles del entorno para reintentar. El registro requiere confirmar el estado.', 'Não foi possível confirmar o cadastro do administrador. Reabra os detalhes do ambiente para tentar novamente. O cadastro exige a confirmação do estado.', 'Impossible de confirmer l’inscription de l’administrateur. Rouvrez les détails de l’environnement pour réessayer. L’inscription nécessite la confirmation de l’état.', 'Die Administratorregistrierung konnte nicht bestätigt werden. Öffnen Sie die Umgebungsdetails erneut. Die Registrierung bleibt bis zur Bestätigung gesperrt.', '관리자 등록 상태를 확인할 수 없습니다. 환경 상세를 다시 열어 확인하세요. 확인 전에는 등록할 수 없습니다.', 'Не удалось проверить регистрацию администратора. Откройте сведения о среде повторно. Регистрация недоступна до проверки статуса.', 'Status pendaftaran administrator tidak dapat dikonfirmasi. Buka kembali detail lingkungan untuk mencoba lagi. Pendaftaran memerlukan konfirmasi status.'],
         'web.envDetail.capacityHint': ['由服务器管理的放置方案', '由伺服器管理的配置方案', 'Plan de ubicación administrado por el servidor', 'Plano de alocação gerenciado pelo servidor', 'Plan de placement géré par le serveur', 'Serververwalteter Platzierungsplan', '서버 관리 배치 계획', 'Управляемый сервером план размещения', 'Rencana penempatan yang dikelola server'],
         'web.envDetail.capacityScope': ['范围', '範圍', 'Ámbito', 'Escopo', 'Portée', 'Bereich', '범위', 'Область', 'Cakupan'],
         'web.envDetail.capacityShared': ['共享池', '共用集區', 'Grupo compartido', 'Pool compartilhado', 'Pool partagé', 'Gemeinsamer Pool', '공유 풀', 'Общий пул', 'Pool bersama'],
@@ -5041,6 +5052,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       if (typeof refreshSetupStaticCopy === 'function') {
         refreshSetupStaticCopy();
       }
+      if (typeof refreshAwsSetupCopy === 'function') {
+        refreshAwsSetupCopy();
+      }
       if (typeof refreshDynamicLocaleContent === 'function') {
         refreshDynamicLocaleContent();
       }
@@ -5121,7 +5135,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     });
   </script>
 </head>
-<body>
+<body${manageOnly ? '' : ' class="platform-entry-mode"'}>
   <!-- Background Typography -->
   <div class="bg-typography" aria-hidden="true">Authrim</div>
 
@@ -5138,7 +5152,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     <header class="setup-masthead">
       <div class="setup-wordmark">Authrim<sup>SETUP</sup></div>
       <div class="setup-meta">
-        <span id="setup-primary-meta">${startCopy.target} <b>Cloudflare Workers</b></span>
+        <span id="setup-primary-meta">${startCopy.target} <b data-i18n="web.platform.targetPending">Not selected</b></span>
         <button type="button" id="theme-toggle" class="theme-toggle" aria-label="Toggle theme">◐ <span data-setup-copy="startTheme">${startCopy.theme}</span></button>
         <div class="top-controls">
           <div class="lang-selector">
@@ -5150,7 +5164,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       </div>
     </header>
 
-    <div class="step-indicator" id="step-indicator">
+    <div class="step-indicator hidden" id="step-indicator">
       <div class="step step-active" id="step-1" data-label="${setupStepLabels[0]}">01</div>
       <div class="step-connector"></div>
       <div class="step step-pending" id="step-2" data-label="${setupStepLabels[1]}">02</div>
@@ -5174,15 +5188,39 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       <div class="setup-hero-number" id="setup-hero-number">0<em>1</em></div>
       <div class="setup-hero-main">
         <p class="header-wizard" data-i18n="web.header.setupWizard">Setup Wizard</p>
-        <h1 id="setup-hero-title">Authrim</h1>
+        <h1 id="setup-hero-title" tabindex="-1">Authrim</h1>
         <p class="subtitle" data-i18n="web.header.subtitle">OIDC Provider on Cloudflare Workers</p>
       </div>
       <p class="setup-hero-aside" id="setup-hero-aside">
       </p>
     </header>
 
-    <!-- Step 1: Prepare -->
-    <div id="section-prerequisites" class="setup-prereq-section setup-section-enter">
+    <!-- Choose the platform before running provider-specific checks. -->
+    <div id="section-platform" class="setup-start-section setup-section-enter">
+      <div class="platform-grid">
+        <button type="button" class="platform-choice" id="btn-platform-cloudflare">
+          <span class="platform-name">Cloudflare</span>
+          <span class="platform-description" data-i18n="web.platform.cloudflareDescription">Set up Authrim on Cloudflare Workers.</span>
+          <span class="platform-action"><span data-i18n="web.platform.cloudflareAction">Build on Cloudflare</span> <span aria-hidden="true">→</span></span>
+        </button>
+        <button type="button" class="platform-choice" id="btn-platform-aws">
+          <span class="platform-name">AWS</span>
+          <span class="platform-badge" data-i18n="web.platform.development">In development</span>
+          <span class="platform-description" data-i18n="web.platform.awsScope">Currently supports SAML DR only</span>
+          <span class="platform-action"><span data-i18n="web.platform.awsAction">Build on AWS</span> <span aria-hidden="true">→</span></span>
+        </button>
+      </div>
+    </div>
+
+    <div id="section-aws-setup" class="setup-start-section hidden">
+      ${getAwsSetupMarkup(locale)}
+      <div class="actions">
+        <button type="button" class="btn btn-back" id="btn-aws-platform-back" data-i18n="web.platform.back">Back to platform selection</button>
+      </div>
+    </div>
+
+    <!-- Step 1: Prepare Cloudflare -->
+    <div id="section-prerequisites" class="setup-prereq-section hidden">
       <section class="checksec">
         <div class="sechead">
           <h3 data-i18n="web.prereq.environmentCheck">Environment Check</h3>
@@ -5200,6 +5238,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       <div id="prereq-content" class="setup-prereq-message"></div>
 
       <div class="actions setup-prereq-actions">
+        <button type="button" class="btn btn-back" id="btn-platform-back" data-i18n="web.platform.back">Back to platform selection</button>
         <div class="progress" id="prereq-progress"><span data-setup-copy="stepKicker">${setupCopy.stepKicker}</span> <b>01</b> / 09</div>
         <div class="spacer"></div>
         <button type="button" class="btn btn-back" id="btn-recheck-prereq">↻ <span data-i18n="web.prereq.recheck">Re-check</span></button>
@@ -5342,6 +5381,23 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
                 <span class="nm"><span data-i18n="web.comp.adminUi">Admin UI</span><small data-i18n="web.comp.adminUiDesc">Administration dashboard for tenants, clients, users, and system settings.</small></span>
                 <span class="st"></span>
               </label>
+            </div>
+            <div id="admin-ui-variant-group" class="admin-ui-variant">
+              <p id="admin-ui-variant-label" class="admin-ui-variant-label" data-i18n="web.comp.adminUiVariant">Admin UI package</p>
+              <div class="radiocards" role="radiogroup" aria-labelledby="admin-ui-variant-label">
+                <label class="radiocard">
+                  <input type="radio" name="admin-ui-variant" value="legacy" checked>
+                  <span class="dot" aria-hidden="true"></span>
+                  <span class="nm"><span data-i18n="web.comp.adminUiLegacy">Current Admin UI</span><small data-i18n="web.comp.adminUiLegacyDesc">The Admin UI in use today, with every feature.</small></span>
+                  <span class="st"></span>
+                </label>
+                <label class="radiocard">
+                  <input type="radio" name="admin-ui-variant" value="console">
+                  <span class="dot" aria-hidden="true"></span>
+                  <span class="nm"><span data-i18n="web.comp.adminUiConsole">Admin console (preview)</span><small data-i18n="web.comp.adminUiConsoleDesc">The redesigned admin console. Features are added one by one; items not rebuilt yet show a placeholder. Uses the same URL and administrator passkeys as the current Admin UI.</small></span>
+                  <span class="st"></span>
+                </label>
+              </div>
             </div>
           </div>
           <div class="rownote">
@@ -5724,6 +5780,37 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         </div>
       </section>
 
+      ${
+        implementedLogArchiveModes().length > 0
+          ? `<section class="row" id="log-archive-options">
+        <div class="rowlabel"><h2>${locale === 'ja' ? 'ログの保存方式' : 'Log storage'}</h2></div>
+        <div class="rowbody">
+          <p>${locale === 'ja' ? 'Cloudflare Pipelinesを使用しますか？Pipeline利用時はログ本体をDBに保存せず、検索反映には数分かかる場合があります。Workers Paidが必要です。非利用時はDBから定期的にIcebergへ出力します。両方式でR2 Data Catalogと2つのAPIトークンが必要で、Setupから自動発行できます。' : 'Use Cloudflare Pipelines? Pipeline mode stores no log-body DB copy and search can lag by minutes. Workers Paid is required. Otherwise logs are exported from the DB to Iceberg on schedule. Both modes require R2 Data Catalog and two API tokens, which Setup can issue automatically.'}</p>
+          <select id="log-archive-mode"><option value="">${locale === 'ja' ? '選択してください' : 'Choose a mode'}</option>${implementedLogArchiveModes()
+            .map(
+              (mode) =>
+                `<option value="${mode}">${mode === 'pipeline' ? (locale === 'ja' ? '使用する' : 'Use Pipelines') : locale === 'ja' ? 'Pipelines を使わない（DB から定期出力）' : 'Without Pipelines (scheduled export from the DB)'}</option>`
+            )
+            .join('')}</select>
+          <label id="log-archive-retention-label" class="hidden">${locale === 'ja' ? 'DB保持日数' : 'DB retention days'}<input id="log-archive-retention" type="number" min="1" max="3650" value="7"></label>
+          <label>${locale === 'ja' ? 'トークンの用意方法' : 'Token source'}<select id="log-archive-token-source"><option value="automatic">${locale === 'ja' ? '自動発行（おすすめ）' : 'Issue automatically (recommended)'}</option><option value="manual">${locale === 'ja' ? '手入力' : 'Enter tokens manually'}</option><option value="staged" id="log-archive-staged-choice" disabled hidden>${locale === 'ja' ? '発行済みのトークンを使用' : 'Use the already issued tokens'}</option></select></label>
+          <p id="log-archive-staged-status" aria-live="polite"></p>
+          <div id="log-archive-automatic-fields">
+            <p>${locale === 'ja' ? '一時トークンはAccount API Tokens Write権限だけで作成してください。Setupがログ専用トークンを作成して保存した後、一時トークンを失効します。Control用にはデプロイ時に別の一時トークンが必要です。' : 'Create a one-time token with only Account API Tokens Write. Setup creates and stages the log tokens, then revokes the one-time token. Control uses a separate one-time token at deployment.'}</p>
+            <button type="button" class="btn btn-ghost sm" id="btn-create-log-archive-bootstrap-token">${locale === 'ja' ? 'Cloudflareで一時トークンを作成' : 'Create one-time Cloudflare token'}</button>
+            <label>${locale === 'ja' ? '一時トークン' : 'One-time token'}<input id="log-archive-bootstrap-token" type="password" autocomplete="off" autocapitalize="none" spellcheck="false"></label>
+            <p id="log-archive-bootstrap-status" aria-live="polite"></p>
+          </div>
+          <div id="log-archive-manual-fields" class="hidden">
+          <label>${locale === 'ja' ? 'Catalog・Basin SQLの読取り専用API token' : 'Read-only Catalog / Basin SQL API token'}<input id="log-archive-read-token" type="password" autocomplete="off"></label>
+          <label>${locale === 'ja' ? 'Catalog書込み用の別API token' : 'Separate Catalog write API token'}<input id="log-archive-write-token" type="password" autocomplete="off"></label>
+          <label id="log-archive-sink-token-label" class="hidden">${locale === 'ja' ? 'Pipeline Sink専用の別Catalog API token（Workerへ配布しません）' : 'Separate Pipeline Sink Catalog API token (never uploaded to Workers)'}<input id="log-archive-sink-token" type="password" autocomplete="off"></label>
+          </div>
+        </div>
+      </section>`
+          : ''
+      }
+
       <section class="row">
         <div class="rowlabel">
           <h2 data-i18n="web.email.title">Email Provider</h2>
@@ -5885,10 +5972,12 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
                   <i id="provision-progress-bar" class="setup-progress-fill" style="width: 46%"></i>
                 </div>
                 <div class="elapsed">
-                  <span id="provision-current-task" data-i18n="web.provision.runningMigrations">Running migrations</span>
+                  <div id="provision-current-message-line" class="deploy-current-message running" role="status" aria-live="polite" aria-atomic="true">
+                    <span id="provision-spinner" class="ora-frame" aria-hidden="true">⠋</span>
+                    <span id="provision-current-task" data-i18n="web.provision.runningMigrations">Running migrations</span>
+                  </div>
                   <span id="provision-progress-text" data-i18n="web.provision.elapsedPending">Waiting for progress...</span>
                 </div>
-                <div class="spinner sr-control" id="provision-spinner"></div>
               </div>
 
               <button type="button" class="log-toggle standalone open" id="provision-log-toggle">
@@ -6700,6 +6789,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
     // State
     let currentStep = 1;
+    let selectedSetupPlatform = MANAGE_ONLY ? 'cloudflare' : null;
     let config = {};
     let loadedConfig = null;
     let lastLoadedConfigSummary = null;
@@ -6707,6 +6797,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     let provisioningCompleted = false;
     let provisionPollInterval = null;
     let lastPrerequisitesResult = null;
+    let lastPrereqFailure = null;
 
     function buildProfilesConfig() {
       return {
@@ -6905,6 +6996,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     }
 
     const sections = {
+      platform: document.getElementById('section-platform'),
+      awsSetup: document.getElementById('section-aws-setup'),
       prerequisites: document.getElementById('section-prerequisites'),
       topMenu: document.getElementById('section-top-menu'),
       loadConfig: document.getElementById('section-load-config'),
@@ -6949,6 +7042,11 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     let workingDirectory = '';
     let workersSubdomain = ''; // e.g., 'sgrastar' for {worker}.sgrastar.workers.dev
 
+    const LOG_ARCHIVE_ERROR_MESSAGES = ${JSON.stringify(LOG_ARCHIVE_ERROR_MESSAGES)};
+    const logArchiveInputError = ${logArchiveInputError.toString()};
+    const logArchiveErrorMessage = ${logArchiveErrorMessage.toString()};
+    const logArchiveStagedChoice = ${logArchiveStagedChoice.toString()};
+    let logArchiveStagedStatus = null;
     // API helpers (with session token authentication)
     async function api(endpoint, options = {}) {
       const { headers: customHeaders, body, ...restOptions } = options;
@@ -6956,15 +7054,24 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const isMutation = method !== 'GET' && method !== 'HEAD';
       if (isMutation) inFlightMutationRequests += 1;
       try {
-        const response = await fetch('/api' + endpoint, {
-          ...restOptions,
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Session-Token': SESSION_TOKEN,
-            ...(customHeaders || {}),
-          },
-          body: body ? (typeof body === 'string' ? body : JSON.stringify(body)) : undefined,
-        });
+        let response;
+        try {
+          response = await fetch('/api' + endpoint, {
+            ...restOptions,
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Session-Token': SESSION_TOKEN,
+              ...(customHeaders || {}),
+            },
+            body: body ? (typeof body === 'string' ? body : JSON.stringify(body)) : undefined,
+          });
+        } catch (error) {
+          // A rejected fetch means no HTTP response arrived at all (the Setup process stopped or
+          // the connection was reset). Browsers word this differently ("Load failed" in Safari),
+          // so say what actually happened instead of surfacing the raw message.
+          if (error?.name === 'AbortError') throw error;
+          throw new Error(t('web.status.serverUnreachable'));
+        }
         const result = await response.json();
         if (result?.errorCode === 'setup_operation_in_progress') {
           result.error = t('web.status.operationInProgress');
@@ -7188,6 +7295,40 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       warning.classList.remove('hidden');
     }
 
+    // Platform entry stays independent from Cloudflare preparation and deployment.
+    function setPlatformHero(platform) {
+      const isAws = platform === 'aws';
+      document.getElementById('step-indicator')?.classList.add('hidden');
+      const title = document.getElementById('setup-hero-title');
+      if (title) title.textContent = t(isAws ? 'web.platform.awsTitle' : 'web.platform.title');
+      const kicker = document.querySelector('.setup-hero .header-wizard');
+      if (kicker) kicker.textContent = t('web.header.setupWizard');
+      const aside = document.getElementById('setup-hero-aside');
+      if (aside) aside.textContent = t(isAws ? 'web.platform.awsDescription' : 'web.platform.description');
+      updateSetupPrimaryMeta();
+    }
+
+    function showPlatformSelection() {
+      if (typeof stopAwsSetupPolling === 'function') stopAwsSetupPolling();
+      selectedSetupPlatform = null;
+      showSection('platform');
+      document.getElementById('setup-hero-title')?.focus();
+    }
+
+    async function selectSetupPlatform(platform) {
+      if (platform !== 'cloudflare' && platform !== 'aws') return;
+      selectedSetupPlatform = platform;
+      if (platform === 'aws') {
+        showSection('awsSetup');
+        if (typeof initializeAwsSetup === 'function') initializeAwsSetup();
+      } else {
+        currentStep = 1;
+        showSection('prerequisites');
+      }
+      document.getElementById('setup-hero-title')?.focus();
+      if (platform === 'cloudflare') await checkPrerequisites();
+    }
+
     // Step navigation
     function setStep(step) {
       currentStep = step;
@@ -7229,7 +7370,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
       const copy = getSetupUiRuntimeCopy();
       const envName = config?.env || config?.environment?.prefix || 'prod';
-      if (step >= 4) {
+      if (selectedSetupPlatform !== 'cloudflare') {
+        primaryMeta.innerHTML = escapeHtml(copy.startTarget) + ' <b>' +
+          escapeHtml(selectedSetupPlatform === 'aws' ? 'AWS' : t('web.platform.targetPending')) + '</b>';
+      } else if (step >= 4) {
         primaryMeta.innerHTML = escapeHtml(t('env.name')) + ' <b>' + escapeHtml(envName) + '</b>';
       } else {
         primaryMeta.innerHTML = escapeHtml(copy.startTarget) + ' <b>Cloudflare Workers</b>';
@@ -7280,7 +7424,11 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           : sections.envDelete && !sections.envDelete.classList.contains('hidden')
             ? 'envDelete'
             : null;
-      if (activeEnvSection) {
+      if (sections.platform && !sections.platform.classList.contains('hidden')) {
+        setPlatformHero(null);
+      } else if (sections.awsSetup && !sections.awsSetup.classList.contains('hidden')) {
+        setPlatformHero('aws');
+      } else if (activeEnvSection) {
         setEnvManagementHero(activeEnvSection);
       } else {
         setStep(currentStep || 1);
@@ -7320,6 +7468,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     }
 
     function refreshDynamicLocaleContent() {
+      renderPrereqFailureMessage();
       if (
         lastPrerequisitesResult &&
         sections.prerequisites &&
@@ -7530,7 +7679,12 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         s.classList.remove('setup-section-enter');
       });
       sections[name].classList.remove('hidden');
-      if (['envList', 'envDetail', 'envDelete'].includes(name)) {
+      const isPlatformEntry = name === 'platform' || name === 'awsSetup';
+      document.body.classList.toggle('platform-entry-mode', isPlatformEntry);
+      if (isPlatformEntry) {
+        document.body.classList.remove('env-management-mode');
+        setPlatformHero(name === 'awsSetup' ? 'aws' : null);
+      } else if (['envList', 'envDetail', 'envDelete'].includes(name)) {
         document.body.classList.add('env-management-mode');
         setEnvManagementHero(name);
       } else {
@@ -7543,6 +7697,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           setLoadConfigHero();
         }
       }
+      if (name === 'email') void refreshLogArchiveStagedStatus();
       replaySetupEntrance(sections[name]);
       window.scrollTo(0, 0);
     }
@@ -7690,6 +7845,38 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }, 80);
     }
 
+    // Provisioning reuses the deploy step's braille frame so both steps read as one family.
+    let provisionOraTimer = null;
+    let provisionOraFrameIndex = 0;
+
+    function paintProvisionOraFrame(frame, state) {
+      const spinner = document.getElementById('provision-spinner');
+      if (spinner) spinner.textContent = frame;
+      const line = document.getElementById('provision-current-message-line');
+      if (line && state) line.className = 'deploy-current-message ' + state;
+    }
+
+    function stopProvisionOraTimer(frame, state) {
+      if (provisionOraTimer) window.clearInterval(provisionOraTimer);
+      provisionOraTimer = null;
+      if (frame) paintProvisionOraFrame(frame, state);
+    }
+
+    function startProvisionOraTimer() {
+      stopProvisionOraTimer();
+      provisionOraFrameIndex = 0;
+      if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+        paintProvisionOraFrame('•', 'running');
+        return;
+      }
+      paintProvisionOraFrame(WEB_ORA_FRAMES[provisionOraFrameIndex], 'running');
+      provisionOraFrameIndex += 1;
+      provisionOraTimer = window.setInterval(() => {
+        paintProvisionOraFrame(WEB_ORA_FRAMES[provisionOraFrameIndex % WEB_ORA_FRAMES.length]);
+        provisionOraFrameIndex += 1;
+      }, 80);
+    }
+
     function updateProgressBarVisual(progressBar, percent, status = 'running', indeterminate = false) {
       if (!progressBar) return;
       const normalizedPercent = Math.min(100, Math.max(0, Number(percent) || 0));
@@ -7709,10 +7896,23 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
     }
 
+    // Deleting an environment that has nothing left to remove reports 0/0, which updateProgressUI
+    // cannot tell apart from "not started yet". Settle the bar and spinner explicitly instead.
+    function finishProgressUI(prefix) {
+      updateProgressBarVisual(document.getElementById(prefix + '-progress-bar'), 100, 'complete');
+      const percentEl = document.getElementById(prefix + '-percent');
+      if (percentEl) percentEl.textContent = '100';
+      const spinner = document.getElementById(prefix + '-spinner');
+      if (spinner && prefix === 'delete') spinner.style.display = 'none';
+    }
+
     function markProgressBarError(prefix) {
       const progressBar = document.getElementById(prefix + '-progress-bar');
       const currentWidth = Number.parseFloat(progressBar?.style.width || '0');
       updateProgressBarVisual(progressBar, currentWidth, 'error');
+      const deleteSpinner = document.getElementById(prefix + '-spinner');
+      if (deleteSpinner && prefix === 'delete') deleteSpinner.style.display = 'none';
+      if (prefix === 'provision') stopProvisionOraTimer('✕', 'error');
     }
 
     function renderDeploymentSnapshot(snapshot) {
@@ -7834,7 +8034,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         currentTaskEl.textContent = currentTask;
       }
       // Hide spinner when complete
-      if (spinner) {
+      // Provisioning paints its own terminal frame (✓ / ✕) instead of hiding the spinner, and a
+      // deletion keeps working after the last resource (verification, lock and local cleanup), so
+      // only finishProgressUI / markProgressBarError may stop it.
+      if (spinner && prefix !== 'provision' && prefix !== 'delete') {
         spinner.style.display = (current >= total && total > 0) ? 'none' : 'block';
       }
     }
@@ -7850,13 +8053,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         }
       }
 
-      if (message.includes('Creating ')) {
-        const parts = message.split('Creating ')[1];
-        if (parts) {
-          const name = parts.split(' ')[0].split('.')[0];
-          if (name) return 'Creating ' + name + '...';
-        }
-      }
+      // Provisioning logs "Creating: <name>..." (with a colon); other steps log "Creating <name>".
+      const creating = message.match(/Creating:?\\s+([^\\s.]+)/);
+      if (creating) return 'Creating ' + creating[1] + '...';
 
       if (message.includes('Deleting')) {
         const parts = message.split('Deleting')[1];
@@ -7957,6 +8156,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     function createProvisionProgressTracker(totalResources) {
       const completedMilestones = new Set();
       let completed = false;
+      // Last resource group header seen, e.g. "D1 Databases 2/6". The "Task N / M" line already
+      // shows milestone progress, so the task line shows what is being created right now.
+      let resourceGroup = '';
       const milestonePatterns = [
         { key: 'keys', test: (message) => message.includes('Admin secrets generated') },
         { key: 'd1', test: (message) => /D1 Databases\\s*\\([^)]*\\)\\s*✓/.test(message) },
@@ -7975,6 +8177,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         if (completed) return;
         if (message.includes('Provisioning complete')) {
           completed = true;
+          // The API keeps writing wrangler config and the lock after this log line, so the spinner
+          // keeps running until the success response calls complete().
           updateProgressUI('provision', totalResources, totalResources, t('web.status.complete'));
           return;
         }
@@ -7982,17 +8186,29 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         for (const milestone of milestonePatterns) {
           if (milestone.test(message)) {
             completedMilestones.add(milestone.key);
+            // Migrations and configuration come after the resource groups, so drop the stale label.
+            if (milestone.key === 'migrations' || milestone.key === 'config') resourceGroup = '';
             break;
           }
         }
 
+        // Group headers: "📊 D1 Databases (0/6)", "🗄️ KV Namespaces (0/9) ✓" and the count-less
+        // "📨 Queues" / "📁 R2 Buckets". Anchored so "Scanning Queues..." is not a header.
+        const group = message.match(
+          /^\\s*[^\\sA-Za-z0-9]+\\s*(D1 Databases|KV Namespaces|Queues|R2 Buckets)(?:\\s*\\((\\d+\\/\\d+)\\))?(?:\\s*✓)?\\s*$/m
+        );
+        if (group) resourceGroup = group[2] ? group[1] + ' ' + group[2] : group[1];
+
         const taskInfo = parseProgressMessage(message);
-        if (taskInfo || completedMilestones.size > 0) {
+        if (taskInfo || group || completedMilestones.size > 0) {
+          // Leave the previous task text in place when this line names no task, so the two
+          // progress lines never show the same "Task N / M running" string.
+          const label = taskInfo || (group ? resourceGroup : '');
           updateProgressUI(
             'provision',
             current(),
             totalResources,
-            taskInfo || t('web.provision.runningTasks', { current: current(), total: totalResources })
+            label && resourceGroup && label !== resourceGroup ? label + ' · ' + resourceGroup : label
           );
         }
       }
@@ -8000,9 +8216,16 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       function complete() {
         completed = true;
         updateProgressUI('provision', totalResources, totalResources, t('web.status.complete'));
+        stopProvisionOraTimer('✓', 'complete');
       }
 
-      return { handle, complete };
+      // After a failure a poll that was already in flight can still deliver messages; ignoring them
+      // keeps the error state (stopped spinner, red bar) from being repainted as running.
+      function fail() {
+        completed = true;
+      }
+
+      return { handle, complete, fail };
     }
 
     // Safe DOM element creation helpers
@@ -8199,7 +8422,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
       updateProgressBarVisual(progressBar, 0);
       if (percentEl) percentEl.textContent = '0';
-      if (spinner) spinner.style.display = 'block';
+      if (spinner && prefix !== 'provision') spinner.style.display = 'block';
+      if (prefix === 'provision') stopProvisionOraTimer('⠋', 'running');
       if (progressDiv) progressDiv.classList.add('hidden');
 
       if (currentTaskEl) {
@@ -8316,7 +8540,11 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const componentNames = [
         components.api !== false ? 'API' : null,
         components.loginUi !== false ? 'Login UI' : null,
-        components.adminUi !== false ? 'Admin UI' : null,
+        components.adminUi !== false
+          ? components.adminUiVariant === 'console'
+            ? 'Admin console (preview)'
+            : 'Admin UI'
+          : null,
       ].filter(Boolean);
       const placement = raw.tenant?.placementPolicy || config.tenant?.placementPolicy || 'tenant_exclusive';
       const coreRegion =
@@ -8429,7 +8657,11 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
     function resetDatabaseAndEmailForm() {
       setAutomaticProvisioningEnabled(true);
+      logArchiveStagedStatus = null;
+      const archiveSource = document.getElementById('log-archive-token-source');
+      if (archiveSource) { archiveSource.value = 'automatic'; renderLogArchiveStagedChoice(); }
       document.getElementById('feature-queue-enabled').checked = false;
+      if (document.getElementById('log-archive-mode')) { document.getElementById('log-archive-bootstrap-token').dataset.stagedForMode = ''; document.getElementById('log-archive-bootstrap-token').value = ''; document.getElementById('log-archive-mode').value = ''; document.getElementById('log-archive-mode').disabled = false; document.getElementById('log-archive-retention').disabled = false; for (const role of ['read', 'write', 'sink']) document.getElementById('log-archive-' + role + '-token').value = ''; }
 
       document.querySelectorAll('input[name="db-core-location"]').forEach((input) => {
         input.checked = input.value === 'auto';
@@ -8860,7 +9092,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     function createPrereqCheckLine(index, name, description, detail, status) {
       const copy = getPrereqUiCopy();
       const statusClass =
-        status === 'pass' ? 'pass' : status === 'warn' ? 'warn' : status === 'loading' ? 'loading' : 'fail';
+        status === 'pass' ? 'pass' : status === 'warn' ? 'check-warning' : status === 'loading' ? 'loading' : 'fail';
       const statusText = status === 'loading' ? copy.checking : '';
       const row = document.createElement('div');
       row.className = 'checkline ' + statusClass;
@@ -8952,17 +9184,21 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
     }
 
-    function renderPrereqFailureMessage(message) {
+    function renderPrereqFailureMessage(key, detail = '') {
+      if (key !== undefined) {
+        lastPrereqFailure = key ? { key, detail } : null;
+      }
       const content = document.getElementById('prereq-content');
       content.textContent = '';
-      if (!message) return;
+      if (!lastPrereqFailure) return;
       const alert = document.createElement('div');
       alert.className = 'alert error';
       const head = document.createElement('div');
       head.className = 'a-head';
       head.textContent = t('web.status.error');
       const body = document.createElement('p');
-      body.textContent = message;
+      body.textContent = t(lastPrereqFailure.key) +
+        (lastPrereqFailure.detail ? ' ' + lastPrereqFailure.detail : '');
       alert.appendChild(head);
       alert.appendChild(body);
       content.appendChild(alert);
@@ -8997,18 +9233,18 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         renderPrereqCheckRows(result);
 
         if (!result.wranglerInstalled) {
-          renderPrereqFailureMessage(t('web.error.wranglerNotInstalled') + ' npm install -g wrangler');
+          renderPrereqFailureMessage('web.error.wranglerNotInstalled', 'npm install -g wrangler');
           return false;
         }
 
         if (!result.auth.isLoggedIn) {
-          renderPrereqFailureMessage(t('web.error.notLoggedIn') + ' wrangler login');
+          renderPrereqFailureMessage('web.error.notLoggedIn', 'wrangler login');
           return false;
         }
 
         return true;
       } catch (error) {
-        renderPrereqFailureMessage(t('web.error.checkingPrereq') + ' ' + error.message);
+        renderPrereqFailureMessage('web.error.checkingPrereq', error.message);
         progress.innerHTML = copy.errorProgress;
         return false;
       }
@@ -9118,6 +9354,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     }
 
     // Top menu handlers
+    document.getElementById('btn-platform-cloudflare').addEventListener('click', () => selectSetupPlatform('cloudflare'));
+    document.getElementById('btn-platform-aws').addEventListener('click', () => selectSetupPlatform('aws'));
+    document.getElementById('btn-platform-back').addEventListener('click', showPlatformSelection);
+    document.getElementById('btn-aws-platform-back').addEventListener('click', showPlatformSelection);
     document.getElementById('btn-recheck-prereq').addEventListener('click', checkPrerequisites);
     document.getElementById('btn-prereq-continue').addEventListener('click', showTopMenu);
 
@@ -9348,6 +9588,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       };
       const profiles = loadedConfig.profiles || buildProfilesConfig();
       const features = {
+        samlDrExport: loadedConfig.features?.samlDrExport,
+        replicationWriter: loadedConfig.features?.replicationWriter,
         queue: { enabled: loadedConfig.features?.queue?.enabled === true },
         r2: { enabled: loadedConfig.features?.r2?.enabled !== false },
         email: loadedConfig.features?.email || { provider: 'none' },
@@ -9356,6 +9598,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       // Build internal config
       config = {
         env,
+        logging: loadedConfig.logging,
         apiDomain: stripProtocol(apiDomain) || null,
         loginUiDomain: stripProtocol(loginUiDomain) || null,
         adminUiDomain: stripProtocol(adminUiDomain) || null,
@@ -9386,8 +9629,11 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       setAutomaticProvisioningEnabled(config.controlPlane?.automaticProvisioning === true);
       document.getElementById('comp-login-ui').checked = config.components.loginUi !== false;
       document.getElementById('comp-admin-ui').checked = config.components.adminUi !== false;
+      setAdminUiVariant(config.components.adminUiVariant);
       document.getElementById('feature-queue-enabled').checked =
         config.features?.queue?.enabled === true;
+      const archiveSelect = document.getElementById('log-archive-mode');
+      if (archiveSelect && config.logging?.archive) { archiveSelect.value = config.logging.archive.mode; archiveSelect.disabled = true; const retention = document.getElementById('log-archive-retention'); retention.value = config.logging.archive.dbRetentionDays ?? 7; retention.disabled = true; document.getElementById('log-archive-retention-label').classList.toggle('hidden', config.logging.archive.mode !== 'scheduled'); }
       updateComponentOptionUi();
 
       // Restore domain check UI if custom domain is set
@@ -9513,7 +9759,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     }
 
     function isValidTenantId(value) {
-      return /^[a-z][a-z0-9-]{0,62}$/.test(String(value || '').trim());
+      const id = String(value || '').trim();
+      // 'platform' is reserved for platform-wide rows (see core/tenant-id.ts).
+      return /^[a-z][a-z0-9-]{0,62}$/.test(id) && id.toLowerCase() !== 'platform';
     }
 
     function showTenantIdValidationError(inputId, label) {
@@ -9705,7 +9953,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const components = [
         'API',
         ...(loginUiEnabled ? ['Login UI'] : []),
-        ...(adminUiEnabled ? ['Admin UI'] : []),
+        ...(adminUiEnabled
+          ? [getAdminUiVariant() === 'console' ? 'Admin console (preview)' : 'Admin UI']
+          : []),
       ];
       const previewComponents = document.getElementById('preview-components');
       previewComponents.textContent = '';
@@ -9877,9 +10127,25 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
     }
 
+    // Only one Admin UI is deployed per environment; the admin console fills the same slot.
+    function getAdminUiVariant() {
+      return document.querySelector('input[name="admin-ui-variant"]:checked')?.value === 'console'
+        ? 'console'
+        : 'legacy';
+    }
+
+    function setAdminUiVariant(variant) {
+      const value = variant === 'console' ? 'console' : 'legacy';
+      document.querySelectorAll('input[name="admin-ui-variant"]').forEach((input) => {
+        input.checked = input.value === value;
+      });
+    }
+
     function updateComponentOptionUi() {
       const loginUiEnabled = document.getElementById('comp-login-ui')?.checked !== false;
       const adminUiEnabled = document.getElementById('comp-admin-ui')?.checked !== false;
+      const adminUiVariantGroup = document.getElementById('admin-ui-variant-group');
+      if (adminUiVariantGroup) adminUiVariantGroup.hidden = !adminUiEnabled;
       const loginDomainRow = document.getElementById('login-domain-row');
       const adminDomainRow = document.getElementById('admin-domain-row');
       const loginDomainInput = document.getElementById('login-domain');
@@ -10448,6 +10714,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
       config = {
         env,
+        logging: config.env === env ? config.logging : undefined,
         apiDomain: baseDomain || null,
         loginUiDomain: loginDomain || null,
         adminUiDomain: adminDomain || null,
@@ -10465,6 +10732,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           api: true,
           loginUi: loginUiEnabled,
           adminUi: adminUiEnabled,
+          adminUiVariant: getAdminUiVariant(),
           saml: true,
           async: true,
           vc: true,
@@ -10472,6 +10740,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           policy: true, // Standard component
         },
         features: {
+          samlDrExport: config.env === env ? config.features?.samlDrExport : undefined,
+          replicationWriter: config.env === env ? config.features?.replicationWriter : undefined,
           queue: { enabled: false },
           r2: { enabled: true },
           email: { provider: 'none' },
@@ -10483,6 +10753,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           ? (document.getElementById('custom-domain-binding')?.checked ?? false)
           : false,
       };
+
+      if (config.logging?.archive.mode === 'pipeline') config.features.queue.enabled = true;
 
       // Create default config with component settings
       const customDomainBinding = document.getElementById('custom-domain-binding')?.checked ?? false;
@@ -10498,6 +10770,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           zoneId: domainZoneId || null,
           customDomainBinding: config.apiDomain ? customDomainBinding : false,
           profiles: config.profiles,
+          logging: config.logging,
+          features: config.features,
         },
       });
 
@@ -10590,6 +10864,57 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
     }
 
+    function syncLogArchiveTokenSource() {
+      const source = document.getElementById('log-archive-token-source')?.value;
+      document.getElementById('log-archive-manual-fields')?.classList.toggle('hidden', source !== 'manual');
+      document.getElementById('log-archive-automatic-fields')?.classList.toggle('hidden', source !== 'automatic');
+    }
+    function renderLogArchiveStagedChoice() {
+      const source = document.getElementById('log-archive-token-source');
+      if (!source) return;
+      const choice = logArchiveStagedChoice(logArchiveStagedStatus, document.getElementById('log-archive-mode').value);
+      const option = document.getElementById('log-archive-staged-choice');
+      option.disabled = !choice.useStaged;
+      option.hidden = !choice.useStaged;
+      if (choice.useStaged && source.value === 'automatic' && !document.getElementById('log-archive-bootstrap-token').value.trim()) source.value = 'staged';
+      else if (!choice.useStaged && source.value === 'staged') source.value = 'automatic';
+      document.getElementById('log-archive-staged-status').textContent = choice.messageCode ? logArchiveErrorMessage(choice.messageCode, _currentLocale) : '';
+      syncLogArchiveTokenSource();
+    }
+    async function refreshLogArchiveStagedStatus() {
+      if (!document.getElementById('log-archive-mode') || !config.env) return;
+      const environment = config.env;
+      logArchiveStagedStatus = null;
+      renderLogArchiveStagedChoice();
+      try {
+        const result = await api('/log-archive/staged-status?environment=' + encodeURIComponent(environment));
+        if (config.env !== environment) return;
+        if (!result.success) { document.getElementById('log-archive-staged-status').textContent = logArchiveErrorMessage(result.error || 'log_archive_configuration_invalid', _currentLocale); return; }
+        logArchiveStagedStatus = result;
+        renderLogArchiveStagedChoice();
+      } catch {
+        if (config.env === environment) document.getElementById('log-archive-staged-status').textContent = logArchiveErrorMessage('log_archive_cloudflare_request_failed', _currentLocale);
+      }
+    }
+    document.getElementById('log-archive-token-source')?.addEventListener('change', syncLogArchiveTokenSource);
+    document.getElementById('btn-create-log-archive-bootstrap-token')?.addEventListener('click', async () => {
+      const popup = window.open('about:blank', '_blank');
+      if (popup) popup.opener = null;
+      try {
+        const result = await api('/log-archive/token-template', { method: 'POST', body: { environment: config.env } });
+        if (!result.success) { popup?.close(); alert(logArchiveErrorMessage(result.error || 'log_archive_configuration_invalid', _currentLocale)); return; }
+        document.getElementById('log-archive-bootstrap-status').textContent = (_currentLocale === 'ja' ? '有効期限の目安: ' : 'Recommended end date: ') + result.expiresOnDate + ' (UTC)';
+        if (popup) popup.location.href = result.url;
+      } catch { popup?.close(); alert(logArchiveErrorMessage('log_archive_cloudflare_request_failed', _currentLocale)); }
+    });
+    document.getElementById('log-archive-mode')?.addEventListener('change', (event) => {
+      const pipeline = event.target.value === 'pipeline';
+      document.getElementById('log-archive-sink-token-label').classList.toggle('hidden', !pipeline);
+      document.getElementById('log-archive-retention-label').classList.toggle('hidden', event.target.value !== 'scheduled');
+      renderLogArchiveStagedChoice();
+
+    });
+
     document.getElementById('feature-queue-enabled').addEventListener('change', syncFeatureQueueUi);
 
     // Toggle provider form visibility
@@ -10606,6 +10931,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     });
 
     document.getElementById('btn-continue-email').addEventListener('click', async () => {
+      const LOG_ARCHIVE_ERROR_MESSAGES = ${JSON.stringify(LOG_ARCHIVE_ERROR_MESSAGES)};
+      const logArchiveInputError = ${logArchiveInputError.toString()};
+      const logArchiveErrorMessage = ${logArchiveErrorMessage.toString()};
       const choice = document.querySelector('input[name="email-setup-choice"]:checked').value;
       const btn = document.getElementById('btn-continue-email');
       const queueEnabled = document.getElementById('feature-queue-enabled').checked === true;
@@ -10699,6 +11027,36 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         };
       }
 
+      const archiveMode = document.getElementById('log-archive-mode')?.value;
+      if (document.getElementById('log-archive-mode') && !config.logging?.archive) {
+        const source = document.getElementById('log-archive-token-source').value;
+        const manual = source !== 'automatic' && source !== 'staged';
+        const fields = { mode: archiveMode, readToken: document.getElementById('log-archive-read-token').value, writeToken: document.getElementById('log-archive-write-token').value, ...(archiveMode === 'pipeline' ? { sinkToken: document.getElementById('log-archive-sink-token').value } : {}) };
+        const error = !archiveMode ? 'log_archive_mode_required' : manual ? logArchiveInputError(fields) : (source !== 'staged' && !document.getElementById('log-archive-bootstrap-token').value.trim() && document.getElementById('log-archive-bootstrap-token').dataset?.stagedForMode !== archiveMode ? 'log_archive_bootstrap_token_required' : null);
+        if (error) { alert(logArchiveErrorMessage(error, _currentLocale)); return; }
+        let result;
+        btn.disabled = true;
+        try {
+          if (!manual && source !== 'staged' && document.getElementById('log-archive-bootstrap-token').dataset?.stagedForMode !== archiveMode) {
+            const issued = await api('/log-archive/issue-tokens', { method: 'POST', body: JSON.stringify({ environment: config.env, mode: archiveMode, bootstrapToken: document.getElementById('log-archive-bootstrap-token').value.trim() }) });
+            document.getElementById('log-archive-bootstrap-token').value = '';
+            if (!issued.success) { alert(logArchiveErrorMessage(issued.error || 'log_archive_configuration_invalid', _currentLocale, issued.cleanupRequired === true || issued.childCleanupRequired === true)); return; }
+            if (issued.warning) document.getElementById('log-archive-bootstrap-status').textContent = logArchiveErrorMessage(issued.warning, _currentLocale);
+            document.getElementById('log-archive-bootstrap-token').dataset.stagedForMode = archiveMode;
+          }
+          result = await api('/log-archive/configure', { method: 'POST', body: JSON.stringify({ environment: config.env, mode: archiveMode, ...(archiveMode === 'scheduled' ? { dbRetentionDays: Number(document.getElementById('log-archive-retention').value) } : {}), ...(manual ? { readToken: fields.readToken.trim(), writeToken: fields.writeToken.trim(), ...(fields.sinkToken ? { sinkToken: fields.sinkToken.trim() } : {}) } : { tokenSource: 'staged' }) }) });
+          if (!result.success) { alert(logArchiveErrorMessage(result.error || 'log_archive_configuration_invalid', _currentLocale)); return; }
+        } catch { alert(logArchiveErrorMessage('log_archive_cloudflare_request_failed', _currentLocale)); return; }
+        finally { btn.disabled = false; }
+        config.logging = { archive: result.archive };
+        document.getElementById('log-archive-read-token').value = '';
+        document.getElementById('log-archive-write-token').value = '';
+        document.getElementById('log-archive-sink-token').value = '';
+      }
+      if (config.logging?.archive.mode === 'pipeline') { document.getElementById('feature-queue-enabled').checked = true; config.features.queue.enabled = true; }
+      const archiveSelect = document.getElementById('log-archive-mode');
+      if (archiveSelect && config.logging?.archive) { archiveSelect.value = config.logging.archive.mode; archiveSelect.disabled = true; document.getElementById('log-archive-retention').disabled = true; }
+
       // Show save config modal before proceeding
       const modal = document.getElementById('save-config-modal');
       modal.classList.remove('hidden');
@@ -10785,6 +11143,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
       const provisionProgress = createProvisionProgressTracker(totalProvisionTasks);
       updateProgressUI('provision', 0, totalProvisionTasks, t('web.status.initializing'));
+      startProvisionOraTimer();
 
       // Start polling for progress
       let lastProgressLength = 0;
@@ -10894,6 +11253,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           provisionPollInterval = null;
         }
 
+        provisionProgress.fail();
         output.textContent += '\\nError: ' + error.message + '\\n';
         markProgressBarError('provision');
         scrollToBottom(log);
@@ -11869,7 +12229,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           pii: { location: 'auto', jurisdiction: 'none' },
         },
         profiles: config.profiles || buildProfilesConfig(),
+        ...(config.logging ? { logging: config.logging } : {}),
         features: {
+          samlDrExport: config.features?.samlDrExport,
+          replicationWriter: config.features?.replicationWriter,
           queue: {
             enabled: config.features?.queue?.enabled === true,
           },
@@ -12196,10 +12559,17 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
 
       try {
-        const response = await api('/admin/status/' + encodeURIComponent(configKv.id));
+        const response = await api('/admin/status/' + encodeURIComponent(configKv.id) + '?env=' + encodeURIComponent(env.env));
         if (generation !== envCardRenderGeneration) return;
         if (!response.success || !adminValue) {
           adminRow?.remove();
+          return;
+        }
+
+        if (response.statusKnown === false) {
+          adminValue.textContent = t('web.status.unknown');
+          adminValue.classList.remove('ok');
+          adminValue.classList.add('warn');
           return;
         }
 
@@ -12538,6 +12908,12 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         return t('web.envDetail.initialDeployRecoveryRecreate');
       }
       if (result?.status === 'blocked') {
+        if (
+          result.reasonCode === 'initial_d1_identity_recovery_required' &&
+          typeof result.recoveryCommand === 'string'
+        ) {
+          return t('web.envDetail.initialDeployRecoveryBlocked') + '\\n' + result.recoveryCommand;
+        }
         return t('web.envDetail.initialDeployRecoveryBlocked');
       }
       if (result?.status !== 'resumable') {
@@ -14403,12 +14779,32 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
     // Check admin setup status and show section if needed
     async function checkAndShowAdminSetup(kvNamespaceId, envName) {
+      const showUnavailable = () => {
+        const section = document.getElementById('admin-setup-section');
+        section.className = 'alert';
+        const heading = section.querySelector('.a-head');
+        const description = section.querySelector('p');
+        if (heading) {
+          heading.setAttribute('data-i18n', 'web.status.unknown');
+          heading.textContent = t('web.status.unknown');
+        }
+        if (description) {
+          description.classList.remove('hidden');
+          description.setAttribute('data-i18n', 'web.envDetail.adminStatusUnavailable');
+          description.textContent = t('web.envDetail.adminStatusUnavailable');
+        }
+        document.getElementById('admin-setup-result')?.classList.add('hidden');
+        const button = document.getElementById('btn-start-admin-setup');
+        button.disabled = true;
+        button.classList.add('hidden');
+      };
       try {
         const response = await api(
           '/admin/status/' + encodeURIComponent(kvNamespaceId) +
           '?env=' + encodeURIComponent(envName)
         );
-        if (!response.success) return;
+        if (selectedEnvForDetail?.env !== envName) return;
+        if (!response.success) { showUnavailable(); return; }
 
         const section = document.getElementById('admin-setup-section');
         const heading = section.querySelector('.a-head');
@@ -14418,7 +14814,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         if (response.statusKnown === false) {
           // Do not turn a transient Cloudflare/namespace status failure into a false
           // "not configured" instruction that invites another setup-token operation.
-          section.classList.add('hidden');
+          showUnavailable();
           return;
         }
 
@@ -14460,6 +14856,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           button.textContent = t('web.envDetail.startPasskey');
         }
       } catch (error) {
+        if (selectedEnvForDetail?.env === envName) showUnavailable();
         console.error('Failed to check admin status:', error);
       }
     }
@@ -15099,11 +15496,14 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       if (deleteOptions.deletePages) totalToDelete += selectedEnvForDelete.pages?.length || 0;
       updateProgressUI('delete', 0, totalToDelete, t('web.delete.starting'));
 
-      // Poll for progress
+      // Poll for progress. clearInterval cannot cancel a request already in flight, so a late
+      // response must not repaint the progress (and the spinner) after the run has ended.
+      let deleteRunFinished = false;
       let lastProgressLength = 0;
       const pollInterval = setInterval(async () => {
         try {
           const statusResult = await api('/deploy/status');
+          if (deleteRunFinished) return;
           const structuredProgress = statusResult.operationProgress?.operation === 'delete'
             ? statusResult.operationProgress
             : null;
@@ -15136,12 +15536,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }, 500);
 
       try {
-        const deleteResult = await api('/environments/' + selectedEnvForDelete.env + '/delete', {
-          method: 'POST',
-          body: deleteOptions,
-        });
+        const deleteResult = await requestEnvironmentDeletion(selectedEnvForDelete.env, deleteOptions);
 
         clearInterval(pollInterval);
+        deleteRunFinished = true;
 
         // Show final progress
         if (deleteResult.progress) {
@@ -15159,7 +15557,12 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
         result.classList.remove('hidden');
 
-        if (deleteResult.success && deleteResult.completion === 'manual_action_required') {
+        if (deleteResult.adoptionCancelled) {
+          result.textContent = '';
+          result.appendChild(createAlert('warning', t('delete.cancelled')));
+          btn.classList.remove('hidden');
+          btn.disabled = false;
+        } else if (deleteResult.success && deleteResult.completion === 'manual_action_required') {
           const environmentDeleted = deleteResult.environmentDeleted === true;
           updateProgressUI(
             'delete',
@@ -15167,6 +15570,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
             totalToDelete,
             t(environmentDeleted ? 'web.delete.complete' : 'web.delete.manualActionRequired')
           );
+          finishProgressUI('delete');
           result.textContent = '';
           const manualR2Targets = Array.isArray(deleteResult.manualR2) ? deleteResult.manualR2 : [];
           const manualDnsIssues = Array.isArray(deleteResult.manualDns) ? deleteResult.manualDns : [];
@@ -15194,6 +15598,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         } else if (deleteResult.success) {
           // Final progress update
           updateProgressUI('delete', totalToDelete, totalToDelete, t('web.delete.complete'));
+          finishProgressUI('delete');
           result.textContent = '';
           const environmentDeleted = deleteResult.environmentDeleted === true;
           if (environmentDeleted) markDeleteNavigationComplete();
@@ -15223,6 +15628,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         }
       } catch (error) {
         clearInterval(pollInterval);
+        deleteRunFinished = true;
         markProgressBarError('delete');
         result.classList.remove('hidden');
         result.textContent = '';
@@ -15234,6 +15640,56 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         btn.disabled = false;
       }
     });
+
+    async function requestEnvironmentDeletion(environment, options) {
+      const endpoint = '/environments/' + environment + '/delete';
+      let response = await api(endpoint, { method: 'POST', body: options });
+      while (response.adoptionReady !== false && Array.isArray(response.adoptionCandidates) && response.adoptionCandidates.length > 0) {
+        const confirmedR2Adoption = await confirmR2OwnershipAdoption(response.adoptionCandidates);
+        if (!confirmedR2Adoption) return { ...response, adoptionCancelled: true };
+        response = await api(endpoint, { method: 'POST', body: { ...options, adoptR2Ownership: true, confirmedR2Adoption } });
+        if (response.errorCode !== 'r2_adoption_candidates_changed') return response;
+      }
+      return response;
+    }
+
+    async function confirmR2OwnershipAdoption(candidates) {
+      const confirmedIdentities = candidates.map(({ name, creationDate, ownershipId }) => ({ name, creationDate, ownershipId }));
+      const ja = _currentLocale === 'ja';
+      const dialog = document.createElement('dialog');
+      dialog.className = 'modal-content';
+      const title = document.createElement('h3');
+      title.textContent = ja ? 'R2所有権の取り込み' : 'Adopt R2 ownership';
+      const description = document.createElement('p');
+      description.textContent = ja
+        ? 'これらの R2 バケットは Setup の所有者マーカーで所有が確認できますが lock.json に記録がありません。この環境の資源として取り込んで削除しますか？'
+        : 'These R2 buckets carry a valid Setup ownership marker but are not recorded in lock.json. Adopt them into this environment and delete?';
+      const list = document.createElement('ul');
+      for (const candidate of candidates) {
+        const item = document.createElement('li');
+        item.textContent = [candidate.name, candidate.binding, candidate.creationDate, candidate.ownershipId].join(' | ');
+        list.appendChild(item);
+      }
+      const cancel = document.createElement('button');
+      cancel.className = 'btn-secondary';
+      cancel.textContent = ja ? 'キャンセル' : 'Cancel';
+      const adopt = document.createElement('button');
+      adopt.className = 'btn-primary';
+      adopt.textContent = ja ? '取り込んで削除' : 'Adopt and delete';
+      dialog.append(title, description, list, cancel, adopt);
+      document.body.appendChild(dialog);
+      return new Promise(resolve => {
+        dialog.addEventListener('close', () => {
+          const confirmed = dialog.returnValue === 'adopt';
+          dialog.remove();
+          resolve(confirmed ? confirmedIdentities : null);
+        }, { once: true });
+        cancel.addEventListener('click', () => dialog.close('cancel'));
+        adopt.addEventListener('click', () => dialog.close('adopt'));
+        dialog.showModal();
+        cancel.focus();
+      });
+    }
 
     async function initializeManageOnly() {
       showSection('envList');
@@ -15247,14 +15703,18 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       await Promise.allSettled([runtimeContextPromise, loadEnvironments()]);
     }
 
-    // Initialize
-    if (MANAGE_ONLY) {
-      // The CLI already enforced prerequisites, but the browser still needs the same read-only
-      // context so account and workers.dev metadata do not remain as placeholders.
-      initializeManageOnly();
-    } else {
-      checkPrerequisites();
+    ${AWS_SETUP_SCRIPT}
+
+    function initializeSetupEntry() {
+      if (MANAGE_ONLY) {
+        // Management keeps its existing read-only Cloudflare context and environment list.
+        return initializeManageOnly();
+      }
+      showPlatformSelection();
     }
+
+    // Initialize
+    initializeSetupEntry();
   </script>
 </body>
 </html>`;

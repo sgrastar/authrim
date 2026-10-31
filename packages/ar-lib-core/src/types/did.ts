@@ -267,7 +267,7 @@ export interface DIDResolver {
  */
 export function parseDID(did: string): ParsedDID | null {
   // DID syntax: did:<method>:<method-specific-id>[/<path>][?<query>][#<fragment>]
-  const regex = /^did:([a-z0-9]+):([^?#\/]+)(\/[^?#]*)?(\?[^#]*)?(#.*)?$/i;
+  const regex = /^did:([a-z0-9]+):([^?#/]+)(\/[^?#]*)?(\?[^#]*)?(#.*)?$/i;
   const match = did.match(regex);
 
   if (!match) {
@@ -428,17 +428,6 @@ function toBase64Url(bytes: Uint8Array): string {
 }
 
 /**
- * Multicodec prefixes for did:key
- * @see https://github.com/multiformats/multicodec/blob/master/table.csv
- */
-const MULTICODEC = {
-  ED25519_PUB: 0xed, // ed25519-pub (varint: 0xed01)
-  P256_PUB: 0x1200, // p256-pub
-  P384_PUB: 0x1201, // p384-pub
-  P521_PUB: 0x1202, // p521-pub
-} as const;
-
-/**
  * Decode multibase key and convert to JWK
  * Supports Ed25519, P-256, P-384, P-521
  */
@@ -483,10 +472,13 @@ function multibaseToJwk(
   // P-256 (multicodec: 0x1200, varint encoded as 0x80 0x24)
   if (decoded[0] === 0x80 && decoded[1] === 0x24) {
     const publicKeyBytes = decoded.slice(2);
-    // Compressed key: 33 bytes, Uncompressed: 65 bytes
+    // did:key allows only the compressed form (33 bytes). The uncompressed form (65 bytes) would
+    // give one key a second DID string, so it is refused rather than accepted as an alias.
+    if (publicKeyBytes.length === 65 && publicKeyBytes[0] === 0x04) {
+      throw new Error(UNCOMPRESSED_DID_KEY_ERROR);
+    }
     if (publicKeyBytes.length === 33) {
-      // Compressed format - decompress
-      const decompressed = decompressP256Point(publicKeyBytes);
+      const decompressed = decompressPoint(publicKeyBytes, EC_CURVES['P-256']);
       if (!decompressed) return null;
       return {
         keyType: 'P-256',
@@ -499,19 +491,6 @@ function multibaseToJwk(
           use: 'sig',
         },
       };
-    } else if (publicKeyBytes.length === 65 && publicKeyBytes[0] === 0x04) {
-      // Uncompressed format
-      return {
-        keyType: 'P-256',
-        jwk: {
-          kty: 'EC',
-          crv: 'P-256',
-          x: toBase64Url(publicKeyBytes.slice(1, 33)),
-          y: toBase64Url(publicKeyBytes.slice(33, 65)),
-          alg: 'ES256',
-          use: 'sig',
-        },
-      };
     }
     return null;
   }
@@ -520,13 +499,18 @@ function multibaseToJwk(
   if (decoded[0] === 0x81 && decoded[1] === 0x24) {
     const publicKeyBytes = decoded.slice(2);
     if (publicKeyBytes.length === 97 && publicKeyBytes[0] === 0x04) {
+      throw new Error(UNCOMPRESSED_DID_KEY_ERROR);
+    }
+    if (publicKeyBytes.length === 49) {
+      const decompressed = decompressPoint(publicKeyBytes, EC_CURVES['P-384']);
+      if (!decompressed) return null;
       return {
         keyType: 'P-384',
         jwk: {
           kty: 'EC',
           crv: 'P-384',
-          x: toBase64Url(publicKeyBytes.slice(1, 49)),
-          y: toBase64Url(publicKeyBytes.slice(49, 97)),
+          x: toBase64Url(decompressed.x),
+          y: toBase64Url(decompressed.y),
           alg: 'ES384',
           use: 'sig',
         },
@@ -539,13 +523,18 @@ function multibaseToJwk(
   if (decoded[0] === 0x82 && decoded[1] === 0x24) {
     const publicKeyBytes = decoded.slice(2);
     if (publicKeyBytes.length === 133 && publicKeyBytes[0] === 0x04) {
+      throw new Error(UNCOMPRESSED_DID_KEY_ERROR);
+    }
+    if (publicKeyBytes.length === 67) {
+      const decompressed = decompressPoint(publicKeyBytes, EC_CURVES['P-521']);
+      if (!decompressed) return null;
       return {
         keyType: 'P-521',
         jwk: {
           kty: 'EC',
           crv: 'P-521',
-          x: toBase64Url(publicKeyBytes.slice(1, 67)),
-          y: toBase64Url(publicKeyBytes.slice(67, 133)),
+          x: toBase64Url(decompressed.x),
+          y: toBase64Url(decompressed.y),
           alg: 'ES512',
           use: 'sig',
         },
@@ -557,50 +546,87 @@ function multibaseToJwk(
   return null;
 }
 
+// did:key (spec) allows only the compressed point form of the EC curves. The uncompressed form is
+// rejected on purpose: it would be a second DID string for the same key. Issuers that published
+// an uncompressed EC did:key (the repository used to accept it) no longer resolve.
+const UNCOMPRESSED_DID_KEY_ERROR = 'did:key public keys must use the compressed point form';
+const INVALID_CURVE_POINT_ERROR = 'did:key public key is not a valid curve point';
+
+/** Short Weierstrass curves (y^2 = x^3 + a*x + b mod p) with p = 3 mod 4. */
+const EC_CURVES = {
+  'P-256': {
+    size: 32,
+    p: BigInt('0xffffffff00000001000000000000000000000000ffffffffffffffffffffffff'),
+    a: BigInt('0xffffffff00000001000000000000000000000000fffffffffffffffffffffffc'),
+    b: BigInt('0x5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b'),
+  },
+  'P-384': {
+    size: 48,
+    p: BigInt(
+      '0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000ffffffff'
+    ),
+    a: BigInt(
+      '0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000fffffffc'
+    ),
+    b: BigInt(
+      '0xb3312fa7e23ee7e4988e056be3f82d19181d9c6efe8141120314088f5013875ac656398d8a2ed19d2a85c8edd3ec2aef'
+    ),
+  },
+  'P-521': {
+    size: 66,
+    p: (1n << 521n) - 1n,
+    a: (1n << 521n) - 4n,
+    b: BigInt(
+      '0x0051953eb9618e1c9a1f929a21a0b68540eea2da725b99b315f3b8b489918ef109e156193951ec7e937b1652c0bd3bb1bf073573df883d2c34f1ef451fd46b503f00'
+    ),
+  },
+} as const;
+
 /**
- * Decompress a P-256 compressed point
- * Uses the formula: y² = x³ - 3x + b (mod p)
+ * Decompress a compressed SEC1 point (0x02/0x03 || x) of a curve with p = 3 mod 4:
+ * y = (x^3 + a*x + b)^((p+1)/4) mod p, then the parity of y is matched to the prefix.
  */
-function decompressP256Point(compressed: Uint8Array): { x: Uint8Array; y: Uint8Array } | null {
-  if (compressed.length !== 33) return null;
+function decompressPoint(
+  compressed: Uint8Array,
+  curve: { size: number; p: bigint; a: bigint; b: bigint }
+): { x: Uint8Array; y: Uint8Array } | null {
+  if (compressed.length !== curve.size + 1) return null;
 
   const prefix = compressed[0];
   if (prefix !== 0x02 && prefix !== 0x03) return null;
 
   const isOdd = prefix === 0x03;
   const x = compressed.slice(1);
+  const { p, a, b } = curve;
 
-  // P-256 curve parameters
-  const p = BigInt('0xffffffff00000001000000000000000000000000ffffffffffffffffffffffff');
-  const a = BigInt('0xffffffff00000001000000000000000000000000fffffffffffffffffffffffc');
-  const b = BigInt('0x5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b');
-
-  // Convert x to BigInt
   let xBigInt = BigInt(0);
   for (const byte of x) {
     xBigInt = (xBigInt << 8n) | BigInt(byte);
   }
 
-  // Calculate y² = x³ + ax + b (mod p)
+  // A recognized EC key whose bytes are not a point of the curve is an error, not a document
+  // without a usable key: the caller must not fall back to a Multikey document for it.
+  if (xBigInt >= p) {
+    throw new Error(INVALID_CURVE_POINT_ERROR);
+  }
+
   const x3 = modPow(xBigInt, 3n, p);
   const ax = (a * xBigInt) % p;
   let y2 = (x3 + ax + b) % p;
   if (y2 < 0n) y2 += p;
 
-  // Calculate y = √(y²) using Tonelli-Shanks (for p ≡ 3 mod 4, y = y²^((p+1)/4))
-  const exp = (p + 1n) / 4n;
-  let y = modPow(y2, exp, p);
-
-  // Check parity
-  const yIsOdd = y % 2n === 1n;
-  if (yIsOdd !== isOdd) {
+  let y = modPow(y2, (p + 1n) / 4n, p);
+  // The square root exists only for a quadratic residue: x must lie on the curve.
+  if ((y * y) % p !== y2) {
+    throw new Error(INVALID_CURVE_POINT_ERROR);
+  }
+  if ((y % 2n === 1n) !== isOdd) {
     y = p - y;
   }
 
-  // Convert y back to bytes
-  const yBytes = new Uint8Array(32);
+  const yBytes = new Uint8Array(curve.size);
   let tempY = y;
-  for (let i = 31; i >= 0; i--) {
+  for (let i = curve.size - 1; i >= 0; i--) {
     yBytes[i] = Number(tempY & 0xffn);
     tempY >>= 8n;
   }

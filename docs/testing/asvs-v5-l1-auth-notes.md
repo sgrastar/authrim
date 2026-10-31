@@ -49,14 +49,19 @@ The initial V10.4 Level 1 ledger intentionally records one gap:
 
 ## Monthly Review Operation
 
-ASVS checks are run manually instead of in PR CI. Run:
+PR CI (the API Tests job) runs the ASVS checks on every pull request, so a check that no longer
+matches the code, or a regression test behind it that fails, stops the pull request. CI writes its
+report outside the repository; the summary JSON is kept with the job's test evidence.
+
+The monthly report is still produced by hand. Run:
 
 ```sh
 pnpm run asvs:check
 ```
 
 The command writes the monthly report to `docs/reports/asvs/YYYY-MM/asvs-coverage.md` and updates
-`docs/reports/asvs/README.md`.
+`docs/reports/asvs/README.md`. Some checks run regression tests (Vitest) and build the workspace
+packages those tests import first, so the command needs installed dependencies.
 
 ## Manual Review Items
 

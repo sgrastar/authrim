@@ -25,12 +25,12 @@ import {
   generateSecureRandomString,
   validateExternalUrl,
   createAuthContextFromHono,
-  createPIIContextFromHono,
   createErrorResponse,
   createCompatibilityErrorResponse,
   AR_ERROR_CODES,
   getLogger,
   createLogger,
+  type Logger,
   // Custom Redirect URIs (Authrim Extension)
   validateAllowedOrigins,
   // Simple Logout Webhook (Authrim Extension)
@@ -43,24 +43,32 @@ import {
   hashClientSecret,
   // DCR Configuration
   getDCRSetting,
-  createSettingsManager,
-  CLIENT_CATEGORY_META,
+  resolveDcrDefaultTarget,
+  getTenantMetadataContextFromHono,
+  type DatabaseSource,
+  grantsUseDefaultTarget,
+  tenantIssuerUrls,
   // Write-Through cache for client metadata
   putClient,
-  CanonicalRuntimeUserStore,
   SUPPORTED_JWE_ALG,
   SUPPORTED_JWE_ENC,
   CLIENT_ASSERTION_SIGNING_ALGS,
   FAPI2_MESSAGE_SIGNING_ALGS,
-  getTenantSystemSettings,
+  resolveProtocolSettings,
+  isConformanceMode,
 } from '@authrim/ar-lib-core';
-import { isOIDCSigningAlgorithm } from '@authrim/ar-lib-core/utils/oidc-signing';
+import {
+  idTokenSigningAlgorithmRefusal,
+  isOIDCSigningAlgorithm,
+} from '@authrim/ar-lib-core/utils/oidc-signing';
+import { readIDTokenSigningPolicy } from './id-token-signing-policy';
 import { getRequestAwareIssuerUrl } from './request-issuer';
 import {
   ensureActiveTenantDiscoveryAliasDirectory,
   prepareTenantDiscoveryAliasDirectory,
   resolveTenantDiscoveryAliasDirectoryInput,
 } from './tenant-alias-directory';
+import { REDIRECT_URI_POLICY_DESCRIPTION, redirectUriRefusedByPolicy } from './redirect-uri-policy';
 
 type ClientRegistrationRequestWithPkce = Omit<ClientRegistrationRequest, 'redirect_uris'> & {
   redirect_uris: string[];
@@ -81,13 +89,11 @@ type ClientRegistrationResponseWithPkce = ClientRegistrationResponse & {
   default_resource?: string;
 };
 
-const CONFORMANCE_TEST_USER_ID = 'user-oidc-conformance-test';
-
-export function buildConformanceTestUserId(tenantId: string, defaultTenantId = 'default'): string {
-  return tenantId === defaultTenantId
-    ? CONFORMANCE_TEST_USER_ID
-    : `${CONFORMANCE_TEST_USER_ID}-${tenantId}`;
-}
+/**
+ * The scope a certification-suite client gets in conformance mode when it registers without one:
+ * the Suite asks for every standard scope (OIDC Core 5.4) and for offline_access.
+ */
+const CONFORMANCE_CLIENT_DEFAULT_SCOPE = 'openid profile email address phone offline_access';
 
 function getContextTenantId(c: Context<{ Bindings: Env }>): string | null {
   try {
@@ -184,8 +190,6 @@ async function validateSectorIdentifierContent(
 interface RegistrationValidationOptions {
   /** Allow localhost HTTP for webhook URLs (development only) */
   allowLocalhostHttp?: boolean;
-  /** Allow RFC 8252 loopback IP redirects for the dedicated Agent public-client profile. */
-  allowLoopbackHttp?: boolean;
 }
 
 function isLoopbackIp(hostname: string): boolean {
@@ -284,8 +288,9 @@ function validateRegistrationRequest(
         parsed.protocol !== 'https:' &&
         !(
           parsed.protocol === 'http:' &&
-          (parsed.hostname === 'localhost' ||
-            (options.allowLoopbackHttp === true && isLoopbackIp(parsed.hostname)))
+          // Any loopback host here: whether this app may use http there (a native app, or a
+          // tenant that allows web apps) is the redirect URI policy's, applied below.
+          (parsed.hostname === 'localhost' || isLoopbackIp(parsed.hostname))
         )
       ) {
         return {
@@ -1192,13 +1197,37 @@ function normalizeOptionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
 }
 
+/**
+ * Thrown when the tenant's DCR settings exist but cannot be read: whether the tenant gives new
+ * apps a default target is then unknown, and registering without one would leave a device or
+ * client credentials app that can never get a token.
+ */
+class DefaultTargetUnavailableError extends Error {}
+
+/**
+ * The access token target a new app starts with:
+ *
+ * 1. what the registration request names (default_audience / default_resource);
+ * 2. for an app with the authorization code grant, the issuer URL (the audience /userinfo accepts):
+ *    the tenant's default (`dcr.default_audience` / `dcr.default_resource`) never replaces it;
+ * 3. for an app with a grant that uses the default target (client credentials, CIBA, device,
+ *    token exchange), the tenant's default when it has a valid one (copied here, so changing it
+ *    later does not retarget this app); a stored value that is not valid (or equals an issuer of
+ *    the tenant or its /userinfo) is ignored, as if unset;
+ * 4. else none.
+ *
+ * Only step 3 reads the tenant's settings, and it throws DefaultTargetUnavailableError when they
+ * cannot be read (a missing document is simply no default).
+ */
 async function resolveDefaultAccessTokenTarget(
   env: Env,
   tenantId: string,
   issuerUrl: string,
   request: ClientRegistrationRequestWithPkce,
-  grantTypes: string[]
-): Promise<{ defaultAudience?: string; defaultResource?: string }> {
+  grantTypes: string[],
+  log: Logger,
+  tenantCoreDb: DatabaseSource | undefined
+): Promise<{ defaultAudience?: string; defaultResource?: string; fromTenantDefault?: boolean }> {
   const requestedDefaultResource = normalizeOptionalString(request.default_resource);
   const requestedDefaultAudience = normalizeOptionalString(request.default_audience);
 
@@ -1209,30 +1238,36 @@ async function resolveDefaultAccessTokenTarget(
     };
   }
 
-  const settingsManager = createSettingsManager({
-    env: env as unknown as Record<string, string | undefined>,
-    kv: env.SETTINGS ?? null,
-    cacheTTL: 30000,
-  });
-  settingsManager.registerCategory(CLIENT_CATEGORY_META);
-
-  const [configuredDefaultResource, configuredDefaultAudience] = await Promise.all([
-    settingsManager
-      .get('client.default_resource', { type: 'tenant', id: tenantId })
-      .catch(() => ''),
-    settingsManager
-      .get('client.default_audience', { type: 'tenant', id: tenantId })
-      .catch(() => ''),
-  ]);
-
-  const defaultResource = normalizeOptionalString(configuredDefaultResource);
-  const defaultAudience = normalizeOptionalString(configuredDefaultAudience);
-  if (defaultResource || defaultAudience) {
-    return { defaultResource, defaultAudience };
-  }
-
   if (grantTypes.includes('authorization_code')) {
     return { defaultResource: issuerUrl };
+  }
+
+  // An app none of whose grants falls back to the default target (implicit, refresh token only)
+  // would never use one: it gets none.
+  if (!grantsUseDefaultTarget(grantTypes)) {
+    return {};
+  }
+
+  let target: Awaited<ReturnType<typeof resolveDcrDefaultTarget>>;
+  try {
+    target = await resolveDcrDefaultTarget(
+      env,
+      tenantId,
+      await tenantIssuerUrls(env, tenantId, [issuerUrl], { tenantCoreDb })
+    );
+  } catch (error) {
+    log.error('DCR default target settings could not be read', { tenantId }, error as Error);
+    throw new DefaultTargetUnavailableError();
+  }
+  for (const { key, problem } of target.ignored) {
+    log.warn('Ignoring an invalid tenant default access token target', { tenantId, key, problem });
+  }
+  if (target.audience || target.resource) {
+    return {
+      defaultAudience: target.audience,
+      defaultResource: target.resource,
+      fromTenantDefault: true,
+    };
   }
 
   return {};
@@ -1494,13 +1529,31 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     const isDevelopment = c.env.ENVIRONMENT === 'development' || c.env.NODE_ENV === 'development';
     const validation = validateRegistrationRequest(body, {
       allowLocalhostHttp: isDevelopment,
-      allowLoopbackHttp: restrictedAgentRegistration,
     });
     if (!validation.valid) {
       return c.json(validation.error, 400);
     }
+    const idTokenSigning = await readIDTokenSigningPolicy(c, tenantId);
+    if (idTokenSigning instanceof Response) return idTokenSigning;
+    const idTokenAlgorithmRefusal = idTokenSigningAlgorithmRefusal(
+      body?.id_token_signed_response_alg,
+      idTokenSigning
+    );
+    if (idTokenAlgorithmRefusal) {
+      return c.json(
+        { error: 'invalid_client_metadata', error_description: idTokenAlgorithmRefusal },
+        400
+      );
+    }
 
-    const request = validation.data;
+    // A copy: the checks below read the request as the app sent it (`body`).
+    const request = { ...validation.data };
+    // OIDC Registration §2: an omitted id_token_signed_response_alg means RS256. When the
+    // tenant signs with another algorithm, register (and answer) that one, so the app is told
+    // what it gets.
+    if (!request.id_token_signed_response_alg && idTokenSigning.algorithm !== 'RS256') {
+      request.id_token_signed_response_alg = idTokenSigning.algorithm;
+    }
     if (restrictedAgentRegistration) {
       const unsupported = Object.keys(body ?? {}).filter(
         (key) =>
@@ -1599,21 +1652,13 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
           : SELF_SERVICE_AGENT_SCOPES.join(' ');
       request.application_type = request.application_type ?? 'native';
     }
-    const systemSettings = (await getTenantSystemSettings(c.env.SETTINGS, tenantId, {
-      failOnError: true,
-    })) as {
-      fapi?: {
-        enabled?: boolean;
-        messageSigning?: {
-          enabled?: boolean;
-          requestObjectSigningAlgorithms?: string[];
-          authorizationSigningAlgorithms?: string[];
-        };
-      };
-    } | null;
+    // A client being registered has no client settings yet: the tenant's apply.
+    const systemSettings = await resolveProtocolSettings(c.env, tenantId, {
+      sections: ['fapi'],
+    });
     if (
       !restrictedAgentRegistration &&
-      systemSettings?.fapi?.enabled === true &&
+      systemSettings.fapi.enabled === true &&
       (request.token_endpoint_auth_method ?? 'client_secret_basic') !== 'private_key_jwt'
     ) {
       return c.json(
@@ -1627,7 +1672,7 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     }
     if (
       !restrictedAgentRegistration &&
-      systemSettings?.fapi?.enabled === true &&
+      systemSettings.fapi.enabled === true &&
       request.token_endpoint_auth_signing_alg &&
       !FAPI2_MESSAGE_SIGNING_ALGS.includes(
         request.token_endpoint_auth_signing_alg as (typeof FAPI2_MESSAGE_SIGNING_ALGS)[number]
@@ -1643,7 +1688,7 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       );
     }
 
-    const messageSigning = systemSettings?.fapi?.messageSigning;
+    const messageSigning = systemSettings.fapi.messageSigning;
     if (
       messageSigning?.enabled === true &&
       request.request_object_signing_alg &&
@@ -1662,7 +1707,7 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     if (
       messageSigning?.enabled === true &&
       request.authorization_signed_response_alg &&
-      !(messageSigning.authorizationSigningAlgorithms ?? ['ES256']).includes(
+      !((messageSigning.authorizationSigningAlgorithms ?? ['ES256']) as string[]).includes(
         request.authorization_signed_response_alg
       )
     ) {
@@ -1750,16 +1795,52 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     const grantTypes = request.grant_types || ['authorization_code'];
     const responseTypes = request.response_types || ['code'];
     const applicationType = request.application_type || 'web';
+    // The tenant's redirect URI policy, as authorize will apply it (security.https_redirect_only).
+    let refusedRedirectUri: string | null;
+    try {
+      refusedRedirectUri = await redirectUriRefusedByPolicy(c.env, tenantId, {
+        redirectUris: request.redirect_uris,
+        applicationType,
+      });
+    } catch (error) {
+      getLogger(c)
+        .module('DCR')
+        .error('Redirect URI policy could not be read', {}, error as Error);
+      return c.json({ error: 'server_error', error_description: 'Failed to register client' }, 500);
+    }
+    if (refusedRedirectUri) {
+      return c.json(
+        {
+          error: 'invalid_redirect_uri',
+          error_description: `${REDIRECT_URI_POLICY_DESCRIPTION}: ${refusedRedirectUri}`,
+        },
+        400
+      );
+    }
     const requirePkce =
       request.require_pkce ??
       (tokenEndpointAuthMethod === 'none' && grantTypes.includes('authorization_code'));
-    const defaultTarget = await resolveDefaultAccessTokenTarget(
-      c.env,
-      tenantId,
-      issuerUrl,
-      request,
-      grantTypes
-    );
+    let defaultTarget: Awaited<ReturnType<typeof resolveDefaultAccessTokenTarget>>;
+    try {
+      defaultTarget = await resolveDefaultAccessTokenTarget(
+        c.env,
+        tenantId,
+        issuerUrl,
+        request,
+        grantTypes,
+        getLogger(c).module('DCR'),
+        getTenantMetadataContextFromHono(c)?.coreDb
+      );
+    } catch (error) {
+      if (!(error instanceof DefaultTargetUnavailableError)) throw error;
+      return c.json(
+        {
+          error: 'temporarily_unavailable',
+          error_description: 'Registration settings are temporarily unavailable',
+        },
+        503
+      );
+    }
 
     // Determine if client is trusted based on redirect_uri domain
     // Trusted clients can skip consent screens (First-Party clients)
@@ -1815,6 +1896,12 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     if (request.default_scope) response.default_scope = request.default_scope;
     if (request.default_audience) response.default_audience = request.default_audience;
     if (request.default_resource) response.default_resource = request.default_resource;
+    // The tenant's default target is part of the registered metadata (RFC 7591 section 3.2.1): the
+    // app sees what its tokens will be for. The issuer URL an authorization code app gets is not.
+    if (defaultTarget.fromTenantDefault) {
+      if (defaultTarget.defaultAudience) response.default_audience = defaultTarget.defaultAudience;
+      if (defaultTarget.defaultResource) response.default_resource = defaultTarget.defaultResource;
+    }
     // OIDC Core 8: Subject type and sector identifier
     response.subject_type = subjectType;
     if (request.sector_identifier_uri)
@@ -1962,6 +2049,14 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
       }
     });
 
+    // The OpenID certification suite registers its clients without `scope`, then asks for every
+    // standard scope. Only in conformance mode (feature.conformance_enabled) does such a client get
+    // them implicitly; otherwise a client can ask only for what it registers (or the default
+    // openid/profile/email), so nothing is granted behind the operator's back.
+    if (isCertificationTest && !request.scope && (await isConformanceMode(c.env))) {
+      response.scope = CONFORMANCE_CLIENT_DEFAULT_SCOPE;
+    }
+
     // Hash client secret for secure storage
     const clientSecretHash = await hashClientSecret(clientSecret);
 
@@ -2069,75 +2164,6 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
 
     // Log client registration for debugging/auditing
     log.info('Client registered', { action: 'register', clientId });
-
-    const requiresInteractiveConformanceUser =
-      !request.grant_types?.length ||
-      request.grant_types.some((grant) => grant !== 'client_credentials');
-
-    if (isCertificationTest && requiresInteractiveConformanceUser) {
-      log.info('OIDC Conformance Test detected, creating test user', { action: 'register' });
-
-      const testUserId = buildConformanceTestUserId(
-        tenantId,
-        c.env.DEFAULT_TENANT_ID?.trim() || 'default'
-      );
-      const testAddress = {
-        formatted: '1234 Main St, Anytown, ST 12345, USA',
-        street_address: '1234 Main St',
-        locality: 'Anytown',
-        region: 'ST',
-        postal_code: '12345',
-        country: 'USA',
-      };
-
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      await new CanonicalRuntimeUserStore({
-        coreAdapter: authCtx.coreAdapter,
-        piiAdapter: piiCtx.defaultPiiAdapter,
-        tenantId,
-      }).syncUser({
-        userId: testUserId,
-        email: 'test@example.com',
-        name: 'John Doe',
-        active: true,
-        emailVerified: true,
-        phoneNumberVerified: true,
-        userType: 'end_user',
-        sourceRef: 'oidc-conformance-registration',
-        piiFields: {
-          given_name: true,
-          family_name: true,
-          nickname: true,
-          preferred_username: true,
-          picture: true,
-          website: true,
-          gender: true,
-          birthdate: true,
-          zoneinfo: true,
-          locale: true,
-          phone_number: true,
-        },
-        sensitiveValues: {
-          given_name: 'John',
-          family_name: 'Doe',
-          nickname: 'Johnny',
-          preferred_username: 'test',
-          picture: 'https://example.com/avatar.jpg',
-          website: 'https://example.com',
-          gender: 'male',
-          birthdate: '1990-01-01',
-          zoneinfo: 'America/New_York',
-          locale: 'en-US',
-          phone_number: '+1-555-0100',
-        },
-        addressJson: JSON.stringify(testAddress),
-      });
-
-      log.info('Conformance test user created or verified', {
-        action: 'register',
-        userId: testUserId,
-      });
-    }
 
     return c.json(response, 201, {
       'Cache-Control': 'no-store',

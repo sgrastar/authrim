@@ -14,6 +14,7 @@ const securityRegressionIt =
 class MockDurableObjectState implements Partial<DurableObjectState> {
   private _storage = new Map<string, unknown>();
   private failPutKey: string | null = null;
+  private failNextBatchDelete = false;
   private blockedInitialization: Promise<unknown> = Promise.resolve();
   id!: DurableObjectId;
   storage: DurableObjectStorage;
@@ -36,6 +37,10 @@ class MockDurableObjectState implements Partial<DurableObjectState> {
         return Promise.resolve();
       },
       delete: (keyOrKeys: string | string[]): Promise<boolean | number> => {
+        if (Array.isArray(keyOrKeys) && this.failNextBatchDelete) {
+          this.failNextBatchDelete = false;
+          return Promise.reject(new Error('Durable Storage unavailable'));
+        }
         if (typeof keyOrKeys === 'string') {
           const existed = this._storage.has(keyOrKeys);
           this._storage.delete(keyOrKeys);
@@ -93,6 +98,10 @@ class MockDurableObjectState implements Partial<DurableObjectState> {
 
   failNextPut(key: string): void {
     this.failPutKey = key;
+  }
+
+  failNextDeleteMany(): void {
+    this.failNextBatchDelete = true;
   }
 
   async waitForBlockedInitialization(): Promise<void> {
@@ -269,6 +278,30 @@ describe('AuthorizationCodeStore', () => {
       expect(body.authTime).toBe(1700000000);
       expect(body.acr).toBe('urn:mace:incommon:iap:silver');
       expect(body.amr).toEqual(['passkey', 'webauthn']);
+    });
+
+    it.each([
+      ['keeps', true, true],
+      ['records nothing of', undefined, undefined],
+    ])('%s the FAL3 evidence of a pushed, signed request', async (_label, stored, consumed) => {
+      const code = `auth_code_fal3_${String(stored)}`;
+      await codeStore.storeCodeRpc({
+        code,
+        clientId: 'client_1',
+        tenantId: 'default',
+        redirectUri: 'https://app.example.com/callback',
+        userId: 'user_123',
+        scope: 'openid',
+        ...(stored ? { pushedSignedRequest: stored } : {}),
+      });
+
+      const result = await codeStore.consumeCodeRpc({
+        code,
+        clientId: 'client_1',
+        tenantId: 'default',
+      });
+
+      expect(result.pushedSignedRequest).toBe(consumed);
     });
 
     securityRegressionIt(
@@ -814,6 +847,36 @@ describe('AuthorizationCodeStore', () => {
   });
 
   describe('Code Expiration (60 seconds TTL)', () => {
+    it('uses the lifetime configured for the tenant or client when the caller passes one', async () => {
+      const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+      try {
+        const configured = await codeStore.storeCodeRpc({
+          code: 'code-configured-ttl',
+          clientId: 'client_1',
+          tenantId: 'default',
+          redirectUri: 'https://app.example.com/callback',
+          userId: 'user_ttl',
+          scope: 'openid',
+          ttlSeconds: 30,
+        });
+        expect(configured.expiresAt).toBe(1_000_000 + 30_000);
+
+        const invalid = await codeStore.storeCodeRpc({
+          code: 'code-invalid-ttl',
+          clientId: 'client_1',
+          tenantId: 'default',
+          redirectUri: 'https://app.example.com/callback',
+          userId: 'user_ttl',
+          scope: 'openid',
+          ttlSeconds: -5,
+        });
+        // An unusable lifetime falls back to the store's own.
+        expect(invalid.expiresAt).toBeGreaterThan(1_000_000 + 30_000);
+      } finally {
+        now.mockRestore();
+      }
+    });
+
     it('should reject expired code', async () => {
       // Note: This test is difficult to implement without mocking time
       // In a real scenario, we would mock Date.now() or use a time-based library
@@ -879,6 +942,42 @@ describe('AuthorizationCodeStore', () => {
       }
     );
 
+    it('logs a failed periodic cleanup instead of leaving an unhandled rejection', async () => {
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      process.on('unhandledRejection', onUnhandled);
+      vi.useFakeTimers();
+      try {
+        const cleanupState = new MockDurableObjectState();
+        const cleanupStore = new AuthorizationCodeStore(
+          cleanupState as unknown as DurableObjectState,
+          { AUTH_CODE_CLEANUP_INTERVAL: '1' } as Env
+        );
+        await cleanupState.waitForBlockedInitialization();
+        await cleanupStore.storeCodeRpc({
+          code: 'cleanup-failure-code',
+          clientId: 'client_1',
+          tenantId: 'default',
+          redirectUri: 'https://app.example.com/callback',
+          userId: 'cleanup-failure-user',
+          scope: 'openid',
+          ttlSeconds: 1,
+        });
+
+        cleanupState.failNextDeleteMany();
+        await vi.advanceTimersByTimeAsync(2_000);
+        vi.useRealTimers();
+        // Node reports an unhandled rejection once the microtask queue drains.
+        await new Promise((resolve) => setImmediate(resolve));
+        await new Promise((resolve) => setImmediate(resolve));
+
+        expect(unhandled).toEqual([]);
+      } finally {
+        vi.useRealTimers();
+        process.off('unhandledRejection', onUnhandled);
+      }
+    });
+
     it('decrements the per-user counter on explicit deletion as a negative control', async () => {
       const limitedState = new MockDurableObjectState();
       const limitedStore = new AuthorizationCodeStore(
@@ -901,6 +1000,38 @@ describe('AuthorizationCodeStore', () => {
       await expect(limitedStore.deleteCodeRpc('delete-counter-original')).resolves.toBe(true);
       await expect(
         limitedStore.storeCodeRpc({ code: 'delete-counter-replacement', ...request })
+      ).resolves.toMatchObject({ success: true });
+    });
+  });
+
+  describe('per-request limits', () => {
+    it("applies the request's per-user code limit over the store's own", async () => {
+      const limitedState = new MockDurableObjectState();
+      const limitedStore = new AuthorizationCodeStore(
+        limitedState as unknown as DurableObjectState,
+        { AUTH_CODE_EXPIRY: '60', MAX_CODES_PER_USER: '100' } as Env
+      );
+      await limitedState.waitForBlockedInitialization();
+      const request = {
+        clientId: 'client_1',
+        tenantId: 'default',
+        redirectUri: 'https://app.example.com/callback',
+        userId: 'per-request-limit',
+        scope: 'openid',
+        maxCodesPerUser: 1,
+      };
+
+      await limitedStore.storeCodeRpc({ code: 'per-request-first', ...request });
+      await expect(
+        limitedStore.storeCodeRpc({ code: 'per-request-second', ...request })
+      ).rejects.toThrow('Too many authorization codes');
+      // Without one, the store's limit applies.
+      await expect(
+        limitedStore.storeCodeRpc({
+          code: 'per-request-third',
+          ...request,
+          maxCodesPerUser: undefined,
+        })
       ).resolves.toMatchObject({ success: true });
     });
   });

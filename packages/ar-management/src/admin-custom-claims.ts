@@ -11,6 +11,7 @@
  * All endpoints require admin authentication via adminAuthMiddleware()
  */
 
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { Context } from 'hono';
 import type { Env, AdminAuthContext, DatabaseSource } from '@authrim/ar-lib-core';
 import {
@@ -45,6 +46,7 @@ import {
   BUILTIN_PROFILE_CLAIM_KEYS,
 } from '@authrim/ar-lib-core';
 import { CUSTOM_CLAIM_PRESETS, type CustomClaimPresetField } from './custom-claim-presets';
+import { ASSURANCE_IMPORT_COLUMNS } from './admin-shared';
 
 /**
  * Hono context type with admin auth variable
@@ -109,7 +111,7 @@ async function mapWithConcurrency<T, R>(
 ): Promise<R[]> {
   const results = new Array<R>(values.length);
   let cursor = 0;
-  await Promise.all(
+  await samlDrAll(
     Array.from({ length: Math.min(concurrency, values.length) }, async () => {
       while (cursor < values.length) {
         const index = cursor++;
@@ -243,6 +245,11 @@ const RESERVED_CLAIM_NAMES = new Set([
   'address_region',
   'address_postal_code',
   'address_country',
+  // CSV import columns that carry identity assurance (evidence, not attributes)
+  ...ASSURANCE_IMPORT_COLUMNS,
+  // Claims computed from a person's evidence when a token or response is made
+  'eduperson_assurance',
+  'verified_claims',
 ]);
 
 /** Valid field types */
@@ -1681,6 +1688,21 @@ export async function adminCustomClaimUpdateHandler(c: AdminContext) {
         variables: {
           field: 'operation_status',
           reason: 'Schema is currently being modified. Wait for the operation to complete.',
+        },
+      });
+    }
+
+    // An attribute with the name of a CSV assurance column cannot be made active again: its
+    // values would collide with the identity assurance that column carries.
+    const reactivating =
+      body.is_active !== undefined &&
+      !!body.is_active &&
+      !(schema.is_active === 1 || schema.is_active === true);
+    if (reactivating && ASSURANCE_IMPORT_COLUMNS.includes(String(schema.field_key))) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
+        variables: {
+          field: 'is_active',
+          reason: `'${String(schema.field_key)}' is a reserved or built-in profile field name`,
         },
       });
     }

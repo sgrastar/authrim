@@ -1,11 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Context } from 'hono';
-import type { DatabaseAdapter, Env, FlowRuntimeContract } from '@authrim/ar-lib-core';
+import {
+  IdentityMappingResolutionError,
+  IdentityMappingSelectionError,
+  OIDCIdentityMappingRuntimeError,
+  readClientIdentityMappingChoice,
+  type DatabaseAdapter,
+  type Env,
+  type FlowRuntimeContract,
+} from '@authrim/ar-lib-core';
 import {
   cleanupExpiredFlowInteractions,
   clearLoginRuntimeFlowVersionCacheForTests,
   loginRuntimeEmailVerificationChallengeHandler,
   loginRuntimeInteractionStartHandler,
+  insertDestinationFieldConsentRecord,
   loginRuntimeInteractionSubmitHandler,
 } from '../login-runtime-flow';
 
@@ -44,20 +53,34 @@ const mocks = vi.hoisted(() => {
 
   return {
     coreAdapter,
+    emitLog: vi.fn(
+      async (
+        _env: unknown,
+        _input: import('@authrim/ar-lib-core/services/log-iceberg-emitter').LogIcebergRowWrite
+      ) => {}
+    ),
     adminAdapter,
     sessionStore,
     challengeStore,
     runtimeUsers,
     resolveRuntimeIdentityMappingBinding: vi.fn(),
+    resolveOidcIdentityMappingBinding: vi.fn(),
     idQueue,
     consumeAuthorizationChallengeContinuation: vi.fn(),
+    readAuthorizationChallengeFreshness: vi.fn(),
     getFeatureFlag: vi.fn(),
+    resolveAccountCoreDataContext: vi.fn(),
+    resolveAccountDataContextFromHono: vi.fn(async () => undefined),
     info: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
   };
 });
 
+vi.mock('@authrim/ar-lib-core/services/log-iceberg-emitter', async (original) => ({
+  ...(await original<typeof import('@authrim/ar-lib-core/services/log-iceberg-emitter')>()),
+  emitLogIcebergRow: mocks.emitLog,
+}));
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
@@ -65,6 +88,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     createAuthContextFromHono: vi.fn(() => ({
       coreAdapter: mocks.coreAdapter,
     })),
+    createAccountAuthContextFromHono: vi.fn(() => ({ coreAdapter: mocks.coreAdapter })),
+    resolveAccountDataContextFromHono: mocks.resolveAccountDataContextFromHono,
     createPIIContextFromHono: vi.fn(() => ({ defaultPiiAdapter: {} })),
     CanonicalRuntimeUserStore: class {
       findById(...args: unknown[]) {
@@ -85,12 +110,20 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     })),
     getTenantIdFromContext: vi.fn(() => 'tenant_test'),
     resolveRuntimeIdentityMappingBinding: mocks.resolveRuntimeIdentityMappingBinding,
+    resolveOidcIdentityMappingBinding: mocks.resolveOidcIdentityMappingBinding,
+    resolveAccountCoreDataContext: mocks.resolveAccountCoreDataContext,
   };
 });
 
-vi.mock('../direct-auth', () => ({
-  consumeAuthorizationChallengeContinuation: mocks.consumeAuthorizationChallengeContinuation,
-}));
+vi.mock('../direct-auth', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../direct-auth')>();
+  return {
+    consumeAuthorizationChallengeContinuation: mocks.consumeAuthorizationChallengeContinuation,
+    readAuthorizationChallengeFreshness: mocks.readAuthorizationChallengeFreshness,
+    isProofOlderThanChallengeRequirement: actual.isProofOlderThanChallengeRequirement,
+    reauthProofFromRecord: actual.reauthProofFromRecord,
+  };
+});
 
 type RuntimeContext = Context<{ Bindings: Env }>;
 
@@ -684,6 +717,32 @@ const conditionRuntime: FlowRuntimeContract = {
   },
 };
 
+/** A condition on the user's roles: admins go to consent, others skip it. */
+const roleConditionRuntime: FlowRuntimeContract = {
+  ...conditionRuntime,
+  ui: {
+    steps: conditionRuntime.ui.steps.map((step) =>
+      step.component === 'condition'
+        ? {
+            ...step,
+            config: {
+              conditions: {
+                rows: [
+                  {
+                    id: 'admin-role',
+                    condition: { type: 'user.role', value: 'admin' },
+                    output_handle: 'needs_consent',
+                  },
+                ],
+                otherwise: { output_handle: 'skip_consent' },
+              },
+            },
+          }
+        : step
+    ),
+  },
+};
+
 const conditionEditor = {
   nodes: [
     { id: 'entry', type: 'entry' },
@@ -750,8 +809,65 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
     : {};
 }
 
+/** The statements run inside the interaction's transactions since the last reset. */
+const txExecuteCalls: Array<[string, unknown[] | undefined]> = [];
+
+/**
+ * The selection and reading of the Mapping Set the app is bound to (tested in ar-lib-core): an app
+ * that names a Mapping Set is bound to it, with `destination_oidc_1` as its Destination Profile,
+ * and one that names none is bound to nothing.
+ */
+function oidcResolution(setId: string | null, destinationProfileId = 'destination_oidc_1') {
+  const chain = [
+    { tier: 'client', state: setId ? 'set' : 'unset' },
+    { tier: 'tenant_default', state: 'unset' },
+    { tier: 'platform_default', state: 'unset' },
+  ];
+  return setId
+    ? {
+        selection: { kind: 'bound', tier: 'client', setId, chain },
+        binding: {
+          fieldMappingSetId: setId,
+          destinationProfileId,
+          destinationProfileIds: [destinationProfileId],
+        },
+      }
+    : { selection: { kind: 'none', reason: 'no_default', chain }, binding: null };
+}
+
+/** The selection's reading of the app's own choice is the real one: what it rejects fails here too. */
+function failIfNotAChoice(clientSelector: unknown): void {
+  const choice = readClientIdentityMappingChoice(clientSelector);
+  if (choice.kind === 'invalid') {
+    throw new IdentityMappingSelectionError(
+      'client_selector_invalid',
+      'client',
+      undefined,
+      choice.reason
+    );
+  }
+}
+
+function namedSetId(clientSelector: unknown): string | null {
+  try {
+    const value =
+      typeof clientSelector === 'string' ? JSON.parse(clientSelector) : (clientSelector ?? {});
+    return typeof value?.fieldMappingSetId === 'string' ? value.fieldMappingSetId : null;
+  } catch {
+    return null;
+  }
+}
+
 function resetAdapter() {
   vi.clearAllMocks();
+  mocks.resolveOidcIdentityMappingBinding.mockReset();
+  mocks.resolveOidcIdentityMappingBinding.mockImplementation(
+    async (input: { clientSelector: unknown }) => {
+      failIfNotAChoice(input.clientSelector);
+      return oidcResolution(namedSetId(input.clientSelector));
+    }
+  );
+  txExecuteCalls.length = 0;
   mocks.coreAdapter.query.mockReset();
   mocks.coreAdapter.queryOne.mockReset();
   mocks.coreAdapter.execute.mockReset();
@@ -767,7 +883,13 @@ function resetAdapter() {
   mocks.challengeStore.getChallengeRpc.mockReset();
   mocks.challengeStore.storeChallengeRpc.mockReset();
   mocks.runtimeUsers.findById.mockReset();
+  mocks.resolveAccountDataContextFromHono.mockReset().mockResolvedValue(undefined);
   mocks.consumeAuthorizationChallengeContinuation.mockReset();
+  mocks.readAuthorizationChallengeFreshness.mockReset();
+  mocks.readAuthorizationChallengeFreshness.mockResolvedValue(null);
+  // No account unless a test gives one (a user without an account has no roles).
+  mocks.resolveAccountCoreDataContext.mockReset();
+  mocks.resolveAccountCoreDataContext.mockRejectedValue(new Error('account_data_route_not_found'));
   clearLoginRuntimeFlowVersionCacheForTests();
   mocks.idQueue.splice(
     0,
@@ -783,7 +905,10 @@ function resetAdapter() {
   mocks.coreAdapter.transaction.mockImplementation(
     async (fn: (tx: DatabaseAdapter) => Promise<unknown>) => {
       const tx = {
-        execute: vi.fn(async () => ({ success: true, rowsAffected: 1 })),
+        execute: vi.fn(async (sql: string, params?: unknown[]) => {
+          txExecuteCalls.push([sql, params]);
+          return { success: true, rowsAffected: 1 };
+        }),
       } as unknown as DatabaseAdapter;
       return fn(tx);
     }
@@ -821,7 +946,7 @@ function mockStartQueries(
 
 function mockSubmitQueries(input: {
   state?: string;
-  expiresAt?: number;
+  expiresAt: number;
   contractHash: string;
   signature: string;
   currentNodeId?: string;
@@ -832,6 +957,7 @@ function mockSubmitQueries(input: {
   context?: Record<string, unknown>;
   clientId?: string | null;
   samlSpId?: string | null;
+  userId?: string | null;
 }) {
   const currentNodeId = input.currentNodeId ?? 'entry';
   const currentStepId = input.currentStepId ?? 'entry:step';
@@ -840,6 +966,7 @@ function mockSubmitQueries(input: {
       id: 'interaction_1',
       flow_id: 'flow_login',
       flow_version_id: 'fv_1',
+      user_id: input.userId ?? null,
       client_id: input.clientId ?? null,
       saml_sp_id: input.samlSpId ?? null,
       state: input.state ?? 'active',
@@ -857,7 +984,7 @@ function mockSubmitQueries(input: {
       }),
       contract_hash: input.contractHash,
       signature: input.signature,
-      expires_at: input.expiresAt ?? Math.floor(Date.now() / 1000) + 600,
+      expires_at: input.expiresAt,
     })
     .mockResolvedValueOnce({
       id: 'step_1',
@@ -1012,8 +1139,8 @@ describe('LoginUI runtime Flow handlers', () => {
     const data = await readJson(response);
 
     expect(response.status).toBe(400);
-    expect(data.error).toBe('invalid_authorization_challenge');
-    expect(data.error_code).toBe('AR_FLOW_AUTH_CHALLENGE_INVALID');
+    expect(data.error).toBe('authorization_request_expired');
+    expect(data.error_code).toBe('AR_FLOW_AUTH_REQUEST_EXPIRED');
     expect(mocks.coreAdapter.queryOne).not.toHaveBeenCalled();
     expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
   });
@@ -1328,7 +1455,7 @@ describe('LoginUI runtime Flow handlers', () => {
       runtimeSnapshot: explicitEmailVerificationRuntime,
       editorSnapshot: explicitEmailVerificationEditor,
     });
-    mocks.sessionStore.getSessionRpc.mockResolvedValueOnce({
+    mocks.sessionStore.getSessionRpc.mockResolvedValue({
       id: 'sess_runtime_1',
       userId: 'user_1',
       createdAt: Date.now(),
@@ -1366,6 +1493,77 @@ describe('LoginUI runtime Flow handlers', () => {
     expect(mocks.runtimeUsers.findById).toHaveBeenCalledWith('user_1', {
       includeInactive: true,
     });
+    expect(mocks.resolveAccountDataContextFromHono).toHaveBeenCalledWith(
+      expect.anything(),
+      'user_1'
+    );
+  });
+
+  it('retains the email-verification rejection and metadata audit for a known inactive owner', async () => {
+    const { data: startData } = await startInteraction(
+      { flow_kind: 'login' },
+      explicitEmailVerificationRuntime,
+      explicitEmailVerificationEditor
+    );
+    const interaction = startData.interaction as Record<string, unknown>;
+    resetAdapter();
+    mockSubmitQueries({
+      contractHash: String(startData.contract_hash),
+      signature: String(startData.signature),
+      expiresAt: Number(interaction.expires_at),
+      currentNodeId: 'email-verify',
+      currentStepId: 'email-verify:step',
+      stepState: 'waiting_input',
+      runtimeSnapshot: explicitEmailVerificationRuntime,
+      editorSnapshot: explicitEmailVerificationEditor,
+    });
+    mocks.sessionStore.getSessionRpc.mockResolvedValue({
+      id: 'sess_runtime_1',
+      userId: 'user_1',
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+      data: {
+        amr: ['email_verification_protocol'],
+        authTime: Math.floor(Date.now() / 1000),
+        runtime_interaction_id: 'interaction_1',
+      },
+    });
+    mocks.resolveAccountDataContextFromHono.mockRejectedValueOnce(
+      new Error('lookup_destination_revalidation_failed', { cause: 'account_inactive' })
+    );
+
+    const response = await loginRuntimeInteractionSubmitHandler(
+      createContext({
+        params: { interaction_id: 'interaction_1' },
+        headers: { Cookie: 'authrim_session=sess_runtime_1' },
+        body: {
+          step_id: 'email-verify:step',
+          node_id: 'email-verify',
+          selected_handle: 'verified',
+          contract_hash: startData.contract_hash,
+          signature: startData.signature,
+        },
+      })
+    );
+    const data = await readJson(response);
+
+    expect(response.status).toBe(403);
+    expect(data).toMatchObject({
+      error: 'email_verification_required',
+      error_code: 'AR_FLOW_EMAIL_VERIFICATION_REQUIRED',
+    });
+    expect(mocks.runtimeUsers.findById).not.toHaveBeenCalled();
+    expect(mocks.emitLog.mock.calls.at(-1)?.[1]).toMatchObject({
+      sourceDataset: 'core.flow_audit_events',
+      row: {
+        event_type: 'flow.interaction.failed',
+        error_code: 'AR_FLOW_EMAIL_VERIFICATION_REQUIRED',
+      },
+    });
+    expect(mocks.resolveAccountDataContextFromHono).toHaveBeenCalledWith(
+      expect.anything(),
+      'user_1'
+    );
   });
 
   it('rejects start when the runtime feature flag is disabled', async () => {
@@ -1851,7 +2049,7 @@ describe('LoginUI runtime Flow handlers', () => {
     mockStartQueries(consentRuntime);
     mocks.coreAdapter.queryOne
       .mockResolvedValueOnce({
-        identity_mapping: JSON.stringify({ destinationProfileId: 'destination_oidc_1' }),
+        identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
       })
       .mockResolvedValueOnce({
         id: 'policy_registration',
@@ -1897,6 +2095,7 @@ describe('LoginUI runtime Flow handlers', () => {
 
     resetAdapter();
     mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
       contractHash: String(startData.contract_hash),
       signature: String(startData.signature),
       currentNodeId: 'consent',
@@ -1914,7 +2113,7 @@ describe('LoginUI runtime Flow handlers', () => {
     });
     mocks.coreAdapter.queryOne
       .mockResolvedValueOnce({
-        identity_mapping: JSON.stringify({ destinationProfileId: 'destination_oidc_1' }),
+        identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
       })
       .mockResolvedValueOnce({
         id: 'policy_registration',
@@ -1978,6 +2177,166 @@ describe('LoginUI runtime Flow handlers', () => {
     );
   });
 
+  it.each([
+    [['openid'], ['sub', 'department']],
+    [
+      ['openid', 'email'],
+      ['sub', 'email', 'department'],
+    ],
+    [
+      ['openid', 'profile', 'email'],
+      ['sub', 'email', 'name', 'department'],
+    ],
+  ])(
+    'asks only about the fields a request with scopes %j can release when the profile lists none',
+    async (requestedScope, expectedKeys) => {
+      mockStartQueries(consentRuntime);
+      mocks.coreAdapter.queryOne
+        .mockResolvedValueOnce({
+          identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
+        })
+        .mockResolvedValueOnce({
+          id: 'policy_registration',
+          display_name: 'Authorization consent',
+          description: null,
+          is_active: 1,
+        });
+      mocks.coreAdapter.query.mockResolvedValueOnce([]);
+      mocks.adminAdapter.queryOne.mockResolvedValueOnce({
+        profile_id: 'destination_oidc_1',
+        destination_type: 'oidc',
+        version_id: 'destination_oidc_version_1',
+        schema_json: JSON.stringify({
+          claims: [
+            { claimName: 'sub', label: 'Subject', required: true },
+            // Required and not sensitive, so a profile may list no scope for it.
+            {
+              claimName: 'email',
+              label: 'Email',
+              required: true,
+              classification: 'internal',
+              requiredScopes: [],
+            },
+            { claimName: 'name', label: 'Name', required: false, classification: 'internal' },
+            { claimName: 'department', label: 'Department', required: false },
+          ],
+        }),
+      });
+
+      const response = await loginRuntimeInteractionStartHandler(
+        createContext({
+          env: { DB_ADMIN: mocks.adminAdapter as never },
+          body: { flow_kind: 'login', client_id: 'client_1', requested_scope: requestedScope },
+        })
+      );
+      const contract = (await readJson(response)).contract as FlowRuntimeContract;
+      const consent = contract.ui.steps[0]?.content?.destination_field_consent as {
+        fields: Array<{ key: string; required_scopes: string[] }>;
+      };
+
+      expect(consent.fields.map((field) => field.key)).toEqual(expectedKeys);
+      // The scope shown is the one the release filter will require.
+      expect(consent.fields.find((field) => field.key === 'email')?.required_scopes).toEqual(
+        expectedKeys.includes('email') ? ['email'] : undefined
+      );
+    }
+  );
+
+  it('does not demand consent to a field the request cannot release', async () => {
+    const profile = {
+      profile_id: 'destination_oidc_1',
+      destination_type: 'oidc',
+      version_id: 'destination_oidc_version_1',
+      schema_json: JSON.stringify({
+        claims: [
+          { claimName: 'sub', label: 'Subject', required: true },
+          // Required, but a standard claim with no listed scope: only an email scope releases it.
+          {
+            claimName: 'email',
+            label: 'Email',
+            required: true,
+            classification: 'internal',
+            requiredScopes: [],
+          },
+        ],
+      }),
+    };
+    const policy = {
+      id: 'policy_registration',
+      display_name: 'Authorization consent',
+      description: null,
+      is_active: 1,
+    };
+    mockStartQueries(consentRuntime);
+    mocks.coreAdapter.queryOne
+      .mockResolvedValueOnce({
+        identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
+      })
+      .mockResolvedValueOnce(policy);
+    mocks.coreAdapter.query.mockResolvedValueOnce([]);
+    mocks.adminAdapter.queryOne.mockResolvedValueOnce(profile);
+    const startResponse = await loginRuntimeInteractionStartHandler(
+      createContext({
+        env: { DB_ADMIN: mocks.adminAdapter as never },
+        body: { flow_kind: 'login', client_id: 'client_1', requested_scope: ['openid'] },
+      })
+    );
+    const startData = await readJson(startResponse);
+
+    resetAdapter();
+    mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+      contractHash: String(startData.contract_hash),
+      signature: String(startData.signature),
+      currentNodeId: 'consent',
+      currentStepId: 'consent:step',
+      stepState: 'waiting_input',
+      runtimeSnapshot: consentRuntime,
+      clientId: 'client_1',
+      context: {
+        protocol: 'oidc',
+        target_type: 'oidc_client',
+        target_id: 'client_1',
+        client_id: 'client_1',
+        requested_scope: ['openid'],
+      },
+    });
+    mocks.coreAdapter.queryOne
+      .mockResolvedValueOnce({
+        identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
+      })
+      .mockResolvedValueOnce(policy)
+      .mockResolvedValueOnce(policy);
+    mocks.coreAdapter.query.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    mocks.adminAdapter.queryOne.mockResolvedValueOnce(profile);
+    mocks.sessionStore.getSessionRpc.mockResolvedValueOnce({
+      userId: 'user_1',
+      expiresAt: Date.now() + 60_000,
+      createdAt: 1_700_000_000_000,
+      data: { authTime: 1_700_000_123 },
+    });
+
+    const submitResponse = await loginRuntimeInteractionSubmitHandler(
+      createContext({
+        env: { DB_ADMIN: mocks.adminAdapter as never },
+        params: { interaction_id: 'interaction_1' },
+        headers: { Cookie: 'authrim_session=sess_runtime_1', 'User-Agent': 'Vitest' },
+        body: {
+          step_id: 'consent:step',
+          node_id: 'consent',
+          selected_handle: 'accepted',
+          contract_hash: startData.contract_hash,
+          signature: startData.signature,
+          // The email field is not shown to this request, so it is not asked for.
+          input: { destination_field_decisions: { sub: true } },
+        },
+      })
+    );
+
+    expect(submitResponse.status).toBe(200);
+    expect(await readJson(submitResponse)).not.toMatchObject({ error: 'consent_required' });
+  });
+
   it('hydrates OIDC consent from the Mapping Set active Destination Profile', async () => {
     mockStartQueries(consentRuntime);
     mocks.coreAdapter.queryOne
@@ -1994,10 +2353,9 @@ describe('LoginUI runtime Flow handlers', () => {
         is_active: 1,
       });
     mocks.coreAdapter.query.mockResolvedValueOnce([]);
-    mocks.resolveRuntimeIdentityMappingBinding.mockResolvedValueOnce({
-      destinationProfileId: 'active_destination_profile',
-      destinationProfileIds: ['active_destination_profile'],
-    });
+    mocks.resolveOidcIdentityMappingBinding.mockResolvedValueOnce(
+      oidcResolution('mapping_set_1', 'active_destination_profile')
+    );
     mocks.adminAdapter.queryOne.mockResolvedValueOnce({
       profile_id: 'active_destination_profile',
       destination_type: 'oidc',
@@ -2021,16 +2379,307 @@ describe('LoginUI runtime Flow handlers', () => {
     const contract = data.contract as FlowRuntimeContract;
 
     expect(response.status).toBe(200);
-    expect(mocks.resolveRuntimeIdentityMappingBinding).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        protocol: 'oidc',
+    // The same selection and reading as the release: the app's row and the Worker's environment.
+    expect(mocks.resolveOidcIdentityMappingBinding).toHaveBeenCalledWith({
+      env: expect.objectContaining({ DB_ADMIN: mocks.adminAdapter }),
+      tenantId: 'tenant_test',
+      clientId: 'client_1',
+      clientSelector: JSON.stringify({
         fieldMappingSetId: 'mapping_set_1',
-      })
-    );
+        destinationProfileId: 'stale_destination_profile',
+      }),
+    });
     expect(contract.ui.steps[0]?.content?.destination_field_consent).toMatchObject({
       profile_id: 'active_destination_profile',
       profile_version_id: 'active_destination_profile_v2',
+    });
+  });
+
+  it("hydrates OIDC consent from the default Mapping Set the app's tenant names when the app names none", async () => {
+    mockStartQueries(consentRuntime);
+    mocks.coreAdapter.queryOne
+      .mockResolvedValueOnce({ identity_mapping: null })
+      .mockResolvedValueOnce({
+        id: 'policy_registration',
+        display_name: 'Authorization consent',
+        description: null,
+        is_active: 1,
+      });
+    mocks.coreAdapter.query.mockResolvedValueOnce([]);
+    mocks.resolveOidcIdentityMappingBinding.mockResolvedValueOnce({
+      ...oidcResolution('tenant_default_set', 'tenant_destination_profile'),
+      selection: { kind: 'bound', tier: 'tenant_default', setId: 'tenant_default_set', chain: [] },
+    });
+    mocks.adminAdapter.queryOne.mockResolvedValueOnce({
+      profile_id: 'tenant_destination_profile',
+      destination_type: 'oidc',
+      version_id: 'tenant_destination_profile_v1',
+      schema_json: JSON.stringify({
+        claims: [
+          { claimName: 'sub', label: 'Subject', required: true },
+          { claimName: 'email', label: 'Email', required: false, requiredScopes: ['email'] },
+        ],
+      }),
+    });
+
+    const response = await loginRuntimeInteractionStartHandler(
+      createContext({
+        env: { DB_ADMIN: mocks.adminAdapter as never },
+        body: { flow_kind: 'login', client_id: 'client_1', requested_scope: ['openid', 'email'] },
+      })
+    );
+    const data = await readJson(response);
+    const contract = data.contract as FlowRuntimeContract;
+
+    expect(response.status).toBe(200);
+    expect(mocks.resolveOidcIdentityMappingBinding).toHaveBeenCalledWith(
+      expect.objectContaining({ clientId: 'client_1', clientSelector: null })
+    );
+    expect(contract.ui.steps[0]?.content?.destination_field_consent).toMatchObject({
+      profile_id: 'tenant_destination_profile',
+      fields: [
+        expect.objectContaining({ key: 'sub', required: true }),
+        expect.objectContaining({ key: 'email', required: false }),
+      ],
+    });
+  });
+
+  describe('an app that is bound to no Mapping Set', () => {
+    async function consentOf(clientRow: Record<string, unknown>, env: Partial<Env>) {
+      mockStartQueries(consentRuntime);
+      mocks.coreAdapter.queryOne.mockResolvedValueOnce(clientRow).mockResolvedValueOnce({
+        id: 'policy_registration',
+        display_name: 'Authorization consent',
+        description: null,
+        is_active: 1,
+      });
+      mocks.coreAdapter.query.mockResolvedValueOnce([]);
+      const response = await loginRuntimeInteractionStartHandler(
+        createContext({
+          env,
+          body: { flow_kind: 'login', client_id: 'client_1', requested_scope: ['openid', 'email'] },
+        })
+      );
+      const data = await readJson(response);
+      return {
+        response,
+        consent: (data.contract as FlowRuntimeContract | undefined)?.ui.steps[0]?.content
+          ?.destination_field_consent,
+      };
+    }
+
+    it.each([
+      ['has no choice of its own', { identity_mapping: null }],
+      ['opts out with { mode: "none" }', { identity_mapping: JSON.stringify({ mode: 'none' }) }],
+    ])(
+      'asks about no fields when it %s, with or without the Admin database',
+      async (_name, row) => {
+        for (const env of [{ DB_ADMIN: mocks.adminAdapter as never }, {}]) {
+          resetAdapter();
+          const { response, consent } = await consentOf(row, env);
+
+          expect(response.status).toBe(200);
+          expect(consent).toBeUndefined();
+          // No Destination Profile was looked up, and no activation was looked for by its scope.
+          expect(mocks.adminAdapter.queryOne).not.toHaveBeenCalled();
+          expect(mocks.resolveRuntimeIdentityMappingBinding).not.toHaveBeenCalled();
+        }
+      }
+    );
+
+    it.each([{ destinationProfileId: 'destination_oidc_1' }, { destination_profile_id: 'p' }])(
+      'fails for a selector of the older kind (%j), with or without the Admin database',
+      async (legacy) => {
+        for (const env of [{ DB_ADMIN: mocks.adminAdapter as never }, {}]) {
+          resetAdapter();
+
+          await expect(
+            consentOf({ identity_mapping: JSON.stringify(legacy) }, env)
+          ).rejects.toBeInstanceOf(OIDCIdentityMappingRuntimeError);
+          // Its Destination Profile was not looked up: it holds no gate any more, and the screen
+          // is not shown without one.
+          expect(mocks.adminAdapter.queryOne).not.toHaveBeenCalled();
+        }
+      }
+    );
+
+    it('fails, and does not go on with no fields to ask about, when the Mapping Set it is bound to cannot be used', async () => {
+      mocks.resolveOidcIdentityMappingBinding.mockRejectedValueOnce(
+        new IdentityMappingResolutionError('set_missing', 'tenant_default', 'set_gone')
+      );
+
+      await expect(
+        consentOf({ identity_mapping: null }, { DB_ADMIN: mocks.adminAdapter as never })
+      ).rejects.toBeInstanceOf(OIDCIdentityMappingRuntimeError);
+    });
+
+    it('fails when the Admin database is not bound and the app is bound to a set', async () => {
+      mocks.resolveOidcIdentityMappingBinding.mockRejectedValueOnce(
+        new IdentityMappingResolutionError(
+          'admin_database_unavailable',
+          'client',
+          'set_1',
+          'admin_database_not_configured'
+        )
+      );
+
+      await expect(
+        consentOf({ identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }) }, {})
+      ).rejects.toMatchObject({ code: 'admin_database_unavailable' });
+    });
+
+    it('fails when a default is not a usable value or the settings cannot be read', async () => {
+      for (const error of [
+        new IdentityMappingSelectionError('default_setting_invalid', 'tenant_default', undefined),
+        new IdentityMappingSelectionError('settings_unreadable', undefined, undefined),
+      ]) {
+        resetAdapter();
+        mocks.resolveOidcIdentityMappingBinding.mockRejectedValueOnce(error);
+
+        await expect(
+          consentOf({ identity_mapping: null }, { DB_ADMIN: mocks.adminAdapter as never })
+        ).rejects.toBeDefined();
+      }
+    });
+  });
+
+  describe('a claim the authorization request names in its claims parameter, without its scope', () => {
+    const profileRow = {
+      profile_id: 'destination_oidc_1',
+      destination_type: 'oidc',
+      version_id: 'destination_oidc_version_1',
+      schema_json: JSON.stringify({
+        claims: [
+          { claimName: 'sub', label: 'Subject', required: true },
+          { claimName: 'name', label: 'Name', required: false, requiredScopes: ['profile'] },
+          { claimName: 'email', label: 'Email', required: false, requiredScopes: ['email'] },
+          { claimName: 'locale', label: 'Locale', required: false, requiredScopes: ['directory'] },
+        ],
+      }),
+    };
+
+    // As the real Login UI starts it: the body names the client and the authorization challenge,
+    // not the scope or the claims; those are the authorization request's own.
+    async function start(
+      client: Record<string, unknown>,
+      claims: unknown,
+      options: { scope?: string; rawClaims?: string } = {}
+    ): Promise<{ keys: string[]; context: Record<string, unknown> | null }> {
+      mocks.challengeStore.getChallengeRpc.mockResolvedValueOnce({
+        id: 'login_challenge_1',
+        tenantId: 'tenant_test',
+        type: 'login',
+        userId: 'anonymous',
+        challenge: 'login_challenge_1',
+        metadata: {
+          client_id: 'client_1',
+          scope: options.scope ?? 'openid',
+          claims: options.rawClaims ?? JSON.stringify(claims),
+        },
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 600_000,
+        consumed: false,
+      });
+      mockStartQueries(consentRuntime);
+      mocks.coreAdapter.queryOne
+        .mockResolvedValueOnce({
+          identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
+          ...client,
+        })
+        .mockResolvedValueOnce({
+          id: 'policy_registration',
+          display_name: 'Authorization consent',
+          description: null,
+          is_active: 1,
+        });
+      mocks.coreAdapter.query.mockResolvedValueOnce([]);
+      mocks.adminAdapter.queryOne.mockResolvedValueOnce(profileRow);
+      const response = await loginRuntimeInteractionStartHandler(
+        createContext({
+          env: { DB_ADMIN: mocks.adminAdapter as never },
+          body: {
+            flow_kind: 'login',
+            client_id: 'client_1',
+            authorization_challenge_id: 'login_challenge_1',
+          },
+        })
+      );
+      const data = await readJson(response);
+      const contract = data.contract as FlowRuntimeContract;
+      const keys = (
+        contract.ui.steps[0]?.content?.destination_field_consent as {
+          fields: Array<{ key: string }>;
+        }
+      ).fields.map((field) => field.key);
+      const stored = txExecuteCalls
+        .filter(([sql]) => String(sql).includes('INSERT INTO flow_interactions'))
+        .flatMap(([, params]) => params ?? [])
+        .find(
+          (param): param is string =>
+            typeof param === 'string' && param.includes('"requested_scope"')
+        );
+      const context: Record<string, unknown> | null = stored
+        ? (JSON.parse(stored) as Record<string, unknown>)
+        : null;
+      return { keys, context };
+    }
+
+    it('is asked about when the client lets claims through without their scope', async () => {
+      const { keys } = await start(
+        { allow_claims_without_scope: 1 },
+        { id_token: { name: { essential: true } }, userinfo: { email: null } }
+      );
+      expect(keys).toEqual(['sub', 'name', 'email']);
+    });
+
+    it('is not asked about when the client requires the scope', async () => {
+      const { keys } = await start(
+        { allow_claims_without_scope: 0 },
+        { id_token: { name: { essential: true } } }
+      );
+      expect(keys).toEqual(['sub']);
+    });
+
+    it("takes the request's scope from the authorization request, not from the Login UI", async () => {
+      // scope=openid: the email field (scope email) is not released, so it is not asked about.
+      const { keys, context } = await start(
+        { allow_claims_without_scope: 1 },
+        {},
+        { scope: 'openid' }
+      );
+      expect(keys).toEqual(['sub']);
+      expect(context).toMatchObject({ requested_scope: ['openid'] });
+    });
+
+    it('asks about the fields of the scopes the authorization request carries', async () => {
+      const { keys, context } = await start({}, {}, { scope: 'openid email profile' });
+      expect(keys).toEqual(['sub', 'name', 'email']);
+      expect(context).toMatchObject({ requested_scope: ['openid', 'email', 'profile'] });
+    });
+
+    it('keeps every claim of a large claims parameter, for the resumed interaction too', async () => {
+      const unknownClaims = Object.fromEntries(
+        Array.from({ length: 600 }, (_, index) => [`claim_${index}`, null])
+      );
+      const rawClaims = JSON.stringify({
+        id_token: { ...unknownClaims, name: { essential: true } },
+      });
+      expect(rawClaims.length).toBeGreaterThan(8192);
+
+      const { keys, context } = await start({ allow_claims_without_scope: 1 }, null, {
+        rawClaims,
+      });
+
+      expect(keys).toEqual(['sub', 'name']);
+      expect(context).toMatchObject({ requested_claims: ['name'] });
+    });
+
+    it('is not asked about when the profile wants a scope of its own that was not requested', async () => {
+      const { keys } = await start(
+        { allow_claims_without_scope: 1 },
+        { id_token: { locale: null } }
+      );
+      expect(keys).toEqual(['sub']);
     });
   });
 
@@ -2116,6 +2765,7 @@ describe('LoginUI runtime Flow handlers', () => {
     const { data: startData } = await startInteraction();
     resetAdapter();
     mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
       contractHash: String(startData.contract_hash),
       signature: String(startData.signature),
     });
@@ -2143,36 +2793,52 @@ describe('LoginUI runtime Flow handlers', () => {
     expect(mocks.coreAdapter.transaction).toHaveBeenCalledTimes(1);
   });
 
-  it('uses editor edge handles to resolve the next runtime step', async () => {
-    const { data: startData } = await startInteraction();
-    resetAdapter();
-    mockSubmitQueries({
-      contractHash: String(startData.contract_hash),
-      signature: String(startData.signature),
-      currentNodeId: 'auth',
-      currentStepId: 'auth:step',
-      stepState: 'waiting_input',
-      runtimeSnapshot: branchingRuntime,
-      editorSnapshot: branchingEditor,
-    });
+  it('uses editor edge handles after the clock advances without changing the signed expiry', async () => {
+    const startedAt = Date.UTC(2026, 8, 22);
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(startedAt);
+    try {
+      const { data: startData } = await startInteraction();
+      clock.mockReturnValue(startedAt + 2000);
+      resetAdapter();
+      mockSubmitQueries({
+        expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+        contractHash: String(startData.contract_hash),
+        signature: String(startData.signature),
+        currentNodeId: 'auth',
+        currentStepId: 'auth:step',
+        stepState: 'waiting_input',
+        runtimeSnapshot: branchingRuntime,
+        editorSnapshot: branchingEditor,
+      });
 
-    const response = await loginRuntimeInteractionSubmitHandler(
-      createContext({
-        params: { interaction_id: 'interaction_1' },
-        body: {
-          step_id: 'auth:step',
-          node_id: 'auth',
-          selected_handle: 'passkey',
-          contract_hash: startData.contract_hash,
-          signature: startData.signature,
-        },
-      })
-    );
-    const data = await readJson(response);
+      mocks.sessionStore.getSessionRpc.mockResolvedValue({
+        userId: 'user_1',
+        expiresAt: startedAt + 60_000,
+        createdAt: startedAt - 1000,
+        data: { authTime: Math.floor(startedAt / 1000) },
+      });
 
-    expect(response.status).toBe(200);
-    expect(data.completed).toBe(true);
-    expect(data.step).toBeNull();
+      const response = await loginRuntimeInteractionSubmitHandler(
+        createContext({
+          params: { interaction_id: 'interaction_1' },
+          headers: { Cookie: 'authrim_session=sess_runtime_1' },
+          body: {
+            step_id: 'auth:step',
+            node_id: 'auth',
+            selected_handle: 'passkey',
+            contract_hash: startData.contract_hash,
+            signature: startData.signature,
+          },
+        })
+      );
+      const data = await readJson(response);
+
+      expect(response.status).toBe(200);
+      expect(data.completed).toBe(true);
+      expect(data.step).toBeNull();
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it('skips implicit account action nodes instead of returning a Continue step', async () => {
@@ -2182,6 +2848,7 @@ describe('LoginUI runtime Flow handlers', () => {
     );
     resetAdapter();
     mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
       contractHash: String(startData.contract_hash),
       signature: String(startData.signature),
       currentNodeId: 'auth',
@@ -2195,12 +2862,21 @@ describe('LoginUI runtime Flow handlers', () => {
         target_type: 'oidc_client',
         target_id: 'client_1',
         client_id: 'client_1',
+        started_at_ms: Date.now() - 1000,
       },
+    });
+
+    mocks.sessionStore.getSessionRpc.mockResolvedValue({
+      userId: 'user_1',
+      expiresAt: Date.now() + 60_000,
+      createdAt: Date.now(),
+      data: { authTime: 1_700_000_123 },
     });
 
     const response = await loginRuntimeInteractionSubmitHandler(
       createContext({
         params: { interaction_id: 'interaction_1' },
+        headers: { Cookie: 'authrim_session=sess_runtime_1' },
         body: {
           step_id: 'auth:step',
           node_id: 'auth',
@@ -2234,6 +2910,7 @@ describe('LoginUI runtime Flow handlers', () => {
     );
     resetAdapter();
     mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
       contractHash: String(startData.contract_hash),
       signature: String(startData.signature),
       currentNodeId: 'scope-condition',
@@ -2265,10 +2942,110 @@ describe('LoginUI runtime Flow handlers', () => {
     });
   });
 
+  describe("a condition on the user's roles", () => {
+    async function submitRoleCondition() {
+      const { data: startData } = await startInteraction(
+        { flow_kind: 'login' },
+        roleConditionRuntime
+      );
+      resetAdapter();
+      mockSubmitQueries({
+        expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+        contractHash: String(startData.contract_hash),
+        signature: String(startData.signature),
+        currentNodeId: 'scope-condition',
+        currentStepId: 'scope-condition:step',
+        stepState: 'pending',
+        runtimeSnapshot: roleConditionRuntime,
+        editorSnapshot: conditionEditor,
+        userId: 'user_1',
+      });
+      return { startData };
+    }
+
+    it('reads the assignment from the account database and the role from the metadata', async () => {
+      const { startData } = await submitRoleCondition();
+      // The metadata database (the request's core adapter) defines the role, nothing more.
+      mocks.coreAdapter.query.mockImplementation(async (sql: string) =>
+        sql.includes('FROM roles') && !sql.includes('user_roles')
+          ? [{ id: 'role_ar_tenant_admin', name: 'admin', permissions_json: '[]' }]
+          : []
+      );
+      const account = {
+        query: vi.fn(async (sql: string) =>
+          sql.includes('FROM role_assignments')
+            ? [
+                {
+                  id: 'ra_1',
+                  role_id: 'role_ar_tenant_admin',
+                  scope_type: 'global',
+                  scope_target: '',
+                },
+              ]
+            : []
+        ),
+        queryOne: vi.fn(),
+        execute: vi.fn(),
+        batch: vi.fn(),
+        transaction: vi.fn(),
+        isHealthy: vi.fn(),
+        getType: () => 'mock',
+        close: vi.fn(),
+      };
+      mocks.resolveAccountCoreDataContext.mockResolvedValue({ coreDb: account });
+
+      const response = await loginRuntimeInteractionSubmitHandler(
+        createContext({
+          params: { interaction_id: 'interaction_1' },
+          body: {
+            step_id: 'scope-condition:step',
+            node_id: 'scope-condition',
+            contract_hash: startData.contract_hash,
+            signature: startData.signature,
+          },
+        })
+      );
+      const data = await readJson(response);
+
+      expect(response.status).toBe(200);
+      expect(data.step).toMatchObject({ id: 'consent:step' });
+      expect(mocks.resolveAccountCoreDataContext).toHaveBeenCalledWith(expect.anything(), {
+        tenantId: 'tenant_test',
+        accountId: 'user_1',
+      });
+    });
+
+    it('chooses no branch when the account cannot be read', async () => {
+      const { startData } = await submitRoleCondition();
+      mocks.coreAdapter.query.mockResolvedValue([]);
+      mocks.resolveAccountCoreDataContext.mockRejectedValue(
+        new Error('account_data_runtime_registry_unavailable')
+      );
+
+      const response = await loginRuntimeInteractionSubmitHandler(
+        createContext({
+          params: { interaction_id: 'interaction_1' },
+          body: {
+            step_id: 'scope-condition:step',
+            node_id: 'scope-condition',
+            contract_hash: startData.contract_hash,
+            signature: startData.signature,
+          },
+        })
+      );
+      const data = await readJson(response);
+
+      expect(data.step).not.toMatchObject({ id: 'complete:step' });
+      expect(data.step).not.toMatchObject({ id: 'consent:step' });
+      expect(JSON.stringify(data)).toContain('AR_FLOW_CONDITION_CONTEXT_UNAVAILABLE');
+    });
+  });
+
   it('routes a session check node to authentication when no active session exists', async () => {
     const { data: startData } = await startInteraction({ flow_kind: 'login' }, sessionCheckRuntime);
     resetAdapter();
     mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
       contractHash: String(startData.contract_hash),
       signature: String(startData.signature),
       currentNodeId: 'session-check',
@@ -2304,6 +3081,7 @@ describe('LoginUI runtime Flow handlers', () => {
     const { data: startData } = await startInteraction({ flow_kind: 'login' }, sessionCheckRuntime);
     resetAdapter();
     mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
       contractHash: String(startData.contract_hash),
       signature: String(startData.signature),
       currentNodeId: 'session-check',
@@ -2312,7 +3090,7 @@ describe('LoginUI runtime Flow handlers', () => {
       runtimeSnapshot: sessionCheckRuntime,
       editorSnapshot: sessionCheckEditor,
     });
-    mocks.sessionStore.getSessionRpc.mockResolvedValueOnce({
+    mocks.sessionStore.getSessionRpc.mockResolvedValue({
       userId: 'user_1',
       expiresAt: Date.now() + 60_000,
       createdAt: 1_700_000_000_000,
@@ -2338,10 +3116,99 @@ describe('LoginUI runtime Flow handlers', () => {
     expect(data.step).toBeNull();
   });
 
+  it.each([
+    ['older than', 1_700_000_124_000, 'auth:step', undefined],
+    ['newer than', 1_700_000_122_000, null, 1_700_000_123_000],
+    // A session that did not record when it was proven cannot show it came after the request.
+    ['of unknown proof time, after', 1_700_000_100_000, 'auth:step', undefined],
+    // An external IdP login that was not asked to renew proves no re-authentication.
+    ['from an unrenewed external login', 1_700_000_100_000, 'auth:step', 'external'],
+    ['from a renewed external login', 1_700_000_100_000, null, 'external-renewed'],
+    ['unreadable for', new Error('challenge store unavailable'), 'auth:step', undefined],
+    // Within the same second, the session's proof time in milliseconds decides.
+    ['proven just before', 1_700_000_123_500, 'auth:step', 1_700_000_123_400],
+    ['proven just after', 1_700_000_123_500, null, 1_700_000_123_600],
+  ] as const)(
+    'routes a session %s a re-authentication request accordingly',
+    async (_label, reauthIssuedAt, nextStepId, provenAt) => {
+      const { data: startData } = await startInteraction(
+        { flow_kind: 'login' },
+        sessionCheckRuntime
+      );
+      resetAdapter();
+      mockSubmitQueries({
+        expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+        contractHash: String(startData.contract_hash),
+        signature: String(startData.signature),
+        currentNodeId: 'session-check',
+        currentStepId: 'session-check:step',
+        stepState: 'pending',
+        runtimeSnapshot: sessionCheckRuntime,
+        editorSnapshot: sessionCheckEditor,
+        context: { authorization_challenge_id: 'reauth_challenge_1' },
+      });
+      if (reauthIssuedAt instanceof Error) {
+        mocks.readAuthorizationChallengeFreshness.mockRejectedValue(reauthIssuedAt);
+      } else {
+        mocks.readAuthorizationChallengeFreshness.mockResolvedValue(
+          reauthIssuedAt === null ? null : { kind: 'reauth', issuedAt: reauthIssuedAt }
+        );
+      }
+      mocks.consumeAuthorizationChallengeContinuation.mockResolvedValue({
+        redirectUrl: 'https://rp.example.com/callback?code=abc',
+      });
+      mocks.sessionStore.getSessionRpc.mockResolvedValue({
+        userId: 'user_1',
+        expiresAt: Date.now() + 60_000,
+        createdAt: 1_700_000_000_000,
+        data: {
+          amr: typeof provenAt === 'string' ? ['external_idp'] : ['passkey'],
+          authTime: 1_700_000_123,
+          ...(typeof provenAt === 'number' ? { proven_at: provenAt } : {}),
+          ...(provenAt === 'external-renewed'
+            ? { reauth_proven_amr: ['external_idp'], reauth_proven_at: 1_700_000_123_000 }
+            : {}),
+        },
+      });
+
+      const response = await loginRuntimeInteractionSubmitHandler(
+        createContext({
+          params: { interaction_id: 'interaction_1' },
+          headers: { Cookie: 'authrim_session=sess_runtime_1' },
+          body: {
+            step_id: 'session-check:step',
+            node_id: 'session-check',
+            contract_hash: startData.contract_hash,
+            signature: startData.signature,
+          },
+        })
+      );
+      const data = await readJson(response);
+
+      // A request that cannot be read is asked for again, not decided on.
+      expect(response.status).toBe(reauthIssuedAt instanceof Error ? 503 : 200);
+      expect(mocks.readAuthorizationChallengeFreshness).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.any(String),
+        'reauth_challenge_1'
+      );
+      if (reauthIssuedAt instanceof Error) {
+        expect(data.error).toBe('temporarily_unavailable');
+      } else if (nextStepId) {
+        expect(data.completed).toBe(false);
+        expect(data.step).toMatchObject({ id: nextStepId });
+      } else {
+        expect(data.completed).toBe(true);
+        expect(data.step).toBeNull();
+      }
+    }
+  );
+
   it('prefers the completion branch matching the active protocol when handles overlap', async () => {
     const { data: startData } = await startInteraction({ flow_kind: 'login' }, sessionCheckRuntime);
     resetAdapter();
     mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
       contractHash: String(startData.contract_hash),
       signature: String(startData.signature),
       currentNodeId: 'session-check',
@@ -2357,7 +3224,7 @@ describe('LoginUI runtime Flow handlers', () => {
         client_id: 'client_1',
       },
     });
-    mocks.sessionStore.getSessionRpc.mockResolvedValueOnce({
+    mocks.sessionStore.getSessionRpc.mockResolvedValue({
       userId: 'user_1',
       expiresAt: Date.now() + 60_000,
       createdAt: 1_700_000_000_000,
@@ -2403,6 +3270,7 @@ describe('LoginUI runtime Flow handlers', () => {
     );
     resetAdapter();
     mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
       contractHash: String(startData.contract_hash),
       signature: String(startData.signature),
       currentNodeId: 'consent',
@@ -2546,6 +3414,62 @@ describe('LoginUI runtime Flow handlers', () => {
     );
   });
 
+  it("does not record consent for another user's session once the interaction is bound to a user", async () => {
+    const { data: startData } = await startInteraction(
+      { flow_kind: 'registration', client_id: 'client_1', requested_scope: 'openid profile' },
+      consentRuntime
+    );
+    resetAdapter();
+    mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+      contractHash: String(startData.contract_hash),
+      signature: String(startData.signature),
+      currentNodeId: 'consent',
+      currentStepId: 'consent:step',
+      stepState: 'waiting_input',
+      runtimeSnapshot: consentRuntime,
+      clientId: 'client_1',
+      userId: 'user_1',
+      context: {
+        protocol: 'oidc',
+        target_type: 'oidc_client',
+        target_id: 'client_1',
+        client_id: 'client_1',
+        requested_scope: ['openid', 'profile'],
+      },
+    });
+    // A session another tab made for someone else.
+    mocks.sessionStore.getSessionRpc.mockResolvedValue({
+      userId: 'user_2',
+      expiresAt: Date.now() + 60_000,
+      createdAt: 1_700_000_000_000,
+      data: { authTime: 1_700_000_123 },
+    });
+
+    const response = await loginRuntimeInteractionSubmitHandler(
+      createContext({
+        params: { interaction_id: 'interaction_1' },
+        headers: { Cookie: 'authrim_session=sess_runtime_1', 'User-Agent': 'Vitest' },
+        body: {
+          step_id: 'consent:step',
+          node_id: 'consent',
+          contract_hash: startData.contract_hash,
+          signature: startData.signature,
+          input: { consent_item_decisions: { statement_terms: 'granted' } },
+        },
+      })
+    );
+    const data = await readJson(response);
+
+    expect(response.status).toBe(403);
+    expect(data.error).toBe('access_denied');
+    expect(mocks.coreAdapter.execute).not.toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO consent_records'),
+      expect.anything()
+    );
+    expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+  });
+
   it('records selected User Decision radio values for SAML attribute release consent', async () => {
     const { data: startData } = await startInteraction(
       {
@@ -2558,6 +3482,7 @@ describe('LoginUI runtime Flow handlers', () => {
     );
     resetAdapter();
     mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
       contractHash: String(startData.contract_hash),
       signature: String(startData.signature),
       currentNodeId: 'consent',
@@ -2743,6 +3668,7 @@ describe('LoginUI runtime Flow handlers', () => {
     );
     resetAdapter();
     mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
       contractHash: String(startData.contract_hash),
       signature: String(startData.signature),
       currentNodeId: 'auth',
@@ -2760,6 +3686,8 @@ describe('LoginUI runtime Flow handlers', () => {
       },
     });
     mocks.coreAdapter.queryOne
+      // The app's row, read to select its Mapping Set (none: no Destination Profile fields).
+      .mockResolvedValueOnce({ identity_mapping: null })
       .mockResolvedValueOnce({
         id: 'policy_registration',
         display_name: 'Registration consent policy',
@@ -2837,6 +3765,7 @@ describe('LoginUI runtime Flow handlers', () => {
     );
     resetAdapter();
     mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
       contractHash: String(startData.contract_hash),
       signature: String(startData.signature),
       currentNodeId: 'auth',
@@ -2855,7 +3784,7 @@ describe('LoginUI runtime Flow handlers', () => {
     });
     mocks.coreAdapter.queryOne
       .mockResolvedValueOnce({
-        identity_mapping: JSON.stringify({ destinationProfileId: 'destination_oidc_1' }),
+        identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
         attribute_release_consent: JSON.stringify({ enabled: true, mode: 'every_time' }),
       })
       .mockResolvedValueOnce({
@@ -2946,10 +3875,232 @@ describe('LoginUI runtime Flow handlers', () => {
     });
   });
 
+  async function submitWithExistingDestinationConsent(
+    existing: Record<string, unknown>,
+    request: {
+      scope?: string[];
+      claims?: string[];
+      profileClaims?: Array<Record<string, unknown>>;
+    } = {}
+  ) {
+    const requestedScope = request.scope ?? ['openid'];
+    const { data: startData } = await startInteraction(
+      {
+        flow_kind: 'login',
+        client_id: 'client_1',
+        requested_scope: requestedScope.join(' '),
+      },
+      acceptedConsentRuntime
+    );
+    resetAdapter();
+    mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+      contractHash: String(startData.contract_hash),
+      signature: String(startData.signature),
+      currentNodeId: 'auth',
+      currentStepId: 'auth:step',
+      stepState: 'waiting_input',
+      runtimeSnapshot: acceptedConsentRuntime,
+      editorSnapshot: acceptedConsentEditor,
+      clientId: 'client_1',
+      context: {
+        protocol: 'oidc',
+        target_type: 'oidc_client',
+        target_id: 'client_1',
+        client_id: 'client_1',
+        requested_scope: requestedScope,
+        requested_claims: request.claims ?? ['name'],
+      },
+    });
+    mocks.coreAdapter.queryOne
+      .mockResolvedValueOnce({
+        identity_mapping: JSON.stringify({ fieldMappingSetId: 'set_1' }),
+        allow_claims_without_scope: 1,
+      })
+      .mockResolvedValueOnce({
+        id: 'policy_registration',
+        display_name: 'Registration consent policy',
+        description: null,
+        is_active: 1,
+      })
+      .mockResolvedValueOnce({ id: 'version_terms_current', version: '20260701' })
+      .mockResolvedValueOnce({ id: 'existing_policy_consent_record' })
+      .mockResolvedValueOnce({
+        id: 'existing_destination_consent_record',
+        released_scopes_json: JSON.stringify(requestedScope),
+        ...existing,
+      });
+    mocks.coreAdapter.query
+      .mockResolvedValueOnce([
+        {
+          statement_id: 'statement_terms',
+          requirement: 'required',
+          version_mode: 'latest',
+          version_id: null,
+          checkbox_mode: 'required',
+          checkbox_default_checked: 0,
+          binding_type: 'subject',
+          binding_value: null,
+          evidence_profile: null,
+          language_fallback: null,
+          display_order: 0,
+          slug: 'terms_of_service',
+          category: 'terms_of_service',
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          language: 'en',
+          title: 'Terms of Service',
+          description: '',
+          document_url: 'https://example.com/tos',
+          inline_content: 'I agree to %link1%.',
+        },
+      ]);
+    mocks.adminAdapter.queryOne.mockResolvedValueOnce({
+      profile_id: 'destination_oidc_1',
+      destination_type: 'oidc',
+      version_id: 'destination_oidc_version_1',
+      schema_json: JSON.stringify({
+        claims: request.profileClaims ?? [
+          { claimName: 'sub', label: 'Subject', required: true, requiredScopes: ['openid'] },
+          { claimName: 'name', label: 'Name', required: false, requiredScopes: ['profile'] },
+        ],
+      }),
+    });
+    mocks.sessionStore.getSessionRpc.mockResolvedValueOnce({
+      userId: 'user_1',
+      expiresAt: Date.now() + 60_000,
+      createdAt: 1_700_000_000_000,
+      data: { authTime: 1_700_000_123 },
+    });
+
+    const response = await loginRuntimeInteractionSubmitHandler(
+      createContext({
+        env: { DB_ADMIN: mocks.adminAdapter as never },
+        params: { interaction_id: 'interaction_1' },
+        headers: { Cookie: 'authrim_session=sess_runtime_1' },
+        body: {
+          step_id: 'auth:step',
+          node_id: 'auth',
+          selected_handle: 'passkey',
+          contract_hash: startData.contract_hash,
+          signature: startData.signature,
+        },
+      })
+    );
+    const data = await readJson(response);
+
+    expect(response.status).toBe(200);
+    return data;
+  }
+
+  describe('an existing Destination Profile consent', () => {
+    const shown = (data: Record<string, unknown>) =>
+      JSON.stringify(data).includes('"destination_field_consent"');
+
+    it.each([
+      ['presented only sub (the claims parameter now asks for name)', ['sub']],
+      ['was recorded before the presented fields were kept', undefined],
+    ])('is asked again when it %s', async (_name, presented) => {
+      const data = await submitWithExistingDestinationConsent({
+        evidence_json: JSON.stringify(presented ? { presented_field_keys: presented } : {}),
+      });
+      expect(data.completed).toBe(false);
+      expect(data.step).toMatchObject({
+        content: { destination_field_consent: { profile_id: 'destination_oidc_1' } },
+      });
+    });
+
+    it('is reused when it presented every field asked about now, even one declined', async () => {
+      const data = await submitWithExistingDestinationConsent({
+        evidence_json: JSON.stringify({ presented_field_keys: ['sub', 'name'] }),
+      });
+      expect(shown(data)).toBe(false);
+    });
+
+    it('is reused after it is stored for a profile of 101 fields and a scope of 129 characters', async () => {
+      const longScope = `directory_${'x'.repeat(119)}`;
+      expect(longScope).toHaveLength(129);
+      const customFields = Array.from({ length: 101 }, (_, index) => ({
+        claimName: `custom_${index}`,
+        label: `Custom ${index}`,
+        required: false,
+        requiredScopes: [longScope],
+      }));
+      const profileClaims = [
+        { claimName: 'sub', label: 'Subject', required: true, requiredScopes: ['openid'] },
+        ...customFields,
+      ];
+      const scope = ['openid', longScope];
+
+      // The record as it is written for that request...
+      const written: unknown[][] = [];
+      await insertDestinationFieldConsentRecord({
+        db: {
+          execute: vi.fn(async (_sql: string, params?: unknown[]) => {
+            written.push(params ?? []);
+            return { success: true, rowsAffected: 1 };
+          }),
+        } as unknown as DatabaseAdapter,
+        tenantId: 'tenant_test',
+        interaction: {
+          id: 'interaction_0',
+          flow_id: 'flow_1',
+          flow_version_id: 'version_1',
+          client_id: 'client_1',
+          saml_sp_id: null,
+        } as never,
+        step: { id: 'consent:step', source_node_id: 'consent' } as never,
+        policyId: 'policy_1',
+        requestContext: {
+          protocol: 'oidc',
+          target_type: 'oidc_client',
+          target_id: 'client_1',
+          client_id: 'client_1',
+          requested_scope: scope,
+        } as never,
+        userId: 'user_1',
+        consent: {
+          profile_id: 'destination_oidc_1',
+          profile_version_id: 'destination_oidc_version_1',
+          consent_version: 'destination_oidc_version_1',
+          destination_type: 'oidc',
+          consent_mode: null,
+          fields: profileClaims.map((field) => ({ key: field.claimName })),
+        } as never,
+        selectedFields: ['sub'],
+      });
+      const params = written.find((entry) => entry.includes('selected')) ?? [];
+      const at = params.indexOf('selected');
+      const stored = { released_scopes_json: params[at + 3], evidence_json: params[at + 9] };
+      expect(JSON.parse(stored.released_scopes_json as string)).toEqual(scope);
+
+      // ...is the consent the next request reuses.
+      const data = await submitWithExistingDestinationConsent(stored, {
+        scope,
+        claims: [],
+        profileClaims,
+      });
+      expect(shown(data)).toBe(false);
+    });
+
+    it('is asked again when what it stored is not a list of strings', async () => {
+      const data = await submitWithExistingDestinationConsent({
+        released_scopes_json: JSON.stringify({ not: 'a list' }),
+        evidence_json: JSON.stringify({ presented_field_keys: ['sub', 'name'] }),
+      });
+      expect(data.step).toMatchObject({
+        content: { destination_field_consent: { profile_id: 'destination_oidc_1' } },
+      });
+    });
+  });
+
   it('rejects an unknown selected edge handle instead of falling back to the default branch', async () => {
     const { data: startData } = await startInteraction();
     resetAdapter();
     mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
       contractHash: String(startData.contract_hash),
       signature: String(startData.signature),
       currentNodeId: 'auth',
@@ -2987,6 +4138,7 @@ describe('LoginUI runtime Flow handlers', () => {
     );
     resetAdapter();
     mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
       contractHash: String(startData.contract_hash),
       signature: String(startData.signature),
       currentNodeId: 'complete',
@@ -2996,9 +4148,17 @@ describe('LoginUI runtime Flow handlers', () => {
       editorSnapshot: null,
     });
 
+    mocks.sessionStore.getSessionRpc.mockResolvedValue({
+      userId: 'user_1',
+      expiresAt: Date.now() + 60_000,
+      createdAt: 1_700_000_000_000,
+      data: { authTime: 1_700_000_123 },
+    });
+
     const response = await loginRuntimeInteractionSubmitHandler(
       createContext({
         params: { interaction_id: 'interaction_1' },
+        headers: { Cookie: 'authrim_session=sess_runtime_1' },
         body: {
           step_id: 'complete:step',
           node_id: 'complete',
@@ -3042,6 +4202,7 @@ describe('LoginUI runtime Flow handlers', () => {
     );
     resetAdapter();
     mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
       contractHash: String(startData.contract_hash),
       signature: String(startData.signature),
       currentNodeId: 'complete',
@@ -3109,8 +4270,68 @@ describe('LoginUI runtime Flow handlers', () => {
       'login_challenge_1',
       'user_1',
       1_700_000_123,
-      'https://first.test.authrim.com'
+      'https://first.test.authrim.com',
+      // The session's recorded method (its amr) and proof time; this fixture records neither.
+      undefined,
+      undefined
     );
+  });
+
+  it("refuses to continue with a session that is not the interaction user's", async () => {
+    const { data: startData } = await startInteraction(
+      {
+        flow_kind: 'login',
+        client_id: 'client_1',
+        requested_scope: 'openid profile',
+        authorization_challenge_id: 'login_challenge_1',
+      },
+      oidcCompletionRuntime
+    );
+    resetAdapter();
+    mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+      contractHash: String(startData.contract_hash),
+      signature: String(startData.signature),
+      currentNodeId: 'complete',
+      currentStepId: 'complete:step',
+      stepState: 'waiting_input',
+      runtimeSnapshot: oidcCompletionRuntime,
+      editorSnapshot: null,
+      userId: 'user_1',
+      context: {
+        target_type: 'oidc_client',
+        target_id: 'client_1',
+        client_id: 'client_1',
+        authorization_challenge_id: 'login_challenge_1',
+      },
+    });
+    mocks.coreAdapter.queryOne.mockResolvedValueOnce(null);
+    mocks.coreAdapter.query.mockResolvedValueOnce([
+      { step_id: 'complete:step', selected_handle: 'completed' },
+    ]);
+    mocks.sessionStore.getSessionRpc.mockResolvedValueOnce({
+      userId: 'user_2',
+      expiresAt: Date.now() + 60_000,
+      createdAt: 1_700_000_000_000,
+      data: { authTime: 1_700_000_123 },
+    });
+
+    const response = await loginRuntimeInteractionSubmitHandler(
+      createContext({
+        params: { interaction_id: 'interaction_1' },
+        headers: { Cookie: 'authrim_session=sess_runtime_1' },
+        url: 'https://first.test.authrim.com/api/v1/login/interactions/interaction_1/submit',
+        body: {
+          step_id: 'complete:step',
+          node_id: 'complete',
+          selected_handle: 'completed',
+          contract_hash: startData.contract_hash,
+          signature: startData.signature,
+        },
+      })
+    );
+    expect(response.status).toBe(403);
+    expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
   });
 
   it('returns an OIDC continuation redirect after an authentication method step completes', async () => {
@@ -3125,6 +4346,7 @@ describe('LoginUI runtime Flow handlers', () => {
     );
     resetAdapter();
     mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
       contractHash: String(startData.contract_hash),
       signature: String(startData.signature),
       currentNodeId: 'complete',
@@ -3187,10 +4409,983 @@ describe('LoginUI runtime Flow handlers', () => {
     });
   });
 
+  describe('a completion waits for someone who is signed in', () => {
+    const session = {
+      userId: 'user_1',
+      expiresAt: Date.now() + 60_000,
+      createdAt: 1_700_000_000_000,
+      data: { amr: ['email_code'], authTime: 1_700_000_300, proven_at: 1_700_000_300_000 },
+    };
+    const consentSelectorRuntime: FlowRuntimeContract = {
+      flow_kind: 'login',
+      ui: {
+        steps: [
+          {
+            id: 'auth:step',
+            source_node_id: 'auth',
+            component: 'authentication_method_selector',
+            render: true,
+            config: { consent_policy_ref: 'policy_login' },
+          },
+          oidcAuthCompletionRuntime.ui.steps[1],
+        ],
+      },
+    };
+
+    async function submitStep(options: {
+      runtime: FlowRuntimeContract;
+      editor?: Record<string, unknown> | null;
+      flowKind?: string;
+      currentStep: { node: string; step: string };
+      handle: string;
+      withSession?: boolean;
+      body?: Record<string, unknown>;
+      context?: Record<string, unknown>;
+      userId?: string;
+      authorizationChallengeId?: string;
+      /** Mocks for what the step reads, set after the interaction's own rows are mocked. */
+      beforeSubmit?: () => void;
+      sessionCreatedAt?: number;
+      startedAtMs?: number;
+    }) {
+      // A step may be submitted more than once in a test; each starts from a clean state.
+      resetAdapter();
+      const { data: startData } = await startInteraction(
+        {
+          flow_kind: options.flowKind ?? 'login',
+          client_id: 'client_1',
+          requested_scope: 'openid profile',
+          ...(options.authorizationChallengeId
+            ? { authorization_challenge_id: options.authorizationChallengeId }
+            : {}),
+        },
+        options.runtime,
+        options.editor ?? null
+      );
+      resetAdapter();
+      mockSubmitQueries({
+        expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+        contractHash: String(startData.contract_hash),
+        signature: String(startData.signature),
+        currentNodeId: options.currentStep.node,
+        currentStepId: options.currentStep.step,
+        stepState: 'waiting_input',
+        runtimeSnapshot: options.runtime,
+        editorSnapshot: options.editor ?? null,
+        clientId: 'client_1',
+        userId: options.userId,
+        context: {
+          target_type: 'oidc_client',
+          target_id: 'client_1',
+          client_id: 'client_1',
+          started_at_ms: options.startedAtMs ?? Date.now() - 1000,
+          ...(options.authorizationChallengeId
+            ? { authorization_challenge_id: options.authorizationChallengeId }
+            : {}),
+          ...options.context,
+        },
+      });
+      options.beforeSubmit?.();
+      mocks.sessionStore.getSessionRpc.mockResolvedValue(
+        options.withSession
+          ? { ...session, createdAt: options.sessionCreatedAt ?? session.createdAt }
+          : null
+      );
+      if (!mocks.consumeAuthorizationChallengeContinuation.getMockImplementation()) {
+        mocks.consumeAuthorizationChallengeContinuation.mockResolvedValue({
+          type: 'login',
+          redirectUrl: 'https://first.test.authrim.com/authorize?_confirmation_challenge=confirm_1',
+        });
+      }
+      const response = await loginRuntimeInteractionSubmitHandler(
+        createContext({
+          params: { interaction_id: 'interaction_1' },
+          headers: options.withSession ? { Cookie: 'authrim_session=sess_runtime_1' } : {},
+          url: 'https://first.test.authrim.com/api/v1/login/interactions/interaction_1/submit',
+          body: {
+            step_id: options.currentStep.step,
+            node_id: options.currentStep.node,
+            selected_handle: options.handle,
+            contract_hash: startData.contract_hash,
+            signature: startData.signature,
+            ...options.body,
+          },
+        })
+      );
+      return { response, data: await readJson(response) };
+    }
+
+    function interactionUserWasSet() {
+      return mocks.coreAdapter.execute.mock.calls.some(
+        ([sql]) => typeof sql === 'string' && sql.includes('SET user_id = COALESCE(user_id')
+      );
+    }
+
+    /** What the interaction's transaction ran, as [sql, params]. */
+    const transactionStatements = () => txExecuteCalls;
+
+    const expectNothingWritten = () => {
+      expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+      expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
+      expect(
+        mocks.coreAdapter.execute.mock.calls.filter(([sql]) =>
+          String(sql).includes('user_id IS NULL')
+        )
+      ).toEqual([]);
+    };
+
+    const auditEventTypes = () => mocks.emitLog.mock.calls.map(([, input]) => input.row.event_type);
+
+    it.each([
+      [
+        'a login Flow',
+        'login',
+        oidcAuthCompletionRuntime,
+        null,
+        { node: 'auth', step: 'auth:step' },
+        'mail_otp',
+      ],
+      [
+        'a registration Flow (the account action is skipped)',
+        'registration',
+        implicitAccountActionRuntime,
+        implicitAccountActionEditor,
+        { node: 'auth', step: 'auth:step' },
+        'passkey',
+      ],
+    ])(
+      'keeps %s at its completion after a method is chosen before anyone is signed in',
+      async (_label, flowKind, runtime, editor, currentStep, handle) => {
+        const { response, data } = await submitStep({
+          runtime,
+          editor,
+          flowKind,
+          currentStep,
+          handle,
+        });
+
+        expect(response.status).toBe(200);
+        expect(data.completed).toBe(false);
+        expect(data.interaction).toMatchObject({
+          state: 'active',
+          current_step_id: 'complete:step',
+        });
+        expect(data.step).toMatchObject({ id: 'complete:step', component: 'completion' });
+        expect(data.output).toBeNull();
+        expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
+        // The interaction is not recorded as complete before anyone has signed in.
+        expect(auditEventTypes()).toEqual(
+          expect.arrayContaining(['flow.auth_method.selected', 'flow.node.entered'])
+        );
+        expect(auditEventTypes()).not.toContain('flow.interaction.completed');
+        expect(auditEventTypes()).not.toContain('flow.output.completed');
+      }
+    );
+
+    it('answers a completion submitted with no session with a sign-in request and records nothing', async () => {
+      const { response, data } = await submitStep({
+        runtime: oidcAuthCompletionRuntime,
+        currentStep: { node: 'complete', step: 'complete:step' },
+        handle: 'completed',
+        withSession: false,
+      });
+
+      expect(response.status).toBe(401);
+      expect(data).toMatchObject({
+        error: 'authentication_required',
+        category: 'reauthentication_required',
+        action: 'reauthenticate',
+      });
+      expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+      expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
+      expect(auditEventTypes()).toEqual([]);
+    });
+
+    it('does not complete a Flow for the protocol-less /login either', async () => {
+      const { response } = await submitStep({
+        runtime: oidcAuthCompletionRuntime,
+        currentStep: { node: 'complete', step: 'complete:step' },
+        handle: 'completed',
+        context: { protocol: 'direct', target_type: 'tenant', target_id: null, client_id: null },
+      });
+
+      expect(response.status).toBe(401);
+    });
+
+    it('completes with the continuation once the sign-in has given a session', async () => {
+      const { response, data } = await submitStep({
+        runtime: oidcAuthCompletionRuntime,
+        currentStep: { node: 'complete', step: 'complete:step' },
+        handle: 'completed',
+        withSession: true,
+        authorizationChallengeId: 'login_challenge_1',
+      });
+
+      expect(response.status).toBe(200);
+      expect(data.completed).toBe(true);
+      expect(data.output).toMatchObject({
+        action: 'continue_protocol',
+        redirect_url: 'https://first.test.authrim.com/authorize?_confirmation_challenge=confirm_1',
+      });
+      expect(auditEventTypes()).toContain('flow.interaction.completed');
+    });
+
+    it('completes a /login without an authorization request for a signed-in browser', async () => {
+      const { response, data } = await submitStep({
+        runtime: oidcAuthCompletionRuntime,
+        currentStep: { node: 'complete', step: 'complete:step' },
+        handle: 'completed',
+        withSession: true,
+        context: { protocol: 'direct', target_type: 'tenant', target_id: null, client_id: null },
+      });
+
+      expect(response.status).toBe(200);
+      expect(data.completed).toBe(true);
+      expect(data.output).toMatchObject({ action: 'complete' });
+    });
+
+    it('does not let a session from before a registration began answer it', async () => {
+      // The browser holds a session from long ago (another account's, or the same one's): a new
+      // registration is not completed by it.
+      const { response, data } = await submitStep({
+        runtime: implicitAccountActionRuntime,
+        editor: implicitAccountActionEditor,
+        flowKind: 'registration',
+        currentStep: { node: 'auth', step: 'auth:step' },
+        handle: 'passkey',
+        withSession: true,
+      });
+
+      expect(response.status).toBe(200);
+      expect(data.completed).toBe(false);
+      expect(data.step).toMatchObject({ component: 'completion' });
+      expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['within the second the registration began, but before it', 1_700_000_000_100, false],
+      ['at the moment it began', 1_700_000_000_900, true],
+      ['after it began', 1_700_000_000_950, true],
+    ])('judges a session made %s to the millisecond', async (_label, createdAt, answers) => {
+      const { data } = await submitStep({
+        runtime: implicitAccountActionRuntime,
+        editor: implicitAccountActionEditor,
+        flowKind: 'registration',
+        currentStep: { node: 'auth', step: 'auth:step' },
+        handle: 'passkey',
+        withSession: true,
+        startedAtMs: 1_700_000_000_900,
+        sessionCreatedAt: createdAt,
+      });
+
+      expect(data.completed).toBe(answers);
+    });
+
+    it('lets a session made since the registration began answer it', async () => {
+      const { response, data } = await submitStep({
+        runtime: implicitAccountActionRuntime,
+        editor: implicitAccountActionEditor,
+        flowKind: 'registration',
+        currentStep: { node: 'auth', step: 'auth:step' },
+        handle: 'passkey',
+        withSession: true,
+        sessionCreatedAt: Date.now() + 1000,
+      });
+
+      expect(response.status).toBe(200);
+      expect(data.completed).toBe(true);
+    });
+
+    it('answers a challenge that is gone and left no confirmation with an expired request, not a sign-in request', async () => {
+      const { response, data } = await submitStep({
+        runtime: oidcAuthCompletionRuntime,
+        currentStep: { node: 'complete', step: 'complete:step' },
+        handle: 'completed',
+        withSession: true,
+        authorizationChallengeId: 'login_challenge_1',
+        beforeSubmit: () =>
+          mocks.readAuthorizationChallengeFreshness.mockResolvedValue({
+            kind: 'login',
+            issuedAt: Infinity,
+            gone: true,
+          }),
+      });
+
+      expect(response.status).toBe(400);
+      expect(data).toMatchObject({
+        error: 'authorization_request_expired',
+        action: 'restart_interaction',
+      });
+      expectNothingWritten();
+    });
+
+    it('lets no session answer a challenge that was continued for another user, and writes nothing', async () => {
+      const { response, data } = await submitStep({
+        runtime: oidcAuthCompletionRuntime,
+        currentStep: { node: 'complete', step: 'complete:step' },
+        handle: 'completed',
+        withSession: true,
+        authorizationChallengeId: 'login_challenge_1',
+        beforeSubmit: () =>
+          mocks.readAuthorizationChallengeFreshness.mockResolvedValue({
+            kind: 'login',
+            issuedAt: 0,
+            confirmedFor: 'user_2',
+          }),
+      });
+
+      expect(response.status).toBe(401);
+      expect(data.error).toBe('authentication_required');
+      expectNothingWritten();
+    });
+
+    it('ends a session check on a challenge that is gone, instead of signing in', async () => {
+      const { data: startData } = await startInteraction(
+        { flow_kind: 'login' },
+        sessionCheckRuntime
+      );
+      resetAdapter();
+      mockSubmitQueries({
+        expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+        contractHash: String(startData.contract_hash),
+        signature: String(startData.signature),
+        currentNodeId: 'session-check',
+        currentStepId: 'session-check:step',
+        stepState: 'pending',
+        runtimeSnapshot: sessionCheckRuntime,
+        editorSnapshot: sessionCheckEditor,
+        context: { authorization_challenge_id: 'login_challenge_1' },
+      });
+      mocks.readAuthorizationChallengeFreshness.mockResolvedValue({
+        kind: 'login',
+        issuedAt: Infinity,
+        gone: true,
+      });
+      mocks.sessionStore.getSessionRpc.mockResolvedValue({
+        userId: 'user_1',
+        expiresAt: Date.now() + 60_000,
+        createdAt: 1_700_000_000_000,
+        data: { authTime: 1_700_000_123 },
+      });
+
+      const response = await loginRuntimeInteractionSubmitHandler(
+        createContext({
+          params: { interaction_id: 'interaction_1' },
+          headers: { Cookie: 'authrim_session=sess_runtime_1' },
+          body: {
+            step_id: 'session-check:step',
+            node_id: 'session-check',
+            contract_hash: startData.contract_hash,
+            signature: startData.signature,
+          },
+        })
+      );
+      const data = await readJson(response);
+
+      expect(data.error).toBe('authorization_request_expired');
+      expect(data.step ?? null).toBeNull();
+    });
+
+    it("does not let another user's session answer a re-authentication, whatever is held", async () => {
+      const { response, data } = await submitStep({
+        runtime: oidcAuthCompletionRuntime,
+        currentStep: { node: 'complete', step: 'complete:step' },
+        handle: 'completed',
+        withSession: true,
+        authorizationChallengeId: 'reauth_challenge_1',
+        beforeSubmit: () =>
+          mocks.readAuthorizationChallengeFreshness.mockResolvedValue({
+            kind: 'reauth',
+            issuedAt: 1_700_000_000_000,
+            subjectUserId: 'user_2',
+          }),
+      });
+
+      expect(response.status).toBe(401);
+      expect(data.error).toBe('authentication_required');
+      expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+      expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
+      expect(auditEventTypes()).toEqual([]);
+    });
+
+    it('does not complete the interaction when the authorization request cannot be continued', async () => {
+      const { response, data } = await submitStep({
+        runtime: oidcAuthCompletionRuntime,
+        currentStep: { node: 'complete', step: 'complete:step' },
+        handle: 'completed',
+        withSession: true,
+        authorizationChallengeId: 'login_challenge_1',
+        beforeSubmit: () =>
+          mocks.consumeAuthorizationChallengeContinuation.mockResolvedValue({
+            error: new Response(JSON.stringify({ error: 'temporarily_unavailable' }), {
+              status: 503,
+              headers: { 'Content-Type': 'application/json' },
+            }),
+          }),
+      });
+
+      expect(response.status).toBe(503);
+      expect(data.error).toBe('temporarily_unavailable');
+      // Nothing is saved as complete or audited as a success: the browser can submit again.
+      expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+      expect(auditEventTypes()).toEqual([]);
+    });
+
+    describe('consent given at the method selection', () => {
+      const policyRow = {
+        id: 'policy_login',
+        display_name: 'Login consent',
+        description: null,
+        is_active: 1,
+      };
+      const itemRow = {
+        statement_id: 'statement_terms',
+        requirement: 'required',
+        version_mode: 'latest',
+        version_id: null,
+        checkbox_mode: 'required',
+        checkbox_default_checked: 0,
+        binding_type: 'subject',
+        binding_value: null,
+        evidence_profile: null,
+        language_fallback: null,
+        display_order: 0,
+        slug: 'terms_of_service',
+        category: 'terms_of_service',
+        conditional_rules_json: null,
+      };
+
+      /**
+       * What the consent tables hold, for whatever the step reads after the interaction's own rows
+       * (those come first, from the queue mockSubmitQueries fills). `queryOne` and `query` may
+       * answer other statements first.
+       */
+      function withPolicy(
+        extra: {
+          queryOne?: (sql: string) => unknown;
+          query?: (sql: string) => unknown[] | undefined;
+        } = {}
+      ) {
+        mocks.coreAdapter.queryOne.mockImplementation(async (sql: string) => {
+          const answered = extra.queryOne?.(sql);
+          if (answered !== undefined) return answered;
+          if (sql.includes('FROM consent_policies')) return policyRow;
+          if (sql.includes('FROM consent_statement_versions')) {
+            return { id: 'version_terms_current', version: '20260701' };
+          }
+          return null;
+        });
+        mocks.coreAdapter.query.mockImplementation(async (sql: string) => {
+          const answered = extra.query?.(sql);
+          if (answered !== undefined) return answered;
+          if (sql.includes('FROM consent_policy_items')) return [itemRow];
+          if (sql.includes('FROM consent_statement_localizations')) {
+            return [
+              {
+                language: 'en',
+                title: 'Terms',
+                description: '',
+                document_url: 'https://example.com/tos',
+                inline_content: null,
+              },
+            ];
+          }
+          return [];
+        });
+      }
+
+      const consentRecords = () =>
+        mocks.coreAdapter.execute.mock.calls.filter(
+          ([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO consent_records')
+        );
+
+      const given = { input: { consent_item_decisions: { statement_terms: 'granted' } } };
+
+      it('refuses a selection that leaves a required consent ungiven, with nobody signed in', async () => {
+        const { response, data } = await submitStep({
+          runtime: consentSelectorRuntime,
+          currentStep: { node: 'auth', step: 'auth:step' },
+          handle: 'mail_otp',
+          beforeSubmit: withPolicy,
+        });
+
+        expect(response.status).toBe(400);
+        expect(data.error).toBe('consent_required');
+        expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+      });
+
+      it('keeps what was given until someone is signed in, recording nothing for anyone yet', async () => {
+        const { response, data } = await submitStep({
+          runtime: consentSelectorRuntime,
+          currentStep: { node: 'auth', step: 'auth:step' },
+          handle: 'mail_otp',
+          body: given,
+          beforeSubmit: withPolicy,
+        });
+
+        expect(response.status).toBe(200);
+        expect(data.step).toMatchObject({ component: 'completion' });
+        expect(consentRecords()).toEqual([]);
+        expect(interactionUserWasSet()).toBe(false);
+        // The step is stored with the consent that was given.
+        const stepUpdates = transactionStatements().filter(([sql]) =>
+          String(sql).includes('UPDATE flow_interaction_steps')
+        );
+        expect(JSON.stringify(stepUpdates)).toContain('held_consent');
+        expect(JSON.stringify(stepUpdates)).toContain('statement_terms');
+      });
+
+      /** The consent a selection kept, as the step's stored state. */
+      async function keptBySelection() {
+        await submitStep({
+          runtime: consentSelectorRuntime,
+          currentStep: { node: 'auth', step: 'auth:step' },
+          handle: 'mail_otp',
+          body: given,
+          beforeSubmit: withPolicy,
+        });
+        const update = transactionStatements().find(([sql]) =>
+          String(sql).includes('UPDATE flow_interaction_steps')
+        );
+        return String((update?.[1] as unknown[])[1]);
+      }
+
+      function readsKept(stateJson: string, extra: { queryOne?: (sql: string) => unknown } = {}) {
+        withPolicy({
+          ...extra,
+          query: (sql) =>
+            sql.includes('held_consent')
+              ? [{ id: 'step_1', step_id: 'auth:step', state_json: stateJson }]
+              : undefined,
+        });
+      }
+
+      it('records it for the user who signs in, when the completion is submitted', async () => {
+        const stateJson = await keptBySelection();
+        const { response, data } = await submitStep({
+          runtime: consentSelectorRuntime,
+          currentStep: { node: 'complete', step: 'complete:step' },
+          handle: 'completed',
+          withSession: true,
+          authorizationChallengeId: 'login_challenge_1',
+          beforeSubmit: () => readsKept(stateJson),
+        });
+
+        expect(response.status, JSON.stringify(data)).toBe(200);
+        expect(data.completed).toBe(true);
+        expect(consentRecords()).toHaveLength(1);
+        expect(consentRecords()[0][1]).toEqual(expect.arrayContaining(['tenant_test', 'user_1']));
+        // The record has a fixed identifier, so a retry or a concurrent attempt cannot add another.
+        expect(consentRecords()[0][0]).toContain('ON CONFLICT(id) DO UPDATE');
+        expect(String((consentRecords()[0][1] as unknown[])[0])).toMatch(/^consent_[0-9a-f]{64}$/);
+        // Each is recorded once.
+        expect(
+          mocks.coreAdapter.execute.mock.calls.filter(
+            ([sql, params]) =>
+              String(sql).includes('UPDATE flow_interaction_steps') &&
+              JSON.stringify(params).includes('held_consent_recorded')
+          )
+        ).toHaveLength(1);
+      });
+
+      it('records it in the version it was given for, and asks again when that version changed', async () => {
+        const stateJson = await keptBySelection();
+        expect(stateJson).toContain('20260701');
+
+        const { response, data } = await submitStep({
+          runtime: consentSelectorRuntime,
+          currentStep: { node: 'complete', step: 'complete:step' },
+          handle: 'completed',
+          withSession: true,
+          authorizationChallengeId: 'login_challenge_1',
+          beforeSubmit: () =>
+            // The statement has a newer version by now.
+            readsKept(stateJson, {
+              queryOne: (sql) =>
+                sql.includes('FROM consent_statement_versions')
+                  ? { id: 'version_terms_next', version: '20260901' }
+                  : undefined,
+            }),
+        });
+
+        expect(response.status).toBe(400);
+        expect(data.error).toBe('consent_changed');
+        expect(consentRecords()).toEqual([]);
+        expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
+        // The interaction goes back to the step that took the consent, nothing held, and is not
+        // completed.
+        const statements = transactionStatements().map(([sql]) => String(sql));
+        expect(statements.some((sql) => sql.includes("state = 'waiting_input'"))).toBe(true);
+        expect(statements.some((sql) => sql.includes("state = 'completed'"))).toBe(false);
+      });
+
+      it('judges the conditions again when what was held is already recorded', async () => {
+        const stateJson = await keptBySelection();
+        const { response, data } = await submitStep({
+          runtime: consentSelectorRuntime,
+          currentStep: { node: 'complete', step: 'complete:step' },
+          handle: 'completed',
+          withSession: true,
+          authorizationChallengeId: 'login_challenge_1',
+          beforeSubmit: () =>
+            // Recorded, and the statement has a newer version since.
+            readsKept(JSON.stringify({ ...JSON.parse(stateJson), held_consent_recorded: true }), {
+              queryOne: (sql) =>
+                sql.includes('FROM consent_statement_versions')
+                  ? { id: 'version_terms_next', version: '20260901' }
+                  : undefined,
+            }),
+        });
+
+        expect(response.status).toBe(400);
+        expect(data.error).toBe('consent_changed');
+        expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
+      });
+
+      it('is not recorded for a user when another has already been given the interaction', async () => {
+        const stateJson = await keptBySelection();
+        const { response, data } = await submitStep({
+          runtime: consentSelectorRuntime,
+          currentStep: { node: 'complete', step: 'complete:step' },
+          handle: 'completed',
+          withSession: true,
+          beforeSubmit: () => {
+            // Another session claimed the interaction first.
+            readsKept(stateJson, {
+              queryOne: (sql) =>
+                sql.includes('SELECT user_id FROM flow_interactions')
+                  ? { user_id: 'user_2' }
+                  : undefined,
+            });
+            mocks.coreAdapter.execute.mockImplementation(async (sql: string) => ({
+              success: true,
+              rowsAffected: String(sql).includes('user_id IS NULL') ? 0 : 1,
+            }));
+          },
+        });
+
+        expect(response.status, JSON.stringify(data)).toBe(403);
+        expect(consentRecords()).toEqual([]);
+        expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+      });
+
+      it('still asks whom the interaction is about when what was held is already recorded', async () => {
+        const stateJson = await keptBySelection();
+        const { response } = await submitStep({
+          runtime: consentSelectorRuntime,
+          currentStep: { node: 'complete', step: 'complete:step' },
+          handle: 'completed',
+          withSession: true,
+          authorizationChallengeId: 'login_challenge_1',
+          beforeSubmit: () => {
+            // Another session was given the interaction and recorded the consent; this one read the
+            // interaction before that, and finds the consent already recorded.
+            readsKept(JSON.stringify({ ...JSON.parse(stateJson), held_consent_recorded: true }), {
+              queryOne: (sql) =>
+                sql.includes('SELECT user_id FROM flow_interactions')
+                  ? { user_id: 'user_2' }
+                  : undefined,
+            });
+            mocks.coreAdapter.execute.mockImplementation(async (sql: string) => ({
+              success: true,
+              rowsAffected: String(sql).includes('user_id IS NULL') ? 0 : 1,
+            }));
+          },
+        });
+
+        expect(response.status).toBe(403);
+        expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
+        expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+      });
+
+      it('is recorded when the Flow ends at a step after the completion was reached', async () => {
+        // A screen follows the selection; the completion is reached from the screen's own submit.
+        const screenRuntime: FlowRuntimeContract = {
+          flow_kind: 'login',
+          ui: {
+            steps: [
+              consentSelectorRuntime.ui.steps[0],
+              { id: 'screen:step', source_node_id: 'screen', component: 'screen', render: true },
+              consentSelectorRuntime.ui.steps[1],
+            ],
+          },
+        };
+        const stateJson = await keptBySelection();
+        const { response, data } = await submitStep({
+          runtime: screenRuntime,
+          currentStep: { node: 'screen', step: 'screen:step' },
+          handle: 'submitted',
+          withSession: true,
+          authorizationChallengeId: 'login_challenge_1',
+          beforeSubmit: () => readsKept(stateJson),
+        });
+
+        expect(response.status).toBe(200);
+        expect(data.completed).toBe(true);
+        expect(consentRecords()).toHaveLength(1);
+        // Recorded before the continuation, so the continuation is not the first of the two to run.
+        expect(mocks.consumeAuthorizationChallengeContinuation).toHaveBeenCalledTimes(1);
+      });
+
+      it('does not record it again once recorded', async () => {
+        const stateJson = await keptBySelection();
+        const { response } = await submitStep({
+          runtime: consentSelectorRuntime,
+          currentStep: { node: 'complete', step: 'complete:step' },
+          handle: 'completed',
+          withSession: true,
+          beforeSubmit: () =>
+            readsKept(JSON.stringify({ ...JSON.parse(stateJson), held_consent_recorded: true })),
+        });
+
+        expect(response.status).toBe(200);
+        expect(consentRecords()).toEqual([]);
+      });
+    });
+
+    it('keeps a spent challenge as it is when only a selection is made', async () => {
+      const { response } = await submitStep({
+        runtime: oidcAuthCompletionRuntime,
+        currentStep: { node: 'auth', step: 'auth:step' },
+        handle: 'mail_otp',
+        authorizationChallengeId: 'login_challenge_1',
+      });
+
+      expect(response.status).toBe(200);
+      expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('a session the authorization challenge would refuse as proof', () => {
+    // A sign-in for a client whose SSO is off (login) and a re-authentication (reauth) are
+    // answered only by a proof made after the challenge. The browser's older session is then not
+    // used at all, so the user can sign in by a method of their own instead of being stopped.
+    const challengeIssuedAt = 1_700_000_200_000;
+    const staleSession = {
+      userId: 'user_1',
+      expiresAt: Date.now() + 60_000,
+      createdAt: 1_700_000_000_000,
+      data: { amr: ['passkey'], authTime: 1_700_000_123, proven_at: 1_700_000_123_000 },
+    };
+    const freshSession = {
+      ...staleSession,
+      data: { amr: ['passkey'], authTime: 1_700_000_300, proven_at: 1_700_000_300_000 },
+    };
+
+    async function submitMailOtpSelection(freshness: unknown, session: unknown, readError?: Error) {
+      const { data: startData } = await startInteraction(
+        {
+          flow_kind: 'login',
+          client_id: 'client_1',
+          requested_scope: 'openid profile',
+          authorization_challenge_id: 'login_challenge_1',
+        },
+        oidcAuthCompletionRuntime
+      );
+      resetAdapter();
+      mockSubmitQueries({
+        expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+        contractHash: String(startData.contract_hash),
+        signature: String(startData.signature),
+        currentNodeId: 'auth',
+        currentStepId: 'auth:step',
+        stepState: 'waiting_input',
+        runtimeSnapshot: oidcAuthCompletionRuntime,
+        editorSnapshot: null,
+        context: {
+          target_type: 'oidc_client',
+          target_id: 'client_1',
+          client_id: 'client_1',
+          authorization_challenge_id: 'login_challenge_1',
+        },
+      });
+      if (readError) {
+        mocks.readAuthorizationChallengeFreshness.mockRejectedValue(readError);
+      } else {
+        mocks.readAuthorizationChallengeFreshness.mockResolvedValue(freshness);
+      }
+      mocks.sessionStore.getSessionRpc.mockResolvedValue(session);
+      mocks.consumeAuthorizationChallengeContinuation.mockResolvedValue({
+        type: 'login',
+        redirectUrl: 'https://first.test.authrim.com/authorize?_confirmation_challenge=confirm_1',
+      });
+
+      const response = await loginRuntimeInteractionSubmitHandler(
+        createContext({
+          params: { interaction_id: 'interaction_1' },
+          headers: { Cookie: 'authrim_session=sess_runtime_1' },
+          url: 'https://first.test.authrim.com/api/v1/login/interactions/interaction_1/submit',
+          body: {
+            step_id: 'auth:step',
+            node_id: 'auth',
+            selected_handle: 'mail_otp',
+            contract_hash: startData.contract_hash,
+            signature: startData.signature,
+          },
+        })
+      );
+      return { response, data: await readJson(response) };
+    }
+
+    function interactionUserWasSet() {
+      return mocks.coreAdapter.execute.mock.calls.some(
+        ([sql]) => typeof sql === 'string' && sql.includes('SET user_id = COALESCE(user_id')
+      );
+    }
+
+    it.each([
+      ['a sign-in for a client whose SSO is off', 'login'],
+      ['a re-authentication', 'reauth'],
+    ] as const)(
+      'selects a sign-in method without using an older session for %s',
+      async (_label, kind) => {
+        const { response, data } = await submitMailOtpSelection(
+          { kind, issuedAt: challengeIssuedAt },
+          staleSession
+        );
+
+        expect(response.status).toBe(200);
+        expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
+        expect(interactionUserWasSet()).toBe(false);
+        // Not complete: the completion waits for the sign-in the selected method will give.
+        expect(data.completed).toBe(false);
+        expect(data.step).toMatchObject({ id: 'complete:step', component: 'completion' });
+        expect(data.output).toBeNull();
+      }
+    );
+
+    it('does not attribute consent given at the selector to an older session the challenge refuses', async () => {
+      const consentSelectorRuntime: FlowRuntimeContract = {
+        flow_kind: 'login',
+        ui: {
+          steps: [
+            {
+              id: 'auth:step',
+              source_node_id: 'auth',
+              component: 'authentication_method_selector',
+              render: true,
+              config: { consent_policy_ref: 'policy_login' },
+            },
+            oidcAuthCompletionRuntime.ui.steps[1],
+          ],
+        },
+      };
+      const { data: startData } = await startInteraction(
+        {
+          flow_kind: 'login',
+          client_id: 'client_1',
+          requested_scope: 'openid profile',
+          authorization_challenge_id: 'login_challenge_1',
+        },
+        consentSelectorRuntime
+      );
+      resetAdapter();
+      mockSubmitQueries({
+        expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+        contractHash: String(startData.contract_hash),
+        signature: String(startData.signature),
+        currentNodeId: 'auth',
+        currentStepId: 'auth:step',
+        stepState: 'waiting_input',
+        runtimeSnapshot: consentSelectorRuntime,
+        editorSnapshot: null,
+        context: {
+          target_type: 'oidc_client',
+          target_id: 'client_1',
+          client_id: 'client_1',
+          authorization_challenge_id: 'login_challenge_1',
+        },
+      });
+      // The consent policy exists and has no item to record: only the user it is attributed to
+      // is in question.
+      const readRows = mocks.coreAdapter.queryOne.getMockImplementation();
+      mocks.coreAdapter.queryOne.mockImplementation(async (sql: string, ...rest: unknown[]) =>
+        sql.includes('FROM consent_policies')
+          ? { id: 'policy_login', display_name: 'Login consent', description: null, is_active: 1 }
+          : readRows?.(sql, ...rest)
+      );
+      mocks.readAuthorizationChallengeFreshness.mockResolvedValue({
+        kind: 'login',
+        issuedAt: challengeIssuedAt,
+      });
+      mocks.sessionStore.getSessionRpc.mockResolvedValue(staleSession);
+
+      const response = await loginRuntimeInteractionSubmitHandler(
+        createContext({
+          params: { interaction_id: 'interaction_1' },
+          headers: { Cookie: 'authrim_session=sess_runtime_1' },
+          url: 'https://first.test.authrim.com/api/v1/login/interactions/interaction_1/submit',
+          body: {
+            step_id: 'auth:step',
+            node_id: 'auth',
+            selected_handle: 'mail_otp',
+            contract_hash: startData.contract_hash,
+            signature: startData.signature,
+          },
+        })
+      );
+
+      expect(response.status).toBe(200);
+      expect(interactionUserWasSet()).toBe(false);
+      expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
+    });
+
+    it('asks to try again, recording nothing, when the challenge cannot be read', async () => {
+      // Neither "no session" (the user would be sent on unauthenticated) nor "this session" (it
+      // could not be judged): the interaction stays open for the browser to submit again.
+      const { response, data } = await submitMailOtpSelection(
+        null,
+        freshSession,
+        new Error('challenge store unavailable')
+      );
+
+      expect(response.status).toBe(503);
+      expect(data).toMatchObject({ error: 'temporarily_unavailable', action: 'retry_step' });
+      expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
+      expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+    });
+
+    it('does not use a re-authentication session that records no method', async () => {
+      const { response } = await submitMailOtpSelection(
+        { kind: 'reauth', issuedAt: challengeIssuedAt },
+        { ...freshSession, data: { authTime: 1_700_000_300, proven_at: 1_700_000_300_000 } }
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
+    });
+
+    it.each(['login', 'reauth'] as const)(
+      'still continues with a session proven after the %s challenge',
+      async (kind) => {
+        const { response, data } = await submitMailOtpSelection(
+          { kind, issuedAt: challengeIssuedAt },
+          freshSession
+        );
+
+        expect(response.status).toBe(200);
+        expect(mocks.consumeAuthorizationChallengeContinuation).toHaveBeenCalledTimes(1);
+        expect(data.output).toMatchObject({
+          redirect_url:
+            'https://first.test.authrim.com/authorize?_confirmation_challenge=confirm_1',
+        });
+      }
+    );
+
+    it('continues with any session when the challenge asks for no newer proof', async () => {
+      const { response, data } = await submitMailOtpSelection(null, staleSession);
+
+      expect(response.status).toBe(200);
+      expect(mocks.consumeAuthorizationChallengeContinuation).toHaveBeenCalledTimes(1);
+      expect(data.output).toHaveProperty('redirect_url');
+    });
+  });
+
   it('rejects submit when the runtime signature does not match the active interaction', async () => {
     const { data: startData } = await startInteraction();
     resetAdapter();
     mockSubmitQueries({
+      expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
       contractHash: String(startData.contract_hash),
       signature: String(startData.signature),
     });
@@ -3266,5 +5461,263 @@ describe('LoginUI runtime Flow handlers', () => {
       expect.stringContaining('DELETE FROM flow_interaction_steps'),
       ['tenant_test', 'tenant_test', 1782767000]
     );
+  });
+});
+
+describe('the re-authentication challenge of a SAML request', () => {
+  const SP = 'https://sp.example.test/entity';
+  const ISSUED_AT = 1_700_000_123_000;
+
+  beforeEach(() => {
+    resetAdapter();
+  });
+
+  const samlChallenge = (
+    change: { metadata?: Record<string, unknown>; [key: string]: unknown } = {}
+  ) => ({
+    id: 'saml_challenge_1',
+    tenantId: 'tenant_test',
+    type: 'reauth',
+    userId: 'user_1',
+    challenge: 'saml_challenge_1',
+    createdAt: Date.now(),
+    expiresAt: Date.now() + 300_000,
+    consumed: false,
+    ...change,
+    metadata: {
+      protocol: 'saml',
+      saml_request_id: '_request-1',
+      saml_sp_entity_id: SP,
+      tenant_id: 'tenant_test',
+      sessionUserId: 'user_1',
+      reauth_issued_at: ISSUED_AT,
+      ...change.metadata,
+    },
+  });
+
+  /** What the Login UI sends for a SAML request that comes with a challenge. */
+  const samlStartBody = (change: Record<string, unknown> = {}) => ({
+    flow_kind: 'login',
+    target_type: 'saml_sp',
+    target_id: SP,
+    saml_sp_id: SP,
+    saml_sp_entity_id: SP,
+    saml_request_id: '_request-1',
+    return_to: 'saml_sso',
+    authorization_challenge_id: 'saml_challenge_1',
+    ...change,
+  });
+
+  async function startWith(body: Record<string, unknown>, challenge: unknown) {
+    mocks.challengeStore.getChallengeRpc.mockResolvedValueOnce(challenge);
+    mockStartQueries();
+    const response = await loginRuntimeInteractionStartHandler(createContext({ body }));
+    return { response, data: await readJson(response) };
+  }
+
+  describe('starting a Flow with it', () => {
+    it('is accepted for the request, SP and tenant it was issued for', async () => {
+      const { response, data } = await startWith(samlStartBody(), samlChallenge());
+
+      expect(response.status).toBe(200);
+      expect(data.interaction).toMatchObject({ current_step_id: 'auth:step' });
+    });
+
+    it.each([
+      ['another AuthnRequest', samlStartBody({ saml_request_id: '_request-2' }), samlChallenge()],
+      [
+        'another SP',
+        samlStartBody({
+          target_id: 'https://other.example.test/entity',
+          saml_sp_id: 'https://other.example.test/entity',
+          saml_sp_entity_id: 'https://other.example.test/entity',
+        }),
+        samlChallenge(),
+      ],
+      [
+        'a Flow assigned to another SP than the one it is bound to',
+        samlStartBody({ target_id: 'https://other.example.test/entity' }),
+        samlChallenge(),
+      ],
+      [
+        'another tenant than its own binding says',
+        samlStartBody(),
+        samlChallenge({ metadata: { tenant_id: 'tenant_other' } }),
+      ],
+      [
+        'a target that also names an OIDC client',
+        samlStartBody({ client_id: 'client_1' }),
+        samlChallenge(),
+      ],
+      [
+        'a challenge that is not a re-authentication',
+        samlStartBody(),
+        samlChallenge({ type: 'login' }),
+      ],
+      [
+        'the challenge of an OIDC authorization request',
+        samlStartBody(),
+        samlChallenge({ metadata: { protocol: undefined, client_id: 'client_1' } }),
+      ],
+    ])('is refused for %s', async (_name, body, challenge) => {
+      const { response, data } = await startWith(body, challenge);
+
+      expect(response.status).toBe(403);
+      expect(data.error).toBe('authorization_challenge_mismatch');
+      expect(mocks.coreAdapter.queryOne).not.toHaveBeenCalled();
+      expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+    });
+
+    it('is not accepted for an OIDC client', async () => {
+      const { response, data } = await startWith(
+        {
+          flow_kind: 'login',
+          client_id: 'client_1',
+          authorization_challenge_id: 'saml_challenge_1',
+        },
+        samlChallenge({ metadata: { client_id: 'client_1' } })
+      );
+
+      expect(response.status).toBe(403);
+      expect(data.error).toBe('authorization_challenge_mismatch');
+      expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+    });
+
+    it('is not accepted for a Flow that is for no client or SP', async () => {
+      const { response, data } = await startWith(
+        { flow_kind: 'login', authorization_challenge_id: 'saml_challenge_1' },
+        samlChallenge()
+      );
+
+      expect(response.status).toBe(400);
+      expect(data.error).toBe('invalid_authorization_challenge');
+    });
+
+    it('is refused once it is gone', async () => {
+      const { response, data } = await startWith(samlStartBody(), null);
+
+      expect(response.status).toBe(400);
+      expect(data.error).toBe('authorization_request_expired');
+    });
+  });
+
+  describe('the session check of a Flow started with it', () => {
+    const samlContext = {
+      protocol: 'saml',
+      target_type: 'saml_sp',
+      target_id: SP,
+      client_id: null,
+      saml_sp_id: SP,
+      saml_sp_entity_id: SP,
+      saml_request_id: '_request-1',
+      authorization_challenge_id: 'saml_challenge_1',
+      return_to: 'saml_sso',
+    };
+
+    /** Submit the session check with the browser's session; the challenge is read as stored. */
+    async function sessionCheck(session: { userId?: string; data: Record<string, unknown> }) {
+      const { data: startData } = await startWith(samlStartBody(), samlChallenge());
+      resetAdapter();
+      const actual = await vi.importActual<typeof import('../direct-auth')>('../direct-auth');
+      // The rule that judges the session is the real one, reading the challenge as stored.
+      mocks.readAuthorizationChallengeFreshness.mockImplementation(
+        actual.readAuthorizationChallengeFreshness
+      );
+      mocks.challengeStore.getChallengeRpc.mockResolvedValue(samlChallenge());
+      mocks.consumeAuthorizationChallengeContinuation.mockResolvedValue({
+        type: 'reauth',
+        redirectUrl: '/saml/idp/sso?saml_request_id=_request-1',
+      });
+      mockSubmitQueries({
+        expiresAt: Number((startData.interaction as Record<string, unknown>).expires_at),
+        contractHash: String(startData.contract_hash),
+        signature: String(startData.signature),
+        currentNodeId: 'session-check',
+        currentStepId: 'session-check:step',
+        stepState: 'pending',
+        runtimeSnapshot: sessionCheckRuntime,
+        editorSnapshot: sessionCheckEditor,
+        samlSpId: SP,
+        context: samlContext,
+      });
+      mocks.sessionStore.getSessionRpc.mockResolvedValue({
+        userId: session.userId ?? 'user_1',
+        expiresAt: Date.now() + 60_000,
+        createdAt: 1_700_000_000_000,
+        data: { authTime: 1_700_000_123, ...session.data },
+      });
+      const response = await loginRuntimeInteractionSubmitHandler(
+        createContext({
+          params: { interaction_id: 'interaction_1' },
+          headers: { Cookie: 'authrim_session=sess_runtime_1' },
+          body: {
+            step_id: 'session-check:step',
+            node_id: 'session-check',
+            contract_hash: startData.contract_hash,
+            signature: startData.signature,
+          },
+        })
+      );
+      return { response, data: await readJson(response) };
+    }
+
+    it.each([
+      ['proven before the person was sent', { amr: ['passkey'], proven_at: ISSUED_AT - 1 }],
+      ['of unknown proof time', { amr: ['passkey'] }],
+      ['whose method is not known', { proven_at: ISSUED_AT + 10 }],
+    ])('does not complete with a session %s: the person signs in', async (_name, data) => {
+      const { response, data: body } = await sessionCheck({ data });
+
+      expect(response.status).toBe(200);
+      expect(body.completed).toBe(false);
+      expect(body.step).toMatchObject({ id: 'auth:step' });
+      expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
+    });
+
+    it('does not complete with the session of another person, however new', async () => {
+      const { response, data } = await sessionCheck({
+        userId: 'user_2',
+        data: { amr: ['passkey'], proven_at: ISSUED_AT + 10 },
+      });
+
+      expect(response.status).toBe(200);
+      expect(data.completed).toBe(false);
+      expect(data.step).toMatchObject({ id: 'auth:step' });
+      expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
+    });
+
+    it("completes with the person's session proven after they were sent, and judges that proof against the challenge", async () => {
+      const { response, data } = await sessionCheck({
+        data: { amr: ['passkey'], proven_at: ISSUED_AT + 10 },
+      });
+
+      expect(response.status).toBe(200);
+      expect(data.completed).toBe(true);
+      expect(mocks.consumeAuthorizationChallengeContinuation).toHaveBeenCalledWith(
+        expect.anything(),
+        'tenant_test',
+        'saml_challenge_1',
+        'user_1',
+        expect.any(Number),
+        expect.any(String),
+        'passkey',
+        ISSUED_AT + 10
+      );
+      // The person goes back to the request, as for any SAML sign-in.
+      expect(JSON.stringify(data)).toContain('/saml/idp/sso?saml_request_id=_request-1');
+    });
+
+    it('completes with a session whose sign-in re-proved it in place', async () => {
+      const { data } = await sessionCheck({
+        data: {
+          amr: ['pwd', 'totp'],
+          proven_at: ISSUED_AT - 3_600_000,
+          reauth_proven_amr: ['totp'],
+          reauth_proven_at: ISSUED_AT + 5,
+        },
+      });
+
+      expect(data.completed).toBe(true);
+    });
   });
 });

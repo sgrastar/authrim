@@ -2,14 +2,18 @@
  * Tests for Rate Limiting Middleware
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { Env } from '../../types/env';
 import {
+  checkRateLimit,
   clearCloudProviderCache,
   clearRateLimitConfigCache,
   clearRateLimitFastPathCache,
+  formatRateLimitProfileOverride,
+  getCloudProvider,
   getRateLimitProfileAsync,
+  parseRateLimitProfileOverride,
   rateLimitMiddleware,
   RateLimitProfiles,
 } from '../rate-limit';
@@ -356,6 +360,41 @@ describe('Rate Limiting Middleware', () => {
       });
     });
 
+    it('does not relax a denial with a loadTest override past its expiry', async () => {
+      let now = Date.now();
+      const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+      try {
+        const resetAt = Math.floor(now / 1000) + 60;
+        const denied = { allowed: false, current: 11, limit: 10, resetAt, retryAfter: 30 };
+        const allowed = { allowed: true, current: 12, limit: 10_000, resetAt, retryAfter: 0 };
+        const incrementRpc = vi
+          .fn()
+          .mockResolvedValueOnce(denied)
+          .mockResolvedValueOnce(allowed)
+          .mockResolvedValue(denied);
+        const config = createMockKV();
+        await config.put(
+          'rate_limit_profile_override',
+          formatRateLimitProfileOverride('loadTest', now + 500)
+        );
+        mockEnv.AUTHRIM_CONFIG = config;
+        mockEnv.RATE_LIMITER = createMockRateLimiter(incrementRpc);
+        app.use('*', rateLimitMiddleware(RateLimitProfiles.strict));
+        app.get('/test', (c) => c.json({ success: true }));
+        const request = () =>
+          app.request('/test', { headers: { 'CF-Connecting-IP': '192.168.1.1' } }, mockEnv);
+
+        expect((await request()).status).toBe(200);
+        // Within the denial check's second, but after the override's expiry.
+        now += 600;
+        expect((await request()).status).toBe(429);
+        // No second try under the expired override's limits.
+        expect(incrementRpc).toHaveBeenCalledTimes(3);
+      } finally {
+        clock.mockRestore();
+      }
+    });
+
     it('keeps a denial fail closed when no relaxed override is authoritative', async () => {
       const resetAt = Math.floor(Date.now() / 1000) + 60;
       const incrementRpc = vi.fn().mockResolvedValue({
@@ -672,6 +711,89 @@ describe('Rate Limiting Middleware', () => {
 
         expect(res.status).toBe(200);
       }
+    });
+
+    async function hit(path: string, method = 'GET') {
+      return app.request(path, { method, headers: { 'CF-Connecting-IP': '192.168.1.1' } }, mockEnv);
+    }
+
+    it('treats a trailing /* as the child routes of the base path', async () => {
+      app.use(
+        '/api/items/*',
+        rateLimitMiddleware({ maxRequests: 1, windowSeconds: 60, endpoints: ['/api/items/*'] })
+      );
+      app.all('/api/items/:id/download', (c) => c.json({ ok: true }));
+      app.all('/api/items-other/:id', (c) => c.json({ ok: true }));
+
+      expect((await hit('/api/items/a/download')).status).toBe(200);
+      expect((await hit('/api/items/a/download')).status).toBe(429);
+      // A sibling that merely shares the string prefix is not a child route.
+      for (let i = 0; i < 3; i++) {
+        expect((await hit('/api/items-other/a')).status).toBe(200);
+      }
+    });
+
+    it('does not count the base path twice when a base entry and a /* entry are both mounted', async () => {
+      app.use(
+        '/api/items',
+        rateLimitMiddleware({ maxRequests: 2, windowSeconds: 60, endpoints: ['/api/items'] })
+      );
+      app.use(
+        '/api/items/*',
+        rateLimitMiddleware({ maxRequests: 2, windowSeconds: 60, endpoints: ['/api/items/*'] })
+      );
+      app.get('/api/items', (c) => c.json({ ok: true }));
+
+      expect((await hit('/api/items')).status).toBe(200);
+      expect((await hit('/api/items')).status).toBe(200);
+      expect((await hit('/api/items')).status).toBe(429);
+    });
+
+    it.each([
+      ['/api/user/consents/*', 'DELETE', '/api/user/consents/client-123'],
+      ['/api/user/data-export/*', 'GET', '/api/user/data-export/export-1/download'],
+      ['/api/admin/tenants/:tenantId/audit/*', 'GET', '/api/admin/tenants/t1/audit/events'],
+    ])('limits child routes registered as %s (%s %s)', async (endpoint, method, path) => {
+      app.use(
+        '*',
+        rateLimitMiddleware({ maxRequests: 1, windowSeconds: 60, endpoints: [endpoint] })
+      );
+      app.all('*', (c) => c.json({ ok: true }));
+
+      expect((await hit(path, method)).status).toBe(200);
+      expect((await hit(path, method)).status).toBe(429);
+    });
+
+    it('spends the same budget for a percent-encoded spelling of a limited path', async () => {
+      app.use(
+        '*',
+        rateLimitMiddleware({
+          maxRequests: 2,
+          windowSeconds: 60,
+          endpoints: ['/api/user/consents/*'],
+        })
+      );
+      app.all('/api/user/consents/:id', (c) => c.json({ ok: true }));
+
+      // Hono routes all three spellings to the same handler.
+      expect((await hit('/api/user/consents/client-1', 'DELETE')).status).toBe(200);
+      expect((await hit('/api/%75ser/consents/client-1', 'DELETE')).status).toBe(200);
+      expect((await hit('/api/user/%63onsents/client-1', 'DELETE')).status).toBe(429);
+    });
+
+    it('matches :param segments against any single path segment', async () => {
+      app.use(
+        '/api/users/:id/lock',
+        rateLimitMiddleware({
+          maxRequests: 1,
+          windowSeconds: 60,
+          endpoints: ['/api/users/:id/lock'],
+        })
+      );
+      app.post('/api/users/:id/lock', (c) => c.json({ ok: true }));
+
+      expect((await hit('/api/users/u1/lock', 'POST')).status).toBe(200);
+      expect((await hit('/api/users/u1/lock', 'POST')).status).toBe(429);
     });
 
     it('should apply to all endpoints when endpoints filter not specified', async () => {
@@ -1113,10 +1235,15 @@ describe('Rate Limiting Middleware', () => {
     });
 
     it('returns built-in defaults before asynchronously refreshing KV overrides', async () => {
-      const configKV = createMockKV();
-      await configKV.put('rate_limit_public_read_max_requests', '123');
-      await configKV.put('rate_limit_public_read_window_seconds', '45');
-      mockEnv.AUTHRIM_CONFIG = configKV;
+      const settingsKV = createMockKV();
+      await settingsKV.put(
+        'settings:platform:rate-limit',
+        JSON.stringify({
+          'rate_limit.public_read': 123,
+          'rate_limit.public_read_window_seconds': 45,
+        })
+      );
+      mockEnv.SETTINGS = settingsKV;
       const waitUntil = vi.fn();
 
       await expect(
@@ -1125,14 +1252,359 @@ describe('Rate Limiting Middleware', () => {
         } as unknown as Parameters<typeof getRateLimitProfileAsync>[2])
       ).resolves.toEqual(RateLimitProfiles.publicRead);
 
-      expect(waitUntil).toHaveBeenCalledTimes(1);
-      const scheduledRefresh = waitUntil.mock.calls[0]?.[0] as Promise<void> | undefined;
-      expect(scheduledRefresh).toBeDefined();
-      await scheduledRefresh;
+      // One refresh for the profile override, one for the profile's limits.
+      expect(waitUntil).toHaveBeenCalledTimes(2);
+      await Promise.all(waitUntil.mock.calls.map(([refresh]) => refresh));
       await expect(getRateLimitProfileAsync(mockEnv, 'publicRead')).resolves.toEqual({
         maxRequests: 123,
         windowSeconds: 45,
       });
+    });
+
+    it('applies the platform Settings API limits over the older per-profile values', async () => {
+      const configKV = createMockKV();
+      await configKV.put('rate_limit_strict_max_requests', '50');
+      await configKV.put('rate_limit_strict_window_seconds', '45');
+      const settingsKV = createMockKV();
+      await settingsKV.put(
+        'settings:platform:rate-limit',
+        JSON.stringify({ 'rate_limit.strict': 25, 'rate_limit.strict_window_seconds': 30 })
+      );
+      mockEnv.AUTHRIM_CONFIG = configKV;
+      mockEnv.SETTINGS = settingsKV;
+      const waitUntil = vi.fn();
+
+      await getRateLimitProfileAsync(mockEnv, 'strict', {
+        waitUntil,
+      } as unknown as Parameters<typeof getRateLimitProfileAsync>[2]);
+      await Promise.all(waitUntil.mock.calls.map(([refresh]) => refresh));
+
+      await expect(getRateLimitProfileAsync(mockEnv, 'strict')).resolves.toEqual({
+        maxRequests: 25,
+        windowSeconds: 30,
+      });
+    });
+
+    it('no longer reads the older per-profile values', async () => {
+      const configKV = createMockKV();
+      await configKV.put('rate_limit_moderate_max_requests', '80');
+      await configKV.put('rate_limit_moderate_window_seconds', '45');
+      mockEnv.AUTHRIM_CONFIG = configKV;
+      mockEnv.SETTINGS = createMockKV();
+      const waitUntil = vi.fn();
+
+      await getRateLimitProfileAsync(mockEnv, 'moderate', {
+        waitUntil,
+      } as unknown as Parameters<typeof getRateLimitProfileAsync>[2]);
+      await Promise.all(waitUntil.mock.calls.map(([refresh]) => refresh));
+
+      await expect(getRateLimitProfileAsync(mockEnv, 'moderate')).resolves.toEqual(
+        RateLimitProfiles.moderate
+      );
+    });
+
+    it('applies the Settings API limits of every profile, not only strict, moderate and lenient', async () => {
+      const configKV = createMockKV();
+      await configKV.put('rate_limit_send_challenge_max_requests', '50');
+      const settingsKV = createMockKV();
+      await settingsKV.put(
+        'settings:platform:rate-limit',
+        JSON.stringify({ 'rate_limit.send_challenge_window_seconds': 120 })
+      );
+      mockEnv.AUTHRIM_CONFIG = configKV;
+      mockEnv.SETTINGS = settingsKV;
+      const waitUntil = vi.fn();
+
+      await getRateLimitProfileAsync(mockEnv, 'sendChallenge', {
+        waitUntil,
+      } as unknown as Parameters<typeof getRateLimitProfileAsync>[2]);
+      await Promise.all(waitUntil.mock.calls.map(([refresh]) => refresh));
+
+      // The older value is not read: the default limit with the Settings API window.
+      await expect(getRateLimitProfileAsync(mockEnv, 'sendChallenge')).resolves.toEqual({
+        maxRequests: RateLimitProfiles.sendChallenge.maxRequests,
+        windowSeconds: 120,
+      });
+    });
+
+    it('keeps the last limits read when a later refresh fails, instead of the defaults', async () => {
+      let fail = false;
+      const settingsKV = createMockKV();
+      await settingsKV.put(
+        'settings:platform:rate-limit',
+        JSON.stringify({ 'rate_limit.strict': 1 })
+      );
+      mockEnv.AUTHRIM_CONFIG = createMockKV();
+      mockEnv.SETTINGS = {
+        get: vi.fn(async (key: string) => {
+          if (fail) throw new Error('kv unavailable');
+          return settingsKV.get(key);
+        }),
+      } as unknown as KVNamespace;
+      let now = Date.now();
+      const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+      const refresh = async () => {
+        // Past every cache time (rate limit profiles, settings documents).
+        now += 10 * 60 * 1000;
+        const waitUntil = vi.fn();
+        const config = await getRateLimitProfileAsync(mockEnv, 'strict', {
+          waitUntil,
+        } as unknown as Parameters<typeof getRateLimitProfileAsync>[2]);
+        await Promise.all(waitUntil.mock.calls.map(([refresh]) => refresh));
+        return config;
+      };
+
+      await refresh();
+      expect((await refresh()).maxRequests).toBe(1);
+      fail = true;
+      await refresh();
+      expect((await refresh()).maxRequests).toBe(1);
+      clock.mockRestore();
+    });
+
+    describe('with a profile override and stores that stop answering', () => {
+      let now: number;
+      let clock: ReturnType<typeof vi.spyOn>;
+      const refreshAll = async (profile: keyof typeof RateLimitProfiles) => {
+        // Past every cache time (profiles, override, settings documents).
+        now += 10 * 60 * 1000;
+        const waitUntil = vi.fn();
+        await getRateLimitProfileAsync(mockEnv, profile, {
+          waitUntil,
+        } as unknown as Parameters<typeof getRateLimitProfileAsync>[2]);
+        await Promise.all(waitUntil.mock.calls.map(([refresh]) => refresh));
+        return waitUntil;
+      };
+
+      beforeEach(() => {
+        now = Date.now();
+        clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+      });
+      afterEach(() => clock.mockRestore());
+
+      it('keeps the override and its limits when the stores fail', async () => {
+        let fail = false;
+        const values = new Map<string, string>([
+          ['rate_limit_profile_override', 'strict'],
+          [
+            'settings:platform:rate-limit',
+            JSON.stringify({ 'rate_limit.strict': 1, 'rate_limit.strict_window_seconds': 3600 }),
+          ],
+        ]);
+        const store = {
+          get: vi.fn(async (key: string) => {
+            if (fail) throw new Error('kv unavailable');
+            return values.get(key) ?? null;
+          }),
+        } as unknown as KVNamespace;
+        mockEnv.AUTHRIM_CONFIG = store;
+        mockEnv.SETTINGS = store;
+
+        await refreshAll('lenient');
+        await refreshAll('lenient');
+        await expect(getRateLimitProfileAsync(mockEnv, 'lenient')).resolves.toEqual({
+          maxRequests: 1,
+          windowSeconds: 3600,
+        });
+
+        fail = true;
+        await refreshAll('lenient');
+        await expect(getRateLimitProfileAsync(mockEnv, 'lenient')).resolves.toEqual({
+          maxRequests: 1,
+          windowSeconds: 3600,
+        });
+      });
+
+      it('stops a loadTest override at its expiry, also while the stores fail', async () => {
+        let fail = false;
+        const values = new Map<string, string>([
+          [
+            'rate_limit_profile_override',
+            formatRateLimitProfileOverride('loadTest', now + 60 * 60 * 1000),
+          ],
+        ]);
+        const store = {
+          get: vi.fn(async (key: string) => {
+            if (fail) throw new Error('kv unavailable');
+            return values.get(key) ?? null;
+          }),
+        } as unknown as KVNamespace;
+        mockEnv.AUTHRIM_CONFIG = store;
+        mockEnv.SETTINGS = store;
+
+        await refreshAll('lenient');
+        await refreshAll('lenient');
+        expect((await getRateLimitProfileAsync(mockEnv, 'lenient')).maxRequests).toBe(10000);
+
+        fail = true;
+        await refreshAll('lenient');
+        expect((await getRateLimitProfileAsync(mockEnv, 'lenient')).maxRequests).toBe(10000);
+        for (let i = 0; i < 4; i++) await refreshAll('lenient');
+        // Past the expiry: the endpoint's own profile, not the load-test limits.
+        expect((await getRateLimitProfileAsync(mockEnv, 'lenient')).maxRequests).toBe(300);
+      });
+
+      it("applies the endpoint's own limits, not the defaults, when an override expires", async () => {
+        let fail = false;
+        const values = new Map<string, string>([
+          [
+            'rate_limit_profile_override',
+            formatRateLimitProfileOverride('loadTest', now + 60 * 60 * 1000),
+          ],
+          ['settings:platform:rate-limit', JSON.stringify({ 'rate_limit.strict': 1 })],
+        ]);
+        const store = {
+          get: vi.fn(async (key: string) => {
+            if (fail) throw new Error('kv unavailable');
+            return values.get(key) ?? null;
+          }),
+        } as unknown as KVNamespace;
+        mockEnv.AUTHRIM_CONFIG = store;
+        mockEnv.SETTINGS = store;
+
+        await refreshAll('strict');
+        await refreshAll('strict');
+        expect((await getRateLimitProfileAsync(mockEnv, 'strict')).maxRequests).toBe(10000);
+
+        fail = true;
+        for (let i = 0; i < 7; i++) await refreshAll('strict');
+        expect((await getRateLimitProfileAsync(mockEnv, 'strict')).maxRequests).toBe(1);
+      });
+
+      it('applies the RATE_LIMIT_PROFILE limits, not the defaults, when an override expires', async () => {
+        let fail = false;
+        const values = new Map<string, string>([
+          ['settings:platform:rate-limit', JSON.stringify({ 'rate_limit.send_challenge': 5 })],
+        ]);
+        const store = {
+          get: vi.fn(async (key: string) => {
+            if (fail) throw new Error('kv unavailable');
+            return values.get(key) ?? null;
+          }),
+        } as unknown as KVNamespace;
+        mockEnv.AUTHRIM_CONFIG = store;
+        mockEnv.SETTINGS = store;
+        (mockEnv as Env & { RATE_LIMIT_PROFILE?: string }).RATE_LIMIT_PROFILE = 'sendChallenge';
+        try {
+          await refreshAll('strict');
+          expect((await getRateLimitProfileAsync(mockEnv, 'strict')).maxRequests).toBe(5);
+
+          // A load test starts; the RATE_LIMIT_PROFILE limit changes while it runs.
+          values.set(
+            'rate_limit_profile_override',
+            formatRateLimitProfileOverride('loadTest', now + 60 * 60 * 1000)
+          );
+          await refreshAll('strict');
+          await refreshAll('strict');
+          expect((await getRateLimitProfileAsync(mockEnv, 'strict')).maxRequests).toBe(10000);
+          values.set(
+            'settings:platform:rate-limit',
+            JSON.stringify({ 'rate_limit.send_challenge': 1 })
+          );
+          await refreshAll('strict');
+          await refreshAll('strict');
+
+          fail = true;
+          for (let i = 0; i < 7; i++) await refreshAll('strict');
+          expect((await getRateLimitProfileAsync(mockEnv, 'strict')).maxRequests).toBe(1);
+        } finally {
+          delete (mockEnv as Env & { RATE_LIMIT_PROFILE?: string }).RATE_LIMIT_PROFILE;
+        }
+      });
+
+      it('applies an older loadTest override saved without its expiry for at most an hour', async () => {
+        let fail = false;
+        const store = {
+          get: vi.fn(async (key: string) => {
+            if (fail) throw new Error('kv unavailable');
+            return key === 'rate_limit_profile_override' ? 'loadTest' : null;
+          }),
+        } as unknown as KVNamespace;
+        mockEnv.AUTHRIM_CONFIG = store;
+        mockEnv.SETTINGS = store;
+
+        await refreshAll('strict');
+        await refreshAll('strict');
+        expect((await getRateLimitProfileAsync(mockEnv, 'strict')).maxRequests).toBe(10000);
+
+        fail = true;
+        for (let i = 0; i < 7; i++) await refreshAll('strict');
+        expect((await getRateLimitProfileAsync(mockEnv, 'strict')).maxRequests).toBe(10);
+      });
+
+      it('switches to a new override only once its limits are read', async () => {
+        let settingsFail = false;
+        const values = new Map<string, string>([
+          ['rate_limit_profile_override', 'strict'],
+          [
+            'settings:platform:rate-limit',
+            JSON.stringify({ 'rate_limit.strict': 1, 'rate_limit.lenient': 1 }),
+          ],
+        ]);
+        const store = {
+          get: vi.fn(async (key: string) => {
+            if (settingsFail && key.startsWith('settings:')) throw new Error('kv unavailable');
+            return values.get(key) ?? null;
+          }),
+        } as unknown as KVNamespace;
+        mockEnv.AUTHRIM_CONFIG = store;
+        mockEnv.SETTINGS = store;
+
+        await refreshAll('moderate');
+        await refreshAll('moderate');
+        expect((await getRateLimitProfileAsync(mockEnv, 'moderate')).maxRequests).toBe(1);
+
+        values.set('rate_limit_profile_override', 'lenient');
+        settingsFail = true;
+        await refreshAll('moderate');
+        await refreshAll('moderate');
+        // Still strict (1): lenient's limits could not be read, so the switch waits.
+        expect((await getRateLimitProfileAsync(mockEnv, 'moderate')).maxRequests).toBe(1);
+
+        settingsFail = false;
+        await refreshAll('moderate');
+        await refreshAll('moderate');
+        expect((await getRateLimitProfileAsync(mockEnv, 'moderate')).maxRequests).toBe(1);
+      });
+
+      it('shares one refresh of the overriding profile between profiles', async () => {
+        const configKV = createMockKV();
+        await configKV.put('rate_limit_profile_override', 'loadTest');
+        mockEnv.AUTHRIM_CONFIG = configKV;
+        mockEnv.SETTINGS = createMockKV();
+        await refreshAll('strict');
+
+        now += 10 * 60 * 1000;
+        const get = vi.spyOn(configKV, 'get');
+        const waitUntil = vi.fn();
+        const ctx = { waitUntil } as unknown as Parameters<typeof getRateLimitProfileAsync>[2];
+        await Promise.all([
+          getRateLimitProfileAsync(mockEnv, 'strict', ctx),
+          getRateLimitProfileAsync(mockEnv, 'moderate', ctx),
+          getRateLimitProfileAsync(mockEnv, 'lenient', ctx),
+        ]);
+        await Promise.all(waitUntil.mock.calls.map(([refresh]) => refresh));
+
+        const reads = get.mock.calls.map(([key]) => key);
+        expect(reads.filter((key) => key === 'rate_limit_profile_override')).toHaveLength(1);
+      });
+    });
+
+    it('keeps the limits it has when the settings cannot be read', async () => {
+      mockEnv.AUTHRIM_CONFIG = createMockKV();
+      mockEnv.SETTINGS = {
+        get: vi.fn().mockRejectedValue(new Error('kv unavailable')),
+      } as unknown as KVNamespace;
+      const waitUntil = vi.fn();
+
+      await getRateLimitProfileAsync(mockEnv, 'strict', {
+        waitUntil,
+      } as unknown as Parameters<typeof getRateLimitProfileAsync>[2]);
+      await Promise.all(waitUntil.mock.calls.map(([refresh]) => refresh));
+
+      await expect(getRateLimitProfileAsync(mockEnv, 'strict')).resolves.toEqual(
+        RateLimitProfiles.strict
+      );
     });
 
     it('should work with strict profile', async () => {
@@ -1221,5 +1693,104 @@ describe('Rate Limiting Middleware', () => {
       expect(res.headers.get('Cache-Control')).toBe('no-store');
       expect(res.headers.get('Pragma')).toBe('no-cache');
     });
+  });
+});
+
+describe('AWS runtime rate limiting', () => {
+  it('selects the typed atomic port with tenant, class, and trusted AWS provider', async () => {
+    const result = { allowed: true, remaining: 4, resetAt: 1234 };
+    const check = vi.fn().mockResolvedValue(result);
+    const env = { AUTH_RUNTIME_PORTS: { rateLimit: { check } } } as Env;
+
+    expect(await getCloudProvider(env)).toBe('aws');
+    await expect(
+      checkRateLimit(
+        env,
+        '203.0.113.7',
+        { maxRequests: 5, windowSeconds: 60, endpointClass: 'loginStart' },
+        'tenant-a'
+      )
+    ).resolves.toEqual(result);
+    expect(check).toHaveBeenCalledWith({
+      tenantId: 'tenant-a',
+      key: 'tenant:tenant-a:rate-limit:loginStart:203.0.113.7',
+      maxRequests: 5,
+      windowSeconds: 60,
+    });
+  });
+
+  it('ignores a forged Cloudflare IP header when AWS ingress supplied the final forwarded IP', async () => {
+    const check = vi.fn().mockResolvedValue({
+      allowed: true,
+      remaining: 4,
+      resetAt: Math.floor(Date.now() / 1000) + 60,
+    });
+    const env = { AUTH_RUNTIME_PORTS: { rateLimit: { check } } } as Env;
+    const app = new Hono<{ Bindings: Env }>();
+    app.use('*', rateLimitMiddleware({ maxRequests: 5, windowSeconds: 60, keyScope: 'global' }));
+    app.get('/test', (c) => c.json({ ok: true }));
+
+    const response = await app.request(
+      '/test',
+      {
+        headers: {
+          'CF-Connecting-IP': '198.51.100.4',
+          'X-Forwarded-For': '198.51.100.4, 203.0.113.7',
+        },
+      },
+      env
+    );
+    expect(response.status).toBe(200);
+    expect(check).toHaveBeenCalledWith(
+      expect.objectContaining({ key: '203.0.113.7', maxRequests: 5 })
+    );
+  });
+
+  it('fails closed when an alternate runtime omits the atomic limiter', async () => {
+    const env = { AUTH_RUNTIME_PORTS: {} } as Env;
+    await expect(
+      checkRateLimit(env, '203.0.113.7', { maxRequests: 5, windowSeconds: 60 }, 'tenant-a')
+    ).rejects.toThrow('auth_runtime_rate_limit_unavailable');
+  });
+});
+
+describe('parseRateLimitProfileOverride', () => {
+  const now = 1_000_000_000_000;
+
+  it('reads the stored override and the names the older API stored', () => {
+    expect(parseRateLimitProfileOverride(null, now)).toBeNull();
+    expect(parseRateLimitProfileOverride('strict', now)).toEqual({
+      profile: 'strict',
+      expiresAt: null,
+    });
+    expect(
+      parseRateLimitProfileOverride(formatRateLimitProfileOverride('publicRead', null), now)
+    ).toEqual({ profile: 'publicRead', expiresAt: null });
+  });
+
+  it('ignores unknown profiles and what cannot be read', () => {
+    expect(parseRateLimitProfileOverride('toString', now)).toBeNull();
+    expect(parseRateLimitProfileOverride('{', now)).toBeNull();
+    expect(parseRateLimitProfileOverride('{"profile":"strict","expires_at":"x"}', now)).toBeNull();
+  });
+
+  it('never lets a loadTest override run past its expiry or an hour', () => {
+    const in15 = now + 15 * 60 * 1000;
+    expect(
+      parseRateLimitProfileOverride(formatRateLimitProfileOverride('loadTest', in15), now)
+    ).toEqual({ profile: 'loadTest', expiresAt: in15 });
+    expect(parseRateLimitProfileOverride('loadTest', now)).toEqual({
+      profile: 'loadTest',
+      expiresAt: now + 60 * 60 * 1000,
+    });
+    expect(
+      parseRateLimitProfileOverride(
+        formatRateLimitProfileOverride('loadTest', now + 5 * 60 * 60 * 1000),
+        now
+      )?.expiresAt
+    ).toBe(now + 60 * 60 * 1000);
+    expect(
+      parseRateLimitProfileOverride(formatRateLimitProfileOverride('loadTest', now - 1), now)
+    ).toBeNull();
   });
 });

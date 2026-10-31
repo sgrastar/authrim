@@ -11,7 +11,7 @@
  */
 
 import type { Env } from '../types/env';
-import type { EmailDomainHashConfig, DEFAULT_EMAIL_DOMAIN_HASH_CONFIG } from '../types/jit-config';
+import type { EmailDomainHashConfig } from '../types/jit-config';
 
 // =============================================================================
 // Domain Normalization

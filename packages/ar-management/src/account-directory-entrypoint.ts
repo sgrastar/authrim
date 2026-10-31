@@ -1,3 +1,4 @@
+import { runSamlDrCoveredOperation } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { D1Database } from '@cloudflare/workers-types';
 import {
@@ -10,6 +11,7 @@ import {
   type AccountDirectoryPublishResult,
   type AccountDirectoryRemovalPublication,
   type Env,
+  runTenantBackupCoveredEffect,
 } from '@authrim/ar-lib-core';
 import { AccountDirectoryCoordinator } from './account-directory-coordinator';
 import { activatePublishedAccountAuthenticationState } from './account-authentication-activation';
@@ -64,7 +66,7 @@ function tenantCoreBinding(
 }
 
 const EXPOSED_ERROR =
-  /^(account_directory_(rpc_caller_unauthorized|source_route_invalid|source_binding_unavailable)|directory_[a-z0-9_]+|invalid_[a-z0-9_]+|lookup_registry_[a-z0-9_]+|control_plane_sensitive_[a-z0-9_:.$-]+)$/u;
+  /^(backup_mutation_unavailable|account_directory_(rpc_caller_unauthorized|source_route_invalid|source_binding_unavailable)|directory_[a-z0-9_]+|invalid_[a-z0-9_]+|lookup_registry_[a-z0-9_]+|control_plane_sensitive_[a-z0-9_:.$-]+)$/u;
 const SAFE_DIAGNOSTIC_ERROR =
   /^(account_creation_[a-z0-9_]+|account_directory_[a-z0-9_]+|directory_[a-z0-9_]+|invalid_[a-z0-9_]+|lookup_registry_[a-z0-9_]+|control_plane_sensitive_[a-z0-9_:.$-]+)$/u;
 
@@ -84,58 +86,66 @@ function logDirectoryFailure(
 
 export class AccountDirectoryEntrypoint extends WorkerEntrypoint<Env, AccountDirectoryRpcProps> {
   async publishAccountDirectory(input: unknown): Promise<AccountDirectoryPublishResult> {
+    return runSamlDrCoveredOperation(this.env, this.ctx, async (env) =>
+      this.#publishAccountDirectory(input, env)
+    );
+  }
+
+  async #publishAccountDirectory(input: unknown, env: Env): Promise<AccountDirectoryPublishResult> {
     try {
-      const environmentId = authorized(this.ctx.props, this.env);
+      const environmentId = authorized(this.ctx.props, env);
       const publication = await validateAccountDirectoryPublication(
         input as AccountDirectoryPublication
       );
-      if (!this.env.TENANT_RUNTIME_REGISTRY) {
-        throw new Error('lookup_registry_snapshot_unavailable');
-      }
-      const publicJwks = this.env.TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS;
-      if (!publicJwks) throw new Error('lookup_registry_public_jwks_unavailable');
-      const lookupForBucket = await createLookupBucketWriteResolver(this.env);
-      const tenantCore = tenantCoreBinding(this.env, publication);
-      const coordinator = new AccountDirectoryCoordinator({
-        tenantCore,
-        lookupForBucket,
-        now: () => Math.floor(Date.now() / 1000),
-        onAccountActivated: async (activatedPublication, now) => {
-          await activatePublishedAccountAuthenticationState(
-            this.env,
+      return await runTenantBackupCoveredEffect(
+        env,
+        { tenantId: publication.tenantId },
+        async () => {
+          if (!env.TENANT_RUNTIME_REGISTRY) {
+            throw new Error('lookup_registry_snapshot_unavailable');
+          }
+          const publicJwks = env.TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS;
+          if (!publicJwks) throw new Error('lookup_registry_public_jwks_unavailable');
+          const lookupForBucket = await createLookupBucketWriteResolver(env);
+          const tenantCore = tenantCoreBinding(env, publication);
+          const coordinator = new AccountDirectoryCoordinator({
             tenantCore,
-            activatedPublication,
-            now
-          );
-          const operationRepository = new AccountCreationOperationRepository(
-            await resolveAuthCorePersistenceAdapterFromEnv(
-              this.env,
-              'account-directory-operation',
-              { tenantId: activatedPublication.tenantId }
-            )
-          );
-          await operationRepository.recordDirectoryOutcome({
-            publication: activatedPublication,
-            outcome: 'succeeded',
-            now,
-            lifecycleEventAdapter: ensureDatabaseAdapter(
-              tenantCore,
-              'account-directory-lifecycle-events'
-            ),
+            lookupForBucket,
+            now: () => Math.floor(Date.now() / 1000),
+            onAccountActivated: async (activatedPublication, now) => {
+              await activatePublishedAccountAuthenticationState(
+                env,
+                tenantCore,
+                activatedPublication,
+                now
+              );
+              const operationRepository = new AccountCreationOperationRepository(
+                await resolveAuthCorePersistenceAdapterFromEnv(env, 'account-directory-operation', {
+                  tenantId: activatedPublication.tenantId,
+                })
+              );
+              await operationRepository.recordDirectoryOutcome({
+                publication: activatedPublication,
+                outcome: 'succeeded',
+                now,
+                lifecycleEventAdapter: ensureDatabaseAdapter(
+                  tenantCore,
+                  'account-directory-lifecycle-events'
+                ),
+              });
+              await processAccountLifecycleEventForOperation(env, tenantCore, {
+                tenantId: activatedPublication.tenantId,
+                operationId: activatedPublication.operationId,
+                now,
+              }).catch((error) => {
+                logDirectoryFailure('lifecycle_event', error);
+                return false;
+              });
+            },
           });
-          this.ctx.waitUntil(
-            processAccountLifecycleEventForOperation(this.env, tenantCore, {
-              tenantId: activatedPublication.tenantId,
-              operationId: activatedPublication.operationId,
-              now,
-            }).catch((error) => {
-              logDirectoryFailure('lifecycle_event', error);
-              return false;
-            })
-          );
-        },
-      });
-      return await coordinator.publish(publication);
+          return coordinator.publish(publication);
+        }
+      );
     } catch (error) {
       logDirectoryFailure('publish', error);
       if (error instanceof Error && EXPOSED_ERROR.test(error.message)) {
@@ -146,23 +156,35 @@ export class AccountDirectoryEntrypoint extends WorkerEntrypoint<Env, AccountDir
   }
 
   async removeAccountDirectory(input: unknown): Promise<AccountDirectoryPublishResult> {
+    return runSamlDrCoveredOperation(this.env, this.ctx, async (env) =>
+      this.#removeAccountDirectory(input, env)
+    );
+  }
+
+  async #removeAccountDirectory(input: unknown, env: Env): Promise<AccountDirectoryPublishResult> {
     try {
-      authorized(this.ctx.props, this.env);
+      authorized(this.ctx.props, env);
       const publication = await validateAccountDirectoryRemovalPublication(
         input as AccountDirectoryRemovalPublication
       );
-      if (!this.env.TENANT_RUNTIME_REGISTRY) {
-        throw new Error('lookup_registry_snapshot_unavailable');
-      }
-      if (!this.env.TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS) {
-        throw new Error('lookup_registry_public_jwks_unavailable');
-      }
-      const coordinator = new AccountDirectoryRemovalCoordinator({
-        tenantCore: tenantCoreBinding(this.env, publication),
-        lookupForBucket: await createLookupBucketWriteResolver(this.env),
-        now: () => Math.floor(Date.now() / 1000),
-      });
-      return await coordinator.remove(publication);
+      return await runTenantBackupCoveredEffect(
+        env,
+        { tenantId: publication.tenantId },
+        async () => {
+          if (!env.TENANT_RUNTIME_REGISTRY) {
+            throw new Error('lookup_registry_snapshot_unavailable');
+          }
+          if (!env.TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS) {
+            throw new Error('lookup_registry_public_jwks_unavailable');
+          }
+          const coordinator = new AccountDirectoryRemovalCoordinator({
+            tenantCore: tenantCoreBinding(env, publication),
+            lookupForBucket: await createLookupBucketWriteResolver(env),
+            now: () => Math.floor(Date.now() / 1000),
+          });
+          return coordinator.remove(publication);
+        }
+      );
     } catch (error) {
       logDirectoryFailure('remove', error);
       if (error instanceof Error && EXPOSED_ERROR.test(error.message)) {

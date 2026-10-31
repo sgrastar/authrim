@@ -325,7 +325,7 @@ async function validateConfig(configPath: string, jsonOutput?: boolean): Promise
           JSON.stringify(
             {
               valid: false,
-              errors: result.error.errors.map((e) => ({
+              errors: result.error.issues.map((e) => ({
                 path: e.path.join('.'),
                 message: e.message,
               })),
@@ -337,7 +337,7 @@ async function validateConfig(configPath: string, jsonOutput?: boolean): Promise
       } else {
         console.log(chalk.red('\n✗ Configuration has validation errors:\n'));
 
-        for (const error of result.error.errors) {
+        for (const error of result.error.issues) {
           const path = error.path.length > 0 ? error.path.join('.') : '(root)';
           console.log(chalk.red(`  • ${path}: ${error.message}`));
         }

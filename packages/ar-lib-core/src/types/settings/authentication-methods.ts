@@ -9,6 +9,9 @@
 import type { CategoryMeta, SettingMeta } from '../../utils/settings-manager';
 
 export interface AuthenticationMethodsSettings {
+  'authentication-methods.email_otp.guest_upgrade_enabled': boolean;
+  'authentication-methods.passkey.guest_upgrade_enabled': boolean;
+  'authentication-methods.guest.login_enabled': boolean;
   'authentication-methods.cache_ttl': number;
   'authentication-methods.passkey.login_enabled': boolean;
   'authentication-methods.passkey.signup_enabled': boolean;
@@ -22,6 +25,7 @@ export interface AuthenticationMethodsSettings {
   'authentication-methods.totp.signup_enabled': boolean;
   'authentication-methods.totp.reauth_enabled': boolean;
   'authentication-methods.totp.account_link_enabled': boolean;
+  'authentication-methods.did.login_enabled': boolean;
   'authentication-methods.totp.preset': string;
   'authentication-methods.totp.default_acr': string;
   'authentication-methods.totp.requirement_policy': string;
@@ -32,15 +36,37 @@ export interface AuthenticationMethodsSettings {
   'authentication-methods.external_provider_usage': string;
   'authentication-methods.external_providers': string;
   'authentication-methods.directory_password.enabled': boolean;
-  'authentication-methods.directory_password.connector_id': string;
-  'authentication-methods.directory_password.label': string;
-  'authentication-methods.directory_password.auto_provision': boolean;
+  'authentication-methods.invitation.email_verification': 'optional' | 'required';
 }
 
 export const AUTHENTICATION_METHODS_SETTINGS_META: Record<
   keyof AuthenticationMethodsSettings,
   SettingMeta
 > = {
+  'authentication-methods.email_otp.guest_upgrade_enabled': {
+    key: 'authentication-methods.email_otp.guest_upgrade_enabled',
+    type: 'boolean',
+    default: true,
+    label: 'Email OTP guest upgrade',
+    description: 'Enable this use independently of other authentication uses.',
+    visibility: 'page',
+  },
+  'authentication-methods.passkey.guest_upgrade_enabled': {
+    key: 'authentication-methods.passkey.guest_upgrade_enabled',
+    type: 'boolean',
+    default: true,
+    label: 'Passkey guest upgrade',
+    description: 'Enable this use independently of other authentication uses.',
+    visibility: 'page',
+  },
+  'authentication-methods.guest.login_enabled': {
+    key: 'authentication-methods.guest.login_enabled',
+    type: 'boolean',
+    default: false,
+    label: 'Guest login',
+    description: 'Enable this use independently of other authentication uses.',
+    visibility: 'page',
+  },
   'authentication-methods.cache_ttl': {
     key: 'authentication-methods.cache_ttl',
     type: 'duration',
@@ -157,6 +183,15 @@ export const AUTHENTICATION_METHODS_SETTINGS_META: Record<
     description: 'Enable authenticator-app TOTP use for account linking flows',
     visibility: 'page',
   },
+  'authentication-methods.did.login_enabled': {
+    key: 'authentication-methods.did.login_enabled',
+    type: 'boolean',
+    default: false,
+    label: 'DID Login',
+    description:
+      'Allow accounts with a linked DID (did:web, did:key) to sign in by signing a challenge. Off unless the tenant turns it on',
+    visibility: 'page',
+  },
   'authentication-methods.totp.preset': {
     key: 'authentication-methods.totp.preset',
     type: 'string',
@@ -229,29 +264,14 @@ export const AUTHENTICATION_METHODS_SETTINGS_META: Record<
     description: 'Enable organization directory password login via Authrim Wordwarden',
     visibility: 'admin',
   },
-  'authentication-methods.directory_password.connector_id': {
-    key: 'authentication-methods.directory_password.connector_id',
-    type: 'string',
-    default: 'default',
-    label: 'Directory Connector ID',
-    description: 'Tenant-scoped Wordwarden connector ID used for directory password login',
-    visibility: 'admin',
-  },
-  'authentication-methods.directory_password.label': {
-    key: 'authentication-methods.directory_password.label',
-    type: 'string',
-    default: 'Organization ID',
-    label: 'Directory Password Label',
-    description: 'Public label shown for directory password login',
-    visibility: 'page',
-  },
-  'authentication-methods.directory_password.auto_provision': {
-    key: 'authentication-methods.directory_password.auto_provision',
-    type: 'boolean',
-    default: false,
-    label: 'Directory Password Auto Provision',
+  'authentication-methods.invitation.email_verification': {
+    key: 'authentication-methods.invitation.email_verification',
+    type: 'enum',
+    enum: ['optional', 'required'],
+    default: 'optional',
+    label: 'Invitation Email Verification',
     description:
-      'Create an Authrim user automatically after successful directory verification when no mapped user exists',
+      'For an invitation that names an email: optional accepts the email a sign-up gives; required has the person prove it (an email code before a passkey or authenticator-app sign-up, an external IdP that reports the email verified)',
     visibility: 'admin',
   },
 };
@@ -264,6 +284,9 @@ export const AUTHENTICATION_METHODS_CATEGORY_META: CategoryMeta = {
 };
 
 export const AUTHENTICATION_METHODS_DEFAULTS: AuthenticationMethodsSettings = {
+  'authentication-methods.email_otp.guest_upgrade_enabled': true,
+  'authentication-methods.passkey.guest_upgrade_enabled': true,
+  'authentication-methods.guest.login_enabled': false,
   'authentication-methods.cache_ttl': 180,
   'authentication-methods.passkey.login_enabled': true,
   'authentication-methods.passkey.signup_enabled': true,
@@ -277,6 +300,7 @@ export const AUTHENTICATION_METHODS_DEFAULTS: AuthenticationMethodsSettings = {
   'authentication-methods.totp.signup_enabled': false,
   'authentication-methods.totp.reauth_enabled': false,
   'authentication-methods.totp.account_link_enabled': false,
+  'authentication-methods.did.login_enabled': false,
   'authentication-methods.totp.preset': 'compatible',
   'authentication-methods.totp.default_acr': 'urn:authrim:aal:2',
   'authentication-methods.totp.requirement_policy':
@@ -288,7 +312,5 @@ export const AUTHENTICATION_METHODS_DEFAULTS: AuthenticationMethodsSettings = {
   'authentication-methods.external_provider_usage': '[]',
   'authentication-methods.external_providers': '[]',
   'authentication-methods.directory_password.enabled': false,
-  'authentication-methods.directory_password.connector_id': 'default',
-  'authentication-methods.directory_password.label': 'Organization ID',
-  'authentication-methods.directory_password.auto_provision': false,
+  'authentication-methods.invitation.email_verification': 'optional',
 };

@@ -9,7 +9,7 @@
  * import { evaluatePermissionsForScope } from './policy-embedding';
  *
  * const permissions = await evaluatePermissionsForScope(
- *   db,
+ *   { metadata, account },
  *   subjectId,
  *   'openid profile documents:read documents:write users:manage',
  *   { cache: env.REBAC_CACHE }
@@ -19,9 +19,19 @@
  */
 
 import type { KVNamespace } from '@cloudflare/workers-types';
-import type { DatabaseSource } from '../db';
-import { ensureDatabaseAdapter } from '../db';
 import type { ScopeType } from '../types/rbac';
+import { createLogger } from './logger';
+import {
+  resolveEffectiveSettingsWithSources,
+  resolvePlatformSettingsWithSources,
+  type EffectiveSettingsEnv,
+} from '../services/effective-settings';
+import {
+  resolveSubjectRoles,
+  roleAssignmentHolds,
+  rolePermissions,
+  type TenantRBACDatabases,
+} from '../services/tenant-rbac';
 
 /**
  * Standard OIDC scopes that should not be treated as resource:action permissions
@@ -67,6 +77,8 @@ interface UserPermissionGrant {
 /**
  * Options for permission evaluation
  */
+const log = createLogger().module('POLICY_EMBEDDING');
+
 export interface PolicyEmbeddingOptions {
   /** KV namespace for caching (optional) */
   cache?: KVNamespace;
@@ -74,6 +86,11 @@ export interface PolicyEmbeddingOptions {
   cacheTTL?: number;
   /** Tenant ID for multi-tenant isolation */
   tenantId: string;
+  /**
+   * At most this many permissions (tenant-wide first, then scoped, in the order of the
+   * requested scope) are embedded (`limits.max_embedded_permissions`). No limit when absent.
+   */
+  maxPermissions?: number;
 }
 
 /**
@@ -129,56 +146,40 @@ export function parseScopeToActions(scope: string): ScopeAction[] {
 /**
  * Get user's permissions from their roles
  *
- * Queries role_assignments and roles tables to get all permissions
+ * Reads the user's active role assignments and the roles they name to get all permissions
  * associated with the user's active roles.
  *
- * @param db - D1 database
+ * @param dbs - The tenant's metadata and the subject's account database
  * @param subjectId - User ID
  * @returns Set of permission strings (e.g., "documents:read")
  */
 async function getUserPermissionGrantsFromRoles(
-  db: DatabaseSource,
+  dbs: TenantRBACDatabases,
   subjectId: string,
   tenantId: string
 ): Promise<UserPermissionGrant[]> {
-  const now = Math.floor(Date.now() / 1000);
-
   // Get permissions from all active roles
-  const rows = await ensureDatabaseAdapter(db, 'policy-embedding').query<{
-    permissions_json: string;
-    scope_type: ScopeType | null;
-    scope_target: string | null;
-  }>(
-    `SELECT r.permissions_json, ra.scope_type, ra.scope_target
-       FROM role_assignments ra
-       JOIN roles r ON ra.role_id = r.id
-       WHERE ra.subject_id = ?
-         AND ra.tenant_id = ?
-         AND r.tenant_id = ?
-         AND (ra.expires_at IS NULL OR ra.expires_at > ?)
-         AND r.permissions_json IS NOT NULL
-         AND r.permissions_json != '[]'`,
-    [subjectId, tenantId, tenantId, now]
+  const rows = (await resolveSubjectRoles(dbs, tenantId, subjectId)).map(
+    ({ role, assignment }) => ({
+      permissions: rolePermissions(role),
+      scope_type: assignment.scope_type as ScopeType | null,
+      scope_target: assignment.scope_target as string | null,
+    })
   );
 
   const grants: UserPermissionGrant[] = [];
   const seen = new Set<string>();
 
   for (const r of rows) {
-    try {
-      const perms = JSON.parse(r.permissions_json) as string[];
-      for (const p of perms) {
-        const scopeType = r.scope_type ?? 'global';
-        const scopeTarget = r.scope_target ?? '';
-        const key = `${p}\u0000${scopeType}\u0000${scopeTarget}`;
-        if (seen.has(key)) {
-          continue;
-        }
-        seen.add(key);
-        grants.push({ permission: p, scopeType, scopeTarget });
+    for (const p of r.permissions) {
+      const scopeType = r.scope_type ?? 'global';
+      const scopeTarget = r.scope_target ?? '';
+      const key = `${p}\u0000${scopeType}\u0000${scopeTarget}`;
+      if (seen.has(key)) {
+        continue;
       }
-    } catch {
-      // Skip invalid JSON
+      seen.add(key);
+      grants.push({ permission: p, scopeType, scopeTarget });
     }
   }
 
@@ -198,8 +199,12 @@ function permissionMatches(grantPermission: string, action: ScopeAction): boolea
   return grantPermission === '*:*';
 }
 
-function isTenantWideGrant(grant: UserPermissionGrant): boolean {
-  return grant.scopeType === 'global' || !grant.scopeTarget;
+/** A grant of a global assignment, or of a tenant one in its own tenant (roleAssignmentHolds). */
+function isTenantWideGrant(grant: UserPermissionGrant, tenantId: string): boolean {
+  return roleAssignmentHolds(
+    { scope: grant.scopeType, scopeTarget: grant.scopeTarget },
+    { tenantId }
+  );
 }
 
 /**
@@ -210,7 +215,7 @@ function isTenantWideGrant(grant: UserPermissionGrant): boolean {
  * 2. Gets the user's permissions from their roles
  * 3. Returns only the scopes that match the user's permissions
  *
- * @param db - D1 database
+ * @param dbs - The tenant's metadata and the subject's account database
  * @param subjectId - User ID
  * @param scope - Requested scope string (space-separated)
  * @param options - Evaluation options
@@ -219,7 +224,7 @@ function isTenantWideGrant(grant: UserPermissionGrant): boolean {
  * @example
  * // User has roles that grant: ['documents:read', 'documents:write']
  * const permissions = await evaluatePermissionsForScope(
- *   db,
+ *   { metadata, account },
  *   'user_123',
  *   'openid profile documents:read documents:write users:manage'
  * );
@@ -227,17 +232,17 @@ function isTenantWideGrant(grant: UserPermissionGrant): boolean {
  * // 'users:manage' is excluded because user doesn't have that permission
  */
 export async function evaluatePermissionsForScope(
-  db: DatabaseSource,
+  dbs: TenantRBACDatabases,
   subjectId: string,
   scope: string,
   options: PolicyEmbeddingOptions
 ): Promise<string[]> {
-  const embedding = await evaluatePermissionEmbeddingForScope(db, subjectId, scope, options);
+  const embedding = await evaluatePermissionEmbeddingForScope(dbs, subjectId, scope, options);
   return embedding.permissions;
 }
 
 export async function evaluatePermissionEmbeddingForScope(
-  db: DatabaseSource,
+  dbs: TenantRBACDatabases,
   subjectId: string,
   scope: string,
   options: PolicyEmbeddingOptions
@@ -259,10 +264,10 @@ export async function evaluatePermissionEmbeddingForScope(
       try {
         userGrants = JSON.parse(cached) as UserPermissionGrant[];
       } catch {
-        userGrants = await getUserPermissionGrantsFromRoles(db, subjectId, tenantId);
+        userGrants = await getUserPermissionGrantsFromRoles(dbs, subjectId, tenantId);
       }
     } else {
-      userGrants = await getUserPermissionGrantsFromRoles(db, subjectId, tenantId);
+      userGrants = await getUserPermissionGrantsFromRoles(dbs, subjectId, tenantId);
       // Cache for next time
       const ttl = options.cacheTTL ?? 300;
       await options.cache.put(cacheKey, JSON.stringify(userGrants), {
@@ -270,7 +275,7 @@ export async function evaluatePermissionEmbeddingForScope(
       });
     }
   } else {
-    userGrants = await getUserPermissionGrantsFromRoles(db, subjectId, tenantId);
+    userGrants = await getUserPermissionGrantsFromRoles(dbs, subjectId, tenantId);
   }
 
   // Filter requested scopes to only those the user has permission for
@@ -285,7 +290,7 @@ export async function evaluatePermissionEmbeddingForScope(
         continue;
       }
 
-      if (isTenantWideGrant(grant)) {
+      if (isTenantWideGrant(grant, tenantId)) {
         if (!grantedSet.has(action.original)) {
           grantedSet.add(action.original);
           grantedPermissions.push(action.original);
@@ -293,7 +298,9 @@ export async function evaluatePermissionEmbeddingForScope(
         continue;
       }
 
-      if (grant.scopeType !== 'org' && grant.scopeType !== 'resource') {
+      // Only an organisation or resource assignment with its target is a scoped grant; any
+      // other (an unknown scope, or one without its target) grants nothing.
+      if ((grant.scopeType !== 'org' && grant.scopeType !== 'resource') || !grant.scopeTarget) {
         continue;
       }
       const scopedPermission: ScopedPolicyPermission = {
@@ -306,6 +313,21 @@ export async function evaluatePermissionEmbeddingForScope(
         scopedSet.add(scopedKey);
         scopedPermissions.push(scopedPermission);
       }
+    }
+  }
+
+  const max = options.maxPermissions;
+  if (max !== undefined && Number.isSafeInteger(max) && max >= 0) {
+    const total = grantedPermissions.length + scopedPermissions.length;
+    if (total > max) {
+      const permissions = grantedPermissions.slice(0, max);
+      const scoped = scopedPermissions.slice(0, max - permissions.length);
+      log.warn('Embedded permissions truncated to the limit', {
+        tenantId,
+        limit: max,
+        requested: total,
+      });
+      return { permissions, scopedPermissions: scoped };
     }
   }
 
@@ -330,29 +352,23 @@ export async function invalidatePermissionCache(
 }
 
 /**
- * Check if policy embedding feature is enabled
- *
- * Reads from KV first (dynamic override), then environment variable.
- *
- * @param env - Environment bindings
- * @returns true if policy embedding is enabled
+ * Whether policy embedding is on for a tenant: `feature.enable_policy_embedding` as the Settings
+ * API resolves it (tenant, else platform, else the older `policy:flags:ENABLE_POLICY_EMBEDDING`,
+ * else the ENABLE_POLICY_EMBEDDING environment variable, else off). Without a tenant, the
+ * platform's value. Off when the settings cannot be read (tokens then carry no embedded policy).
  */
-export async function isPolicyEmbeddingEnabled(env: {
-  SETTINGS?: KVNamespace;
-  ENABLE_POLICY_EMBEDDING?: string;
-}): Promise<boolean> {
-  // Check KV first (dynamic override)
-  if (env.SETTINGS) {
-    try {
-      const kvValue = await env.SETTINGS.get('policy:flags:ENABLE_POLICY_EMBEDDING');
-      if (kvValue !== null) {
-        return kvValue.toLowerCase() === 'true' || kvValue === '1';
-      }
-    } catch {
-      // Fall through to environment variable
-    }
+export async function isPolicyEmbeddingEnabled(
+  env: EffectiveSettingsEnv,
+  tenantId?: string
+): Promise<boolean> {
+  try {
+    const { values } = tenantId
+      ? await resolveEffectiveSettingsWithSources(env, 'feature-flags', {
+          tenantId,
+        })
+      : await resolvePlatformSettingsWithSources(env, 'feature-flags', {});
+    return values['feature.enable_policy_embedding'] === true;
+  } catch {
+    return false;
   }
-
-  // Fall back to environment variable
-  return env.ENABLE_POLICY_EMBEDDING === 'true';
 }

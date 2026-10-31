@@ -9,6 +9,7 @@ import {
 } from './egress-headers';
 import { parsePluginExecutionContext } from './execution-context';
 import { readBoundedRequestBody, readBoundedResponseBody } from './bounded-response';
+import { EXTERNAL_GATE_OPEN } from './external-gate';
 
 const MAX_REQUEST_BYTES = 64 * 1024;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
@@ -97,12 +98,18 @@ function encodeBoundedBody(value: string): ArrayBuffer {
 }
 
 export class PluginOutboundGateway {
+  private readonly fetcher: typeof fetch;
+
   constructor(
     private readonly env: PluginRunnerEnv,
-    private readonly fetcher: typeof fetch = fetch,
+    fetcher: typeof fetch = fetch,
     private readonly now: () => number = () => Math.floor(Date.now() / 1000),
     private readonly executionContext?: PluginEgressContext
-  ) {}
+  ) {
+    // Workers throw "Illegal invocation" when `fetch` is called as a method of another object, so
+    // keep it behind a plain call instead of storing it as a field.
+    this.fetcher = (input, init) => fetcher(input, init);
+  }
 
   async fetch(request: Request): Promise<Response> {
     const invocation = parsePluginExecutionContext(
@@ -112,11 +119,13 @@ export class PluginOutboundGateway {
     const session = primary(this.env.PLUGIN_RUNNER_DB);
     const installation = await session
       .prepare(
-        `SELECT plugin_id, backend_kind, NULL AS version_digest, config_version,
-                platform_rate_per_minute
-           FROM plugin_runner_installations
-          WHERE installation_id = ? AND tenant_id = ? AND state = 'enabled'
-            AND backend_kind IN ('dynamic_worker', 'in_process')`
+        `SELECT installation.plugin_id, installation.backend_kind, NULL AS version_digest,
+                installation.config_version, installation.platform_rate_per_minute
+           FROM plugin_runner_installations installation
+          WHERE installation.installation_id = ? AND installation.tenant_id = ?
+            AND installation.state = 'enabled'
+            AND installation.backend_kind IN ('dynamic_worker', 'in_process')
+            AND ${EXTERNAL_GATE_OPEN}`
       )
       .bind(invocation.pluginInstallationId, invocation.tenantId)
       .first<InstallationRow>();

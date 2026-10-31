@@ -5,6 +5,26 @@ const mocks = vi.hoisted(() => ({
   logger: { error: vi.fn() },
 }));
 
+// Handler SQL/ACL unit tests inject their query port. The real storage boundary is exercised in log-iceberg-read-adapter.test.ts.
+vi.mock('../log-read-adapter', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../log-read-adapter')>();
+  return {
+    ...actual,
+    createLogReadAdapter: (input: {
+      adapter: unknown;
+      page?: { cursor?: string; scope: string };
+    }) => {
+      actual.decodeCursor(input.page?.cursor, input.page?.scope ?? '');
+      return {
+        adapter: input.adapter,
+        hasArchive: () => false,
+        pagination: () => undefined,
+        coverage: () => undefined,
+      };
+    },
+  };
+});
+
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@authrim/ar-lib-core')>()),
   getTenantIdFromContext: vi.fn(() => 'tenant-a'),
@@ -21,7 +41,9 @@ import {
 
 function context(options: { query?: Record<string, string>; id?: string } = {}) {
   return {
+    env: {},
     req: {
+      url: 'https://example.com/api/admin/access-trace',
       query: vi.fn((name?: string) => (name ? options.query?.[name] : (options.query ?? {}))),
       param: vi.fn(() => options.id ?? 'trace-1'),
     },

@@ -259,7 +259,9 @@ describe('setup pending Control operations', () => {
       currentStep: 'apply_migrations',
     });
     expect(query.mock.calls[0]?.[1]).toContain('operation.lock_expires_at <= unixepoch()');
-    expect(query.mock.calls[0]?.[1]).toContain("migration.state = 'ready'");
+    expect(query.mock.calls[0]?.[1]).toContain(
+      "migration.state IN ('requested', 'applying', 'waiting_retry', 'ready')"
+    );
   });
 
   it('filters an explicitly selected operation before strict row parsing', async () => {

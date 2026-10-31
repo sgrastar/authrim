@@ -1,6 +1,6 @@
 {
   "name": "@authrim/ar-management",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "type": "module",
   "private": true,
   "scripts": {
@@ -8,7 +8,8 @@
     "deploy": "test -n \"$DEPLOY_ENV\" && pnpm --dir ../.. exec tsx scripts/deploy-api.ts --env=\"$DEPLOY_ENV\" --component=ar-management --mode=auto --concurrency=1",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "lint": "echo 'op-management: lint skipped'",
+    "lint": "eslint src --pass-on-unpruned-suppressions",
+    "lint:prune-suppressions": "eslint src --prune-suppressions",
     "test": "vitest run",
     "clean": "rm -rf dist"
   },
@@ -21,16 +22,18 @@
     "@authrim/ar-lib-plugin": "workspace:*",
     "@authrim/ar-lib-policy": "workspace:*",
     "@authrim/ar-lib-scim": "workspace:*",
-    "@simplewebauthn/server": "^13.2.2",
+    "@authrim/ar-saml": "workspace:^",
+    "@simplewebauthn/server": "^14.0.2",
     "hono": "4.13.2",
-    "jose": "^6.2.9",
-    "zod": "^3.24.4"
+    "jose": "^6.2.13",
+    "squirreling": "0.16.9",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260903.1",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.8",
-    "wrangler": "^4.110.0",
-    "yaml": "2.8.3"
+    "vitest": "^4.1.12",
+    "wrangler": "^4.152.0",
+    "yaml": "2.9.1"
   }
 }

@@ -289,6 +289,15 @@ Defaults:
 | Claims returned                     | Filtered by granted scopes and claims policy. |
 | Encrypted/signed response           | Controlled by client metadata.                |
 
+Destination Profile scopes (ID Token and UserInfo):
+
+An OIDC Destination Profile field names the scopes that release it in `requiredScopes`. The field is released when the request carries at least one of them. When `requiredScopes` is empty:
+
+- a standard claim needs the scope OIDC Core 5.4 assigns it: `email` for `email` and `email_verified`; `profile` for `name`, `family_name`, `given_name`, `middle_name`, `nickname`, `preferred_username`, `profile`, `picture`, `website`, `gender`, `birthdate`, `zoneinfo`, `locale` and `updated_at`; `phone` for `phone_number` and `phone_number_verified`; `address` for `address`.
+- `sub`, protocol claims and custom claims need no scope.
+
+This holds however the value was produced, so an identity mapping that fills `email` from the user's attributes still cannot release it to a request without the `email` scope. To release a standard claim whatever the scopes, list `openid` in its `requiredScopes`: every OpenID Connect request carries it. A field classified `pii` or `regulated` must list at least one scope: the Admin API and the Admin UI reject such a field with an empty `requiredScopes`, and the runtime refuses to release a sensitive mapping into one, so the default above applies to the other classifications and to older profiles. Resource Server (introspection) profiles are not affected: their scopes are the access token's scopes, which have no OIDC Core 5.4 meaning.
+
 ### 5.5 Introspection Endpoint
 
 ```yaml
@@ -967,6 +976,13 @@ Self-service and delegated operations use different path families:
 
 Downstream elevation grants are product-specific protected-resource flows. They are not accepted as the standard delegated write credential unless a route explicitly opts into that product-specific flow.
 
+Actor–subject authorization:
+
+- A delegated route MUST authorize the actor against `subject_user_id` before it issues a step-up token. A route with no explicit delegated-write authority (scope, grant, or admin permission over that subject) permits only `actor == subject`.
+- Any other subject returns `403 access_denied`, with the same response whether or not the subject exists.
+- Step-up is an additional requirement on an already authorized actor. Completing step-up never grants authority over another subject.
+- `PATCH /api/protected/customer-profiles/users/{subject_user_id}` defines no delegated-write authority, so only the token subject's own profile can be updated. The token's `sub` must itself be the local account id: tokens with a mapped (pairwise or persistent) `sub`, an externally asserted subject, an `act` claim, or a client or admin principal subject are refused with the same `403 access_denied`.
+
 ### 11.2 Delegated Write Envelope
 
 Delegated write requests use:
@@ -1188,17 +1204,18 @@ MVP resource registry:
 
 User fields:
 
-| Field             | Filterable | Aggregatable | Sensitive | Notes                                                            |
-| ----------------- | ---------- | ------------ | --------- | ---------------------------------------------------------------- |
-| `status`          | Yes        | Yes          | No        | Enum: `active`, `suspended`, `locked`.                           |
-| `lifecycle_state` | Yes        | Yes          | No        | Enum lifecycle stage.                                            |
-| `email_verified`  | Yes        | Yes          | No        | Boolean.                                                         |
-| `pii_status`      | Yes        | Yes          | No        | PII write/delete state, not raw PII.                             |
-| `user_type`       | Yes        | Yes          | No        | Enum: `end_user`, `admin`, `m2m`.                                |
-| `created_at`      | Yes        | No           | No        | Datetime. Filter comparisons normalize seconds and milliseconds. |
-| `updated_at`      | Yes        | No           | No        | Datetime. Filter comparisons normalize seconds and milliseconds. |
-| `last_login_at`   | Yes        | No           | No        | Datetime. Filter comparisons normalize seconds and milliseconds. |
-| `email`           | No         | No           | Yes       | Reserved as sensitive and not selectable.                        |
+| Field             | Filterable | Aggregatable | Sensitive | Notes                                                                                            |
+| ----------------- | ---------- | ------------ | --------- | ------------------------------------------------------------------------------------------------ |
+| `status`          | Yes        | No           | No        | Enum: `active`, `suspended`, `locked`. The status the account records, else its lifecycle state. |
+| `lifecycle_state` | Yes        | Yes          | No        | Enum lifecycle stage.                                                                            |
+| `email_verified`  | Yes        | No           | No        | Boolean.                                                                                         |
+| `user_type`       | Yes        | Yes          | No        | Enum: `user`, `admin`, `service_account`.                                                        |
+| `created_at`      | Yes        | No           | No        | Datetime. Filter comparisons normalize seconds and milliseconds.                                 |
+| `updated_at`      | Yes        | No           | No        | Datetime. Filter comparisons normalize seconds and milliseconds.                                 |
+| `email`           | No         | No           | Yes       | Reserved as sensitive and not selectable.                                                        |
+
+Fields are answered from the account's Core store only. PII state (held by the PII store) and the
+last sign-in (held by each account's session state) are not selectable.
 
 Selector shape:
 
@@ -1244,7 +1261,7 @@ Request:
 {
   "resource": "User",
   "selector": { "field": "status", "op": "eq", "value": "active" },
-  "group_by": ["status"]
+  "group_by": ["lifecycle_state"]
 }
 ```
 
@@ -1253,7 +1270,7 @@ Response:
 ```json
 {
   "resource": "User",
-  "groups": [{ "key": { "status": "active" }, "count": 120 }],
+  "groups": [{ "key": { "lifecycle_state": "active" }, "count": 120 }],
   "suppressed_groups": 1,
   "privacy": {
     "min_count": 10,
@@ -1267,7 +1284,7 @@ Response:
 
 Aggregate privacy rules:
 
-- `group_by` must include 1-3 aggregatable fields.
+- `group_by` must include 1-3 aggregatable fields (for `User`: `lifecycle_state`, `user_type`; `status` can be filtered on but not grouped by).
 - Counts are bucketed down to `count_precision`.
 - Counts between 1 and `minCount - 1` are suppressed.
 - If low-count suppression occurs, adjacent visible groups may also be suppressed to reduce differencing risk.
@@ -1283,6 +1300,8 @@ security: admin permission `admin:support_ops:cohorts:preview`
 ```
 
 Preview estimates selector effect without creating a frozen target set. `intent.action` is optional for preview; when present it is used to calculate action-specific blockers.
+
+Preview counts are not exact: after low-count and complementary suppression, matched, actionable, blocked, and the risk summary's matched count are bucketed down to the resource `minCount`, as aggregate counts are. The response and preview audit counts include `privacy.count_exact: false` and `privacy.count_precision`. Counts within one bucket are indistinguishable, but crossing a bucket boundary can change the result; this is coarse counting, not a differential privacy guarantee. No target identities or selector values are added to the response or audit by this change. Frozen cohorts retain their existing low-count suppression and otherwise show their snapshot's exact counts.
 
 ```yaml
 POST /api/admin/support-ops/cohorts
@@ -1629,6 +1648,24 @@ placement and from transient-authentication policy.
 The Admin database-connection inventory may show Control Plane-managed D1 resources and tenant
 assignment metadata. Those rows are operational inventory, not selectable storage modes. R2 and audit
 destination inventory remains separate from identity-data placement.
+
+Admin status changes and account-wide session revocation resolve the account's owning Core
+store even while it is suspended or locked. Status changes retain DO-first disabling and
+Core-first activation; operational reason details remain in the tenant's operational log store.
+Session profile reads use each account's own Core/PII pair and record field-name-only PII access
+audit in that same PII store. A session returned by SessionStore must match the requested tenant
+and session ID before any profile disclosure or individual invalidation.
+
+Individual admin revocation supports a live SessionStore session without a synchronous SQL mirror.
+It starts downstream logout for the session it ended even if later legacy-row cleanup fails.
+Single-session revocation uses `users/session-end-logout-v2` with the precise
+`trigger.action=session.revoke`; all existing actions retain `users/session-end-logout`.
+The payload fields, tenant-scoped Admin Jobs visibility and permissions are unchanged. Older
+scheduled consumers ignore the versioned type and leave it pending without consuming retry
+attempts; a capable consumer resumes it after an upgrade or rollback recovery. Bounded logout
+pages, RP-specific `sid`/`sub`, retries, lifecycle handling and audit retain the existing shared
+logout contract. Job persistence remains best effort: if enqueue fails, the existing helper
+records failure and attempts one fanout when a request execution context is available.
 
 ### 14.4 Custom Schema Validation
 

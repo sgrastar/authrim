@@ -29,7 +29,7 @@ import type {
   SessionClientWithWebhook,
   LogoutRetryConfig,
 } from '../types/logout';
-import { LOGOUT_WEBHOOK_KV_PREFIXES, DEFAULT_LOGOUT_WEBHOOK_CONFIG } from '../types/logout';
+import { LOGOUT_WEBHOOK_KV_PREFIXES } from '../types/logout';
 
 // Re-export common webhook utilities from webhook-sender
 import {
@@ -52,9 +52,9 @@ export interface CreateWebhookPayloadParams {
   issuer: string;
   /** Client ID */
   clientId: string;
-  /** User ID (subject) - optional based on config */
-  userId?: string;
-  /** Session ID - optional based on config */
+  /** The sub the client's ID token carried (never the user's internal id) */
+  subject?: string;
+  /** The client's sid */
   sessionId?: string;
   /** Whether to include sub claim */
   includeSub: boolean;
@@ -76,11 +76,14 @@ export function createWebhookPayload(params: CreateWebhookPayloadParams): Logout
     issuer: params.issuer,
   };
 
-  if (params.includeSub && params.userId) {
-    payload.sub = params.userId;
+  const sub = params.includeSub ? params.subject : undefined;
+  if (sub) {
+    payload.sub = sub;
   }
 
-  if (params.includeSid && params.sessionId) {
+  // As in the logout token: without a sub the notice names the session by its sid, whatever the
+  // config says, so that the receiver can tell which session ended.
+  if ((params.includeSid || !sub) && params.sessionId) {
     payload.sid = params.sessionId;
   }
 
@@ -327,7 +330,6 @@ export interface LogoutWebhookOrchestrator {
     clients: SessionClientWithWebhook[],
     params: {
       issuer: string;
-      userId: string;
       sessionId: string;
     },
     config: LogoutWebhookConfig,
@@ -394,8 +396,8 @@ export function createLogoutWebhookOrchestrator(kv: KVNamespace): LogoutWebhookO
               const payload = createWebhookPayload({
                 issuer: params.issuer,
                 clientId: client.client_id,
-                userId: config.include_sub_claim ? params.userId : undefined,
-                sessionId: config.include_sid_claim ? client.oidc_sid : undefined,
+                subject: client.oidc_sub,
+                sessionId: client.oidc_sid,
                 includeSub: config.include_sub_claim,
                 includeSid: config.include_sid_claim,
               });
@@ -481,38 +483,4 @@ export function createLogoutWebhookOrchestrator(kv: KVNamespace): LogoutWebhookO
       return results;
     },
   };
-}
-
-/**
- * Get Logout Webhook Configuration
- *
- * Priority: KV → defaults
- *
- * @param env - Environment with KV binding
- * @param settingsKV - KV namespace for settings
- * @returns LogoutWebhookConfig
- */
-export async function getLogoutWebhookConfig(
-  settingsKV: KVNamespace | undefined
-): Promise<LogoutWebhookConfig> {
-  if (settingsKV) {
-    try {
-      const kvConfig = await settingsKV.get('settings:logout_webhook');
-      if (kvConfig) {
-        const parsed = JSON.parse(kvConfig);
-        return {
-          ...DEFAULT_LOGOUT_WEBHOOK_CONFIG,
-          ...parsed,
-          retry: {
-            ...DEFAULT_LOGOUT_WEBHOOK_CONFIG.retry,
-            ...(parsed.retry || {}),
-          },
-        };
-      }
-    } catch {
-      // Ignore KV errors, use defaults
-    }
-  }
-
-  return DEFAULT_LOGOUT_WEBHOOK_CONFIG;
 }

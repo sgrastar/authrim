@@ -15,6 +15,8 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core';
+import { resolveTenantAssignedDatabaseSourcesFromRegistry } from '@authrim/ar-lib-core';
+import { runSamlDrCoveredOperation } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 
 // Mock ar-lib-core
 const mockGenerateId = vi.fn().mockReturnValue('test-id-123');
@@ -399,6 +401,79 @@ describe('Custom Claims Admin API', () => {
     mockGetRequiredCustomClaimViolationStatuses.mockReset();
   });
 
+  it.each(['delete', 'rename'] as const)(
+    'keeps DR admission while a sibling store finishes after a %s failure',
+    async (operation) => {
+      let finishDelayedWrite!: () => void;
+      const delayedWrite = new Promise<void>((resolve) => {
+        finishDelayedWrite = resolve;
+      });
+      const delayedStarted = vi.fn();
+      const delayedCommitted = vi.fn();
+      const handlerFinished = vi.fn();
+      const failure = new Error('synthetic_custom_claim_failure');
+      mockDbQuery.mockResolvedValueOnce([createSchemaRow()]).mockResolvedValue([]);
+      const c = createMockContext({
+        method: operation === 'delete' ? 'DELETE' : 'PATCH',
+        params: { id: 'schema-1' },
+        body: { new_field_key: 'emp_id' },
+      }) as Parameters<typeof adminCustomClaimDeleteHandler>[0];
+      vi.mocked(resolveTenantAssignedDatabaseSourcesFromRegistry).mockResolvedValueOnce([
+        { source: c.env.DB },
+        { source: c.env.DB },
+      ] as Awaited<ReturnType<typeof resolveTenantAssignedDatabaseSourcesFromRegistry>>);
+      const mutation =
+        operation === 'delete' ? mockDeleteStoredCustomClaimData : mockRenameStoredCustomClaimData;
+      mutation.mockRejectedValueOnce(failure).mockImplementationOnce(async () => {
+        delayedStarted();
+        await delayedWrite;
+        delayedCommitted();
+        return { affectedUsers: 1, processedUsers: 1, failedUsers: 0 };
+      });
+      const control = {
+        acquireEnvironmentBackupMutationPermit: vi.fn(async () => ({ admitted: true })),
+        completeEnvironmentBackupMutationPermit: vi.fn(async () => {}),
+      };
+      const env = {
+        ...c.env,
+        ENABLE_SAML_DR_EXPORT: 'true',
+        SAML_DR_MUTATION_CONTROL: control,
+      } as Env;
+      const result = runSamlDrCoveredOperation(env, undefined, async (covered) => {
+        c.env = covered;
+        const response = await (operation === 'delete'
+          ? adminCustomClaimDeleteHandler(c)
+          : adminCustomClaimRenameHandler(c));
+        handlerFinished();
+        return response;
+      }).then(
+        (response) => response,
+        (error: unknown) => error
+      );
+      try {
+        await vi.waitFor(() => expect(delayedStarted).toHaveBeenCalledOnce());
+        await vi.waitFor(() => expect(handlerFinished).toHaveBeenCalledOnce());
+        expect(control.completeEnvironmentBackupMutationPermit).not.toHaveBeenCalled();
+        expect(delayedCommitted).not.toHaveBeenCalled();
+      } finally {
+        finishDelayedWrite();
+      }
+      const response = await result;
+      expect(response).toBeInstanceOf(Response);
+      expect((response as Response).status).toBe(500);
+      expect(delayedCommitted).toHaveBeenCalledOnce();
+      expect(control.completeEnvironmentBackupMutationPermit).toHaveBeenCalledOnce();
+      expect(delayedCommitted.mock.invocationCallOrder[0]).toBeLessThan(
+        control.completeEnvironmentBackupMutationPermit.mock.invocationCallOrder[0]
+      );
+      expect(
+        (mockDbExecute.mock.calls as unknown[][]).some(([sql]) =>
+          String(sql).startsWith('DELETE FROM custom_claim_schemas')
+        )
+      ).toBe(false);
+    }
+  );
+
   // ===========================================================================
   // LIST
   // ===========================================================================
@@ -601,6 +676,23 @@ describe('Custom Claims Admin API', () => {
       expect(status).toBe(400);
       expect(body.error_code).toBe('AR130002');
     });
+
+    it.each(['ial', 'ial_verified_at', 'eduperson_assurance', 'verified_claims'])(
+      'should reject creation of %s, a CSV import column that carries identity assurance',
+      async (fieldKey) => {
+        const c = createMockContext({
+          method: 'POST',
+          body: { field_key: fieldKey, display_label: 'Assurance look-alike' },
+        });
+
+        const res = await adminCustomClaimCreateHandler(c);
+        const { body, status } = await getResponseData(res);
+
+        expect(status).toBe(400);
+        expect(body.error_code).toBe('AR130002');
+        expect(mockDbExecute).not.toHaveBeenCalled();
+      }
+    );
 
     it.each(['display_name', 'picture_url'])(
       'should reject creation of built-in profile field %s',
@@ -927,6 +1019,8 @@ describe('Custom Claims Admin API', () => {
       expect(body.reserved_names).toContain('email');
       expect(body.reserved_names).toContain('display_name');
       expect(body.reserved_names).toContain('picture_url');
+      expect(body.reserved_names).toContain('ial');
+      expect(body.reserved_names).toContain('ial_verified_at');
       // Verify sorted
       const sorted = [...body.reserved_names].sort();
       expect(body.reserved_names).toEqual(sorted);
@@ -1150,6 +1244,26 @@ describe('Custom Claims Admin API', () => {
       expect(status).toBe(200);
       expect(body.schema).toBeDefined();
     });
+
+    it.each(['ial', 'ial_verified_at'])(
+      'should reject making a deactivated %s attribute active again',
+      async (fieldKey) => {
+        mockDbQuery.mockResolvedValueOnce([createSchemaRow({ field_key: fieldKey, is_active: 0 })]);
+
+        const c = createMockContext({
+          method: 'PUT',
+          params: { id: 'schema-1' },
+          body: { is_active: true },
+        });
+
+        const res = await adminCustomClaimUpdateHandler(c);
+        const { body, status } = await getResponseData(res);
+
+        expect(status).toBe(400);
+        expect(body.error_code).toBe('AR130002');
+        expect(mockDbExecute).not.toHaveBeenCalled();
+      }
+    );
 
     it('should reject display label changes for built-in profile schemas', async () => {
       mockDbQuery.mockResolvedValueOnce([
@@ -1516,6 +1630,24 @@ describe('Custom Claims Admin API', () => {
       expect(body.new_key).toBe('emp_id');
       expect(body.affected_users).toBe(5);
     });
+
+    it.each(['ial', 'ial_verified_at'])(
+      'should reject renaming to %s, a CSV import column that carries identity assurance',
+      async (newKey) => {
+        const c = createMockContext({
+          method: 'PATCH',
+          params: { id: 'schema-1' },
+          body: { new_field_key: newKey },
+        });
+
+        const res = await adminCustomClaimRenameHandler(c);
+        const { body, status } = await getResponseData(res);
+
+        expect(status).toBe(400);
+        expect(body.error_code).toBe('AR130002');
+        expect(mockDbExecute).not.toHaveBeenCalled();
+      }
+    );
 
     it('should reject missing new_field_key', async () => {
       const c = createMockContext({

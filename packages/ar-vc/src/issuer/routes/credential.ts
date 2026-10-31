@@ -206,7 +206,10 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     // Custom Claim Schema: merge is_vc_claim=1 claims + collect PII names for SD-JWT
     let vcPiiClaimNames: string[] = [];
     try {
-      const ccFeatureConfig = await loadFeatureConfig(c.env.AUTHRIM_CONFIG || null);
+      const ccFeatureConfig = await loadFeatureConfig(
+        c.env as unknown as CoreEnv,
+        tokenResult.tenantId
+      );
       if (ccFeatureConfig.enabled && tokenResult.userId) {
         const runtimeSources = await resolveCustomClaimRuntimeSourcesFromEnv(
           c.env as unknown as CoreEnv,

@@ -54,7 +54,7 @@ function auth(overrides: Partial<AdminAuthContext> = {}): AdminAuthContext {
   return {
     userId: 'admin-1',
     authMethod: 'session',
-    roles: ['super_admin'],
+    roles: ['ar_super_admin'],
     permissions: ['admin:agent:use'],
     tenantId: 'default',
     tenantScope: ['*'],
@@ -116,28 +116,34 @@ describe('central Admin Agent login handoff approval', () => {
     // Successful target-scoped RBAC evaluation is authoritative even when the source session's
     // summary scope remains its central tenant rather than a platform-wide wildcard.
     mocks.targetAuth = auth({ tenantScope: ['default'] });
-    const before = Date.now();
-    const response = await app().request(
-      `/api/admin/agent-login-handoffs/${handoffId}/approve`,
-      { method: 'POST' },
-      {} as Env
-    );
+    // The handler reads the clock itself after the request and middleware ran: frozen, so the
+    // expiry can be checked exactly however long that takes on a loaded runner.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const now = Date.now();
+      const response = await app().request(
+        `/api/admin/agent-login-handoffs/${handoffId}/approve`,
+        { method: 'POST' },
+        {} as Env
+      );
 
-    expect(response.status).toBe(200);
-    expect(response.headers.get('Cache-Control')).toBe('no-store');
-    const body = (await response.json()) as { consume_url: string };
-    const consumeUrl = new URL(body.consume_url);
-    expect(consumeUrl.origin).toBe('https://tenant.example.com');
-    expect(consumeUrl.pathname).toBe('/oauth/admin-agent/login-handoff/consume');
-    expect(consumeUrl.searchParams.get('code')).toMatch(/^ahc_[A-Za-z0-9_-]{43}$/u);
-    expect(body.consume_url).not.toContain('session-root');
+      expect(response.status).toBe(200);
+      expect(response.headers.get('Cache-Control')).toBe('no-store');
+      const body = (await response.json()) as { consume_url: string };
+      const consumeUrl = new URL(body.consume_url);
+      expect(consumeUrl.origin).toBe('https://tenant.example.com');
+      expect(consumeUrl.pathname).toBe('/oauth/admin-agent/login-handoff/consume');
+      expect(consumeUrl.searchParams.get('code')).toMatch(/^ahc_[A-Za-z0-9_-]{43}$/u);
+      expect(body.consume_url).not.toContain('session-root');
 
-    const issued = mocks.issueLoginHandoff.mock.calls[0][0];
-    expect(issued.sourceSessionId).toBe('session-root');
-    expect(issued.adminUserId).toBe('admin-1');
-    expect(issued.expiresAt).toBeGreaterThan(before);
-    expect(issued.expiresAt).toBeLessThanOrEqual(before + 60_100);
-    expect(issued.audit).toMatchObject({ action: 'agent.login_handoff.issued' });
+      const issued = mocks.issueLoginHandoff.mock.calls[0][0];
+      expect(issued.sourceSessionId).toBe('session-root');
+      expect(issued.adminUserId).toBe('admin-1');
+      expect(issued.expiresAt).toBe(now + 60_000);
+      expect(issued.audit).toMatchObject({ action: 'agent.login_handoff.issued' });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('rejects a child session so handoffs cannot create child-of-child chains', async () => {

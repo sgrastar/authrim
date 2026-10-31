@@ -398,7 +398,8 @@ export const CLOUDFLARE_ADMIN_READ_ROUTES: Readonly<Record<string, ManagementOpe
   },
   'admin.read.conformance.inspect': {
     method: 'GET',
-    path: '/api/admin/settings/conformance',
+    // feature.conformance_* (platform only), as the tenant's view shows what applies to it.
+    path: (_input, context) => tenantSettingsPath(context.tenantId, 'feature-flags'),
     response: projectAgentInspectionResponse,
   },
   'admin.read.flows.validate': {

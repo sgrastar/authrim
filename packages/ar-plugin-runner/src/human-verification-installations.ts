@@ -1,32 +1,47 @@
 import type { D1Database, D1DatabaseSession } from '@cloudflare/workers-types';
 import type { PluginEncryptionKeyring } from './encryption-keyring';
 import { D1PluginConfigStore } from './config-store';
+import {
+  HUMAN_VERIFICATION_HOSTNAME_PATTERN,
+  HUMAN_VERIFICATION_LIMITS,
+  HUMAN_VERIFICATION_PROVIDER_WIDGET_MODES,
+} from '@authrim/ar-lib-core';
 
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
-const SAFE_HOST =
-  /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u;
+// The configuration limits are shared with the settings API and the admin guards
+// (ar-lib-core human-verification-policy.ts), so what they call usable the runner accepts.
+const SAFE_HOST = HUMAN_VERIFICATION_HOSTNAME_PATTERN;
 
 const PROVIDERS = {
   'human-verification-cloudflare-turnstile': {
     provider: 'turnstile',
     host: 'challenges.cloudflare.com',
     injectionKind: 'json_field',
-    defaultWidgetMode: 'managed',
-    allowedWidgetModes: new Set(['managed']),
+    defaultWidgetMode:
+      HUMAN_VERIFICATION_PROVIDER_WIDGET_MODES['human-verification-cloudflare-turnstile'].default,
+    allowedWidgetModes: new Set<string>(
+      HUMAN_VERIFICATION_PROVIDER_WIDGET_MODES['human-verification-cloudflare-turnstile'].allowed
+    ),
   },
   'human-verification-hcaptcha': {
     provider: 'hcaptcha',
     host: 'api.hcaptcha.com',
     injectionKind: 'form_field',
-    defaultWidgetMode: 'checkbox',
-    allowedWidgetModes: new Set(['checkbox', 'invisible']),
+    defaultWidgetMode:
+      HUMAN_VERIFICATION_PROVIDER_WIDGET_MODES['human-verification-hcaptcha'].default,
+    allowedWidgetModes: new Set<string>(
+      HUMAN_VERIFICATION_PROVIDER_WIDGET_MODES['human-verification-hcaptcha'].allowed
+    ),
   },
   'human-verification-google-recaptcha': {
     provider: 'recaptcha',
     host: 'www.google.com',
     injectionKind: 'form_field',
-    defaultWidgetMode: 'checkbox',
-    allowedWidgetModes: new Set(['checkbox', 'invisible', 'score']),
+    defaultWidgetMode:
+      HUMAN_VERIFICATION_PROVIDER_WIDGET_MODES['human-verification-google-recaptcha'].default,
+    allowedWidgetModes: new Set<string>(
+      HUMAN_VERIFICATION_PROVIDER_WIDGET_MODES['human-verification-google-recaptcha'].allowed
+    ),
   },
 } as const;
 
@@ -142,9 +157,9 @@ function normalizeConfig(input: ConfigureHumanVerificationInstallationInput) {
   if (
     Object.keys(config).sort().join(',') !== expected.join(',') ||
     siteKey.length < 1 ||
-    siteKey.length > 2_048 ||
+    siteKey.length > HUMAN_VERIFICATION_LIMITS.siteKeyMaxLength ||
     secretKey.length < 1 ||
-    secretKey.length > 8_192 ||
+    secretKey.length > HUMAN_VERIFICATION_LIMITS.secretKeyMaxLength ||
     (expectedHostname !== null && !SAFE_HOST.test(expectedHostname)) ||
     !provider.allowedWidgetModes.has(widgetMode as never) ||
     typeof scoreThreshold !== 'number' ||

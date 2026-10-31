@@ -123,58 +123,60 @@ describe('UserCodeRateLimiter brute-force persistence', () => {
     vi.useRealTimers();
   });
 
+  type Limiter = InstanceType<typeof UserCodeRateLimiter>;
+
+  /** One failed guess: reserved, then settled as a failure. */
+  async function failGuess(limiter: Limiter, ip: string): Promise<void> {
+    const reserved = (await (await limiter.fetch(post('/reserve', { ip }))).json()) as {
+      reservation_id: string;
+    };
+    const settled = await limiter.fetch(
+      post('/record-failure', { ip, reservation_id: reserved.reservation_id })
+    );
+    expect(settled.status).toBe(200);
+  }
+
+  const reserve = async (limiter: Limiter, ip: string) =>
+    (await (await limiter.fetch(post('/reserve', { ip }))).json()) as Record<string, unknown>;
+
   it('blocks the fifth failure and keeps the block across Durable Object restarts', async () => {
     const storage = new MemoryDurableStorage();
     const limiter = new UserCodeRateLimiter(createState(storage), {} as Env);
 
-    for (let attempt = 0; attempt < 5; attempt++) {
-      expect((await limiter.fetch(post('/record-failure', { ip: '198.51.100.4' }))).status).toBe(
-        200
-      );
-    }
+    for (let attempt = 0; attempt < 5; attempt++) await failGuess(limiter, '198.51.100.4');
 
-    const blocked = await limiter.fetch(post('/check', { ip: '198.51.100.4' }));
-    await expect(blocked.json()).resolves.toEqual({ blocked: true, retry_after: 3600 });
+    expect(await reserve(limiter, '198.51.100.4')).toEqual({ blocked: true, retry_after: 3600 });
 
     const restarted = new UserCodeRateLimiter(createState(storage), {} as Env);
-    const stillBlocked = await restarted.fetch(post('/check', { ip: '198.51.100.4' }));
-    await expect(stillBlocked.json()).resolves.toEqual({ blocked: true, retry_after: 3600 });
+    expect(await reserve(restarted, '198.51.100.4')).toEqual({ blocked: true, retry_after: 3600 });
   });
 
   it('resets only the successful client and persists the reset', async () => {
     const storage = new MemoryDurableStorage();
     const limiter = new UserCodeRateLimiter(createState(storage), {} as Env);
     for (const ip of ['client-a', 'client-b']) {
-      for (let attempt = 0; attempt < 5; attempt++) {
-        await limiter.fetch(post('/record-failure', { ip }));
-      }
+      for (let attempt = 0; attempt < 5; attempt++) await failGuess(limiter, ip);
     }
 
     await limiter.fetch(post('/reset', { ip: 'client-a' }));
     const restarted = new UserCodeRateLimiter(createState(storage), {} as Env);
 
-    await expect(
-      (await restarted.fetch(post('/check', { ip: 'client-a' }))).json()
-    ).resolves.toEqual({ blocked: false });
-    await expect(
-      (await restarted.fetch(post('/check', { ip: 'client-b' }))).json()
-    ).resolves.toMatchObject({ blocked: true });
+    expect(await reserve(restarted, 'client-a')).toMatchObject({ blocked: false });
+    expect(await reserve(restarted, 'client-b')).toMatchObject({ blocked: true });
   });
 
   it('removes expired attempts on alarm and does not disclose JSON parser errors', async () => {
     const storage = new MemoryDurableStorage();
     const limiter = new UserCodeRateLimiter(createState(storage), {} as Env);
-    await limiter.fetch(post('/record-failure', { ip: 'client-a' }));
+    await failGuess(limiter, 'client-a');
     vi.advanceTimersByTime(61 * 60 * 1000);
     await limiter.alarm();
 
     const restarted = new UserCodeRateLimiter(createState(storage), {} as Env);
-    await expect(
-      (await restarted.fetch(post('/check', { ip: 'client-a' }))).json()
-    ).resolves.toEqual({ blocked: false });
+    expect(await reserve(restarted, 'client-a')).toMatchObject({ blocked: false });
 
     const malformed = await restarted.fetch(
-      new Request('https://internal/check', { method: 'POST', body: '{' })
+      new Request('https://internal/reserve', { method: 'POST', body: '{' })
     );
     expect(malformed.status).toBe(500);
     await expect(malformed.json()).resolves.toEqual({

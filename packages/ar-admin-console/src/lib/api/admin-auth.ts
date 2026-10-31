@@ -1,0 +1,268 @@
+import { adminFetch } from '$lib/api/admin-request';
+import type { MessageKey } from '$lib/i18n/i18n.svelte';
+/**
+ * Admin Authentication API Client
+ *
+ * Provides API calls for Admin UI authentication:
+ * - Passkey login (WebAuthn)
+ * - Session status check
+ * - Logout
+ *
+ * Uses HttpOnly cookie-backed Admin sessions.
+ */
+
+import type {
+	PublicKeyCredentialRequestOptionsJSON,
+	AuthenticationResponseJSON
+} from '@simplewebauthn/browser';
+
+// API Base URL - empty string for same-origin, or full URL for cross-origin
+const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
+const ADMIN_AGENT_HANDOFF_ID = /^alh_[A-Za-z0-9_-]{32}$/;
+const ADMIN_AGENT_HANDOFF_CODE = /^ahc_[A-Za-z0-9_-]{43}$/;
+
+function buildHeaders(additionalHeaders?: Record<string, string>): Record<string, string> {
+	return {
+		'Content-Type': 'application/json',
+		...additionalHeaders
+	};
+}
+
+/**
+ * Error class for authentication errors
+ */
+export class AuthError extends Error {
+	constructor(
+		public code: string,
+		message: string
+	) {
+		super(message);
+		this.name = 'AuthError';
+	}
+}
+
+/**
+ * Session status response from /api/admin/me/session
+ */
+export interface SessionStatus {
+	active: boolean;
+	user_id: string;
+	tenant_id: string;
+	email?: string;
+	name?: string;
+	roles: string[];
+	permissions?: string[];
+	admin_scope: 'platform' | 'tenant';
+	is_platform_admin: boolean;
+	expires_at: number;
+	created_at: number;
+	last_login_at?: number | null;
+}
+
+/**
+ * Login verification result
+ */
+export interface LoginResult {
+	verified: boolean;
+	userId: string;
+	user: {
+		id: string;
+		email: string | null;
+		name: string | null;
+		email_verified: boolean;
+	};
+}
+
+/**
+ * Admin Authentication API
+ */
+export const adminAuthAPI = {
+	/**
+	 * Approve a tenant login handoff while the host-only central Admin cookie is same-origin.
+	 * Only the returned one-time code URL crosses to the tenant issuer.
+	 */
+	async approveAgentLoginHandoff(handoffId: string): Promise<string> {
+		if (!ADMIN_AGENT_HANDOFF_ID.test(handoffId)) {
+			throw new AuthError('invalid_request', 'Invalid login handoff identifier');
+		}
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/agent-login-handoffs/${encodeURIComponent(handoffId)}/approve`,
+			{
+				method: 'POST',
+				skipTenantHeader: true,
+				credentials: 'include',
+				headers: buildHeaders(),
+				body: '{}'
+			}
+		);
+		const body: unknown = await response.json().catch(() => null);
+		if (!response.ok) {
+			const error = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
+			throw new AuthError(
+				typeof error.error === 'string' ? error.error : 'login_handoff_failed',
+				typeof error.error_description === 'string'
+					? error.error_description
+					: 'Failed to approve login handoff'
+			);
+		}
+		const consumeUrlValue =
+			body && typeof body === 'object' ? (body as Record<string, unknown>).consume_url : undefined;
+		if (typeof consumeUrlValue !== 'string') {
+			throw new AuthError('invalid_response', 'Login handoff response is invalid');
+		}
+		try {
+			const consumeUrl = new URL(consumeUrlValue);
+			const code = consumeUrl.searchParams.get('code');
+			if (
+				consumeUrl.protocol !== 'https:' ||
+				consumeUrl.username ||
+				consumeUrl.password ||
+				consumeUrl.pathname !== '/oauth/admin-agent/login-handoff/consume' ||
+				consumeUrl.hash ||
+				[...consumeUrl.searchParams.keys()].some((key) => key !== 'code') ||
+				!code ||
+				!ADMIN_AGENT_HANDOFF_CODE.test(code)
+			) {
+				throw new TypeError('invalid_consume_url');
+			}
+			return consumeUrl.toString();
+		} catch {
+			throw new AuthError('invalid_response', 'Login handoff response is invalid');
+		}
+	},
+
+	/**
+	 * Get Admin Passkey login options (WebAuthn challenge)
+	 * POST /api/admin/auth/passkey/options
+	 *
+	 * Uses admin-specific endpoint that searches admin_passkeys table.
+	 */
+	async getLoginOptions(): Promise<{
+		options: PublicKeyCredentialRequestOptionsJSON;
+		challengeId: string;
+	}> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/auth/passkey/options`, {
+			method: 'POST',
+			skipTenantHeader: true,
+			headers: { 'Content-Type': 'application/json' },
+			credentials: 'include',
+			body: JSON.stringify({})
+		});
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
+			throw new AuthError(
+				error.error || 'login_options_failed',
+				error.error_description || 'Failed to get login options'
+			);
+		}
+
+		return response.json();
+	},
+
+	/**
+	 * Verify Admin Passkey login
+	 * POST /api/admin/auth/passkey/verify
+	 *
+	 * Uses admin-specific endpoint that verifies against admin_passkeys table
+	 * and creates an admin session.
+	 */
+	async verifyLogin(
+		challengeId: string,
+		credential: AuthenticationResponseJSON
+	): Promise<LoginResult> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/auth/passkey/verify`, {
+			method: 'POST',
+			skipTenantHeader: true,
+			headers: { 'Content-Type': 'application/json' },
+			credentials: 'include',
+			body: JSON.stringify({ challengeId, credential })
+		});
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
+			throw new AuthError(
+				error.error || 'login_failed',
+				error.error_description || 'Login verification failed'
+			);
+		}
+
+		return response.json();
+	},
+
+	/**
+	 * Check current session status
+	 * GET /api/admin/me/session
+	 *
+	 * Returns:
+	 * - SessionStatus if authenticated with admin role
+	 * - null if not authenticated (401) or no admin role (403)
+	 * - throws AuthError with 'forbidden' code if session exists but no admin role
+	 */
+	async checkSession(): Promise<SessionStatus | null> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/me/session`, {
+			skipTenantHeader: true,
+			credentials: 'include',
+			headers: buildHeaders()
+		});
+
+		if (response.status === 401) {
+			// Not authenticated
+			return null;
+		}
+
+		if (response.status === 403) {
+			// Authenticated but no admin role
+			const error = await response.json().catch(() => ({ error: 'forbidden' }));
+			throw new AuthError(
+				'forbidden',
+				error.error_description || 'You do not have admin permissions'
+			);
+		}
+
+		if (!response.ok) {
+			// Other errors
+			return null;
+		}
+
+		return response.json();
+	},
+
+	/**
+	 * Logout
+	 * POST /api/admin/logout
+	 */
+	async logout(): Promise<void> {
+		await adminFetch(`${API_BASE_URL}/api/admin/logout`, {
+			method: 'POST',
+			skipTenantHeader: true,
+			credentials: 'include',
+			headers: buildHeaders()
+		});
+		// Redirect to login page after logout
+		window.location.href = '/admin/login';
+	}
+};
+
+/** Message key for an authentication failure (passkey ceremony or Admin API). */
+export function authErrorKey(error: unknown): MessageKey {
+	if (error instanceof AuthError) {
+		switch (error.code) {
+			case 'forbidden':
+				return 'login.error.forbidden';
+			case 'session_expired':
+			case 'invalid_token':
+			case 'invalid_credentials':
+			case 'auth_passkey_failed':
+				return 'login.error.failed';
+			default:
+				return 'login.error.generic';
+		}
+	}
+	if (error instanceof Error) {
+		if (error.name === 'NotAllowedError') return 'login.error.cancelled';
+		if (error.name === 'NotSupportedError') return 'login.error.unsupported';
+		if (error.name === 'SecurityError') return 'login.error.security';
+	}
+	return 'login.error.generic';
+}

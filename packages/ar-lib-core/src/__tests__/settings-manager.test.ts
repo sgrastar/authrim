@@ -25,6 +25,13 @@ import {
   type SettingMeta,
   type SettingsAuditEvent,
 } from '../utils/settings-manager';
+import { OAUTH_CATEGORY_META } from '../types/settings/oauth';
+import {
+  CHECK_API_AUDIT_CATEGORY_META,
+  CHECK_API_AUDIT_DEFAULTS,
+} from '../types/settings/check-api-audit';
+import { CREDENTIALS_CATEGORY_META } from '../types/settings/credentials';
+import { RATE_LIMIT_CATEGORY_META } from '../types/settings/rate-limit';
 
 // Test category metadata
 const TEST_CATEGORY_META: CategoryMeta = {
@@ -306,6 +313,36 @@ describe('SettingsManager', () => {
       expect(afterPatch.sources['test.string_setting']).toBe('kv');
     });
 
+    it.each([
+      [CREDENTIALS_CATEGORY_META, 'credentials', 'credentials.email_code_ttl', 120.5, 120],
+      [RATE_LIMIT_CATEGORY_META, 'rate-limit', 'rate_limit.auth_max_failed_attempts', 3.5, 8],
+    ] as const)(
+      'stores only whole numbers for %s settings read as whole numbers',
+      async (meta, category, key, fraction, whole) => {
+        manager.registerCategory(meta);
+        const scope = { type: 'tenant', id: 'tenant_1' } as const;
+        const before = await manager.getAll(category, scope);
+
+        const fractional = await manager.patch(
+          category,
+          scope,
+          { ifMatch: before.version, set: { [key]: fraction } },
+          'test_actor'
+        );
+        expect(fractional.applied).not.toContain(key);
+        expect(fractional.rejected[key]).toBeDefined();
+
+        const current = await manager.getAll(category, scope);
+        const accepted = await manager.patch(
+          category,
+          scope,
+          { ifMatch: current.version, set: { [key]: whole } },
+          'test_actor'
+        );
+        expect(accepted.applied).toContain(key);
+      }
+    );
+
     it('should throw ConflictError on version mismatch', async () => {
       await expect(
         manager.patch(
@@ -486,6 +523,181 @@ describe('SettingsManager', () => {
     });
   });
 
+  describe('patch with dryRun', () => {
+    const scope = { type: 'tenant', id: 'tenant_1' } as const;
+
+    it('decides what would be applied, cleared, disabled and rejected, and saves nothing', async () => {
+      const initial = await manager.getAll('test', scope);
+      await manager.patch(
+        'test',
+        scope,
+        { ifMatch: initial.version, set: { 'test.number_setting': 500 } },
+        'test_actor'
+      );
+      auditEvents.length = 0;
+      vi.mocked(mockKV.put).mockClear();
+      const before = await manager.getAll('test', scope);
+
+      const decision = await manager.patch(
+        'test',
+        scope,
+        {
+          ifMatch: before.version,
+          set: { 'test.string_setting': 'new_value', 'unknown.key': 1 },
+          clear: ['test.number_setting'],
+          disable: ['test.boolean_setting'],
+        },
+        'test_actor',
+        { dryRun: true }
+      );
+
+      expect(decision.applied).toEqual(['test.string_setting']);
+      expect(decision.cleared).toEqual(['test.number_setting']);
+      expect(decision.disabled).toEqual(['test.boolean_setting']);
+      expect(decision.rejected).toEqual({ 'unknown.key': 'Unknown setting key' });
+      expect(decision.version).toBe(before.version);
+      expect(mockKV.put).not.toHaveBeenCalled();
+      expect(auditEvents).toEqual([]);
+      const after = await manager.getAll('test', scope);
+      expect(after.version).toBe(before.version);
+      expect(after.values['test.number_setting']).toBe(500);
+    });
+
+    it('returns the scope document before and after the request, without the rejected operations', async () => {
+      const initial = await manager.getAll('test', scope);
+      await manager.patch(
+        'test',
+        scope,
+        { ifMatch: initial.version, set: { 'test.number_setting': 500 } },
+        'test_actor'
+      );
+      const before = await manager.getAll('test', scope);
+
+      const decision = await manager.patch(
+        'test',
+        scope,
+        {
+          ifMatch: before.version,
+          // The same key set and cleared is a conflict: neither is applied.
+          set: { 'test.number_setting': 700, 'test.string_setting': 'new_value' },
+          clear: ['test.number_setting'],
+        },
+        'test_actor',
+        { dryRun: true }
+      );
+
+      expect(decision.rejected).toHaveProperty('test.number_setting');
+      expect(decision.candidate?.before).toEqual({ 'test.number_setting': 500 });
+      expect(decision.candidate?.after).toEqual({
+        'test.number_setting': 500,
+        'test.string_setting': 'new_value',
+      });
+    });
+
+    it('does not return a candidate for a real patch', async () => {
+      const initial = await manager.getAll('test', scope);
+      const result = await manager.patch(
+        'test',
+        scope,
+        { ifMatch: initial.version, set: { 'test.number_setting': 500 } },
+        'test_actor'
+      );
+      expect(result.candidate).toBeUndefined();
+    });
+
+    it.each([
+      ['set', { set: { 'test.string_setting': 'candidate', 'test.number_setting': 999 } }],
+      ['clear', { clear: ['test.number_setting'] }],
+      ['disable', { disable: ['test.boolean_setting'] }],
+    ])(
+      'leaves the cache of a manager with a TTL untouched after a dry run that would %s',
+      async (_, change) => {
+        const cached = createSettingsManager({
+          env: {},
+          kv: createMockKV({
+            'settings:tenant:tenant_1:test': JSON.stringify({ 'test.number_setting': 200 }),
+          }),
+          cacheTTL: 60_000,
+        });
+        cached.registerCategory(TEST_CATEGORY_META);
+        const before = await cached.getAll('test', scope);
+
+        const decision = await cached.patch(
+          'test',
+          scope,
+          { ifMatch: before.version, ...change },
+          'test_actor',
+          { dryRun: true }
+        );
+
+        expect(decision.applied.length + decision.cleared.length + decision.disabled.length).toBe(
+          1 + (change.set ? 1 : 0)
+        );
+        // A read that is served from the cache sees the saved values and the saved version only.
+        const after = await cached.getAll('test', scope);
+        expect(after.version).toBe(before.version);
+        expect(after.values).toEqual(before.values);
+        expect(after.sources).toEqual(before.sources);
+        expect((await cached.getRuntimeView('test', scope))['test.number_setting']).toBe(200);
+      }
+    );
+
+    it('still saves and serves what a real patch changed (the clone does not stop the cache refresh)', async () => {
+      const cached = createSettingsManager({
+        env: {},
+        kv: createMockKV(),
+        cacheTTL: 60_000,
+      });
+      cached.registerCategory(TEST_CATEGORY_META);
+      const before = await cached.getAll('test', scope);
+
+      await cached.patch(
+        'test',
+        scope,
+        { ifMatch: before.version, set: { 'test.number_setting': 321 } },
+        'test_actor'
+      );
+
+      const after = await cached.getAll('test', scope);
+      expect(after.values['test.number_setting']).toBe(321);
+      expect(after.version).not.toBe(before.version);
+    });
+
+    it('refuses conflicting operations on one key exactly as a save would', async () => {
+      const initial = await manager.getAll('test', scope);
+
+      const decision = await manager.patch(
+        'test',
+        scope,
+        {
+          ifMatch: initial.version,
+          set: { 'test.boolean_setting': false },
+          disable: ['test.boolean_setting'],
+        },
+        'test_actor',
+        { dryRun: true }
+      );
+
+      expect(decision.applied).toEqual([]);
+      expect(decision.disabled).toEqual([]);
+      expect(decision.rejected['test.boolean_setting']).toBe(
+        'Conflicting operations for the same key'
+      );
+    });
+
+    it('still reports a version conflict', async () => {
+      await expect(
+        manager.patch(
+          'test',
+          scope,
+          { ifMatch: 'not-the-version', set: { 'test.string_setting': 'x' } },
+          'test_actor',
+          { dryRun: true }
+        )
+      ).rejects.toBeInstanceOf(ConflictError);
+    });
+  });
+
   describe('dependsOn validation in patch', () => {
     it('should reject settings with unsatisfied dependencies', async () => {
       // First, set the dependency to false
@@ -533,6 +745,610 @@ describe('SettingsManager', () => {
 
       expect(patchResult.applied).toContain('test.boolean_setting');
       expect(patchResult.applied).toContain('test.dependent_setting');
+    });
+
+    function managerWithDocs(docs: Record<string, Record<string, unknown>>, env = {}) {
+      const kv = createMockKV(
+        Object.fromEntries(Object.entries(docs).map(([key, value]) => [key, JSON.stringify(value)]))
+      );
+      const m = createSettingsManager({ env, kv, cacheTTL: 0 });
+      m.registerCategory(TEST_CATEGORY_META);
+      return m;
+    }
+
+    it('accepts a dependency met by the default when nothing is stored', async () => {
+      const m = managerWithDocs({});
+      const scope = { type: 'tenant' as const, id: 'tenant_1' };
+      const current = await m.getAll('test', scope);
+
+      const result = await m.patch(
+        'test',
+        scope,
+        { ifMatch: current.version, set: { 'test.dependent_setting': true } },
+        'test_actor'
+      );
+
+      expect(result.applied).toContain('test.dependent_setting');
+    });
+
+    it('checks a dependency against the value inherited from a parent scope', async () => {
+      const client = { type: 'client' as const, id: 'client_1', tenantId: 'tenant_1' };
+      const parents = [{ type: 'tenant' as const, id: 'tenant_1' }];
+      const blocked = managerWithDocs({
+        'settings:tenant:tenant_1:test': { 'test.boolean_setting': false },
+      });
+      const current = await blocked.getAll('test', client, { parents });
+      const refused = await blocked.patch(
+        'test',
+        client,
+        { ifMatch: current.version, set: { 'test.dependent_setting': true } },
+        'test_actor',
+        { parents }
+      );
+      expect(refused.rejected['test.dependent_setting']).toContain('Depends on');
+
+      const allowed = managerWithDocs(
+        { 'settings:tenant:tenant_1:test': { 'test.boolean_setting': true } },
+        { TEST_BOOLEAN_SETTING: 'false' }
+      );
+      const next = await allowed.getAll('test', client, { parents });
+      const accepted = await allowed.patch(
+        'test',
+        client,
+        { ifMatch: next.version, set: { 'test.dependent_setting': true } },
+        'test_actor',
+        { parents }
+      );
+      expect(accepted.applied).toContain('test.dependent_setting');
+    });
+
+    it('checks dependencies against a clear or disable in the same request', async () => {
+      const scope = { type: 'tenant' as const, id: 'tenant_1' };
+      const disabling = managerWithDocs({
+        'settings:tenant:tenant_1:test': { 'test.boolean_setting': true },
+      });
+      const before = await disabling.getAll('test', scope);
+      const refused = await disabling.patch(
+        'test',
+        scope,
+        {
+          ifMatch: before.version,
+          set: { 'test.dependent_setting': true },
+          disable: ['test.boolean_setting'],
+        },
+        'test_actor'
+      );
+      expect(refused.rejected['test.dependent_setting']).toContain('currently disabled');
+      expect(refused.disabled).toEqual(['test.boolean_setting']);
+
+      const parents = [{ type: 'platform' as const }];
+      const clearing = managerWithDocs({
+        'settings:platform:test': { 'test.boolean_setting': true },
+        'settings:tenant:tenant_1:test': { 'test.boolean_setting': false },
+      });
+      const current = await clearing.getAll('test', scope, { parents });
+      const accepted = await clearing.patch(
+        'test',
+        scope,
+        {
+          ifMatch: current.version,
+          set: { 'test.dependent_setting': true },
+          clear: ['test.boolean_setting'],
+        },
+        'test_actor',
+        { parents }
+      );
+      expect(accepted.rejected).toEqual({});
+      expect(accepted.applied).toEqual(['test.dependent_setting']);
+      expect(accepted.cleared).toEqual(['test.boolean_setting']);
+    });
+
+    it('refuses a key named by more than one operation', async () => {
+      const scope = { type: 'tenant' as const, id: 'tenant_1' };
+      const m = managerWithDocs({
+        'settings:tenant:tenant_1:test': { 'test.boolean_setting': true },
+      });
+      const current = await m.getAll('test', scope);
+
+      const result = await m.patch(
+        'test',
+        scope,
+        {
+          ifMatch: current.version,
+          set: { 'test.boolean_setting': false, 'test.number_setting': 200 },
+          disable: ['test.boolean_setting'],
+          clear: ['test.number_setting', 'test.string_setting'],
+        },
+        'test_actor'
+      );
+
+      expect(result.rejected['test.boolean_setting']).toContain('Conflicting');
+      expect(result.rejected['test.number_setting']).toContain('Conflicting');
+      expect(result.applied).toEqual([]);
+      expect(result.disabled).toEqual([]);
+      expect(result.cleared).toEqual([]);
+      const after = await m.getAll('test', scope);
+      expect(after.values['test.boolean_setting']).toBe(true);
+    });
+
+    it('records the inherited value as the result of a clear', async () => {
+      const client = { type: 'client' as const, id: 'client_1', tenantId: 'tenant_1' };
+      const parents = [{ type: 'tenant' as const, id: 'tenant_1' }];
+      const events: SettingsAuditEvent[] = [];
+      const kv = createMockKV({
+        'settings:tenant:tenant_1:test': JSON.stringify({ 'test.number_setting': 200 }),
+        'settings:client:tenant_1:client_1:test': JSON.stringify({ 'test.number_setting': 50 }),
+      });
+      const m = createSettingsManager({
+        env: {},
+        kv,
+        cacheTTL: 0,
+        auditCallback: async (event) => void events.push(event),
+      });
+      m.registerCategory(TEST_CATEGORY_META);
+      const current = await m.getAll('test', client, { parents });
+
+      await m.patch(
+        'test',
+        client,
+        { ifMatch: current.version, clear: ['test.number_setting'] },
+        'test_actor',
+        { parents }
+      );
+
+      expect(events[0].diff['test.number_setting']).toEqual({ before: 50, after: 200 });
+    });
+
+    it('reports a dependency disabled in a parent scope as disabled', async () => {
+      const scope = { type: 'tenant' as const, id: 'tenant_1' };
+      const parents = [{ type: 'platform' as const }];
+      const m = managerWithDocs({
+        'settings:platform:test': { 'test.boolean_setting': DISABLED_MARKER },
+      });
+      const current = await m.getAll('test', scope, { parents });
+
+      const result = await m.patch(
+        'test',
+        scope,
+        { ifMatch: current.version, set: { 'test.dependent_setting': true } },
+        'test_actor',
+        { parents }
+      );
+
+      expect(result.rejected['test.dependent_setting']).toContain('currently disabled');
+    });
+  });
+
+  describe('settings narrowed to fewer scopes than their category', () => {
+    const PLATFORM_ONLY: CategoryMeta = {
+      ...TEST_CATEGORY_META,
+      settings: {
+        ...TEST_CATEGORY_META.settings,
+        'test.number_setting': {
+          ...TEST_CATEGORY_META.settings['test.number_setting'],
+          scopes: ['platform'],
+        } as SettingMeta,
+      },
+    };
+
+    it('ignores a value stored at a scope the setting does not allow, and refuses to set it', async () => {
+      const kv = createMockKV({
+        'settings:platform:test': JSON.stringify({ 'test.number_setting': 300 }),
+        'settings:tenant:tenant_1:test': JSON.stringify({ 'test.number_setting': 50 }),
+      });
+      const m = createSettingsManager({ env: {}, kv, cacheTTL: 0 });
+      m.registerCategory(PLATFORM_ONLY);
+      const scope = { type: 'tenant' as const, id: 'tenant_1' };
+      const parents = [{ type: 'platform' as const }];
+
+      const current = await m.getAll('test', scope, { parents });
+      expect(current.values['test.number_setting']).toBe(300);
+      expect(current.sources['test.number_setting']).toBe('platform');
+
+      const result = await m.patch(
+        'test',
+        scope,
+        { ifMatch: current.version, set: { 'test.number_setting': 200 } },
+        'test_actor',
+        { parents }
+      );
+      expect(result.rejected['test.number_setting']).toContain('Not settable at tenant scope');
+      expect(result.applied).toEqual([]);
+    });
+  });
+
+  describe('runtime lifetimes', () => {
+    it('refuses a fractional lifetime, which runtime could not apply', async () => {
+      const m = createSettingsManager({ env: {}, kv: createMockKV(), cacheTTL: 0 });
+      m.registerCategory(OAUTH_CATEGORY_META);
+      const scope = { type: 'tenant' as const, id: 'tenant_1' };
+      const current = await m.getAll('oauth', scope);
+
+      const result = await m.patch(
+        'oauth',
+        scope,
+        { ifMatch: current.version, set: { 'oauth.auth_code_ttl': 10.5 } },
+        'test_actor'
+      );
+
+      expect(result.rejected['oauth.auth_code_ttl']).toContain('integer');
+      expect(result.applied).toEqual([]);
+    });
+  });
+
+  describe('error settings', () => {
+    it('cannot be set per client, since error responses are built before a client is known', async () => {
+      const m = createSettingsManager({ env: {}, kv: createMockKV(), cacheTTL: 0 });
+      m.registerCategory(OAUTH_CATEGORY_META);
+      const scope = { type: 'client' as const, id: 'app', tenantId: 'tenant_1' };
+      const current = await m.getAll('oauth', scope);
+
+      const result = await m.patch(
+        'oauth',
+        scope,
+        { ifMatch: current.version, set: { 'oauth.error_id_mode': 'none' } },
+        'test_actor'
+      );
+
+      expect(result.rejected['oauth.error_id_mode']).toContain('Not settable at client scope');
+    });
+  });
+
+  describe('strict reads', () => {
+    it('refuses a stored empty document instead of reading it as unset', async () => {
+      const m = createSettingsManager({
+        env: {},
+        kv: createMockKV({ 'settings:tenant:tenant_1:test': '' }),
+        cacheTTL: 0,
+        strictReads: true,
+      });
+      m.registerCategory(TEST_CATEGORY_META);
+
+      await expect(m.getAll('test', { type: 'tenant', id: 'tenant_1' })).rejects.toThrow();
+    });
+  });
+
+  describe('env values parsed the way runtime reads them', () => {
+    const withMeta = (key: string, extra: Partial<SettingMeta>): CategoryMeta => ({
+      ...TEST_CATEGORY_META,
+      settings: {
+        ...TEST_CATEGORY_META.settings,
+        [key]: { ...TEST_CATEGORY_META.settings[key], ...extra } as SettingMeta,
+      },
+    });
+    const read = async (meta: CategoryMeta, env: Record<string, string>, key: string) => {
+      const m = createSettingsManager({ env, kv: createMockKV(), cacheTTL: 0 });
+      m.registerCategory(meta);
+      const result = await m.getAll('test', { type: 'platform' });
+      return { value: result.values[key], source: result.sources[key] };
+    };
+
+    it("ignores a number env value of 0 or less when envNumber is 'positive'", async () => {
+      const meta = withMeta('test.number_setting', { envNumber: 'positive' });
+      for (const raw of ['0', '-5', 'abc']) {
+        expect(await read(meta, { TEST_NUMBER_SETTING: raw }, 'test.number_setting')).toEqual({
+          value: 100,
+          source: 'default',
+        });
+      }
+      expect(await read(meta, { TEST_NUMBER_SETTING: '30' }, 'test.number_setting')).toEqual({
+        value: 30,
+        source: 'env',
+      });
+    });
+
+    it("ignores a number env value outside min..max when envNumber is 'in-range'", async () => {
+      const meta = withMeta('test.number_setting', { envNumber: 'in-range', min: 1, max: 1000 });
+      for (const raw of ['0', '1001', 'abc']) {
+        expect(await read(meta, { TEST_NUMBER_SETTING: raw }, 'test.number_setting')).toEqual({
+          value: 100,
+          source: 'default',
+        });
+      }
+      for (const [raw, value] of [
+        ['1', 1],
+        ['1000', 1000],
+      ] as const) {
+        expect(await read(meta, { TEST_NUMBER_SETTING: raw }, 'test.number_setting')).toEqual({
+          value,
+          source: 'env',
+        });
+      }
+    });
+
+    it("takes only a whole, in-range number when envNumber is 'strict-in-range'", async () => {
+      const meta = withMeta('test.number_setting', {
+        envNumber: 'strict-in-range',
+        integer: true,
+        min: 60,
+        max: 1800,
+      });
+      for (const raw of ['600junk', '1800.9', '90.5', '59', '1801', 'abc', '0x100']) {
+        expect(await read(meta, { TEST_NUMBER_SETTING: raw }, 'test.number_setting')).toEqual({
+          value: 100,
+          source: 'default',
+        });
+      }
+      for (const [raw, value] of [
+        ['60', 60],
+        [' 900 ', 900],
+        ['1800', 1800],
+      ] as const) {
+        expect(await read(meta, { TEST_NUMBER_SETTING: raw }, 'test.number_setting')).toEqual({
+          value,
+          source: 'env',
+        });
+      }
+    });
+
+    it("reads a decimal env value in min..max when envNumber is 'fraction-in-range'", async () => {
+      const meta = withMeta('test.number_setting', {
+        envNumber: 'fraction-in-range',
+        min: 0,
+        max: 1,
+      });
+      for (const [raw, value] of [
+        ['0.5', 0.5],
+        ['0.01', 0.01],
+        ['1', 1],
+      ] as const) {
+        expect(await read(meta, { TEST_NUMBER_SETTING: raw }, 'test.number_setting')).toEqual({
+          value,
+          source: 'env',
+        });
+      }
+      for (const raw of ['2', '-0.1', 'abc', 'Infinity']) {
+        expect(await read(meta, { TEST_NUMBER_SETTING: raw }, 'test.number_setting')).toEqual({
+          value: 100,
+          source: 'default',
+        });
+      }
+    });
+
+    it('turns refresh token rotation off only for the exact environment value false', async () => {
+      const read = async (raw: string) => {
+        const m = createSettingsManager({
+          env: { ENABLE_REFRESH_TOKEN_ROTATION: raw },
+          kv: createMockKV(),
+          cacheTTL: 0,
+        });
+        m.registerCategory(OAUTH_CATEGORY_META);
+        return (await m.getAll('oauth', { type: 'tenant', id: 't1' })).values[
+          'oauth.refresh_token_rotation'
+        ];
+      };
+      expect(await read('false')).toBe(false);
+      for (const raw of ['FALSE', '0', 'no', 'true', '']) expect(await read(raw), raw).toBe(true);
+    });
+
+    it('enables Check API auditing with the default sampling and retention when unset', async () => {
+      const manager = createSettingsManager({ env: {}, kv: createMockKV(), cacheTTL: 0 });
+      manager.registerCategory(CHECK_API_AUDIT_CATEGORY_META);
+      const { values } = await manager.getAll('check-api-audit', { type: 'platform' });
+      expect(values).toEqual({
+        'audit.check_api_enabled': true,
+        'audit.check_api_mode': 'waitUntil',
+        'audit.check_api_log_allow': 'sample',
+        'audit.check_api_sample_rate': 0.01,
+        'audit.check_api_retention_days': 90,
+      });
+      expect(values).toEqual(CHECK_API_AUDIT_DEFAULTS);
+    });
+
+    it("reads only the exact string 'true' as on for an explicit Check API audit env override", async () => {
+      const read = async (raw: string) => {
+        const m = createSettingsManager({
+          env: { ENABLE_CHECK_API_AUDIT: raw },
+          kv: createMockKV(),
+          cacheTTL: 0,
+        });
+        m.registerCategory(CHECK_API_AUDIT_CATEGORY_META);
+        return (await m.getAll('check-api-audit', { type: 'platform' })).values[
+          'audit.check_api_enabled'
+        ];
+      };
+      expect(await read('true')).toBe(true);
+      for (const raw of ['1', 'TRUE', 'false', '']) expect(await read(raw), raw).toBe(false);
+    });
+
+    it('ignores an enum env value the setting does not offer', async () => {
+      expect(
+        await read(TEST_CATEGORY_META, { TEST_ENUM_SETTING: 'invalid' }, 'test.enum_setting')
+      ).toMatchObject({ source: 'default' });
+      expect(
+        await read(TEST_CATEGORY_META, { TEST_ENUM_SETTING: 'option2' }, 'test.enum_setting')
+      ).toEqual({ value: 'option2', source: 'env' });
+    });
+
+    it('ignores a number env value that is not a multiple of the step', async () => {
+      const meta = withMeta('test.number_setting', { step: 10 });
+      expect(await read(meta, { TEST_NUMBER_SETTING: '15' }, 'test.number_setting')).toEqual({
+        value: 100,
+        source: 'default',
+      });
+      expect(await read(meta, { TEST_NUMBER_SETTING: '20' }, 'test.number_setting')).toEqual({
+        value: 20,
+        source: 'env',
+      });
+    });
+
+    it('ignores an integer env value beyond the safe range for an integer setting', async () => {
+      const meta = withMeta('test.number_setting', { integer: true });
+      expect(
+        await read(meta, { TEST_NUMBER_SETTING: '9007199254740993' }, 'test.number_setting')
+      ).toEqual({ value: 100, source: 'default' });
+    });
+
+    it("strips one trailing slash from a string env value with envString 'strip-trailing-slash'", async () => {
+      const meta = withMeta('test.string_setting', { envString: 'strip-trailing-slash' });
+      expect(
+        await read(
+          meta,
+          { TEST_STRING_SETTING: 'https://login.example.com/' },
+          'test.string_setting'
+        )
+      ).toEqual({ value: 'https://login.example.com', source: 'env' });
+    });
+
+    it('keeps a 0 number env value without envNumber', async () => {
+      expect(
+        await read(TEST_CATEGORY_META, { TEST_NUMBER_SETTING: '0' }, 'test.number_setting')
+      ).toEqual({ value: 0, source: 'env' });
+    });
+
+    it("reads an empty boolean env value as false from env when envEmpty is 'false'", async () => {
+      const meta = withMeta('test.boolean_setting', { envEmpty: 'false' });
+      expect(await read(meta, { TEST_BOOLEAN_SETTING: '' }, 'test.boolean_setting')).toEqual({
+        value: false,
+        source: 'env',
+      });
+      expect(await read(meta, { TEST_BOOLEAN_SETTING: '1' }, 'test.boolean_setting')).toEqual({
+        value: true,
+        source: 'env',
+      });
+    });
+
+    it('treats an empty boolean env value as unset by default', async () => {
+      expect(
+        await read(TEST_CATEGORY_META, { TEST_BOOLEAN_SETTING: '' }, 'test.boolean_setting')
+      ).toEqual({ value: true, source: 'default' });
+    });
+  });
+
+  describe('projection to the runtime KV', () => {
+    function canonicalStore() {
+      const docs = new Map<string, { data: Record<string, unknown>; version: string }>();
+      const keyOf = (category: string, scope: { id: string }) => `${category}:${scope.id}`;
+      return {
+        load: vi.fn(
+          async (category: string, scope: { id: string }) =>
+            docs.get(keyOf(category, scope)) ?? null
+        ),
+        compareAndSet: vi.fn(
+          async (
+            category: string,
+            scope: { id: string },
+            expected: string,
+            next: { data: Record<string, unknown>; version: string }
+          ) => {
+            const current = docs.get(keyOf(category, scope));
+            if ((current?.version ?? generateVersion({})) !== expected) return false;
+            docs.set(keyOf(category, scope), next);
+            return true;
+          }
+        ),
+        create: vi.fn(
+          async (
+            category: string,
+            scope: { id: string },
+            initial: { data: Record<string, unknown>; version: string }
+          ) => {
+            const key = keyOf(category, scope);
+            if (!docs.has(key)) docs.set(key, initial);
+            return docs.get(key)!;
+          }
+        ),
+        markProjected: vi.fn(async () => {}),
+        markPending: vi.fn(async () => {}),
+        replace: vi.fn(),
+        pending: vi.fn(),
+      };
+    }
+
+    it('says the change is pending when the runtime copy could not be written', async () => {
+      const kv = createMockKV();
+      (kv.put as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('KV unavailable'));
+      const store = canonicalStore();
+      const m = createSettingsManager({
+        env: {},
+        kv,
+        cacheTTL: 0,
+        canonicalStore: store as never,
+      });
+      m.registerCategory(TEST_CATEGORY_META);
+      const scope = { type: 'tenant' as const, id: 'tenant_1' };
+
+      const result = await m.patch(
+        'test',
+        scope,
+        { ifMatch: generateVersion({}), set: { 'test.number_setting': 200 } },
+        'test_actor'
+      );
+
+      expect(result.applied).toContain('test.number_setting');
+      expect(result.projection).toBe('pending');
+      expect(kv.put).toHaveBeenCalledTimes(3);
+      expect(store.markProjected).not.toHaveBeenCalled();
+      // The latest version is handed to the scheduled retry even if another save marked it done.
+      expect(store.markPending).toHaveBeenCalledWith(
+        'test',
+        { type: 'tenant', id: 'tenant_1' },
+        generateVersion({ 'test.number_setting': 200 })
+      );
+    });
+
+    it('leaves the runtime copy at the latest save when another save lands during projection', async () => {
+      const kv = createMockKV();
+      const store = canonicalStore();
+      const scope = { type: 'tenant' as const, id: 'tenant_1' };
+      const other = createSettingsManager({
+        env: {},
+        kv,
+        cacheTTL: 0,
+        canonicalStore: store as never,
+      });
+      other.registerCategory(TEST_CATEGORY_META);
+      const m = createSettingsManager({ env: {}, kv, cacheTTL: 0, canonicalStore: store as never });
+      m.registerCategory(TEST_CATEGORY_META);
+
+      // While the first save writes KV, a second save commits and projects its own document.
+      const realPut = kv.put as ReturnType<typeof vi.fn>;
+      const put = realPut.getMockImplementation()!;
+      let interleaved = false;
+      realPut.mockImplementation(async (key: string, value: string) => {
+        await put(key, value);
+        if (!interleaved) {
+          interleaved = true;
+          const current = await other.getAll('test', scope);
+          await other.patch(
+            'test',
+            scope,
+            { ifMatch: current.version, set: { 'test.number_setting': 300 } },
+            'other_actor'
+          );
+        }
+      });
+
+      await m.patch(
+        'test',
+        scope,
+        { ifMatch: generateVersion({}), set: { 'test.number_setting': 200 } },
+        'test_actor'
+      );
+
+      const projected = JSON.parse((await kv.get('settings:tenant:tenant_1:test')) as string);
+      expect(projected['test.number_setting']).toBe(300);
+    });
+
+    it('does not report a projection state when the runtime copy was written', async () => {
+      const store = canonicalStore();
+      const m = createSettingsManager({
+        env: {},
+        kv: createMockKV(),
+        cacheTTL: 0,
+        canonicalStore: store as never,
+      });
+      m.registerCategory(TEST_CATEGORY_META);
+
+      const result = await m.patch(
+        'test',
+        { type: 'tenant', id: 'tenant_1' },
+        { ifMatch: generateVersion({}), set: { 'test.number_setting': 200 } },
+        'test_actor'
+      );
+
+      expect(result.projection).toBeUndefined();
+      expect(store.markProjected).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -685,6 +1501,114 @@ describe('SettingsManager', () => {
         tenantId: 'tenant_abc',
       });
       expect(mockKV.get).toHaveBeenCalledWith('settings:client:tenant_abc:client_123:test');
+    });
+  });
+
+  describe('inheritance from parent scopes', () => {
+    const client = { type: 'client' as const, id: 'client_1', tenantId: 'tenant_1' };
+    const parents = [{ type: 'tenant' as const, id: 'tenant_1' }, { type: 'platform' as const }];
+
+    function managerWith(data: Record<string, Record<string, unknown>>, env = {}) {
+      const kv = createMockKV(
+        Object.fromEntries(Object.entries(data).map(([key, value]) => [key, JSON.stringify(value)]))
+      );
+      const m = createSettingsManager({ env, kv, cacheTTL: 0 });
+      m.registerCategory(TEST_CATEGORY_META);
+      return m;
+    }
+
+    it('takes a value from the nearest parent that sets it, before env and default', async () => {
+      const m = managerWith(
+        {
+          'settings:platform:test': {
+            'test.string_setting': 'platform_value',
+            'test.number_setting': 300,
+          },
+          'settings:tenant:tenant_1:test': { 'test.number_setting': 200 },
+        },
+        { TEST_STRING_SETTING: 'env_value', TEST_BOOLEAN_SETTING: 'false' }
+      );
+
+      const result = await m.getAll('test', client, { parents });
+
+      expect(result.values['test.number_setting']).toBe(200);
+      expect(result.sources['test.number_setting']).toBe('tenant');
+      expect(result.values['test.string_setting']).toBe('platform_value');
+      expect(result.sources['test.string_setting']).toBe('platform');
+      expect(result.values['test.boolean_setting']).toBe(false);
+      expect(result.sources['test.boolean_setting']).toBe('env');
+      expect(result.sources['test.enum_setting']).toBe('default');
+    });
+
+    it('reports what a value set here would fall back to', async () => {
+      const m = managerWith({
+        'settings:tenant:tenant_1:test': { 'test.number_setting': 200 },
+        'settings:client:tenant_1:client_1:test': { 'test.number_setting': 50 },
+      });
+
+      const result = await m.getAll('test', client, { parents });
+
+      expect(result.values['test.number_setting']).toBe(50);
+      expect(result.sources['test.number_setting']).toBe('kv');
+      expect(result.inherited.values['test.number_setting']).toBe(200);
+      expect(result.inherited.sources['test.number_setting']).toBe('tenant');
+      expect(result.inherited.values['test.string_setting']).toBe('default_value');
+      expect(result.inherited.sources['test.string_setting']).toBe('default');
+    });
+
+    it('reads a disabled parent value as false', async () => {
+      const m = managerWith({
+        'settings:platform:test': { 'test.boolean_setting': DISABLED_MARKER },
+      });
+
+      const result = await m.getAll(
+        'test',
+        { type: 'tenant', id: 'tenant_1' },
+        {
+          parents: [{ type: 'platform' }],
+        }
+      );
+
+      expect(result.values['test.boolean_setting']).toBe(false);
+      expect(result.sources['test.boolean_setting']).toBe('platform');
+    });
+
+    it('ignores parents unless they are passed', async () => {
+      const m = managerWith({
+        'settings:platform:test': { 'test.number_setting': 300 },
+      });
+
+      const result = await m.getAll('test', { type: 'tenant', id: 'tenant_1' });
+
+      expect(result.values['test.number_setting']).toBe(100);
+      expect(result.sources['test.number_setting']).toBe('default');
+    });
+
+    it('resolves single values and the runtime view through the same chain', async () => {
+      const m = managerWith({
+        'settings:tenant:tenant_1:test': { 'test.number_setting': 200 },
+      });
+
+      await expect(m.get('test.number_setting', client, { parents })).resolves.toBe(200);
+      const runtime = await m.getRuntimeView('test', client, { parents });
+      expect(runtime['test.number_setting']).toBe(200);
+    });
+  });
+
+  describe('get', () => {
+    it('finds the category of a key whose prefix differs from the category name', async () => {
+      const m = createSettingsManager({ env: {}, kv: createMockKV(), cacheTTL: 0 });
+      m.registerCategory({
+        ...TEST_CATEGORY_META,
+        category: 'test-category',
+      });
+
+      await expect(m.get('test.number_setting', { type: 'tenant', id: 'tenant_1' })).resolves.toBe(
+        100
+      );
+      await expect(m.get('test.unknown', { type: 'tenant', id: 'tenant_1' })).rejects.toThrow(
+        'Unknown setting'
+      );
     });
   });
 

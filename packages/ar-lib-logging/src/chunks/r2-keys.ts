@@ -48,6 +48,20 @@ export interface BuildLogChunkManifestObjectKeyInput {
   shard: string;
 }
 
+export interface BuildLogChunkRewrapObjectKeyInput {
+  tenantKey: string;
+  objectCatalogId: string;
+  rewrapJobId: string;
+  keyVersion: number;
+}
+
+function strictSegment(value: string, name: string): string {
+  if (!/^[a-zA-Z0-9._:-]{1,128}$/u.test(value)) {
+    throw new Error(`log_storage_${name}_invalid`);
+  }
+  return value;
+}
+
 export function buildLogChunkObjectKey(input: BuildLogChunkObjectKeyInput): string {
   const partition = formatUtcPartition(input.createdAt);
   const extension = input.compression === 'none' ? 'jsonl' : 'jsonl.gz';
@@ -85,6 +99,24 @@ export function buildLogChunkManifestObjectKey(input: BuildLogChunkManifestObjec
     partition.day,
     partition.hour,
     `${cleanSegment(input.shard)}.json`,
+  ].join('/');
+}
+
+/**
+ * Rewraps use a new immutable key. R2 does not expose an API for reading an older object version,
+ * so overwriting the source key would make an in-flight backup unable to read its captured catalog
+ * generation after the short mutation boundary is released.
+ */
+export function buildLogChunkRewrapObjectKey(input: BuildLogChunkRewrapObjectKeyInput): string {
+  if (!Number.isSafeInteger(input.keyVersion) || input.keyVersion < 1) {
+    throw new Error('log_storage_key_version_invalid');
+  }
+  return [
+    'logs-rewrapped',
+    strictSegment(input.tenantKey, 'tenant_key'),
+    strictSegment(input.objectCatalogId, 'object_catalog_id'),
+    strictSegment(input.rewrapJobId, 'rewrap_job_id'),
+    `v${input.keyVersion}.bin`,
   ].join('/');
 }
 

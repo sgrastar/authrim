@@ -2,10 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   adapter: { query: vi.fn(), queryOne: vi.fn(), execute: vi.fn() },
-  piiAdapter: { query: vi.fn(), queryOne: vi.fn(), execute: vi.fn() },
   audit: vi.fn(),
   generateId: vi.fn(() => 'attr-new'),
-  findCanonicalUser: vi.fn(),
+  findAccountState: vi.fn(),
+  accountCore: vi.fn(),
+  contact: vi.fn(),
+  contacts: vi.fn(),
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -14,10 +16,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ...actual,
     getTenantIdFromContext: vi.fn(() => 'tenant-a'),
     createAuthContextFromHono: vi.fn(() => ({ coreAdapter: mocks.adapter })),
-    createPIIContextFromHono: vi.fn(() => ({ defaultPiiAdapter: mocks.piiAdapter })),
-    CanonicalRuntimeUserStore: class {
-      findById = mocks.findCanonicalUser;
-    },
+    findCanonicalAccountAuthenticationState: mocks.findAccountState,
     generateId: mocks.generateId,
     createAuditLogFromContext: mocks.audit,
     createErrorResponse: vi.fn((c, code) =>
@@ -25,6 +24,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ),
   };
 });
+
+vi.mock('../admin-account-storage', () => ({
+  adminAccountCoreAdapter: mocks.accountCore,
+  adminAccountContact: mocks.contact,
+  adminAccountContacts: mocks.contacts,
+}));
 
 import {
   adminAttributeCreateHandler,
@@ -64,26 +69,20 @@ describe('admin attributes APIs', () => {
     mocks.adapter.query.mockResolvedValue([]);
     mocks.adapter.queryOne.mockResolvedValue(null);
     mocks.adapter.execute.mockResolvedValue({ success: true, rowsAffected: 1 });
-    mocks.piiAdapter.query.mockResolvedValue([]);
-    mocks.piiAdapter.queryOne.mockResolvedValue(null);
-    mocks.piiAdapter.execute.mockResolvedValue({ success: true, rowsAffected: 1 });
     mocks.audit.mockResolvedValue(undefined);
-    mocks.findCanonicalUser.mockResolvedValue({
-      id: 'user-1',
-      email: 'user@example.com',
-      name: null,
-    });
+    mocks.findAccountState.mockReset().mockResolvedValue({ userId: 'user-1', lifecycle: 'active' });
+    mocks.accountCore.mockReset().mockResolvedValue(mocks.adapter);
+    mocks.contact.mockReset().mockResolvedValue({ email: 'user@example.com', name: null });
+    mocks.contacts.mockReset().mockResolvedValue(new Map());
   });
 
   it('lists active attributes with filters, escaped search, and pagination', async () => {
     mocks.adapter.query
       .mockResolvedValueOnce([{ count: 51 }])
-      .mockResolvedValueOnce([{ id: 'attr-1', user_id: 'user-1' }])
-      .mockResolvedValueOnce([{ legacy_user_id: 'user-1' }]);
-    mocks.piiAdapter.query.mockResolvedValueOnce([
-      { owner_id: 'user-1', value_key: 'email', value_json: '"user@example.com"' },
-      { owner_id: 'user-1', value_key: 'name', value_json: '"User One"' },
-    ]);
+      .mockResolvedValueOnce([{ id: 'attr-1', user_id: 'user-1' }]);
+    mocks.contacts.mockResolvedValueOnce(
+      new Map([['user-1', { email: 'user@example.com', name: 'User One' }]])
+    );
     const response = await adminAttributesListHandler(
       context({
         query: {
@@ -111,15 +110,8 @@ describe('admin attributes APIs', () => {
       expect.stringContaining('a.source_type = ?'),
       expect.arrayContaining(['user-1', 'department', 'manual', '%100\\%\\_admin%', 25, 25])
     );
-    expect(mocks.adapter.query).toHaveBeenNthCalledWith(
-      3,
-      expect.stringContaining('FROM identity_accounts'),
-      ['tenant-a', 'user-1']
-    );
-    expect(mocks.piiAdapter.query).toHaveBeenCalledWith(
-      expect.stringContaining('FROM identity_sensitive_values'),
-      ['tenant-a', 'user-1']
-    );
+    expect(mocks.adapter.query).toHaveBeenCalledTimes(2);
+    expect(mocks.contacts).toHaveBeenCalledWith(expect.anything(), 'tenant-a', ['user-1']);
   });
 
   it('can include expired attributes and defaults an absent count to zero', async () => {
@@ -131,7 +123,7 @@ describe('admin attributes APIs', () => {
     expect(mocks.adapter.query.mock.calls[0][0]).not.toContain('expires_at IS NULL');
   });
 
-  it('normalizes invalid pagination and caps lookup batches at 100 users', async () => {
+  it('normalizes invalid pagination and caps the contact lookup page at 100 users', async () => {
     mocks.adapter.query.mockResolvedValueOnce([{ count: 0 }]).mockResolvedValueOnce([]);
     const body = (await (
       await adminAttributesListHandler(context({ query: { page: '-2', limit: '10000' } }))
@@ -171,7 +163,7 @@ describe('admin attributes APIs', () => {
 
   it('returns null for a missing user and handles query errors', async () => {
     mocks.adapter.query.mockResolvedValueOnce([]);
-    mocks.findCanonicalUser.mockResolvedValueOnce(null);
+    mocks.findAccountState.mockResolvedValueOnce(null);
     await expect((await adminUserAttributesHandler(context())).json()).resolves.toMatchObject({
       user: null,
     });
@@ -189,7 +181,7 @@ describe('admin attributes APIs', () => {
   });
 
   it('does not create an attribute for a missing user', async () => {
-    mocks.findCanonicalUser.mockResolvedValueOnce(null);
+    mocks.findAccountState.mockResolvedValueOnce(null);
     expect(
       (
         await adminAttributeCreateHandler(
@@ -207,7 +199,57 @@ describe('admin attributes APIs', () => {
         body: { user_id: 'user-1', attribute_name: 'department', attribute_value: 'eng' },
       })
     );
-    expect(mocks.findCanonicalUser).toHaveBeenCalledWith('user-1');
+    expect(mocks.findAccountState).toHaveBeenCalledWith(mocks.adapter, 'tenant-a', 'user-1');
+    expect(mocks.accountCore).toHaveBeenCalledWith(expect.anything(), 'tenant-a', 'user-1');
+    expect(mocks.contact).not.toHaveBeenCalled();
+  });
+
+  it.each(['suspended', 'locked', 'inactive', 'deleting', 'deleted'])(
+    'does not assign an attribute when the canonical Core lifecycle is %s',
+    async (lifecycle) => {
+      mocks.findAccountState.mockResolvedValueOnce({ userId: 'user-1', lifecycle });
+      const response = await adminAttributeCreateHandler(
+        context({
+          body: { user_id: 'user-1', attribute_name: 'department', attribute_value: 'eng' },
+        })
+      );
+      expect(response.status).toBe(404);
+      expect(mocks.adapter.execute).not.toHaveBeenCalled();
+      expect(mocks.audit).not.toHaveBeenCalled();
+      expect(mocks.contact).not.toHaveBeenCalled();
+    }
+  );
+
+  it('keeps a proven account identifiable when contact ownership is unavailable', async () => {
+    mocks.contact.mockResolvedValueOnce(null);
+    const response = await adminUserAttributesHandler(context({ params: { userId: 'user-1' } }));
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      user: { id: 'user-1', email: null, name: null },
+    });
+    expect(mocks.accountCore).toHaveBeenCalledWith(expect.anything(), 'tenant-a', 'user-1', {
+      includeDeleted: true,
+    });
+  });
+
+  it.each(['deleting', 'deleted'])(
+    'preserves the %s Core identity without asking for contact PII',
+    async (lifecycle) => {
+      mocks.findAccountState.mockResolvedValueOnce({ userId: 'user-1', lifecycle });
+      const response = await adminUserAttributesHandler(context({ params: { userId: 'user-1' } }));
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        user: { id: 'user-1', email: null, name: null },
+      });
+      expect(mocks.contact).not.toHaveBeenCalled();
+    }
+  );
+
+  it('does not hide a contact database failure as a missing identity', async () => {
+    mocks.contact.mockRejectedValueOnce(new Error('contact_storage_unavailable'));
+    const response = await adminUserAttributesHandler(context({ params: { userId: 'user-1' } }));
+    expect(response.status).toBe(500);
+    expect(mocks.audit).not.toHaveBeenCalled();
   });
 
   it('creates and audits a new manual attribute', async () => {

@@ -1,3 +1,8 @@
+import {
+  initializeCredentialStoreSchema,
+  VP_INITIAL_SCHEMA,
+  VP_PRIMARY_KEY_MIGRATION,
+} from '../../common/primary-key-schema.js';
 /** Region-sharded SQLite coordinator for OpenID4VP request state. */
 
 import { DurableObject } from 'cloudflare:workers';
@@ -134,36 +139,9 @@ export class VPRequestStoreV2 extends DurableObject<Env> {
   }
 
   private initializeSchema(): void {
-    this.ctx.storage.sql.exec(`
-      CREATE TABLE IF NOT EXISTS vp_requests (
-        id TEXT PRIMARY KEY,
-        tenant_id TEXT NOT NULL,
-        client_id TEXT NOT NULL,
-        user_id TEXT,
-        credential_profile_id TEXT,
-        credential_profile_version_id TEXT,
-        verification_flow_version_id TEXT,
-        verification_mapping_version_id TEXT,
-        verification_mapping_snapshot_hash TEXT,
-        maximum_attribute_age_seconds INTEGER,
-        nonce TEXT NOT NULL UNIQUE,
-        status_token_hash TEXT NOT NULL,
-        presentation_definition_json TEXT,
-        dcql_query_json TEXT,
-        response_uri TEXT NOT NULL,
-        response_mode TEXT NOT NULL CHECK (response_mode IN ('direct_post','direct_post.jwt')),
-        status TEXT NOT NULL CHECK (status IN ('pending','processing','verified','failed','expired')),
-        response_fingerprint TEXT UNIQUE,
-        reservation_id TEXT,
-        lease_expires_at INTEGER,
-        verified_claim_names_json TEXT,
-        error_code TEXT,
-        error_description TEXT,
-        created_at INTEGER NOT NULL,
-        expires_at INTEGER NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS vp_requests_expiry_idx ON vp_requests(status, expires_at);
-    `);
+    initializeCredentialStoreSchema(this.ctx.storage, VP_INITIAL_SCHEMA, VP_PRIMARY_KEY_MIGRATION, [
+      'vp_requests',
+    ]);
   }
 
   createRequestRpc(input: VPRequestState): VPRequestState {

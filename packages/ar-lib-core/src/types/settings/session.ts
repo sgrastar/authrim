@@ -15,18 +15,15 @@ export interface SessionSettings {
   // Session TTL
   'session.default_ttl': number;
   'session.max_ttl': number;
-  'session.min_ttl': number;
   'session.ttl.email_code': number;
   'session.ttl.directory_password': number;
   'session.ttl.direct_auth': number;
   'session.ttl.passkey': number;
   'session.ttl.passkey_registration': number;
   'session.ttl.admin_passkey': number;
-  'session.ttl.anonymous': number;
+  'session.ttl.guest': number;
   'session.ttl.did': number;
   'session.refresh_default': boolean;
-  'session.token_ttl': number;
-  'session.tombstone_ttl': number;
 
   // Logout Configuration
   'session.backchannel_logout_token_exp': number;
@@ -36,6 +33,15 @@ export interface SessionSettings {
   'session.backchannel_retry_max_delay_ms': number;
   'session.backchannel_retry_backoff_multiplier': number;
   'session.backchannel_on_failure': 'ignore' | 'log' | 'error';
+  'session.backchannel_enabled': boolean;
+  'session.backchannel_include_sub': boolean;
+  'session.backchannel_include_sid': boolean;
+  'session.frontchannel_enabled': boolean;
+  'session.session_management_enabled': boolean;
+  'session.check_session_iframe_enabled': boolean;
+  'session.logout_webhook_enabled': boolean;
+  'session.logout_webhook_include_sub': boolean;
+  'session.logout_webhook_include_sid': boolean;
 }
 
 /**
@@ -45,11 +51,14 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
   // Session TTL
   'session.default_ttl': {
     key: 'session.default_ttl',
+    // Per tenant (or app) only, as before the category had platform values.
+    scopes: ['tenant'],
     type: 'duration',
     default: 86400000,
     envKey: 'DEFAULT_SESSION_TTL',
     label: 'Default Session TTL',
-    description: 'Default session lifetime in milliseconds (24 hours)',
+    description:
+      'Session lifetime in milliseconds for sign-ins without a lifetime setting of their own: external IdP and SAML sign-in, and a session made for an app from a session token (24 hours)',
     min: 60000,
     max: 604800000,
     unit: 'ms',
@@ -57,30 +66,23 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
   },
   'session.max_ttl': {
     key: 'session.max_ttl',
+    // Per tenant (or app) only, as before the category had platform values.
+    scopes: ['tenant'],
     type: 'duration',
-    default: 604800000,
+    default: 2592000000,
     envKey: 'MAX_SESSION_TTL_MS',
     label: 'Max Session TTL',
-    description: 'Maximum allowed session lifetime in milliseconds (7 days)',
+    description:
+      'Longest a session lasts from sign-in in milliseconds, extensions included; longer per-method lifetimes are cut to it (30 days)',
     min: 86400000,
     max: 2592000000,
     unit: 'ms',
     visibility: 'admin',
   },
-  'session.min_ttl': {
-    key: 'session.min_ttl',
-    type: 'duration',
-    default: 60000,
-    envKey: 'MIN_SESSION_TTL_MS',
-    label: 'Min Session TTL',
-    description: 'Minimum allowed session lifetime in milliseconds (1 minute)',
-    min: 30000,
-    max: 86400000,
-    unit: 'ms',
-    visibility: 'admin',
-  },
   'session.ttl.email_code': {
     key: 'session.ttl.email_code',
+    // Per tenant (or app) only, as before the category had platform values.
+    scopes: ['tenant'],
     type: 'duration',
     default: 86400000,
     envKey: 'SESSION_TTL_EMAIL_CODE_MS',
@@ -93,6 +95,8 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
   },
   'session.ttl.directory_password': {
     key: 'session.ttl.directory_password',
+    // Per tenant (or app) only, as before the category had platform values.
+    scopes: ['tenant'],
     type: 'duration',
     default: 86400000,
     envKey: 'SESSION_TTL_DIRECTORY_PASSWORD_MS',
@@ -106,6 +110,8 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
   },
   'session.ttl.direct_auth': {
     key: 'session.ttl.direct_auth',
+    // Per tenant (or app) only, as before the category had platform values.
+    scopes: ['tenant'],
     type: 'duration',
     default: 86400000,
     envKey: 'SESSION_TTL_DIRECT_AUTH_MS',
@@ -118,6 +124,8 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
   },
   'session.ttl.passkey': {
     key: 'session.ttl.passkey',
+    // Per tenant (or app) only, as before the category had platform values.
+    scopes: ['tenant'],
     type: 'duration',
     default: 604800000,
     envKey: 'SESSION_TTL_PASSKEY_MS',
@@ -130,6 +138,8 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
   },
   'session.ttl.passkey_registration': {
     key: 'session.ttl.passkey_registration',
+    // Per tenant (or app) only, as before the category had platform values.
+    scopes: ['tenant'],
     type: 'duration',
     default: 2592000000,
     envKey: 'SESSION_TTL_PASSKEY_REGISTRATION_MS',
@@ -142,6 +152,8 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
   },
   'session.ttl.admin_passkey': {
     key: 'session.ttl.admin_passkey',
+    // Per tenant (or app) only, as before the category had platform values.
+    scopes: ['tenant'],
     type: 'duration',
     default: 604800000,
     envKey: 'SESSION_TTL_ADMIN_PASSKEY_MS',
@@ -152,13 +164,15 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
     unit: 'ms',
     visibility: 'admin',
   },
-  'session.ttl.anonymous': {
-    key: 'session.ttl.anonymous',
+  'session.ttl.guest': {
+    key: 'session.ttl.guest',
+    // Per tenant (or app) only, as before the category had platform values.
+    scopes: ['tenant'],
     type: 'duration',
     default: 86400000,
     envKey: 'SESSION_TTL_ANONYMOUS_MS',
     label: 'Anonymous Session TTL',
-    description: 'Session lifetime after anonymous device authentication in milliseconds',
+    description: 'Session lifetime after browser guest authentication in milliseconds',
     min: 60000,
     max: 2592000000,
     unit: 'ms',
@@ -166,6 +180,8 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
   },
   'session.ttl.did': {
     key: 'session.ttl.did',
+    // Per tenant (or app) only, as before the category had platform values.
+    scopes: ['tenant'],
     type: 'duration',
     default: 86400000,
     envKey: 'SESSION_TTL_DID_MS',
@@ -178,42 +194,22 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
   },
   'session.refresh_default': {
     key: 'session.refresh_default',
+    // Per tenant (or app) only, as before the category had platform values.
+    scopes: ['tenant'],
     type: 'boolean',
     default: true,
     envKey: 'SESSION_REFRESH_DEFAULT',
     label: 'Refresh Session by Default',
-    description: 'Extend session on activity by default',
+    description:
+      'Allow POST /api/sessions/refresh to extend an active session (up to the max session TTL)',
     visibility: 'public',
-  },
-  'session.token_ttl': {
-    key: 'session.token_ttl',
-    type: 'duration',
-    default: 300,
-    envKey: 'SESSION_TOKEN_TTL',
-    label: 'Session Token TTL',
-    description: 'Session token lifetime in seconds (for session management)',
-    min: 60,
-    max: 3600,
-    unit: 'seconds',
-    visibility: 'admin',
-  },
-  'session.tombstone_ttl': {
-    key: 'session.tombstone_ttl',
-    type: 'duration',
-    default: 86400000,
-    envKey: 'SESSION_TOMBSTONE_TTL',
-    label: 'Tombstone TTL',
-    description: 'How long to keep deleted session markers in milliseconds (24 hours)',
-    min: 3600000,
-    max: 604800000,
-    unit: 'ms',
-    visibility: 'admin',
   },
 
   // Logout Configuration
   'session.backchannel_logout_token_exp': {
     key: 'session.backchannel_logout_token_exp',
     type: 'duration',
+    integer: true,
     default: 120,
     envKey: 'LOGOUT_BACKCHANNEL_TOKEN_EXP',
     label: 'Backchannel Logout Token Expiry',
@@ -226,22 +222,25 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
   'session.backchannel_request_timeout_ms': {
     key: 'session.backchannel_request_timeout_ms',
     type: 'duration',
-    default: 10000,
+    integer: true,
+    default: 5000,
     envKey: 'LOGOUT_BACKCHANNEL_REQUEST_TIMEOUT_MS',
     label: 'Backchannel Request Timeout',
     description: 'Timeout for backchannel logout requests in milliseconds',
     min: 1000,
-    max: 60000,
+    max: 30000,
     unit: 'ms',
     visibility: 'admin',
   },
   'session.backchannel_retry_max_attempts': {
     key: 'session.backchannel_retry_max_attempts',
     type: 'number',
+    integer: true,
     default: 3,
     envKey: 'LOGOUT_BACKCHANNEL_RETRY_MAX_ATTEMPTS',
     label: 'Backchannel Retry Attempts',
-    description: 'Maximum retry attempts for failed logout requests',
+    description:
+      'Retries after a logout notification fails with a network error, a timeout or an error response other than 400 (a rejected token), with backoff (0: no retry). Retries end about 25 seconds after the logout, for all its clients together.',
     min: 0,
     max: 10,
     visibility: 'admin',
@@ -249,22 +248,24 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
   'session.backchannel_retry_initial_delay_ms': {
     key: 'session.backchannel_retry_initial_delay_ms',
     type: 'duration',
+    integer: true,
     default: 1000,
     envKey: 'LOGOUT_BACKCHANNEL_RETRY_INITIAL_DELAY_MS',
     label: 'Backchannel Retry Initial Delay',
-    description: 'Initial delay before first retry in milliseconds',
+    description: 'Delay before the first retry, in milliseconds',
     min: 100,
-    max: 10000,
+    max: 60000,
     unit: 'ms',
     visibility: 'admin',
   },
   'session.backchannel_retry_max_delay_ms': {
     key: 'session.backchannel_retry_max_delay_ms',
     type: 'duration',
+    integer: true,
     default: 30000,
     envKey: 'LOGOUT_BACKCHANNEL_RETRY_MAX_DELAY_MS',
     label: 'Backchannel Retry Max Delay',
-    description: 'Maximum delay between retries in milliseconds',
+    description: 'Longest delay between two retries, in milliseconds',
     min: 1000,
     max: 300000,
     unit: 'ms',
@@ -276,7 +277,7 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
     default: 2,
     envKey: 'LOGOUT_BACKCHANNEL_RETRY_BACKOFF_MULTIPLIER',
     label: 'Backchannel Retry Backoff',
-    description: 'Backoff multiplier for retry delays',
+    description: 'Each retry waits this many times longer than the one before',
     min: 1,
     max: 5,
     visibility: 'admin',
@@ -287,9 +288,88 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
     default: 'log',
     envKey: 'LOGOUT_BACKCHANNEL_ON_FAILURE',
     label: 'Backchannel Failure Behavior',
-    description: 'Action when backchannel logout fails after all retries',
+    description:
+      "What happens when a client's logout notification still fails after its retries: 'log' and 'ignore' record the failure; 'error' also writes a warning audit log entry (backchannel_logout.failed).",
     enum: ['ignore', 'log', 'error'],
     visibility: 'admin',
+  },
+  'session.backchannel_enabled': {
+    key: 'session.backchannel_enabled',
+    type: 'boolean',
+    label: 'Back-Channel Logout',
+    description:
+      'Send back-channel logout notifications (OIDC Back-Channel Logout) to the apps of a session that ends',
+    visibility: 'admin',
+    default: true,
+  },
+  'session.backchannel_include_sub': {
+    key: 'session.backchannel_include_sub',
+    type: 'boolean',
+    label: 'Back-Channel Logout: sub',
+    description: 'Put the user (sub) in back-channel logout tokens',
+    visibility: 'admin',
+    default: true,
+  },
+  'session.backchannel_include_sid': {
+    key: 'session.backchannel_include_sid',
+    type: 'boolean',
+    label: 'Back-Channel Logout: sid',
+    description:
+      'Put the session (sid) in back-channel logout tokens (always for apps that require it)',
+    visibility: 'admin',
+    default: true,
+  },
+  'session.frontchannel_enabled': {
+    key: 'session.frontchannel_enabled',
+    type: 'boolean',
+    label: 'Front-Channel Logout',
+    description:
+      'Load the front-channel logout pages of the apps of a session that ends (OIDC Front-Channel Logout)',
+    visibility: 'admin',
+    default: true,
+  },
+  'session.session_management_enabled': {
+    key: 'session.session_management_enabled',
+    type: 'boolean',
+    label: 'Session Management',
+    description:
+      'OIDC Session Management: with Check Session Iframe, advertise the check_session_iframe in discovery',
+    visibility: 'admin',
+    default: true,
+  },
+  'session.check_session_iframe_enabled': {
+    key: 'session.check_session_iframe_enabled',
+    type: 'boolean',
+    label: 'Check Session Iframe',
+    description:
+      'Advertise the check_session_iframe in discovery (with Session Management; the endpoint itself is always served)',
+    visibility: 'admin',
+    default: true,
+  },
+  'session.logout_webhook_enabled': {
+    key: 'session.logout_webhook_enabled',
+    type: 'boolean',
+    label: 'Logout Webhook',
+    description: 'Send a simple logout webhook to apps with a logout webhook URI',
+    visibility: 'admin',
+    default: false,
+  },
+  'session.logout_webhook_include_sub': {
+    key: 'session.logout_webhook_include_sub',
+    type: 'boolean',
+    label: 'Logout Webhook: sub',
+    description:
+      "Put the sub the app's ID token carried in logout webhook payloads (left out when none was recorded)",
+    visibility: 'admin',
+    default: true,
+  },
+  'session.logout_webhook_include_sid': {
+    key: 'session.logout_webhook_include_sid',
+    type: 'boolean',
+    label: 'Logout Webhook: sid',
+    description: 'Put the session (sid) in logout webhook payloads',
+    visibility: 'admin',
+    default: true,
   },
 };
 
@@ -309,23 +389,29 @@ export const SESSION_CATEGORY_META: CategoryMeta = {
 export const SESSION_DEFAULTS: SessionSettings = {
   'session.default_ttl': 86400000,
   'session.max_ttl': 604800000,
-  'session.min_ttl': 60000,
   'session.ttl.email_code': 86400000,
   'session.ttl.directory_password': 86400000,
   'session.ttl.direct_auth': 86400000,
   'session.ttl.passkey': 604800000,
   'session.ttl.passkey_registration': 2592000000,
   'session.ttl.admin_passkey': 604800000,
-  'session.ttl.anonymous': 86400000,
+  'session.ttl.guest': 86400000,
   'session.ttl.did': 86400000,
   'session.refresh_default': true,
-  'session.token_ttl': 300,
-  'session.tombstone_ttl': 86400000,
   'session.backchannel_logout_token_exp': 120,
-  'session.backchannel_request_timeout_ms': 10000,
+  'session.backchannel_request_timeout_ms': 5000,
   'session.backchannel_retry_max_attempts': 3,
   'session.backchannel_retry_initial_delay_ms': 1000,
   'session.backchannel_retry_max_delay_ms': 30000,
   'session.backchannel_retry_backoff_multiplier': 2,
   'session.backchannel_on_failure': 'log',
+  'session.backchannel_enabled': true,
+  'session.backchannel_include_sub': true,
+  'session.backchannel_include_sid': true,
+  'session.frontchannel_enabled': true,
+  'session.session_management_enabled': true,
+  'session.check_session_iframe_enabled': true,
+  'session.logout_webhook_enabled': false,
+  'session.logout_webhook_include_sub': true,
+  'session.logout_webhook_include_sid': true,
 };

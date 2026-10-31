@@ -1,0 +1,1737 @@
+{
+  "notifications": {
+    "email-invalid": {
+      "issues": [
+        {
+          "code": "invalid_string",
+          "message": "Invalid email",
+          "path": ["to"]
+        },
+        {
+          "code": "invalid_type",
+          "message": "Required",
+          "path": ["subject"]
+        },
+        {
+          "code": "invalid_type",
+          "message": "Required",
+          "path": ["body"]
+        },
+        {
+          "code": "invalid_string",
+          "message": "Invalid email",
+          "path": ["cc", 0]
+        },
+        {
+          "code": "invalid_type",
+          "message": "Expected object, received string",
+          "path": ["templateVars"]
+        },
+        {
+          "code": "invalid_type",
+          "message": "Expected object, received array",
+          "path": ["metadata"]
+        }
+      ],
+      "success": false
+    },
+    "email-valid": {
+      "data": {
+        "body": "b",
+        "channel": "email",
+        "subject": "s",
+        "templateVars": {
+          "a": 1
+        },
+        "to": "a@example.com"
+      },
+      "success": true
+    },
+    "push-invalid": {
+      "issues": [
+        {
+          "code": "invalid_type",
+          "message": "Expected string, received number",
+          "path": ["to"]
+        },
+        {
+          "code": "invalid_type",
+          "message": "Required",
+          "path": ["body"]
+        },
+        {
+          "code": "invalid_type",
+          "message": "Expected integer, received float",
+          "path": ["badge"]
+        },
+        {
+          "code": "invalid_type",
+          "message": "Expected object, received string",
+          "path": ["data"]
+        }
+      ],
+      "success": false
+    },
+    "sms-invalid": {
+      "issues": [
+        {
+          "code": "invalid_string",
+          "message": "Phone number must be in E.164 format",
+          "path": ["to"]
+        },
+        {
+          "code": "too_small",
+          "message": "String must contain at least 1 character(s)",
+          "path": ["body"]
+        },
+        {
+          "code": "invalid_type",
+          "message": "Expected object, received null",
+          "path": ["templateVars"]
+        }
+      ],
+      "success": false
+    },
+    "union-bad-discriminator": {
+      "issues": [
+        {
+          "code": "invalid_union_discriminator",
+          "message": "Invalid discriminator value. Expected 'email' | 'sms' | 'push'",
+          "path": ["channel"]
+        }
+      ],
+      "success": false
+    },
+    "union-missing-discriminator": {
+      "issues": [
+        {
+          "code": "invalid_union_discriminator",
+          "message": "Invalid discriminator value. Expected 'email' | 'sms' | 'push'",
+          "path": ["channel"]
+        }
+      ],
+      "success": false
+    },
+    "union-valid": {
+      "data": {
+        "body": "b",
+        "channel": "sms",
+        "to": "+10000000000"
+      },
+      "success": true
+    }
+  },
+  "plugins": {
+    "authenticator-totp": {
+      "defaults": {
+        "data": {
+          "algorithm": "sha1",
+          "allowSetupDuringRegistration": true,
+          "digits": 6,
+          "issuer": "Authrim",
+          "period": 30,
+          "requireVerificationBeforeEnable": true,
+          "secretLength": 20,
+          "window": 1
+        },
+        "success": true
+      },
+      "formFieldHints": [
+        {
+          "default": "Authrim",
+          "description": "Issuer name displayed in authenticator apps (organization or service name)",
+          "label": "issuer",
+          "name": "issuer",
+          "placeholder": "Authrim",
+          "required": false,
+          "type": "text",
+          "validation": {
+            "minLength": 1
+          }
+        },
+        {
+          "default": "sha1",
+          "description": "HMAC algorithm. sha1 has the best compatibility (Google Authenticator, etc.). Use sha256/sha512 for stricter security requirements",
+          "label": "algorithm",
+          "name": "algorithm",
+          "placeholder": "sha1",
+          "required": false,
+          "type": "select",
+          "validation": {
+            "options": ["sha1", "sha256", "sha512"]
+          }
+        },
+        {
+          "default": 6,
+          "description": "Number of OTP code digits. 6 digits is standard, 8 digits offers higher security",
+          "label": "digits",
+          "name": "digits",
+          "placeholder": "6",
+          "required": false,
+          "type": "select",
+          "validation": {
+            "options": [6, 8]
+          }
+        },
+        {
+          "default": 30,
+          "description": "Code refresh interval (seconds). 30 seconds is standard. Shorter increases security, longer increases convenience",
+          "label": "period",
+          "name": "period",
+          "placeholder": "30",
+          "required": false,
+          "type": "integer",
+          "validation": {
+            "maximum": 120,
+            "minimum": 15
+          }
+        },
+        {
+          "default": 1,
+          "description": "Time drift tolerance (±steps). 1 = allows ±30 seconds. 0 is strict but prone to failures from clock skew",
+          "label": "window",
+          "name": "window",
+          "placeholder": "1",
+          "required": false,
+          "type": "integer",
+          "validation": {
+            "maximum": 5,
+            "minimum": 0
+          }
+        },
+        {
+          "default": 20,
+          "description": "Secret key length (bytes). 20 bytes = 160 bits is RFC recommended",
+          "label": "secretLength",
+          "name": "secretLength",
+          "placeholder": "20",
+          "required": false,
+          "type": "integer",
+          "validation": {
+            "maximum": 64,
+            "minimum": 16
+          }
+        },
+        {
+          "default": true,
+          "description": "Allow TOTP setup during user registration",
+          "label": "allowSetupDuringRegistration",
+          "name": "allowSetupDuringRegistration",
+          "placeholder": "true",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "default": true,
+          "description": "Require verification code confirmation before enabling TOTP (recommended: true)",
+          "label": "requireVerificationBeforeEnable",
+          "name": "requireVerificationBeforeEnable",
+          "placeholder": "true",
+          "required": false,
+          "type": "boolean"
+        }
+      ],
+      "invalid": [
+        {
+          "input": {
+            "algorithm": "md5",
+            "digits": 7,
+            "period": 5,
+            "secretLength": 1,
+            "window": 99
+          },
+          "result": {
+            "errors": [
+              {
+                "code": "invalid_enum_value",
+                "message": "Invalid enum value. Expected 'sha1' | 'sha256' | 'sha512', received 'md5'",
+                "path": "algorithm"
+              },
+              {
+                "code": "invalid_union",
+                "message": "Invalid input",
+                "path": "digits"
+              },
+              {
+                "code": "too_small",
+                "message": "Number must be greater than or equal to 15",
+                "path": "period"
+              },
+              {
+                "code": "too_big",
+                "message": "Number must be less than or equal to 5",
+                "path": "window"
+              },
+              {
+                "code": "too_small",
+                "message": "Number must be greater than or equal to 16",
+                "path": "secretLength"
+              }
+            ],
+            "success": false
+          }
+        },
+        {
+          "input": {
+            "digits": "six",
+            "issuer": ""
+          },
+          "result": {
+            "errors": [
+              {
+                "code": "too_small",
+                "message": "String must contain at least 1 character(s)",
+                "path": "issuer"
+              },
+              {
+                "code": "invalid_union",
+                "message": "Invalid input",
+                "path": "digits"
+              }
+            ],
+            "success": false
+          }
+        }
+      ],
+      "jsonSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "algorithm": {
+            "default": "sha1",
+            "description": "HMAC algorithm. sha1 has the best compatibility (Google Authenticator, etc.). Use sha256/sha512 for stricter security requirements",
+            "enum": ["sha1", "sha256", "sha512"],
+            "type": "string"
+          },
+          "allowSetupDuringRegistration": {
+            "default": true,
+            "description": "Allow TOTP setup during user registration",
+            "type": "boolean"
+          },
+          "digits": {
+            "default": 6,
+            "description": "Number of OTP code digits. 6 digits is standard, 8 digits offers higher security",
+            "enum": [6, 8],
+            "type": "number"
+          },
+          "issuer": {
+            "default": "Authrim",
+            "description": "Issuer name displayed in authenticator apps (organization or service name)",
+            "minLength": 1,
+            "type": "string"
+          },
+          "period": {
+            "default": 30,
+            "description": "Code refresh interval (seconds). 30 seconds is standard. Shorter increases security, longer increases convenience",
+            "maximum": 120,
+            "minimum": 15,
+            "type": "integer"
+          },
+          "requireVerificationBeforeEnable": {
+            "default": true,
+            "description": "Require verification code confirmation before enabling TOTP (recommended: true)",
+            "type": "boolean"
+          },
+          "secretLength": {
+            "default": 20,
+            "description": "Secret key length (bytes). 20 bytes = 160 bits is RFC recommended",
+            "maximum": 64,
+            "minimum": 16,
+            "type": "integer"
+          },
+          "window": {
+            "default": 1,
+            "description": "Time drift tolerance (±steps). 1 = allows ±30 seconds. 0 is strict but prone to failures from clock skew",
+            "maximum": 5,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "pluginSchema": {
+        "$ref": "#/definitions/authenticator-totp-config",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "definitions": {
+          "authenticator-totp-config": {
+            "additionalProperties": false,
+            "properties": {
+              "algorithm": {
+                "default": "sha1",
+                "description": "HMAC algorithm. sha1 has the best compatibility (Google Authenticator, etc.). Use sha256/sha512 for stricter security requirements",
+                "enum": ["sha1", "sha256", "sha512"],
+                "type": "string"
+              },
+              "allowSetupDuringRegistration": {
+                "default": true,
+                "description": "Allow TOTP setup during user registration",
+                "type": "boolean"
+              },
+              "digits": {
+                "default": 6,
+                "description": "Number of OTP code digits. 6 digits is standard, 8 digits offers higher security",
+                "enum": [6, 8],
+                "type": "number"
+              },
+              "issuer": {
+                "default": "Authrim",
+                "description": "Issuer name displayed in authenticator apps (organization or service name)",
+                "minLength": 1,
+                "type": "string"
+              },
+              "period": {
+                "default": 30,
+                "description": "Code refresh interval (seconds). 30 seconds is standard. Shorter increases security, longer increases convenience",
+                "maximum": 120,
+                "minimum": 15,
+                "type": "integer"
+              },
+              "requireVerificationBeforeEnable": {
+                "default": true,
+                "description": "Require verification code confirmation before enabling TOTP (recommended: true)",
+                "type": "boolean"
+              },
+              "secretLength": {
+                "default": 20,
+                "description": "Secret key length (bytes). 20 bytes = 160 bits is RFC recommended",
+                "maximum": 64,
+                "minimum": 16,
+                "type": "integer"
+              },
+              "window": {
+                "default": 1,
+                "description": "Time drift tolerance (±steps). 1 = allows ±30 seconds. 0 is strict but prone to failures from clock skew",
+                "maximum": 5,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "description": "Time-based One-Time Password authentication. Compatible with Google Authenticator, Authy, Microsoft Authenticator, and more.",
+        "title": "TOTP Authenticator"
+      },
+      "secretFields": []
+    },
+    "human-verification-cloudflare-turnstile": {
+      "defaults": {
+        "data": {
+          "failurePolicy": "fail_closed",
+          "secretKey": "secret",
+          "siteKey": "site",
+          "timeoutMs": 5000
+        },
+        "success": true
+      },
+      "formFieldHints": [
+        {
+          "description": "Cloudflare Turnstile widget sitekey used by Login UI",
+          "label": "siteKey",
+          "name": "siteKey",
+          "required": true,
+          "type": "text",
+          "validation": {
+            "minLength": 1
+          }
+        },
+        {
+          "description": "Cloudflare Turnstile secret key used only for server-side Siteverify",
+          "label": "secretKey",
+          "name": "secretKey",
+          "required": true,
+          "type": "text",
+          "validation": {
+            "minLength": 1
+          }
+        },
+        {
+          "description": "Expected hostname returned by Siteverify. Leave blank to skip hostname matching.",
+          "label": "expectedHostname",
+          "name": "expectedHostname",
+          "required": false,
+          "type": "text"
+        },
+        {
+          "default": "fail_closed",
+          "description": "Siteverify failure always rejects the authentication request",
+          "label": "failurePolicy",
+          "name": "failurePolicy",
+          "placeholder": "fail_closed",
+          "required": false,
+          "type": "text"
+        },
+        {
+          "default": 5000,
+          "description": "Siteverify request timeout in milliseconds",
+          "label": "timeoutMs",
+          "name": "timeoutMs",
+          "placeholder": "5000",
+          "required": false,
+          "type": "integer",
+          "validation": {
+            "maximum": 10000,
+            "minimum": 1000
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "input": {},
+          "result": {
+            "errors": [
+              {
+                "code": "invalid_type",
+                "message": "Required",
+                "path": "siteKey"
+              },
+              {
+                "code": "invalid_type",
+                "message": "Required",
+                "path": "secretKey"
+              }
+            ],
+            "success": false
+          }
+        },
+        {
+          "input": {
+            "failurePolicy": "fail_open",
+            "secretKey": "k",
+            "siteKey": "s",
+            "timeoutMs": "x"
+          },
+          "result": {
+            "errors": [
+              {
+                "code": "invalid_literal",
+                "message": "Invalid literal value, expected \"fail_closed\"",
+                "path": "failurePolicy"
+              },
+              {
+                "code": "invalid_type",
+                "message": "Expected number, received string",
+                "path": "timeoutMs"
+              }
+            ],
+            "success": false
+          }
+        }
+      ],
+      "jsonSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "expectedHostname": {
+            "description": "Expected hostname returned by Siteverify. Leave blank to skip hostname matching.",
+            "type": "string"
+          },
+          "failurePolicy": {
+            "const": "fail_closed",
+            "default": "fail_closed",
+            "description": "Siteverify failure always rejects the authentication request",
+            "type": "string"
+          },
+          "secretKey": {
+            "description": "Cloudflare Turnstile secret key used only for server-side Siteverify",
+            "minLength": 1,
+            "type": "string"
+          },
+          "siteKey": {
+            "description": "Cloudflare Turnstile widget sitekey used by Login UI",
+            "minLength": 1,
+            "type": "string"
+          },
+          "timeoutMs": {
+            "default": 5000,
+            "description": "Siteverify request timeout in milliseconds",
+            "maximum": 10000,
+            "minimum": 1000,
+            "type": "integer"
+          }
+        },
+        "required": ["siteKey", "secretKey"],
+        "type": "object"
+      },
+      "pluginSchema": {
+        "$ref": "#/definitions/human-verification-cloudflare-turnstile-config",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "definitions": {
+          "human-verification-cloudflare-turnstile-config": {
+            "additionalProperties": false,
+            "properties": {
+              "expectedHostname": {
+                "description": "Expected hostname returned by Siteverify. Leave blank to skip hostname matching.",
+                "type": "string"
+              },
+              "failurePolicy": {
+                "const": "fail_closed",
+                "default": "fail_closed",
+                "description": "Siteverify failure always rejects the authentication request",
+                "type": "string"
+              },
+              "secretKey": {
+                "description": "Cloudflare Turnstile secret key used only for server-side Siteverify",
+                "minLength": 1,
+                "type": "string"
+              },
+              "siteKey": {
+                "description": "Cloudflare Turnstile widget sitekey used by Login UI",
+                "minLength": 1,
+                "type": "string"
+              },
+              "timeoutMs": {
+                "default": 5000,
+                "description": "Siteverify request timeout in milliseconds",
+                "maximum": 10000,
+                "minimum": 1000,
+                "type": "integer"
+              }
+            },
+            "required": ["siteKey", "secretKey"],
+            "type": "object"
+          }
+        },
+        "description": "Human verification for Login UI flows using Cloudflare Turnstile and server-side Siteverify.",
+        "title": "Cloudflare Turnstile"
+      },
+      "secretFields": ["secretKey", "secretKey"]
+    },
+    "human-verification-google-recaptcha": {
+      "defaults": {
+        "data": {
+          "failurePolicy": "fail_closed",
+          "scoreThreshold": 0.5,
+          "secretKey": "secret",
+          "siteKey": "site",
+          "timeoutMs": 5000,
+          "widgetMode": "checkbox"
+        },
+        "success": true
+      },
+      "formFieldHints": [
+        {
+          "description": "Google reCAPTCHA site key used by Login UI",
+          "label": "siteKey",
+          "name": "siteKey",
+          "required": true,
+          "type": "text",
+          "validation": {
+            "minLength": 1
+          }
+        },
+        {
+          "description": "Google reCAPTCHA secret key used only for server-side Siteverify",
+          "label": "secretKey",
+          "name": "secretKey",
+          "required": true,
+          "type": "text",
+          "validation": {
+            "minLength": 1
+          }
+        },
+        {
+          "description": "Expected hostname returned by Siteverify. Leave blank to skip hostname matching.",
+          "label": "expectedHostname",
+          "name": "expectedHostname",
+          "required": false,
+          "type": "text"
+        },
+        {
+          "default": "checkbox",
+          "description": "Use checkbox for reCAPTCHA v2, invisible for reCAPTCHA v2 invisible, or score for reCAPTCHA v3",
+          "label": "widgetMode",
+          "name": "widgetMode",
+          "placeholder": "checkbox",
+          "required": false,
+          "type": "select",
+          "validation": {
+            "options": ["checkbox", "invisible", "score"]
+          }
+        },
+        {
+          "default": 0.5,
+          "description": "Minimum accepted score when widgetMode is score",
+          "label": "scoreThreshold",
+          "name": "scoreThreshold",
+          "placeholder": "0.5",
+          "required": false,
+          "type": "number",
+          "validation": {
+            "maximum": 1,
+            "minimum": 0
+          }
+        },
+        {
+          "default": "fail_closed",
+          "description": "Siteverify failure always rejects the authentication request",
+          "label": "failurePolicy",
+          "name": "failurePolicy",
+          "placeholder": "fail_closed",
+          "required": false,
+          "type": "text"
+        },
+        {
+          "default": 5000,
+          "description": "Siteverify request timeout in milliseconds",
+          "label": "timeoutMs",
+          "name": "timeoutMs",
+          "placeholder": "5000",
+          "required": false,
+          "type": "integer",
+          "validation": {
+            "maximum": 10000,
+            "minimum": 1000
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "input": {},
+          "result": {
+            "errors": [
+              {
+                "code": "invalid_type",
+                "message": "Required",
+                "path": "siteKey"
+              },
+              {
+                "code": "invalid_type",
+                "message": "Required",
+                "path": "secretKey"
+              }
+            ],
+            "success": false
+          }
+        },
+        {
+          "input": {
+            "scoreThreshold": 2,
+            "secretKey": "k",
+            "siteKey": "s",
+            "widgetMode": "enterprise"
+          },
+          "result": {
+            "errors": [
+              {
+                "code": "invalid_enum_value",
+                "message": "Invalid enum value. Expected 'checkbox' | 'invisible' | 'score', received 'enterprise'",
+                "path": "widgetMode"
+              },
+              {
+                "code": "too_big",
+                "message": "Number must be less than or equal to 1",
+                "path": "scoreThreshold"
+              }
+            ],
+            "success": false
+          }
+        },
+        {
+          "input": {
+            "secretKey": "k",
+            "siteKey": "s",
+            "timeoutMs": 999999
+          },
+          "result": {
+            "errors": [
+              {
+                "code": "too_big",
+                "message": "Number must be less than or equal to 10000",
+                "path": "timeoutMs"
+              }
+            ],
+            "success": false
+          }
+        }
+      ],
+      "jsonSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "expectedHostname": {
+            "description": "Expected hostname returned by Siteverify. Leave blank to skip hostname matching.",
+            "type": "string"
+          },
+          "failurePolicy": {
+            "const": "fail_closed",
+            "default": "fail_closed",
+            "description": "Siteverify failure always rejects the authentication request",
+            "type": "string"
+          },
+          "scoreThreshold": {
+            "default": 0.5,
+            "description": "Minimum accepted score when widgetMode is score",
+            "maximum": 1,
+            "minimum": 0,
+            "type": "number"
+          },
+          "secretKey": {
+            "description": "Google reCAPTCHA secret key used only for server-side Siteverify",
+            "minLength": 1,
+            "type": "string"
+          },
+          "siteKey": {
+            "description": "Google reCAPTCHA site key used by Login UI",
+            "minLength": 1,
+            "type": "string"
+          },
+          "timeoutMs": {
+            "default": 5000,
+            "description": "Siteverify request timeout in milliseconds",
+            "maximum": 10000,
+            "minimum": 1000,
+            "type": "integer"
+          },
+          "widgetMode": {
+            "default": "checkbox",
+            "description": "Use checkbox for reCAPTCHA v2, invisible for reCAPTCHA v2 invisible, or score for reCAPTCHA v3",
+            "enum": ["checkbox", "invisible", "score"],
+            "type": "string"
+          }
+        },
+        "required": ["siteKey", "secretKey"],
+        "type": "object"
+      },
+      "pluginSchema": {
+        "$ref": "#/definitions/human-verification-google-recaptcha-config",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "definitions": {
+          "human-verification-google-recaptcha-config": {
+            "additionalProperties": false,
+            "properties": {
+              "expectedHostname": {
+                "description": "Expected hostname returned by Siteverify. Leave blank to skip hostname matching.",
+                "type": "string"
+              },
+              "failurePolicy": {
+                "const": "fail_closed",
+                "default": "fail_closed",
+                "description": "Siteverify failure always rejects the authentication request",
+                "type": "string"
+              },
+              "scoreThreshold": {
+                "default": 0.5,
+                "description": "Minimum accepted score when widgetMode is score",
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              },
+              "secretKey": {
+                "description": "Google reCAPTCHA secret key used only for server-side Siteverify",
+                "minLength": 1,
+                "type": "string"
+              },
+              "siteKey": {
+                "description": "Google reCAPTCHA site key used by Login UI",
+                "minLength": 1,
+                "type": "string"
+              },
+              "timeoutMs": {
+                "default": 5000,
+                "description": "Siteverify request timeout in milliseconds",
+                "maximum": 10000,
+                "minimum": 1000,
+                "type": "integer"
+              },
+              "widgetMode": {
+                "default": "checkbox",
+                "description": "Use checkbox for reCAPTCHA v2, invisible for reCAPTCHA v2 invisible, or score for reCAPTCHA v3",
+                "enum": ["checkbox", "invisible", "score"],
+                "type": "string"
+              }
+            },
+            "required": ["siteKey", "secretKey"],
+            "type": "object"
+          }
+        },
+        "description": "Human verification for Login UI flows using Google reCAPTCHA and server-side Siteverify.",
+        "title": "Google reCAPTCHA"
+      },
+      "secretFields": ["secretKey", "secretKey"]
+    },
+    "human-verification-hcaptcha": {
+      "defaults": {
+        "data": {
+          "failurePolicy": "fail_closed",
+          "secretKey": "secret",
+          "siteKey": "site",
+          "timeoutMs": 5000,
+          "widgetMode": "checkbox"
+        },
+        "success": true
+      },
+      "formFieldHints": [
+        {
+          "description": "hCaptcha sitekey used by Login UI",
+          "label": "siteKey",
+          "name": "siteKey",
+          "required": true,
+          "type": "text",
+          "validation": {
+            "minLength": 1
+          }
+        },
+        {
+          "description": "hCaptcha secret key used only for server-side Siteverify",
+          "label": "secretKey",
+          "name": "secretKey",
+          "required": true,
+          "type": "text",
+          "validation": {
+            "minLength": 1
+          }
+        },
+        {
+          "description": "Expected hostname returned by Siteverify. Leave blank to skip hostname matching.",
+          "label": "expectedHostname",
+          "name": "expectedHostname",
+          "required": false,
+          "type": "text"
+        },
+        {
+          "default": "checkbox",
+          "description": "How the hCaptcha widget is displayed in Login UI",
+          "label": "widgetMode",
+          "name": "widgetMode",
+          "placeholder": "checkbox",
+          "required": false,
+          "type": "select",
+          "validation": {
+            "options": ["checkbox", "invisible"]
+          }
+        },
+        {
+          "default": "fail_closed",
+          "description": "Siteverify failure always rejects the authentication request",
+          "label": "failurePolicy",
+          "name": "failurePolicy",
+          "placeholder": "fail_closed",
+          "required": false,
+          "type": "text"
+        },
+        {
+          "default": 5000,
+          "description": "Siteverify request timeout in milliseconds",
+          "label": "timeoutMs",
+          "name": "timeoutMs",
+          "placeholder": "5000",
+          "required": false,
+          "type": "integer",
+          "validation": {
+            "maximum": 10000,
+            "minimum": 1000
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "input": {},
+          "result": {
+            "errors": [
+              {
+                "code": "invalid_type",
+                "message": "Required",
+                "path": "siteKey"
+              },
+              {
+                "code": "invalid_type",
+                "message": "Required",
+                "path": "secretKey"
+              }
+            ],
+            "success": false
+          }
+        },
+        {
+          "input": {
+            "failurePolicy": "fail_open",
+            "secretKey": "k",
+            "siteKey": "s",
+            "widgetMode": "score"
+          },
+          "result": {
+            "errors": [
+              {
+                "code": "invalid_enum_value",
+                "message": "Invalid enum value. Expected 'checkbox' | 'invisible', received 'score'",
+                "path": "widgetMode"
+              },
+              {
+                "code": "invalid_literal",
+                "message": "Invalid literal value, expected \"fail_closed\"",
+                "path": "failurePolicy"
+              }
+            ],
+            "success": false
+          }
+        },
+        {
+          "input": {
+            "secretKey": "k",
+            "siteKey": "s",
+            "timeoutMs": 1
+          },
+          "result": {
+            "errors": [
+              {
+                "code": "too_small",
+                "message": "Number must be greater than or equal to 1000",
+                "path": "timeoutMs"
+              }
+            ],
+            "success": false
+          }
+        }
+      ],
+      "jsonSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "expectedHostname": {
+            "description": "Expected hostname returned by Siteverify. Leave blank to skip hostname matching.",
+            "type": "string"
+          },
+          "failurePolicy": {
+            "const": "fail_closed",
+            "default": "fail_closed",
+            "description": "Siteverify failure always rejects the authentication request",
+            "type": "string"
+          },
+          "secretKey": {
+            "description": "hCaptcha secret key used only for server-side Siteverify",
+            "minLength": 1,
+            "type": "string"
+          },
+          "siteKey": {
+            "description": "hCaptcha sitekey used by Login UI",
+            "minLength": 1,
+            "type": "string"
+          },
+          "timeoutMs": {
+            "default": 5000,
+            "description": "Siteverify request timeout in milliseconds",
+            "maximum": 10000,
+            "minimum": 1000,
+            "type": "integer"
+          },
+          "widgetMode": {
+            "default": "checkbox",
+            "description": "How the hCaptcha widget is displayed in Login UI",
+            "enum": ["checkbox", "invisible"],
+            "type": "string"
+          }
+        },
+        "required": ["siteKey", "secretKey"],
+        "type": "object"
+      },
+      "pluginSchema": {
+        "$ref": "#/definitions/human-verification-hcaptcha-config",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "definitions": {
+          "human-verification-hcaptcha-config": {
+            "additionalProperties": false,
+            "properties": {
+              "expectedHostname": {
+                "description": "Expected hostname returned by Siteverify. Leave blank to skip hostname matching.",
+                "type": "string"
+              },
+              "failurePolicy": {
+                "const": "fail_closed",
+                "default": "fail_closed",
+                "description": "Siteverify failure always rejects the authentication request",
+                "type": "string"
+              },
+              "secretKey": {
+                "description": "hCaptcha secret key used only for server-side Siteverify",
+                "minLength": 1,
+                "type": "string"
+              },
+              "siteKey": {
+                "description": "hCaptcha sitekey used by Login UI",
+                "minLength": 1,
+                "type": "string"
+              },
+              "timeoutMs": {
+                "default": 5000,
+                "description": "Siteverify request timeout in milliseconds",
+                "maximum": 10000,
+                "minimum": 1000,
+                "type": "integer"
+              },
+              "widgetMode": {
+                "default": "checkbox",
+                "description": "How the hCaptcha widget is displayed in Login UI",
+                "enum": ["checkbox", "invisible"],
+                "type": "string"
+              }
+            },
+            "required": ["siteKey", "secretKey"],
+            "type": "object"
+          }
+        },
+        "description": "Human verification for Login UI flows using hCaptcha and server-side Siteverify.",
+        "title": "hCaptcha"
+      },
+      "secretFields": ["secretKey", "secretKey"]
+    },
+    "notifier-cloudflare": {
+      "defaults": {
+        "data": {
+          "defaultFrom": "noreply@example.com",
+          "maxRecipientsPerRequest": 50
+        },
+        "success": true
+      },
+      "formFieldHints": [
+        {
+          "description": "Default sender email address. The domain must be onboarded to Cloudflare Email Service",
+          "label": "defaultFrom",
+          "name": "defaultFrom",
+          "required": true,
+          "type": "email"
+        },
+        {
+          "description": "Sender display name (optional)",
+          "label": "fromName",
+          "name": "fromName",
+          "required": false,
+          "type": "text"
+        },
+        {
+          "description": "Reply-to email address (optional)",
+          "label": "replyTo",
+          "name": "replyTo",
+          "required": false,
+          "type": "email"
+        },
+        {
+          "default": 50,
+          "description": "Maximum recipients per request (Cloudflare currently allows up to 50 recipients)",
+          "label": "maxRecipientsPerRequest",
+          "name": "maxRecipientsPerRequest",
+          "placeholder": "50",
+          "required": false,
+          "type": "integer",
+          "validation": {
+            "maximum": 50,
+            "minimum": 1
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "input": {},
+          "result": {
+            "errors": [
+              {
+                "code": "invalid_type",
+                "message": "Required",
+                "path": "defaultFrom"
+              }
+            ],
+            "success": false
+          }
+        },
+        {
+          "input": null,
+          "result": {
+            "errors": [
+              {
+                "code": "invalid_type",
+                "message": "Expected object, received null",
+                "path": ""
+              }
+            ],
+            "success": false
+          }
+        },
+        {
+          "input": {
+            "defaultFrom": "not-an-email",
+            "maxRecipients": 0,
+            "replyTo": "x"
+          },
+          "result": {
+            "errors": [
+              {
+                "code": "invalid_string",
+                "message": "Invalid sender email address",
+                "path": "defaultFrom"
+              },
+              {
+                "code": "invalid_string",
+                "message": "Invalid email",
+                "path": "replyTo"
+              }
+            ],
+            "success": false
+          }
+        },
+        {
+          "input": {
+            "defaultFrom": "a@example.com",
+            "maxRecipients": 1.5
+          },
+          "result": {
+            "data": {
+              "defaultFrom": "a@example.com",
+              "maxRecipientsPerRequest": 50
+            },
+            "success": true
+          }
+        },
+        {
+          "input": {
+            "defaultFrom": "a@example.com",
+            "maxRecipients": "10"
+          },
+          "result": {
+            "data": {
+              "defaultFrom": "a@example.com",
+              "maxRecipientsPerRequest": 50
+            },
+            "success": true
+          }
+        }
+      ],
+      "jsonSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "defaultFrom": {
+            "description": "Default sender email address. The domain must be onboarded to Cloudflare Email Service",
+            "format": "email",
+            "type": "string"
+          },
+          "fromName": {
+            "description": "Sender display name (optional)",
+            "type": "string"
+          },
+          "maxRecipientsPerRequest": {
+            "default": 50,
+            "description": "Maximum recipients per request (Cloudflare currently allows up to 50 recipients)",
+            "maximum": 50,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "replyTo": {
+            "description": "Reply-to email address (optional)",
+            "format": "email",
+            "type": "string"
+          }
+        },
+        "required": ["defaultFrom"],
+        "type": "object"
+      },
+      "pluginSchema": {
+        "$ref": "#/definitions/notifier-cloudflare-config",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "definitions": {
+          "notifier-cloudflare-config": {
+            "additionalProperties": false,
+            "properties": {
+              "defaultFrom": {
+                "description": "Default sender email address. The domain must be onboarded to Cloudflare Email Service",
+                "format": "email",
+                "type": "string"
+              },
+              "fromName": {
+                "description": "Sender display name (optional)",
+                "type": "string"
+              },
+              "maxRecipientsPerRequest": {
+                "default": 50,
+                "description": "Maximum recipients per request (Cloudflare currently allows up to 50 recipients)",
+                "maximum": 50,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "replyTo": {
+                "description": "Reply-to email address (optional)",
+                "format": "email",
+                "type": "string"
+              }
+            },
+            "required": ["defaultFrom"],
+            "type": "object"
+          }
+        },
+        "description": "Transactional email sending through the native Cloudflare Workers Email Service binding.",
+        "title": "Cloudflare Email Service"
+      },
+      "secretFields": []
+    },
+    "notifier-console": {
+      "defaults": {
+        "data": {
+          "includeTimestamp": true,
+          "logLevel": "info",
+          "prefix": "[AUTHRIM-NOTIFY]",
+          "prettyPrint": true,
+          "simulateDelayMs": 0,
+          "simulateFailureRate": 0
+        },
+        "success": true
+      },
+      "formFieldHints": [
+        {
+          "default": "[AUTHRIM-NOTIFY]",
+          "description": "Prefix for log messages",
+          "label": "prefix",
+          "name": "prefix",
+          "placeholder": "[AUTHRIM-NOTIFY]",
+          "required": false,
+          "type": "text"
+        },
+        {
+          "default": true,
+          "description": "Include timestamp in logs",
+          "label": "includeTimestamp",
+          "name": "includeTimestamp",
+          "placeholder": "true",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "default": "info",
+          "description": "Log level (debug/info/warn)",
+          "label": "logLevel",
+          "name": "logLevel",
+          "placeholder": "info",
+          "required": false,
+          "type": "select",
+          "validation": {
+            "options": ["debug", "info", "warn"]
+          }
+        },
+        {
+          "default": true,
+          "description": "Pretty print JSON payloads",
+          "label": "prettyPrint",
+          "name": "prettyPrint",
+          "placeholder": "true",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "default": 0,
+          "description": "Simulated delay (ms). Used for timeout handling tests",
+          "label": "simulateDelayMs",
+          "name": "simulateDelayMs",
+          "placeholder": "0",
+          "required": false,
+          "type": "integer",
+          "validation": {
+            "maximum": 5000,
+            "minimum": 0
+          }
+        },
+        {
+          "default": 0,
+          "description": "Failure simulation rate (0-1). 0.5 = 50% failure rate. Used for error handling tests",
+          "label": "simulateFailureRate",
+          "name": "simulateFailureRate",
+          "placeholder": "0",
+          "required": false,
+          "type": "number",
+          "validation": {
+            "maximum": 1,
+            "minimum": 0
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "input": {
+            "logLevel": "trace"
+          },
+          "result": {
+            "errors": [
+              {
+                "code": "invalid_enum_value",
+                "message": "Invalid enum value. Expected 'debug' | 'info' | 'warn', received 'trace'",
+                "path": "logLevel"
+              }
+            ],
+            "success": false
+          }
+        },
+        {
+          "input": {
+            "failureRate": 2,
+            "includeTimestamp": "yes",
+            "prefix": 1,
+            "simulateDelay": -1
+          },
+          "result": {
+            "errors": [
+              {
+                "code": "invalid_type",
+                "message": "Expected string, received number",
+                "path": "prefix"
+              },
+              {
+                "code": "invalid_type",
+                "message": "Expected boolean, received string",
+                "path": "includeTimestamp"
+              }
+            ],
+            "success": false
+          }
+        }
+      ],
+      "jsonSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "includeTimestamp": {
+            "default": true,
+            "description": "Include timestamp in logs",
+            "type": "boolean"
+          },
+          "logLevel": {
+            "default": "info",
+            "description": "Log level (debug/info/warn)",
+            "enum": ["debug", "info", "warn"],
+            "type": "string"
+          },
+          "prefix": {
+            "default": "[AUTHRIM-NOTIFY]",
+            "description": "Prefix for log messages",
+            "type": "string"
+          },
+          "prettyPrint": {
+            "default": true,
+            "description": "Pretty print JSON payloads",
+            "type": "boolean"
+          },
+          "simulateDelayMs": {
+            "default": 0,
+            "description": "Simulated delay (ms). Used for timeout handling tests",
+            "maximum": 5000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "simulateFailureRate": {
+            "default": 0,
+            "description": "Failure simulation rate (0-1). 0.5 = 50% failure rate. Used for error handling tests",
+            "maximum": 1,
+            "minimum": 0,
+            "type": "number"
+          }
+        },
+        "type": "object"
+      },
+      "pluginSchema": {
+        "$ref": "#/definitions/notifier-console-config",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "definitions": {
+          "notifier-console-config": {
+            "additionalProperties": false,
+            "properties": {
+              "includeTimestamp": {
+                "default": true,
+                "description": "Include timestamp in logs",
+                "type": "boolean"
+              },
+              "logLevel": {
+                "default": "info",
+                "description": "Log level (debug/info/warn)",
+                "enum": ["debug", "info", "warn"],
+                "type": "string"
+              },
+              "prefix": {
+                "default": "[AUTHRIM-NOTIFY]",
+                "description": "Prefix for log messages",
+                "type": "string"
+              },
+              "prettyPrint": {
+                "default": true,
+                "description": "Pretty print JSON payloads",
+                "type": "boolean"
+              },
+              "simulateDelayMs": {
+                "default": 0,
+                "description": "Simulated delay (ms). Used for timeout handling tests",
+                "maximum": 5000,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "simulateFailureRate": {
+                "default": 0,
+                "description": "Failure simulation rate (0-1). 0.5 = 50% failure rate. Used for error handling tests",
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "description": "Logs notifications to console. For development and testing only. Do not use in production.",
+        "title": "Console Notifier"
+      },
+      "secretFields": []
+    },
+    "notifier-resend": {
+      "defaults": {
+        "data": {
+          "apiEndpoint": "https://api.resend.com",
+          "apiKey": "re_test",
+          "defaultFrom": "noreply@example.com",
+          "maxRecipientsPerRequest": 10,
+          "sandboxMode": false,
+          "timeoutMs": 10000
+        },
+        "success": true
+      },
+      "formFieldHints": [
+        {
+          "description": "Resend API key (starts with re_). Obtain from Resend dashboard",
+          "label": "apiKey",
+          "name": "apiKey",
+          "required": true,
+          "type": "text",
+          "validation": {
+            "minLength": 1
+          }
+        },
+        {
+          "description": "Default sender email address. Requires domain verification",
+          "label": "defaultFrom",
+          "name": "defaultFrom",
+          "required": true,
+          "type": "email"
+        },
+        {
+          "description": "Reply-to email address (optional)",
+          "label": "replyTo",
+          "name": "replyTo",
+          "required": false,
+          "type": "email"
+        },
+        {
+          "default": 10000,
+          "description": "API request timeout (milliseconds)",
+          "label": "timeoutMs",
+          "name": "timeoutMs",
+          "placeholder": "10000",
+          "required": false,
+          "type": "integer",
+          "validation": {
+            "maximum": 30000,
+            "minimum": 1000
+          }
+        },
+        {
+          "default": 10,
+          "description": "Maximum recipients per request (To+CC+BCC combined)",
+          "label": "maxRecipientsPerRequest",
+          "name": "maxRecipientsPerRequest",
+          "placeholder": "10",
+          "required": false,
+          "type": "integer",
+          "validation": {
+            "maximum": 50,
+            "minimum": 1
+          }
+        },
+        {
+          "default": false,
+          "description": "Sandbox mode. When enabled, emails are not actually sent (for testing)",
+          "label": "sandboxMode",
+          "name": "sandboxMode",
+          "placeholder": "false",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "default": "https://api.resend.com",
+          "description": "Resend API endpoint. Usually no need to change",
+          "label": "apiEndpoint",
+          "name": "apiEndpoint",
+          "placeholder": "https://api.resend.com",
+          "required": false,
+          "type": "url"
+        }
+      ],
+      "invalid": [
+        {
+          "input": {},
+          "result": {
+            "errors": [
+              {
+                "code": "invalid_type",
+                "message": "Required",
+                "path": "apiKey"
+              },
+              {
+                "code": "invalid_type",
+                "message": "Required",
+                "path": "defaultFrom"
+              }
+            ],
+            "success": false
+          }
+        },
+        {
+          "input": {
+            "apiKey": "",
+            "defaultFrom": "a@example.com"
+          },
+          "result": {
+            "errors": [
+              {
+                "code": "too_small",
+                "message": "API key is required",
+                "path": "apiKey"
+              }
+            ],
+            "success": false
+          }
+        },
+        {
+          "input": {
+            "apiBaseUrl": "not a url",
+            "apiKey": "re_x",
+            "defaultFrom": "bad",
+            "timeout": 10
+          },
+          "result": {
+            "errors": [
+              {
+                "code": "invalid_string",
+                "message": "Invalid sender email address",
+                "path": "defaultFrom"
+              }
+            ],
+            "success": false
+          }
+        },
+        {
+          "input": {
+            "apiKey": "re_x",
+            "defaultFrom": "a@example.com",
+            "maxRetries": 99,
+            "sandboxMode": "no"
+          },
+          "result": {
+            "errors": [
+              {
+                "code": "invalid_type",
+                "message": "Expected boolean, received string",
+                "path": "sandboxMode"
+              }
+            ],
+            "success": false
+          }
+        }
+      ],
+      "jsonSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "apiEndpoint": {
+            "default": "https://api.resend.com",
+            "description": "Resend API endpoint. Usually no need to change",
+            "format": "uri",
+            "type": "string"
+          },
+          "apiKey": {
+            "description": "Resend API key (starts with re_). Obtain from Resend dashboard",
+            "minLength": 1,
+            "type": "string"
+          },
+          "defaultFrom": {
+            "description": "Default sender email address. Requires domain verification",
+            "format": "email",
+            "type": "string"
+          },
+          "maxRecipientsPerRequest": {
+            "default": 10,
+            "description": "Maximum recipients per request (To+CC+BCC combined)",
+            "maximum": 50,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "replyTo": {
+            "description": "Reply-to email address (optional)",
+            "format": "email",
+            "type": "string"
+          },
+          "sandboxMode": {
+            "default": false,
+            "description": "Sandbox mode. When enabled, emails are not actually sent (for testing)",
+            "type": "boolean"
+          },
+          "timeoutMs": {
+            "default": 10000,
+            "description": "API request timeout (milliseconds)",
+            "maximum": 30000,
+            "minimum": 1000,
+            "type": "integer"
+          }
+        },
+        "required": ["apiKey", "defaultFrom"],
+        "type": "object"
+      },
+      "pluginSchema": {
+        "$ref": "#/definitions/notifier-resend-config",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "definitions": {
+          "notifier-resend-config": {
+            "additionalProperties": false,
+            "properties": {
+              "apiEndpoint": {
+                "default": "https://api.resend.com",
+                "description": "Resend API endpoint. Usually no need to change",
+                "format": "uri",
+                "type": "string"
+              },
+              "apiKey": {
+                "description": "Resend API key (starts with re_). Obtain from Resend dashboard",
+                "minLength": 1,
+                "type": "string"
+              },
+              "defaultFrom": {
+                "description": "Default sender email address. Requires domain verification",
+                "format": "email",
+                "type": "string"
+              },
+              "maxRecipientsPerRequest": {
+                "default": 10,
+                "description": "Maximum recipients per request (To+CC+BCC combined)",
+                "maximum": 50,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "replyTo": {
+                "description": "Reply-to email address (optional)",
+                "format": "email",
+                "type": "string"
+              },
+              "sandboxMode": {
+                "default": false,
+                "description": "Sandbox mode. When enabled, emails are not actually sent (for testing)",
+                "type": "boolean"
+              },
+              "timeoutMs": {
+                "default": 10000,
+                "description": "API request timeout (milliseconds)",
+                "maximum": 30000,
+                "minimum": 1000,
+                "type": "integer"
+              }
+            },
+            "required": ["apiKey", "defaultFrom"],
+            "type": "object"
+          }
+        },
+        "description": "Transactional email sending via Resend API. Supports OTP codes, password reset, and more.",
+        "title": "Resend Email"
+      },
+      "secretFields": ["apiKey", "apiKey"]
+    }
+  }
+}

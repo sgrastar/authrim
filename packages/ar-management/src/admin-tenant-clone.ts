@@ -1,5 +1,6 @@
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import type { Context } from 'hono';
-import { z } from 'zod';
+import { z } from './zod';
 import type { ControlTenantDefaultRouteAllocation, Env } from '@authrim/ar-lib-core';
 import {
   ALL_CATEGORY_META,
@@ -12,6 +13,8 @@ import {
   createAuthContextFromHono,
   createErrorResponse,
   getLogger,
+  isReservedPlatformTenantId,
+  PLATFORM_MAPPING_TENANT_ID,
   requireAdminDatabaseAdapter,
   resolveAuthCorePersistenceAdapterFromEnv,
   seedBuiltinProfileClaimSchemas,
@@ -62,8 +65,19 @@ const CloneSourceSnapshotSchema = z
 
 const TenantCloneRequestSchema = z
   .object({
-    id: z.string().min(1).max(63).regex(TENANT_ID_REGEX),
-    tenant_code: z.string().min(1).max(63).regex(TENANT_ID_REGEX).optional(),
+    id: z
+      .string()
+      .min(1)
+      .max(63)
+      .regex(TENANT_ID_REGEX)
+      .refine((id) => !isReservedPlatformTenantId(id), 'id is reserved'),
+    tenant_code: z
+      .string()
+      .min(1)
+      .max(63)
+      .regex(TENANT_ID_REGEX)
+      .refine((code) => !isReservedPlatformTenantId(code), 'tenant_code is reserved')
+      .optional(),
     name: z.string().min(1).max(200),
     description: z.string().max(500).optional(),
     isolation_policy: z.enum(['shared_pool', 'tenant_exclusive']).default('tenant_exclusive'),
@@ -152,6 +166,7 @@ export const OAUTH_CLIENT_CLONE_COLUMNS = [
   'software_version',
   'requestable_scopes',
   'require_pkce',
+  'minimum_ial',
   'application_type',
   'trust_group',
   'trust_group_id',
@@ -220,8 +235,18 @@ interface KvRollbackEntry {
 
 interface SettingsCopyContext {
   targetTenantId: string;
-  targetTenantName: string;
   includeClients: boolean;
+  /**
+   * Who owns a Mapping Set: the tenant ID on its row, or null when there is no such set or it
+   * cannot be looked up. Settings that name a Mapping Set keep the name only when the platform owns
+   * the set (the target tenant has none of the source's).
+   */
+  mappingSetOwner?: (setId: string) => Promise<string | null>;
+  /**
+   * The Mapping Set names a copied identity-mapping document may keep, decided before the (synchronous)
+   * sanitising: those whose owner is the platform. `none` names no set and is always kept.
+   */
+  keptMappingSetIds?: ReadonlySet<string>;
 }
 
 function consumeKvCloneBudget(budget: KvCloneBudget, count = 1): void {
@@ -336,11 +361,41 @@ export function sanitizeCopiedSettingsValue(
       'tenant.audit_profile_id',
       'tenant.base_domain',
       'tenant.residency_profile_id',
+      // No longer settings (deployment and key management hold them): stale values are dropped.
+      'tenant.default_id',
+      // No longer a setting (the tenant record holds the name): a stale value is dropped.
+      'tenant.name',
     ]) {
       delete record[key];
     }
-    record['tenant.default_id'] = context.targetTenantId;
-    record['tenant.name'] = context.targetTenantName;
+  }
+
+  if (category === 'institution') {
+    // The scopes and names say which institution a tenant speaks for: the copy is another tenant's.
+    for (const key of ['institution.scopes', 'institution.display_names']) delete record[key];
+  }
+
+  if (category === 'identity-mapping') {
+    // The shadow comparison of the Mapping Set selection is gone with the resolution it compared
+    // against: a saved value is dropped.
+    delete record['identity_mapping.shadow_compare_enabled'];
+    // The target tenant does not have the source's Mapping Sets: a default that names one of them
+    // would point at nothing (or, if the same ID ever appeared there, at another tenant's set).
+    // A set the platform owns is the target's to use as well; `none` names no set.
+    const key = 'identity_mapping.oidc_default_set_id';
+    const setId = record[key];
+    if (
+      setId !== undefined &&
+      !(typeof setId === 'string' && (setId === 'none' || context.keptMappingSetIds?.has(setId)))
+    ) {
+      delete record[key];
+    }
+  }
+
+  if (category === 'client') {
+    // No longer settings (the app registration holds the default target): stale values are dropped.
+    delete record['client.default_audience'];
+    delete record['client.default_resource'];
   }
 
   if (category === 'security') {
@@ -349,10 +404,43 @@ export function sanitizeCopiedSettingsValue(
   }
 
   if (category === 'tokens') {
-    // The clone receives an isolated KeyManager namespace and a newly generated key.
-    record['tokens.access_token_signing_key_id'] = '';
-    record['tokens.id_token_signing_key_id'] = '';
-    record['tokens.userinfo_signing_key_id'] = '';
+    // The clone receives an isolated KeyManager namespace and a newly generated key; signing key
+    // ids are no longer settings, so stale values from the source are dropped.
+    delete record['tokens.access_token_signing_key_id'];
+    delete record['tokens.id_token_signing_key_id'];
+    delete record['tokens.userinfo_signing_key_id'];
+    // The introspection response cache is gone: the value saved for it is dropped.
+    delete record['tokens.introspection_cache_ttl'];
+  }
+
+  if (category === 'feature-flags') {
+    // The introspection response cache is gone: the flag saved for it is dropped.
+    delete record['feature.introspection_cache_enabled'];
+  }
+
+  if (category === 'plugin') {
+    // These plugin settings are gone (the platform fixes the memory; a tenant cannot switch on
+    // the console notifier, which prints secrets; the run time limit is set per installation;
+    // there is no source for plugin updates to check; the Resend switch stopped no sending, and
+    // the Email Settings order picks the provider): saved values are dropped.
+    delete record['plugin.memory_limit_mb'];
+    delete record['plugin.execution_timeout_ms'];
+    delete record['plugin.auto_update_check'];
+    delete record['plugin.notifier_console_enabled'];
+    delete record['plugin.notifier_resend_enabled'];
+  }
+
+  if (category === 'diagnostic-logging') {
+    // Tokens are never stored in clear text, so the switch for hashing them is gone.
+    delete record['diagnostic-logging.filter_tokens'];
+  }
+
+  if (category === 'ciba') {
+    // These CIBA settings are gone (no CIBA behaviour was behind them): saved values are dropped.
+    delete record['ciba.auth_request_ttl'];
+    delete record['ciba.notifier_default_timeout_ms'];
+    delete record['ciba.notifier_max_timeout_ms'];
+    delete record['ciba.notifier_retry_delay_base_ms'];
   }
 
   if (category === 'saml') {
@@ -377,7 +465,8 @@ export function sanitizeCopiedSettingsValue(
     }
     if (!includeSecrets) {
       record['authentication-methods.directory_password.enabled'] = false;
-      record['authentication-methods.directory_password.auto_provision'] = false;
+      // Not a setting (the directory connectors decide it): a stale value is dropped.
+      delete record['authentication-methods.directory_password.auto_provision'];
       record['authentication-methods.human_verification.login_enabled'] = false;
       record['authentication-methods.human_verification.signup_enabled'] = false;
       record['authentication-methods.human_verification.reauth_enabled'] = false;
@@ -681,7 +770,7 @@ async function deleteKvPrefix(kv: KVNamespace | undefined, prefix: string): Prom
     cursor = page.list_complete ? undefined : page.cursor;
   } while (cursor);
   for (let offset = 0; offset < names.length; offset += 25) {
-    await Promise.all(names.slice(offset, offset + 25).map((name) => kv.delete(name)));
+    await samlDrAll(names.slice(offset, offset + 25).map((name) => kv.delete(name)));
   }
 }
 
@@ -711,6 +800,37 @@ export async function cleanupTenantCloneKvArtifacts(env: Env, tenantId: string):
   }
 }
 
+/**
+ * The copy context with the Mapping Set the document names, if the platform owns it. The owner is
+ * read from the Admin database; a set that cannot be found or looked up is not kept.
+ */
+async function withKeptMappingSet(
+  value: string,
+  context: SettingsCopyContext
+): Promise<SettingsCopyContext> {
+  const setId = parseSettingsRecord(value)?.['identity_mapping.oidc_default_set_id'];
+  if (typeof setId !== 'string' || setId === 'none' || !context.mappingSetOwner) return context;
+  let owner: string | null = null;
+  try {
+    owner = await context.mappingSetOwner(setId);
+  } catch {
+    owner = null;
+  }
+  return owner === PLATFORM_MAPPING_TENANT_ID
+    ? { ...context, keptMappingSetIds: new Set([setId]) }
+    : context;
+}
+
+/** Who owns the Mapping Set (see SettingsCopyContext.mappingSetOwner). */
+function mappingSetOwnerLookup(env: Env): (setId: string) => Promise<string | null> {
+  return async (setId) => {
+    const row = await requireAdminDatabaseAdapter(env, 'tenant-clone-mapping-owner').queryOne<{
+      tenant_id: string;
+    }>('SELECT tenant_id FROM field_mapping_sets WHERE id = ?', [setId]);
+    return row?.tenant_id ?? null;
+  };
+}
+
 async function copyKvPrefix(
   kv: KVNamespace | undefined,
   sourcePrefix: string,
@@ -730,7 +850,7 @@ async function copyKvPrefix(
     const page = await kv.list({ prefix: sourcePrefix, cursor, limit: 1000 });
     for (let offset = 0; offset < page.keys.length; offset += MAX_CONCURRENT_KV_WRITES) {
       const batch = page.keys.slice(offset, offset + MAX_CONCURRENT_KV_WRITES);
-      await Promise.all(
+      await samlDrAll(
         batch.map(async (key) => {
           const category = key.name.slice(sourcePrefix.length).toLowerCase();
           if (excludedCategories.has(category)) return;
@@ -746,7 +866,12 @@ async function copyKvPrefix(
           }
           const value = assertCloneKvValueSize(await kv.get(key.name));
           if (value === null) return;
-          const copiedValue = sanitizeCopiedSettingsValue(category, value, includeSecrets, context);
+          const copiedValue = sanitizeCopiedSettingsValue(
+            category,
+            value,
+            includeSecrets,
+            category === 'identity-mapping' ? await withKeptMappingSet(value, context) : context
+          );
           if (copiedValue === null) {
             skippedUnclassified += 1;
             return;
@@ -962,7 +1087,6 @@ async function cloneClientKvConfiguration(
   env: Env,
   sourceTenantId: string,
   targetTenantId: string,
-  targetTenantName: string,
   clientIds: Set<string>,
   includeCredentials: boolean,
   writtenKvKeys: KvRollbackEntry[],
@@ -988,7 +1112,6 @@ async function cloneClientKvConfiguration(
       budget,
       {
         targetTenantId,
-        targetTenantName,
         includeClients: true,
       }
     );
@@ -1558,8 +1681,8 @@ async function executeTenantCloneHandler(
         kvBudget,
         {
           targetTenantId,
-          targetTenantName: parsed.data.name,
           includeClients: options.clients,
+          mappingSetOwner: mappingSetOwnerLookup(c.env),
         }
       );
       summary.settings += copied.copied;
@@ -1574,8 +1697,8 @@ async function executeTenantCloneHandler(
         kvBudget,
         {
           targetTenantId,
-          targetTenantName: parsed.data.name,
           includeClients: options.clients,
+          mappingSetOwner: mappingSetOwnerLookup(c.env),
         },
         new Set(['tenant'])
       );
@@ -1622,8 +1745,9 @@ async function executeTenantCloneHandler(
           if (key in targetValues) mergedValues[key] = targetValues[key];
           else delete mergedValues[key];
         }
-        mergedValues['tenant.default_id'] = targetTenantId;
-        mergedValues['tenant.name'] = parsed.data.name;
+        delete mergedValues['tenant.default_id'];
+        // No longer a setting (the tenant record holds the name): a stale value is dropped.
+        delete mergedValues['tenant.name'];
         await putTrackedKv(
           c.env.AUTHRIM_CONFIG,
           targetTenantSettingsKey,
@@ -1696,7 +1820,6 @@ async function executeTenantCloneHandler(
         c.env,
         sourceTenantId,
         targetTenantId,
-        parsed.data.name,
         clonedClientIds,
         options.client_credentials,
         writtenKvKeys,

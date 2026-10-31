@@ -1,9 +1,16 @@
 openapi: 3.2.0
 info:
   title: Authrim Async Authorization API
-  version: 0.4.1
+  version: 0.5.0
   summary: Device Authorization and CIBA endpoints.
-  description: Initial OpenAPI contract for `@authrim/ar-async`.
+  description: >
+    Initial OpenAPI contract for `@authrim/ar-async`.
+
+    When coordinated SAML DR export is enabled, every operation can additionally return HTTP 503
+    while source updates are paused or update admission is unavailable. This availability response
+    has Content-Type text/plain;charset=UTF-8, Cache-Control no-store, Retry-After 5, and the body
+    "Service temporarily unavailable" (no response body for HEAD). Clients may retry after the
+    indicated delay; a failed response does not establish whether an earlier write completed.
 servers:
   - url: https://{tenant_domain}
     variables:
@@ -18,11 +25,65 @@ paths:
       tags:
         - Device Authorization
       summary: Start an OAuth Device Authorization Grant.
+      description: >-
+        With tenant assurance enabled and a default FAL of FAL3 (with fal3_requires_par), which
+        needs a pushed, signed authorization request, every request is refused with
+        unauthorized_client. Assurance settings that cannot be read return 503
+        temporarily_unavailable. A user code another live device code already holds is not
+        reused: a new one is generated, up to 5 attempts. When no unique user code could be
+        stored, the response is 503 temporarily_unavailable with Retry-After: 1.
+        The expires_in and interval of the response come from the device flow settings of the
+        tenant and, for a client that has its own, of the client (the client's value wins, held
+        between the tenant's bounds): device_flow.expires_in kept between device_flow.min_expires_in
+        and device_flow.max_expires_in (never above one hour), and device_flow.poll_interval kept
+        between device_flow.min_interval and device_flow.max_interval. With nothing saved they are
+        600 and 5. The settings are read only for a registered client that may use the grant
+        (an unknown client or one that may not is refused first). Device flow settings that cannot
+        be read return 503 temporarily_unavailable and no code is issued. The code keeps
+        device_flow.slow_down_increment, device_flow.max_poll_count and device_flow.max_interval
+        as they were when it was issued; the token endpoint applies them while the device polls.
+        The request must be application/x-www-form-urlencoded, and client_id, client_secret,
+        client_assertion, client_assertion_type and scope may each appear once (a repeated,
+        non-string or oversized parameter is 400 invalid_request; client_id is up to 256 characters,
+        scope up to 2048); the body is limited to 64 KiB as it is read, whatever Content-Length says
+        (a larger one is 400 invalid_request). A public client (token_endpoint_auth_method none, the
+        only kind the token endpoint's device_code grant treats as public) sends its client_id
+        only; a client with no registered method and no secret authenticates as a confidential
+        one, and so is refused. A confidential client authenticates as at the token endpoint (RFC 8628 section 3.1):
+        client_secret_basic (client_id may then come from the Authorization header only),
+        client_secret_post or private_key_jwt (the assertion audience may be this endpoint, the
+        token endpoint or the issuer). A client that does not exist and a client that fails to
+        authenticate get the same 401 invalid_client (with WWW-Authenticate: Basic when the client
+        sent a Basic Authorization header); only an authenticated client learns that it may not use
+        the grant (400 unauthorized_client). A scope that is malformed, or that the client may not
+        request (its requestable_scopes, else allowed_scopes, else its registered scope, else openid
+        profile email; the same rule as /authorize), is 400 invalid_scope; openid is not required.
+        With no scope (or a blank one) the code is issued for openid profile email narrowed to what
+        the client may request, and 400 invalid_scope when that is nothing. The scope is stored once
+        per scope, separated by single spaces. Requests are limited per IP address (the moderate
+        rate limit profile, 60 per minute by default) and, once the client is authenticated, per
+        client (the lenient profile, 300 per minute by default); both follow rate_limit.moderate,
+        rate_limit.lenient and their _window_seconds in the platform rate limit settings. Over a
+        limit the answer is 429 rate_limit_exceeded with Retry-After and X-RateLimit-* headers; a
+        rate limiter that cannot answer is 503 temporarily_unavailable (no code is issued). Every
+        answer, the early refusals included, carries Cache-Control: no-store and Pragma: no-cache.
+        Known limit: whether a client exists may be told from the response time (an unregistered
+        client skips the secret check, and a private_key_jwt client with a jwks_uri has its key
+        set fetched before the signature fails), as at /bc-authorize; evening it out belongs to the
+        shared client authentication code.
       requestBody:
         $ref: '#/components/requestBodies/DeviceAuthorization'
       responses:
         '200':
           $ref: '#/components/responses/DeviceAuthorization'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
   /device:
     get:
       tags:
@@ -45,26 +106,111 @@ paths:
       tags:
         - Device Authorization
       summary: Verify or approve a device authorization request.
+      description: >-
+        A code requested before the user last withdrew the client's consent cannot be approved:
+        400 consent_withdrawn, and the device has to start again. Consent state that cannot be
+        read returns 503 temporarily_unavailable and leaves the code pending. The per-IP user code
+        rate limit fails closed: without a working rate limiter, or when the device code store
+        cannot answer, the code is not read and the response is 503 temporarily_unavailable.
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
       requestBody:
         $ref: '#/components/requestBodies/DeviceVerify'
       responses:
         '200':
           $ref: '#/components/responses/DeviceVerify'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+  /api/devices/lookup:
+    post:
+      tags:
+        - Device Authorization
+      summary: Show which application a pending user code belongs to.
+      description: >-
+        Lets the signed-in user see the application and the scopes a user code asks for before
+        deciding it with /api/devices/verify. It decides nothing. It needs the same session as the
+        decision, and a code that does not exist counts against the same per-IP user code rate
+        limit (429 slow_down once blocked). A code that is no longer pending returns 400
+        invalid_code with its state in code_status (approved, denied or expired) and
+        decided_by_self, true only when the signed-in user is the one who approved it (a denial
+        records no user), so a browser that lost the answer to its approval can tell whether it
+        was saved; who else decided a code is never disclosed. An unknown or expired code returns
+        404 invalid_code. Without a working rate
+        limiter, or when the device code store cannot answer, it returns 503
+        temporarily_unavailable.
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
+      requestBody:
+        $ref: '#/components/requestBodies/DeviceLookup'
+      responses:
+        '200':
+          $ref: '#/components/responses/DeviceLookup'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
   /bc-authorize:
     post:
       tags:
         - CIBA
       summary: Start a CIBA backchannel authentication request.
+      description: >-
+        With tenant assurance enabled and a default FAL of FAL3 (with fal3_requires_par), which
+        needs a pushed, signed authorization request, every request is refused with
+        unauthorized_client. Assurance settings that cannot be read return 503
+        temporarily_unavailable, and so do the tenant's CIBA settings (ciba.*). Those settings
+        set the request lifetime (expires_in is ciba.expires_in when requested_expiry is absent,
+        otherwise requested_expiry; either is kept between ciba.min_expires_in and
+        ciba.max_expires_in), the polling interval returned to poll-mode clients (ciba.poll_interval,
+        kept between ciba.min_interval and ciba.max_interval) and the binding_message limits.
+        A binding_message longer than ciba.max_binding_message_length (counted in UTF-16 code
+        units), or missing (or only whitespace) when ciba.binding_message_required is on, is refused with 400
+        invalid_binding_message. A request that carries a user_code (also inside a signed request
+        object) while ciba.user_code_enabled is off, which is the default, is refused with 400
+        invalid_request (user_code is not supported); discovery then advertises
+        backchannel_user_code_parameter_supported as false. With it on, the user_code is accepted,
+        stored and shown to the person approving the request; it is not verified. The request
+        keeps the tenant's ciba.slow_down_increment and ciba.max_poll_count as they were when it
+        was made; the token endpoint applies them while the client polls.
       requestBody:
         $ref: '#/components/requestBodies/CibaAuthorization'
       responses:
         '200':
           $ref: '#/components/responses/CibaAuthorization'
+        '400':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
   /api/ciba/pending:
     get:
       tags:
         - CIBA
       summary: List pending CIBA requests for the current user/session.
+      description: >-
+        The pending, unexpired requests addressed to the signed-in user, across clients: by the
+        subject resolved from a signed hint or, failing that, by its login_hint. At most 50 are
+        returned, oldest first among those found; a user with more sees the rest as earlier ones
+        are decided or expire. The user is taken from the session, never from parameters; a
+        login_hint or user_id naming someone else is refused with 403. When the store cannot
+        produce a complete list right now (its address index is being brought up to date), the
+        response is 503 temporarily_unavailable rather than a partial list: retry. created_at
+        and expires_at are epoch milliseconds.
       security:
         - sessionCookie: []
         - sessionHeader: []
@@ -75,6 +221,8 @@ paths:
           $ref: '#/components/responses/CibaAuthenticationRequired'
         '403':
           $ref: '#/components/responses/CibaInsufficientPermissions'
+        '503':
+          $ref: '#/components/responses/Error'
   /api/ciba/requests/{auth_req_id}:
     get:
       tags:
@@ -89,6 +237,10 @@ paths:
           required: true
           schema:
             type: string
+      description: >-
+        One request of the signed-in user. 404 when it does not exist (or expired and was
+        removed); 503 temporarily_unavailable when the store cannot be read right now (it
+        answered with an error, failed, or returned an unreadable body).
       responses:
         '200':
           $ref: '#/components/responses/CibaDetails'
@@ -96,11 +248,26 @@ paths:
           $ref: '#/components/responses/CibaAuthenticationRequired'
         '403':
           $ref: '#/components/responses/CibaInsufficientPermissions'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
   /api/ciba/approve:
     post:
       tags:
         - CIBA
       summary: Approve a CIBA request.
+      description: >-
+        A request made before the user last withdrew the client's consent cannot be approved: 400
+        consent_withdrawn, and the client has to start again. Consent state that cannot be read
+        returns 503 temporarily_unavailable and leaves the request pending. 404 only when the
+        request does not exist (or expired and was removed). 503 temporarily_unavailable also when
+        the request store cannot answer or does not confirm the approval; the approval may or may
+        not have been saved, so check the request (GET /api/ciba/requests/{auth_req_id}) before
+        retrying. A request already decided is 400. For a ping-mode request the client's
+        notification endpoint is called before this response is sent, and waits at most
+        ciba.ping_notification_timeout_ms (a failed notification is not retried and does not fail
+        the approval).
       security:
         - sessionCookie: []
         - sessionHeader: []
@@ -109,15 +276,26 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/CibaDecision'
+        '400':
+          $ref: '#/components/responses/Error'
         '401':
           $ref: '#/components/responses/CibaAuthenticationRequired'
         '403':
           $ref: '#/components/responses/CibaInsufficientPermissions'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
   /api/ciba/deny:
     post:
       tags:
         - CIBA
       summary: Deny a CIBA request.
+      description: >-
+        404 only when the request does not exist (or expired and was removed). 503
+        temporarily_unavailable when the request store cannot answer or does not confirm the
+        denial; the denial may or may not have been saved, so check the request (GET
+        /api/ciba/requests/{auth_req_id}) before retrying. A request already decided is 400.
       security:
         - sessionCookie: []
         - sessionHeader: []
@@ -126,10 +304,16 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/CibaDecision'
+        '400':
+          $ref: '#/components/responses/Error'
         '401':
           $ref: '#/components/responses/CibaAuthenticationRequired'
         '403':
           $ref: '#/components/responses/CibaInsufficientPermissions'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
   /api/ciba/conformance-action:
     post:
       tags:
@@ -163,10 +347,10 @@ paths:
     get:
       tags:
         - CIBA
-      summary: Render the built-in CIBA test console.
+      summary: Render the CIBA test console.
       description: >-
-        Available only when test endpoints or built-in conformance forms are explicitly enabled.
-        Returns 404 in normal production mode.
+        Available only when ENABLE_TEST_ENDPOINTS is `true`. Returns 404 otherwise, including in
+        normal production mode.
       responses:
         '200':
           description: HTML CIBA test console.
@@ -175,7 +359,7 @@ paths:
               schema:
                 type: string
         '404':
-          description: Test endpoints and built-in conformance forms are disabled.
+          description: Test endpoints are disabled.
 components:
   securitySchemes:
     sessionCookie:
@@ -223,6 +407,14 @@ components:
           example:
             user_code: WDJB-MJHT
             approve: true
+    DeviceLookup:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DeviceLookupRequest'
+          example:
+            user_code: WDJB-MJHT
     CibaAuthorization:
       required: false
       content:
@@ -244,6 +436,19 @@ components:
             auth_req_id: auth_req_123
             user_id: user_123
   responses:
+    Error:
+      description: OAuth error response.
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - error
+            properties:
+              error:
+                type: string
+              error_description:
+                type: string
     Ok:
       description: Successful JSON response.
       content:
@@ -275,6 +480,21 @@ components:
           example:
             success: true
             message: Device authorized successfully
+    DeviceLookup:
+      description: Successful JSON response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DeviceLookupResponse'
+          example:
+            client_id: client_123
+            client_name: Acme TV
+            client_uri: https://tv.example.com
+            logo_uri: https://tv.example.com/logo.png
+            scopes:
+              - openid
+              - profile
+            expires_at: 1770000600000
     CibaAuthorization:
       description: Successful JSON response.
       content:
@@ -367,12 +587,24 @@ components:
       properties:
         client_id:
           type: string
+          maxLength: 256
           example: client_123
+          description: Required unless the client sends it in the Authorization header (client_secret_basic) or as the subject of its client_assertion.
+        client_secret:
+          type: string
+          maxLength: 1024
+          description: For a client registered with client_secret_post.
+        client_assertion:
+          type: string
+          maxLength: 16384
+          description: For a client registered with private_key_jwt.
+        client_assertion_type:
+          type: string
+          example: urn:ietf:params:oauth:client-assertion-type:jwt-bearer
         scope:
           type: string
+          maxLength: 2048
           example: openid profile email
-      required:
-        - client_id
     DeviceAuthorizationResponse:
       type: object
       properties:
@@ -381,6 +613,13 @@ components:
           example: GmRhmhcxhwAzkoEqiMEg_DnyEysNkuNhszIySk9eS
         user_code:
           type: string
+          description: >-
+            The code the user types on the verification page, in groups of 4 characters separated
+            by a hyphen. Its alphabet and length come from the tenant's device_flow.user_code_charset
+            (BASE31, BASE20 or NUMERIC) and device_flow.user_code_length (4 to 16 characters, at
+            least 34 bits of entropy), so the format varies by tenant. A tenant with no setting
+            issues 8 characters of BASE31, for example WDJB-MJHT; 11 digits look like
+            1234-5678-901.
           example: WDJB-MJHT
         verification_uri:
           type: string
@@ -408,6 +647,12 @@ components:
       properties:
         user_code:
           type: string
+          description: >-
+            The user code as shown on the device. Any case is accepted, and the hyphens and spaces
+            between the groups are optional. Only the form is checked (4 to 16 letters and digits
+            once the separators are removed): the tenant's settings may have changed since the code
+            was issued, so whether the code exists is decided by the code store, and a code that
+            does not exist counts against the per-IP failed-attempt limit.
           example: WDJB-MJHT
         approve:
           type: boolean
@@ -438,6 +683,51 @@ components:
           example: Invalid or expired user code
       required:
         - success
+    DeviceLookupRequest:
+      type: object
+      properties:
+        user_code:
+          type: string
+          description: >-
+            The user code as shown on the device, in any case, with or without the hyphens and
+            spaces between the groups (4 to 16 letters and digits). Only the form is checked; see
+            DeviceVerifyRequest.
+          example: WDJB-MJHT
+      required:
+        - user_code
+    DeviceLookupResponse:
+      type: object
+      properties:
+        client_id:
+          type: string
+          example: client_123
+        client_name:
+          type: string
+          example: Acme TV
+        client_uri:
+          type: string
+          format: uri
+          example: https://tv.example.com
+        logo_uri:
+          type: string
+          format: uri
+          example: https://tv.example.com/logo.png
+        scopes:
+          type: array
+          items:
+            type: string
+          example:
+            - openid
+            - profile
+        expires_at:
+          type: integer
+          description: Epoch milliseconds.
+          example: 1770000600000
+      required:
+        - client_id
+        - client_name
+        - scopes
+        - expires_at
     CibaAuthorizationRequest:
       type: object
       properties:
@@ -459,6 +749,7 @@ components:
         user_code:
           type: string
           example: '123456'
+          description: Refused with 400 invalid_request unless the tenant's ciba.user_code_enabled is on.
         requested_expiry:
           type: integer
           example: 300
@@ -521,9 +812,11 @@ components:
           example: '123456'
         created_at:
           type: integer
+          description: Epoch milliseconds.
           example: 1770000000000
         expires_at:
           type: integer
+          description: Epoch milliseconds.
           example: 1770000300000
         status:
           type: string
@@ -566,12 +859,15 @@ components:
           example: '123456'
         created_at:
           type: integer
+          description: Epoch milliseconds.
           example: 1770000000000
         expires_at:
           type: integer
+          description: Epoch milliseconds.
           example: 1770000300000
         time_remaining:
           type: integer
+          description: Seconds until expires_at.
           example: 240
         status:
           type: string

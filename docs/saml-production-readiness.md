@@ -68,6 +68,37 @@ Federation aggregate manual refresh endpoint:
 POST /api/admin/saml-federation-sources/:id/refresh-metadata
 ```
 
+## Institution Scopes
+
+A scoped attribute (`eduPersonScopedAffiliation`, `eduPersonPrincipalName`) is `local@scope`, and a service provider trusts the scope only because the IdP metadata lists it as `shibmd:Scope`. Without a check, a scope taken from a user's own data would reach the service provider as the IdP's word, so a person could present themselves as a member of another institution.
+
+A tenant therefore carries the institution it stands for in the `institution` settings category (tenant scope, no environment variable, not inherited):
+
+| Key                         | Default | Meaning                                                                                                       |
+| --------------------------- | ------- | ------------------------------------------------------------------------------------------------------------- |
+| `institution.scopes`        | empty   | One to 20 comma-separated lowercase domain names, no wildcard. The first is the default scope.                |
+| `institution.display_names` | `{}`    | JSON text mapping a language tag to the institution's name. `ja` and `en` are required, at most 16 languages. |
+
+Only platform authority can change them (a role held through a global assignment, or a machine token that may write the settings of every tenant). The tenant's own administrators, including its ar_tenant_admin, can read them and are refused when they save. They are not copied when a tenant is cloned and are refused by the bulk apply.
+
+While `institution.scopes` is set:
+
+- `eduPersonScopedAffiliation` and `eduPersonPrincipalName` values are released only under a registered scope, matched exactly (not by suffix, not case-insensitively). Which attributes are scoped is judged on what the mapping produced, by whatever rule or transform: the name, friendly name, OID (with or without `urn:oid:`; an OID that continues one, such as `...5923.1.1.1.6.1`, is another attribute), the common short forms `eppn` and `epsa`, the catalog entry and path of the destination, and the fields the value is read from, followed through a transform's input edges and any hidden intermediate field. The tenant's institution settings are read once for every release, and the mapping runs once with the scopes in hand.
+- A value with no `@` gets the default scope. A value under another scope, with nothing before or after the `@`, with more than one `@`, or empty, is withheld (`value_malformed` for the last three).
+- If the saved scopes are not valid, or the settings cannot be read, no scoped value is released; this is never read as "no scopes registered".
+- A required scoped attribute left with no value is answered like any other missing required attribute.
+- What was withheld is recorded as the audit event `saml.attribute.withheld` (or in the `saml.policy.failed` record, when the sign-in was refused). It holds the attribute, a reason code (`scope_not_registered`, `value_malformed`, `institution_scopes_invalid`, `institution_settings_unavailable`), a count, and the scope that was named when it is a domain name. It never holds the value.
+- The metadata lists each scope as `shibmd:Scope` (`regexp="false"`) under `md:Extensions`, and signs and caches as before. A service provider can hold the old metadata for up to a day, so change scopes only when no service provider relies on the old ones. If the settings cannot be read, the metadata endpoint answers 500 instead of metadata without the scopes.
+- A service provider whose field mapping set maps the system source Home Organization (`schac_home_organization`) gets the default scope as `schacHomeOrganization`.
+
+While `institution.display_names` is set, `md:Organization` names the institution in each language, and a field mapping set may map the system source Organization Name (`organization_name`) to `o`, released as the English name. These two sources are released only to a mapping that chooses them, and only to SAML (not OIDC).
+
+The institution is the platform's to state, so a tenant administrator cannot name another one through a mapping. A value released as `schacHomeOrganization` is sent only when it equals one of the registered scopes, and a value released as `o` only when it equals one of the registered names (any language), whatever source the mapping took it from (a custom attribute, a transform, a hidden intermediate field). Anything else is withheld and recorded as `saml.attribute.withheld` with the reason `organization_not_registered` (the domain is named for `schacHomeOrganization`; a name is never recorded). When the saved scopes or the saved names are not valid (reason `institution_names_invalid` for the names, which also holds back the scoped values), or the settings cannot be read, neither is released; the metadata then lists the valid scopes and names the organization as Authrim, as for any tenant without names. A value of the system sources (`schac_home_organization`, `organization_name`) is the registered value and passes. The two attributes are recognised like the scoped ones (name, friendly name, OID, catalog entry, the fields the value is read from), and `o` only by its whole name (`o`, `organizationName`), its OID `2.5.4.10` or its URN (`urn:mace:dir:attribute-def:o`), never by a part of another name. A tenant that has registered neither a scope nor a name has no institution to name, so it releases neither attribute: whatever a mapping produces for them is withheld with the reason `institution_not_registered` (the value is not recorded). A tenant that registered only scopes releases `schacHomeOrganization` under them and no `o`; one that registered only names releases `o` under them and no `schacHomeOrganization`. The scoped attributes (`eduPersonPrincipalName`, `eduPersonScopedAffiliation`) of a tenant with no registered scope are released as they come, as before.
+
+Known limit: an attribute whose mapping carries no hint at all that it is an `eduPersonPrincipalName` or `eduPersonScopedAffiliation` (an arbitrary name such as `uid`, taken from an arbitrary field, with no catalog entry or transform input saying otherwise) is released as an ordinary attribute and not checked. A Shibboleth SP can be configured to read any `Name` as a scoped attribute, but it then checks the scope against the IdP's `shibmd:Scope` itself, so the exposure is limited to an SP that reads an arbitrary `Name` as scoped and does not check it. Name such attributes by their standard OID or `eduPerson...` name in the mapping.
+
+A tenant that has set neither is released and published exactly as before. That includes passing on the scope a user's own data names, so register the scopes of every tenant that releases scoped attributes.
+
 ## Federation Metadata Sources
 
 A federation source is a signed aggregate metadata publisher plus its trust anchors and verification

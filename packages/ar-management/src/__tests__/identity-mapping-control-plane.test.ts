@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type {
   DatabaseAdapter,
@@ -18,8 +18,62 @@ import {
   adminIdentityMappingFederationMetadataDocumentsListHandler,
   adminIdentityMappingReviewTasksListHandler,
   adminIdentityMappingSchemaReadinessHandler,
-  IdentityMappingControlPlaneRepository,
+  IdentityMappingControlPlaneRepository as BaseRepository,
 } from '../identity-mapping-control-plane';
+
+const logCalls = vi.hoisted(() => ({ emit: vi.fn(), prepare: vi.fn(), publication: vi.fn() }));
+vi.mock('@authrim/ar-lib-core/services/log-iceberg-emitter', () => ({
+  emitLogIcebergRow: logCalls.emit,
+  prepareLogIcebergRowWrite: async (...args: unknown[]) => {
+    logCalls.prepare(...args);
+    return { statements: [], dispatch: async () => {} };
+  },
+}));
+vi.mock('@authrim/ar-lib-core/services/log-iceberg-core-publication', async (original) => ({
+  ...(await original<
+    typeof import('@authrim/ar-lib-core/services/log-iceberg-core-publication')
+  >()),
+  prepareCoreLogPublication: async (...args: unknown[]) => {
+    logCalls.publication(...args);
+    return {
+      publicationId: 'unit-publication',
+      state: 'prepared',
+      wrapBusinessBatch: (statements: PreparedStatement[]) => statements,
+      dispatch: async () => {},
+    };
+  },
+}));
+class IdentityMappingControlPlaneRepository extends BaseRepository {
+  constructor(...args: ConstructorParameters<typeof BaseRepository>) {
+    super(
+      args[0],
+      args[1],
+      args[2] ?? args[0],
+      args[3],
+      args[4] ?? ({} as Env),
+      args[5] ?? {
+        environmentId: 'test',
+        tenantId: 'tenant_a',
+        bindingRef: 'DB',
+        databaseId: 'source-db',
+        provider: 'd1',
+        generation: 1,
+        bindingRouteGeneration: 1,
+        dataRole: 'tenant_core/default',
+        residencyPartition: 'default',
+        shardId: 'default',
+        shardGroup: 'default',
+        shardIndex: 0,
+      }
+    );
+  }
+}
+
+beforeEach(() => {
+  logCalls.emit.mockClear();
+  logCalls.prepare.mockClear();
+  logCalls.publication.mockClear();
+});
 
 interface RecordedExecute {
   sql: string;
@@ -58,7 +112,8 @@ function createAdapter(options: {
       }
       return queryRows as T[];
     },
-    async queryOne<T>(): Promise<T | null> {
+    async queryOne<T>(sql: string): Promise<T | null> {
+      if (sql.includes('FROM log_iceberg_core_publications')) return { state: 'committed' } as T;
       return (queryOneRows.shift() ?? null) as T | null;
     },
     async execute(sql: string, params: unknown[] = []): Promise<ExecuteResult> {
@@ -999,6 +1054,81 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
       essentialClaimCount: 1,
       requiredClaimCount: 1,
       piiClaimCount: 1,
+    });
+  });
+
+  describe('OIDC destination profile scopes on standard claims', () => {
+    const create = (claims: Array<Record<string, unknown>>) =>
+      new IdentityMappingControlPlaneRepository(
+        createAdapter({}),
+        () => 1000
+      ).createDestinationProfile('tenant_a', {
+        destinationType: 'oidc',
+        profileKey: 'standard_scopes',
+        displayName: 'Standard scopes',
+        schema: {
+          destinationType: 'oidc',
+          claims: [
+            {
+              claimName: 'sub',
+              required: true,
+              classification: 'internal',
+              surfaces: ['id_token', 'userinfo'],
+            },
+            ...claims,
+          ],
+        },
+      });
+
+    it('accepts openid as the scope that releases a standard claim on every request', async () => {
+      const created = await create([
+        {
+          claimName: 'email',
+          classification: 'pii',
+          surfaces: ['id_token', 'userinfo'],
+          requiredScopes: ['openid'],
+        },
+      ]);
+      expect(created.version.validationSummary).toMatchObject({
+        errorCount: 0,
+        warnings: ['email is released on every OIDC request (scope openid)'],
+      });
+    });
+
+    it('does not warn that a standard claim without a listed scope is unscoped', async () => {
+      const created = await create([
+        { claimName: 'locale', classification: 'internal', surfaces: ['userinfo'] },
+      ]);
+      expect(created.version.validationSummary).toMatchObject({ errorCount: 0, warnings: [] });
+    });
+
+    it('judges eduperson_assurance by the eduperson_assurance scope that releases it', async () => {
+      const claim = { claimName: 'eduperson_assurance', classification: 'internal' };
+      const surfaces = ['id_token', 'userinfo'];
+      for (const requiredScopes of [undefined, ['eduperson_assurance']]) {
+        const created = await create([
+          { ...claim, surfaces, ...(requiredScopes && { requiredScopes }) },
+        ]);
+        expect(created.version.validationSummary).toMatchObject({ errorCount: 0, warnings: [] });
+      }
+      const other = await create([{ ...claim, surfaces, requiredScopes: ['profile'] }]);
+      expect(other.version.validationSummary).toMatchObject({
+        warnings: ['eduperson_assurance is not covered by its configured scopes'],
+      });
+    });
+
+    it('still warns when a standard claim lists a scope that does not release it', async () => {
+      const created = await create([
+        {
+          claimName: 'email',
+          classification: 'pii',
+          surfaces: ['userinfo'],
+          requiredScopes: ['profile'],
+        },
+      ]);
+      expect(created.version.validationSummary).toMatchObject({
+        warnings: ['email is not covered by its configured scopes'],
+      });
     });
   });
 
@@ -2184,8 +2314,333 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     expect(adapter.executes).toHaveLength(0);
   });
 
+  function activationFixture(input: {
+    catalogVersionId: string;
+    sourceRef: Record<string, unknown>;
+    extraSourceRefs?: Record<string, unknown>[];
+    /** Also hold a rule that brings a source profile's field in (no destination profile). */
+    inputRules?: boolean;
+    destinationType: 'saml' | 'oidc';
+    claim: Record<string, unknown>;
+    storedCatalogRows?: Record<string, unknown>[];
+  }) {
+    const profileRow = {
+      id: 'profile_target',
+      tenant_id: 'tenant_a',
+      destination_type: input.destinationType,
+      lifecycle_state: 'active',
+      schema_json: JSON.stringify(
+        input.destinationType === 'saml'
+          ? { destinationType: 'saml', attributes: [input.claim] }
+          : { destinationType: 'oidc', claims: [input.claim] }
+      ),
+    };
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'policy_version_1',
+          tenant_id: 'tenant_a',
+          field_mapping_set_id: 'policy_1',
+          version_label: 'v1',
+          lifecycle_state: 'published',
+          field_mapping_hash: 'field_mapping_hash_1',
+        },
+        {
+          id: 'snapshot_1',
+          tenant_id: 'tenant_a',
+          field_mapping_version_id: 'policy_version_1',
+          catalog_version_id: input.catalogVersionId,
+          snapshot_hash: 'snapshot_hash_1',
+          lifecycle_state: 'draft',
+        },
+      ],
+      queryRowSets: [
+        [
+          ...(input.inputRules
+            ? [
+                {
+                  source_ref_json: JSON.stringify({
+                    side: 'source',
+                    namespace: 'scim.attribute',
+                    path: 'userName',
+                    // Another field's id: not a conflict with the release edges, which it is not part of.
+                    catalogEntryId: 'field.canonical.vault',
+                  }),
+                  target_ref_json: JSON.stringify({
+                    side: 'destination',
+                    namespace: 'authrim.profile',
+                    path: 'preferred_username',
+                  }),
+                },
+              ]
+            : []),
+          ...[input.sourceRef, ...(input.extraSourceRefs ?? [])].map((sourceRef) => ({
+            source_ref_json: JSON.stringify({ side: 'source', ...sourceRef }),
+            target_ref_json: JSON.stringify({
+              side: 'destination',
+              namespace: input.destinationType === 'saml' ? 'saml.attribute' : 'oidc.claim',
+              path: 'target',
+              profileId: 'destination-profile-profile_target',
+            }),
+          })),
+        ],
+        ...(input.storedCatalogRows ? [input.storedCatalogRows] : []),
+        [profileRow],
+      ],
+    });
+    return new IdentityMappingControlPlaneRepository(
+      adapter,
+      () => 1000,
+      createAdapter({ queryRows: [] })
+    );
+  }
+  const activate = (repository: IdentityMappingControlPlaneRepository) =>
+    repository.activateFieldMappingVersion('tenant_a', 'policy_1', 'policy_version_1', {
+      snapshotId: 'snapshot_1',
+      activationScope: { kind: 'tenant', id: 'tenant_a' },
+    });
+  const storedRow = (classification: string) => ({
+    entry_id: 'entry_vault',
+    stable_field_id: 'field.canonical.vault',
+    namespace: 'authrim.canonical',
+    path: 'vault',
+    target_taxonomy: 'canonical',
+    value_type: 'string',
+    cardinality: 'single',
+    classification,
+  });
+  const vaultRef = {
+    namespace: 'authrim.profile',
+    path: 'vault',
+    catalogEntryId: 'field.canonical.vault',
+  };
+
+  it.each(['key_material', 'secret', 'credential', 'token'])(
+    'rejects activation when a %s source goes to a public destination',
+    async (classification) => {
+      const repository = activationFixture({
+        catalogVersionId: 'catalog_version_stored',
+        sourceRef: vaultRef,
+        destinationType: 'saml',
+        claim: { name: 'target', classification: 'public' },
+        storedCatalogRows: [storedRow(classification)],
+      });
+      await expect(activate(repository)).rejects.toMatchObject({
+        status: 400,
+        message: expect.stringContaining('cannot lower classification'),
+      });
+    }
+  );
+
+  it('activates a key_material source going to a key_material destination', async () => {
+    const repository = activationFixture({
+      catalogVersionId: 'catalog_version_stored',
+      sourceRef: vaultRef,
+      destinationType: 'saml',
+      claim: { name: 'target', classification: 'key_material' },
+      storedCatalogRows: [storedRow('key_material')],
+    });
+    await expect(activate(repository)).resolves.toMatchObject({ lifecycleState: 'active' });
+  });
+
+  it('rejects activation of a SAML attribute from a source whose classification is unknown', async () => {
+    const repository = activationFixture({
+      catalogVersionId: 'catalog_version_stored',
+      storedCatalogRows: [],
+      sourceRef: { namespace: 'authrim.claim', path: 'email' },
+      destinationType: 'saml',
+      claim: { name: 'target', classification: 'public' },
+    });
+    await expect(activate(repository)).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining('mapping source classification is unknown'),
+    });
+  });
+
+  it('rejects activation from a runtime-defined source that reads another path', async () => {
+    const repository = activationFixture({
+      catalogVersionId: 'catalog_version_stored',
+      storedCatalogRows: [],
+      sourceRef: {
+        namespace: 'authrim.profile',
+        path: 'email',
+        catalogEntryId: 'system.identity.edu_person_assurance',
+      },
+      destinationType: 'saml',
+      claim: { name: 'target', classification: 'public' },
+    });
+    await expect(activate(repository)).rejects.toMatchObject({ status: 400 });
+  });
+
+  it.each([
+    ['a source side that says destination', { ...vaultRef, side: 'destination' }],
+    ['a source side that says anything else', { ...vaultRef, side: 'both' }],
+  ])('rejects activation with %s, instead of skipping the edge', async (_name, sourceRef) => {
+    const repository = activationFixture({
+      catalogVersionId: 'catalog_version_stored',
+      sourceRef,
+      destinationType: 'saml',
+      claim: { name: 'target', classification: 'public' },
+      storedCatalogRows: [storedRow('key_material')],
+    });
+    await expect(activate(repository)).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining('must be a source and a destination'),
+    });
+  });
+
+  it('rejects activation when the catalog entry a source names describes another place', async () => {
+    const repository = activationFixture({
+      catalogVersionId: 'catalog_version_stored',
+      sourceRef: { ...vaultRef, path: 'something_else' },
+      destinationType: 'saml',
+      claim: { name: 'target', classification: 'public' },
+      storedCatalogRows: [storedRow('key_material')],
+    });
+    await expect(activate(repository)).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining('missing from compiled catalog'),
+    });
+  });
+
+  it('rejects activation when one catalog entry id stands for two sources', async () => {
+    const repository = activationFixture({
+      catalogVersionId: 'catalog_version_stored',
+      sourceRef: vaultRef,
+      extraSourceRefs: [{ ...vaultRef, path: 'other' }],
+      destinationType: 'saml',
+      claim: { name: 'target', classification: 'key_material' },
+      storedCatalogRows: [storedRow('key_material')],
+    });
+    await expect(activate(repository)).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining('different sources'),
+    });
+  });
+
+  it('judges a spelling of a place by the place: custom_claims.x under the profile is the secret customClaims.x', async () => {
+    const repository = activationFixture({
+      catalogVersionId: 'catalog_version_stored',
+      sourceRef: {
+        namespace: 'authrim.profile',
+        path: 'custom_claims.entitlement',
+        catalogEntryId: 'field.canonical.public_spelling',
+      },
+      destinationType: 'saml',
+      claim: { name: 'target', classification: 'public' },
+      storedCatalogRows: [
+        {
+          ...storedRow('public'),
+          entry_id: 'entry_public',
+          stable_field_id: 'field.canonical.public_spelling',
+          namespace: 'authrim.profile',
+          path: 'custom_claims.entitlement',
+        },
+        {
+          ...storedRow('secret'),
+          entry_id: 'entry_secret',
+          stable_field_id: 'field.canonical.secret',
+          namespace: 'authrim.custom_claims',
+          path: 'entitlement',
+        },
+      ],
+    });
+    await expect(activate(repository)).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining('cannot lower classification'),
+    });
+  });
+
+  it('does not judge the rules that bring a source profile in, only those that release to a destination', async () => {
+    const repository = activationFixture({
+      catalogVersionId: 'catalog_version_stored',
+      sourceRef: vaultRef,
+      destinationType: 'saml',
+      claim: { name: 'target', classification: 'key_material' },
+      storedCatalogRows: [storedRow('key_material')],
+      inputRules: true,
+    });
+    await expect(activate(repository)).resolves.toMatchObject({ lifecycleState: 'active' });
+  });
+
+  it('activates over a catalog that holds fields named like members of Object.prototype', async () => {
+    const oddRows = ['constructor', '__proto__', 'toString', 'hasOwnProperty'].map((path) => ({
+      ...storedRow('internal'),
+      entry_id: `entry_${path}`,
+      stable_field_id: `field.canonical.${path}`,
+      path,
+    }));
+    const repository = activationFixture({
+      catalogVersionId: 'catalog_version_stored',
+      sourceRef: vaultRef,
+      destinationType: 'saml',
+      claim: { name: 'target', classification: 'key_material' },
+      storedCatalogRows: [...oddRows, storedRow('key_material')],
+    });
+    await expect(activate(repository)).resolves.toMatchObject({ lifecycleState: 'active' });
+  });
+
+  it('reads such a field like any other: a constructor field marked secret may not go to a public one', async () => {
+    const repository = activationFixture({
+      catalogVersionId: 'catalog_version_stored',
+      sourceRef: {
+        namespace: 'authrim.profile',
+        path: 'constructor',
+        catalogEntryId: 'field.canonical.constructor',
+      },
+      destinationType: 'saml',
+      claim: { name: 'target', classification: 'public' },
+      storedCatalogRows: [
+        {
+          ...storedRow('secret'),
+          entry_id: 'entry_c',
+          stable_field_id: 'field.canonical.constructor',
+          path: 'constructor',
+        },
+      ],
+    });
+    await expect(activate(repository)).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining('cannot lower classification'),
+    });
+  });
+
+  it('classifies a source by the place it reads: a namespace other than the catalog entry’s is the same field', async () => {
+    const repository = activationFixture({
+      catalogVersionId: 'catalog_version_stored',
+      sourceRef: { namespace: 'authrim.claim', path: 'vault' },
+      destinationType: 'saml',
+      claim: { name: 'target', classification: 'public' },
+      storedCatalogRows: [storedRow('key_material')],
+    });
+    await expect(activate(repository)).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining('cannot lower classification'),
+    });
+  });
+
+  it('leaves a source of an unknown namespace to a non-SAML destination as it was', async () => {
+    const repository = activationFixture({
+      catalogVersionId: 'catalog_version_stored',
+      storedCatalogRows: [],
+      sourceRef: { namespace: 'authrim.claim', path: 'email' },
+      destinationType: 'oidc',
+      claim: { claimName: 'target', classification: 'public', requiredScopes: [] },
+    });
+    await expect(activate(repository)).resolves.toMatchObject({ lifecycleState: 'active' });
+  });
+
   it('deactivates an active field mapping set version', async () => {
-    const adapter = createAdapter({});
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'policy_version_1',
+          tenant_id: 'tenant_a',
+          field_mapping_set_id: 'policy_1',
+          lifecycle_state: 'active',
+        },
+      ],
+    });
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
 
     const result = await repository.deactivateFieldMappingVersion(
@@ -2207,6 +2662,18 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
       expect.stringContaining('UPDATE field_mapping_versions'),
       expect.stringContaining('UPDATE field_mapping_sets'),
     ]);
+    // The snapshots are found through the set the version is in, not by the version alone.
+    expect(adapter.executes[1].sql).toContain('field_mapping_set_id = ?');
+  });
+
+  it('does not deactivate a version that is not in the set', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.deactivateFieldMappingVersion('tenant_a', 'policy_1', 'version_of_another_set')
+    ).rejects.toMatchObject({ status: 404 });
+    expect(adapter.executes).toEqual([]);
   });
 
   it('repairs parent lifecycle state when an already-active version is activated again', async () => {
@@ -2314,6 +2781,66 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
       code: 'invalid_request',
     });
     expect(adapter.executes).toHaveLength(0);
+  });
+
+  describe('mapping edges that target a claim only the evidence may state', () => {
+    const register = (targetRef: Record<string, unknown>) => {
+      const adapter = createAdapter({
+        queryOneRows: [
+          {
+            id: 'policy_1',
+            tenant_id: 'tenant_a',
+            field_mapping_key: 'default',
+            display_name: 'Default field mapping set',
+            description: null,
+            lifecycle_state: 'draft',
+          },
+        ],
+      });
+      const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+      return {
+        adapter,
+        result: repository.createFieldMappingVersion('tenant_a', 'policy_1', {
+          versionLabel: 'v1',
+          rules: [
+            {
+              ruleKey: 'assurance',
+              ruleKind: 'mapping',
+              action: 'allow',
+              edges: [
+                {
+                  sourceRef: { side: 'source', namespace: 'user', path: 'department' },
+                  targetRef,
+                },
+              ],
+            },
+          ],
+        }),
+      };
+    };
+
+    it.each(['eduperson_assurance', 'verified_claims'])(
+      'rejects %s however the reference spells it (path, fieldKey or nodeId)',
+      async (claim) => {
+        for (const spelling of ['path', 'fieldKey', 'nodeId']) {
+          const { adapter, result } = register({
+            side: 'destination',
+            namespace: 'oidc.claim',
+            [spelling]: claim,
+          });
+          await expect(result, `${spelling}:${claim}`).rejects.toMatchObject({
+            status: 400,
+            code: 'invalid_request',
+          });
+          expect(adapter.executes).toHaveLength(0);
+        }
+      }
+    );
+
+    it('rejects it when the reference gives no namespace, which the runtime reads as unknown', async () => {
+      const { result } = register({ side: 'destination', fieldKey: 'eduperson_assurance' });
+      await expect(result).rejects.toMatchObject({ status: 400, code: 'invalid_request' });
+    });
   });
 
   it('returns a conflict for duplicate field mapping version labels', async () => {
@@ -2682,10 +3209,13 @@ describe('IdentityMappingControlPlaneRepository identity registry operations', (
 
     expect(authority.priority).toBe(10);
     expect(event.reasonCodes).toEqual(['identity.hard_match']);
+    expect(logCalls.emit.mock.calls.at(-1)?.[1]).toMatchObject({
+      sourceDataset: 'admin.mapping_events',
+      row: { event_type: 'identity.binding.matched', outcome: 'matched' },
+    });
     expect(outbox.status).toBe('pending');
     expect(adapter.executes.map((item) => item.sql)).toEqual([
       expect.stringContaining('INSERT INTO source_authority_contracts'),
-      expect.stringContaining('INSERT INTO mapping_events'),
       expect.stringContaining('INSERT INTO projection_outbox'),
     ]);
   });
@@ -2835,7 +3365,6 @@ describe('IdentityMappingControlPlaneRepository review and notification operatio
     expect(adapter.executes.map((item) => item.sql)).toEqual([
       expect.stringContaining('INSERT INTO review_tasks'),
       expect.stringContaining('UPDATE review_tasks'),
-      expect.stringContaining('INSERT INTO mapping_events'),
     ]);
   });
 
@@ -3227,6 +3756,11 @@ describe('IdentityMappingControlPlaneRepository provisioning assignment operatio
       }
     );
 
+    expect(logCalls.publication).toHaveBeenCalledWith(
+      expect.anything(),
+      adapter,
+      expect.objectContaining({ sourceDataset: 'core.provisioning_assignment_events' })
+    );
     expect(evaluation).toMatchObject({
       matched: true,
       outcome: 'assigned',
@@ -3236,7 +3770,6 @@ describe('IdentityMappingControlPlaneRepository provisioning assignment operatio
     expect(adapter.executes.map((item) => item.sql)).toEqual([
       expect.stringContaining('INSERT INTO group_memberships'),
       expect.stringContaining('INSERT INTO provisioning_assignment_ownership'),
-      expect.stringContaining('INSERT INTO provisioning_assignment_events'),
     ]);
   });
 
@@ -3267,9 +3800,11 @@ describe('IdentityMappingControlPlaneRepository provisioning assignment operatio
       outcome: 'assigned',
       dryRun: true,
     });
-    expect(adapter.executes.map((item) => item.sql)).toEqual([
-      expect.stringContaining('INSERT INTO provisioning_assignment_events'),
-    ]);
+    expect(logCalls.emit.mock.calls.at(-1)?.[1]).toMatchObject({
+      sourceDataset: 'core.provisioning_assignment_events',
+      row: { trace_ref: 'dry-run:assignment-rule-1' },
+    });
+    expect(adapter.executes.map((item) => item.sql)).toEqual([]);
   });
 
   it('does not grant assignments when a persisted rule has malformed condition JSON', async () => {
@@ -3370,57 +3905,50 @@ describe('IdentityMappingControlPlaneRepository provisioning assignment operatio
     });
   });
 
-  it('records SCIM active:false lifecycle signal as an account suspension decision', async () => {
-    const adapter = createAdapter({
-      queryOneRows: [null],
+  it('delegates account signals to the explicitly separated suspension service', async () => {
+    const adapter = createAdapter({});
+    const record = vi.fn(async () => ({
+      signalEventId: 'event-1',
+      decision: 'suspend_account' as const,
+      reasonCodes: [],
+    }));
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000, undefined, {
+      record,
     });
-    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
-
-    const result = await repository.recordExternalLifecycleSignal('tenant_a', {
+    const input = {
       sourceType: 'scim',
       sourceId: 'directory-1',
       sourceEventId: 'event-1',
-      signalType: 'scim_active_false',
+      signalType: 'scim_active_false' as const,
       accountId: 'account-1',
-      targetType: 'account',
+      targetType: 'account' as const,
       targetId: 'account-1',
-    });
-
-    expect(result).toMatchObject({
-      decision: 'suspend_account',
-    });
-    expect(adapter.executes.map((item) => item.sql)).toEqual([
-      expect.stringContaining('INSERT INTO external_lifecycle_signal_events'),
-      expect.stringContaining('INSERT INTO external_lifecycle_signal_decisions'),
-      expect.stringContaining('UPDATE identity_accounts'),
-      expect.stringContaining('INSERT INTO provisioning_revocation_events'),
-      expect.stringContaining('UPDATE external_lifecycle_signal_events'),
-    ]);
+    };
+    await expect(
+      repository.recordExternalLifecycleSignal('tenant_a', input)
+    ).resolves.toMatchObject({ decision: 'suspend_account' });
+    expect(record).toHaveBeenCalledWith(
+      'tenant_a',
+      input,
+      expect.stringMatching(/^[a-f0-9]{64}$/u)
+    );
+    expect(adapter.executes).toHaveLength(0);
   });
 
-  it('invokes the account suspension fence before applying a SCIM account signal', async () => {
-    const adapter = createAdapter({ queryOneRows: [null] });
-    const fence = vi.fn(async () => {
-      expect(adapter.executes).toHaveLength(0);
-    });
-    const repository = new IdentityMappingControlPlaneRepository(
-      adapter,
-      () => 1000,
-      undefined,
-      fence
-    );
-
-    await repository.recordExternalLifecycleSignal('tenant_a', {
-      sourceType: 'scim',
-      sourceId: 'directory-1',
-      sourceEventId: 'event-1',
-      signalType: 'scim_active_false',
-      accountId: 'account-1',
-      targetType: 'account',
-      targetId: 'account-1',
-    });
-
-    expect(fence).toHaveBeenCalledWith('tenant_a', 'account-1', 1000, expect.any(String));
+  it('refuses account signals without the explicitly configured owner/metadata service', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+    await expect(
+      repository.recordExternalLifecycleSignal('tenant_a', {
+        sourceType: 'scim',
+        sourceId: 'directory-1',
+        sourceEventId: 'event-1',
+        signalType: 'scim_active_false',
+        targetType: 'account',
+        targetId: 'account-1',
+      })
+    ).rejects.toThrow('lifecycle_signal_account_service_unavailable');
+    expect(adapter.executes).toHaveLength(0);
   });
 
   it('routes protected SCIM group removal, CSV diff, and claim disappearance to review instead of silent revoke', async () => {
@@ -3452,13 +3980,16 @@ describe('IdentityMappingControlPlaneRepository provisioning assignment operatio
       });
 
       expect(result.decision).toBe('review');
+      expect(logCalls.publication.mock.calls.at(-1)?.[2]).toMatchObject({
+        sourceDataset: 'core.provisioning_revocation_events',
+        row: { decision: 'review' },
+      });
       expect(adapter.executes.map((item) => item.sql).join('\n')).not.toContain(
         'SET lifecycle_state = ?'
       );
       expect(adapter.executes.map((item) => item.sql)).toEqual([
         expect.stringContaining('INSERT INTO external_lifecycle_signal_events'),
         expect.stringContaining('INSERT INTO external_lifecycle_signal_decisions'),
-        expect.stringContaining('INSERT INTO provisioning_revocation_events'),
         expect.stringContaining('UPDATE external_lifecycle_signal_events'),
       ]);
     }
@@ -3493,7 +4024,6 @@ describe('IdentityMappingControlPlaneRepository provisioning assignment operatio
       expect.stringContaining('INSERT INTO external_lifecycle_signal_events'),
       expect.stringContaining('INSERT INTO external_lifecycle_signal_decisions'),
       expect.stringContaining('UPDATE entitlements'),
-      expect.stringContaining('INSERT INTO provisioning_revocation_events'),
       expect.stringContaining('UPDATE external_lifecycle_signal_events'),
     ]);
   });
@@ -3559,11 +4089,14 @@ describe('IdentityMappingControlPlaneRepository federation trust and key lifecyc
       keyPurpose: 'blind_index',
       status: 'active',
     });
+    expect(logCalls.prepare.mock.calls.at(-1)?.[2]).toMatchObject({
+      sourceDataset: 'admin.key_access_events',
+      row: { access_type: 'registry.create' },
+    });
     expect(adapter.executes.map((item) => item.sql)).toEqual([
       expect.stringContaining('INSERT INTO key_registries'),
       expect.stringContaining('INSERT INTO key_versions'),
       expect.stringContaining('INSERT INTO key_material_refs'),
-      expect.stringContaining('INSERT INTO key_access_events'),
     ]);
     expect(adapter.executes[2].params[4]).toBe('wrangler-secret:CONTACT_BLIND_INDEX_KEY_V1');
   });
@@ -3644,7 +4177,6 @@ describe('IdentityMappingControlPlaneRepository federation trust and key lifecyc
       expect.stringContaining('UPDATE key_registries'),
       expect.stringContaining('INSERT INTO rewrap_jobs'),
       expect.stringContaining('INSERT INTO blind_index_rotation_jobs'),
-      expect.stringContaining('INSERT INTO key_access_events'),
     ]);
     expect(String(adapter.executes[5].params[6])).toContain('dual_read');
   });
@@ -3724,9 +4256,10 @@ describe('IdentityMappingControlPlaneRepository federation trust and key lifecyc
     expect(
       statements.some((sql) => sql.includes('DELETE FROM federation_metadata_refresh_jobs'))
     ).toBe(true);
+    // The import events are log rows: they stay and leave with the D1 log retention.
     expect(
       statements.some((sql) => sql.includes('DELETE FROM federation_selected_entity_import_events'))
-    ).toBe(true);
+    ).toBe(false);
     expect(statements.some((sql) => sql.includes('DELETE FROM federation_entity_statements'))).toBe(
       true
     );
@@ -4295,9 +4828,7 @@ describe('IdentityMappingControlPlaneRepository federation trust and key lifecyc
         actorId: 'admin-1',
       })
     ).resolves.toEqual({ keyRegistryId: 'key-registry-1', recorded: true });
-    expect(adapter.executes.map((item) => item.sql)).toEqual([
-      expect.stringContaining('INSERT INTO key_access_events'),
-    ]);
+    expect(adapter.executes.map((item) => item.sql)).toEqual([]);
   });
 
   it('rejects unsupported key access event values before writing audit rows', async () => {
@@ -4348,6 +4879,32 @@ describe('IdentityMappingControlPlaneRepository schema and template catalogs', (
     expect(String(adapter.executes[0].params[5])).toBe(
       '{"attributes":[{"name":"userName","type":"string"}]}'
     );
+  });
+
+  it("shares only the default tenant's non-tenant templates with other tenants", async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await repository.listMappingTemplates('tenant_a');
+
+    const { sql, params } = adapter.queries[0];
+    expect(sql).toContain("tenant_id = ? OR (tenant_id = ? AND template_scope <> 'tenant')");
+    expect(params).toEqual(['tenant_a', 'default']);
+  });
+
+  it('rejects a template scope that is not a string', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createMappingTemplate('default', {
+        templateKey: 'shared',
+        displayName: 'Shared',
+        template: {},
+        templateScope: 1 as unknown as string,
+      })
+    ).rejects.toThrow();
+    expect(adapter.executes).toHaveLength(0);
   });
 
   it('rejects oversized imported schema catalogs before persistence', async () => {
@@ -4407,6 +4964,7 @@ describe('identity mapping control plane Admin API handlers', () => {
         {
           id: 'policy_1',
           tenantId: 'tenant_a',
+          owner: 'tenant',
           fieldMappingKey: 'default',
           displayName: 'Default field mapping set',
           description: null,
@@ -4467,7 +5025,7 @@ describe('identity mapping control plane Admin API handlers', () => {
     app.use('*', async (c, next) => {
       (c as unknown as { set(key: string, value: unknown): void }).set('tenantId', 'tenant_a');
       (c as unknown as { set(key: string, value: unknown): void }).set('adminAuth', {
-        roles: ['tenant_admin'],
+        roles: ['ar_tenant_admin'],
         is_platform_admin: false,
       });
       await next();
@@ -4512,7 +5070,7 @@ describe('identity mapping control plane Admin API handlers', () => {
     app.use('*', async (c, next) => {
       (c as unknown as { set(key: string, value: unknown): void }).set('tenantId', 'tenant_a');
       (c as unknown as { set(key: string, value: unknown): void }).set('adminAuth', {
-        roles: ['tenant_admin'],
+        roles: ['ar_tenant_admin'],
         is_platform_admin: false,
       });
       await next();

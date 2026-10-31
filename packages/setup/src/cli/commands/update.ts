@@ -1,3 +1,7 @@
+import {
+  prepareLogArchiveReadinessAttempt,
+  waitForLogArchiveReadiness,
+} from '../../core/log-archive-readiness.js';
 /**
  * Update Command
  *
@@ -31,6 +35,8 @@ import {
   UI_WORKER_COMPONENTS,
   resolveMissingUiWorkerBindingTargets,
   resolveExistingWorkerComponents,
+  assertRequiredWorkerSecrets,
+  lookupHmacDeployOptions,
   buildApiPackages,
   loadDeploySecretsFromKeys,
   type DeployOptions,
@@ -75,6 +81,13 @@ import {
 } from '../../core/paths.js';
 import { saveMasterWranglerConfigs, syncWranglerConfigs } from '../../core/wrangler-sync.js';
 import { buildWorkerDeploymentResourceIds } from '../../core/deployment-resource-ids.js';
+import { refreshWorkerDeploymentArtifacts } from '../../core/worker-deployment-artifacts.js';
+import {
+  createControlCoordinatorDeployer,
+  isControlRecordedInLock,
+  runControlRolloutHandoffSequence,
+  shouldDeployControlBeforeRolloutHandoff,
+} from '../../core/release-control-first.js';
 import {
   compileControlWorkerInventoryFromArtifacts,
   registerControlWorkerInventory,
@@ -113,6 +126,12 @@ import {
   type ReleaseMigrationManifest,
 } from '../../core/release-migrations.js';
 import {
+  assertControlSnapshotMatchesLock,
+  recordControlMigratedEvidence,
+  verifyDraftAppendDatabaseEvidence,
+} from '../../core/release-draft-append-evidence.js';
+import { resolveSameVersionDraftAppend } from '../../core/release-draft-append.js';
+import {
   applyReleaseSchemaUpdatePlan,
   buildReleaseSchemaUpdatePlan,
   getControlManagedReleaseStreamIds,
@@ -124,16 +143,23 @@ import {
   createReleaseRolloutHandoff,
   getActiveReleaseRolloutHandoffStatus,
   getReleaseRolloutHandoffStatus,
+  type ReleaseRolloutExpectedTarget,
   type ReleaseRolloutHandoffStatus,
+  formatReleaseRolloutProgress,
   waitForReleaseRolloutAwaitingSetup,
 } from '../../core/release-rollout-handoff.js';
+import { executeReleaseRolloutTargetsAsSetup } from '../../core/release-rollout-setup-executor.js';
+import {
+  SetupR2ReleaseArtifactStore,
+  createSetupOperatorD1Client,
+} from '../../core/control-operator-executor.js';
 import {
   buildWorkerHttpReadinessTargets,
   waitForWorkerDeploymentsReady,
   waitForWorkerHttpReady,
   waitForRouterWorkerReady,
 } from '../../core/worker-readiness.js';
-import { resolveUiDeploymentSettings } from '../../core/ui-deployment.js';
+import { resolveUiDeploymentSettings, resolveUiPackageDir } from '../../core/ui-deployment.js';
 import { mergeAndSaveUiEnv } from '../../core/ui-env.js';
 import { ensureLoginUiClient } from '../../core/login-ui-client.js';
 import { prepareAdminUiBffDeployment } from '../../core/admin-ui-bff-deployment.js';
@@ -363,6 +389,34 @@ export function splitReleaseSchemaTargetsForControlHandoff(
   };
 }
 
+/** Setup applies the release targets of a Control that has no D1 token of its own. */
+function setupReleaseTargetExecutor(input: {
+  lock: AuthrimLock;
+  env: string;
+  controlDatabaseId: string;
+  accountId?: string;
+}) {
+  return async (operationId: string, onTarget: (done: number, total: number) => void) => {
+    const migrationReleaseBucket = input.lock.r2?.MIGRATION_RELEASES;
+    if (!migrationReleaseBucket) throw new Error('migration_release_bucket_required');
+    const verifyOwnership = () =>
+      assertR2BucketOwnershipForUse({
+        ...migrationReleaseBucket,
+        environment: input.env,
+        binding: 'MIGRATION_RELEASES',
+      });
+    await verifyOwnership();
+    return executeReleaseRolloutTargetsAsSetup({
+      client: await createSetupOperatorD1Client({ expectedAccountId: input.accountId }),
+      controlDatabaseId: input.controlDatabaseId,
+      environmentId: input.env,
+      operationId,
+      artifactStore: new SetupR2ReleaseArtifactStore(migrationReleaseBucket.name, verifyOwnership),
+      onTarget,
+    });
+  };
+}
+
 async function awaitControlManagedReleaseRollout(input: {
   controlDatabaseId: string;
   environmentId: string;
@@ -372,8 +426,15 @@ async function awaitControlManagedReleaseRollout(input: {
   manifest: ReleaseMigrationManifest;
   artifact: MigrationReleaseArtifactPlan;
   managedStreamIds: readonly string[];
+  /** The verified target set of a same-version draft append; unset for every other rollout. */
+  expectedTargets?: readonly ReleaseRolloutExpectedTarget[];
   lock: AuthrimLock;
   lockPath: string;
+  /** Applies the targets setup takes over from a Control without a migration executor. */
+  executeTargetsAsSetup?: (
+    operationId: string,
+    onTarget: (done: number, total: number) => void
+  ) => Promise<{ claimed: number; nextAttemptAt: number | null }>;
 }): Promise<{ lock: AuthrimLock; ready: boolean }> {
   const spinner = ora('Handing managed database migrations to Control...').start();
   try {
@@ -385,6 +446,7 @@ async function awaitControlManagedReleaseRollout(input: {
       artifact: input.artifact,
       manifest: input.manifest,
       managedStreamIds: input.managedStreamIds,
+      expectedTargets: input.expectedTargets,
       actorId: 'setup:update',
     });
     let workingLock = withReleaseUpdateState(input.lock, {
@@ -395,6 +457,7 @@ async function awaitControlManagedReleaseRollout(input: {
       controlManifestDigest: input.artifact.manifestDigest,
       controlCompletedTargets: created.completedTargets,
       controlTotalTargets: created.totalTargets,
+      controlManagedStreamIds: input.managedStreamIds,
     });
     await saveLockFile(workingLock, input.lockPath);
     const ready = await waitForReleaseRolloutAwaitingSetup({
@@ -402,9 +465,15 @@ async function awaitControlManagedReleaseRollout(input: {
       environmentId: input.environmentId,
       operationId: created.operationId,
       timeoutMs: RELEASE_ROLLOUT_OBSERVATION_MS,
-      onProgress: (status) => {
-        spinner.text = `Control database rollout: ${status.completedTargets}/${status.totalTargets} (${status.phase})`;
+      onProgress: (status, context) => {
+        spinner.text = formatReleaseRolloutProgress(status, context);
       },
+      executeTargetsAsSetup: input.executeTargetsAsSetup
+        ? () =>
+            input.executeTargetsAsSetup!(created.operationId, (done, total) => {
+              spinner.text = `Control has no migration executor; setup is applying managed databases (${done}/${total})`;
+            })
+        : undefined,
     });
     if (
       ready.phase !== 'awaiting_setup' &&
@@ -889,6 +958,7 @@ async function deployReleaseUiWorkers(input: {
       serviceBindingName: settings.serviceBindingName,
       workersDev: settings.workersDev,
       routes: settings.routes,
+      sourcePackage: settings.sourcePackage,
       adminUiBffSecrets,
       skipBuild: input.skipBuild,
       deployConfigLockProof: input.deployConfigLockProof,
@@ -963,6 +1033,7 @@ async function deployReleaseUiWorkers(input: {
       automaticProvisioning: input.config.controlPlane?.automaticProvisioning === true,
     },
     registeredBy: 'setup:update-ui',
+    adminUiVariant: input.config.components?.adminUiVariant,
     disableMissing: false,
   });
   return workingLock;
@@ -1063,7 +1134,9 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
   }
   const localUiVersions = new Map<UiWorkerComponent, string>();
   for (const component of UI_WORKER_COMPONENTS) {
-    const version = await getPackageVersion(join(baseDir, 'packages', component));
+    const version = await getPackageVersion(
+      resolveUiPackageDir(baseDir, component, config.components?.adminUiVariant)
+    );
     if (version) localUiVersions.set(component, version);
   }
   const mismatchedPackages = getWorkspaceVersionMismatches({
@@ -1214,22 +1287,88 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       currentManifest = readReleaseMigrationManifest(currentManifestPath);
     }
   }
+  let sameVersionDraftAppend: ReturnType<typeof resolveSameVersionDraftAppend>;
+  try {
+    sameVersionDraftAppend = resolveSameVersionDraftAppend({
+      migrationsRoot,
+      manifest: targetManifestResult.manifest,
+      manifestChecksum,
+      manifestIsDraft: targetManifestResult.draft,
+      lock: workingLock,
+      targets: physicalTargets,
+      // A dry run may ask the remote questions but must not fetch from it.
+      allowFetch: options.dryRun !== true,
+    });
+  } catch (error) {
+    spinner.fail('The development draft cannot be appended to the installed release');
+    console.error(chalk.red(error instanceof Error ? error.message : String(error)));
+    process.exit(1);
+  }
+  if (sameVersionDraftAppend) {
+    console.log(
+      chalk.yellow(
+        `  Appending ${sameVersionDraftAppend.appendedFileCount} unapplied migration(s) of the draft ` +
+          `to the installed ${productVersion} release (recorded files verified as an exact prefix).`
+      )
+    );
+  }
+  if (sameVersionDraftAppend) {
+    // The lock is only evidence about the databases; read each one back before anything changes.
+    // This runs even when nothing is left to append (a resume after the databases finished), since
+    // a database restored in between must not be accepted on the strength of the lock alone.
+    try {
+      await verifyDraftAppendDatabaseEvidence({
+        append: sameVersionDraftAppend,
+        targets: physicalTargets,
+        onProgress: (message) => {
+          spinner.text = message;
+        },
+      });
+    } catch (error) {
+      spinner.fail('The recorded migration history does not match the lock');
+      console.error(chalk.red(error instanceof Error ? error.message : String(error)));
+      process.exit(1);
+    }
+  }
+  if (sameVersionDraftAppend) {
+    // A release candidate file of the same version describes the draft, not what the databases
+    // already hold; the per-target lock evidence is the only record of what is applied.
+    currentManifest = undefined;
+  }
+  const availableReleaseManifests = listReleaseMigrationManifests(migrationsRoot).map(
+    (release) => release.manifest
+  );
   const migrationExecutionManifest = resolveReleaseMigrationExecutionManifest({
     targetManifest: targetManifestResult.manifest,
     installedProductVersion: workingLock.productVersion,
-    availableManifests: listReleaseMigrationManifests(migrationsRoot).map(
-      (release) => release.manifest
-    ),
+    availableManifests: availableReleaseManifests,
+    sameVersionDraftAppend,
   });
-  const migrationArtifactManifest = workingLock.productVersion
-    ? buildReleaseMigrationArtifactManifest({
-        targetManifest: targetManifestResult.manifest,
-        installedProductVersion: workingLock.productVersion,
-        availableManifests: listReleaseMigrationManifests(migrationsRoot).map(
-          (release) => release.manifest
-        ),
-      })
-    : targetManifestResult.manifest;
+  // A retry of an unfinished same-version append keeps the streams it first handed to Control, so
+  // the artifact (and therefore the Control operation) is rebuilt identically.
+  const priorRelease = workingLock.releaseUpdate;
+  const priorControlManagedStreamIds =
+    sameVersionDraftAppend &&
+    priorRelease?.targetVersion === productVersion &&
+    priorRelease.manifestChecksum === manifestChecksum &&
+    priorRelease.phase !== 'verified'
+      ? (priorRelease.controlManagedStreamIds ?? [])
+      : [];
+  // The Control artifact is only needed when the plan carries migrations or an unfinished handoff
+  // must be resumed. Building it for a no-op same-version update would need a self-referential
+  // upgrade path.
+  const needsMigrationArtifact =
+    migrationExecutionManifest.streams.some((stream) => stream.files.length > 0) ||
+    priorControlManagedStreamIds.length > 0;
+  const migrationArtifactManifest =
+    workingLock.productVersion && needsMigrationArtifact
+      ? buildReleaseMigrationArtifactManifest({
+          targetManifest: targetManifestResult.manifest,
+          installedProductVersion: workingLock.productVersion,
+          availableManifests: availableReleaseManifests,
+          sameVersionDraftAppend,
+        })
+      : targetManifestResult.manifest;
   const targetManifestCache = new Map<string, ReturnType<typeof readReleaseMigrationManifest>>();
   const currentManifestForTarget = (
     target: (typeof physicalTargets)[number]
@@ -1324,10 +1463,13 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       )
     );
   }
-  const controlManagedStreamIds = getControlManagedReleaseStreamIds({
-    targetManifest: migrationExecutionManifest,
-    currentManifest,
-  });
+  const controlManagedStreamIds =
+    priorControlManagedStreamIds.length > 0
+      ? [...priorControlManagedStreamIds]
+      : getControlManagedReleaseStreamIds({
+          targetManifest: migrationExecutionManifest,
+          currentManifest,
+        });
   const componentsWithCoordinator = includeRequiredReleaseControlCoordinator(
     componentsToUpdate,
     controlManagedStreamIds,
@@ -1406,6 +1548,32 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     process.exit(1);
   }
 
+  if (sameVersionDraftAppend && controlManagedStreamIds.length > 0) {
+    // Control applies SQL to every database it snapshots; compare its set with the lock's first.
+    const controlDatabaseId = workingLock.d1.CONTROL_DB?.id;
+    try {
+      if (!controlDatabaseId) throw new Error('control_database_required_for_release_rollout');
+      await assertControlSnapshotMatchesLock({
+        controlDatabaseId,
+        environmentId: env,
+        targets: physicalTargets,
+        managedStreamIds: controlManagedStreamIds,
+      });
+    } catch (error) {
+      spinner.fail('Control would migrate a different set of databases than the lock records');
+      console.error(chalk.red(error instanceof Error ? error.message : String(error)));
+      process.exit(1);
+    }
+  }
+
+  // A resumed update whose handoff row already exists keeps the earlier order (see helper docs).
+  const deployControlFirst = shouldDeployControlBeforeRolloutHandoff({
+    componentsToUpdate,
+    controlManagedStreamIds,
+    handoffAlreadyCreated: Boolean(resumableRelease?.controlOperationId),
+    controlAlreadyDeployed: isControlRecordedInLock(workingLock),
+  });
+
   // Confirm update
   if (!options.yes) {
     const confirmed = await confirm({
@@ -1441,6 +1609,13 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     for (const target of schemaPlan.automaticTargets) {
       console.log(
         `  • schema ${target.target.binding ?? target.target.id}: ${target.target.streamId}`
+      );
+    }
+    if (deployControlFirst) {
+      console.log(
+        chalk.gray(
+          '\n  Order: Control schema → deploy ar-control → publish migration release → hand off managed databases to Control → remaining schemas → other Workers.'
+        )
       );
     }
     console.log(chalk.gray('\nNo changes made.'));
@@ -1480,6 +1655,47 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       throw new Error('release_manifest_changed_while_waiting_for_update_lock');
     }
 
+    const verifyUpdatedLogArchive = async () => {
+      if (options.databaseOnly || options.dryRun) return;
+      const archive = lockedConfig.logging?.archive,
+        owned = workingLock.logArchive,
+        signing = workingLock.controlKeyState?.smokeRpc;
+      const keys = findKeysDirectory({ env, sourceDir: baseDir, keysBaseDir: process.cwd() });
+      if (!archive || !owned || !signing || !keys)
+        throw new Error('log_archive_readiness_identity_required');
+      const attempt = prepareLogArchiveReadinessAttempt(archive, owned, workingLock.workers);
+      const pending = {
+        ...owned,
+        activation: { ...owned.activation, pendingRuntimeProbe: attempt, runtimeProof: undefined },
+      };
+      workingLock = { ...workingLock, logArchive: pending };
+      await saveLockFile(workingLock, lockPath);
+      const workersSubdomain = await getWorkersSubdomain();
+      const proof = await waitForLogArchiveReadiness({
+        apiBaseUrl: resolveIssuerUrl(lockedConfig, { env, workersSubdomain }),
+        environmentId: env,
+        keysDir: keys.path,
+        activeSlot: signing.activeSlot,
+        activeKeyId: signing.activeKeyId,
+        archive,
+        owned: pending,
+        attempt,
+        onProgress: (message) => console.log(chalk.gray(message)),
+      });
+      workingLock = {
+        ...workingLock,
+        logArchive: {
+          ...pending,
+          activation: {
+            ...pending.activation,
+            pendingRuntimeProbe: undefined,
+            runtimeProof: proof,
+          },
+        },
+      };
+      await saveLockFile(workingLock, lockPath);
+    };
+
     // The migration plan addresses D1 targets by name, while the lock retains their immutable
     // provider IDs. Re-prove the complete topology after both locks are held and before persisting
     // `planned` or mutating any schema. This prevents a deleted resource from being silently
@@ -1493,6 +1709,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
         ...Object.values(workingLock.r2 ?? {}).map((bucket) => bucket.name),
         ...getRequiredR2Buckets(env, {
           includeFeatureBuckets: lockedConfig.features.r2?.enabled === true,
+          logArchiveBucketName: lockedConfig.logging?.archive.bucketName,
         }).map((bucket) => bucket.name),
       ]),
     ];
@@ -1524,6 +1741,20 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       requiredR2BucketNames,
     });
 
+    // The set Setup verified for a same-version draft append. It travels with the handoff so Control,
+    // which snapshots its own targets later, fails closed on any database outside it (for example a
+    // tenant database provisioned after this check). Every other rollout carries none.
+    let controlExpectedTargets: ReleaseRolloutExpectedTarget[] | undefined;
+    if (sameVersionDraftAppend && controlManagedStreamIds.length > 0) {
+      // Re-check under the locks, immediately before anything is persisted or handed off.
+      controlExpectedTargets = await assertControlSnapshotMatchesLock({
+        controlDatabaseId: workingLock.d1.CONTROL_DB!.id,
+        environmentId: env,
+        targets: physicalTargets,
+        managedStreamIds: controlManagedStreamIds,
+      });
+    }
+
     workingLock = withReleaseUpdateState(workingLock, {
       targetVersion: productVersion,
       phase: 'planned',
@@ -1553,6 +1784,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
         migrationsRoot,
         concurrency: 2,
         backfillLegacyChecksums: !targetManifestResult.draft,
+        requiredAppliedFilesByTarget: sameVersionDraftAppend?.recordedFilesByTarget,
         onProgress: (message) => {
           migrationSpinner.text = message;
         },
@@ -1566,6 +1798,39 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
         throw new Error('release_setup_schema_update_failed');
       }
       migrationSpinner.succeed(label.replace(/\.\.\.$/u, ' complete'));
+    };
+    // Control applies the tenant-scoped databases of its managed streams. Their lock evidence is
+    // what a later same-version draft append is checked against, so it is recorded only from
+    // Control's own rollout record. A same-version append stops on any mismatch; a normal upgrade
+    // keeps its earlier behaviour (a warning, old evidence left in place) so a finished migration
+    // is not turned into a failure.
+    const recordControlManagedSchemaTargets = async (): Promise<void> => {
+      if (controlManagedStreamIds.length === 0) return;
+      const operationId = workingLock.releaseUpdate?.controlOperationId;
+      const controlDatabaseId = workingLock.d1.CONTROL_DB?.id;
+      if (!operationId || !controlDatabaseId) {
+        if (sameVersionDraftAppend)
+          throw new Error('control_rollout_operation_required_for_evidence');
+        return;
+      }
+      const recorded = await recordControlMigratedEvidence({
+        lock: workingLock,
+        controlDatabaseId,
+        environmentId: env,
+        operationId,
+        targets: physicalTargets,
+        managedStreamIds: controlManagedStreamIds,
+        productVersion,
+        manifestChecksum,
+        manifest: migrationExecutionManifest,
+        strict: sameVersionDraftAppend !== undefined,
+      });
+      for (const warning of recorded.warnings) {
+        console.log(chalk.yellow(`  Control migration evidence was not recorded: ${warning}`));
+      }
+      if (recorded.recordedTargetIds.length === 0) return;
+      workingLock = recorded.lock;
+      await saveLockFile(workingLock, lockPath);
     };
     const baseAppliedTargetIds = [
       ...new Set([
@@ -1607,7 +1872,273 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
 
     const controlDatabase = workingLock.d1.CONTROL_DB;
     let migrationReleaseArtifact: MigrationReleaseArtifactPlan | undefined;
-    if (hasReleaseSchemaDelta) {
+
+    const deploymentGroups = splitReleaseDeploymentForControlCoordinator(componentsToUpdate);
+    // Worker deployment state shared by the early ar-control deployment and the regular
+    // deployment below. Ownership, the token checkpoint and the build are created on first use
+    // and reused, so ar-control is never prepared, built or deployed twice. Deploy options are
+    // not shared: each stage builds its own from the lock and keys as they are at that point.
+    let workerOwnershipState: Awaited<ReturnType<typeof prepareManagedWorkerScriptOwnership>>;
+    const ensureWorkerOwnership = async (): Promise<typeof workerOwnershipState> => {
+      if (workerOwnershipState) return workerOwnershipState;
+      const prepared = await prepareManagedWorkerScriptOwnership({
+        lock: workingLock,
+        lockPath,
+        // Ownership checkpoints are written during later deployments, after workingLock has been
+        // replaced several times; they must land on (and save) the lock as it is then.
+        currentLock: () => workingLock,
+        targets: [
+          ...componentsToUpdate.map((component) => ({
+            component,
+            workerName: getWorkerName(env, component),
+          })),
+          ...uiComponentsToUpdate.map((component) => ({
+            component,
+            workerName: `${env}-${component}`,
+          })),
+        ],
+      });
+      if (prepared.changed) {
+        workingLock = prepared.lock;
+        await saveLockFile(workingLock, lockPath);
+      }
+      workerOwnershipState = prepared;
+      return prepared;
+    };
+    let controlTokenGenerationCheckpointState:
+      | { value: Awaited<ReturnType<typeof checkpointReadyControlTokenGenerationForRedeploy>> }
+      | undefined;
+    const ensureControlTokenGenerationCheckpoint = async () => {
+      controlTokenGenerationCheckpointState ??= {
+        value:
+          !options.dryRun && componentsToUpdate.includes('ar-control')
+            ? await checkpointReadyControlTokenGenerationForRedeploy({
+                environmentId: env,
+                rootDir: baseDir,
+                config,
+                lock: workingLock,
+              })
+            : null,
+      };
+      return controlTokenGenerationCheckpointState.value;
+    };
+    let packagesBuilt = false;
+    const buildPackagesOnce = async (): Promise<void> => {
+      if (options.skipBuild || packagesBuilt) return;
+      const buildSpinner = ora('Building packages...').start();
+
+      const buildResult = await buildApiPackages({
+        rootDir: resolve(baseDir),
+        onProgress: (msg) => {
+          buildSpinner.text = msg;
+        },
+      });
+
+      if (!buildResult.success) {
+        buildSpinner.fail('Build failed');
+        console.error(chalk.red(`\nError: ${buildResult.error}`));
+        throw new Error(`worker_build_failed:${buildResult.error ?? 'unknown'}`);
+      }
+
+      packagesBuilt = true;
+      buildSpinner.succeed('Build complete');
+    };
+    // Builds deploy options for `components` from the lock and generated configs as they are now.
+    const buildDeployOptions = async (
+      components: readonly WorkerComponent[],
+      existingLookupComponents: readonly WorkerComponent[]
+    ): Promise<DeployOptions> => {
+      const workerOwnership = await ensureWorkerOwnership();
+      const keysDirectory = findKeysDirectory({
+        env,
+        sourceDir: baseDir,
+        keysBaseDir: process.cwd(),
+      });
+      if (keysDirectory) {
+        await ensureSupplementalKeyFiles(keysDirectory.path);
+      }
+      const deploymentSecrets = await loadDeploySecretsFromKeys(
+        keysDirectory?.path,
+        [...components],
+        {
+          rootDir: baseDir,
+          env,
+          replicationWriter: config.features.replicationWriter !== undefined,
+        }
+      );
+      const deploymentControlDatabase = workingLock.d1.CONTROL_DB;
+      if (!deploymentControlDatabase) {
+        throw new Error('control_database_required_for_worker_deployment_lease');
+      }
+
+      const deployOptions: DeployOptions = {
+        env,
+        rootDir: resolve(baseDir),
+        maxRetries: 3,
+        retryDelayMs: 1000,
+        concurrency: 2,
+        deploymentStrategy: 'auto',
+        existingComponents: CORE_WORKER_COMPONENTS.filter(
+          (component) => workingLock.workers?.[component] !== undefined
+        ),
+        expectedWorkerVersionIds: Object.fromEntries(
+          Object.entries(workingLock.workers ?? {}).map(([component, worker]) => [
+            component,
+            worker.cloudflareVersionId,
+          ])
+        ),
+        secrets: deploymentSecrets,
+        replicationWriter: config.features.replicationWriter !== undefined,
+        ...lookupHmacDeployOptions(workingLock.controlKeyState?.lookupHmac),
+        deploymentLease: {
+          controlDatabaseId: deploymentControlDatabase.id,
+          environmentId: env,
+          actorId: 'setup:update',
+          accountId: config.cloudflare?.accountId,
+          required: true,
+        },
+        cleanupLegacyStaticSecrets: true,
+        deployConfigLockProof: deployConfigLock!.proof,
+        workerScriptOwnership: workerOwnership.guard,
+        onProgress: (msg) => console.log(chalk.gray(`  ${msg}`)),
+        onError: (component, error) => {
+          console.error(chalk.red(`  ❌ Error in ${component}: ${error.message}`));
+        },
+      };
+      if (!options.dryRun) {
+        // Only `existingLookupComponents` are looked up remotely; Workers outside that set keep the
+        // lock-recorded state the options started from, so smoke-binding bootstrap and strategy
+        // decisions still see the real environment without querying unsynced Worker configs.
+        const lookedUp = await resolveExistingWorkerComponents(deployOptions, [
+          ...existingLookupComponents,
+        ]);
+        deployOptions.existingComponents = [
+          ...new Set([
+            ...lookedUp,
+            ...(deployOptions.existingComponents ?? []).filter(
+              (component) => !existingLookupComponents.includes(component)
+            ),
+          ]),
+        ];
+        // A required secret must be distributed now or already be bound to the Worker. Checked for
+        // every Worker in `components` before the first one deploys (deployAll checks each group too).
+        await assertRequiredWorkerSecrets(deployOptions, [...components]);
+      }
+      return deployOptions;
+    };
+    // ar-control is deployed (once) ahead of every other Worker. When the handoff needs a new
+    // Control, this runs before the handoff row exists; otherwise at the regular point below.
+    const controlCoordinatorDeployment = createControlCoordinatorDeployer<
+      DeployOptions,
+      DeploymentSummary
+    >({
+      deploy: async (deployOptions) => {
+        const controlTokenGenerationCheckpoint = await ensureControlTokenGenerationCheckpoint();
+        console.log(
+          chalk.gray(
+            '  Deploying ar-control first so in-flight provisioning can safely converge...'
+          )
+        );
+        const coordinatorSummary = await deployAll(deployOptions, deploymentGroups.coordinator);
+        if (coordinatorSummary.failedCount > 0) return coordinatorSummary;
+        const controlDeployment = coordinatorSummary.results.find(
+          (result) => result.component === 'ar-control' && result.success
+        );
+        if (!controlDeployment?.cloudflareVersionId) {
+          throw new Error('control_worker_redeploy_version_missing');
+        }
+        const controlGenerationVisibility = await waitForWorkerDeploymentsReady({
+          targets: [
+            {
+              workerName: controlDeployment.workerName,
+              deployedAt: controlDeployment.deployedAt,
+              expectedVersionId: controlDeployment.cloudflareVersionId,
+            },
+          ],
+        });
+        if (!controlGenerationVisibility.ready) {
+          throw new Error(
+            `control_worker_redeploy_generation_not_visible:${controlGenerationVisibility.error ?? 'unknown'}`
+          );
+        }
+        await commitReadyControlTokenGenerationRedeploy({
+          environmentId: env,
+          checkpoint: controlTokenGenerationCheckpoint,
+          deployedVersionId: controlDeployment?.cloudflareVersionId,
+        });
+        workingLock = updateLockWithDeploymentsAndVersions(
+          workingLock,
+          coordinatorSummary.results,
+          localVersions
+        );
+        return coordinatorSummary;
+      },
+    });
+    // The Control that reads the migration release artifact must understand its format, and the
+    // release is only readable by a Control built from the same source as its manifest. A deployed
+    // Control from the previous release cannot parse a manifest format introduced by this one and
+    // would terminally block every managed target. So the new ar-control is deployed after the
+    // Control schema (its only database) is applied and before the release is activated and the
+    // rollout row is created. Only ar-control's own configuration is refreshed here; the other
+    // Workers and setup-owned schemas follow the regular path after the handoff.
+    const deployControlBeforeHandoff = async (): Promise<DeploymentSummary> => {
+      const controlSpinner = ora('Preparing ar-control for the migration handoff...').start();
+      try {
+        const refreshed = await refreshWorkerDeploymentArtifacts({
+          baseDir,
+          env,
+          config,
+          lock: workingLock,
+          lockPath,
+          components: ['ar-control'],
+          registeredBy: 'setup:update',
+          onProgress: (message) => {
+            controlSpinner.text = message;
+          },
+        });
+        workingLock = refreshed.lock;
+        controlSpinner.succeed('ar-control configuration refreshed');
+      } catch (error) {
+        controlSpinner.fail('ar-control configuration refresh failed');
+        console.error(chalk.red(`  ${error instanceof Error ? error.message : String(error)}`));
+        if (
+          error instanceof Error &&
+          error.message.startsWith('control_generated_d1_binding_not_ready:')
+        )
+          console.error(
+            chalk.yellow(
+              `  Control requested a database that is not provisioned yet. Run \`authrim-setup control-provision --env ${env}\`, then run this update again.`
+            )
+          );
+        throw error instanceof Error
+          ? error
+          : new Error('control_coordinator_refresh_failed', { cause: error });
+      }
+      await ensureWorkerOwnership();
+      await ensureControlTokenGenerationCheckpoint();
+      await buildPackagesOnce();
+      // Only ar-control is deployed here, so its secrets and existing-script lookups are scoped to
+      // it; the other Workers' configuration has not been refreshed yet.
+      const coordinatorSummary = await controlCoordinatorDeployment.deployEarly(() =>
+        buildDeployOptions(['ar-control'], ['ar-control'])
+      );
+      if (coordinatorSummary.failedCount > 0) {
+        const failures = coordinatorSummary.results
+          .filter((result) => !result.success)
+          .map((result) => `${result.component}: ${result.error ?? 'unknown error'}`);
+        console.error(
+          chalk.red(
+            `\nar-control could not be deployed. No migration release was activated and no Control handoff was created; run this update again to resume.\n  ${failures.join('\n  ')}`
+          )
+        );
+        throw new Error(`control_coordinator_deploy_before_handoff_failed:${failures.join(',')}`);
+      }
+      await saveLockFile(workingLock, lockPath);
+      return coordinatorSummary;
+    };
+
+    const publishRelease = async (): Promise<MigrationReleaseArtifactPlan | undefined> => {
+      if (!hasReleaseSchemaDelta && priorControlManagedStreamIds.length === 0) return undefined;
       const migrationReleaseBucket = workingLock.r2?.MIGRATION_RELEASES;
       if (!controlDatabase) throw new Error('control_database_required_for_release_publication');
       if (!migrationReleaseBucket) {
@@ -1635,18 +2166,20 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
             releasePublicationSpinner.text = message;
           },
         });
-        migrationReleaseArtifact = publication.artifact;
         releasePublicationSpinner.succeed(
           `Migration release ${publication.artifact.releaseId} published (${publication.artifact.streamIds.length} D1 streams)`
         );
+        return publication.artifact;
       } catch (error) {
         releasePublicationSpinner.fail('Migration release publication failed');
         throw error;
       }
-    }
-
-    if (controlManagedStreamIds.length > 0) {
-      if (!controlDatabase || !migrationReleaseArtifact) {
+    };
+    const createInitialHandoff = async (
+      published: MigrationReleaseArtifactPlan | undefined
+    ): Promise<void> => {
+      if (controlManagedStreamIds.length === 0) return;
+      if (!controlDatabase || !published) {
         throw new Error('release_rollout_handoff_prerequisite_missing');
       }
       const handoff = await createReleaseRolloutHandoff({
@@ -1654,9 +2187,15 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
         environmentId: env,
         sourceVersion: resumableRelease?.previousProductVersion ?? workingLock.productVersion,
         targetVersion: productVersion,
-        artifact: migrationReleaseArtifact,
+        artifact: published,
         manifest: targetManifestResult.manifest,
         managedStreamIds: controlManagedStreamIds,
+        expectedTargets: controlExpectedTargets,
+        // This is the first handoff call of this run and `controlExpectedTargets` was just
+        // re-verified against the lock, so it alone may re-arm a rollout Control blocked on a
+        // target set mismatch in an earlier run. The later call in awaitControlManagedReleaseRollout
+        // never does: a block found within this run needs a new run to recompute the set.
+        rearmBlockedTargetSetMismatch: true,
         actorId: 'setup:update',
       });
       workingLock = withReleaseUpdateState(workingLock, {
@@ -1666,12 +2205,22 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
         appliedTargets: appliedTargetIds,
         manualTargets: [...acknowledgedManualTargets],
         controlOperationId: handoff.operationId,
-        controlManifestDigest: migrationReleaseArtifact.manifestDigest,
+        controlManifestDigest: published.manifestDigest,
         controlCompletedTargets: handoff.completedTargets,
         controlTotalTargets: handoff.totalTargets,
+        controlManagedStreamIds,
       });
       await saveLockFile(workingLock, lockPath);
-    }
+    };
+    // Deploying ar-control first (when required) is skipped in the sequence for database-only
+    // updates, runs without managed streams, and resumed updates that already own a handoff row.
+    const sequence = await runControlRolloutHandoffSequence({
+      deployControlFirst,
+      deployControl: deployControlBeforeHandoff,
+      publishRelease,
+      createHandoff: createInitialHandoff,
+    });
+    migrationReleaseArtifact = sequence.published;
 
     await applySetupTargets(remainingSetupTargets, 'Updating setup-owned database schemas...');
     appliedTargetIds = [
@@ -1695,24 +2244,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     });
     await saveLockFile(workingLock, lockPath);
 
-    const workerOwnership = await prepareManagedWorkerScriptOwnership({
-      lock: workingLock,
-      lockPath,
-      targets: [
-        ...componentsToUpdate.map((component) => ({
-          component,
-          workerName: getWorkerName(env, component),
-        })),
-        ...uiComponentsToUpdate.map((component) => ({
-          component,
-          workerName: `${env}-${component}`,
-        })),
-      ],
-    });
-    if (workerOwnership.changed) {
-      workingLock = workerOwnership.lock;
-      await saveLockFile(workingLock, lockPath);
-    }
+    const workerOwnership = await ensureWorkerOwnership();
 
     if (componentsToUpdate.length === 0) {
       if (controlManagedStreamIds.length > 0) {
@@ -1728,8 +2260,15 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
           manifest: targetManifestResult.manifest,
           artifact: migrationReleaseArtifact,
           managedStreamIds: controlManagedStreamIds,
+          expectedTargets: controlExpectedTargets,
           lock: workingLock,
           lockPath,
+          executeTargetsAsSetup: setupReleaseTargetExecutor({
+            lock: workingLock,
+            env,
+            controlDatabaseId: controlDatabase.id,
+            accountId: config.cloudflare?.accountId,
+          }),
         });
         workingLock = observation.lock;
         if (!observation.ready) {
@@ -1740,6 +2279,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
           );
           return;
         }
+        await recordControlManagedSchemaTargets();
       }
       const retainedWorkerVersion = options.databaseOnly
         ? workingLock.productVersion
@@ -1811,6 +2351,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
           ? error
           : new Error('ui_worker_release_deployment_failed', { cause: error });
       }
+      await verifyUpdatedLogArchive();
       if (!controlDatabase && workingLock.releaseUpdate?.controlOperationId) {
         throw new Error('control_database_required_for_release_rollout_completion');
       }
@@ -1959,94 +2500,16 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     }
     wranglerSpinner.succeed(`Refreshed ${syncResult.synced.length} wrangler config(s)`);
 
-    const controlTokenGenerationCheckpoint =
-      !options.dryRun && componentsToUpdate.includes('ar-control')
-        ? await checkpointReadyControlTokenGenerationForRedeploy({
-            environmentId: env,
-            rootDir: baseDir,
-            config,
-            lock: workingLock,
-          })
-        : null;
+    await ensureControlTokenGenerationCheckpoint();
 
-    // Build packages (unless skipped)
-    if (!options.skipBuild) {
-      const buildSpinner = ora('Building packages...').start();
-
-      const buildResult = await buildApiPackages({
-        rootDir: resolve(baseDir),
-        onProgress: (msg) => {
-          buildSpinner.text = msg;
-        },
-      });
-
-      if (!buildResult.success) {
-        buildSpinner.fail('Build failed');
-        console.error(chalk.red(`\nError: ${buildResult.error}`));
-        throw new Error(`worker_build_failed:${buildResult.error ?? 'unknown'}`);
-      }
-
-      buildSpinner.succeed('Build complete');
-    }
+    // Build packages (unless skipped, or already built for the early ar-control deployment)
+    await buildPackagesOnce();
 
     // Deploy workers
     console.log(chalk.bold('\n🚀 Deploying workers...\n'));
-
-    const keysDirectory = findKeysDirectory({
-      env,
-      sourceDir: baseDir,
-      keysBaseDir: process.cwd(),
-    });
-    if (keysDirectory) {
-      await ensureSupplementalKeyFiles(keysDirectory.path);
-    }
-    const deploymentSecrets = await loadDeploySecretsFromKeys(
-      keysDirectory?.path,
-      componentsToUpdate
-    );
-    const deploymentControlDatabase = workingLock.d1.CONTROL_DB;
-    if (!deploymentControlDatabase) {
-      throw new Error('control_database_required_for_worker_deployment_lease');
-    }
-
-    const deployOptions: DeployOptions = {
-      env,
-      rootDir: resolve(baseDir),
-      maxRetries: 3,
-      retryDelayMs: 1000,
-      concurrency: 2,
-      deploymentStrategy: 'auto',
-      existingComponents: CORE_WORKER_COMPONENTS.filter(
-        (component) => workingLock.workers?.[component] !== undefined
-      ),
-      expectedWorkerVersionIds: Object.fromEntries(
-        Object.entries(workingLock.workers ?? {}).map(([component, worker]) => [
-          component,
-          worker.cloudflareVersionId,
-        ])
-      ),
-      secrets: deploymentSecrets,
-      deploymentLease: {
-        controlDatabaseId: deploymentControlDatabase.id,
-        environmentId: env,
-        actorId: 'setup:update',
-        accountId: config.cloudflare?.accountId,
-        required: true,
-      },
-      cleanupLegacyStaticSecrets: true,
-      deployConfigLockProof: deployConfigLock!.proof,
-      workerScriptOwnership: workerOwnership.guard,
-      onProgress: (msg) => console.log(chalk.gray(`  ${msg}`)),
-      onError: (component, error) => {
-        console.error(chalk.red(`  ❌ Error in ${component}: ${error.message}`));
-      },
-    };
-    if (!options.dryRun) {
-      deployOptions.existingComponents = await resolveExistingWorkerComponents(
-        deployOptions,
-        CORE_WORKER_COMPONENTS
-      );
-    }
+    // Fresh options for the whole update, built after the full config sync and build. They record
+    // the ar-control version deployed earlier (if any) as the current one.
+    const deployOptions = await buildDeployOptions(componentsToUpdate, CORE_WORKER_COMPONENTS);
 
     if (componentsToUpdate.includes('ar-router') && existsSync(envPaths.config)) {
       const missingUiBindingTargets = await resolveMissingUiWorkerBindingTargets(deployOptions, {
@@ -2068,7 +2531,6 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       }
     }
 
-    const deploymentGroups = splitReleaseDeploymentForControlCoordinator(componentsToUpdate);
     let controlRolloutReady = false;
     const ensureControlRolloutReady = async (): Promise<boolean> => {
       if (controlRolloutReady || controlManagedStreamIds.length === 0) return true;
@@ -2116,52 +2578,28 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
         manifest: targetManifestResult.manifest,
         artifact: migrationReleaseArtifact,
         managedStreamIds: controlManagedStreamIds,
+        expectedTargets: controlExpectedTargets,
         lock: workingLock,
         lockPath,
+        executeTargetsAsSetup: setupReleaseTargetExecutor({
+          lock: workingLock,
+          env,
+          controlDatabaseId: controlDatabase.id,
+          accountId: config.cloudflare?.accountId,
+        }),
       });
       workingLock = observation.lock;
       controlRolloutReady = observation.ready;
+      if (observation.ready) await recordControlManagedSchemaTargets();
       return observation.ready;
     };
     let summary: DeploymentSummary;
     if (!options.dryRun && deploymentGroups.coordinator.length > 0) {
-      console.log(
-        chalk.gray('  Deploying ar-control first so in-flight provisioning can safely converge...')
-      );
-      const coordinatorSummary = await deployAll(deployOptions, deploymentGroups.coordinator);
+      // No-op when ar-control was already deployed ahead of the migration handoff.
+      const coordinatorSummary = await controlCoordinatorDeployment.deployRegular(deployOptions);
       if (coordinatorSummary.failedCount > 0) {
         summary = coordinatorSummary;
       } else {
-        const controlDeployment = coordinatorSummary.results.find(
-          (result) => result.component === 'ar-control' && result.success
-        );
-        if (!controlDeployment?.cloudflareVersionId) {
-          throw new Error('control_worker_redeploy_version_missing');
-        }
-        const controlGenerationVisibility = await waitForWorkerDeploymentsReady({
-          targets: [
-            {
-              workerName: controlDeployment.workerName,
-              deployedAt: controlDeployment.deployedAt,
-              expectedVersionId: controlDeployment.cloudflareVersionId,
-            },
-          ],
-        });
-        if (!controlGenerationVisibility.ready) {
-          throw new Error(
-            `control_worker_redeploy_generation_not_visible:${controlGenerationVisibility.error ?? 'unknown'}`
-          );
-        }
-        await commitReadyControlTokenGenerationRedeploy({
-          environmentId: env,
-          checkpoint: controlTokenGenerationCheckpoint,
-          deployedVersionId: controlDeployment?.cloudflareVersionId,
-        });
-        workingLock = updateLockWithDeploymentsAndVersions(
-          workingLock,
-          coordinatorSummary.results,
-          localVersions
-        );
         if (!(await ensureControlRolloutReady())) {
           console.log(
             chalk.cyan(
@@ -2298,6 +2736,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
           ? error
           : new Error('ui_worker_release_deployment_failed', { cause: error });
       }
+      await verifyUpdatedLogArchive();
       if (!controlDatabase && workingLock.releaseUpdate?.controlOperationId) {
         throw new Error('control_database_required_for_release_rollout_completion');
       }

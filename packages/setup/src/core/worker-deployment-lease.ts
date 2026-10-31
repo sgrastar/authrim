@@ -15,6 +15,9 @@ export type WorkerDeploymentLeaseBatchExecutor = (
   batch: readonly D1BatchStatement[]
 ) => Promise<D1BatchExecutionResult[]>;
 
+/** 'taken_over': our row was already gone and another operation holds the lease. */
+export type WorkerDeploymentLeaseReleaseResult = 'released' | 'taken_over';
+
 export interface SetupWorkerDeploymentLease {
   environmentId: string;
   workerScriptName: string;
@@ -358,7 +361,14 @@ export class SetupWorkerDeploymentLeaseCoordinator {
     return started;
   }
 
-  async release(lease: SetupWorkerDeploymentLease): Promise<void> {
+  /**
+   * Delete our hold on the Worker. Returns 'taken_over' when our row is already gone and the row
+   * that remains belongs to a different operation: the lease expired and another actor acquired
+   * it, so there is nothing of ours left to release. That is reported, not thrown, so the caller
+   * can still return the results of a deployment that is already live. If a row of OUR operation
+   * remains the release genuinely failed and this throws.
+   */
+  async release(lease: SetupWorkerDeploymentLease): Promise<WorkerDeploymentLeaseReleaseResult> {
     const results = await this.execute(this.input.databaseId, [
       {
         sql: `DELETE FROM control_worker_deployment_leases
@@ -377,9 +387,11 @@ export class SetupWorkerDeploymentLeaseCoordinator {
         params: [lease.environmentId, lease.workerScriptName],
       },
     ]);
-    if (resultRows(results, 1).length !== 0) {
+    const remaining = resultRows<{ owner_operation_id?: unknown }>(results, 1);
+    if (remaining.some((row) => row.owner_operation_id === lease.operationId)) {
       throw new Error('worker_deployment_lease_release_failed');
     }
+    return remaining.length > 0 ? 'taken_over' : 'released';
   }
 
   async complete(success: boolean, errorCode?: string): Promise<void> {

@@ -1,6 +1,14 @@
 import type { Translation } from '../i18n-types';
 
 const completion = {
+	error_rateLimited: 'Zu viele Versuche. Warten Sie eine Weile und versuchen Sie es dann erneut.',
+	error_rateLimitedRetryAfter: 'Zu viele Versuche. Versuchen Sie es in etwa {minutes} Min. erneut.',
+	error_unregisteredPostLogoutRedirectUri:
+		'Sie wurden abgemeldet. Die Rückleitung zur App war nicht möglich, weil ihre Rücksprungadresse nicht registriert ist. Öffnen Sie die App selbst erneut.',
+	error_invalidIdTokenHint:
+		'Sie wurden abgemeldet. Die Rückleitung zur App war nicht möglich, weil ihre Abmeldeanfrage nicht geprüft werden konnte. Öffnen Sie die App selbst erneut.',
+	error_idTokenHintRequired:
+		'Sie wurden abgemeldet. Die Rückleitung zur App war nicht möglich, weil ihre Abmeldeanfrage unvollständig war. Öffnen Sie die App selbst erneut.',
 	common_logoAlt: 'Logo',
 	common_footerLinks: 'Footer-Links',
 	common_selectOption: 'Option auswählen',
@@ -42,7 +50,7 @@ const completion = {
 	emailCode_title: 'Prüfen Sie Ihre E-Mails',
 	emailCode_subtitle: 'Wir haben einen Bestätigungscode gesendet an',
 	emailCode_instructions:
-		'Geben Sie den sechsstelligen Code aus Ihrer E-Mail ein. Der Code ist fünf Minuten gültig.',
+		'Geben Sie den sechsstelligen Code aus Ihrer E-Mail ein. Die E-Mail nennt, wie lange er gültig ist.',
 	emailCode_codeLabel: 'Bestätigungscode',
 	emailCode_resendSuccess: 'Code wurde erfolgreich gesendet',
 	emailCode_success: 'Bestätigung abgeschlossen. Sie werden weitergeleitet...',
@@ -91,7 +99,7 @@ const completion = {
 	device_subtitle: 'Geben Sie den auf Ihrem Gerät angezeigten Code ein',
 	device_codeLabel: 'Bestätigungscode',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint: 'Geben Sie den achtstelligen Code Ihres Geräts ein (Format: XXXX-XXXX)',
+	device_codeHint: 'Geben Sie den Code ein, der auf Ihrem Gerät angezeigt wird',
 	device_verifyButton: 'Code bestätigen',
 	device_confirmTitle: 'Gerät autorisieren',
 	device_requestedPermissions: 'Angeforderte Berechtigungen',
@@ -104,6 +112,14 @@ const completion = {
 	device_errorApproveFailed: 'Gerät konnte nicht genehmigt werden',
 	device_errorDenyFailed: 'Die Geräteanfrage konnte nicht abgelehnt werden',
 	device_errorInvalidRedirect: 'Ungültige Weiterleitungs-URL vom Server empfangen',
+	device_errorConsentWithdrawn:
+		'Diese Anfrage wurde gestellt, bevor Sie den Zugriff dieser App widerrufen haben. Beginnen Sie auf dem Gerät erneut, um einen neuen Code zu erhalten.',
+	device_errorTryAgain:
+		'Ihre Entscheidung konnte gerade nicht gespeichert werden; es wurde nichts geändert. Versuchen Sie es gleich noch einmal.',
+	device_errorTooManyAttempts:
+		'Zu viele Versuche. Warten Sie eine Weile und versuchen Sie es dann erneut.',
+	device_errorOutcomeUnknown:
+		'Wir konnten nicht bestätigen, ob Ihre Entscheidung gespeichert wurde. Prüfen Sie das Gerät oder geben Sie den Code erneut ein.',
 	ciba_title: 'Authentifizierungsanfrage',
 	ciba_subtitle: 'Eine Anwendung bittet um Ihre Genehmigung',
 	ciba_noPendingRequests: 'Keine ausstehenden Authentifizierungsanfragen',
@@ -123,6 +139,19 @@ const completion = {
 	ciba_errorGeneric: 'Ein Fehler ist aufgetreten',
 	ciba_errorApproveFailed: 'Anfrage konnte nicht genehmigt werden',
 	ciba_errorDenyFailed: 'Anfrage konnte nicht abgelehnt werden',
+	ciba_errorConsentWithdrawn:
+		'Diese Anfrage wurde gestellt, bevor Sie den Zugriff dieser App widerrufen haben. Beginnen Sie in der App erneut.',
+	ciba_errorRequestGone: 'Diese Anfrage ist abgelaufen oder wurde bereits beantwortet.',
+	error_authorizationRequestExpired:
+		'Die Anmeldeanfrage ist abgelaufen. Starten Sie erneut in der App.',
+	ciba_errorTryAgain:
+		'Ihre Entscheidung konnte gerade nicht gespeichert werden; es wurde nichts geändert. Versuchen Sie es gleich noch einmal.',
+	ciba_errorTooManyAttempts:
+		'Zu viele Versuche. Warten Sie eine Weile und versuchen Sie es dann erneut.',
+	ciba_errorOutcomeUnknown:
+		'Wir konnten nicht bestätigen, ob Ihre Antwort gespeichert wurde. Aktualisieren Sie, um die noch wartenden Anfragen zu sehen.',
+	ciba_errorNoLongerWaiting:
+		'Wir konnten Ihre Antwort nicht bestätigen, aber diese Anfrage wartet nicht mehr.',
 	reauth_title: 'Identität bestätigen',
 	reauth_subtitle: 'Authentifizieren Sie sich aus Sicherheitsgründen erneut, um fortzufahren',
 	reauth_verifyWithPasskey: 'Mit Passkey bestätigen',

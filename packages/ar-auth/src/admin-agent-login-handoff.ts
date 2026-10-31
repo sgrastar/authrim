@@ -1,3 +1,4 @@
+import { createCloudflareAdminAgentAuditWriter } from '@authrim/ar-agent-access/platform/cloudflare/admin-agent-audit-writer';
 import type { Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import {
@@ -8,6 +9,7 @@ import {
   isAdminRequestIpAllowedForTenant,
   requireAdminDatabaseAdapter,
   type Env,
+  ADMIN_ROLE_GROUPS,
 } from '@authrim/ar-lib-core';
 import {
   ADMIN_AGENT_LOGIN_HANDOFF_CODE_PATTERN,
@@ -29,7 +31,8 @@ type HandoffContext = Context<{ Bindings: Env }>;
 
 function repository(c: Context<{ Bindings: Env }>): AdminAgentAccessRepository {
   return new AdminAgentAccessRepository(
-    requireAdminDatabaseAdapter(c.env, 'admin-agent-login-handoff')
+    requireAdminDatabaseAdapter(c.env, 'admin-agent-login-handoff'),
+    createCloudflareAdminAgentAuditWriter(c.env)
   );
 }
 
@@ -260,7 +263,7 @@ export async function adminAgentLoginHandoffConsumeHandler(c: HandoffContext): P
   const liveAdmin = await authenticateAdminSessionForTenant(
     c,
     handoff.sourceSessionId,
-    ['super_admin', 'security_admin', 'admin', 'support', 'viewer'],
+    [...ADMIN_ROLE_GROUPS.anyAdmin],
     handoff.targetTenantId
   );
   if (

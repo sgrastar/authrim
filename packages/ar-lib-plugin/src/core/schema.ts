@@ -6,7 +6,11 @@
  */
 
 import { z } from 'zod';
-import { zodToJsonSchema } from 'zod-to-json-schema';
+import { createLogger } from '@authrim/ar-lib-core/utils/logger';
+import {
+  legacyZodErrorMessage,
+  toLegacyZodIssues,
+} from '@authrim/ar-lib-core/utils/zod-legacy-errors';
 import type { AuthrimPlugin, PluginMeta } from './types';
 
 // =============================================================================
@@ -64,21 +68,305 @@ export type JSONSchema7TypeName =
 /**
  * Convert a Zod schema to JSON Schema
  *
+ * Produces the draft-07 document zod-to-json-schema produced for these schemas before
+ * the zod 4 migration (input view: fields with defaults are optional), so the schemas
+ * already stored in KV and rendered by the Admin UI keep their shape.
+ *
  * @param schema - Zod schema to convert
  * @param options - Conversion options
  * @returns JSON Schema 7 compatible object
  */
 export function zodToJSONSchema<T>(
-  schema: z.ZodSchema<T>,
+  schema: z.ZodType<T, unknown>,
   options?: SchemaConversionOptions
 ): JSONSchema7 {
-  const result = zodToJsonSchema(schema, {
-    $refStrategy: 'none',
-    target: 'jsonSchema7',
-    ...options,
-  }) as JSONSchema7;
+  const state: ConversionState = {
+    depth: 0,
+    warn: options?.onWarning ?? logSchemaConversionWarning,
+    warned: new Set(),
+  };
+  const document = toLegacyJSONSchema(schema, state, options);
 
-  return result;
+  if (!options?.name) {
+    return document;
+  }
+
+  // zod-to-json-schema wrapped named schemas in a root definitions map. Generated
+  // definitions (shared or recursive parts) stay at the root so their refs resolve.
+  const { $schema, definitions, ...definition } = document;
+  return {
+    $ref: `#/definitions/${options.name}`,
+    definitions: { ...definitions, [options.name]: definition },
+    $schema,
+  };
+}
+
+function toLegacyJSONSchema(
+  schema: z.core.$ZodType,
+  state: ConversionState,
+  options?: SchemaConversionOptions
+): JSONSchema7 {
+  return z.toJSONSchema(schema, {
+    target: 'draft-7',
+    io: 'input',
+    unrepresentable: 'any',
+    reused: options?.$refStrategy && options.$refStrategy !== 'none' ? 'ref' : 'inline',
+    override: ({ zodSchema, jsonSchema }) =>
+      keepLegacyJSONSchemaShape(zodSchema, jsonSchema, state),
+  }) as JSONSchema7;
+}
+
+/** State of one `zodToJSONSchema()` call, shared by the passes that convert Set/Map elements. */
+interface ConversionState {
+  /** Set/Map element passes currently open. */
+  depth: number;
+  warn: SchemaConversionWarning;
+  /** Warnings already reported, so a recursive element schema reports each reason once. */
+  warned: Set<string>;
+}
+
+/**
+ * Default warning sink: a structured `warn` log entry. The logger reserves the `error`
+ * context key, so the exception reason travels as `conversionError`.
+ */
+export const logSchemaConversionWarning: SchemaConversionWarning = (message, data) => {
+  createLogger().module('PluginSchema').warn(message, data);
+};
+
+function reportOnce(state: ConversionState, message: string, data: Record<string, unknown>): void {
+  if (state.warned.has(message)) return;
+  state.warned.add(message);
+  state.warn(message, data);
+}
+
+const MAX_SAFE_INTEGER_BOUND = Number.MAX_SAFE_INTEGER;
+
+/**
+ * Undo the places where zod 4's JSON Schema output differs from zod-to-json-schema's
+ * for the same schema: strip objects keep `additionalProperties: false` in the input
+ * view, loose objects keep `true`, records drop the implied string `propertyNames`,
+ * built-in string formats do not repeat their regex as `pattern`, unions of literals
+ * (and unions of enums) stay one `enum`, integers do not spell out the safe-integer
+ * range, and dates, bigints, sets and maps keep the types zod-to-json-schema gave them
+ * (zod 4 treats them as unrepresentable and would emit `{}`).
+ */
+function keepLegacyJSONSchemaShape(
+  zodSchema: z.core.$ZodType,
+  jsonSchema: z.core.JSONSchema.BaseSchema,
+  state: ConversionState
+): void {
+  const def = zodSchema._zod.def;
+
+  if (def.type === 'object' && jsonSchema.type === 'object') {
+    const catchall = (def as z.core.$ZodObjectDef).catchall;
+    const catchallType = catchall?._zod.def.type;
+    if (catchall === undefined || catchallType === 'never') {
+      jsonSchema.additionalProperties = false;
+    } else if (catchallType === 'unknown' || catchallType === 'any') {
+      jsonSchema.additionalProperties = true;
+    }
+  }
+
+  if (def.type === 'record') {
+    const propertyNames = jsonSchema.propertyNames as Record<string, unknown> | undefined;
+    if (
+      propertyNames &&
+      Object.keys(propertyNames).length === 1 &&
+      propertyNames.type === 'string'
+    ) {
+      delete jsonSchema.propertyNames;
+    }
+  }
+
+  if (typeof jsonSchema.pattern === 'string' && typeof jsonSchema.format === 'string') {
+    if (builtinFormatPatterns(zodSchema).includes(jsonSchema.pattern)) {
+      delete jsonSchema.pattern;
+    }
+  }
+
+  if (def.type === 'union' && Array.isArray(jsonSchema.anyOf)) {
+    const flattened = flattenLiteralUnion(def as z.core.$ZodUnionDef, jsonSchema.anyOf);
+    if (flattened) {
+      delete jsonSchema.anyOf;
+      jsonSchema.type = flattened.type;
+      jsonSchema.enum = flattened.values;
+    }
+  }
+
+  if (def.type === 'date') {
+    jsonSchema.type = 'string';
+    jsonSchema.format = 'date-time';
+  } else if (def.type === 'bigint') {
+    jsonSchema.type = 'integer';
+    jsonSchema.format = 'int64';
+  } else if (def.type === 'set') {
+    const setDef = def as z.core.$ZodSetDef;
+    jsonSchema.type = 'array';
+    jsonSchema.uniqueItems = true;
+    jsonSchema.items = convertNested(setDef.valueType, state, 'set element');
+    for (const check of setDef.checks ?? []) {
+      const checkDef = check._zod.def as {
+        check?: string;
+        minimum?: number;
+        maximum?: number;
+        size?: number;
+      };
+      if (checkDef.check === 'min_size') jsonSchema.minItems = checkDef.minimum;
+      if (checkDef.check === 'max_size') jsonSchema.maxItems = checkDef.maximum;
+      if (checkDef.check === 'size_equals') {
+        jsonSchema.minItems = checkDef.size;
+        jsonSchema.maxItems = checkDef.size;
+      }
+    }
+  } else if (def.type === 'map') {
+    const mapDef = def as z.core.$ZodMapDef;
+    // zod-to-json-schema described a Map as a bounded array of [key, value] pairs.
+    jsonSchema.type = 'array';
+    jsonSchema.maxItems = 125;
+    jsonSchema.items = {
+      type: 'array',
+      items: [
+        convertNested(mapDef.keyType, state, 'map key'),
+        convertNested(mapDef.valueType, state, 'map value'),
+      ],
+      minItems: 2,
+      maxItems: 2,
+    } as z.core.JSONSchema.BaseSchema;
+  }
+
+  if (jsonSchema.type === 'integer') {
+    if (jsonSchema.minimum === -MAX_SAFE_INTEGER_BOUND) delete jsonSchema.minimum;
+    if (jsonSchema.maximum === MAX_SAFE_INTEGER_BOUND) delete jsonSchema.maximum;
+  }
+}
+
+type PrimitiveLiteral = string | number | boolean | null;
+type LiteralTypeName = 'string' | 'number' | 'boolean' | 'null';
+
+const LITERAL_TYPE_NAMES: Record<string, LiteralTypeName> = {
+  string: 'string',
+  number: 'number',
+  boolean: 'boolean',
+};
+
+function literalTypeName(value: PrimitiveLiteral): LiteralTypeName {
+  return value === null ? 'null' : LITERAL_TYPE_NAMES[typeof value];
+}
+
+/**
+ * zod-to-json-schema flattened a union of literals into one `{ type, enum }` (`type` is
+ * an array when the literals differ in type) and a union of enums into one string
+ * `enum`; the Admin UI renders those as a select. zod 4 emits `anyOf` for both. A
+ * described member keeps `anyOf`, as before.
+ */
+function flattenLiteralUnion(
+  def: z.core.$ZodUnionDef,
+  alternatives: Array<z.core.JSONSchema.BaseSchema>
+): { type: LiteralTypeName | LiteralTypeName[]; values: PrimitiveLiteral[] } | undefined {
+  if (alternatives.some((alternative) => 'description' in alternative)) return undefined;
+
+  const options = def.options.map((option) => option._zod.def);
+  if (options.every((option) => option.type === 'enum')) {
+    // Read the converted alternatives, not the enum entries: numeric TypeScript enums
+    // carry reverse-mapping entries that are not valid values. Only string enums merge.
+    const values: string[] = [];
+    for (const alternative of alternatives) {
+      const {
+        type,
+        enum: members,
+        ...rest
+      } = alternative as {
+        type?: unknown;
+        enum?: unknown;
+      } & Record<string, unknown>;
+      if (
+        type !== 'string' ||
+        Object.keys(rest).length > 0 ||
+        !Array.isArray(members) ||
+        !members.every((member) => typeof member === 'string')
+      ) {
+        return undefined;
+      }
+      values.push(...(members as string[]));
+    }
+    return { type: 'string', values: [...new Set(values)] };
+  }
+
+  if (!options.every((option) => option.type === 'literal')) return undefined;
+  const values: PrimitiveLiteral[] = [];
+  for (const option of options) {
+    for (const value of (option as z.core.$ZodLiteralDef<z.core.util.Literal>).values) {
+      if (
+        value !== null &&
+        typeof value !== 'string' &&
+        typeof value !== 'number' &&
+        typeof value !== 'boolean'
+      ) {
+        return undefined;
+      }
+      values.push(value);
+    }
+  }
+  const types = [...new Set(values.map(literalTypeName))];
+  return { type: types.length === 1 ? types[0] : types, values };
+}
+
+/** Nesting limit for Set/Map element conversion (recursive element schemas). */
+const MAX_NESTED_CONVERSION_DEPTH = 8;
+
+/**
+ * Convert the element schema of a Set or Map. zod 4 cannot represent those types, so
+ * the element is converted in its own pass. Recursive element schemas (a lazy schema
+ * that contains the same Set) stop at the depth limit, and an element that cannot be
+ * converted at all is left out of the document. Either way the element becomes an
+ * unconstrained `{}` and a warning names the reason, so a schema that is looser than
+ * the zod schema it describes shows up in the logs instead of only in the Admin UI.
+ */
+function convertNested(
+  schema: z.core.$ZodType,
+  state: ConversionState,
+  role: 'set element' | 'map key' | 'map value'
+): z.core.JSONSchema.BaseSchema {
+  if (state.depth >= MAX_NESTED_CONVERSION_DEPTH) {
+    reportOnce(state, 'Plugin JSON Schema element left unconstrained: nesting too deep', {
+      role,
+      maxDepth: MAX_NESTED_CONVERSION_DEPTH,
+    });
+    return {};
+  }
+  state.depth += 1;
+  try {
+    const { $schema: _schema, ...converted } = toLegacyJSONSchema(schema, state);
+    return converted as z.core.JSONSchema.BaseSchema;
+  } catch (error) {
+    reportOnce(state, 'Plugin JSON Schema element left unconstrained: conversion failed', {
+      role,
+      conversionError: error instanceof Error ? error.message : String(error),
+    });
+    return {};
+  } finally {
+    state.depth -= 1;
+  }
+}
+
+/** Regex sources of the built-in string formats (email, uuid, ...) on a schema. */
+function builtinFormatPatterns(zodSchema: z.core.$ZodType): string[] {
+  const def = zodSchema._zod.def as z.core.$ZodTypeDef & {
+    checks?: z.core.$ZodCheck[];
+  };
+  const candidates: unknown[] = [zodSchema, ...(def.checks ?? [])];
+  const patterns: string[] = [];
+  for (const candidate of candidates) {
+    const candidateDef = (candidate as { _zod?: { def?: Record<string, unknown> } })._zod?.def;
+    if (
+      candidateDef?.format !== undefined &&
+      candidateDef.format !== 'regex' &&
+      candidateDef.pattern instanceof RegExp
+    ) {
+      patterns.push(candidateDef.pattern.source);
+    }
+  }
+  return patterns;
 }
 
 /**
@@ -90,7 +378,15 @@ export interface SchemaConversionOptions {
 
   /** Custom $ref strategy */
   $refStrategy?: 'none' | 'root' | 'relative';
+
+  /**
+   * Called when part of the schema could not be converted and was left unconstrained.
+   * Defaults to a structured `warn` log.
+   */
+  onWarning?: SchemaConversionWarning;
 }
+
+export type SchemaConversionWarning = (message: string, data?: Record<string, unknown>) => void;
 
 // =============================================================================
 // Plugin Schema Utilities
@@ -152,10 +448,11 @@ export function extractPluginSchema<T>(plugin: AuthrimPlugin<T>): PluginSchemaIn
  * @returns Validation result
  */
 export function validatePluginConfig<T>(
-  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
+  schema: z.ZodType<T, unknown>,
   config: unknown
 ): ValidationResult<T> {
-  const result = schema.safeParse(config);
+  // zod 3 messages and codes: plugin-config errors are part of the Admin API surface.
+  const result = schema.safeParse(config, { error: legacyZodErrorMessage, reportInput: true });
 
   if (result.success) {
     return {
@@ -166,8 +463,8 @@ export function validatePluginConfig<T>(
 
   return {
     success: false,
-    errors: result.error.errors.map((e) => ({
-      path: e.path.join('.'),
+    errors: toLegacyZodIssues(result.error.issues).map((e) => ({
+      path: e.path.map(String).join('.'),
       message: e.message,
       code: e.code,
     })),
@@ -205,7 +502,7 @@ export interface ValidationError {
   /** Error message */
   message: string;
 
-  /** Zod error code */
+  /** Zod error code (zod 3 vocabulary, e.g. `invalid_string`) */
   code: string;
 }
 

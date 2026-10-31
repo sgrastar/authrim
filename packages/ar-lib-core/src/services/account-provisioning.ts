@@ -1,3 +1,4 @@
+import { normalizeLookupExternalSubject } from './lookup-directory/blind-index';
 import type {
   CanonicalRuntimeUserWriteInput,
   CanonicalSensitiveUserField,
@@ -12,17 +13,18 @@ export type AuthAccountProvisioningFlow =
   | 'saml'
   | 'did'
   | 'test_stub'
-  | 'anonymous'
-  | 'anonymous_upgrade';
+  | 'guest'
+  | 'guest_upgrade';
 
-export interface AuthAnonymousDeviceProvisioningInput {
+export interface AuthGuestResumeCredentialProvisioningInput {
   id: string;
-  deviceIdHash: string;
-  installationIdHash: string | null;
-  fingerprintHash: string | null;
-  platform: 'ios' | 'android' | 'web' | 'other' | null;
-  stability: 'session' | 'installation' | 'device';
+  credentialHash: string;
   expiresInDays: number | null;
+  guestLifecycle?: {
+    clientId: string;
+    deletionAfterDays: number | null;
+    policyVersion: string;
+  };
 }
 
 export interface AuthExternalIdpIdentityProvisioningInput {
@@ -47,7 +49,7 @@ export interface AuthAccountProvisioningInput {
   flow: AuthAccountProvisioningFlow;
   email: string | null;
   externalSubject?: { issuer: string; subject: string } | null;
-  anonymousDevice?: AuthAnonymousDeviceProvisioningInput | null;
+  guestResumeCredential?: AuthGuestResumeCredentialProvisioningInput | null;
   externalIdentity?: AuthExternalIdpIdentityProvisioningInput | null;
   runtimeUser: Omit<CanonicalRuntimeUserWriteInput, 'userId' | 'tenantId'> & {
     piiFields?: Partial<Record<CanonicalSensitiveUserField, boolean>>;
@@ -107,18 +109,22 @@ export interface AuthDirectoryRoutePublicationInput {
 
 export type AuthDirectoryRoutePublicationResult = AuthPasskeyRoutePublicationResult;
 
-export interface AuthAnonymousDeviceRouteRemovalInput {
+/**
+ * Publishes the lookup-directory route (external_subject index) of a DID the signed-in user linked
+ * to their own account, so that DID login can find the account again.
+ */
+export interface AuthDidRoutePublicationInput {
   schemaVersion: 1;
   operationId: string;
   idempotencyKey: string;
   tenantId: string;
   accountId: string;
   userId: string;
-  deviceId: string;
-  deviceIdHash: string;
+  linkedIdentityId: string;
+  did: string;
 }
 
-export type AuthAnonymousDeviceRouteRemovalResult = AuthPasskeyRoutePublicationResult;
+export type AuthDidRoutePublicationResult = AuthPasskeyRoutePublicationResult;
 
 export interface ExternalIdpRoutePublicationInput {
   schemaVersion: 1;
@@ -134,7 +140,13 @@ export interface ExternalIdpRoutePublicationInput {
 
 export type ExternalIdpRoutePublicationResult = AuthPasskeyRoutePublicationResult;
 
-export type ExternalIdpRouteRemovalInput = ExternalIdpRoutePublicationInput;
+export type ExternalIdpRouteRemovalInput = ExternalIdpRoutePublicationInput & {
+  /**
+   * The owner token of the account's sign-in-method removal lease the caller holds; the removal
+   * checks it is still held right before it writes (withLoginMethodRemovalLock).
+   */
+  removalLeaseOwner?: string;
+};
 export type ExternalIdpRouteRemovalResult = AuthPasskeyRoutePublicationResult;
 
 export interface ExternalIdpRouteRemovalStatusInput {
@@ -179,16 +191,16 @@ export function passkeyCredentialLookupSubject(input: { rpId: string; credential
   };
 }
 
-export function anonymousDeviceLookupSubject(deviceIdHash: string): {
+export function guestResumeCredentialLookupSubject(credentialHash: string): {
   issuer: string;
   subject: string;
 } {
-  if (!/^[a-f0-9]{64}$/u.test(deviceIdHash)) {
-    throw new Error('anonymous_device_route_digest_invalid');
+  if (!/^[a-f0-9]{64}$/u.test(credentialHash)) {
+    throw new Error('guest_resume_credential_digest_invalid');
   }
   return {
-    issuer: 'urn:authrim:anonymous-device:v1',
-    subject: deviceIdHash,
+    issuer: 'urn:authrim:guest-resume:v1',
+    subject: credentialHash,
   };
 }
 
@@ -207,6 +219,35 @@ export function directoryIdentityLookupSubject(input: {
   return { issuer: `urn:authrim:directory:${connectorId}`, subject: directorySubject };
 }
 
+/** DID Core syntax: `did:` method (lowercase letters, digits) `:` method-specific id. */
+const DID_SYNTAX = /^did:[a-z0-9]+:[A-Za-z0-9._:%-]+$/u;
+
+/** Issuer under which DIDs are stored in linked_identities and in the lookup directory. */
+export const DID_LOOKUP_ISSUER = 'did';
+
+/**
+ * The lookup-directory subject of a DID. DID login resolves accounts through this same subject, so
+ * the link flow (publish) and the login flow (lookup) must both use it. The limits are those of the
+ * lookup directory itself (trimmed, non-empty, at most 1024 UTF-8 bytes, no control characters;
+ * `normalizeLookupExternalSubject` is the single source of truth), so a DID that passes here can
+ * always be indexed. A DID the index would store in a different form (surrounding whitespace) is
+ * refused too: the link row and the index must name the same string.
+ */
+export function didLookupSubject(did: string): { issuer: string; subject: string } {
+  // A DID, not a DID URL: DID Core syntax (method, then a method-specific id), so no path, query,
+  // fragment or whitespace. Otherwise `did:key:zK`, `did:key:zK/a` and `did:key:zK?x=1`, which
+  // resolve to the same key, would index as separate identifiers.
+  if (typeof did !== 'string' || !DID_SYNTAX.test(did)) {
+    throw new Error('did_route_subject_invalid');
+  }
+  try {
+    normalizeLookupExternalSubject({ issuer: DID_LOOKUP_ISSUER, subject: did });
+  } catch {
+    throw new Error('did_route_subject_invalid');
+  }
+  return { issuer: DID_LOOKUP_ISSUER, subject: did };
+}
+
 export interface AuthAccountProvisioningServiceBinding {
   provisionAuthAccount(input: AuthAccountProvisioningInput): Promise<AuthAccountProvisioningResult>;
   getAuthAccountProvisioningStatus(
@@ -218,9 +259,7 @@ export interface AuthAccountProvisioningServiceBinding {
   publishAuthDirectoryRoute(
     input: AuthDirectoryRoutePublicationInput
   ): Promise<AuthDirectoryRoutePublicationResult>;
-  removeAuthAnonymousDeviceRoute(
-    input: AuthAnonymousDeviceRouteRemovalInput
-  ): Promise<AuthAnonymousDeviceRouteRemovalResult>;
+  publishAuthDidRoute(input: AuthDidRoutePublicationInput): Promise<AuthDidRoutePublicationResult>;
 }
 
 export interface ExternalIdpAccountProvisioningServiceBinding {

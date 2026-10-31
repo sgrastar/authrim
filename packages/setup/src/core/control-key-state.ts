@@ -133,6 +133,11 @@ function jwkFingerprint(jwk: Ed25519Jwk): string {
     .digest('hex');
 }
 
+/** The Control-published fingerprint of a Lookup HMAC key value; throws for a malformed key. */
+export function lookupHmacKeyFingerprint(value: string): string {
+  return hmacFingerprint(value);
+}
+
 function hmacFingerprint(value: string): string {
   const normalized = value.trim();
   if (

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import AccountRegistrationState from '$lib/components/admin/AccountRegistrationState.svelte';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { SvelteSet } from 'svelte/reactivity';
@@ -381,6 +382,7 @@
 						</th>
 						<th>{$LL.admin_users_email()}</th>
 						<th>{$LL.admin_users_name()}</th>
+						<th>{$LL.admin_registration_label()}</th>
 						<th>{$LL.admin_users_status()}</th>
 						<th>{$LL.admin_users_verified_label()}</th>
 						<th>{$LL.admin_users_created()}</th>
@@ -408,6 +410,7 @@
 							</td>
 							<td>{user.email || '-'}</td>
 							<td>{user.name || '-'}</td>
+							<td><AccountRegistrationState state={user.registration_state} /></td>
 							<td>
 								<span class={getStatusBadgeClass(user.status)}>{formatStatus(user.status)}</span>
 							</td>

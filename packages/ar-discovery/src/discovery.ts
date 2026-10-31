@@ -9,26 +9,37 @@ import type {
 import {
   SUPPORTED_JWE_ALG,
   SUPPORTED_JWE_ENC,
+  REQUEST_OBJECT_ENCRYPTION_ALGS,
+  REQUEST_OBJECT_ENCRYPTION_ENCS,
   ALLOWED_DPOP_ALGS,
   buildRequestIssuerUrl,
   DEFAULT_LOGOUT_CONFIG,
-  LOGOUT_SETTINGS_KEY,
+  resolveLogoutConfig,
   getTenantIdFromContext,
+  resolveEffectiveSettings,
+  resolveCibaConfig,
+  resolveIDTokenSigningPolicy,
+  AAL_ACR_VALUES,
   isNativeSSOEnabled,
   loadTenantProfileCached,
   filterGrantTypesByProfile,
   getLogger,
   // Request-level caching for feature flags (Phase 2)
   getTenantFeatureFlagsCached,
+  readSettingsFlag,
   getFeatureFlagCached,
   // KV caching utilities (Phase 2)
   buildVersionedKey,
   getCacheTTL,
   PREDEFINED_TRANSFORMED_CLAIMS,
-  getTenantSystemSettings,
+  resolveProtocolSettings,
+  type FAPIProtocolSettings,
+  type OIDCProtocolSettings,
   FAPI2_MESSAGE_SIGNING_ALGS,
   CLIENT_ASSERTION_SIGNING_ALGS,
   setBoundedMapEntry,
+  EDUPERSON_ASSURANCE_CLAIM,
+  parseIALAssuranceValues,
 } from '@authrim/ar-lib-core';
 import type { JWK } from 'jose';
 import {
@@ -36,55 +47,8 @@ import {
   type OIDCSigningAlgorithm,
 } from '@authrim/ar-lib-core/utils/oidc-signing';
 
-/**
- * OIDC Configuration interface for discovery metadata
- * Loaded from SETTINGS KV (system_settings.oidc)
- */
-interface OIDCConfig {
-  /** RFC 9101: HTTPS request_uri support */
-  httpsRequestUri?: { enabled: boolean };
-  /** RFC 8693: Token Exchange */
-  tokenExchange?: {
-    enabled: boolean;
-    /** ID-JAG: Identity Assertion Authorization Grant */
-    idJag?: {
-      enabled: boolean;
-      allowedIssuers?: string[];
-    };
-  };
-  /** RFC 6749 Section 4.4: Client Credentials */
-  clientCredentials?: { enabled: boolean };
-  /** RFC 9396: Rich Authorization Requests */
-  rar?: { enabled: boolean };
-  /** AI Ephemeral Auth scopes */
-  aiScopes?: { enabled: boolean };
-  /** RFC 9126: Require PAR */
-  requirePar?: boolean;
-  /** OIDC Core: Supported claims */
-  claimsSupported?: string[];
-  /** Token endpoint auth methods */
-  tokenEndpointAuthMethodsSupported?: string[];
-  /** OAuth/OIDC response types enabled for this tenant profile */
-  responseTypesSupported?: string[];
-  /** Allow 'none' algorithm for request objects */
-  allowNoneAlgorithm?: boolean;
-}
-
-/**
- * FAPI Configuration interface for discovery metadata
- * Loaded from SETTINGS KV (system_settings.fapi)
- */
-interface FAPIConfig {
-  /** FAPI 2.0 Security Profile enabled */
-  enabled?: boolean;
-  messageSigning?: {
-    enabled?: boolean;
-    requireSignedRequestObject?: boolean;
-    requireJarm?: boolean;
-    requestObjectSigningAlgorithms?: string[];
-    authorizationSigningAlgorithms?: OIDCSigningAlgorithm[];
-  };
-}
+/** The prompt values /authorize acts on, with create (listed only while prompt=create is on). */
+const PROMPT_VALUES_WITH_CREATE = ['none', 'login', 'consent', 'create'];
 
 // Cache for metadata to improve performance
 // Key: tenantId:settingsHash, Value: metadata
@@ -138,34 +102,80 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   const publishedSigningAlgorithms = await resolvePublishedSigningAlgorithms(c.env, tenantId, log);
 
   // Load dynamic configuration from SETTINGS KV
-  let oidcConfig: OIDCConfig = {};
-  let fapiConfig: FAPIConfig = {};
+  let oidcConfig: OIDCProtocolSettings = {};
+  let fapiConfig: FAPIProtocolSettings = {};
   let logoutConfig: LogoutConfig = DEFAULT_LOGOUT_CONFIG;
   let currentSettingsJson = '';
+  // Token Exchange and ID-JAG, as the token endpoint reads them (the Settings API for the tenant).
+  let tokenExchangeEnabled = false;
+  let idJagEnabled = false;
+  // The acr values advertised: discovery.acr_values_supported, and with assurance enabled the
+  // values Authrim issues for each AAL (urn:authrim:aal:1..3).
+  let acrValuesSupported: string[] = [];
+  // The eduperson_assurance scope and claim, advertised only while the tenant has assurance
+  // enabled and assurance values set to release.
+  let eduPersonAssuranceSupported = false;
+  // The ID token algorithms: every published one while apps choose their own, else only the
+  // tenant's (oauth.id_token_signing_alg).
+  let idTokenSigningAlgorithms: OIDCSigningAlgorithm[] = publishedSigningAlgorithms;
+  // backchannel_user_code_parameter_supported: the tenant's ciba.user_code_enabled, which is also
+  // what /bc-authorize enforces. Read only where CIBA is advertised at all.
+  let cibaUserCodeSupported = false;
+  // prompt=create (oauth.prompt_create_enabled): listed in prompt_values_supported only while on.
+  let promptCreateSupported = false;
 
   try {
-    const settings = await getTenantSystemSettings(c.env.SETTINGS, tenantId, {
-      failOnError: true,
-    });
-    currentSettingsJson = settings ? JSON.stringify(settings) : '';
-    if (settings) {
-      oidcConfig = settings.oidc || {};
-      fapiConfig = settings.fapi || {};
+    const [tokens, flags, discoverySettings, assurance, idTokenSigning, ciba, oauth] =
+      await Promise.all([
+        resolveEffectiveSettings(c.env, 'tokens', {
+          tenantId,
+        }),
+        resolveEffectiveSettings(c.env, 'feature-flags', {
+          tenantId,
+        }),
+        resolveEffectiveSettings(c.env, 'discovery', { tenantId }),
+        resolveEffectiveSettings(c.env, 'assurance', { tenantId }),
+        resolveIDTokenSigningPolicy(c.env, tenantId),
+        asyncEnabled ? resolveCibaConfig(c.env, tenantId) : null,
+        resolveEffectiveSettings(c.env, 'oauth', { tenantId }),
+      ]);
+    cibaUserCodeSupported = ciba?.userCodeEnabled === true;
+    promptCreateSupported = oauth['oauth.prompt_create_enabled'] === true;
+    if (!idTokenSigning.appsMayChoose) {
+      idTokenSigningAlgorithms = publishedSigningAlgorithms.filter(
+        (algorithm) => algorithm === idTokenSigning.algorithm
+      );
     }
+    const configuredAcrValues = discoverySettings['discovery.acr_values_supported'];
+    acrValuesSupported = [
+      ...new Set([
+        ...(typeof configuredAcrValues === 'string'
+          ? configuredAcrValues
+              .split(',')
+              .map((value) => value.trim())
+              .filter(Boolean)
+          : []),
+        ...(assurance['assurance.enabled'] === true ? AAL_ACR_VALUES : []),
+      ]),
+    ];
+    if (assurance['assurance.enabled'] === true) {
+      eduPersonAssuranceSupported =
+        Object.keys(parseIALAssuranceValues(assurance['assurance.ial_assurance_values'])).length >
+        0;
+    }
+    tokenExchangeEnabled = tokens['tokens.exchange_enabled'] === true;
+    // ID-JAG is a Token Exchange token type: advertised only with Token Exchange.
+    idJagEnabled = tokenExchangeEnabled && flags['feature.enable_id_jag'] === true;
 
-    // Load logout configuration
-    const logoutSettingsJson = await c.env.SETTINGS?.get(LOGOUT_SETTINGS_KEY);
-    if (logoutSettingsJson) {
-      const parsed = JSON.parse(logoutSettingsJson);
-      logoutConfig = {
-        backchannel: { ...DEFAULT_LOGOUT_CONFIG.backchannel, ...(parsed.backchannel || {}) },
-        frontchannel: { ...DEFAULT_LOGOUT_CONFIG.frontchannel, ...(parsed.frontchannel || {}) },
-        session_management: {
-          ...DEFAULT_LOGOUT_CONFIG.session_management,
-          ...(parsed.session_management || {}),
-        },
-      };
-    }
+    const settings = await resolveProtocolSettings(c.env, tenantId, {
+      sections: ['fapi', 'oidc'],
+    });
+    currentSettingsJson = JSON.stringify(settings);
+    oidcConfig = settings.oidc;
+    fapiConfig = settings.fapi;
+
+    // Logout settings, as the logout handler reads them (the Settings API for the tenant).
+    logoutConfig = await resolveLogoutConfig(c.env, tenantId);
   } catch (error) {
     log.error('Failed to load settings from KV', { tenantId }, error as Error);
     return c.json(
@@ -176,18 +186,6 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
       503
     );
   }
-
-  // HTTPS request_uri support status
-  // Check SETTINGS KV first, then fall back to environment variable
-  const httpsRequestUriEnabled =
-    oidcConfig.httpsRequestUri?.enabled ?? c.env.ENABLE_HTTPS_REQUEST_URI === 'true';
-  // request_uri is always supported (PAR), but HTTPS variant depends on config
-  const requestUriSupported = true; // PAR always supported
-
-  // RFC 8693 Token Exchange feature flag
-  // Check SETTINGS KV first, then fall back to environment variable
-  const tokenExchangeEnabled =
-    oidcConfig.tokenExchange?.enabled ?? c.env.ENABLE_TOKEN_EXCHANGE === 'true';
 
   // RFC 6749 Section 4.4 Client Credentials feature flag
   // Check SETTINGS KV first, then fall back to environment variable
@@ -206,26 +204,16 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   // Check SETTINGS KV first, then fall back to environment variable
   const aiScopesEnabled = oidcConfig.aiScopes?.enabled ?? c.env.ENABLE_AI_SCOPES === 'true';
 
-  // ID-JAG (Identity Assertion Authorization Grant) feature flag
-  // draft-ietf-oauth-identity-assertion-authz-grant: Identity chaining via Token Exchange
-  // Check SETTINGS KV first, then fall back to environment variable
-  const idJagEnabled =
-    (tokenExchangeEnabled && oidcConfig.tokenExchange?.idJag?.enabled) ??
-    c.env.ENABLE_ID_JAG === 'true';
-
   // Flow Engine (UI Contract) feature flag (request-level cached)
   // When enabled, server-driven UI flows are available
   // Check Settings Manager KV format first (settings:tenant:<tenantId>:feature-flags)
   // then fall back to legacy flag format (flag:ENABLE_FLOW_ENGINE)
-  let flowEngineEnabled = false;
   const tenantFlags = await getTenantFeatureFlagsCached(c, c.env, tenantId);
-  if (tenantFlags && tenantFlags['feature.enable_flow_engine'] === true) {
-    flowEngineEnabled = true;
-  }
-  // Legacy fallback: check flag:ENABLE_FLOW_ENGINE or env variable (request-level cached)
-  if (!flowEngineEnabled) {
-    flowEngineEnabled = await getFeatureFlagCached(c, 'ENABLE_FLOW_ENGINE', c.env, false);
-  }
+  // An explicit setting wins; the legacy flag (flag:ENABLE_FLOW_ENGINE or env) applies only
+  // when the tenant and platform documents leave it unset (request-level cached).
+  const flowEngineEnabled =
+    readSettingsFlag(tenantFlags as Record<string, unknown> | null, 'feature.enable_flow_engine') ??
+    (await getFeatureFlagCached(c, 'ENABLE_FLOW_ENGINE', c.env, false));
 
   // Load TenantProfile for profile-based grant_types filtering (request-level cached)
   // §16: Human Auth / AI Ephemeral Auth two-layer model
@@ -241,9 +229,16 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   // stale metadata for a different environment or component set.
   const logoutHash = `bc=${logoutConfig.backchannel.enabled}:fc=${logoutConfig.frontchannel.enabled}:sm=${logoutConfig.session_management.enabled}:sm_iframe=${logoutConfig.session_management.check_session_iframe_enabled}`;
   const profileHash = `profile=${tenantProfile.type}`;
-  const signingAlgorithmsHash = `oidc_algs=${publishedSigningAlgorithms.join(',')}`;
-  const settingsHash = `${currentSettingsJson}:issuer=${issuer}:async=${asyncEnabled}:te=${tokenExchangeEnabled}:cc=${clientCredentialsEnabled}:ns=${nativeSSOEnabled}:rar=${rarEnabled}:ai=${aiScopesEnabled}:idjag=${idJagEnabled}:fe=${flowEngineEnabled}:${profileHash}:${logoutHash}:${signingAlgorithmsHash}`;
-  const cacheKey = `${tenantId}:${settingsHash}`;
+  const assuranceClaimsHash = `ea=${eduPersonAssuranceSupported}`;
+  const signingAlgorithmsHash = `oidc_algs=${publishedSigningAlgorithms.join(',')}:id_token_algs=${idTokenSigningAlgorithms.join(',')}`;
+  const settingsHash = `${currentSettingsJson}:acr=${acrValuesSupported.join(',')}:issuer=${issuer}:async=${asyncEnabled}:te=${tokenExchangeEnabled}:cc=${clientCredentialsEnabled}:ns=${nativeSSOEnabled}:rar=${rarEnabled}:ai=${aiScopesEnabled}:idjag=${idJagEnabled}:fe=${flowEngineEnabled}:${profileHash}:${logoutHash}:${signingAlgorithmsHash}:${assuranceClaimsHash}:cuc=${cibaUserCodeSupported}:pc=${promptCreateSupported}`;
+  // A digest of everything the metadata depends on: a fixed-length key, however long the settings
+  // (a KV key is at most 512 bytes).
+  const settingsDigest = Array.from(
+    new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(settingsHash))),
+    (byte) => byte.toString(16).padStart(2, '0')
+  ).join('');
+  const cacheKey = `${tenantId}:${settingsDigest}`;
   const discoveryTTL = await getCacheTTL(c.env, 'discovery');
   const kvCacheKey = buildVersionedKey('discovery', cacheKey);
 
@@ -289,7 +284,9 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
         publishedSigningAlgorithms.includes(algorithm)
       )
     : publishedSigningAlgorithms;
-  const responseTypesSupported = oidcConfig.responseTypesSupported || [
+  const responseTypesSupported = (Array.isArray(oidcConfig.responseTypesSupported)
+    ? (oidcConfig.responseTypesSupported as string[])
+    : null) || [
     'code',
     'id_token',
     'id_token token',
@@ -332,7 +329,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
             'ES256',
             'PS256',
           ],
-          backchannel_user_code_parameter_supported: true,
+          backchannel_user_code_parameter_supported: cibaUserCodeSupported,
           tls_client_certificate_bound_access_tokens: true,
         }
       : {}),
@@ -357,18 +354,23 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
       tenantProfile,
       { tokenExchangeEnabled, clientCredentialsEnabled }
     ),
-    id_token_signing_alg_values_supported: publishedSigningAlgorithms,
+    id_token_signing_alg_values_supported: idTokenSigningAlgorithms,
     // OIDC Core 8: Both public and pairwise subject identifiers are supported
     subject_types_supported: ['public', 'pairwise'],
     // Dynamic scopes based on AI Ephemeral Auth configuration
     scopes_supported: [
       'openid',
+      'account:lifecycle:read',
       'profile',
       'email',
       'address',
       'phone',
+      // OIDC Core 11: refresh tokens for OpenID Connect grants come with offline_access
+      'offline_access',
       // Include AI scopes when enabled
       ...(aiScopesEnabled ? ['ai:read', 'ai:write', 'ai:execute', 'ai:admin'] : []),
+      // REFEDS assurance values of the person's IAL (assurance enabled and values configured)
+      ...(eduPersonAssuranceSupported ? [EDUPERSON_ASSURANCE_CLAIM] : []),
     ],
     // RFC 9396: RAR authorization_details_types_supported (when enabled)
     ...(rarEnabled
@@ -382,6 +384,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
       : {}),
     // Dynamic claims based on OIDC config
     claims_supported: oidcConfig.claimsSupported || [
+      'authrim_account_lifecycle',
       // Standard claims (always present)
       'sub',
       'iss',
@@ -436,15 +439,18 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     dpop_signing_alg_values_supported: [...ALLOWED_DPOP_ALGS],
     // RFC 9101 (JAR): Request Object support
     request_parameter_supported: true,
+    // Always true: a PAR request_uri is always accepted. HTTPS request_uri (fetched request objects)
+    // is separately gated by oidc.httpsRequestUri and is not advertised.
     request_uri_parameter_supported: true,
     request_object_signing_alg_values_supported: requestObjectSigningAlgorithms,
-    request_object_encryption_alg_values_supported: [...SUPPORTED_JWE_ALG],
-    request_object_encryption_enc_values_supported: [...SUPPORTED_JWE_ENC],
+    // Encrypted to the tenant's request object encryption key (use enc in its JWKS, RSA).
+    request_object_encryption_alg_values_supported: [...REQUEST_OBJECT_ENCRYPTION_ALGS],
+    request_object_encryption_enc_values_supported: [...REQUEST_OBJECT_ENCRYPTION_ENCS],
     // JARM (JWT-Secured Authorization Response Mode) support
-    response_modes_supported:
-      messageSigningEnabled && fapiConfig.messageSigning?.requireJarm
-        ? ['query.jwt', 'fragment.jwt', 'form_post.jwt', 'jwt']
-        : ['query', 'fragment', 'form_post', 'query.jwt', 'fragment.jwt', 'form_post.jwt', 'jwt'],
+    // Authorization requires a JARM response mode whenever requireJarm is set.
+    response_modes_supported: fapiConfig.messageSigning?.requireJarm
+      ? ['query.jwt', 'fragment.jwt', 'form_post.jwt', 'jwt']
+      : ['query', 'fragment', 'form_post', 'query.jwt', 'fragment.jwt', 'form_post.jwt', 'jwt'],
     authorization_signing_alg_values_supported: authorizationSigningAlgorithms,
     authorization_encryption_alg_values_supported: [...SUPPORTED_JWE_ALG],
     authorization_encryption_enc_values_supported: [...SUPPORTED_JWE_ENC],
@@ -472,8 +478,11 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     transformed_claims_predefined: PREDEFINED_TRANSFORMED_CLAIMS,
     transformed_claims_max_depth: 2,
     transformed_claims_max_count: 0,
+    // OIDC Initiating User Registration (prompt=create): once create is supported, the values the
+    // authorization endpoint acts on are listed with it. Absent while the tenant has it off.
+    ...(promptCreateSupported ? { prompt_values_supported: PROMPT_VALUES_WITH_CREATE } : {}),
     // ACR (Authentication Context Class Reference) support
-    acr_values_supported: ['urn:mace:incommon:iap:silver', 'urn:mace:incommon:iap:bronze'],
+    ...(acrValuesSupported.length > 0 ? { acr_values_supported: acrValuesSupported } : {}),
     // OIDC Discovery: Recommended metadata fields
     service_documentation: `${issuer}/docs`,
     ui_locales_supported: ['en', 'ja'],
@@ -522,6 +531,13 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
         }
       : {}),
   };
+
+  // The claim the assurance values make Authrim return, added to whichever list is advertised.
+  if (eduPersonAssuranceSupported) {
+    metadata.claims_supported = [
+      ...new Set([...metadata.claims_supported, EDUPERSON_ASSURANCE_CLAIM]),
+    ];
+  }
 
   // Update in-memory cache (with size limit to prevent memory issues)
   setBoundedMapEntry(metadataCache, cacheKey, metadata, MAX_METADATA_CACHE_ENTRIES);

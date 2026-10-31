@@ -109,7 +109,7 @@ function selectVerificationKey(keys: JWK[], kid: string, algorithm: string): JWK
       (key.key_ops === undefined || key.key_ops.includes('verify')) &&
       (key.alg === undefined || key.alg === algorithm)
   );
-  return matchingKeys.length === 1 ? matchingKeys[0]! : null;
+  return matchingKeys.length === 1 ? matchingKeys[0] : null;
 }
 
 export interface VerifyExternalIdJagSubjectTokenOptions {

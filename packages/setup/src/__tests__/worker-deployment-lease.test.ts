@@ -146,6 +146,41 @@ describe('setup Worker deployment lease coordinator', () => {
     ).toEqual({ status: 'blocked', last_error_code: 'deployment_failed' });
   });
 
+  it('reports a takeover on release instead of failing, but fails if its own row remains', async () => {
+    const first = coordinator('op_setup_deploy_release_first');
+    const firstLease = await first.acquire({
+      workerScriptName: 'test-ar-lib-core',
+      expectedSourceVersionId: 'version-one',
+    });
+    // A stale token leaves our own (renewed) row behind: the release genuinely failed.
+    const renewed = await first.renew(firstLease);
+    await expect(first.release(firstLease)).rejects.toThrow(
+      'worker_deployment_lease_release_failed'
+    );
+    await expect(first.release(renewed)).resolves.toBe('released');
+
+    // Our hold expired and another operation took the lease: nothing of ours is left to release.
+    const third = coordinator('op_setup_deploy_release_third');
+    const thirdLease = await third.acquire({
+      workerScriptName: 'test-ar-token',
+      expectedSourceVersionId: 'version-one',
+    });
+    now = 161;
+    const taker = coordinator('op_setup_deploy_release_taker');
+    await taker.acquire({
+      workerScriptName: 'test-ar-token',
+      expectedSourceVersionId: 'version-one',
+    });
+    await expect(third.release(thirdLease)).resolves.toBe('taken_over');
+    expect(
+      database
+        .prepare(
+          'SELECT owner_operation_id FROM control_worker_deployment_leases WHERE worker_script_name = ?'
+        )
+        .get('test-ar-token')
+    ).toEqual({ owner_operation_id: taker.operationId });
+  });
+
   it('takes over an unmutated lease after its setup operation is blocked', async () => {
     const failed = coordinator('op_setup_deploy_failed_preflight');
     const successor = coordinator('op_setup_deploy_successor');

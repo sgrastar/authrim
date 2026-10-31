@@ -12,21 +12,29 @@
  */
 
 import type { DatabaseAdapter } from '../db';
+import type { Env } from '../types/env';
+import { readSamlDrConsentIpSalt } from '../services/tenant-portability/saml-dr-runtime-settings';
 import type {
   ConsentStatement,
   ConsentStatementVersion,
   ConsentStatementLocalization,
-  ConsentStatementUserRecord,
   TenantConsentRequirement,
   ClientConsentOverride,
   ConditionalConsentRule,
   ConsentScreenItem,
   ConsentEvidence,
   ResolvedConsentRequirement,
-  ConsentItemHistoryRecord,
   ConsentEnforcement,
-  ConsentRecordStatus,
 } from '../types/consent-statements';
+import { listUserStatementConsentRecords } from '../services/statement-consent-records';
+import type { StatementConsentStores } from '../services/statement-consent-stores';
+import {
+  readStatementConsentRecord,
+  readStatementConsentDefinition,
+  writeStatementConsentDecision,
+  type StatementConsentWriteOptions,
+} from '../services/statement-consent-writes';
+import { enqueueStatementConsentProjection } from '../services/statement-consent-generations';
 import { CanonicalRuntimeUserStore } from '../repositories/identity/canonical-runtime-user-store';
 
 export interface ResolvedClientTrustPolicy {
@@ -58,6 +66,7 @@ export interface ConsentDecisionTarget {
   version_id: string;
   version: string;
   withdrawal_allowed?: boolean;
+  content_hash?: string | null;
 }
 
 // =============================================================================
@@ -189,6 +198,13 @@ export function evaluateConditionalRules(
 // =============================================================================
 
 /**
+ * Flag columns are INTEGER in D1 and BIGINT in PostgreSQL, where node-postgres returns BIGINT as
+ * a string. A required statement read as "0" would silently stop being asked for, so every flag
+ * read goes through here.
+ */
+const isOn = (value: unknown): boolean => value === true || Number(value) === 1;
+
+/**
  * Get all active consent statements for a tenant
  */
 export async function getActiveConsentStatements(
@@ -225,13 +241,18 @@ export async function getActiveConsentStatements(
   return rows.map((r) => ({
     ...r,
     processing_purpose: r.processing_purpose ?? undefined,
-    is_active: r.is_active === 1,
-    record_retention_days: r.record_retention_days ?? undefined,
-    withdrawal_allowed: r.withdrawal_allowed == null ? true : r.withdrawal_allowed === 1,
+    display_order: Number(r.display_order),
+    is_active: isOn(r.is_active),
+    record_retention_days:
+      r.record_retention_days == null ? undefined : Number(r.record_retention_days),
+    withdrawal_allowed: r.withdrawal_allowed == null ? true : isOn(r.withdrawal_allowed),
     withdrawal_impact: r.withdrawal_impact ?? undefined,
     reconsent_on_version_change:
-      r.reconsent_on_version_change == null ? true : r.reconsent_on_version_change === 1,
-    reconsent_interval_days: r.reconsent_interval_days ?? undefined,
+      r.reconsent_on_version_change == null ? true : isOn(r.reconsent_on_version_change),
+    reconsent_interval_days:
+      r.reconsent_interval_days == null ? undefined : Number(r.reconsent_interval_days),
+    created_at: Number(r.created_at),
+    updated_at: Number(r.updated_at),
     category: r.category as ConsentStatement['category'],
     legal_basis: r.legal_basis as ConsentStatement['legal_basis'],
   }));
@@ -271,47 +292,11 @@ async function getCurrentVersion(
   return {
     ...r,
     content_hash: r.content_hash ?? undefined,
-    effective_until: r.effective_until ?? null,
-    is_current: r.is_current === 1,
-    content_type: r.content_type as ConsentStatementVersion['content_type'],
-    status: r.status as ConsentStatementVersion['status'],
-  };
-}
-
-async function getVersionById(
-  adapter: DatabaseAdapter,
-  tenantId: string,
-  statementId: string,
-  versionId: string
-): Promise<ConsentStatementVersion | null> {
-  const rows = await adapter.query<{
-    id: string;
-    tenant_id: string;
-    statement_id: string;
-    version: string;
-    content_type: string;
-    effective_at: number;
-    effective_until: number | null;
-    content_hash: string | null;
-    is_current: number;
-    status: string;
-    created_at: number;
-    updated_at: number;
-  }>(
-    `SELECT id, tenant_id, statement_id, version, content_type, effective_at, effective_until,
-            content_hash, is_current, status, created_at, updated_at
-     FROM consent_statement_versions
-     WHERE tenant_id = ? AND statement_id = ? AND id = ?`,
-    [tenantId, statementId, versionId]
-  );
-
-  if (rows.length === 0) return null;
-  const r = rows[0];
-  return {
-    ...r,
-    content_hash: r.content_hash ?? undefined,
-    effective_until: r.effective_until ?? null,
-    is_current: r.is_current === 1,
+    effective_at: Number(r.effective_at),
+    effective_until: r.effective_until == null ? null : Number(r.effective_until),
+    created_at: Number(r.created_at),
+    updated_at: Number(r.updated_at),
+    is_current: isOn(r.is_current),
     content_type: r.content_type as ConsentStatementVersion['content_type'],
     status: r.status as ConsentStatementVersion['status'],
   };
@@ -371,6 +356,8 @@ export async function getLocalization(
         withdrawal_impact: match.withdrawal_impact ?? undefined,
         document_url: match.document_url ?? undefined,
         inline_content: match.inline_content ?? undefined,
+        created_at: Number(match.created_at),
+        updated_at: Number(match.updated_at),
       };
     }
   }
@@ -383,6 +370,8 @@ export async function getLocalization(
     withdrawal_impact: first.withdrawal_impact ?? undefined,
     document_url: first.document_url ?? undefined,
     inline_content: first.inline_content ?? undefined,
+    created_at: Number(first.created_at),
+    updated_at: Number(first.updated_at),
   };
 }
 
@@ -418,17 +407,17 @@ async function getTenantRequirements(
     id: r.id,
     tenant_id: r.tenant_id,
     statement_id: r.statement_id,
-    is_required: r.is_required === 1,
+    is_required: isOn(r.is_required),
     min_version: r.min_version ?? undefined,
     enforcement: r.enforcement as ConsentEnforcement,
-    show_deletion_link: r.show_deletion_link === 1,
+    show_deletion_link: isOn(r.show_deletion_link),
     deletion_url: r.deletion_url ?? undefined,
     conditional_rules: r.conditional_rules_json
       ? (JSON.parse(r.conditional_rules_json) as ConditionalConsentRule[])
       : [],
-    display_order: r.display_order,
-    created_at: r.created_at,
-    updated_at: r.updated_at,
+    display_order: Number(r.display_order),
+    created_at: Number(r.created_at),
+    updated_at: Number(r.updated_at),
   }));
 }
 
@@ -481,7 +470,7 @@ async function getClientOverrides(
     checkbox_default_checked:
       r.checkbox_default_checked === null || r.checkbox_default_checked === undefined
         ? undefined
-        : r.checkbox_default_checked === 1,
+        : isOn(r.checkbox_default_checked),
     binding_type:
       r.binding_type === 'subject' ||
       r.binding_type === 'scope' ||
@@ -493,9 +482,9 @@ async function getClientOverrides(
     binding_value: r.binding_value ?? undefined,
     evidence_profile: r.evidence_profile ?? undefined,
     language_fallback: r.language_fallback ?? undefined,
-    display_order: r.display_order ?? undefined,
-    created_at: r.created_at,
-    updated_at: r.updated_at,
+    display_order: r.display_order == null ? undefined : Number(r.display_order),
+    created_at: Number(r.created_at),
+    updated_at: Number(r.updated_at),
   }));
 }
 
@@ -588,9 +577,9 @@ export async function resolveClientTrustPolicy(
     const rows = await adapter.query<{
       target_type: string;
       target_id: string;
-      first_party: number;
-      trusted: number;
-      skip_authorization_consent: number;
+      first_party: number | string;
+      trusted: number | string;
+      skip_authorization_consent: number | string;
     }>(
       `SELECT target_type, target_id, first_party, trusted, skip_authorization_consent
          FROM client_trust_policies
@@ -607,9 +596,10 @@ export async function resolveClientTrustPolicy(
     return {
       target_type: row.target_type as ResolvedClientTrustPolicy['target_type'],
       target_id: row.target_id,
-      first_party: row.first_party === 1,
-      trusted: row.trusted === 1,
-      skip_authorization_consent: row.skip_authorization_consent === 1,
+      first_party: row.first_party === 1 || row.first_party === '1',
+      trusted: row.trusted === 1 || row.trusted === '1',
+      skip_authorization_consent:
+        row.skip_authorization_consent === 1 || row.skip_authorization_consent === '1',
     };
   } catch {
     return null;
@@ -774,54 +764,6 @@ export async function resolveConsentRequirements(
 // =============================================================================
 
 /**
- * Get user's consent records for a tenant
- */
-async function getUserConsentRecords(
-  adapter: DatabaseAdapter,
-  tenantId: string,
-  userId: string
-): Promise<ConsentStatementUserRecord[]> {
-  const rows = await adapter.query<{
-    id: string;
-    tenant_id: string;
-    user_id: string;
-    statement_id: string;
-    version_id: string;
-    version: string;
-    status: string;
-    granted_at: number | null;
-    withdrawn_at: number | null;
-    expires_at: number | null;
-    retain_until: number | null;
-    consent_settings_snapshot_at: number | null;
-    record_retention_days_snapshot: number | null;
-    reconsent_interval_days_snapshot: number | null;
-    client_id: string | null;
-    ip_address_hash: string | null;
-    user_agent: string | null;
-    receipt_id: string | null;
-    created_at: number;
-    updated_at: number;
-  }>(`SELECT * FROM user_consent_records WHERE tenant_id = ? AND user_id = ?`, [tenantId, userId]);
-
-  return rows.map((r) => ({
-    ...r,
-    status: r.status as ConsentRecordStatus,
-    granted_at: r.granted_at ?? undefined,
-    withdrawn_at: r.withdrawn_at ?? undefined,
-    expires_at: r.expires_at ?? undefined,
-    retain_until: r.retain_until ?? undefined,
-    consent_settings_snapshot_at: r.consent_settings_snapshot_at ?? undefined,
-    record_retention_days_snapshot: r.record_retention_days_snapshot ?? undefined,
-    reconsent_interval_days_snapshot: r.reconsent_interval_days_snapshot ?? undefined,
-    client_id: r.client_id ?? undefined,
-    ip_address_hash: r.ip_address_hash ?? undefined,
-    user_agent: r.user_agent ?? undefined,
-    receipt_id: r.receipt_id ?? undefined,
-  }));
-}
-
-/**
  * Check if a user satisfies all consent requirements.
  * Returns the list of unsatisfied requirement statement IDs.
  */
@@ -833,7 +775,7 @@ export async function checkUserConsentSatisfaction(
 ): Promise<{ satisfied: boolean; unsatisfied: string[] }> {
   if (requirements.length === 0) return { satisfied: true, unsatisfied: [] };
 
-  const records = await getUserConsentRecords(adapter, tenantId, userId);
+  const records = await listUserStatementConsentRecords(adapter, tenantId, userId);
   const unsatisfied: string[] = [];
 
   for (const req of requirements) {
@@ -880,24 +822,42 @@ export async function checkUserConsentSatisfaction(
 // =============================================================================
 
 /**
- * Build consent items for the consent screen display
+ * The subject's consent records could not be read from the account database.
+ *
+ * A required statement cannot be treated as "not agreed yet" (the screen would ask again and
+ * overwrite what was recorded) or as "nothing to ask" (a required agreement would be skipped), and
+ * the definitions are never a substitute for the records. Callers answer with an error.
+ */
+export class StatementConsentAccountReadError extends Error {
+  constructor(cause: unknown) {
+    super('statement_consent_account_read_failed', { cause });
+    this.name = 'StatementConsentAccountReadError';
+  }
+}
+
+/**
+ * Build consent items for the consent screen display.
+ *
+ * Definitions (statements, versions, localizations, requirements, overrides) are read from the
+ * metadata database; the subject's profile claims and consent records from the account database.
+ * The two are joined here, never in SQL.
  */
 export async function getConsentItemsForScreen(
-  adapter: DatabaseAdapter,
+  stores: StatementConsentStores,
   tenantId: string,
   clientId: string | null,
   userId: string,
   language: string,
   tenantDefaultLanguage: string = 'en',
   context: ConsentRequirementResolutionContext = {},
-  piiAdapter: DatabaseAdapter = adapter
+  piiAdapter: DatabaseAdapter = stores.account
 ): Promise<ConsentScreenItem[]> {
   // Get user claims for conditional rule evaluation
-  const userClaims = await getUserClaimsForRules(adapter, tenantId, userId, piiAdapter);
+  const userClaims = await getUserClaimsForRules(stores.account, tenantId, userId, piiAdapter);
 
   // Resolve requirements
   const requirements = await resolveConsentRequirements(
-    adapter,
+    stores.metadata,
     tenantId,
     clientId,
     userClaims,
@@ -906,14 +866,18 @@ export async function getConsentItemsForScreen(
   if (requirements.length === 0) return [];
 
   // Get user's existing consent records
-  const records = await getUserConsentRecords(adapter, tenantId, userId);
+  const records = await listUserStatementConsentRecords(stores.account, tenantId, userId).catch(
+    (error: unknown) => {
+      throw new StatementConsentAccountReadError(error);
+    }
+  );
 
   const items: ConsentScreenItem[] = [];
 
   for (const req of requirements) {
     // Get localization
     const localization = await getLocalization(
-      adapter,
+      stores.metadata,
       tenantId,
       req.current_version.id,
       language,
@@ -949,6 +913,7 @@ export async function getConsentItemsForScreen(
       inline_content: localization?.inline_content,
       version: req.current_version.version,
       version_id: req.current_version.id,
+      content_hash: req.current_version.content_hash ?? null,
       is_required: req.is_required,
       enforcement: req.enforcement,
       current_status: currentStatus,
@@ -1025,455 +990,54 @@ export async function getUserClaimsForRules(
 // Consent Decision Processing (D3, D9, D10)
 // =============================================================================
 
-interface ConsentAuditSnapshot {
-  recordRetentionDays: number | null;
-  reconsentIntervalDays: number | null;
-  snapshotAt: number;
-  expiresAt: number | null;
-  retainUntil: number | null;
-}
-
-async function getConsentAuditSnapshot(
-  adapter: DatabaseAdapter,
-  tenantId: string,
-  statementId: string,
-  at: number
-): Promise<ConsentAuditSnapshot> {
-  const rows = await adapter.query<{
-    record_retention_days: number | null;
-    reconsent_interval_days: number | null;
-  }>(
-    `SELECT record_retention_days, reconsent_interval_days
-       FROM consent_statements
-      WHERE tenant_id = ? AND id = ?`,
-    [tenantId, statementId]
-  );
-  const statement = rows[0];
-  const recordRetentionDays =
-    statement?.record_retention_days !== undefined && statement.record_retention_days !== null
-      ? Number(statement.record_retention_days)
-      : null;
-  const reconsentIntervalDays =
-    statement?.reconsent_interval_days !== undefined && statement.reconsent_interval_days !== null
-      ? Number(statement.reconsent_interval_days)
-      : null;
-  const dayMs = 24 * 60 * 60 * 1000;
-
-  return {
-    recordRetentionDays,
-    reconsentIntervalDays,
-    snapshotAt: at,
-    expiresAt:
-      reconsentIntervalDays !== null && reconsentIntervalDays > 0
-        ? at + reconsentIntervalDays * dayMs
-        : null,
-    retainUntil:
-      recordRetentionDays !== null && recordRetentionDays >= 0
-        ? at + recordRetentionDays * dayMs
-        : null,
-  };
-}
-
-async function updatePriorConsentHistoryRetention(
-  adapter: DatabaseAdapter,
-  tenantId: string,
-  userId: string,
-  statementId: string,
-  snapshot: ConsentAuditSnapshot
-): Promise<void> {
-  await adapter.execute(
-    `UPDATE consent_item_history
-        SET retain_until = ?,
-            consent_settings_snapshot_at = ?,
-            record_retention_days_snapshot = ?,
-            reconsent_interval_days_snapshot = ?
-      WHERE tenant_id = ?
-        AND user_id = ?
-        AND statement_id = ?
-        AND (retain_until IS NULL OR retain_until < ?)`,
-    [
-      snapshot.retainUntil,
-      snapshot.snapshotAt,
-      snapshot.recordRetentionDays,
-      snapshot.reconsentIntervalDays,
-      tenantId,
-      userId,
-      statementId,
-      snapshot.retainUntil,
-    ]
-  );
-}
-
-/**
- * Process user's consent item decisions.
- * Handles granted/denied/withdrawn transitions with idempotency (D9).
- */
+/** Process each key through its account-local atomic transition. */
 export async function processConsentItemDecisions(
-  adapter: DatabaseAdapter,
+  stores: StatementConsentStores,
   tenantId: string,
   userId: string,
   decisions: Record<string, 'granted' | 'denied'>,
   evidence: ConsentEvidence,
   ipHash?: string,
-  targets: Record<string, ConsentDecisionTarget> = {}
+  targets: Record<string, ConsentDecisionTarget> = {},
+  options: StatementConsentWriteOptions = {}
 ): Promise<void> {
-  const now = Date.now();
-
-  // Get existing records
-  const existingRecords = await getUserConsentRecords(adapter, tenantId, userId);
-  const existingMap = new Map(existingRecords.map((r) => [r.statement_id, r]));
-
   for (const [statementId, decision] of Object.entries(decisions)) {
-    const existing = existingMap.get(statementId);
-
     const target = targets[statementId];
-    const currentVersion = target
-      ? ({
-          id: target.version_id,
-          version: target.version,
-        } as ConsentStatementVersion)
-      : await getCurrentVersion(adapter, tenantId, statementId);
-    if (!currentVersion) continue; // No active version — skip
-    const auditSnapshot = await getConsentAuditSnapshot(adapter, tenantId, statementId, now);
-
-    if (decision === 'granted') {
-      if (existing) {
-        // Check for idempotency (D9): same version, already granted
-        if (existing.status === 'granted' && existing.version === currentVersion.version) {
-          continue; // No change needed
-        }
-
-        // Determine action type
-        const isVersionUpgrade =
-          existing.status === 'granted' && existing.version < currentVersion.version;
-        const action = isVersionUpgrade ? 'version_upgraded' : 'granted';
-
-        // Update existing record
-        await adapter.execute(
-          `UPDATE user_consent_records
-           SET version_id = ?, version = ?, status = 'granted',
-               granted_at = ?, client_id = ?, ip_address_hash = ?,
-               user_agent = ?, expires_at = ?, retain_until = ?,
-               consent_settings_snapshot_at = ?, record_retention_days_snapshot = ?,
-               reconsent_interval_days_snapshot = ?,
-               updated_at = ?
-           WHERE tenant_id = ? AND user_id = ? AND statement_id = ?`,
-          [
-            currentVersion.id,
-            currentVersion.version,
-            now,
-            evidence.client_id ?? null,
-            ipHash ?? null,
-            evidence.user_agent ?? null,
-            auditSnapshot.expiresAt,
-            auditSnapshot.retainUntil,
-            auditSnapshot.snapshotAt,
-            auditSnapshot.recordRetentionDays,
-            auditSnapshot.reconsentIntervalDays,
-            now,
-            tenantId,
-            userId,
-            statementId,
-          ]
-        );
-
-        // Record history
-        await insertConsentItemHistory(adapter, {
-          tenantId,
-          userId,
-          statementId,
-          action,
-          versionIdBefore: existing.version_id,
-          versionIdAfter: currentVersion.id,
-          versionBefore: existing.version,
-          versionAfter: currentVersion.version,
-          statusBefore: existing.status,
-          statusAfter: 'granted',
-          grantedAt: now,
-          expiresAt: auditSnapshot.expiresAt,
-          retainUntil: auditSnapshot.retainUntil,
-          consentSettingsSnapshotAt: auditSnapshot.snapshotAt,
-          recordRetentionDaysSnapshot: auditSnapshot.recordRetentionDays,
-          reconsentIntervalDaysSnapshot: auditSnapshot.reconsentIntervalDays,
-          ipHash,
-          userAgent: evidence.user_agent,
-          clientId: evidence.client_id,
-        });
-      } else {
-        // New record — INSERT
-        const recordId = crypto.randomUUID();
-        await adapter.execute(
-          `INSERT INTO user_consent_records
-           (id, tenant_id, user_id, statement_id, version_id, version, status,
-            granted_at, expires_at, retain_until, record_retention_days_snapshot,
-            reconsent_interval_days_snapshot, consent_settings_snapshot_at, client_id,
-            ip_address_hash, user_agent, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, 'granted', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            recordId,
-            tenantId,
-            userId,
-            statementId,
-            currentVersion.id,
-            currentVersion.version,
-            now,
-            auditSnapshot.expiresAt,
-            auditSnapshot.retainUntil,
-            auditSnapshot.recordRetentionDays,
-            auditSnapshot.reconsentIntervalDays,
-            auditSnapshot.snapshotAt,
-            evidence.client_id ?? null,
-            ipHash ?? null,
-            evidence.user_agent ?? null,
-            now,
-            now,
-          ]
-        );
-
-        await insertConsentItemHistory(adapter, {
-          tenantId,
-          userId,
-          statementId,
-          action: 'granted',
-          versionIdAfter: currentVersion.id,
-          versionAfter: currentVersion.version,
-          statusAfter: 'granted',
-          grantedAt: now,
-          expiresAt: auditSnapshot.expiresAt,
-          retainUntil: auditSnapshot.retainUntil,
-          consentSettingsSnapshotAt: auditSnapshot.snapshotAt,
-          recordRetentionDaysSnapshot: auditSnapshot.recordRetentionDays,
-          reconsentIntervalDaysSnapshot: auditSnapshot.reconsentIntervalDays,
-          ipHash,
-          userAgent: evidence.user_agent,
-          clientId: evidence.client_id,
-        });
-      }
-    } else if (decision === 'denied') {
-      if (existing) {
-        // If already granted → this is a withdrawal (D3)
-        if (existing.status === 'granted') {
-          if (target?.withdrawal_allowed === false) {
-            continue;
-          }
-          await adapter.execute(
-            `UPDATE user_consent_records
-             SET status = 'withdrawn', withdrawn_at = ?, ip_address_hash = ?,
-                 user_agent = ?, retain_until = ?, record_retention_days_snapshot = ?,
-                 reconsent_interval_days_snapshot = ?, consent_settings_snapshot_at = ?,
-                 updated_at = ?
-             WHERE tenant_id = ? AND user_id = ? AND statement_id = ?`,
-            [
-              now,
-              ipHash ?? null,
-              evidence.user_agent ?? null,
-              auditSnapshot.retainUntil,
-              auditSnapshot.recordRetentionDays,
-              auditSnapshot.reconsentIntervalDays,
-              auditSnapshot.snapshotAt,
-              now,
-              tenantId,
-              userId,
-              statementId,
-            ]
-          );
-          await updatePriorConsentHistoryRetention(
-            adapter,
-            tenantId,
-            userId,
-            statementId,
-            auditSnapshot
-          );
-
-          await insertConsentItemHistory(adapter, {
-            tenantId,
-            userId,
-            statementId,
-            action: 'withdrawn',
-            versionIdBefore: existing.version_id,
-            versionIdAfter: existing.version_id,
-            versionBefore: existing.version,
-            versionAfter: existing.version,
-            statusBefore: 'granted',
-            statusAfter: 'withdrawn',
-            withdrawnAt: now,
-            expiresAt: existing.expires_at,
-            retainUntil: auditSnapshot.retainUntil,
-            consentSettingsSnapshotAt: auditSnapshot.snapshotAt,
-            recordRetentionDaysSnapshot: auditSnapshot.recordRetentionDays,
-            reconsentIntervalDaysSnapshot: auditSnapshot.reconsentIntervalDays,
-            ipHash,
-            userAgent: evidence.user_agent,
-            clientId: evidence.client_id,
-          });
-        } else if (existing.status !== 'denied') {
-          // Update to denied (from expired or other non-granted state)
-          await adapter.execute(
-            `UPDATE user_consent_records
-             SET status = 'denied', ip_address_hash = ?,
-                 user_agent = ?, expires_at = NULL, retain_until = ?,
-                 record_retention_days_snapshot = ?, reconsent_interval_days_snapshot = ?,
-                 consent_settings_snapshot_at = ?,
-                 updated_at = ?
-             WHERE tenant_id = ? AND user_id = ? AND statement_id = ?`,
-            [
-              ipHash ?? null,
-              evidence.user_agent ?? null,
-              auditSnapshot.retainUntil,
-              auditSnapshot.recordRetentionDays,
-              auditSnapshot.reconsentIntervalDays,
-              auditSnapshot.snapshotAt,
-              now,
-              tenantId,
-              userId,
-              statementId,
-            ]
-          );
-          await updatePriorConsentHistoryRetention(
-            adapter,
-            tenantId,
-            userId,
-            statementId,
-            auditSnapshot
-          );
-
-          await insertConsentItemHistory(adapter, {
-            tenantId,
-            userId,
-            statementId,
-            action: 'denied',
-            versionIdBefore: existing.version_id,
-            versionIdAfter: currentVersion.id,
-            versionBefore: existing.version,
-            versionAfter: currentVersion.version,
-            statusBefore: existing.status,
-            statusAfter: 'denied',
-            retainUntil: auditSnapshot.retainUntil,
-            consentSettingsSnapshotAt: auditSnapshot.snapshotAt,
-            recordRetentionDaysSnapshot: auditSnapshot.recordRetentionDays,
-            reconsentIntervalDaysSnapshot: auditSnapshot.reconsentIntervalDays,
-            ipHash,
-            userAgent: evidence.user_agent,
-            clientId: evidence.client_id,
-          });
-        }
-        // Already denied → no change (idempotent)
-      } else {
-        // New denied record (D10)
-        const recordId = crypto.randomUUID();
-        await adapter.execute(
-          `INSERT INTO user_consent_records
-           (id, tenant_id, user_id, statement_id, version_id, version, status,
-            expires_at, retain_until, record_retention_days_snapshot,
-            reconsent_interval_days_snapshot, consent_settings_snapshot_at, client_id,
-            ip_address_hash, user_agent, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, 'denied', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            recordId,
-            tenantId,
-            userId,
-            statementId,
-            currentVersion.id,
-            currentVersion.version,
-            auditSnapshot.retainUntil,
-            auditSnapshot.recordRetentionDays,
-            auditSnapshot.reconsentIntervalDays,
-            auditSnapshot.snapshotAt,
-            evidence.client_id ?? null,
-            ipHash ?? null,
-            evidence.user_agent ?? null,
-            now,
-            now,
-          ]
-        );
-
-        await insertConsentItemHistory(adapter, {
-          tenantId,
-          userId,
-          statementId,
-          action: 'denied',
-          versionIdAfter: currentVersion.id,
-          versionAfter: currentVersion.version,
-          statusAfter: 'denied',
-          retainUntil: auditSnapshot.retainUntil,
-          consentSettingsSnapshotAt: auditSnapshot.snapshotAt,
-          recordRetentionDaysSnapshot: auditSnapshot.recordRetentionDays,
-          reconsentIntervalDaysSnapshot: auditSnapshot.reconsentIntervalDays,
-          ipHash,
-          userAgent: evidence.user_agent,
-          clientId: evidence.client_id,
-        });
-      }
+    const definition = await readStatementConsentDefinition(
+      stores.metadata,
+      tenantId,
+      statementId,
+      target?.version_id
+    );
+    if (!definition) {
+      if (target) throw new Error('document_changed');
+      continue;
     }
+    if (
+      target &&
+      (target.version !== definition.version ||
+        (Object.hasOwn(target, 'content_hash') && target.content_hash !== definition.content_hash))
+    )
+      throw new Error('document_changed');
+    if (
+      decision === 'granted' &&
+      (definition.is_active !== 1 || definition.version_status !== 'active')
+    )
+      throw new Error('document_changed');
+    const before = await readStatementConsentRecord(stores.account, tenantId, userId, statementId);
+    await writeStatementConsentDecision(
+      stores,
+      tenantId,
+      userId,
+      statementId,
+      decision,
+      definition,
+      before,
+      evidence,
+      ipHash,
+      options
+    );
   }
-}
-
-// =============================================================================
-// History Helper
-// =============================================================================
-
-async function insertConsentItemHistory(
-  adapter: DatabaseAdapter,
-  params: {
-    tenantId: string;
-    userId: string;
-    statementId: string;
-    action: string;
-    versionIdBefore?: string;
-    versionIdAfter?: string;
-    versionBefore?: string;
-    versionAfter?: string;
-    statusBefore?: string;
-    statusAfter?: string;
-    grantedAt?: number;
-    withdrawnAt?: number;
-    expiresAt?: number | null;
-    retainUntil?: number | null;
-    consentSettingsSnapshotAt?: number | null;
-    recordRetentionDaysSnapshot?: number | null;
-    reconsentIntervalDaysSnapshot?: number | null;
-    ipHash?: string;
-    userAgent?: string;
-    clientId?: string;
-    metadata?: Record<string, unknown>;
-  }
-): Promise<string> {
-  const id = crypto.randomUUID();
-  await adapter.execute(
-    `INSERT INTO consent_item_history
-     (id, tenant_id, user_id, statement_id, action,
-      version_id_before, version_id_after, version_before, version_after,
-      status_before, status_after, granted_at, withdrawn_at, expires_at, retain_until,
-      consent_settings_snapshot_at, record_retention_days_snapshot, reconsent_interval_days_snapshot,
-      ip_address_hash, user_agent, client_id, metadata_json, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      id,
-      params.tenantId,
-      params.userId,
-      params.statementId,
-      params.action,
-      params.versionIdBefore ?? null,
-      params.versionIdAfter ?? null,
-      params.versionBefore ?? null,
-      params.versionAfter ?? null,
-      params.statusBefore ?? null,
-      params.statusAfter ?? null,
-      params.grantedAt ?? null,
-      params.withdrawnAt ?? null,
-      params.expiresAt ?? null,
-      params.retainUntil ?? null,
-      params.consentSettingsSnapshotAt ?? null,
-      params.recordRetentionDaysSnapshot ?? null,
-      params.reconsentIntervalDaysSnapshot ?? null,
-      params.ipHash ?? null,
-      params.userAgent ?? null,
-      params.clientId ?? null,
-      params.metadata ? JSON.stringify(params.metadata) : null,
-      Date.now(),
-    ]
-  );
-  return id;
 }
 
 // =============================================================================
@@ -1492,8 +1056,12 @@ export async function activateVersion(
   versionId: string
 ): Promise<void> {
   // Validate: version exists and belongs to this statement
-  const versionRows = await adapter.query<{ id: string; status: string }>(
-    `SELECT id, status FROM consent_statement_versions
+  const versionRows = await adapter.query<{
+    id: string;
+    status: string;
+    updated_at: number | string;
+  }>(
+    `SELECT id, status, updated_at FROM consent_statement_versions
      WHERE id = ? AND statement_id = ? AND tenant_id = ?`,
     [versionId, statementId, tenantId]
   );
@@ -1502,34 +1070,57 @@ export async function activateVersion(
   }
 
   // Validate: at least one localization exists (D8)
-  const locCount = await adapter.query<{ cnt: number }>(
+  const locCount = await adapter.query<{ cnt: number | string }>(
     `SELECT COUNT(*) as cnt
        FROM consent_statement_localizations
       WHERE tenant_id = ? AND version_id = ?`,
     [tenantId, versionId]
   );
-  if (locCount[0].cnt === 0) {
+  const localizationCount = Number(locCount[0]?.cnt);
+  if (!Number.isSafeInteger(localizationCount) || localizationCount < 1) {
     throw new Error('Cannot activate version without at least one localization');
   }
 
   // Compute content hash (D11)
   const contentHash = await computeContentHash(adapter, versionId, tenantId);
 
-  // Transaction: deactivate old current, activate new (D5)
-  await adapter.execute(
-    `UPDATE consent_statement_versions
-     SET is_current = 0, current_statement_guard = NULL, status = 'archived', updated_at = ?
-     WHERE statement_id = ? AND tenant_id = ? AND is_current = 1`,
-    [Date.now(), statementId, tenantId]
-  );
-
-  await adapter.execute(
-    `UPDATE consent_statement_versions
-     SET is_current = 1, current_statement_guard = statement_id,
-         status = 'active', content_hash = ?, updated_at = ?
-     WHERE id = ? AND statement_id = ? AND tenant_id = ?`,
-    [contentHash, Date.now(), versionId, statementId, tenantId]
-  );
+  const revision = Number(versionRows[0].updated_at);
+  if (!Number.isSafeInteger(revision) || revision < 0 || revision >= Number.MAX_SAFE_INTEGER)
+    throw new Error('statement_consent_version_revision_invalid');
+  const now = Math.max(Date.now(), revision + 1);
+  const token = `activation:${crypto.randomUUID()}`;
+  const reserved = `EXISTS (SELECT 1 FROM consent_statement_versions v
+    WHERE v.tenant_id=? AND v.statement_id=? AND v.id=? AND v.current_statement_guard=?)`;
+  const proof = [tenantId, statementId, versionId, token];
+  // Reserve the version row before touching the old current. Draft edits co-commit a monotone
+  // updated_at revision, so a hash read before such an edit cannot activate afterwards. The
+  // transient token is visible only inside this batch and also serializes PostgreSQL writers.
+  const result = await adapter.batch([
+    {
+      sql: `UPDATE consent_statement_versions SET current_statement_guard=? WHERE tenant_id=? AND statement_id=? AND id=? AND updated_at=? AND status=?`,
+      params: [token, tenantId, statementId, versionId, revision, versionRows[0].status],
+    },
+    {
+      sql: `UPDATE consent_statement_versions SET is_current=0,current_statement_guard=NULL,status='archived',updated_at=?
+      WHERE statement_id=? AND tenant_id=? AND is_current=1 AND id<>? AND ${reserved}`,
+      params: [now, statementId, tenantId, versionId, ...proof],
+    },
+    {
+      sql: `UPDATE consent_statements SET definition_generation=definition_generation+1,updated_at=?
+      WHERE tenant_id=? AND id=? AND ${reserved}`,
+      params: [now, tenantId, statementId, ...proof],
+    },
+    enqueueStatementConsentProjection(tenantId, statementId, now, { versionId, token }),
+    {
+      sql: `UPDATE consent_statement_versions SET is_current=1,current_statement_guard=statement_id,status='active',content_hash=?,updated_at=?
+      WHERE tenant_id=? AND statement_id=? AND id=? AND current_statement_guard=?`,
+      params: [contentHash, now, ...proof],
+    },
+  ]);
+  if (result.length !== 5 || result.some((entry) => !entry.success))
+    throw new Error('statement_consent_activation_result_unknown');
+  if (result[0].rowsAffected !== 1 || result[4].rowsAffected !== 1)
+    throw new Error('document_changed');
 }
 
 // =============================================================================
@@ -1602,10 +1193,13 @@ export async function computeContentHash(
 export async function hashIpAddress(
   ip: string,
   tenantId: string,
-  kv: KVNamespace | null
+  kv: KVNamespace | null,
+  env?: Pick<Env, 'ENABLE_SAML_DR_EXPORT' | 'KEY_MANAGER'>
 ): Promise<string> {
   let salt = '';
-  if (kv) {
+  if (env?.ENABLE_SAML_DR_EXPORT === 'true') {
+    salt = await readSamlDrConsentIpSalt(env, tenantId);
+  } else if (kv) {
     try {
       const storedSalt = await kv.get(`consent:ip_salt:${tenantId}`);
       if (storedSalt) {

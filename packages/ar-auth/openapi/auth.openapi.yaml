@@ -1,12 +1,25 @@
 openapi: 3.2.0
 info:
   title: Authrim Authentication API
-  version: 0.4.1
+  version: 0.5.0
   summary: Browser and API authentication endpoints.
   description: >
     Initial OpenAPI contract for endpoints owned by `@authrim/ar-auth`. This document intentionally
     contains route contracts only; do not add secrets, private test credentials, or vulnerability
     notes.
+
+    When coordinated SAML DR export is enabled, every operation can additionally return HTTP 503
+    while source updates are paused or update admission is unavailable. This availability response
+    has Content-Type text/plain;charset=UTF-8, Cache-Control no-store, Retry-After 5, and the body
+    "Service temporarily unavailable" (no response body for HEAD). Clients may retry after the
+    indicated delay; a failed response does not establish whether an earlier write completed.
+
+    Browser CORS allows configured origins with credentials and the request headers
+    Content-Type, Authorization, X-Session-Id, and X-Authrim-Interaction-Id. An unapproved
+    origin receives no Access-Control-Allow-Origin header. The AWS SAML profile exposes
+    only its supported passkey and Login Runtime routes; when login is disabled, those
+    routes and their preflights return 404. External UI mode keeps the same client,
+    active origin, PKCE, and WebAuthn verification requirements.
   x-authrim-coverage: initial route inventory
 servers:
   - url: https://{tenant_domain}
@@ -22,7 +35,6 @@ tags:
   - name: Directory Password
   - name: DID
   - name: Anonymous Login
-  - name: Upgrade
   - name: Consent
   - name: Sessions
   - name: Logout
@@ -36,6 +48,20 @@ tags:
   - name: Auth
 paths:
   /api/auth/health:
+    options:
+      operationId: optionsAuthHealth
+      summary: Check browser cross-origin access.
+      description: >-
+        Responds with the configured CORS policy. This does not authenticate a browser,
+        validate a credential, or authorize the corresponding operation. In the AWS SAML
+        profile, this endpoint is unavailable when login is disabled.
+      responses:
+        '204':
+          $ref: '#/components/responses/BrowserCorsPreflight'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
     get:
       tags:
         - Health
@@ -51,6 +77,45 @@ paths:
       description: >-
         Rejects response types that are disabled by the tenant OIDC policy. Internal consent
         continuations are accepted only from the originating live session and browser binding.
+        With tenant assurance enabled, a default FAL of FAL3 (with fal3_requires_par) accepts only
+        a pushed request whose request object the client signed, and refuses any other with
+        invalid_request; FAL2 and above with fal2_requires_dpop refuse response types that return
+        an access token (token, code token, id_token token) with unsupported_response_type.
+        Assurance settings that cannot be read stop the request with temporarily_unavailable.
+        A client's minimum_ial applies whether or not assurance is on, and the scope-to-IAL map
+        (assurance.scope_ial_requirements) for the requested scopes while it is on. A signed-in
+        user whose identity assurance level (read from their evidence each time) is below the
+        higher of the two is refused with access_denied, also for prompt=none, before any
+        step-up, re-authentication or consent, since none of those can raise an IAL. When
+        nothing is required no evidence is read; evidence that cannot be read stops the request
+        with temporarily_unavailable. Like access_denied, it is an OAuth error code returned to
+        the client's redirect_uri (query, fragment or form_post), not an HTTP 503. A request that
+        asks for prompt=login or an exceeded max_age is re-authenticated first, and the user who
+        returns is judged then. Access tokens already issued stay valid until they expire;
+        revoking evidence stops new authorizations, refreshes and exchanges.
+        An id_token_hint must be an ID token this server issued (signature and issuer; it may
+        have expired), else invalid_request; it never stands in for a session. When the signed-in
+        End-User is not the one it names (its sub, or the sub the app's identity mapping issues),
+        the request ends with login_required, whether prompt=none or not.
+        prompt=create (Initiating User Registration) is acted on only while the tenant has
+        oauth.prompt_create_enabled on and a sign-up method is available: passkey, email code or
+        authenticator app switched on for sign-up, or an external identity provider (social
+        login) that the sign-up page offers and that can create the account (the provider is
+        enabled, the tenant has not turned off its sign-up use, its own JIT provisioning is on,
+        and the tenant's external_idp.jit_provisioning_enabled is on and
+        external_idp.jit_allowed_provider_ids allows it; a provider that can only link an
+        existing account does not count). Changing those provider settings changes whether the
+        value is acted on. When the settings cannot be read, the value is ignored. The browser
+        then goes to the tenant's sign-up page
+        (tenant.ui_register_path) with the same challenge_id as the sign-in page gets, whether or
+        not it holds a session: only an authentication made after the request completes it, and
+        the request then continues as after any sign-in. Otherwise the value is ignored, as any
+        prompt value is that this server does not act on. prompt=create with none is
+        invalid_request, as none with any other value. The prompt values are the space-separated,
+        case-sensitive whole tokens of the parameter: a value that only contains a known one
+        (nonetheless, loginnow) is ignored. An app with its own sign-in UI (login_ui_url) is sent
+        to that UI with the tenant's sign-up path (the base URL is the app's, the paths are the
+        tenant's).
       parameters:
         - $ref: '#/components/parameters/ClientIdQuery'
         - name: redirect_uri
@@ -67,6 +132,14 @@ paths:
             type: string
         - name: state
           in: query
+          schema:
+            type: string
+        - name: id_token_hint
+          in: query
+          description: >-
+            An ID token this server issued, naming the End-User the client expects (OIDC Core
+            3.1.2.1). Verified (signature, issuer; it may have expired) and matched to the
+            signed-in End-User; it is a hint, never a sign-in.
           schema:
             type: string
         - name: ui_locales
@@ -90,7 +163,7 @@ paths:
       summary: Submit an OAuth/OIDC authorization request.
       description: >-
         Internal consent continuations are accepted only from the originating live session and
-        browser binding.
+        browser binding. The tenant assurance FAL requirements described for GET apply.
       requestBody:
         $ref: '#/components/requestBodies/FormOrJson'
       responses:
@@ -110,7 +183,13 @@ paths:
           $ref: '#/components/responses/PushedAuthorization'
         '400':
           $ref: '#/components/responses/Error'
-      description: Stores OAuth/OIDC authorization parameters and returns a request_uri per RFC 9126.
+        '503':
+          $ref: '#/components/responses/Error'
+      description: >-
+        Stores OAuth/OIDC authorization parameters and returns a request_uri per RFC 9126. With
+        tenant assurance enabled and a default FAL of FAL3 (with fal3_requires_par), a request
+        without a request object the client signed is refused with invalid_request. Assurance
+        settings that cannot be read return 503 temporarily_unavailable.
     get:
       tags:
         - Auth
@@ -316,61 +395,16 @@ paths:
           $ref: '#/components/responses/Error'
         '410':
           $ref: '#/components/responses/Error'
-  /flow/login:
-    get:
-      tags:
-        - OAuth
-      summary: Render the test or OIDC-conformance login adapter when enabled.
-      responses:
-        '200':
-          $ref: '#/components/responses/Any'
-        '400':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-    post:
-      tags:
-        - OAuth
-      summary: Submit the test or OIDC-conformance login adapter when enabled.
-      requestBody:
-        $ref: '#/components/requestBodies/FormOrJson'
-      responses:
-        '200':
-          $ref: '#/components/responses/Any'
-        '400':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-  /flow/confirm:
-    get:
-      tags:
-        - OAuth
-      summary: Render the test or OIDC-conformance reauthentication adapter when enabled.
-      responses:
-        '200':
-          $ref: '#/components/responses/Any'
-        '400':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-    post:
-      tags:
-        - OAuth
-      summary: Submit the test or OIDC-conformance reauthentication adapter when enabled.
-      requestBody:
-        $ref: '#/components/requestBodies/FormOrJson'
-      responses:
-        '200':
-          $ref: '#/components/responses/Any'
-        '400':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
   /api/auth/passkeys/register/options:
     post:
       tags:
         - Passkeys
       summary: Create WebAuthn registration options.
+      description: >
+        Creates a new account, so it works only where the tenant allows passkey sign-up
+        (`authentication-methods.passkey.signup_enabled`, on unless the tenant turned it off);
+        otherwise it is refused with 403 before any account is looked up or created, and with 503
+        when the tenant's settings cannot be read.
       requestBody:
         $ref: '#/components/requestBodies/PasskeyRegisterOptions'
       responses:
@@ -383,6 +417,10 @@ paths:
       tags:
         - Passkeys
       summary: Verify WebAuthn registration and create a session.
+      description: >
+        Works only where the tenant allows passkey sign-up
+        (`authentication-methods.passkey.signup_enabled`); otherwise it is refused with 403 (503
+        when the settings cannot be read) and no session is opened.
       requestBody:
         $ref: '#/components/requestBodies/PasskeyRegisterVerify'
       responses:
@@ -403,6 +441,11 @@ paths:
       tags:
         - Passkeys
       summary: Verify WebAuthn login and create a session.
+      description: >
+        A tenant's users sign in only where the tenant allows passkey login
+        (`authentication-methods.passkey.login_enabled`); otherwise 403 (503 when the settings
+        cannot be read). Administrators signing in to the console are not governed by it. The
+        options endpoint above is not gated: it issues a challenge only, and the verify decides.
       requestBody:
         $ref: '#/components/requestBodies/PasskeyLoginVerify'
       responses:
@@ -413,6 +456,12 @@ paths:
       tags:
         - Email Codes
       summary: Send an email verification code.
+      description: >
+        Works only where the tenant allows email code for login
+        (`authentication-methods.email_otp.login_enabled`); otherwise nothing is sent or created and
+        the reply is the one a sent code gets. An address with no account is created only where
+        email code signup is allowed too. Signing up with an email code is the Direct Auth API's
+        (`/api/v1/auth/direct/email-code/*`).
       requestBody:
         $ref: '#/components/requestBodies/EmailCodeSend'
       responses:
@@ -425,6 +474,9 @@ paths:
       tags:
         - Email Codes
       summary: Verify an email code and create a session.
+      description: >
+        Works only where the tenant allows email code for login
+        (`authentication-methods.email_otp.login_enabled`); otherwise it is refused with 403.
       requestBody:
         $ref: '#/components/requestBodies/EmailCodeVerify'
       responses:
@@ -493,11 +545,30 @@ paths:
       tags:
         - Directory Password
       summary: Authenticate with a directory password and create a managed browser session.
+      description:
+        A directory identity route that cannot be published returns 503 without creating a session.
+        A refused route reservation removes only the identity link created by this request;
+        existing links and links whose publication outcome is unknown are preserved for retry.
       requestBody:
         $ref: '#/components/requestBodies/DirectoryPasswordLogin'
       responses:
         '200':
           $ref: '#/components/responses/DirectoryPasswordLogin'
+        '503':
+          description: Directory sign-in could not complete. Retry after the indicated delay.
+          headers:
+            Retry-After:
+              schema:
+                type: string
+                const: '1'
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error, error_description]
+                properties:
+                  error: { type: string, const: temporarily_unavailable }
+                  error_description: { type: string }
   /api/auth/directory-password/migration/passkey/options:
     post:
       tags:
@@ -535,6 +606,12 @@ paths:
       tags:
         - Directory Password
       summary: Send an email code for a directory password migration fallback or recovery transaction.
+      description: >-
+        Works only where the tenant allows email code for login
+        (`authentication-methods.email_otp.login_enabled`, off unless turned on). This is decided
+        first, before the transaction is looked up or anything is counted, sent or stored: 403
+        `access_denied` (`error_code` `AR050006`) when it is off, 503 `temporarily_unavailable`
+        when the tenant settings cannot be read.
       requestBody:
         $ref: '#/components/requestBodies/DirectoryMigrationEmailCodeSend'
       responses:
@@ -548,11 +625,19 @@ paths:
           $ref: '#/components/responses/Any'
         '429':
           $ref: '#/components/responses/Any'
+        '503':
+          $ref: '#/components/responses/Any'
   /api/auth/directory-password/migration/email-code/verify:
     post:
       tags:
         - Directory Password
       summary: Verify an email code for a directory password migration fallback or recovery transaction and create a session.
+      description: >-
+        Works only where the tenant allows email code for login
+        (`authentication-methods.email_otp.login_enabled`, off unless turned on). This is decided
+        first, before the transaction or the code is consumed and before any session is created:
+        403 `access_denied` (`error_code` `AR050006`) when it is off, 503 `temporarily_unavailable`
+        when the tenant settings cannot be read.
       requestBody:
         $ref: '#/components/requestBodies/DirectoryMigrationEmailCodeVerify'
       responses:
@@ -563,6 +648,8 @@ paths:
         '401':
           $ref: '#/components/responses/Any'
         '403':
+          $ref: '#/components/responses/Any'
+        '503':
           $ref: '#/components/responses/Any'
   /api/auth/directory-connectors/heartbeat/{tenantId}/{connectorId}:
     post:
@@ -657,21 +744,44 @@ paths:
       tags:
         - DID
       summary: Create a DID authentication challenge.
+      description: >
+        DID login is off unless the tenant turns it on (`authentication-methods.did.login_enabled`,
+        default false). Where it is off the request is refused with 403 (503 when the tenant's
+        settings cannot be read) before the DID is resolved or a challenge is stored, whatever the
+        DID, so nothing about a DID or its link to an account is revealed.
       requestBody:
         $ref: '#/components/requestBodies/DIDChallenge'
       responses:
         '200':
           $ref: '#/components/responses/DIDChallenge'
+        '403':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
   /api/auth/dids/verify:
     post:
       tags:
         - DID
       summary: Verify a DID authentication proof and create a session.
+      description: >
+        Works only where the tenant allows DID login (`authentication-methods.did.login_enabled`,
+        default false); otherwise 403 (503 when the settings cannot be read), decided before the
+        challenge is consumed, the DID is resolved, an account is looked up or a session is opened.
+        A DID that is not linked, or whose link has no lookup route, answers like an unlinked DID
+        (link required), not with a server error. Linking a DID (`/api/auth/dids/register/*`) is
+        governed by the same setting; listing and unlinking (`/api/auth/dids`) are not, so a user can
+        always remove a DID.
       requestBody:
         $ref: '#/components/requestBodies/DIDVerify'
       responses:
         '200':
           $ref: '#/components/responses/DIDVerify'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
   /api/auth/dids:
     get:
       tags:
@@ -698,56 +808,74 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/DIDUnlink'
-  /api/auth/anon-login/challenge:
+  /api/auth/guest/login:
     post:
       tags:
         - Anonymous Login
-      summary: Create an anonymous-login challenge.
+      summary: Create or resume a human guest browser session.
+      description: >-
+        Requires tenant guest login permission and explicit client guest permission.
+        For OAuth login, supply an unexpired, unconsumed login authorization challenge for this
+        tenant; requested scopes must be within the client's anonymous allow-list.
+        Reauthentication challenges are rejected. For direct browser login, omit the challenge
+        and supply clientId. The client must permit browser Direct Auth from the request origin
+        and allow the openid guest scope. Direct login creates only a cookie session, not an OAuth grant.
+        An invalid supplied challenge never falls back to direct login.
+        Subject creation and resumption use a private HttpOnly Secure SameSite=Lax cookie,
+        authrim_guest_resume; a device identifier alone is never accepted as proof.
+        Resume credentials expire 180 days after creation without deleting the account.
+        A live registered browser session must be logged out first (409).
+        Success sets authrim_session and returns no tokens or redirect URL; continue the original
+        authorization transaction through the standard login continuation when using a challenge.
+        Requests are subject to browser CSRF protection, configured login human verification,
+        and strict rate limiting. Human verification is bound to this login transaction and
+        private resume credential for up to five minutes to permit asynchronous provisioning retries.
       requestBody:
-        $ref: '#/components/requestBodies/AnonLoginChallenge'
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              anyOf:
+                - required: [authorizationChallengeId]
+                - required: [clientId]
+              properties:
+                clientId:
+                  type: string
+                  minLength: 1
+                  maxLength: 256
+                  description: Client for direct browser login; ignored when an authorization challenge is supplied.
+                authorizationChallengeId:
+                  type: string
+                  minLength: 1
+                  maxLength: 256
+                human_verification_response:
+                  type: string
+                  description: Token from the configured login human-verification provider.
       responses:
         '200':
-          $ref: '#/components/responses/AnonLoginChallenge'
-  /api/auth/anon-login/verify:
-    post:
-      tags:
-        - Anonymous Login
-      summary: Verify anonymous-login challenge and create or resume an anonymous session.
-      requestBody:
-        $ref: '#/components/requestBodies/AnonLoginVerify'
-      responses:
-        '200':
-          $ref: '#/components/responses/AnonLoginVerify'
+          description: Guest browser session established.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success]
+                properties:
+                  success:
+                    type: boolean
+                    const: true
         '202':
           $ref: '#/components/responses/AnonymousLoginPending'
-  /api/auth/upgrade:
-    post:
-      tags:
-        - Upgrade
-      summary: Start an anonymous-user upgrade.
-      requestBody:
-        $ref: '#/components/requestBodies/UpgradeStart'
-      responses:
-        '200':
-          $ref: '#/components/responses/UpgradeStart'
-  /api/auth/upgrade/complete:
-    post:
-      tags:
-        - Upgrade
-      summary: Complete an anonymous-user upgrade.
-      requestBody:
-        $ref: '#/components/requestBodies/UpgradeComplete'
-      responses:
-        '200':
-          $ref: '#/components/responses/UpgradeComplete'
-  /api/auth/upgrade/status:
-    get:
-      tags:
-        - Upgrade
-      summary: Return anonymous-user upgrade eligibility and history.
-      responses:
-        '200':
-          $ref: '#/components/responses/UpgradeStatus'
+        '400':
+          description: Invalid challenge, disabled guest login, or disallowed guest scopes.
+        '401':
+          description: Resume credential expired or revoked, or account no longer eligible.
+        '409':
+          description: A registered browser session already exists; log out before creating a guest.
+        '429':
+          description: Too many login attempts.
+        '500':
+          description: Guest account storage or settings are temporarily unavailable.
   /api/auth/consents:
     get:
       tags:
@@ -760,41 +888,82 @@ paths:
       tags:
         - Consent
       summary: Submit a consent decision.
-      description: Acting-as requests require the feature to be enabled and a current delegated relationship.
+      description: >-
+        Accepts a JSON body only and returns the authorization continuation as `redirect_url`.
+        Acting-as requests require the feature to be enabled and a current delegated relationship.
       requestBody:
-        $ref: '#/components/requestBodies/FormOrJson'
+        $ref: '#/components/requestBodies/JsonObject'
       responses:
         '200':
-          $ref: '#/components/responses/Any'
+          $ref: '#/components/responses/Ok'
+        '400':
+          $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
   /auth/consent:
     get:
       tags:
         - Consent
-      summary: Render built-in consent page when enabled.
+      summary: Return consent screen data for the Login UI (JSON consent API).
       description: Managed browser challenges require the authenticated session bound at authorization time.
       responses:
         '200':
-          $ref: '#/components/responses/Any'
+          $ref: '#/components/responses/ConsentGet'
         '401':
           $ref: '#/components/responses/Error'
     post:
       tags:
         - Consent
-      summary: Submit built-in consent page decision when enabled.
+      summary: Submit the Login UI's consent decision (JSON consent API).
       description: >-
+        Accepts a JSON body only and returns the authorization continuation as `redirect_url`.
         Managed browser challenges require the authenticated session bound at authorization time.
         Acting-as requests require the feature to be enabled and a current delegated relationship.
+        Approvals with statement items must send consent_item_versions, keyed by statement ID,
+        containing version_id and content_hash for every displayed item, including optional items.
+        Changed or missing snapshots return 409 document_changed. Use refresh_consent or the
+        replacement consent_challenge_id in error_details to display updated documents; expired
+        requests require a fresh authorization. Omitted optional decisions continue to mean withdrawal/refusal.
       requestBody:
-        $ref: '#/components/requestBodies/FormOrJson'
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              properties:
+                consent_item_versions:
+                  type: object
+                  description: Required for every displayed statement item when approving.
+                  additionalProperties:
+                    type: object
+                    required: [version_id, content_hash]
+                    properties:
+                      version_id:
+                        type: string
+                      content_hash:
+                        type: [string, 'null']
       responses:
         '200':
-          $ref: '#/components/responses/Any'
+          $ref: '#/components/responses/Ok'
+        '400':
+          $ref: '#/components/responses/Error'
         '401':
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+        '409':
+          description: document_changed; obtain a fresh consent screen before submitting again.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Statement consent atomic writes are unavailable on the configured backend.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/sessions:
     post:
       tags:
@@ -816,6 +985,20 @@ paths:
         '200':
           $ref: '#/components/responses/SessionVerify'
   /api/sessions/status:
+    options:
+      operationId: optionsSessionStatus
+      summary: Check browser cross-origin access.
+      description: >-
+        Responds with the configured CORS policy. This does not authenticate a browser,
+        validate a credential, or authorize the corresponding operation. In the AWS SAML
+        profile, this endpoint is unavailable when login is disabled.
+      responses:
+        '204':
+          $ref: '#/components/responses/BrowserCorsPreflight'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
     get:
       tags:
         - Sessions
@@ -830,11 +1013,31 @@ paths:
       tags:
         - Sessions
       summary: Refresh current browser session expiration.
+      description:
+        Extends the session to extend_seconds (default 3600, at most 86400) from now, and renews the
+        session cookies to match when the cookie names the session. An extension never shortens a
+        session and never takes it past its sign-in plus the tenant's session.max_ttl (a session made
+        under a longer limit keeps its expiry but is not extended). The tenant can turn extension
+        off with session.refresh_default.
       security:
         - sessionCookie: []
       responses:
         '200':
           $ref: '#/components/responses/SessionRefresh'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          description: Session extension is disabled for the tenant (session.refresh_default).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: The session is gone.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /session/check:
     get:
       tags:
@@ -864,6 +1067,8 @@ paths:
         A direct RP-initiated POST renders the same confirmation interaction as GET. A follow-up POST
         validates the form confirmation token against the short-lived confirmation cookie, then
         invalidates the selected session and performs configured logout propagation.
+        If credential revocation or session invalidation cannot complete, returns 503 and preserves
+        cookies so the confirmed request can be retried.
       requestBody:
         required: false
         content:
@@ -887,16 +1092,23 @@ paths:
           description: Redirect after successful logout.
         '400':
           $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/LogoutUnavailable'
   /logout/backchannel:
     post:
       tags:
         - Logout
       summary: Receive OIDC back-channel logout token.
+      description:
+        Returns 503 when credential revocation or session invalidation cannot complete, allowing
+        the authenticated logout request to be retried.
       requestBody:
         $ref: '#/components/requestBodies/FormOrJson'
       responses:
         '200':
           $ref: '#/components/responses/Any'
+        '503':
+          $ref: '#/components/responses/LogoutUnavailable'
   /api/auth/dids/register/challenge:
     post:
       tags:
@@ -905,7 +1117,11 @@ paths:
       summary: Create a DID registration challenge for the current session.
       description:
         Creates a DID proof challenge for an authenticated browser session so the DID can be
-        linked to the current user.
+        linked to the current user. Refused with 403 when the tenant has DID login off
+        (`authentication-methods.did.login_enabled`, default false), and with 503 when that setting
+        cannot be read, before the DID is resolved or a challenge is stored. A DID already linked
+        to the same user may be proven again (to complete a link whose lookup route was not
+        published); a DID linked to another user is refused.
       responses:
         '200':
           $ref: '#/components/responses/DIDRegisterChallenge'
@@ -914,6 +1130,8 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/DIDRegisterChallenge'
@@ -927,7 +1145,12 @@ paths:
       summary: Verify and link a DID registration proof.
       description:
         Verifies the DID proof for a prior registration challenge and links the DID to the
-        current authenticated session user.
+        current authenticated session user, then publishes the lookup route DID login uses to find
+        the account. Refused with 403 when the tenant has DID login off
+        (`authentication-methods.did.login_enabled`, default false), and with 503 when that setting
+        cannot be read, before the challenge is consumed. Answers 503 `temporarily_unavailable`
+        when the lookup route could not be published; repeat the link (new challenge and proof) to
+        complete it.
       responses:
         '200':
           $ref: '#/components/responses/DIDRegisterVerify'
@@ -936,6 +1159,8 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/DIDRegisterVerify'
@@ -949,7 +1174,9 @@ paths:
       summary: Read login challenge metadata.
       description:
         Returns client display metadata, OIDC prompt metadata, session mode, handoff methods,
-        and web-origin policy for a login or re-auth challenge.
+        and web-origin policy for a login or re-auth challenge. The re-authentication challenge of
+        a SAML request (issued by the SAML IdP SSO endpoint for a ForceAuthn request or a step-up)
+        names no client; it is served with protocol saml and only for the tenant it belongs to.
       responses:
         '200':
           $ref: '#/components/responses/LoginChallenge'
@@ -967,6 +1194,20 @@ paths:
             type: string
           description: Challenge id returned by the authorization flow.
   /api/v1/login/interactions/start:
+    options:
+      operationId: optionsLoginInteractionStart
+      summary: Check browser cross-origin access.
+      description: >-
+        Responds with the configured CORS policy. This does not authenticate a browser,
+        validate a credential, or authorize the corresponding operation. In the AWS SAML
+        profile, this endpoint is unavailable when login is disabled.
+      responses:
+        '204':
+          $ref: '#/components/responses/BrowserCorsPreflight'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
     post:
       tags:
         - Login Runtime
@@ -1162,6 +1403,25 @@ paths:
         '500':
           $ref: '#/components/responses/Error'
   /api/v1/login/interactions/{interaction_id}/submit:
+    options:
+      operationId: optionsLoginInteractionSubmit
+      summary: Check browser cross-origin access.
+      description: >-
+        Responds with the configured CORS policy. This does not authenticate a browser,
+        validate a credential, or authorize the corresponding operation. In the AWS SAML
+        profile, this endpoint is unavailable when login is disabled.
+      parameters:
+        - name: interaction_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204':
+          $ref: '#/components/responses/BrowserCorsPreflight'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
     post:
       tags:
         - Login Runtime
@@ -1288,6 +1548,9 @@ paths:
         code; missing, unsupported, or invalid presentations use the normal mail-OTP response. The
         accepted response intentionally does not disclose whether the account exists or whether the
         delivery provider accepted the message.
+        Credential authentication requires a completed guest upgrade. Uncommitted or deleting
+        guest accounts cannot receive a regular authentication artifact or session. Unavailable
+        lifecycle state returns temporarily_unavailable (503).
       responses:
         '200':
           $ref: '#/components/responses/DirectEmailCodeSend'
@@ -1298,6 +1561,8 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/DirectEmailCodeSend'
@@ -1334,6 +1599,9 @@ paths:
       description:
         Verifies the email code and returns a short-lived Direct Auth artifact bound to client,
         channel, provider, and PKCE metadata.
+        Credential authentication requires a completed guest upgrade. Uncommitted or deleting
+        guest accounts cannot receive a regular authentication artifact or session. Unavailable
+        lifecycle state returns temporarily_unavailable (503).
       responses:
         '200':
           $ref: '#/components/responses/DirectAuthArtifact'
@@ -1342,6 +1610,8 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/DirectEmailCodeVerify'
@@ -1353,7 +1623,8 @@ paths:
       summary: End a Direct Auth managed browser session.
       description:
         Invalidates the current Direct Auth session when present, optionally revokes associated
-        device secrets according to logout_scope, and clears Direct Auth cookies.
+        device secrets according to logout_scope, and clears Direct Auth cookies. Guest resume credentials are revoked before session invalidation.
+        If session retrieval or revocation fails, returns 503 and preserves cookies for retry.
       responses:
         '200':
           $ref: '#/components/responses/DirectLogout'
@@ -1363,9 +1634,32 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+        '503':
+          description: Logout could not complete. Retry with the same cookies.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error: { type: string, const: logout_unavailable }
       requestBody:
         $ref: '#/components/requestBodies/DirectLogout'
   /api/v1/auth/direct/passkey/login/finish:
+    options:
+      operationId: optionsDirectPasskeyLoginFinish
+      summary: Check browser cross-origin access.
+      description: >-
+        Responds with the configured CORS policy. This does not authenticate a browser,
+        validate a credential, or authorize the corresponding operation. In the AWS SAML
+        profile, this endpoint is unavailable when login is disabled.
+      responses:
+        '204':
+          $ref: '#/components/responses/BrowserCorsPreflight'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
     post:
       tags:
         - Direct Auth
@@ -1374,6 +1668,9 @@ paths:
       description:
         Verifies the passkey authentication response and returns a short-lived Direct Auth
         artifact for session redemption or token exchange.
+        Credential authentication requires a completed guest upgrade. Uncommitted or deleting
+        guest accounts cannot receive a regular authentication artifact or session. Unavailable
+        lifecycle state returns temporarily_unavailable (503).
       responses:
         '200':
           $ref: '#/components/responses/DirectAuthArtifact'
@@ -1383,9 +1680,25 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/DirectPasskeyLoginFinish'
   /api/v1/auth/direct/passkey/login/start:
+    options:
+      operationId: optionsDirectPasskeyLoginStart
+      summary: Check browser cross-origin access.
+      description: >-
+        Responds with the configured CORS policy. This does not authenticate a browser,
+        validate a credential, or authorize the corresponding operation. In the AWS SAML
+        profile, this endpoint is unavailable when login is disabled.
+      responses:
+        '204':
+          $ref: '#/components/responses/BrowserCorsPreflight'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
     post:
       tags:
         - Direct Auth
@@ -1453,7 +1766,8 @@ paths:
       summary: Finish Direct Auth passkey signup.
       description:
         Verifies a signup passkey registration response, creates the user when needed, and
-        returns a Direct Auth artifact.
+        returns a Direct Auth artifact. Tenant assurance settings that cannot be read return 503
+        temporarily_unavailable before the challenge is spent or a credential is saved.
       responses:
         '200':
           $ref: '#/components/responses/DirectAuthArtifact'
@@ -1462,6 +1776,8 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/DirectPasskeySignupFinish'
@@ -1488,6 +1804,20 @@ paths:
       requestBody:
         $ref: '#/components/requestBodies/DirectPasskeySignupStart'
   /api/v1/auth/direct/session:
+    options:
+      operationId: optionsDirectSession
+      summary: Check browser cross-origin access.
+      description: >-
+        Responds with the configured CORS policy. This does not authenticate a browser,
+        validate a credential, or authorize the corresponding operation. In the AWS SAML
+        profile, this endpoint is unavailable when login is disabled.
+      responses:
+        '204':
+          $ref: '#/components/responses/BrowserCorsPreflight'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
     get:
       tags:
         - Direct Auth
@@ -1514,6 +1844,9 @@ paths:
         Consumes a short-lived Direct Auth artifact, verifies its client/channel/provider/PKCE
         bindings, creates an HttpOnly managed browser session, and returns session and user
         metadata.
+        Credential authentication requires a completed guest upgrade. Uncommitted or deleting
+        guest accounts cannot receive a regular authentication artifact or session. Unavailable
+        lifecycle state returns temporarily_unavailable (503).
       responses:
         '200':
           $ref: '#/components/responses/DirectSessionCreate'
@@ -1522,6 +1855,8 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/DirectSessionCreate'
@@ -1539,27 +1874,6 @@ paths:
           $ref: '#/components/responses/DirectTokenCompatibility'
       requestBody:
         $ref: '#/components/requestBodies/DirectToken'
-  /api/v1/invitations/use:
-    post:
-      tags:
-        - Invitations
-      operationId: postApiV1InvitationsUse
-      summary: Consume an invitation after signup.
-      description:
-        Marks an invitation token as used for a verified user in the invited tenant and applies
-        configured role or organization assignments.
-      responses:
-        '200':
-          $ref: '#/components/responses/InvitationUse'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-      requestBody:
-        $ref: '#/components/requestBodies/InvitationUse'
-      security: []
   /api/v1/invitations/validate:
     get:
       tags:
@@ -1586,6 +1900,109 @@ paths:
           schema:
             type: string
             minLength: 32
+  /api/v1/invitations/email-verification/send:
+    post:
+      tags:
+        - Invitations
+      operationId: postApiV1InvitationsEmailVerificationSend
+      summary: Send a code to the email an invitation names.
+      description:
+        Sends a one-time code to the invited email of an active invitation (never to an address
+        the request gives), so a passkey or authenticator-app signup can prove it controls that
+        email when the tenant requires it (authentication-methods.invitation.email_verification).
+        Limited per invitation like other email sends.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - token
+              properties:
+                token:
+                  type: string
+                  minLength: 32
+      responses:
+        '200':
+          description: The code was sent.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - verification_id
+                  - expires_in
+                  - masked_email
+                properties:
+                  verification_id:
+                    type: string
+                  expires_in:
+                    type: integer
+                    example: 600
+                  masked_email:
+                    type: string
+                    example: i***@example.com
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+      security: []
+  /api/v1/invitations/email-verification/verify:
+    post:
+      tags:
+        - Invitations
+      operationId: postApiV1InvitationsEmailVerificationVerify
+      summary: Exchange the invited email's code for a proof.
+      description:
+        Checks the code sent to the invited email (five attempts per code) and returns a proof,
+        valid for 15 minutes, that passkey and authenticator-app signup starts take as
+        invitation_email_proof.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - token
+                - verification_id
+                - code
+              properties:
+                token:
+                  type: string
+                  minLength: 32
+                verification_id:
+                  type: string
+                code:
+                  type: string
+                  pattern: '^\d{6}$'
+      responses:
+        '200':
+          description: The code was right.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - invitation_email_proof
+                  - expires_in
+                properties:
+                  invitation_email_proof:
+                    type: string
+                    pattern: '^[A-Za-z0-9_-]{43}$'
+                  expires_in:
+                    type: integer
+                    example: 900
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+      security: []
   /api/v1/registration-fields:
     get:
       tags:
@@ -1606,6 +2023,20 @@ paths:
           $ref: '#/components/responses/Error'
       security: []
   /auth/login-challenge:
+    options:
+      operationId: optionsLoginChallenge
+      summary: Check browser cross-origin access.
+      description: >-
+        Responds with the configured CORS policy. This does not authenticate a browser,
+        validate a credential, or authorize the corresponding operation. In the AWS SAML
+        profile, this endpoint is unavailable when login is disabled.
+      responses:
+        '204':
+          $ref: '#/components/responses/BrowserCorsPreflight'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
     get:
       tags:
         - Login Challenges
@@ -1638,7 +2069,8 @@ paths:
       summary: Render the initial admin setup page.
       description:
         Returns the browser setup HTML page when a valid setup token is supplied, or an HTML
-        error/completed page when setup is unavailable.
+        error/completed page when setup is unavailable. This platform-level setup page is available
+        before tenant provisioning completes.
       responses:
         '200':
           $ref: '#/components/responses/Any'
@@ -1657,7 +2089,8 @@ paths:
       summary: Complete router-side initial setup.
       description:
         Validates the temporary setup session, permanently disables router-side setup, cleans
-        up setup CSRF state, and returns Admin UI passkey setup handoff details.
+        up setup CSRF state, and returns Admin UI passkey setup handoff details. Tenant provisioning
+        is not a prerequisite; setup session and origin checks still apply.
       responses:
         '200':
           $ref: '#/components/responses/SetupComplete'
@@ -1678,7 +2111,7 @@ paths:
       description:
         Validates the one-time setup token and CSRF token, creates the initial administrator,
         assigns the system admin role, and returns a temporary setup session plus Admin UI setup
-        token.
+        token. This platform-level operation does not require tenant provisioning to complete.
       responses:
         '200':
           $ref: '#/components/responses/SetupInitialize'
@@ -1698,7 +2131,7 @@ paths:
       summary: Read initial setup status.
       description:
         Returns whether the system has an administrator, whether setup is disabled, and whether
-        a setup token is currently present.
+        a setup token is currently present. Available before tenant provisioning completes.
       responses:
         '200':
           $ref: '#/components/responses/SetupStatus'
@@ -2361,44 +2794,6 @@ components:
           example:
             challenge_id: challenge_123
             proof: eyJhbGciOiJFZERTQSJ9...
-    AnonLoginChallenge:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/AnonLoginChallengeRequest'
-          example:
-            client_id: client_123
-            device_signature: device_sig_123
-            platform: web
-    AnonLoginVerify:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/AnonLoginVerifyRequest'
-          example:
-            challenge_id: challenge_123
-            device_signature: device_sig_123
-            proof: signed_challenge
-    UpgradeStart:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/UpgradeStartRequest'
-          example:
-            method: email
-    UpgradeComplete:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/UpgradeCompleteRequest'
-          example:
-            upgrade_token: upgrade_123
-            method: email
-            preserve_sub: true
     SessionIssue:
       required: true
       content:
@@ -2544,15 +2939,6 @@ components:
             direct_auth_artifact: direct_auth_code_123
             client_id: client_123
             code_verifier: rfc7636-code-verifier
-    InvitationUse:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/InvitationUseRequest'
-          example:
-            token: invite_123
-            user_id: user_123
     SetupInitialize:
       required: true
       content:
@@ -2647,6 +3033,21 @@ components:
             response:
               code: '123456'
   responses:
+    BrowserCorsPreflight:
+      description: >-
+        Browser preflight response. Access-Control-Allow-Origin is present only for a
+        configured allowed origin; the remaining headers alone do not grant browser access.
+      headers:
+        Access-Control-Allow-Origin:
+          schema: { type: string, format: uri }
+        Access-Control-Allow-Credentials:
+          schema: { type: string, const: 'true' }
+        Access-Control-Allow-Methods:
+          schema: { type: string }
+        Access-Control-Allow-Headers:
+          schema: { type: string }
+        Access-Control-Max-Age:
+          schema: { type: string, const: '86400' }
     Ok:
       description: Successful JSON response.
       content:
@@ -2661,6 +3062,16 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+    LogoutUnavailable:
+      description: Logout could not complete. Retry with the same session context and parameters.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error, error_description]
+            properties:
+              error: { type: string, const: temporarily_unavailable }
+              error_description: { type: string }
     AuthHealth:
       description: Successful JSON response.
       content:
@@ -2909,79 +3320,6 @@ components:
             success: true
             did: did:web:example.com
             message: DID unlinked successfully
-    AnonLoginChallenge:
-      description: Successful JSON response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/AnonLoginChallengeResponse'
-          example:
-            challenge_id: challenge_123
-            challenge: anon_challenge_123
-            expires_at: 1770000300000
-    AnonLoginVerify:
-      description: Successful JSON response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/AnonLoginVerifyResponse'
-          example:
-            success: true
-            session_id: sess_123
-            user_id: anon_123
-            is_new_user: true
-            upgrade_eligible: true
-            user:
-              id: anon_123
-              user_type: anonymous
-    UpgradeStart:
-      description: Successful JSON response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/UpgradeStartResponse'
-          example:
-            success: true
-            user_id: anon_123
-            upgrade_token: upgrade_123
-            instructions:
-              method: email
-              endpoint: /api/auth/email-codes/send
-              description: Verify email with OTP
-              next_step: Call /api/auth/upgrade/complete after verification
-    UpgradeComplete:
-      description: Successful JSON response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/UpgradeCompleteResponse'
-          example:
-            success: true
-            user_id: user_123
-            preserve_sub: true
-            method: email
-            upgraded_at: 1770000000000
-            profile_completion_required: false
-            missing_required_custom_claims: []
-            account_lifecycle_state: active
-    UpgradeStatus:
-      description: Successful JSON response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/UpgradeStatusResponse'
-          example:
-            user_id: user_123
-            is_anonymous: false
-            upgrade_eligible: false
-            profile_completion_required: false
-            missing_required_custom_claims: []
-            account_lifecycle_state: active
-            upgrade_history:
-              - id: upgrade_123
-                method: email
-                upgraded_at: 1770000000000
-                preserve_sub: true
     ConsentGet:
       description: Successful JSON response.
       content:
@@ -3164,18 +3502,6 @@ components:
           example:
             error: legacy_endpoint_not_supported
             error_description: This endpoint is no longer supported.
-    InvitationUse:
-      description: Successful JSON response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/InvitationUseResponse'
-          example:
-            success: true
-            invitation_id: inv_123
-            tenant_id: tenant_123
-            role_assigned: true
-            organization_assigned: false
     SetupInitialize:
       description: Successful JSON response.
       content:
@@ -3201,7 +3527,7 @@ components:
               id: admin_123
               email: admin@example.com
               name: Admin User
-              role: system_admin
+              role: ar_super_admin
             message: Administrator account created. Please complete passkey registration on Admin UI.
             admin_ui_url: https://admin.example.com
             admin_ui_setup_url: https://admin.example.com/setup/complete?token=admin_setup_token_123
@@ -3566,7 +3892,7 @@ components:
             - type: 'null'
         user_type:
           type: string
-          example: anonymous
+          example: end_user
     WebAuthnOptions:
       type: object
       additionalProperties: true
@@ -3828,6 +4154,17 @@ components:
           type: string
         authorization_challenge_id:
           type: string
+        invite_token:
+          type: string
+          minLength: 1
+          description:
+            Tenant invitation token. Checked, and one use reserved for this signup, before the
+            options are returned; applied to the account activation creates.
+        invitation_email_proof:
+          type: string
+          description:
+            Proof of the invited email from /api/v1/invitations/email-verification/verify, needed
+            when the tenant requires the email an invitation names to be proved.
     TotpSignupActivateRequest:
       type: object
       additionalProperties: false
@@ -4329,6 +4666,10 @@ components:
                 - disabled
             email_code_fallback_available:
               type: boolean
+              description: >-
+                False when the campaign does not offer the email code, or when the tenant has email
+                code for login off (`authentication-methods.email_otp.login_enabled`) or its
+                settings cannot be read.
             email_code_fallback:
               anyOf:
                 - $ref: '#/components/schemas/DirectoryPasswordEmailCodeTransaction'
@@ -4556,246 +4897,6 @@ components:
         - success
         - did
         - message
-    AnonLoginChallengeRequest:
-      type: object
-      properties:
-        client_id:
-          type: string
-          example: client_123
-        device_signature:
-          type: string
-          example: device_sig_123
-        device_stability:
-          type: string
-          example: stable
-        platform:
-          type: string
-          example: web
-      required:
-        - client_id
-    AnonLoginChallengeResponse:
-      type: object
-      properties:
-        challenge_id:
-          type: string
-          example: challenge_123
-        challenge:
-          type: string
-          example: anon_challenge_123
-        expires_at:
-          type: integer
-          example: 1770000300000
-      required:
-        - challenge_id
-        - challenge
-        - expires_at
-    AnonLoginVerifyRequest:
-      type: object
-      properties:
-        challenge_id:
-          type: string
-          example: challenge_123
-        device_signature:
-          type: string
-          example: device_sig_123
-        proof:
-          type: string
-          example: signed_challenge
-      required:
-        - challenge_id
-        - device_signature
-    AnonLoginVerifyResponse:
-      type: object
-      properties:
-        success:
-          type: boolean
-          example: true
-        session_id:
-          type: string
-          example: sess_123
-        user_id:
-          type: string
-          example: anon_123
-        is_new_user:
-          type: boolean
-          example: true
-        upgrade_eligible:
-          type: boolean
-          example: true
-        user:
-          type: object
-          properties:
-            id:
-              type: string
-              example: anon_123
-            user_type:
-              type: string
-              example: anonymous
-      required:
-        - success
-        - session_id
-        - user_id
-        - is_new_user
-        - upgrade_eligible
-        - user
-    UpgradeStartRequest:
-      type: object
-      properties:
-        method:
-          type: string
-          enum:
-            - email
-            - social
-            - phone
-          example: email
-      required:
-        - method
-    UpgradeStartResponse:
-      type: object
-      properties:
-        success:
-          type: boolean
-          example: true
-        user_id:
-          type: string
-          example: anon_123
-        upgrade_token:
-          type: string
-          example: upgrade_123
-        instructions:
-          type: object
-          properties:
-            method:
-              type: string
-              example: email
-            endpoint:
-              type: string
-              example: /api/auth/email-codes/send
-            description:
-              type: string
-              example: Verify email with OTP
-            next_step:
-              type: string
-              example: Call /api/auth/upgrade/complete after verification
-      required:
-        - success
-        - user_id
-        - upgrade_token
-        - instructions
-    UpgradeCompleteRequest:
-      type: object
-      properties:
-        upgrade_token:
-          type: string
-          example: upgrade_123
-        method:
-          type: string
-          example: email
-        preserve_sub:
-          type: boolean
-          example: true
-      required:
-        - upgrade_token
-        - method
-    UpgradeCompleteResponse:
-      type: object
-      properties:
-        success:
-          type: boolean
-          example: true
-        user_id:
-          type: string
-          example: user_123
-        previous_user_id:
-          type: string
-          example: anon_123
-        preserve_sub:
-          type: boolean
-          example: true
-        method:
-          type: string
-          example: email
-        upgraded_at:
-          type: integer
-          example: 1770000000000
-        profile_completion_required:
-          type: boolean
-          example: false
-        missing_required_custom_claims:
-          type: array
-          items:
-            $ref: '#/components/schemas/MissingRequiredField'
-        account_lifecycle_state:
-          type: string
-          example: active
-      required:
-        - success
-        - user_id
-        - preserve_sub
-        - method
-        - upgraded_at
-        - profile_completion_required
-        - missing_required_custom_claims
-        - account_lifecycle_state
-    MissingRequiredField:
-      type: object
-      properties:
-        field_key:
-          type: string
-          example: department
-        label:
-          type: string
-          example: Department
-        field_type:
-          type: string
-          example: text
-    UpgradeStatusResponse:
-      type: object
-      properties:
-        user_id:
-          type: string
-          example: user_123
-        is_anonymous:
-          type: boolean
-          example: false
-        upgrade_eligible:
-          type: boolean
-          example: false
-        profile_completion_required:
-          type: boolean
-          example: false
-        missing_required_custom_claims:
-          type: array
-          items:
-            $ref: '#/components/schemas/MissingRequiredField'
-        account_lifecycle_state:
-          type: string
-          example: active
-        upgrade_history:
-          type: array
-          items:
-            type: object
-            properties:
-              id:
-                type: string
-                example: upgrade_123
-              method:
-                type: string
-                example: email
-              upgraded_at:
-                type: integer
-                example: 1770000000000
-              preserve_sub:
-                type: boolean
-                example: true
-      required:
-        - user_id
-        - is_anonymous
-        - upgrade_eligible
-        - profile_completion_required
-        - missing_required_custom_claims
-        - account_lifecycle_state
-        - upgrade_history
     ConsentGetResponse:
       type: object
       properties:
@@ -5123,6 +5224,7 @@ components:
           example: required
         user_verification:
           type: string
+          description: Accepted for compatibility and ignored. User verification is always required for passkey registration.
           enum:
             - required
             - preferred
@@ -5138,6 +5240,18 @@ components:
         resume_user_id:
           type: string
           description: Internal Login UI continuation value paired with provisioning_token.
+        invite_token:
+          type: string
+          minLength: 1
+          description:
+            Tenant invitation token. Checked before the account is created (active, of this tenant,
+            and for the email it names, if any) and one use reserved for this signup; its role or
+            organization is assigned to the new account when signup/finish registers the passkey.
+        invitation_email_proof:
+          type: string
+          description:
+            Proof of the invited email from /api/v1/invitations/email-verification/verify, needed
+            when the tenant requires the email an invitation names to be proved.
       required:
         - client_id
         - code_challenge
@@ -5270,7 +5384,7 @@ components:
       properties:
         status:
           type: string
-          const: anonymous_credential_recycling
+          const: guest_credential_recycling
         restart_required:
           type: boolean
           const: true
@@ -5295,7 +5409,7 @@ components:
           maximum: 2000
         restart_required:
           type: boolean
-          description: When true, start a fresh anonymous-login challenge after provisioning is ready.
+          description: When true, restart browser guest login after provisioning is ready.
     DirectEmailCodeVerifyRequest:
       type: object
       properties:
@@ -5364,6 +5478,7 @@ components:
           example: required
         user_verification:
           type: string
+          description: Accepted for compatibility and ignored. User verification is always required for passkey registration.
           enum:
             - required
             - preferred
@@ -5459,38 +5574,6 @@ components:
         code_verifier:
           type: string
           example: rfc7636-code-verifier
-    InvitationUseRequest:
-      type: object
-      properties:
-        token:
-          type: string
-          example: invite_123
-        user_id:
-          type: string
-          example: user_123
-      required:
-        - token
-        - user_id
-    InvitationUseResponse:
-      type: object
-      properties:
-        success:
-          type: boolean
-          example: true
-        invitation_id:
-          type: string
-          example: inv_123
-        tenant_id:
-          type: string
-          example: tenant_123
-        role_assigned:
-          type: boolean
-          example: true
-        organization_assigned:
-          type: boolean
-          example: false
-      required:
-        - success
     SetupInitializeRequest:
       type: object
       properties:
@@ -5571,7 +5654,7 @@ components:
                 - type: 'null'
             role:
               type: string
-              example: system_admin
+              example: ar_super_admin
         message:
           type: string
           example: Administrator account created. Please complete passkey registration on Admin UI.
@@ -5949,7 +6032,6 @@ components:
       type: object
       required:
         - challenge_id
-        - client
         - session_mode
         - handoff_methods
         - web_origin_registry
@@ -5957,6 +6039,14 @@ components:
         challenge_id:
           type: string
           example: chal_123
+        protocol:
+          type: string
+          enum:
+            - saml
+          description:
+            Present (as saml) when the challenge is the re-authentication of a SAML request. Such a
+            response has no client, scope, login_hint or oidc, and its web_origin_registry has no
+            origins. Otherwise the challenge is an OIDC authorization request and client is present.
         client:
           type: object
           required:
@@ -6169,6 +6259,11 @@ components:
             - string
             - 'null'
           format: email
+        email_verification_required:
+          type: boolean
+          description:
+            True when the invitation names an email and the tenant requires that email proved, so a
+            passkey or authenticator-app signup must first use /api/v1/invitations/email-verification.
           example: user@example.com
         expires_at:
           type: integer

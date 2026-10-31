@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { processLoggingDeliveryQueue } from '../queue-consumer';
-import { decodeStoredLogChunkRecord, writeLogChunkToR2 } from '@authrim/ar-lib-logging/chunks';
 import { decryptObjectArtifact, encryptObjectArtifact } from '../../object-artifact-crypto';
 
 const ROOT_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
@@ -12,7 +11,7 @@ async function createEncryptedArchivePayloadObject(
 ): Promise<R2ObjectBody> {
   const envelope = await encryptObjectArtifact(JSON.stringify(payload), {
     rootKeyHex: ROOT_KEY,
-    plane: 'AUDIT_ARCHIVE',
+    plane: 'SENSITIVE_DETAILS',
     keyVersion: 1,
     contentType: 'application/json',
     context: {
@@ -31,43 +30,6 @@ async function createEncryptedArchivePayloadObject(
     },
     text: vi.fn().mockResolvedValue(stored),
   } as unknown as R2ObjectBody;
-}
-
-function hexToBytes(hex: string): Uint8Array {
-  const bytes = new Uint8Array(32);
-  for (let index = 0; index < hex.length; index += 2) {
-    bytes[index / 2] = Number.parseInt(hex.slice(index, index + 2), 16);
-  }
-  return bytes;
-}
-
-async function deriveArchiveChunkEncryptionKey(input: {
-  rootKeyHex: string;
-  tenantKey: string;
-  logType: string;
-  plane: string;
-  keyVersion: number;
-}): Promise<Uint8Array> {
-  const material = await crypto.subtle.importKey(
-    'raw',
-    hexToBytes(input.rootKeyHex),
-    'HKDF',
-    false,
-    ['deriveBits']
-  );
-  const bits = await crypto.subtle.deriveBits(
-    {
-      name: 'HKDF',
-      hash: 'SHA-256',
-      salt: new TextEncoder().encode('authrim-log-chunk-archive-encryption'),
-      info: new TextEncoder().encode(
-        `${input.tenantKey}:${input.logType}:${input.plane}:v${input.keyVersion}`
-      ),
-    },
-    material,
-    256
-  );
-  return new Uint8Array(bits);
 }
 
 function createMessage(body: unknown) {
@@ -191,134 +153,62 @@ describe('logging delivery queue consumer', () => {
     vi.unstubAllGlobals();
   });
 
-  it('writes chunk_write payload records to R2 and commits catalog rows', async () => {
-    const bucket = {
-      put: vi.fn().mockResolvedValue(undefined),
-    } as unknown as R2Bucket;
-    const adminDb = createAdminDbAdapter();
-    const message = createMessage({
+  it.each([
+    {
       payload_type: 'chunk_write',
-      schema_version: 1,
-      payload_id: 'qpl_chunk_1',
-      tenant_key: 'tk_chunk',
-      lane: 'default',
-      created_at: 1779148800000,
       log_type: 'operational',
       plane: 'archive',
-      records: [
-        {
-          id: 'evt_chunk_1',
-          event_at: 1779148800000,
-          payload: { operation: 'job.run', status: 'ok' },
-          indexed_fields: { operation: 'job.run', status: 'ok' },
-        },
-      ],
-    });
-
-    await processLoggingDeliveryQueue(
-      { messages: [message], queue: 'LOGGING_DELIVERY_QUEUE' } as unknown as MessageBatch<unknown>,
-      {
-        DB: {} as D1Database,
-        DB_PII: {} as D1Database,
-        DB_ADMIN: adminDb,
-        AUDIT_ARCHIVE: bucket,
-        OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
-      }
-    );
-
-    expect(bucket.put).toHaveBeenCalledWith(
-      expect.stringContaining('logs/v1/tk_chunk/archive/operational/'),
-      expect.any(Uint8Array),
-      expect.objectContaining({
-        httpMetadata: expect.objectContaining({
-          contentType: 'application/authrim.log-chunk+encrypted',
-        }),
-      })
-    );
-    expect(adminDb.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO log_object_catalog'),
-      expect.arrayContaining(['tk_chunk', 'operational', 'archive'])
-    );
-    expect(adminDb.batch).toHaveBeenCalledWith([
-      expect.objectContaining({
-        sql: expect.stringContaining('INSERT INTO log_chunk_record_index'),
-        params: expect.arrayContaining(['evt_chunk_1', 'tk_chunk', 'operational', 'archive']),
-      }),
-    ]);
-    expect(adminDb.execute).toHaveBeenCalledWith(
-      expect.stringContaining('UPDATE logging_delivery_event_aggregates'),
-      expect.arrayContaining([
-        'tk_chunk',
-        'chunk_writer',
-        'operational',
-        'archive',
-        'default',
-        'delivered',
-      ])
-    );
-    expect(message.ack).toHaveBeenCalledOnce();
-    expect(message.retry).not.toHaveBeenCalled();
-  });
-
-  it('loads chunk_write records from an R2 object reference before writing chunks', async () => {
-    const objectKey = 'payloads/chunk-records.json';
-    const bucket = {
-      get: vi.fn().mockResolvedValue(
-        await createEncryptedArchivePayloadObject(objectKey, 'tk_chunk_ref', {
-          records: [
-            {
-              id: 'evt_chunk_ref_1',
-              eventAt: 1779148800000,
-              payload: { operation: 'bulk.flush', status: 'ok' },
-              indexedFields: { operation: 'bulk.flush' },
-            },
-          ],
-        })
-      ),
-      put: vi.fn().mockResolvedValue(undefined),
-    } as unknown as R2Bucket;
-    const adminDb = createAdminDbAdapter();
-    const message = createMessage({
+      records: [{ id: 'old', payload: {} }],
+    },
+    {
       payload_type: 'chunk_write',
-      schema_version: 1,
-      payload_id: 'qpl_chunk_ref_1',
-      tenant_key: 'tk_chunk_ref',
-      lane: 'bulk',
-      created_at: 1779148800000,
       log_type: 'operational',
-      plane: 'archive',
+      plane: 'diagnostic_detail',
       records: [],
-      records_object_ref: `r2://${objectKey}`,
-    });
+      records_object_ref: 'r2://old.json',
+    },
+    { payload_type: 'rewrap_chunk', rewrap_job_id: 'old-job', object_catalog_id: 'old-object' },
+    {
+      payload_type: 'log_chunk_delivery',
+      catalog_id: 'old-catalog',
+      object_key: 'old.json',
+      destination_id: 'dest_1',
+      log_type: 'audit',
+      plane: 'archive',
+      record_count: 1,
+    },
+  ])(
+    'rejects retired log chunk input $payload_type before touching payload storage',
+    async (payload) => {
+      const bucket = { put: vi.fn(), get: vi.fn() } as unknown as R2Bucket;
+      const message = createMessage({
+        schema_version: 1,
+        payload_id: 'old-payload',
+        tenant_key: 'key-a',
+        lane: 'default',
+        created_at: 1779148800000,
+        ...payload,
+      });
+      const adminDb = createAdminDbAdapter();
+      await processLoggingDeliveryQueue(
+        { messages: [message] } as unknown as MessageBatch<unknown>,
+        {
+          DB: {} as D1Database,
+          DB_PII: {} as D1Database,
+          DB_ADMIN: adminDb,
+          SENSITIVE_DETAILS: bucket,
+          OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
+        }
+      );
+      expect(message.retry).toHaveBeenCalledOnce();
+      expect(message.ack).not.toHaveBeenCalled();
+      expect(bucket.get).not.toHaveBeenCalled();
+      expect(bucket.put).not.toHaveBeenCalled();
+      expect(adminDb.execute).not.toHaveBeenCalled();
+    }
+  );
 
-    await processLoggingDeliveryQueue(
-      { messages: [message], queue: 'LOGGING_DELIVERY_QUEUE' } as unknown as MessageBatch<unknown>,
-      {
-        DB: {} as D1Database,
-        DB_PII: {} as D1Database,
-        DB_ADMIN: adminDb,
-        AUDIT_ARCHIVE: bucket,
-        OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
-      }
-    );
-
-    expect(bucket.get).toHaveBeenCalledWith('payloads/chunk-records.json');
-    expect(bucket.put).toHaveBeenCalledWith(
-      expect.stringContaining('logs/v1/tk_chunk_ref/archive/operational/'),
-      expect.any(Uint8Array),
-      expect.any(Object)
-    );
-    expect(adminDb.batch).toHaveBeenCalledWith([
-      expect.objectContaining({
-        sql: expect.stringContaining('INSERT INTO log_chunk_record_index'),
-        params: expect.arrayContaining(['evt_chunk_ref_1', 'tk_chunk_ref', 'operational']),
-      }),
-    ]);
-    expect(message.ack).toHaveBeenCalledOnce();
-    expect(message.retry).not.toHaveBeenCalled();
-  });
-
-  it('rejects plaintext R2 payload references instead of using the removed legacy format', async () => {
+  it('rejects retired chunk references before reading a plaintext object', async () => {
     const bucket = {
       get: vi.fn().mockResolvedValue({
         size: 14,
@@ -355,7 +245,7 @@ describe('logging delivery queue consumer', () => {
     expect(message.ack).not.toHaveBeenCalled();
   });
 
-  it('rejects oversized chunk_write record objects before reading R2 text', async () => {
+  it('rejects retired chunk references before reading an oversized object', async () => {
     const text = vi.fn().mockResolvedValue('[]');
     const bucket = {
       get: vi.fn().mockResolvedValue({
@@ -705,7 +595,7 @@ describe('logging delivery queue consumer', () => {
         DB: {} as D1Database,
         DB_PII: {} as D1Database,
         DB_ADMIN: adminDb,
-        AUDIT_ARCHIVE: bucket,
+        SENSITIVE_DETAILS: bucket,
         OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
       }
     );
@@ -723,18 +613,86 @@ describe('logging delivery queue consumer', () => {
       })
     );
     expect(adminDb.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO logging_delivery_events'),
-      expect.arrayContaining([
-        'tk_123',
-        'dest_1',
-        'operational',
-        'external_sink',
-        'critical',
-        'delivered',
-      ])
+      expect.stringContaining("SET status = 'delivered'"),
+      expect.arrayContaining([1])
     );
     expect(message.ack).toHaveBeenCalledOnce();
     expect(message.retry).not.toHaveBeenCalled();
+  });
+
+  it('claims a stable HTTP batch delivery before POST and skips duplicate queue messages', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      status: 202,
+      headers: { get: vi.fn().mockReturnValue(null) },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const bucket = {
+      get: vi.fn().mockResolvedValue(
+        await createEncryptedArchivePayloadObject('payloads/batch_dedup.json', 'tk_123', {
+          records: [{ id: 'evt_1' }],
+        })
+      ),
+      delete: vi.fn().mockResolvedValue(undefined),
+    } as unknown as R2Bucket;
+    const adminDb = createAdminDbAdapter();
+    const deliveryClaims = new Map<string, string>();
+    adminDb.execute.mockImplementation(async (sql: string, params: unknown[] = []) => {
+      if (sql.includes('INSERT INTO logging_delivery_events')) {
+        const id = String(params[0]);
+        if (deliveryClaims.has(id)) return { rowsAffected: 0 };
+        deliveryClaims.set(id, 'retrying');
+        return { rowsAffected: 1 };
+      }
+      if (sql.includes('UPDATE logging_delivery_events')) {
+        const id = String(params[4] ?? params[10] ?? params[1]);
+        if (sql.includes("SET status = 'delivered'") && deliveryClaims.get(id) === 'retrying') {
+          deliveryClaims.set(id, 'delivered');
+          return { rowsAffected: 1 };
+        }
+        return { rowsAffected: 0 };
+      }
+      return { rowsAffected: 1 };
+    });
+    const payload = {
+      payload_type: 'http_sink_batch',
+      schema_version: 1,
+      payload_id: 'qpl_dedup_1',
+      tenant_key: 'tk_123',
+      lane: 'critical',
+      created_at: 1779148800000,
+      destination_id: 'dest_1',
+      endpoint_url: 'https://collector.example/logs',
+      log_type: 'operational',
+      plane: 'external_sink',
+      batch_id: 'batch_dedup',
+      record_count: 1,
+      body_object_ref: 'r2://payloads/batch_dedup.json',
+    };
+    const messages = [createMessage(payload), createMessage(payload)];
+
+    await processLoggingDeliveryQueue(
+      { messages, queue: 'LOGGING_DELIVERY_QUEUE' } as unknown as MessageBatch<unknown>,
+      {
+        DB: {} as D1Database,
+        DB_PII: {} as D1Database,
+        DB_ADMIN: adminDb,
+        SENSITIVE_DETAILS: bucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
+      }
+    );
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(bucket.get).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://collector.example/logs',
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'X-Authrim-Delivery': 'qpl_dedup_1' }),
+      })
+    );
+    for (const message of messages) {
+      expect(message.ack).toHaveBeenCalledOnce();
+      expect(message.retry).not.toHaveBeenCalled();
+    }
   });
 
   it('rejects oversized HTTP sink body objects before reading R2 text', async () => {
@@ -773,7 +731,7 @@ describe('logging delivery queue consumer', () => {
         DB: {} as D1Database,
         DB_PII: {} as D1Database,
         DB_ADMIN: adminDb,
-        AUDIT_ARCHIVE: bucket,
+        SENSITIVE_DETAILS: bucket,
       }
     );
 
@@ -832,8 +790,8 @@ describe('logging delivery queue consumer', () => {
       })
     );
     expect(adminDb.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO logging_delivery_events'),
-      expect.arrayContaining(['delivered'])
+      expect.stringContaining("SET status = 'delivered'"),
+      expect.any(Array)
     );
     expect(JSON.stringify(adminDb.execute.mock.calls)).not.toContain('runtime-token');
     expect(message.ack).toHaveBeenCalledOnce();
@@ -898,10 +856,10 @@ describe('logging delivery queue consumer', () => {
       })
     );
     expect(JSON.stringify(adminDb.execute.mock.calls)).not.toContain('runtime-hmac-secret');
-    const eventInsert = adminDb.execute.mock.calls.find(([sql]) =>
-      String(sql).includes('INSERT INTO logging_delivery_events')
+    const eventCompletion = adminDb.execute.mock.calls.find(([sql]) =>
+      String(sql).includes("SET status = 'delivered'")
     );
-    const metadata = JSON.parse((eventInsert?.[1] as unknown[])[13] as string) as {
+    const metadata = JSON.parse((eventCompletion?.[1] as unknown[])[3] as string) as {
       redacted_headers: Record<string, string>;
     };
     expect(metadata.redacted_headers['X-Authrim-Signature-256']).toBe('[redacted]');
@@ -961,10 +919,10 @@ describe('logging delivery queue consumer', () => {
         }),
       })
     );
-    const eventInsert = adminDb.execute.mock.calls.find(([sql]) =>
-      String(sql).includes('INSERT INTO logging_delivery_events')
+    const eventCompletion = adminDb.execute.mock.calls.find(([sql]) =>
+      String(sql).includes("SET status = 'delivered'")
     );
-    const metadata = JSON.parse((eventInsert?.[1] as unknown[])[13] as string) as {
+    const metadata = JSON.parse((eventCompletion?.[1] as unknown[])[3] as string) as {
       redacted_headers: Record<string, string>;
     };
     expect(metadata.redacted_headers['X-Webhook-Signature']).toBe('[redacted]');
@@ -1014,18 +972,8 @@ describe('logging delivery queue consumer', () => {
       })
     );
     expect(adminDb.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO logging_delivery_events'),
-      expect.arrayContaining([
-        'tk_123',
-        'dest_1',
-        'audit',
-        'external_sink',
-        'critical',
-        'delivered',
-        1,
-        null,
-        'chk_1',
-      ])
+      expect.stringContaining("SET status = 'delivered'"),
+      expect.arrayContaining([1, 'chk_1'])
     );
     expect(message.ack).toHaveBeenCalledOnce();
     expect(message.retry).not.toHaveBeenCalled();
@@ -1164,8 +1112,8 @@ describe('logging delivery queue consumer', () => {
       }
     );
 
-    const eventCall = adminDb.execute.mock.calls.find(([sql]) =>
-      String(sql).includes('INSERT INTO logging_delivery_events')
+    const eventCall = adminDb.execute.mock.calls.find(([, params]) =>
+      (params as unknown[] | undefined)?.includes('http_sink_delivery_failed')
     );
     expect(eventCall?.[1]).toEqual(
       expect.arrayContaining([
@@ -1217,7 +1165,7 @@ describe('logging delivery queue consumer', () => {
         DB: {} as D1Database,
         DB_PII: {} as D1Database,
         DB_ADMIN: adminDb,
-        AUDIT_ARCHIVE: bucket,
+        SENSITIVE_DETAILS: bucket,
         AUDIT_QUEUE: { send } as never,
         OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
       }
@@ -1266,7 +1214,7 @@ describe('logging delivery queue consumer', () => {
         DB: {} as D1Database,
         DB_PII: {} as D1Database,
         DB_ADMIN: adminDb,
-        AUDIT_ARCHIVE: bucket,
+        SENSITIVE_DETAILS: bucket,
         AUDIT_QUEUE: { send } as never,
       }
     );
@@ -1320,7 +1268,7 @@ describe('logging delivery queue consumer', () => {
         DB: {} as D1Database,
         DB_PII: {} as D1Database,
         DB_ADMIN: adminDb,
-        AUDIT_ARCHIVE: bucket,
+        SENSITIVE_DETAILS: bucket,
         AUDIT_QUEUE: { send: vi.fn() } as never,
         LOGGING_DELIVERY_QUEUE: { send: deliverySend } as never,
         OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
@@ -1332,199 +1280,6 @@ describe('logging delivery queue consumer', () => {
     expect(adminDb.execute).toHaveBeenCalledWith(
       expect.stringContaining("SET status = 'replayed'"),
       expect.arrayContaining(['dlq_1'])
-    );
-    expect(message.ack).toHaveBeenCalledOnce();
-    expect(message.retry).not.toHaveBeenCalled();
-  });
-
-  it('rewraps encrypted archive chunks through the delivery queue without exposing payloads', async () => {
-    const rootKeyHex = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
-    const tenantKey = 'tk_123';
-    const encryptionScope = `tenant:${tenantKey}:audit:archive`;
-    const payload = { id: 'evt_rewrap_1', eventType: 'auth.login', result: 'success' };
-    let storedBody: Uint8Array | undefined;
-    let rewrappedBody: Uint8Array | undefined;
-    const indexRows: Array<Record<string, unknown>> = [];
-    const chunkResult = await writeLogChunkToR2({
-      bucket: {
-        put: vi.fn(async (_key: string, body: Uint8Array) => {
-          storedBody = body;
-        }),
-      } as unknown as R2Bucket,
-      tenantKey,
-      logType: 'audit',
-      plane: 'archive',
-      records: [{ id: 'evt_rewrap_1', eventAt: 1779148800000, payload }],
-      compression: 'none',
-      now: 1779148800000,
-      encryption: {
-        keyBytes: await deriveArchiveChunkEncryptionKey({
-          rootKeyHex,
-          tenantKey,
-          logType: 'audit',
-          plane: 'archive',
-          keyVersion: 1,
-        }),
-        encryptionScope,
-        keyVersion: 1,
-      },
-      catalogStore: {
-        createPendingObject: vi.fn(),
-        createPendingRecordIndexes: vi.fn(async (rows) => {
-          indexRows.push(...(rows as unknown as Array<Record<string, unknown>>));
-        }),
-        commitObject: vi.fn(),
-        commitRecordIndexes: vi.fn(),
-        markObjectOrphanCandidate: vi.fn(),
-      },
-    });
-    const recordIndex = indexRows[0]!;
-    const bucket = {
-      get: vi.fn().mockResolvedValue({
-        arrayBuffer: vi.fn().mockResolvedValue(storedBody!.slice().buffer),
-      }),
-      put: vi.fn(async (_key: string, body: Uint8Array) => {
-        rewrappedBody = body;
-      }),
-    } as unknown as R2Bucket;
-    const adminDb = {
-      query: vi.fn().mockResolvedValue([]),
-      queryOne: vi.fn().mockImplementation((sql: string) => {
-        if (sql.includes('FROM logging_rewrap_jobs')) {
-          return Promise.resolve({
-            id: 'lrw_1',
-            key_registry_id: 'lkey_1',
-            from_version: 1,
-            to_version: 2,
-            status: 'queued',
-            metadata: '{"reason":"critical_archive"}',
-          });
-        }
-        if (sql.includes('FROM log_object_catalog')) {
-          return Promise.resolve({
-            id: chunkResult.objectCatalogId,
-            tenant_key: tenantKey,
-            log_type: 'audit',
-            plane: 'archive',
-            object_key: chunkResult.objectKey,
-            chunk_id: chunkResult.chunkId,
-            object_kind: 'chunk',
-            status: 'committed',
-            record_count: 1,
-            byte_count: storedBody!.byteLength,
-            checksum_sha256: 'old-checksum',
-            compression: chunkResult.compression,
-            encryption_scope: encryptionScope,
-            key_version: 1,
-          });
-        }
-        if (sql.includes('internal_notification_events')) {
-          return Promise.resolve(null);
-        }
-        return Promise.resolve(null);
-      }),
-      execute: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
-      transaction: vi.fn(),
-      batch: vi.fn().mockResolvedValue([]),
-      isHealthy: vi.fn().mockResolvedValue({ healthy: true, latencyMs: 1 }),
-      getType: vi.fn().mockReturnValue('mock'),
-      close: vi.fn().mockResolvedValue(undefined),
-    };
-    const message = createMessage({
-      payload_type: 'rewrap_chunk',
-      schema_version: 1,
-      payload_id: 'qpl_rewrap_1',
-      tenant_key: tenantKey,
-      lane: 'bulk',
-      created_at: 1779148800000,
-      rewrap_job_id: 'lrw_1',
-      object_catalog_id: chunkResult.objectCatalogId,
-    });
-
-    await processLoggingDeliveryQueue(
-      {
-        messages: [message],
-        queue: 'LOGGING_DELIVERY_BULK_QUEUE',
-      } as unknown as MessageBatch<unknown>,
-      {
-        DB: {} as D1Database,
-        DB_PII: {} as D1Database,
-        DB_ADMIN: adminDb,
-        AUDIT_ARCHIVE: bucket,
-        OBJECT_ENCRYPTION_ROOT_KEY: rootKeyHex,
-      }
-    );
-
-    expect(bucket.get).toHaveBeenCalledWith(chunkResult.objectKey);
-    expect(bucket.put).toHaveBeenCalledWith(
-      chunkResult.objectKey,
-      expect.any(Uint8Array),
-      expect.objectContaining({
-        customMetadata: expect.objectContaining({
-          keyVersion: '2',
-          encryptionScope,
-        }),
-      })
-    );
-    await expect(
-      decodeStoredLogChunkRecord({
-        storedBody: rewrappedBody!,
-        compression: chunkResult.compression,
-        recordIndex: {
-          recordId: String(recordIndex.recordId),
-          tenantKey,
-          logType: 'audit',
-          plane: 'archive',
-          objectCatalogId: chunkResult.objectCatalogId,
-          chunkId: chunkResult.chunkId,
-          lineNumber: Number(recordIndex.lineNumber),
-          blockOffset: Number(recordIndex.blockOffset),
-          blockLength: Number(recordIndex.blockLength),
-          recordOffset: Number(recordIndex.recordOffset),
-          recordLength: Number(recordIndex.recordLength),
-          eventAt: 1779148800000,
-          indexProfile: 'audit',
-          status: 'committed',
-          createdAt: 1779148800000,
-        },
-        encryption: {
-          keyBytes: await deriveArchiveChunkEncryptionKey({
-            rootKeyHex,
-            tenantKey,
-            logType: 'audit',
-            plane: 'archive',
-            keyVersion: 2,
-          }),
-          tenantKey,
-          logType: 'audit',
-          plane: 'archive',
-          objectKey: chunkResult.objectKey,
-          chunkId: chunkResult.chunkId,
-          expectedEncryptionScope: encryptionScope,
-          expectedKeyVersion: 2,
-        },
-      })
-    ).resolves.toEqual(payload);
-    expect(adminDb.execute).toHaveBeenCalledWith(
-      expect.stringContaining('UPDATE log_object_catalog'),
-      expect.arrayContaining([2, expect.any(Number), chunkResult.objectCatalogId, 'committed'])
-    );
-    expect(adminDb.execute).toHaveBeenCalledWith(
-      expect.stringContaining('UPDATE logging_rewrap_jobs'),
-      expect.arrayContaining([
-        'succeeded',
-        expect.any(Number),
-        expect.stringContaining('"to_version":2'),
-        'lrw_1',
-      ])
-    );
-    expect(adminDb.execute).toHaveBeenCalledWith(
-      expect.stringContaining('UPDATE logging_key_versions'),
-      expect.arrayContaining(['lkey_1', 1])
-    );
-    expect(adminDb.execute).toHaveBeenCalledWith(
-      expect.stringContaining('UPDATE logging_key_versions'),
-      expect.arrayContaining([1, 'lkey_1', 2])
     );
     expect(message.ack).toHaveBeenCalledOnce();
     expect(message.retry).not.toHaveBeenCalled();
@@ -1557,7 +1312,7 @@ describe('logging delivery queue consumer', () => {
         DB: {} as D1Database,
         DB_PII: {} as D1Database,
         DB_ADMIN: adminDb,
-        AUDIT_ARCHIVE: bucket,
+        SENSITIVE_DETAILS: bucket,
         OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
       }
     );

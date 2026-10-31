@@ -42,6 +42,21 @@ const expectedExports = {
     types: './dist/keys/index.d.ts',
     default: './src/keys/index.ts',
   },
+  './iceberg': {
+    import: './dist/iceberg/index.js',
+    types: './dist/iceberg/index.d.ts',
+    default: './src/iceberg/index.ts',
+  },
+  './iceberg/schema': {
+    import: './dist/iceberg/schema.js',
+    types: './dist/iceberg/schema.d.ts',
+    default: './src/iceberg/schema.ts',
+  },
+  './iceberg/capabilities': {
+    import: './dist/iceberg/capabilities.js',
+    types: './dist/iceberg/capabilities.d.ts',
+    default: './src/iceberg/capabilities.ts',
+  },
   './messaging': {
     import: './dist/messaging/index.js',
     types: './dist/messaging/index.d.ts',

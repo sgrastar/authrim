@@ -33,7 +33,7 @@ function createPiiEntry(overrides: Partial<PIILogEntry> = {}): PIILogEntry {
 }
 
 describe('D1AuditAdapter', () => {
-  it('uses insert-if-not-exists SQL for event writes', async () => {
+  it('refuses retired writeEventLogBatch instead of creating an old primary copy', async () => {
     const bind = vi.fn().mockReturnValue({ kind: 'bound' });
     const prepare = vi.fn().mockReturnValue({ bind });
     const batch = vi.fn().mockResolvedValue([]);
@@ -43,36 +43,12 @@ describe('D1AuditAdapter', () => {
       isPiiDb: false,
     });
 
-    const result = await adapter.writeEventLogBatch([createEventEntry()]);
-
-    expect(result.success).toBe(true);
-    expect(prepare).toHaveBeenCalledTimes(1);
-    expect(prepare.mock.calls[0]?.[0]).toContain('WHERE NOT EXISTS');
-    expect(prepare.mock.calls[0]?.[0]).not.toContain('ON CONFLICT');
-    expect(bind).toHaveBeenCalledWith(
-      'evt-1',
-      'tenant-1',
-      'auth.login',
-      'authentication',
-      'success',
-      'info',
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      1_700_000_000_000,
-      'evt-1'
+    await expect(adapter.writeEventLogBatch([createEventEntry()])).rejects.toThrow(
+      'audit_primary_storage_retired_use_configured_iceberg_mode'
     );
-    expect(batch).toHaveBeenCalledTimes(1);
   });
 
-  it('uses insert-if-not-exists SQL for pii writes', async () => {
+  it('refuses retired writePIILogBatch instead of creating an old primary copy', async () => {
     const bind = vi.fn().mockReturnValue({ kind: 'bound' });
     const prepare = vi.fn().mockReturnValue({ bind });
     const batch = vi.fn().mockResolvedValue([]);
@@ -82,33 +58,9 @@ describe('D1AuditAdapter', () => {
       isPiiDb: true,
     });
 
-    const result = await adapter.writePIILogBatch([createPiiEntry()]);
-
-    expect(result.success).toBe(true);
-    expect(prepare).toHaveBeenCalledTimes(1);
-    expect(prepare.mock.calls[0]?.[0]).toContain('WHERE NOT EXISTS');
-    expect(prepare.mock.calls[0]?.[0]).not.toContain('ON CONFLICT');
-    expect(bind).toHaveBeenCalledWith(
-      'pii-1',
-      'tenant-1',
-      'user-1',
-      'anon-1',
-      'update',
-      'email',
-      null,
-      null,
-      'key-1',
-      'iv-1',
-      null,
-      'user',
-      null,
-      null,
-      null,
-      1_800_000_000_000,
-      1_700_000_000_000,
-      'pii-1'
+    await expect(adapter.writePIILogBatch([createPiiEntry()])).rejects.toThrow(
+      'audit_primary_storage_retired_use_configured_iceberg_mode'
     );
-    expect(batch).toHaveBeenCalledTimes(1);
   });
 
   it('lists retention candidates in stable oldest-first order and deletes through an ordered subquery', async () => {
@@ -172,5 +124,25 @@ describe('D1AuditAdapter', () => {
       'ORDER BY retention_until ASC, created_at ASC, id ASC'
     );
     expect(deleted).toBe(1);
+  });
+
+  it('reports a failed retention read or delete instead of nothing to delete', async () => {
+    const failure = new Error('D1_ERROR: database unavailable');
+    const bind = vi.fn().mockReturnValue({
+      all: vi.fn().mockRejectedValue(failure),
+      run: vi.fn().mockRejectedValue(failure),
+    });
+    const adapter = new D1AuditAdapter({
+      id: 'audit-d1',
+      db: { prepare: vi.fn().mockReturnValue({ bind }) } as unknown as D1Database,
+      isPiiDb: false,
+    });
+
+    await expect(
+      adapter.listTenantRetentionCandidates('event', Date.now(), 'tenant-1')
+    ).rejects.toThrow(failure);
+    await expect(adapter.deleteTenantByRetention('pii', Date.now(), 'tenant-1')).rejects.toThrow(
+      failure
+    );
   });
 });

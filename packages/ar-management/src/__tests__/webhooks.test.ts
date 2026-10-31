@@ -392,6 +392,78 @@ describe('Webhook Admin API - Create Webhook', () => {
   });
 
   describe('POST /api/admin/webhooks', () => {
+    it('persists selected account fields and registration filters', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          name: 'Email integration',
+          url: 'https://example.com/hook',
+          events: ['account.email.changed'],
+          payloadFields: ['email'],
+          registrationStates: ['registered'],
+        },
+      });
+      mockWebhookRegistry.register.mockResolvedValue('w');
+      mockWebhookRegistry.get.mockResolvedValue({
+        ...createWebhookEntry({ id: 'w' }),
+        payloadFields: ['email'],
+        registrationStates: ['registered'],
+      });
+      await createWebhook(c);
+      expect(c.json.mock.calls[0][1]).toBe(201);
+      expect(mockWebhookRegistry.register).toHaveBeenCalledWith(
+        'test-tenant',
+        expect.objectContaining({ payloadFields: ['email'], registrationStates: ['registered'] })
+      );
+      expect(c.json.mock.calls[0][0].webhook.payloadFields).toEqual(['email']);
+    });
+    it.each([['password_hash'], ['email', 'email'], ['email', 'secret'], 'email', null])(
+      'rejects invalid field selection %j',
+      async (fields) => {
+        const c = createMockContext({
+          method: 'POST',
+          body: {
+            name: 'Email',
+            url: 'https://example.com/hook',
+            events: ['account.*'],
+            payloadFields: fields,
+          },
+        });
+        await createWebhook(c);
+        expect(c.json.mock.calls[0][1]).toBe(400);
+        expect(mockWebhookRegistry.register).not.toHaveBeenCalled();
+      }
+    );
+    it('requires payload permission before enabling email delivery', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        adminPermissions: ['admin:webhooks:create'],
+        body: {
+          name: 'Email',
+          url: 'https://example.com/hook',
+          events: ['account.*'],
+          payloadFields: ['email'],
+        },
+      });
+      await createWebhook(c);
+      expect(c.json.mock.calls[0][1]).toBe(403);
+      expect(mockWebhookRegistry.register).not.toHaveBeenCalled();
+    });
+    it('rejects selected account data on a client-scoped destination', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          name: 'Email',
+          url: 'https://example.com/hook',
+          events: ['account.*'],
+          payloadFields: ['email'],
+          clientId: 'client',
+        },
+      });
+      await createWebhook(c);
+      expect(c.json.mock.calls[0][1]).toBe(400);
+      expect(mockWebhookRegistry.register).not.toHaveBeenCalled();
+    });
     it('should create a webhook with valid input', async () => {
       const c = createMockContext({
         method: 'POST',

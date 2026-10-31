@@ -387,7 +387,7 @@ async function verifyStatusListJWTSignature(
 
   try {
     // Convert JWK to CryptoKey if needed
-    const key = 'kty' in publicKey ? await importJWK(publicKey as JWK, alg) : publicKey;
+    const key = 'kty' in publicKey ? await importJWK(publicKey, alg) : publicKey;
 
     // Verify the JWT signature
     await jwtVerify(jwt, key, {

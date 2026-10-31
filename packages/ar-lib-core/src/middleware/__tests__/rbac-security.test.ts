@@ -1,13 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { AdminAuthContext } from '../../types/admin';
-import {
-  requireAdmin,
-  requireAllRoles,
-  requireAnyRole,
-  requireRole,
-  requireSystemAdmin,
-} from '../rbac';
+import { requireAllRoles, requireAnyRole, requireRole, requireSystemAdmin } from '../rbac';
 
 function auth(overrides: Partial<AdminAuthContext> = {}): AdminAuthContext {
   return {
@@ -36,12 +30,20 @@ function app(middleware: ReturnType<typeof requireRole>, context?: AdminAuthCont
   return { instance, reached };
 }
 
+const RETIRED_ROLE_NAMES = [
+  'super_admin',
+  'system_admin',
+  'security_admin',
+  'distributor_admin',
+  'tenant_admin',
+  'admin',
+];
+
 describe('RBAC middleware security decisions', () => {
   it.each([
-    requireRole('security_admin'),
-    requireAnyRole(['security_admin', 'auditor']),
-    requireAllRoles(['security_admin', 'auditor']),
-    requireAdmin(),
+    requireRole('ar_tenant_admin'),
+    requireAnyRole(['ar_tenant_admin', 'auditor']),
+    requireAllRoles(['ar_tenant_admin', 'auditor']),
     requireSystemAdmin(),
   ])('rejects missing authentication before invoking the handler', async (middleware) => {
     const { instance, reached } = app(middleware);
@@ -56,44 +58,41 @@ describe('RBAC middleware security decisions', () => {
 
   it('requires an exact role match and does not accept case or substring variants', async () => {
     for (const roles of [
-      ['security_admin_extra'],
+      ['ar_tenant_admin_extra'],
       ['SECURITY_ADMIN'],
-      [' security_admin '],
+      [' ar_tenant_admin '],
       ['admin'],
     ]) {
-      const { instance, reached } = app(requireRole('security_admin'), auth({ roles }));
+      const { instance, reached } = app(requireRole('ar_tenant_admin'), auth({ roles }));
       const response = await instance.request('/protected');
       expect(response.status).toBe(403);
       expect(await response.json()).toMatchObject({
         error: 'access_denied',
-        required_roles: ['security_admin'],
+        required_roles: ['ar_tenant_admin'],
       });
       expect(reached).not.toHaveBeenCalled();
     }
 
-    const allowed = app(requireRole('security_admin'), auth({ roles: ['security_admin'] }));
+    const allowed = app(requireRole('ar_tenant_admin'), auth({ roles: ['ar_tenant_admin'] }));
     expect((await allowed.instance.request('/protected')).status).toBe(200);
     expect(allowed.reached).toHaveBeenCalledOnce();
   });
 
-  it.each(['super_admin', 'system_admin'])(
-    '%s bypasses single, any and all role gates',
-    async (role) => {
-      for (const middleware of [
-        requireRole('unrelated'),
-        requireAnyRole(['unrelated-a', 'unrelated-b']),
-        requireAllRoles(['unrelated-a', 'unrelated-b']),
-      ]) {
-        const { instance, reached } = app(middleware, auth({ roles: [role] }));
-        expect((await instance.request('/protected')).status).toBe(200);
-        expect(reached).toHaveBeenCalledOnce();
-      }
+  it.each(['ar_super_admin'])('%s bypasses single, any and all role gates', async (role) => {
+    for (const middleware of [
+      requireRole('unrelated'),
+      requireAnyRole(['unrelated-a', 'unrelated-b']),
+      requireAllRoles(['unrelated-a', 'unrelated-b']),
+    ]) {
+      const { instance, reached } = app(middleware, auth({ roles: [role] }));
+      expect((await instance.request('/protected')).status).toBe(200);
+      expect(reached).toHaveBeenCalledOnce();
     }
-  );
+  });
 
   it('allows machine bypass only for an exact machine token and admin:* permission', async () => {
     const allowed = app(
-      requireAllRoles(['security_admin', 'auditor']),
+      requireAllRoles(['ar_tenant_admin', 'auditor']),
       auth({ authMethod: 'machine_access_token', permissions: ['admin:*'] })
     );
     expect((await allowed.instance.request('/protected')).status).toBe(200);
@@ -104,7 +103,7 @@ describe('RBAC middleware security decisions', () => {
       auth({ authMethod: 'admin_session', permissions: ['admin:*'] }),
       auth({ permissions: ['admin:*'] }),
     ]) {
-      const denied = app(requireRole('security_admin'), context);
+      const denied = app(requireRole('ar_tenant_admin'), context);
       expect((await denied.instance.request('/protected')).status).toBe(403);
       expect(denied.reached).not.toHaveBeenCalled();
     }
@@ -112,70 +111,128 @@ describe('RBAC middleware security decisions', () => {
 
   it('allows any-role access with one exact role and reports all accepted roles on denial', async () => {
     const allowed = app(
-      requireAnyRole(['security_admin', 'auditor']),
+      requireAnyRole(['ar_tenant_admin', 'auditor']),
       auth({ roles: ['auditor'] })
     );
     expect((await allowed.instance.request('/protected')).status).toBe(200);
 
-    const denied = app(requireAnyRole(['security_admin', 'auditor']), auth({ roles: ['viewer'] }));
+    const denied = app(
+      requireAnyRole(['ar_tenant_admin', 'auditor']),
+      auth({ roles: ['ar_viewer'] })
+    );
     const response = await denied.instance.request('/protected');
     expect(response.status).toBe(403);
     expect(await response.json()).toEqual({
       error: 'access_denied',
-      error_description: 'This action requires one of the following roles: security_admin, auditor',
-      required_roles: ['security_admin', 'auditor'],
+      error_description:
+        'This action requires one of the following roles: ar_tenant_admin, auditor',
+      required_roles: ['ar_tenant_admin', 'auditor'],
     });
   });
 
   it('requires every all-role entry and identifies only the missing roles', async () => {
     const denied = app(
-      requireAllRoles(['security_admin', 'auditor', 'incident_responder']),
-      auth({ roles: ['security_admin', 'incident_responder'] })
+      requireAllRoles(['ar_tenant_admin', 'auditor', 'incident_responder']),
+      auth({ roles: ['ar_tenant_admin', 'incident_responder'] })
     );
     const response = await denied.instance.request('/protected');
     expect(response.status).toBe(403);
     expect(await response.json()).toEqual({
       error: 'access_denied',
       error_description: 'Missing required roles: auditor',
-      required_roles: ['security_admin', 'auditor', 'incident_responder'],
+      required_roles: ['ar_tenant_admin', 'auditor', 'incident_responder'],
       missing_roles: ['auditor'],
     });
 
     const allowed = app(
-      requireAllRoles(['security_admin', 'auditor']),
-      auth({ roles: ['auditor', 'security_admin', 'extra'] })
+      requireAllRoles(['ar_tenant_admin', 'auditor']),
+      auth({ roles: ['auditor', 'ar_tenant_admin', 'extra'] })
     );
     expect((await allowed.instance.request('/protected')).status).toBe(200);
   });
 
-  it.each(['system_admin', 'distributor_admin', 'org_admin', 'admin'])(
-    'requireAdmin accepts the documented %s role',
-    async (role) => {
-      const protectedApp = app(requireAdmin(), auth({ roles: [role] }));
-      expect((await protectedApp.instance.request('/protected')).status).toBe(200);
-    }
-  );
-
-  it('requireAdmin rejects tenant_admin and end_user while requireSystemAdmin rejects lower admins', async () => {
-    for (const role of ['tenant_admin', 'end_user']) {
+  it('requireSystemAdmin rejects lower admins and accepts the super admin held globally', async () => {
+    for (const role of ['ar_tenant_admin', 'ar_support', 'ar_viewer', 'end_user']) {
       expect(
-        (await app(requireAdmin(), auth({ roles: [role] })).instance.request('/protected')).status
+        (await app(requireSystemAdmin(), auth({ roles: [role] })).instance.request('/protected'))
+          .status
       ).toBe(403);
     }
     expect(
       (
-        await app(requireSystemAdmin(), auth({ roles: ['distributor_admin'] })).instance.request(
-          '/protected'
-        )
-      ).status
-    ).toBe(403);
-    expect(
-      (
-        await app(requireSystemAdmin(), auth({ roles: ['system_admin'] })).instance.request(
-          '/protected'
-        )
+        await app(
+          requireSystemAdmin(),
+          auth({
+            roles: ['ar_super_admin'],
+            globalRoles: ['ar_super_admin'],
+            tenantScope: ['*'],
+          })
+        ).instance.request('/protected')
       ).status
     ).toBe(200);
+  });
+
+  it('does not read the retired role names as authority', async () => {
+    for (const role of RETIRED_ROLE_NAMES) {
+      expect(
+        (
+          await app(
+            requireSystemAdmin(),
+            auth({ roles: [role], globalRoles: [role], tenantScope: ['*'] })
+          ).instance.request('/protected')
+        ).status
+      ).toBe(403);
+      expect(
+        (
+          await app(requireRole('unrelated'), auth({ roles: [role] })).instance.request(
+            '/protected'
+          )
+        ).status
+      ).toBe(403);
+    }
+  });
+
+  it('requireSystemAdmin takes the role from a global assignment, not one held for a tenant', async () => {
+    for (const roles of [
+      // The role is in the sum of the assignments, but only a viewer is global.
+      { roles: ['ar_viewer', 'ar_super_admin'], globalRoles: ['ar_viewer'], tenantScope: ['*'] },
+      { roles: ['ar_super_admin'], globalRoles: [], tenantScope: ['tenant-a'] },
+      // A global role without the global scope that goes with it.
+      { roles: ['ar_super_admin'], globalRoles: ['ar_super_admin'], tenantScope: ['tenant-a'] },
+    ]) {
+      expect(
+        (await app(requireSystemAdmin(), auth(roles)).instance.request('/protected')).status
+      ).toBe(403);
+    }
+    expect(
+      (
+        await app(
+          requireSystemAdmin(),
+          auth({ roles: ['ar_super_admin'], globalRoles: ['ar_super_admin'], tenantScope: ['*'] })
+        ).instance.request('/protected')
+      ).status
+    ).toBe(200);
+  });
+
+  it('requireSystemAdmin passes a machine token on admin:* only when its scope is global', async () => {
+    const machine = (overrides: Partial<AdminAuthContext>) =>
+      auth({
+        authMethod: 'machine_access_token',
+        permissions: ['admin:*'],
+        tenantScope: ['*'],
+        globalPermissions: ['admin:*'],
+        ...overrides,
+      });
+
+    for (const [context, status] of [
+      [machine({}), 200],
+      [machine({ tenantScope: ['tenant-a'], globalPermissions: [] }), 403],
+      [machine({ globalPermissions: [] }), 403],
+    ] as const) {
+      expect((await app(requireSystemAdmin(), context).instance.request('/protected')).status).toBe(
+        status
+      );
+    }
   });
 
   it.each([

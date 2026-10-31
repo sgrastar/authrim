@@ -237,7 +237,7 @@ export class DPoPJTIStore {
     try {
       // POST /check - Check if JTI exists
       if (path === '/check' && request.method === 'POST') {
-        const body = (await request.json()) as { jti: string };
+        const body = await request.json<{ jti: string }>();
 
         if (!body.jti) {
           return new Response(
@@ -277,7 +277,7 @@ export class DPoPJTIStore {
 
       // POST /check-and-store - Atomic check and store
       if (path === '/check-and-store' && request.method === 'POST') {
-        const body = (await request.json()) as Partial<CheckAndStoreJTIRequest>;
+        const body = await request.json<Partial<CheckAndStoreJTIRequest>>();
 
         if (!body.jti || !body.iat || !body.ttl) {
           return new Response(

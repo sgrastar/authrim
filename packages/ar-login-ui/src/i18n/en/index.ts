@@ -1,6 +1,31 @@
 import type { BaseTranslation } from '../i18n-types';
 
 const en = {
+	account_guestLogoutWarning:
+		'Logging out will prevent you from returning to this guest account. Register first to keep access to your account and data. Log out anyway?',
+	account_guestTitle: 'Register your account',
+	account_guestDescription: 'Keep the same account and data when you register.',
+	account_guestDue: 'Eligible for automatic deletion from {date:string}.',
+	account_guestNoExpiry: 'No automatic deletion is scheduled.',
+	account_guestEmail: 'Email address',
+	account_guestSend: 'Register with email',
+	account_guestPasskey: 'Register with a passkey',
+	account_guestCode: 'Confirmation code',
+	account_guestConfirm: 'Confirm registration',
+	account_guestPending: 'Registration is in progress. You can retry to check completion.',
+	account_guestRetry: 'Retry',
+	account_guestError:
+		'Registration could not be completed. Check the confirmation code or try again.',
+	account_guestCollision:
+		'This identity already has an account. Sign in to that account separately. Your guest account will not be merged.',
+	account_guestExistingLogin: 'Sign in to an existing account',
+	account_guestRegistered: 'Your account has been registered.',
+	account_guestChangeMethod: 'Choose another method',
+	login_guestContinue: 'Continue as a guest',
+	login_guestRetention:
+		'Guest accounts are eligible for automatic deletion {days:number} days after creation. Register an account to keep using it.',
+	login_guestNoExpiry: 'No automatic deletion is scheduled for new guest accounts.',
+
 	app_title: 'Authrim',
 	app_subtitle: 'Identity & Access at the edge of everywhere.',
 	button_openDialog: 'Open Dialog',
@@ -86,6 +111,31 @@ const en = {
 	account_delete: 'Delete',
 	account_empty: 'No items',
 	account_planned: 'Planned',
+	account_socialEmpty: 'No external accounts are linked.',
+	account_socialLinkHeading: 'Link an account',
+	account_socialLinkWith: 'Link {provider}',
+	account_socialNoProviders: 'No other providers are available to link.',
+	account_socialLinkedAt: 'Linked {date}',
+	account_socialLastUsed: 'Last used {date}',
+	account_socialUnlink: 'Unlink',
+	account_socialUnlinkConfirm: 'Unlink {provider}? You will no longer be able to log in with it.',
+	account_socialUnlinkConfirmAction: 'Unlink {provider}',
+	account_socialLinked: 'The account was linked.',
+	account_socialUnlinked: 'The account was unlinked.',
+	account_socialErrorAlreadyLinked: 'That account is already linked to another user.',
+	account_socialErrorAlreadyLinkedHere: 'That provider is already linked to your account.',
+	account_socialErrorEmailNotVerified:
+		"The provider has not verified that account's email address.",
+	account_socialErrorSessionExpired:
+		'Your confirmation expired before the link finished. Confirm again and retry.',
+	account_socialErrorCancelled: 'Linking was cancelled.',
+	account_socialErrorFailed: 'The account could not be linked. Try again.',
+	account_socialErrorLastMethod:
+		'This is your last way to log in. Add a passkey or another login method first.',
+	account_socialErrorInProgress:
+		'Another change to your login methods is in progress. Try again in a moment.',
+	account_operationSocialLinked: 'External account linked',
+	account_operationSocialUnlinked: 'External account unlinked',
 	account_passkeyUnsupported: 'This browser does not support passkey registration.',
 	account_passkeyRegistrationCancelled:
 		'Passkey registration was cancelled or timed out. Please try again.',
@@ -119,12 +169,30 @@ const en = {
 	account_reauthTotpCodePlaceholder: '6- or 8-digit code',
 	account_actionFailed: 'The operation failed',
 	account_remainingLoginMethodRequired: 'Add another login method before deleting this method.',
+	account_activityIncomplete: 'Activity results are incomplete. Please retry later.',
+	account_activityLoadMore: 'Load older activity',
 	account_activityTitle: 'Activity',
 	account_operationNameUpdated: 'Name changed',
 	account_operationPasskeyCreated: 'Passkey added',
 	account_operationPasskeyUpdated: 'Passkey renamed',
 	account_operationPasskeyDeleted: 'Passkey deleted',
 	account_operationSessionRevoked: 'Session ended',
+	account_operationGuestCreated: 'Guest account created',
+	account_operationGuestUpgradeFailed: 'Guest registration failed',
+	account_operationGuestUpgradeStarted: 'Guest registration started',
+	account_operationGuestUpgraded: 'Guest account registered',
+	account_operationEmailAdded: 'Email added',
+	account_operationEmailChanged: 'Email changed',
+	account_operationEmailReauthenticated: 'Re-authenticated by email',
+	account_operationDeviceUpdated: 'Device renamed',
+	account_operationDeviceUnlinked: 'Device unlinked',
+	account_operationPasskeyReauthenticated: 'Re-authenticated by Passkey',
+	account_operationTotpEnrollmentStarted: 'Authenticator setup started',
+	account_operationTotpActivated: 'Authenticator activated',
+	account_operationTotpUpdated: 'Authenticator renamed',
+	account_operationTotpRemoved: 'Authenticator removed',
+	account_operationTotpBackupCodesRegenerated: 'Backup codes regenerated',
+	account_operationTotpReauthenticated: 'Re-authenticated by authenticator',
 	account_launcherTitle: 'My applications',
 	account_launcherDescription: 'Search and open the applications available to you.',
 	account_launcherLoadFailed: 'Applications could not be loaded.',
@@ -191,6 +259,8 @@ const en = {
 	login_humanVerificationLoading: 'Loading security check...',
 	login_humanVerificationLoadFailed:
 		'Security check could not be loaded. Reload the page and try again.',
+	login_humanVerificationUnavailable:
+		'Human verification is currently unavailable. Contact your administrator.',
 	login_noMethodsAvailable:
 		'No authentication method is enabled for this organization. Contact your administrator.',
 	login_passkeyPreparing: 'Preparing passkey authentication.',
@@ -274,7 +344,7 @@ const en = {
 	emailCode_title: 'Check your email',
 	emailCode_subtitle: "We've sent a verification code to",
 	emailCode_instructions:
-		'Enter the 6-digit code from your email. The code will expire in 5 minutes.',
+		'Enter the 6-digit code from your email. The email says how long the code lasts.',
 	emailCode_codeLabel: 'Verification code',
 	emailCode_verifyButton: 'Verify',
 	emailCode_resendButton: 'Resend code',
@@ -337,12 +407,20 @@ const en = {
 		'The authorization server is temporarily unable to handle the request',
 	error_login_required: 'Authentication required. Please sign in to continue.',
 	error_unknown: 'An unknown error occurred',
+	error_rateLimited: 'Too many attempts. Wait a while, then try again.',
+	error_rateLimitedRetryAfter: 'Too many attempts. Try again in about {minutes:number} min.',
+	error_unregisteredPostLogoutRedirectUri:
+		'You have been signed out. You could not be sent back to the app because its return address is not registered. Open the app again yourself.',
+	error_invalidIdTokenHint:
+		'You have been signed out. You could not be sent back to the app because its sign-out request could not be verified. Open the app again yourself.',
+	error_idTokenHintRequired:
+		'You have been signed out. You could not be sent back to the app because its sign-out request was incomplete. Open the app again yourself.',
 
 	device_title: 'Device verification',
 	device_subtitle: 'Enter the code shown on your device',
 	device_codeLabel: 'Verification code',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint: 'Enter the 8-character code from your device (format: XXXX-XXXX)',
+	device_codeHint: 'Enter the code shown on your device',
 	device_verifyButton: 'Verify code',
 	device_confirmTitle: 'Authorize device',
 	device_requestedPermissions: 'Requested permissions',
@@ -355,6 +433,13 @@ const en = {
 	device_errorApproveFailed: 'Failed to approve device',
 	device_errorDenyFailed: 'Could not deny the device request',
 	device_errorInvalidRedirect: 'Invalid redirect URL received from server',
+	device_errorConsentWithdrawn:
+		"This request was made before you withdrew this app's access. Start again on the device to get a new code.",
+	device_errorTryAgain:
+		"Your decision couldn't be saved right now, and nothing has changed. Try again in a moment.",
+	device_errorTooManyAttempts: 'Too many attempts. Wait a while, then try again.',
+	device_errorOutcomeUnknown:
+		"We couldn't confirm whether your decision was saved. Check the device, or enter the code again.",
 
 	ciba_title: 'Authentication request',
 	ciba_subtitle: 'An application is requesting your approval',
@@ -375,6 +460,17 @@ const en = {
 	ciba_errorGeneric: 'An error occurred',
 	ciba_errorApproveFailed: 'Failed to approve request',
 	ciba_errorDenyFailed: 'Failed to deny request',
+	ciba_errorConsentWithdrawn:
+		"This request was made before you withdrew this app's access. Start again from the app.",
+	ciba_errorRequestGone: 'This request has expired or has already been answered.',
+	error_authorizationRequestExpired: 'The sign-in request has expired. Start again from the app.',
+	ciba_errorTryAgain:
+		"Your decision couldn't be saved right now, and nothing has changed. Try again in a moment.",
+	ciba_errorTooManyAttempts: 'Too many attempts. Wait a while, then try again.',
+	ciba_errorOutcomeUnknown:
+		"We couldn't confirm whether your answer was saved. Refresh to see the requests still waiting.",
+	ciba_errorNoLongerWaiting:
+		"We couldn't confirm your answer, but this request is no longer waiting.",
 
 	reauth_title: 'Verify your identity',
 	reauth_subtitle: 'For security, please re-authenticate to continue',
@@ -415,6 +511,9 @@ const en = {
 	login_extError_callbackFailed_title: 'Authentication failed',
 	login_extError_callbackFailed_message:
 		'An error occurred during authentication. Please try again.',
+	login_extError_reauthNotProven_title: 'Sign-in not confirmed',
+	login_extError_reauthNotProven_message:
+		'Your sign-in provider did not confirm that you signed in again. Sign in again or choose another method.',
 	login_extError_default_title: 'Authentication error',
 	login_extError_default_message: 'An error occurred during external authentication.',
 

@@ -1,6 +1,14 @@
 import {
+  AccountCreationOperationRepository,
+  hashAccountCreationRequest,
+} from './account-creation-operation';
+import { executeDurableInitialAccountDirectoryWrite } from './account-directory-producer';
+import { writeCanonicalAccountAuthoritative } from './account-authoritative-write';
+import { CrossShardAccountExactSearchService } from './cross-shard-account-list';
+import {
   decryptObjectArtifact,
   type DatabaseAdapter,
+  type DatabaseSource,
   type Env,
   encryptObjectArtifact,
   CanonicalRuntimeUserStore,
@@ -8,20 +16,36 @@ import {
   generateUserIdFromSettings,
   invalidateUserCache,
   persistCustomClaimWrite,
+  withGroupInputWrite,
   resolveAuthCorePersistenceAdapterFromEnv,
-  resolveTenantUserStoreSourcesFromEnv,
   resolveCustomClaimRuntimeSourcesFromEnv,
   syncUserLifecycleState,
   transitionAccountAuthenticationState,
   validateCustomClaimWrite,
+  DefaultIALUnavailableError,
+  InitialAssuranceRecordError,
+  resolveTenantPolicyInitialAssurance,
+  type InitialAssuranceEvidence,
 } from '@authrim/ar-lib-core';
 import { loadCatalogObjectJson } from '@authrim/ar-lib-core/services/object-artifact-store';
 import {
   ADMIN_USER_CREATE_RESERVED_FIELDS,
+  ASSURANCE_IMPORT_COLUMNS,
   extractCustomClaimInput,
   VALID_USER_LIFECYCLE_STATES,
 } from './admin-shared';
 import { materializeEncryptedObjectArtifact } from './object-artifact-materialization';
+import {
+  isAdminJobAllowedForTenantLifecycle,
+  readAdminJobTenantLifecycleState,
+} from './admin-job-executor';
+import {
+  applyImportedAssurance,
+  importedAssuranceEvidence,
+  assertAssuranceColumnsFree,
+  parseImportedAssurance,
+  type ImportedAssurance,
+} from './user-import-assurance';
 
 export const USER_IMPORT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 export const USER_IMPORT_BATCH_SIZE = 100;
@@ -53,7 +77,7 @@ const USER_IMPORT_DEFAULT_HEADERS = [
 ] as const;
 
 const USER_IMPORT_ALLOWED_STATUSES = new Set(['active', 'suspended', 'locked']);
-const USER_IMPORT_ALLOWED_TYPES = new Set(['end_user', 'admin', 'm2m', 'anonymous']);
+const USER_IMPORT_ALLOWED_TYPES = new Set(['end_user', 'admin', 'm2m']);
 const USER_IMPORT_FORBIDDEN_CREDENTIAL_FIELDS = new Set([
   'password',
   'password_hash',
@@ -111,6 +135,8 @@ const IMPORT_RESERVED_FIELDS = new Set<string>([
   ...ADMIN_USER_CREATE_RESERVED_FIELDS,
   'status',
   'lifecycle_state',
+  // The identity assurance columns: evidence, never custom attributes.
+  ...ASSURANCE_IMPORT_COLUMNS,
 ]);
 
 interface JobProgressState {
@@ -127,6 +153,8 @@ interface JobProgressState {
 export interface ImportJobFailure {
   row?: number;
   error_code: string;
+  /** The row may succeed if imported again (nothing is wrong with it). */
+  retryable?: boolean;
   field?: string;
   message?: string;
   email?: string;
@@ -207,20 +235,31 @@ interface ImportedUserRowInput {
   email_verified?: boolean;
   phone_number?: string;
   phone_number_verified?: boolean;
-  user_type?: 'end_user' | 'admin' | 'm2m' | 'anonymous';
+  user_type?: 'end_user' | 'admin' | 'm2m';
   status?: 'active' | 'suspended' | 'locked';
   lifecycle_state?: string;
   [key: string]: string | boolean | number | null | undefined;
 }
 
 interface ImportedUserRowResult {
-  outcome: 'created' | 'updated' | 'skipped' | 'validated';
+  outcome: 'created' | 'updated' | 'skipped' | 'validated' | 'pending';
   userId?: string;
   message: string;
 }
 
+interface UserImportJobRuntime {
+  tenantId: string;
+  jobId: string;
+  /** When the job was created (epoch ms): see UserImportRuntime. */
+  importedAt?: number;
+  env: Env;
+  metadata: DatabaseAdapter;
+}
 interface UserImportRuntime {
   tenantId: string;
+  jobId: string;
+  /** When the job was created: the time an asserted IAL counts from when its row gives none. */
+  importedAt?: number;
   env: Env;
   coreAdapter: DatabaseAdapter;
   piiAdapter: DatabaseAdapter;
@@ -607,6 +646,17 @@ function parseOptionalBoolean(
 }
 
 export function normalizeImportRecord(record: Record<string, string>): ImportedUserRowInput {
+  return normalizeImportRow(record).input;
+}
+
+/** A CSV row as the user it describes and the identity assurance it asserts (null: none). */
+export function normalizeImportRow(
+  record: Record<string, string>,
+  now: number = Date.now()
+): { input: ImportedUserRowInput; assurance: ImportedAssurance | null } {
+  if (Object.keys(record).some((key) => key.trim().toLowerCase() === 'registration_state')) {
+    throw new Error('registration_state is read-only');
+  }
   const email = record.email?.trim();
   if (!email) {
     throw new Error('Email is required');
@@ -679,36 +729,23 @@ export function normalizeImportRecord(record: Record<string, string>): ImportedU
     result[key] = parseImportCellValue(rawValue);
   }
 
-  return result;
+  return { input: result, assurance: parseImportedAssurance(record, now) };
 }
 
-async function createUserImportRuntime(env: Env, tenantId: string): Promise<UserImportRuntime> {
-  const coreAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
-    env,
-    'management-user-import',
-    {
-      tenantId,
-    }
-  );
-  const tenantUserSources = await resolveTenantUserStoreSourcesFromEnv(env, tenantId);
-  const schemaAdapter = ensureDatabaseAdapter(
-    tenantUserSources.coreDb,
-    'management-user-import-schema'
-  );
-  const piiAdapter = ensureDatabaseAdapter(tenantUserSources.piiDb, 'management-user-import-pii');
-  const customClaimSources = {
-    schemaDb: schemaAdapter,
-    nonPiiDb: schemaAdapter,
-    piiDb: piiAdapter,
-  };
-
+async function createUserImportRuntime(
+  env: Env,
+  tenantId: string,
+  jobId: string,
+  createdAt?: number
+): Promise<UserImportJobRuntime> {
+  const sources = await resolveCustomClaimRuntimeSourcesFromEnv(env, tenantId);
   return {
-    tenantId,
     env,
-    coreAdapter,
-    piiAdapter,
-    runtimeUsers: new CanonicalRuntimeUserStore({ coreAdapter, piiAdapter, tenantId }),
-    customClaimSources,
+    tenantId,
+    jobId,
+    // Seconds or milliseconds, as admin_jobs holds them.
+    importedAt: createdAt ? (createdAt < 1e12 ? createdAt * 1000 : createdAt) : undefined,
+    metadata: ensureDatabaseAdapter(sources.schemaDb, 'csv-metadata'),
   };
 }
 
@@ -732,138 +769,183 @@ function importedAccountAuthenticationLifecycle(
 }
 
 async function createImportedUser(
-  runtime: UserImportRuntime,
+  runtime: UserImportJobRuntime,
   input: ImportedUserRowInput,
-  validateOnly: boolean
+  assurance: ImportedAssurance | null,
+  validateOnly: boolean,
+  rowNumber: number,
+  resuming = false
 ): Promise<ImportedUserRowResult> {
-  const customFieldInput = extractCustomClaimInput(input, IMPORT_RESERVED_FIELDS);
-
-  const customFieldValidation = await validateCustomClaimWrite({
-    db: runtime.customClaimSources.nonPiiDb,
-    dbPii: runtime.customClaimSources.piiDb,
-    schemaDb: runtime.customClaimSources.schemaDb,
+  const validation = await validateCustomClaimWrite({
+    db: runtime.metadata,
+    schemaDb: runtime.metadata,
+    dbPii: null,
+    piiStorageAvailable: true,
     tenantId: runtime.tenantId,
-    submitted: customFieldInput,
+    submitted: extractCustomClaimInput(input, IMPORT_RESERVED_FIELDS),
     requireCompleteRecord: true,
   });
-
-  if (!customFieldValidation.ok) {
-    const detail = customFieldValidation.error ?? 'Invalid custom claim input';
-    throw new Error(detail);
-  }
-
-  if (validateOnly) {
-    return {
-      outcome: 'validated',
-      message: `Validated create for ${input.email}`,
-    };
-  }
-
-  const userId = await generateUserIdFromSettings(
-    runtime.env.AUTHRIM_CONFIG,
-    runtime.tenantId,
-    runtime.env
-  );
-
-  await runtime.runtimeUsers.syncUser({
-    userId,
-    email: input.email,
-    name: input.name ?? null,
-    active: isImportedUserActive(input),
-    emailVerified: input.email_verified ?? false,
-    phoneNumberVerified: input.phone_number_verified ?? false,
-    userType: input.user_type ?? 'end_user',
-    sourceRef: 'management:user-import',
-    piiFields: {
-      phone_number: input.phone_number !== undefined,
-      given_name: input.given_name !== undefined,
-      family_name: input.family_name !== undefined,
-      nickname: input.nickname !== undefined,
-      preferred_username: input.preferred_username !== undefined,
-      picture: input.picture !== undefined,
-    },
-    sensitiveValues: {
-      phone_number: input.phone_number ?? null,
-      given_name: input.given_name ?? null,
-      family_name: input.family_name ?? null,
-      nickname: input.nickname ?? null,
-      preferred_username: input.preferred_username ?? null,
-      picture: input.picture ?? null,
-    },
-    inlineProfileFields: {
-      ...(input.status ? { 'runtime.status': input.status } : {}),
-      ...(input.lifecycle_state ? { 'runtime.lifecycle_state': input.lifecycle_state } : {}),
-    },
-  });
-  const createdLifecycle = importedAccountAuthenticationLifecycle(input) ?? 'active';
-  await transitionAccountAuthenticationState(runtime.env, {
-    tenantId: runtime.tenantId,
-    userId,
-    lifecycle: createdLifecycle,
-    sourceVersionMs: Date.now(),
-    operationId: crypto.randomUUID(),
-    revokeSessions: createdLifecycle !== 'active',
-  });
-
+  if (!validation.ok) throw new Error(validation.error ?? 'Invalid custom claim input');
+  if (validateOnly) return { outcome: 'validated', message: `Validated create for ${input.email}` };
+  // What the row asserts, else the tenant's default IAL for accounts the organisation creates,
+  // recorded as evidence with the account. Not knowing the default, the row fails (to import
+  // again) rather than create the account without the evidence.
+  let initialAssurance: InitialAssuranceEvidence | null;
   try {
-    await persistCustomClaimWrite({
-      db: runtime.customClaimSources.nonPiiDb,
-      dbPii: runtime.customClaimSources.piiDb,
-      schemaDb: runtime.customClaimSources.schemaDb,
-      tenantId: runtime.tenantId,
-      userId,
-      validation: customFieldValidation,
-    });
-    await syncUserLifecycleState({
-      db: runtime.customClaimSources.nonPiiDb,
-      dbPii: runtime.customClaimSources.piiDb,
-      schemaDb: runtime.customClaimSources.schemaDb,
-      stateDb: runtime.coreAdapter,
-      tenantId: runtime.tenantId,
-      userId,
-      accountAuthenticationEnv: runtime.env,
-    });
-  } catch (customFieldError) {
-    try {
-      await ensureDatabaseAdapter(
-        runtime.customClaimSources.nonPiiDb,
-        'user-import-create-rollback-fields'
-      ).execute('DELETE FROM user_custom_fields WHERE tenant_id = ? AND user_id = ?', [
-        runtime.tenantId,
-        userId,
-      ]);
-      await runtime.runtimeUsers.deleteUser(userId);
-      await transitionAccountAuthenticationState(runtime.env, {
-        tenantId: runtime.tenantId,
-        userId,
-        lifecycle: 'deleted',
-        sourceVersionMs: Date.now(),
-        operationId: crypto.randomUUID(),
-        revokeSessions: true,
-      });
-    } catch {
-      // Best effort rollback only.
+    initialAssurance = assurance
+      ? importedAssuranceEvidence(assurance, runtime.jobId, runtime.importedAt)
+      : await resolveTenantPolicyInitialAssurance(runtime.env, runtime.tenantId);
+  } catch (error) {
+    // An unfinished creation of this row (its operation exists) is resumed once the default can
+    // be read; a row not begun simply fails.
+    if (resuming && error instanceof DefaultIALUnavailableError) {
+      throw new ImportAssuranceStepError(error, 'create');
     }
-    throw customFieldError;
+    throw error;
   }
-
+  const operationId = await importRowOperationId(runtime, rowNumber);
+  const result = await executeDurableInitialAccountDirectoryWrite(
+    runtime.env,
+    {
+      tenantId: runtime.tenantId,
+      actorId: `csv-import:${runtime.jobId}`,
+      idempotencyKey: operationId,
+      candidateOperationId: operationId,
+      requestHash: await hashAccountCreationRequest(JSON.parse(JSON.stringify(input))),
+      candidateUserId: await generateUserIdFromSettings(runtime.env, runtime.tenantId, runtime.env),
+      email: input.email,
+      residencyPolicyId: runtime.env.DEFAULT_RESIDENCY_PROFILE_ID ?? 'builtin:residency:default',
+      residencyPartition: 'default',
+    },
+    {
+      operationRepository: new AccountCreationOperationRepository(runtime.metadata),
+      async writeAuthoritative(context) {
+        const userId = context.publication.accountId.slice('account:'.length);
+        await withGroupInputWrite(
+          context.tenantCoreUsers,
+          runtime.tenantId,
+          userId,
+          'csv:user-create',
+          async () => {
+            await writeCanonicalAccountAuthoritative({
+              ...context,
+              runtimeUser: {
+                active: isImportedUserActive(input),
+                emailVerified: input.email_verified ?? false,
+                phoneNumberVerified: input.phone_number_verified ?? false,
+                userType: input.user_type ?? 'end_user',
+                sourceRef: 'management:user-import',
+                piiFields: {
+                  email: true,
+                  name: true,
+                  phone_number: true,
+                  given_name: true,
+                  family_name: true,
+                  nickname: true,
+                  preferred_username: true,
+                  picture: true,
+                },
+                sensitiveValues: {
+                  email: input.email,
+                  name: input.name ?? null,
+                  phone_number: input.phone_number ?? null,
+                  given_name: input.given_name ?? null,
+                  family_name: input.family_name ?? null,
+                  nickname: input.nickname ?? null,
+                  preferred_username: input.preferred_username ?? null,
+                  picture: input.picture ?? null,
+                },
+                inlineProfileFields: {
+                  ...(input.status ? { 'runtime.status': input.status } : {}),
+                  ...(input.lifecycle_state
+                    ? { 'runtime.lifecycle_state': input.lifecycle_state }
+                    : {}),
+                },
+              },
+              initialAssurance,
+            });
+            await persistCustomClaimWrite({
+              db: context.tenantCoreUsers,
+              dbPii: context.tenantPii,
+              schemaDb: runtime.metadata,
+              tenantId: runtime.tenantId,
+              userId,
+              validation,
+            });
+            const lifecycle = importedAccountAuthenticationLifecycle(input) ?? 'active';
+            if (lifecycle !== 'active')
+              await transitionAccountAuthenticationState(runtime.env, {
+                tenantId: runtime.tenantId,
+                userId,
+                lifecycle,
+                sourceVersionMs: Date.now(),
+                operationId: context.publication.operationId,
+                revokeSessions: true,
+              });
+            else
+              await syncUserLifecycleState({
+                db: context.tenantCoreUsers,
+                dbPii: context.tenantPii,
+                schemaDb: runtime.metadata,
+                stateDb: context.tenantCoreUsers,
+                tenantId: runtime.tenantId,
+                userId,
+                accountAuthenticationEnv: runtime.env,
+              });
+          }
+        );
+      },
+    }
+  ).catch((error: unknown) => {
+    // The account is written; only its evidence is not. Writing the same creation again (the
+    // operation is found by the row) records it once.
+    if (error instanceof InitialAssuranceRecordError) {
+      throw new ImportAssuranceStepError(error, 'create');
+    }
+    throw error;
+  });
   return {
-    outcome: 'created',
-    userId,
-    message: `Created user ${input.email}`,
+    outcome: result.delivery.status === 201 ? 'created' : 'pending',
+    userId: result.operation.userId,
+    message:
+      result.delivery.status === 201
+        ? `Created user ${input.email}`
+        : 'Waiting for account directory publication',
   };
+}
+async function importRowOperationId(
+  runtime: UserImportJobRuntime,
+  rowNumber: number
+): Promise<string> {
+  return `csv-${await sha256Hex(JSON.stringify([runtime.tenantId, runtime.jobId, rowNumber]))}`;
+}
+
+/** Importing a public classification must not commit guest registration. */
+export function resolveImportedAccountUserType(
+  registrationState: string,
+  requestedType: ImportedUserRowInput['user_type']
+): string | undefined {
+  if (registrationState !== 'guest') return requestedType;
+  if (requestedType !== undefined && requestedType !== 'end_user') {
+    throw new Error('Guest registration changes require the account upgrade flow');
+  }
+  return requestedType;
 }
 
 async function updateImportedUser(
   runtime: UserImportRuntime,
   userId: string,
   input: ImportedUserRowInput,
-  validateOnly: boolean
+  assurance: ImportedAssurance | null,
+  validateOnly: boolean,
+  rowNumber: number
 ): Promise<ImportedUserRowResult> {
   const existingUser = await runtime.runtimeUsers.findById(userId, { includeInactive: true });
   if (!existingUser) {
     throw new Error(`User ${userId} not found`);
   }
+
+  const userType = resolveImportedAccountUserType(existingUser.registration_state, input.user_type);
 
   const customFieldInput = extractCustomClaimInput(input, IMPORT_RESERVED_FIELDS);
   const customFieldValidation = await validateCustomClaimWrite({
@@ -889,128 +971,194 @@ async function updateImportedUser(
     };
   }
 
-  const targetLifecycle = importedAccountAuthenticationLifecycle(input);
-  const lifecycleVersionMs = Date.now();
-  if (targetLifecycle && targetLifecycle !== 'active') {
-    await transitionAccountAuthenticationState(runtime.env, {
-      tenantId: runtime.tenantId,
-      userId,
-      lifecycle: targetLifecycle,
-      sourceVersionMs: lifecycleVersionMs,
-      operationId: crypto.randomUUID(),
-      revokeSessions: true,
-    });
-  }
-
-  await runtime.runtimeUsers.syncUser({
+  return withGroupInputWrite(
+    runtime.coreAdapter,
+    runtime.tenantId,
     userId,
-    email: input.email,
-    name: input.name ?? existingUser.name,
-    active:
-      input.status !== undefined || input.lifecycle_state !== undefined
-        ? isImportedUserActive(input)
-        : existingUser.active === 1,
-    emailVerified: input.email_verified ?? Boolean(existingUser.email_verified),
-    phoneNumberVerified: input.phone_number_verified ?? Boolean(existingUser.phone_number_verified),
-    userType: input.user_type ?? undefined,
-    sourceRef: 'management:user-import',
-    piiFields: {
-      email: true,
-      name: input.name !== undefined,
-      phone_number: input.phone_number !== undefined,
-      given_name: input.given_name !== undefined,
-      family_name: input.family_name !== undefined,
-      nickname: input.nickname !== undefined,
-      preferred_username: input.preferred_username !== undefined,
-      picture: input.picture !== undefined,
-    },
-    sensitiveValues: {
-      email: input.email,
-      name: input.name,
-      phone_number: input.phone_number,
-      given_name: input.given_name,
-      family_name: input.family_name,
-      nickname: input.nickname,
-      preferred_username: input.preferred_username,
-      picture: input.picture,
-    },
-    inlineProfileFields: {
-      ...(input.status ? { 'runtime.status': input.status } : {}),
-      ...(input.lifecycle_state ? { 'runtime.lifecycle_state': input.lifecycle_state } : {}),
-    },
-  });
-  if (targetLifecycle === 'active') {
-    await transitionAccountAuthenticationState(runtime.env, {
-      tenantId: runtime.tenantId,
-      userId,
-      lifecycle: 'active',
-      sourceVersionMs: lifecycleVersionMs,
-      operationId: crypto.randomUUID(),
-      revokeSessions: false,
-    });
-  }
+    'csv:user-update',
+    async () => {
+      const targetLifecycle = importedAccountAuthenticationLifecycle(input);
+      const lifecycleVersionMs = Date.now();
+      if (targetLifecycle && targetLifecycle !== 'active') {
+        await transitionAccountAuthenticationState(runtime.env, {
+          tenantId: runtime.tenantId,
+          userId,
+          lifecycle: targetLifecycle,
+          sourceVersionMs: lifecycleVersionMs,
+          operationId: crypto.randomUUID(),
+          revokeSessions: true,
+        });
+      }
 
-  const hasCustomFieldChanges =
-    Object.keys(customFieldValidation.nonPiiValues).length > 0 ||
-    Object.keys(customFieldValidation.piiValues).length > 0 ||
-    customFieldValidation.nonPiiKeysToDelete.length > 0 ||
-    customFieldValidation.piiKeysToDelete.length > 0;
+      await runtime.runtimeUsers.syncUser({
+        userId,
+        email: input.email,
+        name: input.name ?? existingUser.name,
+        active:
+          input.status !== undefined || input.lifecycle_state !== undefined
+            ? isImportedUserActive(input)
+            : existingUser.active === 1,
+        emailVerified: input.email_verified ?? Boolean(existingUser.email_verified),
+        phoneNumberVerified:
+          input.phone_number_verified ?? Boolean(existingUser.phone_number_verified),
+        userType,
+        sourceRef: 'management:user-import',
+        piiFields: {
+          email: true,
+          name: input.name !== undefined,
+          phone_number: input.phone_number !== undefined,
+          given_name: input.given_name !== undefined,
+          family_name: input.family_name !== undefined,
+          nickname: input.nickname !== undefined,
+          preferred_username: input.preferred_username !== undefined,
+          picture: input.picture !== undefined,
+        },
+        sensitiveValues: {
+          email: input.email,
+          name: input.name,
+          phone_number: input.phone_number,
+          given_name: input.given_name,
+          family_name: input.family_name,
+          nickname: input.nickname,
+          preferred_username: input.preferred_username,
+          picture: input.picture,
+        },
+        inlineProfileFields: {
+          ...(input.status ? { 'runtime.status': input.status } : {}),
+          ...(input.lifecycle_state ? { 'runtime.lifecycle_state': input.lifecycle_state } : {}),
+        },
+      });
+      if (targetLifecycle === 'active') {
+        await transitionAccountAuthenticationState(runtime.env, {
+          tenantId: runtime.tenantId,
+          userId,
+          lifecycle: 'active',
+          sourceVersionMs: lifecycleVersionMs,
+          operationId: crypto.randomUUID(),
+          revokeSessions: false,
+        });
+      }
 
-  if (hasCustomFieldChanges) {
-    await persistCustomClaimWrite({
-      db: runtime.customClaimSources.nonPiiDb,
-      dbPii: runtime.customClaimSources.piiDb,
-      schemaDb: runtime.customClaimSources.schemaDb,
-      tenantId: runtime.tenantId,
-      userId,
-      validation: customFieldValidation,
-    });
-    await syncUserLifecycleState({
-      db: runtime.customClaimSources.nonPiiDb,
-      dbPii: runtime.customClaimSources.piiDb,
-      schemaDb: runtime.customClaimSources.schemaDb,
-      stateDb: runtime.coreAdapter,
-      tenantId: runtime.tenantId,
-      userId,
-      accountAuthenticationEnv: runtime.env,
-    });
-  }
+      const hasCustomFieldChanges =
+        Object.keys(customFieldValidation.nonPiiValues).length > 0 ||
+        Object.keys(customFieldValidation.piiValues).length > 0 ||
+        customFieldValidation.nonPiiKeysToDelete.length > 0 ||
+        customFieldValidation.piiKeysToDelete.length > 0;
 
-  await invalidateUserCache(runtime.env, runtime.tenantId, userId);
+      if (hasCustomFieldChanges) {
+        await persistCustomClaimWrite({
+          db: runtime.customClaimSources.nonPiiDb,
+          dbPii: runtime.customClaimSources.piiDb,
+          schemaDb: runtime.customClaimSources.schemaDb,
+          tenantId: runtime.tenantId,
+          userId,
+          validation: customFieldValidation,
+        });
+        await syncUserLifecycleState({
+          db: runtime.customClaimSources.nonPiiDb,
+          dbPii: runtime.customClaimSources.piiDb,
+          schemaDb: runtime.customClaimSources.schemaDb,
+          stateDb: runtime.coreAdapter,
+          tenantId: runtime.tenantId,
+          userId,
+          accountAuthenticationEnv: runtime.env,
+        });
+      }
 
-  return {
-    outcome: 'updated',
-    userId,
-    message: `Updated user ${input.email}`,
-  };
+      // Only once the user is written: a row that fails changes no evidence. A row with an IAL
+      // replaces what earlier imports asserted; one without keeps it. If this step fails the
+      // row fails to be imported again (the user write and the evidence are both safe to repeat).
+      try {
+        await applyImportedAssurance(
+          runtime.coreAdapter,
+          runtime.tenantId,
+          userId,
+          runtime.jobId,
+          runtime.importedAt ?? Date.now(),
+          assurance
+        );
+      } catch (error) {
+        throw new ImportAssuranceStepError(error);
+      }
+
+      await invalidateUserCache(runtime.env, runtime.tenantId, userId);
+
+      return {
+        outcome: 'updated',
+        userId,
+        message: `Updated user ${input.email}`,
+      };
+    }
+  );
 }
 
-async function processImportedRow(
-  runtime: UserImportRuntime,
+export async function processImportedRow(
+  runtime: UserImportJobRuntime,
   record: Record<string, string>,
   rowNumber: number,
   options: UserImportJobOptions
 ): Promise<ImportedUserRowResult> {
-  const input = normalizeImportRecord(record);
-  const existing = await runtime.runtimeUsers.findByEmail(input.email, { includeInactive: true });
-
+  const { input, assurance } = normalizeImportRow(record);
+  // The ial columns are read as assurance only where no custom attribute has the name.
+  await assertAssuranceColumnsFree(runtime.metadata, runtime.tenantId, record);
+  // Resume this pinned job/row before duplicate handling: our own successful create is not a duplicate.
+  const operation = options.validate_only
+    ? null
+    : await new AccountCreationOperationRepository(runtime.metadata).findForActor({
+        tenantId: runtime.tenantId,
+        actorId: `csv-import:${runtime.jobId}`,
+        operationId: await importRowOperationId(runtime, rowNumber),
+      });
+  if (operation) return createImportedUser(runtime, input, assurance, false, rowNumber, true);
+  const matches = await new CrossShardAccountExactSearchService(runtime.env).find({
+    tenantId: runtime.tenantId,
+    identifier: input.email,
+    purpose: 'account_lifecycle',
+    indexKind: 'email_exact',
+  });
+  if (matches.length > 1) throw new Error('csv_account_ambiguous');
+  const existing = matches[0];
   if (existing) {
-    if (options.on_duplicate === 'skip') {
+    if (options.on_duplicate === 'skip')
       return {
         outcome: 'skipped',
-        userId: existing.id,
+        userId: existing.legacyUserId,
         message: `Skipped duplicate email ${input.email}`,
       };
-    }
-
-    if (options.on_duplicate === 'error') {
-      throw new Error(`Duplicate email: ${input.email}`);
-    }
-
-    return updateImportedUser(runtime, existing.id, input, options.validate_only);
+    if (options.on_duplicate === 'error') throw new Error(`Duplicate email: ${input.email}`);
+    const bindings = runtime.env as unknown as Record<string, DatabaseSource>;
+    const coreAdapter = ensureDatabaseAdapter(
+      bindings[existing.coreBindingRef],
+      'csv-account-core'
+    );
+    const piiAdapter = ensureDatabaseAdapter(bindings[existing.piiBindingRef], 'csv-account-pii');
+    return updateImportedUser(
+      {
+        env: runtime.env,
+        tenantId: runtime.tenantId,
+        jobId: runtime.jobId,
+        importedAt: runtime.importedAt,
+        coreAdapter,
+        piiAdapter,
+        runtimeUsers: new CanonicalRuntimeUserStore({
+          coreAdapter,
+          piiAdapter,
+          tenantId: runtime.tenantId,
+        }),
+        customClaimSources: {
+          schemaDb: runtime.metadata,
+          nonPiiDb: coreAdapter,
+          piiDb: piiAdapter,
+        },
+      },
+      existing.legacyUserId,
+      input,
+      assurance,
+      options.validate_only,
+      rowNumber
+    );
   }
-
-  return createImportedUser(runtime, input, options.validate_only);
+  return createImportedUser(runtime, input, assurance, options.validate_only, rowNumber);
 }
 
 function parseJobOptions(config: string | null): UserImportJobOptions {
@@ -1252,11 +1400,80 @@ function pushFailure(artifact: ImportJobArtifact, failure: ImportJobFailure): vo
   }
 }
 
-function createFailureEntry(
+/**
+ * The user of a row was written but the evidence of its IAL could not be: the row fails, and
+ * importing it again completes it (nothing is taken for "no evidence").
+ */
+export class ImportAssuranceStepError extends Error {
+  /**
+   * 'update': the user of an existing account was written, its evidence was not.
+   * 'create': the new account was written (its creation is unfinished), its evidence was not.
+   */
+  readonly phase: 'create' | 'update';
+
+  constructor(cause: unknown, phase: 'create' | 'update' = 'update') {
+    super('import_assurance_step_failed');
+    this.name = 'ImportAssuranceStepError';
+    this.cause = cause;
+    this.phase = phase;
+  }
+}
+
+/** How many times a job tries a row whose new account is written but whose evidence is not. */
+export const IMPORT_INITIAL_ASSURANCE_MAX_ATTEMPTS = 5;
+
+/**
+ * What the job does with a row that threw. A row whose new account was written but whose evidence
+ * could not be recorded is tried again by the job (it is not counted as processed): the creation
+ * is unfinished, and the next run finds its operation by the row and completes it, recording the
+ * evidence once. After `IMPORT_INITIAL_ASSURANCE_MAX_ATTEMPTS` attempts it fails like any row.
+ */
+export function importRowErrorDisposition(
+  error: unknown,
+  previousAttempts: number
+): 'retry' | 'fail' {
+  return error instanceof ImportAssuranceStepError &&
+    error.phase === 'create' &&
+    previousAttempts + 1 < IMPORT_INITIAL_ASSURANCE_MAX_ATTEMPTS
+    ? 'retry'
+    : 'fail';
+}
+
+export function createFailureEntry(
   rowNumber: number,
   record: Record<string, string>,
   error: unknown
 ): ImportJobFailure {
+  if (error instanceof DefaultIALUnavailableError) {
+    // Nothing is wrong with the row: the tenant's default IAL could not be read, so the account
+    // was not created. Importing the row again creates it.
+    return {
+      row: rowNumber,
+      email: record.email?.trim() || undefined,
+      error_code: 'default_ial_unavailable',
+      retryable: true,
+      message: 'The default identity assurance level could not be read; import this row again',
+    };
+  }
+  if (error instanceof ImportAssuranceStepError) {
+    return error.phase === 'create'
+      ? {
+          row: rowNumber,
+          email: record.email?.trim() || undefined,
+          error_code: 'assurance_initial_failed',
+          retryable: true,
+          message:
+            'The account was written but its identity assurance could not be recorded after several attempts; its creation is unfinished',
+        }
+      : {
+          row: rowNumber,
+          email: record.email?.trim() || undefined,
+          error_code: 'assurance_update_failed',
+          retryable: true,
+          message:
+            'The user was updated but the identity assurance could not be recorded; import this row again',
+        };
+  }
   const message = error instanceof Error ? error.message : String(error);
   return {
     row: rowNumber,
@@ -1300,7 +1517,7 @@ async function processUserImportJob(
   const resultKey = job.result_r2_key ?? buildUserImportResultKey(job.tenant_id, job.id);
   const parsed = parseUserImportCsv(csvText, { skip_header: options.skip_header });
   const progress = parseProgress(job.progress);
-  const runtime = await createUserImportRuntime(env, job.tenant_id);
+  const runtime = await createUserImportRuntime(env, job.tenant_id, job.id, job.created_at);
   const artifact = await loadImportArtifact(
     env,
     coreAdapter,
@@ -1347,6 +1564,17 @@ async function processUserImportJob(
 
     try {
       const result = await processImportedRow(runtime, record, rowNumber, options);
+      if (result.outcome === 'pending') {
+        const last = artifact.logs.at(-1);
+        if (last?.code !== 'directory_pending' || last.row !== rowNumber)
+          pushLog(artifact, {
+            level: 'info',
+            code: 'directory_pending',
+            row: rowNumber,
+            message: result.message,
+          });
+        break;
+      }
       processed += 1;
 
       if (result.outcome === 'skipped') {
@@ -1369,6 +1597,26 @@ async function processUserImportJob(
         });
       }
     } catch (error) {
+      const previousAttempts = artifact.logs.filter(
+        (entry) => entry.code === 'assurance_initial_failed' && entry.row === rowNumber
+      ).length;
+      if (importRowErrorDisposition(error, previousAttempts) === 'retry') {
+        // The account is written, its evidence is not: the row is not counted, and the next run
+        // of the job resumes the creation (the operation is found by the row).
+        pushLog(artifact, {
+          level: 'warn',
+          code: 'assurance_initial_failed',
+          row: rowNumber,
+          email: record.email?.trim() || undefined,
+          message: 'The identity assurance of a new account could not be recorded; trying again',
+        });
+        logger.error(
+          'User import row awaiting its identity assurance',
+          { job_id: job.id, tenant_id: job.tenant_id, row: rowNumber, email: currentEmail },
+          error as Error
+        );
+        break;
+      }
       processed += 1;
       failed += 1;
       const failure = createFailureEntry(rowNumber, record, error);
@@ -1521,6 +1769,22 @@ export async function processPendingUserImportJobs(
 
   for (const job of pendingJobs) {
     const startedTs = Math.floor(Date.now() / 1000);
+
+    // Each run's batch, as the generic admin jobs: an import queued while the tenant was active
+    // changes no account once it is suspended, frozen or being deleted.
+    const lifecycleState = await readAdminJobTenantLifecycleState(env, job.tenant_id);
+    if (!isAdminJobAllowedForTenantLifecycle(lifecycleState, 'users/import')) {
+      const blocked = await coreAdapter.execute(
+        `UPDATE admin_jobs
+            SET status = 'partial_failure', error_message = ?, completed_at = ?, updated_at = ?
+          WHERE id = ? AND tenant_id = ? AND status IN ('pending', 'processing')`,
+        [`tenant_lifecycle_blocked:${lifecycleState}`, startedTs, startedTs, job.id, job.tenant_id]
+      );
+      if ((blocked.rowsAffected ?? 0) > 0) {
+        await deleteTerminalUserImportInput(inputBucket, job, logger);
+      }
+      continue;
+    }
 
     if (job.status === 'pending') {
       const claimed = await coreAdapter.execute(

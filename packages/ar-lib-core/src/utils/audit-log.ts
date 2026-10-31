@@ -14,25 +14,37 @@ import type { Context } from 'hono';
 import type { Env } from '../types/env';
 import type { AuditLogEntry } from '../types/admin';
 import { generateSecureRandomString } from './crypto';
-import type { DatabaseAdapter } from '../db/adapter';
 import { createLogger } from './logger';
 import {
   auditTargetFromBackendConfig,
   buildAuditStorageConfigFromProfile,
-  createExternalAuditStorageAdapter,
   createAuditService,
   resolveAuditEventFailureBehavior,
-  resolveAuditPersistenceSourcesFromEnv,
-  resolveLegacyAuditLogAdapterFromEnv,
   type EventCategory,
+  type EventResult,
   type EventSeverity,
   type IAuditService,
-  type IAuditStorageAdapter,
   normalizeAuditStorageRoutingTargets,
   resolveAuditRoutingTargets,
+  resolveAuditRetention,
+  DEFAULT_PII_CONFIG,
+  type AuditRetentionSource,
   type AuditStorageRoutingRule,
+  type TenantPIIConfig,
 } from '../services/audit';
 import { resolveTenantRuntimeProfilesFromEnv } from '../services/runtime-profile-resolver';
+import { getCachedAnonymizedUserId } from '../services/audit/anonymized-user-id-cache';
+import {
+  mirrorableResourceId,
+  resolveAnonymizedUserIdFromEnv,
+  resolveAuditClientId,
+  resolveAuditSessionRef,
+  resolveAuditSubjectUserId,
+} from './audit-log-subject';
+import {
+  createLogIcebergPolicySnapshotObjectStore,
+  LOG_ICEBERG_POLICY_PREFIX,
+} from '../services/log-iceberg-policy-artifacts';
 import type { AuditProfile, AuditTarget } from '../types/runtime-profile';
 import {
   RuntimeLoggingPolicySnapshotMemoryCache,
@@ -87,6 +99,11 @@ function isFailClosedAuditAction(action: string): boolean {
   return resolveAuditEventFailureBehavior(action).behavior === 'fail_closed_or_strong_retry';
 }
 
+export interface CreateAuditLogOptions {
+  /** The request's ExecutionContext.waitUntil, which keeps after-response work alive. */
+  waitUntil?: (promise: Promise<unknown>) => void;
+}
+
 export interface LegacyAuditLogWriteInput {
   id: string;
   tenantId: string;
@@ -101,80 +118,15 @@ export interface LegacyAuditLogWriteInput {
   createdAt: number;
 }
 
-function createNoopAuditBucket(): R2Bucket {
-  return {
-    async put() {
-      throw new Error('audit_archive_bucket_not_configured');
-    },
-    async get() {
-      return null;
-    },
-    async head() {
-      return null;
-    },
-    async delete() {},
-    async list() {
-      return {
-        objects: [],
-        truncated: false,
-      };
-    },
-    async createMultipartUpload() {
-      throw new Error('audit_archive_bucket_not_configured');
-    },
-    async resumeMultipartUpload() {
-      throw new Error('audit_archive_bucket_not_configured');
-    },
-  } as unknown as R2Bucket;
-}
-
 function getUnifiedAuditService(env: Env): IAuditService {
-  // Keep adapters and delivery state request-local. Cloudflare request promises
-  // must never be retained by an isolate-wide service object.
-  const primaryAdapterCache = new Map<string, IAuditStorageAdapter | null>();
-  const sources = resolveAuditPersistenceSourcesFromEnv(env);
-
-  const service = createAuditService({
-    coreSource: sources.coreSource,
-    piiSource: sources.piiSource,
-    r2Bucket: env.AUDIT_ARCHIVE ?? createNoopAuditBucket(),
-    sensitiveDetailBucket: env.SENSITIVE_DETAILS,
-    objectEncryptionRootKey: env.OBJECT_ENCRYPTION_ROOT_KEY,
-    objectEncryptionKeyVersion: Number.parseInt(env.OBJECT_ENCRYPTION_KEY_VERSION || '1', 10) || 1,
-    piiEncryptionKey: env.PII_ENCRYPTION_KEY,
-    piiEncryptionKeyVersion: Number.parseInt(env.PII_ENCRYPTION_KEY_VERSION || '1', 10) || 1,
-    auditQueue: env.AUDIT_QUEUE,
+  return createAuditService({
+    env,
     configKv: env.AUTHRIM_CONFIG,
-    logger: log.module('UNIFIED-MIRROR'),
-    resolveAuditProfile: async (tenantId: string): Promise<AuditProfile> => {
-      const resolved = await resolveTenantRuntimeProfilesFromEnv(env, tenantId);
-      return resolved.auditProfile;
-    },
+    logger: log.module('AUDIT'),
+    resolveAuditProfile: async (tenantId) =>
+      (await resolveTenantRuntimeProfilesFromEnv(env, tenantId)).auditProfile,
     resolveDeliveryPlan: async (input) => resolveAuditDeliveryPlanFromEnv(env, input),
-    resolvePrimaryAdapter: async (
-      target: AuditTarget,
-      logType: 'event' | 'pii'
-    ): Promise<IAuditStorageAdapter | null> => {
-      const cacheKey = JSON.stringify({ target, logType });
-      if (primaryAdapterCache.has(cacheKey)) {
-        return primaryAdapterCache.get(cacheKey) ?? null;
-      }
-
-      const adapter = createExternalAuditStorageAdapter(
-        env as unknown as Record<string, unknown>,
-        target,
-        logType
-      );
-      if (!adapter) {
-        primaryAdapterCache.set(cacheKey, null);
-        return null;
-      }
-      primaryAdapterCache.set(cacheKey, adapter);
-      return adapter;
-    },
   });
-
-  return service;
 }
 
 function mapLegacySeverity(severity: AuditLogEntry['severity']): EventSeverity {
@@ -235,42 +187,94 @@ function parseLegacyMetadata(metadata: string): Record<string, unknown> {
   return { raw_metadata: metadata };
 }
 
-async function resolveLegacyAuditLogPolicy(
+const EVENT_RESULTS: ReadonlySet<string> = new Set<EventResult>(['success', 'failure', 'partial']);
+// error_code is a column outside the details sanitizer, so only a code-shaped value goes there.
+const AUDIT_ERROR_CODE_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/u;
+
+/**
+ * The outcome of a legacy audit entry: a `result` its data states, else a failure for a failed
+ * action (`auth.passkey.failed`, `auth.email_code.send_failed`), else a success.
+ */
+function mapLegacyAuditResult(action: string, metadata: Record<string, unknown>): EventResult {
+  if (typeof metadata.result === 'string' && EVENT_RESULTS.has(metadata.result)) {
+    return metadata.result as EventResult;
+  }
+  // Mapping Set saves state their outcome as 'saved' / 'failed'.
+  if (metadata.result === 'failed') return 'failure';
+  const outcome = action.split('.').pop() ?? '';
+  return outcome === 'failed' || outcome.endsWith('_failed') ? 'failure' : 'success';
+}
+
+/** The error code an unsuccessful entry carries (`errorCode`, or `error_code` in snake_case data). */
+function mapLegacyAuditErrorCode(
+  result: EventResult,
+  metadata: Record<string, unknown>
+): string | undefined {
+  if (result === 'success') return undefined;
+  const code = metadata.errorCode ?? metadata.error_code;
+  return typeof code === 'string' && AUDIT_ERROR_CODE_PATTERN.test(code) ? code : undefined;
+}
+
+async function resolveAuditBackpressure(
   env: Env,
-  tenantId: string,
-  action: string
-): Promise<{
-  writeLegacyD1: boolean;
-  backpressureMode: NonNullable<AuditProfile['backpressure']>['mode'];
-}> {
+  tenantId: string
+): Promise<NonNullable<AuditProfile['backpressure']>['mode']> {
   try {
-    const resolved = await resolveTenantRuntimeProfilesFromEnv(env, tenantId);
-    const primary = resolved.auditProfile.primary;
-
-    if (!primary) {
-      return {
-        writeLegacyD1: false,
-        backpressureMode: resolved.auditProfile.backpressure?.mode ?? 'event_class',
-      };
-    }
-
-    return {
-      writeLegacyD1: primary.type === 'd1' && primary.dataset !== 'event_log',
-      backpressureMode: resolved.auditProfile.backpressure?.mode ?? 'event_class',
-    };
-  } catch (error) {
-    log.warn('Failed to resolve audit profile for legacy audit write; keeping D1 write enabled', {
-      action,
-      tenantId,
-    });
-    log.error('Audit profile resolution failed', {}, error as Error);
-    return { writeLegacyD1: true, backpressureMode: 'event_class' };
+    return (
+      (await resolveTenantRuntimeProfilesFromEnv(env, tenantId)).auditProfile.backpressure?.mode ??
+      'event_class'
+    );
+  } catch {
+    return 'event_class';
   }
 }
 
+async function resolveFinalAnonymizedUserId(
+  env: Env,
+  tenantId: string,
+  userId: string | undefined
+): Promise<string | undefined> {
+  if (!userId) return undefined;
+  const cached = getCachedAnonymizedUserId(tenantId, userId);
+  if (cached) return cached;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return (
+      (await Promise.race([
+        resolveAnonymizedUserIdFromEnv(env, tenantId, userId),
+        new Promise<undefined>((resolve) => {
+          timeout = setTimeout(() => resolve(undefined), 2000);
+        }),
+      ])) ?? undefined
+    );
+  } catch (error) {
+    log.warn('Audit subject lookup unavailable; writing the finalized unlinked event', {
+      errorType: error instanceof Error ? error.name : 'Unknown',
+    });
+    return undefined;
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
+}
+
+/**
+ * The request's waitUntil, or undefined where the context has none (Hono throws on reading
+ * executionCtx outside a Workers request: tests, local tools).
+ */
+export function getWaitUntilFromContext(
+  c: Context<{ Bindings: Env }>
+): CreateAuditLogOptions['waitUntil'] {
+  let executionCtx: { waitUntil(promise: Promise<unknown>): void } | undefined;
+  try {
+    executionCtx = c.executionCtx;
+  } catch {
+    return undefined;
+  }
+  return executionCtx ? (promise) => executionCtx.waitUntil(promise) : undefined;
+}
+
 function getRequestIdFromContext(c: Context<{ Bindings: Env }>): string | undefined {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const contextRequestId = (c as any).get?.('requestId');
+  const contextRequestId = (c as unknown as { get(key: string): unknown }).get('requestId');
   if (typeof contextRequestId === 'string' && contextRequestId.length > 0) {
     return contextRequestId;
   }
@@ -278,7 +282,9 @@ function getRequestIdFromContext(c: Context<{ Bindings: Env }>): string | undefi
   return c.req.header('X-Request-Id') || c.req.header('X-Correlation-Id') || undefined;
 }
 
-function getAdminProxyMetadataFromContext(c: Context<{ Bindings: Env }>): Record<string, unknown> {
+export function getAdminProxyMetadataFromContext(
+  c: Context<{ Bindings: Env }>
+): Record<string, unknown> {
   const requestId = getRequestIdFromContext(c);
   const apiMode = c.req.header('X-Authrim-Admin-UI-Api-Mode');
   const forwardedHost =
@@ -353,7 +359,12 @@ function snapshotString(value: unknown): string | null {
 }
 
 function snapshotNumber(value: unknown, fallback: number): number {
-  const parsed = typeof value === 'number' ? value : Number.parseInt(String(value ?? ''), 10);
+  const parsed =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string'
+        ? Number.parseInt(value, 10)
+        : Number.NaN;
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
@@ -455,7 +466,9 @@ function mapSnapshotFallback(row: unknown): LoggingFallbackPolicy | null {
     return null;
   }
   return {
-    id: snapshotString(raw.id) ?? `${raw.scope_type ?? 'platform'}:${raw.scope_id ?? 'global'}`,
+    id:
+      snapshotString(raw.id) ??
+      `${snapshotString(raw.scope_type) ?? 'platform'}:${snapshotString(raw.scope_id) ?? 'global'}`,
     scopeType: readSnapshotScopeType(raw.scope_type),
     scopeId: snapshotString(raw.scope_id) ?? 'global',
     logType,
@@ -614,7 +627,7 @@ function targetFromLoggingDestination(
       bucketRef:
         snapshotString(config.bindingRef) ??
         snapshotString(config.bucketRef) ??
-        (plane === 'archive' ? 'AUDIT_ARCHIVE' : 'SENSITIVE_DETAILS'),
+        (plane === 'archive' ? 'LOG_ARCHIVE' : 'SENSITIVE_DETAILS'),
       prefix: snapshotString(config.prefix) ?? undefined,
     };
   }
@@ -706,7 +719,8 @@ async function loadRuntimeLoggingPolicySnapshot(
           scopeType,
           scopeId,
           kv: configKv,
-          objectStore: env.DIAGNOSTIC_LOGS,
+          objectStore: createLogIcebergPolicySnapshotObjectStore(env),
+          prefix: LOG_ICEBERG_POLICY_PREFIX,
         }),
     });
     if (snapshot) {
@@ -732,10 +746,39 @@ async function resolveSnapshotAuditDeliveryPlanFromEnv(
   }
 ) {
   const policies = await loadRuntimeLoggingPolicySnapshot(env, input.tenantId);
-  if (!policies) {
-    return null;
-  }
+  return policies ? snapshotAuditDeliveryPlan(policies, input) : null;
+}
 
+/**
+ * The tenant's published logging policies read for an admin view: not cached, and a published
+ * snapshot that cannot be read throws (runtime would fall back to the routing rules).
+ */
+async function loadRuntimeLoggingPolicySnapshotStrict(
+  env: Env,
+  tenantId: string
+): Promise<RuntimeLoggingPolicySnapshotPayload | null> {
+  if (!env.AUTHRIM_CONFIG) return null;
+  const load = (scopeType: LoggingPolicyScopeType, scopeId: string) =>
+    loadPublishedRuntimeLoggingPolicySnapshot<RuntimeLoggingPolicySnapshotPayload>({
+      scopeType,
+      scopeId,
+      kv: env.AUTHRIM_CONFIG!,
+      objectStore: createLogIcebergPolicySnapshotObjectStore(env),
+      prefix: LOG_ICEBERG_POLICY_PREFIX,
+      strict: true,
+    });
+  const snapshot = (await load('tenant', tenantId)) ?? (await load('platform', 'global'));
+  return snapshot?.policies ?? null;
+}
+
+function snapshotAuditDeliveryPlan(
+  policies: RuntimeLoggingPolicySnapshotPayload,
+  input: {
+    tenantId: string;
+    logType: 'event' | 'pii';
+    auditProfile: AuditProfile;
+  }
+) {
   const logType: LogType = input.logType === 'pii' ? 'pii' : 'audit';
   const assignments = policies.assignments.map(mapSnapshotAssignment).filter(isPresent);
   const fallbacks = policies.fallbacks.map(mapSnapshotFallback).filter(isPresent);
@@ -779,10 +822,9 @@ async function resolveSnapshotAuditDeliveryPlanFromEnv(
     primary: input.auditProfile.primary ?? null,
     archives: archive ? [archive] : [],
     sinks: sink ? [sink] : [],
-    retentionDays:
-      input.logType === 'event'
-        ? input.auditProfile.retention?.eventLogRetentionDays
-        : input.auditProfile.retention?.piiLogRetentionDays,
+    // A logging policy picks destinations, not retention: the profile's retention applies, so
+    // it is left to the profile (and reported as the profile's), not passed as an override.
+    retentionDays: undefined,
     archiveFailureMode: input.auditProfile.archiveFailureMode,
     sinkFailureMode: input.auditProfile.sinkFailureMode,
     matchedRuleNames: ['logging_policy_snapshot'],
@@ -889,145 +931,257 @@ async function resolveAuditDeliveryPlanFromEnv(
   };
 }
 
+/** The retention an audit log of each type gets when written for a tenant now. */
+export interface TenantAuditRetentionEntry {
+  days: number;
+  source: AuditRetentionSource;
+  variesByRoute: boolean;
+  /**
+   * New logs use the configured Iceberg archive mode. Each record keeps its retention deadline;
+   * shared maintenance removes expired records while honoring pending writes and DR pins.
+   */
+  archived: boolean;
+}
+
+export interface TenantAuditRetention {
+  event: TenantAuditRetentionEntry;
+  pii: TenantAuditRetentionEntry;
+}
+
+/**
+ * A routing rule that sets this log type's retention for some writes of the tenant only (those of
+ * an app or an event category); a rule for all its writes is the value itself, not a variation.
+ */
+function routeRetentionRuleApplies(
+  rule: AuditStorageRoutingRule,
+  tenantId: string,
+  logType: 'event' | 'pii'
+): boolean {
+  const retention =
+    logType === 'event'
+      ? rule.retention?.eventLogRetentionDays
+      : rule.retention?.piiLogRetentionDays;
+  const conditions = rule.conditions;
+  const narrows = (expected: string | string[] | undefined) =>
+    expected !== undefined && expected !== '*';
+  const matches = (expected: string | string[] | undefined, actual: string) =>
+    expected === undefined ||
+    expected === '*' ||
+    (Array.isArray(expected) ? expected.includes(actual) : expected === actual);
+  return (
+    rule.enabled &&
+    retention !== undefined &&
+    // Writes carry no region, so only a rule for any region ('*') applies.
+    (conditions.region === undefined || conditions.region === '*') &&
+    (narrows(conditions.clientId) || narrows(conditions.eventCategory)) &&
+    matches(conditions.tenantId, tenantId) &&
+    matches(conditions.logType, logType)
+  );
+}
+
+/**
+ * The audit log retention a write for this tenant uses, resolved the way AuditService does
+ * (delivery plan, then audit profile, then the tenant's PII config) for a write with no event
+ * category or app. Shown to admins, so unlike a write it does not fall back to defaults when
+ * the profile, the PII config or the routing rules cannot be read: it throws. `variesByRoute`:
+ * a routing rule sets another retention for some event categories or apps of the tenant.
+ */
+export async function resolveTenantAuditRetentionFromEnv(
+  env: Env,
+  tenantId: string,
+  /** The tenant's audit profile, already read strictly (so other views share it). */
+  options: { auditProfile?: AuditProfile } = {}
+): Promise<TenantAuditRetention> {
+  const auditProfile =
+    options.auditProfile ??
+    (await resolveTenantRuntimeProfilesFromEnv(env, tenantId, { strict: true })).auditProfile;
+  let defaults: TenantPIIConfig = DEFAULT_PII_CONFIG;
+  let routingRules: AuditStorageRoutingRule[] = [];
+  if (env.AUTHRIM_CONFIG) {
+    const [storedConfig, storedRules] = await Promise.all([
+      env.AUTHRIM_CONFIG.get(`pii_config:${tenantId}`),
+      env.AUTHRIM_CONFIG.get(KV_KEY_ROUTING_RULES),
+    ]);
+    // A write ignores a config it cannot parse; shown to admins, it is unreadable, not absent.
+    if (storedConfig !== null) {
+      const parsed: unknown = JSON.parse(storedConfig);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('pii_config_invalid');
+      }
+      defaults = parsed as TenantPIIConfig;
+    }
+    // Only a missing value is no rules; anything stored must parse (an empty string does not).
+    if (storedRules !== null) {
+      const parsed: unknown = JSON.parse(storedRules);
+      if (!Array.isArray(parsed)) throw new Error('audit_routing_rules_invalid');
+      routingRules = parseStoredAuditRoutingRules(storedRules);
+    }
+  }
+
+  const policies = await loadRuntimeLoggingPolicySnapshotStrict(env, tenantId);
+  const resolve = async (logType: 'event' | 'pii') => {
+    // A published logging policy decides destinations and leaves retention to the profile; the
+    // routing rules apply only without one (as for a write).
+    const snapshotPlan = policies
+      ? snapshotAuditDeliveryPlan(policies, { tenantId, logType, auditProfile })
+      : null;
+    if (snapshotPlan) {
+      return {
+        ...resolveAuditRetention(auditProfile, defaults, logType),
+        variesByRoute: false,
+        archived: true,
+      };
+    }
+    const storageConfig = buildAuditStorageConfigFromProfile(auditProfile, { routingRules });
+    const resolved = resolveAuditRoutingTargets(storageConfig, { tenantId, logType });
+    const override =
+      logType === 'event'
+        ? resolved.retention.eventLogRetentionDays
+        : resolved.retention.piiLogRetentionDays;
+    return {
+      ...resolveAuditRetention(auditProfile, defaults, logType, override),
+      variesByRoute: routingRules.some((rule) =>
+        routeRetentionRuleApplies(rule, tenantId, logType)
+      ),
+      archived: true,
+    };
+  };
+  const [event, pii] = await Promise.all([resolve('event'), resolve('pii')]);
+  return { event, pii };
+}
+
+type MirroredAuditLogEntry = Omit<AuditLogEntry, 'createdAt'> & {
+  tenantId: string;
+  createdAt: number;
+  requireDurableFanout?: boolean;
+};
+
 async function mirrorLegacyAuditLogToUnifiedService(
   env: Env,
-  entry: Omit<AuditLogEntry, 'id' | 'createdAt'> & { tenantId: string }
+  entry: MirroredAuditLogEntry,
+  metadata: Record<string, unknown>,
+  subjectUserId: string | undefined,
+  anonymizedUserId: string | undefined
 ): Promise<void> {
-  const tenantId = requireAuditTenantId(entry.tenantId, entry.action);
-  if (!tenantId) {
-    if (isFailClosedAuditAction(entry.action)) {
-      throw new AuditLogDeliveryError('audit_log_tenant_id_required', entry.action, 'unknown');
-    }
-    return;
-  }
-  const metadata = parseLegacyMetadata(entry.metadata);
+  const result = mapLegacyAuditResult(entry.action, metadata);
+  const errorCode = mapLegacyAuditErrorCode(result, metadata);
+  const clientId = resolveAuditClientId(metadata);
+  const sessionId = await resolveAuditSessionRef(entry, metadata);
+  // The data's own resource ID keys go through the same rule as the entry's resourceId.
+  const {
+    resourceId: dataResourceId,
+    resource_id: dataResourceIdSnake,
+    ...detailsMetadata
+  } = metadata;
+  const resourceId = await mirrorableResourceId(
+    entry,
+    entry.resourceId ?? dataResourceId ?? dataResourceIdSnake,
+    subjectUserId
+  );
   const auditService = getUnifiedAuditService(env);
 
-  await auditService.logEvent(tenantId, {
+  await auditService.logEvent(entry.tenantId, {
+    id: entry.id,
+    createdAt: entry.createdAt,
     eventType: entry.action,
     eventCategory: mapLegacyAuditCategory(entry.action, entry.resource),
-    result: 'success',
+    result,
+    ...(errorCode ? { errorCode } : {}),
     severity: mapLegacySeverity(entry.severity),
+    ...(anonymizedUserId ? { anonymizedUserId } : {}),
+    ...(clientId ? { clientId } : {}),
+    ...(sessionId ? { sessionId } : {}),
+    ...(entry.requireDurableFanout ? { requireDurableFanout: true } : {}),
+    // The user is named by anonymized_user_id only; the details sanitizer drops user ID keys.
     details: {
       source: 'legacy_audit_log',
       resourceType: entry.resource,
-      resourceId: entry.resourceId,
-      ...metadata,
+      ...detailsMetadata,
+      resourceId,
     },
   });
 }
 
 export async function writeLegacyAuditLog(
-  adapter: DatabaseAdapter,
+  env: Env,
   entry: LegacyAuditLogWriteInput
 ): Promise<void> {
-  await adapter.execute(
-    `INSERT INTO audit_log (
-      id, tenant_id, user_id, action, resource_type, resource_id,
-      ip_address, user_agent, metadata_json, severity, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      entry.id,
-      entry.tenantId,
-      entry.userId ?? null,
-      entry.action,
-      entry.resource,
-      entry.resourceId ?? null,
-      entry.ipAddress ?? null,
-      entry.userAgent ?? null,
-      entry.metadata,
-      entry.severity,
-      entry.createdAt,
-    ]
-  );
+  await createAuditLog(env, {
+    ...entry,
+    userId: entry.userId ?? 'system',
+    resourceId: entry.resourceId ?? '',
+    ipAddress: entry.ipAddress ?? '',
+    userAgent: entry.userAgent ?? '',
+    metadata: entry.metadata,
+    createdAt: entry.createdAt,
+    tenantId: entry.tenantId,
+  });
 }
 
 /**
- * Create an audit log entry in the database
+ * Create one immutable canonical audit event
  *
  * This function is non-blocking - if the audit log creation fails,
  * it will log the error but not throw, allowing the main operation to continue.
  *
+ * The subject is resolved before emission with a bounded lookup. The resulting immutable
+ * event carries that ID or is permanently unlinked; no later body update is scheduled.
+ *
  * @param env - Cloudflare Workers environment bindings
- * @param entry - Audit log entry data (id and createdAt will be generated)
+ * @param entry - Audit log entry data (createdAt and an omitted id will be generated)
+ * @param _options - Request lifecycle options; storage acceptance is awaited
  */
 export async function createAuditLog(
   env: Env,
-  entry: Omit<AuditLogEntry, 'id' | 'createdAt'> & { tenantId: string }
+  entry: Omit<AuditLogEntry, 'id' | 'createdAt'> & {
+    tenantId: string;
+    id?: string;
+    createdAt?: number;
+    requireDurableFanout?: boolean;
+  },
+  _options: CreateAuditLogOptions = {}
 ): Promise<void> {
   const tenantId = requireAuditTenantId(entry.tenantId, entry.action);
   if (!tenantId) {
     return;
   }
 
-  const id = generateSecureRandomString(16);
-  // Use seconds (not milliseconds) for consistency with other audit log writers
-  const createdAt = Math.floor(Date.now() / 1000);
-  let failureBehavior: ReturnType<typeof resolveAuditEventFailureBehavior>['behavior'] =
-    'fail_closed_or_strong_retry';
-  let legacyD1WasPrimary = true;
-
-  try {
-    const legacyPolicy = await resolveLegacyAuditLogPolicy(env, tenantId, entry.action);
-    legacyD1WasPrimary = legacyPolicy.writeLegacyD1;
-    const classification = resolveAuditEventFailureBehavior(
-      entry.action,
-      legacyPolicy.backpressureMode
-    );
-    failureBehavior = classification.behavior;
-
-    if (!legacyPolicy.writeLegacyD1) {
-      log.debug('Skipping legacy D1 audit_log write for non-D1 audit profile', {
-        action: entry.action,
-        tenantId,
-        auditCategory: classification.category,
-        auditFailureBehavior: classification.behavior,
-      });
-    } else {
-      log.info('createAuditLog: Starting INSERT', {
-        id,
-        action: entry.action,
-        tenantId,
-        createdAt,
-        auditCategory: classification.category,
-        auditFailureBehavior: classification.behavior,
-      });
-
-      const coreAdapter: DatabaseAdapter = resolveLegacyAuditLogAdapterFromEnv(env);
-      await writeLegacyAuditLog(coreAdapter, {
-        id,
-        tenantId,
-        userId: entry.userId,
-        action: entry.action,
-        resource: entry.resource,
-        resourceId: entry.resourceId,
-        ipAddress: entry.ipAddress,
-        userAgent: entry.userAgent,
-        metadata: entry.metadata,
-        severity: entry.severity,
-        createdAt,
-      });
-
-      log.info('createAuditLog: INSERT completed successfully', { id, action: entry.action });
-    }
-  } catch (error) {
-    // PII Protection: Don't log entry details (may contain PII in metadata)
-    log.error('Failed to create audit log', {}, error as Error);
-    if (failureBehavior === 'fail_closed_or_strong_retry') {
-      throw new AuditLogDeliveryError('audit_log_write_failed', entry.action, tenantId);
-    }
+  const id = entry.id ?? generateSecureRandomString(16);
+  if (!/^[A-Za-z0-9._:-]{1,200}$/u.test(id)) {
+    throw new AuditLogDeliveryError('audit_log_id_invalid', entry.action, tenantId);
   }
-
+  const createdAtMs = entry.createdAt ?? Date.now();
+  if (!Number.isSafeInteger(createdAtMs) || createdAtMs < 0) {
+    throw new AuditLogDeliveryError('audit_log_created_at_invalid', entry.action, tenantId);
+  }
+  if (env.AUDIT_RUNTIME_PORTS) {
+    try {
+      await env.AUDIT_RUNTIME_PORTS.append({ ...entry, id, tenantId, createdAt: createdAtMs });
+    } catch {
+      throw new AuditLogDeliveryError('audit_log_runtime_write_failed', entry.action, tenantId);
+    }
+    return;
+  }
+  const failureBehavior = resolveAuditEventFailureBehavior(
+    entry.action,
+    await resolveAuditBackpressure(env, tenantId)
+  ).behavior;
+  const finalized: MirroredAuditLogEntry = { ...entry, id, tenantId, createdAt: createdAtMs };
+  const metadata = parseLegacyMetadata(entry.metadata);
+  const subjectUserId = resolveAuditSubjectUserId(entry, metadata);
+  const anonymizedUserId = await resolveFinalAnonymizedUserId(env, tenantId, subjectUserId);
   try {
-    await mirrorLegacyAuditLogToUnifiedService(env, { ...entry, tenantId });
+    await mirrorLegacyAuditLogToUnifiedService(
+      env,
+      finalized,
+      metadata,
+      subjectUserId,
+      anonymizedUserId
+    );
   } catch (error) {
-    log.warn('Failed to mirror audit log to unified audit service', {
-      action: entry.action,
-      tenantId,
-    });
-    log.error('Unified audit mirror failed', {}, error as Error);
-    if (failureBehavior === 'fail_closed_or_strong_retry' && !legacyD1WasPrimary) {
-      throw new AuditLogDeliveryError('audit_log_unified_mirror_failed', entry.action, tenantId);
+    log.error('Failed to persist canonical audit event', {}, error as Error);
+    if (entry.requireDurableFanout || failureBehavior === 'fail_closed_or_strong_retry') {
+      throw new AuditLogDeliveryError('audit_log_write_failed', entry.action, tenantId);
     }
   }
 
@@ -1038,8 +1192,7 @@ export async function createAuditLog(
       tenantId,
       action: entry.action,
       resource: entry.resource,
-      resourceId: entry.resourceId,
-      // Note: userId and metadata intentionally omitted (may contain PII)
+      // Note: userId, resourceId (a user's ID for a user resource) and metadata are omitted
     });
   }
 }
@@ -1057,6 +1210,9 @@ export async function createAuditLog(
  * @param resourceId - Resource identifier (e.g., kid)
  * @param metadata - Additional metadata object (will be JSON stringified)
  * @param severity - Severity level (default: 'info')
+ * @param auditId - Stable audit ID for idempotent retries
+ * @param createdAt - Original event timestamp in epoch milliseconds
+ * @param requireDurableFanout - Require gated archive/sink queue acceptance
  */
 export async function createAuditLogFromContext(
   c: Context<{ Bindings: Env }>,
@@ -1064,19 +1220,23 @@ export async function createAuditLogFromContext(
   resource: string,
   resourceId: string,
   metadata: Record<string, unknown>,
-  severity: 'info' | 'warning' | 'critical' = 'info'
+  severity: 'info' | 'warning' | 'critical' = 'info',
+  auditId?: string,
+  createdAt?: number,
+  requireDurableFanout = false
 ): Promise<void> {
   // Debug: Log that we're attempting to create audit log
-  log.info('Creating audit log from context', { action, resource, resourceId });
+  // resourceId is left out: for a user resource it is the user's ID.
+  log.info('Creating audit log from context', { action, resource });
 
   // Get admin auth context (set by adminAuthMiddleware)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const adminAuth = (c as any).get('adminAuth') as { userId: string } | undefined;
+  const adminAuth = (c as unknown as { get(key: string): unknown }).get('adminAuth') as
+    | { userId: string }
+    | undefined;
   if (!adminAuth) {
     log.error('Cannot create audit log: adminAuth context not found', {
       action,
       resource,
-      resourceId,
     });
     if (isFailClosedAuditAction(action)) {
       throw new AuditLogDeliveryError('audit_log_admin_auth_required', action, 'unknown');
@@ -1087,8 +1247,10 @@ export async function createAuditLogFromContext(
   log.info('Admin auth found', { userId: adminAuth.userId, action });
 
   // Get tenantId from request context (set by requestContextMiddleware)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const tenantId = requireAuditTenantId((c as any).get('tenantId') as string | undefined, action);
+  const tenantId = requireAuditTenantId(
+    (c as unknown as { get(key: string): unknown }).get('tenantId') as string | undefined,
+    action
+  );
   if (!tenantId) {
     if (isFailClosedAuditAction(action)) {
       throw new AuditLogDeliveryError('audit_log_tenant_id_required', action, 'unknown');
@@ -1110,17 +1272,24 @@ export async function createAuditLogFromContext(
     ...getAdminProxyMetadataFromContext(c),
   };
 
-  await createAuditLog(c.env, {
-    tenantId,
-    userId: adminAuth.userId,
-    action,
-    resource,
-    resourceId,
-    ipAddress,
-    userAgent,
-    metadata: JSON.stringify(auditMetadata),
-    severity,
-  });
+  await createAuditLog(
+    c.env,
+    {
+      id: auditId,
+      createdAt,
+      tenantId,
+      userId: adminAuth.userId,
+      action,
+      resource,
+      resourceId,
+      ipAddress,
+      userAgent,
+      metadata: JSON.stringify(auditMetadata),
+      severity,
+      ...(requireDurableFanout ? { requireDurableFanout: true } : {}),
+    },
+    { waitUntil: getWaitUntilFromContext(c) }
+  );
 }
 
 /**

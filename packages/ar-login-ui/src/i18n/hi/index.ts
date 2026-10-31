@@ -1,6 +1,31 @@
 import type { Translation } from '../i18n-types';
 
 const translation = {
+	account_guestLogoutWarning:
+		'लॉग आउट करने के बाद आप इस अतिथि खाते में वापस नहीं आ सकेंगे। खाते और डेटा तक पहुँच बनाए रखने के लिए पहले पंजीकरण करें। फिर भी लॉग आउट करें?',
+	account_guestTitle: 'अपना खाता पंजीकृत करें',
+	account_guestDescription: 'पंजीकरण के बाद भी आपका वही खाता और डेटा बना रहेगा।',
+	account_guestDue: '{date} से यह खाता अपने आप हटाया जा सकता है।',
+	account_guestNoExpiry: 'अपने आप हटाने की कोई योजना नहीं है।',
+	account_guestEmail: 'ईमेल पता',
+	account_guestSend: 'ईमेल से पंजीकरण करें',
+	account_guestPasskey: 'पास कुंजी से पंजीकरण करें',
+	account_guestCode: 'सत्यापन कोड',
+	account_guestConfirm: 'पंजीकरण पूरा करें',
+	account_guestPending:
+		'पंजीकरण प्रक्रिया में है। पूरा होने की जाँच के लिए आप पुनः प्रयास कर सकते हैं।',
+	account_guestRetry: 'पुनः प्रयास करें',
+	account_guestError: 'पंजीकरण पूरा नहीं हो सका। सत्यापन कोड जाँचें या पुनः प्रयास करें।',
+	account_guestCollision:
+		'इस पहचान से पहले से एक खाता मौजूद है। उस खाते में अलग से साइन इन करें। आपका अतिथि खाता विलय नहीं किया जाएगा।',
+	account_guestExistingLogin: 'मौजूदा खाते में साइन इन करें',
+	account_guestRegistered: 'आपका खाता पंजीकृत हो गया है।',
+	account_guestChangeMethod: 'कोई अन्य विधि चुनें',
+	login_guestContinue: 'अतिथि के रूप में जारी रखें',
+	login_guestRetention:
+		'अतिथि खाते बनने के {days} दिन बाद अपने आप हटाए जा सकते हैं। उपयोग जारी रखने के लिए खाता पंजीकृत करें।',
+	login_guestNoExpiry: 'नए अतिथि खातों के लिए अपने आप हटाने की कोई योजना नहीं है।',
+
 	app_title: 'Authrim',
 	app_subtitle: 'हर जगह एज पर पहचान और पहुँच।',
 	button_openDialog: 'संवाद खोलें',
@@ -84,6 +109,30 @@ const translation = {
 	account_delete: 'हटाएँ',
 	account_empty: 'कोई आइटम नहीं',
 	account_planned: 'नियोजित',
+	account_socialEmpty: 'कोई बाहरी खाता लिंक नहीं है।',
+	account_socialLinkHeading: 'खाता लिंक करें',
+	account_socialLinkWith: '{provider} लिंक करें',
+	account_socialNoProviders: 'लिंक करने के लिए कोई अन्य प्रदाता उपलब्ध नहीं है।',
+	account_socialLinkedAt: '{date} को लिंक किया गया',
+	account_socialLastUsed: 'अंतिम बार उपयोग: {date}',
+	account_socialUnlink: 'लिंक हटाएँ',
+	account_socialUnlinkConfirm: '{provider} का लिंक हटाएँ? इसके बाद आप इससे लॉगिन नहीं कर पाएँगे।',
+	account_socialUnlinkConfirmAction: '{provider} का लिंक हटाएँ',
+	account_socialLinked: 'खाता लिंक कर दिया गया।',
+	account_socialUnlinked: 'खाते का लिंक हटा दिया गया।',
+	account_socialErrorAlreadyLinked: 'यह खाता पहले से किसी अन्य उपयोगकर्ता से लिंक है।',
+	account_socialErrorAlreadyLinkedHere: 'यह प्रदाता पहले से आपके खाते से लिंक है।',
+	account_socialErrorEmailNotVerified: 'प्रदाता ने इस खाते के ईमेल पते को सत्यापित नहीं किया है।',
+	account_socialErrorSessionExpired:
+		'लिंक पूरा होने से पहले आपकी पुष्टि की समय-सीमा समाप्त हो गई। फिर से पुष्टि करें और पुनः प्रयास करें।',
+	account_socialErrorCancelled: 'लिंक करना रद्द कर दिया गया।',
+	account_socialErrorFailed: 'खाता लिंक नहीं किया जा सका। पुनः प्रयास करें।',
+	account_socialErrorLastMethod:
+		'यह लॉगिन करने का आपका अंतिम तरीका है। पहले पास कुंजी या कोई अन्य लॉगिन विधि जोड़ें।',
+	account_socialErrorInProgress:
+		'आपकी लॉगिन विधियों में एक अन्य बदलाव प्रगति पर है। कुछ देर बाद पुनः प्रयास करें।',
+	account_operationSocialLinked: 'बाहरी खाता लिंक किया गया',
+	account_operationSocialUnlinked: 'बाहरी खाते का लिंक हटाया गया',
 	account_passkeyUnsupported: 'यह ब्राउज़र पासकी पंजीकरण का समर्थन नहीं करता है।',
 	account_passkeyRegistrationCancelled:
 		'पासकी पंजीकरण रद्द कर दिया गया था या समय समाप्त कर दिया गया था। कृपया पुनः प्रयास करें।',
@@ -118,12 +167,30 @@ const translation = {
 	account_reauthTotpCodePlaceholder: '6 या 8 अंकों का कोड',
 	account_actionFailed: 'ऑपरेशन विफल रहा',
 	account_remainingLoginMethodRequired: 'इस विधि को हटाने से पहले एक और लॉगिन विधि जोड़ें।',
+	account_activityIncomplete: 'गतिविधि के परिणाम अधूरे हैं। कृपया बाद में फिर से कोशिश करें।',
+	account_activityLoadMore: 'पुरानी गतिविधि लोड करें',
 	account_activityTitle: 'गतिविधि',
 	account_operationNameUpdated: 'नाम बदल दिया गया',
 	account_operationPasskeyCreated: 'Passkey जोड़ा गया',
 	account_operationPasskeyUpdated: 'पासकी का नाम बदल दिया गया',
 	account_operationPasskeyDeleted: 'पास कुंजी हटाई गई',
 	account_operationSessionRevoked: 'सत्र समाप्त',
+	account_operationGuestCreated: 'अतिथि खाता बनाया गया',
+	account_operationGuestUpgradeFailed: 'अतिथि पंजीकरण विफल रहा',
+	account_operationGuestUpgradeStarted: 'अतिथि पंजीकरण शुरू हुआ',
+	account_operationGuestUpgraded: 'अतिथि खाता पंजीकृत हुआ',
+	account_operationEmailAdded: 'ईमेल जोड़ा गया',
+	account_operationEmailChanged: 'ईमेल बदला गया',
+	account_operationEmailReauthenticated: 'ईमेल से पुनः प्रमाणीकरण किया गया',
+	account_operationDeviceUpdated: 'डिवाइस का नाम बदला गया',
+	account_operationDeviceUnlinked: 'डिवाइस का लिंक हटाया गया',
+	account_operationPasskeyReauthenticated: 'Passkey से पुनः प्रमाणीकरण किया गया',
+	account_operationTotpEnrollmentStarted: 'प्रमाणीकरण ऐप सेटअप शुरू हुआ',
+	account_operationTotpActivated: 'प्रमाणीकरण ऐप सक्रिय किया गया',
+	account_operationTotpUpdated: 'प्रमाणीकरण ऐप का नाम बदला गया',
+	account_operationTotpRemoved: 'प्रमाणीकरण ऐप हटाया गया',
+	account_operationTotpBackupCodesRegenerated: 'बैकअप कोड पुनर्जनित किए गए',
+	account_operationTotpReauthenticated: 'प्रमाणीकरण ऐप से पुनः प्रमाणीकरण किया गया',
 	account_launcherTitle: 'मेरे ऐप्स',
 	account_launcherDescription: 'आपके लिए उपलब्ध ऐप्स खोजें और खोलें।',
 	account_launcherLoadFailed: 'ऐप्स लोड नहीं किए जा सके।',
@@ -189,6 +256,8 @@ const translation = {
 	login_humanVerificationLoading: 'सुरक्षा जाँच लोड हो रही है...',
 	login_humanVerificationLoadFailed:
 		'सुरक्षा जाँच लोड नहीं की जा सकी। पृष्ठ को फिर से लोड करें और पुनः प्रयास करें।',
+	login_humanVerificationUnavailable:
+		'मानव सत्यापन अभी उपलब्ध नहीं है। कृपया अपने व्यवस्थापक से संपर्क करें।',
 	login_noMethodsAvailable:
 		'इस संगठन के लिए कोई प्रमाणीकरण विधि सक्षम नहीं है। अपने प्रशासक से संपर्क करें।',
 	login_passkeyPreparing: 'पासकी प्रमाणीकरण तैयार हो रहा है...',
@@ -265,7 +334,8 @@ const translation = {
 	register_metaDescription: 'पासकी, ईमेल कोड या किसी अन्य उपलब्ध विधि से खाता बनाएँ।',
 	emailCode_title: 'अपने ईमेल की जाँच करें',
 	emailCode_subtitle: 'हमने एक सत्यापन कोड भेजा है',
-	emailCode_instructions: 'अपने ईमेल से 6 अंकों का कोड दर्ज करें। कोड 5 मिनट में समाप्त हो जाएगा.',
+	emailCode_instructions:
+		'अपने ईमेल से 6 अंकों का कोड दर्ज करें। कोड कितनी देर मान्य है, यह ईमेल में लिखा है।',
 	emailCode_codeLabel: 'सत्यापन कोड',
 	emailCode_verifyButton: 'सत्यापित करें',
 	emailCode_resendButton: 'फिर से कोड भेजें',
@@ -321,11 +391,19 @@ const translation = {
 	error_temporarily_unavailable: 'प्राधिकरण सर्वर अस्थायी रूप से अनुरोध को संभालने में असमर्थ है',
 	error_login_required: 'प्रमाणीकरण की आवश्यकता है। कृपया जारी रखने के लिए साइन इन करें.',
 	error_unknown: 'एक अज्ञात त्रुटि हुई',
+	error_rateLimited: 'बहुत अधिक प्रयास। कुछ देर प्रतीक्षा करें, फिर से प्रयास करें।',
+	error_rateLimitedRetryAfter: 'बहुत अधिक प्रयास। लगभग {minutes} मिनट बाद फिर से प्रयास करें।',
+	error_unregisteredPostLogoutRedirectUri:
+		'आप साइन आउट हो गए हैं। ऐप का वापसी पता पंजीकृत नहीं है, इसलिए आपको ऐप पर वापस नहीं भेजा जा सका। ऐप को स्वयं फिर से खोलें।',
+	error_invalidIdTokenHint:
+		'आप साइन आउट हो गए हैं। ऐप के साइन-आउट अनुरोध को सत्यापित नहीं किया जा सका, इसलिए आपको ऐप पर वापस नहीं भेजा जा सका। ऐप को स्वयं फिर से खोलें।',
+	error_idTokenHintRequired:
+		'आप साइन आउट हो गए हैं। ऐप का साइन-आउट अनुरोध अधूरा था, इसलिए आपको ऐप पर वापस नहीं भेजा जा सका। ऐप को स्वयं फिर से खोलें।',
 	device_title: 'उपकरण सत्यापन',
 	device_subtitle: 'अपने डिवाइस पर दिखाए गए कोड दर्ज करें',
 	device_codeLabel: 'सत्यापन कोड',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint: 'अपने डिवाइस से 8-वर्ण कोड दर्ज करें (फॉर्मेटः XXXX-XXXX)',
+	device_codeHint: 'अपने डिवाइस पर दिखाया गया कोड दर्ज करें',
 	device_verifyButton: 'कोड सत्यापित करें',
 	device_confirmTitle: 'डिवाइस को अधिकृत करें',
 	device_requestedPermissions: 'अनुरोधित अनुमतियाँ',
@@ -338,6 +416,13 @@ const translation = {
 	device_errorApproveFailed: 'डिवाइस को अनुमोदित करने में विफल',
 	device_errorDenyFailed: 'डिवाइस अनुरोध को अस्वीकार नहीं कर सका',
 	device_errorInvalidRedirect: 'सर्वर से प्राप्त अमान्य रीडायरेक्ट URL',
+	device_errorConsentWithdrawn:
+		'यह अनुरोध आपके द्वारा इस ऐप की पहुँच वापस लेने से पहले किया गया था। नया कोड पाने के लिए डिवाइस पर फिर से शुरू करें।',
+	device_errorTryAgain:
+		'अभी आपका निर्णय सहेजा नहीं जा सका और कुछ भी नहीं बदला। कुछ देर बाद फिर से प्रयास करें।',
+	device_errorTooManyAttempts: 'बहुत अधिक प्रयास। कुछ देर प्रतीक्षा करें, फिर से प्रयास करें।',
+	device_errorOutcomeUnknown:
+		'यह पुष्टि नहीं हो सकी कि आपका निर्णय सहेजा गया या नहीं। डिवाइस जाँचें, या कोड फिर से दर्ज करें।',
 	ciba_title: 'प्रमाणीकरण अनुरोध',
 	ciba_subtitle: 'एक ऐप आपकी स्वीकृति माँग रहा है',
 	ciba_noPendingRequests: 'प्रमाणीकरण के लिए कोई लंबित अनुरोध नहीं',
@@ -357,6 +442,18 @@ const translation = {
 	ciba_errorGeneric: 'त्रुटि हुई',
 	ciba_errorApproveFailed: 'अनुरोध स्वीकृत नहीं किया जा सका',
 	ciba_errorDenyFailed: 'अनुरोध को अस्वीकार करने में विफल',
+	ciba_errorConsentWithdrawn:
+		'यह अनुरोध आपके द्वारा इस ऐप की पहुँच वापस लेने से पहले किया गया था। ऐप से फिर से शुरू करें।',
+	ciba_errorRequestGone: 'यह अनुरोध समाप्त हो गया है या इसका उत्तर पहले ही दिया जा चुका है।',
+	error_authorizationRequestExpired:
+		'साइन-इन अनुरोध समाप्त हो गया है। कृपया ऐप से फिर से शुरू करें।',
+	ciba_errorTryAgain:
+		'अभी आपका निर्णय सहेजा नहीं जा सका और कुछ भी नहीं बदला। कुछ देर बाद फिर से प्रयास करें।',
+	ciba_errorTooManyAttempts: 'बहुत अधिक प्रयास। कुछ देर प्रतीक्षा करें, फिर से प्रयास करें।',
+	ciba_errorOutcomeUnknown:
+		'यह पुष्टि नहीं हो सकी कि आपका उत्तर सहेजा गया या नहीं। अभी भी प्रतीक्षारत अनुरोध देखने के लिए रीफ़्रेश करें।',
+	ciba_errorNoLongerWaiting:
+		'आपके उत्तर की पुष्टि नहीं हो सकी, लेकिन यह अनुरोध अब प्रतीक्षा में नहीं है।',
 	reauth_title: 'अपनी पहचान सत्यापित करें',
 	reauth_subtitle: 'सुरक्षा के लिए, कृपया जारी रखने के लिए फिर से प्रमाणीकरण करें',
 	reauth_verifyWithPasskey: 'Passkey के साथ सत्यापित करें',
@@ -393,6 +490,9 @@ const translation = {
 	login_extError_callbackFailed_title: 'प्रमाणीकरण विफल',
 	login_extError_callbackFailed_message:
 		'प्रमाणीकरण के दौरान एक त्रुटि हुई। कृपया पुनः प्रयास करें।',
+	login_extError_reauthNotProven_title: 'साइन-इन की पुष्टि नहीं हुई',
+	login_extError_reauthNotProven_message:
+		'आपके साइन-इन प्रदाता ने पुष्टि नहीं की कि आपने फिर से साइन इन किया। फिर से साइन इन करें या कोई अन्य तरीका चुनें।',
 	login_extError_default_title: 'प्रमाणीकरण त्रुटि',
 	login_extError_default_message: 'बाहरी प्रमाणीकरण के दौरान एक त्रुटि हुई।',
 	login_signingInTo: 'इसमें साइन इन किया जा रहा है:',

@@ -36,6 +36,7 @@ export { DeviceSecretRouteStore } from './DeviceSecretRouteStore';
 export type { DeviceSecretRouteHint } from './DeviceSecretRouteStore';
 export { KeyManagerPublicEntrypoint } from '../entrypoints/KeyManagerPublicEntrypoint';
 export { RuntimeSmokeEntrypoint } from '../entrypoints/RuntimeSmokeEntrypoint';
+export { LogArchiveWriteEntrypoint } from '../entrypoints/LogArchiveWriteEntrypoint';
 
 // Export types for external use
 export type { Session, SessionData, CreateSessionRequest, SessionResponse } from './SessionStore';
@@ -45,6 +46,7 @@ export type {
   SessionRegistrationResult,
 } from './SessionRevocationStore';
 export type {
+  DeletedSessionClients,
   RegisterSessionClientRequest,
   SessionClientRecord,
   UpdateSessionClientActivityRequest,
@@ -92,14 +94,13 @@ export type {
   CreateRuntimeStateParams,
   OAuthFlowParams as FlowOAuthParams,
 } from './FlowStateStore';
-export { DEFAULT_FLOW_TTL_MS, MAX_PROCESSED_REQUEST_IDS } from './FlowStateStore';
 
 /**
  * Default export for ES Module compatibility
  * This worker only exports Durable Objects, so the default export is a minimal fetch handler
  */
 export default {
-  fetch(request: Request, env: unknown, ctx: ExecutionContext): Response {
+  fetch(_request: Request, _env: unknown, _ctx: ExecutionContext): Response {
     return new Response('Authrim Shared - Durable Objects Worker', {
       status: 200,
       headers: { 'Content-Type': 'text/plain' },

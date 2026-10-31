@@ -4,32 +4,18 @@
 	import AuthPageShell from '$lib/components/AuthPageShell.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
+	import { errorPageMessage } from '$lib/errors/error-page-message';
 
 	const { brandingStore } = useLoginUIStores();
 
 	let errorCode = $state('');
-	let errorMessage = $derived(getErrorMessage(errorCode));
+	let errorMessage = $derived(errorPageMessage($LL, errorCode));
 
 	onMount(() => {
 		// Get error parameters from URL
 		const urlParams = new URLSearchParams(window.location.search);
 		errorCode = urlParams.get('error') || 'unknown';
 	});
-
-	function getErrorMessage(code: string): string {
-		const errorMessages: Record<string, string> = {
-			invalid_request: $LL.error_invalid_request(),
-			access_denied: $LL.error_access_denied(),
-			unauthorized_client: $LL.error_unauthorized_client(),
-			unsupported_response_type: $LL.error_unsupported_response_type(),
-			invalid_scope: $LL.error_invalid_scope(),
-			server_error: $LL.error_server_error(),
-			temporarily_unavailable: $LL.error_temporarily_unavailable(),
-			unknown: $LL.error_unknown()
-		};
-
-		return errorMessages[code] || errorMessages.unknown;
-	}
 
 	function handleBackToLogin() {
 		window.location.href = '/login';
@@ -52,7 +38,7 @@
 		<!-- Error Icon -->
 		<div class="auth-icon-badge">
 			<div class="auth-icon-badge__circle auth-icon-badge__circle--danger">
-				<div class="i-heroicons-exclamation-circle h-9 w-9 auth-icon-badge__icon"></div>
+				<div class="i-ph-warning-circle h-9 w-9 auth-icon-badge__icon"></div>
 			</div>
 		</div>
 
@@ -84,12 +70,12 @@
 		<!-- Action Buttons -->
 		<div class="space-y-3">
 			<Button variant="primary" class="w-full" onclick={handleBackToLogin}>
-				<div class="i-heroicons-arrow-left h-5 w-5"></div>
+				<div class="i-ph-arrow-left h-5 w-5"></div>
 				{$LL.common_backToLogin()}
 			</Button>
 
 			<Button variant="ghost" class="w-full" onclick={handleContactSupport}>
-				<div class="i-heroicons-question-mark-circle h-5 w-5"></div>
+				<div class="i-ph-question h-5 w-5"></div>
 				{$LL.common_contactSupport()}
 			</Button>
 		</div>

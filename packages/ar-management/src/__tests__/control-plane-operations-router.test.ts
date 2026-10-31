@@ -426,6 +426,7 @@ function createApp(input?: {
   authMethod?: AdminAuthContext['authMethod'];
   principalType?: AdminAuthContext['principalType'];
   clientId?: string;
+  actorId?: string;
   permissions?: string[];
   environmentId?: string;
   control?: Partial<NonNullable<Env['CONTROL']>>;
@@ -588,8 +589,13 @@ function createApp(input?: {
       actorType: input?.actorType ?? 'human',
       principalType: input?.principalType,
       clientId: input?.clientId,
-      roles: input?.roles ?? ['system_admin'],
+      actorId: input?.actorId,
+      roles: input?.roles ?? ['ar_super_admin'],
+      // The roles of this fixture's Admin come from a global assignment.
+      globalRoles: input?.roles ?? ['ar_super_admin'],
+      tenantScope: ['*'],
       permissions: input?.permissions ?? [],
+      globalPermissions: input?.permissions ?? [],
     });
     await next();
   });
@@ -1057,6 +1063,7 @@ describe('control-plane operations admin router', () => {
       authMethod: 'machine_access_token',
       principalType: 'setup_tool',
       clientId: 'authrim-setup',
+      actorId: 'amp_authrim_setup',
       permissions: ['admin:control_plane:provision'],
     });
     const setupResponse = await setupMachine.app.request(
@@ -1237,6 +1244,33 @@ describe('control-plane operations admin router', () => {
     });
   });
 
+  it('asks to retry observing the generation while Control keeps dual-write', async () => {
+    const target = createApp({
+      control: {
+        observeLookupHmacRotationGeneration: vi.fn(async () => {
+          throw new Error('lookup_hmac_dual_write_dwell_incomplete');
+        }),
+      },
+    });
+    const response = await target.app.request(
+      '/api/admin/platform/control-plane/lookup-hmac/rotations/hmac-rotation-1/observe-generation',
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'idempotency-key': 'lookup-hmac-observe-dwell',
+        },
+        body: JSON.stringify({ fencingToken: 1 }),
+      },
+      target.env
+    );
+    expect(response.status).toBe(409);
+    expect(response.headers.get('Retry-After')).toBe('15');
+    expect(await response.json()).toMatchObject({
+      error: 'CONTROL_PLANE_LOOKUP_HMAC_DUAL_WRITE_DWELL_INCOMPLETE',
+    });
+  });
+
   it('requires explicit read scope and validates Lookup HMAC verification evidence', async () => {
     const denied = createApp({ actorType: 'machine', roles: [], permissions: [] });
     const deniedResponse = await denied.app.request(
@@ -1303,7 +1337,7 @@ describe('control-plane operations admin router', () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ items: [finding], count: 1 });
 
-    const denied = createApp({ roles: ['tenant_admin'] });
+    const denied = createApp({ roles: ['ar_tenant_admin'] });
     const deniedResponse = await denied.app.request(
       '/api/admin/platform/control-plane/drift-findings',
       {},
@@ -1450,6 +1484,7 @@ describe('control-plane operations admin router', () => {
       authMethod: 'machine_access_token',
       principalType: 'setup_tool',
       clientId: 'authrim-setup',
+      actorId: 'amp_authrim_setup',
       roles: [],
       permissions: ['admin:control_plane:provision'],
     });

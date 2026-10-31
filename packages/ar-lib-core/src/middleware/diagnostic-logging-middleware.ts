@@ -19,10 +19,14 @@ import {
 } from '../services/diagnostic/diagnostic-logger';
 import { createSettingsManager } from '../utils/settings-manager';
 import type { DiagnosticLoggingSettings } from '../types/settings/diagnostic-logging';
-import { DIAGNOSTIC_LOGGING_CATEGORY_META } from '../types/settings/diagnostic-logging';
+import {
+  DIAGNOSTIC_LOGGING_CATEGORY_META,
+  DIAGNOSTIC_LOGGING_DEFAULTS,
+} from '../types/settings/diagnostic-logging';
 import { createLogger } from '../utils/logger';
 import { parseBasicAuth } from '../utils/basic-auth';
 import { readRequestTextWithLimit } from '../utils/body-limits';
+import { isSafeIdentifier } from '../utils/diagnostic-redaction';
 
 const log = createLogger().module('DiagnosticLoggingMiddleware');
 const DIAGNOSTIC_CLIENT_ID_BODY_MAX_BYTES = 64 * 1024;
@@ -129,7 +133,13 @@ export function diagnosticLoggingMiddleware(config: DiagnosticLoggingMiddlewareC
     }
 
     // Generate request ID if not present
-    const requestId = c.req.header('X-Request-Id') || crypto.randomUUID();
+    // A client-supplied id is adopted only when it is a plain identifier (it is stored and
+    // exported with every entry); anything else, an email address for one, is replaced.
+    const suppliedRequestId = c.req.header('X-Request-Id');
+    const requestId =
+      suppliedRequestId && isSafeIdentifier(suppliedRequestId)
+        ? suppliedRequestId
+        : crypto.randomUUID();
 
     // Log HTTP request
     try {
@@ -168,33 +178,12 @@ export function diagnosticLoggingMiddleware(config: DiagnosticLoggingMiddlewareC
   };
 }
 
+/**
+ * The settings a request uses until the tenant's are read (and when they cannot be read): the
+ * built-in defaults, which are the safe values. Logging is off, and the PII filter is on.
+ */
 function getDefaultDiagnosticSettings(): DiagnosticLoggingSettings {
-  return {
-    'diagnostic-logging.enabled': false,
-    'diagnostic-logging.log_level': 'debug',
-    'diagnostic-logging.http_request_enabled': true,
-    'diagnostic-logging.http_response_enabled': true,
-    'diagnostic-logging.token_validation_enabled': true,
-    'diagnostic-logging.auth_decision_enabled': true,
-    'diagnostic-logging.r2_output_enabled': false,
-    'diagnostic-logging.r2_bucket_binding': 'DIAGNOSTIC_LOGS',
-    'diagnostic-logging.r2_path_prefix': 'diagnostic-logs',
-    'diagnostic-logging.output_format': 'jsonl',
-    'diagnostic-logging.buffer_strategy': 'queue',
-    'diagnostic-logging.batch_size': 100,
-    'diagnostic-logging.batch_interval_ms': 5000,
-    'diagnostic-logging.filter_pii': true,
-    'diagnostic-logging.filter_tokens': true,
-    'diagnostic-logging.token_hash_prefix_length': 12,
-    'diagnostic-logging.http_safe_headers':
-      'content-type,accept,user-agent,x-correlation-id,x-diagnostic-session-id',
-    'diagnostic-logging.http_body_schema_aware': true,
-    'diagnostic-logging.retention_days': 30,
-    'diagnostic-logging.storage_mode.default': 'masked',
-    'diagnostic-logging.storage_mode.by_client': '{}',
-    'diagnostic-logging.sdk_ingest_enabled': true,
-    'diagnostic-logging.merged_output_enabled': false,
-  };
+  return { ...DIAGNOSTIC_LOGGING_DEFAULTS };
 }
 
 function getDiagnosticSettingsCache(env: Env): Map<string, CachedDiagnosticSettings> {

@@ -772,13 +772,23 @@ export const adminAgentAccessAPI = {
 	},
 
 	async listGrantAudit(id: string, tenantId?: string): Promise<AdminAgentGrantAuditEvent[]> {
+		return (await this.listGrantAuditPage(id, tenantId)).events;
+	},
+	async listGrantAuditPage(
+		id: string,
+		tenantId?: string,
+		cursor?: string
+	): Promise<{
+		events: AdminAgentGrantAuditEvent[];
+		pagination?: import('./log-pagination').LogCursorPagination;
+	}> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/agent-grants/${encodeURIComponent(id)}/audit?limit=100`,
+			`${API_BASE_URL}/api/admin/agent-grants/${encodeURIComponent(id)}/audit?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
 			{ tenantId }
 		);
 		if (!response.ok) throw await parseError(response, 'Failed to load Agent Grant audit');
 		const body = await response.json();
-		return body.events;
+		return body;
 	},
 
 	async getElevation(id: string): Promise<AgentElevationReview> {

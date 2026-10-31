@@ -1,3 +1,4 @@
+import { ExternalGateClosedError } from './external-gate';
 import type { Fetcher, WorkerLoader } from '@cloudflare/workers-types';
 import type { PluginWorkerCodeResolver } from './dynamic-worker-code';
 import type {
@@ -27,6 +28,8 @@ export interface PluginInstallationResolver {
     pluginInstallationId: string;
     capability: string;
   }): Promise<PluginInstallationTarget | null>;
+  /** The tenant's gate for external plugin code, checked again right before a launch. */
+  isExternalGateOpen(tenantId: string): Promise<boolean>;
 }
 
 export type PluginOutboundFactory = (context: {
@@ -121,6 +124,11 @@ export class DynamicWorkerPluginBackend implements PluginExecutionBackend {
       ) {
         throw new Error('plugin_host_interface_unavailable');
       }
+      // The resolution above checked the gate, then the code was fetched (which can wait): check
+      // again right before the Worker is launched. A closed gate is final, not retried.
+      if (!(await this.installations.isExternalGateOpen(input.tenantId))) {
+        throw new ExternalGateClosedError();
+      }
       response = await this.loader
         .get(workerId, async () => ({
           ...workerCode,
@@ -145,7 +153,9 @@ export class DynamicWorkerPluginBackend implements PluginExecutionBackend {
           signal: AbortSignal.timeout(target.timeoutMs),
           redirect: 'manual',
         });
-    } catch {
+    } catch (error) {
+      if (error instanceof ExternalGateClosedError)
+        throw new Error('plugin_hook_provider_rejected');
       throw new Error('plugin_hook_transient_failure');
     }
     const contentLength = Number(response.headers.get('Content-Length'));

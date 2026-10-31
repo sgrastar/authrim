@@ -1,3 +1,7 @@
+import {
+  waitForLogArchiveReadiness,
+  prepareLogArchiveReadinessAttempt,
+} from '../../core/log-archive-readiness.js';
 /**
  * Deploy Command
  *
@@ -56,6 +60,7 @@ import {
   updateLockWithDeployments,
   buildApiPackages,
   loadDeploySecretsFromKeys,
+  lookupHmacDeployOptions,
   UI_WORKER_COMPONENTS,
   hasBlockingDeploymentFailures,
   type DeployOptions,
@@ -85,6 +90,7 @@ import {
   getAccountId,
   getCloudflareApiToken,
   assertR2BucketOwnershipForUse,
+  createR2BucketOwnershipVerifier,
 } from '../../core/cloudflare.js';
 import { type WorkerComponent, CORE_WORKER_COMPONENTS, getWorkerName } from '../../core/naming.js';
 import {
@@ -128,7 +134,11 @@ import {
   type ConfigureDownstreamIntrospectionDeploymentResult,
 } from '../../core/downstream-introspection-deploy.js';
 import { runEphemeralSetupMachineAccess } from '../../core/setup-machine-access-lifecycle.js';
-import { describeAdminUiApiMode, resolveUiDeploymentSettings } from '../../core/ui-deployment.js';
+import {
+  describeAdminUiApiMode,
+  resolveUiDeploymentSettings,
+  resolveUiPackageDir,
+} from '../../core/ui-deployment.js';
 import { mergeAndSaveUiEnv } from '../../core/ui-env.js';
 import {
   resolveApiBaseUrlCandidates,
@@ -189,6 +199,7 @@ import {
   buildCloudflareBootstrapTemplateUrl,
   CloudflareTokenBootstrapError,
   detectCloudflareTokenOwnership,
+  formatCloudflareTokenCapabilityDiagnostic,
   selectPreferredCloudflareTokenOwnership,
   validateDirectControlTokensWithEvidence,
   type CloudflareTokenOwnership,
@@ -503,7 +514,11 @@ export async function getInitialDeploymentWorkspaceVersionMismatches(input: {
   ];
   const mismatches: string[] = [];
   for (const component of requiredComponents) {
-    const version = await getPackageVersion(join(input.rootDir, 'packages', component));
+    const version = await getPackageVersion(
+      component === 'ar-login-ui' || component === 'ar-admin-ui'
+        ? resolveUiPackageDir(input.rootDir, component, input.config.components.adminUiVariant)
+        : join(input.rootDir, 'packages', component)
+    );
     if (version !== input.productVersion) {
       mismatches.push(`${component}=${version ?? 'missing'}`);
     }
@@ -1520,6 +1535,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         serviceBindingName: uiSettings.serviceBindingName,
         workersDev: uiSettings.workersDev,
         routes: uiSettings.routes,
+        sourcePackage: uiSettings.sourcePackage,
         adminUiBffSecrets,
         deployConfigLockProof: deployConfigLock?.proof,
         workerScriptOwnership: uiWorkerOwnership,
@@ -1567,7 +1583,9 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         if (!result.deployedAt || !result.cloudflareVersionId || !result.cloudflareScriptTag) {
           throw new Error(`ui_worker_deployment_exact_identity_unavailable:${uiComponent}`);
         }
-        const version = await getPackageVersion(join(rootDir, 'packages', uiComponent));
+        const version = await getPackageVersion(
+          resolveUiPackageDir(rootDir, uiComponent, config.components?.adminUiVariant)
+        );
         currentLock = clearProvisionalWorkerScriptOwnership(
           {
             ...currentLock,
@@ -2034,7 +2052,8 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       const keysDir = getResolvedKeysDir();
       deploymentSecrets = await loadDeploySecretsFromKeys(
         existsSync(keysDir) ? keysDir : undefined,
-        componentsToDeply
+        componentsToDeply,
+        { rootDir, env, replicationWriter: config.features.replicationWriter !== undefined }
       );
       deploymentSecrets = { ...deploymentSecrets, ...promptedDirectControlSecrets };
     }
@@ -2101,6 +2120,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
               })),
               ...getRequiredR2Buckets(env, {
                 includeFeatureBuckets: config.features.r2?.enabled === true,
+                logArchiveBucketName: config.logging?.archive.bucketName,
               }),
             ].map((bucket) => [bucket.name, bucket] as const)
           ).values(),
@@ -2339,12 +2359,11 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       }
       const releaseSpinner = startDeploySpinner('Publishing migration release artifact...');
       try {
-        const verifyMigrationBucketOwnership = () =>
-          assertR2BucketOwnershipForUse({
-            ...migrationReleaseBucket,
-            environment: env,
-            binding: 'MIGRATION_RELEASES',
-          });
+        const verifyMigrationBucketOwnership = await createR2BucketOwnershipVerifier({
+          ...migrationReleaseBucket,
+          environment: env,
+          binding: 'MIGRATION_RELEASES',
+        });
         await verifyMigrationBucketOwnership();
         const publication = await publishAndActivateMigrationRelease({
           migrationsRoot: migrationsRootResult.path,
@@ -2950,6 +2969,8 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         ])
       ),
       secrets: deploymentSecrets,
+      replicationWriter: config.features.replicationWriter !== undefined,
+      ...lookupHmacDeployOptions(currentLock.controlKeyState?.lookupHmac),
       automaticProvisioning: automaticProvisioning && pendingControlTokenBootstrap === null,
       cloudflareAccountId: config.cloudflare?.accountId,
       varsByComponent: testEndpointVarsByComponent,
@@ -3305,12 +3326,14 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
                 )
           );
           if (error instanceof CloudflareTokenBootstrapError && error.capabilityDiagnostic) {
-            const { issuedFor, probes } = error.capabilityDiagnostic;
+            console.error(
+              chalk.red(formatCloudflareTokenCapabilityDiagnostic(error.capabilityDiagnostic))
+            );
+          }
+          if (error instanceof CloudflareTokenBootstrapError && error.apiOperation) {
             console.error(
               chalk.red(
-                `Scoped token capability mismatch (${issuedFor}): ${Object.entries(probes)
-                  .map(([resourceClass, capability]) => `${resourceClass}=${capability}`)
-                  .join(', ')}`
+                `Cloudflare token API operation failed: ${error.apiOperation} (${error.code})`
               )
             );
           }
@@ -4100,6 +4123,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
               serviceBindingName: loginUiSettings.serviceBindingName,
               workersDev: loginUiSettings.workersDev,
               routes: loginUiSettings.routes,
+              sourcePackage: loginUiSettings.sourcePackage,
             },
             'ar-admin-ui': {
               apiBaseUrl: adminUiSettings.apiBaseUrl,
@@ -4108,6 +4132,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
               serviceBindingName: adminUiSettings.serviceBindingName,
               workersDev: adminUiSettings.workersDev,
               routes: adminUiSettings.routes,
+              sourcePackage: adminUiSettings.sourcePackage,
               adminUiBffSecrets,
             },
           },
@@ -4170,7 +4195,9 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             name: result.projectName,
             deployedAt: result.deployedAt,
             version:
-              (await getPackageVersion(join(rootDir, 'packages', result.component))) ?? undefined,
+              (await getPackageVersion(
+                resolveUiPackageDir(rootDir, result.component, config.components?.adminUiVariant)
+              )) ?? undefined,
             cloudflareVersionId: result.cloudflareVersionId,
             cloudflareScriptTag: result.cloudflareScriptTag,
           };
@@ -4200,6 +4227,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             automaticProvisioning: config.controlPlane?.automaticProvisioning === true,
           },
           registeredBy: 'setup:deploy-ui',
+          adminUiVariant: config.components?.adminUiVariant,
           onProgress: (message) => console.log(chalk.gray(`  ${message}`)),
         });
       }
@@ -4233,6 +4261,57 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       !(await cleanupEphemeralSetupMachineAccess())
     ) {
       abortLockedDeployment('setup_machine_access_cleanup_failed');
+    }
+
+    if (
+      !options.dryRun &&
+      summary.failedCount === 0 &&
+      bootstrapSuccess &&
+      uiWorkersSuccess &&
+      config.logging?.archive
+    ) {
+      let owned = currentLock.logArchive;
+      const signing = currentLock.controlKeyState?.smokeRpc;
+      if (!owned || !signing || !deploymentApiBaseUrl)
+        throw new Error('log_archive_readiness_identity_required');
+      const attempt = prepareLogArchiveReadinessAttempt(
+        config.logging.archive,
+        owned,
+        currentLock.workers
+      );
+      owned = {
+        ...owned,
+        activation: { ...owned.activation, pendingRuntimeProbe: attempt, runtimeProof: undefined },
+      };
+      currentLock = { ...currentLock, logArchive: owned };
+      await saveLockFile(currentLock, lockPath);
+      console.log(
+        chalk.gray('Verifying the Worker log write/read path through the owned Iceberg table...')
+      );
+      const runtimeProof = await waitForLogArchiveReadiness({
+        apiBaseUrl: deploymentApiBaseUrl,
+        environmentId: env,
+        keysDir: getResolvedKeysDir(),
+        activeSlot: signing.activeSlot,
+        activeKeyId: signing.activeKeyId,
+        archive: config.logging.archive,
+        owned,
+        attempt,
+        onProgress: (message) => console.log(chalk.gray(message)),
+      });
+      currentLock = {
+        ...currentLock,
+        logArchive: {
+          ...owned,
+          activation: { ...owned.activation, runtimeProof, pendingRuntimeProbe: undefined },
+        },
+      };
+      await saveLockFile(currentLock, lockPath);
+      console.log(
+        chalk.gray(
+          '✓ Log Parquet/Iceberg write, snapshot visibility and authenticated read verified.'
+        )
+      );
     }
 
     // Report component results now, but do not claim the deployment is complete until the

@@ -1,9 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  listFamilies: vi.fn(),
   revokeFamilies: vi.fn(),
-  resolveRotator: vi.fn(),
   resolveSession: vi.fn(),
   isShardedSessionId: vi.fn(),
   listSessions: vi.fn(),
@@ -13,9 +11,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
-    listRefreshTokenFamiliesByUser: mocks.listFamilies,
-    revokeRefreshTokenFamiliesByUser: mocks.revokeFamilies,
-    getRefreshTokenRotatorStubByJti: mocks.resolveRotator,
+    revokeUserRefreshTokenFamilies: mocks.revokeFamilies,
     getSessionStoreBySessionId: mocks.resolveSession,
     isShardedSessionId: mocks.isShardedSessionId,
     getSessionRevocationStore: vi.fn(() => ({
@@ -27,7 +23,6 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 import { revokeIdentifierReplacementCredentials } from '../identifier-replacement-credential-revocation';
 
 describe('identifier replacement credential revocation', () => {
-  const revokeFamilyRpc = vi.fn();
   const invalidateSessionRpc = vi.fn();
   const core = {
     query: vi.fn(),
@@ -36,24 +31,14 @@ describe('identifier replacement credential revocation', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    revokeFamilyRpc.mockResolvedValue(undefined);
     invalidateSessionRpc.mockResolvedValue(undefined);
-    mocks.revokeFamilies.mockResolvedValue(undefined);
+    mocks.revokeFamilies.mockResolvedValue({ familyCount: 0, instanceCount: 0 });
     mocks.resolveSession.mockReturnValue({ stub: { invalidateSessionRpc } });
     mocks.isShardedSessionId.mockImplementation((id: string) => id.startsWith('g1:'));
     core.execute.mockResolvedValue({ success: true, rowsAffected: 2 });
   });
 
-  it('revokes each rotator once, preserves the initiating session, and removes other indexes', async () => {
-    mocks.listFamilies.mockResolvedValue([
-      { client_id: 'client-a', jti: 'family-a' },
-      { client_id: 'client-a', jti: 'family-a-duplicate' },
-      { client_id: 'client-b', jti: 'family-b' },
-    ]);
-    mocks.resolveRotator.mockImplementation((_env, clientId: string) => ({
-      resolution: { instanceName: clientId },
-      stub: { revokeFamilyRpc },
-    }));
+  it("revokes every client's refresh-token families and invalidates the other sessions", async () => {
     mocks.listSessions.mockResolvedValue([
       { sessionId: 'g1:current-session' },
       { sessionId: 'g1:other-session' },
@@ -68,10 +53,10 @@ describe('identifier replacement credential revocation', () => {
       initiatingSessionRef: 'g1:current-session',
     });
 
-    expect(revokeFamilyRpc).toHaveBeenCalledTimes(2);
-    expect(mocks.revokeFamilies).toHaveBeenCalledWith(core, {
+    expect(mocks.revokeFamilies).toHaveBeenCalledWith({}, core, {
       tenantId: 'tenant-a',
       userId: 'account-a',
+      reason: 'identifier_replaced',
     });
     expect(core.query).not.toHaveBeenCalled();
     expect(invalidateSessionRpc).toHaveBeenCalledWith('g1:other-session');
@@ -79,7 +64,6 @@ describe('identifier replacement credential revocation', () => {
   });
 
   it('fails closed before invalidating sessions when the bounded index query overflows', async () => {
-    mocks.listFamilies.mockResolvedValue([]);
     mocks.listSessions.mockResolvedValue(
       Array.from({ length: 1001 }, (_, index) => ({ sessionId: `g1:session-${index}` }))
     );

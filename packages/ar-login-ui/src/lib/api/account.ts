@@ -1,3 +1,4 @@
+import type { AccountRegistrationState } from '@authrim/ar-lib-core';
 import { buildDiagnosticHeaders, type APIError } from '$lib/api/client';
 import { authrimFetch } from '$lib/authrim/fetch';
 import type {
@@ -11,6 +12,7 @@ type AccountApiResult<T> = Promise<{ data?: T; error?: APIError }>;
 
 export type AccountProfile = {
 	user_id: string;
+	registration_state: AccountRegistrationState;
 	email: string | null;
 	email_verified: boolean;
 	name: string | null;
@@ -195,6 +197,7 @@ export type AccountPageScreenField = {
 		| 'link'
 		| 'divider'
 		| 'layout_row'
+		| 'account_upgrade_widget'
 		| 'account_profile_widget'
 		| 'account_device_list_widget'
 		| 'account_session_widget'
@@ -250,6 +253,7 @@ export type AccountPageDefinition = {
 			| 'external_idp_enabled'
 			| 'consent_records_available'
 			| 'multiple_sessions';
+		show_for_guests: boolean;
 	}>;
 };
 
@@ -323,7 +327,59 @@ async function accountFetch<T>(endpoint: string, options: RequestInit = {}): Acc
 	}
 }
 
+/** An external account linked to this one. Times are milliseconds since the epoch. */
+export type AccountLinkedIdentity = {
+	id: string;
+	providerId: string;
+	/** The provider's slug, which the authentication-methods API uses as the provider id. */
+	providerSlug?: string;
+	providerName: string;
+	providerEmail?: string;
+	linkedAt: number;
+	lastLoginAt?: number;
+};
+
+export type GuestUpgradeStatus = {
+	registration_state: AccountRegistrationState;
+	status: string;
+	deletion_due_at: number | null;
+	upgrade_hold_until: number | null;
+	upgrade_eligible: boolean;
+	allowed_methods: ('email' | 'passkey')[];
+	upgrade_in_progress: boolean;
+	profile_complete: boolean;
+};
+export type GuestUpgradeAttempt = {
+	operation_id: string;
+	upgrade_token: string;
+	method: 'email' | 'passkey';
+	expires_at: number;
+	options?: PublicKeyCredentialCreationOptionsJSON;
+};
+
 export const accountAPI = {
+	getGuestUpgrade: () => accountFetch<GuestUpgradeStatus>('/api/account/guest-upgrade'),
+	startGuestUpgrade: (method: 'email' | 'passkey', email?: string) =>
+		accountFetch<GuestUpgradeAttempt>('/api/account/guest-upgrade/start', {
+			method: 'POST',
+			body: JSON.stringify({ method, ...(email && { email }) })
+		}),
+	completeGuestUpgrade: (
+		attempt: GuestUpgradeAttempt,
+		proof: { code?: string; passkey_response?: RegistrationResponseJSON }
+	) =>
+		accountFetch<{ success?: boolean; status?: 'in_progress' }>(
+			'/api/account/guest-upgrade/complete',
+			{
+				method: 'POST',
+				body: JSON.stringify({
+					operation_id: attempt.operation_id,
+					upgrade_token: attempt.upgrade_token,
+					...proof
+				})
+			}
+		),
+
 	createAccountReturn: (path: string) =>
 		accountFetch<{ account_return: string; expires_in: number }>('/api/account/return', {
 			method: 'POST',
@@ -563,11 +619,31 @@ export const accountAPI = {
 			}
 		),
 
-	getOperations: () =>
-		accountFetch<{ operations: AccountOperation[] }>('/api/account/operations?limit=20'),
+	getOperations: (cursor?: string) =>
+		accountFetch<{
+			operations: AccountOperation[];
+			pagination?: { mode: 'cursor'; has_more: boolean; next_cursor: string | null };
+		}>(`/api/account/operations?limit=20${cursor ? '&cursor=' + encodeURIComponent(cursor) : ''}`),
 
 	getConsents: (locale?: string) =>
 		accountFetch<{ consents: AccountConsent[]; total: number }>('/api/account/consents', {
 			headers: locale ? { 'Accept-Language': locale.replace('_', '-') } : undefined
-		})
+		}),
+
+	// Linked external accounts (served by the external identity bridge).
+	getLinkedIdentities: () =>
+		accountFetch<{ identities: AccountLinkedIdentity[] }>('/api/external/links'),
+
+	/** Starts linking: the browser goes to `authorization_url` and returns to the account page. */
+	startLinkIdentity: (providerId: string) =>
+		accountFetch<{ authorization_url: string }>('/api/external/links', {
+			method: 'POST',
+			body: JSON.stringify({ provider_id: providerId })
+		}),
+
+	unlinkIdentity: (id: string) =>
+		accountFetch<{ success: boolean; cleanup_pending: boolean }>(
+			`/api/external/links/${encodeURIComponent(id)}`,
+			{ method: 'DELETE' }
+		)
 };

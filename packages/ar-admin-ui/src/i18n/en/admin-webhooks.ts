@@ -1,4 +1,11 @@
 const adminWebhooks = {
+	admin_webhooks_registration_filter: 'Account states (leave empty for all)',
+	admin_webhooks_payload_save: 'Save fields',
+	admin_webhooks_payload_registration: 'Registration state',
+	admin_webhooks_payload_email: 'Email address (before and after)',
+	admin_webhooks_payload_hint:
+		'Select event-time data for email changes and account deletion. Unselected fields are omitted.',
+	admin_webhooks_payload_fields: 'Account data',
 	admin_webhooks_head_title: 'Webhooks - Admin Dashboard - Authrim',
 	admin_webhooks_title: 'Webhooks',
 	admin_webhooks_description:

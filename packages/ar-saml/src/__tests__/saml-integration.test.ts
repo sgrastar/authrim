@@ -16,7 +16,7 @@
  *   - Signature verification
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 
@@ -43,6 +43,7 @@ const {
   mockRuntimeUsersByEmail,
   mockRuntimeSyncUser,
   mockRuntimeDeleteUser,
+  mockRuntimeUpdateProfileFields,
   mockGetSigningKey,
   mockGetSigningCertificate,
   mockGetSPConfig,
@@ -52,7 +53,14 @@ const {
   mockProvisionAuthAccount,
   mockPublishExternalIdpRoute,
   mockProvisionedAccounts,
+  invitationMocks,
 } = vi.hoisted(() => ({
+  invitationMocks: {
+    requirement: vi.fn(),
+    apply: vi.fn(),
+    release: vi.fn(),
+    resolveCoreAdapter: vi.fn(),
+  },
   mockValidateCustomClaimWrite: vi.fn().mockResolvedValue({ ok: true }),
   mockPersistCustomClaimWrite: vi.fn().mockResolvedValue(undefined),
   mockSyncUserLifecycleState: vi.fn().mockResolvedValue({
@@ -64,6 +72,7 @@ const {
   mockRuntimeUsersByEmail: new Map<string, any>(),
   mockRuntimeSyncUser: vi.fn(),
   mockRuntimeDeleteUser: vi.fn(),
+  mockRuntimeUpdateProfileFields: vi.fn().mockResolvedValue(true),
   mockGetSigningKey: vi.fn().mockResolvedValue({
     kid: 'mock-kid',
     privateKeyPem: 'mock-key',
@@ -82,7 +91,10 @@ const {
 
 // Mock modules
 const mockGetIdPConfigByEntityId = vi.fn();
+// The keys the IdP's saved sign-in/sign-up switches are filed under (none: no switches saved).
+const mockGetIdPUsageKeyByEntityId = vi.fn(async (..._args: unknown[]) => null as unknown);
 vi.mock('../admin/providers', () => ({
+  getIdPUsageKeyByEntityId: (...args: unknown[]) => mockGetIdPUsageKeyByEntityId(...args),
   getIdPConfigByEntityId: async (...args: any[]) => {
     const config = await mockGetIdPConfigByEntityId(...args);
     return config
@@ -120,12 +132,32 @@ vi.mock('../common/key-utils', () => ({
   getSigningCertificate: (...args: any[]) => mockGetSigningCertificate(...args),
 }));
 
+vi.mock('@authrim/ar-lib-core/services/external-signup-invitation', async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import('@authrim/ar-lib-core/services/external-signup-invitation')
+  >()),
+  externalSignupInvitationRequirement: invitationMocks.requirement,
+  applyExternalSignupInvitation: invitationMocks.apply,
+  releaseExternalSignupInvitation: invitationMocks.release,
+}));
+
+// Overrides the deleted-account re-registration check for one test (null: the real check).
+const registrationCheck = vi.hoisted(() => ({
+  override: null as null | 'blocked' | 'unavailable',
+}));
+
 // Mock structured logger and event publisher
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   const { vi } = await import('vitest');
+  invitationMocks.resolveCoreAdapter.mockImplementation(
+    actual.resolveAuthCorePersistenceAdapterFromEnv
+  );
   return {
     ...actual,
+    resolveAuthCorePersistenceAdapterFromEnv: invitationMocks.resolveCoreAdapter,
+    checkEmailRegistration: async (...args: Parameters<typeof actual.checkEmailRegistration>) =>
+      registrationCheck.override ?? actual.checkEmailRegistration(...args),
     getLogger: () => ({
       module: () => ({
         info: vi.fn(),
@@ -165,6 +197,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
           mockRuntimeUsersByEmail.set(String(input.email).toLowerCase(), user);
         }
         return user;
+      }
+
+      async updateProfileFields(userId: string, values: Record<string, string>) {
+        return mockRuntimeUpdateProfileFields(userId, values);
       }
 
       async deleteUser(userId: string) {
@@ -251,6 +287,12 @@ function createTestSAMLInboundMappingBinding() {
       ),
       fieldCatalogEntry('field.profile.email', 'authrim.profile', 'email', 'canonical'),
       fieldCatalogEntry('field.profile.name', 'authrim.profile', 'name', 'canonical'),
+      fieldCatalogEntry('field.saml.attribute.givenName', 'saml.attribute', 'givenName', 'source'),
+      fieldCatalogEntry('field.saml.attribute.locale', 'saml.attribute', 'locale', 'source'),
+      fieldCatalogEntry('field.saml.attribute.photo', 'saml.attribute', 'photo', 'source'),
+      fieldCatalogEntry('field.profile.given_name', 'authrim.profile', 'given_name', 'canonical'),
+      fieldCatalogEntry('field.profile.locale', 'authrim.profile', 'locale', 'canonical'),
+      fieldCatalogEntry('field.profile.picture_url', 'authrim.profile', 'picture_url', 'canonical'),
       fieldCatalogEntry(
         'field.customClaims.department',
         'authrim.custom_claims',
@@ -274,6 +316,21 @@ function createTestSAMLInboundMappingBinding() {
         'displayName',
         'authrim.profile',
         'name'
+      ),
+      mappingEdge(
+        'edge.givenName.given_name',
+        'saml.attribute',
+        'givenName',
+        'authrim.profile',
+        'given_name'
+      ),
+      mappingEdge('edge.locale.locale', 'saml.attribute', 'locale', 'authrim.profile', 'locale'),
+      mappingEdge(
+        'edge.photo.picture_url',
+        'saml.attribute',
+        'photo',
+        'authrim.profile',
+        'picture_url'
       ),
       mappingEdge(
         'edge.department.customClaim',
@@ -343,6 +400,9 @@ function createMockSAMLResponse(
     signatureReferenceUri?: string;
     includeUnsignedReferenceToResponse?: boolean;
     assertionIssuer?: string;
+    /** The IdP's clock (ISO 8601): when it issued the assertion, and when the user authenticated. */
+    issueInstant?: string;
+    authnInstant?: string;
   } = {}
 ): string {
   const {
@@ -360,6 +420,8 @@ function createMockSAMLResponse(
     signatureReferenceUri = undefined,
     includeUnsignedReferenceToResponse = false,
     assertionIssuer = issuer,
+    issueInstant = new Date().toISOString(),
+    authnInstant = new Date().toISOString(),
   } = options;
   const uniqueId = `${Date.now()}_${crypto.randomUUID().replace(/-/g, '')}`;
   const responseId = `_${uniqueId}`;
@@ -388,7 +450,7 @@ function createMockSAMLResponse(
   <samlp:Status>
     <samlp:StatusCode Value="${statusCode}"/>
   </samlp:Status>
-  <saml:Assertion ID="${assertionId}" Version="2.0" IssueInstant="${new Date().toISOString()}">
+  <saml:Assertion ID="${assertionId}" Version="2.0" IssueInstant="${issueInstant}">
     <saml:Issuer>${assertionIssuer}</saml:Issuer>
     <saml:Subject>
       <saml:NameID Format="${nameIdFormat}">${nameId}</saml:NameID>
@@ -404,7 +466,7 @@ function createMockSAMLResponse(
         <saml:Audience>${audience}</saml:Audience>
       </saml:AudienceRestriction>
     </saml:Conditions>
-    <saml:AuthnStatement AuthnInstant="${new Date().toISOString()}">
+    <saml:AuthnStatement AuthnInstant="${authnInstant}">
       <saml:AuthnContext>
         <saml:AuthnContextClassRef>${authnContextClassRef}</saml:AuthnContextClassRef>
       </saml:AuthnContext>
@@ -818,7 +880,7 @@ describe('SAML Integration', () => {
     }
     const inResponseTo = atob(samlResponse).match(/\bInResponseTo="(_[0-9a-f]{32})"/)?.[1];
     const browserBindingCookie = inResponseTo
-      ? buildSAMLRequestBindingCookie(inResponseTo)
+      ? buildSAMLRequestBindingCookie(inResponseTo, 300)
       : undefined;
 
     // Create minimal Hono-like context with all required properties
@@ -1162,6 +1224,60 @@ describe('SAML Integration', () => {
           body: expect.stringContaining('"tenantId":"default"'),
         })
       );
+    });
+
+    it('records no proof time even for a response answering a request, whatever the IdP clock', async () => {
+      const requestId = `_${'c'.repeat(32)}`;
+      const requestedAt = Date.now() - 10_000;
+      mockEnv.SAML_REQUEST_STORE = {
+        idFromName: vi.fn((name: string) => name),
+        get: vi.fn(() => ({
+          fetch: vi.fn().mockResolvedValue(
+            Response.json({
+              requestId,
+              issuer: 'https://idp.example.com',
+              destination: 'https://idp.example.com/sso',
+              binding: 'post',
+              used: true,
+              type: 'authn_request',
+              createdAt: requestedAt,
+              expiresAt: requestedAt + 300_000,
+            })
+          ),
+        })),
+      } as unknown as Env['SAML_REQUEST_STORE'];
+      // The IdP clock runs 30 s ahead: an authentication 5 s before the request reads as after it.
+      const ahead = 30_000;
+      const authenticatedAt = requestedAt - 5_000 + ahead;
+      const issuedAt = requestedAt + 2_000 + ahead;
+
+      const res = await callACSDirectly(
+        createMockSAMLResponse({
+          inResponseTo: requestId,
+          issueInstant: new Date(issuedAt).toISOString(),
+          authnInstant: new Date(authenticatedAt).toISOString(),
+        }),
+        'https://auth.example.com/dashboard'
+      );
+
+      expect(res.status).toBe(302);
+      const body = JSON.parse(mockSessionStoreFetch.mock.calls.at(-1)![1].body as string);
+      expect(body.data).toMatchObject({
+        amr: ['saml'],
+        upstream_acr: 'urn:oasis:names:tc:SAML:2.0:ac:classes:Password',
+      });
+      expect(body.data).not.toHaveProperty('proven_at');
+    });
+
+    it('records no proof time for a response that answers no request', async () => {
+      const res = await callACSDirectly(
+        createMockSAMLResponse(),
+        'https://auth.example.com/dashboard'
+      );
+
+      expect(res.status).toBe(302);
+      const body = JSON.parse(mockSessionStoreFetch.mock.calls.at(-1)![1].body as string);
+      expect(body.data).not.toHaveProperty('proven_at');
     });
 
     it('should reject when verified signature references do not cover the processed Response or Assertion', async () => {
@@ -1508,6 +1624,99 @@ describe('SAML Integration', () => {
         expect.arrayContaining(['default', 'saml-link-001'])
       );
     });
+
+    it.each([
+      [
+        "the IdP's own fields",
+        ['name', 'given_name', 'locale', 'picture'],
+        { 'external_idp.jit_update_on_login': true },
+        {
+          name: 'New Name',
+          given_name: 'Ann',
+          locale: 'ja',
+          picture: 'https://idp.example.com/photo.png',
+        },
+      ],
+      [
+        "only the IdP's own fields",
+        ['locale'],
+        { 'external_idp.jit_update_on_login': true },
+        { locale: 'ja' },
+      ],
+      [
+        'nothing while updates on login are off',
+        ['name'],
+        { 'external_idp.jit_update_on_login': false },
+        undefined,
+      ],
+      [
+        'nothing when the IdP chooses none',
+        [],
+        { 'external_idp.jit_update_on_login': true },
+        undefined,
+      ],
+    ])(
+      "updates a linked user's profile from the IdP with %s",
+      async (_label, profileUpdateFields, externalIdp, expected) => {
+        const nameIdFormat = 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent';
+        mockGetIdPConfigByEntityId.mockResolvedValueOnce({
+          entityId: 'https://idp.example.com',
+          ssoUrl: 'https://idp.example.com/sso',
+          certificate: 'mock-certificate',
+          attributeMapping: { email: 'email', name: 'displayName' },
+          profileUpdateFields,
+        });
+        (mockEnv as unknown as { SETTINGS: unknown }).SETTINGS = {
+          get: vi.fn(async (key: string) =>
+            key === 'settings:tenant:default:external-idp' ? JSON.stringify(externalIdp) : null
+          ),
+        };
+        mockRuntimeUsersById.set('linked-user-001', {
+          id: 'linked-user-001',
+          email: 'linked@example.com',
+          active: true,
+          lifecycle_state: 'active',
+          email_verified: true,
+        });
+        const coreAdapter = createMockAdapter({
+          queryOne: (sql) =>
+            sql.includes('SELECT id, email_verified FROM users_core WHERE id')
+              ? { id: 'linked-user-001', email_verified: 1 }
+              : null,
+        });
+        const piiAdapter = createMockAdapter({
+          queryOne: (sql) =>
+            sql.includes('WHERE tenant_id = ? AND provider_id = ? AND provider_user_id = ?')
+              ? { id: 'saml-link-001', user_id: 'linked-user-001' }
+              : null,
+        });
+        mockResolveAccountDataContextByIdentifier.mockResolvedValueOnce({
+          coreDb: coreAdapter,
+          piiDb: piiAdapter,
+        });
+        mockRuntimeUpdateProfileFields.mockClear();
+
+        const res = await callACSDirectly(
+          createMockSAMLResponse({
+            nameId: 'persistent-subject-123',
+            nameIdFormat,
+            attributes: [
+              { name: 'displayName', value: 'New Name' },
+              { name: 'givenName', value: 'Ann' },
+              { name: 'locale', value: 'ja' },
+              { name: 'photo', value: 'https://idp.example.com/photo.png' },
+            ],
+          })
+        );
+
+        expect(res.status).toBe(302);
+        if (expected) {
+          expect(mockRuntimeUpdateProfileFields).toHaveBeenCalledWith('linked-user-001', expected);
+        } else {
+          expect(mockRuntimeUpdateProfileFields).not.toHaveBeenCalled();
+        }
+      }
+    );
 
     it('should create a SAML linked identity when verified email matches a provisioned user', async () => {
       const nameIdFormat = 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent';
@@ -1989,6 +2198,442 @@ describe('SAML Integration', () => {
         })
       );
       expect(mockSyncUserLifecycleState).toHaveBeenCalled();
+    });
+  });
+
+  describe('ACS for a sign-in started from an invitation', () => {
+    const nameIdFormat = 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent';
+    const reservation = { inviteId: 'invite-1', inviteReservationId: 'inr-1' };
+
+    function serveRequest(context?: Record<string, unknown>) {
+      const requestId = `_${'f'.repeat(32)}`;
+      const createdAt = Date.now() - 5_000;
+      mockEnv.SAML_REQUEST_STORE = {
+        idFromName: vi.fn((name: string) => name),
+        get: vi.fn(() => ({
+          fetch: vi.fn().mockResolvedValue(
+            Response.json({
+              requestId,
+              issuer: 'https://idp.example.com',
+              destination: 'https://idp.example.com/sso',
+              binding: 'post',
+              used: true,
+              type: 'authn_request',
+              createdAt,
+              expiresAt: createdAt + 300_000,
+              ...(context ? { context } : {}),
+            })
+          ),
+        })),
+      } as unknown as Env['SAML_REQUEST_STORE'];
+      return requestId;
+    }
+
+    function respond(requestId: string, nameId: string, email: string) {
+      return callACSDirectly(
+        createMockSAMLResponse({
+          inResponseTo: requestId,
+          nameId,
+          nameIdFormat,
+          attributes: [{ name: 'email', value: email }],
+        }),
+        'https://ui.example.com/'
+      );
+    }
+
+    beforeEach(() => {
+      invitationMocks.requirement.mockReset().mockResolvedValue({
+        invitedEmail: null,
+        requireVerifiedEmail: false,
+      });
+      invitationMocks.apply.mockReset().mockResolvedValue(true);
+      invitationMocks.release.mockReset().mockResolvedValue(undefined);
+      invitationMocks.resolveCoreAdapter.mockResolvedValue({ name: 'tenant-metadata' });
+    });
+
+    it('gives the use back when the account cannot be created in time (provisioning pending)', async () => {
+      mockProvisionAuthAccount.mockResolvedValueOnce({
+        status: 202,
+        operationId: 'operation-1',
+        accountId: 'account:user-pending',
+        userId: 'user-pending',
+      });
+      const requestId = serveRequest({ invitation: reservation });
+
+      const res = await respond(requestId, 'persistent-subject-pending', 'pending@example.com');
+
+      expect(res.status).toBe(400);
+      expect(invitationMocks.apply).not.toHaveBeenCalled();
+      expect(invitationMocks.release).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.anything(),
+        {
+          ...reservation,
+          tenantId: 'default',
+        }
+      );
+    });
+
+    it('applies the reserved use to the account it created, before the session is made', async () => {
+      const requestId = serveRequest({ invitation: reservation });
+
+      const res = await respond(requestId, 'persistent-subject-invited', 'invited@example.com');
+
+      expect(res.status).toBe(302);
+      expect(invitationMocks.requirement).toHaveBeenCalledWith(
+        mockEnv,
+        { name: 'tenant-metadata' },
+        { tenantId: 'default', inviteId: 'invite-1' }
+      );
+      expect(mockProvisionAuthAccount).toHaveBeenCalled();
+      expect(invitationMocks.apply).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({
+          ...reservation,
+          tenantId: 'default',
+          userId: expect.any(String),
+        })
+      );
+      expect(invitationMocks.apply.mock.invocationCallOrder[0]).toBeLessThan(
+        mockSessionStoreFetch.mock.invocationCallOrder.at(-1)!
+      );
+      expect(invitationMocks.release).not.toHaveBeenCalled();
+    });
+
+    it('creates no account for another email than the invitation names, and gives the use back', async () => {
+      invitationMocks.requirement.mockResolvedValue({
+        invitedEmail: 'invited@example.com',
+        requireVerifiedEmail: false,
+      });
+      const requestId = serveRequest({ invitation: reservation });
+
+      const res = await respond(requestId, 'persistent-subject-other', 'other@example.com');
+
+      expect(res.status).toBe(400);
+      expect(mockProvisionAuthAccount).not.toHaveBeenCalled();
+      expect(invitationMocks.apply).not.toHaveBeenCalled();
+      expect(invitationMocks.release).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.anything(),
+        {
+          ...reservation,
+          tenantId: 'default',
+        }
+      );
+    });
+
+    it('gives the use back when the sign-in finds an existing account', async () => {
+      mockRuntimeUsersById.set('linked-user-001', {
+        id: 'linked-user-001',
+        email: 'linked@example.com',
+        active: true,
+        lifecycle_state: 'active',
+        email_verified: true,
+      });
+      mockResolveAccountDataContextByIdentifier.mockResolvedValueOnce({
+        coreDb: createMockAdapter({
+          queryOne: (sql) =>
+            sql.includes('SELECT id, email_verified FROM users_core WHERE id')
+              ? { id: 'linked-user-001', email_verified: 1 }
+              : null,
+        }),
+        piiDb: createMockAdapter({
+          queryOne: (sql) =>
+            sql.includes('WHERE tenant_id = ? AND provider_id = ? AND provider_user_id = ?')
+              ? { id: 'saml-link-001', user_id: 'linked-user-001' }
+              : null,
+        }),
+      });
+      const requestId = serveRequest({ invitation: reservation });
+
+      const res = await respond(requestId, 'persistent-subject-123', 'linked@example.com');
+
+      expect(res.status).toBe(302);
+      expect(invitationMocks.apply).not.toHaveBeenCalled();
+      expect(invitationMocks.release).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.anything(),
+        {
+          ...reservation,
+          tenantId: 'default',
+        }
+      );
+    });
+
+    it('handles a response to a request without an invitation as before', async () => {
+      const requestId = serveRequest();
+
+      const res = await respond(requestId, 'persistent-subject-plain', 'plain@example.com');
+
+      expect(res.status).toBe(302);
+      expect(invitationMocks.requirement).not.toHaveBeenCalled();
+      expect(invitationMocks.apply).not.toHaveBeenCalled();
+      expect(invitationMocks.release).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("ACS and the tenant's per-IdP sign-in and sign-up switches", () => {
+    const IDP_ROW = { providerId: 'idp-row-1', ids: ['saml:idp-row-1', 'idp-row-1'] };
+    const resetUsageKey = () => mockGetIdPUsageKeyByEntityId.mockReset().mockResolvedValue(null);
+    beforeEach(resetUsageKey);
+    afterEach(resetUsageKey);
+    const nameIdFormat = 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent';
+    const settingsWith = (usage: unknown) => ({
+      get: vi.fn(async (key: string) => {
+        if (key !== 'settings:tenant:default:authentication-methods') return null;
+        if (usage === 'unreadable') return '{';
+        return JSON.stringify({
+          'authentication-methods.external_provider_usage': JSON.stringify(usage),
+        });
+      }),
+    });
+    const entry = (fields: Record<string, unknown>) => [
+      { id: 'saml:idp-row-1', providerId: 'idp-row-1', ...fields },
+    ];
+    const useSettings = (usage: unknown) => {
+      (mockEnv as unknown as { SETTINGS: unknown }).SETTINGS = settingsWith(usage);
+      mockGetIdPUsageKeyByEntityId.mockResolvedValue(IDP_ROW);
+    };
+    const newUser = () =>
+      callACSDirectly(
+        createMockSAMLResponse({
+          nameId: 'persistent-subject-gated',
+          nameIdFormat,
+          attributes: [{ name: 'email', value: 'gated@example.com' }],
+        }),
+        'https://ui.example.com/'
+      );
+    const expectNothingMade = () => {
+      expect(mockProvisionAuthAccount).not.toHaveBeenCalled();
+      expect(mockValidateCustomClaimWrite).not.toHaveBeenCalled();
+      expect(mockSyncUserLifecycleState).not.toHaveBeenCalled();
+      expect(mockSessionStoreFetch).not.toHaveBeenCalled();
+      expect(mockChallengeStore.size).toBe(0);
+    };
+
+    it('refuses a sign-in when the tenant turned the IdP off, before anything is made', async () => {
+      useSettings(entry({ loginEnabled: false }));
+
+      const res = await newUser();
+
+      expect(res.status).toBe(403);
+      expect(res.headers.get('Set-Cookie')).toBeNull();
+      expectNothingMade();
+    });
+
+    it('answers 503, making nothing, when the switches cannot be read', async () => {
+      useSettings('unreadable');
+
+      const res = await newUser();
+
+      expect(res.status).toBe(503);
+      expectNothingMade();
+    });
+
+    it('does not create an account when the tenant turned sign-up off, before anything is written', async () => {
+      useSettings(entry({ loginEnabled: true, signupEnabled: false }));
+
+      const res = await newUser();
+
+      expect(res.status).toBe(403);
+      expect(res.headers.get('Set-Cookie')).toBeNull();
+      expectNothingMade();
+    });
+
+    it('refuses a recently deleted address as it refuses sign-up turned off, making nothing', async () => {
+      useSettings(entry({ loginEnabled: true, signupEnabled: false }));
+      const signupOff = await newUser();
+      const signupOffBody = await signupOff.text();
+
+      vi.clearAllMocks();
+      useSettings(entry({ loginEnabled: true, signupEnabled: true }));
+      registrationCheck.override = 'blocked';
+      let res: Response;
+      try {
+        res = await newUser();
+      } finally {
+        registrationCheck.override = null;
+      }
+
+      expect(res.status).toBe(signupOff.status);
+      expect(await res.text()).toBe(signupOffBody);
+      expectNothingMade();
+    });
+
+    it('answers 503, spending and making nothing, when finding the IdP record fails', async () => {
+      useSettings(entry({ loginEnabled: true }));
+      mockGetIdPUsageKeyByEntityId.mockRejectedValue(new Error('database unavailable'));
+
+      const res = await newUser();
+
+      expect(res.status).toBe(503);
+      expect(res.headers.get('Set-Cookie')).toBeNull();
+      expectNothingMade();
+    });
+
+    it("still refuses sign-up in a re-authentication's response, whose sign-in switch is not asked", async () => {
+      useSettings(entry({ loginEnabled: false, reauthEnabled: true, signupEnabled: false }));
+      const requestId = `_${'e'.repeat(32)}`;
+      const requestedAt = Date.now() - 10_000;
+      mockEnv.SAML_REQUEST_STORE = {
+        idFromName: vi.fn((name: string) => name),
+        get: vi.fn(() => ({
+          fetch: vi.fn().mockResolvedValue(
+            Response.json({
+              requestId,
+              issuer: 'https://idp.example.com',
+              destination: 'https://idp.example.com/sso',
+              binding: 'post',
+              used: true,
+              type: 'authn_request',
+              createdAt: requestedAt,
+              expiresAt: requestedAt + 300_000,
+              context: {
+                spReauthentication: {
+                  authorizationChallengeId: 'reauth_1',
+                  requestedAt,
+                  providerId: IDP_ROW.providerId,
+                  providerIds: IDP_ROW.ids,
+                },
+              },
+            })
+          ),
+        })),
+      } as unknown as Env['SAML_REQUEST_STORE'];
+
+      const res = await callACSDirectly(
+        createMockSAMLResponse({
+          inResponseTo: requestId,
+          nameId: 'persistent-subject-reauth-new',
+          nameIdFormat,
+          attributes: [{ name: 'email', value: 'reauth-new@example.com' }],
+        }),
+        'https://ui.example.com/'
+      );
+
+      // Refused by the sign-up switch (the sign-in switch is off and was not what refused it).
+      expect(res.status).toBe(403);
+      expect(res.headers.get('Set-Cookie')).toBeNull();
+      expectNothingMade();
+    });
+
+    it('still signs in an existing linked identity while sign-up is off', async () => {
+      useSettings(entry({ signupEnabled: false }));
+      mockRuntimeUsersById.set('linked-user-001', {
+        id: 'linked-user-001',
+        email: 'linked@example.com',
+        active: true,
+        lifecycle_state: 'active',
+        email_verified: true,
+      });
+      mockResolveAccountDataContextByIdentifier.mockResolvedValueOnce({
+        coreDb: createMockAdapter({
+          queryOne: (sql) =>
+            sql.includes('SELECT id, email_verified FROM users_core WHERE id')
+              ? { id: 'linked-user-001', email_verified: 1 }
+              : null,
+        }),
+        piiDb: createMockAdapter({
+          queryOne: (sql) =>
+            sql.includes('WHERE tenant_id = ? AND provider_id = ? AND provider_user_id = ?')
+              ? { id: 'saml-link-001', user_id: 'linked-user-001' }
+              : null,
+        }),
+      });
+
+      const res = await callACSDirectly(
+        createMockSAMLResponse({ nameId: 'persistent-subject-123', nameIdFormat }),
+        'https://auth.example.com/dashboard'
+      );
+
+      expect(res.status).toBe(302);
+      expect(res.headers.get('Set-Cookie')).toContain('authrim_session=');
+      expect(mockProvisionAuthAccount).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['nothing saved for the tenant', undefined],
+      ['an IdP without a provider record of its own', 'no-key'],
+      ['no entry for the IdP', [{ id: 'saml:other', providerId: 'other', loginEnabled: false }]],
+      ['an entry that leaves the switches out', entry({ reauthEnabled: false })],
+      ['both on', entry({ loginEnabled: true, signupEnabled: true })],
+    ])('signs in and creates the account as before with %s', async (_label, usage) => {
+      if (usage === 'no-key') {
+        (mockEnv as unknown as { SETTINGS: unknown }).SETTINGS = settingsWith(
+          entry({ loginEnabled: false, signupEnabled: false })
+        );
+        mockGetIdPUsageKeyByEntityId.mockResolvedValue(null);
+      } else if (usage !== undefined) {
+        useSettings(usage);
+      }
+
+      const res = await newUser();
+
+      expect(res.status).toBe(302);
+      expect(mockProvisionAuthAccount).toHaveBeenCalledOnce();
+    });
+
+    it("names the IdP in a sign-in's handoff artifact, so redeeming it checks the switch again", async () => {
+      useSettings(entry({ loginEnabled: true }));
+
+      const res = await newUser();
+
+      const token = new URL(res.headers.get('Location')!).searchParams.get('handoff_token');
+      expect(mockChallengeStore.get(`handoff:${token}`).metadata).toEqual(
+        expect.objectContaining({
+          aud: 'saml_sp_cookie_handoff',
+          external_provider_usage_key: IDP_ROW,
+        })
+      );
+    });
+
+    it('leaves a re-authentication to its own switch, and names no IdP in its artifact', async () => {
+      useSettings(entry({ loginEnabled: false, reauthEnabled: true, signupEnabled: true }));
+      const requestId = `_${'d'.repeat(32)}`;
+      const requestedAt = Date.now() - 10_000;
+      mockEnv.SAML_REQUEST_STORE = {
+        idFromName: vi.fn((name: string) => name),
+        get: vi.fn(() => ({
+          fetch: vi.fn().mockResolvedValue(
+            Response.json({
+              requestId,
+              issuer: 'https://idp.example.com',
+              destination: 'https://idp.example.com/sso',
+              binding: 'post',
+              used: true,
+              type: 'authn_request',
+              createdAt: requestedAt,
+              expiresAt: requestedAt + 300_000,
+              context: {
+                spReauthentication: {
+                  authorizationChallengeId: 'reauth_1',
+                  requestedAt,
+                  providerId: IDP_ROW.providerId,
+                  providerIds: IDP_ROW.ids,
+                },
+              },
+            })
+          ),
+        })),
+      } as unknown as Env['SAML_REQUEST_STORE'];
+
+      const res = await callACSDirectly(
+        createMockSAMLResponse({
+          inResponseTo: requestId,
+          nameId: 'persistent-subject-reauth',
+          nameIdFormat,
+          attributes: [{ name: 'email', value: 'reauth@example.com' }],
+        }),
+        'https://ui.example.com/'
+      );
+
+      expect(res.status).toBe(302);
+      const token = new URL(res.headers.get('Location')!).searchParams.get('handoff_token');
+      expect(mockChallengeStore.get(`handoff:${token}`).metadata).not.toHaveProperty(
+        'external_provider_usage_key'
+      );
     });
   });
 

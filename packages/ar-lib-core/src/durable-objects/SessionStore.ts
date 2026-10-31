@@ -56,6 +56,19 @@ export interface Session {
 export interface SessionData {
   amr?: string[]; // Authentication Methods References
   acr?: string; // Authentication Context Class Reference
+  /** Methods in amr whose possession was not proven (a passkey just registered): no AAL counts them. */
+  unverified_amr?: string[];
+  /** The acr (or SAML AuthnContextClassRef) an external or SAML IdP gave for this login. */
+  upstream_acr?: string;
+  /** When the authentication was proven (milliseconds), where it was before the session was made. */
+  proven_at?: number;
+  /**
+   * The method a re-authentication takes from this session and when it was proven (milliseconds),
+   * as one pair, where that differs from the oldest proof (proven_at): a later re-authentication
+   * by one method, or a verified new upstream login.
+   */
+  reauth_proven_amr?: string[];
+  reauth_proven_at?: number;
   deviceName?: string;
   ipAddress?: string;
   userAgent?: string;
@@ -64,11 +77,11 @@ export interface SessionData {
 
   // Anonymous authentication (architecture-decisions.md §17)
   /** Whether this session belongs to an anonymous user */
-  is_anonymous?: boolean;
+  is_guest_session?: boolean;
   /** Whether the anonymous user can upgrade to registered */
   upgrade_eligible?: boolean;
   /** Device ID hash for anonymous sessions (for re-identification) */
-  device_id_hash?: string;
+  guest_resume_credential_hash?: string;
 
   [key: string]: unknown;
 }
@@ -97,6 +110,41 @@ export interface SessionResponse {
   data?: SessionData; // Include session data for OIDC conformance (authTime etc.)
 }
 
+/** Conditions under which a session data update is written (otherwise the session is returned as is). */
+export interface SessionDataUpdateOptions {
+  /** Only while the session is a guest session. */
+  onlyIfGuestSession?: boolean;
+  /** Only while each of these fields still holds this value (absent: undefined). */
+  ifDataMatches?: Partial<SessionData>;
+}
+
+function sessionDataMatches(
+  data: SessionData | undefined,
+  expected: Partial<SessionData>
+): boolean {
+  return Object.entries(expected).every(
+    ([field, value]) =>
+      JSON.stringify((data as Record<string, unknown> | undefined)?.[field]) ===
+      JSON.stringify(value)
+  );
+}
+
+/**
+ * Whether two copies are the same session binding: the same user, account and revocation
+ * registration. A session deleted and created again, or rebound to another user, is not.
+ */
+function sameRevocationBinding(a: Session, b: Session): boolean {
+  return (
+    a.id === b.id &&
+    a.tenantId === b.tenantId &&
+    a.userId === b.userId &&
+    a.accountId === b.accountId &&
+    a.revocationAuthority === b.revocationAuthority &&
+    a.revocationBoundAtMs === b.revocationBoundAtMs &&
+    a.sessionClientNamespaceVersion === b.sessionClientNamespaceVersion
+  );
+}
+
 /**
  * Storage key prefix for sessions
  */
@@ -118,6 +166,10 @@ export const SESSION_CLIENT_NAMESPACE_VERSION = 2;
  */
 export class SessionStore extends DurableObject<Env> {
   private sessionCache: Map<string, Session> = new Map();
+  // Extensions in progress, per session: the next one waits for the last (extendSession).
+  private sessionExtensions: Map<string, Promise<Session | null>> = new Map();
+  /** Rebinds in progress, per session: one at a time, so none undoes another's index entry. */
+  private sessionRebinds = new Map<string, Promise<unknown>>();
   private actorCtx: ActorContext;
   private tenantId: string | null = null;
 
@@ -125,7 +177,7 @@ export class SessionStore extends DurableObject<Env> {
     super(ctx, env);
     this.actorCtx = new CloudflareActorContext(ctx);
 
-    ctx.blockConcurrencyWhile(async () => {
+    void ctx.blockConcurrencyWhile(async () => {
       if ((await ctx.storage.getAlarm()) === null) {
         await ctx.storage.setAlarm(Date.now() + SESSION_CLEANUP_INTERVAL_MS);
       }
@@ -182,8 +234,12 @@ export class SessionStore extends DurableObject<Env> {
   /**
    * RPC: Extend session expiration
    */
-  async extendSessionRpc(sessionId: string, additionalSeconds: number): Promise<Session | null> {
-    return this.extendSession(sessionId, additionalSeconds);
+  async extendSessionRpc(
+    sessionId: string,
+    additionalSeconds: number,
+    maxLifetimeMs?: number
+  ): Promise<Session | null> {
+    return this.extendSession(sessionId, additionalSeconds, maxLifetimeMs);
   }
 
   /**
@@ -192,9 +248,10 @@ export class SessionStore extends DurableObject<Env> {
    */
   async updateSessionDataRpc(
     sessionId: string,
-    dataUpdates: Partial<SessionData>
+    dataUpdates: Partial<SessionData>,
+    options?: SessionDataUpdateOptions
   ): Promise<Session | null> {
-    return this.updateSessionData(sessionId, dataUpdates);
+    return this.updateSessionData(sessionId, dataUpdates, options);
   }
 
   /**
@@ -387,52 +444,59 @@ export class SessionStore extends DurableObject<Env> {
 
   /**
    * Get session by ID (cache → Durable Object storage)
+   *
+   * The revocation check awaits another Durable Object, and an invalidation of this session can
+   * run meanwhile. A copy read before that await is therefore never put back: the cache is filled
+   * only from storage re-read without interleaving, and a cached copy is returned only while it
+   * is still the cached one.
    */
   async getSession(sessionId: string): Promise<Session | null> {
     // 1. Check in-memory cache (hot)
-    let session = this.sessionCache.get(sessionId);
-    if (session) {
-      await this.validateStoredSessionBinding(sessionId, session);
-      if (!this.usesCurrentSessionClientNamespace(session)) {
-        await this.dropLegacySessionClientNamespace(session);
-        return null;
-      }
-      if (await this.isRevokedByUserEpoch(session)) {
-        await this.dropRevokedSession(session);
-        return null;
-      }
-      if (!this.isExpired(session)) {
-        return session;
-      }
-      // Cleanup expired session
-      this.sessionCache.delete(sessionId);
-      await this.actorCtx.storage.delete(this.buildSessionKey(sessionId));
-      return null;
+    const cached = this.sessionCache.get(sessionId);
+    if (cached) {
+      if (!(await this.admitSession(sessionId, cached))) return null;
+      if (this.sessionCache.get(sessionId) === cached) return cached;
+      // Invalidated, evicted or replaced meanwhile: decide from storage.
     }
 
     // 2. Check Durable Storage
-    const storedSession = await this.actorCtx.storage.get<Session>(this.buildSessionKey(sessionId));
-    if (storedSession) {
-      await this.validateStoredSessionBinding(sessionId, storedSession);
-      if (!this.usesCurrentSessionClientNamespace(storedSession)) {
-        await this.dropLegacySessionClientNamespace(storedSession);
+    const key = this.buildSessionKey(sessionId);
+    const storedSession = await this.actorCtx.storage.get<Session>(key);
+    if (!storedSession) return null;
+    if (!(await this.admitSession(sessionId, storedSession))) return null;
+    return this.actorCtx.blockConcurrencyWhile(async () => {
+      const current = await this.actorCtx.storage.get<Session>(key);
+      if (!current || !sameRevocationBinding(current, storedSession) || this.isExpired(current)) {
+        this.sessionCache.delete(sessionId);
         return null;
       }
-      if (await this.isRevokedByUserEpoch(storedSession)) {
-        await this.dropRevokedSession(storedSession);
-        return null;
-      }
-      if (!this.isExpired(storedSession)) {
-        // Promote to cache
-        this.sessionCache.set(sessionId, storedSession);
-        return storedSession;
-      }
-      // Cleanup expired session
-      await this.actorCtx.storage.delete(this.buildSessionKey(sessionId));
-      return null;
-    }
+      // Promote to cache
+      this.sessionCache.set(sessionId, current);
+      return current;
+    });
+  }
 
-    return null;
+  /**
+   * Whether a session read from the cache or storage may be used: bound to this store, in the
+   * current client namespace, not revoked for its user, and not expired. Drops it otherwise.
+   */
+  private async admitSession(sessionId: string, session: Session): Promise<boolean> {
+    await this.validateStoredSessionBinding(sessionId, session);
+    if (!this.usesCurrentSessionClientNamespace(session)) {
+      await this.dropLegacySessionClientNamespace(session);
+      return false;
+    }
+    if (await this.isRevokedByUserEpoch(session)) {
+      await this.dropRevokedSession(session);
+      return false;
+    }
+    if (this.isExpired(session)) {
+      // Cleanup expired session
+      this.sessionCache.delete(sessionId);
+      await this.actorCtx.storage.delete(this.buildSessionKey(sessionId));
+      return false;
+    }
+    return true;
   }
 
   /**
@@ -603,18 +667,45 @@ export class SessionStore extends DurableObject<Env> {
   }
 
   /**
-   * Extend session expiration (Active TTL)
+   * Extend session expiration (Active TTL): to `additionalSeconds` from now, but never past its
+   * creation plus `maxLifetimeMs` (session.max_ttl). An extension never shortens a session: one
+   * made under a longer limit keeps its expiry and is not extended. Null when the session is gone.
+   * Extensions of a session run one at a time, each from the expiry the previous one left.
    */
-  async extendSession(sessionId: string, additionalSeconds: number): Promise<Session | null> {
+  async extendSession(
+    sessionId: string,
+    additionalSeconds: number,
+    maxLifetimeMs?: number
+  ): Promise<Session | null> {
+    const previous = this.sessionExtensions.get(sessionId) ?? Promise.resolve();
+    const run = previous
+      .catch(() => undefined)
+      .then(() => this.extendSessionNow(sessionId, additionalSeconds, maxLifetimeMs));
+    this.sessionExtensions.set(sessionId, run);
+    try {
+      return await run;
+    } finally {
+      if (this.sessionExtensions.get(sessionId) === run) this.sessionExtensions.delete(sessionId);
+    }
+  }
+
+  private async extendSessionNow(
+    sessionId: string,
+    additionalSeconds: number,
+    maxLifetimeMs?: number
+  ): Promise<Session | null> {
     const current = await this.getSession(sessionId);
     if (!current) {
       return null;
     }
 
-    const session = {
-      ...current,
-      expiresAt: current.expiresAt + additionalSeconds * 1000,
-    };
+    const requested = Date.now() + additionalSeconds * 1000;
+    const expiresAt =
+      maxLifetimeMs === undefined
+        ? requested
+        : Math.min(requested, current.createdAt + maxLifetimeMs);
+    if (expiresAt <= current.expiresAt) return current;
+    const session = { ...current, expiresAt };
     const tenantId = this.requireTenantId(current.tenantId, 'Session extension');
     let indexUpdated: boolean;
     try {
@@ -634,10 +725,18 @@ export class SessionStore extends DurableObject<Env> {
       throw new Error('session_revocation_store_unavailable');
     }
     if (!indexUpdated) throw new Error('session_revocation_index_missing');
-    await this.persistSession(session);
-    this.sessionCache.set(sessionId, session);
-
-    return session;
+    // The index update awaited another actor: write only if the session is still the one read.
+    return this.actorCtx.blockConcurrencyWhile(async () => {
+      const stored = await this.actorCtx.storage.get<Session>(this.buildSessionKey(sessionId));
+      if (!stored || !sameRevocationBinding(stored, current) || this.isExpired(stored)) {
+        this.sessionCache.delete(sessionId);
+        return null;
+      }
+      const extended = { ...stored, expiresAt: session.expiresAt };
+      await this.persistSession(extended);
+      this.sessionCache.set(sessionId, extended);
+      return extended;
+    });
   }
 
   /**
@@ -646,35 +745,59 @@ export class SessionStore extends DurableObject<Env> {
    */
   async updateSessionData(
     sessionId: string,
-    dataUpdates: Partial<SessionData>
+    dataUpdates: Partial<SessionData>,
+    options?: SessionDataUpdateOptions
   ): Promise<Session | null> {
-    const current = await this.getSession(sessionId);
-    if (!current) {
-      return null;
-    }
-
-    const session = {
-      ...current,
-      data: {
-        ...current.data,
-        ...dataUpdates,
-      },
-    };
-    await this.actorCtx.storage.put(this.buildSessionKey(sessionId), session);
-    this.sessionCache.set(sessionId, session);
-
-    return session;
+    if (!(await this.getSession(sessionId))) return null;
+    // Validation can await another actor. Re-read authoritative data in a storage-only
+    // critical section so stale updates cannot replace a newer login or revive a session.
+    return this.actorCtx.blockConcurrencyWhile(async () => {
+      const key = this.buildSessionKey(sessionId);
+      const current = await this.actorCtx.storage.get<Session>(key);
+      if (!current || current.expiresAt <= Date.now()) {
+        this.sessionCache.delete(sessionId);
+        return null;
+      }
+      if (
+        (options?.onlyIfGuestSession && current.data?.is_guest_session !== true) ||
+        (options?.ifDataMatches && !sessionDataMatches(current.data, options.ifDataMatches))
+      ) {
+        this.sessionCache.set(sessionId, current);
+        return current;
+      }
+      const updated = { ...current, data: { ...current.data, ...dataUpdates } };
+      await this.actorCtx.storage.put(key, updated);
+      this.sessionCache.set(sessionId, updated);
+      return updated;
+    });
   }
 
   /**
    * Update session user ID
    * Used when anonymous user sub changes during upgrade (preserve_sub=false)
+   *
+   * Rebinds of one session run one after another: a rebind that found the session changed
+   * withdraws its index registration, which must not be the one a concurrent rebind kept.
    */
   async updateSessionUserId(sessionId: string, newUserId: string): Promise<Session | null> {
+    const previous = this.sessionRebinds.get(sessionId) ?? Promise.resolve();
+    const run = previous.then(() => this.rebindSessionUser(sessionId, newUserId));
+    const settled = run.catch(() => undefined);
+    this.sessionRebinds.set(sessionId, settled);
+    try {
+      return await run;
+    } finally {
+      if (this.sessionRebinds.get(sessionId) === settled) this.sessionRebinds.delete(sessionId);
+    }
+  }
+
+  private async rebindSessionUser(sessionId: string, newUserId: string): Promise<Session | null> {
     const current = await this.getSession(sessionId);
     if (!current) {
       return null;
     }
+    // Already bound to this user (a repeated rebind): nothing to register or withdraw.
+    if (current.userId === newUserId) return current;
 
     const accountId = `account:${newUserId}`;
     const tenantId = this.requireTenantId(current.tenantId, 'Session user update');
@@ -692,16 +815,7 @@ export class SessionStore extends DurableObject<Env> {
         userAgent: current.data?.userAgent,
       }
     );
-    const session = {
-      ...current,
-      userId: newUserId,
-      accountId,
-      revocationAuthority: SESSION_REVOCATION_AUTHORITY,
-      revocationBoundAtMs: registration.revocationBoundAtMs,
-    };
-    try {
-      await this.persistSession(session);
-    } catch (error) {
+    const compensate = async (): Promise<void> => {
       try {
         await revocationStore.unregisterSessionRpc(tenantId, newUserId, accountId, sessionId);
       } catch (cleanupError) {
@@ -709,14 +823,42 @@ export class SessionStore extends DurableObject<Env> {
           error: cleanupError instanceof Error ? cleanupError.message : 'unknown_error',
         });
       }
-      throw new Error('session_storage_write_failed', { cause: error });
+    };
+    // The registration awaited another actor: rebind only if the session is still the one read.
+    const outcome = await this.actorCtx.blockConcurrencyWhile(async () => {
+      const stored = await this.actorCtx.storage.get<Session>(this.buildSessionKey(sessionId));
+      if (!stored || !sameRevocationBinding(stored, current) || this.isExpired(stored)) {
+        this.sessionCache.delete(sessionId);
+        return null;
+      }
+      const rebound = {
+        ...stored,
+        userId: newUserId,
+        accountId,
+        revocationAuthority: SESSION_REVOCATION_AUTHORITY,
+        revocationBoundAtMs: registration.revocationBoundAtMs,
+      };
+      try {
+        await this.persistSession(rebound);
+      } catch (error) {
+        return { error };
+      }
+      this.sessionCache.set(sessionId, rebound);
+      return { rebound };
+    });
+    if (!outcome) {
+      await compensate();
+      return null;
     }
-    this.sessionCache.set(sessionId, session);
+    if ('error' in outcome) {
+      await compensate();
+      throw new Error('session_storage_write_failed', { cause: outcome.error });
+    }
     this.unregisterSessionIndex(current);
 
     log.info('Updated session user binding');
 
-    return session;
+    return outcome.rebound;
   }
 
   /**
@@ -762,7 +904,7 @@ export class SessionStore extends DurableObject<Env> {
 
       // POST /session - Create new session
       if (path === '/session' && request.method === 'POST') {
-        const body = (await request.json()) as Partial<CreateSessionRequest>;
+        const body = await request.json<Partial<CreateSessionRequest>>();
 
         if (!body.sessionId || !body.userId || !body.ttl || !body.tenantId) {
           return new Response(
@@ -806,7 +948,7 @@ export class SessionStore extends DurableObject<Env> {
 
       // POST /sessions/batch-delete - Batch invalidate multiple sessions
       if (path === '/sessions/batch-delete' && request.method === 'POST') {
-        const body = (await request.json()) as { sessionIds?: string[] };
+        const body = await request.json<{ sessionIds?: string[] }>();
 
         if (!body.sessionIds || !Array.isArray(body.sessionIds)) {
           return new Response(
@@ -846,7 +988,7 @@ export class SessionStore extends DurableObject<Env> {
       // POST /session/:id/extend - Extend session expiration
       if (path.match(/^\/session\/[^/]+\/extend$/) && request.method === 'POST') {
         const sessionId = path.split('/')[2];
-        const body = (await request.json()) as { seconds?: number };
+        const body = await request.json<{ seconds?: number }>();
 
         if (!body.seconds || body.seconds <= 0) {
           return new Response(JSON.stringify({ error: 'Invalid seconds value' }), {

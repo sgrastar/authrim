@@ -789,6 +789,29 @@ const fr: Translations = {
   'web.lightMode': 'Clair',
   'web.systemMode': 'Système',
 
+  // Web UI cloud platform selection
+  'web.platform.title': 'Choisir une plateforme cloud',
+  'web.platform.description': 'Choisissez le cloud sur lequel vous souhaitez configurer Authrim.',
+  'web.platform.cloudflareAction': 'Configurer sur Cloudflare',
+  'web.platform.cloudflareDescription': 'Configurez Authrim sur Cloudflare Workers.',
+  'web.platform.awsAction': 'Configurer sur AWS',
+  'web.platform.development': 'En développement',
+  'web.platform.awsScope': 'Prise en charge limitée à SAML DR pour le moment',
+  'web.platform.choose': 'Sélectionner',
+  'web.platform.back': 'Retour au choix du cloud',
+  'web.platform.awsTitle': 'Préparer SAML DR sur AWS',
+  'web.platform.awsDescription':
+    'Préparez un environnement de reprise du fournisseur d’identité SAML en cas de panne de Cloudflare.',
+  'web.platform.awsGuide':
+    'Les commandes de configuration AWS permettent de vérifier les prérequis et de planifier le déploiement. La configuration dans le navigateur est en développement.',
+  'web.platform.awsPrerequisites':
+    'Préparez un compte AWS, une région et un profil permettant de se connecter avec le rôle dédié.',
+  'web.platform.awsCommand': 'Commande de vérification des prérequis',
+  'web.platform.awsCommandNote':
+    'Remplacez l’identifiant du compte et le nom du profil par ceux de votre configuration AWS.',
+  'web.platform.targetPending': 'Non sélectionné',
+  'web.platform.chooseCloudflare': 'Continuer vers la configuration Cloudflare',
+
   // Web UI Prerequisites
   'web.prereq.title': 'Préparer',
   'web.prereq.checking': 'Vérification...',
@@ -1123,6 +1146,13 @@ const fr: Translations = {
   'web.comp.adminUi': "UI d'Admin",
   'web.comp.adminUiDesc':
     'Tableau de bord admin pour gérer les tenants, clients, utilisateurs et paramètres système.',
+  'web.comp.adminUiVariant': 'Paquet de l’interface d’administration',
+  'web.comp.adminUiLegacy': 'Interface d’administration actuelle',
+  'web.comp.adminUiLegacyDesc':
+    'L’interface d’administration utilisée aujourd’hui, avec toutes les fonctionnalités.',
+  'web.comp.adminUiConsole': 'Console d’administration (aperçu)',
+  'web.comp.adminUiConsoleDesc':
+    'La console d’administration repensée. Les fonctionnalités sont ajoutées une à une ; les éléments pas encore reconstruits affichent un espace réservé. Même URL et mêmes clés d’accès administrateur que l’interface actuelle.',
 
   // Web UI Domain Row Labels
   'web.domain.loginUi': 'UI de Connexion',
@@ -1370,6 +1400,8 @@ const fr: Translations = {
   'web.status.adminNotConfigured': 'Admin Non Configuré',
   'web.status.initializing': 'Initialisation...',
   'web.status.found': '{{count}} trouvé(s)',
+  'web.status.serverUnreachable':
+    "Impossible de joindre le serveur Setup. Vérifiez qu'il s'exécute toujours dans votre terminal, redémarrez-le si nécessaire, puis réessayez.",
   'web.status.operationInProgress':
     'Une autre opération de configuration est déjà en cours. Attendez qu’elle se termine, puis réessayez.',
   'web.status.warning': 'Avertissement :',

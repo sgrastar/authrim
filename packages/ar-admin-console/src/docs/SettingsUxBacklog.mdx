@@ -1,0 +1,43 @@
+import { Meta } from '@storybook/addon-docs/blocks';
+
+<Meta title="Pages/Settings UX backlog" />
+
+# Settings UX backlog
+
+Problems found while preparing an OpenID certification run against a freshly built
+environment (October 2026), with the old Admin UI. Each one cost a round trip: a test failed, the
+cause turned out to be a setting, and the setting was hard to find or its effective value was
+invisible. The new console should not repeat them. Open items; strike one through when a page
+covers it.
+
+## What went wrong
+
+| Setting                                                                           | Symptom                                                                       | Why it was hard                                                                                                                      |
+| --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `authentication-methods.totp.signup_enabled` / `login_enabled` / `reauth_enabled` | Creating the test user failed with "insufficient permissions"                 | Off by default (secure), and the error names permissions, not the switch                                                             |
+| `dcr.enabled`                                                                     | Every dynamic registration returned `access_denied`                           | Lives under Settings → category `dcr`; nothing points there from the client list                                                     |
+| `feature.conformance_enabled`                                                     | Certification clients did not get the standard scopes                         | Platform-only; Settings → scope Platform → Feature Flags                                                                             |
+| `oauth.sso_enabled`                                                               | `prompt=none` returned `login_required`; `auth_time` changed between requests | A DCR client inherits the tenant value (off); the app shows nothing about it, and the tenant switch sits deep under Settings → OAuth |
+
+## Ideas, in priority order
+
+1. **Show the effective value and its source on the app.** An app whose own setting is unset
+   should say so: "SSO: off (inherited from the tenant) → open the tenant setting". The runtime
+   already resolves values with their sources (`resolveEffectiveSettings`); the console only
+   has to show them. This would have explained the `prompt=none` failures at a glance. Fits the
+   remaining sections of the App defaults page and the app detail page.
+2. **Search settings by what people call them.** "SSO", "DCR", "TOTP", "dynamic registration",
+   "sign-in sharing" should land on the setting. `placement.ts` and `inventory.ts` already list
+   every setting with its page and section; add search terms (aliases) to them and use them as
+   the index.
+3. **Name and describe a setting by its effect.** Not "SSO enabled" but "Share sign-in across
+   apps (SSO)", with the consequence when off ("`prompt=none` returns `login_required`; every app
+   asks the user to sign in"). Same for DCR ("apps cannot register themselves") and the
+   sign-in methods.
+4. **Errors that name the switch.** When a request is refused because a tenant switch is off
+   (TOTP signup, DCR, SSO), the Admin API / logs should say which setting, so the console can link
+   to it. Today TOTP signup answers "insufficient permissions".
+5. **A readiness checklist for certification profiles.** On the certification profile page, list
+   what a run needs and whether it is in place, each with a link: DCR on (with an initial access
+   token required), TOTP sign-up and sign-in allowed, conformance mode on (platform), SSO on.
+   Useful only as often as certification runs happen; lower priority than 1–4.

@@ -1,5 +1,21 @@
 const DEFAULT_BODY_LIMIT_BYTES = 1024 * 1024;
 
+/**
+ * Thrown when a body (declared by Content-Length or counted from the stream)
+ * exceeds the byte limit. Callers that must answer "too large" differently from
+ * a broken stream can tell the two apart with `instanceof`. The message format is
+ * unchanged for callers that only match on text.
+ */
+export class BodyLimitExceededError extends Error {
+  constructor(
+    readonly observedBytes: number,
+    readonly maxBytes: number
+  ) {
+    super(`Body exceeds maximum size: ${observedBytes} > ${maxBytes} bytes`);
+    this.name = 'BodyLimitExceededError';
+  }
+}
+
 export async function readStreamTextWithLimit(
   stream: ReadableStream<Uint8Array> | null,
   maxBytes = DEFAULT_BODY_LIMIT_BYTES
@@ -36,7 +52,7 @@ export async function readStreamBytesWithLimit(
       totalBytes += value.byteLength;
       if (totalBytes > maxBytes) {
         void reader.cancel().catch(() => {});
-        throw new Error(`Body exceeds maximum size: ${totalBytes} > ${maxBytes} bytes`);
+        throw new BodyLimitExceededError(totalBytes, maxBytes);
       }
       chunks.push(value);
     }
@@ -62,7 +78,7 @@ export async function readRequestBytesWithLimit(
   if (contentLength) {
     const parsed = Number.parseInt(contentLength, 10);
     if (Number.isFinite(parsed) && parsed > maxBytes) {
-      throw new Error(`Body exceeds maximum size: ${parsed} > ${maxBytes} bytes`);
+      throw new BodyLimitExceededError(parsed, maxBytes);
     }
   }
 

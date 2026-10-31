@@ -25,7 +25,7 @@ export interface DeviceFlowSettings {
   'device_flow.max_interval': number;
 
   // User Code Settings
-  'device_flow.user_code_charset': 'BASE20' | 'NUMERIC';
+  'device_flow.user_code_charset': 'BASE31' | 'BASE20' | 'NUMERIC';
   'device_flow.user_code_length': number;
 }
 
@@ -39,10 +39,13 @@ export const DEVICE_FLOW_SETTINGS_META: Record<keyof DeviceFlowSettings, Setting
     default: 600,
     envKey: 'DEVICE_FLOW_DEFAULT_EXPIRES_IN',
     label: 'Device Code Expiry',
-    description: 'Device code lifetime in seconds (default: 10 minutes)',
+    description:
+      'Lifetime of a device code in seconds (RFC 8628 recommends 5 to 10 minutes). Kept between the minimum and maximum expiry. Applies to codes issued after the change.',
     min: 300,
     max: 1800,
     unit: 'seconds',
+    integer: true,
+    envNumber: 'strict-in-range',
     visibility: 'public',
   },
   'device_flow.poll_interval': {
@@ -51,10 +54,13 @@ export const DEVICE_FLOW_SETTINGS_META: Record<keyof DeviceFlowSettings, Setting
     default: 5,
     envKey: 'DEVICE_FLOW_DEFAULT_INTERVAL',
     label: 'Poll Interval',
-    description: 'Minimum polling interval in seconds (RFC 8628 default: 5)',
+    description:
+      'Polling interval returned to the device in seconds (RFC 8628 default: 5). Kept between the minimum and maximum poll interval. Applies to codes issued after the change.',
     min: 1,
     max: 60,
     unit: 'seconds',
+    integer: true,
+    envNumber: 'strict-in-range',
     visibility: 'public',
   },
   'device_flow.max_poll_count': {
@@ -63,9 +69,12 @@ export const DEVICE_FLOW_SETTINGS_META: Record<keyof DeviceFlowSettings, Setting
     default: 120,
     envKey: 'DEVICE_FLOW_MAX_POLL_COUNT',
     label: 'Max Poll Count',
-    description: 'Maximum number of polling attempts (DoS protection)',
+    description:
+      'Polls a device may make before its code is dropped (expired_token). A floor, not a fixed limit: the count a device needs when it waits the whole polling interval for the whole code lifetime, plus a margin, is allowed if that is higher, so a device that follows the interval is never cut off. Applies to codes issued after the change.',
     min: 10,
     max: 500,
+    integer: true,
+    envNumber: 'strict-in-range',
     visibility: 'admin',
   },
   'device_flow.slow_down_increment': {
@@ -74,10 +83,13 @@ export const DEVICE_FLOW_SETTINGS_META: Record<keyof DeviceFlowSettings, Setting
     default: 5,
     envKey: 'DEVICE_FLOW_SLOW_DOWN_INCREMENT',
     label: 'Slow Down Increment',
-    description: 'Seconds to add to interval on slow_down error (RFC 8628)',
-    min: 1,
+    description:
+      "Seconds added to the polling interval each time a device polls too early (slow_down), up to the maximum poll interval. RFC 8628 section 3.5 requires at least 5 seconds. Applies to codes issued after the change. Standard clients raise their own wait by exactly 5 s after slow_down; a larger value keeps the server's interval ahead of them until they catch up, so they can be told slow_down repeatedly. Keep 5 unless your clients follow the server's interval.",
+    min: 5,
     max: 30,
     unit: 'seconds',
+    integer: true,
+    envNumber: 'strict-in-range',
     visibility: 'admin',
   },
 
@@ -88,10 +100,13 @@ export const DEVICE_FLOW_SETTINGS_META: Record<keyof DeviceFlowSettings, Setting
     default: 300,
     envKey: 'DEVICE_FLOW_MIN_EXPIRES_IN',
     label: 'Min Expiry',
-    description: 'Minimum device code lifetime allowed for clients',
+    description:
+      'Shortest device code lifetime, in seconds. The code lifetime is never set below it, which also holds a client-level expiry to it. Must not exceed the maximum expiry.',
     min: 60,
     max: 1800,
     unit: 'seconds',
+    integer: true,
+    envNumber: 'strict-in-range',
     visibility: 'admin',
   },
   'device_flow.max_expires_in': {
@@ -100,10 +115,13 @@ export const DEVICE_FLOW_SETTINGS_META: Record<keyof DeviceFlowSettings, Setting
     default: 1800,
     envKey: 'DEVICE_FLOW_MAX_EXPIRES_IN',
     label: 'Max Expiry',
-    description: 'Maximum device code lifetime allowed for clients',
+    description:
+      'Longest device code lifetime, in seconds. The code lifetime is never set above it (and never above one hour, whatever is stored), which also holds a client-level expiry to it. Must not be below the minimum expiry.',
     min: 300,
     max: 3600,
     unit: 'seconds',
+    integer: true,
+    envNumber: 'strict-in-range',
     visibility: 'admin',
   },
   'device_flow.min_interval': {
@@ -112,10 +130,13 @@ export const DEVICE_FLOW_SETTINGS_META: Record<keyof DeviceFlowSettings, Setting
     default: 5,
     envKey: 'DEVICE_FLOW_MIN_INTERVAL',
     label: 'Min Poll Interval',
-    description: 'Minimum polling interval clients can request',
+    description:
+      'Server-side lower bound for the polling interval, in seconds. The poll interval is never set below it, which also holds a client-level interval to it. Must not exceed the maximum poll interval.',
     min: 1,
     max: 60,
     unit: 'seconds',
+    integer: true,
+    envNumber: 'strict-in-range',
     visibility: 'admin',
   },
   'device_flow.max_interval': {
@@ -124,20 +145,25 @@ export const DEVICE_FLOW_SETTINGS_META: Record<keyof DeviceFlowSettings, Setting
     default: 60,
     envKey: 'DEVICE_FLOW_MAX_INTERVAL',
     label: 'Max Poll Interval',
-    description: 'Maximum polling interval allowed for clients',
+    description:
+      'Server-side upper bound for the polling interval, in seconds: the poll interval is never set above it, and slow_down never raises a code past it. Must not be below the minimum poll interval. Applies to codes issued after the change.',
     min: 5,
     max: 300,
     unit: 'seconds',
+    integer: true,
+    envNumber: 'strict-in-range',
     visibility: 'admin',
   },
   'device_flow.user_code_charset': {
     key: 'device_flow.user_code_charset',
     type: 'enum',
-    default: 'BASE20',
+    default: 'BASE31',
     envKey: 'DEVICE_FLOW_USER_CODE_CHARSET',
     label: 'User Code Charset',
-    description: 'Character set for user codes (BASE20: BCDFGHJKLMNPQRSTVWXZ, NUMERIC: 0-9)',
-    enum: ['BASE20', 'NUMERIC'],
+    description:
+      'Characters the user code is drawn from. BASE31 (default): 23456789ABCDEFGHJKMNPQRSTUVWXYZ, the letters and digits without 0, O, 1, I and L, 4.95 bits per character. BASE20: BCDFGHJKLMNPQRSTVWXZ, the consonants of the RFC 8628 example, 4.32 bits per character. NUMERIC: 0-9, 3.32 bits per character. A user code needs at least 34 bits of entropy, so the user code length must be at least 7 with BASE31, 8 with BASE20 and 11 with NUMERIC. A tenant setting; applies to codes issued after the change.',
+    enum: ['BASE31', 'BASE20', 'NUMERIC'],
+    scopes: ['tenant'],
     visibility: 'public',
   },
   'device_flow.user_code_length': {
@@ -146,9 +172,13 @@ export const DEVICE_FLOW_SETTINGS_META: Record<keyof DeviceFlowSettings, Setting
     default: 8,
     envKey: 'DEVICE_FLOW_USER_CODE_LENGTH',
     label: 'User Code Length',
-    description: 'Number of characters in user code',
+    description:
+      'Number of characters in the user code, shown in groups of 4 separated by a hyphen (8: ABCD-EFGH). At least 34 bits of entropy are required with the chosen charset: 7 characters with BASE31, 8 with BASE20, 11 with NUMERIC; a shorter code is refused when saved. A tenant setting; applies to codes issued after the change.',
     min: 4,
     max: 16,
+    integer: true,
+    envNumber: 'strict-in-range',
+    scopes: ['tenant'],
     visibility: 'public',
   },
 };
@@ -175,6 +205,6 @@ export const DEVICE_FLOW_DEFAULTS: DeviceFlowSettings = {
   'device_flow.max_expires_in': 1800,
   'device_flow.min_interval': 5,
   'device_flow.max_interval': 60,
-  'device_flow.user_code_charset': 'BASE20',
+  'device_flow.user_code_charset': 'BASE31',
   'device_flow.user_code_length': 8,
 };

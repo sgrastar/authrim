@@ -5,6 +5,7 @@
  */
 
 import type { DeviceCodeMetadata } from '../types/oidc';
+import { randomCharacters, type RandomBytesSource } from './unbiased-random';
 
 /**
  * Generate a device code (opaque, unique identifier)
@@ -17,73 +18,172 @@ export function generateDeviceCode(): string {
 }
 
 /**
- * Generate a user code (short, human-readable code)
- * RFC 8628 recommends: Short, case-insensitive, human-readable
- * Common format: 8 characters, uppercase letters and digits, with hyphen separator
+ * The alphabets a user code can be drawn from (`device_flow.user_code_charset`).
  *
- * Examples: "WDJB-MJHT", "BDSD-HQMK", "PPZZ-JJKK"
- *
- * Character set: Excludes ambiguous characters (0, O, 1, I, L)
- * to reduce user input errors
- *
- * @returns User code string (format: XXXX-XXXX)
+ * - BASE31 is the alphabet the endpoint has always used: it leaves out 0, O, 1, I and L, which are
+ *   easy to confuse when read from a screen.
+ * - BASE20 is the consonant alphabet RFC 8628 section 6.1 gives as its example.
+ * - NUMERIC suits a device whose user can only enter digits.
  */
-export function generateUserCode(): string {
-  // Character set excluding ambiguous characters
-  // Removed: 0 (zero), O (letter O), 1 (one), I (letter I), L (letter L)
-  const charset = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
-  const codeLength = 8;
-  const separatorPosition = 4;
+export const USER_CODE_CHARSETS = {
+  BASE31: '23456789ABCDEFGHJKMNPQRSTUVWXYZ',
+  BASE20: 'BCDFGHJKLMNPQRSTVWXZ',
+  NUMERIC: '0123456789',
+} as const;
 
-  let code = '';
-  const randomBytes = new Uint8Array(codeLength);
-  crypto.getRandomValues(randomBytes);
+export type UserCodeCharsetName = keyof typeof USER_CODE_CHARSETS;
 
-  for (let i = 0; i < codeLength; i++) {
-    // Use modulo to map random byte to charset index
-    const index = randomBytes[i] % charset.length;
-    code += charset[index];
+/** The user code charset names, in the order the setting offers them. */
+export const USER_CODE_CHARSET_NAMES = Object.keys(USER_CODE_CHARSETS) as UserCodeCharsetName[];
 
-    // Add hyphen separator for readability
-    if (i === separatorPosition - 1 && i < codeLength - 1) {
-      code += '-';
-    }
+/** The shortest and longest user code the setting allows (characters, separators not counted). */
+export const USER_CODE_MIN_LENGTH = 4;
+export const USER_CODE_MAX_LENGTH = 16;
+
+/** A user code is shown in groups of this many characters, separated by a hyphen. */
+export const USER_CODE_GROUP_SIZE = 4;
+
+/**
+ * The least entropy (bits) a user code must carry: `length * log2(alphabet size)`. A user code is
+ * guessed through the verification page, so RFC 8628 section 6.1 ties its size to the attempts a
+ * client can make during its lifetime. The floor is held in code, whatever is stored.
+ */
+export const USER_CODE_MIN_ENTROPY_BITS = 34;
+
+/** The user code format an unconfigured tenant gets: the alphabet and length used since the start. */
+export const DEFAULT_USER_CODE_CHARSET: UserCodeCharsetName = 'BASE31';
+export const DEFAULT_USER_CODE_LENGTH = 8;
+
+/** The user code settings of a tenant. */
+export interface UserCodeFormat {
+  userCodeCharset: UserCodeCharsetName;
+  userCodeLength: number;
+}
+
+export function isUserCodeCharsetName(value: unknown): value is UserCodeCharsetName {
+  return typeof value === 'string' && Object.hasOwn(USER_CODE_CHARSETS, value);
+}
+
+/** Entropy (bits) of a code of `length` characters drawn uniformly from the charset. */
+export function userCodeEntropyBits(charset: UserCodeCharsetName, length: number): number {
+  return length * Math.log2(USER_CODE_CHARSETS[charset].length);
+}
+
+/**
+ * The shortest length that carries enough entropy with this charset (BASE31: 7, BASE20: 8,
+ * NUMERIC: 11), never below the setting's own minimum.
+ */
+export function minimumUserCodeLength(charset: UserCodeCharsetName): number {
+  let length = USER_CODE_MIN_LENGTH;
+  while (userCodeEntropyBits(charset, length) < USER_CODE_MIN_ENTROPY_BITS) length += 1;
+  return length;
+}
+
+/** Whether a charset and length together are a user code format the endpoint may issue. */
+export function isUserCodeFormatAllowed(charset: unknown, length: unknown): boolean {
+  return (
+    isUserCodeCharsetName(charset) &&
+    typeof length === 'number' &&
+    Number.isInteger(length) &&
+    length >= USER_CODE_MIN_LENGTH &&
+    length <= USER_CODE_MAX_LENGTH &&
+    userCodeEntropyBits(charset, length) >= USER_CODE_MIN_ENTROPY_BITS
+  );
+}
+
+/**
+ * Why a charset and length cannot be saved together, or null. Names the minimum length for the
+ * charset, so an admin knows what to change.
+ */
+export function userCodeFormatProblem(charset: UserCodeCharsetName, length: number): string | null {
+  if (length < USER_CODE_MIN_LENGTH || length > USER_CODE_MAX_LENGTH) {
+    return `device_flow.user_code_length must be between ${USER_CODE_MIN_LENGTH} and ${USER_CODE_MAX_LENGTH}`;
   }
-
-  return code;
+  const minimum = minimumUserCodeLength(charset);
+  if (length < minimum) {
+    const bits = userCodeEntropyBits(charset, length).toFixed(1);
+    return `device_flow.user_code_length (${length}) is too short for device_flow.user_code_charset ${charset}: a user code needs at least ${USER_CODE_MIN_ENTROPY_BITS} bits of entropy (${length} characters give ${bits} bits), which takes at least ${minimum} characters with ${charset}`;
+  }
+  return null;
 }
 
 /**
- * Validate user code format
- * Checks if the user code matches the expected format: XXXX-XXXX
- *
- * @param userCode - User code to validate
- * @returns true if valid, false otherwise
+ * The user code format to use for the values a tenant has (a stored value, an environment
+ * variable or the default). The pair has to be allowed as a whole: when it is not (an unknown
+ * charset, a length out of range, or too little entropy) the default pair is used, not one value
+ * of it, so a bad value can never lower the entropy below the floor.
  */
-export function validateUserCodeFormat(userCode: string): boolean {
-  // Expected format: 4 chars, hyphen, 4 chars
-  // Only allowed characters from our charset (excluding 0, O, 1, I, L)
-  const pattern = /^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}$/;
-  return pattern.test(userCode.toUpperCase());
+export function resolveUserCodeFormat(charset: unknown, length: unknown): UserCodeFormat {
+  return isUserCodeFormatAllowed(charset, length)
+    ? { userCodeCharset: charset as UserCodeCharsetName, userCodeLength: length as number }
+    : { userCodeCharset: DEFAULT_USER_CODE_CHARSET, userCodeLength: DEFAULT_USER_CODE_LENGTH };
 }
 
+/** Characters people type between the groups of a code (hyphens of any kind, white space). */
+const USER_CODE_SEPARATORS = /[\s\-\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/gu;
+
 /**
- * Normalize user code
- * Converts to uppercase and adds hyphen if missing
- *
- * @param userCode - User code to normalize
- * @returns Normalized user code
+ * The canonical form of a user code, which is what is stored and looked up: upper case, with the
+ * separators people type or the display adds removed ("abcd-efgh" and "ABCD EFGH" are
+ * "ABCDEFGH").
  */
 export function normalizeUserCode(userCode: string): string {
-  // Remove any existing hyphens and convert to uppercase
-  const cleaned = userCode.replace(/-/g, '').toUpperCase();
+  return userCode.replace(USER_CODE_SEPARATORS, '').toUpperCase();
+}
 
-  // Add hyphen at position 4 if code is 8 characters
-  if (cleaned.length === 8) {
-    return `${cleaned.slice(0, 4)}-${cleaned.slice(4)}`;
+/**
+ * Whether a user code, in any of the forms people type, is well formed: 4 to 16 letters and
+ * digits once the separators are gone. It deliberately says nothing about the alphabet or the
+ * length the tenant issues now: the settings may have changed since the code was issued, so the
+ * store decides whether the code exists.
+ */
+export function validateUserCodeFormat(userCode: string): boolean {
+  return /^[A-Z0-9]{4,16}$/.test(normalizeUserCode(userCode));
+}
+
+/**
+ * The display form of a user code: groups of 4 characters separated by a hyphen ("ABCD-EFGH",
+ * "ABCD-EFGH-JKM", "ABCD" for 4 characters). Accepts any form `normalizeUserCode` reads.
+ */
+export function formatUserCode(userCode: string): string {
+  const canonical = normalizeUserCode(userCode);
+  const groups: string[] = [];
+  for (let index = 0; index < canonical.length; index += USER_CODE_GROUP_SIZE) {
+    groups.push(canonical.slice(index, index + USER_CODE_GROUP_SIZE));
   }
+  return groups.join('-');
+}
 
-  return cleaned;
+/**
+ * Generate a user code (short, human-readable code)
+ * RFC 8628 section 6.1: short, case-insensitive, drawn from a limited alphabet; the entropy has to
+ * stand against guessing during the lifetime of the code.
+ *
+ * The alphabet and length come from the tenant's settings (`device_flow.user_code_charset`,
+ * `device_flow.user_code_length`); without them it is today's format: 8 characters of BASE31,
+ * "WDJB-MJHT". The code is shown in groups of 4 characters separated by a hyphen. A format below
+ * the entropy floor is refused whatever the caller passes.
+ *
+ * @param format - The tenant's user code settings (defaults to BASE31 x 8)
+ * @param source - Random byte source (defaults to Web Crypto; replaceable in tests)
+ * @returns User code string in the display form
+ */
+export function generateUserCode(
+  format: UserCodeFormat = {
+    userCodeCharset: DEFAULT_USER_CODE_CHARSET,
+    userCodeLength: DEFAULT_USER_CODE_LENGTH,
+  },
+  source?: RandomBytesSource
+): string {
+  if (!isUserCodeFormatAllowed(format.userCodeCharset, format.userCodeLength)) {
+    throw new RangeError(
+      `User code format ${String(format.userCodeCharset)} x ${String(format.userCodeLength)} is not allowed (at least ${USER_CODE_MIN_ENTROPY_BITS} bits of entropy)`
+    );
+  }
+  // Rejection sampling: `byte % size` alone would favour the first characters of the alphabet
+  return formatUserCode(
+    randomCharacters(USER_CODE_CHARSETS[format.userCodeCharset], format.userCodeLength, source)
+  );
 }
 
 /**

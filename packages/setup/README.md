@@ -18,6 +18,74 @@ tags:
 
 The Web UI is the primary path for interactive setup. It runs only on your local machine, talks to a local HTTP server started by the CLI, and uses your local `wrangler` authentication to operate against Cloudflare.
 
+Log archive setup uses the existing features step when a release supports the complete storage
+path. `pipeline` sends new logs to a private Basin Pipeline Stream without a searchable DB copy;
+`scheduled` stores them in the DB and periodically writes Parquet into an Iceberg table. Scheduled
+setup initially offers seven days of DB retention. This does not change dataset retention in R2.
+A missing `logging.archive` is allowed only while editing a wizard draft. Provisioning, Worker
+configuration generation, and deployment require an explicit mode; there is no legacy storage mode.
+
+Both modes require R2 and Basin Catalog. Pipeline mode also requires Workers Paid and durable
+logging delivery queues. Setup checks subscriptions and permissions; it never subscribes the
+account or silently changes modes. A mode whose producer, query, retention, or recovery path is
+incomplete is hidden in interactive setup and rejected before resource creation or Worker config
+generation. Resource-plan previews report whether the selected mode is implemented.
+
+The wizard offers **Issue automatically** (recommended) and manual Catalog token entry. For
+automatic issuance, create a one-time account Cloudflare token using Setup's template link with
+only `Account API Tokens Write`. Setup checks its authority, resolves the exact Catalog/SQL/R2
+permission groups, creates account-scoped read and write tokens, and verifies their policies
+before staging them. The read token has Catalog, Basin SQL and R2 Storage Read; the write token
+has Catalog and R2 Storage Write. Pipeline mode adds a separate Setup-only Sink token with the
+same write permissions. Setup then revokes the one-time token. Interrupted revocation retains
+purpose-bound private recovery state; retry automatic issuance to finish cleanup before creating
+a fresh one-time token. Unconfirmed cleanup is reported and may require Dashboard revocation.
+Setup prefers the exact Cloudflare permission names before using the shared name patterns; ambiguous
+fallback matches are rejected. Automatic re-issuance refuses to overwrite existing staged tokens.
+Verified staged credentials are bound to the account, mode and secret fingerprint. Setup verifies
+them again when configuring the archive. A successful issuance records the confirmed bootstrap
+revocation locally, so CLI resume with the same `LOG_ARCHIVE_BOOTSTRAP_TOKEN` reuses those credentials
+without calling the token authority again and prints a reuse message. A local recovery-file cleanup
+failure after confirmed revocation is reported as a warning and preserves the issued tokens.
+After a page reload, the wizard checks staged credentials and offers **Use the already issued tokens**
+when their account and mode match. While recovery is pending, manual entry is refused to preserve
+the original staged values; finish automatic recovery first. CLI issuance and source-selection
+errors include readable messages and any required Dashboard revocation guidance.
+The Control bootstrap at deployment requires its own separate one-time token.
+
+Noninteractive setup accepts `LOG_ARCHIVE_BOOTSTRAP_TOKEN` instead of explicit
+`LOG_ARCHIVE_CATALOG_READ_TOKEN` / `LOG_ARCHIVE_CATALOG_WRITE_TOKEN` (plus
+`LOG_ARCHIVE_CATALOG_SINK_TOKEN` in pipeline mode). Explicit Catalog tokens select the manual
+path and take precedence over automatic defaults; supplying both explicit tokens and a bootstrap
+token is an error, including partial explicit credentials. Manual verification requires Setup
+authentication that can inspect account token policies; pipeline provisioning also reads account
+subscriptions. Tokens are stored as private local secret files and never enter config, lock,
+plans, or progress responses. Only Management receives `LOG_ARCHIVE_CATALOG_READ_TOKEN` and
+`LOG_ARCHIVE_CATALOG_WRITE_TOKEN` as Worker secrets. The Pipeline Sink token stays with Setup.
+
+Reuse a saved config to preserve the storage generation and activation boundary:
+
+```bash
+npx @authrim/setup init --config ./config.json --dry-run
+npx @authrim/setup init --config ./config.json --yes
+```
+
+The Web API provides the same read-only plan through `POST /api/log-archive/plan`. Planning does
+not create resources, enable a Catalog, change billing, or write local files. Created resource IDs
+and immutable configuration digests are journaled before later setup work. Ambiguous creates with
+no provider ID stop for recovery; a same-name resource is never treated as owned merely because
+it exists. Mode and generation changes require an explicit transition rather than an edit that
+reuses the old Iceberg table.
+
+Authrim owns snapshot retention for its log tables. Setup disables provider snapshot expiration
+only after table ownership is proven, verifies `disabled` and `next_eligible_at=null`, and records
+the maintenance policy digest. Public provider APIs do not prove that an earlier maintenance run
+has finished. Initial activation therefore requires the owned table to be empty and records
+that limited basis together with its UUID, physical schema fingerprint, and metadata location.
+Deployment rejects missing or mismatched evidence; the existing post-deploy connection checks
+remain separate from this preparation evidence. Explicit environment deletion verifies resource identities and
+removes Pipeline, Sink, Stream, and Catalog metadata before the normal R2 cleanup.
+
 ## Quick Start
 
 ```bash
@@ -80,10 +148,9 @@ uses the public npm registry to install the tarball into a temporary directory, 
 runtime dependencies, and checks launcher help/version without any Authrim source checkout. It does
 not publish packages or deploy resources.
 
-
 ## Requirements
 
-- Node.js `>=20.0.0`
+- Node.js `>=22.12.0`
 - `pnpm@9` for source preparation and repository development
 - Wrangler CLI installed and authenticated with `wrangler login`
 
@@ -123,6 +190,30 @@ Common options:
 | `--lang <code>`   | Initial language, for example `ja`, `en`, or `zh-CN`.                   |
 
 The Web UI serves static font files from the local setup server and does not load Google Fonts at runtime.
+
+### Admin UI package
+
+Only one Admin UI is deployed per environment. When the Admin UI component is enabled, choose
+which package fills it:
+
+| Choice                  | `components.adminUiVariant` | Package                     |
+| ----------------------- | --------------------------- | --------------------------- |
+| Current Admin UI        | `legacy` (default)          | `packages/ar-admin-ui`      |
+| Admin console (preview) | `console`                   | `packages/ar-admin-console` |
+
+Both deploy into the same Worker (`{env}-ar-admin-ui`) with the same URL, API origin settings,
+router binding and Admin UI BFF machine credentials. Because the Admin UI host does not change,
+administrator passkeys (whose RP ID is that host) keep working after a switch. The admin console
+is being rebuilt feature by feature; items it has not rebuilt yet show a placeholder that names
+the current Admin UI pages they will replace.
+
+To switch an existing environment, set `components.adminUiVariant` in `.authrim/{env}/config.json`
+(or run `npx @authrim/setup --cli --config .authrim/prod/config.json` → Edit config → Components)
+and redeploy the Admin UI:
+
+```bash
+npx @authrim/setup deploy --env prod --component ar-admin-ui
+```
 
 ## Environment Files
 
@@ -175,6 +266,32 @@ Deploy an existing configured environment.
 npx @authrim/setup deploy --env prod --yes
 ```
 
+If an initial Control Plane D1 create stops after Cloudflare receives the request but before Setup
+records the database ID, inspect the exact database in Cloudflare D1 inventory. When it exists, use
+its UUID to recover that one pending create checkpoint, then resume the initial deployment:
+
+```bash
+pnpm run setup recover-initial-d1 --env test \
+  --binding TEST_TDB_PII_BOOTSTRAP_PII --database-id <cloudflare-d1-uuid>
+```
+
+The command checks the pinned account, expected binding and name, and live Cloudflare inventory
+before recording the ID. It does not create or modify a Cloudflare database. If the database is
+absent, this command refuses recovery; use the environment deletion and fresh-init procedure.
+
+If an initial Queue create times out without a `queue_id`, Setup preserves its pending checkpoint.
+After at least five minutes, use the targeted recovery command for a Queue that is absent from the
+pinned Cloudflare account:
+
+```bash
+pnpm run setup recover-absent-queue --env test --binding LOGGING_DELIVERY_BULK_QUEUE
+pnpm run setup init --cli --env test --lang en
+```
+
+Recovery requires two complete Cloudflare API inventory reads and refuses to release the checkpoint
+if the Queue exists. It changes only the local provisioning journal; the resumed setup repeats its
+strict absence check before issuing a new create. Never use this command to adopt a same-name Queue.
+
 Setup remains Authrim's release and deployment plane after the initial deployment. It owns version
 updates, Worker deployment and rollback, whole-environment migrations, Control Worker updates,
 environment deletion, and operator-driven D1 provisioning or repair. The Control Worker does not
@@ -197,11 +314,13 @@ session and refresh that session once when Cloudflare rejects an expired access 
 - **On:** setup opens a Cloudflare Dashboard link prefilled with only API-token creation permission.
   The Control Worker needs this one-time bootstrap token to create its scoped execution credentials;
   setup displays an explicit required-token message if it has not been entered. Enter the token once.
+  The temporary token may have additional permissions; Setup requires an active token with
+  token-management write access for the selected account and revokes it after cutover.
   Setup creates distinct account-scoped D1 and
   Workers Scripts tokens and, when the enabled capability requires them, separate KV and R2 tokens.
-  Before registering a child secret, setup verifies that the token can list only its own resource
-  class and that Cloudflare rejects the other D1, Workers Scripts, KV, and R2 list endpoints with
-  `401` or `403`. Transport errors and other provider responses are not accepted as denial evidence.
+  Before registering a child secret, Setup reads back its exact account policy and checks that
+  the token can access its intended API. An unrelated list endpoint's response is not used to
+  infer the child's write permissions.
   Setup then registers the values directly as Control Worker secrets and revokes the bootstrap token.
   Dashboard authentication is separate from Wrangler OAuth and may require another login.
 - **Off / Skip:** no Cloudflare API token is stored on the Control Worker. Setup continues to use the
@@ -383,6 +502,12 @@ health checks, and records the completed product version in the environment lock
 enabled Worker succeeds. Re-running the command resumes an interrupted update from the recorded phase,
 including partially completed UI deployment.
 
+Fresh-install baselines omit `authrim_migrations` and the engine sentinel
+`tenant_database_migration_state` for every schema family, including Admin. Setup and the engine
+create their own ledgers. The unused Admin business table with the same name is removed by a forward
+migration for 0.5.0; live tenant migration state stays in Control's
+`control_tenant_database_migration_state`.
+
 Legacy locks without `productVersion` are reconciled from recorded Worker versions. If those versions
 are mixed, setup does not guess the database release: it checks cumulative D1 history and converges all
 Workers to the requested release, while refusing any target below the highest recorded Worker version.
@@ -425,6 +550,12 @@ Useful options:
 | `--skip-build`            | Skip package builds.                                                                   |
 | `-y, --yes`               | Accept the displayed release plan without an interactive prompt.                       |
 
+With `--allow-draft-manifest`, an environment that already runs an unpublished product version can
+also receive SQL files appended to that version's draft. Only the files each database has not
+recorded are applied, and only when the lock proves the recorded files are an identical prefix of the
+draft and the version tag is not reachable from remote `main`. See
+[`docs/versioning-and-database-updates.md`](../../docs/versioning-and-database-updates.md), section 4.3.
+
 ### `delete`
 
 Delete an environment and its Cloudflare resources.
@@ -437,6 +568,18 @@ npx @authrim/setup delete --env staging --yes --no-r2
 Resource keep flags include `--no-workers`, `--no-d1`, `--no-kv`, `--no-queues`, `--no-r2`, and
 `--no-pages`. Partial deletion preserves the local environment state for the resource types that
 remain.
+
+When R2 deletion is selected, unrecorded R2 buckets block deletion of every selected resource type.
+To recover a missing local lock,
+run `npx @authrim/setup delete --env staging --adopt-r2-ownership`. Setup offers only buckets
+with exactly one valid Setup marker matching the environment, bucket, and known binding.
+After confirmation it saves the inventory creation date and marker identity to `lock.json`, then
+repeats the full ownership preflight before deletion. Add `--yes` to confirm adoption without a
+prompt; `--yes` alone never adopts. The Web UI offers the same **Adopt and delete** confirmation.
+Setup completes the other ownership and credential preflights before asking to adopt or saving
+ownership. Web confirmation is bound to the displayed bucket names, creation dates, and marker
+identities; changed candidates require confirmation again.
+Missing, ambiguous, unreadable, or mismatched markers require manual cleanup in Cloudflare.
 
 ### `info`
 
@@ -455,6 +598,29 @@ Show or validate local configuration.
 npx @authrim/setup config --env prod --show
 npx @authrim/setup config --config .authrim/prod/config.json --validate
 ```
+
+### `local`
+
+Run a complete Authrim environment on your machine, with no Cloudflare account. Workers run under
+one `wrangler dev` session (Miniflare D1, KV and Durable Objects), the issuer is
+`http://localhost:8787`, and email codes and other notifications are written to the Worker log.
+It must be run from a source checkout, on macOS, Linux or WSL (native Windows is refused).
+
+```bash
+pnpm setup:local init     # keys, Wrangler configs, local databases and seed data
+pnpm setup:local up       # start Workers and the Login/Admin UIs (also: pnpm dev)
+pnpm setup:local reset    # delete and rebuild
+```
+
+`pnpm setup:local ...` builds the workspace packages the CLI imports first (`pnpm setup:bootstrap`,
+cached by Turbo), so it works right after `pnpm install`. The API is on port 8787, the Login UI on
+5173 and the Admin UI on 5174 (`init --port/--login-ui-port/--admin-ui-port`). Per-environment
+files are `packages/*/wrangler.local.<env>.toml` and `.dev.vars.<env>`, and `init`, `up` and
+`reset` hold a per-environment lock (`.authrim-local/<env>.lock/`).
+
+State lives in `.authrim-local/<env>/`, apart from Cloudflare environments in `.authrim/`. See the
+[Development Guide](../../docs/getting-started/development.md) for what differs from a deployed
+environment (Control runs without Cloudflare credentials, no backups, no queues or R2).
 
 ### Other Maintenance Commands
 

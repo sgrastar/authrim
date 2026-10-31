@@ -1,6 +1,31 @@
 import type { Translation } from '../i18n-types';
 
 const translation = {
+	account_guestLogoutWarning:
+		'Çıkış yaptıktan sonra bu misafir hesabına geri dönemezsiniz. Hesabınıza ve verilerinize erişimi korumak için önce kaydolun. Yine de çıkış yapılsın mı?',
+	account_guestTitle: 'Hesabınızı kaydedin',
+	account_guestDescription: 'Kaydolduğunuzda aynı hesabı ve verilerinizi korursunuz.',
+	account_guestDue: '{date} tarihinden itibaren otomatik olarak silinebilir.',
+	account_guestNoExpiry: 'Otomatik silme planlanmamıştır.',
+	account_guestEmail: 'E-posta adresi',
+	account_guestSend: 'E-posta ile kaydol',
+	account_guestPasskey: 'Geçiş anahtarı ile kaydol',
+	account_guestCode: 'Doğrulama kodu',
+	account_guestConfirm: 'Kaydı tamamla',
+	account_guestPending:
+		'Kayıt işleniyor. Tamamlanıp tamamlanmadığını kontrol etmek için yeniden deneyebilirsiniz.',
+	account_guestRetry: 'Yeniden dene',
+	account_guestError: 'Kayıt tamamlanamadı. Doğrulama kodunu kontrol edin veya tekrar deneyin.',
+	account_guestCollision:
+		'Bu kimliğe ait bir hesap zaten var. O hesaba ayrıca giriş yapın. Misafir hesabınız birleştirilmeyecektir.',
+	account_guestExistingLogin: 'Mevcut bir hesaba giriş yap',
+	account_guestRegistered: 'Hesabınız kaydedildi.',
+	account_guestChangeMethod: 'Başka bir yöntem seç',
+	login_guestContinue: 'Misafir olarak devam et',
+	login_guestRetention:
+		'Misafir hesapları oluşturulduktan {days} gün sonra otomatik olarak silinebilir. Kullanmaya devam etmek için hesabınızı kaydedin.',
+	login_guestNoExpiry: 'Yeni misafir hesapları için otomatik silme planlanmamıştır.',
+
 	app_title: 'Authrim',
 	app_subtitle: 'Her yerde uçta kimlik ve erişim.',
 	button_openDialog: 'İletişim kutusunu aç',
@@ -84,6 +109,31 @@ const translation = {
 	account_delete: 'Sil',
 	account_empty: 'Öğe yok',
 	account_planned: 'Planlı',
+	account_socialEmpty: 'Bağlı harici hesap yok.',
+	account_socialLinkHeading: 'Hesap bağla',
+	account_socialLinkWith: '{provider} bağla',
+	account_socialNoProviders: 'Bağlanabilecek başka sağlayıcı yok.',
+	account_socialLinkedAt: 'Bağlanma tarihi: {date}',
+	account_socialLastUsed: 'Son kullanım: {date}',
+	account_socialUnlink: 'Bağlantıyı kaldır',
+	account_socialUnlinkConfirm:
+		'{provider} bağlantısı kaldırılsın mı? Artık bu hesapla giriş yapamayacaksınız.',
+	account_socialUnlinkConfirmAction: '{provider} bağlantısını kaldır',
+	account_socialLinked: 'Hesap bağlandı.',
+	account_socialUnlinked: 'Hesap bağlantısı kaldırıldı.',
+	account_socialErrorAlreadyLinked: 'Bu hesap zaten başka bir kullanıcıya bağlı.',
+	account_socialErrorAlreadyLinkedHere: 'Bu sağlayıcı zaten hesabınıza bağlı.',
+	account_socialErrorEmailNotVerified: 'Sağlayıcı bu hesabın e-posta adresini doğrulamamış.',
+	account_socialErrorSessionExpired:
+		'Bağlama tamamlanmadan onayınızın süresi doldu. Yeniden onaylayıp tekrar deneyin.',
+	account_socialErrorCancelled: 'Bağlama iptal edildi.',
+	account_socialErrorFailed: 'Hesap bağlanamadı. Tekrar deneyin.',
+	account_socialErrorLastMethod:
+		'Bu, son giriş yönteminiz. Önce bir geçiş anahtarı veya başka bir giriş yöntemi ekleyin.',
+	account_socialErrorInProgress:
+		'Giriş yöntemlerinizde başka bir değişiklik sürüyor. Biraz sonra tekrar deneyin.',
+	account_operationSocialLinked: 'Harici hesap bağlandı',
+	account_operationSocialUnlinked: 'Harici hesap bağlantısı kaldırıldı',
 	account_passkeyUnsupported: 'Bu tarayıcı geçiş anahtarı kaydını desteklemiyor.',
 	account_passkeyRegistrationCancelled:
 		'Passkey kayıtları iptal edildi veya sona erdi. Lütfen tekrar deneyin.',
@@ -117,12 +167,30 @@ const translation = {
 	account_reauthTotpCodePlaceholder: '6 veya 8 rakamlı kod',
 	account_actionFailed: 'Operasyon başarısız oldu.',
 	account_remainingLoginMethodRequired: 'Bu yöntemi silmeden önce başka bir giriş yöntemi ekleyin.',
+	account_activityIncomplete: 'Etkinlik sonuçları eksik. Lütfen daha sonra tekrar deneyin.',
+	account_activityLoadMore: 'Önceki etkinlikleri yükle',
 	account_activityTitle: 'Etkinlik',
 	account_operationNameUpdated: 'Ad güncellendi',
 	account_operationPasskeyCreated: 'Geçiş anahtarı eklendi',
 	account_operationPasskeyUpdated: 'Geçiş anahtarının adı değiştirildi',
 	account_operationPasskeyDeleted: 'Geçiş anahtarı silindi',
 	account_operationSessionRevoked: 'Oturum sonlandırıldı',
+	account_operationGuestCreated: 'Misafir hesabı oluşturuldu',
+	account_operationGuestUpgradeFailed: 'Misafir kaydı başarısız oldu',
+	account_operationGuestUpgradeStarted: 'Misafir kaydı başlatıldı',
+	account_operationGuestUpgraded: 'Misafir hesabı kaydedildi',
+	account_operationEmailAdded: 'E-posta eklendi',
+	account_operationEmailChanged: 'E-posta değiştirildi',
+	account_operationEmailReauthenticated: 'E-posta ile yeniden doğrulandı',
+	account_operationDeviceUpdated: 'Cihazın adı değiştirildi',
+	account_operationDeviceUnlinked: 'Cihaz bağlantısı kaldırıldı',
+	account_operationPasskeyReauthenticated: 'Passkey ile yeniden doğrulandı',
+	account_operationTotpEnrollmentStarted: 'Doğrulama uygulaması kurulumu başlatıldı',
+	account_operationTotpActivated: 'Doğrulama uygulaması etkinleştirildi',
+	account_operationTotpUpdated: 'Doğrulama uygulamasının adı değiştirildi',
+	account_operationTotpRemoved: 'Doğrulama uygulaması kaldırıldı',
+	account_operationTotpBackupCodesRegenerated: 'Yedek kodlar yeniden oluşturuldu',
+	account_operationTotpReauthenticated: 'Doğrulama uygulaması ile yeniden doğrulandı',
 	account_launcherTitle: 'Uygulamalarım',
 	account_launcherDescription: 'Kullanabileceğiniz uygulamaları arayın ve açın.',
 	account_launcherLoadFailed: 'Uygulamalar yüklenemedi.',
@@ -188,6 +256,8 @@ const translation = {
 	login_humanVerificationLoading: 'Güvenlik kontrolü yükleniyor...',
 	login_humanVerificationLoadFailed:
 		'Güvenlik kontrolü yüklenemedi. Sayfayı yeniden yükle ve tekrar dene.',
+	login_humanVerificationUnavailable:
+		'İnsan doğrulaması şu anda kullanılamıyor. Lütfen yöneticinizle iletişime geçin.',
 	login_noMethodsAvailable:
 		'Bu kuruluş için hiçbir kimlik doğrulama yöntemi etkinleştirilmemiş. Yöneticinizle iletişime geçin.',
 	login_passkeyPreparing: 'Geçiş anahtarıyla kimlik doğrulama hazırlanıyor…',
@@ -268,7 +338,7 @@ const translation = {
 	emailCode_title: 'E-postanızı kontrol edin',
 	emailCode_subtitle: 'Şu adrese doğrulama kodu gönderdik:',
 	emailCode_instructions:
-		'E-posta adresinden 6 rakamlı kodu girin. Kod 5 dakika sonra sona erecek.',
+		'E-posta adresinden 6 rakamlı kodu girin. Kodun ne kadar geçerli olduğu e-postada yazıyor.',
 	emailCode_codeLabel: 'Doğrulama kodu',
 	emailCode_verifyButton: 'Doğrula',
 	emailCode_resendButton: 'Kodu yeniden gönder',
@@ -324,11 +394,19 @@ const translation = {
 	error_temporarily_unavailable: 'Yetkilendirme sunucusu isteği geçici olarak işleyemiyor.',
 	error_login_required: 'Doğrulama gereklidir. Lütfen devam etmek için giriş yapın.',
 	error_unknown: 'Bilinmeyen bir hata oluştu.',
+	error_rateLimited: 'Çok fazla deneme yapıldı. Bir süre bekleyip tekrar dene.',
+	error_rateLimitedRetryAfter: 'Çok fazla deneme yapıldı. Yaklaşık {minutes} dk sonra tekrar dene.',
+	error_unregisteredPostLogoutRedirectUri:
+		'Oturumun kapatıldı. Uygulamanın dönüş adresi kayıtlı olmadığı için uygulamaya geri gönderilemedin. Uygulamayı kendin yeniden aç.',
+	error_invalidIdTokenHint:
+		'Oturumun kapatıldı. Uygulamanın oturum kapatma isteği doğrulanamadığı için uygulamaya geri gönderilemedin. Uygulamayı kendin yeniden aç.',
+	error_idTokenHintRequired:
+		'Oturumun kapatıldı. Uygulamanın oturum kapatma isteği eksik olduğu için uygulamaya geri gönderilemedin. Uygulamayı kendin yeniden aç.',
 	device_title: 'Cihaz doğrulama',
 	device_subtitle: 'Cihazınızda gösterilen kodu girin',
 	device_codeLabel: 'Doğrulama kodu',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint: 'Cihazınızdan 8 karakterlik kodu girin (format: XXXX-XXXX)',
+	device_codeHint: 'Cihazınızda görüntülenen kodu girin',
 	device_verifyButton: 'Kodu doğrula',
 	device_confirmTitle: 'Cihazı yetkilendir',
 	device_requestedPermissions: 'İstenen izinler',
@@ -341,6 +419,13 @@ const translation = {
 	device_errorApproveFailed: 'Cihaz onaylanamadı',
 	device_errorDenyFailed: 'Cihaz isteği reddedilemedi.',
 	device_errorInvalidRedirect: "Sunucudan geçersiz yönlendirme URL'si alındı",
+	device_errorConsentWithdrawn:
+		'Bu istek, bu uygulamanın erişimini geri almadan önce oluşturuldu. Yeni bir kod almak için cihazda baştan başla.',
+	device_errorTryAgain:
+		'Kararın şu anda kaydedilemedi ve hiçbir şey değişmedi. Birazdan tekrar dene.',
+	device_errorTooManyAttempts: 'Çok fazla deneme yapıldı. Bir süre bekleyip tekrar dene.',
+	device_errorOutcomeUnknown:
+		'Kararının kaydedilip kaydedilmediği doğrulanamadı. Cihazı kontrol et veya kodu yeniden gir.',
 	ciba_title: 'Doğrulama talebi',
 	ciba_subtitle: 'Bir başvuru onayınızı istiyor.',
 	ciba_noPendingRequests: 'Bekleyen kimlik doğrulama talepleri yok',
@@ -360,6 +445,17 @@ const translation = {
 	ciba_errorGeneric: 'Bir hata oluştu.',
 	ciba_errorApproveFailed: 'Başvuru onaylanamadı',
 	ciba_errorDenyFailed: 'İstek reddedilemedi.',
+	ciba_errorConsentWithdrawn:
+		'Bu istek, bu uygulamanın erişimini geri almadan önce oluşturuldu. Uygulamadan baştan başla.',
+	ciba_errorRequestGone: 'Bu isteğin süresi doldu veya zaten yanıtlandı.',
+	error_authorizationRequestExpired:
+		'Oturum açma isteğinin süresi doldu. Uygulamadan yeniden başlayın.',
+	ciba_errorTryAgain:
+		'Kararın şu anda kaydedilemedi ve hiçbir şey değişmedi. Birazdan tekrar dene.',
+	ciba_errorTooManyAttempts: 'Çok fazla deneme yapıldı. Bir süre bekleyip tekrar dene.',
+	ciba_errorOutcomeUnknown:
+		'Yanıtının kaydedilip kaydedilmediği doğrulanamadı. Hâlâ bekleyen istekleri görmek için yenile.',
+	ciba_errorNoLongerWaiting: 'Yanıtın doğrulanamadı, ancak bu istek artık beklemiyor.',
 	reauth_title: 'Kimliğinizi doğrulayın',
 	reauth_subtitle: 'Güvenliğiniz için devam etmeden önce kimliğinizi yeniden doğrulayın.',
 	reauth_verifyWithPasskey: 'Passkey ile doğrulama',
@@ -395,6 +491,9 @@ const translation = {
 	login_extError_callbackFailed_title: 'Doğrulama başarısız oldu',
 	login_extError_callbackFailed_message:
 		'Doğrulama sırasında bir hata oluştu. Lütfen tekrar deneyin.',
+	login_extError_reauthNotProven_title: 'Oturum açma doğrulanmadı',
+	login_extError_reauthNotProven_message:
+		'Oturum açma sağlayıcınız yeniden oturum açtığınızı doğrulamadı. Yeniden oturum açın veya başka bir yöntem seçin.',
 	login_extError_default_title: 'Doğrulama hatası',
 	login_extError_default_message: 'Dış doğrulama sırasında bir hata oluştu.',
 	login_signingInTo: 'Giriş yapılan uygulama:',

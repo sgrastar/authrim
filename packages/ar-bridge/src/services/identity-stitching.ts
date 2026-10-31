@@ -4,6 +4,7 @@
  * with JIT Provisioning, policy evaluation, and organization auto-join
  */
 
+import { externalSignupInvitationEmailCheck } from '@authrim/ar-lib-core/services/external-signup-invitation';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   createAuditLog,
@@ -13,14 +14,15 @@ import {
   ensureDatabaseAdapter,
   type JITProvisioningConfig,
   type RuleEvaluationContext,
-  type RuleEvaluationResult,
   type DenyErrorCode,
   DEFAULT_JIT_CONFIG,
   createRuleEvaluator,
   resolveOrgByDomainHash,
   resolveAllOrgsByDomainHash,
   joinOrganization,
-  assignRoleToUser,
+  singleDatabaseRBAC,
+  type TenantRBACDatabases,
+  assignScopedRoleToUser,
   generateEmailDomainHashWithVersion,
   getEmailDomainHashConfig,
   type ResolvedOrganization,
@@ -35,6 +37,11 @@ import {
   resolveAccountDataContextByIdentifier,
   resolveTenantMetadataContext,
   type AuthAccountProvisioningInput,
+  parseJitAllowedProviderIds,
+  jitSettingValuesWellTyped,
+  resolveEffectiveSettings,
+  updateProfileOnLogin,
+  checkEmailRegistration,
 } from '@authrim/ar-lib-core';
 import {
   ExternalIdPError,
@@ -42,7 +49,6 @@ import {
   type HandleIdentityParams,
   type HandleIdentityResult,
   type StitchingConfig,
-  type UpstreamProvider,
   type UserInfo,
   type TokenResponse,
 } from '../types';
@@ -54,6 +60,7 @@ import {
   findPendingLinkedIdentityProvisioning,
 } from './linked-identity-store';
 import { decrypt, encrypt, getEncryptionKey } from '../utils/crypto';
+import { assertExternalProviderUsageAllowed } from './external-usage-gate';
 
 /**
  * Get identity stitching configuration
@@ -80,22 +87,90 @@ export async function getStitchingConfig(env: Env): Promise<StitchingConfig> {
 }
 
 /**
- * Get JIT Provisioning configuration
- * Priority: KV → Default
+ * Update a linked user's profile from the provider's claims on login, when the tenant turns
+ * `external_idp.jit_update_on_login` on (with JIT provisioning on): the fields the provider chooses,
+ * else those the tenant chooses (`external_idp.jit_update_fields`), never the email or the account
+ * state. Only claims the
+ * provider sends are written. A failure is logged and never fails the login.
  */
-export async function getJITConfig(env: Env): Promise<JITProvisioningConfig> {
-  if (env.SETTINGS) {
-    try {
-      const kvConfig = await env.SETTINGS.get('jit_provisioning_config');
-      if (kvConfig) {
-        return JSON.parse(kvConfig);
-      }
-    } catch {
-      // Ignore KV errors, fall through to default
-    }
+async function updateUserProfileFromProvider(
+  env: Env,
+  tenantId: string,
+  userId: string,
+  userInfo: UserInfo,
+  sources: { coreDb: DatabaseSource; piiDb: DatabaseSource },
+  /** The provider's own list (null: the tenant's). */
+  providerFields: string[] | null | undefined
+): Promise<void> {
+  let users: CanonicalRuntimeUserStore;
+  try {
+    users = new CanonicalRuntimeUserStore({
+      coreAdapter: ensureDatabaseAdapter(sources.coreDb, 'identity-stitching-profile-core'),
+      piiAdapter: ensureDatabaseAdapter(sources.piiDb, 'identity-stitching-profile-pii'),
+      tenantId,
+    });
+  } catch (error) {
+    createLogger()
+      .module('IDENTITY-STITCHING')
+      .warn('Profile update from the identity provider failed', {
+        action: 'profile_update_on_login',
+        errorName: error instanceof Error ? error.name : 'Unknown error',
+      });
+    return;
   }
+  await updateProfileOnLogin({
+    env,
+    tenantId,
+    userId,
+    claims: userInfo as unknown as Record<string, unknown>,
+    providerFields,
+    users,
+  });
+}
 
-  return DEFAULT_JIT_CONFIG;
+/**
+ * Get JIT Provisioning configuration for a tenant: the tenant's `external_idp.jit_*` settings as
+ * the Settings API resolves them (tenant, platform, the older `jit_provisioning_config` document,
+ * env, defaults). JIT creates accounts, so settings that cannot be read disable it rather than
+ * falling back to values that enable it.
+ */
+export async function getJITConfig(env: Env, tenantId: string): Promise<JITProvisioningConfig> {
+  let values: Record<string, unknown>;
+  try {
+    // Read as saved now, not a cached copy: this decides whether an account is created (and
+    // runs only then).
+    values = await resolveEffectiveSettings(env, 'external-idp', {
+      tenantId,
+      fresh: true,
+    });
+  } catch {
+    return { ...DEFAULT_JIT_CONFIG, enabled: false };
+  }
+  const providerList = values['external_idp.jit_allowed_provider_ids'];
+  const role = values['external_idp.jit_default_role_id'];
+  // A value of the wrong type is not taken for one that allows more: JIT stays off. The sign-up
+  // prediction for prompt=create (ar-lib-core) applies the same check.
+  if (
+    !jitSettingValuesWellTyped(values) ||
+    typeof providerList !== 'string' ||
+    typeof role !== 'string'
+  ) {
+    return { ...DEFAULT_JIT_CONFIG, enabled: false };
+  }
+  return {
+    enabled: values['external_idp.jit_provisioning_enabled'] === true,
+    require_verified_email: values['external_idp.jit_require_verified_email'] === true,
+    // Only an empty value allows every provider: one that names none allows none.
+    allowed_provider_ids: parseJitAllowedProviderIds(providerList),
+    join_all_matching_orgs: values['external_idp.jit_join_all_matching_orgs'] === true,
+    allow_user_without_org: values['external_idp.jit_allow_user_without_org'] === true,
+    // Empty: no default role.
+    default_role_id: role,
+    allow_unverified_domain_mappings:
+      values['external_idp.jit_allow_unverified_domain_mappings'] === true,
+    // Not applied by the bridge.
+    auto_create_org_on_domain_match: false,
+  };
 }
 
 /**
@@ -136,11 +211,41 @@ export async function handleIdentity(
     if (accountContext && accountContext.legacyUserId !== linkingUserId) {
       throw new Error('external_idp_link_account_mismatch');
     }
-    const existingIdentity = accountContext
-      ? await findLinkedIdentity(env, tenantId, provider.id, userInfo.sub, accountContext.piiDb)
-      : null;
+    // The external account may already sign in to another account, whose data lives elsewhere:
+    // the directory says whose it is before anything is written here.
+    let externalOwner: string | null = null;
+    try {
+      const route = await resolveAccountDataContextByIdentifier(env, {
+        tenantId,
+        indexKind: 'external_subject',
+        identifier: { issuer: provider.id, subject: userInfo.sub },
+      });
+      externalOwner = route.legacyUserId;
+    } catch (routeError) {
+      if (!(routeError instanceof Error && routeError.message === 'account_data_route_not_found')) {
+        throw routeError;
+      }
+    }
+    if (externalOwner !== null && externalOwner !== linkingUserId) {
+      throw new ExternalIdPError(
+        ExternalIdPErrorCode.ACCOUNT_ALREADY_LINKED,
+        'This external account is already linked to another account.',
+        { providerName: provider.name }
+      );
+    }
+    const existingIdentity = await findLinkedIdentity(
+      env,
+      tenantId,
+      provider.id,
+      userInfo.sub,
+      accountContext?.piiDb ?? defaultUserStoreSources.piiDb
+    );
     if (existingIdentity && existingIdentity.userId !== linkingUserId) {
-      throw new Error('external_idp_link_authority_conflict');
+      throw new ExternalIdPError(
+        ExternalIdPErrorCode.ACCOUNT_ALREADY_LINKED,
+        'This external account is already linked to another account.',
+        { providerName: provider.name }
+      );
     }
     const identityInput = {
       userId: linkingUserId,
@@ -210,6 +315,16 @@ export async function handleIdentity(
         defaultUserStoreSources.piiDb
       );
   if (existingLink) {
+    // The user's profile from the provider, where the tenant turns that on.
+    await updateUserProfileFromProvider(
+      env,
+      existingLink.tenantId,
+      existingLink.userId,
+      userInfo,
+      externalRoute ?? defaultUserStoreSources,
+      provider.profileUpdateFields
+    );
+
     // Update tokens and last login
     const updates = { tokens, lastLoginAt: Date.now(), rawClaims: userInfo };
     if (externalRoute) {
@@ -239,6 +354,9 @@ export async function handleIdentity(
     };
   }
   if (tenantD1 && externalRoute) {
+    // The account was provisioned by an earlier sign-in that did not finish; finishing it (its
+    // roles, organizations and identity) is still a sign-up, so the tenant's switch holds.
+    await assertExternalProviderUsageAllowed(env, tenantId, provider, 'signup');
     const completed = await completeTenantD1ExternalIdpJIT(env, {
       tenantId,
       userId: externalRoute.legacyUserId,
@@ -372,6 +490,10 @@ export async function handleIdentity(
 
   // 4. No existing user - try JIT Provisioning
   if (provider.jitProvisioning) {
+    // Creating an account is a sign-up: only a provider the tenant lets sign people up does it,
+    // decided before anything is written. The login screen merely hides the others.
+    await assertExternalProviderUsageAllowed(env, tenantId, provider, 'signup');
+
     // Check if provider email is verified (if we require it)
     // SECURITY: Check both global setting AND per-provider setting
     const requireVerified = stitchingConfig.requireVerifiedEmail || provider.requireEmailVerified;
@@ -385,7 +507,7 @@ export async function handleIdentity(
     }
 
     // Get JIT provisioning configuration
-    const jitConfig = await getJITConfig(env);
+    const jitConfig = await getJITConfig(env, tenantId);
 
     // Check if JIT is enabled
     if (!jitConfig.enabled) {
@@ -414,6 +536,41 @@ export async function handleIdentity(
       throw new ExternalIdPError(
         ExternalIdPErrorCode.EMAIL_NOT_VERIFIED,
         'A verified email is required for automatic account creation.',
+        { providerName: provider.name }
+      );
+    }
+
+    // An invitation that names an email creates an account only for that email; a tenant that
+    // requires the invited email to be verified also needs the provider to say it verified it.
+    const invitationEmail = externalSignupInvitationEmailCheck(params.invitation, {
+      email: userInfo.email,
+      emailVerified: userInfo.email_verified,
+    });
+    if (invitationEmail === 'email_mismatch') {
+      throw new ExternalIdPError(
+        ExternalIdPErrorCode.INVITATION_EMAIL_MISMATCH,
+        'This invitation is for another email address.',
+        { providerName: provider.name }
+      );
+    }
+    if (invitationEmail === 'email_not_verified') {
+      throw new ExternalIdPError(
+        ExternalIdPErrorCode.EMAIL_NOT_VERIFIED,
+        'This invitation needs an email your provider has verified.',
+        { providerName: provider.name }
+      );
+    }
+
+    // The address of an account deleted within the retention period, where the tenant blocks
+    // re-registration: refused as any other policy denial, without saying it was deleted.
+    const registration = await checkEmailRegistration(env, { tenantId, email: userInfo.email });
+    if (registration === 'unavailable') {
+      throw new Error('external_idp_reregistration_check_unavailable');
+    }
+    if (registration === 'blocked') {
+      throw new ExternalIdPError(
+        ExternalIdPErrorCode.POLICY_ACCESS_DENIED,
+        'Access denied by policy.',
         { providerName: provider.name }
       );
     }
@@ -699,58 +856,6 @@ async function validateProvisionedCustomClaims(
   return validation;
 }
 
-/**
- * Create user from external identity
- * PII/Non-PII DB separation: creates records in both Core DB and PII DB
- */
-async function createUserFromExternalIdentity(
-  env: Env,
-  params: CreateUserParams
-): Promise<{ id: string }> {
-  await validateProvisionedCustomClaims(env, params.tenantId, {});
-
-  const id = crypto.randomUUID();
-
-  // Generate a placeholder email if not provided
-  const email = params.email || `${id}@external.authrim.local`;
-
-  const { coreAdapter, piiAdapter } = await resolveUserStoreAdapters(env, params.tenantId);
-  if (!piiAdapter) {
-    throw new ExternalIdPError(
-      ExternalIdPErrorCode.ACCOUNT_CREATION_FAILED,
-      'Canonical runtime user creation requires a PII database.'
-    );
-  }
-  const runtimeUsers = new CanonicalRuntimeUserStore({
-    coreAdapter,
-    piiAdapter,
-    tenantId: params.tenantId,
-  });
-  await runtimeUsers.syncUser({
-    userId: id,
-    email: email.toLowerCase(),
-    name: params.name || null,
-    active: true,
-    emailVerified: params.emailVerified,
-    userType: 'end_user',
-    sourceRef: `external-idp:${params.identityProviderId}`,
-    piiFields: {
-      given_name: params.givenName !== undefined,
-      family_name: params.familyName !== undefined,
-      picture: params.picture !== undefined,
-      locale: params.locale !== undefined,
-    },
-    sensitiveValues: {
-      given_name: params.givenName ?? null,
-      family_name: params.familyName ?? null,
-      picture: params.picture ?? null,
-      locale: params.locale ?? null,
-    },
-  });
-
-  return { id };
-}
-
 interface AuditEventParams {
   tenantId: string;
   userId: string;
@@ -853,6 +958,40 @@ interface TenantD1JITPlan {
   defaultRoleId: string | null;
   matchedRules: string[];
   attributesSet: Array<{ name: string; value: string }>;
+}
+
+type JITRoleAssignment = TenantD1JITPlan['roleAssignments'][number];
+
+/** The role each matched domain mapping gives, scoped to the organisation it joins. */
+function domainMappingRoleAssignments(matches: ResolvedOrganization[]): JITRoleAssignment[] {
+  return matches.flatMap((match) =>
+    match.auto_assign_role_id
+      ? [
+          {
+            roleId: match.auto_assign_role_id,
+            scopeType: 'org',
+            scopeTarget: `org:${match.org_id}`,
+          },
+        ]
+      : []
+  );
+}
+
+function uniqueRoleAssignments(roles: JITRoleAssignment[]): JITRoleAssignment[] {
+  const seen = new Set<string>();
+  return roles.filter((role) => {
+    const key = `${role.roleId}\u0000${role.scopeType}\u0000${role.scopeTarget}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** An organisation role is given only for an organisation the user joined here. */
+function isGrantableRole(role: JITRoleAssignment, orgsJoined: string[]): boolean {
+  return (
+    role.scopeType !== 'org' || orgsJoined.some((orgId) => role.scopeTarget === `org:${orgId}`)
+  );
 }
 
 function canonicalJson(value: unknown): string {
@@ -971,22 +1110,23 @@ async function applyTenantD1JITPlan(
     validation: input.plan.customClaimValidation,
   });
 
+  // Organisations and roles are defined in the tenant metadata database; the user's memberships
+  // and assignments go to its account database.
+  const rbac: TenantRBACDatabases = {
+    metadata: (await resolveTenantMetadataContext(env, input.tenantId)).coreDb,
+    account: account.coreDb,
+  };
   const orgsJoined: string[] = [];
   for (const orgId of input.plan.organizationIds) {
-    const joined = await joinOrganization(
-      account.coreDb,
-      input.userId,
-      orgId,
-      input.tenantId,
-      'member'
-    );
+    const joined = await joinOrganization(rbac, input.userId, orgId, input.tenantId, 'member');
     if (joined.success) orgsJoined.push(orgId);
   }
 
   const rolesAssigned: JITProvisioningResult['roles_assigned'] = [];
   for (const role of input.plan.roleAssignments) {
-    const assigned = await assignRoleToUserInternal(
-      account.coreDb,
+    if (!isGrantableRole(role, orgsJoined)) continue;
+    const assigned = await assignScopedRoleToUser(
+      rbac,
       input.userId,
       role.roleId,
       role.scopeType,
@@ -1002,10 +1142,11 @@ async function applyTenantD1JITPlan(
     }
   }
   if (rolesAssigned.length === 0 && input.plan.defaultRoleId) {
-    const scopeTarget = orgsJoined.length > 0 ? `org:${orgsJoined[0]}` : 'global';
+    // A global role has an empty target, as the admin API and the role readers expect.
+    const scopeTarget = orgsJoined.length > 0 ? `org:${orgsJoined[0]}` : '';
     const scopeType = orgsJoined.length > 0 ? 'org' : 'global';
-    const assigned = await assignRoleToUserInternal(
-      account.coreDb,
+    const assigned = await assignScopedRoleToUser(
+      rbac,
       input.userId,
       input.plan.defaultRoleId,
       scopeType,
@@ -1095,7 +1236,10 @@ function parseTenantD1JITPlan(value: string): TenantD1JITPlan {
         Object.keys(value).length === 3 &&
         boundedString((value as Record<string, unknown>).roleId) &&
         boundedString((value as Record<string, unknown>).scopeType, 64) &&
-        boundedString((value as Record<string, unknown>).scopeTarget)
+        // A global rule role has an empty target.
+        (boundedString((value as Record<string, unknown>).scopeTarget) ||
+          ((value as Record<string, unknown>).scopeType === 'global' &&
+            (value as Record<string, unknown>).scopeTarget === ''))
     ) ||
     (plan.defaultRoleId !== null && !boundedString(plan.defaultRoleId)) ||
     !boundedStringArray(plan.matchedRules, 128) ||
@@ -1220,6 +1364,7 @@ async function createTenantD1UserWithJITProvisioning(
   }
 
   const organizationIds = ruleResult.orgs_to_join.filter((orgId) => orgId !== 'auto');
+  let domainMatches: ResolvedOrganization[] = [];
   if (emailDomainHash) {
     const matches = params.jitConfig.join_all_matching_orgs
       ? await resolveAllOrgsByDomainHash(
@@ -1236,6 +1381,7 @@ async function createTenantD1UserWithJITProvisioning(
             params.jitConfig
           ),
         ].filter((value): value is ResolvedOrganization => value !== null);
+    domainMatches = matches;
     for (const organization of matches) {
       if (!organizationIds.includes(organization.org_id)) {
         organizationIds.push(organization.org_id);
@@ -1252,22 +1398,28 @@ async function createTenantD1UserWithJITProvisioning(
     };
   }
 
-  const roleAssignments = ruleResult.roles_to_assign
-    .map((role) => ({
-      roleId: role.role_id,
-      scopeType: role.scope_type,
-      scopeTarget:
-        role.scope_target === 'auto' && organizationIds.length > 0
-          ? `org:${organizationIds[0]}`
-          : role.scope_target,
-    }))
-    .filter((role) => role.scopeTarget !== 'auto');
+  const roleAssignments = uniqueRoleAssignments([
+    ...ruleResult.roles_to_assign
+      .map((role) => ({
+        roleId: role.role_id,
+        scopeType: role.scope_type,
+        scopeTarget:
+          role.scope_target === 'auto' && organizationIds.length > 0
+            ? `org:${organizationIds[0]}`
+            : role.scope_target,
+      }))
+      .filter((role) => role.scopeTarget !== 'auto')
+      // Readers treat a scoped role without a target as tenant-wide, so it is never given.
+      .filter((role) => role.scopeType === 'global' || role.scopeTarget.length > 0),
+    ...domainMappingRoleAssignments(domainMatches),
+  ]);
   const plan: TenantD1JITPlan = {
     schemaVersion: 1,
     customClaimValidation,
     organizationIds,
     roleAssignments,
-    defaultRoleId: params.jitConfig.default_role_id ?? null,
+    // An empty role ID is none.
+    defaultRoleId: params.jitConfig.default_role_id || null,
     matchedRules: ruleResult.matched_rules,
     attributesSet: ruleResult.attributes_to_set ?? [],
   };
@@ -1634,7 +1786,7 @@ async function createUserWithJITProvisioning(
   // Actually join the organizations
   for (const orgId of orgsToJoin) {
     const joinResult = await joinOrganization(
-      coreSource,
+      singleDatabaseRBAC(coreSource),
       id,
       orgId,
       params.tenantId,
@@ -1659,8 +1811,8 @@ async function createUserWithJITProvisioning(
       continue;
     }
 
-    const assignResult = await assignRoleToUserInternal(
-      coreSource,
+    const assignResult = await assignScopedRoleToUser(
+      singleDatabaseRBAC(coreSource),
       id,
       roleAssignment.role_id,
       roleAssignment.scope_type,
@@ -1679,12 +1831,11 @@ async function createUserWithJITProvisioning(
 
   // Step 7: Assign default role if no roles were assigned
   if (result.roles_assigned.length === 0 && params.jitConfig.default_role_id) {
-    const defaultScopeTarget =
-      result.orgs_joined.length > 0 ? `org:${result.orgs_joined[0]}` : 'global';
+    const defaultScopeTarget = result.orgs_joined.length > 0 ? `org:${result.orgs_joined[0]}` : '';
     const defaultScopeType = result.orgs_joined.length > 0 ? 'org' : 'global';
 
-    const assignResult = await assignRoleToUserInternal(
-      coreSource,
+    const assignResult = await assignScopedRoleToUser(
+      singleDatabaseRBAC(coreSource),
       id,
       params.jitConfig.default_role_id,
       defaultScopeType,
@@ -1715,67 +1866,6 @@ async function createUserWithJITProvisioning(
 }
 
 /**
- * Assign role to user (internal helper)
- */
-async function assignRoleToUserInternal(
-  db: DatabaseSource,
-  userId: string,
-  roleId: string,
-  scopeType: string,
-  scopeTarget: string,
-  tenantId: string
-): Promise<{ success: boolean; assignment_id?: string; error?: string }> {
-  const assignmentId = `ra_${crypto.randomUUID().replace(/-/g, '')}`;
-  const now = Math.floor(Date.now() / 1000);
-
-  try {
-    const coreAdapter = ensureDatabaseAdapter(db, 'identity-stitching-role-assignment');
-
-    // Check if role exists
-    const roleCheck = await coreAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM roles WHERE id = ? AND tenant_id = ?',
-      [roleId, tenantId]
-    );
-
-    if (!roleCheck) {
-      // SECURITY: Do not expose role ID to prevent enumeration
-      return { success: false, error: 'Role not found' };
-    }
-
-    // Check if already assigned
-    const existing = await coreAdapter.queryOne<{ id: string }>(
-      `SELECT id FROM role_assignments
-       WHERE tenant_id = ? AND user_id = ? AND role_id = ? AND scope_type = ? AND scope_target = ?`,
-      [tenantId, userId, roleId, scopeType, scopeTarget]
-    );
-
-    if (existing) {
-      return { success: true, assignment_id: existing.id, error: 'Already assigned' };
-    }
-
-    // Create assignment
-    await coreAdapter.execute(
-      `INSERT INTO role_assignments (id, tenant_id, user_id, role_id, scope_type, scope_target, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [assignmentId, tenantId, userId, roleId, scopeType, scopeTarget, now, now]
-    );
-
-    return { success: true, assignment_id: assignmentId };
-  } catch (error) {
-    const log = createLogger().module('IDENTITY-STITCHING');
-    log.error(
-      'Database error in assignRoleToUserInternal',
-      { action: 'assign_role' },
-      error as Error
-    );
-    return {
-      success: false,
-      // SECURITY: Do not expose internal error details
-      error: 'Failed to assign role',
-    };
-  }
-}
-
 /**
  * Map deny_code to ExternalIdPErrorCode
  */

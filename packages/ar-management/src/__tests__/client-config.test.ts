@@ -117,6 +117,34 @@ describe('client-config update handler', () => {
     mocked.publishEvent.mockResolvedValue(undefined);
   });
 
+  it('refuses to update a web app to an http loopback redirect URI while HTTPS only is on', async () => {
+    const adapter = createMockAdapter();
+    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter: adapter });
+    mocked.getClientCached.mockResolvedValue({
+      client_id: 'client-123',
+      client_name: 'Smoke Client',
+      redirect_uris: ['https://example.com/callback'],
+      grant_types: ['authorization_code'],
+      response_types: ['code'],
+      registration_access_token_hash: 'token-hash',
+    });
+
+    const res = await clientConfigUpdateHandler(
+      createMockContext({
+        body: {
+          client_id: 'client-123',
+          redirect_uris: ['HTTP://LOCALHOST:3000/callback'],
+          grant_types: ['authorization_code'],
+          response_types: ['code'],
+        },
+      })
+    );
+
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_redirect_uri');
+    expect(adapter.execute).not.toHaveBeenCalled();
+  });
+
   it('normalizes undefined optional fields to null and clears request cache before re-read', async () => {
     const adapter = createMockAdapter();
     mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter: adapter });
@@ -180,6 +208,81 @@ describe('client-config update handler', () => {
     };
     expect(requestCache.clients.has('client-123')).toBe(false);
     expect(mocked.getClientCached).toHaveBeenCalledTimes(3);
+  });
+
+  it('neither changes nor returns the identity assurance minimum an administrator set', async () => {
+    const adapter = createMockAdapter();
+    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter: adapter });
+    const stored = {
+      client_id: 'client-123',
+      client_name: 'Smoke Client',
+      redirect_uris: ['https://example.com/callback'],
+      grant_types: ['authorization_code'],
+      response_types: ['code'],
+      registration_access_token_hash: 'token-hash',
+      minimum_ial: 'IAL3',
+    };
+    mocked.getClientCached.mockResolvedValue(stored);
+
+    const res = await clientConfigUpdateHandler(
+      createMockContext({
+        body: {
+          client_id: 'client-123',
+          redirect_uris: ['https://example.com/callback'],
+          grant_types: ['authorization_code'],
+          response_types: ['code'],
+          // A registration management request cannot lower, or set, the minimum.
+          minimum_ial: 'IAL1',
+        },
+      })
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).not.toHaveProperty('minimum_ial');
+    const [sql, params] = (adapter.execute as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      unknown[],
+    ];
+    expect(sql).not.toContain('minimum_ial');
+    expect(params).not.toContain('IAL1');
+  });
+
+  it("answers with the algorithm the app's ID tokens are signed with", async () => {
+    const adapter = createMockAdapter();
+    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter: adapter });
+    const client = {
+      client_id: 'client-123',
+      client_name: 'Smoke Client',
+      redirect_uris: ['https://example.com/callback'],
+      grant_types: ['authorization_code'],
+      response_types: ['code'],
+      registration_access_token_hash: 'token-hash',
+    };
+    mocked.getClientCached.mockResolvedValue(client);
+    const c = createMockContext({
+      body: {
+        client_id: 'client-123',
+        redirect_uris: ['https://example.com/callback'],
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+      },
+      env: {
+        SETTINGS: {
+          get: vi
+            .fn()
+            .mockImplementation(async (key: string) =>
+              key === 'settings:tenant:default:oauth'
+                ? JSON.stringify({ 'oauth.id_token_signing_alg': 'PS256' })
+                : null
+            ),
+        } as unknown as KVNamespace,
+      },
+    });
+
+    const res = await clientConfigUpdateHandler(c);
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ id_token_signed_response_alg: 'PS256' });
   });
 
   it('rejects backchannel logout URIs that target internal addresses', async () => {
@@ -325,15 +428,11 @@ describe('client-config update handler', () => {
       env: {
         SETTINGS: {
           get: vi.fn().mockImplementation(async (key: string) =>
-            key.includes('certification-profile')
+            key === 'settings:tenant:default:security'
               ? JSON.stringify({
-                  fapi: {
-                    enabled: true,
-                    messageSigning: {
-                      enabled: true,
-                      authorizationSigningAlgorithms: ['ES256'],
-                    },
-                  },
+                  'security.fapi_enabled': true,
+                  'security.fapi_message_signing_enabled': true,
+                  'security.authorization_signing_algs': 'ES256',
                 })
               : null
           ),
@@ -374,6 +473,40 @@ describe('client-config update handler', () => {
     expect(mocked.createAuthContextFromHono).not.toHaveBeenCalled();
   });
 
+  it('applies FAPI set only for this client when validating its update', async () => {
+    mocked.getClientCached.mockResolvedValue({
+      client_id: 'client-123',
+      token_endpoint_auth_method: 'private_key_jwt',
+      registration_access_token_hash: 'token-hash',
+    });
+    const c = createMockContext({
+      body: {
+        client_id: 'client-123',
+        redirect_uris: ['https://example.com/callback'],
+        token_endpoint_auth_method: 'client_secret_basic',
+      },
+      env: {
+        SETTINGS: {
+          get: vi
+            .fn()
+            .mockImplementation(async (key: string) =>
+              key.startsWith('settings:client:') && key.endsWith(':client-123:security')
+                ? JSON.stringify({ 'security.fapi_enabled': true })
+                : null
+            ),
+        } as unknown as KVNamespace,
+      },
+    });
+
+    const res = await clientConfigUpdateHandler(c);
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: 'invalid_client_metadata',
+      error_description: expect.stringContaining('private_key_jwt'),
+    });
+  });
+
   it('rejects changing a FAPI client to secret-based token authentication', async () => {
     mocked.getClientCached.mockResolvedValue({
       client_id: 'client-123',
@@ -391,8 +524,8 @@ describe('client-config update handler', () => {
           get: vi
             .fn()
             .mockImplementation(async (key: string) =>
-              key.includes('certification-profile')
-                ? JSON.stringify({ fapi: { enabled: true } })
+              key === 'settings:tenant:default:security'
+                ? JSON.stringify({ 'security.fapi_enabled': true })
                 : null
             ),
         } as unknown as KVNamespace,

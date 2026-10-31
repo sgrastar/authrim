@@ -1,6 +1,6 @@
 {
   "name": "@authrim/ar-agent-access",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "type": "module",
   "private": true,
   "engines": {
@@ -58,31 +58,37 @@
       "import": "./dist/platform/cloudflare/service-binding.js",
       "types": "./dist/platform/cloudflare/service-binding.d.ts",
       "default": "./src/platform/cloudflare/service-binding.ts"
+    },
+    "./platform/cloudflare/admin-agent-audit-writer": {
+      "import": "./dist/platform/cloudflare/admin-agent-audit-writer.js",
+      "types": "./dist/platform/cloudflare/admin-agent-audit-writer.d.ts",
+      "default": "./src/platform/cloudflare/admin-agent-audit-writer.ts"
     }
   },
   "scripts": {
     "deploy": "test -n \"$DEPLOY_ENV\" && pnpm --dir ../.. exec tsx scripts/deploy-api.ts --env=\"$DEPLOY_ENV\" --component=ar-agent-access --mode=auto --concurrency=1",
     "build": "tsc && node scripts/verify-build-contract.mjs",
     "typecheck": "tsc --noEmit",
-    "lint": "echo 'ar-agent-access: dependency boundaries enforced by tests'",
+    "lint": "eslint src --pass-on-unpruned-suppressions",
+    "lint:prune-suppressions": "eslint src --prune-suppressions",
     "test": "pnpm exec vitest run",
     "test:mcp-conformance": "node scripts/run-mcp-conformance-gate.mjs",
-    "test:inspector": "node scripts/run-inspector-gate.mjs",
     "clean": "rm -rf dist"
   },
   "dependencies": {
     "@authrim/ar-lib-core": "workspace:*",
     "@cfworker/json-schema": "4.1.1",
-    "@modelcontextprotocol/sdk": "1.30.0",
-    "agents": "0.22.0",
-    "zod": "^4.4.3"
+    "@modelcontextprotocol/client": "2.3.1",
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "@modelcontextprotocol/server": "2.3.1",
+    "agents": "0.28.1",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260903.1",
     "@modelcontextprotocol/conformance": "0.1.16",
-    "@modelcontextprotocol/inspector": "0.22.0",
     "@types/node": "^20.19.25",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.12"
   }
 }

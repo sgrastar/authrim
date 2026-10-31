@@ -1,10 +1,7 @@
 <script lang="ts">
-	import { Button, Card, Alert } from '$lib/components';
-	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
-	import ConfiguredFooter from '$lib/components/ConfiguredFooter.svelte';
-	import LocalizedTagline from '$lib/components/LocalizedTagline.svelte';
-	import PinCodeInput from '$lib/components/PinCodeInput.svelte';
-	import { LL, getLocale } from '$i18n/i18n-svelte';
+	import AuthPageShell from '$lib/components/AuthPageShell.svelte';
+	import VerifyEmailCodeView from '$lib/views/VerifyEmailCodeView.svelte';
+	import { LL } from '$i18n/i18n-svelte';
 	import { accountAPI } from '$lib/api/account';
 	import { emailCodeAPI } from '$lib/api/client';
 	import {
@@ -16,7 +13,7 @@
 	import { loginUiDisplayError, messageForCaughtError } from '$lib/errors/display-error';
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { auth } from '$lib/stores/auth';
-	import { isValidImageUrl, isValidRedirectUrl, isValidReturnUrl } from '$lib/utils/url-validation';
+	import { isValidRedirectUrl, isValidReturnUrl } from '$lib/utils/url-validation';
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import {
@@ -28,28 +25,12 @@
 	} from '$lib/authrim/storage-keys';
 	import {
 		consumeFlowRuntimeState,
+		peekFlowRuntimeState,
 		persistFlowRuntimeState
 	} from '$lib/authrim/flow-runtime-state';
+	import { completionRedirect } from '$lib/authrim/completion-redirect';
 
-	const { brandingStore, loginUIPageStore } = useLoginUIStores();
-	const localizedBrandPanelTitle = $derived(
-		loginUIPageStore.getLocalizedText(getLocale(), 'brandPanelTitle')
-	);
-	const localizedBrandPanelText = $derived(
-		loginUIPageStore.getLocalizedText(getLocale(), 'brandPanelText')
-	);
-	const hasBrandingLogo = $derived(
-		Boolean(brandingStore.logoUrl && isValidImageUrl(brandingStore.logoUrl))
-	);
-	const showBrandLogo = $derived(
-		loginUIPageStore.logoDisplay !== 'hidden' &&
-			loginUIPageStore.logoDisplay !== 'text' &&
-			hasBrandingLogo
-	);
-	const showBrandText = $derived(
-		loginUIPageStore.logoDisplay !== 'hidden' &&
-			(loginUIPageStore.logoDisplay !== 'image' || !hasBrandingLogo)
-	);
+	const { brandingStore } = useLoginUIStores();
 
 	let email = $state('');
 	let inviteToken = $state('');
@@ -80,6 +61,9 @@
 			invalidScope: () => $LL.error_invalid_scope(),
 			serverError: () => $LL.error_server_error(),
 			temporarilyUnavailable: () => $LL.error_temporarily_unavailable(),
+			requestExpired: () => $LL.error_authorizationRequestExpired(),
+			rateLimited: (minutes) =>
+				minutes === null ? $LL.error_rateLimited() : $LL.error_rateLimitedRetryAfter({ minutes }),
 			loginRequired: () => $LL.error_login_required(),
 			emailCodeInvalid: () => $LL.emailCode_errorInvalid()
 		});
@@ -208,7 +192,20 @@
 			// Restore authenticated state from the HttpOnly managed session cookie.
 			await auth.refreshFromSession();
 
-			const postVerifyRedirect = await resolveRuntimePostEmailRedirect(verifyData?.redirect_url);
+			let postVerifyRedirect: string;
+			try {
+				postVerifyRedirect = await resolveRuntimePostEmailRedirect(verifyData?.redirect_url);
+			} catch (resumeError) {
+				// The code is spent and the session exists, but the Flow could not be finished just
+				// now. Its stored state is still there: the sign-in page resumes it, and tries again
+				// to submit the completion, with the session.
+				if (!runtimeInteractionId || !peekFlowRuntimeState(runtimeInteractionId)) {
+					throw resumeError;
+				}
+				postVerifyRedirect = `${getRuntimeResumePath()}?runtime_interaction_id=${encodeURIComponent(
+					runtimeInteractionId
+				)}`;
+			}
 
 			// Redirect after delay. OAuth/OIDC challenges resume /authorize via the server-provided URL.
 			setTimeout(() => {
@@ -271,7 +268,9 @@
 			return postAuthRedirect;
 		}
 
-		const storedRuntime = consumeFlowRuntimeState(runtimeInteractionId);
+		// Left in place until the interaction is complete (or handed on): a resume that fails for a
+		// moment is tried again from it.
+		const storedRuntime = peekFlowRuntimeState(runtimeInteractionId);
 		if (!storedRuntime) {
 			throw loginUiDisplayError($LL.error_invalid_request());
 		}
@@ -282,6 +281,12 @@
 			signature: storedRuntime.signature
 		});
 		if (resumeError || !resumedFlow) {
+			throw loginUiDisplayError($LL.error_invalid_request());
+		}
+
+		// The resume signed the contract again as it is now, and the server keeps that one: it is
+		// what the next resume, and the submits below, have to present, so it is stored first.
+		if (!persistFlowRuntimeState(resumedFlow, { postAuthRedirect })) {
 			throw loginUiDisplayError($LL.error_invalid_request());
 		}
 
@@ -299,7 +304,13 @@
 				throw loginUiDisplayError($LL.error_invalid_request());
 			}
 
-			if (step.render !== false && step.component !== 'email_verification') {
+			// The completion waits for this sign-in (the method was chosen before the code was
+			// sent): the session exists now, so it is submitted here rather than at another page.
+			if (
+				step.render !== false &&
+				step.component !== 'email_verification' &&
+				step.component !== 'completion'
+			) {
 				if (!persistFlowRuntimeState(flow, { postAuthRedirect })) {
 					throw loginUiDisplayError($LL.error_invalid_request());
 				}
@@ -313,7 +324,12 @@
 				{
 					step_id: step.id,
 					node_id: step.source_node_id,
-					selected_handle: step.component === 'email_verification' ? 'verified' : undefined,
+					selected_handle:
+						step.component === 'email_verification'
+							? 'verified'
+							: step.component === 'completion'
+								? 'completed'
+								: undefined,
 					contract_hash: flow.contract_hash,
 					signature: flow.signature
 				}
@@ -328,13 +344,7 @@
 			};
 			if (submittedFlow.completed || flow.interaction.state === 'completed') {
 				consumeFlowRuntimeState(flow.interaction.id);
-				if (
-					submittedFlow.output?.redirect_url &&
-					isValidRedirectUrl(submittedFlow.output.redirect_url)
-				) {
-					return submittedFlow.output.redirect_url;
-				}
-				return postAuthRedirect;
+				return completionRedirect(submittedFlow.output, postAuthRedirect);
 			}
 		}
 
@@ -387,188 +397,22 @@
 	<title>{$LL.emailCode_title()} - {brandingStore.brandName || $LL.app_title()}</title>
 </svelte:head>
 
-<div class="auth-page" class:auth-page--has-footer={loginUIPageStore.footerEnabled}>
-	<div class="auth-main">
-		{#if loginUIPageStore.showTopbar && loginUIPageStore.topbarPosition !== 'in_card'}
-			<LanguageSwitcher
-				showThemeToggle={loginUIPageStore.themeToggleEnabled}
-				showLanguageSelect={loginUIPageStore.languageSelectEnabled}
-			/>
-		{/if}
-
-		{#if loginUIPageStore.showBrandPanel}
-			<aside class="auth-brand-panel" aria-hidden="true">
-				<div class="auth-brand-panel__content">
-					{#if showBrandLogo && brandingStore.logoUrl}
-						<img
-							src={brandingStore.logoUrl}
-							alt=""
-							class="auth-brand-panel__logo"
-							onerror={(event) =>
-								((event.currentTarget as HTMLImageElement).style.display = 'none')}
-						/>
-					{/if}
-					{#if loginUIPageStore.brandContentMode === 'logo_copy'}
-						<p class="auth-brand-panel__eyebrow">
-							{brandingStore.brandName || $LL.app_title()}
-						</p>
-						{#if localizedBrandPanelTitle}
-							<h2>{localizedBrandPanelTitle}</h2>
-						{/if}
-						{#if localizedBrandPanelText}
-							<p>{localizedBrandPanelText}</p>
-						{/if}
-					{:else if !showBrandLogo}
-						<h2>{brandingStore.brandName || $LL.app_title()}</h2>
-					{/if}
-				</div>
-			</aside>
-		{/if}
-
-		<div class="auth-container">
-			{#if loginUIPageStore.headerEnabled}
-				<header class="auth-header">
-					{#if showBrandLogo && brandingStore.logoUrl}
-						<img
-							src={brandingStore.logoUrl}
-							alt={brandingStore.brandName || $LL.common_logoAlt()}
-							class="auth-header__logo"
-							onerror={(event) =>
-								((event.currentTarget as HTMLImageElement).style.display = 'none')}
-						/>
-					{/if}
-					{#if showBrandText}
-						<h1 class="auth-header__title">
-							{brandingStore.brandName || $LL.app_title()}
-						</h1>
-					{/if}
-					{#if loginUIPageStore.subtitleEnabled}
-						<p class="auth-header__subtitle">
-							<LocalizedTagline />
-						</p>
-					{/if}
-				</header>
-			{/if}
-
-			{#if loginUIPageStore.showTopbar && loginUIPageStore.topbarPosition === 'in_card'}
-				<LanguageSwitcher
-					showThemeToggle={loginUIPageStore.themeToggleEnabled}
-					showLanguageSelect={loginUIPageStore.languageSelectEnabled}
-				/>
-			{/if}
-
-			<Card class="mb-6">
-				<!-- Icon -->
-				<div class="auth-icon-badge">
-					<div class="auth-icon-badge__circle">
-						<div class="i-heroicons-envelope-solid h-9 w-9 auth-icon-badge__icon"></div>
-					</div>
-				</div>
-
-				<!-- Title -->
-				<h2 class="auth-section-title text-center">
-					{$LL.emailCode_title()}
-				</h2>
-
-				<!-- The same accepted status is shown regardless of account existence. -->
-				<div class="auth-progress mb-6" role="status" aria-live="polite">
-					<span class="i-heroicons-check-circle h-5 w-5" aria-hidden="true"></span>
-					<div class="min-w-0">
-						<p class="font-medium" style="color: var(--text-secondary);">
-							{$LL.emailCode_subtitle()}
-						</p>
-						<p class="text-sm font-medium break-all" style="color: var(--text-primary);">
-							{email}
-						</p>
-					</div>
-				</div>
-
-				<!-- Instructions -->
-				<div class="auth-binding-message mb-6">
-					<p class="text-sm" style="color: var(--text-secondary);">
-						{$LL.emailCode_instructions()}
-					</p>
-				</div>
-
-				<!-- Success Message -->
-				{#if success}
-					<Alert variant="success" dismissible={true} onDismiss={() => (success = '')} class="mb-4">
-						{success}
-					</Alert>
-				{/if}
-
-				{#if resendNotice}
-					<Alert
-						variant="success"
-						dismissible={true}
-						onDismiss={() => (resendNotice = '')}
-						class="mb-4"
-					>
-						{resendNotice}
-					</Alert>
-				{/if}
-
-				<!-- Error Message -->
-				{#if error}
-					<Alert variant="error" dismissible={true} onDismiss={() => (error = '')} class="mb-4">
-						{error}
-					</Alert>
-				{/if}
-
-				<!-- Pin Input -->
-				<div class="mb-6">
-					<div
-						class="block text-sm font-medium mb-2 text-center"
-						style="color: var(--text-secondary);"
-					>
-						{$LL.emailCode_codeLabel()}
-					</div>
-
-					<PinCodeInput
-						value={code}
-						length={6}
-						disabled={loading || resendLoading || !!success}
-						label={$LL.emailCode_codeLabel()}
-						digitLabel={(position) => $LL.emailCode_digitLabel({ position })}
-						onValueChange={(nextValue) => (code = nextValue)}
-					/>
-				</div>
-
-				<!-- Verify Button -->
-				<Button
-					variant="primary"
-					class="w-full mb-4"
-					disabled={code.length !== 6 || loading || resendLoading || !!success}
-					{loading}
-					onclick={() => handleVerify()}
-				>
-					{$LL.emailCode_verifyButton()}
-				</Button>
-
-				<!-- Resend Button -->
-				<Button
-					variant="secondary"
-					class="w-full"
-					disabled={!canResend || resendLoading || !!success}
-					loading={resendLoading}
-					onclick={handleResend}
-				>
-					{#if canResend || resendLoading}
-						{$LL.emailCode_resendButton()}
-					{:else}
-						{$LL.emailCode_resendTimer({ seconds: countdown })}
-					{/if}
-				</Button>
-			</Card>
-
-			<p class="auth-bottom-link">
-				<a href="/login" class="inline-flex items-center gap-2" data-sveltekit-reload>
-					<span class="i-heroicons-arrow-left h-4 w-4"></span>
-					{$LL.common_backToLogin()}
-				</a>
-			</p>
-		</div>
-	</div>
-
-	<ConfiguredFooter class="auth-page-footer" />
-</div>
+<AuthPageShell>
+	<VerifyEmailCodeView
+		{email}
+		{code}
+		{countdown}
+		{canResend}
+		{loading}
+		{resendLoading}
+		{error}
+		{success}
+		{resendNotice}
+		onCodeChange={(nextValue) => (code = nextValue)}
+		onVerify={() => handleVerify()}
+		onResend={handleResend}
+		onDismissError={() => (error = '')}
+		onDismissSuccess={() => (success = '')}
+		onDismissResendNotice={() => (resendNotice = '')}
+	/>
+</AuthPageShell>

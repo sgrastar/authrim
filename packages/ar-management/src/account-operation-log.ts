@@ -10,6 +10,7 @@ export async function recordAccountOperation(
     resourceType?: string;
     resourceId?: string;
     metadata?: Record<string, unknown>;
+    required?: boolean;
   }
 ): Promise<void> {
   const tenantId = getTenantIdFromContext(c);
@@ -29,11 +30,13 @@ export async function recordAccountOperation(
       metadata: JSON.stringify(input.metadata ?? {}),
       severity: 'info',
     });
-  } catch {
+  } catch (error) {
     const log = getLogger(c).module('ACCOUNT-OPERATIONS');
     log.warn('Failed to record Account Page operation', {
       action: input.action,
       resourceType: input.resourceType,
+      required: input.required === true,
     });
+    if (input.required) throw error;
   }
 }

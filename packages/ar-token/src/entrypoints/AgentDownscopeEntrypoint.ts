@@ -1,3 +1,5 @@
+import { createCloudflareAdminAgentAuditWriter } from '@authrim/ar-agent-access/platform/cloudflare/admin-agent-audit-writer';
+import { runSamlDrCoveredOperation } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import {
   AdminAgentAccessRepository,
@@ -75,7 +77,7 @@ export interface AgentDownscopeEntrypointDependencies {
   ): Promise<AgentDownscopeExchangeResult>;
 }
 
-async function defaultModeBPermissionLimit(
+export async function defaultModeBPermissionLimit(
   env: Env,
   tenantId: string,
   principalId: string,
@@ -84,44 +86,10 @@ async function defaultModeBPermissionLimit(
   const repository = new AdminMachineAccessRepository(
     requireDedicatedAdminDatabaseAdapter(env, 'agent-downscope-machine-principal')
   );
-  const principal = await repository.findPrincipalById(principalId);
-  if (!principal || principal.status !== 'active') return null;
-  const [principalScopes, principalPermissions] = await Promise.all([
-    repository.getPrincipalTenantScopes(principalId),
-    repository.getPrincipalPermissions(principalId),
-  ]);
-  if (
-    principalScopes.length === 0 ||
-    principalScopes.some((scope) => scope.scopeMode !== 'allow') ||
-    !principalScopes.some((scope) => scope.tenantId === tenantId)
-  ) {
-    return null;
-  }
-  if (!credentialId) return principalPermissions;
-  const credential = await repository.findCredentialById(credentialId);
-  if (
-    !credential ||
-    credential.principalId !== principalId ||
-    (credential.status !== 'active' && credential.status !== 'rotating')
-  ) {
-    return null;
-  }
-  const [credentialScopes, credentialPermissions] = await Promise.all([
-    repository.getCredentialTenantScopes(credentialId),
-    repository.getCredentialPermissions(credentialId),
-  ]);
-  if (
-    credentialScopes.length > 0 &&
-    (credentialScopes.some((scope) => scope.scopeMode !== 'allow') ||
-      !credentialScopes.some((scope) => scope.tenantId === tenantId))
-  ) {
-    return null;
-  }
-  return credentialPermissions.length === 0
-    ? principalPermissions
-    : principalPermissions.filter((permission) =>
-        credentialPermissions.some((candidate) => hasAdminPermission([candidate], permission))
-      );
+  // One snapshot of the principal and the credential: the scope of one stored state is never
+  // combined with the permissions of another.
+  const limit = await repository.resolveTenantMachineLimit(tenantId, principalId, credentialId);
+  return limit?.permissions ?? null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -251,7 +219,8 @@ export async function exchangeAgentAccessToken(
       overrides.createRepository ??
       ((runtimeEnv) =>
         new AdminAgentAccessRepository(
-          requireDedicatedAdminDatabaseAdapter(runtimeEnv, 'agent-downscope-exchange')
+          requireDedicatedAdminDatabaseAdapter(runtimeEnv, 'agent-downscope-exchange'),
+          createCloudflareAdminAgentAuditWriter(runtimeEnv)
         )),
     getModeBPermissionLimit: overrides.getModeBPermissionLimit ?? defaultModeBPermissionLimit,
     signToken: overrides.signToken ?? defaultSignToken,
@@ -427,9 +396,11 @@ export async function issueAgentBulkChildToken(
       ? undefined
       : requireDedicatedAdminDatabaseAdapter(env, 'agent-bulk-child-token');
   const bulkRepository =
-    overrides.createBulkRepository?.(env) ?? new AgentBulkRepository(database!);
+    overrides.createBulkRepository?.(env) ??
+    new AgentBulkRepository(database!, createCloudflareAdminAgentAuditWriter(env));
   const accessRepository =
-    overrides.createRepository?.(env) ?? new AdminAgentAccessRepository(database!);
+    overrides.createRepository?.(env) ??
+    new AdminAgentAccessRepository(database!, createCloudflareAdminAgentAuditWriter(env));
   const [plan, execution] = await Promise.all([
     bulkRepository.get(input.controlTenantId, input.bulkPlanId, input.bulkPlanVersion),
     bulkRepository.getTenantExecution(
@@ -594,12 +565,21 @@ export class AgentDownscopeEntrypoint extends WorkerEntrypoint<Env> {
   exchangeAgentAccessToken(
     input: AgentDownscopeExchangeRequest
   ): Promise<AgentDownscopeExchangeResult> {
-    return exchangeAgentAccessToken(this.env, input);
+    return runSamlDrCoveredOperation(this.env, this.ctx, (env) =>
+      exchangeAgentAccessToken(env, input)
+    );
   }
 
   issueAgentBulkChildToken(
     input: AgentBulkChildTokenRequest
   ): Promise<AgentDownscopeExchangeResult> {
-    return issueAgentBulkChildToken(this.env, input);
+    return runSamlDrCoveredOperation(this.env, this.ctx, (env) =>
+      issueAgentBulkChildToken(env, input)
+    );
   }
 }
+
+export const SAML_DR_WRITER_SURFACES = [
+  'rpc:AgentDownscopeEntrypoint.exchangeAgentAccessToken',
+  'rpc:AgentDownscopeEntrypoint.issueAgentBulkChildToken',
+] as const;

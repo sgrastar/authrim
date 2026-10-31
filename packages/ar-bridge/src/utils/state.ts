@@ -56,8 +56,9 @@ export async function storeAuthState(
     `INSERT INTO external_idp_auth_states (
       id, tenant_id, client_id, provider_id, state, nonce, code_verifier, code_challenge, flow_id,
       redirect_uri, user_id, session_id, original_auth_request,
-      max_age, acr_values, prompt, enable_sso, expires_at, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      max_age, acr_values, prompt, enable_sso, reauth_challenge_id, reauth_requested_at,
+      invite_id, invite_reservation_id, attempt_interaction_id, expires_at, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       state.tenantId,
@@ -76,6 +77,11 @@ export async function storeAuthState(
       state.acrValues || null,
       state.prompt || null,
       state.enableSso !== false ? 1 : 0,
+      state.reauthChallengeId || null,
+      state.reauthRequestedAt ?? null,
+      state.inviteId || null,
+      state.inviteReservationId || null,
+      state.attemptInteractionId || null,
       state.expiresAt,
       now,
     ]
@@ -151,6 +157,11 @@ interface DbAuthState {
   acr_values: string | null;
   prompt: string | null;
   enable_sso: number | null;
+  reauth_challenge_id?: string | null;
+  reauth_requested_at?: number | null;
+  invite_id?: string | null;
+  invite_reservation_id?: string | null;
+  attempt_interaction_id?: string | null;
   expires_at: number;
   created_at: number;
   consumed_at: number | null;
@@ -235,6 +246,11 @@ function mapDbToAuthState(db: DbAuthState): ExternalIdpAuthState {
     acrValues: db.acr_values || undefined,
     prompt: db.prompt || undefined,
     enableSso: db.enable_sso === 1,
+    reauthChallengeId: db.reauth_challenge_id || undefined,
+    reauthRequestedAt: db.reauth_requested_at ?? undefined,
+    inviteId: db.invite_id || undefined,
+    inviteReservationId: db.invite_reservation_id || undefined,
+    attemptInteractionId: db.attempt_interaction_id || undefined,
     expiresAt: db.expires_at,
     createdAt: db.created_at,
   };

@@ -5,11 +5,7 @@
  * No I/O operations, no side effects - easy to test and maintain.
  */
 
-import type {
-  DiagnosticLogEntry,
-  TokenValidationLogEntry,
-  AuthDecisionLogEntry,
-} from '../services/diagnostic/types.js';
+import type { DiagnosticLogEntry } from '../services/diagnostic/types.js';
 
 /**
  * OIDF submission format entry
@@ -27,6 +23,8 @@ export interface OIDFLogEntry {
   event: string;
   /** Event details */
   details: Record<string, unknown>;
+  /** Which side wrote the entry (server or SDK); present only in merged output */
+  source?: string;
 }
 
 /**
@@ -54,6 +52,8 @@ export interface ExportOptions {
   sortOrder?: 'asc' | 'desc';
   /** Sort mode */
   sortMode?: 'session' | 'category' | 'timeline';
+  /** Name which side wrote each entry (server or SDK), as merged output does */
+  includeSource?: boolean;
 }
 
 /**
@@ -159,7 +159,10 @@ export function filterLogs(
  * @param log - Diagnostic log entry
  * @returns OIDF log entry
  */
-export function toOIDFFormat(log: DiagnosticLogEntry): OIDFLogEntry {
+export function toOIDFFormat(
+  log: DiagnosticLogEntry,
+  options: Pick<ExportOptions, 'includeSource'> = {}
+): OIDFLogEntry {
   const base: OIDFLogEntry = {
     timestamp: new Date(log.timestamp).toISOString(),
     sessionId: log.diagnosticSessionId,
@@ -194,12 +197,13 @@ export function toOIDFFormat(log: DiagnosticLogEntry): OIDFLogEntry {
       requestId: log.requestId,
     };
   } else if (log.category === 'token-validation') {
-    const tokenLog = log as TokenValidationLogEntry;
+    const tokenLog = log;
     base.event = `token_validation_${tokenLog.step}`;
     base.details = {
       flowId: log.flowId,
       storageMode: log.storageMode,
       tokenType: tokenLog.tokenType,
+      tokenHash: tokenLog.tokenHash,
       result: tokenLog.result,
       expected: tokenLog.expected,
       actual: tokenLog.actual,
@@ -207,7 +211,7 @@ export function toOIDFFormat(log: DiagnosticLogEntry): OIDFLogEntry {
       ...tokenLog.details,
     };
   } else if (log.category === 'auth-decision') {
-    const authLog = log as AuthDecisionLogEntry;
+    const authLog = log;
     base.event = `auth_decision_${authLog.decision}`;
     base.details = {
       flowId: log.flowId,
@@ -216,6 +220,10 @@ export function toOIDFFormat(log: DiagnosticLogEntry): OIDFLogEntry {
       flow: authLog.flow,
       ...authLog.context,
     };
+  }
+
+  if (options.includeSource && log.source) {
+    base.source = log.source;
   }
 
   return base;
@@ -239,7 +247,7 @@ export function toOIDFFormatBatch(
   const sorted = sortLogsByTimestamp(filtered, options.sortOrder, options.sortMode);
 
   // Convert to OIDF format
-  return sorted.map(toOIDFFormat);
+  return sorted.map((log) => toOIDFFormat(log, { includeSource: options.includeSource }));
 }
 
 /**
@@ -286,6 +294,7 @@ export function formatAsText(logs: DiagnosticLogEntry[], options: ExportOptions 
     for (const log of oidfLogs) {
       lines.push(`[${log.timestamp}] ${log.level.toUpperCase()} - ${log.event}`);
       lines.push(`  Category: ${log.category}`);
+      if (log.source) lines.push(`  Source: ${log.source}`);
 
       if (Object.keys(log.details).length > 0) {
         lines.push('  Details:');
@@ -316,6 +325,7 @@ export function formatAsText(logs: DiagnosticLogEntry[], options: ExportOptions 
 
       for (const log of categoryLogs) {
         lines.push(`[${log.timestamp}] ${log.level.toUpperCase()} - ${log.event}`);
+        if (log.source) lines.push(`  Source: ${log.source}`);
 
         if (Object.keys(log.details).length > 0) {
           lines.push('  Details:');
@@ -351,6 +361,7 @@ export function formatAsText(logs: DiagnosticLogEntry[], options: ExportOptions 
       for (const log of sessionLogs) {
         lines.push(`[${log.timestamp}] ${log.level.toUpperCase()} - ${log.event}`);
         lines.push(`  Category: ${log.category}`);
+        if (log.source) lines.push(`  Source: ${log.source}`);
 
         if (Object.keys(log.details).length > 0) {
           lines.push('  Details:');

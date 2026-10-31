@@ -31,7 +31,7 @@ export const oidcDestinationTemplates: DestinationTemplate[] = [
 					label: 'Full name',
 					valueType: 'string',
 					classification: 'pii',
-					surfaces: ['userinfo'],
+					surfaces: ['id_token', 'userinfo'],
 					requiredScopes: ['profile']
 				},
 				{
@@ -39,7 +39,7 @@ export const oidcDestinationTemplates: DestinationTemplate[] = [
 					label: 'Given name',
 					valueType: 'string',
 					classification: 'pii',
-					surfaces: ['userinfo'],
+					surfaces: ['id_token', 'userinfo'],
 					requiredScopes: ['profile']
 				},
 				{
@@ -47,7 +47,7 @@ export const oidcDestinationTemplates: DestinationTemplate[] = [
 					label: 'Family name',
 					valueType: 'string',
 					classification: 'pii',
-					surfaces: ['userinfo'],
+					surfaces: ['id_token', 'userinfo'],
 					requiredScopes: ['profile']
 				},
 				{
@@ -55,7 +55,7 @@ export const oidcDestinationTemplates: DestinationTemplate[] = [
 					label: 'Middle name',
 					valueType: 'string',
 					classification: 'pii',
-					surfaces: ['userinfo'],
+					surfaces: ['id_token', 'userinfo'],
 					requiredScopes: ['profile']
 				},
 				{
@@ -63,7 +63,7 @@ export const oidcDestinationTemplates: DestinationTemplate[] = [
 					label: 'Nickname',
 					valueType: 'string',
 					classification: 'pii',
-					surfaces: ['userinfo'],
+					surfaces: ['id_token', 'userinfo'],
 					requiredScopes: ['profile']
 				},
 				{
@@ -71,7 +71,7 @@ export const oidcDestinationTemplates: DestinationTemplate[] = [
 					label: 'Preferred username',
 					valueType: 'string',
 					classification: 'pii',
-					surfaces: ['userinfo'],
+					surfaces: ['id_token', 'userinfo'],
 					requiredScopes: ['profile']
 				},
 				{
@@ -79,7 +79,7 @@ export const oidcDestinationTemplates: DestinationTemplate[] = [
 					label: 'Profile URL',
 					valueType: 'string',
 					classification: 'pii',
-					surfaces: ['userinfo'],
+					surfaces: ['id_token', 'userinfo'],
 					requiredScopes: ['profile']
 				},
 				{
@@ -87,7 +87,7 @@ export const oidcDestinationTemplates: DestinationTemplate[] = [
 					label: 'Picture URL',
 					valueType: 'string',
 					classification: 'pii',
-					surfaces: ['userinfo'],
+					surfaces: ['id_token', 'userinfo'],
 					requiredScopes: ['profile']
 				},
 				{
@@ -95,7 +95,7 @@ export const oidcDestinationTemplates: DestinationTemplate[] = [
 					label: 'Website URL',
 					valueType: 'string',
 					classification: 'pii',
-					surfaces: ['userinfo'],
+					surfaces: ['id_token', 'userinfo'],
 					requiredScopes: ['profile']
 				},
 				{
@@ -103,7 +103,7 @@ export const oidcDestinationTemplates: DestinationTemplate[] = [
 					label: 'Gender',
 					valueType: 'string',
 					classification: 'pii',
-					surfaces: ['userinfo'],
+					surfaces: ['id_token', 'userinfo'],
 					requiredScopes: ['profile']
 				},
 				{
@@ -111,7 +111,7 @@ export const oidcDestinationTemplates: DestinationTemplate[] = [
 					label: 'Birthdate',
 					valueType: 'date',
 					classification: 'pii',
-					surfaces: ['userinfo'],
+					surfaces: ['id_token', 'userinfo'],
 					requiredScopes: ['profile']
 				},
 				{
@@ -119,7 +119,7 @@ export const oidcDestinationTemplates: DestinationTemplate[] = [
 					label: 'Time zone',
 					valueType: 'string',
 					classification: 'pii',
-					surfaces: ['userinfo'],
+					surfaces: ['id_token', 'userinfo'],
 					requiredScopes: ['profile']
 				},
 				{
@@ -127,7 +127,7 @@ export const oidcDestinationTemplates: DestinationTemplate[] = [
 					label: 'Locale',
 					valueType: 'string',
 					classification: 'pii',
-					surfaces: ['userinfo'],
+					surfaces: ['id_token', 'userinfo'],
 					requiredScopes: ['profile']
 				},
 				{
@@ -135,7 +135,7 @@ export const oidcDestinationTemplates: DestinationTemplate[] = [
 					label: 'Profile updated at',
 					valueType: 'number',
 					classification: 'internal',
-					surfaces: ['userinfo'],
+					surfaces: ['id_token', 'userinfo'],
 					requiredScopes: ['profile']
 				},
 				{
@@ -143,7 +143,7 @@ export const oidcDestinationTemplates: DestinationTemplate[] = [
 					label: 'Email',
 					valueType: 'email',
 					classification: 'pii',
-					surfaces: ['userinfo'],
+					surfaces: ['id_token', 'userinfo'],
 					requiredScopes: ['email']
 				},
 				{
@@ -151,7 +151,7 @@ export const oidcDestinationTemplates: DestinationTemplate[] = [
 					label: 'Email verified',
 					valueType: 'boolean',
 					classification: 'internal',
-					surfaces: ['userinfo'],
+					surfaces: ['id_token', 'userinfo'],
 					requiredScopes: ['email']
 				},
 				{
@@ -159,7 +159,7 @@ export const oidcDestinationTemplates: DestinationTemplate[] = [
 					label: 'Phone number',
 					valueType: 'phone',
 					classification: 'pii',
-					surfaces: ['userinfo'],
+					surfaces: ['id_token', 'userinfo'],
 					requiredScopes: ['phone']
 				},
 				{
@@ -167,7 +167,7 @@ export const oidcDestinationTemplates: DestinationTemplate[] = [
 					label: 'Phone number verified',
 					valueType: 'boolean',
 					classification: 'internal',
-					surfaces: ['userinfo'],
+					surfaces: ['id_token', 'userinfo'],
 					requiredScopes: ['phone']
 				},
 				{
@@ -175,7 +175,7 @@ export const oidcDestinationTemplates: DestinationTemplate[] = [
 					label: 'Address',
 					valueType: 'json',
 					classification: 'pii',
-					surfaces: ['userinfo'],
+					surfaces: ['id_token', 'userinfo'],
 					requiredScopes: ['address']
 				}
 			]

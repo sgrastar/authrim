@@ -1,3 +1,4 @@
+import { replacementWebhookStatements } from './account-webhook-replacement';
 import type { D1Database, D1DatabaseSession } from '@cloudflare/workers-types';
 import type { DatabaseAdapter } from '@authrim/ar-lib-core';
 
@@ -83,6 +84,7 @@ export function isPermanentIdentifierReplacementFailure(error: unknown): boolean
 }
 
 export interface IdentifierReplacementCoordinatorDependencies {
+  webhookCoreForAccount?(tenantId: string, userId: string): Promise<DatabaseAdapter>;
   pii: DatabaseAdapter;
   lookupForBucket(virtualBucket: number): Promise<D1Database>;
   revokeCredentials(input: {
@@ -215,7 +217,7 @@ export class IdentifierReplacementCoordinator {
           oldValue,
         });
       }
-      await this.complete(operation, pairs);
+      await this.complete(operation, pairs, oldValue, newValue);
       operation = { ...operation, state: 'completed' };
     }
 
@@ -771,7 +773,9 @@ export class IdentifierReplacementCoordinator {
 
   private async complete(
     operation: OperationRow,
-    pairs: Array<{ old: ProjectionRow; next: ProjectionRow }>
+    pairs: Array<{ old: ProjectionRow; next: ProjectionRow }>,
+    oldValue: string,
+    newValue: string
   ): Promise<void> {
     const now = this.now();
     const indexKind = replacementIdentifierKind(operation);
@@ -845,6 +849,23 @@ export class IdentifierReplacementCoordinator {
         throw new Error('identifier_replacement_release_verification_failed');
       }
     }
+    const webhookStatements =
+      replacementIdentifierKind(operation) === 'email_exact' &&
+      this.dependencies.webhookCoreForAccount
+        ? await replacementWebhookStatements({
+            core: await this.dependencies.webhookCoreForAccount(
+              operation.tenant_id,
+              operation.account_id
+            ),
+            operationId: operation.operation_id,
+            tenantId: operation.tenant_id,
+            userId: operation.account_id,
+            before: oldValue,
+            after: newValue,
+            // Subscription authorization compares millisecond timestamps.
+            now: Date.now(),
+          })
+        : [];
     const results = await this.dependencies.pii.batch([
       {
         sql: `UPDATE identity_identifier_replacement_operations
@@ -869,6 +890,7 @@ export class IdentifierReplacementCoordinator {
                WHERE operation_id = ?`,
         params: [now, operation.operation_id],
       },
+      ...webhookStatements,
     ]);
     if (
       results[0]?.rowsAffected !== 1 ||

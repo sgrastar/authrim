@@ -273,7 +273,7 @@ export class FlowCompilerService implements FlowCompiler {
         webauthn: {
           mode: 'authenticate',
           discoverable: true,
-          userVerification: 'preferred',
+          userVerification: 'required',
         },
       },
       display_info: {

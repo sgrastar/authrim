@@ -48,7 +48,7 @@ export type BasicAuthResult = BasicAuthSuccess | BasicAuthFailure;
  * Parse HTTP Basic Authentication header
  *
  * Implements RFC 7617 Section 2:
- * 1. Extract Base64-encoded credentials after "Basic "
+ * 1. Extract Base64-encoded credentials after the (case-insensitive) "Basic" scheme
  * 2. Decode Base64 to get "user-id:password"
  * 3. URL-decode both parts (they are URL-encoded before Base64 encoding)
  *
@@ -72,15 +72,17 @@ export function parseBasicAuth(authHeader: string | undefined): BasicAuthResult 
     return { success: false, error: 'missing_header' };
   }
 
-  // Check for "Basic " prefix (case-sensitive per RFC 7617)
-  // Empty string or wrong scheme both return invalid_scheme
-  if (!authHeader.startsWith('Basic ')) {
+  // RFC 9110 section 11.1: the authentication scheme is case-insensitive ("Basic", "basic", "BASIC"),
+  // and one or more spaces separate it from the credentials. Empty string or wrong scheme both
+  // return invalid_scheme.
+  const scheme = /^basic +/i.exec(authHeader);
+  if (!scheme) {
     return { success: false, error: 'invalid_scheme' };
   }
 
   try {
-    // Extract Base64-encoded credentials (everything after "Basic ")
-    const base64Credentials = authHeader.substring(6);
+    // Extract Base64-encoded credentials (everything after the scheme and its spaces)
+    const base64Credentials = authHeader.substring(scheme[0].length);
 
     // Decode Base64
     const credentials = atob(base64Credentials);

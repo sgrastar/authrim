@@ -8,6 +8,9 @@ import { executeD1Command, putKVKeyByNamespaceId, queryD1Rows } from './cloudfla
 
 const RESEND_PLUGIN_ID = 'notifier-resend';
 const CLOUDFLARE_PLUGIN_ID = 'notifier-cloudflare';
+/** Local development only: writes deliveries to the Worker log. See ar-plugin-runner. */
+export const LOCAL_LOG_PLUGIN_ID = 'notifier-log';
+type NotificationChannel = 'email' | 'sms' | 'push';
 const RESEND_API_HOST = 'api.resend.com';
 const PLUGIN_ENCRYPTION_SALT = 'authrim-plugin-config-v1';
 type PluginCryptoKey = Awaited<ReturnType<typeof crypto.subtle.importKey>>;
@@ -121,19 +124,27 @@ function providerId(config: AuthrimConfig): string | null {
   }
 }
 
-async function operationId(environmentId: string, namespaceId: string): Promise<string> {
+async function operationId(
+  environmentId: string,
+  namespaceId: string,
+  channel: NotificationChannel = 'email'
+): Promise<string> {
   const digest = await sha256(
-    JSON.stringify(['authrim-notification-order-bootstrap-v1', environmentId, namespaceId, 'email'])
+    JSON.stringify(['authrim-notification-order-bootstrap-v1', environmentId, namespaceId, channel])
   );
   return `notification-order-bootstrap-v1-${digest}`;
 }
 
-async function orderFingerprint(namespaceId: string, installationIds: string[]): Promise<string> {
+async function orderFingerprint(
+  namespaceId: string,
+  installationIds: string[],
+  channel: NotificationChannel = 'email'
+): Promise<string> {
   return sha256(
     JSON.stringify([
       'authrim-notification-provider-order-v1',
       namespaceId,
-      'email',
+      channel,
       installationIds,
     ])
   );
@@ -205,6 +216,7 @@ INSERT INTO plugin_runner_encrypted_configs (
 async function namespaceSql(input: {
   environmentId: string;
   namespaceId: string;
+  channel?: NotificationChannel;
   providerId: string | null;
   apiKey?: string;
   encryptionSecret?: string;
@@ -216,18 +228,21 @@ async function namespaceSql(input: {
   orderFingerprint: string;
   installationIds: string[];
 }> {
-  const routeOperationId = await operationId(input.environmentId, input.namespaceId);
+  const channel = input.channel ?? 'email';
+  const channelSql = sqlText(channel);
+  const routeOperationId = await operationId(input.environmentId, input.namespaceId, channel);
   const installationIds = input.providerId
     ? [
         await deriveNotificationInstallationId({
           environmentId: input.environmentId,
           tenantId: input.namespaceId,
           pluginId: input.providerId,
+          // One installation per (tenant, plugin): every channel routes to the same one.
           purpose: 'email-provider',
         }),
       ]
     : [];
-  const fingerprint = await orderFingerprint(input.namespaceId, installationIds);
+  const fingerprint = await orderFingerprint(input.namespaceId, installationIds, channel);
   const installationId = installationIds[0];
   const configVersion = input.providerId === RESEND_PLUGIN_ID ? 2 : 1;
   let sql = '';
@@ -270,7 +285,7 @@ INSERT INTO plugin_runner_notification_route_sets (
   tenant_id, channel, config_version, state, last_operation_id,
   order_fingerprint, created_at, updated_at
 ) VALUES (
-  ${sqlText(input.namespaceId)}, 'email', 1,
+  ${sqlText(input.namespaceId)}, ${channelSql}, 1,
   ${sqlText(installationIds.length > 0 ? 'enabled' : 'disabled')},
   ${sqlText(routeOperationId)}, ${sqlText(fingerprint)}, ${input.now}, ${input.now}
 ) ON CONFLICT(tenant_id, channel) DO NOTHING;`;
@@ -279,7 +294,7 @@ INSERT INTO plugin_runner_notification_route_sets (
 INSERT INTO plugin_runner_notification_route_entries (
   tenant_id, channel, config_version, priority, installation_id, created_at
 ) VALUES (
-  ${sqlText(input.namespaceId)}, 'email', 1, 0, ${sqlText(installationId)}, ${input.now}
+  ${sqlText(input.namespaceId)}, ${channelSql}, 1, 0, ${sqlText(installationId)}, ${input.now}
 ) ON CONFLICT(tenant_id, channel, priority) DO NOTHING;`;
   }
   return {
@@ -293,6 +308,7 @@ INSERT INTO plugin_runner_notification_route_entries (
 async function reflectNamespace(input: {
   databaseName: string;
   namespaceId: string;
+  channel?: NotificationChannel;
   providerId: string | null;
   operationId: string;
   orderFingerprint: string;
@@ -313,14 +329,14 @@ async function reflectNamespace(input: {
                 )
             ), '[]') AS installation_ids_json
        FROM plugin_runner_notification_route_sets route
-      WHERE route.tenant_id = ${sqlText(input.namespaceId)} AND route.channel = 'email'`
+      WHERE route.tenant_id = ${sqlText(input.namespaceId)} AND route.channel = ${sqlText(input.channel ?? 'email')}`
   );
   const route = routes[0];
   if (
     routes.length !== 1 ||
     !route ||
     route.tenant_id !== input.namespaceId ||
-    route.channel !== 'email' ||
+    route.channel !== (input.channel ?? 'email') ||
     Number(route.config_version) !== 1 ||
     route.state !== (input.installationIds.length > 0 ? 'enabled' : 'disabled') ||
     route.last_operation_id !== input.operationId ||
@@ -455,4 +471,78 @@ export async function ensureInitialNotificationProviderConfiguration(
     await putKv(settingsNamespaceId, `plugins:enabled:${selectedProviderId}`, 'true');
   }
   return { providerId: selectedProviderId, namespaces };
+}
+
+const LOCAL_LOG_CHANNELS: readonly NotificationChannel[] = ['email', 'sms', 'push'];
+
+/**
+ * Route every notification channel to the local-only `notifier-log` provider, which writes each
+ * delivery (including one-time codes and magic links) to the Worker log instead of sending it.
+ *
+ * This exists for `authrim-setup local` only. Production setup never calls it, and the Worker
+ * side refuses the provider unless the deployment explicitly sets
+ * `AUTHRIM_LOCAL_NOTIFICATION_LOG=true`, which setup emits only for local development.
+ */
+export async function ensureLocalLogNotificationConfiguration(input: {
+  environmentId: string;
+  config: AuthrimConfig;
+  lock: AuthrimLock;
+  now?: number;
+  execute?: typeof executeD1Command;
+  query?: typeof queryD1Rows;
+  putKv?: typeof putKVKeyByNamespaceId;
+}): Promise<InitialNotificationProviderBootstrapResult> {
+  const databaseIdentifier = input.lock.d1.PLUGIN_RUNNER_DB?.id?.trim();
+  const authrimConfigNamespaceId = input.lock.kv.AUTHRIM_CONFIG?.id;
+  const settingsNamespaceId = input.lock.kv.SETTINGS?.id;
+  if (!databaseIdentifier) {
+    throw new Error('notification_provider_bootstrap_database_id_missing');
+  }
+  if (!authrimConfigNamespaceId || !settingsNamespaceId) {
+    throw new Error('notification_provider_bootstrap_kv_missing');
+  }
+  const initialTenantId = input.config.tenant.name;
+  if (!initialTenantId || initialTenantId === PLATFORM_NOTIFICATION_NAMESPACE) {
+    throw new Error('notification_provider_bootstrap_tenant_invalid');
+  }
+  const now = input.now ?? Math.floor(Date.now() / 1_000);
+  if (!Number.isSafeInteger(now) || now < 1) {
+    throw new Error('notification_provider_bootstrap_now_invalid');
+  }
+  const execute = input.execute ?? executeD1Command;
+  const query = input.query ?? queryD1Rows;
+  const putKv = input.putKv ?? putKVKeyByNamespaceId;
+
+  const namespaces = [PLATFORM_NOTIFICATION_NAMESPACE, initialTenantId];
+  for (const namespaceId of namespaces) {
+    for (const channel of LOCAL_LOG_CHANNELS) {
+      const plan = await namespaceSql({
+        environmentId: input.environmentId,
+        namespaceId,
+        channel,
+        providerId: LOCAL_LOG_PLUGIN_ID,
+        now,
+      });
+      await execute(databaseIdentifier, plan.sql);
+      await reflectNamespace({
+        databaseName: databaseIdentifier,
+        namespaceId,
+        channel,
+        providerId: LOCAL_LOG_PLUGIN_ID,
+        operationId: plan.operationId,
+        orderFingerprint: plan.orderFingerprint,
+        installationIds: plan.installationIds,
+        query,
+      });
+    }
+  }
+
+  await putKv(
+    authrimConfigNamespaceId,
+    `settings:tenant:${initialTenantId}:email-settings`,
+    JSON.stringify({ strategy: 'priority_failover', providerOrder: [LOCAL_LOG_PLUGIN_ID] })
+  );
+  await putKv(settingsNamespaceId, `plugins:config:${LOCAL_LOG_PLUGIN_ID}`, '{}');
+  await putKv(settingsNamespaceId, `plugins:enabled:${LOCAL_LOG_PLUGIN_ID}`, 'true');
+  return { providerId: LOCAL_LOG_PLUGIN_ID, namespaces };
 }

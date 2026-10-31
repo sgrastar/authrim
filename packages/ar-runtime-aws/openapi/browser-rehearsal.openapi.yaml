@@ -1,0 +1,186 @@
+openapi: 3.2.0
+info:
+  title: Authrim Synthetic Browser SAML Rehearsal
+  version: 0.5.0
+  description: >-
+    An isolated, explicitly enabled synthetic service provider for browser testing.
+    It shares one pinned HTTPS origin with the test IdP and is not a production SP.
+    SAML responses must match the configured synthetic subject and attribute policy.
+    The success page displays verification status without assertions or user data.
+servers:
+  - url: /
+tags:
+  - name: Synthetic browser rehearsal
+paths:
+  /test-sp/start:
+    get:
+      operationId: getSyntheticBrowserSpStartPage
+      tags: [Synthetic browser rehearsal]
+      summary: Show the Japanese synthetic SAML login start page
+      description: Reading the page does not create an authentication request.
+      responses:
+        '200':
+          $ref: '#/components/responses/HtmlPage'
+        '400':
+          $ref: '#/components/responses/Rejected'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+    post:
+      operationId: startSyntheticBrowserSpLogin
+      tags: [Synthetic browser rehearsal]
+      summary: Create a browser-bound SAML AuthnRequest
+      description: >-
+        Requires the exact configured origin. Creates a ten-minute, single-use
+        request and returns an HTML form that posts to the same-origin IdP.
+        All SAML destinations and the entity ID are configured by the deployment;
+        this operation accepts no caller-selected destination or redirect URL.
+        Starting another request replaces the browser's correlation cookie.
+      parameters:
+        - $ref: '#/components/parameters/SameOrigin'
+      responses:
+        '200':
+          description: HTML form for the pinned IdP and a browser correlation cookie
+          headers:
+            Set-Cookie:
+              description: Secure, HttpOnly, SameSite=Strict correlation cookie with Path=/ and a ten-minute lifetime
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            text/html:
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/Rejected'
+        '403':
+          $ref: '#/components/responses/ForeignOrigin'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /test-sp/metadata:
+    get:
+      operationId: getSyntheticBrowserSpMetadata
+      tags: [Synthetic browser rehearsal]
+      summary: Return the synthetic SP metadata
+      description: >-
+        Declares the same-origin entity ID and HTTP-POST assertion consumer URL.
+        AuthnRequests are unsigned. The ACS requires a signature covering the SAML
+        Response and verifies it against the independently pinned IdP certificate.
+      responses:
+        '200':
+          description: SAML SP metadata
+          content:
+            application/samlmetadata+xml:
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/Rejected'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /test-sp/acs:
+    post:
+      operationId: consumeSyntheticBrowserSamlResponse
+      tags: [Synthetic browser rehearsal]
+      summary: Verify and consume a synthetic SAML response
+      description: >-
+        Requires the exact configured Origin or the literal opaque Origin value null,
+        together with the browser correlation cookie. A missing or foreign Origin is
+        rejected. The opaque-origin exception applies only to this ACS operation and
+        supports the IdP's no-referrer HTTP-POST binding; it does not bypass verification.
+        Accepts only a signed successful SAML Response with the pinned certificate,
+        issuer, audience, destination, recipient, request ID, synthetic NameID and
+        attribute, and valid timestamps. RelayState must identify the outstanding
+        browser-bound request. The request is consumed atomically only after
+        verification; missing, expired, consumed or mismatched requests are rejected.
+        The form body is limited to 128 KiB. Duplicate or unknown fields are rejected.
+      security:
+        - SyntheticBrowserCorrelation: []
+      parameters:
+        - $ref: '#/components/parameters/SamlPostOrigin'
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [SAMLResponse, RelayState]
+              properties:
+                SAMLResponse:
+                  type: string
+                  contentEncoding: base64
+                  description: Base64-encoded UTF-8 SAML Response XML
+                RelayState:
+                  type: string
+                  description: Opaque correlation value returned by the start operation
+      responses:
+        '200':
+          description: Japanese verification success page; correlation cookie is cleared
+          headers:
+            Set-Cookie:
+              description: Clears the browser correlation cookie
+              schema:
+                type: string
+          content:
+            text/html:
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/Rejected'
+        '403':
+          $ref: '#/components/responses/ForeignOrigin'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+components:
+  securitySchemes:
+    SyntheticBrowserCorrelation:
+      type: apiKey
+      in: cookie
+      name: __Host-authrim_test_sp
+      description: Opaque single-request browser binding; does not establish an application session
+  parameters:
+    SameOrigin:
+      name: Origin
+      in: header
+      required: true
+      description: Must exactly match the deployment's pinned HTTPS origin
+      schema:
+        type: string
+        format: uri
+    SamlPostOrigin:
+      name: Origin
+      in: header
+      required: true
+      description: >-
+        Must exactly match the deployment's pinned HTTPS origin or be the literal
+        string null. The Strict browser correlation cookie and signed response are
+        required for either value.
+      schema:
+        type: string
+  responses:
+    HtmlPage:
+      description: Japanese test page with Cache-Control no-store
+      content:
+        text/html:
+          schema:
+            type: string
+    Rejected:
+      description: Invalid host, malformed input, failed verification or unavailable correlation; no sensitive diagnostics
+      content:
+        text/plain:
+          schema:
+            type: string
+    ForeignOrigin:
+      description: Missing or disallowed Origin; literal null is permitted only for the ACS operation
+      content:
+        text/plain:
+          schema:
+            type: string
+    Unavailable:
+      description: Pinned configuration or database initialization is temporarily unavailable
+      content:
+        text/plain:
+          schema:
+            type: string

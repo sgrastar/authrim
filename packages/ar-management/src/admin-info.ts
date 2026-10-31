@@ -16,6 +16,7 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   getUIConfig,
+  type UIConfigReadOptions,
   getLogger,
   createRuntimeProfileRegistryFromEnv,
   loadEnvironmentProfileDefaultsFromEnv,
@@ -25,6 +26,7 @@ import {
 import { ensureSupportedTenantId } from './single-tenant-guard';
 import { getCanonicalTenantBaseUrl } from './request-issuer';
 import { requireTenantResourceAccess } from './admin-tenant-access';
+import { settingsUnavailableResponse } from './routes/settings/settings-unavailable';
 
 type AdminInfoEnv = Env & {
   LOGIN_UI_ENABLED?: string;
@@ -91,7 +93,21 @@ export async function adminTenantInfoHandler(c: Context<{ Bindings: Env }>) {
     const issuer = buildTenantBaseUrl(c.env, tenantId);
 
     const components = getComponentAvailability(c.env);
-    const { loginUiUrl, adminUiUrl } = await getConfiguredUiUrls(c.env, issuer);
+    // The platform's UI for the entry URLs below (as before); the UI base URL configured for the
+    // tenant, validated as the login redirects validate it, for login_ui_base_url. Read strictly:
+    // a UI that may be configured is not shown as unset (503 instead).
+    let urls: [Awaited<ReturnType<typeof getConfiguredUiUrls>>, string | null];
+    try {
+      const [platformUrls, tenantUrls] = await Promise.all([
+        getConfiguredUiUrls(c.env, issuer, undefined, { strict: true }),
+        getConfiguredUiUrls(c.env, issuer, tenantId, { strict: true }),
+      ]);
+      urls = [platformUrls, tenantUrls.loginUiUrl];
+    } catch (error) {
+      log.warn('UI settings could not be read', { tenantId, error: String(error) });
+      return settingsUnavailableResponse(c);
+    }
+    const [{ loginUiUrl, adminUiUrl }, tenantLoginUiBaseUrl] = urls;
     const singleTenantMode = !c.env.BASE_DOMAIN;
     const tenantLoginUrl = buildTenantLoginUrl({
       issuer,
@@ -115,6 +131,9 @@ export async function adminTenantInfoHandler(c: Context<{ Bindings: Env }>) {
       issuer,
       components,
       login_ui_url: tenantLoginUrl,
+      // The UI base URL configured for this tenant (its own when allowed, else the platform's;
+      // null: none). The per-request host choice of the login redirects is not applied.
+      login_ui_base_url: tenantLoginUiBaseUrl,
       global_login_ui_url: globalLoginUiUrl,
       discover_url: discoverUrl,
       admin_ui_url: adminUiUrl,
@@ -321,7 +340,8 @@ function buildEndpoints(issuer: string, apiBaseUrl: string) {
       clients: `${apiBaseUrl}/api/admin/clients`,
       sessions: `${apiBaseUrl}/api/admin/sessions`,
       audit_logs: `${apiBaseUrl}/api/admin/audit-logs`,
-      settings: `${apiBaseUrl}/api/admin/settings`,
+      // The Settings API's catalog of categories (values are read per scope and category).
+      settings: `${apiBaseUrl}/api/admin/settings/meta`,
       tenants: `${apiBaseUrl}/api/admin/tenants`,
       custom_claims: `${apiBaseUrl}/api/admin/custom-claims`,
       organizations: `${apiBaseUrl}/api/admin/organizations`,
@@ -348,13 +368,17 @@ export function usesNakedDomainIssuer(env: Env, tenantId: string): boolean {
 
 export async function getConfiguredUiUrls(
   env: AdminInfoEnv,
-  issuer: string | null = null
+  issuer: string | null = null,
+  /** The tenant whose sign-in UI is wanted (its own, else the platform's); none: the platform's. */
+  tenantId?: string,
+  options?: UIConfigReadOptions
 ): Promise<{
   loginUiUrl: string | null;
   adminUiUrl: string | null;
 }> {
   const components = getComponentAvailability(env);
-  const uiConfig = await getUIConfig(env);
+  // The configured base URL, validated as the login redirects validate it.
+  const uiConfig = await getUIConfig(env, tenantId, options);
   const loginUiUrl = uiConfig?.baseUrl ?? null;
   const adminUiUrl = components.admin_ui ? env.ADMIN_UI_URL || null : null;
   return {

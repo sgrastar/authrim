@@ -14,6 +14,7 @@ import {
   resolveAgentConfigurationPlan,
   hasCompleteAgentConfigurationSnapshot,
   type AdminAgentAuditWrite,
+  type AdminAgentAuditWriter,
   type AgentBulkPlanDefinition,
   type AgentGrantContract,
   type AgentToolCatalog,
@@ -96,10 +97,11 @@ export class CloudflareAgentBulkPlanAdapter implements AgentBulkPlanPort {
     private readonly resolveActiveTenantIds: (
       tenantIds: readonly string[]
     ) => Promise<ReadonlySet<string>>,
-    private readonly now: () => number = () => Date.now()
+    private readonly now: () => number = () => Date.now(),
+    auditWriter?: AdminAgentAuditWriter
   ) {
-    this.bulk = new AgentBulkRepository(database);
-    this.grants = new AdminAgentAccessRepository(database);
+    this.bulk = new AgentBulkRepository(database, auditWriter);
+    this.grants = new AdminAgentAccessRepository(database, auditWriter);
     this.machines = new AdminMachineAccessRepository(database);
   }
 
@@ -294,21 +296,18 @@ export class CloudflareAgentBulkPlanAdapter implements AgentBulkPlanPort {
       return result(409, { error: 'AGENT_BULK_PLAN_CANARY_PROTECTED' });
     }
 
-    const [
-      principal,
-      credential,
-      principalScopes,
-      credentialScopes,
-      principalPermissions,
-      credentialPermissions,
-    ] = await Promise.all([
-      this.machines.findPrincipalById(request.actor.machinePrincipalId),
-      this.machines.findCredentialById(request.actor.machineCredentialId),
-      this.machines.getPrincipalTenantScopes(request.actor.machinePrincipalId),
-      this.machines.getCredentialTenantScopes(request.actor.machineCredentialId),
-      this.machines.getPrincipalPermissions(request.actor.machinePrincipalId),
-      this.machines.getCredentialPermissions(request.actor.machineCredentialId),
-    ]);
+    // One snapshot of the principal, the credential and their scopes and permissions: the scope
+    // of one stored state is never combined with the permissions of another.
+    const machineSnapshot = await this.machines.loadMachineGrantSnapshot(
+      request.actor.machinePrincipalId,
+      request.actor.machineCredentialId
+    );
+    const principal = machineSnapshot?.principal;
+    const credential = machineSnapshot?.credential;
+    const principalScopes = machineSnapshot?.principalTenantScopes ?? [];
+    const credentialScopes = machineSnapshot?.credentialTenantScopes ?? [];
+    const principalPermissions = machineSnapshot?.principalPermissions ?? [];
+    const credentialPermissions = machineSnapshot?.credentialPermissions ?? [];
     if (
       !principal ||
       principal.status !== 'active' ||
@@ -347,7 +346,7 @@ export class CloudflareAgentBulkPlanAdapter implements AgentBulkPlanPort {
       tools.some(
         (tool, index) =>
           !tool ||
-          tool.contractVersion !== definition.plan.steps[index]!.toolContractVersion ||
+          tool.contractVersion !== definition.plan.steps[index].toolContractVersion ||
           !agentGrantPinsToolContract(grant, tool)
       ) ||
       requiredPermissions.some(

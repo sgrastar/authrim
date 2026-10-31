@@ -3,6 +3,11 @@
  */
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import { runSamlDrCoveredOperation } from '../tenant-portability/saml-dr-writer';
+
+const canonicalAudit = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+vi.mock('../../utils/audit-log', () => ({ writeLegacyAuditLog: canonicalAudit }));
+import type { Env } from '../../types/env';
 
 vi.mock('../logging-runtime-emitter', () => ({
   emitRuntimeLogRecords: vi.fn(async () => ({ tenantKey: 'tk_test', targetResults: [] })),
@@ -104,8 +109,10 @@ describe('EventDispatcher', () => {
     mockFetch.mockReset();
     decryptSecret.mockClear();
     vi.mocked(emitRuntimeLogRecords).mockClear();
+    canonicalAudit.mockClear();
 
     dispatcher = createEventDispatcher({
+      env: {} as Env,
       adapter,
       kv,
       webhookRegistry,
@@ -173,6 +180,26 @@ describe('EventDispatcher', () => {
   // ===========================================================================
 
   describe('deduplication', () => {
+    it('keeps durable outbox identity and retries after a failed publish without a KV lock', async () => {
+      webhookRegistry.findByEventType.mockRejectedValueOnce(
+        new Error('temporary registry failure')
+      );
+      const payload = { type: 'account.deleted', tenantId: 't', data: { userId: 'u' } };
+      const options = {
+        durableEvent: { id: 'evt_durable', occurredAt: 1234000 },
+        skipAuditLog: true,
+      };
+      const failed = await dispatcher.publish(payload, options);
+      const retried = await dispatcher.publish(payload, options);
+      expect(failed.success).toBe(false);
+      expect(retried.success).toBe(true);
+      expect(retried.deduplicated).toBeUndefined();
+      expect(failed.eventId).toBe('evt_durable');
+      expect(retried.eventId).toBe(failed.eventId);
+      expect(retried.timestamp).toBe(1234000);
+      expect(kv.put).not.toHaveBeenCalled();
+    });
+
     it('should deduplicate events with same deduplicationKey', async () => {
       const result1 = await dispatcher.publish(
         {
@@ -382,6 +409,161 @@ describe('EventDispatcher', () => {
   // ===========================================================================
 
   describe('webhook delivery', () => {
+    it('materializes selected data independently for each destination', async () => {
+      mockFetch.mockResolvedValue({ ok: true, status: 200 });
+      webhookRegistry.findByEventType.mockResolvedValue([
+        {
+          id: 'email',
+          tenantId: 'tenant_default',
+          scope: 'tenant',
+          url: 'https://example.com/email',
+          secretEncrypted: 'secret',
+          timeoutMs: 1000,
+          events: ['account.email.changed'],
+          payloadFields: ['email'],
+          active: true,
+        },
+        {
+          id: 'ids',
+          tenantId: 'tenant_default',
+          scope: 'tenant',
+          url: 'https://example.com/ids',
+          secretEncrypted: 'secret',
+          timeoutMs: 1000,
+          events: ['account.email.changed'],
+          payloadFields: [],
+          active: true,
+        },
+      ]);
+      await dispatcher.publish(
+        { type: 'account.email.changed', tenantId: 'tenant_default', data: { userId: 'u' } },
+        {
+          skipAuditLog: true,
+          skipInternalHandlers: true,
+          accountWebhookData: async (webhook) =>
+            webhook.payloadFields?.includes('email')
+              ? {
+                  userId: 'u',
+                  changes: { email: { before: 'old@example.com', after: 'new@example.com' } },
+                }
+              : { userId: 'u' },
+        }
+      );
+      const bodies = new Map(
+        mockFetch.mock.calls.map(([url, request]) => [String(url), JSON.parse(request.body).data])
+      );
+      expect(bodies.get('https://example.com/ids')).toEqual({ userId: 'u' });
+      expect(bodies.get('https://example.com/email')).toHaveProperty(
+        'changes.email.before',
+        'old@example.com'
+      );
+    });
+    it.each([
+      'user.created',
+      'user.updated',
+      'user.deleted',
+      'account.guest.created',
+      'account.guest.updated',
+      'account.guest.deleted',
+      'account.registered.created',
+      'account.registered.updated',
+      'account.registered.deleted',
+      'account.registration.promoted',
+      'account.registration.demoted',
+    ])('does not deliver removed lifecycle webhook %s', async (type) => {
+      await dispatcher.publish(
+        { type, tenantId: 'tenant_default', data: { userId: 'u' } },
+        { skipAuditLog: true }
+      );
+      expect(webhookRegistry.findByEventType).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+    it('filters account state without resolving legacy subscription aliases', async () => {
+      mockFetch.mockResolvedValue({ ok: true, status: 200 });
+      const base = {
+        tenantId: 'tenant_default',
+        scope: 'tenant',
+        url: 'https://example.com/hook',
+        secretEncrypted: 'secret',
+        timeoutMs: 1000,
+        active: true,
+      };
+      webhookRegistry.findByEventType.mockImplementation(async (_tenant, type) =>
+        type === 'account.created'
+          ? [
+              {
+                ...base,
+                id: 'registered',
+                events: ['account.created'],
+                registrationStates: ['registered'],
+              },
+            ]
+          : [{ ...base, id: 'legacy', events: ['account.guest.created'] }]
+      );
+      await dispatcher.publish(
+        {
+          type: 'account.created',
+          tenantId: 'tenant_default',
+          data: { registration_state: 'guest' },
+        },
+        { skipAuditLog: true }
+      );
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(webhookRegistry.findByEventType).toHaveBeenCalledTimes(1);
+    });
+    it('sends a durable account event with its original envelope on every delivery attempt', async () => {
+      mockFetch.mockResolvedValue({ ok: true, status: 200 });
+      webhookRegistry.findByEventType.mockResolvedValue([
+        {
+          id: 'wh_account',
+          tenantId: 'tenant_default',
+          url: 'https://example.com/webhook',
+          secretEncrypted: 'encrypted_secret',
+          timeoutMs: 10000,
+          events: ['account.*'],
+          active: true,
+        },
+      ]);
+      const payload = {
+        type: 'account.deleted',
+        tenantId: 'tenant_default',
+        data: { userId: 'u' },
+      };
+      const options = {
+        durableEvent: { id: 'evt_original', occurredAt: 1000 },
+        skipAuditLog: true,
+      };
+      await dispatcher.publish(payload, options);
+      await dispatcher.publish(payload, options);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      for (const [, request] of mockFetch.mock.calls) {
+        expect(JSON.parse(request.body)).toMatchObject({
+          id: 'evt_original',
+          timestamp: '1970-01-01T00:00:01.000Z',
+          type: 'account.deleted',
+          tenantId: 'tenant_default',
+          data: { userId: 'u' },
+        });
+      }
+    });
+    it('keeps a durable event pending when a matching webhook cannot sign the payload', async () => {
+      webhookRegistry.findByEventType.mockResolvedValue([
+        {
+          id: 'wh_account',
+          tenantId: 'tenant_default',
+          url: 'https://example.com/webhook',
+          events: ['account.*'],
+          active: true,
+        },
+      ]);
+      const result = await dispatcher.publish(
+        { type: 'account.deleted', tenantId: 'tenant_default', data: {} },
+        { durableEvent: { id: 'evt_missing_secret', occurredAt: 1000 }, skipAuditLog: true }
+      );
+      expect(result.delivery.webhooks.skipped).toBe(1);
+      expect(result.success).toBe(false);
+    });
+
     it('should deliver to matching webhooks', async () => {
       mockFetch.mockResolvedValue({ ok: true, status: 200 });
 
@@ -476,6 +658,7 @@ describe('EventDispatcher', () => {
       ]);
 
       const runtimeDispatcher = createEventDispatcher({
+        env: {} as Env,
         adapter,
         kv,
         webhookRegistry,
@@ -547,16 +730,21 @@ describe('EventDispatcher', () => {
         data: { userId: 'user_123' },
       });
 
-      expect(adapter.execute).toHaveBeenCalled();
-      const calls = (adapter.execute as any).mock.calls;
-      const auditLogCall = calls.find((c: any) => c[0].includes('audit_log'));
-      expect(auditLogCall).toBeDefined();
+      expect(canonicalAudit).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.objectContaining({ action: 'auth.login.succeeded', tenantId: 'tenant_default' })
+      );
+      expect(adapter.execute).not.toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO audit_log'),
+        expect.any(Array)
+      );
       expect(result.delivery.auditLog).toBe(true);
     });
 
     it('should use a custom auditLogWriter when provided', async () => {
       const auditLogWriter = vi.fn().mockResolvedValue(undefined);
       const customDispatcher = createEventDispatcher({
+        env: {} as Env,
         adapter,
         kv,
         webhookRegistry,
@@ -598,6 +786,87 @@ describe('EventDispatcher', () => {
   // ===========================================================================
 
   describe('after hooks', () => {
+    it('retains admission for an unawaited event and its asynchronous source hook', async () => {
+      let finish!: () => void;
+      const pending = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      const handler = vi.fn(async () => {
+        await pending;
+      });
+      (hookRegistry as { getAfterHooks: ReturnType<typeof vi.fn> }).getAfterHooks.mockReturnValue([
+        { id: 'dr-hook', name: 'DR Hook', eventPattern: '*', handler, async: true },
+      ]);
+      const complete = vi.fn(async () => undefined);
+      const env = {
+        ENABLE_SAML_DR_EXPORT: 'true',
+        SAML_DR_MUTATION_CONTROL: {
+          acquireEnvironmentBackupMutationPermit: vi.fn(async () => ({ admitted: true })),
+          completeEnvironmentBackupMutationPermit: complete,
+        },
+      };
+      const run = runSamlDrCoveredOperation(env, undefined, async () => {
+        void dispatcher.publish({
+          type: 'auth.login.succeeded',
+          tenantId: 'tenant_default',
+          data: {},
+        });
+      });
+      await vi.waitFor(() => expect(handler).toHaveBeenCalledOnce());
+      expect(complete).not.toHaveBeenCalled();
+      finish();
+      await run;
+      expect(complete).toHaveBeenCalledOnce();
+    });
+
+    it('retains admission for a timed-out source hook until its underlying effect settles', async () => {
+      vi.useFakeTimers();
+      try {
+        let finish!: () => void;
+        const pending = new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+        const handler = vi.fn(async () => {
+          await pending;
+        });
+        (hookRegistry as { getAfterHooks: ReturnType<typeof vi.fn> }).getAfterHooks.mockReturnValue(
+          [
+            {
+              id: 'dr-timeout-hook',
+              name: 'DR Hook',
+              eventPattern: '*',
+              handler,
+              timeoutMs: 5,
+              async: false,
+            },
+          ]
+        );
+        const complete = vi.fn(async () => undefined);
+        const env = {
+          ENABLE_SAML_DR_EXPORT: 'true',
+          SAML_DR_MUTATION_CONTROL: {
+            acquireEnvironmentBackupMutationPermit: vi.fn(async () => ({ admitted: true })),
+            completeEnvironmentBackupMutationPermit: complete,
+          },
+        };
+        const run = runSamlDrCoveredOperation(env, undefined, async () => {
+          await dispatcher.publish({
+            type: 'auth.login.succeeded',
+            tenantId: 'tenant_default',
+            data: {},
+          });
+        });
+        await vi.waitFor(() => expect(handler).toHaveBeenCalledOnce());
+        await vi.advanceTimersByTimeAsync(10);
+        expect(complete).not.toHaveBeenCalled();
+        finish();
+        await run;
+        expect(complete).toHaveBeenCalledOnce();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('should execute sync after hooks', async () => {
       const afterHandler = vi.fn().mockResolvedValue(undefined);
       hookRegistry.getAfterHooks.mockReturnValue([
@@ -747,6 +1016,7 @@ describe('EventDispatcher', () => {
 describe('createEventDispatcher', () => {
   it('should create dispatcher with all dependencies', () => {
     const dispatcher = createEventDispatcher({
+      env: {} as Env,
       adapter: createMockAdapter(),
       kv: createMockKV(),
       webhookRegistry: createMockWebhookRegistry(),
@@ -760,6 +1030,7 @@ describe('createEventDispatcher', () => {
 
   it('should accept custom options', () => {
     const dispatcher = createEventDispatcher({
+      env: {} as Env,
       adapter: createMockAdapter(),
       kv: createMockKV(),
       webhookRegistry: createMockWebhookRegistry(),

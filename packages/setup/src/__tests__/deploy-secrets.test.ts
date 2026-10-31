@@ -6,7 +6,7 @@ import {
   loadDeploySecretsFromKeys,
   SECRET_UPLOAD_PLAN,
 } from '../core/deploy.js';
-import { getMissingRequiredDeploySecrets } from '../core/secrets.js';
+import { getMissingRequiredDeploySecrets, SECRET_KEY_FILES } from '../core/secrets.js';
 import { WORKER_COMPONENTS, getRequiredDataRolesForComponent } from '../core/naming.js';
 
 describe('DEFAULT_SECRET_TARGET_WORKERS', () => {
@@ -67,6 +67,22 @@ describe('getSecretTargetWorkers', () => {
 });
 
 describe('SECRET_UPLOAD_PLAN', () => {
+  it('uploads the tenant backup wrapping key only to Management', () => {
+    expect(
+      Object.entries(SECRET_UPLOAD_PLAN)
+        .filter(([, secrets]) => secrets.includes('TENANT_BACKUP_WRAPPING_KEY'))
+        .map(([worker]) => worker)
+    ).toEqual(['ar-management']);
+    expect(getSecretNamesForWorker('ar-management')).toContain('TENANT_BACKUP_WRAPPING_KEY');
+  });
+
+  it('gives Async the lookup HMAC keys its session account resolution reads', () => {
+    expect(getSecretNamesForWorker('ar-async')).toEqual(
+      expect.arrayContaining(['LOOKUP_HMAC_KEY_SLOT_A', 'LOOKUP_HMAC_KEY_SLOT_B'])
+    );
+    expect(getRequiredDataRolesForComponent('ar-async')).toContain('lookup');
+  });
+
   it('keeps persistent Cloudflare tokens exclusive to the Control Worker', () => {
     expect(getSecretNamesForWorker('ar-control')).toEqual([
       'RUNTIME_REGISTRY_SIGNING_JWK_SLOT_A',
@@ -326,8 +342,39 @@ describe('SECRET_UPLOAD_PLAN', () => {
       'LOOKUP_HMAC_KEY_SLOT_A',
       'LOOKUP_HMAC_KEY_SLOT_B',
       'CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS',
+      'TOMBSTONE_HMAC_KEYRING',
+      'INVESTIGATION_SUBJECT_HMAC_KEYRING',
     ]);
     expect(getSecretNamesForWorker('ar-bridge')).not.toContain('ADMIN_API_SECRET');
+  });
+
+  it("gives the tombstone keyring to the Workers that write or check deleted accounts' records only", () => {
+    for (const worker of ['ar-auth', 'ar-management', 'ar-bridge', 'ar-saml'] as const) {
+      expect(getSecretNamesForWorker(worker)).toContain('TOMBSTONE_HMAC_KEYRING');
+    }
+    for (const worker of ['ar-token', 'ar-userinfo', 'ar-discovery', 'ar-control'] as const) {
+      expect(getSecretNamesForWorker(worker)).not.toContain('TOMBSTONE_HMAC_KEYRING');
+    }
+    expect(SECRET_KEY_FILES.TOMBSTONE_HMAC_KEYRING).toBe('tombstone_hmac_keyring.json');
+  });
+
+  it('gives the investigation keyring to the Workers that record or read sign-in attempts only', () => {
+    // ar-auth, ar-bridge and ar-saml record attempts; ar-management reads them.
+    for (const worker of ['ar-auth', 'ar-bridge', 'ar-saml', 'ar-management'] as const) {
+      expect(getSecretNamesForWorker(worker)).toContain('INVESTIGATION_SUBJECT_HMAC_KEYRING');
+    }
+    for (const worker of [
+      'ar-token',
+      'ar-userinfo',
+      'ar-discovery',
+      'ar-control',
+      'ar-vc',
+    ] as const) {
+      expect(getSecretNamesForWorker(worker)).not.toContain('INVESTIGATION_SUBJECT_HMAC_KEYRING');
+    }
+    expect(SECRET_KEY_FILES.INVESTIGATION_SUBJECT_HMAC_KEYRING).toBe(
+      'investigation_subject_hmac_keyring.json'
+    );
   });
 
   it('keeps runtime registry private signing material exclusive to Control', () => {

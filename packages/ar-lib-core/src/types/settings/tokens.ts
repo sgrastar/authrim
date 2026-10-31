@@ -18,22 +18,18 @@ export interface TokensSettings {
   'tokens.exchange_impersonation_enabled': boolean;
 
   // Token Introspection
-  'tokens.introspection_cache_ttl': number;
-  'tokens.introspection_require_client_auth': boolean;
   'tokens.introspection_strict_validation': boolean;
-  'tokens.introspection_cache_max_size': number;
-  'tokens.introspection_cache_inactive': number;
   'tokens.introspection_extended_claims': boolean;
-
-  // Token Signing Key Selection
-  'tokens.access_token_signing_key_id': string;
-  'tokens.id_token_signing_key_id': string;
-  'tokens.userinfo_signing_key_id': string;
-  'tokens.access_token_singularization': boolean;
 
   // RBAC Claims Embedding
   'tokens.rbac_id_token_claims': string;
   'tokens.rbac_access_token_claims': string;
+  'tokens.exchange_allowed_subject_token_types': string;
+  'tokens.id_jag_allowed_issuers': string[];
+  'tokens.id_jag_max_token_lifetime': number;
+  'tokens.id_jag_include_tenant_claim': boolean;
+  'tokens.id_jag_require_confidential_client': boolean;
+  'tokens.introspection_expected_audience': string;
 }
 
 /**
@@ -45,134 +41,65 @@ export const TOKENS_SETTINGS_META: Record<keyof TokensSettings, SettingMeta> = {
     type: 'boolean',
     default: false,
     envKey: 'ENABLE_TOKEN_EXCHANGE',
+    envBoolean: 'exactly-true',
     label: 'Token Exchange Enabled',
     description: 'Enable OAuth 2.0 Token Exchange (RFC 8693)',
     visibility: 'public',
   },
   'tokens.exchange_delegation_enabled': {
     key: 'tokens.exchange_delegation_enabled',
+    // Per tenant (or app) only, as before the category had platform values.
+    scopes: ['tenant'],
     type: 'boolean',
     default: false,
     envKey: 'ENABLE_TOKEN_EXCHANGE_DELEGATION',
     label: 'Delegation Enabled',
-    description: 'Allow delegation use case in token exchange',
+    description:
+      "Tenant ceiling for token exchange by delegation (the app acts for the user, with an act claim). An app whose delegation_mode is delegation (the default) is refused with unauthorized_client unless this is on; the app's own delegation_mode can narrow it further but not widen it.",
     visibility: 'admin',
     dependsOn: [{ key: 'tokens.exchange_enabled', value: true }],
   },
   'tokens.exchange_impersonation_enabled': {
     key: 'tokens.exchange_impersonation_enabled',
+    // Per tenant (or app) only, as before the category had platform values.
+    scopes: ['tenant'],
     type: 'boolean',
     default: false,
     envKey: 'ENABLE_TOKEN_EXCHANGE_IMPERSONATION',
     label: 'Impersonation Enabled',
-    description: 'Allow impersonation use case in token exchange (security sensitive)',
+    description:
+      'Tenant ceiling for token exchange by impersonation (the token acts as the user, with no act claim; security sensitive). An app whose delegation_mode is impersonation is refused with unauthorized_client unless this is on.',
     visibility: 'admin',
     dependsOn: [{ key: 'tokens.exchange_enabled', value: true }],
-  },
-  'tokens.introspection_cache_ttl': {
-    key: 'tokens.introspection_cache_ttl',
-    type: 'duration',
-    default: 60,
-    envKey: 'INTROSPECTION_CACHE_TTL',
-    label: 'Introspection Cache TTL',
-    description: 'Token introspection result cache lifetime in seconds',
-    min: 0,
-    max: 300,
-    unit: 'seconds',
-    visibility: 'admin',
-  },
-  'tokens.introspection_require_client_auth': {
-    key: 'tokens.introspection_require_client_auth',
-    type: 'boolean',
-    default: true,
-    envKey: 'INTROSPECTION_REQUIRE_CLIENT_AUTH',
-    label: 'Require Client Auth for Introspection',
-    description: 'Require client authentication for token introspection',
-    visibility: 'admin',
   },
   'tokens.introspection_strict_validation': {
     key: 'tokens.introspection_strict_validation',
     type: 'boolean',
-    default: true,
-    envKey: 'INTROSPECTION_STRICT_VALIDATION',
+    default: false,
+    envKey: 'ENABLE_INTROSPECTION_STRICT_VALIDATION',
+    envBoolean: 'exactly-true',
     label: 'Strict Introspection Validation',
     description: 'Enforce strict token validation during introspection',
     visibility: 'admin',
   },
-  'tokens.introspection_cache_max_size': {
-    key: 'tokens.introspection_cache_max_size',
-    type: 'number',
-    default: 10000,
-    envKey: 'INTROSPECTION_CACHE_MAX_SIZE',
-    label: 'Introspection Cache Max Size',
-    description: 'Maximum number of tokens to cache for introspection',
-    min: 100,
-    max: 100000,
-    visibility: 'admin',
-  },
-  'tokens.introspection_cache_inactive': {
-    key: 'tokens.introspection_cache_inactive',
-    type: 'duration',
-    default: 300,
-    envKey: 'INTROSPECTION_CACHE_INACTIVE',
-    label: 'Introspection Cache Inactive TTL',
-    description: 'Time in seconds before inactive cache entries are evicted',
-    min: 60,
-    max: 3600,
-    unit: 'seconds',
-    visibility: 'admin',
-  },
   'tokens.introspection_extended_claims': {
     key: 'tokens.introspection_extended_claims',
+    // Per tenant (or app) only, as before the category had platform values.
+    scopes: ['tenant'],
     type: 'boolean',
     default: false,
     envKey: 'INTROSPECTION_EXTENDED_CLAIMS',
     label: 'Extended Introspection Claims',
-    description: 'Include extended claims in introspection response',
-    visibility: 'admin',
-  },
-
-  // Token Signing Key Selection
-  'tokens.access_token_signing_key_id': {
-    key: 'tokens.access_token_signing_key_id',
-    type: 'string',
-    default: '',
-    envKey: 'ACCESS_TOKEN_SIGNING_KEY_ID',
-    label: 'Access Token Signing Key ID',
-    description: 'Key ID for signing access tokens (empty for default)',
-    visibility: 'admin',
-  },
-  'tokens.id_token_signing_key_id': {
-    key: 'tokens.id_token_signing_key_id',
-    type: 'string',
-    default: '',
-    envKey: 'ID_TOKEN_SIGNING_KEY_ID',
-    label: 'ID Token Signing Key ID',
-    description: 'Key ID for signing ID tokens (empty for default)',
-    visibility: 'admin',
-  },
-  'tokens.userinfo_signing_key_id': {
-    key: 'tokens.userinfo_signing_key_id',
-    type: 'string',
-    default: '',
-    envKey: 'USERINFO_SIGNING_KEY_ID',
-    label: 'UserInfo Signing Key ID',
-    description: 'Key ID for signing UserInfo responses (empty for default)',
-    visibility: 'admin',
-  },
-  'tokens.access_token_singularization': {
-    key: 'tokens.access_token_singularization',
-    type: 'boolean',
-    default: false,
-    envKey: 'ACCESS_TOKEN_SINGULARIZATION',
-    label: 'Access Token Singularization',
-    description: 'Revoke previous access token when new one is issued',
+    description:
+      "Master switch for extended claims in introspection responses. Off: the Resource Server's destination profile and identity mapping are not used, and the response holds only the protocol claims (active, scope, client_id, sub, exp and the like). On: the Resource Server's own profile decides which more claims it receives.",
     visibility: 'admin',
   },
 
   // RBAC Claims Embedding
   'tokens.rbac_id_token_claims': {
     key: 'tokens.rbac_id_token_claims',
+    // Per tenant (or app) only, as before the category had platform values.
+    scopes: ['tenant'],
     type: 'string',
     default: 'roles,user_type,org_id,plan,org_type',
     envKey: 'RBAC_ID_TOKEN_CLAIMS',
@@ -182,12 +109,71 @@ export const TOKENS_SETTINGS_META: Record<keyof TokensSettings, SettingMeta> = {
   },
   'tokens.rbac_access_token_claims': {
     key: 'tokens.rbac_access_token_claims',
+    // Per tenant (or app) only, as before the category had platform values.
+    scopes: ['tenant'],
     type: 'string',
     default: 'roles,org_id,org_type',
     envKey: 'RBAC_ACCESS_TOKEN_CLAIMS',
     label: 'Access Token RBAC Claims',
     description: 'Comma-separated list of RBAC claims to embed in access tokens (none to disable)',
     visibility: 'admin',
+  },
+  'tokens.exchange_allowed_subject_token_types': {
+    key: 'tokens.exchange_allowed_subject_token_types',
+    type: 'string',
+    envKey: 'TOKEN_EXCHANGE_ALLOWED_TYPES',
+    label: 'Token Exchange: Subject Token Types',
+    description:
+      'Comma-separated subject token types accepted by Token Exchange: access_token, jwt, id_token (refresh_token is never accepted)',
+    visibility: 'admin',
+    default: 'access_token',
+  },
+  'tokens.id_jag_allowed_issuers': {
+    key: 'tokens.id_jag_allowed_issuers',
+    type: 'json',
+    label: 'ID-JAG: Allowed Issuers',
+    description:
+      'Issuers (https URLs) whose ID tokens may be exchanged for an ID-JAG; an empty list trusts none, so ID-JAG requests are refused',
+    visibility: 'admin',
+    default: [],
+  },
+  'tokens.id_jag_max_token_lifetime': {
+    key: 'tokens.id_jag_max_token_lifetime',
+    type: 'number',
+    label: 'ID-JAG: Max Lifetime',
+    description: 'Longest lifetime of an issued ID-JAG',
+    unit: 'seconds',
+    min: 60,
+    max: 86400,
+    integer: true,
+    visibility: 'admin',
+    default: 3600,
+  },
+  'tokens.id_jag_include_tenant_claim': {
+    key: 'tokens.id_jag_include_tenant_claim',
+    type: 'boolean',
+    label: 'ID-JAG: Tenant Claim',
+    description: 'Put the tenant claim in issued ID-JAGs',
+    visibility: 'admin',
+    default: true,
+  },
+  'tokens.id_jag_require_confidential_client': {
+    key: 'tokens.id_jag_require_confidential_client',
+    type: 'boolean',
+    label: 'ID-JAG: Confidential Clients Only',
+    description: 'Issue ID-JAGs only to confidential clients',
+    visibility: 'admin',
+    default: true,
+  },
+  'tokens.introspection_expected_audience': {
+    key: 'tokens.introspection_expected_audience',
+    type: 'string',
+    envKey: 'INTROSPECTION_EXPECTED_AUDIENCE',
+    label: 'Introspection: Expected Audience',
+    description:
+      'Report tokens whose audience does not include this value as inactive; empty skips the check',
+    visibility: 'admin',
+    default: '',
   },
 };
 
@@ -208,16 +194,14 @@ export const TOKENS_DEFAULTS: TokensSettings = {
   'tokens.exchange_enabled': false,
   'tokens.exchange_delegation_enabled': false,
   'tokens.exchange_impersonation_enabled': false,
-  'tokens.introspection_cache_ttl': 60,
-  'tokens.introspection_require_client_auth': true,
-  'tokens.introspection_strict_validation': true,
-  'tokens.introspection_cache_max_size': 10000,
-  'tokens.introspection_cache_inactive': 300,
+  'tokens.introspection_strict_validation': false,
   'tokens.introspection_extended_claims': false,
-  'tokens.access_token_signing_key_id': '',
-  'tokens.id_token_signing_key_id': '',
-  'tokens.userinfo_signing_key_id': '',
-  'tokens.access_token_singularization': false,
   'tokens.rbac_id_token_claims': 'roles,user_type,org_id,plan,org_type',
   'tokens.rbac_access_token_claims': 'roles,org_id,org_type',
+  'tokens.exchange_allowed_subject_token_types': 'access_token',
+  'tokens.id_jag_allowed_issuers': [],
+  'tokens.id_jag_max_token_lifetime': 3600,
+  'tokens.id_jag_include_tenant_claim': true,
+  'tokens.id_jag_require_confidential_client': true,
+  'tokens.introspection_expected_audience': '',
 };

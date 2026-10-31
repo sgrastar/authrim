@@ -1,3 +1,4 @@
+export { renderPortableMigrationSql } from '../../migrations/sql-portability.js';
 export * from './cloudflare-worker-settings.js';
 export * from './bootstrap-handoff-contract.js';
 export * from './bootstrap-accelerator-proof.js';

@@ -23,24 +23,22 @@ export interface FeatureFlagsSettings {
 
   // Token Features
   'feature.enable_sd_jwt': boolean;
-  'feature.enable_token_exchange': boolean;
   'feature.enable_client_credentials': boolean;
   'feature.enable_custom_claims': boolean;
+  'feature.enable_custom_claim_schemas': boolean;
+  'feature.enable_custom_claim_schemas_introspection': boolean;
 
-  // Development & Testing
-  'feature.enable_test_endpoints': boolean;
   'feature.enable_check_api': boolean;
-  'feature.enable_mock_auth': boolean;
-
-  // Cache Features
-  'feature.introspection_cache_enabled': boolean;
 
   // Conformance Testing
   'feature.conformance_enabled': boolean;
-  'feature.conformance_use_builtin_forms': boolean;
 
   // UI Contract / Flow Engine
   'feature.enable_flow_engine': boolean;
+  'feature.enable_rar': boolean;
+  'feature.enable_ai_scopes': boolean;
+  'feature.enable_ai_ephemeral_auth': boolean;
+  'feature.enable_id_jag': boolean;
 }
 
 /**
@@ -54,7 +52,8 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
     default: false,
     envKey: 'ENABLE_ABAC',
     label: 'Enable ABAC',
-    description: 'Enable Attribute-Based Access Control',
+    description:
+      'Evaluate attribute-based policy rules in permission checks (the Check API), after roles, ID-level permissions and relationships',
     visibility: 'page', // Managed on Attributes page
   },
   'feature.enable_rebac': {
@@ -63,7 +62,7 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
     default: false,
     envKey: 'ENABLE_REBAC',
     label: 'Enable ReBAC',
-    description: 'Enable Relationship-Based Access Control',
+    description: 'Enable the policy service relationship (ReBAC) check endpoints',
     visibility: 'page', // Managed on ReBAC page
   },
   'feature.enable_policy_logging': {
@@ -72,7 +71,8 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
     default: false,
     envKey: 'ENABLE_POLICY_LOGGING',
     label: 'Enable Policy Logging',
-    description: 'Log policy evaluation decisions for debugging',
+    description:
+      'Log each permission check decision (subject, permission, result and the rule that decided it)',
     visibility: 'admin',
   },
   'feature.enable_verified_attributes': {
@@ -81,7 +81,7 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
     default: false,
     envKey: 'ENABLE_VERIFIED_ATTRIBUTES',
     label: 'Enable Verified Attributes',
-    description: 'Enable verified attribute claims in tokens',
+    description: "Use users' verified attributes in attribute-based policy rules",
     visibility: 'admin',
   },
   'feature.enable_custom_rules': {
@@ -90,7 +90,7 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
     default: true,
     envKey: 'ENABLE_CUSTOM_RULES',
     label: 'Enable Custom Rules',
-    description: 'Allow custom policy rules',
+    description: "Evaluate the tenant's custom policy rules in attribute-based checks",
     visibility: 'page', // Managed on Policies page
   },
   'feature.enable_policy_embedding': {
@@ -98,6 +98,8 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
     type: 'boolean',
     default: false,
     envKey: 'ENABLE_POLICY_EMBEDDING',
+    // As token issuance has always read it.
+    envBoolean: 'exactly-true',
     label: 'Enable Policy Embedding',
     description: 'Enable embedding policy decisions in tokens',
     visibility: 'admin',
@@ -107,6 +109,8 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
     type: 'boolean',
     default: false,
     envKey: 'ENABLE_ID_LEVEL_PERMISSIONS',
+    // As token issuance reads it.
+    envBoolean: 'exactly-true',
     label: 'Enable ID-Level Permissions',
     description: 'Enable fine-grained ID-level permission checks',
     visibility: 'admin',
@@ -118,17 +122,10 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
     type: 'boolean',
     default: false,
     envKey: 'ENABLE_SD_JWT',
+    // As token issuance reads it.
+    envBoolean: 'exactly-true',
     label: 'Enable SD-JWT',
-    description: 'Enable Selective Disclosure JWT support',
-    visibility: 'admin',
-  },
-  'feature.enable_token_exchange': {
-    key: 'feature.enable_token_exchange',
-    type: 'boolean',
-    default: false,
-    envKey: 'ENABLE_TOKEN_EXCHANGE',
-    label: 'Enable Token Exchange',
-    description: 'Enable OAuth 2.0 Token Exchange (RFC 8693)',
+    description: 'Issue SD-JWT ID tokens (RFC 9901) to clients that request them',
     visibility: 'admin',
   },
   'feature.enable_client_credentials': {
@@ -136,6 +133,7 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
     type: 'boolean',
     default: false,
     envKey: 'ENABLE_CLIENT_CREDENTIALS',
+    envBoolean: 'exactly-true',
     label: 'Enable Client Credentials',
     description: 'Enable Client Credentials grant type',
     visibility: 'admin',
@@ -145,70 +143,57 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
     type: 'boolean',
     default: false,
     envKey: 'ENABLE_CUSTOM_CLAIMS',
-    label: 'Enable Custom Claims',
-    description: 'Allow custom claims in ID tokens and UserInfo',
+    // As token issuance reads it.
+    envBoolean: 'exactly-true',
+    label: 'Enable Token Claim Rules',
+    description: 'Add the claims of the token claim rules to access tokens',
     visibility: 'admin',
   },
-
-  // Development & Testing
-  'feature.enable_test_endpoints': {
-    key: 'feature.enable_test_endpoints',
+  'feature.enable_custom_claim_schemas': {
+    key: 'feature.enable_custom_claim_schemas',
     type: 'boolean',
     default: false,
-    envKey: 'ENABLE_TEST_ENDPOINTS',
-    label: 'Enable Test Endpoints',
-    description: 'Enable test/debug API endpoints (development only)',
-    visibility: 'internal',
+    label: 'Enable Custom Claim Schemas',
+    description:
+      'Add the claims of the custom claim schemas to ID tokens, UserInfo and verifiable credentials',
+    visibility: 'admin',
   },
+  'feature.enable_custom_claim_schemas_introspection': {
+    key: 'feature.enable_custom_claim_schemas_introspection',
+    type: 'boolean',
+    default: false,
+    label: 'Custom Claim Schemas in Introspection',
+    description: 'Also add the claims of the custom claim schemas to token introspection responses',
+    visibility: 'admin',
+    dependsOn: [{ key: 'feature.enable_custom_claim_schemas', value: true }],
+  },
+
   'feature.enable_check_api': {
     key: 'feature.enable_check_api',
+    // The Check API is turned on or off before the request's tenant is known: platform only.
+    scopes: ['platform'],
     type: 'boolean',
     default: false,
     envKey: 'ENABLE_CHECK_API',
+    // As the Check API reads it: on only as 'true'.
+    envBoolean: 'exactly-true',
     label: 'Enable Check API',
-    description: 'Enable /api/check endpoint for permission checking',
-    visibility: 'admin',
-  },
-  'feature.enable_mock_auth': {
-    key: 'feature.enable_mock_auth',
-    type: 'boolean',
-    default: false,
-    envKey: 'ENABLE_MOCK_AUTH',
-    label: 'Enable Mock Auth',
-    description: 'Enable mock authentication for testing (development only)',
-    visibility: 'internal',
-  },
-
-  // Cache Features
-  'feature.introspection_cache_enabled': {
-    key: 'feature.introspection_cache_enabled',
-    type: 'boolean',
-    default: true,
-    envKey: 'INTROSPECTION_CACHE_ENABLED',
-    label: 'Introspection Cache Enabled',
-    description: 'Enable caching of token introspection results',
+    description: 'Enable /api/check endpoint for permission checking, for the whole platform',
     visibility: 'admin',
   },
 
   // Conformance Testing
   'feature.conformance_enabled': {
     key: 'feature.conformance_enabled',
+    // Conformance mode applies to the whole deployment; tenants cannot set it.
+    scopes: ['platform'],
     type: 'boolean',
     default: false,
-    envKey: 'CONFORMANCE_ENABLED',
+    envKey: 'ENABLE_CONFORMANCE_MODE',
+    envEmpty: 'false',
     label: 'Conformance Mode',
     description:
-      'Enable OIDC conformance testing mode for OpenID Foundation certification. When enabled: (1) Uses built-in HTML forms instead of external UI for Login/Consent pages, (2) Required for passing OpenID conformance tests, (3) UI_URL configuration is ignored, (4) Should be disabled in production environments.',
-    visibility: 'admin',
-  },
-  'feature.conformance_use_builtin_forms': {
-    key: 'feature.conformance_use_builtin_forms',
-    type: 'boolean',
-    default: true,
-    envKey: 'CONFORMANCE_USE_BUILTIN_FORMS',
-    label: 'Use Built-in Forms',
-    description:
-      'Use built-in HTML login/consent forms when conformance mode is enabled. This is required for OIDC conformance testing. When disabled: external UI must handle all authentication flows (not recommended for certification testing).',
+      'Enable conformance-test-only behaviour for OpenID Foundation certification runs (for example, certification-suite clients registered without a scope get the standard scopes). Sign-in still goes through the Login UI. Must be disabled in production environments.',
     visibility: 'admin',
   },
 
@@ -222,6 +207,47 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
     description:
       'Enable server-driven UI flows (UI Contract). When disabled, standard OIDC flows will be used.',
     visibility: 'admin',
+  },
+  'feature.enable_rar': {
+    key: 'feature.enable_rar',
+    type: 'boolean',
+    envKey: 'ENABLE_RAR',
+    envBoolean: 'exactly-true',
+    label: 'Rich Authorization Requests',
+    description:
+      'Accept authorization_details (RFC 9396) at authorize and PAR, and advertise the supported types',
+    visibility: 'admin',
+    default: false,
+  },
+  'feature.enable_ai_scopes': {
+    key: 'feature.enable_ai_scopes',
+    type: 'boolean',
+    envKey: 'ENABLE_AI_SCOPES',
+    envBoolean: 'exactly-true',
+    label: 'AI Scopes',
+    description: 'Advertise the ai:* scopes (ai:read, ai:write, ai:execute, ai:admin) in discovery',
+    visibility: 'admin',
+    default: false,
+  },
+  'feature.enable_ai_ephemeral_auth': {
+    key: 'feature.enable_ai_ephemeral_auth',
+    type: 'boolean',
+    envKey: 'ENABLE_AI_EPHEMERAL_AUTH',
+    envBoolean: 'exactly-true',
+    label: 'AI Ephemeral Auth',
+    description: "Allow tenants to use the 'ai_ephemeral' tenant profile",
+    visibility: 'admin',
+    default: false,
+  },
+  'feature.enable_id_jag': {
+    key: 'feature.enable_id_jag',
+    type: 'boolean',
+    envKey: 'ENABLE_ID_JAG',
+    envBoolean: 'exactly-true',
+    label: 'ID-JAG',
+    description: 'Issue Identity Assertion Authorization Grants (ID-JAG) through Token Exchange',
+    visibility: 'admin',
+    default: false,
   },
 };
 
@@ -250,22 +276,20 @@ export const FEATURE_FLAGS_DEFAULTS: FeatureFlagsSettings = {
 
   // Token Features
   'feature.enable_sd_jwt': false,
-  'feature.enable_token_exchange': false,
   'feature.enable_client_credentials': false,
   'feature.enable_custom_claims': false,
+  'feature.enable_custom_claim_schemas': false,
+  'feature.enable_custom_claim_schemas_introspection': false,
 
-  // Development & Testing
-  'feature.enable_test_endpoints': false,
   'feature.enable_check_api': false,
-  'feature.enable_mock_auth': false,
-
-  // Cache Features
-  'feature.introspection_cache_enabled': true,
 
   // Conformance Testing
   'feature.conformance_enabled': false,
-  'feature.conformance_use_builtin_forms': true,
 
   // UI Contract / Flow Engine
   'feature.enable_flow_engine': false,
+  'feature.enable_rar': false,
+  'feature.enable_ai_scopes': false,
+  'feature.enable_ai_ephemeral_auth': false,
+  'feature.enable_id_jag': false,
 };

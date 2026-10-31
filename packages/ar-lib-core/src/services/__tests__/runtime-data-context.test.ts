@@ -9,7 +9,9 @@ import {
   resolveAccountDataContextByIdentifierFromHono,
   resolveAccountDataContextFromHono,
   resolveAccountCoreDataContext,
+  resolveAccountPiiSourceForAudit,
   resolveOtpAccountCoreDataContextByIdentifier,
+  resolveAccountRouteForSamlDrSnapshot,
 } from '../runtime-data-context';
 
 const mocks = vi.hoisted(() => ({
@@ -95,6 +97,10 @@ function d1(input: {
   accountId?: string;
   subjectLifecycleState?: string;
   emailVerified?: number;
+  /** The account row's lifecycle state, or null for no row (deleted at the destination). */
+  accountLifecycleState?: string | null;
+  /** The shard metadata's binding (default: the one routed to). */
+  metadataBindingRef?: string;
 }): D1Database {
   const session = {
     prepare: vi.fn((sql: string) => {
@@ -104,16 +110,19 @@ function d1(input: {
         first: vi.fn(async () => {
           if (sql.includes('authrim_control_plane_shard_metadata')) {
             return {
-              binding_ref: input.role === 'tenant_pii' ? 'TDB_PII_A' : 'TDB_USERS_A',
+              binding_ref:
+                input.metadataBindingRef ??
+                (input.role === 'tenant_pii' ? 'TDB_PII_A' : 'TDB_USERS_A'),
               data_role: input.role,
               residency_partition: 'default',
             };
           }
           if (sql.includes('FROM identity_accounts')) {
+            if (input.accountLifecycleState === null) return null;
             return {
               id: input.accountId ?? 'account:user-a',
               legacy_user_id: input.legacyUserId ?? 'user-a',
-              lifecycle_state: 'active',
+              lifecycle_state: input.accountLifecycleState ?? 'active',
               directory_publication_state: 'active',
               account_route_generation: input.accountRouteGeneration ?? 3,
               account_type: 'end_user',
@@ -289,6 +298,68 @@ describe('runtime account data context', () => {
     mocks.tenantId = 'tenant-a';
   });
 
+  it('reads a held DR route from primary even after normal runtime cached an older route', async () => {
+    const bindings = env();
+    await resolveAccountDataContext(bindings, { tenantId: 'tenant-a', accountId: 'user-a' });
+    const replacement = d1({ lookupRows: [lookupRow()] });
+    const updated = { ...bindings, ENABLE_SAML_DR_EXPORT: 'true', LOOKUP_A: replacement } as Env;
+    const route = await resolveAccountRouteForSamlDrSnapshot(updated, {
+      tenantId: 'tenant-a',
+      accountId: 'account:user-a',
+      accountRouteGeneration: 3,
+      nowMs: Date.now(),
+    });
+    expect(route.accountRouteGeneration).toBe(3);
+    expect(
+      (replacement as unknown as { withSession: ReturnType<typeof vi.fn> }).withSession
+    ).toHaveBeenCalledWith('first-primary');
+    expect(
+      (replacement as unknown as { withSession: ReturnType<typeof vi.fn> }).withSession
+    ).not.toHaveBeenCalledWith('first-unconstrained');
+  });
+
+  it('does not require an active Core account while capturing its primary DR route', async () => {
+    const bindings = {
+      ...env(),
+      ENABLE_SAML_DR_EXPORT: 'true',
+      TDB_USERS_A: d1({ role: 'tenant_core/users', accountLifecycleState: 'suspended' }),
+    } as Env;
+    await expect(
+      resolveAccountRouteForSamlDrSnapshot(bindings, {
+        tenantId: 'tenant-a',
+        accountId: 'account:user-a',
+        accountRouteGeneration: 3,
+        nowMs: Date.now(),
+      })
+    ).resolves.toMatchObject({ accountRouteGeneration: 3 });
+    expect(
+      (bindings as unknown as { TDB_USERS_A: { withSession: ReturnType<typeof vi.fn> } })
+        .TDB_USERS_A.withSession
+    ).not.toHaveBeenCalled();
+  });
+
+  it.each(['stale', 'foreign', 'disabled'])(
+    'rejects invalid primary DR membership: %s',
+    async (kind) => {
+      const row = lookupRow();
+      if (kind === 'foreign') row.tenant_id = 'tenant-other';
+      if (kind === 'disabled') row.lifecycle_state = 'disabled';
+      const bindings = {
+        ...env(),
+        ENABLE_SAML_DR_EXPORT: 'true',
+        LOOKUP_A: d1({ lookupRows: [row] }),
+      } as Env;
+      await expect(
+        resolveAccountRouteForSamlDrSnapshot(bindings, {
+          tenantId: 'tenant-a',
+          accountId: 'account:user-a',
+          accountRouteGeneration: kind === 'stale' ? 4 : 3,
+          nowMs: Date.now(),
+        })
+      ).rejects.toThrow();
+    }
+  );
+
   it('fixes one account to its verified core and PII shard route', async () => {
     const bindings = env();
     const context = await resolveAccountDataContext(bindings, {
@@ -340,6 +411,50 @@ describe('runtime account data context', () => {
     expect(piiD1.withSession).not.toHaveBeenCalled();
   });
 
+  it('resolves the account Core route without resolving its PII destination', async () => {
+    // A Core-only reader (the status-only investigation read) must not depend on the PII
+    // store's binding: with it gone, the Core context still resolves, the full context does not.
+    const bindings = env() as unknown as Record<string, unknown>;
+    delete bindings.TDB_PII_A;
+    const context = await resolveAccountCoreDataContext(bindings as unknown as Env, {
+      tenantId: 'tenant-a',
+      accountId: 'account:user-a',
+    });
+    expect(context.coreDb).toBe(bindings.TDB_USERS_A);
+    await expect(
+      resolveAccountDataContext(bindings as unknown as Env, {
+        tenantId: 'tenant-a',
+        accountId: 'user-a',
+      })
+    ).rejects.toThrow();
+  });
+
+  it('still refuses a Core route whose projection names no PII destination', async () => {
+    // Skipping the PII binding is not skipping the route's completeness check.
+    const row = lookupRow();
+    const projection = JSON.parse(row.route_projection_json) as {
+      targets: Array<{ dataRole: string }>;
+    };
+    projection.targets = projection.targets.filter((target) => target.dataRole !== 'tenant_pii');
+    const bindings = env() as unknown as Record<string, unknown>;
+    bindings.LOOKUP_A = d1({
+      lookupRows: [
+        {
+          ...row,
+          // The row's generation is its targets' highest: the Core target's alone now.
+          required_binding_route_generation: 8,
+          route_projection_json: JSON.stringify(projection),
+        },
+      ],
+    });
+    await expect(
+      resolveAccountCoreDataContext(bindings as unknown as Env, {
+        tenantId: 'tenant-a',
+        accountId: 'account:user-a',
+      })
+    ).rejects.toThrow('account_data_route_incomplete');
+  });
+
   it('resolves the minimal OTP user in the Core revalidation batch without touching PII', async () => {
     const bindings = env();
     const usersD1 = (bindings as unknown as Record<string, D1Database>)
@@ -379,6 +494,19 @@ describe('runtime account data context', () => {
     expect(otpSql).toContain('contact.account_id = account.id');
     expect(otpSql).not.toContain('contact.account_id = account.id OR');
     expect(piiD1.withSession).not.toHaveBeenCalled();
+  });
+
+  it('resolves the OTP Core context without resolving the PII destination', async () => {
+    // The OTP path promises not to touch tenant PII: it must not need the PII binding either.
+    const bindings = env() as unknown as Record<string, unknown>;
+    delete bindings.TDB_PII_A;
+    const context = await resolveOtpAccountCoreDataContextByIdentifier(bindings as unknown as Env, {
+      tenantId: 'tenant-a',
+      indexKind: 'email_exact',
+      identifier: 'User-A@Example.com',
+      trustedEmail: 'User-A@Example.com',
+    });
+    expect(context.coreDb).toBe(bindings.TDB_USERS_A);
   });
 
   it('rejects an OTP email projection that is not bound to the routed identifier', async () => {
@@ -424,6 +552,94 @@ describe('runtime account data context', () => {
       })
     ).rejects.toThrow('lookup_destination_revalidation_failed');
   });
+
+  it.each([
+    ['deleted', 'deleted'],
+    ['gone from the destination', null],
+  ])(
+    'tells a cached route to an account %s apart from a mismatched destination',
+    async (_case, accountLifecycleState) => {
+      const inactive = env();
+      (inactive as unknown as Record<string, unknown>).TDB_USERS_A = d1({
+        role: 'tenant_core/users',
+        accountLifecycleState,
+      });
+      const failure = await resolveAccountDataContext(inactive, {
+        tenantId: 'tenant-a',
+        accountId: 'user-a',
+      }).catch((error: unknown) => error as Error);
+      expect(failure).toMatchObject({
+        message: 'lookup_destination_revalidation_failed',
+        cause: 'account_inactive',
+      });
+
+      // Another shard answering for the route: an integrity failure, not an inactive account.
+      const mismatched = env();
+      (mismatched as unknown as Record<string, unknown>).TDB_USERS_A = d1({
+        role: 'tenant_core/users',
+        accountLifecycleState,
+        metadataBindingRef: 'TDB_USERS_B',
+      });
+      const integrity = await resolveAccountDataContext(mismatched, {
+        tenantId: 'tenant-a',
+        accountId: 'user-a',
+      }).catch((error: unknown) => error as Error);
+      expect(integrity).toMatchObject({ message: 'lookup_destination_revalidation_failed' });
+      expect(integrity.cause).toBeUndefined();
+
+      // A mismatched PII destination is reported first, even with the core account inactive.
+      const piiMismatch = env();
+      (piiMismatch as unknown as Record<string, unknown>).TDB_USERS_A = d1({
+        role: 'tenant_core/users',
+        accountLifecycleState,
+      });
+      (piiMismatch as unknown as Record<string, unknown>).TDB_PII_A = d1({
+        role: 'tenant_pii',
+        metadataBindingRef: 'TDB_PII_B',
+      });
+      const pii = await resolveAccountDataContext(piiMismatch, {
+        tenantId: 'tenant-a',
+        accountId: 'user-a',
+      }).catch((error: unknown) => error as Error);
+      expect(pii).toMatchObject({ message: 'lookup_destination_revalidation_failed' });
+      expect(pii.cause).toBeUndefined();
+    }
+  );
+
+  it.each(['suspended', 'locked', 'deleted'])(
+    'resolves the PII store of a %s account for its audit pseudonym, verified there',
+    async (accountLifecycleState) => {
+      const inactive = env();
+      (inactive as unknown as Record<string, unknown>).TDB_USERS_A = d1({
+        role: 'tenant_core/users',
+        accountLifecycleState,
+      });
+      await expect(
+        resolveAccountDataContext(inactive, { tenantId: 'tenant-a', accountId: 'user-a' })
+      ).rejects.toThrow('lookup_destination_revalidation_failed');
+      expect(
+        await resolveAccountPiiSourceForAudit(inactive, {
+          tenantId: 'tenant-a',
+          accountId: 'user-a',
+        })
+      ).toBe((inactive as unknown as Record<string, unknown>).TDB_PII_A);
+
+      const piiMismatch = env();
+      (piiMismatch as unknown as Record<string, unknown>).TDB_PII_A = d1({
+        role: 'tenant_pii',
+        metadataBindingRef: 'TDB_PII_B',
+      });
+      await expect(
+        resolveAccountPiiSourceForAudit(piiMismatch, { tenantId: 'tenant-a', accountId: 'user-a' })
+      ).rejects.toThrow('lookup_destination_revalidation_failed');
+      clearLookupRouteMemoryCache();
+      mocks.tenantId = 'tenant-b';
+      await expect(
+        resolveAccountPiiSourceForAudit(env(), { tenantId: 'tenant-a', accountId: 'user-a' })
+      ).rejects.toThrow('account_data_route_not_found');
+      mocks.tenantId = 'tenant-a';
+    }
+  );
 
   it('rejects a Lookup membership owned by another tenant', async () => {
     mocks.tenantId = 'tenant-b';

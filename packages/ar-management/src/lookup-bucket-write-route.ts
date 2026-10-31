@@ -1,3 +1,4 @@
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import type {
   D1Database,
   D1DatabaseSession,
@@ -86,7 +87,7 @@ class MirroredPreparedStatement {
   }
 
   async first<T>(column?: string): Promise<T | null> {
-    const results = await Promise.all(
+    const results = await samlDrAll(
       this.statements.map((statement) =>
         column === undefined ? statement.first<T>() : statement.first<T>(column)
       )
@@ -98,7 +99,7 @@ class MirroredPreparedStatement {
   }
 
   async all<T>(): Promise<D1Result<T>> {
-    const results = await Promise.all(this.statements.map((statement) => statement.all<T>()));
+    const results = await samlDrAll(this.statements.map((statement) => statement.all<T>()));
     if (results.some((result) => !equalResult(result.results, results[0].results))) {
       throw new Error('lookup_write_reflection_mismatch');
     }
@@ -106,12 +107,12 @@ class MirroredPreparedStatement {
   }
 
   async run<T>(): Promise<D1Result<T>> {
-    const results = await Promise.all(this.statements.map((statement) => statement.run<T>()));
+    const results = await samlDrAll(this.statements.map((statement) => statement.run<T>()));
     return results[0];
   }
 
   async raw<T>(options?: { columnNames?: boolean }): Promise<T[]> {
-    const results = await Promise.all(
+    const results = await samlDrAll(
       this.statements.map((statement) =>
         (statement.raw as unknown as (input?: { columnNames?: boolean }) => Promise<unknown[]>)(
           options
@@ -143,7 +144,7 @@ function mirroredSession(sessions: D1DatabaseSession[]): D1DatabaseSession {
         }
         return statement;
       });
-      const results = await Promise.all(
+      const results = await samlDrAll(
         sessions.map((candidate, index) =>
           candidate.batch<T>(mirrored.map((statement) => statement.statement(index)))
         )
@@ -170,7 +171,7 @@ function mirroredDatabase(databases: D1Database[]): D1Database {
         }
         return statement;
       });
-      const results = await Promise.all(
+      const results = await samlDrAll(
         databases.map((candidate, index) =>
           candidate.batch<T>(mirrored.map((statement) => statement.statement(index)))
         )

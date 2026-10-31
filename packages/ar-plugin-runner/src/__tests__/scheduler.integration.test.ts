@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readRenderedMigrationSql } from '../../../../test/helpers/migration-source.mjs';
+
 import { resolve } from 'node:path';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
@@ -89,9 +90,10 @@ function d1(database: DatabaseSync): D1Database {
 }
 
 function pluginOutboxSchema(): string {
-  return readFileSync(resolve(REPO_ROOT, 'migrations/core/d1/001_0_4_0_core_baseline.sql'), 'utf8')
-    .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
-    .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()');
+  return readRenderedMigrationSql(
+    resolve(REPO_ROOT, 'migrations/core/d1/'),
+    '001_0_4_0_core_baseline.sql'
+  );
 }
 
 async function dynamicWorkerFixture(database: DatabaseSync) {
@@ -169,14 +171,16 @@ describe('PluginRunnerScheduler integration', () => {
     runnerDatabase = new DatabaseSync(':memory:');
     tenantDatabase = new DatabaseSync(':memory:');
     runnerDatabase.exec('PRAGMA foreign_keys = ON');
-    for (const migration of ['001_0_4_0_plugin_runner_baseline.sql']) {
+    for (const migration of ['001_0_5_0_plugin_runner_baseline.sql']) {
       runnerDatabase.exec(
-        readFileSync(resolve(REPO_ROOT, 'migrations/plugin-runner/d1', migration), 'utf8')
+        readRenderedMigrationSql(resolve(REPO_ROOT, 'migrations/plugin-runner/d1'), migration)
       );
     }
     tenantDatabase.exec(pluginOutboxSchema());
     runnerDatabase.exec(
-      `INSERT INTO plugin_runner_installations (
+      `INSERT INTO plugin_runner_tenant_external_gates (tenant_id, allowed, generation, updated_at)
+       VALUES ('tenant-a', 1, 1, 1);
+       INSERT INTO plugin_runner_installations (
          installation_id, tenant_id, plugin_id, backend_kind, script_name,
          state, config_version, platform_concurrency_cap, platform_rate_per_minute,
          created_at, updated_at

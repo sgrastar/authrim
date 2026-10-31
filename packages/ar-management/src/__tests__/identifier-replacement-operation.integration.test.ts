@@ -169,6 +169,46 @@ describe('IdentifierReplacementOperationRepository', () => {
     expect(JSON.parse(outbox.payload_json).projections).toHaveLength(4);
   });
 
+  it('records an operation that must not run as canceled in the same write, never claimable', async () => {
+    await expect(
+      repository.create(input({ canceledAs: 'identifier_replacement_permanent_failure' }))
+    ).resolves.toMatchObject({ state: 'canceled' });
+    expect(
+      database
+        .prepare(`SELECT state, error_code FROM identity_identifier_replacement_operations`)
+        .get()
+    ).toEqual({ state: 'canceled', error_code: 'identifier_replacement_permanent_failure' });
+    expect(
+      database.prepare(`SELECT status FROM identity_identifier_replacement_outbox`).get()
+    ).toEqual({ status: 'blocked' });
+    // The claim a request or the scheduler makes finds nothing to run.
+    const claimed = database
+      .prepare(
+        `UPDATE identity_identifier_replacement_outbox SET status = 'leased'
+          WHERE operation_id = 'replacement-1' AND status IN ('pending', 'retry')`
+      )
+      .run();
+    expect(Number(claimed.changes)).toBe(0);
+    // A retried request adopts the canceled operation as it is.
+    await expect(
+      repository.create(input({ canceledAs: 'identifier_replacement_permanent_failure' }))
+    ).resolves.toMatchObject({ operationId: 'replacement-1', state: 'canceled' });
+  });
+
+  it('writes nothing when the canceled operation cannot be written whole', async () => {
+    database.exec(`CREATE TRIGGER refuse_outbox_block BEFORE UPDATE ON identity_identifier_replacement_outbox
+      WHEN NEW.status = 'blocked' BEGIN SELECT RAISE(ABORT, 'refused'); END;`);
+    await expect(
+      repository.create(input({ canceledAs: 'identifier_replacement_permanent_failure' }))
+    ).rejects.toThrow();
+    expect(
+      database.prepare(`SELECT COUNT(*) AS n FROM identity_identifier_replacement_operations`).get()
+    ).toEqual({ n: 0 });
+    expect(
+      database.prepare(`SELECT COUNT(*) AS n FROM identity_identifier_replacement_outbox`).get()
+    ).toEqual({ n: 0 });
+  });
+
   it('adopts the exact retry and rejects a changed idempotent request', async () => {
     await repository.create(input());
     await expect(repository.create(input())).resolves.toMatchObject({

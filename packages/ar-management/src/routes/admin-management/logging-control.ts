@@ -1,3 +1,9 @@
+import {
+  createLogIcebergPolicySnapshotObjectStore,
+  LOG_ICEBERG_POLICY_PREFIX,
+} from '@authrim/ar-lib-core/services/log-iceberg-policy-artifacts';
+import { createLogReadAdapter, logCoverageHeaders } from '../../log-read-adapter';
+import { logQueryErrorResponse } from '../../log-archive-query';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { AdminAuthContext, Env } from '@authrim/ar-lib-core';
@@ -11,10 +17,14 @@ import {
   createRuntimeProfileRegistryFromEnv,
   ensureDatabaseAdapter,
   getTenantIdFromContext,
+  hasCapturingTenantBackupSnapshot,
+  listCapturingTenantBackupTenantKeys,
   hasAdminPermission,
+  hasGlobalPlatformAuthority,
   loadChunkedSensitiveDetailJson,
   loadEnvironmentProfileDefaultsFromEnv,
   readR2ObjectTextWithLimit,
+  retireDeletedLogObjectGeneration,
   requireDedicatedAdminDatabaseAdapter,
   resolveRuntimeLoggingPolicyTargetFromEnv,
   resolveTenantDatabaseSourceFromRegistry,
@@ -178,13 +188,12 @@ function hasAnyPermission(authContext: AdminAuthContext, permissions: string[]):
   return permissions.some((permission) => hasPermission(authContext, permission));
 }
 
+// Platform logging reaches every tenant, so the authority has to come from a global assignment.
+// This gate names no permission of its own (each route checks its own before it), so a machine
+// token needs everything under `admin:` for every tenant: a global scope with a narrow permission
+// is not a platform administrator.
 function hasPlatformAuthority(authContext: AdminAuthContext): boolean {
-  return (
-    hasPermission(authContext, ADMIN_PERMISSIONS.ALL) ||
-    (authContext.roles || []).includes('super_admin') ||
-    (authContext.roles || []).includes('system_admin') ||
-    authContext.tenantScope?.includes('*') === true
-  );
+  return hasGlobalPlatformAuthority(authContext, 'admin:*');
 }
 
 async function requirePlatformAuthority(c: AdminContext): Promise<Response | null> {
@@ -992,20 +1001,27 @@ function getLoggingMessagePayloadBucket(c: AdminContext): R2Bucket | null {
   return c.env.AUDIT_ARCHIVE ?? null;
 }
 
-function getCatalogObjectBucket(c: AdminContext, row: LogObjectCatalogRow): R2Bucket | null {
+function getCatalogObjectBucketBinding(
+  row: LogObjectCatalogRow
+):
+  | 'AUDIT_ARCHIVE'
+  | 'DIAGNOSTIC_LOGS'
+  | 'SENSITIVE_DETAILS'
+  | 'EXPORT_ARTIFACTS'
+  | 'IMPORT_ARTIFACTS' {
   if (row.object_kind === 'dlq_payload') {
-    return getDlqPayloadBucket(c);
+    return 'AUDIT_ARCHIVE';
   }
   if (row.object_kind === 'export_artifact') {
-    return getLoggingExportBucket(c);
+    return 'EXPORT_ARTIFACTS';
   }
   if (row.plane === 'sensitive_detail') {
-    return c.env.SENSITIVE_DETAILS ?? null;
+    return 'SENSITIVE_DETAILS';
   }
   if (row.plane === 'diagnostic_detail' || row.log_type === 'diagnostic') {
-    return c.env.DIAGNOSTIC_LOGS ?? null;
+    return 'DIAGNOSTIC_LOGS';
   }
-  return c.env.AUDIT_ARCHIVE ?? null;
+  return 'AUDIT_ARCHIVE';
 }
 
 async function readR2TextWithLimit(
@@ -4300,6 +4316,7 @@ async function detectLogCatalogRepairs(
     now,
     limit,
     pendingTtlMs,
+    tenantKey: input?.tenantKey ?? null,
   });
   const findings = rawFindings.filter((finding) => {
     if (input?.tenantKey && finding.tenantKey !== input.tenantKey) {
@@ -4497,12 +4514,19 @@ async function buildDangerousCatalogRepairPlanFromRequest(c: AdminContext): Prom
   };
 }
 
+// The destinations and policies are the installation's own; what is tenant data in these views
+// (which tenant sends what where) is limited to the caller's tenant unless the caller is the
+// platform.
 async function loadAdminLoggingCriticalPolicy(c: AdminContext) {
-  return getAdminLoggingControlRepository(c).loadCriticalPolicy();
+  return getAdminLoggingControlRepository(c).loadCriticalPolicy(
+    hasPlatformAuthority(getAuth(c)) ? undefined : getTenantIdFromContext(c)
+  );
 }
 
 async function loadSensitiveDetailPolicy(c: AdminContext) {
-  return getAdminLoggingControlRepository(c).loadSensitiveDetailPolicy();
+  return getAdminLoggingControlRepository(c).loadSensitiveDetailPolicy(
+    hasPlatformAuthority(getAuth(c)) ? undefined : getTenantIdFromContext(c)
+  );
 }
 
 interface LoggingPolicySnapshotDraftBody {
@@ -7112,8 +7136,8 @@ loggingPoliciesRouter.get('/runtime/topology', async (c) => {
           db_pii: Boolean(c.env.DB_PII),
           logging_index_db: Boolean(c.env.LOGGING_INDEX_DB),
           authrim_config: Boolean(c.env.AUTHRIM_CONFIG),
-          diagnostic_logs: Boolean(c.env.DIAGNOSTIC_LOGS),
-          audit_archive: Boolean(c.env.AUDIT_ARCHIVE),
+          log_archive: Boolean(c.env.LOG_ARCHIVE),
+          log_archive_mode: c.env.AUTHRIM_LOG_ARCHIVE_MODE ?? null,
           sensitive_details: Boolean(c.env.SENSITIVE_DETAILS),
           logging_delivery_critical_queue: Boolean(c.env.LOGGING_DELIVERY_CRITICAL_QUEUE),
           logging_delivery_queue: Boolean(c.env.LOGGING_DELIVERY_QUEUE),
@@ -7166,7 +7190,11 @@ loggingPoliciesRouter.get('/runtime/verify', async (c) => {
   }
 
   try {
-    const pointerKey = buildRuntimeLoggingPolicySnapshotPointerKey({ scopeType, scopeId });
+    const pointerKey = buildRuntimeLoggingPolicySnapshotPointerKey({
+      scopeType,
+      scopeId,
+      prefix: LOG_ICEBERG_POLICY_PREFIX,
+    });
     const pointerJson = c.env.AUTHRIM_CONFIG ? await c.env.AUTHRIM_CONFIG.get(pointerKey) : null;
     const parseJsonObjectOrNull = (value: string | null): Record<string, unknown> | null => {
       if (!value) {
@@ -7191,10 +7219,10 @@ loggingPoliciesRouter.get('/runtime/verify', async (c) => {
           ? await c.env.AUTHRIM_CONFIG.get(objectRef.slice('kv://'.length))
           : null;
         objectStatus = snapshotJson ? 'readable' : 'missing';
-      } else if (c.env.DIAGNOSTIC_LOGS?.get) {
-        const object = await c.env.DIAGNOSTIC_LOGS.get(objectRef);
+      } else if (c.env.LOG_ARCHIVE) {
+        const object = await createLogIcebergPolicySnapshotObjectStore(c.env).get!(objectRef);
         if (object) {
-          snapshotJson = await readR2ObjectTextWithLimit(object, 1024 * 1024).catch(() => null);
+          snapshotJson = await object.text();
           objectStatus = snapshotJson ? 'readable' : 'unreadable';
         } else {
           objectStatus = 'missing';
@@ -7454,7 +7482,7 @@ loggingPoliciesRouter.post('/runtime/tenant-db-probe', async (c) => {
     const tenantAdapter = ensureDatabaseAdapter(resolved.source, 'tenant-db-probe');
     await tenantAdapter.execute(
       `CREATE TABLE IF NOT EXISTS authrim_runtime_probes (
-        id TEXT PRIMARY KEY,
+        id TEXT PRIMARY KEY NOT NULL,
         tenant_id TEXT NOT NULL,
         role TEXT NOT NULL,
         probe_kind TEXT NOT NULL,
@@ -10830,6 +10858,16 @@ loggingPoliciesRouter.post('/dlq-items/:id/purge', async (c) => {
       ]);
     }
 
+    if (await hasCapturingTenantBackupSnapshot(adapter)) {
+      return createAdminFieldErrorResponse(c, [
+        fieldError(
+          'payload_object_ref',
+          'backup_snapshot_active',
+          'DLQ payload is retained while a tenant backup snapshot is active.'
+        ),
+      ]);
+    }
+
     await bucket.delete(item.payload_object_ref);
     const now = Date.now();
     await adapter.execute(
@@ -11017,10 +11055,12 @@ loggingPoliciesRouter.post('/drafts/:id/publish', async (c) => {
       ReturnType<typeof createRuntimeLoggingPolicySnapshot>
     >;
     const now = snapshot.synchronizedAt;
+    if (!c.env.LOG_ARCHIVE) throw new Error('logging_policy_store_unavailable');
     const publication = await publishRuntimeLoggingPolicySnapshot({
       snapshot,
       kv: c.env.AUTHRIM_CONFIG,
-      objectStore: c.env.DIAGNOSTIC_LOGS,
+      objectStore: c.env.LOG_ARCHIVE,
+      prefix: LOG_ICEBERG_POLICY_PREFIX,
       now,
     });
 
@@ -11090,10 +11130,12 @@ loggingPoliciesRouter.post('/snapshots', async (c) => {
       parsed.value
     );
     const now = snapshot.synchronizedAt;
+    if (!c.env.LOG_ARCHIVE) throw new Error('logging_policy_store_unavailable');
     const publication = await publishRuntimeLoggingPolicySnapshot({
       snapshot,
       kv: c.env.AUTHRIM_CONFIG,
-      objectStore: c.env.DIAGNOSTIC_LOGS,
+      objectStore: c.env.LOG_ARCHIVE,
+      prefix: LOG_ICEBERG_POLICY_PREFIX,
       now,
     });
 
@@ -12206,23 +12248,28 @@ adminLoggingRouter.post('/catalog-repairs/dangerous/apply', async (c) => {
 
     const adapter = getAdminAdapter(c);
     const now = Date.now();
+    if (
+      parsed.object &&
+      (parsed.action === 'delete_object' || parsed.action === 'purge_record_indexes') &&
+      (await listCapturingTenantBackupTenantKeys(adapter)).has(parsed.object.tenant_key)
+    ) {
+      return createAdminFieldErrorResponse(c, [
+        fieldError(
+          'object_catalog_id',
+          'backup_snapshot_active',
+          'Record indexes are retained while a tenant backup export of this tenant is active.'
+        ),
+      ]);
+    }
     if (parsed.action === 'delete_object' && parsed.object) {
-      const bucket = getCatalogObjectBucket(c, parsed.object);
-      if (bucket) {
-        await bucket.delete(parsed.object.object_key);
-      }
-      await adapter.execute(
-        `UPDATE log_object_catalog
-         SET status = 'deleted', deleted_at = ?
-         WHERE id = ? AND status <> 'deleted'`,
-        [now, parsed.object.id]
-      );
-      await adapter.execute(
-        `UPDATE log_chunk_record_index
-         SET status = 'deleted'
-         WHERE object_catalog_id = ? AND status <> 'deleted'`,
-        [parsed.object.id]
-      );
+      await retireDeletedLogObjectGeneration(adapter, {
+        retirementId: `log-delete:${parsed.object.id}`,
+        tenantKey: parsed.object.tenant_key,
+        objectCatalogId: parsed.object.id,
+        objectKey: parsed.object.object_key,
+        deletedAt: now,
+        bucketBinding: getCatalogObjectBucketBinding(parsed.object),
+      });
     } else if (parsed.action === 'purge_record_indexes' && parsed.object) {
       await adapter.execute(
         `UPDATE log_chunk_record_index
@@ -12672,7 +12719,14 @@ adminLoggingRouter.get('/', async (c) => {
 
   try {
     const adapter = getAdminAdapter(c);
-    const auditSummary = await adapter.queryOne<Record<string, unknown>>(
+    const read = createLogReadAdapter({
+      env: c.env,
+      tenantId,
+      dataset: 'admin.admin_audit_log',
+      window: { fromMs: from },
+      onCoverage: logCoverageHeaders(c),
+    });
+    const auditSummary = await read.adapter.queryOne<Record<string, unknown>>(
       `SELECT
          COUNT(*) AS total,
          SUM(CASE WHEN result = 'failure' THEN 1 ELSE 0 END) AS failures,
@@ -12681,30 +12735,28 @@ adminLoggingRouter.get('/', async (c) => {
        WHERE tenant_id = ? AND created_at >= ?`,
       [tenantId, from]
     );
-    const archiveSummary = await adapter.query<Record<string, unknown>>(
-      `SELECT log_type, plane, status, COUNT(*) AS chunks, SUM(record_count) AS records
-       FROM log_object_catalog
-       WHERE created_at >= ? AND (
-         log_type IN ('admin_audit', 'audit')
-         OR plane = 'sensitive_detail'
-       )
-       GROUP BY log_type, plane, status
-       ORDER BY log_type ASC, plane ASC, status ASC`,
-      [from]
-    );
+    // Archive membership comes from the current Catalog snapshot, never the former JSON catalog.
+    const archiveSummary = {
+      format: 'iceberg',
+      has_archive: read.hasArchive(),
+      coverage: read.coverage(),
+    };
+    // Delivery is counted for the caller's tenant; only the platform sees every tenant's.
+    const deliveryTenant = await resolveTenantKeyFilter(c, undefined);
+    if (!deliveryTenant.ok) return deliveryTenant.response;
     const deliverySummary = await adapter.query<Record<string, unknown>>(
       `SELECT lane, status, SUM(batch_count) AS total
        FROM logging_delivery_event_aggregates
-       WHERE bucket_start_at >= ?
+       WHERE bucket_start_at >= ? ${deliveryTenant.tenantKey ? 'AND tenant_key = ?' : ''}
        GROUP BY lane, status
        ORDER BY lane ASC, status ASC`,
-      [from]
+      deliveryTenant.tenantKey ? [from, deliveryTenant.tenantKey] : [from]
     );
-    const recentChanges = await adapter.query<Record<string, unknown>>(
+    const recentChanges = await read.adapter.query<Record<string, unknown>>(
       `SELECT id AS audit_id, admin_user_id AS actor_id, action, resource_type, resource_id,
               severity, created_at
        FROM admin_audit_log
-       WHERE created_at >= ?
+       WHERE tenant_id = ? AND created_at >= ?
          AND (
            severity = 'critical'
            OR action LIKE 'admin_logging.%'
@@ -12713,7 +12765,7 @@ adminLoggingRouter.get('/', async (c) => {
          )
        ORDER BY created_at DESC
        LIMIT 20`,
-      [from]
+      [tenantId, from]
     );
     const criticalPolicy = await loadAdminLoggingCriticalPolicy(c);
     const sensitiveDetailPolicy = await loadSensitiveDetailPolicy(c);
@@ -12725,13 +12777,19 @@ adminLoggingRouter.get('/', async (c) => {
         coverage: summarizeAdminAuditCoverage(LOGGING_ADMIN_AUDIT_COVERAGE_REGISTRY),
         critical_protection: criticalPolicy.summary,
         sensitive_detail: sensitiveDetailPolicy.summary,
-        audit: auditSummary ?? { total: 0, failures: 0, critical: 0 },
+        audit: {
+          total: Number(auditSummary?.total ?? 0),
+          failures: Number(auditSummary?.failures ?? 0),
+          critical: Number(auditSummary?.critical ?? 0),
+        },
         recent_changes: recentChanges,
         archive: archiveSummary,
         delivery: deliverySummary,
       })
     );
-  } catch {
+  } catch (error) {
+    const incomplete = logQueryErrorResponse(c, error);
+    if (incomplete) return incomplete;
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 });

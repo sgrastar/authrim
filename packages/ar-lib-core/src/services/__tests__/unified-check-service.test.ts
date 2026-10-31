@@ -19,13 +19,58 @@ import {
 } from '../unified-check-service';
 import type { CheckApiRequest, ParsedPermission } from '../../types/check-api';
 
-// Mock D1 database
+// Mock D1 database: `all` and `first` are given the statement's SQL
 const mockD1 = {
-  prepare: vi.fn().mockReturnThis(),
-  bind: vi.fn().mockReturnThis(),
+  prepare: vi.fn((sql: string) => {
+    const statement = {
+      bind: () => statement,
+      all: () => mockD1.all(sql),
+      first: () => mockD1.first(sql),
+    };
+    return statement;
+  }),
   all: vi.fn(),
   first: vi.fn(),
 };
+
+/**
+ * The subject's roles, read as the service reads them: its assignments (account database), then
+ * the roles they name (metadata database). Other statements find nothing.
+ */
+function mockSubjectRoles(
+  roles: Array<{
+    name: string;
+    permissions_json: string;
+    scope_type?: string;
+    scope_target?: string;
+  }>
+) {
+  mockD1.all.mockImplementation(async (sql: string) => {
+    if (sql.includes('FROM role_assignments')) {
+      return {
+        results: roles.map((role, index) => ({
+          id: `ra_${index}`,
+          role_id: `role_${index}`,
+          scope_type: role.scope_type ?? 'global',
+          scope_target: role.scope_target ?? '',
+          expires_at: null,
+          assigned_by: null,
+          created_at: 0,
+        })),
+      };
+    }
+    if (sql.includes('FROM roles')) {
+      return {
+        results: roles.map(({ name, permissions_json }, index) => ({
+          id: `role_${index}`,
+          name,
+          permissions_json,
+        })),
+      };
+    }
+    return { results: [] };
+  });
+}
 
 // Mock KV namespace
 const mockKV = {
@@ -369,14 +414,12 @@ describe('UnifiedCheckService', () => {
   describe('check - Role-Based Permission (RBAC)', () => {
     it('should allow when user has matching role permission', async () => {
       // Mock role with permission
-      mockD1.all.mockResolvedValue({
-        results: [
-          {
-            name: 'admin',
-            permissions_json: JSON.stringify(['documents:read', 'documents:write']),
-          },
-        ],
-      });
+      mockSubjectRoles([
+        {
+          name: 'admin',
+          permissions_json: JSON.stringify(['documents:read', 'documents:write']),
+        },
+      ]);
 
       const request: CheckApiRequest = {
         subject_id: 'user_123',
@@ -391,14 +434,12 @@ describe('UnifiedCheckService', () => {
     });
 
     it('should allow when role has wildcard permission', async () => {
-      mockD1.all.mockResolvedValue({
-        results: [
-          {
-            name: 'admin',
-            permissions_json: JSON.stringify(['documents:*']),
-          },
-        ],
-      });
+      mockSubjectRoles([
+        {
+          name: 'admin',
+          permissions_json: JSON.stringify(['documents:*']),
+        },
+      ]);
 
       const request: CheckApiRequest = {
         subject_id: 'user_123',
@@ -413,14 +454,12 @@ describe('UnifiedCheckService', () => {
     });
 
     it('should allow when role has global wildcard', async () => {
-      mockD1.all.mockResolvedValue({
-        results: [
-          {
-            name: 'super_admin',
-            permissions_json: JSON.stringify(['*:*']),
-          },
-        ],
-      });
+      mockSubjectRoles([
+        {
+          name: 'super_admin',
+          permissions_json: JSON.stringify(['*:*']),
+        },
+      ]);
 
       const request: CheckApiRequest = {
         subject_id: 'user_123',
@@ -433,15 +472,123 @@ describe('UnifiedCheckService', () => {
       expect(result.allowed).toBe(true);
     });
 
-    it('should deny when role does not have permission', async () => {
-      mockD1.all.mockResolvedValue({
-        results: [
-          {
-            name: 'viewer',
-            permissions_json: JSON.stringify(['documents:read']),
-          },
-        ],
+    it('grants a scoped role only where it is assigned', async () => {
+      mockSubjectRoles([
+        {
+          name: 'org_editor',
+          permissions_json: JSON.stringify(['documents:read']),
+          scope_type: 'org',
+          scope_target: 'org:org_a',
+        },
+        {
+          name: 'doc_owner',
+          permissions_json: JSON.stringify(['reports:*']),
+          scope_type: 'resource',
+          scope_target: 'resource:reports:rep_1',
+        },
+      ]);
+      const check = (permission: string, orgId?: string) =>
+        service.check({
+          subject_id: 'user_123',
+          permission,
+          tenant_id: 'default',
+          ...(orgId ? { resource_context: { org_id: orgId } } : {}),
+        });
+
+      expect((await check('documents:read', 'org_a')).resolved_via).toContain('role');
+      expect((await check('documents:read', 'org_b')).allowed).toBe(false);
+      expect((await check('documents:read')).allowed).toBe(false);
+      expect((await check('reports:rep_1:write')).resolved_via).toContain('role');
+      expect((await check('reports:rep_2:write')).allowed).toBe(false);
+      expect((await check('reports:write')).allowed).toBe(false);
+    });
+
+    it('grants nothing from a role with an empty or unknown scope', async () => {
+      mockSubjectRoles([
+        { name: 'blank', permissions_json: JSON.stringify(['reports:*']), scope_type: '' },
+        { name: 'odd', permissions_json: JSON.stringify(['reports:*']), scope_type: 'region' },
+      ]);
+
+      const result = await service.check({
+        subject_id: 'user_123',
+        permission: 'reports:read',
+        tenant_id: 'default',
       });
+
+      expect(result.allowed).toBe(false);
+    });
+
+    it('grants a tenant-scoped role (as invitations once gave) in its own tenant', async () => {
+      mockSubjectRoles([
+        {
+          name: 'member',
+          permissions_json: JSON.stringify(['documents:read']),
+          scope_type: 'tenant',
+          scope_target: 'default',
+        },
+        {
+          name: 'elsewhere',
+          permissions_json: JSON.stringify(['documents:write']),
+          scope_type: 'tenant',
+          scope_target: 'other_tenant',
+        },
+      ]);
+      const check = (permission: string) =>
+        service.check({ subject_id: 'user_123', permission, tenant_id: 'default' });
+
+      expect((await check('documents:read')).allowed).toBe(true);
+      expect((await check('documents:write')).allowed).toBe(false);
+    });
+
+    it("reads the subject's assignments from its account database", async () => {
+      // The metadata database (mockD1) defines the role and holds no assignment of it.
+      mockSubjectRoles([]);
+      mockD1.all.mockImplementation(async (sql: string) => ({
+        results: sql.includes('FROM roles')
+          ? [{ id: 'role_editor', name: 'editor', permissions_json: '["documents:write"]' }]
+          : [],
+      }));
+      const accountQueries: string[] = [];
+      const account = {
+        query: vi.fn(async (sql: string) => {
+          accountQueries.push(sql);
+          return sql.includes('FROM role_assignments')
+            ? [{ id: 'ra_1', role_id: 'role_editor', scope_type: 'global', scope_target: '' }]
+            : [];
+        }),
+        queryOne: vi.fn(async () => null),
+        execute: vi.fn(),
+        batch: vi.fn(),
+        transaction: vi.fn(),
+        isHealthy: vi.fn(),
+        getType: () => 'mock',
+        close: vi.fn(),
+      };
+      const subjectAccountDb = vi.fn(async () => account as never);
+      const routed = createUnifiedCheckService({
+        db: mockD1 as unknown as D1Database,
+        subjectAccountDb,
+      });
+
+      const result = await routed.check({
+        subject_id: 'user_123',
+        permission: 'documents:write',
+        tenant_id: 'default',
+      });
+
+      expect(result.allowed).toBe(true);
+      expect(result.resolved_via).toContain('role');
+      expect(subjectAccountDb).toHaveBeenCalledWith('default', 'user_123');
+      expect(accountQueries.some((sql) => sql.includes('FROM roles'))).toBe(false);
+    });
+
+    it('should deny when role does not have permission', async () => {
+      mockSubjectRoles([
+        {
+          name: 'viewer',
+          permissions_json: JSON.stringify(['documents:read']),
+        },
+      ]);
 
       const request: CheckApiRequest = {
         subject_id: 'user_123',
@@ -472,9 +619,15 @@ describe('UnifiedCheckService', () => {
       expect(result.resolved_via).toContain('computed');
     });
 
-    it('should allow when user is org member', async () => {
-      // Mock org membership
-      mockD1.first.mockResolvedValue({ id: 'membership_1' });
+    it('grants nothing for membership of the resource organization alone', async () => {
+      // The subject's membership (account database) of an active organisation (metadata)
+      mockD1.all.mockImplementation(async (sql: string) => ({
+        results: sql.includes('FROM subject_org_membership')
+          ? [{ id: 'membership_1', org_id: 'org_456', membership_type: 'member', is_primary: 0 }]
+          : sql.includes('FROM organizations')
+            ? [{ id: 'org_456', name: 'Org', org_type: 'enterprise', is_active: 1 }]
+            : [],
+      }));
 
       const request: CheckApiRequest = {
         subject_id: 'user_123',
@@ -487,21 +640,191 @@ describe('UnifiedCheckService', () => {
 
       const result = await service.check(request);
 
+      expect(result.allowed).toBe(false);
+      expect(result.resolved_via).not.toContain('computed');
+    });
+  });
+
+  describe("check - the tenant's attribute-based policy", () => {
+    const allowPremium = {
+      evaluate: vi.fn((context: { verifiedAttributes: Array<{ name: string; value: string }> }) => {
+        const premium = context.verifiedAttributes.some(
+          (attribute) => attribute.name === 'tier' && attribute.value === 'premium'
+        );
+        return premium
+          ? { allowed: true, reason: 'premium', decidedBy: 'rule_premium' }
+          : { allowed: false, reason: 'no rule matched' };
+      }),
+    };
+    const attributes = {
+      getValidAttributesForUser: vi.fn(async () => ({ tier: 'premium' })),
+    };
+    const request: CheckApiRequest = {
+      subject_id: 'user_123',
+      permission: 'reports:read',
+      tenant_id: 'acme',
+    };
+
+    it('grants through the tenant rules with its verified attributes when both are on', async () => {
+      const abacService = createUnifiedCheckService({
+        db: mockD1 as unknown as D1Database,
+        attributeRepository: attributes,
+        tenantPolicy: async () => ({
+          abac: true,
+          verifiedAttributes: true,
+          logDecisions: false,
+          evaluator: allowPremium,
+        }),
+      });
+
+      const result = await abacService.check(request);
+
       expect(result.allowed).toBe(true);
       expect(result.resolved_via).toContain('computed');
+      expect(attributes.getValidAttributesForUser).toHaveBeenCalledWith('acme', 'user_123');
+    });
+
+    it('does not load verified attributes, or evaluate rules, when the settings keep them off', async () => {
+      const withoutAttributes = createUnifiedCheckService({
+        db: mockD1 as unknown as D1Database,
+        attributeRepository: attributes,
+        tenantPolicy: async () => ({
+          abac: true,
+          verifiedAttributes: false,
+          logDecisions: false,
+          evaluator: allowPremium,
+        }),
+      });
+      expect((await withoutAttributes.check(request)).allowed).toBe(false);
+      expect(attributes.getValidAttributesForUser).not.toHaveBeenCalled();
+      allowPremium.evaluate.mockClear();
+
+      const abacOff = createUnifiedCheckService({
+        db: mockD1 as unknown as D1Database,
+        attributeRepository: attributes,
+        tenantPolicy: async () => ({
+          abac: false,
+          verifiedAttributes: true,
+          logDecisions: false,
+          evaluator: allowPremium,
+        }),
+      });
+      expect((await abacOff.check(request)).allowed).toBe(false);
+      expect(allowPremium.evaluate).not.toHaveBeenCalled();
+    });
+
+    it('turns attribute-based policy off when the tenant settings cannot be resolved', async () => {
+      const failing = createUnifiedCheckService({
+        db: mockD1 as unknown as D1Database,
+        attributeRepository: attributes,
+        tenantPolicy: async () => {
+          throw new Error('settings unavailable');
+        },
+      });
+      expect((await failing.check(request)).allowed).toBe(false);
+    });
+
+    it('grants nothing through the rules when attributes or roles cannot be read', async () => {
+      // A rule set that would grant: without the subject's attributes or roles, a rule denying
+      // on one of them could be skipped, so the rules are not evaluated at all.
+      const grantAll = { evaluate: vi.fn(() => ({ allowed: true, decidedBy: 'rule_any' })) };
+      const policy = async () => ({
+        abac: true,
+        verifiedAttributes: true,
+        logDecisions: false,
+        evaluator: grantAll,
+      });
+
+      const attributesDown = createUnifiedCheckService({
+        db: mockD1 as unknown as D1Database,
+        attributeRepository: {
+          getValidAttributesForUser: vi.fn(async () => {
+            throw new Error('attributes unavailable');
+          }),
+        },
+        tenantPolicy: policy,
+      });
+      expect((await attributesDown.check(request)).allowed).toBe(false);
+
+      mockD1.all.mockRejectedValueOnce(new Error('roles unavailable'));
+      const rolesDown = createUnifiedCheckService({
+        db: mockD1 as unknown as D1Database,
+        attributeRepository: attributes,
+        tenantPolicy: policy,
+      });
+      expect((await rolesDown.check(request)).allowed).toBe(false);
+      expect(grantAll.evaluate).not.toHaveBeenCalled();
+
+      // With both read, the same rules grant.
+      const healthy = createUnifiedCheckService({
+        db: mockD1 as unknown as D1Database,
+        attributeRepository: attributes,
+        tenantPolicy: policy,
+      });
+      expect((await healthy.check(request)).allowed).toBe(true);
+    });
+
+    it('keeps results out of the shared cache while tenant rules apply or cannot be read', async () => {
+      const cache = { get: vi.fn(async () => null), put: vi.fn(async () => undefined) };
+      const withPolicy = (policy: Record<string, unknown>) =>
+        createUnifiedCheckService({
+          db: mockD1 as unknown as D1Database,
+          cache: cache as unknown as KVNamespace,
+          attributeRepository: attributes,
+          tenantPolicy: async () => ({
+            abac: false,
+            verifiedAttributes: false,
+            logDecisions: false,
+            ...policy,
+          }),
+        });
+
+      await withPolicy({ abac: true, verifiedAttributes: true, evaluator: allowPremium }).check(
+        request
+      );
+      await withPolicy({ unavailable: true }).check(request);
+      await createUnifiedCheckService({
+        db: mockD1 as unknown as D1Database,
+        cache: cache as unknown as KVNamespace,
+        tenantPolicy: async () => {
+          throw new Error('settings unavailable');
+        },
+      }).check(request);
+      expect(cache.get).not.toHaveBeenCalled();
+      expect(cache.put).not.toHaveBeenCalled();
+
+      // Without tenant rules, results are cached as before.
+      await withPolicy({}).check(request);
+      expect(cache.get).toHaveBeenCalled();
+      expect(cache.put).toHaveBeenCalled();
+    });
+
+    it('resolves the settings of each check tenant once', async () => {
+      const tenantPolicy = vi.fn(async (tenantId: string) => ({
+        abac: tenantId === 'acme',
+        verifiedAttributes: true,
+        logDecisions: false,
+        evaluator: allowPremium,
+      }));
+      const perTenant = createUnifiedCheckService({
+        db: mockD1 as unknown as D1Database,
+        attributeRepository: attributes,
+        tenantPolicy,
+      });
+
+      const result = await perTenant.batchCheck({
+        checks: [request, { ...request, tenant_id: 'other' }, request],
+      });
+
+      expect(result.results.map((entry) => entry.allowed)).toEqual([true, false, true]);
+      expect(tenantPolicy).toHaveBeenCalledTimes(2);
     });
   });
 
   describe('batchCheck', () => {
     it('should process multiple checks and return summary', async () => {
-      // Mock different results for different checks
-      mockD1.all
-        .mockResolvedValueOnce({
-          results: [{ name: 'admin', permissions_json: JSON.stringify(['documents:read']) }],
-        })
-        .mockResolvedValueOnce({
-          results: [],
-        });
+      // A role granting the first check's permission only
+      mockSubjectRoles([{ name: 'admin', permissions_json: JSON.stringify(['documents:read']) }]);
 
       const result = await service.batchCheck({
         checks: [

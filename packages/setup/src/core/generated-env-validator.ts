@@ -1,3 +1,14 @@
+import {
+  assertLogArchiveImplemented,
+  assertLogArchiveLockMatches,
+  logArchiveRuntimeVars,
+  LOG_ARCHIVE_PRODUCER_COMPONENTS,
+} from './log-archive-config.js';
+import { LOG_ARCHIVE_SCHEMA_DIGEST } from './log-archive.js';
+import {
+  createLogIcebergKeyResolver,
+  parseLogIcebergRootKeyring,
+} from '@authrim/ar-lib-core/services/log-iceberg-keys';
 import { existsSync, readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -14,6 +25,7 @@ import { parseConfig, type AuthrimConfig } from './config.js';
 import {
   buildResourceIdsFromLock,
   parseWranglerToml,
+  parseGeneratedLogArchiveVars,
   validateWranglerConfigs,
 } from './wrangler.js';
 import { buildWorkerDeploymentResourceIds } from './deployment-resource-ids.js';
@@ -25,7 +37,13 @@ import {
   getRequiredDataRolesForComponent,
   type WorkerComponent,
 } from './naming.js';
-import { listD1Databases, listKVNamespaces, listR2Buckets, queryD1Rows } from './cloudflare.js';
+import {
+  hasExactR2BucketOwnership,
+  listD1Databases,
+  listKVNamespaces,
+  listR2Buckets,
+  queryD1Rows,
+} from './cloudflare.js';
 import { SECRET_KEY_FILES } from './secrets.js';
 import { getTenantDatabaseBootstrapBinding } from '@authrim/ar-lib-core/services/tenant-database-naming';
 
@@ -90,13 +108,6 @@ const BUILTIN_D1_BINDINGS: ReadonlySet<string> = new Set(
 function requiredBuiltinD1Bindings(component: WorkerComponent): ReadonlySet<string> {
   return new Set(getBuiltinD1BindingsForComponent(component));
 }
-
-const LOGGING_R2_BINDINGS = [
-  'DIAGNOSTIC_LOGS',
-  'AUDIT_ARCHIVE',
-  'EXPORT_ARTIFACTS',
-  'SENSITIVE_DETAILS',
-] as const;
 
 const MANAGEMENT_R2_BINDINGS = [
   'IMPORT_ARTIFACTS',
@@ -249,15 +260,6 @@ const LIVE_RUNTIME_D1_SCHEMA_REQUIREMENTS: Array<{
     label: 'tenant PII assignment schema',
     tables: ['identity_sensitive_values', 'users_pii', 'users_pii_tombstone'],
   },
-];
-
-const DIAGNOSTIC_R2_COMPONENTS: WorkerComponent[] = [
-  'ar-auth',
-  'ar-token',
-  'ar-async',
-  'ar-saml',
-  'ar-vc',
-  'ar-management',
 ];
 
 function normalizeHyperdriveRefCandidates(ref: string): string[] {
@@ -684,25 +686,42 @@ function validateLoggingR2Bindings(config: AuthrimConfig, lock: AuthrimLock): Va
     'lock.json has R2 buckets required by generated logging defaults'
   );
 
-  if (config.features.r2?.enabled === false) {
-    pushDetail(
-      check,
-      'warn',
-      'features.r2.enabled=false; generated logging defaults cannot use R2 chunk/archive buckets'
-    );
-    return finishCheck(check, 'R2 is disabled');
-  }
-
-  for (const binding of LOGGING_R2_BINDINGS) {
-    const bucket = lock.r2?.[binding];
-    if (bucket?.name) {
-      pushDetail(check, 'pass', `${binding}: ${bucket.name}`);
-      continue;
+  if (config.logging?.archive) {
+    const archive = config.logging.archive;
+    try {
+      assertLogArchiveImplemented(archive);
+    } catch {
+      pushDetail(check, 'fail', 'Selected log archive mode is not implemented in this release');
     }
-    pushDetail(check, 'fail', `${binding} is missing from lock.json`);
+    const resource = lock.logArchive;
+    try {
+      assertLogArchiveLockMatches(archive, resource, config.cloudflare.accountId);
+    } catch {
+      pushDetail(check, 'fail', 'Log archive account, Catalog or maintenance identity is invalid');
+    }
+    if (
+      !resource ||
+      resource.mode !== archive.mode ||
+      resource.storageGeneration !== archive.storageGeneration ||
+      resource.activatedAt !== archive.activatedAt ||
+      resource.schemaDigest !== LOG_ARCHIVE_SCHEMA_DIGEST ||
+      resource.bucketName !== archive.bucketName ||
+      resource.namespace !== archive.namespace ||
+      resource.tableName !== archive.tableName
+    )
+      pushDetail(check, 'fail', 'Log archive configuration does not match lock.json');
+    else pushDetail(check, 'pass', 'Log archive mode, generation and schema match lock.json');
+    if (
+      !lock.r2?.LOG_ARCHIVE ||
+      lock.r2.LOG_ARCHIVE.name !== archive.bucketName ||
+      !hasExactR2BucketOwnership(lock.r2.LOG_ARCHIVE)
+    )
+      pushDetail(check, 'fail', 'LOG_ARCHIVE bucket ownership is missing');
+    return finishCheck(check, 'Log archive configuration and required resources are present');
   }
 
-  return finishCheck(check, 'All logging R2 buckets are present in lock.json');
+  pushDetail(check, 'fail', 'logging.archive must select pipeline or scheduled');
+  return finishCheck(check, 'An explicit log archive mode is required');
 }
 
 function validateMigrationReleaseR2Binding(lock: AuthrimLock): ValidationCheck {
@@ -783,10 +802,44 @@ async function validateLoggingSecretMaterial(
     'OBJECT_ENCRYPTION_ROOT_KEY',
     isHexRootKey
   );
+  if (config.logging?.archive) {
+    await inspectSecretFile(
+      check,
+      join(keysDir, 'log_archive_root_keyring.json'),
+      'LOG_ARCHIVE_ROOT_KEYRING',
+      (value) => {
+        try {
+          createLogIcebergKeyResolver({
+            LOG_ARCHIVE_ROOT_KEYRING: value,
+            OBJECT_ENCRYPTION_ROOT_KEY: readFileSync(
+              join(keysDir, 'object_encryption_root_key.txt'),
+              'utf8'
+            ).trim(),
+            OBJECT_ENCRYPTION_KEY_VERSION: String(
+              config.logging!.archive!.objectEncryptionKeyVersion
+            ),
+            LOG_ARCHIVE_CONTENT_HMAC_KEY: readFileSync(
+              join(keysDir, 'log_archive_content_hmac_key.txt'),
+              'utf8'
+            ).trim(),
+          });
+          return true;
+        } catch {
+          return false;
+        }
+      }
+    );
+  }
   await inspectSecretFile(
     check,
     join(keysDir, 'pii_encryption_key.txt'),
     'PII_ENCRYPTION_KEY',
+    isHexRootKey
+  );
+  await inspectSecretFile(
+    check,
+    join(keysDir, 'tenant_backup_wrapping_key.txt'),
+    'TENANT_BACKUP_WRAPPING_KEY',
     isHexRootKey
   );
   await inspectSecretFile(
@@ -849,6 +902,15 @@ async function loadSecretLeakCandidates(
     if (!existsSync(path)) continue;
     const value = (await readFile(path, 'utf8')).trim();
     if (value.length >= 16) candidates.push({ label: fileName, value });
+    if (fileName === 'log_archive_root_keyring.json') {
+      try {
+        const ring = parseLogIcebergRootKeyring(value);
+        for (const [version, master] of Object.entries(ring.roots))
+          candidates.push({ label: `${fileName}:version_${version}`, value: master });
+      } catch {
+        // The dedicated key-material validation rejects malformed registries.
+      }
+    }
     if (fileName.endsWith('private.jwk.json')) {
       try {
         const jwk = JSON.parse(value) as { d?: unknown };
@@ -980,7 +1042,7 @@ async function validateDeployWranglers(
 
     const content = await readFile(deployPath, 'utf-8');
     const parsed = parseWranglerToml(content, env);
-    if (component !== 'ar-router' && component !== 'ar-async') {
+    if (component !== 'ar-router') {
       for (const binding of requiredBuiltinD1Bindings(component)) {
         if (!parsed.d1[binding]) {
           pushDetail(
@@ -992,25 +1054,34 @@ async function validateDeployWranglers(
       }
     }
 
-    const expectedDiagnosticLogs = lock.r2?.DIAGNOSTIC_LOGS?.name;
-    if (expectedDiagnosticLogs && DIAGNOSTIC_R2_COMPONENTS.includes(component)) {
-      if (parsed.r2.DIAGNOSTIC_LOGS !== expectedDiagnosticLogs) {
-        pushDetail(
-          check,
-          'fail',
-          `${component}: DIAGNOSTIC_LOGS expected=${expectedDiagnosticLogs} actual=${parsed.r2.DIAGNOSTIC_LOGS ?? '(missing)'}`
-        );
+    if (
+      config.logging?.archive &&
+      lock.logArchive &&
+      LOG_ARCHIVE_PRODUCER_COMPONENTS.includes(component)
+    ) {
+      const actual = parseGeneratedLogArchiveVars(content, env);
+      for (const [name, value] of Object.entries(
+        logArchiveRuntimeVars(config.logging.archive, lock.logArchive)
+      )) {
+        if (actual[name] !== value)
+          pushDetail(check, 'fail', `${component}: ${name} does not match the owned archive`);
       }
-    }
-
-    const expectedAuditArchive = lock.r2?.AUDIT_ARCHIVE?.name;
-    if (expectedAuditArchive && DIAGNOSTIC_R2_COMPONENTS.includes(component)) {
-      if (parsed.r2.AUDIT_ARCHIVE !== expectedAuditArchive) {
-        pushDetail(
-          check,
-          'fail',
-          `${component}: AUDIT_ARCHIVE expected=${expectedAuditArchive} actual=${parsed.r2.AUDIT_ARCHIVE ?? '(missing)'}`
-        );
+      if (
+        (component === 'ar-lib-core' || component === 'ar-management') &&
+        parsed.r2.LOG_ARCHIVE !== lock.logArchive.bucketName
+      ) {
+        pushDetail(check, 'fail', `${component}: LOG_ARCHIVE binding is missing or redirected`);
+      }
+      if (component === 'ar-lib-core' && parsed.d1.DB_ADMIN !== lock.d1.DB_ADMIN?.id)
+        pushDetail(check, 'fail', `${component}: archive staging DB_ADMIN binding is invalid`);
+      if (component === 'ar-management' && config.logging.archive.mode === 'pipeline') {
+        const expected = `[[env.${env}.pipelines]]\nbinding = "LOG_ARCHIVE_STREAM"\nstream = "${lock.logArchive.stream?.id}"`;
+        if (!content.replaceAll('\r\n', '\n').includes(expected))
+          pushDetail(
+            check,
+            'fail',
+            'ar-management: LOG_ARCHIVE_STREAM binding is missing or redirected'
+          );
       }
     }
 

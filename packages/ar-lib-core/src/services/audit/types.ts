@@ -5,8 +5,8 @@
  * The system separates Event Logs (non-PII) from PII Logs for GDPR compliance.
  *
  * Architecture:
- * - EventLog: What happened, results, errors (D1_CORE - no PII)
- * - PIILog: User data changes (D1_PII - encrypted)
+ * - EventLog: What happened, results, errors (encrypted canonical record)
+ * - PIILog: User data changes (nested encrypted values)
  * - Both linked via anonymized_user_id (random UUID + mapping table)
  */
 
@@ -39,17 +39,16 @@ export type EventCategory =
 export type EventResult = 'success' | 'failure' | 'partial';
 
 // =============================================================================
-// Event Log (D1_CORE - Non-PII)
+// Event Log (canonical event data)
 // =============================================================================
 
 /**
- * Event log entry stored in D1_CORE.
- * Contains only search axes; detailed data is stored in R2 if > 2KB.
+ * Event log data used to construct the immutable encrypted record and HTTP sink delivery.
  *
  * Time units: epoch milliseconds
  */
 export interface EventLogEntry {
-  /** Unique event ID (UUID v4) */
+  /** Unique event ID; may be a caller-provided stable idempotency key. */
   id: string;
 
   /** Tenant identifier */
@@ -350,6 +349,12 @@ export const DEFAULT_PII_CONFIG: TenantPIIConfig = {
  * Parameters for logging an event.
  */
 export interface EventLogParams {
+  /** Stable event ID for idempotent retries. Generated when omitted. */
+  id?: string;
+
+  /** Original event timestamp in epoch milliseconds. Generated when omitted. */
+  createdAt?: number;
+
   /** Event type (e.g., 'auth.login', 'token.issued') */
   eventType: string;
 
@@ -385,6 +390,9 @@ export interface EventLogParams {
 
   /** Additional details (will be sanitized for PII) */
   details?: EventDetails;
+
+  /** Require a configured gated fanout to be accepted before this write succeeds. */
+  requireDurableFanout?: boolean;
 }
 
 /**
@@ -457,6 +465,10 @@ export interface PurgeContext {
  * Result of a PII purge operation.
  */
 export interface PurgeResult {
+  /** The exact pending intent was already completed or removed; no new purge started. */
+  skipped?: boolean;
+  /** Physical erasure is continuing; completed must not be reported yet. */
+  pending?: boolean;
   /** Whether the purge succeeded */
   success: boolean;
 
@@ -507,6 +519,11 @@ export interface IAuditService {
    * Uses 2-stage logging (started/completed/failed).
    */
   purgeUserPII(tenantId: string, userId: string, context: PurgeContext): Promise<PurgeResult>;
+  resumePendingPIIPurge(
+    tenantId: string,
+    userId: string,
+    expectedOperationId: string
+  ): Promise<PurgeResult>;
 }
 
 // =============================================================================

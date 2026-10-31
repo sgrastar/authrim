@@ -1,0 +1,138 @@
+<script lang="ts">
+	import type { Snippet } from 'svelte';
+	import { t } from '$lib/i18n/i18n.svelte';
+	import InfoTip from '../primitives/InfoTip.svelte';
+	import { useRowStack } from './row-stack';
+
+	/**
+	 * One field of a settings form laid out as a table row: its name on the start side (what it
+	 * does behind a "?"), the control on the end side, rows divided by a line. The same columns as a
+	 * ruled DetailList, so a page reads the same whether the admin may change it or only look.
+	 *
+	 * The name shown here is for the eye; give the control the same label with `hideLabel` so
+	 * assistive tech still reads it with the control. Narrow screens stack name over control.
+	 */
+	interface Props {
+		label: string;
+		/** What the setting does, behind a "?" next to its name. */
+		info?: string;
+		/** ID to let the control reference the help text with aria-describedby. */
+		infoId?: string;
+		/** Marks after the name: where the value comes from ("Set for this tenant"). */
+		badges?: Snippet;
+		/**
+		 * What the control side starts with, so the name lines up with it: a field's box
+		 * (`field`, default) or a line of text or a checkbox (`text`).
+		 */
+		align?: 'field' | 'text';
+		/** The setting must be set: a red "*" after the name (the control itself is `required`). */
+		required?: boolean;
+		/**
+		 * No dividing lines and no padding: for a row among other fields of a form, where the
+		 * form's own spacing separates them, and not a table of settings.
+		 */
+		plain?: boolean;
+		/** The control, with its own label hidden (`hideLabel`). */
+		children: Snippet;
+	}
+
+	let {
+		label,
+		info,
+		infoId,
+		badges,
+		align = 'field',
+		required = false,
+		plain = false,
+		children
+	}: Props = $props();
+
+	// In a ruled RowStack a plain row takes the lines and the space of a row of settings.
+	const stack = useRowStack();
+	const plainNow = $derived(plain && !stack?.ruled);
+</script>
+
+<div class="field-row" class:field-row--text={align === 'text'} class:field-row--plain={plainNow}>
+	<div class="field-row__name">
+		<span class="field-row__label" aria-hidden="true"
+			>{label}{#if required}<span class="field-row__req">*</span>{/if}</span
+		>
+		{#if info}
+			<InfoTip label="{t('common.moreInfo')}: {label}" text={info} id={infoId} />
+		{/if}
+		{#if badges}<span class="field-row__badges">{@render badges()}</span>{/if}
+	</div>
+	<div class="field-row__control">{@render children()}</div>
+</div>
+
+<style>
+	/* `--row-name-col`: set by a page whose rows must line up across nested boxes. */
+	.field-row {
+		display: grid;
+		grid-template-columns: var(--row-name-col, minmax(0, 2fr)) minmax(0, 3fr);
+		gap: 8px var(--space-columns);
+		padding-block: 16px;
+	}
+
+	/* Among other fields of a form: no lines, no padding of its own. */
+	.field-row.field-row--plain,
+	.field-row.field-row--plain:not(:first-child) {
+		padding-block: 0;
+		border-top: 0;
+	}
+
+	.field-row__req {
+		margin-inline-start: 3px;
+		color: var(--danger);
+	}
+
+	.field-row:first-child {
+		padding-top: 0;
+	}
+
+	.field-row:not(:first-child) {
+		border-top: 1px solid var(--border-subtle);
+	}
+
+	/* The name's first line sits level with the text in the control beside it. */
+	.field-row__name {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: flex-start;
+		gap: 4px 6px;
+		min-width: 0;
+		padding-top: 6px;
+		font-size: var(--fs-body);
+		line-height: var(--lh-snug);
+	}
+
+	.field-row--text .field-row__name {
+		padding-top: 0;
+	}
+
+	/* The "?" is taller than a line of text: centre it on the name's first line. */
+	.field-row__name > :global(.info-tip) {
+		margin-block: calc((1lh - var(--control-h-xs)) / 2);
+	}
+
+	.field-row__badges {
+		display: inline-flex;
+		gap: 6px;
+	}
+
+	.field-row__label {
+		color: var(--text-primary);
+		font-size: var(--fs-label);
+		font-weight: var(--fw-semibold);
+	}
+
+	.field-row__control {
+		min-width: 0;
+	}
+
+	@media (max-width: 640px) {
+		.field-row {
+			grid-template-columns: minmax(0, 1fr);
+		}
+	}
+</style>

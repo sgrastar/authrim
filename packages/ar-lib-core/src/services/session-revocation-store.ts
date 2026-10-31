@@ -1,4 +1,5 @@
 import type { Env } from '../types/env';
+import { isValidTenantIdentifier } from '../utils/tenant-request-policy';
 import type { SessionRevocationStore } from '../durable-objects/SessionRevocationStore';
 import type {
   AccountAuthenticationLifecycle,
@@ -7,11 +8,23 @@ import type {
 
 export const SESSION_REVOCATION_AUTHORITY = 'user-session-do-v1' as const;
 
+type SessionRevocationEnv = Pick<Env, 'SESSION_REVOCATION_STORE' | 'AUTH_RUNTIME_PORTS'>;
+
 export function getSessionRevocationStore(
-  env: Pick<Env, 'SESSION_REVOCATION_STORE'>,
+  env: SessionRevocationEnv,
   tenantId: string,
   userId: string
 ): DurableObjectStub<SessionRevocationStore> {
+  if (env.AUTH_RUNTIME_PORTS) {
+    if (!isValidTenantIdentifier(tenantId) || !userId.trim()) {
+      throw new Error('auth_runtime_account_identity_invalid');
+    }
+    const store = env.AUTH_RUNTIME_PORTS.sessionRevocation.forAccount({ tenantId, userId });
+    if (!store) throw new Error('auth_runtime_session_revocation_unavailable');
+    // Existing callers receive a DO stub type, but use only its RPC methods. The AWS port
+    // implements those methods directly and never constructs a DurableObjectNamespace.
+    return store as unknown as DurableObjectStub<SessionRevocationStore>;
+  }
   const namespace = env.SESSION_REVOCATION_STORE;
   if (!namespace) throw new Error('session_revocation_store_unavailable');
   return namespace.get(namespace.idFromName(`tenant:${tenantId}:user-session:${userId}`));
@@ -53,7 +66,7 @@ async function initializeAccountAuthenticationState(
 }
 
 export async function ensureAccountAuthenticationState(
-  env: Pick<Env, 'SESSION_REVOCATION_STORE'>,
+  env: SessionRevocationEnv,
   tenantId: string,
   userId: string,
   loader: () => Promise<AccountAuthenticationHydration | null>
@@ -81,7 +94,7 @@ export async function ensureAccountAuthenticationState(
  * only during lazy migration of an account whose DO state has not been initialized yet.
  */
 export async function advancePasskeyAuthenticationState(
-  env: Pick<Env, 'SESSION_REVOCATION_STORE'>,
+  env: SessionRevocationEnv,
   input: {
     tenantId: string;
     userId: string;
@@ -117,7 +130,7 @@ export async function advancePasskeyAuthenticationState(
  * for lazy state initialization.
  */
 export async function consumeTotpAuthenticationState(
-  env: Pick<Env, 'SESSION_REVOCATION_STORE'>,
+  env: SessionRevocationEnv,
   input: {
     tenantId: string;
     userId: string;
@@ -148,8 +161,44 @@ export async function consumeTotpAuthenticationState(
   }
 }
 
+/**
+ * The account's authentication state as its Durable Object holds it (lifecycle null: not
+ * initialized yet; sign-in then hydrates it from the canonical account).
+ */
+export async function readAccountAuthenticationState(
+  env: SessionRevocationEnv,
+  tenantId: string,
+  userId: string
+): Promise<AccountAuthenticationSnapshot> {
+  return getSessionRevocationStore(env, tenantId, userId).getAccountStateRpc(
+    tenantId,
+    userId,
+    `account:${userId}`
+  );
+}
+
+/**
+ * Initializes an account's authentication state that has none yet from the canonical account
+ * (as sign-in does), so a change made to the canonical account next is not read back as the
+ * state it started from. An initialized state is left as it is.
+ */
+export async function initializeAccountAuthenticationFromAccount(
+  env: SessionRevocationEnv,
+  tenantId: string,
+  userId: string,
+  hydration: AccountAuthenticationHydration
+): Promise<AccountAuthenticationSnapshot> {
+  return getSessionRevocationStore(env, tenantId, userId).initializeAccountStateRpc(
+    tenantId,
+    userId,
+    `account:${userId}`,
+    hydration.lifecycle,
+    hydration.sourceVersionMs
+  );
+}
+
 export async function transitionAccountAuthenticationState(
-  env: Pick<Env, 'SESSION_REVOCATION_STORE'>,
+  env: SessionRevocationEnv,
   input: {
     tenantId: string;
     userId: string;
@@ -170,9 +219,58 @@ export async function transitionAccountAuthenticationState(
   );
 }
 
+/**
+ * As `transitionAccountAuthenticationState`, also returning the sessions the transition ended
+ * (unexpired, revoked by this epoch move and not an earlier one), for telling the relying parties
+ * signed in through them.
+ */
+export async function transitionAccountAuthenticationStateEndingSessions(
+  env: Pick<Env, 'SESSION_REVOCATION_STORE'>,
+  input: Parameters<typeof transitionAccountAuthenticationState>[1]
+): Promise<{ state: AccountAuthenticationSnapshot; endedSessionIds: string[] }> {
+  const { state, endedSessions } = await getSessionRevocationStore(
+    env,
+    input.tenantId,
+    input.userId
+  ).setAccountLifecycleEndingSessionsRpc(
+    input.tenantId,
+    input.userId,
+    `account:${input.userId}`,
+    input.lifecycle,
+    input.sourceVersionMs,
+    input.operationId,
+    input.revokeSessions,
+    Date.now()
+  );
+  return { state, endedSessionIds: endedSessions.map((entry) => entry.sessionId) };
+}
+
+/**
+ * As `recordUserSessionRevocation`, also returning the sessions the revocation ended (see
+ * `transitionAccountAuthenticationStateEndingSessions`).
+ */
+export async function recordUserSessionRevocationEndingSessions(
+  env: SessionRevocationEnv,
+  tenantId: string,
+  userId: string,
+  revokedAfterMs = Date.now()
+): Promise<{ revokedAfterMs: number; endedSessionIds: string[] }> {
+  const result = await getSessionRevocationStore(env, tenantId, userId).revokeAllEndingSessionsRpc(
+    tenantId,
+    userId,
+    `account:${userId}`,
+    revokedAfterMs,
+    Date.now()
+  );
+  return {
+    revokedAfterMs: result.revokedAfterMs,
+    endedSessionIds: result.endedSessions.map((entry) => entry.sessionId),
+  };
+}
+
 /** Advance the sole per-user session revocation authority. */
 export async function recordUserSessionRevocation(
-  env: Pick<Env, 'SESSION_REVOCATION_STORE'>,
+  env: SessionRevocationEnv,
   tenantId: string,
   userId: string,
   revokedAfterMs = Date.now()
@@ -189,7 +287,7 @@ export async function recordUserSessionRevocation(
 
 // Compatibility signature for SAML integrations; the user-scoped DO remains authoritative.
 export async function recordHybridUserSessionRevocationEpoch(
-  env: Pick<Env, 'SESSION_REVOCATION_STORE'>,
+  env: SessionRevocationEnv,
   _legacyCoreAdapter: unknown,
   tenantId: string,
   userId: string,

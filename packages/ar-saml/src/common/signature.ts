@@ -356,7 +356,7 @@ export function verifyXmlSignatureAndGetReferences(
     }
 
     for (let referenceIndex = 0; referenceIndex < references.length; referenceIndex++) {
-      validateReferenceTransforms(references[referenceIndex]!);
+      validateReferenceTransforms(references[referenceIndex]);
     }
 
     // 5. Check signature algorithm (reject SHA-1) BEFORE verification
@@ -464,7 +464,7 @@ function getSingleDirectXmlDsigChild(parent: Element, localName: string): Elemen
   if (children.length !== 1) {
     throw new Error(`XML signature must contain exactly one direct ${localName}`);
   }
-  return children[0]!;
+  return children[0];
 }
 
 function getDirectXmlDsigChildren(parent: Element, localName: string): Element[] {
@@ -511,41 +511,6 @@ export function extractCertificateFromSignature(xml: string): string | null {
 
   // Format as PEM
   const lines = certBase64.match(/.{1,64}/g) || [];
-  return `-----BEGIN CERTIFICATE-----\n${lines.join('\n')}\n-----END CERTIFICATE-----`;
-}
-
-/**
- * Convert JWK public key to X.509 certificate (self-signed)
- *
- * This creates a minimal self-signed certificate from a JWK public key.
- * Used for IdP metadata when we only have JWK keys from KeyManager.
- */
-export async function jwkToX509Certificate(
-  jwk: JsonWebKey,
-  issuer: string,
-  validityDays: number = 365
-): Promise<string> {
-  // Import the public key (cast to JsonWebKey for Web Crypto API compatibility)
-  const publicKey = await crypto.subtle.importKey(
-    'jwk',
-    jwk as JsonWebKey,
-    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
-    true,
-    ['verify']
-  );
-
-  // Export as SPKI (SubjectPublicKeyInfo)
-  const spki = await crypto.subtle.exportKey('spki', publicKey);
-  const spkiBase64 = btoa(String.fromCharCode(...new Uint8Array(spki as ArrayBuffer)));
-
-  // For a proper X.509 certificate, we would need to construct the full ASN.1 structure.
-  // However, for SAML purposes, many implementations accept just the public key.
-  // We'll return a minimal self-signed certificate structure.
-
-  // Note: In production, you should use a proper certificate generation library
-  // or pre-generate certificates. This is a simplified version.
-
-  const lines = spkiBase64.match(/.{1,64}/g) || [];
   return `-----BEGIN CERTIFICATE-----\n${lines.join('\n')}\n-----END CERTIFICATE-----`;
 }
 

@@ -3,18 +3,17 @@ import {
   getRefreshTokenShardConfig,
   saveRefreshTokenShardConfig,
   createNewGeneration,
-  parseRefreshTokenJti,
-  buildRefreshTokenRotatorInstanceName,
   clearShardConfigCache,
   getTenantIdFromContext,
   createAuthContextFromHono,
+  createAccountAuthContextFromHono,
+  resolveAccountDataContextFromHono,
   resolveOptionalCoreAdapterFromHono,
   countActiveRefreshTokenFamiliesByGeneration,
   deleteRefreshTokenFamiliesByGeneration,
   getLogger,
   getRefreshTokenFamilyGenerationStats,
-  listRefreshTokenFamiliesByUser,
-  revokeRefreshTokenFamiliesByUser,
+  revokeUserRefreshTokenFamilies,
   type RefreshTokenShardConfig,
   type Env,
 } from '@authrim/ar-lib-core';
@@ -336,19 +335,31 @@ export async function revokeAllUserRefreshTokens(c: Context<{ Bindings: Env }>) 
       );
     }
 
-    // Get all token families for this user via Adapter
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    // ar-token indexes the user's families in its account database, not tenant metadata.
+    try {
+      await resolveAccountDataContextFromHono(c, userId);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'account_data_route_not_found') {
+        return c.json({
+          success: true,
+          message: 'No active refresh tokens found for user',
+          revoked: 0,
+        });
+      }
+      throw error;
+    }
+    const authCtx = createAccountAuthContextFromHono(c, tenantId);
 
-    const families = await listRefreshTokenFamiliesByUser(authCtx.coreAdapter, {
+    // A failure leaves the index as it was (the request fails), so a retry can complete it.
+    const { familyCount } = await revokeUserRefreshTokenFamilies(c.env, authCtx.coreAdapter, {
       tenantId,
       userId,
       clientId,
-      activeOnly: true,
-      nowMs: Date.now(),
+      reason: 'user_wide_revocation',
     });
 
-    if (families.length === 0) {
+    if (familyCount === 0) {
       return c.json({
         success: true,
         message: 'No active refresh tokens found for user',
@@ -356,55 +367,10 @@ export async function revokeAllUserRefreshTokens(c: Context<{ Bindings: Env }>) 
       });
     }
 
-    // Group by shard for parallel revocation
-    const shardGroups = new Map<string, { clientId: string; jtis: string[] }>();
-
-    for (const family of families) {
-      const parsed = parseRefreshTokenJti(family.jti);
-      const instanceName = buildRefreshTokenRotatorInstanceName(
-        family.client_id,
-        parsed.generation,
-        parsed.shardIndex,
-        tenantId
-      );
-
-      if (!shardGroups.has(instanceName)) {
-        shardGroups.set(instanceName, { clientId: family.client_id, jtis: [] });
-      }
-      shardGroups.get(instanceName)!.jtis.push(family.jti);
-    }
-
-    // Revoke in parallel
-    const revokePromises = Array.from(shardGroups.entries()).map(
-      async ([instanceName, { jtis }]) => {
-        const rotatorId = c.env.REFRESH_TOKEN_ROTATOR.idFromName(instanceName);
-        const rotator = c.env.REFRESH_TOKEN_ROTATOR.get(rotatorId);
-
-        const response = await rotator.fetch(
-          new Request('http://internal/batch-revoke', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ jtis, reason: 'user_wide_revocation' }),
-          })
-        );
-
-        return response.ok;
-      }
-    );
-
-    await Promise.all(revokePromises);
-
-    // Update D1 via Adapter
-    await revokeRefreshTokenFamiliesByUser(authCtx.coreAdapter, {
-      tenantId,
-      userId,
-      clientId,
-    });
-
     return c.json({
       success: true,
       message: `Revoked all refresh tokens for user ${userId}`,
-      revoked: families.length,
+      revoked: familyCount,
     });
   } catch (error) {
     log.error('Failed to revoke user refresh tokens', {}, error as Error);

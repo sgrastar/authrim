@@ -1,3 +1,4 @@
+import { generateKeyPairSync } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { didWebToUrl, isDIDMethodSupported, isValidDID, parseDID, resolveDID } from '../did';
 
@@ -74,30 +75,119 @@ describe('DID parsing and did:key resolution', () => {
     });
   });
 
-  it.each([
-    [0x80, 0x24, 65, 'P-256', 'ES256'],
-    [0x81, 0x24, 97, 'P-384', 'ES384'],
-    [0x82, 0x24, 133, 'P-521', 'ES512'],
-  ])('resolves uncompressed multicodec %#/%#', async (first, second, length, curve, alg) => {
-    const key = [first, second, 0x04, ...new Array(length - 1).fill(1)];
-    const multibase = `z${base58(key)}`;
-    await expect(resolveDID(`did:key:${multibase}`)).resolves.toMatchObject({
-      verificationMethod: [
-        {
-          type: 'JsonWebKey2020',
-          publicKeyJwk: { kty: 'EC', crv: curve, alg, use: 'sig' },
-        },
-      ],
-    });
+  describe('EC did:key with real keys', () => {
+    const curves = [
+      ['P-256', 'prime256v1', [0x80, 0x24], 'ES256', 32],
+      ['P-384', 'secp384r1', [0x81, 0x24], 'ES384', 48],
+      ['P-521', 'secp521r1', [0x82, 0x24], 'ES512', 66],
+    ] as const;
+
+    function keyBytes(namedCurve: string, size: number) {
+      const jwk = generateKeyPairSync('ec', { namedCurve }).publicKey.export({ format: 'jwk' });
+      const x = Buffer.from(jwk.x as string, 'base64url');
+      const y = Buffer.from(jwk.y as string, 'base64url');
+      const compressed = [(y[size - 1] & 1) === 0 ? 0x02 : 0x03, ...x];
+      const uncompressed = [0x04, ...x, ...y];
+      return { jwk, compressed, uncompressed };
+    }
+
+    it.each(curves)(
+      'resolves the compressed %s form back to the same public key',
+      async (curve, namedCurve, prefix, alg, size) => {
+        // Several keys, so both y parities are exercised.
+        for (let i = 0; i < 6; i += 1) {
+          const { jwk, compressed } = keyBytes(namedCurve, size);
+          const did = `did:key:z${base58([...prefix, ...compressed])}`;
+          const document = await resolveDID(did);
+          expect(document.verificationMethod?.[0].publicKeyJwk).toMatchObject({
+            kty: 'EC',
+            crv: curve,
+            alg,
+            x: jwk.x,
+            y: jwk.y,
+          });
+        }
+      }
+    );
+
+    it.each(curves)(
+      'rejects the uncompressed %s form (a second DID string for the same key)',
+      async (_curve, namedCurve, prefix, _alg, size) => {
+        const { uncompressed } = keyBytes(namedCurve, size);
+        await expect(
+          resolveDID(`did:key:z${base58([...prefix, ...uncompressed])}`)
+        ).rejects.toThrow('compressed point form');
+      }
+    );
   });
 
-  it('decompresses a syntactically valid compressed P-256 point', async () => {
-    const multibase = `z${base58([0x80, 0x24, 0x02, ...new Array(32).fill(1)])}`;
-    await expect(resolveDID(`did:key:${multibase}`)).resolves.toMatchObject({
-      verificationMethod: [
-        { publicKeyJwk: { kty: 'EC', crv: 'P-256', x: expect.any(String), y: expect.any(String) } },
+  describe('compressed EC did:key that is not a point of the curve', () => {
+    const curves = [
+      [
+        'P-256',
+        [0x80, 0x24],
+        32,
+        'ffffffff00000001000000000000000000000000ffffffffffffffffffffffff',
+        'ffffffff00000001000000000000000000000000fffffffffffffffffffffffc',
+        '5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b',
       ],
-    });
+      [
+        'P-384',
+        [0x81, 0x24],
+        48,
+        'fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000ffffffff',
+        'fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000fffffffc',
+        'b3312fa7e23ee7e4988e056be3f82d19181d9c6efe8141120314088f5013875ac656398d8a2ed19d2a85c8edd3ec2aef',
+      ],
+      [
+        'P-521',
+        [0x82, 0x24],
+        66,
+        '01' + 'ff'.repeat(65),
+        '01' + 'ff'.repeat(64) + 'fc',
+        '0051953eb9618e1c9a1f929a21a0b68540eea2da725b99b315f3b8b489918ef109e156193951ec7e937b1652c0bd3bb1bf073573df883d2c34f1ef451fd46b503f00',
+      ],
+    ] as const;
+
+    const toBytes = (value: bigint, size: number) =>
+      Array.from({ length: size }, (_, i) => Number((value >> BigInt(8 * (size - 1 - i))) & 0xffn));
+    const modPow = (base: bigint, exponent: bigint, modulus: bigint) => {
+      let result = 1n;
+      let b = base % modulus;
+      for (let e = exponent; e > 0n; e >>= 1n) {
+        if (e & 1n) result = (result * b) % modulus;
+        b = (b * b) % modulus;
+      }
+      return result;
+    };
+
+    it.each(curves)(
+      '%s: x equal to p (and above) is a resolution error, not a Multikey document',
+      async (_curve, prefix, size, pHex) => {
+        const p = BigInt(`0x${pHex}`);
+        for (const x of [p, p + 1n]) {
+          const did = `did:key:z${base58([...prefix, 0x02, ...toBytes(x, size)])}`;
+          await expect(resolveDID(did)).rejects.toThrow('not a valid curve point');
+        }
+      }
+    );
+
+    it.each(curves)(
+      '%s: an x with no point on the curve (non-residue) is a resolution error',
+      async (_curve, prefix, size, pHex, aHex, bHex) => {
+        const p = BigInt(`0x${pHex}`);
+        const a = BigInt(`0x${aHex}`);
+        const b = BigInt(`0x${bHex}`);
+        // Euler's criterion: rhs is a non-residue when rhs^((p-1)/2) = p - 1.
+        let x = 1n;
+        while (modPow((x ** 3n + a * x + b) % p, (p - 1n) / 2n, p) !== p - 1n) x += 1n;
+
+        for (const parity of [0x02, 0x03]) {
+          const did = `did:key:z${base58([...prefix, parity, ...toBytes(x, size)])}`;
+          await expect(resolveDID(did)).rejects.toThrow('not a valid curve point');
+        }
+      }
+    );
   });
 
   it.each([

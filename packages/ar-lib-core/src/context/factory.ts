@@ -28,6 +28,7 @@
  */
 
 import type { Context as HonoContext } from 'hono';
+import type { LogIcebergRuntimeEnv } from '../services/log-iceberg-runtime';
 import type { DatabaseAdapter } from '../db/adapter';
 import type { PIIPartitionRouter, PartitionKey } from '../db/partition-router';
 import {
@@ -129,7 +130,10 @@ export class ContextFactory implements IContextFactory {
     }
 
     const repositories = this.createCoreRepositories();
-    const piiRepositories = this.createPIIRepositories(this.defaultPiiAdapter);
+    const piiRepositories = this.createPIIRepositories(
+      this.defaultPiiAdapter,
+      c.env as LogIcebergRuntimeEnv
+    );
 
     return {
       tenantId: this.tenantId,
@@ -165,7 +169,10 @@ export class ContextFactory implements IContextFactory {
       throw new Error('Partition router not configured. Cannot elevate to PIIContext.');
     }
 
-    const piiRepositories = this.createPIIRepositories(this.defaultPiiAdapter);
+    const piiRepositories = this.createPIIRepositories(
+      this.defaultPiiAdapter,
+      authCtx.honoContext.env as LogIcebergRuntimeEnv
+    );
 
     return {
       ...authCtx,
@@ -219,12 +226,15 @@ export class ContextFactory implements IContextFactory {
    *
    * @param piiAdapter - PII database adapter
    */
-  private createPIIRepositories(piiAdapter: DatabaseAdapter): PIIRepositories {
+  private createPIIRepositories(
+    piiAdapter: DatabaseAdapter,
+    env: LogIcebergRuntimeEnv
+  ): PIIRepositories {
     return {
       tombstone: new TombstoneRepository(piiAdapter),
       identifier: new SubjectIdentifierRepository(piiAdapter),
       linkedIdentity: new LinkedIdentityRepository(piiAdapter),
-      auditLog: new PIIAuditLogRepository(piiAdapter),
+      auditLog: new PIIAuditLogRepository(env, this.tenantId),
     };
   }
 }

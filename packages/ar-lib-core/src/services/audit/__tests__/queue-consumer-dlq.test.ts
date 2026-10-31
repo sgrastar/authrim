@@ -70,6 +70,8 @@ describe('audit DLQ consumer', () => {
       resumeMultipartUpload: vi.fn(),
     } as unknown as R2Bucket;
     const adminDb = createAdminDbAdapter();
+    const acquire = vi.fn(async () => ({ admitted: true }));
+    const complete = vi.fn(async () => {});
     const message = createMessage({
       type: 'event_log',
       tenantId: 'tenant-a',
@@ -93,8 +95,13 @@ describe('audit DLQ consumer', () => {
         DB: {} as D1Database,
         DB_PII: {} as D1Database,
         DB_ADMIN: adminDb,
-        AUDIT_ARCHIVE: bucket,
+        SENSITIVE_DETAILS: bucket,
         OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
+        TENANT_BACKUP_WRAPPING_KEY: 'enabled',
+        CONTROL: {
+          acquireTenantBackupMutationPermit: acquire,
+          completeTenantBackupMutationPermit: complete,
+        },
       } as unknown as Parameters<typeof processDLQQueue>[1]
     );
 
@@ -135,6 +142,46 @@ describe('audit DLQ consumer', () => {
     });
     expect(message.ack).toHaveBeenCalledOnce();
     expect(message.retry).not.toHaveBeenCalled();
+    expect(acquire).toHaveBeenCalledWith({
+      tenantId: 'tenant-a',
+      permitId: expect.any(String),
+    });
+    expect(complete).toHaveBeenCalledWith({
+      tenantId: 'tenant-a',
+      permitId: acquire.mock.calls[0]?.[0].permitId,
+    });
+  });
+
+  it('retries without acknowledging or recording recovery when its payload bucket is missing', async () => {
+    const adminDb = createAdminDbAdapter();
+    const message = createMessage({
+      type: 'event_log',
+      tenantId: 'tenant-a',
+      timestamp: Date.now(),
+      entries: [
+        {
+          id: 'evt-missing-bucket',
+          tenantId: 'tenant-a',
+          eventType: 'auth.login',
+          eventCategory: 'auth',
+          result: 'failure',
+          severity: 'critical',
+          createdAt: Date.now(),
+        },
+      ],
+    });
+    await processDLQQueue(
+      { messages: [message], queue: 'AUDIT_DLQ' } as unknown as MessageBatch<AuditQueueMessage>,
+      {
+        DB: {} as D1Database,
+        DB_PII: {} as D1Database,
+        DB_ADMIN: adminDb,
+        OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
+      } as unknown as Parameters<typeof processDLQQueue>[1]
+    );
+    expect(message.ack).not.toHaveBeenCalled();
+    expect(message.retry).toHaveBeenCalledOnce();
+    expect(adminDb.execute).not.toHaveBeenCalled();
   });
 
   it('fails closed instead of writing a plaintext DLQ payload without an encryption key', async () => {
@@ -162,7 +209,7 @@ describe('audit DLQ consumer', () => {
         DB: {} as D1Database,
         DB_PII: {} as D1Database,
         DB_ADMIN: createAdminDbAdapter(),
-        AUDIT_ARCHIVE: bucket,
+        SENSITIVE_DETAILS: bucket,
       } as unknown as Parameters<typeof processDLQQueue>[1]
     );
 

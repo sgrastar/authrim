@@ -7,6 +7,7 @@ import {
   buildDOKey,
   completeDirectoryAuthEmailCodeFallback,
   completeDirectoryAuthPasskeyEnrollment,
+  createAccountAuthContextFromHono,
   createAuditLog,
   createAuthContextFromHono,
   createDirectoryAuthMigrationTransaction,
@@ -27,7 +28,7 @@ import {
   getSessionCookieSameSite,
   getSessionStoreForNewSession,
   getSessionClientMetadata,
-  getTenantSettings,
+  getTenantSettingsDocument,
   getTenantIdFromContext,
   hasRemainingInvitationUses,
   isAllowedOrigin,
@@ -37,13 +38,25 @@ import {
   resolveDirectoryAuthEmailFallbackRecoveryCampaign,
   resolveDirectoryAuthEffectiveEmailCodeFallbackMode,
   resolveDirectoryAuthMigrationDecision,
+  resolveAccountDataContextByIdentifierFromHono,
+  resolveAccountDataContextFromHono,
   resolvePostLoginRedirectUrl,
+  type AccountDataContext,
   type AuthEventData,
   type DatabaseAdapter,
   type DirectoryAuthMigrationDecision,
   type Env,
+  type PasskeyRepository,
   type SessionEventData,
+  resolveAuthMaxFailedAttempts,
+  resolveEmailCodeTtlSeconds,
+  resolveEmailSendLimit,
 } from '@authrim/ar-lib-core';
+import {
+  accountAuthenticationDenialReason,
+  signInAttemptFailureRecorder,
+  signInAttemptInteractionMetadata,
+} from './sign-in-attempt-recording';
 import {
   DirectoryPasswordClient,
   DirectoryPasswordError,
@@ -65,13 +78,23 @@ import { verifyHumanVerificationForAction } from './human-verification';
 import { getRequestIssuer } from './issuer';
 import { resolveSessionTtl } from './session-ttl';
 import { timeAuthRequestDiagnosticOperation } from './request-diagnostics';
-import { publishTenantD1PasskeyRoute } from './account-provisioning';
+import {
+  isDeletedDestinationRouteError,
+  publishDirectoryRoute,
+  publishTenantD1PasskeyRoute,
+  resolveDirectoryAccountRoute,
+  usesRoutedAccountStorage,
+} from './account-provisioning';
 import { generateRegistrationOptions, verifyRegistrationResponse } from '@simplewebauthn/server';
 import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import type {
   RegistrationResponseJSON,
   VerifiedRegistrationResponse,
 } from '@simplewebauthn/server';
+import {
+  isDirectoryEmailCodeOfferable,
+  rejectIfDirectoryEmailCodeDisabled,
+} from './directory-email-code-gate';
 import { getEmailCodeHtml, getEmailCodeText } from './utils/email/templates';
 import {
   generateEmailCode,
@@ -89,10 +112,42 @@ const MAX_DIRECTORY_FACTS_JSON_BYTES = 32 * 1024;
 const WORDWARDEN_CONNECTOR_ID_PATTERN = /^wwcon_[a-zA-Z0-9]{16}$/;
 const RP_NAME = 'Authrim';
 const MIGRATION_PASSKEY_CHALLENGE_TTL_SECONDS = 5 * 60;
-const MIGRATION_EMAIL_CODE_TTL_SECONDS = 5 * 60;
 const DIRECTORY_UNAVAILABLE_RECOVERY_REQUEST_PREFIX = 'directory_unavailable_recovery:';
 const DIRECTORY_PASSWORD_ACCOUNT_WINDOW_SECONDS = 15 * 60;
-const DIRECTORY_PASSWORD_ACCOUNT_MAX_FAILURES = 5;
+// Codes Authrim raises for a directory sign-in. A connector may report any string, which is only a
+// connectorReason: the event's errorCode reaches the unified event_log error_code column.
+const DIRECTORY_PASSWORD_ERROR_CODES: ReadonlySet<string> = new Set([
+  'auth_context_mismatch',
+  'auth_timeout',
+  'connector_error_response_mismatch',
+  'connector_response_mismatch',
+  'fetch_error',
+  'incompatible_relay_protocol',
+  'invalid_connector_endpoint',
+  'invalid_connector_response',
+  'invalid_relay_request',
+  'relay_auth_failed',
+  'relay_auth_rate_limited',
+  'relay_connection_closed',
+  'relay_connector_not_configured',
+  'relay_connector_offline',
+  'relay_fetch_error',
+  'relay_instance_rejected',
+  'relay_overloaded',
+  'relay_request_too_large',
+  'relay_response_mismatch',
+  'relay_send_failed',
+  'relay_timeout',
+  'relay_unavailable',
+  'relay_verify_error',
+  'relay_verify_timeout',
+  'replayed_auth_challenge',
+  'stale_auth_challenge',
+  'timeout',
+  'unexpected_connector_result',
+  'unexpected_directory_status',
+  'wordwarden_error',
+]);
 
 async function getDirectoryPasswordAccountLimiter(env: Env, tenantId: string, username: string) {
   const normalizedUsername = username.normalize('NFKC').toLocaleLowerCase('en-US');
@@ -232,17 +287,155 @@ interface RegistrationInfoCompat {
 type AuthenticatorTransport = 'usb' | 'nfc' | 'ble' | 'internal' | 'hybrid';
 type CredentialIDLike = string | ArrayBuffer | ArrayBufferView;
 
-function createCanonicalRuntimeUserStore(
+/**
+ * The stores of a directory sign-in's account: the account's own databases where accounts are
+ * routed (shared_pool and tenant_exclusive), the metadata database otherwise. The account's
+ * directory identity links and passkeys are there. The directory's tenant records (pending users,
+ * migration campaigns, user states and transactions) are in the metadata database either way, as
+ * ar-management keeps them.
+ */
+interface DirectoryAccountStores {
+  /** The Core database of the account: its directory identity links. */
+  accountCore: DatabaseAdapter;
+  passkeys: PasskeyRepository;
+  runtimeUsers: CanonicalRuntimeUserStore;
+}
+
+/** The stores of the account attached to the request (where accounts are routed). */
+function directoryAccountStores(
   c: Context<{ Bindings: Env }>,
   tenantId: string
-): CanonicalRuntimeUserStore {
-  const authCtx = createAuthContextFromHono(c, tenantId);
+): DirectoryAccountStores {
+  const authCtx = usesRoutedAccountStorage(c)
+    ? createAccountAuthContextFromHono(c, tenantId)
+    : createAuthContextFromHono(c, tenantId);
   const piiCtx = createPIIContextFromHono(c, tenantId);
-  return new CanonicalRuntimeUserStore({
-    coreAdapter: authCtx.coreAdapter,
-    piiAdapter: piiCtx.defaultPiiAdapter,
+  return {
+    accountCore: authCtx.coreAdapter,
+    passkeys: authCtx.repositories.passkey,
+    runtimeUsers: new CanonicalRuntimeUserStore({
+      coreAdapter: authCtx.coreAdapter,
+      piiAdapter: piiCtx.defaultPiiAdapter,
+      tenantId,
+    }),
+  };
+}
+
+/** The stores of the user's account, which is resolved first where accounts are routed. */
+async function resolveDirectoryAccountStores(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  userId: string
+): Promise<DirectoryAccountStores> {
+  if (usesRoutedAccountStorage(c)) await resolveAccountDataContextFromHono(c, userId);
+  return directoryAccountStores(c, tenantId);
+}
+
+/** The account an address's Lookup route names, attached to the request; null without one. */
+async function resolveEmailAccountRouteOrNull(
+  c: Context<{ Bindings: Env }>,
+  email: string
+): Promise<AccountDataContext | null> {
+  try {
+    return await resolveAccountDataContextByIdentifierFromHono(c, {
+      indexKind: 'email_exact',
+      identifier: email,
+    });
+  } catch (error) {
+    // No account holds the address, or the one its route names is gone: as no user found.
+    if (
+      (error instanceof Error && error.message === 'account_data_route_not_found') ||
+      isDeletedDestinationRouteError(error)
+    ) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+/** How a verified directory identity matches an account. */
+type DirectoryAccountMatch =
+  | { status: 'none' }
+  /** The identity's link (or route) names an account that is gone or no longer active. */
+  | { status: 'stale' }
+  /** The address names an account whose database links the identity to another user. */
+  | { status: 'conflict' }
+  | {
+      status: 'linked';
+      stores: DirectoryAccountStores;
+      runtimeUser: NonNullable<Awaited<ReturnType<CanonicalRuntimeUserStore['findById']>>>;
+      /** False where the link was found by the address: its route is still to be published. */
+      routePublished: boolean;
+    }
+  | {
+      status: 'found_by_email';
+      stores: DirectoryAccountStores;
+      runtimeUser: NonNullable<Awaited<ReturnType<CanonicalRuntimeUserStore['findByEmail']>>>;
+    };
+
+/**
+ * The account a verified directory identity signs in to: the one its link names, else the one
+ * holding the directory's address (which is then linked). Where accounts are routed, the
+ * identity's Lookup route (published with its link) names the account, else the address's route;
+ * the link is read from that account's database.
+ */
+async function matchDirectoryAccount(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  identity: { connectorId: string; directorySubject: string },
+  email: string | null
+): Promise<DirectoryAccountMatch> {
+  if (!usesRoutedAccountStorage(c)) {
+    const stores = directoryAccountStores(c, tenantId);
+    const linkedUserId = await findDirectoryIdentityLink(
+      stores.accountCore,
+      tenantId,
+      identity.connectorId,
+      identity.directorySubject
+    );
+    if (linkedUserId) {
+      const runtimeUser = await stores.runtimeUsers.findById(linkedUserId);
+      return runtimeUser
+        ? { status: 'linked', stores, runtimeUser, routePublished: true }
+        : { status: 'stale' };
+    }
+    if (!email) return { status: 'none' };
+    const runtimeUser = await stores.runtimeUsers.findByEmail(email);
+    return runtimeUser ? { status: 'found_by_email', stores, runtimeUser } : { status: 'none' };
+  }
+
+  let account: AccountDataContext | null;
+  try {
+    account = await resolveDirectoryAccountRoute(c, identity);
+  } catch (error) {
+    if (isDeletedDestinationRouteError(error)) return { status: 'stale' };
+    throw error;
+  }
+  const routePublished = account !== null;
+  if (!account && email) account = await resolveEmailAccountRouteOrNull(c, email);
+  if (!account) return { status: 'none' };
+
+  const stores = directoryAccountStores(c, tenantId);
+  const linkedUserId = await findDirectoryIdentityLink(
+    stores.accountCore,
     tenantId,
-  });
+    identity.connectorId,
+    identity.directorySubject
+  );
+  const runtimeUser = await stores.runtimeUsers.findById(account.legacyUserId);
+  if (routePublished) {
+    // The route names the account; its link there must name the same user.
+    return linkedUserId === account.legacyUserId && runtimeUser
+      ? { status: 'linked', stores, runtimeUser, routePublished: true }
+      : { status: 'stale' };
+  }
+  if (!runtimeUser) return { status: 'none' };
+  // Linked before, but its route was not published (a publication that failed).
+  if (linkedUserId === account.legacyUserId) {
+    return { status: 'linked', stores, runtimeUser, routePublished: false };
+  }
+  if (linkedUserId) return { status: 'conflict' };
+  return { status: 'found_by_email', stores, runtimeUser };
 }
 
 async function ensureDirectoryAccountAuthenticationState(
@@ -250,7 +443,7 @@ async function ensureDirectoryAccountAuthenticationState(
   tenantId: string,
   userId: string
 ): Promise<void> {
-  const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+  const { runtimeUsers } = await resolveDirectoryAccountStores(c, tenantId, userId);
   await timeAuthRequestDiagnosticOperation(c, 'auth_account_state_read', () =>
     ensureAccountAuthenticationState(c.env, tenantId, userId, () =>
       runtimeUsers.findAccountAuthenticationState(userId)
@@ -258,8 +451,31 @@ async function ensureDirectoryAccountAuthenticationState(
   );
 }
 
+interface DirectoryAttemptBoundary {
+  recordUnexpected?: () => void;
+}
+
+/** Preserve the original rejected promise/HTTP response while observing unexpected failures. */
+function withDirectoryAttemptBoundary(
+  run: (c: Context<{ Bindings: Env }>, boundary: DirectoryAttemptBoundary) => Promise<Response>
+) {
+  return async (c: Context<{ Bindings: Env }>): Promise<Response> => {
+    const boundary: DirectoryAttemptBoundary = {};
+    try {
+      return await run(c, boundary);
+    } catch (error) {
+      try {
+        boundary.recordUnexpected?.();
+      } catch {
+        /* Recording cannot replace the auth failure. */
+      }
+      throw error;
+    }
+  };
+}
+
 export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordFetch) {
-  return async function directoryPasswordLoginHandler(c: Context<{ Bindings: Env }>) {
+  return withDirectoryAttemptBoundary(async function directoryPasswordLoginHandler(c, boundary) {
     const log = getLogger(c).module('DIRECTORY_PASSWORD_LOGIN');
     const tenantId = getTenantIdFromContext(c);
 
@@ -282,6 +498,29 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT);
     }
 
+    const record = signInAttemptFailureRecorder(
+      c,
+      tenantId,
+      await signInAttemptInteractionMetadata(c, tenantId),
+      'directory_password'
+    );
+    let recorded = false;
+    let attemptUserId: string | null = null;
+    const failed = <T>(
+      response: T,
+      reason: Parameters<typeof record>[1],
+      userId?: string | null
+    ): T => {
+      if (!recorded) {
+        recorded = true;
+        return record(response, reason, userId === undefined ? attemptUserId : userId);
+      }
+      return response;
+    };
+    boundary.recordUnexpected = () => {
+      failed(undefined, 'service_unavailable');
+    };
+
     const accountRateLimit = await getDirectoryPasswordAccountLimiter(c.env, tenantId, username);
     let turnstileAction: 'login' | 'reauth' = 'login';
     if (authorizationChallengeId) {
@@ -291,9 +530,12 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
         authorizationChallengeId
       );
       if (!challengeType) {
-        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-          variables: { field: 'authorization_challenge_id' },
-        });
+        return failed(
+          createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+            variables: { field: 'authorization_challenge_id' },
+          }),
+          'challenge_mismatch'
+        );
       }
       turnstileAction = challengeType;
     }
@@ -302,16 +544,19 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       turnstileAction,
       request.human_verification_response ?? request.cf_turnstile_response
     );
-    if (turnstileError) return turnstileError;
+    if (turnstileError) return failed(turnstileError, 'verification_failed');
 
     const connector = await resolveDirectoryConnector(c.env, tenantId);
     if (!connector) {
-      return c.json(
-        {
-          error: 'directory_password_not_configured',
-          error_description: 'Directory password login is not configured for this tenant',
-        },
-        404
+      return failed(
+        c.json(
+          {
+            error: 'directory_password_not_configured',
+            error_description: 'Directory password login is not configured for this tenant',
+          },
+          404
+        ),
+        'method_disabled'
       );
     }
 
@@ -322,12 +567,15 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
           ? new DirectoryPasswordClient(connector.clientConfig, fetcher)
           : null;
     if (!client) {
-      return c.json(
-        {
-          error: 'directory_password_not_configured',
-          error_description: 'Directory password login is not configured for this tenant',
-        },
-        404
+      return failed(
+        c.json(
+          {
+            error: 'directory_password_not_configured',
+            error_description: 'Directory password login is not configured for this tenant',
+          },
+          404
+        ),
+        'method_disabled'
       );
     }
 
@@ -336,38 +584,48 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
     // burst to send many password guesses before any failure is recorded.
     const accountAttempt = await accountRateLimit.limiter.incrementRpc(accountRateLimit.key, {
       windowSeconds: DIRECTORY_PASSWORD_ACCOUNT_WINDOW_SECONDS,
-      maxRequests: DIRECTORY_PASSWORD_ACCOUNT_MAX_FAILURES,
+      // The tenant's lockout threshold (rate_limit.auth_max_failed_attempts).
+      maxRequests: await resolveAuthMaxFailedAttempts(c.env, tenantId),
     });
     if (!accountAttempt.allowed) {
-      return c.json(
-        {
-          error: 'rate_limit_exceeded',
-          error_description: 'Too many login attempts. Please try again later.',
-        },
-        429,
-        {
-          'Retry-After': String(
-            accountAttempt.retryAfter || DIRECTORY_PASSWORD_ACCOUNT_WINDOW_SECONDS
-          ),
-        }
+      return failed(
+        c.json(
+          {
+            error: 'rate_limit_exceeded',
+            error_description: 'Too many login attempts. Please try again later.',
+          },
+          429,
+          {
+            'Retry-After': String(
+              accountAttempt.retryAfter || DIRECTORY_PASSWORD_ACCOUNT_WINDOW_SECONDS
+            ),
+          }
+        ),
+        'rate_limited'
       );
     }
 
     let verdict;
+    // When the password was verified (milliseconds): the proof time of every session and migration
+    // this login leads to.
+    let passwordVerifiedAtMs = 0;
     try {
       verdict = await client.verifyPassword({
         username,
         password,
         attributeNames: connector.attributeNames,
       });
+      passwordVerifiedAtMs = Date.now();
     } catch (error) {
       if (error instanceof DirectoryPasswordError) {
+        const ownCode = DIRECTORY_PASSWORD_ERROR_CODES.has(error.details.code);
         await publishDirectoryPasswordFailureEvent(
           c,
           connector.connectorId,
-          error.details.code,
+          ownCode ? error.details.code : 'directory_connector_error',
           error.details.requestId,
-          username
+          username,
+          ownCode ? undefined : error.details.code
         );
         log.warn('Directory connector verification failed', {
           action: 'directory_password_connector',
@@ -389,12 +647,15 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
             return recoveryResponse;
           }
         }
-        return c.json(
-          {
-            error: 'connector_unavailable',
-            retryable: error.details.retryable,
-          },
-          error.details.retryable ? 503 : 400
+        return failed(
+          c.json(
+            {
+              error: 'connector_unavailable',
+              retryable: error.details.retryable,
+            },
+            error.details.retryable ? 503 : 400
+          ),
+          'service_unavailable'
         );
       }
       log.error(
@@ -403,34 +664,34 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
         error as Error
       );
       const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
-      if (writeFenceResponse) return writeFenceResponse;
-      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+      if (writeFenceResponse) return failed(writeFenceResponse, 'service_unavailable');
+      return failed(createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR), 'service_unavailable');
     }
 
     if (verdict.result !== 'success') {
       await publishDirectoryPasswordFailureEvent(
         c,
         connector.connectorId,
-        verdict.reason || verdict.result,
+        `directory_${verdict.result}`,
         verdict.request_id,
-        username
+        username,
+        verdict.reason
       );
-      return c.json({ error: 'invalid_credentials' }, 401);
+      return failed(c.json({ error: 'invalid_credentials' }, 401), 'verification_failed');
     }
 
     await accountRateLimit.limiter.resetRpc(accountRateLimit.key);
 
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+    // The directory's tenant records are in the metadata database (see DirectoryAccountStores).
+    const metadataCore = createAuthContextFromHono(c, tenantId).coreAdapter;
     const directoryFacts = buildDirectoryFacts(connector, verdict);
-    const linkedUserId = await findDirectoryIdentityLink(
-      authCtx.coreAdapter,
-      tenantId,
-      connector.wordwardenConnectorId,
-      verdict.subject.directory_id
-    );
-    let runtimeUser = linkedUserId ? await runtimeUsers.findById(linkedUserId) : null;
-    if (linkedUserId && !runtimeUser) {
+    const email = directoryEmail(verdict);
+    const identity = {
+      connectorId: connector.wordwardenConnectorId,
+      directorySubject: verdict.subject.directory_id,
+    };
+    const match = await matchDirectoryAccount(c, tenantId, identity, email);
+    if (match.status === 'stale') {
       log.warn('Directory identity link references a missing or inactive user', {
         action: 'directory_identity_link_stale',
         connectorId: connector.connectorId,
@@ -441,44 +702,96 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
         'directory_identity_link_stale',
         verdict.request_id
       );
-      return c.json({ error: 'directory_identity_unmapped' }, 409);
+      return failed(c.json({ error: 'directory_identity_unmapped' }, 409), 'account_unavailable');
     }
+    const directoryIdentityLinkConflict = async () => {
+      log.warn('Directory identity link conflict during first login', {
+        action: 'directory_identity_link_conflict',
+        connectorId: connector.connectorId,
+      });
+      await publishDirectoryPasswordFailureEvent(
+        c,
+        connector.connectorId,
+        'directory_identity_link_conflict',
+        verdict.request_id
+      );
+      return failed(c.json({ error: 'directory_identity_unmapped' }, 409), 'account_unavailable');
+    };
+    if (match.status === 'conflict') return directoryIdentityLinkConflict();
 
-    const email = directoryEmail(verdict);
-    if (!runtimeUser && email) {
-      runtimeUser = await runtimeUsers.findByEmail(email);
-      if (runtimeUser) {
-        try {
-          await upsertDirectoryIdentityLink(authCtx.coreAdapter, {
-            tenantId,
-            connectorId: connector.wordwardenConnectorId,
-            directorySubject: verdict.subject.directory_id,
-            userId: runtimeUser.id,
-            facts: directoryFacts,
-          });
-        } catch {
-          log.warn('Directory identity link conflict during first login', {
-            action: 'directory_identity_link_conflict',
-            connectorId: connector.connectorId,
-          });
-          await publishDirectoryPasswordFailureEvent(
-            c,
-            connector.connectorId,
-            'directory_identity_link_conflict',
-            verdict.request_id
-          );
-          return c.json({ error: 'directory_identity_unmapped' }, 409);
-        }
+    const runtimeUser = match.status === 'none' ? null : match.runtimeUser;
+    attemptUserId = runtimeUser?.id ?? null;
+    const accountStores = match.status === 'none' ? null : match.stores;
+    if (match.status === 'found_by_email') {
+      try {
+        await upsertDirectoryIdentityLink(match.stores.accountCore, {
+          tenantId,
+          ...identity,
+          userId: match.runtimeUser.id,
+          facts: directoryFacts,
+        });
+      } catch {
+        return directoryIdentityLinkConflict();
       }
     }
 
-    if (runtimeUser && linkedUserId) {
-      await recordDirectoryIdentityLogin(authCtx.coreAdapter, {
+    if (match.status === 'linked') {
+      await recordDirectoryIdentityLogin(match.stores.accountCore, {
         tenantId,
-        connectorId: connector.wordwardenConnectorId,
-        directorySubject: verdict.subject.directory_id,
+        ...identity,
         facts: directoryFacts,
       });
+    }
+
+    // Where accounts are routed, a new link is found next time by its Lookup route. A link made
+    // here whose route was refused is removed again: left without its route, a later sign-in with
+    // another address (routed to another account's database) would not see it and could link the
+    // identity to that account too. A link whose publication may have been written (no answer, an
+    // internal error) is kept: removing it under a published route would leave the route naming
+    // no link. Found by the address on the next sign-in, it is published again.
+    if (
+      (match.status === 'found_by_email' && usesRoutedAccountStorage(c)) ||
+      (match.status === 'linked' && !match.routePublished)
+    ) {
+      try {
+        await publishDirectoryRoute(c, { tenantId, userId: match.runtimeUser.id, ...identity });
+      } catch (error) {
+        log.error(
+          'Directory identity route publication failed',
+          { action: 'directory_identity_route_publish', connectorId: connector.connectorId },
+          error as Error
+        );
+        if (
+          match.status === 'found_by_email' &&
+          error instanceof Error &&
+          DIRECTORY_ROUTE_REFUSED_ERRORS.has(error.message)
+        ) {
+          await deleteDirectoryIdentityLink(match.stores.accountCore, {
+            tenantId,
+            ...identity,
+            userId: match.runtimeUser.id,
+          }).catch((deleteError: unknown) => {
+            log.error(
+              'Unpublished directory identity link could not be removed',
+              { action: 'directory_identity_link_unpublished', connectorId: connector.connectorId },
+              deleteError as Error
+            );
+          });
+        }
+        const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
+        if (writeFenceResponse) return failed(writeFenceResponse, 'service_unavailable');
+        return failed(
+          c.json(
+            {
+              error: 'temporarily_unavailable',
+              error_description: 'Directory sign-in could not be completed. Please try again.',
+            },
+            503,
+            { 'Retry-After': '1' }
+          ),
+          'service_unavailable'
+        );
+      }
     }
 
     if (!runtimeUser) {
@@ -489,10 +802,10 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
           'directory_identity_unmapped',
           verdict.request_id
         );
-        return c.json({ error: 'directory_identity_unmapped' }, 409);
+        return failed(c.json({ error: 'directory_identity_unmapped' }, 409), 'account_not_linked');
       }
       const pendingStatus = await findDirectoryPendingStatus(
-        authCtx.coreAdapter,
+        metadataCore,
         tenantId,
         connector.wordwardenConnectorId,
         verdict.subject.directory_id
@@ -504,9 +817,9 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
           `directory_pending_${pendingStatus}`,
           verdict.request_id
         );
-        return c.json({ error: 'directory_identity_unmapped' }, 409);
+        return failed(c.json({ error: 'directory_identity_unmapped' }, 409), 'account_not_linked');
       }
-      const pendingRecorded = await upsertDirectoryPendingUser(authCtx.coreAdapter, {
+      const pendingRecorded = await upsertDirectoryPendingUser(metadataCore, {
         tenantId,
         connectorId: connector.wordwardenConnectorId,
         directorySubject: verdict.subject.directory_id,
@@ -520,7 +833,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
           'directory_pending_state_conflict',
           verdict.request_id
         );
-        return c.json({ error: 'directory_identity_unmapped' }, 409);
+        return failed(c.json({ error: 'directory_identity_unmapped' }, 409), 'account_not_linked');
       }
       await publishDirectoryPasswordFailureEvent(
         c,
@@ -528,23 +841,26 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
         'pending_provisioning_created',
         verdict.request_id
       );
-      return c.json(
-        {
-          error: 'directory_provisioning_pending',
-          error_description: '管理者の確認が必要です。所属組織の管理者にお問い合わせください。',
-        },
-        403
+      return failed(
+        c.json(
+          {
+            error: 'directory_provisioning_pending',
+            error_description: '管理者の確認が必要です。所属組織の管理者にお問い合わせください。',
+          },
+          403
+        ),
+        'account_not_linked'
       );
     }
 
-    if (!runtimeUser) {
-      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    if (!runtimeUser || !accountStores) {
+      return failed(createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR), 'service_unavailable');
     }
 
-    const now = Date.now();
+    const now = passwordVerifiedAtMs;
     const authTime = Math.floor(now / 1000);
     const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'directory_password');
-    const migrationDecision = await resolveDirectoryAuthMigrationDecision(authCtx.coreAdapter, {
+    const migrationDecision = await resolveDirectoryAuthMigrationDecision(metadataCore, {
       tenantId,
       userId: runtimeUser.id,
       connectorId: connector.wordwardenConnectorId,
@@ -554,10 +870,10 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
     });
     let migrationSatisfiedByExistingPasskey = false;
     if (migrationDecision.action !== 'none') {
-      const existingPasskeys = await authCtx.repositories.passkey.findByUserId(runtimeUser.id);
+      const existingPasskeys = await accountStores.passkeys.findByUserId(runtimeUser.id);
       if (existingPasskeys.length > 0) {
         migrationSatisfiedByExistingPasskey = true;
-        await markDirectoryAuthMigrationUserEnrolled(authCtx.coreAdapter, {
+        await markDirectoryAuthMigrationUserEnrolled(metadataCore, {
           tenantId,
           campaignId: migrationDecision.campaign.id,
           userId: runtimeUser.id,
@@ -570,11 +886,11 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
           'directory_migration_blocked',
           verdict.request_id
         );
-        return c.json({ error: 'directory_migration_blocked' }, 403);
+        return failed(c.json({ error: 'directory_migration_blocked' }, 403), 'migration_blocked');
       } else if (migrationDecision.action === 'require_passkey') {
         return createMigrationRequiredResponse(c, {
           tenantId,
-          adapter: authCtx.coreAdapter,
+          adapter: metadataCore,
           connector,
           runtimeUser,
           verdict,
@@ -594,10 +910,12 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
         authorizationChallengeId,
         runtimeUser.id,
         authTime,
-        new URL(c.req.url).origin
+        new URL(c.req.url).origin,
+        'directory_password',
+        now
       );
       if ('error' in continuation) {
-        return continuation.error;
+        return failed(continuation.error, 'challenge_mismatch');
       }
       authorizationContinuation = continuation;
     }
@@ -606,16 +924,22 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       await ensureDirectoryAccountAuthenticationState(c, tenantId, runtimeUser.id);
     } catch (error) {
       if (!isAccountAuthenticationDeniedError(error)) {
-        return c.json(
-          {
-            error: 'temporarily_unavailable',
-            error_description: 'Authentication state unavailable.',
-          },
-          503,
-          { 'Retry-After': '1' }
+        return failed(
+          c.json(
+            {
+              error: 'temporarily_unavailable',
+              error_description: 'Authentication state unavailable.',
+            },
+            503,
+            { 'Retry-After': '1' }
+          ),
+          'service_unavailable'
         );
       }
-      return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
+      return failed(
+        createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS),
+        accountAuthenticationDenialReason(error)
+      );
     }
     const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env, tenantId);
     await sessionStore.createSessionRpc(
@@ -629,6 +953,8 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
         amr: ['pwd', 'directory'],
         acr: 'urn:mace:incommon:iap:bronze',
         authTime,
+        // When the password was verified (milliseconds), for assurance step-ups.
+        proven_at: now,
         directory_connector_id: connector.connectorId,
         wordwarden_connector_id: connector.wordwardenConnectorId,
       },
@@ -755,7 +1081,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
         : {}),
       redirect_url: postLoginRedirect,
     });
-  };
+  });
 }
 
 export const directoryPasswordLoginHandler = createDirectoryPasswordLoginHandler();
@@ -799,13 +1125,17 @@ export async function directoryMigrationPasskeyOptionsHandler(c: Context<{ Bindi
     const originUrl = new URL(originHeader as string);
     const rpID = originUrl.hostname;
 
-    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+    const { runtimeUsers, passkeys } = await resolveDirectoryAccountStores(
+      c,
+      tenantId,
+      transaction.user_id
+    );
     const runtimeUser = await runtimeUsers.findById(transaction.user_id, { includeInactive: true });
     if (!runtimeUser || runtimeUser.active !== 1) {
       return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
     }
 
-    const existingPasskeys = await authCtx.repositories.passkey.findByUserId(transaction.user_id);
+    const existingPasskeys = await passkeys.findByUserId(transaction.user_id);
     const excludeCredentials: Array<{
       id: string;
       type: 'public-key';
@@ -943,6 +1273,7 @@ export async function directoryMigrationPasskeyVerifyHandler(c: Context<{ Bindin
         expectedChallenge: challengeData.challenge,
         expectedOrigin: challengeMetadata.origin,
         expectedRPID: challengeMetadata.rpID,
+        requireUserVerification: true,
       });
     } catch (error) {
       log.error('Directory migration passkey verification failed', {
@@ -965,7 +1296,8 @@ export async function directoryMigrationPasskeyVerifyHandler(c: Context<{ Bindin
 
     const credentialIDBase64URL = toBase64URLString(credentialID as CredentialIDLike);
     const passkeyId = crypto.randomUUID();
-    await authCtx.repositories.passkey.create({
+    const accountStores = await resolveDirectoryAccountStores(c, tenantId, transaction.user_id);
+    await accountStores.passkeys.create({
       id: passkeyId,
       user_id: transaction.user_id,
       credential_id: credentialIDBase64URL,
@@ -987,7 +1319,7 @@ export async function directoryMigrationPasskeyVerifyHandler(c: Context<{ Bindin
     });
 
     const now = Date.now();
-    const completed = await completeDirectoryAuthPasskeyEnrollment(authCtx.coreAdapter, {
+    const completed = await completeDirectoryAuthPasskeyEnrollment(c.env, authCtx.coreAdapter, {
       tenantId,
       transactionId: transaction.id,
       campaignId: transaction.campaign_id,
@@ -999,13 +1331,16 @@ export async function directoryMigrationPasskeyVerifyHandler(c: Context<{ Bindin
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_SESSION_EXPIRED);
     }
 
-    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
-    const runtimeUser = await runtimeUsers.findById(transaction.user_id, { includeInactive: true });
+    const runtimeUser = await accountStores.runtimeUsers.findById(transaction.user_id, {
+      includeInactive: true,
+    });
     if (!runtimeUser || runtimeUser.active !== 1) {
       return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
     }
 
-    const authTime = Math.floor(now / 1000);
+    // The password was proven when the transaction was made; the new passkey proves nothing yet,
+    // so the session counts as authenticated then, not now.
+    const authTime = Math.floor(transaction.created_at / 1000);
     let authorizationContinuation: AuthorizationChallengeContinuation | undefined;
     if (transaction.authorization_challenge_id) {
       const continuation = await consumeAuthorizationChallengeContinuation(
@@ -1014,11 +1349,14 @@ export async function directoryMigrationPasskeyVerifyHandler(c: Context<{ Bindin
         transaction.authorization_challenge_id,
         transaction.user_id,
         authTime,
-        new URL(c.req.url).origin
+        new URL(c.req.url).origin,
+        'directory_password',
+        transaction.created_at
       );
-      if (!('error' in continuation)) {
-        authorizationContinuation = continuation;
+      if ('error' in continuation) {
+        return continuation.error;
       }
+      authorizationContinuation = continuation;
     }
 
     return createDirectorySessionSuccessResponse(c, {
@@ -1033,6 +1371,8 @@ export async function directoryMigrationPasskeyVerifyHandler(c: Context<{ Bindin
       connectorId: transaction.connector_id ?? 'directory',
       wordwardenConnectorId: transaction.connector_id ?? 'directory',
       requestId: transaction.request_id ?? undefined,
+      // The password was verified when the transaction was made.
+      provenAt: transaction.created_at,
       method: 'directory_password_passkey_migration',
       authorizationChallengeId: transaction.authorization_challenge_id ?? undefined,
       authorizationContinuation,
@@ -1052,6 +1392,11 @@ export async function directoryMigrationEmailCodeSendHandler(c: Context<{ Bindin
   const log = getLogger(c).module('DIRECTORY_MIGRATION_EMAIL_CODE');
   const tenantId = getTenantIdFromContext(c);
   try {
+    // A code that signs a person in works only where the tenant allows email code for login.
+    // Decided first: nothing is looked up, counted, sent or stored when it is off.
+    const disabled = await rejectIfDirectoryEmailCodeDisabled(c, tenantId);
+    if (disabled) return disabled;
+
     const body = await c.req.json<{
       transaction_id?: unknown;
       transaction_token?: unknown;
@@ -1076,19 +1421,21 @@ export async function directoryMigrationEmailCodeSendHandler(c: Context<{ Bindin
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_SESSION_EXPIRED);
     }
 
-    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+    const { runtimeUsers } = await resolveDirectoryAccountStores(c, tenantId, transaction.user_id);
     const runtimeUser = await runtimeUsers.findById(transaction.user_id, { includeInactive: true });
     if (!runtimeUser || runtimeUser.active !== 1 || !runtimeUser.email) {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_SESSION_EXPIRED);
     }
 
+    // The tenant's email send limit (rate_limit.email_max_requests per rate_limit.email_window).
+    const emailSendLimit = await resolveEmailSendLimit(c.env, tenantId);
     const rateLimiterId = c.env.RATE_LIMITER.idFromName(
       buildDOKey('rate-limit', 'directory-migration-email-code', tenantId)
     );
     const rateLimiter = c.env.RATE_LIMITER.get(rateLimiterId);
     const rateLimitResult = await rateLimiter.incrementRpc(`transaction:${transaction.id}`, {
-      windowSeconds: 15 * 60,
-      maxRequests: 3,
+      windowSeconds: emailSendLimit.windowSeconds,
+      maxRequests: emailSendLimit.maxRequests,
     });
     if (!rateLimitResult.allowed) {
       return createErrorResponse(c, AR_ERROR_CODES.RATE_LIMIT_EXCEEDED, {
@@ -1105,6 +1452,15 @@ export async function directoryMigrationEmailCodeSendHandler(c: Context<{ Bindin
     }
 
     const code = generateEmailCode();
+    // The tenant's email code lifetime (credentials.email_code_ttl), but never past the
+    // transaction the code completes.
+    const emailCodeTtlSeconds = Math.max(
+      1,
+      Math.min(
+        await resolveEmailCodeTtlSeconds(c.env, tenantId),
+        Math.floor((transaction.expires_at - Date.now()) / 1000)
+      )
+    );
     const challengeId = crypto.randomUUID();
     const issuedAt = Date.now();
     const normalizedEmail = runtimeUser.email.toLowerCase();
@@ -1115,13 +1471,19 @@ export async function directoryMigrationEmailCodeSendHandler(c: Context<{ Bindin
       getChallengeStoreByChallengeId(c.env, challengeId, tenantId),
     ]);
 
+    const codeExpiresAtMs = Math.min(
+      Date.now() + emailCodeTtlSeconds * 1000,
+      transaction.expires_at
+    );
     await challengeStore.storeChallengeRpc({
       id: `directory_migration_email:${challengeId}`,
       tenantId,
       type: 'directory_migration_email',
       userId: transaction.user_id,
       challenge: codeHash,
-      ttl: MIGRATION_EMAIL_CODE_TTL_SECONDS,
+      // The store ends the code with its transaction, however long storing takes.
+      ttl: emailCodeTtlSeconds,
+      notAfterMs: transaction.expires_at,
       email: normalizedEmail,
       metadata: {
         transaction_id: transaction.id,
@@ -1140,7 +1502,7 @@ export async function directoryMigrationEmailCodeSendHandler(c: Context<{ Bindin
       notificationKind: 'auth.directory-email-code',
       accountId: transaction.user_id,
       idempotencyKey: `directory-email-code:${challengeId}`,
-      expiresAt: Math.floor(issuedAt / 1000) + MIGRATION_EMAIL_CODE_TTL_SECONDS,
+      expiresAt: Math.floor(codeExpiresAtMs / 1000),
       payload: {
         channel: 'email',
         to: normalizedEmail,
@@ -1153,7 +1515,7 @@ export async function directoryMigrationEmailCodeSendHandler(c: Context<{ Bindin
           name: runtimeUser.name || undefined,
           email: normalizedEmail,
           code,
-          expiresInMinutes: MIGRATION_EMAIL_CODE_TTL_SECONDS / 60,
+          expiresInMinutes: Math.max(1, Math.ceil((codeExpiresAtMs - Date.now()) / 60_000)),
           appName: 'Authrim',
           logoUrl: undefined,
         }),
@@ -1162,7 +1524,7 @@ export async function directoryMigrationEmailCodeSendHandler(c: Context<{ Bindin
             name: runtimeUser.name || undefined,
             email: normalizedEmail,
             code,
-            expiresInMinutes: MIGRATION_EMAIL_CODE_TTL_SECONDS / 60,
+            expiresInMinutes: Math.max(1, Math.ceil((codeExpiresAtMs - Date.now()) / 60_000)),
             appName: 'Authrim',
           }),
           headers: {
@@ -1183,7 +1545,7 @@ export async function directoryMigrationEmailCodeSendHandler(c: Context<{ Bindin
     return c.json({
       success: true,
       challenge_id: challengeId,
-      expires_in: MIGRATION_EMAIL_CODE_TTL_SECONDS,
+      expires_in: emailCodeTtlSeconds,
       masked_email: maskEmail(normalizedEmail),
     });
   } catch (error) {
@@ -1205,6 +1567,10 @@ export async function directoryMigrationEmailCodeVerifyHandler(c: Context<{ Bind
   const log = getLogger(c).module('DIRECTORY_MIGRATION_EMAIL_CODE');
   const tenantId = getTenantIdFromContext(c);
   try {
+    // Like the send: decided before the transaction or the code is touched.
+    const disabled = await rejectIfDirectoryEmailCodeDisabled(c, tenantId);
+    if (disabled) return disabled;
+
     const body = await c.req.json<{
       transaction_id?: unknown;
       transaction_token?: unknown;
@@ -1286,13 +1652,13 @@ export async function directoryMigrationEmailCodeVerifyHandler(c: Context<{ Bind
     }
 
     const now = Date.now();
-    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+    const { runtimeUsers } = await resolveDirectoryAccountStores(c, tenantId, transaction.user_id);
     const runtimeUser = await runtimeUsers.findById(transaction.user_id, { includeInactive: true });
     if (!runtimeUser || runtimeUser.active !== 1) {
       return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
     }
 
-    const completed = await completeDirectoryAuthEmailCodeFallback(authCtx.coreAdapter, {
+    const completed = await completeDirectoryAuthEmailCodeFallback(c.env, authCtx.coreAdapter, {
       tenantId,
       transactionId: transaction.id,
       campaignId: transaction.campaign_id,
@@ -1313,12 +1679,16 @@ export async function directoryMigrationEmailCodeVerifyHandler(c: Context<{ Bind
         tenantId,
         transaction.authorization_challenge_id,
         transaction.user_id,
-        authTime,
-        new URL(c.req.url).origin
+        // Recovery proves the email now; the fallback follows a password proven when it was made.
+        transaction.scope === 'recovery' ? authTime : Math.floor(transaction.created_at / 1000),
+        new URL(c.req.url).origin,
+        transaction.scope === 'recovery' ? 'email_otp' : 'directory_password',
+        transaction.scope === 'recovery' ? now : transaction.created_at
       );
-      if (!('error' in continuation)) {
-        authorizationContinuation = continuation;
+      if ('error' in continuation) {
+        return continuation.error;
       }
+      authorizationContinuation = continuation;
     }
 
     return createDirectorySessionSuccessResponse(c, {
@@ -1333,6 +1703,11 @@ export async function directoryMigrationEmailCodeVerifyHandler(c: Context<{ Bind
       connectorId: transaction.connector_id ?? 'directory',
       wordwardenConnectorId: transaction.connector_id ?? 'directory',
       requestId: transaction.request_id ?? undefined,
+      // A fallback's password was verified when the transaction was made (before the code); a
+      // recovery proves only the code.
+      provenAt: transaction.scope === 'recovery' ? now : transaction.created_at,
+      // Its email code, the method a re-authentication takes from it, was proven now.
+      ...(transaction.scope === 'recovery' ? {} : { reauthProof: { amr: ['otp'], at: now } }),
       method:
         transaction.scope === 'recovery'
           ? 'directory_unavailable_email_code_recovery'
@@ -1370,7 +1745,7 @@ async function createMigrationRequiredResponse(
   }
 ): Promise<Response> {
   const token = createMigrationTransactionToken();
-  const transaction = await createDirectoryAuthMigrationTransaction(input.adapter, {
+  const transaction = await createDirectoryAuthMigrationTransaction(c.env, input.adapter, {
     tenantId: input.tenantId,
     campaignId: input.decision.campaign.id,
     userId: input.runtimeUser.id,
@@ -1434,16 +1809,28 @@ async function createDirectoryUnavailableRecoveryResponse(
   const email = normalizeLoginEmail(input.username);
   if (!email) return null;
 
+  // Recovery signs a person in with an emailed code, so it is offered only where the tenant allows
+  // email code for login. Decided before the user is looked up, so the answer does not depend on
+  // the account; no offer (null) leaves the usual "directory unavailable" answer.
+  if (!(await isDirectoryEmailCodeOfferable(c, input.tenantId))) return null;
+
   const authCtx = createAuthContextFromHono(c, input.tenantId);
-  const runtimeUsers = createCanonicalRuntimeUserStore(c, input.tenantId);
-  const runtimeUser = await runtimeUsers.findByEmail(email);
+  // Where accounts are routed, the address's Lookup route names the account to look in.
+  if (usesRoutedAccountStorage(c) && !(await resolveEmailAccountRouteOrNull(c, email))) {
+    return null;
+  }
+  const accountStores = directoryAccountStores(c, input.tenantId);
+  const runtimeUser = await accountStores.runtimeUsers.findByEmail(email);
   if (!runtimeUser || runtimeUser.active !== 1 || !runtimeUser.email) return null;
 
-  const hasLinkedDirectoryIdentity = await hasDirectoryIdentityLinkForUser(authCtx.coreAdapter, {
-    tenantId: input.tenantId,
-    connectorId: input.connector.wordwardenConnectorId,
-    userId: runtimeUser.id,
-  });
+  const hasLinkedDirectoryIdentity = await hasDirectoryIdentityLinkForUser(
+    accountStores.accountCore,
+    {
+      tenantId: input.tenantId,
+      connectorId: input.connector.wordwardenConnectorId,
+      userId: runtimeUser.id,
+    }
+  );
   if (!hasLinkedDirectoryIdentity) return null;
 
   const campaign = await resolveDirectoryAuthEmailFallbackRecoveryCampaign(authCtx.coreAdapter, {
@@ -1455,6 +1842,8 @@ async function createDirectoryUnavailableRecoveryResponse(
   });
   if (!campaign) return null;
 
+  // Opening a recovery leads to an emailed code, so the tenant's email send limit counts it.
+  const emailSendLimit = await resolveEmailSendLimit(c.env, input.tenantId);
   const recoveryRateLimiterId = c.env.RATE_LIMITER.idFromName(
     buildDOKey('rate-limit', 'directory-unavailable-recovery', input.tenantId)
   );
@@ -1462,8 +1851,8 @@ async function createDirectoryUnavailableRecoveryResponse(
   const recoveryRateLimitResult = await recoveryRateLimiter.incrementRpc(
     `user:${input.connector.wordwardenConnectorId}:${runtimeUser.id}`,
     {
-      windowSeconds: 15 * 60,
-      maxRequests: 3,
+      windowSeconds: emailSendLimit.windowSeconds,
+      maxRequests: emailSendLimit.maxRequests,
     }
   );
   if (!recoveryRateLimitResult.allowed) {
@@ -1473,7 +1862,7 @@ async function createDirectoryUnavailableRecoveryResponse(
   }
 
   const token = createMigrationTransactionToken();
-  const transaction = await createDirectoryAuthMigrationTransaction(authCtx.coreAdapter, {
+  const transaction = await createDirectoryAuthMigrationTransaction(c.env, authCtx.coreAdapter, {
     tenantId: input.tenantId,
     campaignId: campaign.id,
     userId: runtimeUser.id,
@@ -1599,10 +1988,14 @@ async function createEmailFallbackMigrationResponse(
   if (fallbackMode !== 'admin_invitation_only' && !allowsMigrationEmailCodeFallback(fallbackMode)) {
     return { email_code_fallback_available: false };
   }
+  // The tenant's own switch for signing in with an emailed code, on top of the campaign's mode.
+  if (!(await isDirectoryEmailCodeOfferable(c, input.tenantId))) {
+    return { email_code_fallback_available: false };
+  }
 
   let token = createMigrationTransactionToken();
   if (token === passkeyToken) token = createMigrationTransactionToken();
-  const transaction = await createDirectoryAuthMigrationTransaction(input.adapter, {
+  const transaction = await createDirectoryAuthMigrationTransaction(c.env, input.adapter, {
     tenantId: input.tenantId,
     campaignId: input.decision.campaign.id,
     userId: input.runtimeUser.id,
@@ -1634,6 +2027,13 @@ async function createDirectorySessionSuccessResponse(
     user: { id: string; email: string | null; name?: string | null };
     authTime: number;
     now: number;
+    /**
+     * When the session's authentication was proven (milliseconds): the earliest proof among its
+     * methods (a migration's password was verified when the transaction was made).
+     */
+    provenAt: number;
+    /** The method a re-authentication takes and when it was proven (ms), where that differs. */
+    reauthProof?: { amr: string[]; at: number };
     connectorId: string;
     wordwardenConnectorId: string;
     requestId?: string;
@@ -1676,6 +2076,14 @@ async function createDirectorySessionSuccessResponse(
       email: input.user.email,
       name: input.user.name,
       amr: directorySessionAmr(input.method),
+      ...directorySessionUnverifiedAmr(input.method),
+      // When the authentication was proven (milliseconds), for assurance step-ups.
+      proven_at: input.provenAt,
+      // The method a re-authentication takes and when it was proven, where it differs from the
+      // oldest proof (a fallback's email code).
+      ...(input.reauthProof
+        ? { reauth_proven_amr: input.reauthProof.amr, reauth_proven_at: input.reauthProof.at }
+        : {}),
       acr: 'urn:mace:incommon:iap:bronze',
       authTime: input.authTime,
       directory_connector_id: input.connectorId,
@@ -1791,7 +2199,19 @@ async function createDirectorySessionSuccessResponse(
   });
 }
 
-function directorySessionAmr(
+type DirectorySessionMethod = Parameters<typeof directorySessionAmr>[0];
+
+/**
+ * The methods of a directory session no assurance level counts: the passkey of a migration was
+ * registered with attestation none, so no signature proves it until it signs in.
+ */
+export function directorySessionUnverifiedAmr(method: DirectorySessionMethod): {
+  unverified_amr?: string[];
+} {
+  return method === 'directory_password_passkey_migration' ? { unverified_amr: ['passkey'] } : {};
+}
+
+export function directorySessionAmr(
   method:
     | 'directory_password'
     | 'directory_password_passkey_migration'
@@ -1815,7 +2235,8 @@ async function publishDirectoryPasswordFailureEvent(
   connectorId: string,
   errorCode: string,
   requestId?: string,
-  username?: string
+  username?: string,
+  connectorReason?: string
 ): Promise<void> {
   const tenantId = getTenantIdFromContext(c);
   const log = getLogger(c).module('DIRECTORY_PASSWORD_LOGIN');
@@ -1830,6 +2251,7 @@ async function publishDirectoryPasswordFailureEvent(
         connectorId,
         requestId,
         errorCode,
+        ...(connectorReason ? { connectorReason } : {}),
         ...(usernameHash ? { usernameHash } : {}),
       } satisfies AuthEventData,
     });
@@ -1850,7 +2272,10 @@ function createMigrationTransactionToken(): string {
 
 async function getAllowedOriginsFromKV(env: Env, tenantId: string): Promise<string[]> {
   let allowedOriginsValue: string | undefined;
-  const settings = await getTenantSettings(env.AUTHRIM_CONFIG, tenantId, 'tenant');
+  const settings = await getTenantSettingsDocument(env, tenantId, 'tenant', {
+    // Without the tenant's settings the fallback is at least as strict.
+    onUnreadable: 'empty',
+  });
   if (settings && typeof settings['tenant.allowed_origins'] === 'string') {
     allowedOriginsValue = settings['tenant.allowed_origins'];
   }
@@ -2068,6 +2493,28 @@ async function upsertDirectoryIdentityLink(
   if (result.rowsAffected !== 1) {
     throw new Error('directory identity link conflict');
   }
+}
+
+/** Route publication failures that wrote nothing: refused before (or instead of) publishing. */
+const DIRECTORY_ROUTE_REFUSED_ERRORS = new Set([
+  'account_provisioner_unavailable',
+  'directory_route_account_mismatch',
+  'auth_account_provisioning_rpc_caller_unauthorized',
+  'auth_directory_route_input_invalid',
+  'auth_directory_route_account_mismatch',
+  'auth_directory_route_authority_not_found',
+  'directory_identifier_reservation_conflict',
+]);
+
+async function deleteDirectoryIdentityLink(
+  adapter: DatabaseAdapter,
+  input: { tenantId: string; connectorId: string; directorySubject: string; userId: string }
+): Promise<void> {
+  await adapter.execute(
+    `DELETE FROM directory_identity_links
+      WHERE tenant_id = ? AND connector_id = ? AND directory_subject = ? AND user_id = ?`,
+    [input.tenantId, input.connectorId, input.directorySubject, input.userId]
+  );
 }
 
 async function findDirectoryPendingStatus(

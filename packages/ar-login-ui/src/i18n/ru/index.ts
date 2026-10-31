@@ -2,6 +2,32 @@ import { createTranslation } from '../create-translation';
 import completion from './completion';
 
 const ru = createTranslation({
+	account_guestLogoutWarning:
+		'После выхода вы не сможете вернуться в этот гостевой аккаунт. Сначала зарегистрируйтесь, чтобы сохранить доступ к аккаунту и данным. Всё равно выйти?',
+	account_guestTitle: 'Зарегистрируйте аккаунт',
+	account_guestDescription: 'После регистрации у вас останутся тот же аккаунт и данные.',
+	account_guestDue: 'Аккаунт может быть автоматически удалён начиная с {date}.',
+	account_guestNoExpiry: 'Автоматическое удаление не запланировано.',
+	account_guestEmail: 'Адрес электронной почты',
+	account_guestSend: 'Зарегистрироваться по электронной почте',
+	account_guestPasskey: 'Зарегистрироваться с Passkey',
+	account_guestCode: 'Код подтверждения',
+	account_guestConfirm: 'Завершить регистрацию',
+	account_guestPending:
+		'Регистрация выполняется. Повторите попытку, чтобы проверить её завершение.',
+	account_guestRetry: 'Повторить',
+	account_guestError:
+		'Не удалось завершить регистрацию. Проверьте код подтверждения или повторите попытку.',
+	account_guestCollision:
+		'Для этих учётных данных уже существует аккаунт. Войдите в него отдельно. Ваш гостевой аккаунт не будет объединён с ним.',
+	account_guestExistingLogin: 'Войти в существующий аккаунт',
+	account_guestRegistered: 'Ваш аккаунт зарегистрирован.',
+	account_guestChangeMethod: 'Выбрать другой способ',
+	login_guestContinue: 'Продолжить как гость',
+	login_guestRetention:
+		'Гостевые аккаунты могут быть автоматически удалены через {days} дней после создания. Зарегистрируйтесь, чтобы продолжить использование аккаунта.',
+	login_guestNoExpiry: 'Автоматическое удаление новых гостевых аккаунтов не запланировано.',
+
 	...completion,
 	app_subtitle: 'Идентификация и доступ повсюду.',
 	dialog_cancel: 'Отмена',
@@ -67,6 +93,32 @@ const ru = createTranslation({
 	account_delete: 'Удалить',
 	account_empty: 'Нет элементов',
 	account_planned: 'Запланировано',
+	account_socialEmpty: 'Нет связанных внешних учётных записей.',
+	account_socialLinkHeading: 'Связать учётную запись',
+	account_socialLinkWith: 'Связать {provider}',
+	account_socialNoProviders: 'Нет других провайдеров, доступных для связывания.',
+	account_socialLinkedAt: 'Связано {date}',
+	account_socialLastUsed: 'Последнее использование: {date}',
+	account_socialUnlink: 'Отвязать',
+	account_socialUnlinkConfirm:
+		'Отвязать {provider}? Вы больше не сможете входить через эту учётную запись.',
+	account_socialUnlinkConfirmAction: 'Отвязать {provider}',
+	account_socialLinked: 'Учётная запись связана.',
+	account_socialUnlinked: 'Учётная запись отвязана.',
+	account_socialErrorAlreadyLinked: 'Эта учётная запись уже связана с другим пользователем.',
+	account_socialErrorAlreadyLinkedHere: 'Этот провайдер уже связан с вашей учётной записью.',
+	account_socialErrorEmailNotVerified:
+		'Провайдер не подтвердил адрес электронной почты этой учётной записи.',
+	account_socialErrorSessionExpired:
+		'Срок подтверждения истёк до завершения связывания. Подтвердите личность снова и повторите попытку.',
+	account_socialErrorCancelled: 'Связывание отменено.',
+	account_socialErrorFailed: 'Не удалось связать учётную запись. Повторите попытку.',
+	account_socialErrorLastMethod:
+		'Это ваш последний способ входа. Сначала добавьте Passkey или другой способ входа.',
+	account_socialErrorInProgress:
+		'Выполняется другое изменение способов входа. Повторите попытку чуть позже.',
+	account_operationSocialLinked: 'Внешняя учётная запись связана',
+	account_operationSocialUnlinked: 'Внешняя учётная запись отвязана',
 	account_passkeyUnsupported: 'Этот браузер не поддерживает регистрацию Passkey.',
 	account_passkeyRegistrationCancelled:
 		'Регистрация Passkey была отменена или время ожидания истекло. Повторите попытку.',
@@ -101,12 +153,30 @@ const ru = createTranslation({
 	account_reauthTotpCodePlaceholder: '6- или 8-значный код',
 	account_actionFailed: 'Не удалось выполнить операцию',
 	account_remainingLoginMethodRequired: 'Добавьте другой способ входа перед удалением этого.',
+	account_activityIncomplete: 'Результаты активности неполные. Повторите попытку позже.',
+	account_activityLoadMore: 'Загрузить более раннюю активность',
 	account_activityTitle: 'Активность',
 	account_operationNameUpdated: 'Имя изменено',
 	account_operationPasskeyCreated: 'Passkey добавлен',
 	account_operationPasskeyUpdated: 'Passkey переименован',
 	account_operationPasskeyDeleted: 'Passkey удалён',
 	account_operationSessionRevoked: 'Сеанс завершён',
+	account_operationGuestCreated: 'Гостевая учётная запись создана',
+	account_operationGuestUpgradeFailed: 'Не удалось зарегистрировать гостя',
+	account_operationGuestUpgradeStarted: 'Начата регистрация гостя',
+	account_operationGuestUpgraded: 'Гостевая учётная запись зарегистрирована',
+	account_operationEmailAdded: 'Адрес электронной почты добавлен',
+	account_operationEmailChanged: 'Адрес электронной почты изменён',
+	account_operationEmailReauthenticated: 'Повторная аутентификация по электронной почте',
+	account_operationDeviceUpdated: 'Устройство переименовано',
+	account_operationDeviceUnlinked: 'Устройство отвязано',
+	account_operationPasskeyReauthenticated: 'Повторная аутентификация с помощью Passkey',
+	account_operationTotpEnrollmentStarted: 'Начата настройка приложения-аутентификатора',
+	account_operationTotpActivated: 'Приложение-аутентификатор активировано',
+	account_operationTotpUpdated: 'Приложение-аутентификатор переименовано',
+	account_operationTotpRemoved: 'Приложение-аутентификатор удалено',
+	account_operationTotpBackupCodesRegenerated: 'Резервные коды созданы заново',
+	account_operationTotpReauthenticated: 'Повторная аутентификация через приложение-аутентификатор',
 	account_launcherTitle: 'Мои приложения',
 	account_launcherDescription: 'Находите и открывайте доступные вам приложения.',
 	account_launcherLoadFailed: 'Не удалось загрузить приложения.',
@@ -172,6 +242,8 @@ const ru = createTranslation({
 	login_humanVerificationLoading: 'Загрузка проверки безопасности...',
 	login_humanVerificationLoadFailed:
 		'Не удалось загрузить проверку. Обновите страницу и повторите попытку.',
+	login_humanVerificationUnavailable:
+		'Проверка на человека сейчас недоступна. Обратитесь к администратору.',
 	login_noMethodsAvailable:
 		'Для этой организации не включён ни один способ аутентификации. Обратитесь к администратору.',
 	login_passkeyPreparing: 'Подготовка проверки с Passkey.',
@@ -263,6 +335,9 @@ const ru = createTranslation({
 	login_extError_callbackFailed_title: 'Ошибка аутентификации',
 	login_extError_callbackFailed_message:
 		'Во время аутентификации произошла ошибка. Повторите попытку.',
+	login_extError_reauthNotProven_title: 'Вход не подтверждён',
+	login_extError_reauthNotProven_message:
+		'Ваш поставщик входа не подтвердил, что вы вошли снова. Войдите снова или выберите другой способ.',
 	login_extError_default_title: 'Ошибка аутентификации',
 	login_extError_default_message: 'Во время внешней аутентификации произошла ошибка.'
 });

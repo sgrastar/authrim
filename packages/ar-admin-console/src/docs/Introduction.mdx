@@ -1,0 +1,38 @@
+import { Meta } from '@storybook/addon-docs/blocks';
+
+<Meta title="Introduction" />
+
+# Authrim admin console — UI
+
+This Storybook is the source of truth for how the admin console looks and behaves. The redesign
+mock (`private/admin-ui-redesign-2026`) is where ideas are tried; once a pattern is settled it
+moves here and the mock stops being authoritative for it.
+
+## Layers
+
+| Layer          | Lives in                      | Decides                                           |
+| -------------- | ----------------------------- | ------------------------------------------------- |
+| **Tokens**     | `src/lib/ui/tokens`, `themes` | colour, material, shape, type, motion             |
+| **Primitives** | `src/lib/ui/primitives`       | single controls: button, toggle, checkbox, field  |
+| **Patterns**   | `src/lib/ui/patterns`         | recurring blocks: card, setting row, table, notes |
+| **Templates**  | `src/lib/ui/templates`        | page types and their widths                       |
+| **Shell**      | `src/lib/shell`               | header, categories, left nav, drawer              |
+| Pages          | `src/routes`                  | _what_ is shown — never _how_                     |
+
+Pages only compose the layers above. `pnpm lint` fails if a route file contains a `<style>`
+block, a `style`/`class` attribute, or if a literal colour appears outside the theme tokens.
+When a page needs something the layers cannot express, add a pattern here first.
+
+## Toolbar
+
+- **Theme** — Standard, Swiss Grid and Frosted (translucent, blurred panels).
+- **Scheme** — light / dark.
+- **Language** — ja / en / de / ar. Arabic switches the whole layout to right-to-left.
+- **Pseudo (layout check)** — English stretched and accented, e.g. `[Šåṽé çĥåñĝéš öñé ţŵö]`.
+  Not a shipped language; use it to find:
+  - text that stays plain English or Japanese — it never went through `t()` / `sample()`;
+  - a missing `]` — the label is cut off there (translations run 30–100 % longer);
+  - clipped accents above or below the letters — the line height is too tight.
+
+Every story is also a test: `pnpm test:stories` renders each one in Chromium, runs its
+interactions and fails on accessibility violations (including colour contrast).

@@ -118,7 +118,6 @@ describe('Login UI proxy hooks', () => {
 				authenticationMethods: {
 					ui: {
 						theme: 'dark',
-						variant: 'navy',
 						pageTemplate: { backgroundColor: '#112233' }
 					}
 				}
@@ -355,6 +354,43 @@ describe('Login UI proxy hooks', () => {
 
 		expect(headers.get('DPoP')).toBe('proof.jwt.value');
 		expect(headers.get('X-Authrim-Internal-Secret')).toBeNull();
+	});
+
+	it('forwards the screen an email-code human verification token came from', async () => {
+		const { buildProxyHeaders } = await import('../hooks.server');
+		const request = new Request('https://login.example.com/api/v1/auth/direct/email-code/send', {
+			method: 'POST',
+			headers: { 'X-Authrim-Human-Verification-Action': 'signup' }
+		});
+		const event = {
+			request,
+			url: new URL(request.url),
+			getClientAddress: () => '192.0.2.10'
+		};
+
+		const headers = buildProxyHeaders(event as never, undefined, 'first.test.authrim.com');
+
+		expect(headers.get('X-Authrim-Human-Verification-Action')).toBe('signup');
+	});
+
+	it('forwards the Flow interaction a sign-in start belongs to', async () => {
+		const { buildProxyHeaders } = await import('../hooks.server');
+		const request = new Request(
+			'https://login.example.com/api/v1/auth/direct/passkey/login/start',
+			{
+				method: 'POST',
+				headers: { 'X-Authrim-Interaction-Id': 'int-1' }
+			}
+		);
+		const event = {
+			request,
+			url: new URL(request.url),
+			getClientAddress: () => '192.0.2.10'
+		};
+
+		const headers = buildProxyHeaders(event as never, undefined, 'first.test.authrim.com');
+
+		expect(headers.get('X-Authrim-Interaction-Id')).toBe('int-1');
 	});
 
 	it('preserves binary proxy request bodies and enforces a byte limit', async () => {
@@ -643,6 +679,49 @@ describe('Login UI proxy hooks', () => {
 		).toBe('second.test.authrim.com');
 	});
 
+	it('keeps the router-selected tenant host despite a stale shared-login cookie', async () => {
+		const { getForwardedHost } = await import('../hooks.server');
+		const { LOGIN_TENANT_HOST_COOKIE } = await import('$lib/discovery-session');
+		const event = {
+			request: new Request('https://login.example.com/login', {
+				headers: { 'x-authrim-original-host': 'first.test.authrim.com' }
+			}),
+			url: new URL('https://login.example.com/login'),
+			cookies: {
+				get: (name: string) =>
+					name === LOGIN_TENANT_HOST_COOKIE ? 'second.test.authrim.com' : undefined
+			}
+		};
+
+		expect(
+			getForwardedHost(event as never, {
+				PUBLIC_API_BASE_URL: 'https://first.test.authrim.com'
+			})
+		).toBe('first.test.authrim.com');
+	});
+
+	it('preserves tenant selection on a shared login host proxied to an internal Worker host', async () => {
+		const { getForwardedHost } = await import('../hooks.server');
+		const { LOGIN_TENANT_HOST_COOKIE } = await import('$lib/discovery-session');
+		const event = {
+			request: new Request(
+				'https://login-worker.example.workers.dev/api/auth/authentication-methods',
+				{
+					headers: {
+						'x-authrim-original-host': 'login.example.com',
+						'x-authrim-shared-login-host': 'true'
+					}
+				}
+			),
+			url: new URL('https://login-worker.example.workers.dev/api/auth/authentication-methods'),
+			cookies: {
+				get: (name: string) =>
+					name === LOGIN_TENANT_HOST_COOKIE ? 'second.test.authrim.com' : undefined
+			}
+		};
+		expect(getForwardedHost(event as never)).toBe('second.test.authrim.com');
+	});
+
 	it('targets the forwarded tenant host when using the router service binding', async () => {
 		const { resolveHumanVerificationProviderForRequest } = await import('../hooks.server');
 		const fetch = vi.fn(async (_input: Request | string, _init?: RequestInit) =>
@@ -789,33 +868,28 @@ describe('Login UI proxy hooks', () => {
 			resolveInitialLoginUIAppearance({
 				ui: {
 					theme: 'dark',
-					variant: 'navy',
 					pageTemplate: { backgroundColor: '#112233' }
 				}
 			} as never)
 		).toEqual({ background: '#112233', colorScheme: 'dark' });
+		// Without a configured colour: the page background of the theme template in the mode
+		// (Meridian when none is set), as app.css paints it.
 		expect(resolveInitialLoginUIAppearance(null)).toEqual({
-			background: '#eeeae3',
+			background: '#eef1f6',
 			colorScheme: 'light'
 		});
-		expect(
-			resolveInitialLoginUIAppearance(null, {
-				theme: 'dark',
-				darkVariant: 'navy'
-			})
-		).toEqual({
-			background: '#0a0e14',
+		expect(resolveInitialLoginUIAppearance(null, { theme: 'dark' })).toEqual({
+			background: '#0b0e16',
 			colorScheme: 'dark'
 		});
 		expect(
-			resolveInitialLoginUIAppearance(null, {
-				theme: 'light',
-				lightVariant: 'green'
-			})
-		).toEqual({
-			background: '#e8f2e8',
-			colorScheme: 'light'
-		});
+			resolveInitialLoginUIAppearance({ ui: { theme: 'light', themeTemplate: 'classic' } } as never)
+		).toEqual({ background: '#eeeae3', colorScheme: 'light' });
+		expect(
+			resolveInitialLoginUIAppearance({
+				ui: { theme: 'dark', themeTemplate: 'fullbleed-glass' }
+			} as never)
+		).toEqual({ background: '#0d0908', colorScheme: 'dark' });
 	});
 
 	it('skips server-side theme bootstrap for same-origin plain /login', async () => {
@@ -953,6 +1027,28 @@ describe('Login UI proxy hooks', () => {
 		});
 
 		expect(target).toEqual({ challengeId: 'challenge-dcr', valid: true, clientId });
+	});
+
+	it.each([
+		['the challenge of a SAML request, which names no client', { protocol: 'saml' }, true],
+		// A response with neither a client nor the SAML marker is not a usable challenge.
+		['a response that names no client and is not a SAML challenge', {}, false]
+	])('reads %s', async (_name, body, valid) => {
+		const { fetchLoginChallengeThemeTargetForPageRequest } = await import('../hooks.server');
+		const fetch = vi.fn(async () => Response.json(body));
+		const event = {
+			request: new Request('https://login.example.com/login?challenge_id=challenge-saml'),
+			url: new URL('https://login.example.com/login?challenge_id=challenge-saml'),
+			cookies: { get: () => undefined },
+			getClientAddress: () => '192.0.2.10'
+		};
+
+		const target = await fetchLoginChallengeThemeTargetForPageRequest(event as never, {
+			PUBLIC_API_BASE_URL: 'https://first.test.authrim.com',
+			AR_ROUTER: { fetch }
+		});
+
+		expect(target).toEqual({ challengeId: 'challenge-saml', valid, clientId: null });
 	});
 
 	it('rejects challenge client identifiers above the shared 256-character limit', async () => {
@@ -1401,5 +1497,25 @@ describe('Login UI proxy hooks', () => {
 
 		expect(data).toMatchObject({ preferredLanguage: 'zh-TW' });
 		expect(setCookie).not.toHaveBeenCalled();
+	});
+});
+
+describe('guest authentication methods client selection', () => {
+	it.each([
+		['/login?lang=ja', null, 'login-ui'],
+		['/login?challenge_id=', null, null],
+		['/login?challenge_id=valid', { valid: true, clientId: 'rp-client' }, 'rp-client'],
+		['/login?challenge_id=expired', { valid: false, clientId: null }, null],
+		['/login?saml_request_id=saml', null, null],
+		['/signup', null, null]
+	])('selects the correct client for %s', async (path, target, expected) => {
+		const { resolveAuthenticationMethodsClientId } = await import('../hooks.server');
+		expect(
+			resolveAuthenticationMethodsClientId(
+				new URL(path as string, 'https://login.example.com'),
+				target as { valid: boolean; clientId: string | null } | null,
+				'login-ui'
+			)
+		).toBe(expected);
 	});
 });

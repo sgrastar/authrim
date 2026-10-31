@@ -1,0 +1,182 @@
+openapi: 3.2.0
+info:
+  title: Authrim environment replication inventory API
+  version: 0.5.0
+  description: Explicit metadata-only delegation for a complete environment inventory. Tenant export credentials remain separate.
+paths:
+  /api/admin/replication-environments/grants:
+    post:
+      summary: Issue a metadata-only environment inventory grant
+      description: Requires a human Admin session, MFA within five minutes, global platform tenant-management authority and backups manage permission. The credential is returned once. It grants no data export, import, login or ordinary Admin API access.
+      security:
+        - AdminSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [pairId, sourceDeploymentId, destinationDeploymentId, expiresAt]
+              properties:
+                pairId: { type: string }
+                sourceDeploymentId: { type: string }
+                destinationDeploymentId: { type: string }
+                expiresAt:
+                  { type: integer, description: Unix milliseconds, at most 30 days from issuance. }
+      responses:
+        '201':
+          description: Grant and one-time credential
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [grant, credential]
+                properties:
+                  grant: { $ref: '#/components/schemas/Grant' }
+                  credential: { type: string, pattern: '^[a-f0-9]{64}$' }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '403': { $ref: '#/components/responses/Denied' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /api/admin/replication-environments/grants/{grantId}/revoke:
+    post:
+      summary: Revoke one environment inventory grant
+      description: Requires the same fresh human MFA and global authority as issuance. Revocation is permanent.
+      security:
+        - AdminSession: []
+      parameters:
+        - $ref: '#/components/parameters/GrantId'
+      responses:
+        '200':
+          description: Revoked grant
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  grant: { $ref: '#/components/schemas/Grant' }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '403': { $ref: '#/components/responses/Denied' }
+        '404': { description: Grant not found for this owning Admin tenant. }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /api/replication-environments/{grantId}/inventory:
+    get:
+      summary: Read the complete environment metadata inventory
+      description: Authenticates the purpose-bound grant and owning tenant before and after collection. Includes every non-deleted tenant or fails; never truncates. The initial serving profile supports at most 16 active tenants. Pending provisioning, migration, unsupported lifecycle, placement mismatch or writer-coverage mismatch fails closed. No user rows or secrets are returned. The endpoint remains available during a coordinated writer drain. Observation during normal writes is not a global snapshot guarantee; planned promotion requires a new inventory after the global drain.
+      security:
+        - InventoryBearer: []
+      parameters:
+        - $ref: '#/components/parameters/GrantId'
+        - in: header
+          name: X-Tenant-Id
+          required: true
+          description: The real owning Admin tenant recorded when this metadata grant was issued.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Complete, sorted metadata inventory
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  [
+                    formatVersion,
+                    complete,
+                    environmentId,
+                    pairId,
+                    sourceDeploymentId,
+                    observedAtMs,
+                    inventorySha256,
+                    writerCoverageSha256,
+                    tenants,
+                  ]
+                properties:
+                  formatVersion: { type: integer, const: 1 }
+                  complete: { type: boolean, const: true }
+                  environmentId: { type: string }
+                  pairId: { type: string }
+                  sourceDeploymentId: { type: string }
+                  observedAtMs: { type: integer }
+                  inventorySha256:
+                    {
+                      type: string,
+                      pattern: '^[a-f0-9]{64}$',
+                      description: Canonical response digest excluding observedAtMs and inventorySha256.,
+                    }
+                  writerCoverageSha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+                  tenants:
+                    type: array
+                    minItems: 1
+                    maxItems: 16
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required:
+                        [tenantId, issuer, productVersion, lifecycleState, placementGeneration]
+                      properties:
+                        tenantId: { type: string }
+                        issuer: { type: string, format: uri }
+                        productVersion: { type: string }
+                        lifecycleState: { type: string, const: active }
+                        placementGeneration: { type: integer, minimum: 1 }
+        '403': { $ref: '#/components/responses/Denied' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+components:
+  securitySchemes:
+    AdminSession:
+      type: apiKey
+      in: cookie
+      name: authrim_admin_session
+    InventoryBearer:
+      type: http
+      scheme: bearer
+      description: Purpose-bound metadata grant, never an Admin or tenant export credential.
+  parameters:
+    GrantId:
+      in: path
+      name: grantId
+      required: true
+      schema: { type: string }
+  schemas:
+    Grant:
+      type: object
+      required: [id, createdBy, createdAt, expiresAt, revokedAt, scope]
+      properties:
+        id: { type: string }
+        createdBy: { type: string }
+        createdAt: { type: integer }
+        expiresAt: { type: integer }
+        revokedAt: { type: [integer, 'null'] }
+        scope:
+          type: object
+          additionalProperties: false
+          required:
+            [
+              version,
+              kind,
+              ownerTenantId,
+              environmentId,
+              pairId,
+              sourceDeploymentId,
+              destinationDeploymentId,
+            ]
+          properties:
+            version: { type: integer, const: 1 }
+            kind: { type: string, const: environment_inventory_read }
+            ownerTenantId: { type: string }
+            environmentId: { type: string }
+            pairId: { type: string }
+            sourceDeploymentId: { type: string }
+            destinationDeploymentId: { type: string }
+  responses:
+    Invalid:
+      description: Malformed or mismatched request.
+    Denied:
+      description: Authentication, scope, permission or fresh MFA requirement not met.
+    Unavailable:
+      description: Inventory, source coverage, audit or configuration verification failed. No partial result is returned.

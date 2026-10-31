@@ -4,6 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { UpstreamProvider, UserInfo, TokenResponse } from '../types';
+import { ExternalIdPErrorCode } from '../types';
 
 // Create hoisted mocks that can be configured in tests
 const {
@@ -16,6 +17,8 @@ const {
   mockCreateAuditLog,
   mockRuntimeSyncUser,
   MockD1Adapter,
+  mockFindUserById,
+  mockUpdateProfileFields,
   MockCanonicalRuntimeUserStore,
   sqlTracker,
   mockResolveAccountContext,
@@ -50,6 +53,8 @@ const {
   });
   const createAuditLogMock = vi.fn().mockResolvedValue(undefined);
   const runtimeSyncUserMock = vi.fn().mockResolvedValue({ accountId: 'account-id' });
+  const findUserByIdMock = vi.fn().mockResolvedValue(null);
+  const updateProfileFieldsMock = vi.fn().mockResolvedValue(true);
   const resolveAccountContextMock = vi.fn();
   const resolveTenantMetadataContextMock = vi.fn();
   const createRuleEvaluatorMock = vi.fn(() => ({
@@ -125,6 +130,14 @@ const {
     async syncUser(input: unknown) {
       return runtimeSyncUserMock(input);
     }
+
+    async findById(userId: string) {
+      return findUserByIdMock(userId);
+    }
+
+    async updateProfileFields(userId: string, values: unknown) {
+      return updateProfileFieldsMock(userId, values);
+    }
   }
 
   return {
@@ -136,6 +149,8 @@ const {
     mockSyncUserLifecycleState: syncUserLifecycleStateMock,
     mockCreateAuditLog: createAuditLogMock,
     mockRuntimeSyncUser: runtimeSyncUserMock,
+    mockFindUserById: findUserByIdMock,
+    mockUpdateProfileFields: updateProfileFieldsMock,
     MockD1Adapter: D1AdapterClass,
     MockCanonicalRuntimeUserStore: CanonicalRuntimeUserStoreClass,
     sqlTracker: tracker,
@@ -150,59 +165,91 @@ const {
 });
 
 // Mock @authrim/ar-lib-core to prevent Cloudflare Workers imports
-vi.mock('@authrim/ar-lib-core', () => ({
-  D1Adapter: MockD1Adapter,
-  CanonicalRuntimeUserStore: MockCanonicalRuntimeUserStore,
-  ensureDatabaseAdapter: vi.fn().mockImplementation((db: unknown) => new MockD1Adapter({ db })),
-  createLogger: () => ({
-    module: () => ({
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-      debug: vi.fn(),
-    }),
-  }),
-  getDefaultTenantId: vi.fn(() => 'default'),
-  createRuleEvaluator: mockCreateRuleEvaluator,
-  resolveOrgByDomainHash: vi.fn().mockResolvedValue(null),
-  resolveAllOrgsByDomainHash: vi.fn().mockResolvedValue([]),
-  joinOrganization: vi.fn().mockResolvedValue({ success: true }),
-  assignRoleToUser: vi.fn().mockResolvedValue(undefined),
-  generateEmailDomainHashWithVersion: vi.fn().mockResolvedValue({
-    hash: 'mock-domain-hash',
-    version: 1,
-  }),
-  getEmailDomainHashConfig: vi.fn().mockResolvedValue({
-    current_version: 1,
-    secrets: { 1: 'test-secret-key-16+' },
-    migration_in_progress: false,
-    deprecated_versions: [],
-  }),
-  DEFAULT_JIT_CONFIG: {
-    enabled: true,
-    auto_create_org_on_domain_match: false,
-    join_all_matching_orgs: false,
-    allow_user_without_org: true,
-    default_role_id: 'role_end_user',
-    allow_unverified_domain_mappings: false,
-  },
-  validateCustomClaimWrite: mockValidateCustomClaimWrite,
-  persistCustomClaimWrite: mockPersistCustomClaimWrite,
-  syncUserLifecycleState: mockSyncUserLifecycleState,
-  createAuditLog: mockCreateAuditLog,
-  resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Record<string, unknown>) => ({
-    schemaDb: env.DB,
-    nonPiiDb: env.DB,
-    piiDb: env.DB_PII ?? null,
-  })),
-  resolveTenantUserStoreSourcesFromEnv: vi.fn(async (env: Record<string, unknown>) => ({
-    coreDb: env.DB,
-    piiDb: env.DB_PII ?? env.DB,
-  })),
-  resolveAccountDataContext: mockResolveAccountContext,
-  resolveAccountDataContextByIdentifier: mockResolveAccountContext,
-  resolveTenantMetadataContext: mockResolveTenantMetadataContext,
+// Overrides the deleted-account re-registration check for one test (null: the real check).
+const registrationCheck = vi.hoisted(() => ({
+  override: null as null | 'blocked' | 'unavailable',
 }));
+
+vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
+  return {
+    checkEmailRegistration: async (...args: Parameters<typeof actual.checkEmailRegistration>) =>
+      registrationCheck.override ?? actual.checkEmailRegistration(...args),
+    D1Adapter: MockD1Adapter,
+    // JIT settings as the Settings API resolves them with nothing set for the platform: the tenant's
+    // values, else the saved document (as the older reader maps it), else the defaults.
+    JIT_PROVISIONING_SETTING_KEYS: actual.JIT_PROVISIONING_SETTING_KEYS,
+    updateProfileOnLogin: actual.updateProfileOnLogin,
+    parseJitAllowedProviderIds: actual.parseJitAllowedProviderIds,
+    jitSettingValuesWellTyped: actual.jitSettingValuesWellTyped,
+    readExternalProviderUsagePolicy: actual.readExternalProviderUsagePolicy,
+    resolveEffectiveSettings: vi.fn(
+      async (
+        env: { SETTINGS?: { get: (key: string) => Promise<string | null> } },
+        _category: string,
+        target: { tenantId: string }
+      ) => {
+        const raw = await env.SETTINGS?.get('jit_provisioning_config');
+        const tenant = await env.SETTINGS?.get(`settings:tenant:${target.tenantId}:external-idp`);
+        return {
+          ...actual.EXTERNAL_IDP_DEFAULTS,
+          ...actual.legacyJitProvisioningValues(raw ?? null),
+          ...(tenant ? (JSON.parse(tenant) as Record<string, unknown>) : {}),
+        };
+      }
+    ),
+    CanonicalRuntimeUserStore: MockCanonicalRuntimeUserStore,
+    ensureDatabaseAdapter: vi.fn().mockImplementation((db: unknown) => new MockD1Adapter({ db })),
+    createLogger: () => ({
+      module: () => ({
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+        debug: vi.fn(),
+      }),
+    }),
+    getDefaultTenantId: vi.fn(() => 'default'),
+    createRuleEvaluator: mockCreateRuleEvaluator,
+    resolveOrgByDomainHash: vi.fn().mockResolvedValue(null),
+    resolveAllOrgsByDomainHash: vi.fn().mockResolvedValue([]),
+    joinOrganization: vi.fn().mockResolvedValue({ success: true }),
+    assignRoleToUser: vi.fn().mockResolvedValue(undefined),
+    generateEmailDomainHashWithVersion: vi.fn().mockResolvedValue({
+      hash: 'mock-domain-hash',
+      version: 1,
+    }),
+    getEmailDomainHashConfig: vi.fn().mockResolvedValue({
+      current_version: 1,
+      secrets: { 1: 'test-secret-key-16+' },
+      migration_in_progress: false,
+      deprecated_versions: [],
+    }),
+    DEFAULT_JIT_CONFIG: {
+      enabled: true,
+      auto_create_org_on_domain_match: false,
+      join_all_matching_orgs: false,
+      allow_user_without_org: true,
+      default_role_id: 'role_end_user',
+      allow_unverified_domain_mappings: false,
+    },
+    validateCustomClaimWrite: mockValidateCustomClaimWrite,
+    persistCustomClaimWrite: mockPersistCustomClaimWrite,
+    syncUserLifecycleState: mockSyncUserLifecycleState,
+    createAuditLog: mockCreateAuditLog,
+    resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Record<string, unknown>) => ({
+      schemaDb: env.DB,
+      nonPiiDb: env.DB,
+      piiDb: env.DB_PII ?? null,
+    })),
+    resolveTenantUserStoreSourcesFromEnv: vi.fn(async (env: Record<string, unknown>) => ({
+      coreDb: env.DB,
+      piiDb: env.DB_PII ?? env.DB,
+    })),
+    resolveAccountDataContext: mockResolveAccountContext,
+    resolveAccountDataContextByIdentifier: mockResolveAccountContext,
+    resolveTenantMetadataContext: mockResolveTenantMetadataContext,
+  };
+});
 
 // Mock the linked identity store
 vi.mock('../services/linked-identity-store', () => ({
@@ -503,6 +550,131 @@ describe('Identity Stitching Service', () => {
         );
       });
 
+      it("updates the user's profile from the provider only when the tenant turns it on", async () => {
+        const accountContext = {
+          tenantId: 'default',
+          accountId: 'account:existing-user-789',
+          legacyUserId: 'existing-user-789',
+          coreDb: { _isPii: false },
+          piiDb: { _isPii: true },
+        };
+        mockResolveAccountContext.mockResolvedValue(accountContext);
+        const link = {
+          id: 'existing-linked-id',
+          userId: 'existing-user-789',
+          tenantId: 'default',
+          providerId: mockProvider.id,
+          providerUserId: mockUserInfo.sub,
+          emailVerified: true,
+          linkedAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+        mockFindUserById.mockResolvedValue({
+          id: 'existing-user-789',
+          name: 'Old Name',
+          active: 1,
+          account_type: 'end_user',
+        });
+        const userInfo = { ...mockUserInfo, name: 'New Name', given_name: 'New', locale: 'ja' };
+
+        // Off by default: the profile is left as it is.
+        vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce(link);
+        vi.mocked(linkedIdentityStore.updateLinkedIdentity).mockResolvedValueOnce(true);
+        await handleIdentity(createMockEnv() as never, {
+          provider: mockProvider,
+          userInfo,
+          tokens: mockTokens,
+          tenantId: 'default',
+        });
+        expect(mockUpdateProfileFields).not.toHaveBeenCalled();
+
+        const env = createMockEnv();
+        const originalGet = env.SETTINGS.get;
+        env.SETTINGS.get = vi.fn(async (key: string) =>
+          key === 'settings:tenant:default:external-idp'
+            ? JSON.stringify({ 'external_idp.jit_update_on_login': true })
+            : originalGet(key)
+        );
+        vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce(link);
+        vi.mocked(linkedIdentityStore.updateLinkedIdentity).mockResolvedValueOnce(true);
+        await handleIdentity(env as never, {
+          provider: mockProvider,
+          userInfo,
+          tokens: mockTokens,
+          tenantId: 'default',
+        });
+
+        // Only the claims the provider sent; the account state and other fields are not written.
+        expect(mockUpdateProfileFields).toHaveBeenCalledWith('existing-user-789', {
+          name: 'New Name',
+          given_name: 'New',
+          family_name: mockUserInfo.family_name,
+          picture: mockUserInfo.picture,
+          locale: 'ja',
+        });
+        expect(mockRuntimeSyncUser).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        [
+          'the fields the tenant chooses',
+          ['nickname', 'locale'],
+          undefined,
+          { nickname: 'nick', locale: 'ja' },
+        ],
+        ['nothing when the tenant chooses none', [], undefined, undefined],
+        ["the provider's own fields over the tenant's", ['name'], ['locale'], { locale: 'ja' }],
+        ['nothing when the provider chooses none', ['name'], [], undefined],
+      ])('updates %s', async (_label, fields, providerFields, expected) => {
+        mockResolveAccountContext.mockResolvedValue({
+          tenantId: 'default',
+          accountId: 'account:existing-user-789',
+          legacyUserId: 'existing-user-789',
+          coreDb: { _isPii: false },
+          piiDb: { _isPii: true },
+        });
+        mockFindUserById.mockResolvedValue({
+          id: 'existing-user-789',
+          name: 'Old Name',
+          active: 1,
+          account_type: 'end_user',
+        });
+        const env = createMockEnv();
+        const originalGet = env.SETTINGS.get;
+        env.SETTINGS.get = vi.fn(async (key: string) =>
+          key === 'settings:tenant:default:external-idp'
+            ? JSON.stringify({
+                'external_idp.jit_update_on_login': true,
+                'external_idp.jit_update_fields': fields,
+              })
+            : originalGet(key)
+        );
+        vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce({
+          id: 'existing-linked-id',
+          userId: 'existing-user-789',
+          tenantId: 'default',
+          providerId: mockProvider.id,
+          providerUserId: mockUserInfo.sub,
+          emailVerified: true,
+          linkedAt: Date.now(),
+          updatedAt: Date.now(),
+        } as never);
+        vi.mocked(linkedIdentityStore.updateLinkedIdentity).mockResolvedValueOnce(true);
+
+        await handleIdentity(env as never, {
+          provider: { ...mockProvider, profileUpdateFields: providerFields ?? null },
+          userInfo: { ...mockUserInfo, name: 'New Name', nickname: 'nick', locale: 'ja' },
+          tokens: mockTokens,
+          tenantId: 'default',
+        });
+
+        if (expected) {
+          expect(mockUpdateProfileFields).toHaveBeenCalledWith('existing-user-789', expected);
+        } else {
+          expect(mockUpdateProfileFields).not.toHaveBeenCalled();
+        }
+      });
+
       it('updates an existing linked identity in its routed PII shard', async () => {
         const accountContext = {
           tenantId: 'default',
@@ -731,6 +903,84 @@ describe('Identity Stitching Service', () => {
     });
 
     describe('JIT Provisioning', () => {
+      describe('for a sign-in started from an invitation', () => {
+        // Every other email-verification gate off, so only the invitation's own rule decides.
+        const envWithoutOtherEmailChecks = () => {
+          const env = createMockEnv({ ENABLE_IDENTITY_STITCHING_REQUIRE_VERIFIED_EMAIL: 'false' });
+          (env.SETTINGS.get as ReturnType<typeof vi.fn>).mockImplementation(async (key: string) =>
+            key === 'settings:tenant:default:external-idp'
+              ? JSON.stringify({ 'external_idp.jit_require_verified_email': false })
+              : null
+          );
+          return env;
+        };
+        const provider = { ...mockProvider, requireEmailVerified: false };
+
+        beforeEach(() => {
+          vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValue(null);
+          vi.mocked(linkedIdentityStore.createLinkedIdentity).mockResolvedValue('new-linked-id');
+        });
+
+        it('creates no account for another email than the invitation names', async () => {
+          await expect(
+            handleIdentity(envWithoutOtherEmailChecks() as never, {
+              provider,
+              userInfo: mockUserInfo,
+              tokens: mockTokens,
+              tenantId: 'default',
+              invitation: { invitedEmail: 'invited@example.com', requireVerifiedEmail: false },
+            })
+          ).rejects.toMatchObject({ code: ExternalIdPErrorCode.INVITATION_EMAIL_MISMATCH });
+          expect(mockProvisionExternalIdpAccount).not.toHaveBeenCalled();
+        });
+
+        it('creates the account for the invited email, in any case', async () => {
+          const result = await handleIdentity(envWithoutOtherEmailChecks() as never, {
+            provider,
+            userInfo: { ...mockUserInfo, email: 'Test@Example.com' },
+            tokens: mockTokens,
+            tenantId: 'default',
+            invitation: { invitedEmail: 'test@example.com', requireVerifiedEmail: true },
+          });
+
+          expect(result.isNewUser).toBe(true);
+        });
+
+        it.each([
+          ['an unverified', false],
+          ['an unstated', undefined],
+        ])(
+          'creates no account for %s invited email when the tenant requires it verified',
+          async (_label, emailVerified) => {
+            await expect(
+              handleIdentity(envWithoutOtherEmailChecks() as never, {
+                provider,
+                userInfo: { ...mockUserInfo, email_verified: emailVerified },
+                tokens: mockTokens,
+                tenantId: 'default',
+                invitation: { invitedEmail: 'test@example.com', requireVerifiedEmail: true },
+              })
+            ).rejects.toMatchObject({
+              code: ExternalIdPErrorCode.EMAIL_NOT_VERIFIED,
+              message: 'This invitation needs an email your provider has verified.',
+            });
+            expect(mockProvisionExternalIdpAccount).not.toHaveBeenCalled();
+          }
+        );
+
+        it('accepts an unverified invited email when the tenant does not require it', async () => {
+          const result = await handleIdentity(envWithoutOtherEmailChecks() as never, {
+            provider,
+            userInfo: { ...mockUserInfo, email_verified: false },
+            tokens: mockTokens,
+            tenantId: 'default',
+            invitation: { invitedEmail: 'test@example.com', requireVerifiedEmail: false },
+          });
+
+          expect(result.isNewUser).toBe(true);
+        });
+      });
+
       it('should create new user when JIT enabled and no existing user', async () => {
         const env = createMockEnv();
         vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce(null);
@@ -1030,6 +1280,214 @@ describe('Identity Stitching Service', () => {
         ).rejects.toThrow('external_idp_jit_plan_invalid');
         expect(mockPersistCustomClaimWrite).not.toHaveBeenCalled();
         expect(mockActivatePendingIdentity).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('Sign-up switch (external_provider_usage)', () => {
+      const USAGE_KEY = 'settings:tenant:default:authentication-methods';
+      const usageEnv = (value: unknown) =>
+        createMockEnv({
+          SETTINGS: {
+            get: vi.fn(async (key: string) =>
+              key === USAGE_KEY
+                ? value === 'unreadable'
+                  ? '{'
+                  : JSON.stringify({
+                      'authentication-methods.external_provider_usage': JSON.stringify(value),
+                    })
+                : null
+            ),
+          },
+        });
+      const signupOff = [
+        {
+          id: 'provider-123',
+          providerId: 'provider-123',
+          loginEnabled: true,
+          signupEnabled: false,
+        },
+      ];
+
+      const expectNothingCreated = () => {
+        expect(mockProvisionExternalIdpAccount).not.toHaveBeenCalled();
+        expect(linkedIdentityStore.createLinkedIdentity).not.toHaveBeenCalled();
+        expect(mockPersistCustomClaimWrite).not.toHaveBeenCalled();
+        expect(mockSyncUserLifecycleState).not.toHaveBeenCalled();
+        expect(mockCreateRuleEvaluator).not.toHaveBeenCalled();
+      };
+
+      it('does not create an account when the tenant turned sign-up off for the provider', async () => {
+        const env = usageEnv(signupOff);
+
+        await expect(
+          handleIdentity(env as never, {
+            provider: mockProvider,
+            userInfo: mockUserInfo,
+            tokens: mockTokens,
+            tenantId: 'default',
+          })
+        ).rejects.toMatchObject({ code: 'external_signup_disabled' });
+
+        expectNothingCreated();
+      });
+
+      it('refuses a recently deleted address as any other policy denial, creating nothing', async () => {
+        const env = createMockEnv();
+        vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce(null);
+        mockPiiQueryOne.mockResolvedValueOnce(null);
+        registrationCheck.override = 'blocked';
+        try {
+          await expect(
+            handleIdentity(env as never, {
+              provider: mockProvider,
+              userInfo: mockUserInfo,
+              tokens: mockTokens,
+              tenantId: 'default',
+            })
+          ).rejects.toMatchObject({ code: 'policy_access_denied' });
+        } finally {
+          registrationCheck.override = null;
+        }
+        expectNothingCreated();
+      });
+
+      it('creates nothing when the deletion check cannot be made', async () => {
+        const env = createMockEnv();
+        vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce(null);
+        mockPiiQueryOne.mockResolvedValueOnce(null);
+        registrationCheck.override = 'unavailable';
+        try {
+          await expect(
+            handleIdentity(env as never, {
+              provider: mockProvider,
+              userInfo: mockUserInfo,
+              tokens: mockTokens,
+              tenantId: 'default',
+            })
+          ).rejects.toThrow('external_idp_reregistration_check_unavailable');
+        } finally {
+          registrationCheck.override = null;
+        }
+        expectNothingCreated();
+      });
+
+      it('matches the saved switch by the provider slug for an older entry', async () => {
+        const env = usageEnv([{ id: 'google', signupEnabled: false }]);
+
+        await expect(
+          handleIdentity(env as never, {
+            provider: { ...mockProvider, slug: 'google' },
+            userInfo: mockUserInfo,
+            tokens: mockTokens,
+            tenantId: 'default',
+          })
+        ).rejects.toMatchObject({ code: 'external_signup_disabled' });
+
+        expectNothingCreated();
+      });
+
+      it('answers temporarily unavailable, creating nothing, when the switches cannot be read', async () => {
+        const env = usageEnv('unreadable');
+
+        await expect(
+          handleIdentity(env as never, {
+            provider: mockProvider,
+            userInfo: mockUserInfo,
+            tokens: mockTokens,
+            tenantId: 'default',
+          })
+        ).rejects.toMatchObject({ code: 'temporarily_unavailable' });
+
+        expectNothingCreated();
+      });
+
+      it.each([
+        ['no entry for the provider', []],
+        [
+          'an entry for another provider only',
+          [{ id: 'other', providerId: 'p', signupEnabled: false }],
+        ],
+        ['an entry that leaves sign-up out', [{ id: 'provider-123', providerId: 'provider-123' }]],
+        [
+          'sign-up on and sign-in off (sign-in is decided before, at the callback)',
+          [
+            {
+              id: 'provider-123',
+              providerId: 'provider-123',
+              loginEnabled: false,
+              signupEnabled: true,
+            },
+          ],
+        ],
+      ])('still creates the account with %s', async (_label, usage) => {
+        const env = usageEnv(usage);
+        vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce(null);
+        mockPiiQueryOne.mockResolvedValueOnce(null);
+
+        const result = await handleIdentity(env as never, {
+          provider: mockProvider,
+          userInfo: mockUserInfo,
+          tokens: mockTokens,
+          tenantId: 'default',
+        });
+
+        expect(result.isNewUser).toBe(true);
+        expect(mockProvisionExternalIdpAccount).toHaveBeenCalledOnce();
+      });
+
+      it('does not stop an existing linked identity or an email match from signing in', async () => {
+        const env = usageEnv(signupOff);
+        mockResolveAccountContext.mockResolvedValue({
+          tenantId: 'default',
+          accountId: 'account:existing-user-789',
+          legacyUserId: 'existing-user-789',
+          coreDb: env.DB,
+          piiDb: env.DB_PII,
+        });
+        vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce({
+          id: 'existing-linked-id',
+          userId: 'existing-user-789',
+          tenantId: 'default',
+          providerId: 'provider-123',
+          providerUserId: 'google-user-123',
+          emailVerified: true,
+          linkedAt: Date.now() - 86400000,
+          updatedAt: Date.now() - 86400000,
+        });
+
+        await expect(
+          handleIdentity(env as never, {
+            provider: mockProvider,
+            userInfo: mockUserInfo,
+            tokens: mockTokens,
+            tenantId: 'default',
+          })
+        ).resolves.toMatchObject({ userId: 'existing-user-789', isNewUser: false });
+      });
+
+      it('does not finish a provisioning an earlier sign-in left pending once sign-up is off', async () => {
+        const env = usageEnv(signupOff);
+        mockResolveAccountContext.mockResolvedValue({
+          tenantId: 'default',
+          accountId: 'account:user-a',
+          legacyUserId: 'user-a',
+          coreDb: env.DB,
+          piiDb: env.DB_PII,
+        });
+        vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValue(null);
+
+        await expect(
+          handleIdentity(env as never, {
+            provider: mockProvider,
+            userInfo: mockUserInfo,
+            tokens: mockTokens,
+            tenantId: 'default',
+          })
+        ).rejects.toMatchObject({ code: 'external_signup_disabled' });
+
+        expect(mockFindPendingIdentity).not.toHaveBeenCalled();
+        expect(mockActivatePendingIdentity).not.toHaveBeenCalled();
+        expect(mockPersistCustomClaimWrite).not.toHaveBeenCalled();
       });
     });
 

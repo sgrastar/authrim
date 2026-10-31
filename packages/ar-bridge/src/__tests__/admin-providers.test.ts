@@ -23,7 +23,10 @@ interface Env {
 }
 
 // Mock @authrim/ar-lib-core to avoid cloudflare:workers dependency
-vi.mock('@authrim/ar-lib-core', () => {
+vi.mock('@authrim/ar-lib-core', async () => {
+  const profileUpdate = await vi.importActual<
+    typeof import('@authrim/ar-lib-core/services/profile-update-on-login')
+  >('@authrim/ar-lib-core/services/profile-update-on-login');
   // Map AR error codes to status and RFC error
   const errorMappings: Record<string, { status: number; rfcError: string }> = {
     AR900001: { status: 500, rfcError: 'server_error' }, // INTERNAL_ERROR
@@ -44,6 +47,7 @@ vi.mock('@authrim/ar-lib-core', () => {
   };
 
   return {
+    profileUpdateFieldsProblem: profileUpdate.profileUpdateFieldsProblem,
     ADMIN_PERMISSIONS: {
       EXTERNAL_PROVIDERS_READ: 'admin:external_providers:read',
       EXTERNAL_PROVIDERS_WRITE: 'admin:external_providers:write',
@@ -399,6 +403,58 @@ describe('Admin Provider API', () => {
         201
       );
     });
+
+    it.each([
+      ['a field that is not a profile field', ['email']],
+      ['an identifier', ['preferred_username']],
+      ['a field twice', ['name', 'name']],
+      ['something other than a list', 'name'],
+    ])('refuses profile update fields naming %s', async (_label, fields) => {
+      const ctx = createMockContext('POST', '/external-idp/admin/providers', {
+        headers: { Authorization: 'Bearer test-admin-secret' },
+        body: {
+          name: 'Test Provider',
+          client_id: 'test-client-id',
+          client_secret: 'test-secret',
+          issuer: 'https://example.com',
+          profile_update_fields: fields,
+        },
+      });
+      const response = await handleAdminCreateProvider(ctx as never);
+
+      expect(response.status).toBe(400);
+      expect(providerStore.createProvider).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['its own list', ['nickname', 'locale'], ['nickname', 'locale']],
+      ['an empty list', [], []],
+      ['none (the tenant default)', undefined, null],
+    ])(
+      'creates a provider with %s as its profile update fields',
+      async (_label, fields, stored) => {
+        vi.mocked(providerStore.createProvider).mockResolvedValueOnce({
+          id: 'new-provider-id',
+          clientSecretEncrypted: 'encrypted',
+        } as never);
+        const ctx = createMockContext('POST', '/external-idp/admin/providers', {
+          headers: { Authorization: 'Bearer test-admin-secret' },
+          body: {
+            name: 'Test Provider',
+            client_id: 'test-client-id',
+            client_secret: 'test-secret',
+            issuer: 'https://example.com',
+            ...(fields !== undefined ? { profile_update_fields: fields } : {}),
+          },
+        });
+        await handleAdminCreateProvider(ctx as never);
+
+        expect(providerStore.createProvider).toHaveBeenCalledWith(
+          mockEnv,
+          expect.objectContaining({ profileUpdateFields: stored })
+        );
+      }
+    );
 
     it('should reject creation without required fields', async () => {
       const ctx = createMockContext('POST', '/external-idp/admin/providers', {
@@ -820,6 +876,37 @@ describe('Admin Provider API', () => {
           name: 'Updated Name',
         }
       );
+    });
+
+    it.each([
+      ['its own list', ['website'], 200],
+      ['the tenant default again', null, 200],
+      ['a field that is not a profile field', ['phone_number'], 400],
+    ])('updates the profile update fields to %s', async (_label, fields, status) => {
+      if (status === 200) {
+        vi.mocked(providerStore.updateProvider).mockResolvedValueOnce({
+          id: 'provider-123',
+          clientSecretEncrypted: 'encrypted',
+        } as never);
+      }
+      const ctx = createMockContext('PUT', '/external-idp/admin/providers/provider-123', {
+        headers: { Authorization: 'Bearer test-admin-secret' },
+        params: { id: 'provider-123' },
+        body: { profile_update_fields: fields },
+      });
+      const response = await handleAdminUpdateProvider(ctx as never);
+
+      if (status === 400) {
+        expect(response.status).toBe(400);
+        expect(providerStore.updateProvider).not.toHaveBeenCalled();
+      } else {
+        expect(providerStore.updateProvider).toHaveBeenCalledWith(
+          mockEnv,
+          'default',
+          'provider-123',
+          { profileUpdateFields: fields }
+        );
+      }
     });
 
     it('should encrypt new client secret on update', async () => {

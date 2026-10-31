@@ -1,3 +1,4 @@
+import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import type { Env } from '@authrim/ar-lib-core';
 import { createAuditLog, createLogger } from '@authrim/ar-lib-core';
 import { pollSAMLMetadata } from './admin/metadata-polling';
@@ -68,6 +69,7 @@ export async function handleScheduled(
             severity: 'warning',
             metadata: JSON.stringify({
               protocol: 'saml',
+              result: 'failure',
               transaction_id: transaction.transactionId,
               session_index: transaction.sessionIndex,
               target_count: transaction.targets.length,
@@ -100,5 +102,5 @@ export async function handleScheduled(
 
   // These maintenance jobs are independent. Start both immediately so a large logout backlog
   // cannot delay certificate, expiry, or entity-removal synchronization.
-  await Promise.all([observeLogoutFanout(), pollMetadata()]);
+  await samlDrAll([observeLogoutFanout(), pollMetadata()]);
 }

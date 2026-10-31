@@ -6,7 +6,8 @@ import type {
   QueryOptions,
   TransactionContext,
 } from '@authrim/ar-lib-core';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import type { AdminAgentAuditWriter } from '@authrim/ar-agent-access/core';
 import {
   AGENT_ELEVATION_RECOVERY_CRON,
   isAgentElevationRecoveryCron,
@@ -14,6 +15,7 @@ import {
 } from '../agent-elevation-recovery';
 
 class RecoveryDatabaseAdapter implements DatabaseAdapter {
+  readonly batches: PreparedStatement[][] = [];
   readonly executions: Array<{ sql: string; params?: unknown[] }> = [];
 
   async query<T>(sql: string, _params?: unknown[], _options?: QueryOptions): Promise<T[]> {
@@ -54,6 +56,7 @@ class RecoveryDatabaseAdapter implements DatabaseAdapter {
   }
 
   async batch(statements: PreparedStatement[]): Promise<ExecuteResult[]> {
+    this.batches.push(statements);
     return Promise.all(statements.map(({ sql, params }) => this.execute(sql, params)));
   }
 
@@ -77,7 +80,11 @@ describe('Agent elevation scheduled recovery', () => {
 
   it('moves a missing target execution record to indeterminate with one audit transaction', async () => {
     const adapter = new RecoveryDatabaseAdapter();
+    const auditWriter = vi
+      .fn<AdminAgentAuditWriter>()
+      .mockResolvedValue([{ sql: 'SELECT ? AS iceberg_audit_test_receipt', params: ['audit-1'] }]);
     const summary = await recoverStaleAgentElevations(adapter, {
+      auditWriter,
       now: () => 100,
       createId: () => 'audit-1',
       reconcilerId: 'test-reconciler',
@@ -86,7 +93,35 @@ describe('Agent elevation scheduled recovery', () => {
     expect(summary.indeterminate).toBe(1);
     expect(adapter.executions[0].sql).toContain('UPDATE agent_elevation_challenges');
     expect(adapter.executions[0].params).toContain('indeterminate');
-    expect(adapter.executions[1].sql).toContain('INSERT INTO admin_audit_log');
-    expect(adapter.executions[1].params).toContain('agent.elevation.indeterminate');
+    expect(adapter.batches[0]).toHaveLength(2);
+    expect(adapter.batches[0][1]).toEqual({
+      sql: 'SELECT ? AS iceberg_audit_test_receipt',
+      params: ['audit-1'],
+    });
+    expect(auditWriter).toHaveBeenCalledWith(
+      adapter,
+      expect.objectContaining({
+        id: 'audit-1',
+        tenantId: 'tenant-1',
+        action: 'agent.elevation.indeterminate',
+        resourceType: 'agent_elevation_challenge',
+        resourceId: 'challenge-1',
+        actorType: 'system',
+        actorSub: 'system:test-reconciler',
+        severity: 'warn',
+        metadata: {
+          idempotency_status: 'not_found',
+          execution_attempt: 2,
+          execution_fence: 4,
+          execution_lease_expires_at: 90,
+          reconciler_id: 'test-reconciler',
+        },
+      }),
+      {
+        from: 'agent_elevation_challenges',
+        where: 'tenant_id = ? AND id = ? AND terminal_transition_id = ?',
+        params: ['tenant-1', 'challenge-1', 'audit-1'],
+      }
+    );
   });
 });

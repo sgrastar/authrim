@@ -3,7 +3,9 @@
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 
 	const { loginUIPageStore } = useLoginUIStores();
-	const tagline = $derived(loginUIPageStore.getLocalizedText(getLocale(), 'tagline') ?? $LL.app_subtitle());
+	const tagline = $derived(
+		loginUIPageStore.getLocalizedText(getLocale(), 'tagline') ?? $LL.app_subtitle()
+	);
 </script>
 
 {tagline}

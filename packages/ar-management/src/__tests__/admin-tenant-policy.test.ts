@@ -45,8 +45,10 @@ function buildApp(env: Partial<Env>) {
   app.get('/api/admin/platform/tenant-domain-mappings', (c) =>
     c.json({ tenantId: getTenantIdFromContext(c) })
   );
-  app.get('/api/admin/settings/ui-config', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
-  app.put('/api/admin/settings/ui-config', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
+  app.get('/api/admin/settings/cache-mode', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
+  app.post('/api/admin/settings/cache-mode', (c) =>
+    c.json({ tenantId: getTenantIdFromContext(c) })
+  );
   app.post('/api/admin/auth/passkey/options', (c) =>
     c.json({ tenantId: getTenantIdFromContext(c) })
   );
@@ -99,6 +101,9 @@ function buildPlatformGuardApp(roles: string[]) {
       userId: 'admin-1',
       authMethod: 'session',
       roles,
+      // The roles of this fixture's Admin come from a global assignment.
+      globalRoles: roles,
+      tenantScope: ['*'],
       tenantId: 'tenant-a',
       permissions: [],
     });
@@ -126,7 +131,12 @@ describe('adminTenantPolicyMiddleware', () => {
     );
     expect(
       hasPlatformTenantManagementAuthority(
-        { ...machine, permissions: ['admin:tenants:lifecycle:standard'] },
+        {
+          ...machine,
+          permissions: ['admin:tenants:lifecycle:standard'],
+          // A machine token's tenant scope is global, so its permissions are global ones.
+          globalPermissions: ['admin:tenants:lifecycle:standard'],
+        },
         'admin:tenants:lifecycle:standard'
       )
     ).toBe(true);
@@ -138,8 +148,11 @@ describe('adminTenantPolicyMiddleware', () => {
     );
     expect(isTenantScopedAdminPath('/api/admin/tenants/tenant-a/directory-connectors')).toBe(true);
     expect(isTenantScopedAdminPath('/api/admin/tenants/tenant-a/settings/login-ui')).toBe(true);
+    expect(isTenantScopedAdminPath('/api/admin/tenants/tenant-a/info')).toBe(true);
     expect(isTenantScopedAdminPath('/api/admin/tenants/tenant-a')).toBe(false);
     expect(isTenantScopedAdminPath('/api/admin/tenants/tenant-a/email-settings')).toBe(false);
+    expect(isTenantScopedAdminPath('/api/admin/tenants/tenant-a/info/extra')).toBe(false);
+    expect(isTenantScopedAdminPath('/api/admin/tenants/tenant-a/information')).toBe(false);
   });
 
   it('allows platform admin endpoints without X-Tenant-Id', async () => {
@@ -172,7 +185,7 @@ describe('adminTenantPolicyMiddleware', () => {
   });
 
   it('allows platform admins at the tenant-domain mapping platform guard', async () => {
-    const app = buildPlatformGuardApp(['super_admin']);
+    const app = buildPlatformGuardApp(['ar_super_admin']);
     const res = await app.request(
       makeRequest('/api/admin/platform/tenant-domain-mappings'),
       undefined,
@@ -190,10 +203,10 @@ describe('adminTenantPolicyMiddleware', () => {
       AUTHRIM_CONFIG: createMockKV(),
     });
 
-    const getRes = await app.request(makeRequest('/api/admin/settings/ui-config'), undefined, env);
+    const getRes = await app.request(makeRequest('/api/admin/settings/cache-mode'), undefined, env);
     const putRes = await app.request(
-      new Request('https://admin.pages.dev/api/admin/settings/ui-config', {
-        method: 'PUT',
+      new Request('https://admin.pages.dev/api/admin/settings/cache-mode', {
+        method: 'POST',
         headers: { Host: 'admin.pages.dev' },
       }),
       undefined,

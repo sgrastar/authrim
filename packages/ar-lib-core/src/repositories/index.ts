@@ -84,7 +84,6 @@ export {
   type PIIAuditLog,
   type PIIAuditAction,
   type CreatePIIAuditLogInput,
-  type PIIAuditLogFilterOptions,
 } from './pii';
 
 // Cache repository

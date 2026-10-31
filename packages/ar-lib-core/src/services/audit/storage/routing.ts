@@ -112,7 +112,7 @@ export function resolveAuditRoutingTargets(
     }
 
     const targets = normalizeAuditStorageRoutingTargets(rule.targets, rule.backend);
-    if (!hasAuditStorageRoutingTargets(targets)) {
+    if (!hasAuditStorageRoutingTargets(targets) && !rule.retention) {
       continue;
     }
 

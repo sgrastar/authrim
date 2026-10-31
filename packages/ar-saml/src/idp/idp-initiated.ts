@@ -15,27 +15,26 @@ import {
   AR_ERROR_CODES,
   getUIConfig,
   buildUIUrl,
-  shouldUseBuiltinForms,
   createConfigurationError,
   usesNakedDomainIssuer,
   getLogger,
   resolveAuthCorePersistenceAdapterFromEnv,
   requireAdminDatabaseAdapter,
-  resolveRuntimeIdentityMappingBinding,
   filterSamlAttributesByDestinationConsentWithStatus,
+  resolveSamlAssertionTtlSeconds,
+  RuntimeIdentityMappingReleaseSafetyError,
 } from '@authrim/ar-lib-core';
 import { getSAMLInteractiveLoginUrlPolicy } from '../common/entity-id';
 import { base64Encode, generateSAMLId } from '../common/xml-utils';
-import { NAMEID_FORMATS, DEFAULTS, STATUS_CODES } from '../common/constants';
+import { NAMEID_FORMATS, DEFAULTS } from '../common/constants';
 import { buildSAMLResponse } from './assertion';
 import { getSPConfig, listSPConfigs } from '../admin/providers';
 import { getSamlUserInfoById, type SAMLUserInfo } from '../common/user-store';
 import { getSAMLIdPSigningMaterial } from '../common/idp-signing';
 import { resolveSAMLTenantIdFromContext } from '../common/tenant';
 import {
-  buildSAMLAttributesForSP,
   resolveSAMLIdentityMappingFieldMappingBinding,
-  type SAMLIdentityMappingReleaseConfig,
+  MissingRequiredSAMLAttributeError,
   SAMLIdentityMappingRuntimeError,
 } from './attributes';
 import { applySAMLResponseSigningPolicy } from './signing';
@@ -46,22 +45,33 @@ import {
   resolveSAMLPersistentNameIDRegistryStore,
   resolveSAMLTransientNameIDStore,
 } from './subject';
-import { buildSAMLAssertionTiming } from './assertion-timing';
+import { buildSAMLAssertionTiming, resolveSAMLAuthnInstant } from './assertion-timing';
 import { extractAuthrimSessionIdFromCookieHeader } from '../common/session-cookie';
 import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
-import { resolveSAMLAuthnContextClassRef } from './authn-context';
+import { SAMLAuthnContextPolicyError } from './authn-context';
+import { chooseSAMLAuthnContextClassRef, type SAMLClassRefGuard } from './authn-context-assurance';
 import { getSAMLLocalEntityIds } from '../common/entity-id';
 import { assertSAMLRelayStateSize, SAMLRelayStateTooLargeError } from '../common/relay-state';
 import {
   enforceSAMLAttributeReleaseConsent,
   SAMLAttributeReleaseConsentRequiredError,
 } from './attribute-release-consent';
+import { checkSAMLIdentityAssurance, withSAMLAssuranceAttributes } from './identity-assurance';
+import { resolveSAMLRuntimeIdentityMapping } from './runtime-identity-mapping';
+import { checkSAMLAuthnAssurance } from './authn-assurance';
+import { scheduleSAMLAttributeWithheldAudit, scheduleSAMLPolicyFailureAudit } from './audit';
+import { releaseSAMLAttributesWithInstitution } from './institution-release';
+import type { SAMLWithheldScopedValues } from './institution-scope';
 
 interface AuthenticatedSAMLSession {
   userId: string;
   sessionId: string;
   acr?: string;
   amr?: string[];
+  /** The session's data: what it records of the authentication (assurance evidence included). */
+  data?: Record<string, unknown>;
+  /** When the session was created (milliseconds), the last resort for the time of the sign-in. */
+  createdAt?: number;
 }
 
 /**
@@ -96,6 +106,21 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
     const consentTransactionId = readConsentTransactionId(c.req.query('consent_tx'));
     const consentRetry = c.req.query('consent_retry') === '1';
 
+    // The SP's minimum identity assurance level. No sign-in or consent step can raise a person's
+    // IAL, so a session that is already there is judged before it is sent through the consent
+    // flow, and again (it is the same check on the same session) before the assertion is built.
+    // Without a session the person is not yet known: they are judged when they come back.
+    if (authenticatedSession) {
+      const refused = await refuseBelowMinimumIdentityAssurance(c, {
+        tenantId,
+        spConfig,
+        userId: authenticatedSession.userId,
+        requestId: consentTransactionId ?? 'idp_initiated',
+        log,
+      });
+      if (refused) return refused;
+    }
+
     if (!authenticatedSession || !consentTransactionId) {
       return redirectToIdPInitiatedConsentFlow(c, {
         issuerUrl,
@@ -104,6 +129,53 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
         relayState,
         consentTransactionId: consentTransactionId ?? crypto.randomUUID(),
       });
+    }
+
+    // The SP's minimum authentication assurance level. An IdP-initiated sign-in has no AuthnRequest
+    // to store a step-up in, nor to answer with NoAuthnContext, so a session below the minimum gets
+    // the error page and no assertion is built. Judged here, where the assertion would be built,
+    // not before the consent flow, which sends the person to sign in again anyway.
+    const authnAssurance = await checkSAMLAuthnAssurance({
+      env,
+      tenantId,
+      authnRequest: {},
+      spConfig,
+      session: authenticatedSession,
+      onUnrecorded: () => undefined,
+    });
+    if (authnAssurance.outcome !== 'not_required' && authnAssurance.outcome !== 'met') {
+      const unavailable = authnAssurance.outcome === 'unavailable';
+      if (unavailable) {
+        log.error(
+          'Failed to read assurance settings',
+          { tenantId, spEntityId: spConfig.entityId },
+          authnAssurance.error instanceof Error
+            ? authnAssurance.error
+            : new Error(String(authnAssurance.error))
+        );
+      } else {
+        log.info('SAML sign-in refused: authentication assurance level not met', {
+          tenantId,
+          spEntityId: spConfig.entityId,
+        });
+      }
+      scheduleSAMLPolicyFailureAudit(c, {
+        tenantId,
+        spEntityId: spConfig.entityId,
+        authnRequestId: consentTransactionId,
+        failureKind: unavailable ? 'authn_assurance_unavailable' : 'authn_assurance_insufficient',
+        policyDetails: unavailable
+          ? {}
+          : {
+              required_aal: authnAssurance.requiredAal,
+              ...(authnAssurance.actual ? { actual_aal: authnAssurance.actual } : {}),
+            },
+      });
+      // The page says neither the level the sign-in reached nor the one the SP requires.
+      return createErrorResponse(
+        c,
+        unavailable ? AR_ERROR_CODES.INTERNAL_ERROR : AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS
+      );
     }
 
     // Get user information
@@ -123,9 +195,87 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
         userInfo,
         tenantId,
         authenticatedSession,
-        consentTransactionId
+        consentTransactionId,
+        c,
+        log,
+        authnAssurance.outcome === 'met' ? authnAssurance : undefined,
+        (withheld) =>
+          scheduleSAMLAttributeWithheldAudit(c, {
+            tenantId,
+            spEntityId: spConfig.entityId,
+            authnRequestId: consentTransactionId,
+            withheld,
+          })
       );
     } catch (error) {
+      if (error instanceof SAMLAuthnContextPolicyError) {
+        // The AuthnContext to issue is above what the sign-in reached: no assertion.
+        log.info('SAML sign-in refused: authentication context above the level reached', {
+          tenantId,
+          spEntityId: spConfig.entityId,
+        });
+        scheduleSAMLPolicyFailureAudit(c, {
+          tenantId,
+          spEntityId: spConfig.entityId,
+          authnRequestId: consentTransactionId,
+          failureKind: 'authn_assurance_insufficient',
+          policyDetails: { reason: 'no_class_ref' },
+        });
+        return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
+      }
+      if (error instanceof MissingRequiredSAMLAttributeError) {
+        // No assertion without a required attribute (there is no SAML error answer to an
+        // IdP-initiated sign-in). The administrator gets the attributes, and the scoped values
+        // that were withheld on the way (reason and scope, no value).
+        log.warn('SAML attribute release policy failed', {
+          tenantId,
+          spEntityId: spConfig.entityId,
+          missingAttributes: error.missingAttributes,
+        });
+        scheduleSAMLPolicyFailureAudit(c, {
+          tenantId,
+          spEntityId: spConfig.entityId,
+          authnRequestId: consentTransactionId,
+          failureKind: 'required_attribute_missing',
+          missingAttributes: error.missingAttributes,
+          ...(error.withheldScopedValues.length > 0
+            ? { policyDetails: { withheld: error.withheldScopedValues } }
+            : {}),
+        });
+        return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+      }
+      if (
+        error instanceof SAMLIdentityMappingRuntimeError ||
+        error instanceof RuntimeIdentityMappingReleaseSafetyError
+      ) {
+        // The mapping or the release safety check refused (see handleIdPSSO): the person gets the
+        // error page, the administrator the reason codes and the field name (no value).
+        const reasonCodes =
+          error instanceof RuntimeIdentityMappingReleaseSafetyError
+            ? [`policy.release_${error.reason}`]
+            : error.reasons.map((reason) => reason.code);
+        log.warn('SAML field mapping set failed', {
+          tenantId,
+          spEntityId: spConfig.entityId,
+          reasonCodes,
+          ...(error instanceof RuntimeIdentityMappingReleaseSafetyError
+            ? { field: error.field }
+            : {}),
+        });
+        scheduleSAMLPolicyFailureAudit(c, {
+          tenantId,
+          spEntityId: spConfig.entityId,
+          authnRequestId: consentTransactionId,
+          failureKind: 'identity_mapping_failed',
+          policyDetails: {
+            reason_codes: reasonCodes,
+            ...(error instanceof RuntimeIdentityMappingReleaseSafetyError
+              ? { field: error.field }
+              : {}),
+          },
+        });
+        return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+      }
       if (!(error instanceof SAMLAttributeReleaseConsentRequiredError)) throw error;
       if (consentRetry) {
         return c.json(createConfigurationError(), 500);
@@ -152,6 +302,66 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
     log.error('IdP-Initiated SSO Error', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
+}
+
+/**
+ * The error response for a person who may not sign in to the SP on identity assurance, or null.
+ * An IdP-initiated request has no AuthnRequest to answer, so the person gets the error page and no
+ * assertion is built. A read of the evidence that fails is reported as an error, never as IAL1.
+ */
+async function refuseBelowMinimumIdentityAssurance(
+  c: Context<{ Bindings: Env }>,
+  input: {
+    tenantId: string;
+    spConfig: SAMLSPConfig;
+    userId: string;
+    requestId: string;
+    log: {
+      info(message: string, context?: Record<string, unknown>): void;
+      error(message: string, context?: Record<string, unknown>, error?: Error): void;
+    };
+  }
+): Promise<Response | null> {
+  const check = await checkSAMLIdentityAssurance(c, {
+    env: c.env,
+    tenantId: input.tenantId,
+    userId: input.userId,
+    spConfig: input.spConfig,
+  });
+  if (check.outcome === 'allowed') return null;
+
+  const logContext = { tenantId: input.tenantId, spEntityId: input.spConfig.entityId };
+  if (check.outcome === 'unavailable') {
+    input.log.error(
+      'Failed to read identity assurance evidence',
+      logContext,
+      check.error instanceof Error ? check.error : new Error(String(check.error))
+    );
+  } else {
+    input.log.info('SAML sign-in refused: identity assurance level not met', {
+      ...logContext,
+    });
+  }
+  scheduleSAMLPolicyFailureAudit(c, {
+    tenantId: input.tenantId,
+    spEntityId: input.spConfig.entityId,
+    authnRequestId: input.requestId,
+    failureKind:
+      check.outcome === 'unavailable'
+        ? 'identity_assurance_unavailable'
+        : 'identity_assurance_insufficient',
+    policyDetails: {
+      required_ial: check.required,
+      ...(check.outcome === 'insufficient' ? { actual_ial: check.actual } : {}),
+    },
+  });
+  // The page says neither the level the person holds nor the one the SP requires.
+  return createErrorResponse(
+    c,
+    check.outcome === 'unavailable'
+      ? AR_ERROR_CODES.INTERNAL_ERROR
+      : AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS
+  );
 }
 
 function readConsentTransactionId(value: string | undefined): string | null {
@@ -186,14 +396,7 @@ async function redirectToIdPInitiatedConsentFlow(
     saml_sp_entity_id: input.spEntityId,
   };
 
-  if (await shouldUseBuiltinForms(c.env)) {
-    const loginUrl = new URL('/flow/login', input.issuerUrl);
-    for (const [key, value] of Object.entries(loginParameters))
-      loginUrl.searchParams.set(key, value);
-    return c.redirect(loginUrl.toString());
-  }
-
-  const uiConfig = await getUIConfig(c.env);
+  const uiConfig = await getUIConfig(c.env, input.tenantId);
   if (!uiConfig?.baseUrl) return c.json(createConfigurationError(), 500);
   const loginUrlPolicy = await getSAMLInteractiveLoginUrlPolicy(c.env, input.tenantId);
   if (loginUrlPolicy === 'tenant_host') {
@@ -270,18 +473,25 @@ async function checkUserAuthentication(
       return null;
     }
 
-    const session = (await response.json()) as {
+    const session = await response.json<{
       userId?: string;
-      data?: { acr?: unknown; amr?: unknown };
-    };
+      createdAt?: number;
+      data?: Record<string, unknown>;
+    }>();
+    const data =
+      session.data && typeof session.data === 'object' && !Array.isArray(session.data)
+        ? session.data
+        : undefined;
     return session.userId
       ? {
           userId: session.userId,
           sessionId,
-          acr: typeof session.data?.acr === 'string' ? session.data.acr : undefined,
-          amr: Array.isArray(session.data?.amr)
-            ? session.data.amr.filter((value): value is string => typeof value === 'string')
+          acr: typeof data?.acr === 'string' ? data.acr : undefined,
+          amr: Array.isArray(data?.amr)
+            ? data.amr.filter((value): value is string => typeof value === 'string')
             : undefined,
+          data,
+          createdAt: typeof session.createdAt === 'number' ? session.createdAt : undefined,
         }
       : null;
   } catch {
@@ -311,7 +521,16 @@ async function generateIdPInitiatedResponse(
   userInfo: SAMLUserInfo,
   tenantId: string,
   authSession: AuthenticatedSAMLSession,
-  consentTransactionId: string
+  consentTransactionId: string,
+  requestScope: object,
+  log: {
+    debug?(message: string, context?: Record<string, unknown>): void;
+    error(message: string, context?: Record<string, unknown>, error?: Error): void;
+  },
+  /** The class reference chosen for the AAL reached, and what the one issued is checked against. */
+  assurance?: { classRef?: string; guard: SAMLClassRefGuard },
+  /** Told what scoped values the tenant's institution scopes kept out of the assertion. */
+  onScopedValuesWithheld?: (withheld: SAMLWithheldScopedValues[]) => void
 ): Promise<string> {
   const { privateKeyPem, certificate } = await getSAMLIdPSigningMaterial(env, {
     tenantId,
@@ -319,6 +538,12 @@ async function generateIdPInitiatedResponse(
     providerPolicy: spConfig.signingKeyPolicy,
   });
 
+  // The service provider's own assertion lifetime, else the tenant's.
+  const assertionTtlSeconds = await resolveSamlAssertionTtlSeconds(
+    env,
+    tenantId,
+    spConfig.assertionValiditySeconds
+  );
   const nameIdFormat = spConfig.nameIdFormat || NAMEID_FORMATS.EMAIL;
   const nameIdValue = await resolveSAMLNameIDValue(userInfo, nameIdFormat, {
     tenantId,
@@ -327,7 +552,7 @@ async function generateIdPInitiatedResponse(
     persistentRegistry: resolveSAMLPersistentNameIDRegistryStore(env),
     allowCreate: true,
     transientStore: resolveSAMLTransientNameIDStore(env),
-    transientTtlSeconds: spConfig.assertionValiditySeconds || DEFAULTS.ASSERTION_VALIDITY_SECONDS,
+    transientTtlSeconds: assertionTtlSeconds,
     sessionId: authSession.sessionId,
   });
 
@@ -338,11 +563,43 @@ async function generateIdPInitiatedResponse(
     idpEntityId,
     spConfig
   );
-  let attributes = buildSAMLAttributesForSP(userInfo, {
-    ...spConfig,
+  const mappingContext = {
+    role: 'idp' as const,
+    tenantId,
     localEntityId: idpEntityId,
-    identityMapping,
+    partnerEntityId: spConfig.entityId,
+  };
+  const onReadError = (message: string, error: unknown) =>
+    log.error(
+      message,
+      { tenantId, spEntityId: spConfig.entityId },
+      error instanceof Error ? error : new Error(String(error))
+    );
+  // The assurance values a mapping releases come from the person's evidence, read only when
+  // one is released. The tenant's institution (the scopes the scoped attributes must be under,
+  // and the attributes a mapping may release about it) is applied when the mapping has a use for it.
+  const release = await releaseSAMLAttributesWithInstitution({
+    env,
+    tenantId,
+    subject: await withSAMLAssuranceAttributes(userInfo, {
+      requestScope,
+      env,
+      tenantId,
+      userId: authSession.userId,
+      identityMapping,
+      mappingContext,
+      onError: onReadError,
+    }),
+    releaseConfig: {
+      ...spConfig,
+      tenantId,
+      localEntityId: idpEntityId,
+      identityMapping,
+    },
+    onError: onReadError,
   });
+  if (release.withheldScopedValues?.length) onScopedValuesWithheld?.(release.withheldScopedValues);
+  let attributes = release.attributes;
   let destinationFieldConsentConfirmed: { consentRecordId: string } | undefined;
   if (identityMapping?.destinationProfileId) {
     const destinationRelease = (await filterSamlAttributesByDestinationConsentWithStatus({
@@ -389,9 +646,23 @@ async function generateIdPInitiatedResponse(
     attributes,
     destinationFieldConsentConfirmed,
   });
+  // AuthnInstant is when the person authenticated (a session reused for single sign-on keeps the
+  // time of its sign-in), not the instant the assertion is issued.
+  const issuedAt = new Date();
+  const authnInstant = resolveSAMLAuthnInstant(authSession.data, {
+    createdAt: authSession.createdAt,
+    nowMs: issuedAt.getTime(),
+  });
+  if (authnInstant.source === 'unknown') {
+    log.debug?.('SAML authentication time unknown, using the issue instant for AuthnInstant', {
+      tenantId,
+      spEntityId: spConfig.entityId,
+    });
+  }
   const timing = buildSAMLAssertionTiming({
-    assertionValiditySeconds:
-      spConfig.assertionValiditySeconds || DEFAULTS.ASSERTION_VALIDITY_SECONDS,
+    now: issuedAt,
+    authenticatedAtMs: authnInstant.ms,
+    assertionValiditySeconds: assertionTtlSeconds,
   });
 
   // Build SAML Response (no InResponseTo for IdP-initiated)
@@ -416,7 +687,7 @@ async function generateIdPInitiatedResponse(
     }),
     notBefore: timing.notBefore,
     notOnOrAfter: timing.notOnOrAfter,
-    authnContextClassRef: resolveSAMLAuthnContextClassRef(
+    authnContextClassRef: chooseSAMLAuthnContextClassRef(
       {
         id: responseId,
         issueInstant: timing.issueInstant,
@@ -425,7 +696,8 @@ async function generateIdPInitiatedResponse(
       {
         spConfig,
         session: authSession,
-      }
+      },
+      assurance
     ),
     attributes,
   });
@@ -471,66 +743,6 @@ async function consumeIdPInitiatedDestinationConsent(
         AND status = 'active'`,
     [Math.floor(Date.now() / 1000), consentRecordId, tenantId, subjectId]
   );
-}
-
-async function resolveSAMLRuntimeIdentityMapping(
-  env: Env,
-  tenantId: string,
-  idpEntityId: string,
-  spConfig: SAMLSPConfig
-): Promise<SAMLIdentityMappingReleaseConfig | undefined> {
-  const configured = spConfig.identityMapping as SAMLIdentityMappingReleaseConfig | undefined;
-  if (configured?.catalog || configured?.defaultBinding || configured?.bindings?.length) {
-    return configured;
-  }
-
-  const adapter = requireAdminDatabaseAdapter(env, 'saml-identity-mapping');
-  const binding = await resolveRuntimeIdentityMappingBinding(adapter, {
-    tenantId,
-    protocol: 'saml',
-    role: 'idp',
-    fieldMappingSetId: configured?.fieldMappingSetId,
-    localEntityId: idpEntityId,
-    partnerEntityId: spConfig.entityId,
-  });
-  if (!binding) {
-    throw new SAMLIdentityMappingRuntimeError([
-      {
-        category: 'policy',
-        code: 'policy.missing_identity_mapping_binding',
-        severity: 'critical',
-      },
-    ]);
-  }
-  if (binding.destinationProfileIds.length !== 1 || !binding.destinationProfileId) {
-    throw new SAMLIdentityMappingRuntimeError([
-      {
-        category: 'policy',
-        code: 'policy.invalid_destination_profile_binding',
-        severity: 'critical',
-      },
-    ]);
-  }
-
-  return {
-    id: binding.id,
-    role: 'idp',
-    tenantId: binding.tenantId,
-    localEntityId: idpEntityId,
-    partnerEntityId: spConfig.entityId,
-    catalog: binding.catalog,
-    edges: binding.edges,
-    transforms: binding.transforms,
-    validationRules: binding.validationRules,
-    fieldMappingSet: binding.fieldMappingSet,
-    destinationNamespace: configured?.destinationNamespace ?? binding.destinationNamespace,
-    attributeDescriptors: configured?.attributeDescriptors,
-    destinationFieldPolicies: configured?.destinationFieldPolicies,
-    fieldMappingSetId: binding.fieldMappingSetId,
-    fieldMappingVersionId: binding.fieldMappingVersionId,
-    sourceProfileId: configured?.sourceProfileId ?? binding.sourceProfileId,
-    destinationProfileId: binding.destinationProfileId ?? configured?.destinationProfileId,
-  };
 }
 
 /**

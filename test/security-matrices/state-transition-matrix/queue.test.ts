@@ -25,7 +25,11 @@ import {
   queueMutationCandidate,
   runQueueRow,
 } from './queue-observation';
-import { MessageBatchFake, createCapturingLogger, messageCallCounts } from './harness';
+import {
+  processAuditQueue,
+  processLoggingDeliveryQueue,
+} from '../../../packages/ar-lib-core/src/services/audit/queue-consumer';
+import { MessageFake, MessageBatchFake, createCapturingLogger, messageCallCounts } from './harness';
 
 describe('state-transition Matrix Q-A: audit queue consumer', () => {
   let kit: SecurityMatrixEnvKit;
@@ -306,7 +310,7 @@ describe('out-of-order queue delivery', () => {
           entry.dimensions.delivery === 'first' &&
           entry.dimensions.schema === 'supported' &&
           entry.dimensions.bindingState === 'present' &&
-          entry.dimensions.payloadFamily === 'chunk-write'
+          entry.dimensions.payloadFamily === 'iceberg-ingest'
       ),
     ];
     expect(representatives.every(Boolean), 'all queue consumers have an order probe').toBe(true);
@@ -334,4 +338,171 @@ describe('out-of-order queue delivery', () => {
       expect(forward.retried, `${entry.matrix} no message retried`).toEqual([]);
     }
   });
+});
+
+describe('forward-only queue persistence boundaries', () => {
+  afterEach(() => restoreRealClock());
+
+  for (const type of ['event_log', 'pii_log']) {
+    it(`rejects retired ${type} primary writes without ACK or a legacy durable effect`, async () => {
+      installFrozenNow(FROZEN_NOW);
+      const ledger = new CallLedger();
+      const kit = await createSecurityMatrixEnv(ledger);
+      const entry = QUEUE_AUDIT_CASE_TABLE.find(
+        (row) =>
+          row.dimensions.batchComposition === 'all-success' &&
+          row.dimensions.bindingState === 'present'
+      );
+      if (!entry) throw new Error('missing healthy audit fixture');
+      const { env, logger } = makeQueueEnv(kit, entry, ledger, queueCanarySecret(entry.id));
+      const body: Record<string, unknown> = {
+        ...messageBody(entry, 'legacy-m1', queueCanarySecret(entry.id)),
+        type,
+      };
+      delete body.fanout;
+      const message = new MessageFake({ id: 'legacy-m1', body }, ledger);
+      await processAuditQueue(
+        { queue: 'audit', messages: [message] } as never,
+        env as never,
+        logger.logger as never
+      );
+      expect(message.ackCalls).toBe(0);
+      expect(message.retryCalls).toBe(1);
+      expect(ledger.ofKind('r2.put')).toEqual([]);
+      expect(ledger.ofKind('d1.execute')).toEqual([]);
+    });
+  }
+
+  it('rejects retired ordinary chunk writes even with healthy bindings', async () => {
+    installFrozenNow(FROZEN_NOW);
+    const ledger = new CallLedger();
+    const kit = await createSecurityMatrixEnv(ledger);
+    const healthy = QUEUE_LOG_CASE_TABLE.find(
+      (row) =>
+        row.dimensions.payloadFamily === 'iceberg-ingest' &&
+        row.dimensions.batchComposition === 'all-success' &&
+        row.dimensions.delivery === 'first'
+    );
+    if (!healthy) throw new Error('missing healthy ingest fixture');
+    const entry = {
+      ...healthy,
+      dimensions: { ...healthy.dimensions, payloadFamily: 'legacy-chunk-write' },
+    };
+    const { env, logger } = makeQueueEnv(kit, entry, ledger, queueCanarySecret(entry.id));
+    const message = new MessageFake(
+      { id: 'legacy-chunk', body: messageBody(entry, 'legacy-chunk', queueCanarySecret(entry.id)) },
+      ledger
+    );
+    await processLoggingDeliveryQueue(
+      { queue: 'logging-delivery', messages: [message] } as never,
+      env as never,
+      logger.logger as never
+    );
+    expect(message.ackCalls).toBe(0);
+    expect(message.retryCalls).toBe(1);
+    expect(ledger.ofKind('r2.put')).toEqual([]);
+    expect(ledger.ofKind('d1.execute')).toEqual([]);
+  });
+
+  it('saves an unsupported envelope durably before its ACK', async () => {
+    installFrozenNow(FROZEN_NOW);
+    const ledger = new CallLedger();
+    const kit = await createSecurityMatrixEnv(ledger);
+    const entry = QUEUE_LOG_CASE_TABLE.find(
+      (row) =>
+        row.dimensions.schema === 'future' &&
+        row.dimensions.batchComposition === 'all-success' &&
+        row.dimensions.delivery === 'first'
+    );
+    if (!entry) throw new Error('missing future-schema fixture');
+    await runQueueRow(kit, ledger, entry);
+    const events = ledger.all();
+    const save = events.findIndex(
+      (event) => event.kind === 'r2.put' && event.target.includes('/unsupported/')
+    );
+    const ack = events.findIndex((event) => event.kind === 'ack');
+    expect(save).toBeGreaterThanOrEqual(0);
+    expect(ack).toBeGreaterThan(save);
+  });
+
+  it('detects the credential canary in a binary R2 payload without truncation', async () => {
+    installFrozenNow(FROZEN_NOW);
+    const ledger = new CallLedger();
+    const kit = await createSecurityMatrixEnv(ledger);
+    const entry = QUEUE_AUDIT_CASE_TABLE.find(
+      (row) => row.dimensions.batchComposition === 'all-success'
+    );
+    if (!entry) throw new Error('missing audit fixture');
+    const canary = queueCanarySecret(entry.id);
+    const { env, logger } = makeQueueEnv(kit, entry, ledger, canary);
+    const bucket = (
+      env as { SENSITIVE_DETAILS: { put(key: string, body: Uint8Array): Promise<unknown> } }
+    ).SENSITIVE_DETAILS;
+    await bucket.put('binary-canary', new TextEncoder().encode(`${'x'.repeat(1000)}${canary}`));
+    const { scanForSecretLeak } = await import('./queue-observation');
+    expect(scanForSecretLeak(ledger, logger, canary)).toBe(true);
+  });
+});
+
+describe('healthy database with unavailable queue payload storage', () => {
+  afterEach(() => restoreRealClock());
+
+  for (const payloadFamily of ['iceberg-ingest', 'future-schema']) {
+    for (const fault of ['missing', 'throws']) {
+      it(`${payloadFamily} retries ${fault} R2 while database bindings remain healthy`, async () => {
+        installFrozenNow(FROZEN_NOW);
+        const ledger = new CallLedger();
+        const kit = await createSecurityMatrixEnv(ledger);
+        const entry = QUEUE_LOG_CASE_TABLE.find(
+          (row) =>
+            row.id === `st-ql-app-r2-${payloadFamily}-${fault}` &&
+            row.dimensions.payloadFamily === payloadFamily &&
+            row.dimensions.bindingState === 'present' &&
+            row.dimensions.dlqArchive === fault &&
+            row.dimensions.batchComposition === 'all-fail'
+        );
+        if (!entry) throw new Error(`missing legal healthy-DB ${payloadFamily}/${fault} row`);
+        const { messages, logger } = await runQueueRow(kit, ledger, entry);
+        const observed = await buildQueueObservation(kit, ledger, entry, batchIds(entry), logger);
+        expect(observed).toEqual(queueDecisionFor(entry));
+        expect(
+          messages.every((message) => message.ackCalls === 0 && message.retryCalls === 1)
+        ).toBe(true);
+        expect(observed.writeCalls).toBe(0);
+        expect(observed.uniqueEffects).toBe(0);
+        expect(observed.dlqSaved).toBe(false);
+        expect(ledger.ofKind('queue.send')).toEqual([]);
+
+        if (payloadFamily === 'iceberg-ingest') {
+          const identityReads = ledger
+            .ofKind('d1.queryOne')
+            .filter((event) => event.target.includes('FROM log_iceberg_outbox'));
+          expect(identityReads.length).toBe(messages.length);
+          expect(identityReads.every((event) => (event.detail as { found: boolean }).found)).toBe(
+            true
+          );
+        }
+        if (fault === 'throws') {
+          const target =
+            payloadFamily === 'iceberg-ingest'
+              ? 'LOG_ARCHIVE.get:throws'
+              : 'SENSITIVE_DETAILS.put:throws';
+          expect(
+            ledger.ofKind('binding-operation').filter((event) => event.target === target)
+          ).toHaveLength(messages.length);
+        } else {
+          const errorClass =
+            payloadFamily === 'iceberg-ingest'
+              ? 'log_iceberg_retry_bucket_unavailable'
+              : 'logging_delivery_unsupported_payload_dlq_bucket_unavailable';
+          expect(
+            logger.entries.filter(
+              (event) =>
+                typeof event.context.error === 'string' && event.context.error.includes(errorClass)
+            )
+          ).toHaveLength(messages.length);
+        }
+      });
+    }
+  }
 });

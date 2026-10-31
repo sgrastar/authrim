@@ -59,6 +59,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
           userId: 'admin_actor',
           email: 'actor@example.com',
           permissions: (c.req.header('x-test-permissions') ?? '').split(',').filter(Boolean),
+          globalPermissions: (c.req.header('x-test-global-permissions') ?? '')
+            .split(',')
+            .filter(Boolean),
+          tenantScope: (c.req.header('x-test-tenant-scope') ?? '').split(',').filter(Boolean),
           roles: ['admin'],
           hierarchyLevel: Number(c.req.header('x-test-hierarchy-level') ?? '100'),
         });
@@ -107,9 +111,9 @@ describe('adminInvitationsRouter', () => {
     vi.clearAllMocks();
     repo.findByEmail.mockResolvedValue(null);
     repo.getRole.mockResolvedValue({
-      id: 'role_admin',
+      id: 'role_ar_tenant_admin',
       tenant_id: 'tenant_123',
-      name: 'admin',
+      name: 'ar_tenant_admin',
       display_name: 'Administrator',
       hierarchy_level: 10,
       is_system: false,
@@ -133,7 +137,7 @@ describe('adminInvitationsRouter', () => {
         },
         body: JSON.stringify({
           email: 'NEW@EXAMPLE.COM',
-          role_id: 'role_admin',
+          role_id: 'role_ar_tenant_admin',
           allowed_ip_ranges: ['203.0.113.0/24'],
         }),
       },
@@ -151,7 +155,7 @@ describe('adminInvitationsRouter', () => {
     expect(insertParams?.[10]).toBe(0);
     expect(insertParams?.[11]).toBe('[]');
     expect(insertParams?.[17]).toBe('new@example.com');
-    expect(insertParams?.[18]).toBe('admin');
+    expect(insertParams?.[18]).toBe('ar_tenant_admin');
     expect(insertParams?.[19]).toBe('Administrator');
     expect(insertSql?.match(/\?/gu) ?? []).toHaveLength(insertParams?.length ?? 0);
     expect(notifier.send).toHaveBeenCalledOnce();
@@ -179,7 +183,7 @@ describe('adminInvitationsRouter', () => {
         },
         body: JSON.stringify({
           email: 'admin@example.com',
-          role_id: 'role_admin',
+          role_id: 'role_ar_tenant_admin',
           ip_restriction_enabled: true,
           allowed_ip_ranges: ranges,
         }),
@@ -205,7 +209,7 @@ describe('adminInvitationsRouter', () => {
         },
         body: JSON.stringify({
           email: 'admin@example.com',
-          role_id: 'role_admin',
+          role_id: 'role_ar_tenant_admin',
           ip_restriction_enabled: true,
           allowed_ip_ranges: Array.from({ length: 6 }, (_, index) => `203.0.113.${index + 1}`),
         }),
@@ -230,7 +234,7 @@ describe('adminInvitationsRouter', () => {
         },
         body: JSON.stringify({
           email: 'admin@example.com',
-          role_id: 'role_admin',
+          role_id: 'role_ar_tenant_admin',
           name: { unexpected: true },
         }),
       },
@@ -242,11 +246,52 @@ describe('adminInvitationsRouter', () => {
     expect(notifier.send).not.toHaveBeenCalled();
   });
 
-  it('allows a wildcard-authorized Admin to invite a peer super_admin globally', async () => {
+  it('allows a wildcard-authorized Admin to invite a peer ar_super_admin globally', async () => {
     repo.getRole.mockResolvedValue({
-      id: 'role_super_admin',
+      id: 'role_ar_super_admin',
       tenant_id: 'default',
-      name: 'super_admin',
+      name: 'ar_super_admin',
+      display_name: 'Super Admin',
+      hierarchy_level: 0,
+      is_system: true,
+    });
+    const { app, env } = createTestApp();
+    const response = await app.request(
+      '/api/admin/admin-invitations',
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-test-permissions': invitationPermissions(['*']),
+          'x-test-global-permissions': '*',
+          'x-test-tenant-scope': '*',
+          'x-test-hierarchy-level': '0',
+        },
+        body: JSON.stringify({ email: 'peer@example.com', role_id: 'role_ar_super_admin' }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(201);
+    const insertParams = getInvitationInsertParams();
+    expect(insertParams?.[7]).toBe('global');
+    expect(insertParams?.[8]).toBeNull();
+  });
+
+  it.each([
+    [
+      'a wildcard that is not a global one',
+      { 'x-test-global-permissions': '', 'x-test-tenant-scope': '*' },
+    ],
+    [
+      'a global wildcard under a tenant scope',
+      { 'x-test-global-permissions': '*', 'x-test-tenant-scope': 'tenant_123' },
+    ],
+  ])('refuses %s to invite a ar_super_admin, which is global', async (_name, extraHeaders) => {
+    repo.getRole.mockResolvedValue({
+      id: 'role_ar_super_admin',
+      tenant_id: 'default',
+      name: 'ar_super_admin',
       display_name: 'Super Admin',
       hierarchy_level: 0,
       is_system: true,
@@ -260,16 +305,16 @@ describe('adminInvitationsRouter', () => {
           'content-type': 'application/json',
           'x-test-permissions': invitationPermissions(['*']),
           'x-test-hierarchy-level': '0',
+          ...extraHeaders,
         },
-        body: JSON.stringify({ email: 'peer@example.com', role_id: 'role_super_admin' }),
+        body: JSON.stringify({ email: 'peer@example.com', role_id: 'role_ar_super_admin' }),
       },
       env
     );
 
-    expect(response.status).toBe(201);
-    const insertParams = getInvitationInsertParams();
-    expect(insertParams?.[7]).toBe('global');
-    expect(insertParams?.[8]).toBeNull();
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(response.status).toBeLessThan(500);
+    expect(getInvitationInsertParams()).toBeUndefined();
   });
 
   it('returns a stable conflict when concurrent creation hits the pending-email constraint', async () => {
@@ -290,7 +335,7 @@ describe('adminInvitationsRouter', () => {
           'content-type': 'application/json',
           'x-test-permissions': invitationPermissions(),
         },
-        body: JSON.stringify({ email: 'admin@example.com', role_id: 'role_admin' }),
+        body: JSON.stringify({ email: 'admin@example.com', role_id: 'role_ar_tenant_admin' }),
       },
       env
     );
@@ -312,7 +357,7 @@ describe('adminInvitationsRouter', () => {
           'content-type': 'application/json',
           'x-test-permissions': invitationPermissions(),
         },
-        body: JSON.stringify({ email: 'admin@example.com', role_id: 'role_admin' }),
+        body: JSON.stringify({ email: 'admin@example.com', role_id: 'role_ar_tenant_admin' }),
       },
       env
     );
@@ -343,7 +388,7 @@ describe('adminInvitationsRouter', () => {
           'content-type': 'application/json',
           'x-test-permissions': invitationPermissions(),
         },
-        body: JSON.stringify({ email: 'admin@example.com', role_id: 'role_admin' }),
+        body: JSON.stringify({ email: 'admin@example.com', role_id: 'role_ar_tenant_admin' }),
       },
       env
     );
@@ -368,7 +413,7 @@ describe('adminInvitationsRouter', () => {
           'content-type': 'application/json',
           'x-test-permissions': invitationPermissions(),
         },
-        body: JSON.stringify({ email: 'admin@example.com', role_id: 'role_admin' }),
+        body: JSON.stringify({ email: 'admin@example.com', role_id: 'role_ar_tenant_admin' }),
       },
       env
     );
@@ -394,8 +439,8 @@ describe('adminInvitationsRouter', () => {
       name: null,
       code_hash: 'previous-code-hash',
       status: 'pending',
-      admin_role_id: 'role_admin',
-      role_name: 'admin',
+      admin_role_id: 'role_ar_tenant_admin',
+      role_name: 'ar_tenant_admin',
       role_display_name: 'Administrator',
       scope_type: 'tenant',
       scope_id: 'tenant_123',
@@ -436,8 +481,8 @@ describe('adminInvitationsRouter', () => {
       name: null,
       code_hash: 'previous-code-hash',
       status: 'pending',
-      admin_role_id: 'role_admin',
-      role_name: 'admin',
+      admin_role_id: 'role_ar_tenant_admin',
+      role_name: 'ar_tenant_admin',
       role_display_name: 'Administrator',
       scope_type: 'tenant',
       scope_id: 'tenant_123',

@@ -163,6 +163,18 @@ function expectedIssuer(environmentId: string): string {
   )}`;
 }
 
+function requestBinding(value: unknown, operationId: unknown, targetWorker: unknown): string {
+  if (
+    value === 'LOG_ARCHIVE' &&
+    typeof operationId === 'string' &&
+    /^log_archive_probe_v1:[a-f0-9]{64}$/.test(operationId) &&
+    typeof targetWorker === 'string' &&
+    /^[A-Za-z0-9._-]+-ar-management$/.test(targetWorker)
+  )
+    return value;
+  return requiredPattern(value, SAFE_BINDING, 'runtime_smoke_invalid_binding_ref');
+}
+
 export function runtimeSmokeJti(input: {
   operationId: string;
   attempt: number;
@@ -180,11 +192,7 @@ export function runtimeSmokeJti(input: {
     SAFE_WORKER,
     'runtime_smoke_invalid_target_worker'
   );
-  const bindingRef = requiredPattern(
-    input.bindingRef,
-    SAFE_BINDING,
-    'runtime_smoke_invalid_binding_ref'
-  );
+  const bindingRef = requestBinding(input.bindingRef, input.operationId, input.targetWorker);
   return `${operationId}:${attempt}:${targetWorker}:${bindingRef}`;
 }
 
@@ -194,11 +202,7 @@ function normalizeRequest(input: RuntimeSmokeRequestInput, issuedAt: number): Ru
     SAFE_WORKER,
     'runtime_smoke_invalid_target_worker'
   );
-  const bindingRef = requiredPattern(
-    input.bindingRef,
-    SAFE_BINDING,
-    'runtime_smoke_invalid_binding_ref'
-  );
+  const bindingRef = requestBinding(input.bindingRef, input.operationId, input.targetWorker);
   const operationId = requiredPattern(
     input.operationId,
     SAFE_ID,
@@ -390,11 +394,7 @@ export async function verifyRuntimeSmokeRequest(
     'runtime_smoke_invalid_operation_id'
   );
   const attempt = requiredInteger(raw.attempt, 'runtime_smoke_invalid_attempt');
-  const bindingRef = requiredPattern(
-    raw.bindingRef,
-    SAFE_BINDING,
-    'runtime_smoke_invalid_binding_ref'
-  );
+  const bindingRef = requestBinding(raw.bindingRef, raw.operationId, raw.targetWorker);
   const expectedJti = runtimeSmokeJti({ operationId, attempt, targetWorker, bindingRef });
   if (raw.jti !== expectedJti) throw new Error('runtime_smoke_jti_mismatch');
   if (raw.iss !== expectedIssuer(input.environmentId)) {

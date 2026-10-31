@@ -1,3 +1,12 @@
+import {
+  assertLogArchiveImplemented,
+  assertLogArchiveLockMatches,
+  logArchiveRuntimeVars,
+  localLogArchiveRuntimeVars,
+  LOG_ARCHIVE_PRODUCER_COMPONENTS,
+  type LogArchiveLock,
+} from './log-archive-config.js';
+import { LOG_ARCHIVE_SCHEMA_DIGEST } from './log-archive.js';
 /**
  * Wrangler Configuration Generator
  *
@@ -33,6 +42,7 @@ import { MANAGED_WORKER_DEPLOY_BUILD_COMMAND } from './managed-worker-deploy.js'
 // =============================================================================
 
 export interface ResourceIds {
+  logArchive?: LogArchiveLock;
   d1: Record<string, { id: string; name: string }>;
   kv: Record<string, { id: string; name: string }>;
   queues?: Record<string, { id: string; name: string }>;
@@ -44,6 +54,7 @@ export interface ResourceIds {
 
 export function buildResourceIdsFromLock(lock: AuthrimLock, config?: AuthrimConfig): ResourceIds {
   return {
+    ...(lock.logArchive ? { logArchive: lock.logArchive } : {}),
     d1: Object.fromEntries(
       Object.entries(lock.d1 || {}).map(([key, value]) => [key, { id: value.id, name: value.name }])
     ),
@@ -74,12 +85,15 @@ export interface WranglerConfig {
   workers_dev: boolean;
   build?: { command: string };
   placement?: { mode: string };
+  /** Per-invocation runtime limits (Workers Paid / standard usage model). */
+  limits?: { cpu_ms?: number; subrequests?: number };
   version_metadata?: { binding: string };
   worker_loaders?: Array<{ binding: string }>;
   kv_namespaces?: Array<{ binding: string; id: string; preview_id?: string }>;
   d1_databases?: Array<{ binding: string; database_name: string; database_id: string }>;
   hyperdrive?: Array<{ binding: string; id: string }>;
   r2_buckets?: Array<{ binding: string; bucket_name: string }>;
+  pipelines?: Array<{ binding: string; stream: string }>;
   durable_objects?: {
     bindings: Array<{ name: string; class_name: string; script_name?: string }>;
   };
@@ -125,6 +139,59 @@ export interface GenerateWranglerConfigOptions {
   includeAuthAccountProvisioner?: boolean;
   /** Initial-deploy escape hatch for the Bridge -> Management -> Bridge bootstrap cycle. */
   includeExternalIdpAccountProvisioner?: boolean;
+  /**
+   * Generate for `wrangler dev` on a developer machine instead of a Cloudflare deployment.
+   * The managed-deploy build guard, placement and cron triggers are dropped, and Service Bindings
+   * to Workers that will not run locally (the UI Workers, `excludedComponents`) are
+   * removed so the remaining Workers still start.
+   */
+  local?: LocalWranglerOptions;
+}
+
+/** Local development runs UIs and the API on different localhost ports, which browsers treat as one site. */
+export interface GenerateEnvVarsOptions {
+  allowLocalhostSameSite?: boolean;
+}
+
+export interface LocalWranglerOptions {
+  /** Components that are not started in this local session. */
+  excludedComponents?: readonly WorkerComponent[];
+}
+
+/**
+ * Enables the plugin runner's local-only `notifier-log` provider (see
+ * ar-plugin-runner/src/local-log-notifier.ts). Only the local development shape sets it.
+ */
+export const LOCAL_LOG_NOTIFIER_ENV = 'AUTHRIM_LOCAL_NOTIFICATION_LOG';
+
+function applyLocalDevelopmentShape(
+  wranglerConfig: WranglerConfig,
+  env: string,
+  component: WorkerComponent,
+  options: LocalWranglerOptions
+): void {
+  delete wranglerConfig.build;
+  delete wranglerConfig.placement;
+  delete wranglerConfig.triggers;
+  // The issuer is http://localhost, so the built-in Login UI client registers http loopback
+  // redirect URIs; a web app may only do that when this tenant policy is explicitly off.
+  wranglerConfig.vars['HTTPS_REDIRECT_ONLY'] = 'false';
+  if (component === 'ar-plugin-runner') wranglerConfig.vars[LOCAL_LOG_NOTIFIER_ENV] = 'true';
+  // The Login UI is served from its own localhost port. Over plain http `SameSite=None` is
+  // rejected (it needs `Secure`), and localhost ports are one site, so Lax is both enough and valid.
+  if (wranglerConfig.vars['COOKIE_SAME_SITE']) wranglerConfig.vars['COOKIE_SAME_SITE'] = 'Lax';
+  const excludedWorkerNames = new Set<string>(
+    (options.excludedComponents ?? []).map((component) => getWorkerName(env, component))
+  );
+  excludedWorkerNames.add(`${env}-ar-login-ui`);
+  excludedWorkerNames.add(`${env}-ar-admin-ui`);
+  if (wranglerConfig.services) {
+    const services = wranglerConfig.services.filter(
+      (service) => !excludedWorkerNames.has(service.service)
+    );
+    if (services.length > 0) wranglerConfig.services = services;
+    else delete wranglerConfig.services;
+  }
 }
 
 const LOGGING_DELIVERY_QUEUE_DEFINITIONS = [
@@ -313,22 +380,31 @@ const COMPONENT_KV_BINDINGS: Record<WorkerComponent, KVNamespace[]> = {
     'AUTHRIM_CONFIG',
     'TENANT_RUNTIME_REGISTRY',
   ],
-  'ar-userinfo': ['CLIENTS_CACHE', 'USER_CACHE', 'AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
+  'ar-userinfo': [
+    'CLIENTS_CACHE',
+    'USER_CACHE',
+    'SETTINGS',
+    'AUTHRIM_CONFIG',
+    'TENANT_RUNTIME_REGISTRY',
+  ],
+  // REBAC_CACHE: removing a role or a membership drops the subject's cached RBAC claims.
   'ar-management': [
     'CLIENTS_CACHE',
     'SETTINGS',
     'USER_CACHE',
+    'REBAC_CACHE',
     'INITIAL_ACCESS_TOKENS',
     'AUTHRIM_CONFIG',
     'TENANT_RUNTIME_REGISTRY',
   ],
   'ar-agent-access': ['SETTINGS', 'AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
   'ar-router': ['SETTINGS', 'AUTHRIM_CONFIG'],
-  'ar-async': ['INITIAL_ACCESS_TOKENS', 'AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
-  'ar-policy': ['REBAC_CACHE', 'AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
+  'ar-async': ['INITIAL_ACCESS_TOKENS', 'SETTINGS', 'AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
+  'ar-policy': ['SETTINGS', 'REBAC_CACHE', 'AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
   'ar-saml': ['SETTINGS', 'AUTHRIM_CONFIG', 'STATE_STORE', 'TENANT_RUNTIME_REGISTRY'],
   'ar-bridge': ['SETTINGS', 'AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
-  'ar-vc': ['AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
+  // SETTINGS: the Settings API values credential issuance reads (custom claim schemas).
+  'ar-vc': ['SETTINGS', 'AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
 };
 
 // =============================================================================
@@ -340,10 +416,13 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
   'ar-control': [],
   'ar-plugin-runner': [],
   'ar-discovery': [],
+  // SESSION_CLIENT_STORE: implicit/hybrid /authorize records the client in the session, and
+  // RP-Initiated Logout reads the store to send Back-Channel, Front-Channel and webhook logouts.
   'ar-auth': [
     'KEY_MANAGER',
     'SESSION_STORE',
     'SESSION_REVOCATION_STORE',
+    'SESSION_CLIENT_STORE',
     'AUTH_CODE_STORE',
     'CHALLENGE_STORE',
     'RATE_LIMITER',
@@ -351,10 +430,13 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
     'FLOW_STATE_STORE',
     'DPOP_JTI_STORE',
   ],
+  // SESSION_CLIENT_STORE: the authorization code exchange records the client in the session,
+  // so a later logout knows to notify it.
   'ar-token': [
     'KEY_MANAGER',
     'SESSION_STORE',
     'SESSION_REVOCATION_STORE',
+    'SESSION_CLIENT_STORE',
     'AUTH_CODE_STORE',
     'REFRESH_TOKEN_ROTATOR',
     'RATE_LIMITER',
@@ -371,12 +453,15 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
     'DPOP_JTI_STORE',
     'TOKEN_REVOCATION_STORE',
   ],
+  // SESSION_CLIENT_STORE: suspending, locking or revoking a user's sessions tells the relying
+  // parties signed in through the sessions it ends; their logout targets are read from this store.
   'ar-management': [
     'KEY_MANAGER',
     'REFRESH_TOKEN_ROTATOR',
     'RATE_LIMITER',
     'SESSION_STORE',
     'SESSION_REVOCATION_STORE',
+    'SESSION_CLIENT_STORE',
     'TOKEN_REVOCATION_STORE',
     'VERSION_MANAGER',
     'CHALLENGE_STORE',
@@ -384,7 +469,17 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
   ],
   'ar-agent-access': ['KEY_MANAGER', 'RATE_LIMITER', 'DPOP_JTI_STORE'],
   'ar-router': [],
-  'ar-async': ['DEVICE_CODE_STORE', 'CIBA_REQUEST_STORE', 'DPOP_JTI_STORE'],
+  // SESSION_STORE: the device and CIBA approval APIs act for the signed-in browser session.
+  // USER_CODE_RATE_LIMITER: per-IP limit on guessing device user codes (fails closed if absent).
+  // RATE_LIMITER: per-IP and per-client limits on issuing device codes (fails closed if absent).
+  'ar-async': [
+    'DEVICE_CODE_STORE',
+    'CIBA_REQUEST_STORE',
+    'DPOP_JTI_STORE',
+    'SESSION_STORE',
+    'USER_CODE_RATE_LIMITER',
+    'RATE_LIMITER',
+  ],
   'ar-policy': ['PERMISSION_CHANGE_HUB'],
   'ar-saml': [
     'KEY_MANAGER',
@@ -394,7 +489,18 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
     'SESSION_REVOCATION_STORE',
     'CHALLENGE_STORE',
   ],
-  'ar-bridge': ['KEY_MANAGER', 'SESSION_STORE', 'SESSION_REVOCATION_STORE', 'CHALLENGE_STORE'],
+  // RATE_LIMITER: /api/external/* is rate limited. Without it the limiter falls back to a
+  // STATE_STORE KV the Bridge Worker does not have, and every request would answer 503.
+  // SESSION_CLIENT_STORE: an upstream back-channel logout tells the relying parties signed in
+  // through the sessions it ends; their logout targets are read from this store.
+  'ar-bridge': [
+    'KEY_MANAGER',
+    'SESSION_STORE',
+    'SESSION_REVOCATION_STORE',
+    'SESSION_CLIENT_STORE',
+    'CHALLENGE_STORE',
+    'RATE_LIMITER',
+  ],
   'ar-vc': ['KEY_MANAGER', 'RATE_LIMITER', 'TOKEN_REVOCATION_STORE'],
 };
 
@@ -521,10 +627,12 @@ function addOriginWithSubdomain(
 function getAdminUiApiMode(
   apiUrl: string,
   adminUiUrl: string,
-  baseDomain?: string
+  baseDomain?: string,
+  allowLocalhostSameSite?: boolean
 ): 'same-origin' | 'same-site-cross-origin' | 'cross-site-proxy' {
   const classification: UiApiSiteClassification = classifyUiApiSite(apiUrl, adminUiUrl, {
     baseDomain,
+    allowLocalhostSameSite,
   });
   return classification === 'cross-site' ? 'cross-site-proxy' : classification;
 }
@@ -543,7 +651,11 @@ function getAdminUiApiMode(
  * Workers.dev URLs are normalized to the correct format:
  *   {name}.{subdomain}.workers.dev
  */
-export function deriveAllowedOrigins(config: AuthrimConfig, workersSubdomain?: string): string[] {
+export function deriveAllowedOrigins(
+  config: AuthrimConfig,
+  workersSubdomain?: string,
+  options: GenerateEnvVarsOptions = {}
+): string[] {
   const origins = new Set<string>();
 
   // API origin (the issuer URL / router)
@@ -574,6 +686,7 @@ export function deriveAllowedOrigins(config: AuthrimConfig, workersSubdomain?: s
     const normalizedAdminUiUrl = normalizeWorkersDevUrl(adminUiUrl, workersSubdomain);
     const adminUiSiteClassification = classifyUiApiSite(normalizedApiUrl, normalizedAdminUiUrl, {
       baseDomain: config.tenant?.multiTenant === true ? config.tenant.baseDomain : undefined,
+      allowLocalhostSameSite: options.allowLocalhostSameSite,
     });
 
     if (adminUiSiteClassification !== 'cross-site') {
@@ -603,6 +716,19 @@ export function generateWranglerConfig(
   workersSubdomain?: string,
   options: GenerateWranglerConfigOptions = {}
 ): WranglerConfig {
+  assertLogArchiveImplemented(config.logging?.archive);
+  const archive = config.logging?.archive;
+  if (archive && !config.features.r2.enabled) throw new Error('log_archive_requires_r2');
+  if (archive?.mode === 'pipeline' && !config.features.queue.enabled)
+    throw new Error('log_archive_pipeline_requires_durable_queue');
+  if (options.local && archive?.mode !== 'scheduled')
+    throw new Error('local_log_archive_requires_scheduled');
+  if (archive && !options.local) {
+    const locked = resourceIds.logArchive;
+    assertLogArchiveLockMatches(archive, locked, config.cloudflare.accountId);
+    if (locked.schemaDigest !== LOG_ARCHIVE_SCHEMA_DIGEST)
+      throw new Error('log_archive_schema_digest_mismatch');
+  }
   const env = config.environment.prefix;
   const multiTenantBaseDomain =
     config.tenant?.multiTenant === true ? config.tenant.baseDomain : undefined;
@@ -628,8 +754,28 @@ export function generateWranglerConfig(
         ? false
         : !config.urls?.api?.custom,
     build: { command: MANAGED_WORKER_DEPLOY_BUILD_COMMAND },
-    vars: generateEnvVars(component, config, workersSubdomain),
+    vars: generateEnvVars(
+      component,
+      config,
+      workersSubdomain,
+      options.local ? { allowLocalhostSameSite: true } : {}
+    ),
   };
+  if (archive && options.local && LOG_ARCHIVE_PRODUCER_COMPONENTS.includes(component))
+    Object.assign(wranglerConfig.vars, localLogArchiveRuntimeVars(archive));
+  if (
+    archive &&
+    !options.local &&
+    resourceIds.logArchive &&
+    LOG_ARCHIVE_PRODUCER_COMPONENTS.includes(component)
+  ) {
+    const locked = resourceIds.logArchive;
+    Object.assign(wranglerConfig.vars, logArchiveRuntimeVars(archive, locked));
+    if (archive.mode === 'pipeline' && component === 'ar-management') {
+      if (!locked.stream?.id) throw new Error('log_archive_stream_binding_missing');
+      wranglerConfig.pipelines = [{ binding: 'LOG_ARCHIVE_STREAM', stream: locked.stream.id }];
+    }
+  }
   if (resourceIds.controlKeyState && component === 'ar-control') {
     wranglerConfig.vars['RUNTIME_REGISTRY_SIGNING_ACTIVE_SLOT'] =
       resourceIds.controlKeyState.runtimeRegistry.activeSlot;
@@ -700,8 +846,12 @@ export function generateWranglerConfig(
 
   if (component === 'ar-management') {
     wranglerConfig.triggers = {
-      crons: ['* * * * *', '*/2 * * * *', '*/5 * * * *', '0 */6 * * *'],
+      // */10 moves log rows past their D1 retention to R2 (log-storage.d1_retention_days).
+      crons: ['* * * * *', '*/2 * * * *', '*/5 * * * *', '*/10 * * * *', '0 */6 * * *'],
     };
+    // One scheduled run advances up to 16 tenant backup transitions; each reads up to ~750 D1 queries and
+    // spends seconds of CPU on row decoding and hashing. The defaults are 30 s and 10,000.
+    wranglerConfig.limits = { cpu_ms: 300_000, subrequests: 50_000 };
     wranglerConfig.vars['AUTHRIM_R2_MAINTENANCE_CRON_ENABLED'] = 'true';
   }
 
@@ -750,8 +900,37 @@ export function generateWranglerConfig(
 
   // D1 databases, including Control-managed TDB_* routes where a Worker needs data-plane access.
   const d1Databases = collectD1DatabaseBindings(component, resourceIds);
+  if (archive && component === 'ar-lib-core') {
+    const database = resourceIds.d1.DB_ADMIN;
+    if (!database?.id) throw new Error('log_archive_staging_admin_database_missing');
+    if (!d1Databases.some((entry) => entry.binding === 'DB_ADMIN'))
+      d1Databases.push({
+        binding: 'DB_ADMIN',
+        database_name: database.name,
+        database_id: database.id,
+      });
+  }
   if (d1Databases.length > 0) {
     wranglerConfig.d1_databases = d1Databases;
+    const fixedDatabaseBindings = new Set([
+      'DB',
+      'DB_PII',
+      'DB_ADMIN',
+      'CONTROL_DB',
+      'LOOKUP_DB',
+      'PLUGIN_RUNNER_DB',
+    ]);
+    const fixedDatabases = Object.fromEntries(
+      d1Databases
+        .filter((database) => fixedDatabaseBindings.has(database.binding))
+        .map((database) => [database.binding, database.database_id])
+        .sort(([a], [b]) => a.localeCompare(b))
+    );
+    if (Object.keys(fixedDatabases).length)
+      wranglerConfig.vars.AUTHRIM_FIXED_DATABASE_IDS = JSON.stringify({
+        version: 1,
+        databases: fixedDatabases,
+      });
   }
 
   const hyperdriveBindings = collectConfiguredHyperdriveBindings(config);
@@ -867,19 +1046,6 @@ export function generateWranglerConfig(
       addProvisionedR2Binding('PUBLIC_ASSETS');
     }
 
-    if (
-      component === 'ar-auth' ||
-      component === 'ar-token' ||
-      component === 'ar-async' ||
-      component === 'ar-saml' ||
-      component === 'ar-bridge' ||
-      component === 'ar-vc' ||
-      component === 'ar-management'
-    ) {
-      addProvisionedR2Binding('DIAGNOSTIC_LOGS');
-      addProvisionedR2Binding('AUDIT_ARCHIVE');
-    }
-
     if (component === 'ar-bridge') {
       addProvisionedR2Binding('SENSITIVE_DETAILS');
     }
@@ -893,6 +1059,13 @@ export function generateWranglerConfig(
     if (r2Buckets.length > 0) {
       wranglerConfig.r2_buckets = r2Buckets;
     }
+  }
+
+  if (archive && (component === 'ar-management' || component === 'ar-lib-core')) {
+    wranglerConfig.r2_buckets = [
+      ...(wranglerConfig.r2_buckets ?? []),
+      { binding: 'LOG_ARCHIVE', bucket_name: archive.bucketName },
+    ];
   }
 
   // Queues (optional)
@@ -913,8 +1086,13 @@ export function generateWranglerConfig(
       });
     }
 
-    if (LOGGING_DELIVERY_PRODUCER_COMPONENTS.includes(component)) {
-      for (const definition of LOGGING_DELIVERY_QUEUE_DEFINITIONS) {
+    if (
+      LOGGING_DELIVERY_PRODUCER_COMPONENTS.includes(component) ||
+      (archive?.mode === 'pipeline' && component === 'ar-lib-core')
+    ) {
+      for (const definition of LOGGING_DELIVERY_QUEUE_DEFINITIONS.filter(
+        (entry) => component !== 'ar-lib-core' || entry.binding === 'LOGGING_DELIVERY_QUEUE'
+      )) {
         producers.push({
           queue: resourceIds.queues[definition.resourceKey]?.name ?? definition.fallbackName(env),
           binding: definition.binding,
@@ -952,7 +1130,8 @@ export function generateWranglerConfig(
   }
 
   // Service Bindings for standard services used by auth/runtime and admin proxies.
-  if (component === 'ar-discovery') {
+  // Discovery publishes the OIDC JWKS; ar-async verifies CIBA id_token_hints signed with them.
+  if (component === 'ar-discovery' || component === 'ar-async') {
     wranglerConfig.services = [
       {
         binding: 'KEY_MANAGER_PUBLIC',
@@ -970,6 +1149,22 @@ export function generateWranglerConfig(
         binding: 'AGENT_DOWNSCOPE',
         service: `${env}-ar-token`,
         entrypoint: 'AgentDownscopeEntrypoint',
+      },
+    ];
+  }
+
+  if (component === 'ar-userinfo') {
+    wranglerConfig.services = [
+      ...(wranglerConfig.services ?? []),
+      {
+        binding: 'GUEST_UPGRADE_READINESS',
+        service: `${env}-ar-management`,
+        entrypoint: 'GuestUpgradeReadinessEntrypoint',
+        props: {
+          caller: 'ar-userinfo',
+          environmentId: env,
+          audience: 'authrim-guest-upgrade-readiness-v1',
+        },
       },
     ];
   }
@@ -1049,6 +1244,30 @@ export function generateWranglerConfig(
     });
   }
 
+  if (archive && component === 'ar-lib-core') {
+    wranglerConfig.services ??= [];
+    if (!wranglerConfig.services.some((binding) => binding.binding === 'CONTROL'))
+      wranglerConfig.services.push({
+        binding: 'CONTROL',
+        service: `${env}-ar-control`,
+        props: { caller: 'ar-lib-core', audience: 'authrim-control-v1', environmentId: env },
+      });
+  }
+
+  if (
+    archive &&
+    component !== 'ar-lib-core' &&
+    LOG_ARCHIVE_PRODUCER_COMPONENTS.includes(component)
+  ) {
+    wranglerConfig.services ??= [];
+    wranglerConfig.services.push({
+      binding: 'LOG_ARCHIVE_WRITER',
+      service: `${env}-ar-lib-core`,
+      entrypoint: 'LogArchiveWriteEntrypoint',
+      props: { caller: component, audience: 'authrim-log-archive-v1', environmentId: env },
+    });
+  }
+
   // Service Bindings for ar-router (required for routing to other workers)
   if (component === 'ar-router') {
     // Core services (always required)
@@ -1125,6 +1344,50 @@ export function generateWranglerConfig(
   // special-case routing (e.g. /api/auth/authentication-methods, /api/admin/setup-token/*)
   // is bypassed by Cloudflare route precedence.
 
+  if (config.features.samlDrExport?.enabled === true) {
+    wranglerConfig.vars['ENABLE_SAML_DR_EXPORT'] = 'true';
+    wranglerConfig.vars['AUTHRIM_ENVIRONMENT_NAME'] = env;
+    wranglerConfig.vars['AUTHRIM_WORKER_SCRIPT_NAME'] = workerName;
+    wranglerConfig.version_metadata = { binding: 'CONTROL_SMOKE_VERSION' };
+    if (component !== 'ar-control') {
+      wranglerConfig.services ??= [];
+      wranglerConfig.services.push({
+        binding: 'SAML_DR_MUTATION_CONTROL',
+        service: `${env}-ar-control`,
+        entrypoint: 'SamlDrMutationEntrypoint',
+        props: { caller: component, audience: 'authrim-saml-dr-mutation-v1', environmentId: env },
+      });
+    } else if (options.includeControlSmokeBindings !== false) {
+      wranglerConfig.services ??= [];
+      for (const targetComponent of ['ar-control', 'ar-router'] as const) {
+        wranglerConfig.services.push({
+          binding: `SMOKE_${targetComponent.replaceAll('-', '_').toUpperCase()}`,
+          service: `${env}-${targetComponent}`,
+          entrypoint: 'RuntimeSmokeEntrypoint',
+          props: {
+            caller: 'ar-control',
+            audience: 'authrim-runtime-smoke-v1',
+            environmentId: env,
+            targetWorker: `${env}-${targetComponent}`,
+          },
+        });
+      }
+    }
+  }
+
+  if (config.features.replicationWriter !== undefined) {
+    if (config.features.samlDrExport?.enabled !== true)
+      throw new Error('replication_requires_coordinated_export');
+    // Every Worker, including the DO host and Control, receives the same environment-wide fence.
+    wranglerConfig.vars['AUTHRIM_REPLICATION_WRITER'] = JSON.stringify(
+      config.features.replicationWriter
+    );
+  }
+
+  if (options.local) {
+    applyLocalDevelopmentShape(wranglerConfig, env, component, options.local);
+  }
+
   return wranglerConfig;
 }
 
@@ -1138,7 +1401,8 @@ export function generateWranglerConfig(
 export function generateEnvVars(
   component: WorkerComponent,
   config: AuthrimConfig,
-  workersSubdomain?: string
+  workersSubdomain?: string,
+  envOptions: GenerateEnvVarsOptions = {}
 ): Record<string, string> {
   const vars: Record<string, string> = {};
   const multiTenantBaseDomain =
@@ -1353,7 +1617,12 @@ export function generateEnvVars(
 
     if (hasAdminUiOrigins) {
       vars['ADMIN_UI_URL'] = adminUiUrl;
-      vars['ADMIN_UI_API_MODE'] = getAdminUiApiMode(apiUrlForUi, adminUiUrl, multiTenantBaseDomain);
+      vars['ADMIN_UI_API_MODE'] = getAdminUiApiMode(
+        apiUrlForUi,
+        adminUiUrl,
+        multiTenantBaseDomain,
+        envOptions.allowLocalhostSameSite
+      );
     }
     vars['ADMIN_COOKIE_SAME_SITE'] = 'Lax';
   }
@@ -1362,7 +1631,12 @@ export function generateEnvVars(
   if (component === 'ar-management') {
     if (hasAdminUiOrigins) {
       vars['ADMIN_UI_URL'] = adminUiUrl;
-      vars['ADMIN_UI_API_MODE'] = getAdminUiApiMode(apiUrlForUi, adminUiUrl, multiTenantBaseDomain);
+      vars['ADMIN_UI_API_MODE'] = getAdminUiApiMode(
+        apiUrlForUi,
+        adminUiUrl,
+        multiTenantBaseDomain,
+        envOptions.allowLocalhostSameSite
+      );
     }
     vars['ADMIN_COOKIE_SAME_SITE'] = 'Lax';
     vars['SAML_ENABLED'] = 'true';
@@ -1409,7 +1683,6 @@ export function generateEnvVars(
   }
 
   // Security settings
-  vars['ENABLE_HTTP_REDIRECT'] = 'false';
   vars['ENABLE_OPEN_REGISTRATION'] = 'false';
   if (component === 'ar-auth') {
     vars['ENABLE_LOGIN_RUNTIME_FLOW'] = 'true';
@@ -1424,7 +1697,10 @@ export function generateEnvVars(
     vars['AUTHRIM_CHALLENGE_SHARDS'] = (config.sharding.challengeShards ?? 4).toString();
   }
 
-  const componentSecrets = getSecretNamesForWorker(component);
+  const componentSecrets = getSecretNamesForWorker(component, {
+    logArchive: Boolean(config.logging?.archive),
+    replicationWriter: config.features.replicationWriter !== undefined,
+  });
   if (componentSecrets.includes('PLUGIN_ENCRYPTION_KEY')) {
     vars['PLUGIN_ENCRYPTION_KEY'] = ''; // Set via secret
   }
@@ -1506,7 +1782,7 @@ export function generateEnvVars(
   // This is the setup-side web_origin_registry -> ALLOWED_ORIGINS materialization boundary.
   // Workers.dev URLs are normalized to correct format: {name}.{subdomain}.workers.dev
   if (['ar-auth', 'ar-management', 'ar-agent-access', 'ar-router', 'ar-saml'].includes(component)) {
-    const allowedOrigins = deriveAllowedOrigins(config, workersSubdomain);
+    const allowedOrigins = deriveAllowedOrigins(config, workersSubdomain, envOptions);
     if (allowedOrigins.length > 0) {
       vars['ALLOWED_ORIGINS'] = allowedOrigins.join(',');
     }
@@ -1573,6 +1849,10 @@ function generateDOMigrations(): WranglerConfig['migrations'] {
     {
       tag: 'v12',
       new_sqlite_classes: ['SessionRevocationStore'],
+    },
+    {
+      tag: 'v13',
+      new_sqlite_classes: ['UserCodeRateLimiter'],
     },
   ];
 }
@@ -1684,6 +1964,15 @@ export function toToml(config: WranglerConfig, envName?: string): string {
     lines.push(`workers_dev = ${config.workers_dev}`);
     lines.push('');
 
+    // Runtime limits
+    if (config.limits) {
+      lines.push(`[env.${envName}.limits]`);
+      if (config.limits.cpu_ms !== undefined) lines.push(`cpu_ms = ${config.limits.cpu_ms}`);
+      if (config.limits.subrequests !== undefined)
+        lines.push(`subrequests = ${config.limits.subrequests}`);
+      lines.push('');
+    }
+
     // Placement
     if (config.placement) {
       lines.push(`[env.${envName}.placement]`);
@@ -1739,6 +2028,15 @@ export function toToml(config: WranglerConfig, envName?: string): string {
     }
 
     // R2 Buckets
+    if (config.pipelines?.length) {
+      for (const pipeline of config.pipelines) {
+        lines.push(`[[env.${envName}.pipelines]]`);
+        lines.push(`binding = ${JSON.stringify(pipeline.binding)}`);
+        lines.push(`stream = ${JSON.stringify(pipeline.stream)}`);
+        lines.push('');
+      }
+    }
+
     if (config.r2_buckets && config.r2_buckets.length > 0) {
       lines.push('# R2 Buckets');
       for (const r2 of config.r2_buckets) {
@@ -1876,6 +2174,15 @@ export function toToml(config: WranglerConfig, envName?: string): string {
       lines.push('');
     }
 
+    // Runtime limits
+    if (config.limits) {
+      lines.push('[limits]');
+      if (config.limits.cpu_ms !== undefined) lines.push(`cpu_ms = ${config.limits.cpu_ms}`);
+      if (config.limits.subrequests !== undefined)
+        lines.push(`subrequests = ${config.limits.subrequests}`);
+      lines.push('');
+    }
+
     // Placement
     if (config.placement) {
       lines.push('[placement]');
@@ -1930,6 +2237,15 @@ export function toToml(config: WranglerConfig, envName?: string): string {
     }
 
     // R2 Buckets
+    if (config.pipelines?.length) {
+      for (const pipeline of config.pipelines) {
+        lines.push('[[pipelines]]');
+        lines.push(`binding = ${JSON.stringify(pipeline.binding)}`);
+        lines.push(`stream = ${JSON.stringify(pipeline.stream)}`);
+        lines.push('');
+      }
+    }
+
     if (config.r2_buckets && config.r2_buckets.length > 0) {
       lines.push('# R2 Buckets');
       for (const r2 of config.r2_buckets) {
@@ -2082,7 +2398,6 @@ export function generateRoutes(
     case 'ar-auth':
       routes.push(
         { pattern: `${domain}/authorize*`, zone_name: zoneName },
-        { pattern: `${domain}/flow/*`, zone_name: zoneName },
         { pattern: `${domain}/api/flow/*`, zone_name: zoneName },
         { pattern: `${domain}/par`, zone_name: zoneName },
         { pattern: `${domain}/session/check`, zone_name: zoneName },
@@ -2258,6 +2573,35 @@ export function parseWranglerToml(
   }
 
   return result;
+}
+
+/**
+ * Extract the ordered Durable Object migration tags (`[[migrations]]` tables) from a generated
+ * wrangler.toml. Like parseWranglerToml this accepts only the layout Setup generates: top-level
+ * `[[migrations]]` tables whose `tag` is a basic string on its own line. Array items and other
+ * keys of the table are skipped; any following table header ends the current migration.
+ */
+export function parseWranglerMigrationTags(content: string): string[] {
+  const tags: string[] = [];
+  let inMigration = false;
+  for (const rawLine of content.split(/\r?\n/u)) {
+    const line = rawLine.trim();
+    if (line.length === 0 || line.startsWith('#')) continue;
+    if (line.startsWith('[')) {
+      inMigration = line.split('#', 1)[0].trim() === '[[migrations]]';
+      continue;
+    }
+    if (!inMigration) continue;
+    const match = /^tag\s*=\s*("(?:[^"\\]|\\.)*")\s*(?:#.*)?$/u.exec(line);
+    if (!match) continue;
+    try {
+      const tag: unknown = JSON.parse(match[1]);
+      if (typeof tag === 'string' && tag.length > 0) tags.push(tag);
+    } catch {
+      throw new Error('wrangler_migration_tag_invalid');
+    }
+  }
+  return tags;
 }
 
 function escapeRegExp(value: string): string {
@@ -2508,4 +2852,50 @@ export function generateUiWorkersWranglerConfig(options: UiWorkersWranglerOption
   }
 
   return lines.join('\n') + '\n';
+}
+
+/** Read only Setup's generated vars section; unknown explicit modes fail closed. */
+export function parseGeneratedLogArchiveVars(
+  content: string,
+  environment: string
+): Record<string, string> {
+  const scopes: Record<string, Record<string, string>> = { root: {}, environment: {} };
+  let scope: 'root' | 'environment' | undefined;
+  for (const line of content.split(/\r?\n/u)) {
+    const text = line.trim();
+    if (text.startsWith('['))
+      scope =
+        text === `[env.${environment}.vars]`
+          ? 'environment'
+          : text === '[vars]'
+            ? 'root'
+            : undefined;
+    if (
+      !scope ||
+      !(text.startsWith('AUTHRIM_LOG_ARCHIVE_') || text.startsWith('OBJECT_ENCRYPTION_KEY_VERSION'))
+    )
+      continue;
+    const match =
+      /^(AUTHRIM_LOG_ARCHIVE_[A-Z_]+|OBJECT_ENCRYPTION_KEY_VERSION)\s*=\s*("(?:[^"\\]|\\.)*")\s*(?:#.*)?$/u.exec(
+        text
+      );
+    if (!match || scopes[scope][match[1]] !== undefined)
+      throw new Error('log_archive_generated_vars_invalid');
+    scopes[scope][match[1]] = JSON.parse(match[2]) as string;
+  }
+  const result = { ...scopes.root, ...scopes.environment };
+  if (result.AUTHRIM_LOG_ARCHIVE_LOCAL_STAGING_ONLY !== undefined)
+    throw new Error('local_log_archive_cannot_be_deployed');
+  return result;
+}
+
+export function parseGeneratedLogArchiveMode(
+  content: string,
+  environment: string
+): 'pipeline' | 'scheduled' | undefined {
+  const value = parseGeneratedLogArchiveVars(content, environment).AUTHRIM_LOG_ARCHIVE_MODE;
+  if (value === undefined) return undefined;
+  if (value !== 'pipeline' && value !== 'scheduled')
+    throw new Error('log_archive_generated_mode_invalid');
+  return value;
 }

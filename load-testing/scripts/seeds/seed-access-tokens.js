@@ -27,11 +27,14 @@
  *
  * Reference: Keycloak Benchmark, Auth0 Performance Testing
  *
- * Note: strictValidation=true must be set before running tests
- *   curl -X PUT https://your-authrim.example.com/api/admin/settings/introspection-validation \
+ * Note: strict introspection (tokens.introspection_strict_validation) must be on before running
+ * tests. Read the platform's token settings for their version, then set it:
+ *   curl https://your-authrim.example.com/api/admin/platform/settings/tokens \
+ *     -H "Authorization: Bearer $ADMIN_MACHINE_ACCESS_TOKEN"
+ *   curl -X PATCH https://your-authrim.example.com/api/admin/platform/settings/tokens \
  *     -H "Authorization: Bearer $ADMIN_MACHINE_ACCESS_TOKEN" \
  *     -H "Content-Type: application/json" \
- *     -d '{"strictValidation": true}'
+ *     -d '{"ifMatch": "<version>", "set": {"tokens.introspection_strict_validation": true}}'
  *
  * Environment variables:
  *   BASE_URL             Target Authrim Worker URL (default: https://your-authrim.example.com)
@@ -934,11 +937,14 @@ async function main() {
   console.log('');
   console.log(`📁 Saved to: ${outputPath}`);
   console.log('');
-  console.log('⚠️  Remember to enable strictValidation before running the benchmark:');
-  console.log(`   curl -X PUT ${BASE_URL}/api/admin/settings/introspection-validation \\`);
+  console.log('⚠️  Remember to turn strict introspection on before running the benchmark');
+  console.log('   (tokens.introspection_strict_validation; read the version first):');
+  console.log(`   curl -X PATCH ${BASE_URL}/api/admin/platform/settings/tokens \\`);
   console.log('     -H "Authorization: Bearer \\$ADMIN_MACHINE_ACCESS_TOKEN" \\');
   console.log('     -H "Content-Type: application/json" \\');
-  console.log(`     -d '{"strictValidation": true}'`);
+  console.log(
+    `     -d '{"ifMatch": "<version>", "set": {"tokens.introspection_strict_validation": true}}'`
+  );
   console.log('');
   console.log('🎉 done');
 }

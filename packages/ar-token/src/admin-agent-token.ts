@@ -1,3 +1,4 @@
+import { createCloudflareAdminAgentAuditWriter } from '@authrim/ar-agent-access/platform/cloudflare/admin-agent-audit-writer';
 import type { Context } from 'hono';
 import {
   AGENT_ACCESS_SETTING_KEYS,
@@ -164,17 +165,6 @@ interface ModeBMachineActor {
   permissions: string[];
 }
 
-function explicitTenantAllowed(
-  scopes: readonly { scopeMode: string; tenantId: string | null }[],
-  tenantId: string
-): boolean {
-  return (
-    scopes.length > 0 &&
-    scopes.every((scope) => scope.scopeMode === 'allow') &&
-    scopes.some((scope) => scope.tenantId === tenantId)
-  );
-}
-
 async function modeALinkedPrincipalPermissionLimit(
   env: Env,
   tenantId: string,
@@ -184,14 +174,9 @@ async function modeALinkedPrincipalPermissionLimit(
   const repository = new AdminMachineAccessRepository(
     requireDedicatedAdminDatabaseAdapter(env, 'admin-agent-mode-a-principal-limit')
   );
-  const [principal, scopes, permissions] = await Promise.all([
-    repository.findPrincipalById(principalId),
-    repository.getPrincipalTenantScopes(principalId),
-    repository.getPrincipalPermissions(principalId),
-  ]);
-  return principal?.status === 'active' && explicitTenantAllowed(scopes, tenantId)
-    ? permissions
-    : null;
+  // One snapshot of the principal: its scope and permissions are those of the same stored state.
+  const limit = await repository.resolveTenantMachineLimit(tenantId, principalId);
+  return limit ? limit.permissions : null;
 }
 
 function linkedPrincipalCoversGrant(
@@ -255,39 +240,12 @@ async function authenticateModeBActor(
   const machine = new AdminMachineAccessRepository(
     requireDedicatedAdminDatabaseAdapter(c.env, 'admin-agent-mode-b-actor')
   );
-  const [principal, credential] = await Promise.all([
-    machine.findPrincipalById(principalId),
-    machine.findCredentialById(credentialId),
-  ]);
-  if (
-    !principal ||
-    !credential ||
-    principal.status !== 'active' ||
-    (credential.status !== 'active' && credential.status !== 'rotating') ||
-    credential.principalId !== principal.id ||
-    principal.clientId !== clientId
-  ) {
+  // One snapshot of the principal and the credential (see `resolveTenantMachineLimit`).
+  const limit = await machine.resolveTenantMachineLimit(tenantId, principalId, credentialId);
+  if (!limit || limit.principal.clientId !== clientId) {
     return null;
   }
-  const [principalPermissions, credentialPermissions, principalScopes, credentialScopes] =
-    await Promise.all([
-      machine.getPrincipalPermissions(principal.id),
-      machine.getCredentialPermissions(credential.id),
-      machine.getPrincipalTenantScopes(principal.id),
-      machine.getCredentialTenantScopes(credential.id),
-    ]);
-  if (
-    !explicitTenantAllowed(principalScopes, tenantId) ||
-    (credentialScopes.length > 0 && !explicitTenantAllowed(credentialScopes, tenantId))
-  ) {
-    return null;
-  }
-  const permissions =
-    credentialPermissions.length === 0
-      ? principalPermissions
-      : principalPermissions.filter((permission) =>
-          credentialPermissions.some((limit) => hasAdminPermission([limit], permission))
-        );
+  const permissions = limit.permissions;
   return { principalId, credentialId, clientId, dpopJkt: cnf, permissions };
 }
 
@@ -442,7 +400,7 @@ async function handleAdminAgentRefresh(
   if (form.resource && form.resource !== resource) {
     return errorResponse(c, 'invalid_target', 'resource must identify this MCP endpoint');
   }
-  const client = (await getClientCached(c, c.env, form.client_id)) as ClientMetadata | null;
+  const client = await getClientCached(c, c.env, form.client_id);
   if (!client || !selfServiceClientIsActive(client)) {
     return errorResponse(c, 'invalid_client', 'Client authentication failed', 401);
   }
@@ -456,7 +414,7 @@ async function handleAdminAgentRefresh(
   if (!credentials.ok) {
     return errorResponse(c, credentials.error, credentials.errorDescription, 401);
   }
-  const publicClient = (client.token_endpoint_auth_method as string | undefined) === 'none';
+  const publicClient = client.token_endpoint_auth_method === 'none';
   if (publicClient) {
     const methodValidation = validateRegisteredClientAuthenticationMethod(
       client,
@@ -557,7 +515,8 @@ async function handleAdminAgentRefresh(
   }
 
   const repository = new AdminAgentAccessRepository(
-    requireDedicatedAdminDatabaseAdapter(c.env, 'admin-agent-refresh')
+    requireDedicatedAdminDatabaseAdapter(c.env, 'admin-agent-refresh'),
+    createCloudflareAdminAgentAuditWriter(c.env)
   );
   const now = Date.now();
   const [grant, currentPermissions, familyUsable] = await Promise.all([
@@ -759,7 +718,8 @@ export async function adminAgentDelegationHandler(
     return errorResponse(c, 'invalid_target', 'resource must identify this MCP endpoint');
   }
   const repository = new AdminAgentAccessRepository(
-    requireDedicatedAdminDatabaseAdapter(c.env, 'admin-agent-mode-b-delegation')
+    requireDedicatedAdminDatabaseAdapter(c.env, 'admin-agent-mode-b-delegation'),
+    createCloudflareAdminAgentAuditWriter(c.env)
   );
   const grant = await repository.getGrant(tenantId, form.grant_id);
   if (
@@ -787,7 +747,7 @@ export async function adminAgentDelegationHandler(
           grant.consentVersion
         )
       : Promise.resolve(false),
-    getClientCached(c, c.env, actor.clientId) as Promise<ClientMetadata | null>,
+    getClientCached(c, c.env, actor.clientId),
   ]);
   if (
     !delegatorPermissions ||
@@ -936,7 +896,8 @@ async function handleAdminAgentModeBExchange(
     return errorResponse(c, 'invalid_grant', 'Agent delegation binding is invalid');
   }
   const repository = new AdminAgentAccessRepository(
-    requireDedicatedAdminDatabaseAdapter(c.env, 'admin-agent-mode-b-exchange')
+    requireDedicatedAdminDatabaseAdapter(c.env, 'admin-agent-mode-b-exchange'),
+    createCloudflareAdminAgentAuditWriter(c.env)
   );
   const consumed = await repository.consumeModeBDelegationJti({
     jti,
@@ -964,7 +925,7 @@ async function handleAdminAgentModeBExchange(
           grant.consentVersion
         )
       : Promise.resolve(false),
-    getClientCached(c, c.env, actor.clientId) as Promise<ClientMetadata | null>,
+    getClientCached(c, c.env, actor.clientId),
   ]);
   const tokenScopes =
     typeof delegation.scope === 'string' ? requestedAgentScopes(delegation.scope) : [];
@@ -1126,7 +1087,7 @@ export async function adminAgentTokenHandler(c: Context<{ Bindings: Env }>): Pro
   if (form.resource !== resource) {
     return errorResponse(c, 'invalid_target', 'resource must identify this MCP endpoint');
   }
-  const client = (await getClientCached(c, c.env, form.client_id)) as ClientMetadata | null;
+  const client = await getClientCached(c, c.env, form.client_id);
   if (!client || !selfServiceClientIsActive(client)) {
     return errorResponse(c, 'invalid_client', 'Client authentication failed', 401);
   }
@@ -1140,7 +1101,7 @@ export async function adminAgentTokenHandler(c: Context<{ Bindings: Env }>): Pro
   if (!credentials.ok) {
     return errorResponse(c, credentials.error, credentials.errorDescription, 401);
   }
-  const publicClient = (client.token_endpoint_auth_method as string | undefined) === 'none';
+  const publicClient = client.token_endpoint_auth_method === 'none';
   if (publicClient) {
     const methodValidation = validateRegisteredClientAuthenticationMethod(
       client,
@@ -1247,7 +1208,8 @@ export async function adminAgentTokenHandler(c: Context<{ Bindings: Env }>): Pro
   }
   const delegatorId = codeData.userId.slice('admin_user:'.length);
   const repository = new AdminAgentAccessRepository(
-    requireDedicatedAdminDatabaseAdapter(c.env, 'admin-agent-token')
+    requireDedicatedAdminDatabaseAdapter(c.env, 'admin-agent-token'),
+    createCloudflareAdminAgentAuditWriter(c.env)
   );
   const grant = await repository.getGrant(tenantId, codeData.agentGrantId);
   const currentPermissions = await repository.getActiveDelegatorPermissions(

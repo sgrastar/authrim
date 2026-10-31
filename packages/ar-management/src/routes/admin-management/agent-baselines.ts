@@ -1,3 +1,4 @@
+import { createCloudflareAdminAgentAuditWriter } from '@authrim/ar-agent-access/platform/cloudflare/admin-agent-audit-writer';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import {
@@ -32,6 +33,7 @@ import {
 } from '@authrim/ar-lib-core';
 import { isAgentMcpEnabled, type AgentManagementEnv } from '../../agent-downscope-auth';
 import { isFreshAdminHuman } from '../../agent-fresh-auth';
+import { actorReachesTenants } from './tenant-reach';
 
 type BaselineContext = Context<{
   Bindings: AgentManagementEnv;
@@ -76,9 +78,12 @@ function permitted(c: BaselineContext, permission: string): boolean {
   return hasAdminPermission(auth(c).permissions ?? [], permission);
 }
 
-function tenantScoped(c: BaselineContext, tenantIds: readonly string[]): boolean {
-  const scope = auth(c).tenantScope ?? [];
-  return scope.includes('*') || tenantIds.every((tenantId) => scope.includes(tenantId));
+function tenantScoped(
+  c: BaselineContext,
+  tenantIds: readonly string[],
+  permission: string
+): boolean {
+  return actorReachesTenants(auth(c), controlTenant(c), tenantIds, permission);
 }
 
 function error(c: BaselineContext, status: 400 | 403 | 404 | 409 | 503, code: string) {
@@ -99,9 +104,12 @@ async function body(c: BaselineContext): Promise<Record<string, unknown> | null>
 function repositories(c: BaselineContext) {
   const database = requireDedicatedAdminDatabaseAdapter(c.env, 'agent-baseline-management');
   return {
-    baseline: new AgentBaselineRepository(database),
-    bulk: new AgentBulkRepository(database),
-    configuration: new AgentConfigurationRepository(database),
+    baseline: new AgentBaselineRepository(database, createCloudflareAdminAgentAuditWriter(c.env)),
+    bulk: new AgentBulkRepository(database, createCloudflareAdminAgentAuditWriter(c.env)),
+    configuration: new AgentConfigurationRepository(
+      database,
+      createCloudflareAdminAgentAuditWriter(c.env)
+    ),
   };
 }
 
@@ -241,6 +249,11 @@ agentTemplatesRouter.get('/:id/:version/copies', async (c) => {
   if (!Number.isSafeInteger(itemVersion) || itemVersion < 1) {
     return error(c, 400, 'AGENT_TEMPLATE_INVALID_VERSION');
   }
+  // A template is looked up by ID alone; only the tenant that published it sees its copies.
+  const template = await repositories(c).baseline.getTemplate(c.req.param('id'), itemVersion);
+  if (!template || template.sourceTenantId !== controlTenant(c)) {
+    return error(c, 404, 'AGENT_TEMPLATE_NOT_FOUND');
+  }
   return c.json({
     copies: await repositories(c).baseline.listTemplateCopies(c.req.param('id'), itemVersion),
   });
@@ -271,14 +284,14 @@ agentTemplatesRouter.post('/:id/:version/copies', async (c) => {
     typeof bulkPlanVersion !== 'number' ||
     !Number.isSafeInteger(bulkPlanVersion) ||
     bulkPlanVersion < 1 ||
-    !tenantScoped(c, tenantIds as string[]) ||
+    !tenantScoped(c, tenantIds as string[], ADMIN_PERMISSIONS.AGENT_TEMPLATES_PUBLISH) ||
     !(await activeTenants(c, tenantIds as string[]))
   ) {
     return error(c, 400, 'AGENT_TEMPLATE_COPY_INVALID');
   }
   const { baseline, bulk } = repositories(c);
   const template = await baseline.getTemplate(c.req.param('id'), itemVersion);
-  if (!template || template.status !== 'active') {
+  if (!template || template.status !== 'active' || template.sourceTenantId !== controlTenant(c)) {
     return error(c, 404, 'AGENT_TEMPLATE_NOT_FOUND');
   }
   const plan = await bulk.get(controlTenant(c), bulkPlanId, bulkPlanVersion);
@@ -420,7 +433,7 @@ agentBaselinesRouter.post('/:id/:version/assignments', async (c) => {
     typeof bulkPlanVersion !== 'number' ||
     !Number.isSafeInteger(bulkPlanVersion) ||
     bulkPlanVersion < 1 ||
-    !tenantScoped(c, [tenantId])
+    !tenantScoped(c, [tenantId], ADMIN_PERMISSIONS.AGENT_BASELINES_APPLY)
   ) {
     return error(c, 400, 'AGENT_BASELINE_ASSIGNMENT_INVALID');
   }
@@ -470,7 +483,7 @@ agentBaselinesRouter.post('/assignments/:assignmentId/evaluate', async (c) => {
   const repository = repositories(c).baseline;
   const context = await repository.getAssignmentContext(controlTenant(c), assignmentId);
   if (!context) return error(c, 404, 'AGENT_BASELINE_ASSIGNMENT_NOT_FOUND');
-  if (!tenantScoped(c, [context.assignment.tenantId])) {
+  if (!tenantScoped(c, [context.assignment.tenantId], ADMIN_PERMISSIONS.AGENT_BASELINES_APPLY)) {
     return error(c, 403, 'ADMIN_INSUFFICIENT_TENANT_SCOPE');
   }
   if (context.baseline.status !== 'active') {
@@ -606,7 +619,7 @@ agentBaselinesRouter.post('/assignments/:assignmentId/exceptions', async (c) => 
   const repository = repositories(c).baseline;
   const context = await repository.getAssignmentContext(controlTenant(c), assignmentId);
   if (!context) return error(c, 404, 'AGENT_BASELINE_ASSIGNMENT_NOT_FOUND');
-  if (!tenantScoped(c, [context.assignment.tenantId])) {
+  if (!tenantScoped(c, [context.assignment.tenantId], ADMIN_PERMISSIONS.AGENT_BASELINES_APPLY)) {
     return error(c, 403, 'ADMIN_INSUFFICIENT_TENANT_SCOPE');
   }
   const id = `abx_${crypto.randomUUID()}`;

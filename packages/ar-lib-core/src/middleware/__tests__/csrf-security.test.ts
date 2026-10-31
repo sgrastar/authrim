@@ -4,13 +4,13 @@ import type { Env } from '../../types/env';
 
 const mocks = vi.hoisted(() => ({
   tenantSettings: null as Record<string, unknown> | null,
-  getTenantSettings: vi.fn(),
+  getTenantSettingsDocument: vi.fn(),
   logInfo: vi.fn(),
   logWarn: vi.fn(),
 }));
 
 vi.mock('../../utils/tenant-settings', () => ({
-  getTenantSettings: mocks.getTenantSettings,
+  getTenantSettingsDocument: mocks.getTenantSettingsDocument,
 }));
 
 vi.mock('../../utils/logger', () => ({
@@ -46,7 +46,7 @@ describe('CSRF middleware security decision table', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.tenantSettings = null;
-    mocks.getTenantSettings.mockImplementation(async () => mocks.tenantSettings);
+    mocks.getTenantSettingsDocument.mockImplementation(async () => mocks.tenantSettings);
   });
 
   it.each(['GET', 'HEAD', 'OPTIONS'])(

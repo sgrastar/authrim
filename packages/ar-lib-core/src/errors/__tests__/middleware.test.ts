@@ -11,7 +11,11 @@ import {
   errorMiddleware,
 } from '../middleware';
 
-type TestEnv = { AUTHRIM_CONFIG?: { get: (key: string) => Promise<string | null> } };
+type TestEnv = {
+  AUTHRIM_CONFIG?: { get: (key: string) => Promise<string | null> };
+  SETTINGS?: { get: (key: string) => Promise<string | null> };
+  ERROR_RESPONSE_FORMAT?: string;
+};
 
 function appWithError(
   error: unknown,
@@ -88,19 +92,18 @@ describe('error middleware', () => {
 
   it('uses valid KV locale, format, and error-id settings', async () => {
     const values: Record<string, string> = {
-      error_locale: 'ja',
-      error_response_format: 'problem_details',
-      error_id_mode: 'all',
+      'settings:platform:oauth': JSON.stringify({
+        'oauth.error_locale': 'ja',
+        'oauth.error_response_format': 'problem_details',
+        'oauth.error_id_mode': 'all',
+      }),
     };
     const kv = { get: vi.fn(async (key: string) => values[key] ?? null) };
-    const { app, env } = appWithError(new RFCError('invalid_request', 400), {
-      AUTHRIM_CONFIG: kv,
-    });
+    const { app, env } = appWithError(new RFCError('invalid_request', 400), { SETTINGS: kv });
 
     const response = await app.request('/test', {}, env);
 
     expect(response.headers.get('content-type')).toContain('application/problem+json');
-    expect(kv.get).toHaveBeenCalledTimes(3);
   });
 
   it.each([
@@ -112,6 +115,82 @@ describe('error middleware', () => {
     });
 
     const response = await app.request('/authorize', {}, env);
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get('content-type')).toContain('application/json');
+  });
+
+  it("uses the tenant's Settings API format over the value saved in AUTHRIM_CONFIG", async () => {
+    const settings: Record<string, string> = {
+      'settings:tenant:default:oauth': JSON.stringify({
+        'oauth.error_response_format': 'problem_details',
+      }),
+    };
+    const { app, env } = appWithError(new RFCError('invalid_request', 400), {
+      AUTHRIM_CONFIG: { get: async (key) => (key === 'error_response_format' ? 'oauth' : null) },
+      SETTINGS: { get: async (key) => settings[key] ?? null },
+    });
+
+    const response = await app.request('/test', {}, env);
+
+    expect(response.headers.get('content-type')).toContain('application/problem+json');
+  });
+
+  it('uses the format from env when nothing is saved', async () => {
+    const { app, env } = appWithError(new RFCError('invalid_request', 400), {
+      ERROR_RESPONSE_FORMAT: 'problem_details',
+    });
+
+    const response = await app.request('/test', {}, env);
+
+    expect(response.headers.get('content-type')).toContain('application/problem+json');
+  });
+
+  it('applies saved error settings even when unrelated settings documents are broken', async () => {
+    const { app, env } = appWithError(new RFCError('invalid_request', 400), {
+      SETTINGS: {
+        get: async (key) =>
+          key === 'settings:platform:oauth'
+            ? JSON.stringify({ 'oauth.error_response_format': 'problem_details' })
+            : key === 'settings:platform:security'
+              ? 'not json'
+              : null,
+      },
+    });
+
+    const response = await app.request('/test', {}, env);
+
+    expect(response.headers.get('content-type')).toContain('application/problem+json');
+  });
+
+  it('uses its defaults when a saved error setting cannot be read, and backs off re-reading', async () => {
+    const get = vi.fn(async (key: string) => {
+      if (key === 'settings:platform:oauth') throw new Error('kv unavailable');
+      return null;
+    });
+    const { app, env } = appWithError(new RFCError('invalid_request', 400), {
+      SETTINGS: { get },
+    });
+
+    const first = await app.request('/test', {}, env);
+    expect(first.headers.get('content-type')).toContain('application/json');
+    const readsAfterFirst = get.mock.calls.length;
+    expect(readsAfterFirst).toBeGreaterThan(0);
+    await app.request('/test', {}, env);
+    await app.request('/test', {}, env);
+    expect(get.mock.calls.length).toBe(readsAfterFirst);
+  });
+
+  it('keeps the OAuth format when the Settings API cannot be read', async () => {
+    const { app, env } = appWithError(new RFCError('invalid_request', 400), {
+      SETTINGS: {
+        get: async () => {
+          throw new Error('kv unavailable');
+        },
+      },
+    });
+
+    const response = await app.request('/test', {}, env);
 
     expect(response.status).toBe(400);
     expect(response.headers.get('content-type')).toContain('application/json');

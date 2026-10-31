@@ -1,0 +1,21 @@
+<script lang="ts">
+	import type { AdminAccess } from '$lib/access/access';
+	import type { SettingsClient } from '$lib/api/settings';
+	import { PROTECTION } from '$lib/settings/placement';
+	import SettingsPage from '$lib/settings/SettingsPage.svelte';
+
+	/**
+	 * Authentication → Attack protection. A settings page: what it shows is its placement
+	 * (`PROTECTION`); loading, access, saving and notices are SettingsPage's.
+	 */
+	interface Props {
+		client: SettingsClient;
+		tenantId: string;
+		/** Who is looking; the signed-in admin unless given (Storybook). */
+		access?: AdminAccess;
+	}
+
+	let { client, tenantId, access }: Props = $props();
+</script>
+
+<SettingsPage page={PROTECTION} {client} target={{ level: 'tenant', tenantId }} {access} />

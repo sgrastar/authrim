@@ -14,7 +14,6 @@ import type { CategoryMeta, SettingMeta } from '../../utils/settings-manager';
 export interface DiscoverySettings {
   // Claims Configuration
   'discovery.claims_supported': string;
-  'discovery.claims_locales_supported': string;
 
   // ACR Configuration
   'discovery.acr_values_supported': string;
@@ -27,26 +26,18 @@ export const DISCOVERY_SETTINGS_META: Record<keyof DiscoverySettings, SettingMet
   'discovery.claims_supported': {
     key: 'discovery.claims_supported',
     type: 'string',
-    default:
-      'sub,name,given_name,family_name,preferred_username,email,email_verified,picture,locale,updated_at',
-    envKey: 'DISCOVERY_CLAIMS_SUPPORTED',
+    // Empty: discovery advertises the claims Authrim can issue.
+    default: '',
     label: 'Supported Claims',
-    description: 'Comma-separated list of supported claims in UserInfo and ID tokens',
-    visibility: 'admin',
-  },
-  'discovery.claims_locales_supported': {
-    key: 'discovery.claims_locales_supported',
-    type: 'string',
-    default: 'en,ja',
-    envKey: 'DISCOVERY_CLAIMS_LOCALES_SUPPORTED',
-    label: 'Supported Claim Locales',
-    description: 'Comma-separated list of supported locales for claims',
+    description:
+      'Comma-separated claims discovery advertises as claims_supported; empty advertises the claims Authrim can issue',
     visibility: 'admin',
   },
   'discovery.acr_values_supported': {
     key: 'discovery.acr_values_supported',
     type: 'string',
-    default: 'urn:authrim:acr:basic,urn:authrim:acr:mfa',
+    // What discovery has always advertised; with assurance enabled, urn:authrim:aal:1..3 are added.
+    default: 'urn:mace:incommon:iap:silver,urn:mace:incommon:iap:bronze',
     envKey: 'DISCOVERY_ACR_VALUES_SUPPORTED',
     label: 'Supported ACR Values',
     description: 'Comma-separated list of supported Authentication Context Class References',
@@ -68,8 +59,6 @@ export const DISCOVERY_CATEGORY_META: CategoryMeta = {
  * Default Discovery settings values
  */
 export const DISCOVERY_DEFAULTS: DiscoverySettings = {
-  'discovery.claims_supported':
-    'sub,name,given_name,family_name,preferred_username,email,email_verified,picture,locale,updated_at',
-  'discovery.claims_locales_supported': 'en,ja',
-  'discovery.acr_values_supported': 'urn:authrim:acr:basic,urn:authrim:acr:mfa',
+  'discovery.claims_supported': '',
+  'discovery.acr_values_supported': 'urn:mace:incommon:iap:silver,urn:mace:incommon:iap:bronze',
 };

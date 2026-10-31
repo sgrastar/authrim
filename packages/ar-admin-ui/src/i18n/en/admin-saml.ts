@@ -370,6 +370,14 @@ const adminSaml = {
 	admin_saml_detail_identity_mapping_policy_hint:
 		'Selects the active Field Mapping Set used for inbound and outbound SAML attribute mapping.',
 	admin_saml_detail_identity_mapping_policy_link: 'Manage Field Mapping Sets',
+	admin_saml_detail_minimum_ial: 'Minimum identity assurance level',
+	admin_saml_detail_minimum_ial_none: 'No minimum',
+	admin_saml_detail_minimum_ial_hint:
+		'A person whose identity has not been proofed to this level (NIST SP 800-63A IAL) gets no assertion for this SP: it is answered with a RequestDenied status, or the error page for an IdP-initiated sign-in. Applies whether or not assurance is on for the tenant.',
+	admin_saml_detail_minimum_aal: 'Minimum authentication assurance level',
+	admin_saml_detail_minimum_aal_none: 'No minimum',
+	admin_saml_detail_minimum_aal_hint:
+		"A sign-in below this level (NIST SP 800-63B AAL) is sent to authenticate again once, its factors combined with the new sign-in's. If it still falls short, the SP is answered with NoAuthnContext (an IdP-initiated sign-in gets the error page). Applies whether or not assurance is on for the tenant. The bundled login UI asks the person to authenticate again, on its re-authentication page, as the same user with a passkey, email code or TOTP the tenant allows for re-authentication (their re-authentication setting, not their sign-in setting); a session proven before the step-up began is never counted.",
 	admin_saml_detail_authn_request_signature: 'AuthnRequest signature verification',
 	admin_saml_detail_authn_request_signature_hint:
 		'Controls whether AuthnRequests from this SP must be signed. Use Optional or Required for normal SPs; use Disabled only for an explicit exception.',
@@ -378,7 +386,7 @@ const adminSaml = {
 		'Controls whether LogoutRequests from this SP must be signed. Required is the default.',
 	admin_saml_detail_authn_context_mode: 'AuthnContext emission mode',
 	admin_saml_detail_authn_context_mode_hint:
-		'Choose whether Assertion AuthnContextClassRef follows the actual login session or uses a fixed value.',
+		'Choose whether Assertion AuthnContextClassRef follows the actual login session, uses a fixed value, or is the class reference mapped to the assurance level the sign-in reached (Assurance level; see the SAML AuthnContext AAL setting under Assurance levels).',
 	admin_saml_detail_default_authn_context: 'Default login AuthnContext',
 	admin_saml_detail_default_authn_context_hint:
 		'AuthnContextClassRef used for fixed emission or ordinary logins. Most SPs accept PasswordProtectedTransport.',
@@ -401,6 +409,7 @@ const adminSaml = {
 	admin_saml_detail_require_allowed: 'Require allowed value',
 	admin_saml_detail_session_aware: 'Session aware',
 	admin_saml_detail_legacy_static: 'Legacy static',
+	admin_saml_detail_assurance_level: 'Assurance level',
 	admin_saml_detail_certificate_valid: 'Valid X.509 certificate',
 	admin_saml_detail_key_size: 'Key Size',
 	admin_saml_detail_bits: '{bits:number} bits',

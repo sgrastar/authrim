@@ -768,6 +768,28 @@ const id: Translations = {
   'web.lightMode': 'Terang',
   'web.systemMode': 'Sistem',
 
+  // Web UI cloud platform selection
+  'web.platform.title': 'Pilih platform cloud',
+  'web.platform.description': 'Pilih cloud tempat Anda ingin menyiapkan Authrim.',
+  'web.platform.cloudflareAction': 'Siapkan di Cloudflare',
+  'web.platform.cloudflareDescription': 'Siapkan Authrim di Cloudflare Workers.',
+  'web.platform.awsAction': 'Siapkan di AWS',
+  'web.platform.development': 'Dalam pengembangan',
+  'web.platform.awsScope': 'Saat ini hanya mendukung SAML DR',
+  'web.platform.choose': 'Pilih',
+  'web.platform.back': 'Kembali ke pilihan cloud',
+  'web.platform.awsTitle': 'Siapkan SAML DR di AWS',
+  'web.platform.awsDescription':
+    'Siapkan lingkungan pemulihan SAML IdP untuk menghadapi gangguan Cloudflare.',
+  'web.platform.awsGuide':
+    'Perintah penyiapan AWS saat ini mendukung pemeriksaan prasyarat dan perencanaan deployment. Penyiapan melalui browser masih dalam pengembangan.',
+  'web.platform.awsPrerequisites':
+    'Siapkan akun AWS, wilayah, dan profil untuk masuk melalui peran khusus.',
+  'web.platform.awsCommand': 'Perintah pemeriksaan prasyarat',
+  'web.platform.awsCommandNote': 'Ganti ID akun dan nama profil sesuai pengaturan AWS Anda.',
+  'web.platform.targetPending': 'Belum dipilih',
+  'web.platform.chooseCloudflare': 'Lanjutkan ke penyiapan Cloudflare',
+
   // Web UI Prerequisites
   'web.prereq.title': 'Siap',
   'web.prereq.checking': 'Memeriksa...',
@@ -1093,6 +1115,12 @@ const id: Translations = {
   'web.comp.adminUi': 'UI Admin',
   'web.comp.adminUiDesc':
     'Dashboard admin untuk mengelola tenant, klien, pengguna, dan pengaturan sistem.',
+  'web.comp.adminUiVariant': 'Paket UI admin',
+  'web.comp.adminUiLegacy': 'UI admin saat ini',
+  'web.comp.adminUiLegacyDesc': 'UI admin yang digunakan saat ini, dengan semua fitur.',
+  'web.comp.adminUiConsole': 'Konsol admin (pratinjau)',
+  'web.comp.adminUiConsoleDesc':
+    'Konsol admin yang didesain ulang. Fitur ditambahkan satu per satu; item yang belum dibangun ulang menampilkan placeholder. Menggunakan URL dan passkey administrator yang sama dengan UI admin saat ini.',
 
   // Web UI Domain Row Labels
   'web.domain.loginUi': 'UI Login',
@@ -1338,6 +1366,8 @@ const id: Translations = {
   'web.status.adminNotConfigured': 'Admin Belum Dikonfigurasi',
   'web.status.initializing': 'Menginisialisasi...',
   'web.status.found': '{{count}} ditemukan',
+  'web.status.serverUnreachable':
+    'Tidak dapat terhubung ke server Setup. Pastikan server masih berjalan di terminal Anda, mulai ulang jika perlu, lalu coba lagi.',
   'web.status.operationInProgress':
     'Operasi penyiapan lain sedang berlangsung. Tunggu hingga selesai, lalu coba lagi.',
   'web.status.warning': 'Peringatan:',

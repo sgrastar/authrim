@@ -30,6 +30,18 @@ export interface ParsedClaimsRequest {
   _asc?: ClaimsRequestASC;
 }
 
+/**
+ * The claim OpenID Connect for Identity Assurance verified claims are returned as. Not issued yet;
+ * the name is reserved so no identity mapping or token claim rule can write it.
+ */
+export const VERIFIED_CLAIMS_CLAIM = 'verified_claims';
+
+/**
+ * The claim (and scope) that carries the assurance values of a person's IAL, as REFEDS and the
+ * research and education federations name it.
+ */
+export const EDUPERSON_ASSURANCE_CLAIM = 'eduperson_assurance';
+
 export interface OIDCClaimsClientPolicy {
   allow_claims_without_scope?: boolean;
   claims_parameter_policy?: Record<string, ClaimReleasePolicy>;
@@ -77,12 +89,20 @@ export const EMAIL_CLAIMS = ['email', 'email_verified'] as const;
 export const PHONE_CLAIMS = ['phone_number', 'phone_number_verified'] as const;
 export const ADDRESS_CLAIMS = ['address'] as const;
 
-const CLAIM_SCOPE: Record<string, string> = {
+/**
+ * The scope that releases each standard claim (OIDC Core 5.4), and the scope that releases
+ * `eduperson_assurance`. `sub` and the protocol claims are not scope-gated and so are absent. The
+ * Destination Profile release filter reads this too, to treat a claim whose profile field names no
+ * scope as requiring its own.
+ */
+export const OIDC_STANDARD_CLAIM_SCOPE: Readonly<Record<string, string>> = {
   ...Object.fromEntries(PROFILE_CLAIMS.map((claim) => [claim, 'profile'])),
   ...Object.fromEntries(EMAIL_CLAIMS.map((claim) => [claim, 'email'])),
   ...Object.fromEntries(PHONE_CLAIMS.map((claim) => [claim, 'phone'])),
   address: 'address',
+  [EDUPERSON_ASSURANCE_CLAIM]: EDUPERSON_ASSURANCE_CLAIM,
 };
+const CLAIM_SCOPE = OIDC_STANDARD_CLAIM_SCOPE;
 
 const PREDEFINED_TRANSFORMED_BASE_CLAIM: Record<string, string> = {
   age_over_13: 'birthdate',
@@ -130,7 +150,7 @@ export function parseClaimsRequest(claims?: string): ClaimsEvaluationResult & {
     };
   }
 
-  const root = parsed as Record<string, unknown>;
+  const root = parsed;
   // OIDC Core 5.5 requires members that are not understood to be ignored. Only
   // validate sections implemented by Authrim; extension members must not turn an
   // otherwise valid authorization request into an error.
@@ -210,7 +230,7 @@ function validateASC(
     };
   }
 
-  const ascValue = value as Record<string, unknown>;
+  const ascValue = value;
   const asc: ClaimsRequestASC = {};
 
   if (ascValue.transformed_claims !== undefined) {
@@ -221,7 +241,7 @@ function validateASC(
         error_description: 'claims._asc.transformed_claims must be an object',
       };
     }
-    asc.transformed_claims = ascValue.transformed_claims as Record<string, unknown>;
+    asc.transformed_claims = ascValue.transformed_claims;
   }
 
   if (ascValue.sao !== undefined) {
@@ -234,7 +254,7 @@ function validateASC(
     }
     const sao: Partial<Record<ClaimsTarget, SAORule[]>> = {};
     for (const target of ['id_token', 'userinfo'] as const) {
-      const rules = (ascValue.sao as Record<string, unknown>)[target];
+      const rules = ascValue.sao[target];
       if (rules === undefined) continue;
       if (!Array.isArray(rules)) {
         return {
@@ -264,7 +284,7 @@ function validateSAORule(
   if (!isPlainObject(value)) {
     return { ok: false, error: 'invalid_request', error_description: `${path} must be an object` };
   }
-  const rule = value as Record<string, unknown>;
+  const rule = value;
   const method = (rule.method ?? 'exists') as string;
 
   if (typeof rule.loc !== 'string' || !rule.loc.startsWith('/')) {
@@ -497,6 +517,67 @@ export function buildStandardUserClaims(user: {
   };
 }
 
+/** The standard user claims buildStandardUserClaims produces from a user's own attributes. */
+const STANDARD_USER_ATTRIBUTE_CLAIMS: ReadonlySet<string> = new Set([
+  'name',
+  'family_name',
+  'given_name',
+  'middle_name',
+  'nickname',
+  'preferred_username',
+  'profile',
+  'picture',
+  'website',
+  'gender',
+  'birthdate',
+  'zoneinfo',
+  'locale',
+  'updated_at',
+  'email',
+  'email_verified',
+  'phone_number',
+  'phone_number_verified',
+  'address',
+]);
+
+/** The neutral names an identity mapping reads for two standard claims. */
+const NEUTRAL_USER_ATTRIBUTE_ALIASES: Readonly<Record<string, string>> = {
+  display_name: 'name',
+  picture_url: 'picture',
+};
+
+/**
+ * A user's attributes under the standard claim names: an attribute held only under a neutral
+ * alias (`display_name`, `picture_url`) gives the standard claim it stands for. For attributes
+ * named as a field catalog names them (a test user's), before `buildStandardUserClaims`.
+ */
+export function withStandardUserAttributeNames(
+  attributes: Readonly<Record<string, unknown>>
+): Record<string, unknown> {
+  const named: Record<string, unknown> = { ...attributes };
+  for (const [alias, claim] of Object.entries(NEUTRAL_USER_ATTRIBUTE_ALIASES)) {
+    if (!Object.hasOwn(named, claim) && Object.hasOwn(attributes, alias)) {
+      named[claim] = attributes[alias];
+    }
+  }
+  return named;
+}
+
+/**
+ * Of the attribute names an identity mapping reads, the standard user claims they stand for (a
+ * neutral alias resolves to its claim). Custom attributes are not among them: they are not the
+ * user's standard attributes and are read by the custom claim resolver, so a mapping that reads
+ * only those needs none of the user's profile or contact values.
+ */
+export function standardUserAttributeNames(names: readonly string[]): string[] {
+  const standard = new Set<string>();
+  for (const name of names) {
+    const claim = NEUTRAL_USER_ATTRIBUTE_ALIASES[name] ?? name;
+    if (STANDARD_USER_ATTRIBUTE_CLAIMS.has(claim)) standard.add(claim);
+  }
+  return [...standard];
+}
+
 export function hasSAORulesForTarget(
   claimsRequest: ParsedClaimsRequest | undefined,
   target: ClaimsTarget
@@ -512,7 +593,8 @@ function matchesClaimRequest(value: unknown, request: OIDCIndividualClaimRequest
   return true;
 }
 
-function canReleaseClaim(
+/** Whether the client's claims policy lets `claimName` be released to a request with these scopes. */
+export function canReleaseClaim(
   claimName: string,
   scopes: Set<string>,
   clientPolicy: OIDCClaimsClientPolicy

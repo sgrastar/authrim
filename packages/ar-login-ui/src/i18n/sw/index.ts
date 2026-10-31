@@ -1,6 +1,31 @@
 import type { Translation } from '../i18n-types';
 
 const translation = {
+	account_guestLogoutWarning:
+		'Ukiondoka, hutaweza kurudi kwenye akaunti hii ya mgeni. Jisajili kwanza ili uendelee kufikia akaunti na data zako. Ungependa kuondoka hata hivyo?',
+	account_guestTitle: 'Sajili akaunti yako',
+	account_guestDescription: 'Utabaki na akaunti na data zile zile utakapojisajili.',
+	account_guestDue: 'Inaweza kufutwa kiotomatiki kuanzia {date}.',
+	account_guestNoExpiry: 'Hakuna ufutaji wa kiotomatiki uliopangwa.',
+	account_guestEmail: 'Anwani ya barua pepe',
+	account_guestSend: 'Jisajili kwa barua pepe',
+	account_guestPasskey: 'Jisajili kwa Passkey',
+	account_guestCode: 'Nambari ya uthibitisho',
+	account_guestConfirm: 'Kamilisha usajili',
+	account_guestPending: 'Usajili unaendelea. Unaweza kujaribu tena ili kuangalia kama umekamilika.',
+	account_guestRetry: 'Jaribu tena',
+	account_guestError:
+		'Usajili haukuweza kukamilika. Angalia nambari ya uthibitisho au ujaribu tena.',
+	account_guestCollision:
+		'Utambulisho huu tayari una akaunti. Ingia kwenye akaunti hiyo kando. Akaunti yako ya mgeni haitaunganishwa.',
+	account_guestExistingLogin: 'Ingia kwenye akaunti iliyopo',
+	account_guestRegistered: 'Akaunti yako imesajiliwa.',
+	account_guestChangeMethod: 'Chagua njia nyingine',
+	login_guestContinue: 'Endelea kama mgeni',
+	login_guestRetention:
+		'Akaunti za wageni zinaweza kufutwa kiotomatiki siku {days} baada ya kuundwa. Sajili akaunti ili kuendelea kuitumia.',
+	login_guestNoExpiry: 'Hakuna ufutaji wa kiotomatiki uliopangwa kwa akaunti mpya za wageni.',
+
 	app_title: 'Authrim',
 	app_subtitle: 'Utambulisho & Ufikiaji katika makali ya kila mahali.',
 	button_openDialog: 'Fungua kisanduku cha mazungumzo',
@@ -84,6 +109,32 @@ const translation = {
 	account_delete: 'Futa',
 	account_empty: 'Hakuna vitu',
 	account_planned: 'Iliyotayarishwa',
+	account_socialEmpty: 'Hakuna akaunti za nje zilizounganishwa.',
+	account_socialLinkHeading: 'Unganisha akaunti',
+	account_socialLinkWith: 'Unganisha {provider}',
+	account_socialNoProviders: 'Hakuna watoaji wengine wanaopatikana kuunganisha.',
+	account_socialLinkedAt: 'Iliunganishwa {date}',
+	account_socialLastUsed: 'Ilitumika mwisho {date}',
+	account_socialUnlink: 'Tenganisha',
+	account_socialUnlinkConfirm:
+		'Tenganisha {provider}? Hutaweza tena kuingia kwa kutumia akaunti hiyo.',
+	account_socialUnlinkConfirmAction: 'Tenganisha {provider}',
+	account_socialLinked: 'Akaunti imeunganishwa.',
+	account_socialUnlinked: 'Akaunti imetenganishwa.',
+	account_socialErrorAlreadyLinked: 'Akaunti hiyo tayari imeunganishwa na mtumiaji mwingine.',
+	account_socialErrorAlreadyLinkedHere: 'Mtoaji huyo tayari ameunganishwa na akaunti yako.',
+	account_socialErrorEmailNotVerified:
+		'Mtoaji hajathibitisha anwani ya barua pepe ya akaunti hiyo.',
+	account_socialErrorSessionExpired:
+		'Uthibitisho wako uliisha muda kabla ya kuunganisha kukamilika. Thibitisha tena kisha ujaribu tena.',
+	account_socialErrorCancelled: 'Kuunganisha kumeghairiwa.',
+	account_socialErrorFailed: 'Imeshindwa kuunganisha akaunti. Jaribu tena.',
+	account_socialErrorLastMethod:
+		'Hii ndiyo njia yako ya mwisho ya kuingia. Ongeza Passkey au njia nyingine ya kuingia kwanza.',
+	account_socialErrorInProgress:
+		'Badiliko jingine kwenye njia zako za kuingia linaendelea. Jaribu tena baada ya muda mfupi.',
+	account_operationSocialLinked: 'Akaunti ya nje imeunganishwa',
+	account_operationSocialUnlinked: 'Akaunti ya nje imetenganishwa',
 	account_passkeyUnsupported: 'Kivinjari hiki hakiungi mkono usajili Passkey.',
 	account_passkeyRegistrationCancelled:
 		'Usajili wa Passkey ulifutwa au ulifutwa. Tafadhali jaribu tena.',
@@ -119,12 +170,30 @@ const translation = {
 	account_actionFailed: 'Operesheni hiyo ilishindwa',
 	account_remainingLoginMethodRequired:
 		'Ongeza mbinu nyingine ya kuingia kabla ya kufuta mbinu hii.',
+	account_activityIncomplete: 'Matokeo ya shughuli hayajakamilika. Tafadhali jaribu tena baadaye.',
+	account_activityLoadMore: 'Pakia shughuli za awali',
 	account_activityTitle: 'Shughuli',
 	account_operationNameUpdated: 'Jina limebadilishwa',
 	account_operationPasskeyCreated: 'Passkey imeongezwa',
 	account_operationPasskeyUpdated: 'Jina la Passkey limebadilishwa',
 	account_operationPasskeyDeleted: 'Passkey ilifutwa',
 	account_operationSessionRevoked: 'Mkutano uliomalizika',
+	account_operationGuestCreated: 'Akaunti ya mgeni imeundwa',
+	account_operationGuestUpgradeFailed: 'Usajili wa mgeni umeshindwa',
+	account_operationGuestUpgradeStarted: 'Usajili wa mgeni umeanza',
+	account_operationGuestUpgraded: 'Akaunti ya mgeni imesajiliwa',
+	account_operationEmailAdded: 'Barua pepe imeongezwa',
+	account_operationEmailChanged: 'Barua pepe imebadilishwa',
+	account_operationEmailReauthenticated: 'Imethibitishwa tena kwa barua pepe',
+	account_operationDeviceUpdated: 'Jina la kifaa limebadilishwa',
+	account_operationDeviceUnlinked: 'Kifaa kimetenganishwa',
+	account_operationPasskeyReauthenticated: 'Imethibitishwa tena kwa Passkey',
+	account_operationTotpEnrollmentStarted: 'Usanidi wa programu ya uthibitishaji umeanza',
+	account_operationTotpActivated: 'Programu ya uthibitishaji imewashwa',
+	account_operationTotpUpdated: 'Jina la programu ya uthibitishaji limebadilishwa',
+	account_operationTotpRemoved: 'Programu ya uthibitishaji imeondolewa',
+	account_operationTotpBackupCodesRegenerated: 'Nambari za chelezo zimezalishwa upya',
+	account_operationTotpReauthenticated: 'Imethibitishwa tena kwa programu ya uthibitishaji',
 	account_launcherTitle: 'Programu zangu',
 	account_launcherDescription: 'Tafuta na ufungue programu zinazopatikana kwako.',
 	account_launcherLoadFailed: 'Programu hazikuweza kupakiwa.',
@@ -189,6 +258,8 @@ const translation = {
 	login_humanVerificationLoading: 'Upakiaji wa ukaguzi wa usalama...',
 	login_humanVerificationLoadFailed:
 		'Ukaguzi wa usalama haukuweza kupakiwa. Pakia tena ukurasa na ujaribu tena.',
+	login_humanVerificationUnavailable:
+		'Uthibitishaji wa binadamu haupatikani kwa sasa. Wasiliana na msimamizi wako.',
 	login_noMethodsAvailable:
 		'Hakuna njia ya uthibitisho imewezeshwa kwa ajili ya shirika hili. Wasiliana na msimamizi wako.',
 	login_passkeyPreparing: 'Inatayarisha uthibitishaji wa Passkey...',
@@ -268,7 +339,7 @@ const translation = {
 	emailCode_title: 'Angalia barua pepe yako',
 	emailCode_subtitle: 'Tumetuma nambari ya uthibitisho kwa',
 	emailCode_instructions:
-		'Ingiza msimbo wa tarakimu 6 kutoka kwenye barua pepe yako. Msimbo utaisha baada ya dakika 5.',
+		'Ingiza msimbo wa tarakimu 6 kutoka kwenye barua pepe yako. Barua pepe inaeleza muda ambao msimbo utadumu.',
 	emailCode_codeLabel: 'Nambari ya uthibitisho',
 	emailCode_verifyButton: 'Thibitisha',
 	emailCode_resendButton: 'Tuma msimbo tena',
@@ -323,11 +394,20 @@ const translation = {
 	error_temporarily_unavailable: 'Seva ya uidhinishaji haiwezi kushughulikia ombi kwa muda',
 	error_login_required: 'Uthibitishaji unahitajika. Tafadhali ingia ili kuendelea.',
 	error_unknown: 'Hitilafu isiyojulikana imetokea',
+	error_rateLimited: 'Majaribio mengi mno. Subiri kwa muda, kisha ujaribu tena.',
+	error_rateLimitedRetryAfter:
+		'Majaribio mengi mno. Jaribu tena baada ya takriban dakika {minutes}.',
+	error_unregisteredPostLogoutRedirectUri:
+		'Umetoka. Haukuweza kurudishwa kwenye programu kwa sababu anwani yake ya kurudi haijasajiliwa. Fungua programu tena mwenyewe.',
+	error_invalidIdTokenHint:
+		'Umetoka. Haukuweza kurudishwa kwenye programu kwa sababu ombi lake la kutoka halikuweza kuthibitishwa. Fungua programu tena mwenyewe.',
+	error_idTokenHintRequired:
+		'Umetoka. Haukuweza kurudishwa kwenye programu kwa sababu ombi lake la kutoka halikuwa kamili. Fungua programu tena mwenyewe.',
 	device_title: 'uthibitisho wa kifaa',
 	device_subtitle: 'Ingiza nambari iliyoonyeshwa kwenye kifaa chako',
 	device_codeLabel: 'Nambari ya uthibitisho',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint: 'Ingiza nambari ya herufi 8 kutoka kifaa chako (muundo: XXXX-XXXX)',
+	device_codeHint: 'Ingiza nambari iliyoonyeshwa kwenye kifaa chako',
 	device_verifyButton: 'Thibitisha msimbo',
 	device_confirmTitle: 'Idhinisha kifaa',
 	device_requestedPermissions: 'ruhusa zinazohitajika',
@@ -340,6 +420,13 @@ const translation = {
 	device_errorApproveFailed: 'Haijaidhinishwa kifaa',
 	device_errorDenyFailed: 'Haikuweza kukataa ombi la kifaa',
 	device_errorInvalidRedirect: 'URL isiyofaa ya kuelekeza upya iliyopokelewa kutoka kwa seva',
+	device_errorConsentWithdrawn:
+		'Ombi hili lilifanywa kabla hujaondoa ruhusa ya programu hii. Anza upya kwenye kifaa ili kupata nambari mpya.',
+	device_errorTryAgain:
+		'Uamuzi wako haukuweza kuhifadhiwa sasa na hakuna kilichobadilika. Jaribu tena baada ya muda mfupi.',
+	device_errorTooManyAttempts: 'Majaribio mengi mno. Subiri kwa muda, kisha ujaribu tena.',
+	device_errorOutcomeUnknown:
+		'Hatukuweza kuthibitisha kama uamuzi wako umehifadhiwa. Angalia kifaa, au weka nambari tena.',
 	ciba_title: 'Ombi la uthibitisho',
 	ciba_subtitle: 'Programu inaomba idhini yako',
 	ciba_noPendingRequests: 'Hakuna maombi ya uthibitisho yanayotarajiwa',
@@ -359,6 +446,17 @@ const translation = {
 	ciba_errorGeneric: 'Hitilafu ilitokea',
 	ciba_errorApproveFailed: 'Ombi halikuweza kuidhinishwa',
 	ciba_errorDenyFailed: 'Kushindwa kukataa ombi',
+	ciba_errorConsentWithdrawn:
+		'Ombi hili lilifanywa kabla hujaondoa ruhusa ya programu hii. Anza upya kutoka kwenye programu.',
+	ciba_errorRequestGone: 'Muda wa ombi hili umekwisha au tayari limejibiwa.',
+	error_authorizationRequestExpired:
+		'Ombi la kuingia limeisha muda wake. Anza tena kutoka kwenye programu.',
+	ciba_errorTryAgain:
+		'Uamuzi wako haukuweza kuhifadhiwa sasa na hakuna kilichobadilika. Jaribu tena baada ya muda mfupi.',
+	ciba_errorTooManyAttempts: 'Majaribio mengi mno. Subiri kwa muda, kisha ujaribu tena.',
+	ciba_errorOutcomeUnknown:
+		'Hatukuweza kuthibitisha kama jibu lako limehifadhiwa. Onyesha upya ili kuona maombi yanayosubiri bado.',
+	ciba_errorNoLongerWaiting: 'Hatukuweza kuthibitisha jibu lako, lakini ombi hili halisubiri tena.',
 	reauth_title: 'Thibitisha utambulisho wako',
 	reauth_subtitle: 'Kwa usalama, tafadhali thibitisha utambulisho wako tena ili kuendelea',
 	reauth_verifyWithPasskey: 'Thibitisha kwa Passkey',
@@ -395,6 +493,9 @@ const translation = {
 	login_extError_callbackFailed_title: 'Uthibitisho ulishindwa',
 	login_extError_callbackFailed_message:
 		'Hitilafu ilitokea wakati wa uthibitisho. Tafadhali jaribu tena.',
+	login_extError_reauthNotProven_title: 'Kuingia hakujathibitishwa',
+	login_extError_reauthNotProven_message:
+		'Mtoa huduma wako wa kuingia hakuthibitisha kuwa uliingia tena. Ingia tena au chagua njia nyingine.',
 	login_extError_default_title: 'Kosa la uthibitisho',
 	login_extError_default_message: 'Kosa lilitokea wakati wa uthibitisho wa nje.',
 	login_signingInTo: 'Inaingia kwenye:',

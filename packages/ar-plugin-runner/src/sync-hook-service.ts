@@ -9,6 +9,7 @@ import {
   type SyncHookGroup,
   type SyncHookTarget,
 } from './sync-hooks';
+import { EXTERNAL_GATE_OPEN } from './external-gate';
 
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
 const SAFE_CAPABILITY = /^[a-z][a-z0-9_.:-]{0,127}$/u;
@@ -152,6 +153,7 @@ export class SyncHookService {
             AND breaker.capability = ?
           WHERE installation.installation_id = ? AND installation.tenant_id = ?
             AND installation.state = 'enabled'
+            AND ${EXTERNAL_GATE_OPEN}
             AND ((installation.backend_kind = 'dynamic_worker'
                   AND release.version_digest IS NOT NULL
                   AND manifest.plugin_id IS NOT NULL

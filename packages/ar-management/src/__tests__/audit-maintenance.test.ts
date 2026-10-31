@@ -119,6 +119,12 @@ describe('cleanupResolvedAuditPrimaries', () => {
       piiArchived: 0,
       eventDeleted: 8,
       piiDeleted: 10,
+      failedTenants: 0,
+      tenantOutcomes: {
+        'archive-tenant': 'archive_only',
+        'd1-tenant': 'cleaned',
+        'pg-tenant': 'cleaned',
+      },
     });
 
     expect(d1EventAdapter.deleteTenantByRetention).toHaveBeenCalledWith(
@@ -174,6 +180,8 @@ describe('cleanupResolvedAuditPrimaries', () => {
       piiArchived: 0,
       eventDeleted: 0,
       piiDeleted: 0,
+      failedTenants: 0,
+      tenantOutcomes: { 'pg-tenant': 'not_supported' },
     });
     expect(d1EventAdapter.deleteTenantByRetention).not.toHaveBeenCalled();
     expect(d1PiiAdapter.deleteTenantByRetention).not.toHaveBeenCalled();
@@ -205,6 +213,8 @@ describe('cleanupResolvedAuditPrimaries', () => {
       piiArchived: 0,
       eventDeleted: 2,
       piiDeleted: 3,
+      failedTenants: 0,
+      tenantOutcomes: { 'mysql-tenant': 'cleaned' },
     });
   });
 
@@ -260,6 +270,8 @@ describe('cleanupResolvedAuditPrimaries', () => {
       piiArchived: 1,
       eventDeleted: 1,
       piiDeleted: 1,
+      failedTenants: 0,
+      tenantOutcomes: { 'tenant-1': 'cleaned' },
     });
     expect(archiveEventAdapter.writeEventLogBatch).toHaveBeenCalledWith(
       expect.arrayContaining([expect.objectContaining({ id: 'evt-1' })])
@@ -320,8 +332,62 @@ describe('cleanupResolvedAuditPrimaries', () => {
       piiArchived: 1,
       eventDeleted: 0,
       piiDeleted: 1,
+      failedTenants: 0,
+      tenantOutcomes: { 'tenant-1': 'archive_copy_failed' },
     });
     expect(d1EventAdapter.deleteTenantByRetention).not.toHaveBeenCalled();
     expect(d1PiiAdapter.deleteTenantByRetention).toHaveBeenCalledOnce();
+  });
+
+  it('records a tenant whose store fails and still cleans the next one', async () => {
+    const d1EventAdapter = createMockAdapter(2);
+    const d1PiiAdapter = createMockAdapter(1);
+    vi.mocked(d1EventAdapter.deleteTenantByRetention).mockImplementation(
+      async (_logType, _beforeTime, tenantId) => {
+        if (tenantId === 'broken-tenant') throw new Error('D1_ERROR: database unavailable');
+        return 2;
+      }
+    );
+
+    const summary = await cleanupResolvedAuditPrimaries({} as any, {
+      tenantIds: ['broken-tenant', 'tenant-1'],
+      resolveAuditProfile: async () =>
+        createAuditProfile('d1-primary', { type: 'd1', bindingRef: 'DB', dataset: 'event_log' }),
+      d1EventAdapter,
+      d1PiiAdapter,
+    });
+
+    expect(summary).toMatchObject({
+      processedTenants: 1,
+      failedTenants: 1,
+      eventDeleted: 2,
+      piiDeleted: 1,
+      tenantOutcomes: { 'broken-tenant': 'failed', 'tenant-1': 'cleaned' },
+    });
+  });
+
+  it('fails a tenant whose audit profile cannot be read, without stopping the others', async () => {
+    const d1EventAdapter = createMockAdapter(1);
+    const d1PiiAdapter = createMockAdapter(1);
+    const summary = await cleanupResolvedAuditPrimaries({} as any, {
+      tenantIds: ['unreadable', 'constructor'],
+      resolveAuditProfile: async (tenantId) => {
+        if (tenantId === 'unreadable') throw new Error('settings_unavailable');
+        return createAuditProfile('d1-primary', {
+          type: 'd1',
+          bindingRef: 'DB',
+          dataset: 'event_log',
+        });
+      },
+      d1EventAdapter,
+      d1PiiAdapter,
+    });
+
+    expect(summary.failedTenants).toBe(1);
+    expect(summary.pendingSupportTenants).toBe(0);
+    expect({ ...summary.tenantOutcomes }).toEqual({
+      unreadable: 'failed',
+      constructor: 'cleaned',
+    });
   });
 });

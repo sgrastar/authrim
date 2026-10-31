@@ -39,6 +39,7 @@ vi.mock('../user-import-jobs', async (importOriginal) => {
 });
 
 import {
+  cleanupDiagnosticLogs,
   cleanupOrphanedAuditTransientPayloads,
   cleanupOrphanedPublicAssets,
   deleteTenantPublicAssets,
@@ -88,6 +89,7 @@ describe('R2 scheduled storage maintenance', () => {
     mockEnsureDatabaseAdapter.mockReturnValue({
       execute: vi.fn().mockResolvedValue({ success: true, rowsAffected: 1 }),
       query: vi.fn().mockResolvedValue([]),
+      queryOne: vi.fn().mockResolvedValue(null),
     });
     mockResolveTenantUserStoreSourcesFromEnv.mockResolvedValue({ coreDb: {}, piiDb: {} });
     mockCreateSettingsManager.mockReturnValue({
@@ -144,19 +146,18 @@ describe('R2 scheduled storage maintenance', () => {
     await processR2StorageMaintenance(env, log);
     const dashboard = await getR2MaintenanceDashboard(env);
 
-    expect(dashboard.schedules).toHaveLength(7);
+    expect(dashboard.schedules).toHaveLength(11);
     expect(dashboard.schedules).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           id: 'r2_diagnostic_log_retention',
-          enabled: true,
-          status: 'succeeded',
-          lastCompletedAt: expect.any(Number),
-          nextRunAt: expect.any(Number),
+          enabled: false,
+          status: 'disabled',
+          nextRunAt: null,
         }),
       ])
     );
-    expect(mockDeleteByRetentionPage).toHaveBeenCalledOnce();
+    expect(mockDeleteByRetentionPage).not.toHaveBeenCalled();
     expect(publicAssets.delete).toHaveBeenCalledWith(oldObject.key);
     expect(dashboard.storageMetrics).toHaveLength(8);
     expect(dashboard.storageMetrics).toContainEqual(
@@ -170,42 +171,11 @@ describe('R2 scheduled storage maintenance', () => {
     );
   });
 
-  it('reports bounded partial cleanup failures without losing the saved progress evidence', async () => {
-    const kv = createKv();
-    mockDeleteByRetentionPage.mockRejectedValueOnce(new Error('r2_unavailable'));
-    const env = {
-      AUTHRIM_CONFIG: kv,
-      AUTHRIM_R2_MAINTENANCE_CRON_ENABLED: 'true',
-      DB_ADMIN: {},
-      SETTINGS: kv,
-      PUBLIC_ASSETS: createBucket(),
-      DIAGNOSTIC_LOGS: createBucket(),
-      AUDIT_ARCHIVE: createBucket(),
-      IMPORT_ARTIFACTS: createBucket(),
-      EXPORT_ARTIFACTS: createBucket(),
-      SENSITIVE_DETAILS: createBucket(),
-    } as never;
-    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
-
-    await processR2StorageMaintenance(env, log);
-    const dashboard = await getR2MaintenanceDashboard(env);
-    const diagnostic = dashboard.schedules.find(
-      (schedule) => schedule.id === 'r2_diagnostic_log_retention'
-    );
-
-    expect(diagnostic).toMatchObject({
-      status: 'failed',
-      lastErrorCode: 'diagnostic_log_retention_partial_failure',
-      lastResult: expect.objectContaining({ failures: 1, tenantsScanned: 1 }),
-    });
-    expect(log.error).toHaveBeenCalledWith(
-      'R2 scheduled maintenance task failed',
-      expect.objectContaining({
-        taskId: 'r2_diagnostic_log_retention',
-        errorCode: 'diagnostic_log_retention_partial_failure',
-      }),
-      expect.any(Error)
-    );
+  it('refuses retired object-level diagnostic cleanup because Iceberg owns row expiration', async () => {
+    await expect(
+      cleanupDiagnosticLogs({} as never, { info: vi.fn(), warn: vi.fn(), error: vi.fn() })
+    ).rejects.toThrow('diagnostic_retention_managed_by_iceberg');
+    expect(mockCreateDiagnosticLogR2Adapter).not.toHaveBeenCalled();
   });
 
   it('removes only expired audit delivery payload orphans and persists scan progress', async () => {
@@ -272,6 +242,7 @@ describe('R2 scheduled storage maintenance', () => {
     }));
     mockEnsureDatabaseAdapter.mockReturnValueOnce({
       query: vi.fn().mockResolvedValue([{ payload_object_ref: activeKey }]),
+      queryOne: vi.fn().mockResolvedValue(null),
     });
 
     await expect(
@@ -290,6 +261,25 @@ describe('R2 scheduled storage maintenance', () => {
 
     expect(bucket.delete).toHaveBeenCalledWith([terminalKey]);
     expect(bucket.delete).not.toHaveBeenCalledWith(expect.arrayContaining([activeKey]));
+  });
+
+  it('does not scan or delete transient audit payloads during snapshot capture', async () => {
+    const kv = createKv();
+    const bucket = createBucket();
+    mockEnsureDatabaseAdapter.mockReturnValueOnce({
+      query: vi.fn().mockResolvedValue([]),
+      queryOne: vi.fn().mockResolvedValue({ id: 'snapshot-a' }),
+    });
+
+    await expect(
+      cleanupOrphanedAuditTransientPayloads({
+        AUTHRIM_CONFIG: kv,
+        AUDIT_ARCHIVE: bucket,
+        DB_ADMIN: {},
+      } as never)
+    ).resolves.toMatchObject({ scanned: 0, deleted: 0, retained: 0, retainedActive: 0 });
+    expect(bucket.list).not.toHaveBeenCalled();
+    expect(bucket.delete).not.toHaveBeenCalled();
   });
 
   it('deletes only old unreferenced Login UI objects within the same tenant scope', async () => {

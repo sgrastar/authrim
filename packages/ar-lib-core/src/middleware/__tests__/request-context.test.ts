@@ -69,6 +69,18 @@ function buildApp(env: TestEnv, requireTenant = true) {
     const tenantId = getTenantIdFromContext(c);
     return c.json({ tenantId });
   });
+  app.all('/api/admin-init-setup/*', (c) => {
+    return c.json({ tenantId: getTenantIdFromContext(c) });
+  });
+  app.all('/api/admin/me/passkeys/*', (c) => {
+    return c.json({ tenantId: getTenantIdFromContext(c) });
+  });
+  app.all('/api/admin/invitations/*', (c) => {
+    return c.json({ tenantId: getTenantIdFromContext(c) });
+  });
+  app.get('/api/admin/me/passkeys', (c) => {
+    return c.json({ tenantId: getTenantIdFromContext(c) });
+  });
   app.get('/api/auth/discovery', (c) => {
     const tenantId = getTenantIdFromContext(c);
     return c.json({ tenantId });
@@ -104,7 +116,7 @@ function buildApp(env: TestEnv, requireTenant = true) {
   app.get('/api/admin/platform/tenant-domain-mappings', (c) => {
     return c.json({ tenantId: getTenantIdFromContext(c) });
   });
-  app.get('/api/admin/settings/ui-config', (c) => {
+  app.get('/api/admin/settings/cache-mode', (c) => {
     return c.json({ tenantId: getTenantIdFromContext(c) });
   });
   app.post('/api/admin/auth/passkey/options', (c) => {
@@ -273,7 +285,11 @@ describe('requestContextMiddleware – tenant existence check', () => {
 
     it('passes via positive KV cache without hitting D1', async () => {
       const db = createMockDB({ tenantRow: null }); // would return 404 if queried
-      const kv = createMockKV({ cachedValue: 'true' }); // cache hit
+      // Cache hit for the tenant existence check; the tenant has no settings document.
+      const kv = createMockKV({
+        cachedValue: 'true',
+        valuesByKey: { 'settings:tenant:sample:tenant': null },
+      });
       const env: TestEnv = { BASE_DOMAIN, DB: db, AUTHRIM_CONFIG: kv };
       const app = buildApp(env);
       const res = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env as Env);
@@ -645,7 +661,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const app = buildApp(env);
 
       const res = await app.request(
-        makeRequest('admin.pages.dev', '/api/admin/settings/ui-config'),
+        makeRequest('admin.pages.dev', '/api/admin/settings/cache-mode'),
         undefined,
         env as Env
       );
@@ -854,6 +870,18 @@ describe('requestContextMiddleware – tenant existence check', () => {
     });
 
     it.each([
+      ['GET', '/admin-init-setup'],
+      ['GET', '/api/admin-init-setup/status'],
+      ['POST', '/api/admin-init-setup/initialize'],
+      ['POST', '/api/admin-init-setup/complete'],
+      ['POST', '/api/admin/invitations/redeem'],
+      ['POST', '/api/admin/invitations/passkey/options'],
+      ['POST', '/api/admin/invitations/passkey/register'],
+      ['POST', '/api/admin/invitations/activate'],
+      ['GET', '/api/admin/me/passkeys'],
+      ['POST', '/api/admin/me/passkeys/options'],
+      ['POST', '/api/admin/me/passkeys/complete'],
+      ['DELETE', '/api/admin/me/passkeys/credential-id'],
       ['GET', '/api/admin/tenants/provisioning-tenant/provisioning'],
       ['POST', '/api/admin/tenants/provisioning-tenant/provisioning/retry'],
       ['POST', '/api/admin/tenants/provisioning-tenant/provisioning/cleanup'],
@@ -878,6 +906,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       expect(res.status).toBe(200);
       await expect(res.json()).resolves.toEqual({ tenantId: 'default' });
       expect(db.prepare).not.toHaveBeenCalled();
+      expect(runtimeMocks.resolveTenantMetadata).not.toHaveBeenCalled();
     });
 
     it('allows platform admin requests without X-Tenant-Id', async () => {

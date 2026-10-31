@@ -10,6 +10,10 @@ import { frozenNowMs } from '../fixtures/deterministic-clock';
 import { createMatrixTokenApp, requestUrl } from '../fixtures/hono-context';
 import { LedgerExecutionContext } from '../fixtures/call-ledger';
 import { DeviceCodeStore } from '../../../packages/ar-lib-core/src/durable-objects/DeviceCodeStore';
+import {
+  DEVICE_POLL_LIMITS,
+  evaluatePoll,
+} from '../../../packages/ar-lib-core/src/utils/poll-governor';
 import { decideDeviceStore, decideDeviceToken, type DeviceDecision, type StateCase } from './cases';
 import { StateTransitionNamespace } from './harness';
 
@@ -185,14 +189,33 @@ export function createDeviceStub(entry: StateCase): {
     fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
       const request = input instanceof Request ? input : new Request(input, init);
       const url = new URL(request.url);
-      if (url.pathname.endsWith('/update-poll')) {
-        return new Response(JSON.stringify({ success: true }), { status: 200 });
-      }
-      if (url.pathname.endsWith('/get-by-device-code')) {
+      if (url.pathname.endsWith('/poll')) {
+        // Answers like the real store's /poll: ownership first, then the poll evaluated against
+        // the previous one by the same governor the store runs. The stub does not keep the
+        // recorded poll (every request is a fresh row), so the row's pollingTiming is what
+        // the poll is evaluated against.
+        const { client_id } = (await request.json()) as { client_id: string };
         if (state === 'missing') {
-          return new Response('null', { status: 200 });
+          return new Response(JSON.stringify({ result: 'not_found' }), { status: 200 });
         }
-        return new Response(JSON.stringify(metadata()), { status: 200 });
+        const record = metadata();
+        if (record.client_id !== client_id) {
+          return new Response(JSON.stringify({ result: 'client_mismatch' }), { status: 200 });
+        }
+        const evaluation = evaluatePoll(
+          record,
+          frozenNowMs(),
+          DEVICE_POLL_LIMITS,
+          record.status === 'pending'
+        );
+        return new Response(
+          JSON.stringify({
+            result: 'ok',
+            too_fast: evaluation.tooFast,
+            metadata: evaluation.next,
+          }),
+          { status: 200 }
+        );
       }
       if (url.pathname.endsWith('/mark-token-issued')) {
         reservationCalled = true;

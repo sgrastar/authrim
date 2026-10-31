@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import PluginRunnerWorker from '../worker';
+import PluginRunnerWorker, { createDynamicPluginHostInterfaces } from '../worker';
 import type { PluginEgressContext } from '../types';
 import type {
   PluginResourceBindingDescriptor,
@@ -38,25 +38,19 @@ describe('PluginRunnerWorker RPC boundary', () => {
     }));
     const kvAccess = vi.fn(() => ({ get: vi.fn() }));
     const r2Access = vi.fn(() => ({ get: vi.fn() }));
-    const runtime = new PluginRunnerWorker(
-      {
-        props: {
-          caller: 'ar-management',
-          environmentId: 'test',
-          audience: 'authrim-plugin-runner-v1',
-        },
-        exports: {
-          PluginAccountMetadataAccess: vi.fn(),
-          PluginD1ResourceAccess: d1Access,
-          PluginKvResourceAccess: kvAccess,
-          PluginR2ResourceAccess: r2Access,
-        },
-      } as unknown as ConstructorParameters<typeof PluginRunnerWorker>[0],
-      {
-        AUTHRIM_ENVIRONMENT_NAME: 'test',
-        PLUGIN_RUNNER_DB: {} as D1Database,
-      } as unknown as ConstructorParameters<typeof PluginRunnerWorker>[1]
-    );
+    const executionContext = {
+      props: {
+        caller: 'ar-management',
+        environmentId: 'test',
+        audience: 'authrim-plugin-runner-v1',
+      },
+      exports: {
+        PluginAccountMetadataAccess: vi.fn(),
+        PluginD1ResourceAccess: d1Access,
+        PluginKvResourceAccess: kvAccess,
+        PluginR2ResourceAccess: r2Access,
+      },
+    } as unknown as ExecutionContext;
     const context: PluginEgressContext = {
       contractVersion: 1,
       tenantId: 'tenant-a',
@@ -90,16 +84,13 @@ describe('PluginRunnerWorker RPC boundary', () => {
         ownershipFingerprint: 'c'.repeat(64),
       },
     ];
-    const factory = runtime as unknown as {
-      dynamicHostInterfaces(
-        context: PluginEgressContext,
-        bindings: [],
-        resources: PluginResourceBindingDescriptor[],
-        pluginId: string
-      ): Record<string, unknown>;
-    };
-
-    const interfaces = factory.dynamicHostInterfaces(context, [], resources, 'plugin-a');
+    const interfaces = createDynamicPluginHostInterfaces(
+      executionContext,
+      context,
+      [],
+      resources,
+      'plugin-a'
+    );
     expect(Object.keys(interfaces).sort()).toEqual([
       'PLUGIN_CACHE',
       'PLUGIN_OBJECTS',
@@ -375,5 +366,75 @@ describe('PluginRunnerWorker RPC boundary', () => {
         arbitraryCapability: 'cloudflare.admin',
       })
     ).rejects.toThrow('plugin_sync_input_invalid');
+  });
+
+  it('limits the tenant gate for external plugin code to Management and an exact contract', async () => {
+    for (const caller of ['ar-auth', 'ar-bridge', 'ar-policy', 'ar-saml'] as const) {
+      await expect(
+        worker(caller).setTenantExternalGate({ tenantId: 'tenant-a', allowed: true })
+      ).rejects.toThrow('plugin_sync_caller_unauthorized');
+      await expect(worker(caller).getTenantExternalGate({ tenantId: 'tenant-a' })).rejects.toThrow(
+        'plugin_sync_caller_unauthorized'
+      );
+    }
+    await expect(
+      worker('ar-management', 'other-environment').setTenantExternalGate({
+        tenantId: 'tenant-a',
+        allowed: true,
+      })
+    ).rejects.toThrow('plugin_sync_caller_unauthorized');
+    for (const input of [
+      null,
+      { tenantId: 'tenant-a' },
+      { allowed: true },
+      { tenantId: 'tenant-a', allowed: 'true' },
+      { tenantId: 'tenant-a', allowed: 1 },
+      { tenantId: '../tenant', allowed: true },
+      { tenantId: 'tenant-a', allowed: true, pluginId: 'plugin-a' },
+      // Opening names the generation it read, closing names none.
+      { tenantId: 'tenant-a', allowed: true },
+      { tenantId: 'tenant-a', allowed: true, ifGeneration: -1 },
+      { tenantId: 'tenant-a', allowed: true, ifGeneration: '0' },
+      { tenantId: 'tenant-a', allowed: false, ifGeneration: 0 },
+    ]) {
+      await expect(worker('ar-management').setTenantExternalGate(input)).rejects.toThrow(
+        /^plugin_(?:sync|dynamic)_.*input_invalid$/u
+      );
+    }
+    await expect(
+      worker('ar-management').getTenantExternalGate({ tenantId: 'tenant-a', allowed: true })
+    ).rejects.toThrow('plugin_sync_input_invalid');
+  });
+
+  it('reports an unusable database for the tenant gate only by a fixed code', async () => {
+    await expect(
+      worker('ar-management').setTenantExternalGate({
+        tenantId: 'tenant-a',
+        allowed: true,
+        ifGeneration: 0,
+      })
+    ).rejects.toThrow('plugin_dynamic_external_gate_d1_session_required');
+  });
+
+  it('limits the gate candidate listing to Management and a bounded, exact contract', async () => {
+    for (const caller of ['ar-auth', 'ar-bridge', 'ar-policy', 'ar-saml'] as const) {
+      await expect(worker(caller).listTenantExternalGateCandidates({})).rejects.toThrow(
+        'plugin_sync_caller_unauthorized'
+      );
+    }
+    for (const input of [
+      null,
+      { limit: 'ten' },
+      { limit: 1.5 },
+      { limit: 0 },
+      { limit: 201 },
+      { after: 7 },
+      { after: '../tenant' },
+      { tenantId: 'tenant-a' },
+    ]) {
+      await expect(worker('ar-management').listTenantExternalGateCandidates(input)).rejects.toThrow(
+        /^plugin_(?:sync|dynamic)_.*(?:input_invalid|d1_session_required)$/u
+      );
+    }
   });
 });

@@ -169,6 +169,8 @@ describe('myPasskeysRouter', () => {
         rpID: 'admin.example.com',
         userName: 'admin@example.com',
         excludeCredentials: [expect.objectContaining({ id: 'credential-1' })],
+        // The console signs in by passkey with user verification required: so is the registration.
+        authenticatorSelection: expect.objectContaining({ userVerification: 'required' }),
       })
     );
     expect(kv?.put).toHaveBeenCalledWith(
@@ -308,6 +310,9 @@ describe('myPasskeysRouter', () => {
     );
 
     expect(response.status).toBe(201);
+    expect(mocks.verifyRegistrationResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ requireUserVerification: true })
+    );
     expect(mocks.createPasskey).toHaveBeenCalledWith(
       expect.objectContaining({
         admin_user_id: 'admin-1',

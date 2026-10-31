@@ -1,6 +1,30 @@
 import { createTranslation } from '../create-translation';
 
 const vi = createTranslation({
+	account_guestLogoutWarning:
+		'Sau khi đăng xuất, bạn sẽ không thể quay lại tài khoản khách này. Hãy đăng ký trước để giữ quyền truy cập tài khoản và dữ liệu. Vẫn đăng xuất?',
+	account_guestTitle: 'Đăng ký tài khoản',
+	account_guestDescription: 'Bạn vẫn giữ nguyên tài khoản và dữ liệu khi đăng ký.',
+	account_guestDue: 'Có thể bị tự động xóa kể từ {date}.',
+	account_guestNoExpiry: 'Chưa lên lịch tự động xóa.',
+	account_guestEmail: 'Địa chỉ email',
+	account_guestSend: 'Đăng ký bằng email',
+	account_guestPasskey: 'Đăng ký bằng khoá truy cập',
+	account_guestCode: 'Mã xác minh',
+	account_guestConfirm: 'Hoàn tất đăng ký',
+	account_guestPending: 'Đang xử lý đăng ký. Bạn có thể thử lại để kiểm tra xem đã hoàn tất chưa.',
+	account_guestRetry: 'Thử lại',
+	account_guestError: 'Không thể hoàn tất đăng ký. Hãy kiểm tra mã xác minh hoặc thử lại.',
+	account_guestCollision:
+		'Danh tính này đã có tài khoản. Hãy đăng nhập riêng vào tài khoản đó. Tài khoản khách của bạn sẽ không được hợp nhất.',
+	account_guestExistingLogin: 'Đăng nhập vào tài khoản hiện có',
+	account_guestRegistered: 'Tài khoản của bạn đã được đăng ký.',
+	account_guestChangeMethod: 'Chọn phương thức khác',
+	login_guestContinue: 'Tiếp tục với tư cách khách',
+	login_guestRetention:
+		'Tài khoản khách có thể bị tự động xóa sau {days} ngày kể từ khi tạo. Hãy đăng ký tài khoản để tiếp tục sử dụng.',
+	login_guestNoExpiry: 'Chưa lên lịch tự động xóa cho tài khoản khách mới.',
+
 	app_title: 'Authrim',
 	app_subtitle: 'Danh tính và quyền truy cập ở mọi nơi.',
 	button_openDialog: 'Mở hộp thoại',
@@ -83,6 +107,32 @@ const vi = createTranslation({
 	account_delete: 'Xóa',
 	account_empty: 'Không có mục nào',
 	account_planned: 'Đã lên kế hoạch',
+	account_socialEmpty: 'Chưa liên kết tài khoản bên ngoài nào.',
+	account_socialLinkHeading: 'Liên kết tài khoản',
+	account_socialLinkWith: 'Liên kết {provider}',
+	account_socialNoProviders: 'Không còn nhà cung cấp nào khác để liên kết.',
+	account_socialLinkedAt: 'Đã liên kết {date}',
+	account_socialLastUsed: 'Lần dùng gần nhất: {date}',
+	account_socialUnlink: 'Hủy liên kết',
+	account_socialUnlinkConfirm:
+		'Hủy liên kết {provider}? Bạn sẽ không thể đăng nhập bằng tài khoản này nữa.',
+	account_socialUnlinkConfirmAction: 'Hủy liên kết {provider}',
+	account_socialLinked: 'Đã liên kết tài khoản.',
+	account_socialUnlinked: 'Đã hủy liên kết tài khoản.',
+	account_socialErrorAlreadyLinked: 'Tài khoản này đã được liên kết với người dùng khác.',
+	account_socialErrorAlreadyLinkedHere: 'Nhà cung cấp này đã được liên kết với tài khoản của bạn.',
+	account_socialErrorEmailNotVerified:
+		'Nhà cung cấp chưa xác minh địa chỉ email của tài khoản này.',
+	account_socialErrorSessionExpired:
+		'Xác nhận của bạn đã hết hạn trước khi liên kết hoàn tất. Hãy xác nhận lại rồi thử lại.',
+	account_socialErrorCancelled: 'Đã hủy thao tác liên kết.',
+	account_socialErrorFailed: 'Không thể liên kết tài khoản. Vui lòng thử lại.',
+	account_socialErrorLastMethod:
+		'Đây là cách đăng nhập cuối cùng của bạn. Hãy thêm khoá truy cập hoặc phương thức đăng nhập khác trước.',
+	account_socialErrorInProgress:
+		'Một thay đổi khác đối với phương thức đăng nhập của bạn đang được xử lý. Vui lòng thử lại sau giây lát.',
+	account_operationSocialLinked: 'Đã liên kết tài khoản bên ngoài',
+	account_operationSocialUnlinked: 'Đã hủy liên kết tài khoản bên ngoài',
 	account_passkeyUnsupported: 'Trình duyệt này không hỗ trợ đăng ký khoá truy cập.',
 	account_passkeyRegistrationCancelled:
 		'Quá trình đăng ký khoá truy cập đã bị huỷ hoặc hết thời gian. Vui lòng thử lại.',
@@ -118,12 +168,30 @@ const vi = createTranslation({
 	account_actionFailed: 'Thao tác không thành công',
 	account_remainingLoginMethodRequired:
 		'Hãy thêm một phương thức đăng nhập khác trước khi xóa phương thức này.',
+	account_activityIncomplete: 'Kết quả hoạt động chưa đầy đủ. Vui lòng thử lại sau.',
+	account_activityLoadMore: 'Tải hoạt động cũ hơn',
 	account_activityTitle: 'Hoạt động',
 	account_operationNameUpdated: 'Đã đổi tên',
 	account_operationPasskeyCreated: 'Đã thêm khoá truy cập',
 	account_operationPasskeyUpdated: 'Đã đổi tên khoá truy cập',
 	account_operationPasskeyDeleted: 'Đã xoá khoá truy cập',
 	account_operationSessionRevoked: 'Đã kết thúc phiên',
+	account_operationGuestCreated: 'Đã tạo tài khoản khách',
+	account_operationGuestUpgradeFailed: 'Đăng ký tài khoản khách không thành công',
+	account_operationGuestUpgradeStarted: 'Đã bắt đầu đăng ký tài khoản khách',
+	account_operationGuestUpgraded: 'Đã đăng ký tài khoản khách',
+	account_operationEmailAdded: 'Đã thêm email',
+	account_operationEmailChanged: 'Đã đổi email',
+	account_operationEmailReauthenticated: 'Đã xác thực lại bằng email',
+	account_operationDeviceUpdated: 'Đã đổi tên thiết bị',
+	account_operationDeviceUnlinked: 'Đã hủy liên kết thiết bị',
+	account_operationPasskeyReauthenticated: 'Đã xác thực lại bằng khoá truy cập',
+	account_operationTotpEnrollmentStarted: 'Đã bắt đầu thiết lập ứng dụng xác thực',
+	account_operationTotpActivated: 'Đã kích hoạt ứng dụng xác thực',
+	account_operationTotpUpdated: 'Đã đổi tên ứng dụng xác thực',
+	account_operationTotpRemoved: 'Đã xoá ứng dụng xác thực',
+	account_operationTotpBackupCodesRegenerated: 'Đã tạo lại mã dự phòng',
+	account_operationTotpReauthenticated: 'Đã xác thực lại bằng ứng dụng xác thực',
 	account_launcherTitle: 'Ứng dụng của tôi',
 	account_launcherDescription: 'Tìm kiếm và mở các ứng dụng dành cho bạn.',
 	account_launcherLoadFailed: 'Không thể tải ứng dụng.',
@@ -189,6 +257,8 @@ const vi = createTranslation({
 	login_humanVerificationLoading: 'Đang tải bước kiểm tra bảo mật...',
 	login_humanVerificationLoadFailed:
 		'Không thể tải bước kiểm tra bảo mật. Hãy tải lại trang rồi thử lần nữa.',
+	login_humanVerificationUnavailable:
+		'Xác minh con người hiện không khả dụng. Vui lòng liên hệ quản trị viên.',
 	login_noMethodsAvailable:
 		'Tổ chức này chưa bật phương thức xác thực nào. Hãy liên hệ quản trị viên.',
 	login_passkeyPreparing: 'Đang chuẩn bị xác thực bằng khoá truy cập.',
@@ -270,7 +340,8 @@ const vi = createTranslation({
 		'Tạo tài khoản bằng khoá truy cập, mã email hoặc một phương thức khác đang khả dụng.',
 	emailCode_title: 'Kiểm tra email của bạn',
 	emailCode_subtitle: 'Chúng tôi đã gửi mã xác minh đến',
-	emailCode_instructions: 'Nhập mã gồm 6 chữ số trong email. Mã sẽ hết hạn sau 5 phút.',
+	emailCode_instructions:
+		'Nhập mã gồm 6 chữ số trong email. Email cho biết mã có hiệu lực trong bao lâu.',
 	emailCode_codeLabel: 'Mã xác minh',
 	emailCode_verifyButton: 'Xác minh',
 	emailCode_resendButton: 'Gửi lại mã',
@@ -326,11 +397,19 @@ const vi = createTranslation({
 	error_temporarily_unavailable: 'Máy chủ cấp quyền tạm thời không thể xử lý yêu cầu',
 	error_login_required: 'Bạn cần xác thực. Hãy đăng nhập để tiếp tục.',
 	error_unknown: 'Đã xảy ra lỗi không xác định',
+	error_rateLimited: 'Quá nhiều lần thử. Hãy đợi một lúc rồi thử lại.',
+	error_rateLimitedRetryAfter: 'Quá nhiều lần thử. Hãy thử lại sau khoảng {minutes} phút.',
+	error_unregisteredPostLogoutRedirectUri:
+		'Bạn đã đăng xuất. Không thể đưa bạn trở lại ứng dụng vì địa chỉ quay lại của ứng dụng chưa được đăng ký. Hãy tự mở lại ứng dụng.',
+	error_invalidIdTokenHint:
+		'Bạn đã đăng xuất. Không thể đưa bạn trở lại ứng dụng vì không xác minh được yêu cầu đăng xuất của ứng dụng. Hãy tự mở lại ứng dụng.',
+	error_idTokenHintRequired:
+		'Bạn đã đăng xuất. Không thể đưa bạn trở lại ứng dụng vì yêu cầu đăng xuất của ứng dụng không đầy đủ. Hãy tự mở lại ứng dụng.',
 	device_title: 'Xác minh thiết bị',
 	device_subtitle: 'Nhập mã đang hiển thị trên thiết bị',
 	device_codeLabel: 'Mã xác minh',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint: 'Nhập mã gồm 8 ký tự trên thiết bị (định dạng: XXXX-XXXX)',
+	device_codeHint: 'Nhập mã đang hiển thị trên thiết bị',
 	device_verifyButton: 'Xác minh mã',
 	device_confirmTitle: 'Cấp quyền cho thiết bị',
 	device_requestedPermissions: 'Quyền được yêu cầu',
@@ -343,6 +422,13 @@ const vi = createTranslation({
 	device_errorApproveFailed: 'Không thể chấp thuận thiết bị',
 	device_errorDenyFailed: 'Không thể từ chối yêu cầu của thiết bị',
 	device_errorInvalidRedirect: 'Máy chủ trả về URL chuyển hướng không hợp lệ',
+	device_errorConsentWithdrawn:
+		'Yêu cầu này được tạo trước khi bạn thu hồi quyền truy cập của ứng dụng này. Hãy bắt đầu lại trên thiết bị để nhận mã mới.',
+	device_errorTryAgain:
+		'Hiện không thể lưu quyết định của bạn và chưa có gì thay đổi. Hãy thử lại sau giây lát.',
+	device_errorTooManyAttempts: 'Quá nhiều lần thử. Hãy đợi một lúc rồi thử lại.',
+	device_errorOutcomeUnknown:
+		'Không thể xác nhận quyết định của bạn đã được lưu hay chưa. Hãy kiểm tra thiết bị hoặc nhập lại mã.',
 	ciba_title: 'Yêu cầu xác thực',
 	ciba_subtitle: 'Một ứng dụng đang yêu cầu bạn chấp thuận',
 	ciba_noPendingRequests: 'Không có yêu cầu xác thực nào đang chờ',
@@ -362,6 +448,17 @@ const vi = createTranslation({
 	ciba_errorGeneric: 'Đã xảy ra lỗi',
 	ciba_errorApproveFailed: 'Không thể chấp thuận yêu cầu',
 	ciba_errorDenyFailed: 'Không thể từ chối yêu cầu',
+	ciba_errorConsentWithdrawn:
+		'Yêu cầu này được tạo trước khi bạn thu hồi quyền truy cập của ứng dụng này. Hãy bắt đầu lại từ ứng dụng.',
+	ciba_errorRequestGone: 'Yêu cầu này đã hết hạn hoặc đã được phản hồi.',
+	error_authorizationRequestExpired: 'Yêu cầu đăng nhập đã hết hạn. Hãy bắt đầu lại từ ứng dụng.',
+	ciba_errorTryAgain:
+		'Hiện không thể lưu quyết định của bạn và chưa có gì thay đổi. Hãy thử lại sau giây lát.',
+	ciba_errorTooManyAttempts: 'Quá nhiều lần thử. Hãy đợi một lúc rồi thử lại.',
+	ciba_errorOutcomeUnknown:
+		'Không thể xác nhận câu trả lời của bạn đã được lưu hay chưa. Hãy làm mới để xem các yêu cầu vẫn đang chờ.',
+	ciba_errorNoLongerWaiting:
+		'Không thể xác nhận câu trả lời của bạn, nhưng yêu cầu này không còn chờ nữa.',
 	reauth_title: 'Xác minh danh tính',
 	reauth_subtitle: 'Để bảo mật, hãy xác thực lại trước khi tiếp tục',
 	reauth_verifyWithPasskey: 'Xác minh bằng khoá truy cập',
@@ -395,6 +492,9 @@ const vi = createTranslation({
 	login_extError_providerError_message: 'Nhà cung cấp bên ngoài trả về lỗi. Hãy thử lại sau.',
 	login_extError_callbackFailed_title: 'Xác thực không thành công',
 	login_extError_callbackFailed_message: 'Đã xảy ra lỗi trong quá trình xác thực. Hãy thử lại.',
+	login_extError_reauthNotProven_title: 'Chưa xác nhận đăng nhập',
+	login_extError_reauthNotProven_message:
+		'Nhà cung cấp đăng nhập không xác nhận rằng bạn đã đăng nhập lại. Hãy đăng nhập lại hoặc chọn phương thức khác.',
 	login_extError_default_title: 'Lỗi xác thực',
 	login_extError_default_message: 'Đã xảy ra lỗi trong quá trình xác thực bên ngoài.',
 	login_signingInTo: 'Đang đăng nhập vào',

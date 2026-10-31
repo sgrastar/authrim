@@ -1,5 +1,7 @@
 // Re-export everything from shared modules
 export * from './constants';
+// `./constants` is the file constants.ts, so the directory is exported by path.
+export * from './constants/admin-roles';
 export * from './types/env';
 export * from './types/oidc';
 export * from './types/admin';
@@ -20,11 +22,46 @@ export * from './types/login-ui-languages';
 export * from './types/oidc-scopes';
 export * from './types/consent-records';
 export * from './services/notification-intent-routing';
+export * from './services/legacy-settings';
+export * from './services/legacy-settings-import';
+export * from './services/effective-settings';
+export * from './services/external-plugin-gate';
+export * from './services/assurance';
+export * from './services/assurance-session';
+export * from './services/identity-assurance';
+export * from './services/tenant-institution';
+export * from './services/identity-assurance-enforcement';
+export * from './services/assurance-claims';
+export * from './services/organisation-assurance';
+export * from './services/profile-update-on-login';
+export * from './services/logout-settings';
+export * from './services/account-session';
+export * from './services/account-login-methods';
+export * from './services/external-signup-availability';
+export * from './services/authorization-challenge-kind';
+export * from './services/saml-authorization-challenge';
+export * from './services/sign-in-limits';
+export * from './services/ciba-config';
+export * from './services/device-flow-settings';
+export * from './services/dcr-default-target';
+export * from './services/scim-token-expiry';
+export * from './services/saml-settings';
+export * from './services/token-exchange-ceilings';
+export * from './services/id-token-signing';
+export * from './services/app-security-requirements';
+export * from './services/protocol-settings';
+export {
+  StoredLegacyValue,
+  isStoredLegacyValue,
+  REQUEST_OBJECT_SIGNING_ALGORITHMS,
+  AUTHORIZATION_SIGNING_ALGORITHMS,
+} from './utils/system-settings-fields';
 export * from './services/notification-delivery-producer';
 export * from './services/notification-installation-id';
 export * from './services/plugin-installation-id';
 export * from './services/plugin-host-interface-contract.js';
 export * from './services/human-verification-runner';
+export * from './services/human-verification-policy';
 
 // RFC 7517: JWK Types
 export * from './types/jwk';
@@ -68,19 +105,24 @@ export * from './types/settings/assurance-levels';
 export * from './db';
 export * from './utils/audit-log';
 export * from './utils/client-authentication';
+export * from './utils/client-scopes';
 export * from './utils/crypto';
 export * from './utils/id';
 export * from './utils/d1-retry';
 export * from './utils/device-flow';
 export * from './utils/ciba';
+export * from './utils/poll-governor';
+export * from './utils/unbiased-random';
 export * from './utils/delegated-write';
 export * from './utils/dpop';
 export * from './utils/dr-bundle';
 export * from './utils/errors';
 export * from './utils/issuer';
 export * from './utils/jwe';
+export * from './utils/request-object-encryption';
 export * from './utils/jwt';
 export * from './utils/oidc-signing';
+export * from './utils/issued-id-token';
 export * from './utils/mtls';
 export * from './utils/jwt-bearer';
 export * from './utils/keys';
@@ -107,7 +149,7 @@ export * from './utils/resource-permissions';
 export * from './utils/consent-rbac';
 export * from './utils/refresh-token-sharding';
 export * from './utils/refresh-token-store';
-export * from './utils/oauth-config';
+export * from './utils/consent-config';
 export * from './utils/oidc-claims';
 export * from './utils/canonical-runtime-claims';
 export * from './utils/dcr-config';
@@ -132,17 +174,35 @@ export * from './utils/basic-auth';
 export * from './utils/web-origin-registry';
 export * from './utils/jwks-cache';
 export * from './utils/tenant-settings';
+export * from './utils/logout-settings';
+export * from './utils/policy-flags';
 export * from './utils/email-domain-hash';
 export * from './utils/claim-normalizer';
 export * from './utils/feature-flags';
-export * from './utils/device-fingerprint';
 export * from './utils/ssrf-protection';
 export * from './utils/post-login-routing';
 export * from './utils/totp';
 export * from './utils/totp-backup-codes';
 
 // Runtime services
+export * from './services/identity-mapping-owner';
 export * from './services/identity-mapping-runtime-resolver';
+export * from './services/identity-mapping-set-binding';
+export * from './services/identity-mapping-selection';
+export * from './services/identity-mapping-level-history';
+export * from './services/identity-mapping-failures';
+export * from './services/identity-mapping-client-history-receipt';
+export * from './services/settings-bulk-apply-policy';
+export * from './services/identity-mapping-resolution';
+export * from './services/identity-mapping-implicit-activations';
+export * from './services/identity-mapping-platform-checks';
+export * from './services/identity-mapping-set-reference';
+export * from './services/identity-mapping-set-references';
+export * from './services/identity-mapping-reference-limits';
+export * from './services/identity-mapping-set-swap';
+export * from './services/saml-destination-policy';
+export * from './services/identity-mapping-source-reads';
+export * from './services/identity-mapping-output-graph';
 export * from './services/server-flow-execution';
 export * from './services/active-access-token-protected-resource';
 export * from './services/lookup-directory';
@@ -151,6 +211,7 @@ export * from './services/directory-connector-fleet';
 export * from './services/oidc-identity-mapping';
 export * from './services/introspection-identity-mapping';
 export * from './services/oidc-attribute-release-consent';
+export * from './services/oidc-id-token-release';
 export * from './services/persistent-identifiers';
 export * from './utils/ui-config';
 export * from './utils/conformance-config';
@@ -239,9 +300,15 @@ export * from './services/settings-history';
 export * from './services/auth-core-persistence-context';
 export * from './services/runtime-data-context';
 export * from './services/account-provisioning';
+export * from './services/account-tombstone';
+export * from './services/tombstone-hmac-keyring';
+export * from './services/sign-in-attempts';
+export * from './services/pii-access-log';
 export * from './services/device-secret-route';
 export * from './services/consent-store';
 export * from './services/refresh-token-family-index';
+export * from './services/oauth-client-consent-revocation';
+export * from './services/subject-reference';
 export * from './services/object-artifact-crypto';
 export * from './services/object-artifact-store';
 export * from './services/notification-intent-envelope';
@@ -362,13 +429,20 @@ export * from './services/destination-profile-consent';
 export * from './services/backchannel-logout-sender';
 export * from './services/frontchannel-logout';
 export * from './services/logout-webhook-sender';
+export * from './services/logout-fanout';
 export * from './services/invitation-auth-core';
+export * from './services/tenant-rbac';
+export * from './services/tenant-rbac-directory';
+export * from './services/statement-consent-stores';
+export * from './services/statement-consent-records';
+export * from './services/statement-consent-definitions';
 export * from './services/policy-resolver';
 export * from './services/custom-claims';
 export * from './services/custom-claim-schema-history';
 export * from './services/profile-registry';
 export * from './services/runtime-profile-resolver';
 export * from './services/session-client-store';
+export * from './services/session-ttl';
 export * from './services/external-provider-session-store';
 export {
   advancePasskeyAuthenticationState,
@@ -380,6 +454,10 @@ export {
   recordHybridUserSessionRevocationEpoch,
   SESSION_REVOCATION_AUTHORITY,
   transitionAccountAuthenticationState,
+  readAccountAuthenticationState,
+  initializeAccountAuthenticationFromAccount,
+  recordUserSessionRevocationEndingSessions,
+  transitionAccountAuthenticationStateEndingSessions,
 } from './services/session-revocation-store';
 export * from './services/tenant-database-health';
 export * from './services/tenant-backup-policy';
@@ -419,6 +497,20 @@ export {
 // Diagnostic Logging (Debugging, Troubleshooting, OIDF Conformance)
 export * from './services/diagnostic';
 export * from './utils/diagnostic-security';
+export {
+  protectDiagnosticEntry,
+  isSafeIdentifier,
+  isProtectedForm,
+  maskIpAddress,
+  redactSecretsInText,
+  redactCompactJwts,
+  redactPhoneNumbers,
+  redactPiiText,
+  redactEmails,
+  safeSnapshot,
+  identifierOrFingerprint,
+  type UniversalProtectionOptions,
+} from './utils/diagnostic-redaction';
 export * from './utils/diagnostic-log-formatter';
 export * from './utils/admin-invitation-security';
 
@@ -430,6 +522,7 @@ export type {
   UnifiedEvent,
   EventPublishPayload,
   EventPublishOptions,
+  AccountEventType,
   EventPublishResult as EventResult,
   EventDispatcher,
   EventHandlerConfig,
@@ -462,6 +555,7 @@ export {
   TOKEN_EVENTS,
   CONSENT_EVENTS,
   USER_EVENTS,
+  ACCOUNT_EVENTS,
   CLIENT_EVENTS,
   SECURITY_EVENTS,
   DOMAIN_EVENTS,
@@ -506,6 +600,7 @@ export {
   CanonicalRuntimeUserStore,
   findCanonicalAccountAuthenticationState,
   markOtpLoginEmailVerified,
+  runtimeTimestampToIso,
   type CanonicalAccountAuthenticationState,
   type CanonicalAuthenticationResponseUser,
   type CanonicalOtpLoginUser,
@@ -548,6 +643,10 @@ export type {
 } from './durable-objects/SessionRevocationStore';
 export { AuthorizationCodeStore } from './durable-objects/AuthorizationCodeStore';
 export { RefreshTokenRotator } from './durable-objects/RefreshTokenRotator';
+export type {
+  RefreshTokenAuthContext,
+  RefreshTokenLifetimePolicy,
+} from './durable-objects/RefreshTokenRotator';
 export { RateLimiterCounter } from './durable-objects/RateLimiterCounter';
 export { PARRequestStore } from './durable-objects/PARRequestStore';
 export type { PARRequestData } from './durable-objects/PARRequestStore';
@@ -670,3 +769,44 @@ export type {
   RuntimeSmokeEntrypointProps,
 } from './entrypoints/RuntimeSmokeEntrypoint';
 export { RUNTIME_LOOKUP_HMAC_TEST_VECTOR } from './entrypoints/RuntimeSmokeEntrypoint';
+
+// Human guest registration and retention.
+export * from './services/guest-lifecycle';
+export * from './services/guest-settings';
+export * from './repositories/guest-lifecycle';
+export * from './services/guest-pii-erasure';
+
+export * from './services/guest-session';
+
+export * from './services/guest-client-policy';
+
+export * from './repositories/guest-upgrade';
+export * from './services/guest-upgrade-coordinator';
+export * from './services/guest-credential-authentication';
+
+export {
+  ACCOUNT_WEBHOOK_FIELDS,
+  validateAccountRegistrationStates,
+  validateAccountWebhookFields,
+  type AccountWebhookField,
+} from './services/account-webhook-fields';
+export {
+  captureAccountDeletionSnapshot,
+  persistAccountEmailMutation,
+} from './services/account-webhook-snapshots';
+
+export {
+  hasTenantBackupMutationCoverage,
+  runTenantBackupCoveredEffect,
+  TenantBackupMutationUnavailableError,
+  withTenantBackupMutationCoverage,
+  type TenantBackupMutationCoverage,
+} from './services/tenant-portability/covered-mutation';
+export * from './services/tenant-portability/r2-generation-retention';
+
+// Service memberships are intentionally separate from authorization and token claims.
+export * from './services/dynamic-groups';
+
+export * from './services/statement-consent-writes';
+
+export * from './services/statement-consent-generations';

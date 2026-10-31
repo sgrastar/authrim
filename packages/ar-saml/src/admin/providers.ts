@@ -1,3 +1,4 @@
+import { emitLogIcebergRow } from '@authrim/ar-lib-core/services/log-iceberg-emitter';
 /**
  * SAML Provider Admin API
  *
@@ -19,7 +20,6 @@ import type {
   SAMLIdPConfig,
   SAMLProviderCreateRequest,
   SAMLProviderUpdateRequest,
-  SAMLProviderResponse,
   MetadataImportRequest,
   SAMLSPProfile,
   SAMLAttributeReleaseRule,
@@ -37,9 +37,11 @@ import type {
   SAMLCertificateValidationSummary,
   SAMLJitEmailLinkingPolicy,
   NameIDFormat,
+  SamlProvisioningDefaults,
 } from '@authrim/ar-lib-core';
 import {
   ADMIN_PERMISSIONS,
+  profileUpdateFieldsProblem,
   validateExternalUrl,
   safeFetch,
   safeFetchText,
@@ -57,6 +59,11 @@ import {
   hasAdminPermission,
   bumpAuthenticationMethodsCacheRevision,
   readRequestJsonWithLimit,
+  resolveSamlProvisioningDefaults,
+  isAAL,
+  isIAL,
+  samlDestinationPolicyCoversProfile,
+  findRenamedOutputAttributes,
 } from '@authrim/ar-lib-core';
 import {
   parseXml,
@@ -70,11 +77,11 @@ import { resolveSAMLTenantIdFromContext } from '../common/tenant';
 import {
   SAML_BUILTIN_ATTRIBUTE_PRESETS,
   applySAMLAttributePresetToSPConfig,
-  normalizeSAMLSPAttributePresetConfig,
 } from '../idp/attribute-presets';
 import { normalizeAttributeReleaseConsentPolicy } from '../idp/attribute-release-consent';
 import { SAMLMetadataValidationError } from './errors';
-import { applySAMLSPProfileDefaults } from './profile-defaults';
+import { applySAMLSPProfileDefaults, SAML_SP_PROFILE_DEFAULTS } from './profile-defaults';
+import { fillSAMLProviderProvisioningDefaults } from './provisioning-defaults';
 import {
   analyzeSAMLMetadata,
   buildSAMLMetadataRefreshStatus,
@@ -88,7 +95,6 @@ import {
   SINGLE_METADATA_FETCH_LIMIT_BYTES,
   extractEntityDescriptorXml,
   extractEntityDescriptorXmls,
-  fingerprintCertificateSha256,
   getLogoUrl,
   isAggregateMetadata,
   resolveAggregateSignaturePolicy,
@@ -202,6 +208,7 @@ function normalizeSAMLSigningCertificateSubject(
 function readSubjectString(value: unknown, maxLength: number): string {
   return typeof value === 'string'
     ? value
+        // eslint-disable-next-line no-control-regex -- matches C0/DEL control characters on purpose (input hygiene)
         .replace(/[\u0000-\u001f\u007f]/g, '')
         .trim()
         .slice(0, maxLength)
@@ -244,9 +251,24 @@ function normalizeSAMLIdPJitLinkingPolicyConfig(
   config: SAMLIdPConfig,
   options: { requireIdentityMapping?: boolean } = {}
 ): SAMLIdPConfig | ResponseValidationError {
+  // A minimum IAL or AAL gates sign-in to a service provider; nothing would apply it to an IdP.
+  const { minimumIal, minimumAal, ...idpConfig } = config as SAMLIdPConfig & {
+    minimumIal?: unknown;
+    minimumAal?: unknown;
+  };
+  if (minimumIal !== undefined && minimumIal !== null) return { field: 'minimumIal' };
+  if (minimumAal !== undefined && minimumAal !== null) return { field: 'minimumAal' };
+  config = idpConfig;
   const policy = config.jitEmailLinkingPolicy ?? 'email_linking';
   if (!SAML_JIT_EMAIL_LINKING_POLICIES.has(policy)) {
     return { field: 'jitEmailLinkingPolicy' };
+  }
+  if (
+    config.profileUpdateFields !== undefined &&
+    config.profileUpdateFields !== null &&
+    profileUpdateFieldsProblem(config.profileUpdateFields) !== null
+  ) {
+    return { field: 'profileUpdateFields' };
   }
   if (options.requireIdentityMapping !== false && !config.identityMapping?.fieldMappingSetId) {
     return { field: 'identityMapping.fieldMappingSetId' };
@@ -263,7 +285,56 @@ function normalizeSAMLIdPJitLinkingPolicyConfig(
   };
 }
 
+/**
+ * `minimumIal`: absent leaves it, null removes it, IAL1 to IAL3 sets it. Anything else is refused
+ * (an empty string too), so a stray value can never turn the minimum off.
+ */
+function normalizeSAMLMinimumIal(value: unknown): { ial: SAMLSPConfig['minimumIal'] } | null {
+  if (value === undefined || value === null) return { ial: undefined };
+  return isIAL(value) ? { ial: value } : null;
+}
+
+/** `minimumAal`: the same rules as `minimumIal`, for AAL1 to AAL3. */
+function normalizeSAMLMinimumAal(value: unknown): { aal: SAMLSPConfig['minimumAal'] } | null {
+  if (value === undefined || value === null) return { aal: undefined };
+  return isAAL(value) ? { aal: value } : null;
+}
+
+const SAML_AUTHN_CONTEXT_CLASS_REF_MODES = new Set<unknown>([
+  'legacy_static',
+  'session',
+  'assurance',
+]);
+
 function normalizeSAMLSPConfig(
+  config: SAMLSPConfig,
+  options: { requireIdentityMapping?: boolean } = {}
+): SAMLSPConfig | ResponseValidationError {
+  const minimumIal = normalizeSAMLMinimumIal(config.minimumIal);
+  if (!minimumIal) return { field: 'minimumIal' };
+  const minimumAal = normalizeSAMLMinimumAal(config.minimumAal);
+  if (!minimumAal) return { field: 'minimumAal' };
+  // Left unset it is the static mode; a value that is not a mode is not taken for one.
+  if (
+    config.authnContextClassRefMode !== undefined &&
+    config.authnContextClassRefMode !== null &&
+    !SAML_AUTHN_CONTEXT_CLASS_REF_MODES.has(config.authnContextClassRefMode)
+  ) {
+    return { field: 'authnContextClassRefMode' };
+  }
+  const normalized = normalizeSAMLSPConfigFields(config, options);
+  if (isResponseValidationError(normalized)) return normalized;
+  const result = { ...normalized };
+  delete result.minimumIal;
+  delete result.minimumAal;
+  return {
+    ...result,
+    ...(minimumIal.ial ? { minimumIal: minimumIal.ial } : {}),
+    ...(minimumAal.aal ? { minimumAal: minimumAal.aal } : {}),
+  };
+}
+
+function normalizeSAMLSPConfigFields(
   config: SAMLSPConfig,
   options: { requireIdentityMapping?: boolean } = {}
 ): SAMLSPConfig | ResponseValidationError {
@@ -441,6 +512,19 @@ async function validateSAMLSPMappingConfig(
     if (!binding || binding.destinationProfileIds.length !== 1 || !binding.destinationProfileId) {
       return { field: 'identityMapping.fieldMappingSetId' };
     }
+    // The release policy and the classification check are by Destination Profile field, so an
+    // attribute descriptor may not name the attribute as another field.
+    if (
+      findRenamedOutputAttributes(
+        { edges: binding.edges ?? [], transforms: binding.transforms ?? [] },
+        config.identityMapping?.destinationNamespace ??
+          binding.destinationNamespace ??
+          'saml.attribute',
+        config.identityMapping?.attributeDescriptors
+      ).length > 0
+    ) {
+      return { field: 'identityMapping.attributeDescriptors' };
+    }
     const descriptor = await loadDestinationProfileConsentDescriptor(
       adminAdapter,
       tenantId,
@@ -449,14 +533,12 @@ async function validateSAMLSPMappingConfig(
     if (!descriptor || descriptor.destinationType !== 'saml') {
       return { field: 'identityMapping.fieldMappingSetId' };
     }
-    const profileFields = new Set(descriptor.fields.map((field) => field.key));
-    const policyFields = new Set(
-      Object.keys(config.identityMapping?.destinationFieldPolicies ?? {})
-    );
+    // The same rule the check for putting another version of the set in use applies.
     if (
-      profileFields.size === 0 ||
-      profileFields.size !== policyFields.size ||
-      [...profileFields].some((field) => !policyFields.has(field))
+      !samlDestinationPolicyCoversProfile(
+        Object.keys(config.identityMapping?.destinationFieldPolicies ?? {}),
+        descriptor.fields.map((field) => field.key)
+      )
     ) {
       return { field: 'identityMapping.destinationFieldPolicies' };
     }
@@ -795,12 +877,12 @@ export async function handleUpdateSAMLSettings(c: AdminSAMLContext): Promise<Res
       return forbidden;
     }
 
-    const body = (await c.req.json()) as {
+    const body = await c.req.json<{
       entityIdStyle?: unknown;
       interactiveLoginUrlPolicy?: unknown;
       certificateSubject?: unknown;
       certificateSubjectAlternativeNames?: unknown;
-    };
+    }>();
     const tenantId = resolveSAMLTenantIdFromContext(c);
     const before = await getSAMLPublicSettings(c.env, tenantId);
     const entityIdStyle =
@@ -895,7 +977,7 @@ export async function handleUpdateSAMLLocalSigning(c: AdminSAMLContext): Promise
       return forbidden;
     }
 
-    const body = (await c.req.json()) as {
+    const body = await c.req.json<{
       role?: unknown;
       action?: unknown;
       certificateSubject?: unknown;
@@ -907,7 +989,7 @@ export async function handleUpdateSAMLLocalSigning(c: AdminSAMLContext): Promise
       validTo?: unknown;
       publicKeyAlgorithm?: unknown;
       publicKeySizeBits?: unknown;
-    };
+    }>();
     const role: 'idp' | 'sp' | null = body.role === 'idp' || body.role === 'sp' ? body.role : null;
     const action =
       body.action === 'recreate_active' ||
@@ -1381,7 +1463,8 @@ export async function handlePreviewMetadata(c: AdminSAMLContext): Promise<Respon
         providerType,
         resolvedMetadata.metadataXml,
         body.samlProfile,
-        body.attributePresetId
+        body.attributePresetId,
+        await resolveSamlProvisioningDefaults(c.env, resolveSAMLTenantIdFromContext(c))
       );
     } catch (error) {
       throw toSAMLMetadataValidationError(error);
@@ -1469,7 +1552,7 @@ export async function handleCreateAttributePreset(c: AdminSAMLContext): Promise<
       return forbidden;
     }
 
-    const body = (await c.req.json()) as SAMLAttributePresetCreateRequest;
+    const body = await c.req.json<SAMLAttributePresetCreateRequest>();
     const attributes = body.attributeReleasePolicy?.attributes ?? [];
     if (!body.label || attributes.length === 0) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
@@ -1623,8 +1706,14 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
+    // What the metadata, the request and the profile leave open comes from the tenant's defaults.
+    const provisioningDefaults = await resolveSamlProvisioningDefaults(
+      c.env,
+      resolveSAMLTenantIdFromContext(c)
+    );
     let metadataDerivedConfig: SAMLIdPConfig | SAMLSPConfig | undefined;
     let metadataDerivedFields: SAMLMetadataConfigFields | undefined;
+    let requestedConfig = body.config;
 
     if (hasMetadataInput) {
       const resolvedMetadata = await resolveMetadataImportInput(c, body, {
@@ -1640,12 +1729,19 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
       }
 
       try {
+        requestedConfig = reconcileRequestedBindings(
+          body.providerType,
+          requestedConfig,
+          resolvedMetadata.metadataXml
+        );
         metadataDerivedConfig = buildConfigFromMetadata(
           body.providerType,
           resolvedMetadata.metadataXml,
           body.samlProfile,
-          body.attributePresetId
+          body.attributePresetId,
+          defaultsForRequestedBindings(body.providerType, requestedConfig, provisioningDefaults)
         );
+        assertRequestedSloBindingMatches(body.providerType, requestedConfig, metadataDerivedConfig);
       } catch (error) {
         throw new SAMLMetadataValidationError(
           error instanceof Error ? error.message : 'Invalid SAML metadata'
@@ -1666,11 +1762,15 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
       };
     }
 
-    const config = {
-      ...(metadataDerivedConfig ?? {}),
-      ...(body.config ?? {}),
-      ...(metadataDerivedFields ?? {}),
-    } as SAMLIdPConfig | SAMLSPConfig;
+    const config = fillSAMLProviderProvisioningDefaults(
+      body.providerType,
+      {
+        ...(metadataDerivedConfig ?? {}),
+        ...(requestedConfig ?? {}),
+        ...(metadataDerivedFields ?? {}),
+      } as SAMLIdPConfig | SAMLSPConfig,
+      provisioningDefaults
+    );
     if (!hasMetadataInput && config.metadataRefreshPolicy) {
       config.metadataRefreshPolicy = {
         mode: config.metadataRefreshPolicy.mode,
@@ -1769,6 +1869,14 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
             ? true
             : undefined,
         mapping_configuration_pending: !normalizedConfig.identityMapping?.fieldMappingSetId,
+        minimum_ial:
+          body.providerType === 'saml_sp'
+            ? (normalizedConfig as SAMLSPConfig).minimumIal
+            : undefined,
+        minimum_aal:
+          body.providerType === 'saml_sp'
+            ? (normalizedConfig as SAMLSPConfig).minimumAal
+            : undefined,
       },
     });
     await invalidateAuthenticationMethodsCacheForSAML(c.env, tenantId, 'saml.provider.created', c);
@@ -1987,6 +2095,16 @@ export async function handleUpdateProvider(c: AdminSAMLContext): Promise<Respons
     const nextEnabled =
       requestedEnabled && newConfigWithValidation.certificateValidation?.allExpired !== true;
     const now = Math.max(Date.now(), existing.updated_at + 1);
+    const minimumIalChanged =
+      existing.provider_type === 'saml_sp' &&
+      (existingConfig as SAMLSPConfig).minimumIal !== (newConfig as SAMLSPConfig).minimumIal;
+    const minimumAalChanged =
+      existing.provider_type === 'saml_sp' &&
+      (existingConfig as SAMLSPConfig).minimumAal !== (newConfig as SAMLSPConfig).minimumAal;
+    const classRefModeChanged =
+      existing.provider_type === 'saml_sp' &&
+      (existingConfig as SAMLSPConfig).authnContextClassRefMode !==
+        (newConfig as SAMLSPConfig).authnContextClassRefMode;
 
     const update = await coreAdapter.execute(
       `UPDATE identity_providers
@@ -2016,6 +2134,29 @@ export async function handleUpdateProvider(c: AdminSAMLContext): Promise<Respons
         enabled_changed: nextEnabled !== (existing.enabled === 1),
         config_updated: !!body.config,
         disabled_due_to_expired_certificate: requestedEnabled && !nextEnabled ? true : undefined,
+        ...(minimumIalChanged
+          ? {
+              minimum_ial_changed: true,
+              previous_minimum_ial: (existingConfig as SAMLSPConfig).minimumIal ?? null,
+              next_minimum_ial: (newConfig as SAMLSPConfig).minimumIal ?? null,
+            }
+          : {}),
+        ...(minimumAalChanged
+          ? {
+              minimum_aal_changed: true,
+              previous_minimum_aal: (existingConfig as SAMLSPConfig).minimumAal ?? null,
+              next_minimum_aal: (newConfig as SAMLSPConfig).minimumAal ?? null,
+            }
+          : {}),
+        ...(classRefModeChanged
+          ? {
+              authn_context_class_ref_mode_changed: true,
+              previous_authn_context_class_ref_mode:
+                (existingConfig as SAMLSPConfig).authnContextClassRefMode ?? null,
+              next_authn_context_class_ref_mode:
+                (newConfig as SAMLSPConfig).authnContextClassRefMode ?? null,
+            }
+          : {}),
       },
     });
     await invalidateAuthenticationMethodsCacheForSAML(c.env, tenantId, 'saml.provider.updated', c);
@@ -2159,7 +2300,8 @@ export async function handleImportMetadata(c: AdminSAMLContext): Promise<Respons
         existing.provider_type,
         resolvedMetadata.metadataXml,
         body.samlProfile,
-        body.attributePresetId
+        body.attributePresetId,
+        await resolveSamlProvisioningDefaults(c.env, tenantId)
       );
     } catch (error) {
       throw new SAMLMetadataValidationError(
@@ -2503,7 +2645,13 @@ export async function handleRefreshMetadata(c: AdminSAMLContext): Promise<Respon
       existing.provider_type === 'saml_sp'
         ? (existingConfig as SAMLSPConfig).samlProfile
         : undefined;
-    const refreshedConfig = buildConfigFromMetadata(existing.provider_type, metadataXml, profile);
+    const refreshedConfig = buildConfigFromMetadata(
+      existing.provider_type,
+      metadataXml,
+      profile,
+      undefined,
+      defaultsOfRegisteredProvider(existing.provider_type, existingConfig, metadataXml)
+    );
     const restoreMetadataSuspension =
       existingConfig.metadataRefreshPolicy?.suspendedByMetadataSync === true;
     const mergedConfig = await withProviderCertificateValidation({
@@ -2676,7 +2824,7 @@ export async function handlePreviewFederationTrustCertificate(
     const forbidden = await requireSAMLAdminPermission(c, ADMIN_PERMISSIONS.SAML_PROVIDERS_CREATE);
     if (forbidden) return forbidden;
 
-    const body = (await c.req.json()) as { certificate?: string; certificateUrl?: string };
+    const body = await c.req.json<{ certificate?: string; certificateUrl?: string }>();
     const certificateUrl = body.certificateUrl?.trim();
     const certificate = body.certificate?.trim();
 
@@ -2750,7 +2898,7 @@ export async function handleListAggregatePreviewEntities(c: AdminSAMLContext): P
       { method: 'GET' }
     );
     if (!response.ok) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-    return c.json((await response.json()) as SAMLMetadataEntityListResponse);
+    return c.json(await response.json<SAMLMetadataEntityListResponse>());
   } catch (error) {
     getLogger(c)
       .module('SAML')
@@ -2765,7 +2913,7 @@ export async function handleStartAggregateBatchCreate(c: AdminSAMLContext): Prom
     const forbidden = await requireSAMLAdminPermission(c, ADMIN_PERMISSIONS.SAML_PROVIDERS_CREATE);
     if (forbidden) return forbidden;
     if (!previewId) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-    const body = (await c.req.json()) as SAMLMetadataBatchCreateRequest;
+    const body = await c.req.json<SAMLMetadataBatchCreateRequest>();
     const entityIds = Array.from(
       new Set((body.entityIds ?? []).map((id) => id.trim()).filter(Boolean))
     );
@@ -2893,7 +3041,7 @@ export async function handleGetAggregateBatchStatus(c: AdminSAMLContext): Promis
       method: 'GET',
     });
     if (!response.ok) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-    const status = (await response.json()) as SAMLMetadataBatchStatusResponse;
+    const status = await response.json<SAMLMetadataBatchStatusResponse>();
     const tenantId = resolveSAMLTenantIdFromContext(c);
     if (status.tenantId !== tenantId) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
@@ -3003,7 +3151,7 @@ async function updateProviderSigningPolicy(
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    const body = (await c.req.json()) as SigningRolloverRequestBody;
+    const body = await c.req.json<SigningRolloverRequestBody>();
     if (options.requireCertificate && !body.certificate) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
         variables: { field: 'certificate' },
@@ -3061,17 +3209,175 @@ async function updateProviderSigningPolicy(
   }
 }
 
+/**
+ * `defaults` are the NameID format and bindings for what the metadata leaves open. A provider
+ * being added or having metadata imported by an administrator gets the tenant's (see
+ * `defaultsForRequestedBindings`); a registered provider being refreshed keeps its own (see
+ * `defaultsOfRegisteredProvider`); one resolved at sign-in from federation metadata gets none.
+ */
 function buildConfigFromMetadata(
   providerType: string,
   metadataXml: string,
   profile?: SAMLSPProfile,
-  _attributePresetId?: SAMLAttributePresetId
+  _attributePresetId?: SAMLAttributePresetId,
+  defaults?: SamlProvisioningDefaults
 ): SAMLIdPConfig | SAMLSPConfig {
   if (providerType === 'saml_idp') {
-    return parseIdPMetadata(metadataXml);
+    return parseIdPMetadata(metadataXml, defaults);
   }
 
-  return applySAMLSPProfileDefaults(parseSPMetadata(metadataXml, profile), profile);
+  return applySAMLSPProfileDefaults(parseSPMetadata(metadataXml, profile, defaults), profile);
+}
+
+/**
+ * The tenant's defaults, adjusted to what the request already names: the binding the request
+ * lists in `allowedBindings` (identity providers) or `sloBinding` (service providers) decides
+ * which metadata endpoint is taken, so the URL and the binding the sign-in uses agree.
+ */
+function defaultsForRequestedBindings(
+  providerType: string,
+  requested: Partial<SAMLIdPConfig & SAMLSPConfig> | undefined,
+  tenantDefaults: SamlProvisioningDefaults
+): SamlProvisioningDefaults {
+  if (providerType === 'saml_idp' && Array.isArray(requested?.allowedBindings)) {
+    const bindings = requested.allowedBindings;
+    // Sign-in goes by Redirect whenever it is allowed (sp/login.ts), so that is the one to match.
+    if (bindings.includes('redirect')) return { ...tenantDefaults, ssoBinding: 'redirect' };
+    if (bindings.includes('post')) return { ...tenantDefaults, ssoBinding: 'post' };
+  }
+  if (
+    providerType === 'saml_sp' &&
+    (requested?.sloBinding === 'post' || requested?.sloBinding === 'redirect')
+  ) {
+    return { ...tenantDefaults, sloBinding: requested.sloBinding };
+  }
+  return tenantDefaults;
+}
+
+/**
+ * With metadata, the request's `allowedBindings` is read against what the metadata offers, so an
+ * identity provider never ends up with a binding that has no matching endpoint:
+ * - an empty list is unspecified (the metadata decides);
+ * - a list is narrowed to the bindings the metadata offers, and refused when none is offered.
+ * An explicit `ssoUrl` is the request's own choice and is left alone.
+ */
+function reconcileRequestedBindings<T extends Partial<SAMLIdPConfig & SAMLSPConfig> | undefined>(
+  providerType: string,
+  requested: T,
+  metadataXml: string
+): T {
+  if (providerType !== 'saml_idp' || !requested || !Array.isArray(requested.allowedBindings)) {
+    return requested;
+  }
+  const { allowedBindings, ...rest } = requested;
+  if (allowedBindings.length === 0) return rest as T;
+  if (requested.ssoUrl) return requested;
+  const offered = parseIdPMetadata(metadataXml).allowedBindings;
+  const usable = allowedBindings.filter((binding) => offered.includes(binding));
+  if (usable.length === 0) {
+    throw new SAMLMetadataValidationError(
+      'allowedBindings lists no binding that the metadata offers for single sign-on.'
+    );
+  }
+  return { ...requested, allowedBindings: usable };
+}
+
+/** A requested logout binding must be the one of the logout endpoint taken from the metadata. */
+function assertRequestedSloBindingMatches(
+  providerType: string,
+  requested: Partial<SAMLSPConfig> | undefined,
+  derived: SAMLIdPConfig | SAMLSPConfig
+): void {
+  if (providerType !== 'saml_sp' || !requested?.sloBinding || requested.sloUrl) return;
+  const { sloUrl, sloBinding } = derived as SAMLSPConfig;
+  if (sloUrl && sloBinding !== requested.sloBinding) {
+    throw new SAMLMetadataValidationError(
+      'sloBinding is not a logout binding that the metadata offers.'
+    );
+  }
+}
+
+/**
+ * Which logout binding a registered identity provider's `sloUrl` was taken from, read from the
+ * metadata it was registered from. This only recovers an earlier choice, so the metadata is read
+ * as it stands: no validity or signature checks (it may have expired since), and only the
+ * SingleLogoutService endpoints. Undefined when the URL is not there, or is offered under both
+ * bindings (the choice cannot be told).
+ */
+function registeredSloBinding(
+  metadataXml: string | undefined,
+  sloUrl: string
+): 'post' | 'redirect' | undefined {
+  if (!metadataXml) return undefined;
+  try {
+    const bindings = new Set<'post' | 'redirect'>();
+    for (const idp of findElements(parseXml(metadataXml), SAML_NAMESPACES.MD, 'IDPSSODescriptor')) {
+      for (const slo of findElements(idp, SAML_NAMESPACES.MD, 'SingleLogoutService')) {
+        if (getAttribute(slo, 'Location') !== sloUrl) continue;
+        const binding = getAttribute(slo, 'Binding');
+        if (binding === BINDING_URIS.HTTP_POST) bindings.add('post');
+        if (binding === BINDING_URIS.HTTP_REDIRECT) bindings.add('redirect');
+      }
+    }
+    return bindings.size === 1 ? [...bindings][0] : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * What a registered provider already has, as the defaults for refreshing it from its metadata:
+ * the NameID format and bindings stay unless the metadata now names a format or offers only one
+ * binding. Without this a refresh would fall back to the built-in defaults and undo what the
+ * tenant defaults gave the provider when it was registered.
+ */
+function defaultsOfRegisteredProvider(
+  providerType: string,
+  existing: SAMLIdPConfig | SAMLSPConfig,
+  metadataXml: string
+): SamlProvisioningDefaults {
+  const defaults: SamlProvisioningDefaults = {
+    ssoBinding: 'redirect',
+    sloBinding: 'redirect',
+    nameIdFormat: existing.nameIdFormat || NAMEID_FORMATS.EMAIL,
+  };
+  if (providerType === 'saml_sp') {
+    const { sloBinding } = existing as SAMLSPConfig;
+    return sloBinding === 'post' || sloBinding === 'redirect'
+      ? { ...defaults, sloBinding }
+      : defaults;
+  }
+
+  const { allowedBindings, sloUrl } = existing as SAMLIdPConfig;
+  const ssoBinding = Array.isArray(allowedBindings)
+    ? allowedBindings.includes('redirect')
+      ? 'redirect'
+      : allowedBindings.includes('post')
+        ? 'post'
+        : defaults.ssoBinding
+    : defaults.ssoBinding;
+  // An identity provider does not record its logout binding: read it from which endpoint of the
+  // metadata it was registered from (kept with it) it uses. The new metadata may have moved the
+  // endpoints, so that comes last.
+  let sloBinding = defaults.sloBinding;
+  const registered = sloUrl
+    ? registeredSloBinding((existing as SAMLIdPConfig).metadataXml, sloUrl)
+    : undefined;
+  if (registered) {
+    sloBinding = registered;
+  } else if (sloUrl) {
+    // No usable stored metadata: see which endpoint of the new metadata the URL still is.
+    try {
+      const sloUrlFor = (binding: 'post' | 'redirect') =>
+        parseIdPMetadata(metadataXml, { ...defaults, ssoBinding, sloBinding: binding }).sloUrl;
+      const postUrl = sloUrlFor('post');
+      const redirectUrl = sloUrlFor('redirect');
+      if (sloUrl === postUrl && sloUrl !== redirectUrl) sloBinding = 'post';
+    } catch {
+      // The new metadata is validated by the caller; nothing more to infer here.
+    }
+  }
+  return { ...defaults, ssoBinding, sloBinding };
 }
 
 export interface SAMLProviderMetadataRefreshResult {
@@ -3138,7 +3444,13 @@ export async function refreshSAMLProviderConfigFromMetadata(input: {
     input.providerType === 'saml_sp'
       ? (input.existingConfig as SAMLSPConfig).samlProfile
       : undefined;
-  const refreshedConfig = buildConfigFromMetadata(input.providerType, input.metadataXml, profile);
+  const refreshedConfig = buildConfigFromMetadata(
+    input.providerType,
+    input.metadataXml,
+    profile,
+    undefined,
+    defaultsOfRegisteredProvider(input.providerType, input.existingConfig, input.metadataXml)
+  );
   const config = await withProviderCertificateValidation({
     ...input.existingConfig,
     ...refreshedConfig,
@@ -3302,10 +3614,10 @@ async function readOptionalJson(
   }
 
   return (
-    ((await c.req.json()) as {
+    (await c.req.json<{
       metadataUrl?: string;
       allowEntityIdChange?: boolean;
-    }) ?? {}
+    }>()) ?? {}
   );
 }
 
@@ -3411,6 +3723,7 @@ async function createSAMLAdminAudit(
     metadata: JSON.stringify({
       protocol: 'saml',
       ...(input.metadata ?? {}),
+      ...(input.result ? { result: input.result } : {}),
     }),
     severity: input.severity ?? (input.result === 'failure' ? 'warning' : 'info'),
   });
@@ -3563,14 +3876,6 @@ function normalizeFederationTrustPolicy(value: unknown): SAMLFederationTrustProf
   return value === 'strict' || value === 'warn' || value === 'disabled' ? value : undefined;
 }
 
-async function hashStableJson(value: unknown): Promise<string> {
-  const bytes = new TextEncoder().encode(stableJson(value));
-  const digest = await crypto.subtle.digest('SHA-256', bytes);
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, '0'))
-    .join('');
-}
-
 function stableJson(value: unknown): string {
   return JSON.stringify(sortForStableJson(value));
 }
@@ -3626,7 +3931,7 @@ async function storeAggregatePreview(
   if (!response.ok) {
     throw new Error('Failed to store aggregate preview');
   }
-  return (await response.json()) as { expiresAt: number };
+  return await response.json<{ expiresAt: number }>();
 }
 
 async function getAggregatePreview(
@@ -3643,13 +3948,13 @@ async function getAggregatePreview(
     method: 'GET',
   });
   return response.ok
-    ? ((await response.json()) as {
+    ? await response.json<{
         tenantId: string;
         metadataXml: string;
         metadataUrl?: string;
         entities: SAMLMetadataEntitySummary[];
         verification: SAMLMetadataVerificationSummary;
-      })
+      }>()
     : null;
 }
 
@@ -3666,7 +3971,7 @@ async function startAggregateBatch(
   if (!response.ok) {
     throw new Error('Failed to start aggregate batch');
   }
-  return (await response.json()) as SAMLMetadataBatchStatusResponse;
+  return await response.json<SAMLMetadataBatchStatusResponse>();
 }
 
 async function recordAggregateBatchResult(
@@ -3728,6 +4033,7 @@ async function processAggregateBatchCreate(
       );
       if (!previewTrustStillCurrent) throw new Error('Aggregate preview trust context changed');
     }
+    const provisioningDefaults = await resolveSamlProvisioningDefaults(env, input.tenantId);
     const coreAdapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'core', {
       tenantId: input.tenantId,
     });
@@ -3774,7 +4080,8 @@ async function processAggregateBatchCreate(
           providerType,
           metadataXml,
           input.samlProfile,
-          input.attributePresetId
+          input.attributePresetId,
+          provisioningDefaults
         );
         const configWithMapping = {
           ...metadataConfig,
@@ -3903,24 +4210,30 @@ async function recordFederationSelectedEntityImportEvent(
     return;
   }
   try {
-    const adapter = requireDedicatedAdminDatabaseAdapter(env, 'saml-federation-trust');
-    await adapter.execute(
-      `INSERT INTO federation_selected_entity_import_events (
-        id, tenant_id, trust_source_id, metadata_entity_summary_id, provider_id,
-        import_action, outcome, reason_codes_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        crypto.randomUUID(),
-        input.tenantId,
-        input.trustSourceId,
-        null,
-        input.providerId ?? null,
-        input.importAction,
-        input.outcome,
-        stableJson(input.reasonCodes),
-        Date.now(),
-      ]
-    );
+    const now = Date.now();
+    await emitLogIcebergRow(env, {
+      tenantId: input.tenantId,
+      sourceDataset: 'admin.federation_selected_entity_import_events',
+      logType: 'normal',
+      eventAt: now,
+      expiresAt: null,
+      overview: {
+        action: input.importAction,
+        result: input.outcome,
+        resource_id: input.providerId ?? input.trustSourceId,
+      },
+      row: {
+        id: crypto.randomUUID(),
+        tenant_id: input.tenantId,
+        trust_source_id: input.trustSourceId,
+        metadata_entity_summary_id: null,
+        provider_id: input.providerId ?? null,
+        import_action: input.importAction,
+        outcome: input.outcome,
+        reason_codes_json: stableJson(input.reasonCodes),
+        created_at: now,
+      },
+    });
   } catch {
     // Best-effort operational evidence must not fail the provider import itself.
   }
@@ -3960,7 +4273,7 @@ function buildProviderNameFromEntity(
 /**
  * Parse IdP metadata XML
  */
-export function parseIdPMetadata(xml: string): SAMLIdPConfig {
+export function parseIdPMetadata(xml: string, defaults?: SamlProvisioningDefaults): SAMLIdPConfig {
   const doc = parseXml(xml);
 
   // Find IDPSSODescriptor
@@ -3986,8 +4299,9 @@ export function parseIdPMetadata(xml: string): SAMLIdPConfig {
     throw new Error('Invalid metadata: missing IDPSSODescriptor');
   }
 
-  // Get SSO URL. SP-initiated login signs AuthnRequest with HTTP-Redirect,
-  // so prefer the Redirect endpoint when metadata publishes both bindings.
+  // Get SSO URL. SP-initiated login signs AuthnRequest with HTTP-Redirect, so the Redirect
+  // endpoint is preferred when metadata publishes both bindings, unless the tenant's default
+  // (federation.saml_sso_binding) asks for POST.
   const ssoServices = findElements(idpDescriptor, SAML_NAMESPACES.MD, 'SingleSignOnService');
   let postSsoUrl = '';
   let redirectSsoUrl = '';
@@ -4006,25 +4320,35 @@ export function parseIdPMetadata(xml: string): SAMLIdPConfig {
     }
   }
 
-  const ssoUrl = redirectSsoUrl || postSsoUrl;
+  const preferPostSso = defaults?.ssoBinding === 'post' && postSsoUrl !== '';
+  const ssoUrl = preferPostSso ? postSsoUrl : redirectSsoUrl || postSsoUrl;
   if (!ssoUrl) {
     throw new Error('Invalid metadata: no supported SSO binding found');
   }
+  if (preferPostSso && allowedBindings.includes('redirect')) {
+    // Sign-in is sent by POST; leaving Redirect in would send it to the POST endpoint.
+    allowedBindings.splice(0, allowedBindings.length, 'post');
+  }
 
-  // Get SLO URL (optional)
+  // Get SLO URL (optional). Redirect is preferred unless the tenant's default
+  // (federation.saml_slo_binding) asks for POST.
   const sloServices = findElements(idpDescriptor, SAML_NAMESPACES.MD, 'SingleLogoutService');
-  let sloUrl: string | undefined;
+  let redirectSloUrl: string | undefined;
+  let postSloUrl: string | undefined;
 
   for (const slo of sloServices) {
     const binding = getAttribute(slo, 'Binding');
     if (binding === BINDING_URIS.HTTP_REDIRECT) {
-      sloUrl = getAttribute(slo, 'Location') || undefined;
-      break;
+      redirectSloUrl = redirectSloUrl || getAttribute(slo, 'Location') || undefined;
     }
     if (binding === BINDING_URIS.HTTP_POST) {
-      sloUrl = sloUrl || getAttribute(slo, 'Location') || undefined;
+      postSloUrl = postSloUrl || getAttribute(slo, 'Location') || undefined;
     }
   }
+  const sloUrl =
+    defaults?.sloBinding === 'post'
+      ? (postSloUrl ?? redirectSloUrl)
+      : (redirectSloUrl ?? postSloUrl);
 
   // Get certificate
   const keyDescriptors = findElements(idpDescriptor, SAML_NAMESPACES.MD, 'KeyDescriptor');
@@ -4050,10 +4374,11 @@ export function parseIdPMetadata(xml: string): SAMLIdPConfig {
 
   // Get NameID formats
   const nameIdFormats = findElements(idpDescriptor, SAML_NAMESPACES.MD, 'NameIDFormat');
+  const fallbackNameIdFormat = defaults?.nameIdFormat ?? NAMEID_FORMATS.EMAIL;
   const nameIdFormat =
     nameIdFormats.length > 0
-      ? (getTextContent(nameIdFormats[0]) as SAMLIdPConfig['nameIdFormat']) || NAMEID_FORMATS.EMAIL
-      : NAMEID_FORMATS.EMAIL;
+      ? (getTextContent(nameIdFormats[0]) as SAMLIdPConfig['nameIdFormat']) || fallbackNameIdFormat
+      : fallbackNameIdFormat;
 
   return {
     entityId,
@@ -4071,7 +4396,11 @@ export function parseIdPMetadata(xml: string): SAMLIdPConfig {
 /**
  * Parse SP metadata XML
  */
-export function parseSPMetadata(xml: string, profile?: SAMLSPProfile): SAMLSPConfig {
+export function parseSPMetadata(
+  xml: string,
+  profile?: SAMLSPProfile,
+  defaults?: SamlProvisioningDefaults
+): SAMLSPConfig {
   const doc = parseXml(xml);
 
   // Find SPSSODescriptor
@@ -4151,7 +4480,7 @@ export function parseSPMetadata(xml: string, profile?: SAMLSPProfile): SAMLSPCon
 
   // Get SLO URL (optional)
   const sloServices = findElements(spDescriptor, SAML_NAMESPACES.MD, 'SingleLogoutService');
-  const selectedSloService = selectSPMetadataSLOService(sloServices, profile);
+  const selectedSloService = selectSPMetadataSLOService(sloServices, profile, defaults?.sloBinding);
 
   // Get signing/encryption certificates (optional for SP)
   const certificates: string[] = [];
@@ -4183,7 +4512,7 @@ export function parseSPMetadata(xml: string, profile?: SAMLSPProfile): SAMLSPCon
 
   // Get NameID formats
   const metadataNameIdFormats = parseMetadataNameIDFormats(spDescriptor);
-  const nameIdFormat = metadataNameIdFormats[0] ?? NAMEID_FORMATS.EMAIL;
+  const nameIdFormat = metadataNameIdFormats[0] ?? defaults?.nameIdFormat ?? NAMEID_FORMATS.EMAIL;
   const metadataRequestedAttributes = parseSPMetadataRequestedAttributes(spDescriptor);
   const metadataAttributeReleasePolicySuggestion = buildAttributeReleasePolicySuggestion(
     metadataRequestedAttributes
@@ -4372,7 +4701,8 @@ function deduplicateAcsServices(
 
 function selectSPMetadataSLOService(
   sloServices: Element[],
-  profile: SAMLSPProfile | undefined
+  profile: SAMLSPProfile | undefined,
+  tenantSloBinding: 'post' | 'redirect' | undefined
 ):
   | {
       binding: Extract<SAMLSPConfig['allowedBindings'][number], 'post' | 'redirect'>;
@@ -4406,8 +4736,13 @@ function selectSPMetadataSLOService(
       metadataBinding: service.binding,
     }));
 
+  // The profile's own preference first (legacy: POST), then the tenant's default, then Redirect.
+  const preferredBindingKind =
+    (profile ? SAML_SP_PROFILE_DEFAULTS[profile]?.sloBinding : undefined) ??
+    tenantSloBinding ??
+    'redirect';
   const preferredBinding =
-    profile === 'legacy' ? BINDING_URIS.HTTP_POST : BINDING_URIS.HTTP_REDIRECT;
+    preferredBindingKind === 'post' ? BINDING_URIS.HTTP_POST : BINDING_URIS.HTTP_REDIRECT;
   const fallbackBinding =
     preferredBinding === BINDING_URIS.HTTP_POST
       ? BINDING_URIS.HTTP_REDIRECT
@@ -4451,6 +4786,12 @@ export async function getSPConfig(
   tenantId: string,
   entityId: string
 ): Promise<SAMLSPConfig | null> {
+  if (
+    env.SAML_RUNTIME_PORTS &&
+    !env.SAML_RUNTIME_PORTS.serviceProviders.isAllowed({ tenantId, entityId })
+  ) {
+    return null;
+  }
   const coreAdapter = await resolveSAMLProvidersCoreAdapter(env, tenantId);
   const result = await coreAdapter.query<{ config_json: string; enabled: number }>(
     `SELECT config_json, enabled FROM identity_providers
@@ -4473,7 +4814,7 @@ export async function getSPConfig(
   }
   const match = matches[0];
   if (match) {
-    if (match.row.enabled !== 1 || !isPersistedSAMLProviderTrustUsable(match.config)) {
+    if (Number(match.row.enabled) !== 1 || !isPersistedSAMLProviderTrustUsable(match.config)) {
       // An explicit provider is authoritative for its entityID. Do not silently replace an
       // disabled, expired, or metadata-suspended relationship with an aggregate candidate.
       return null;
@@ -4483,7 +4824,11 @@ export async function getSPConfig(
     return applySafeSAMLSPSigningDefaults(match.config);
   }
 
-  return resolveFederationRuntimeConfig(env, tenantId, entityId, 'saml_sp');
+  // The AWS DR slice accepts only imported, explicitly configured SPs. Aggregate
+  // federation resolution depends on a separate control-plane snapshot and policy.
+  return env.SAML_RUNTIME_PORTS
+    ? null
+    : resolveFederationRuntimeConfig(env, tenantId, entityId, 'saml_sp');
 }
 
 /**
@@ -4547,6 +4892,31 @@ export async function getIdPConfigByEntityId(
   }
 
   return resolveFederationRuntimeConfig(env, tenantId, entityId, 'saml_idp');
+}
+
+/**
+ * The keys a SAML IdP's saved sign-in/sign-up switches
+ * (`authentication-methods.external_provider_usage`) are filed under: its provider id and the id
+ * the login screen uses (`saml:<id>`). Null for an IdP that has no provider record of its own
+ * (one resolved from federation metadata), which has no switches saved.
+ */
+export async function getIdPUsageKeyByEntityId(
+  env: Env,
+  tenantId: string,
+  entityId: string
+): Promise<{ providerId: string; ids: string[] } | null> {
+  const coreAdapter = await resolveSAMLProvidersCoreAdapter(env, tenantId);
+  const rows = await coreAdapter.query<{ id: string; config_json: string }>(
+    `SELECT id, config_json FROM identity_providers
+     WHERE tenant_id = ? AND provider_type = 'saml_idp'`,
+    [tenantId]
+  );
+  const matches = rows.filter(
+    (row) => (JSON.parse(row.config_json) as SAMLIdPConfig).entityId === entityId
+  );
+  // An ambiguous entity id is refused where the IdP is resolved; no key is guessed here.
+  const match = matches.length === 1 ? matches[0] : undefined;
+  return match ? { providerId: match.id, ids: [`saml:${match.id}`, match.id] } : null;
 }
 
 interface FederationRuntimeEntityRow {
@@ -4679,13 +5049,13 @@ async function resolveFederationRuntimeConfig(
     return null;
   }
   try {
-    return await buildFederationRuntimeConfig(highest[0]!, entityId, role);
+    return await buildFederationRuntimeConfig(highest[0], entityId, role);
   } catch (error) {
     createLogger()
       .module('SAML')
       .warn(
         'Federation runtime entity configuration was rejected',
-        { tenantId, entityId, role, trustSourceId: highest[0]!.row.trust_source_id },
+        { tenantId, entityId, role, trustSourceId: highest[0].row.trust_source_id },
         error as Error
       );
     return null;
@@ -4858,9 +5228,7 @@ function evaluateFederationRuntimePolicy(
   );
   if (effectivePresets.size > 1) return { allowed: false };
   const allowed = allow.length > 0 || categoryPolicy.defaultDecision === 'allow';
-  const attributePresetId = effectivePresets.values().next().value as
-    | SAMLAttributePresetId
-    | undefined;
+  const attributePresetId = effectivePresets.values().next().value;
   return {
     allowed,
     ...(attributePresetId

@@ -4,7 +4,10 @@ import type { Env } from '@authrim/ar-lib-core';
 const {
   mockProjectionRepository,
   mockTotpRepository,
+  mockTenantMetadataTotpRepository,
   mockCreateAuthContextFromHono,
+  mockCreateAccountAuthContextFromHono,
+  mockProjectionRepositoryConstructor,
   mockCreateAuditLogFromContext,
   mockGetTenantIdFromContext,
   mockResolveAccountDataContextFromHono,
@@ -12,18 +15,21 @@ const {
   const projectionRepository = {
     findByLegacyUserId: vi.fn(),
   };
+  // The account database holds the user and its TOTP credentials; the tenant metadata database
+  // must not be touched for either.
   const totpRepository = {
+    deleteByUserId: vi.fn(),
+  };
+  const tenantMetadataTotpRepository = {
     deleteByUserId: vi.fn(),
   };
   return {
     mockProjectionRepository: projectionRepository,
     mockTotpRepository: totpRepository,
-    mockCreateAuthContextFromHono: vi.fn().mockReturnValue({
-      coreAdapter: {},
-      repositories: {
-        totp: totpRepository,
-      },
-    }),
+    mockTenantMetadataTotpRepository: tenantMetadataTotpRepository,
+    mockCreateAuthContextFromHono: vi.fn(),
+    mockCreateAccountAuthContextFromHono: vi.fn(),
+    mockProjectionRepositoryConstructor: vi.fn(),
     mockCreateAuditLogFromContext: vi.fn(),
     mockGetTenantIdFromContext: vi.fn().mockReturnValue('tenant_123'),
     mockResolveAccountDataContextFromHono: vi.fn(),
@@ -36,7 +42,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ...actual,
     getTenantIdFromContext: mockGetTenantIdFromContext,
     createAuthContextFromHono: mockCreateAuthContextFromHono,
-    createAccountAuthContextFromHono: mockCreateAuthContextFromHono,
+    createAccountAuthContextFromHono: mockCreateAccountAuthContextFromHono,
     resolveAccountDataContextFromHono: mockResolveAccountDataContextFromHono,
     createPIIContextFromHono: vi.fn().mockReturnValue({ defaultPiiAdapter: {} }),
     hasPIIDatabase: vi.fn().mockReturnValue(true),
@@ -44,7 +50,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       return {};
     }),
     CanonicalRuntimeUserProjectionRepository: vi.fn(
-      function CanonicalRuntimeUserProjectionRepositoryMock() {
+      function CanonicalRuntimeUserProjectionRepositoryMock(coreAdapter: unknown) {
+        mockProjectionRepositoryConstructor(coreAdapter);
         return mockProjectionRepository;
       }
     ),
@@ -85,7 +92,13 @@ describe('admin user TOTP reset handler', () => {
     vi.clearAllMocks();
     mockGetTenantIdFromContext.mockReturnValue('tenant_123');
     mockCreateAuthContextFromHono.mockReturnValue({
-      coreAdapter: {},
+      coreAdapter: { database: 'tenant-metadata' },
+      repositories: {
+        totp: mockTenantMetadataTotpRepository,
+      },
+    });
+    mockCreateAccountAuthContextFromHono.mockReturnValue({
+      coreAdapter: { database: 'account-core' },
       repositories: {
         totp: mockTotpRepository,
       },
@@ -107,7 +120,10 @@ describe('admin user TOTP reset handler', () => {
 
     expect(response.status).toBe(200);
     expect(body).toEqual({ ok: true, deleted: 2 });
-    expect(mockCreateAuthContextFromHono).toHaveBeenCalledWith(context, 'tenant_123');
+    expect(mockResolveAccountDataContextFromHono).toHaveBeenCalledWith(context, 'user_123');
+    expect(mockCreateAccountAuthContextFromHono).toHaveBeenCalledWith(context, 'tenant_123');
+    expect(mockProjectionRepositoryConstructor).toHaveBeenCalledWith({ database: 'account-core' });
+    expect(mockTenantMetadataTotpRepository.deleteByUserId).not.toHaveBeenCalled();
     expect(mockProjectionRepository.findByLegacyUserId).toHaveBeenCalledWith('user_123', {
       includeInactive: true,
     });
@@ -132,6 +148,18 @@ describe('admin user TOTP reset handler', () => {
     expect(body.error).toBe('not_found');
     expect(mockTotpRepository.deleteByUserId).not.toHaveBeenCalled();
     expect(mockCreateAuditLogFromContext).not.toHaveBeenCalled();
+  });
+
+  it('answers 404 without deleting anything when the user has no account route', async () => {
+    mockResolveAccountDataContextFromHono.mockRejectedValue(
+      new Error('account_data_route_not_found')
+    );
+
+    const response = await adminUserTotpResetHandler(createMockContext('missing_user'));
+
+    expect(response.status).toBe(404);
+    expect(mockTotpRepository.deleteByUserId).not.toHaveBeenCalled();
+    expect(mockTenantMetadataTotpRepository.deleteByUserId).not.toHaveBeenCalled();
   });
 
   it('returns a redacted retryable response when the tenant placement write fence is active', async () => {

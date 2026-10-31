@@ -6,15 +6,23 @@
  * Apple Sign In uses POST with response_mode=form_post when name/email scope is requested.
  */
 
+import {
+  applyExternalSignupInvitation,
+  externalSignupInvitationRequirement,
+  releaseExternalSignupInvitation,
+} from '../services/signup-invitation';
 import type { Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import * as jose from 'jose';
-import type { Env } from '@authrim/ar-lib-core';
+import type { ChallengeStore, Env } from '@authrim/ar-lib-core';
 import {
+  resolveAuthCorePersistenceAdapterFromEnv,
+  scheduleSignInAttemptFailureRecord,
+  type SignInAttemptReasonCode,
   getSessionStoreForNewSession,
+  readAccountSession,
   getUIConfig,
   buildIssuerUrl,
-  shouldUseBuiltinForms,
   getDefaultTenantId,
   getTenantIdFromContext,
   createDiagnosticLoggerFromContext,
@@ -26,28 +34,32 @@ import {
   resolveAccountDataContextByIdentifier,
   // Challenge Store for auth_code generation
   getChallengeStoreByChallengeId,
+  readExternalProviderReauthPolicy,
   // Event System
   publishEvent,
   AUTH_EVENTS,
-  SESSION_EVENTS,
   type AuthEventData,
-  type SessionEventData,
   // Logger
   getLogger,
   createLogger,
   registerExternalProviderSession,
   // Audit Log
-  createAuditLog,
   // Errors
   AR_ERROR_CODES,
   createErrorResponse,
   safeFetchJson,
+  resolveSessionTtl,
 } from '@authrim/ar-lib-core';
 import { consumeAuthState, getAuthStateCookieName, matchesAuthStateCookie } from '../utils/state';
 import { getProviderByIdOrSlug } from '../services/provider-store';
+import {
+  assertExternalProviderUsageAllowed,
+  externalProviderUsageKey,
+} from '../services/external-usage-gate';
 import { OIDCRPClient } from '../clients/oidc-client';
 import { Fapi2Client } from '../clients/fapi2-client';
 import { completeExternalIdpJIT, handleIdentity } from '../services/identity-stitching';
+import { accountPageLinkResultUrl, recordSocialAccountActivity } from '../services/link-intent';
 import { decrypt, encrypt, getEncryptionKeyOrUndefined } from '../utils/crypto';
 import {
   ExternalIdPError,
@@ -166,6 +178,24 @@ export function createHybridFragmentRelayResponse(): Response {
   });
 }
 
+type ProvisioningChallengeStore = Pick<
+  ChallengeStore,
+  'storeChallengeRpc' | 'getChallengeRpc' | 'consumeChallengeRpc'
+>;
+
+/** Keep the concrete RPC contract when crossing the legacy sharding helper's untyped stub. */
+async function getProvisioningChallengeStore(
+  env: Env,
+  challengeId: string,
+  tenantId: string
+): Promise<ProvisioningChallengeStore> {
+  return (await getChallengeStoreByChallengeId(
+    env,
+    challengeId,
+    tenantId
+  )) as ProvisioningChallengeStore;
+}
+
 /**
  * Generate authorization code for Direct Auth token exchange
  * TTL: 60 seconds, single-use
@@ -196,6 +226,46 @@ async function generateAuthCode(
   return authCode;
 }
 
+/** Leeway between Authrim's clock and a provider's (OIDC Core's usual skew allowance). */
+const REAUTH_CLOCK_SKEW_SECONDS = 60;
+
+/**
+ * Whether the provider showed a new login made after Authrim asked it for one (prompt=login,
+ * max_age=0): the validated ID token's auth_time, or, where the tenant accepts that for this
+ * provider, the request alone. Returns the proof's time: when Authrim asked (its own clock), so a
+ * re-authentication asked for later, which a held-back answer would otherwise complete, is not.
+ * Throws otherwise.
+ */
+export async function provenUpstreamReauthentication(
+  env: Env,
+  input: {
+    tenantId: string;
+    provider: UpstreamProvider;
+    requestedAt: number;
+    idTokenValidated: boolean;
+    idTokenAuthTime?: number;
+  }
+): Promise<number> {
+  const notProven = (message: string) =>
+    new ExternalIdPError(ExternalIdPErrorCode.REAUTH_NOT_PROVEN, message);
+  if (!input.idTokenValidated) throw notProven('No validated ID token dates the new login');
+  const policy = await readExternalProviderReauthPolicy(env, input.tenantId, {
+    providerId: input.provider.id,
+    ids: [input.provider.id, input.provider.slug ?? ''].filter(Boolean),
+  }).catch(() => {
+    throw notProven('Re-authentication settings are unavailable');
+  });
+  if (!policy.reauthEnabled) throw notProven('This provider cannot be used to re-authenticate');
+  if (input.idTokenAuthTime !== undefined) {
+    if (input.idTokenAuthTime + REAUTH_CLOCK_SKEW_SECONDS < Math.floor(input.requestedAt / 1000)) {
+      throw notProven('The provider answered with a login made before it was asked for one');
+    }
+    return input.requestedAt;
+  }
+  if (!policy.acceptWithoutAuthTime) throw notProven('The provider did not date the new login');
+  return input.requestedAt;
+}
+
 async function completeExternalAuthentication(
   c: Context<{ Bindings: Env }>,
   input: {
@@ -203,6 +273,10 @@ async function completeExternalAuthentication(
     provider: UpstreamProvider;
     userInfo: UserInfo;
     upstreamIdToken?: string;
+    /** The acr of the upstream ID token, as validated (not from userinfo). */
+    upstreamAcr?: string;
+    /** When a new login the provider was asked for was verified (milliseconds, Authrim's clock). */
+    reauthProvenAt?: number;
     result: HandleIdentityReadyResult;
   }
 ): Promise<Response> {
@@ -214,6 +288,17 @@ async function completeExternalAuthentication(
     expectedAccountId: `account:${result.userId}`,
   });
   (c as unknown as { set(key: string, value: unknown): void }).set('accountDataContext', account);
+  // The use the start reserved goes to the account this sign-in created, before any session or
+  // code is issued so its first tokens carry the invitation's role.
+  if (result.isNewUser && authState.inviteId && authState.inviteReservationId) {
+    await applyExternalSignupInvitation(c.env, getLogger(c).module('CALLBACK'), {
+      inviteId: authState.inviteId,
+      inviteReservationId: authState.inviteReservationId,
+      tenantId: authState.tenantId,
+      userId: result.userId,
+      accountCoreAdapter: createAccountAuthContextFromHono(c, authState.tenantId).coreAdapter,
+    });
+  }
   publishEvent(c, {
     type: AUTH_EVENTS.EXTERNAL_IDP_SUCCEEDED,
     tenantId: authState.tenantId,
@@ -257,10 +342,14 @@ async function completeExternalAuthentication(
       tenantId,
     });
     const runtimeUser = await runtimeUsers.findById(result.userId);
-    if (!runtimeUser) return createErrorResponse(c, AR_ERROR_CODES.USER_INACTIVE);
+    if (!runtimeUser) {
+      scheduleExternalSignInFailure(c, authState, result.userId, 'account_unavailable');
+      return createErrorResponse(c, AR_ERROR_CODES.USER_INACTIVE);
+    }
 
     const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env, tenantId);
-    const sessionTTL = 24 * 60 * 60;
+    // session.default_ttl: external IdP sign-in has no lifetime setting of its own.
+    const sessionTTL = (await resolveSessionTtl(c.env, tenantId, 'default')).seconds;
     const encryptionKey = getEncryptionKeyOrUndefined(c.env);
     const upstreamIdTokenEncrypted =
       input.upstreamIdToken && encryptionKey
@@ -281,6 +370,14 @@ async function completeExternalAuthentication(
         external_provider_sub: userInfo.sub,
         external_provider_sid: typeof userInfo.sid === 'string' ? userInfo.sid : undefined,
         upstream_id_token_encrypted: upstreamIdTokenEncrypted,
+        // The upstream acr, for the AAL assurance takes the login for (upstream_acr_mappings).
+        ...(input.upstreamAcr ? { upstream_acr: input.upstreamAcr } : {}),
+        // No proof time (proven_at): the IdP's auth_time is in its own clock, so this login is
+        // never taken as the result of a step-up. It completes a re-authentication only when the
+        // IdP was asked for a new login and showed one (reauth_proven_at, Authrim's clock).
+        ...(input.reauthProvenAt !== undefined
+          ? { reauth_proven_amr: ['external_idp'], reauth_proven_at: input.reauthProvenAt }
+          : {}),
       },
       tenantId
     );
@@ -322,6 +419,11 @@ async function completeExternalAuthentication(
         state: authState.state,
         aud: 'handoff',
         created_at: Date.now(),
+        // A sign-in's artifact names its provider, so that redeeming it checks the tenant's
+        // sign-in switch again. A re-authentication has its own switch.
+        ...(input.reauthProvenAt === undefined && authState.reauthRequestedAt === undefined
+          ? { external_provider_usage_key: externalProviderUsageKey(provider) }
+          : {}),
       },
     });
     const redirectUrl = new URL(authState.redirectUri);
@@ -345,6 +447,11 @@ async function completeExternalAuthentication(
     client_id: clientId,
     is_new_user: result.isNewUser,
     stitched_from_existing: result.stitchedFromExisting,
+    // The session made from this code keeps the upstream acr, as the SSO path does.
+    ...(input.upstreamAcr ? { upstream_acr: input.upstreamAcr } : {}),
+    ...(input.reauthProvenAt !== undefined
+      ? { reauth_proven_amr: ['external_idp'], reauth_proven_at: input.reauthProvenAt }
+      : {}),
   });
   const redirectUrl = new URL(authState.redirectUri);
   redirectUrl.searchParams.set('code', authCode);
@@ -368,7 +475,18 @@ interface ExternalIdpProvisioningContinuation {
   providerId: string;
   userInfo: UserInfo;
   upstreamIdToken?: string;
+  upstreamAcr?: string;
   result: HandleIdentityPendingResult;
+}
+
+/** The tenant turned the provider's sign-in or sign-up off, or its switches cannot be read. */
+function isUsageGateError(error: unknown): error is ExternalIdPError {
+  return (
+    error instanceof ExternalIdPError &&
+    (error.code === ExternalIdPErrorCode.LOGIN_DISABLED ||
+      error.code === ExternalIdPErrorCode.SIGNUP_DISABLED ||
+      error.code === ExternalIdPErrorCode.SETTINGS_UNAVAILABLE)
+  );
 }
 
 function randomContinuationToken(): string {
@@ -400,7 +518,7 @@ async function beginExternalIdpProvisioningContinuation(
   if (new TextEncoder().encode(payload).byteLength > 48 * 1024) {
     throw new Error('external_idp_provisioning_continuation_too_large');
   }
-  const store = await getChallengeStoreByChallengeId(c.env, id, continuation.authState.tenantId);
+  const store = await getProvisioningChallengeStore(c.env, id, continuation.authState.tenantId);
   await store.storeChallengeRpc({
     id,
     tenantId: continuation.authState.tenantId,
@@ -476,7 +594,11 @@ function parseContinuation(value: string): ExternalIdpProvisioningContinuation {
     !boundedString(result.providerUserId) ||
     result.accountId !== `account:${result.userId}` ||
     continuation.providerId !== result.providerId ||
-    userInfo.sub !== result.providerUserId
+    userInfo.sub !== result.providerUserId ||
+    (continuation.upstreamAcr !== undefined && !boundedString(continuation.upstreamAcr, 1024)) ||
+    (authState.inviteId !== undefined && !boundedString(authState.inviteId, 256)) ||
+    (authState.inviteReservationId !== undefined &&
+      !boundedString(authState.inviteReservationId, 256))
   ) {
     throw new Error('external_idp_provisioning_continuation_invalid');
   }
@@ -490,7 +612,7 @@ async function loadExternalIdpContinuation(
 ): Promise<{
   digest: string;
   id: string;
-  store: Awaited<ReturnType<typeof getChallengeStoreByChallengeId>>;
+  store: ProvisioningChallengeStore;
   continuation: ExternalIdpProvisioningContinuation;
 }> {
   if (!EXTERNAL_PROVISIONING_TOKEN.test(token) || !SAFE_CONTINUATION_TENANT.test(tenantId)) {
@@ -501,7 +623,7 @@ async function loadExternalIdpContinuation(
     throw new Error('external_idp_provisioning_browser_binding_failed');
   }
   const id = `external_idp_provisioning:${digest}`;
-  const store = await getChallengeStoreByChallengeId(c.env, id, tenantId);
+  const store = await getProvisioningChallengeStore(c.env, id, tenantId);
   const challenge = await store.getChallengeRpc(id);
   const encryptedPayload = challenge?.metadata?.encrypted_payload;
   if (
@@ -571,12 +693,22 @@ export async function handleExternalProvisioningStatus(
       throw new Error('external_idp_provisioning_status_mismatch');
     }
     if (status.status === 'failed') {
-      await loaded.store.consumeChallengeRpc({
+      const consumed = await loaded.store.consumeChallengeRpc({
         id: loaded.id,
         tenantId: loaded.continuation.authState.tenantId,
         type: 'external_idp_provisioning_resume',
         challenge: loaded.digest,
       });
+      // Only the successful durable challenge consumer may schedule this terminal failure.
+      // A crash after consumption can still lose a best-effort record; this is dedupe, not delivery.
+      if (consumed.userId === expected.userId) {
+        scheduleExternalSignInFailure(
+          c,
+          loaded.continuation.authState,
+          expected.userId,
+          'provisioning_failed'
+        );
+      }
       deleteCookie(c, continuationCookieName(loaded.digest), { path: '/' });
     }
     return c.json(
@@ -601,6 +733,7 @@ export async function handleExternalProvisioningStatus(
 export async function handleExternalProvisioningResume(
   c: Context<{ Bindings: Env }>
 ): Promise<Response> {
+  let attempt: { state: ExternalIdpAuthState; userId: string } | null = null;
   try {
     const token = c.req.query('token');
     const tenantId = c.req.query('tenant');
@@ -616,6 +749,19 @@ export async function handleExternalProvisioningResume(
       flow: 'external_idp',
     });
     if (
+      status.status === 'failed' &&
+      status.operationId === expected.operationId &&
+      status.accountId === expected.accountId &&
+      status.userId === expected.userId
+    ) {
+      scheduleExternalSignInFailure(
+        c,
+        loaded.continuation.authState,
+        expected.userId,
+        'provisioning_failed'
+      );
+    }
+    if (
       status.status !== 'ready' ||
       status.operationId !== expected.operationId ||
       status.accountId !== expected.accountId ||
@@ -623,24 +769,43 @@ export async function handleExternalProvisioningResume(
     ) {
       throw new Error('external_idp_provisioning_not_ready');
     }
+    // Pending/not-ready, bad bindings and replayed continuations never reach this boundary.
+    attempt = { state: loaded.continuation.authState, userId: expected.userId };
+    const provider = await getProviderByIdOrSlug(c.env, loaded.continuation.providerId, tenantId);
+    if (!provider || provider.id !== expected.providerId) {
+      throw new Error('external_idp_provisioning_provider_mismatch');
+    }
+    // The tenant may have turned the provider's sign-in or sign-up off since the account was
+    // provisioned: decided before its identity is activated and a session is made.
+    if (loaded.continuation.authState.reauthRequestedAt === undefined) {
+      await assertExternalProviderUsageAllowed(c.env, tenantId, provider, 'login');
+    }
+    await assertExternalProviderUsageAllowed(c.env, tenantId, provider, 'signup');
     const completed = await completeExternalIdpJIT(c.env, {
       tenantId,
       userId: expected.userId,
       providerId: expected.providerId,
       providerUserId: expected.providerUserId,
     });
-    const consumed = await loaded.store.consumeChallengeRpc({
-      id: loaded.id,
-      tenantId,
-      type: 'external_idp_provisioning_resume',
-      challenge: loaded.digest,
-    });
+    const consumed = await loaded.store
+      .consumeChallengeRpc({
+        id: loaded.id,
+        tenantId,
+        type: 'external_idp_provisioning_resume',
+        challenge: loaded.digest,
+      })
+      .catch((error: unknown) => {
+        // A concurrent resume may have consumed it after this request loaded the challenge.
+        // That losing request is a replay, not another failed sign-in.
+        attempt = null;
+        throw error;
+      });
     if (consumed.userId !== expected.userId) {
+      attempt = null;
       throw new Error('external_idp_provisioning_consume_mismatch');
     }
     deleteCookie(c, continuationCookieName(loaded.digest), { path: '/' });
-    const provider = await getProviderByIdOrSlug(c.env, loaded.continuation.providerId, tenantId);
-    if (!provider || provider.id !== expected.providerId || !completed.linkedIdentityId) {
+    if (!completed.linkedIdentityId) {
       throw new Error('external_idp_provisioning_provider_mismatch');
     }
     return await completeExternalAuthentication(c, {
@@ -648,6 +813,7 @@ export async function handleExternalProvisioningResume(
       provider,
       userInfo: loaded.continuation.userInfo,
       upstreamIdToken: loaded.continuation.upstreamIdToken,
+      upstreamAcr: loaded.continuation.upstreamAcr,
       result: {
         status: 'ready',
         userId: expected.userId,
@@ -658,12 +824,99 @@ export async function handleExternalProvisioningResume(
         orgs_joined: completed.orgs_joined,
       },
     });
-  } catch {
+  } catch (error) {
+    if (attempt) {
+      scheduleExternalSignInFailure(
+        c,
+        attempt.state,
+        attempt.userId,
+        error instanceof ExternalIdPError
+          ? externalSignInAttemptReason(error)
+          : 'service_unavailable'
+      );
+    }
+    if (isUsageGateError(error)) {
+      return redirectWithError(c, error.code, 'Authentication failed. Please try again.');
+    }
     return redirectWithError(
       c,
       ExternalIdPErrorCode.CALLBACK_FAILED,
       'Authentication could not be resumed. Please try again.'
     );
+  }
+}
+
+/** Best-effort dedupe across callback and verified provisioning continuation retries. */
+function scheduleExternalSignInFailure(
+  c: Context<{ Bindings: Env }>,
+  state: ExternalIdpAuthState,
+  userId: string | null,
+  reasonCode: SignInAttemptReasonCode
+): void {
+  // A link is not a sign-in; an interaction from query/body is never accepted here.
+  if (state.userId || !state.attemptInteractionId) return;
+  scheduleSignInAttemptFailureRecord(
+    {
+      waitUntil: (promise) => c.executionCtx.waitUntil(promise),
+      core: () =>
+        resolveAuthCorePersistenceAdapterFromEnv(c.env, 'bridge-sign-in-attempt', {
+          tenantId: state.tenantId,
+        }),
+      env: c.env,
+      onError: (error) =>
+        getLogger(c)
+          .module('CALLBACK')
+          .warn('Failed to record a failed sign-in attempt', {
+            errorType: error instanceof Error ? error.name : 'unknown',
+          }),
+    },
+    {
+      tenantId: state.tenantId,
+      interactionId: state.attemptInteractionId,
+      method: 'external_idp',
+      reasonCode,
+      userId,
+      dedupeKey: state.id,
+    }
+  );
+}
+
+/** Why a failed external provider sign-in failed, in the attempt records' closed vocabulary. */
+function externalSignInAttemptReason(error: unknown): SignInAttemptReasonCode {
+  const code = error instanceof ExternalIdPError ? error.code : null;
+  switch (code) {
+    case ExternalIdPErrorCode.ACCOUNT_EXISTS_LINK_REQUIRED:
+    case ExternalIdPErrorCode.NO_ACCOUNT_FOUND:
+      return 'account_not_linked';
+    case ExternalIdPErrorCode.EMAIL_NOT_VERIFIED:
+    case ExternalIdPErrorCode.LOCAL_EMAIL_NOT_VERIFIED:
+      return 'email_not_verified';
+    case ExternalIdPErrorCode.JIT_PROVISIONING_DISABLED:
+    case ExternalIdPErrorCode.SIGNUP_DISABLED:
+      return 'signup_disabled';
+    case ExternalIdPErrorCode.LOGIN_DISABLED:
+      return 'method_disabled';
+    case ExternalIdPErrorCode.PROVIDER_ERROR:
+      return 'upstream_error';
+    case ExternalIdPErrorCode.ACR_VALUES_NOT_SATISFIED:
+    case ExternalIdPErrorCode.REAUTH_NOT_PROVEN:
+      return 'assurance_not_met';
+    case ExternalIdPErrorCode.POLICY_ACCESS_DENIED:
+    case ExternalIdPErrorCode.POLICY_INTERACTION_REQUIRED:
+    case ExternalIdPErrorCode.POLICY_LOGIN_REQUIRED:
+    case ExternalIdPErrorCode.REQUIRED_CUSTOM_CLAIMS_MISSING:
+      return 'policy_denied';
+    case ExternalIdPErrorCode.ACCOUNT_CREATION_FAILED:
+    case ExternalIdPErrorCode.INVITATION_EMAIL_MISMATCH:
+      return 'provisioning_failed';
+    case ExternalIdPErrorCode.SETTINGS_UNAVAILABLE:
+    case ExternalIdPErrorCode.TOKEN_REVOCATION_FAILED:
+      return 'service_unavailable';
+    default:
+      // The same test the response below makes: an unmet acr is an assurance failure.
+      return error instanceof Error && error.message.includes('acr')
+        ? 'assurance_not_met'
+        : 'verification_failed';
   }
 }
 
@@ -696,6 +949,25 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
     | 'resource-response' = 'authorization-response';
   // Declared outside the try block for failure event and diagnostic correlation.
   let provider: UpstreamProvider | null = null;
+  // Set once the state shows this is a link from the account page, whose outcome returns there.
+  let link: { tenantId: string; userId: string; sessionId?: string } | null = null;
+  // The invitation use this sign-in's start reserved, until it is handed to the account the
+  // sign-in creates. Every other ending (a provider error, a failed exchange, an existing
+  // account, any failure) gives it back below, so an abandoned start does not hold it.
+  let unsettledInvitation: {
+    inviteId: string;
+    inviteReservationId: string;
+    tenantId: string;
+  } | null = null;
+  // The Flow interaction the sign-in's start checked, once the state is consumed: a failed
+  // sign-in (not a link) is recorded with it after the response.
+  let attempt: ExternalIdpAuthState | null = null;
+  // The account, once the identity resolved to one: a later failure carries its subject hash.
+  let attemptUserId: string | null = null;
+  const recordFailure = <T>(response: T, reasonCode: SignInAttemptReasonCode): T => {
+    if (attempt && !link) scheduleExternalSignInFailure(c, attempt, attemptUserId, reasonCode);
+    return response;
+  };
 
   if (c.req.method === 'GET' && !code && !state && !error && !responseJwt) {
     return createHybridFragmentRelayResponse();
@@ -750,6 +1022,13 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
 
     // 2. Validate state and get stored data
     const authState = await consumeAuthState(c.env, tenantId, state);
+    if (authState?.inviteId && authState.inviteReservationId) {
+      unsettledInvitation = {
+        inviteId: authState.inviteId,
+        inviteReservationId: authState.inviteReservationId,
+        tenantId: authState.tenantId,
+      };
+    }
     if (!authState) {
       await logCallbackRejection(log, diagnosticLogger, {
         diagnosticSessionId,
@@ -757,6 +1036,9 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
         fapi2: fapi2Flow,
       });
       return redirectWithError(c, 'invalid_state', 'State validation failed or expired');
+    }
+    if (authState.attemptInteractionId) {
+      attempt = authState;
     }
 
     // Verify the provider ID matches (authState always stores the actual ID)
@@ -766,7 +1048,24 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
         validationError: 'provider_mismatch',
         fapi2: fapi2Flow,
       });
-      return redirectWithError(c, 'invalid_state', 'Provider mismatch');
+      return recordFailure(
+        redirectWithError(c, 'invalid_state', 'Provider mismatch'),
+        'challenge_mismatch'
+      );
+    }
+    if (authState.userId) {
+      link = {
+        tenantId: authState.tenantId,
+        userId: authState.userId,
+        sessionId: authState.sessionId,
+      };
+    }
+
+    // 2b. The tenant may have turned this provider's sign-in off since the sign-in started. Before
+    // the code is exchanged and before any account, session or artifact is made. A link and a
+    // re-authentication have their own switches.
+    if (!link && authState.reauthRequestedAt === undefined) {
+      await assertExternalProviderUsageAllowed(c.env, authState.tenantId, provider, 'login');
     }
 
     const flowId = authState.flowId;
@@ -889,10 +1188,20 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
     // signature/issuer/audience validation have completed.
     if (error) {
       log.error('External IdP returned error', { error });
-      return redirectWithError(c, error, errorDescription);
+      if (link) {
+        return redirectToLinkResult(c, link.tenantId, {
+          linked: false,
+          reason: error === 'access_denied' ? 'cancelled' : 'failed',
+        });
+      }
+      return recordFailure(redirectWithError(c, error, errorDescription), 'upstream_error');
     }
     if (!code) {
-      return redirectWithError(c, 'invalid_request', 'Missing code');
+      if (link) return redirectToLinkResult(c, link.tenantId, { linked: false, reason: 'failed' });
+      return recordFailure(
+        redirectWithError(c, 'invalid_request', 'Missing code'),
+        'upstream_error'
+      );
     }
 
     // 4b. Log authorization response (OIDF conformance)
@@ -945,7 +1254,8 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
           nonce: authState.nonce,
           code,
           requireCodeHash: true,
-          maxAge: authState.maxAge,
+          // A re-authentication dates its new login itself, from the token-endpoint ID token.
+          maxAge: authState.reauthRequestedAt === undefined ? authState.maxAge : undefined,
           acrValues: authState.acrValues,
         },
         diagnosticLogger ? { logger: diagnosticLogger, flowId, diagnosticSessionId } : undefined
@@ -1029,7 +1339,12 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
 
     // 6. Validate ID token and/or fetch user info
     let userInfo;
+    // The acr of the validated ID token, kept apart from userinfo data merged in below.
+    let upstreamAcr: string | undefined;
     let idTokenSub: string | undefined;
+    // The ID token's own auth_time (not userinfo's, merged in below), when one was validated.
+    let idTokenValidated = false;
+    let idTokenAuthTime: number | undefined;
     const diagnostics = diagnosticLogger
       ? {
           logger: diagnosticLogger,
@@ -1045,7 +1360,10 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
         {
           nonce: authState.nonce,
           accessToken: tokens.access_token, // For at_hash validation if present
-          maxAge: authState.maxAge, // For auth_time validation if max_age was requested
+          // For auth_time validation if max_age was requested. A re-authentication dates the new
+          // login itself below (against when it asked), so a provider without auth_time can be
+          // accepted where the tenant allows it.
+          maxAge: authState.reauthRequestedAt === undefined ? authState.maxAge : undefined,
           acrValues: authState.acrValues, // For acr validation if acr_values was requested
           requireExactAudience: fapi2Enabled,
           expectedSigningAlgorithms: fapi2IdTokenSigningAlgorithms,
@@ -1053,6 +1371,16 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
         diagnostics
       );
       idTokenSub = userInfo.sub;
+      idTokenValidated = true;
+      idTokenAuthTime =
+        typeof userInfo.auth_time === 'number' && Number.isFinite(userInfo.auth_time)
+          ? userInfo.auth_time
+          : undefined;
+      // An acr longer than the continuation accepts is not kept (nor used for assurance).
+      upstreamAcr =
+        typeof userInfo.acr === 'string' && userInfo.acr && userInfo.acr.length <= 1024
+          ? userInfo.acr
+          : undefined;
       if (
         authorizationIdTokenClaims &&
         (authorizationIdTokenClaims.iss !== userInfo.iss ||
@@ -1268,21 +1596,82 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
 
     // Ensure sub is present (required for identity linking)
     if (!userInfo.sub) {
-      return redirectWithError(
-        c,
-        ExternalIdPErrorCode.CALLBACK_FAILED,
-        'Provider did not return a user identifier. Check attributeMapping configuration.'
+      if (link) return redirectToLinkResult(c, link.tenantId, { linked: false, reason: 'failed' });
+      return recordFailure(
+        redirectWithError(
+          c,
+          ExternalIdPErrorCode.CALLBACK_FAILED,
+          'Provider did not return a user identifier. Check attributeMapping configuration.'
+        ),
+        'upstream_error'
       );
     }
 
-    // 7. Handle identity stitching or account creation
+    // 7a. A link attaches the identity to the account that asked for it, while that session still
+    // stands, and signs no one in.
+    if (link) {
+      const session = link.sessionId
+        ? await readAccountSession(c.env, link.tenantId, link.sessionId)
+        : null;
+      if (!session || session.userId !== link.userId) {
+        return redirectToLinkResult(c, link.tenantId, {
+          linked: false,
+          reason: 'session_expired',
+        });
+      }
+      const linked = await handleIdentity(c.env, {
+        provider,
+        userInfo,
+        tokens,
+        linkingUserId: link.userId,
+        tenantId: link.tenantId,
+      });
+      if (linked.status !== 'ready' || linked.userId !== link.userId || !linked.linkedIdentityId) {
+        throw new Error('external_idp_link_not_completed');
+      }
+      await recordSocialAccountActivity(c, link.userId, 'account.social_account.linked', {
+        linkedIdentityId: linked.linkedIdentityId,
+        providerId: provider.id,
+      });
+      return redirectToLinkResult(c, link.tenantId, { linked: true });
+    }
+
+    // 7. A re-authentication needs the provider to show a new login made after it asked.
+    const reauthProvenAt =
+      authState.reauthRequestedAt === undefined
+        ? undefined
+        : await provenUpstreamReauthentication(c.env, {
+            tenantId: authState.tenantId,
+            provider,
+            requestedAt: authState.reauthRequestedAt,
+            idTokenValidated,
+            idTokenAuthTime,
+          });
+
+    // 8. Handle identity stitching or account creation. An invitation the sign-in started from
+    // goes only to an account created here: one it names an email for is created only for that
+    // email, and a sign-in that finds an existing account gives the reserved use back.
+    const signupInvitation =
+      authState.inviteId && authState.inviteReservationId
+        ? { inviteId: authState.inviteId, inviteReservationId: authState.inviteReservationId }
+        : null;
+    const invitation = signupInvitation
+      ? await externalSignupInvitationRequirement(c.env, {
+          tenantId: authState.tenantId,
+          inviteId: signupInvitation.inviteId,
+        })
+      : null;
     const result = await handleIdentity(c.env, {
       provider,
       userInfo,
       tokens,
       linkingUserId: authState.userId,
       tenantId: authState.tenantId,
+      ...(invitation ? { invitation } : {}),
     });
+    // Created here (now or once provisioning finishes): the use goes to that account.
+    if (result.isNewUser) unsettledInvitation = null;
+    if (typeof result.userId === 'string' && result.userId) attemptUserId = result.userId;
 
     if (result.status === 'pending') {
       return await beginExternalIdpProvisioningContinuation(c, {
@@ -1290,6 +1679,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
         providerId: provider.id,
         userInfo,
         upstreamIdToken: tokens.id_token,
+        upstreamAcr,
         result,
       });
     }
@@ -1298,6 +1688,8 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       provider,
       userInfo,
       upstreamIdToken: tokens.id_token,
+      upstreamAcr,
+      reauthProvenAt,
       result,
     });
   } catch (error) {
@@ -1363,6 +1755,8 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       );
     }
 
+    recordFailure(undefined, externalSignInAttemptReason(error));
+
     // Determine error code for event
     let errorCode: string = ExternalIdPErrorCode.CALLBACK_FAILED;
     if (error instanceof ExternalIdPError) {
@@ -1391,6 +1785,20 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
     }).catch((err: unknown) => {
       log.error('Failed to publish auth.external_idp.failed', {}, err as Error);
     });
+
+    if (link) {
+      return redirectToLinkResult(c, link.tenantId, {
+        linked: false,
+        reason:
+          error instanceof ExternalIdPError &&
+          error.code === ExternalIdPErrorCode.ACCOUNT_ALREADY_LINKED
+            ? 'already_linked'
+            : error instanceof ExternalIdPError &&
+                error.code === ExternalIdPErrorCode.EMAIL_NOT_VERIFIED
+              ? 'email_not_verified'
+              : 'failed',
+      });
+    }
 
     // Handle specific ExternalIdPError with appropriate error codes
     // SECURITY: Do not expose internal error details in redirect URL
@@ -1424,6 +1832,9 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       'Authentication failed. Please try again.'
     );
   } finally {
+    if (unsettledInvitation) {
+      await releaseExternalSignupInvitation(c.env, log, unsettledInvitation);
+    }
     if (diagnosticLogger) {
       await diagnosticLogger.cleanup().catch((cleanupError: unknown) => {
         log.warn('Failed to flush callback diagnostic logs', {
@@ -1567,13 +1978,29 @@ export function extractUnverifiedJarmState(responseJwt: string): string | undefi
  * Redirect with error parameters
  * Uses UI config if available, falls back to issuer URL
  */
+/** Back to the account page with a link's outcome. */
+async function redirectToLinkResult(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  outcome: Parameters<typeof accountPageLinkResultUrl>[2]
+): Promise<Response> {
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: await accountPageLinkResultUrl(c.env, tenantId, outcome),
+      'Referrer-Policy': 'no-referrer',
+      'Cache-Control': 'no-store',
+    },
+  });
+}
+
 async function redirectWithError(
   c: Context<{ Bindings: Env }>,
   error: string,
   description?: string
 ): Promise<Response> {
   const tenantId = getTenantIdFromContext(c);
-  const uiConfig = await getUIConfig(c.env);
+  const uiConfig = await getUIConfig(c.env, tenantId);
 
   let baseUrl: string;
   if (uiConfig?.baseUrl) {
@@ -1634,33 +2061,6 @@ async function recordExternalProviderSession(
   } catch {
     createLogger().module('CALLBACK').warn('Failed to record external-provider session index');
   }
-}
-
-/**
- * Build session cookie
- */
-function buildSessionCookie(sessionId: string, issuerUrl: string): string {
-  const domain = new URL(issuerUrl).hostname;
-  const isSecure = issuerUrl.startsWith('https://');
-
-  const parts = [
-    `authrim_session=${sessionId}`,
-    'Path=/',
-    'HttpOnly',
-    'SameSite=Lax',
-    'Max-Age=3600', // 1 hour
-  ];
-
-  if (isSecure) {
-    parts.push('Secure');
-  }
-
-  // Don't set domain for localhost
-  if (!domain.includes('localhost') && !domain.includes('127.0.0.1')) {
-    parts.push(`Domain=${domain}`);
-  }
-
-  return parts.join('; ');
 }
 
 /**

@@ -393,11 +393,19 @@ export async function prepareWorkerScriptOwnership(input: {
   };
 }
 
-/** Prepare ownership and durably journal any fresh script immediately after Cloudflare creates it. */
+/**
+ * Prepare ownership and durably journal any fresh script immediately after Cloudflare creates it.
+ *
+ * `currentLock` names the lock a checkpoint must be recorded on. Without it checkpoints go to the
+ * lock object returned here. A caller that replaces its lock object between preparing ownership
+ * and deploying (every `with...` lock update returns a new object) passes the accessor so a
+ * checkpoint never saves a stale lock that lacks the caller's later state.
+ */
 export async function prepareManagedWorkerScriptOwnership(input: {
   lock: AuthrimLock;
   lockPath: string;
   targets: readonly WorkerScriptOwnershipTarget[];
+  currentLock?: () => AuthrimLock;
   dependencies?: WorkerScriptOwnershipDependencies;
 }): Promise<{
   lock: AuthrimLock;
@@ -409,33 +417,35 @@ export async function prepareManagedWorkerScriptOwnership(input: {
   // save erase a sibling Worker's pending ownership checkpoint after a partial commit.
   let managedLock = input.lock;
   let persistedLock = managedLock;
-  const applyOwnershipCheckpoint = (updated: AuthrimLock): void => {
-    managedLock.workerScriptOwnership = updated.workerScriptOwnership;
-    managedLock.updatedAt = updated.updatedAt;
-    persistedLock = managedLock;
+  const lockToCheckpoint = (): AuthrimLock => input.currentLock?.() ?? persistedLock;
+  const checkpointOwnership = async (derive: (lock: AuthrimLock) => AuthrimLock): Promise<void> => {
+    const target = lockToCheckpoint();
+    const updated = derive(target);
+    target.workerScriptOwnership = updated.workerScriptOwnership;
+    target.updatedAt = updated.updatedAt;
+    persistedLock = target;
+    await saveLockFile(target, input.lockPath);
   };
   const prepared = await prepareWorkerScriptOwnership({
     lock: input.lock,
     targets: input.targets,
     dependencies: input.dependencies,
-    persistProvisional: async ({ component, workerName, cloudflareScriptTag }) => {
-      const updated = withProvisionalWorkerScriptOwnership(persistedLock, {
-        component,
-        name: workerName,
-        cloudflareScriptTag,
-      });
-      applyOwnershipCheckpoint(updated);
-      await saveLockFile(persistedLock, input.lockPath);
-    },
-    persistCommittedVersion: async ({ component, workerName, cloudflareVersionId }) => {
-      const updated = withPendingWorkerScriptVersionOwnership(persistedLock, {
-        component,
-        name: workerName,
-        pendingCloudflareVersionId: cloudflareVersionId,
-      });
-      applyOwnershipCheckpoint(updated);
-      await saveLockFile(persistedLock, input.lockPath);
-    },
+    persistProvisional: ({ component, workerName, cloudflareScriptTag }) =>
+      checkpointOwnership((lock) =>
+        withProvisionalWorkerScriptOwnership(lock, {
+          component,
+          name: workerName,
+          cloudflareScriptTag,
+        })
+      ),
+    persistCommittedVersion: ({ component, workerName, cloudflareVersionId }) =>
+      checkpointOwnership((lock) =>
+        withPendingWorkerScriptVersionOwnership(lock, {
+          component,
+          name: workerName,
+          pendingCloudflareVersionId: cloudflareVersionId,
+        })
+      ),
   });
   managedLock = prepared.lock;
   persistedLock = managedLock;

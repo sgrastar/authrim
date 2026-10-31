@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readRenderedMigrationSql } from '../../../../test/helpers/migration-source.mjs';
+
 import { resolve } from 'node:path';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
@@ -69,13 +70,15 @@ describe('D1PluginDispatchLimiter', () => {
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
     database.exec('PRAGMA foreign_keys = ON');
-    for (const migration of ['001_0_4_0_plugin_runner_baseline.sql']) {
+    for (const migration of ['001_0_5_0_plugin_runner_baseline.sql']) {
       database.exec(
-        readFileSync(resolve(REPO_ROOT, 'migrations/plugin-runner/d1', migration), 'utf8')
+        readRenderedMigrationSql(resolve(REPO_ROOT, 'migrations/plugin-runner/d1'), migration)
       );
     }
     database.exec(
-      `INSERT INTO plugin_runner_installations (
+      `INSERT INTO plugin_runner_tenant_external_gates (tenant_id, allowed, generation, updated_at)
+       VALUES ('tenant-a', 1, 1, 1);
+       INSERT INTO plugin_runner_installations (
          installation_id, tenant_id, plugin_id, backend_kind, script_name,
          state, created_at, updated_at
        ) VALUES (

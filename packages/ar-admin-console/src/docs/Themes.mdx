@@ -1,0 +1,84 @@
+import { Meta, ColorPalette, ColorItem } from '@storybook/addon-docs/blocks';
+
+<Meta title="Tokens/Themes" />
+
+# Themes
+
+A theme sets values for the **theme contract** and nothing else: it never targets a component
+or page class and never changes spacing, sizes or layout. A page reviewed under one theme is the
+same page under every theme. The contract is documented in `src/lib/ui/themes/README.md`.
+
+Two independent axes on `<html>` (or any element, which is how the _All themes_ stories work):
+
+- `data-admin-theme` — `standard` · `swiss-grid` · `frosted`
+- `data-scheme` — `light` · `dark` (resolved from the OS when the user picks "system")
+
+## Material
+
+Surfaces are drawn through `--surface-bg`, `--surface-backdrop` and `--surface-highlight`, the
+shell through `--shell-bg` / `--shell-backdrop`, and the page through `--page-backdrop`. Flat
+themes leave them plain; a translucent theme sets gradients and `blur()` — see Frosted in
+the toolbar. `--shell-inset` and `--shell-radius` float the shell panels apart.
+
+## Colour contract (current theme)
+
+<ColorPalette>
+	<ColorItem
+		title="Surfaces"
+		subtitle="--bg-*"
+		colors={{
+			page: 'var(--bg-page)',
+			card: 'var(--bg-card)',
+			subtle: 'var(--bg-subtle)',
+			input: 'var(--bg-input)'
+		}}
+	/>
+	<ColorItem
+		title="Ink"
+		subtitle="--primary, --text-*"
+		colors={{
+			primary: 'var(--primary)',
+			text: 'var(--text-primary)',
+			secondary: 'var(--text-secondary)',
+			muted: 'var(--text-muted)'
+		}}
+	/>
+	<ColorItem
+		title="Lines"
+		subtitle="--border*, --focus-ring"
+		colors={{
+			border: 'var(--border)',
+			strong: 'var(--border-strong)',
+			subtle: 'var(--border-subtle)',
+			focus: 'var(--focus-ring)'
+		}}
+	/>
+	<ColorItem
+		title="Scope accents"
+		subtitle="--accent-*"
+		colors={{
+			enduser: 'var(--accent-enduser)',
+			client: 'var(--accent-client)',
+			tenant: 'var(--accent-tenant)',
+			platform: 'var(--accent-platform)'
+		}}
+	/>
+	<ColorItem
+		title="Status"
+		subtitle="--success, --warning, --danger, --info"
+		colors={{
+			success: 'var(--success)',
+			warning: 'var(--warning)',
+			danger: 'var(--danger)',
+			info: 'var(--info)'
+		}}
+	/>
+</ColorPalette>
+
+Contrast is enforced in two places: `theme-contrast.test.ts` checks text/surface pairs from the
+CSS for every theme and scheme, and the Storybook accessibility checks run on rendered stories.
+
+## Environment marker (reserved)
+
+A per-landscape header colour and label (to prevent operating on production by mistake) will
+sit above the theme. The token names `--env-marker-*` are reserved for it.

@@ -7,6 +7,7 @@ import type {
   WritePluginAccountMetadataInput,
   WritePluginAccountMetadataResult,
 } from './types';
+import { EXTERNAL_GATE_OPEN } from './external-gate';
 
 export const PLUGIN_ACCOUNT_METADATA_URL =
   'https://authrim.invalid/internal/authrim-data/account-metadata';
@@ -265,7 +266,8 @@ export class PluginAccountMetadataService {
             AND enabled_scope.mutation_scope = approved.mutation_scope
             AND enabled_scope.state = 'enabled'
           WHERE installation.installation_id = ? AND installation.tenant_id = ?
-            AND installation.state = 'enabled'`
+            AND installation.state = 'enabled'
+            AND ${EXTERNAL_GATE_OPEN}`
       )
       .bind(context.pluginInstallationId, context.tenantId)
       .first<AuthorizedInstallationRow>();

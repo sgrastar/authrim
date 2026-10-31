@@ -7,16 +7,22 @@ import type {
   AdminMachinePrincipalStatus,
   AdminMachinePrincipalType,
   AdminMachineTenantScope,
+  AdminMachineWriteGuard,
   Env,
 } from '@authrim/ar-lib-core';
 import {
   ADMIN_PERMISSIONS,
   AR_ERROR_CODES,
   AdminMachineAccessRepository,
+  AdminMachineConflictError,
   adminAuthMiddleware,
   createErrorResponse,
+  getTenantIdFromContext,
   hasAdminPermission,
+  hasGlobalAdminPermission,
+  intersectMachinePermissionSets,
   requireDedicatedAdminDatabaseAdapter,
+  resolveMachineTenantScope,
 } from '@authrim/ar-lib-core';
 import { writeAdminAuditLog } from '../../admin-shared';
 
@@ -32,6 +38,33 @@ const PRINCIPAL_TYPES = new Set<AdminMachinePrincipalType>([
   'internal_service',
   'integration',
 ]);
+
+/** Principal types that act for the platform; creating one is for a platform administrator. */
+const PLATFORM_PRINCIPAL_TYPES = new Set<AdminMachinePrincipalType>([
+  'setup_tool',
+  'admin_ui_bff',
+  'internal_service',
+]);
+
+/** The principals the bootstrap writes, by their fixed IDs. */
+const PLATFORM_PRINCIPAL_IDS = new Set(['amp_authrim_setup', 'amp_authrim_admin_ui_bff']);
+
+/**
+ * Whether the principal acts for the platform (the setup tool, the Admin UI, an internal service).
+ * Its tokens are trusted for platform operations by what the principal is, so changing it, or
+ * handing out a key for it, is for a platform administrator whatever its tenant scope says.
+ */
+function isPlatformPrincipal(principal: {
+  id: string;
+  clientId: string;
+  principalType: AdminMachinePrincipalType;
+}): boolean {
+  return (
+    PLATFORM_PRINCIPAL_IDS.has(principal.id) ||
+    PLATFORM_PRINCIPAL_TYPES.has(principal.principalType) ||
+    principal.clientId === 'authrim-setup'
+  );
+}
 
 const CREDENTIAL_ALGORITHMS = new Set<AdminMachineCredentialAlgorithm>(['ES256', 'PS256', 'RS256']);
 const DEFAULT_ROTATION_OVERLAP_SECONDS = 24 * 60 * 60;
@@ -81,16 +114,12 @@ function asString(value: unknown): string | null {
 
 function asStringArray(value: unknown): string[] {
   return Array.isArray(value)
-    ? value.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
+    ? Array.from(
+        new Set(
+          value.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
+        )
+      )
     : [];
-}
-
-function parsePermissionsForActor(c: AdminContext, value: unknown): string[] | null {
-  const permissions = asStringArray(value);
-  const actorPermissions = getAuth(c).permissions || [];
-  return permissions.every((permission) => hasAdminPermission(actorPermissions, permission))
-    ? permissions
-    : null;
 }
 
 function asOptionalNonEmptyString(value: unknown): string | undefined | null {
@@ -139,60 +168,104 @@ function parseTenantScopes(value: unknown): AdminMachineTenantScope[] | null {
   return scopes.length === value.length ? scopes : null;
 }
 
-function isGlobalAdminActor(auth: AdminAuthContext): boolean {
-  return (auth.tenantScope ?? []).includes('*');
+/**
+ * Whom a machine principal or credential may be given to.
+ *
+ * A machine token reaches the tenants in its scope and holds the permissions of its principal,
+ * narrowed by its credential's own. When that scope is every tenant, its permissions are global
+ * permissions. `auth.permissions` adds up every assignment of the actor that applies to the
+ * request, so a permission the actor holds only for this tenant is in it too; handing it out with a
+ * reach beyond this tenant would make a global permission out of a local one. So:
+ * - within the tenants the actor's own permissions apply to, the actor may hand out what its
+ *   permissions hold;
+ * - beyond them (every tenant, or another tenant), the actor needs the permission to do so from a
+ *   global assignment, and may hand out only what its global permissions hold.
+ */
+type MachineReach = readonly string[];
+
+/** The tenants the actor's `permissions` apply to as a whole (the request's tenant for a global actor). */
+function localTenantIds(c: AdminContext): Set<string> {
+  const auth = getAuth(c);
+  if ((auth.tenantScope ?? []).includes('*')) {
+    return new Set([getTenantIdFromContext(c)]);
+  }
+  return new Set(auth.tenantScope ?? (auth.tenantId ? [auth.tenantId] : []));
 }
 
-function tenantScopesWithinActorScope(
-  auth: AdminAuthContext,
-  scopes: AdminMachineTenantScope[]
+function reachOfScopes(scopes: AdminMachineTenantScope[]): string[] {
+  const reach: string[] = [];
+  for (const scope of scopes) {
+    if (scope.scopeMode === 'all') {
+      reach.push('*');
+    } else if (scope.scopeMode === 'allow' && scope.tenantId) {
+      reach.push(scope.tenantId);
+    }
+  }
+  return reach;
+}
+
+function permissionsWithin(held: string[] | undefined, permissions: readonly string[]): boolean {
+  return permissions.every((permission) => hasAdminPermission(held ?? [], permission));
+}
+
+/**
+ * Whether the actor may give a machine access of `permissions` over `reach`. `requested` is what
+ * the request itself names; when the access reaches no tenant, only that has to be within the
+ * actor's permissions, as what a principal holds without any tenant does nothing.
+ */
+function actorMayGrant(
+  c: AdminContext,
+  authorityPermission: string,
+  permissions: readonly string[],
+  reachGiven: MachineReach,
+  requested: readonly string[] = permissions,
+  platform = false
 ): boolean {
-  if (isGlobalAdminActor(auth)) {
+  const auth = getAuth(c);
+  // A platform principal is never the tenant's own, whichever tenants it is limited to.
+  const reach = platform ? ['*', ...reachGiven] : reachGiven;
+  if (reach.length === 0) {
+    return permissionsWithin(auth.permissions, requested);
+  }
+  const local = localTenantIds(c);
+  if (reach.every((tenant) => tenant !== '*' && local.has(tenant))) {
+    return permissionsWithin(auth.permissions, permissions);
+  }
+  return (
+    hasGlobalAdminPermission(auth, authorityPermission) &&
+    permissionsWithin(auth.globalPermissions, permissions)
+  );
+}
+
+/**
+ * Whether the actor may see and manage something that reaches `scopes`: a principal or credential
+ * that reaches beyond the actor's own tenant is managed with a global permission.
+ */
+function scopesWithinActorReach(
+  c: AdminContext,
+  scopes: AdminMachineTenantScope[],
+  permission: string
+): boolean {
+  if (hasGlobalAdminPermission(getAuth(c), permission)) {
     return true;
   }
-
-  const allowedTenantIds = new Set(auth.tenantScope ?? (auth.tenantId ? [auth.tenantId] : []));
-  if (allowedTenantIds.size === 0) {
-    return false;
-  }
-
+  const local = localTenantIds(c);
   return (
+    local.size > 0 &&
     scopes.length > 0 &&
     scopes.every(
-      (scope) =>
-        scope.scopeMode === 'allow' && scope.tenantId && allowedTenantIds.has(scope.tenantId)
+      (scope) => scope.scopeMode === 'allow' && scope.tenantId && local.has(scope.tenantId)
     )
   );
 }
 
-function validateTenantScopesForActor(
-  auth: AdminAuthContext,
-  scopes: AdminMachineTenantScope[] | null
-): AdminMachineTenantScope[] | null {
-  if (!scopes) {
-    return null;
+/** Whether everything in `reach` (tenant IDs, or '*') is within what the actor manages. */
+function reachWithinActor(c: AdminContext, reach: readonly string[], permission: string): boolean {
+  if (hasGlobalAdminPermission(getAuth(c), permission)) {
+    return true;
   }
-  if (isGlobalAdminActor(auth)) {
-    return scopes;
-  }
-
-  const allowedTenantIds = new Set(auth.tenantScope ?? (auth.tenantId ? [auth.tenantId] : []));
-  for (const scope of scopes) {
-    if (scope.scopeMode === 'all') {
-      return null;
-    }
-    if (scope.scopeMode === 'allow' && (!scope.tenantId || !allowedTenantIds.has(scope.tenantId))) {
-      return null;
-    }
-  }
-  return scopes;
-}
-
-function parseTenantScopesForActor(
-  c: AdminContext,
-  value: unknown
-): AdminMachineTenantScope[] | null {
-  return validateTenantScopesForActor(getAuth(c), parseTenantScopes(value));
+  const local = localTenantIds(c);
+  return reach.every((tenant) => tenant !== '*' && local.has(tenant));
 }
 
 async function getVisiblePrincipalResponse(
@@ -204,33 +277,135 @@ async function getVisiblePrincipalResponse(
   if (!principal) {
     return null;
   }
-  return tenantScopesWithinActorScope(getAuth(c), principal.tenantScopes) ? principal : null;
+  if (
+    isPlatformPrincipal(principal) &&
+    !hasGlobalAdminPermission(getAuth(c), ADMIN_PERMISSIONS.ADMIN_MACHINE_ACCESS_READ)
+  ) {
+    return null;
+  }
+  return scopesWithinActorReach(
+    c,
+    principal.tenantScopes,
+    ADMIN_PERMISSIONS.ADMIN_MACHINE_ACCESS_READ
+  )
+    ? principal
+    : null;
 }
 
 async function principalIsWithinActorScope(
   c: AdminContext,
   repo: AdminMachineAccessRepository,
-  principalId: string
+  principalId: string,
+  permission: string
 ): Promise<boolean> {
-  const tenantScopes = await repo.getPrincipalTenantScopes(principalId);
-  return tenantScopesWithinActorScope(getAuth(c), tenantScopes);
+  const [principal, tenantScopes] = await Promise.all([
+    repo.findPrincipalById(principalId),
+    repo.getPrincipalTenantScopes(principalId),
+  ]);
+  if (
+    principal &&
+    isPlatformPrincipal(principal) &&
+    !hasGlobalAdminPermission(getAuth(c), permission)
+  ) {
+    return false;
+  }
+  return scopesWithinActorReach(c, tenantScopes, permission);
 }
 
 async function credentialIsWithinActorScope(
   c: AdminContext,
   repo: AdminMachineAccessRepository,
   principalId: string,
-  credentialId: string
+  credentialId: string,
+  permission: string
 ): Promise<boolean> {
+  if (!(await principalIsWithinActorScope(c, repo, principalId, permission))) {
+    return false;
+  }
   const [principalScopes, credentialScopes] = await Promise.all([
     repo.getPrincipalTenantScopes(principalId),
     repo.getCredentialTenantScopes(credentialId),
   ]);
-  const effectiveScopes = credentialScopes.length > 0 ? credentialScopes : principalScopes;
-  return (
-    tenantScopesWithinActorScope(getAuth(c), principalScopes) &&
-    tenantScopesWithinActorScope(getAuth(c), effectiveScopes)
+  // The credential is judged by what it reaches on its principal, the same narrowing that issuing
+  // it and the token endpoint apply: a scope it asks for beyond the principal's adds nothing.
+  return reachWithinActor(
+    c,
+    resolveMachineTenantScope(principalScopes, credentialScopes),
+    permission
   );
+}
+
+/**
+ * Whether the actor may give this credential what it would end up with on its principal: the
+ * principal's permissions narrowed by the credential's own, over the principal's tenants narrowed
+ * by the credential's. Issuing a key for a principal hands over exactly that.
+ */
+async function actorMayGrantCredential(
+  c: AdminContext,
+  repo: AdminMachineAccessRepository,
+  principalId: string,
+  credential: { permissions: string[]; tenantScopes: AdminMachineTenantScope[] }
+): Promise<boolean> {
+  const [principal, principalPermissions, principalScopes] = await Promise.all([
+    repo.findPrincipalById(principalId),
+    repo.getPrincipalPermissions(principalId),
+    repo.getPrincipalTenantScopes(principalId),
+  ]);
+  const effectivePermissions =
+    credential.permissions.length > 0
+      ? intersectMachinePermissionSets(principalPermissions, credential.permissions)
+      : principalPermissions;
+  const effectiveReach = resolveMachineTenantScope(principalScopes, credential.tenantScopes);
+  return actorMayGrant(
+    c,
+    ADMIN_PERMISSIONS.ADMIN_MACHINE_ACCESS_WRITE,
+    effectivePermissions,
+    effectiveReach,
+    credential.permissions,
+    principal !== null && isPlatformPrincipal(principal)
+  );
+}
+
+/**
+ * The revision of a principal, read before anything else the request decides on, so that the write
+ * can check it is still the state the decision was made on.
+ */
+async function principalGuard(
+  repo: AdminMachineAccessRepository,
+  principalId: string
+): Promise<AdminMachineWriteGuard | null> {
+  const revision = await repo.getPrincipalRevision(principalId);
+  return revision === null ? null : { principal: { id: principalId, revision } };
+}
+
+/** The same for a credential and the principal whose permissions and tenants it narrows. */
+async function credentialGuard(
+  repo: AdminMachineAccessRepository,
+  principalId: string,
+  credentialId: string
+): Promise<AdminMachineWriteGuard | null> {
+  const [principal, credential] = await Promise.all([
+    repo.getPrincipalRevision(principalId),
+    repo.getCredentialRevision(credentialId),
+  ]);
+  return principal === null || credential === null
+    ? null
+    : {
+        principal: { id: principalId, revision: principal },
+        credential: { id: credentialId, revision: credential },
+      };
+}
+
+/** A write whose guard failed answers 409: read the state again and decide again. */
+async function guardedWrite<T>(c: AdminContext, run: () => Promise<T>): Promise<T | Response> {
+  try {
+    return await run();
+  } catch (error) {
+    if (error instanceof AdminMachineConflictError) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
+    }
+    throw error;
+  }
 }
 
 const PRIVATE_JWK_FIELDS = new Set(['d', 'p', 'q', 'dp', 'dq', 'qi', 'oth', 'k']);
@@ -368,21 +543,44 @@ machineAccessRouter.post('/principals', async (c) => {
 
   const repo = getRepo(c);
   const actor = actorRef(c);
-  const tenantScopes = parseTenantScopesForActor(c, body?.tenant_scopes);
-  const permissions = parsePermissionsForActor(c, body?.permissions);
-  if (!tenantScopes || !permissions) {
+  const tenantScopes = parseTenantScopes(body?.tenant_scopes);
+  const permissions = asStringArray(body?.permissions);
+  if (
+    !tenantScopes ||
+    !actorMayGrant(
+      c,
+      ADMIN_PERMISSIONS.ADMIN_MACHINE_ACCESS_WRITE,
+      permissions,
+      reachOfScopes(tenantScopes)
+    )
+  ) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
   }
-  const principal = await repo.createPrincipal({
-    clientId,
-    displayName,
-    description: body?.description === null ? null : asString(body?.description),
-    principalType: principalType as AdminMachinePrincipalType,
-    tokenTtlSeconds,
-    createdBy: actor,
-  });
-  await repo.setPrincipalPermissions(principal.id, permissions, actor);
-  await repo.setPrincipalTenantScopes(principal.id, tenantScopes, actor);
+  // The setup tool, the Admin UI and the internal services act for the platform, not for a
+  // tenant: only a platform administrator creates one, and with global permissions at most.
+  if (
+    (PLATFORM_PRINCIPAL_TYPES.has(principalType as AdminMachinePrincipalType) ||
+      clientId === 'authrim-setup') &&
+    !(
+      hasGlobalAdminPermission(getAuth(c), ADMIN_PERMISSIONS.ADMIN_MACHINE_ACCESS_WRITE) &&
+      permissionsWithin(getAuth(c).globalPermissions, permissions)
+    )
+  ) {
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+  }
+  // One atomic write: a principal never exists with only part of what it was meant to have.
+  const principal = await repo.createPrincipalWithGrant(
+    {
+      clientId,
+      displayName,
+      description: body?.description === null ? null : asString(body?.description),
+      principalType: principalType as AdminMachinePrincipalType,
+      tokenTtlSeconds,
+      createdBy: actor,
+    },
+    { permissions, tenantScopes },
+    actor
+  );
   await writeAdminAuditLog(c, {
     action: 'admin_machine_access.principal.created',
     resourceType: 'admin_machine_principal',
@@ -409,11 +607,19 @@ machineAccessRouter.patch('/principals/:id', async (c) => {
 
   const repo = getRepo(c);
   const principalId = c.req.param('id');
+  const guard = await principalGuard(repo, principalId);
   const existing = await repo.findPrincipalById(principalId);
-  if (!existing) {
+  if (!existing || !guard) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
   }
-  if (!(await principalIsWithinActorScope(c, repo, principalId))) {
+  if (
+    !(await principalIsWithinActorScope(
+      c,
+      repo,
+      principalId,
+      ADMIN_PERMISSIONS.ADMIN_MACHINE_ACCESS_WRITE
+    ))
+  ) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
   }
 
@@ -432,26 +638,51 @@ machineAccessRouter.patch('/principals/:id', async (c) => {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
   }
 
+  // What the principal ends up with is what has to be within the actor's authority, whichever of
+  // its permissions and tenants the request changes; both are checked before anything is saved.
+  const newPermissions =
+    body?.permissions === undefined ? undefined : asStringArray(body.permissions);
+  const newTenantScopes =
+    body?.tenant_scopes === undefined ? undefined : parseTenantScopes(body.tenant_scopes);
+  if (newTenantScopes === null) {
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+  }
+  if (newPermissions !== undefined || newTenantScopes !== undefined) {
+    const [finalPermissions, finalTenantScopes] = await Promise.all([
+      newPermissions ?? repo.getPrincipalPermissions(principalId),
+      newTenantScopes ?? repo.getPrincipalTenantScopes(principalId),
+    ]);
+    if (
+      !actorMayGrant(
+        c,
+        ADMIN_PERMISSIONS.ADMIN_MACHINE_ACCESS_WRITE,
+        finalPermissions,
+        reachOfScopes(finalTenantScopes),
+        newPermissions ?? [],
+        isPlatformPrincipal(existing)
+      )
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+    }
+  }
+
   const actor = actorRef(c);
-  await repo.updatePrincipal(principalId, {
-    displayName,
-    description: body?.description === undefined ? undefined : asString(body.description),
-    tokenTtlSeconds,
-  });
-  if (body?.permissions !== undefined) {
-    const permissions = parsePermissionsForActor(c, body.permissions);
-    if (!permissions) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
-    }
-    await repo.setPrincipalPermissions(principalId, permissions, actor);
-  }
-  if (body?.tenant_scopes !== undefined) {
-    const tenantScopes = parseTenantScopesForActor(c, body.tenant_scopes);
-    if (!tenantScopes) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
-    }
-    await repo.setPrincipalTenantScopes(principalId, tenantScopes, actor);
-  }
+  // Its fields, permissions and tenant scopes change in one atomic write, so a failure part-way
+  // cannot leave new permissions on the old scope.
+  const written = await guardedWrite(c, () =>
+    repo.updatePrincipalWithGrant(
+      principalId,
+      {
+        displayName,
+        description: body?.description === undefined ? undefined : asString(body.description),
+        tokenTtlSeconds,
+      },
+      { permissions: newPermissions, tenantScopes: newTenantScopes },
+      actor,
+      guard
+    )
+  );
+  if (written instanceof Response) return written;
   await writeAdminAuditLog(c, {
     action: 'admin_machine_access.principal.updated',
     resourceType: 'admin_machine_principal',
@@ -468,17 +699,32 @@ machineAccessRouter.delete('/principals/:id', async (c) => {
 
   const repo = getRepo(c);
   const principalId = c.req.param('id');
+  const guard = await principalGuard(repo, principalId);
   const existing = await repo.findPrincipalById(principalId);
-  if (!existing) {
+  if (!existing || !guard) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
   }
-  if (!(await principalIsWithinActorScope(c, repo, principalId))) {
+  if (
+    !(await principalIsWithinActorScope(
+      c,
+      repo,
+      principalId,
+      ADMIN_PERMISSIONS.ADMIN_MACHINE_ACCESS_DELETE
+    ))
+  ) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
   }
-  await repo.updatePrincipal(principalId, {
-    status: 'deleted',
-    disabledBy: actorRef(c),
-  });
+  const deleted = await guardedWrite(c, () =>
+    repo.updatePrincipal(
+      principalId,
+      {
+        status: 'deleted',
+        disabledBy: actorRef(c),
+      },
+      guard
+    )
+  );
+  if (deleted instanceof Response) return deleted;
   await writeAdminAuditLog(c, {
     action: 'admin_machine_access.principal.deleted',
     resourceType: 'admin_machine_principal',
@@ -495,8 +741,9 @@ machineAccessRouter.post('/principals/:id/credentials', async (c) => {
 
   const repo = getRepo(c);
   const principalId = c.req.param('id');
+  const guard = await principalGuard(repo, principalId);
   const principal = await repo.findPrincipalById(principalId);
-  if (!principal) {
+  if (!principal || !guard) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
   }
   const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
@@ -515,8 +762,8 @@ machineAccessRouter.post('/principals/:id/credentials', async (c) => {
   } catch {
     publicJwkJson = null;
   }
-  const tenantScopes = parseTenantScopesForActor(c, body?.tenant_scopes);
-  const permissions = parsePermissionsForActor(c, body?.permissions);
+  const tenantScopes = parseTenantScopes(body?.tenant_scopes);
+  const permissions = asStringArray(body?.permissions);
   if (
     !kid ||
     !displayName ||
@@ -524,26 +771,39 @@ machineAccessRouter.post('/principals/:id/credentials', async (c) => {
     !CREDENTIAL_ALGORITHMS.has(alg as AdminMachineCredentialAlgorithm) ||
     !publicJwkJson ||
     !tenantScopes ||
-    !permissions ||
-    !(await principalIsWithinActorScope(c, repo, principalId))
+    !(await principalIsWithinActorScope(
+      c,
+      repo,
+      principalId,
+      ADMIN_PERMISSIONS.ADMIN_MACHINE_ACCESS_WRITE
+    )) ||
+    !(await actorMayGrantCredential(c, repo, principalId, { permissions, tenantScopes }))
   ) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
   }
 
   const actor = actorRef(c);
-  const credential = await repo.createCredential({
-    principalId,
-    kid,
-    publicJwkJson,
-    alg: alg as AdminMachineCredentialAlgorithm,
-    displayName,
-    description: body?.description === null ? null : asString(body?.description),
-    notBefore: asOptionalEpochMs(body?.not_before) ?? null,
-    expiresAt: asOptionalEpochMs(body?.expires_at) ?? null,
-    createdBy: actor,
-  });
-  await repo.setCredentialPermissions(credential.id, permissions, actor);
-  await repo.setCredentialTenantScopes(credential.id, tenantScopes, actor);
+  // The key and its own permissions and tenant scopes are written together: without them the
+  // credential would take everything the principal has.
+  const credential = await guardedWrite(c, () =>
+    repo.createCredentialWithGrant(
+      {
+        principalId,
+        kid,
+        publicJwkJson,
+        alg: alg as AdminMachineCredentialAlgorithm,
+        displayName,
+        description: body?.description === null ? null : asString(body?.description),
+        notBefore: asOptionalEpochMs(body?.not_before) ?? null,
+        expiresAt: asOptionalEpochMs(body?.expires_at) ?? null,
+        createdBy: actor,
+      },
+      { permissions, tenantScopes },
+      actor,
+      guard
+    )
+  );
+  if (credential instanceof Response) return credential;
   await writeAdminAuditLog(c, {
     action: 'admin_machine_access.credential.created',
     resourceType: 'admin_machine_credential',
@@ -561,11 +821,20 @@ machineAccessRouter.patch('/principals/:id/credentials/:credentialId', async (c)
 
   const repo = getRepo(c);
   const credentialId = c.req.param('credentialId');
+  const guard = await credentialGuard(repo, c.req.param('id'), credentialId);
   const credential = await repo.findCredentialById(credentialId);
-  if (!credential || credential.principalId !== c.req.param('id')) {
+  if (!credential || !guard || credential.principalId !== c.req.param('id')) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
   }
-  if (!(await credentialIsWithinActorScope(c, repo, credential.principalId, credentialId))) {
+  if (
+    !(await credentialIsWithinActorScope(
+      c,
+      repo,
+      credential.principalId,
+      credentialId,
+      ADMIN_PERMISSIONS.ADMIN_MACHINE_ACCESS_WRITE
+    ))
+  ) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
   }
 
@@ -586,30 +855,57 @@ machineAccessRouter.patch('/principals/:id/credentials/:credentialId', async (c)
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
   }
 
+  const newPermissions =
+    body?.permissions === undefined ? undefined : asStringArray(body.permissions);
+  const newTenantScopes =
+    body?.tenant_scopes === undefined ? undefined : parseTenantScopes(body.tenant_scopes);
+  if (newTenantScopes === null) {
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+  }
+  // Anything that keeps or brings back what the credential can do (its permissions, its tenants,
+  // its validity window, or making it usable again) has to be within the actor's authority;
+  // revoking it or renaming it does not.
+  const keepsCredentialUsable =
+    newPermissions !== undefined ||
+    newTenantScopes !== undefined ||
+    body?.not_before !== undefined ||
+    body?.expires_at !== undefined ||
+    status === 'active' ||
+    status === 'rotating';
+  if (keepsCredentialUsable) {
+    const [currentPermissions, currentTenantScopes] = await Promise.all([
+      repo.getCredentialPermissions(credentialId),
+      repo.getCredentialTenantScopes(credentialId),
+    ]);
+    if (
+      !(await actorMayGrantCredential(c, repo, credential.principalId, {
+        permissions: newPermissions ?? currentPermissions,
+        tenantScopes: newTenantScopes ?? currentTenantScopes,
+      }))
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+    }
+  }
+
   const actor = actorRef(c);
-  const updated = await repo.updateCredential(credentialId, {
-    displayName,
-    description: body?.description === undefined ? undefined : asString(body.description),
-    status: status as AdminMachineCredentialStatus | undefined,
-    notBefore: asOptionalEpochMs(body?.not_before),
-    expiresAt: asOptionalEpochMs(body?.expires_at),
-    revokedBy: status === 'revoked' ? actor : undefined,
-    revokeReason: body?.revoke_reason === undefined ? undefined : asString(body.revoke_reason),
-  });
-  if (body?.permissions !== undefined) {
-    const permissions = parsePermissionsForActor(c, body.permissions);
-    if (!permissions) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
-    }
-    await repo.setCredentialPermissions(credentialId, permissions, actor);
-  }
-  if (body?.tenant_scopes !== undefined) {
-    const tenantScopes = parseTenantScopesForActor(c, body.tenant_scopes);
-    if (!tenantScopes) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
-    }
-    await repo.setCredentialTenantScopes(credentialId, tenantScopes, actor);
-  }
+  const updated = await guardedWrite(c, () =>
+    repo.updateCredentialWithGrant(
+      credentialId,
+      {
+        displayName,
+        description: body?.description === undefined ? undefined : asString(body.description),
+        status: status as AdminMachineCredentialStatus | undefined,
+        notBefore: asOptionalEpochMs(body?.not_before),
+        expiresAt: asOptionalEpochMs(body?.expires_at),
+        revokedBy: status === 'revoked' ? actor : undefined,
+        revokeReason: body?.revoke_reason === undefined ? undefined : asString(body.revoke_reason),
+      },
+      { permissions: newPermissions, tenantScopes: newTenantScopes },
+      actor,
+      guard
+    )
+  );
+  if (updated instanceof Response) return updated;
   await writeAdminAuditLog(c, {
     action: 'admin_machine_access.credential.updated',
     resourceType: 'admin_machine_credential',
@@ -628,15 +924,29 @@ machineAccessRouter.post('/principals/:id/credentials/:credentialId/rotate', asy
   const repo = getRepo(c);
   const principalId = c.req.param('id');
   const oldCredentialId = c.req.param('credentialId');
+  const guard = await credentialGuard(repo, principalId, oldCredentialId);
   const [principal, oldCredential] = await Promise.all([
     repo.findPrincipalById(principalId),
     repo.findCredentialById(oldCredentialId),
   ]);
-  if (!principal || !oldCredential || oldCredential.principalId !== principalId) {
+  if (!principal || !guard || !oldCredential || oldCredential.principalId !== principalId) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
   }
-  if (!(await credentialIsWithinActorScope(c, repo, principalId, oldCredentialId))) {
+  if (
+    !(await credentialIsWithinActorScope(
+      c,
+      repo,
+      principalId,
+      oldCredentialId,
+      ADMIN_PERMISSIONS.ADMIN_MACHINE_ACCESS_WRITE
+    ))
+  ) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+  }
+
+  // A revoked or expired credential is finished: rotating it would bring it back.
+  if (oldCredential.status !== 'active' && oldCredential.status !== 'rotating') {
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
   }
 
   const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
@@ -657,9 +967,7 @@ machineAccessRouter.post('/principals/:id/credentials/:credentialId/rotate', asy
     publicJwkJson = null;
   }
   const requestedTenantScopes =
-    body?.tenant_scopes === undefined
-      ? undefined
-      : parseTenantScopesForActor(c, body.tenant_scopes);
+    body?.tenant_scopes === undefined ? undefined : parseTenantScopes(body.tenant_scopes);
   if (
     !kid ||
     !displayName ||
@@ -672,47 +980,57 @@ machineAccessRouter.post('/principals/:id/credentials/:credentialId/rotate', asy
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
   }
   const requestedPermissions =
-    body?.permissions === undefined ? undefined : parsePermissionsForActor(c, body.permissions);
-  if (requestedPermissions === null) {
-    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
-  }
+    body?.permissions === undefined ? undefined : asStringArray(body.permissions);
 
-  const actor = actorRef(c);
-  const oldExpiresAt = Date.now() + overlapSeconds * 1000;
-  await repo.updateCredential(oldCredentialId, {
-    status: 'rotating',
-    expiresAt: oldExpiresAt,
-    revokeReason: 'rotation_overlap',
-  });
-  const newCredential = await repo.createCredential({
-    principalId,
-    kid,
-    publicJwkJson,
-    alg: alg as AdminMachineCredentialAlgorithm,
-    displayName,
-    description: body?.description === null ? null : asString(body?.description),
-    notBefore: asOptionalEpochMs(body?.not_before) ?? null,
-    expiresAt: asOptionalEpochMs(body?.expires_at) ?? null,
-    createdBy: actor,
-  });
-
+  // The new credential takes over the old one's permissions and tenants unless the request names
+  // its own, and what it ends up with on the principal has to be within the actor's authority.
   const [oldPermissions, oldTenantScopes] = await Promise.all([
     repo.getCredentialPermissions(oldCredentialId),
     repo.getCredentialTenantScopes(oldCredentialId),
   ]);
-  const effectiveTenantScopes =
-    body?.tenant_scopes === undefined
-      ? validateTenantScopesForActor(getAuth(c), oldTenantScopes)
-      : requestedTenantScopes;
-  if (!effectiveTenantScopes) {
+  const newCredentialPermissions = requestedPermissions ?? oldPermissions;
+  const newCredentialTenantScopes = requestedTenantScopes ?? oldTenantScopes;
+  if (
+    !(await actorMayGrantCredential(c, repo, principalId, {
+      permissions: newCredentialPermissions,
+      tenantScopes: newCredentialTenantScopes,
+    }))
+  ) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
   }
-  await repo.setCredentialPermissions(
-    newCredential.id,
-    requestedPermissions === undefined ? oldPermissions : requestedPermissions,
-    actor
+
+  const actor = actorRef(c);
+  // The old key keeps working for the overlap and no longer than it already would: rotation never
+  // lengthens what the old credential can do, which would hand its authority on past a revoke.
+  const overlapEnd = Date.now() + overlapSeconds * 1000;
+  const oldExpiresAt = Math.min(oldCredential.expiresAt ?? overlapEnd, overlapEnd);
+  // One atomic write: the old key moves to its overlap only together with the new key's rows.
+  const rotated = await guardedWrite(c, () =>
+    repo.rotateCredential({
+      previousCredentialId: oldCredentialId,
+      previousUpdate: {
+        status: 'rotating',
+        expiresAt: oldExpiresAt,
+        revokeReason: 'rotation_overlap',
+      },
+      next: {
+        principalId,
+        kid,
+        publicJwkJson,
+        alg: alg as AdminMachineCredentialAlgorithm,
+        displayName,
+        description: body?.description === null ? null : asString(body?.description),
+        notBefore: asOptionalEpochMs(body?.not_before) ?? null,
+        expiresAt: asOptionalEpochMs(body?.expires_at) ?? null,
+        createdBy: actor,
+      },
+      grant: { permissions: newCredentialPermissions, tenantScopes: newCredentialTenantScopes },
+      actor,
+      guard,
+    })
   );
-  await repo.setCredentialTenantScopes(newCredential.id, effectiveTenantScopes, actor);
+  if (rotated instanceof Response) return rotated;
+  const newCredential = rotated;
   await writeAdminAuditLog(c, {
     action: 'admin_machine_access.credential.rotated',
     resourceType: 'admin_machine_credential',
@@ -742,18 +1060,33 @@ machineAccessRouter.post('/principals/:id/disable', async (c) => {
 
   const repo = getRepo(c);
   const principalId = c.req.param('id');
+  const guard = await principalGuard(repo, principalId);
   const principal = await repo.findPrincipalById(principalId);
-  if (!principal) {
+  if (!principal || !guard) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
   }
-  if (!(await principalIsWithinActorScope(c, repo, principalId))) {
+  if (
+    !(await principalIsWithinActorScope(
+      c,
+      repo,
+      principalId,
+      ADMIN_PERMISSIONS.ADMIN_MACHINE_ACCESS_DELETE
+    ))
+  ) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
   }
   const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
-  const updated = await repo.updatePrincipal(principalId, {
-    status: 'disabled',
-    disabledBy: actorRef(c),
-  });
+  const updated = await guardedWrite(c, () =>
+    repo.updatePrincipal(
+      principalId,
+      {
+        status: 'disabled',
+        disabledBy: actorRef(c),
+      },
+      guard
+    )
+  );
+  if (updated instanceof Response) return updated;
   await writeAdminAuditLog(c, {
     action: 'admin_machine_access.principal.disabled',
     resourceType: 'admin_machine_principal',
@@ -771,16 +1104,44 @@ machineAccessRouter.post('/principals/:id/enable', async (c) => {
 
   const repo = getRepo(c);
   const principalId = c.req.param('id');
+  const guard = await principalGuard(repo, principalId);
   const principal = await repo.findPrincipalById(principalId);
-  if (!principal) {
+  if (!principal || !guard) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
   }
-  if (!(await principalIsWithinActorScope(c, repo, principalId))) {
+  if (
+    !(await principalIsWithinActorScope(
+      c,
+      repo,
+      principalId,
+      ADMIN_PERMISSIONS.ADMIN_MACHINE_ACCESS_WRITE
+    ))
+  ) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
   }
-  const updated = await repo.updatePrincipal(principalId, {
-    status: 'active',
-  });
+  // Enabling brings back everything the principal holds, so the actor has to be able to give it,
+  // as when it was made. (Disabling does not revoke the credentials: they stay as they are, and
+  // the principal's status is what stops their tokens meanwhile.)
+  const [heldPermissions, heldTenantScopes] = await Promise.all([
+    repo.getPrincipalPermissions(principalId),
+    repo.getPrincipalTenantScopes(principalId),
+  ]);
+  if (
+    !actorMayGrant(
+      c,
+      ADMIN_PERMISSIONS.ADMIN_MACHINE_ACCESS_WRITE,
+      heldPermissions,
+      reachOfScopes(heldTenantScopes),
+      heldPermissions,
+      isPlatformPrincipal(principal)
+    )
+  ) {
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+  }
+  const updated = await guardedWrite(c, () =>
+    repo.updatePrincipal(principalId, { status: 'active' }, guard)
+  );
+  if (updated instanceof Response) return updated;
   await writeAdminAuditLog(c, {
     action: 'admin_machine_access.principal.enabled',
     resourceType: 'admin_machine_principal',
@@ -798,20 +1159,36 @@ machineAccessRouter.post(
 
     const repo = getRepo(c);
     const credentialId = c.req.param('credentialId');
+    const guard = await credentialGuard(repo, c.req.param('id'), credentialId);
     const credential = await repo.findCredentialById(credentialId);
-    if (!credential || credential.principalId !== c.req.param('id')) {
+    if (!credential || !guard || credential.principalId !== c.req.param('id')) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
-    if (!(await credentialIsWithinActorScope(c, repo, credential.principalId, credentialId))) {
+    if (
+      !(await credentialIsWithinActorScope(
+        c,
+        repo,
+        credential.principalId,
+        credentialId,
+        ADMIN_PERMISSIONS.ADMIN_MACHINE_ACCESS_DELETE
+      ))
+    ) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
     const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
     const reason = asString(body?.reason) ?? 'emergency_revoke';
-    const updated = await repo.updateCredential(credentialId, {
-      status: 'revoked',
-      revokedBy: actorRef(c),
-      revokeReason: reason,
-    });
+    const updated = await guardedWrite(c, () =>
+      repo.updateCredential(
+        credentialId,
+        {
+          status: 'revoked',
+          revokedBy: actorRef(c),
+          revokeReason: reason,
+        },
+        guard
+      )
+    );
+    if (updated instanceof Response) return updated;
     await writeAdminAuditLog(c, {
       action: 'admin_machine_access.credential.emergency_revoked',
       resourceType: 'admin_machine_credential',
@@ -830,18 +1207,34 @@ machineAccessRouter.delete('/principals/:id/credentials/:credentialId', async (c
 
   const repo = getRepo(c);
   const credentialId = c.req.param('credentialId');
+  const guard = await credentialGuard(repo, c.req.param('id'), credentialId);
   const credential = await repo.findCredentialById(credentialId);
-  if (!credential || credential.principalId !== c.req.param('id')) {
+  if (!credential || !guard || credential.principalId !== c.req.param('id')) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
   }
-  if (!(await credentialIsWithinActorScope(c, repo, credential.principalId, credentialId))) {
+  if (
+    !(await credentialIsWithinActorScope(
+      c,
+      repo,
+      credential.principalId,
+      credentialId,
+      ADMIN_PERMISSIONS.ADMIN_MACHINE_ACCESS_DELETE
+    ))
+  ) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
   }
-  await repo.updateCredential(credentialId, {
-    status: 'revoked',
-    revokedBy: actorRef(c),
-    revokeReason: 'deleted_by_admin_api',
-  });
+  const revoked = await guardedWrite(c, () =>
+    repo.updateCredential(
+      credentialId,
+      {
+        status: 'revoked',
+        revokedBy: actorRef(c),
+        revokeReason: 'deleted_by_admin_api',
+      },
+      guard
+    )
+  );
+  if (revoked instanceof Response) return revoked;
   await writeAdminAuditLog(c, {
     action: 'admin_machine_access.credential.revoked',
     resourceType: 'admin_machine_credential',

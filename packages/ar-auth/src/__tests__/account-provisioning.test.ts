@@ -4,9 +4,8 @@ import type { Env, StoreChallengeRequest } from '@authrim/ar-lib-core';
 import {
   accountProvisioningStatusHandler,
   publishPasskeyRoute,
-  provisionAnonymousAccount,
+  provisionGuestAccount,
   provisionEmailAccount,
-  removeAnonymousDeviceRoute,
 } from '../account-provisioning';
 
 const TENANT_ID = 'tenant-a';
@@ -15,7 +14,6 @@ const OPERATION_ID = 'account-create-11111111-1111-4111-8111-111111111111';
 function context(options: {
   provision?: ReturnType<typeof vi.fn>;
   publishPasskey?: ReturnType<typeof vi.fn>;
-  removeAnonymous?: ReturnType<typeof vi.fn>;
   status?: ReturnType<typeof vi.fn>;
   store?: ReturnType<typeof vi.fn>;
   getChallenge?: ReturnType<typeof vi.fn>;
@@ -50,13 +48,6 @@ function context(options: {
         vi.fn().mockResolvedValue({
           status: 201,
           operationId: 'passkey-route-passkey-a',
-          accountId: 'account:user-a',
-        }),
-      removeAuthAnonymousDeviceRoute:
-        options.removeAnonymous ??
-        vi.fn().mockResolvedValue({
-          status: 201,
-          operationId: 'anonymous-route-remove-device-a',
           accountId: 'account:user-a',
         }),
     },
@@ -244,7 +235,7 @@ describe('routed account provisioning resume boundary', () => {
     expect(provision.mock.calls[0][0].operationId).not.toBe(provision.mock.calls[1][0].operationId);
   });
 
-  it('provisions anonymous devices with only HMAC authority and stable routing identity', async () => {
+  it('provisions a browser guest with an opaque resume credential', async () => {
     const provision = vi.fn().mockResolvedValue({
       status: 201,
       operationId: OPERATION_ID,
@@ -252,41 +243,38 @@ describe('routed account provisioning resume boundary', () => {
       userId: 'user-a',
     });
     const { c } = context({ provision });
-    const device = {
-      deviceIdHash: 'd'.repeat(64),
-      installationIdHash: null,
-      fingerprintHash: null,
-      platform: 'web' as const,
-      stability: 'installation' as const,
+    const resumeCredential = {
+      credentialHash: 'd'.repeat(64),
       expiresInDays: 30,
     };
 
-    await provisionAnonymousAccount(c, {
+    await provisionGuestAccount(c, {
       tenantId: TENANT_ID,
       candidateUserId: 'candidate-a',
-      device,
+      resumeCredential,
     });
-    await provisionAnonymousAccount(c, {
+    await provisionGuestAccount(c, {
       tenantId: TENANT_ID,
       candidateUserId: 'candidate-b',
-      device,
+      resumeCredential,
     });
 
     expect(provision.mock.calls[0][0]).toMatchObject({
-      flow: 'anonymous',
+      flow: 'guest',
       email: null,
       externalSubject: {
-        issuer: 'urn:authrim:anonymous-device:v1',
-        subject: device.deviceIdHash,
+        issuer: 'urn:authrim:guest-resume:v1',
+        subject: resumeCredential.credentialHash,
       },
-      anonymousDevice: {
-        id: `anonymous-device-${device.deviceIdHash.slice(0, 32)}`,
-        ...device,
+      guestResumeCredential: {
+        id: `guest-resume-${resumeCredential.credentialHash.slice(0, 32)}`,
+        ...resumeCredential,
       },
       runtimeUser: {
         active: true,
-        userType: 'anonymous',
-        sourceRef: 'auth:anonymous',
+        userType: 'end_user',
+        registrationState: 'guest',
+        sourceRef: 'auth:guest',
         piiFields: {},
         sensitiveValues: {},
       },
@@ -294,7 +282,9 @@ describe('routed account provisioning resume boundary', () => {
     expect(provision.mock.calls[0][0].idempotencyKey).toBe(
       provision.mock.calls[1][0].idempotencyKey
     );
-    expect(provision.mock.calls[0][0].idempotencyKey).not.toContain(device.deviceIdHash);
+    expect(provision.mock.calls[0][0].idempotencyKey).not.toContain(
+      resumeCredential.credentialHash
+    );
   });
 
   it('publishes a stable routed passkey route without exposing credential data in the key', async () => {
@@ -323,33 +313,6 @@ describe('routed account provisioning resume boundary', () => {
       })
     );
     expect(publishPasskey.mock.calls[0][0].idempotencyKey).not.toContain('credential_A-1');
-  });
-
-  it('removes an anonymous route through the narrow destination-verified RPC', async () => {
-    const removeAnonymous = vi.fn().mockResolvedValue({
-      status: 202,
-      operationId: 'anonymous-route-remove-device-a',
-      accountId: 'account:user-a',
-    });
-    const { c } = context({ removeAnonymous, routedAccount: true });
-
-    await expect(
-      removeAnonymousDeviceRoute(c, {
-        tenantId: TENANT_ID,
-        userId: 'user-a',
-        deviceId: 'device-a',
-        deviceIdHash: 'd'.repeat(64),
-      })
-    ).resolves.toBe(202);
-    expect(removeAnonymous).toHaveBeenCalledWith(
-      expect.objectContaining({
-        operationId: 'anonymous-route-remove-device-a',
-        idempotencyKey: expect.stringMatching(/^auth-anonymous-route-remove:[a-f0-9]{64}$/u),
-        accountId: 'account:user-a',
-        deviceIdHash: 'd'.repeat(64),
-      })
-    );
-    expect(removeAnonymous.mock.calls[0][0].idempotencyKey).not.toContain('d'.repeat(64));
   });
 
   it('polls a valid tenant-bound challenge without returning account identifiers', async () => {

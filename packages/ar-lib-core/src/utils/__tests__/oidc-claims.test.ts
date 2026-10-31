@@ -3,6 +3,7 @@ import {
   evaluateClaimsForTarget,
   parseClaimsRequest,
   PREDEFINED_TRANSFORMED_CLAIMS,
+  standardUserAttributeNames,
 } from '../oidc-claims';
 
 describe('OIDC claims parameter and ASC utilities', () => {
@@ -337,5 +338,66 @@ describe('OIDC claims parameter and ASC utilities', () => {
       expect(result.ok).toBe(true);
       if (result.ok) expect(result.claims['::age_over_18']).toBeUndefined();
     }
+  });
+});
+
+describe('standardUserAttributeNames', () => {
+  it('keeps the standard user claims and resolves the neutral aliases to their claims', () => {
+    expect(
+      standardUserAttributeNames(['preferred_username', 'display_name', 'picture_url', 'email'])
+    ).toEqual(['preferred_username', 'name', 'picture', 'email']);
+  });
+
+  it('leaves custom attributes out, so a mapping that reads only those needs no profile lookup', () => {
+    expect(standardUserAttributeNames(['employee_id', 'department'])).toEqual([]);
+    expect(standardUserAttributeNames(['employee_id', 'phone_number'])).toEqual(['phone_number']);
+  });
+
+  it('names a claim once', () => {
+    expect(standardUserAttributeNames(['name', 'display_name'])).toEqual(['name']);
+  });
+});
+
+describe('eduperson_assurance in the claims parameter', () => {
+  it('still refuses a list for any other claim', () => {
+    for (const claim of ['email', 'eduperson_assurance', 'verified_claims', 'groups']) {
+      const result = parseClaimsRequest(JSON.stringify({ userinfo: { [claim]: [{}] } }));
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toBe('invalid_request');
+    }
+  });
+
+  it('releases eduperson_assurance to the eduperson_assurance scope, like a standard claim', () => {
+    const values = ['https://example.org/assurance/IAL2'];
+    const withScope = evaluateClaimsForTarget({
+      target: 'userinfo',
+      availableClaims: { eduperson_assurance: values },
+      grantedScopes: ['openid', 'eduperson_assurance'],
+    });
+    expect(withScope.ok && withScope.claims.eduperson_assurance).toEqual(values);
+
+    const without = evaluateClaimsForTarget({
+      target: 'userinfo',
+      availableClaims: { eduperson_assurance: values },
+      grantedScopes: ['openid', 'profile'],
+    });
+    expect(without.ok && without.claims.eduperson_assurance).toBeUndefined();
+  });
+
+  it('holds a claims-parameter request for eduperson_assurance to the scope, unless the client policy lets it through', () => {
+    const parsed = parseClaimsRequest(JSON.stringify({ id_token: { eduperson_assurance: null } }));
+    const base = {
+      target: 'id_token' as const,
+      claimsRequest: parsed.request,
+      availableClaims: { eduperson_assurance: ['urn:x'] },
+      grantedScopes: ['openid'],
+    };
+    const denied = evaluateClaimsForTarget(base);
+    expect(denied.ok && denied.claims.eduperson_assurance).toBeUndefined();
+    const allowed = evaluateClaimsForTarget({
+      ...base,
+      clientPolicy: { claims_parameter_policy: { eduperson_assurance: 'claims_allowed' } },
+    });
+    expect(allowed.ok && allowed.claims.eduperson_assurance).toEqual(['urn:x']);
   });
 });

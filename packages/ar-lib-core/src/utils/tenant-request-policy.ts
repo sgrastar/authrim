@@ -6,11 +6,17 @@ const TENANT_SCOPED_PATH_TENANT_ID_PATTERNS = [
 ] as const;
 const SETTINGS_METADATA_PATH =
   /^\/api\/admin\/settings\/(?:schema|diff|validate|meta(?:\/.*)?)\/?$/;
-const SETTINGS_PLATFORM_PATH =
-  /^\/api\/admin\/settings\/(?:ui-config|ui-routing|cache-mode(?:\/info)?)\/?$/;
+const SETTINGS_PLATFORM_PATH = /^\/api\/admin\/settings\/cache-mode(?:\/info)?\/?$/;
 const RUNTIME_PROFILE_PLATFORM_PATH = /^\/api\/admin\/runtime-profiles(?:\/.*)?\/?$/;
 const ADMIN_PLATFORM_AUTH_PATH =
   /^\/api\/admin\/(?:auth\/.*|setup-token\/.*|sessions\/me|me\/session|logout)\/?$/;
+const INITIAL_ADMIN_SETUP_PATH =
+  /^(?:\/admin-init-setup|\/api\/admin-init-setup\/(?:status|initialize|complete))\/?$/;
+// An invited administrator has no session and no tenant context yet. The code-gated enrollment
+// handlers read the invitation, and so its tenant, from the dedicated Admin database.
+const ADMIN_INVITATION_ENROLLMENT_PATH =
+  /^\/api\/admin\/invitations\/(?:redeem|passkey\/options|passkey\/register|activate)\/?$/;
+const ADMIN_SELF_SERVICE_PATH = /^\/api\/admin\/me\/(?:passkeys|agent-consents)(?:\/[^/]+)?\/?$/;
 const ADMIN_AGENT_LOGIN_HANDOFF_APPROVAL_PATH =
   /^\/api\/admin\/agent-login-handoffs\/alh_[A-Za-z0-9_-]{32}\/approve\/?$/;
 const TENANT_ID_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
@@ -50,6 +56,21 @@ export function classifyTenantRequestPath(path?: string | null): TenantRequestCl
   }
 
   if (ADMIN_PLATFORM_AUTH_PATH.test(normalizedPath)) {
+    return 'platform_admin';
+  }
+
+  // Initial administrators live in the dedicated Admin database. Their one-time
+  // setup token and origin checks must run before a tenant runtime exists.
+  if (INITIAL_ADMIN_SETUP_PATH.test(normalizedPath)) {
+    return 'platform_admin';
+  }
+
+  if (ADMIN_INVITATION_ENROLLMENT_PATH.test(normalizedPath)) {
+    return 'platform_admin';
+  }
+
+  // These handlers derive ownership from the authenticated Admin identity in DB_ADMIN.
+  if (ADMIN_SELF_SERVICE_PATH.test(normalizedPath)) {
     return 'platform_admin';
   }
 

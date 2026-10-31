@@ -71,6 +71,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
 });
 
 import { didAuthChallengeHandler, didAuthVerifyHandler } from '../did-auth';
+import { getChallengeStoreByDID, getSessionStoreForNewSession } from '@authrim/ar-lib-core';
 import { jwtVerify, importJWK, decodeProtectedHeader } from 'jose';
 
 // Helper to create mock context
@@ -91,6 +92,14 @@ function createMockContext(overrides: {
       get: vi.fn().mockReturnValue(mockSessionStoreStub),
     } as unknown as DurableObjectNamespace,
     ISSUER_URL: 'https://issuer.example.com',
+    // DID login is off unless the tenant turns it on; the tests of the flow turn it on.
+    SETTINGS: {
+      get: vi.fn(async (key: string) =>
+        key === 'settings:tenant:default:authentication-methods'
+          ? JSON.stringify({ 'authentication-methods.did.login_enabled': true })
+          : null
+      ),
+    } as unknown as KVNamespace,
     ...overrides.env,
   } as Env;
 
@@ -635,6 +644,116 @@ describe('DID Authentication', () => {
         expect(data.error).toBe('interaction_required');
         expect(data.error_description).toContain('linking');
       });
+
+      it('answers a DID without a lookup-directory route like a missing link row, not with a 500', async () => {
+        const body = { challenge_id: 'test', proof: 'header.payload.sig' };
+        mockLinkedIdentityRepo.findByProviderUser.mockResolvedValue(null);
+        const missingRow = await didAuthVerifyHandler(createMockContext({ body }));
+
+        mockResolveAccountDataContextByIdentifierFromHono.mockRejectedValue(
+          new Error('account_data_route_not_found')
+        );
+        mockLinkedIdentityRepo.findByProviderUser.mockClear();
+        mockPublishEvent.mockClear();
+        const noRoute = await didAuthVerifyHandler(createMockContext({ body }));
+
+        expect(noRoute.status).toBe(400);
+        expect(noRoute.status).toBe(missingRow.status);
+        expect(await noRoute.json()).toEqual(await missingRow.json());
+        expect(mockResolveAccountDataContextByIdentifierFromHono).toHaveBeenLastCalledWith(
+          expect.anything(),
+          {
+            indexKind: 'external_subject',
+            identifier: {
+              issuer: 'did',
+              subject: 'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH',
+            },
+          }
+        );
+        expect(mockLinkedIdentityRepo.findByProviderUser).not.toHaveBeenCalled();
+        expect(mockPublishEvent).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            data: expect.objectContaining({ errorCode: 'identity_not_linked' }),
+          })
+        );
+        expect(mockSessionStoreStub.createSessionRpc).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ['1025 bytes', `did:web:${'a'.repeat(1025 - 'did:web:'.length)}`],
+        ['1028 bytes in 348 characters', `did:web:${'\u3042'.repeat(340)}`],
+        ['a control character', 'did:web:exa\u0007mple.com'],
+      ])(
+        'refuses a DID of %s, which the lookup directory cannot index, as an invalid DID before the challenge is consumed (not 500)',
+        async (_label, bad) => {
+          const badKid = `${bad}#key-1`;
+          vi.mocked(decodeProtectedHeader).mockReturnValue({ alg: 'ES256', kid: badKid });
+          mockChallengeStoreStub.consumeChallengeRpc.mockResolvedValue({
+            challenge: 'test-challenge',
+            metadata: { did: bad, allowedVerificationMethods: [badKid], nonce: 'test-nonce' },
+          });
+          mockResolveDID.mockResolvedValue({
+            ...sampleDIDDocument,
+            verificationMethod: [{ ...sampleDIDDocument.verificationMethod[0], id: badKid }],
+          });
+          vi.mocked(jwtVerify).mockResolvedValue({
+            payload: { iss: bad, nonce: 'test-nonce', aud: 'https://issuer.example.com' },
+            protectedHeader: { alg: 'ES256' },
+          } as never);
+
+          const response = await didAuthVerifyHandler(
+            createMockContext({ body: { challenge_id: 'test', proof: 'header.payload.sig' } })
+          );
+
+          expect(response.status).toBe(400);
+          expect(((await response.json()) as ApiResponse).error).toBe('invalid_request');
+          expect(mockChallengeStoreStub.consumeChallengeRpc).not.toHaveBeenCalled();
+          expect(mockResolveAccountDataContextByIdentifierFromHono).not.toHaveBeenCalled();
+          expect(mockSessionStoreStub.createSessionRpc).not.toHaveBeenCalled();
+        }
+      );
+
+      it('answers lookup_external_subject_value_invalid from the index lookup as not linked', async () => {
+        mockResolveAccountDataContextByIdentifierFromHono.mockRejectedValue(
+          new Error('lookup_external_subject_value_invalid')
+        );
+
+        const response = await didAuthVerifyHandler(
+          createMockContext({ body: { challenge_id: 'test', proof: 'header.payload.sig' } })
+        );
+
+        expect(response.status).toBe(400);
+        expect(((await response.json()) as ApiResponse).error).toBe('interaction_required');
+      });
+
+      it('still answers 500 for other lookup failures', async () => {
+        mockResolveAccountDataContextByIdentifierFromHono.mockRejectedValue(
+          new Error('account_data_lookup_unavailable')
+        );
+
+        const response = await didAuthVerifyHandler(
+          createMockContext({ body: { challenge_id: 'test', proof: 'header.payload.sig' } })
+        );
+
+        expect(response.status).toBe(500);
+        expect(mockSessionStoreStub.createSessionRpc).not.toHaveBeenCalled();
+      });
+
+      it('still answers 500 when the link row belongs to another account than the route', async () => {
+        mockLinkedIdentityRepo.findByProviderUser.mockResolvedValue({
+          user_id: 'someone-else',
+          provider_id: 'did',
+          provider_user_id: 'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH',
+        });
+
+        const response = await didAuthVerifyHandler(
+          createMockContext({ body: { challenge_id: 'test', proof: 'header.payload.sig' } })
+        );
+
+        expect(response.status).toBe(500);
+        expect(mockSessionStoreStub.createSessionRpc).not.toHaveBeenCalled();
+      });
     });
 
     describe('Session Creation', () => {
@@ -843,6 +962,199 @@ describe('DID Authentication', () => {
         // Security: Generic error message to prevent information leakage
         expect(data.error_description).toContain('invalid');
       });
+    });
+  });
+  describe('the tenant login setting (authentication-methods.did.login_enabled)', () => {
+    const SETTINGS_KEY = 'settings:tenant:default:authentication-methods';
+    const did = 'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH';
+    const kid = `${did}#z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH`;
+
+    function settingsEnv(get: (key: string) => Promise<string | null>): Partial<Env> {
+      return { SETTINGS: { get: vi.fn(get) } as unknown as KVNamespace };
+    }
+    const documentWith = (settings: Record<string, unknown>) =>
+      settingsEnv(async (key) => (key === SETTINGS_KEY ? JSON.stringify(settings) : null));
+
+    // Everything the flow could do, so a refusal can be shown to have done none of it.
+    function expectNothingDone() {
+      expect(mockResolveDID).not.toHaveBeenCalled();
+      expect(getChallengeStoreByDID).not.toHaveBeenCalled();
+      expect(mockChallengeStoreStub.storeChallengeRpc).not.toHaveBeenCalled();
+      expect(mockChallengeStoreStub.consumeChallengeRpc).not.toHaveBeenCalled();
+      expect(mockResolveAccountDataContextByIdentifierFromHono).not.toHaveBeenCalled();
+      expect(mockLinkedIdentityRepo.findByProviderUser).not.toHaveBeenCalled();
+      expect(getSessionStoreForNewSession).not.toHaveBeenCalled();
+      expect(mockSessionStoreStub.createSessionRpc).not.toHaveBeenCalled();
+      expect(mockPublishEvent).not.toHaveBeenCalled();
+      expect(mockCreateAuditLog).not.toHaveBeenCalled();
+    }
+
+    function armHappyPath() {
+      mockResolveDID.mockResolvedValue(sampleDIDDocument);
+      mockChallengeStoreStub.storeChallengeRpc.mockResolvedValue({ success: true });
+      mockChallengeStoreStub.consumeChallengeRpc.mockResolvedValue({
+        challenge: 'test-challenge',
+        metadata: { did, allowedVerificationMethods: [kid], nonce: 'test-nonce' },
+      });
+      mockLinkedIdentityRepo.findByProviderUser.mockResolvedValue({
+        user_id: 'linked-user-id',
+        provider_id: 'did',
+        provider_user_id: did,
+      });
+      vi.mocked(decodeProtectedHeader).mockReturnValue({ alg: 'ES256', kid });
+      vi.mocked(importJWK).mockResolvedValue({} as CryptoKey);
+      vi.mocked(jwtVerify).mockResolvedValue({
+        payload: { iss: did, nonce: 'test-nonce', aud: 'https://issuer.example.com' },
+        protectedHeader: { alg: 'ES256' },
+      } as never);
+    }
+
+    const challengeBody = { did };
+    const verifyBody = { challenge_id: 'test', proof: 'header.payload.sig' };
+
+    describe.each([
+      ['no document', settingsEnv(async () => null)],
+      [
+        'a document without the key',
+        documentWith({ 'authentication-methods.passkey.enabled': true }),
+      ],
+      [
+        'a document with other methods on',
+        documentWith({
+          'authentication-methods.passkey.login_enabled': true,
+          'authentication-methods.email_otp.login_enabled': true,
+          'authentication-methods.totp.login_enabled': true,
+          'authentication-methods.guest.login_enabled': true,
+        }),
+      ],
+      ['the string "true"', documentWith({ 'authentication-methods.did.login_enabled': 'true' })],
+      [
+        'the string " TRUE " (a damaged value is not a yes)',
+        documentWith({ 'authentication-methods.did.login_enabled': ' TRUE ' }),
+      ],
+      ['an explicit false', documentWith({ 'authentication-methods.did.login_enabled': false })],
+      ['the string "false"', documentWith({ 'authentication-methods.did.login_enabled': 'false' })],
+      [
+        'a value that is not a boolean',
+        documentWith({ 'authentication-methods.did.login_enabled': 1 }),
+      ],
+      ['no SETTINGS binding', { SETTINGS: undefined } as Partial<Env>],
+    ])('with DID login off (%s)', (_label, env) => {
+      beforeEach(armHappyPath);
+
+      it('refuses the challenge with 403 and does nothing', async () => {
+        const response = await didAuthChallengeHandler(
+          createMockContext({ body: challengeBody, env })
+        );
+        expect(response.status).toBe(403);
+        expectNothingDone();
+      });
+
+      it('refuses the verification with 403 and does nothing', async () => {
+        const response = await didAuthVerifyHandler(createMockContext({ body: verifyBody, env }));
+        expect(response.status).toBe(403);
+        expectNothingDone();
+      });
+
+      it('answers the same whatever the DID or its link to an account', async () => {
+        mockLinkedIdentityRepo.findByProviderUser.mockResolvedValue(null);
+        mockResolveDID.mockRejectedValue(new Error('unresolvable'));
+        const linked = await didAuthChallengeHandler(
+          createMockContext({ body: challengeBody, env })
+        );
+        const other = await didAuthChallengeHandler(
+          createMockContext({ body: { did: 'did:web:never-linked.example' }, env })
+        );
+        const malformed = await didAuthChallengeHandler(
+          createMockContext({ body: { did: 'not-a-did' }, env })
+        );
+        expect([linked.status, other.status, malformed.status]).toEqual([403, 403, 403]);
+        expect(await other.json()).toEqual(await linked.json());
+        expectNothingDone();
+      });
+    });
+
+    describe.each([
+      ['not JSON', '{not json'],
+      ['an empty string', ''],
+      ['an array', '[]'],
+    ])('with settings that cannot be understood (%s)', (_label, raw) => {
+      const env = settingsEnv(async (key) => (key === SETTINGS_KEY ? raw : null));
+      beforeEach(armHappyPath);
+
+      it('refuses the challenge with 503 and does nothing', async () => {
+        const response = await didAuthChallengeHandler(
+          createMockContext({ body: challengeBody, env })
+        );
+        expect(response.status).toBe(503);
+        expectNothingDone();
+      });
+
+      it('refuses the verification with 503 and does not consume the challenge', async () => {
+        const response = await didAuthVerifyHandler(createMockContext({ body: verifyBody, env }));
+        expect(response.status).toBe(503);
+        expectNothingDone();
+      });
+    });
+
+    describe('with settings that cannot be read (KV down)', () => {
+      const env = settingsEnv(async () => {
+        throw new Error('KV unavailable');
+      });
+      beforeEach(armHappyPath);
+
+      it('refuses the challenge with 503 and does nothing', async () => {
+        const response = await didAuthChallengeHandler(
+          createMockContext({ body: challengeBody, env })
+        );
+        expect(response.status).toBe(503);
+        expectNothingDone();
+      });
+
+      it('refuses the verification with 503 without burning the challenge', async () => {
+        const response = await didAuthVerifyHandler(createMockContext({ body: verifyBody, env }));
+        expect(response.status).toBe(503);
+        expect(mockChallengeStoreStub.consumeChallengeRpc).not.toHaveBeenCalled();
+        expectNothingDone();
+      });
+    });
+
+    describe.each([['true', documentWith({ 'authentication-methods.did.login_enabled': true })]])(
+      'with DID login on (%s)',
+      (_label, env) => {
+        beforeEach(armHappyPath);
+
+        it('issues a challenge as before', async () => {
+          const response = await didAuthChallengeHandler(
+            createMockContext({ body: challengeBody, env })
+          );
+          expect(response.status).toBe(200);
+          expect(mockResolveDID).toHaveBeenCalledWith(did);
+          expect(mockChallengeStoreStub.storeChallengeRpc).toHaveBeenCalledTimes(1);
+        });
+
+        it('opens a session as before', async () => {
+          const response = await didAuthVerifyHandler(createMockContext({ body: verifyBody, env }));
+          expect(response.status).toBe(200);
+          const data: ApiResponse = await response.json();
+          expect(data.session_id).toBe('mock-session-id');
+          expect(mockChallengeStoreStub.consumeChallengeRpc).toHaveBeenCalledTimes(1);
+          expect(mockSessionStoreStub.createSessionRpc).toHaveBeenCalledTimes(1);
+        });
+      }
+    );
+
+    it('does not depend on the other methods being off: only the DID key turns it on', async () => {
+      armHappyPath();
+      const env = documentWith({
+        'authentication-methods.did.login_enabled': true,
+        'authentication-methods.passkey.login_enabled': false,
+        'authentication-methods.email_otp.login_enabled': false,
+      });
+      const response = await didAuthChallengeHandler(
+        createMockContext({ body: challengeBody, env })
+      );
+      expect(response.status).toBe(200);
     });
   });
 });

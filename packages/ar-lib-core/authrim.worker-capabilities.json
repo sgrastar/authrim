@@ -3,11 +3,31 @@
   "packageName": "@authrim/ar-lib-core",
   "worker": "ar-lib-core",
   "lookupBlindIndex": true,
-  "requiredDataRoles": ["tenant_core/default", "tenant_core/users", "tenant_pii", "lookup"],
+  "requiredDataRoles": [
+    "tenant_core/default",
+    "tenant_core/users",
+    "tenant_pii",
+    "lookup"
+  ],
   "bindings": [
-    { "name": "DB", "kind": "d1", "required": true, "capability": "audit.event" },
-    { "name": "DB_PII", "kind": "d1", "required": true, "capability": "audit.pii" },
-    { "name": "LOOKUP_DB", "kind": "d1", "required": true, "dataRole": "lookup" },
+    {
+      "name": "DB",
+      "kind": "d1",
+      "required": true,
+      "capability": "audit.event"
+    },
+    {
+      "name": "DB_PII",
+      "kind": "d1",
+      "required": true,
+      "capability": "audit.pii"
+    },
+    {
+      "name": "LOOKUP_DB",
+      "kind": "d1",
+      "required": true,
+      "dataRole": "lookup"
+    },
     {
       "name": "AUTHRIM_CONFIG",
       "kind": "kv_namespace",
@@ -19,38 +39,135 @@
       "kind": "kv_namespace",
       "required": true
     },
-    { "name": "SESSION_STORE", "kind": "durable_object_namespace", "required": true },
+    {
+      "name": "SESSION_STORE",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
     {
       "name": "SESSION_REVOCATION_STORE",
       "kind": "durable_object_namespace",
       "required": true
     },
-    { "name": "SESSION_CLIENT_STORE", "kind": "durable_object_namespace", "required": true },
-    { "name": "KEY_MANAGER", "kind": "durable_object_namespace", "required": true },
-    { "name": "AUTH_CODE_STORE", "kind": "durable_object_namespace", "required": true },
-    { "name": "REFRESH_TOKEN_ROTATOR", "kind": "durable_object_namespace", "required": true },
-    { "name": "CHALLENGE_STORE", "kind": "durable_object_namespace", "required": true },
-    { "name": "RATE_LIMITER", "kind": "durable_object_namespace", "required": true },
-    { "name": "PAR_REQUEST_STORE", "kind": "durable_object_namespace", "required": true },
-    { "name": "DPOP_JTI_STORE", "kind": "durable_object_namespace", "required": true },
-    { "name": "DEVICE_CODE_STORE", "kind": "durable_object_namespace", "required": true },
-    { "name": "CIBA_REQUEST_STORE", "kind": "durable_object_namespace", "required": true },
-    { "name": "TOKEN_REVOCATION_STORE", "kind": "durable_object_namespace", "required": true },
-    { "name": "VERSION_MANAGER", "kind": "durable_object_namespace", "required": true },
-    { "name": "SAML_REQUEST_STORE", "kind": "durable_object_namespace", "required": true },
+    {
+      "name": "SESSION_CLIENT_STORE",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "KEY_MANAGER",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "AUTH_CODE_STORE",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "REFRESH_TOKEN_ROTATOR",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "CHALLENGE_STORE",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "RATE_LIMITER",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "PAR_REQUEST_STORE",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "DPOP_JTI_STORE",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "DEVICE_CODE_STORE",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "CIBA_REQUEST_STORE",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "TOKEN_REVOCATION_STORE",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "VERSION_MANAGER",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "SAML_REQUEST_STORE",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
     {
       "name": "SAML_AGGREGATE_METADATA_STORE",
       "kind": "durable_object_namespace",
       "required": true
     },
-    { "name": "PERMISSION_CHANGE_HUB", "kind": "durable_object_namespace", "required": true },
-    { "name": "FLOW_STATE_STORE", "kind": "durable_object_namespace", "required": true },
+    {
+      "name": "PERMISSION_CHANGE_HUB",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "FLOW_STATE_STORE",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
     {
       "name": "DEVICE_SECRET_ROUTE_STORE",
       "kind": "durable_object_namespace",
       "required": true
     },
-    { "name": "CONTROL_SMOKE_VERSION", "kind": "version_metadata", "required": true }
+    {
+      "name": "USER_CODE_RATE_LIMITER",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "CONTROL_SMOKE_VERSION",
+      "kind": "version_metadata",
+      "required": true
+    },
+    {
+      "name": "LOG_ARCHIVE",
+      "kind": "r2_bucket",
+      "required": false,
+      "capability": "logging.archive.objects"
+    },
+    {
+      "name": "DB_ADMIN",
+      "kind": "d1",
+      "required": false,
+      "capability": "logging.archive.state"
+    },
+    {
+      "name": "CONTROL",
+      "kind": "service",
+      "required": false,
+      "capability": "backup_mutation_admission"
+    },
+    {
+      "name": "LOGGING_DELIVERY_QUEUE",
+      "kind": "queue",
+      "required": false,
+      "capability": "logging.archive.delivery"
+    }
   ],
   "secrets": [
     {
@@ -77,6 +194,16 @@
       "name": "CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS",
       "capability": "control_smoke.verify",
       "required": true
+    },
+    {
+      "name": "LOG_ARCHIVE_CONTENT_HMAC_KEY",
+      "required": false,
+      "capability": "logging.archive.encrypt"
+    },
+    {
+      "name": "LOG_ARCHIVE_ROOT_KEYRING",
+      "required": false,
+      "capability": "logging.archive.encrypt"
     }
   ]
 }

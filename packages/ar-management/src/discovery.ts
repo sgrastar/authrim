@@ -1,5 +1,5 @@
 import type { Context } from 'hono';
-import { z } from 'zod';
+import { legacyUrlString, z } from './zod';
 import type { Env, LoginEntrySettings } from '@authrim/ar-lib-core';
 import {
   LOGIN_ENTRY_DEFAULTS,
@@ -9,6 +9,8 @@ import {
   ensureDatabaseAdapter,
   getDefaultTenantId,
   getUIConfig,
+  getTenantUIConfig,
+  isValidUIPath,
   loadVerifiedLookupBucketAssignmentProvider,
   LookupRouteResolver,
   resolveTenantDatabaseSourceFromRegistry,
@@ -17,7 +19,8 @@ import {
   type LookupAliasKind,
   type ResolvedLookupAlias,
 } from '@authrim/ar-lib-core';
-import { getLogger } from '@authrim/ar-lib-core';
+import { getLogger, getTenantSettingsDocument } from '@authrim/ar-lib-core';
+import { invitationHasUsesLeft } from '@authrim/ar-lib-core/services/invitation-auth-core';
 import { SignJWT, jwtVerify } from 'jose';
 import { getSingleTenantId, isSingleTenantMode } from './single-tenant-guard';
 import { getCanonicalTenantBaseUrlAsync } from './request-issuer';
@@ -38,12 +41,12 @@ const DISCOVERY_REQUEST_SCHEMA = z.object({
 const DISCOVERY_GRANT_CREATE_SCHEMA = z.object({
   tenant_id: z.string().min(1).max(255),
   expected_tenant_id: z.string().min(1).max(255).optional(),
-  return_to: z.string().url().max(2048).optional(),
+  return_to: legacyUrlString().max(2048).optional(),
   login_hint: z.string().min(1).max(320).optional(),
 });
 const DISCOVERY_GRANT_VERIFY_SCHEMA = z.object({
   grant: z.string().min(1).max(8192),
-  current_url: z.string().url().max(2048),
+  current_url: legacyUrlString().max(2048),
 });
 const DISCOVERY_EMAIL_START_SCHEMA = z.object({ email: z.string().min(3).max(320) });
 const DISCOVERY_EMAIL_VERIFY_SCHEMA = z.object({
@@ -209,7 +212,6 @@ interface DiscoveryConfigResponse {
   };
   ui: {
     theme: string;
-    variant: string;
     brand_name: string;
     logo_url: string | null;
     page_title: string;
@@ -383,14 +385,6 @@ type DiscoveryMethod = DiscoveryConfigResponse['config']['discovery_methods'][nu
 type DiscoveryUIConfig = DiscoveryConfigResponse['ui'];
 
 const DISCOVERY_UI_THEME_OPTIONS = ['light', 'dark'] as const;
-const DISCOVERY_UI_VARIANT_OPTIONS = [
-  'beige',
-  'blue-gray',
-  'green',
-  'brown',
-  'navy',
-  'slate',
-] as const;
 
 async function readSettingsRecord(
   kv: KVNamespace | undefined,
@@ -614,8 +608,10 @@ async function resolveGrantTargetLoginUrl(
     return fallback;
   }
 
-  const uiConfig = await getUIConfig(env).catch(() => null);
-  const expectedLoginPath = uiConfig?.paths.login || '/login';
+  // The tenant's login path, as resolveTenantLoginUrl uses it (also when no base URL is set).
+  const tenantUi = await getTenantUIConfig(env, tenantId).catch(() => null);
+  const configuredPath = tenantUi?.paths.login;
+  const expectedLoginPath = isValidUIPath(configuredPath) ? configuredPath : '/login';
   if (parsedReturnTo.pathname !== expectedLoginPath) {
     return appendLoginHint(fallback, options.loginHint);
   }
@@ -631,19 +627,30 @@ async function resolveGrantTargetLoginUrl(
 }
 
 async function resolveTenantLoginUrl(env: Env, tenantId: string): Promise<string> {
-  const canonicalLoginUrl = `${await getCanonicalTenantBaseUrlAsync(env, tenantId)}/login`;
+  // The tenant's UI settings (its own values, else the platform's): its login path applies on
+  // whichever host is chosen, and a UI base URL the tenant set goes before the tenant's host.
+  const tenantUi = await getTenantUIConfig(env, tenantId).catch(() => null);
+  const configuredPath = tenantUi?.paths.login;
+  const loginPath = isValidUIPath(configuredPath) ? configuredPath : '/login';
+  if (tenantUi?.tenantBaseUrl && tenantUi.config) {
+    try {
+      return new URL(loginPath, tenantUi.config.baseUrl).toString();
+    } catch {
+      // Fall back to the tenant's host
+    }
+  }
+  const canonicalLoginUrl = `${await getCanonicalTenantBaseUrlAsync(env, tenantId)}${loginPath}`;
   if (!isSingleTenantMode(env) || env.LOGIN_UI_EXECUTION_HOST_MODE !== 'dedicated') {
     return canonicalLoginUrl;
   }
 
-  const uiConfig = await getUIConfig(env).catch(() => null);
-  const uiBaseUrl = uiConfig?.baseUrl || env.UI_URL;
+  const uiBaseUrl = tenantUi?.config?.baseUrl || env.UI_URL;
   if (!uiBaseUrl) {
     return canonicalLoginUrl;
   }
 
   try {
-    return new URL('/login', uiBaseUrl).toString();
+    return new URL(loginPath, uiBaseUrl).toString();
   } catch {
     return canonicalLoginUrl;
   }
@@ -714,13 +721,6 @@ function readSettingBoolean(record: Record<string, unknown> | null, key: string)
 function normalizeThemeValue(value: string | null): string | null {
   return value &&
     DISCOVERY_UI_THEME_OPTIONS.includes(value as (typeof DISCOVERY_UI_THEME_OPTIONS)[number])
-    ? value
-    : null;
-}
-
-function normalizeVariantValue(value: string | null): string | null {
-  return value &&
-    DISCOVERY_UI_VARIANT_OPTIONS.includes(value as (typeof DISCOVERY_UI_VARIANT_OPTIONS)[number])
     ? value
     : null;
 }
@@ -826,13 +826,6 @@ async function getDiscoveryUiConfig(
         defaultValue: LOGIN_UI_DEFAULTS['login-ui.theme'],
         normalize: normalizeThemeValue,
       }) ?? LOGIN_UI_DEFAULTS['login-ui.theme'],
-    variant:
-      resolveDiscoveryVisualSetting(effectiveTenantSettings, platformSettings, loginUiSettings, {
-        tenantKey: 'tenant-discovery-ui.variant',
-        loginUiKey: 'login-ui.variant',
-        defaultValue: LOGIN_UI_DEFAULTS['login-ui.variant'],
-        normalize: normalizeVariantValue,
-      }) ?? LOGIN_UI_DEFAULTS['login-ui.variant'],
     brand_name:
       resolveDiscoveryVisualSetting(effectiveTenantSettings, platformSettings, loginUiSettings, {
         tenantKey: 'tenant-discovery-ui.brand_name',
@@ -999,15 +992,15 @@ async function getTenantCandidatePresentation(
   if (cached) tenantCandidatePresentationCache.delete(cacheKey);
 
   const loginUiKey = `settings:tenant:${tenantId}:login-ui`;
-  const tenantKey = `settings:tenant:${tenantId}:tenant`;
-  const [loginUiSettings, tenantSettingsFromSettings, tenantSettingsFromLegacy, loginUrl] =
-    await Promise.all([
-      readSettingsRecord(env.SETTINGS, loginUiKey),
-      readSettingsRecord(env.SETTINGS, tenantKey),
-      readSettingsRecord(env.AUTHRIM_CONFIG, tenantKey),
-      resolveTenantLoginUrl(env, tenantId),
-    ]);
-  const tenantSettings = tenantSettingsFromSettings ?? tenantSettingsFromLegacy ?? {};
+  const [loginUiSettings, tenantDocument, loginUrl] = await Promise.all([
+    readSettingsRecord(env.SETTINGS, loginUiKey),
+    getTenantSettingsDocument(env, tenantId, 'tenant', {
+      // Without the tenant's settings the fallback is at least as strict.
+      onUnreadable: 'empty',
+    }),
+    resolveTenantLoginUrl(env, tenantId),
+  ]);
+  const tenantSettings = tenantDocument ?? {};
 
   const brandName = loginUiSettings?.['login-ui.brand_name'];
   const loginUiLogoUrl = loginUiSettings?.['login-ui.logo_url'];
@@ -1102,7 +1095,11 @@ async function resolveInvitationDiscovery(
     throw new Error('tenant_alias_destination_revalidation_failed');
   }
 
-  if (invitation.max_uses !== -1 && invitation.use_count >= invitation.max_uses) {
+  // Uses left, counting reservations that expired unapplied as returned (an abandoned sign-up
+  // must not leave the link dead until another sign-up starts).
+  if (
+    !(await invitationHasUsesLeft(adapter, { ...invitation, role_id: null, org_id: null }, now))
+  ) {
     return null;
   }
 

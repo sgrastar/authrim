@@ -34,7 +34,11 @@ const testState = vi.hoisted(() => {
   const adapter = {
     query: vi.fn(async () => []),
     queryOne: vi.fn(async () => null),
-    execute: vi.fn(async () => ({ success: true, rowsAffected: 0 })),
+    // The consent write is conditional on the consent generation and checks it wrote a row.
+    execute: vi.fn(async (sql: string) => ({
+      success: true,
+      rowsAffected: sql.includes('oauth_client_consents') ? 1 : 0,
+    })),
     transaction: vi.fn(async (callback: (value: unknown) => unknown) => callback(adapter)),
     batch: vi.fn(async () => []),
     isHealthy: vi.fn(async () => ({ healthy: true, latencyMs: 0, type: 'mock' })),
@@ -113,11 +117,6 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     createSettingsManager: vi.fn(() => ({
       registerCategory: vi.fn(),
       getAll: testState.getSettingsAll,
-    })),
-    createOAuthConfigManager: vi.fn(() => ({
-      isStateRequired: vi.fn(async () => false),
-      getTokenExpiry: vi.fn(async () => 3600),
-      getRefreshTokenExpiry: vi.fn(async () => 86400),
     })),
     createAuthContextFromHono: vi.fn(() => authContext),
     createAccountAuthContextFromHono: vi.fn(() => authContext),
@@ -434,7 +433,6 @@ function createEnv(): SecurityTestEnv {
   return {
     ISSUER_URL: ISSUER,
     UI_URL: ISSUER,
-    ENABLE_CONFORMANCE_MODE: 'false',
     ACCESS_TOKEN_EXPIRY: '3600',
     REFRESH_TOKEN_EXPIRY: '86400',
     AUTHRIM_CONFIG: authrimConfig as unknown as KVNamespace,

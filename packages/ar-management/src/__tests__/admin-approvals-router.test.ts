@@ -12,6 +12,7 @@ const { mockAdapter, mockRequestRepo, mockApprovalRepo, mockGrantRepo } = vi.hoi
     createApprovalRequest: vi.fn(),
     getApprovalRequestByPublicId: vi.fn(),
     updateApprovalRequestStatus: vi.fn(),
+    recomputeApprovalRequestStatus: vi.fn(),
     listApprovalRequests: vi.fn(),
   },
   mockApprovalRepo: {
@@ -88,7 +89,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
             authMethod: 'session',
             tenantId: 'tenant-a',
             permissions,
-            roles: ['tenant_admin'],
+            roles: ['ar_tenant_admin'],
             hierarchyLevel: 50,
             mfaVerified: true,
           });
@@ -141,7 +142,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       }
     },
     getTenantIdFromContext: vi.fn(() => 'tenant-a'),
-    getTenantSettings: mockGetTenantSettings,
+    getTenantSettingsDocument: mockGetTenantSettings,
     ApprovalRequestRepository: vi.fn(function MockApprovalRequestRepository() {
       return mockRequestRepo;
     }),
@@ -212,6 +213,7 @@ describe('admin approvals router', () => {
     mockRequestRepo.listApprovalRequests.mockResolvedValue([]);
     mockRequestRepo.getApprovalRequestByPublicId.mockResolvedValue(null);
     mockRequestRepo.updateApprovalRequestStatus.mockResolvedValue(null);
+    mockRequestRepo.recomputeApprovalRequestStatus.mockResolvedValue(null);
     mockApprovalRepo.listApprovalsForRequest.mockResolvedValue([]);
     mockGrantRepo.listElevationGrantsForRequest.mockResolvedValue([]);
     mockGetTenantSettings.mockResolvedValue(null);
@@ -1686,7 +1688,7 @@ describe('admin approvals router', () => {
       tenant_id: 'tenant-a',
       investigation_id: 'inv_test_1',
       requester_subject_type: 'admin_user',
-      requester_subject_id: 'admin-1',
+      requester_subject_id: 'admin-9',
       target_subject_type: 'user',
       target_subject_id: 'user-1',
       request_surface: 'admin_audit',
@@ -1779,7 +1781,7 @@ describe('admin approvals router', () => {
         updated_at: Date.now(),
       },
     ]);
-    mockRequestRepo.updateApprovalRequestStatus.mockResolvedValue({
+    mockRequestRepo.recomputeApprovalRequestStatus.mockResolvedValue({
       ...request,
       status: 'approved',
     });
@@ -1805,15 +1807,17 @@ describe('admin approvals router', () => {
       expect.objectContaining({
         status: 'approved',
         method: 'portal_confirm',
-      })
+      }),
+      expect.objectContaining({ expectedStatus: 'pending' })
     );
-    expect(mockRequestRepo.updateApprovalRequestStatus).toHaveBeenCalledWith('req-1', 'approved');
+    expect(mockRequestRepo.recomputeApprovalRequestStatus).toHaveBeenCalledWith('req-1');
     expect(mockGrantRepo.createElevationGrant).toHaveBeenCalledWith(
       expect.objectContaining({
         approval_request_id: 'req-1',
         target_audience: 'admin_api',
         resource_class: 'admin_audit_detail',
-      })
+      }),
+      { onlyIfNoActiveGrant: true }
     );
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.status).toBe('approved');
@@ -1906,9 +1910,9 @@ describe('admin approvals router', () => {
     expect(await res.json()).toMatchObject({
       error: 'self_approval_not_allowed',
     });
-    expect(mockGetTenantSettings).toHaveBeenCalledWith(mockEnv.SETTINGS, 'tenant-a', 'support-ops');
+    expect(mockGetTenantSettings).toHaveBeenCalledWith(mockEnv, 'tenant-a', 'support-ops');
     expect(mockApprovalRepo.updateApproval).not.toHaveBeenCalled();
-    expect(mockRequestRepo.updateApprovalRequestStatus).not.toHaveBeenCalled();
+    expect(mockRequestRepo.recomputeApprovalRequestStatus).not.toHaveBeenCalled();
   });
 
   it('captures the approving admin on unassigned support operation approval steps', async () => {
@@ -1983,7 +1987,7 @@ describe('admin approvals router', () => {
         subject_id: 'admin-1',
       },
     ]);
-    mockRequestRepo.updateApprovalRequestStatus.mockResolvedValue({
+    mockRequestRepo.recomputeApprovalRequestStatus.mockResolvedValue({
       ...request,
       status: 'approved',
     });
@@ -2010,7 +2014,8 @@ describe('admin approvals router', () => {
       expect.objectContaining({
         status: 'approved',
         subject_id: 'admin-1',
-      })
+      }),
+      expect.objectContaining({ expectedStatus: 'pending' })
     );
   });
 

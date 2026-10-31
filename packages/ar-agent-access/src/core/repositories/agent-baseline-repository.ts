@@ -1,5 +1,9 @@
 import type { DatabaseAdapter, PreparedStatement } from '@authrim/ar-lib-core/db/adapter';
-import type { AdminAgentAuditWrite } from '../audit';
+import {
+  prepareAdminAgentAuditStatements,
+  type AdminAgentAuditWrite,
+  type AdminAgentAuditWriter,
+} from '../audit';
 import type {
   AgentBaselineDefinition,
   AgentBaselineDriftStatus,
@@ -91,50 +95,15 @@ export interface AgentBaselineExceptionRecord {
   revokedAt?: number;
 }
 
-function auditStatement(
-  audit: AdminAgentAuditWrite,
-  guard?: { from: string; where: string; params: readonly unknown[] }
-): PreparedStatement {
-  const values = [
-    audit.id,
-    audit.tenantId,
-    audit.adminUserId ?? null,
-    audit.action,
-    audit.resourceType,
-    audit.resourceId,
-    audit.result ?? 'success',
-    audit.severity,
-    audit.requestId ?? null,
-    JSON.stringify(audit.metadata),
-    audit.createdAt,
-    audit.actorType,
-    audit.actorSub,
-    audit.actorMode ?? null,
-    audit.actorAssurance ?? null,
-    audit.tokenBinding ?? null,
-    audit.actClientId ?? null,
-    audit.actPrincipalId ?? null,
-    audit.grantId ?? null,
-    audit.elevationId ?? null,
-    audit.mcpTool ?? null,
-  ];
-  return {
-    sql: `INSERT INTO admin_audit_log (
-      id, tenant_id, admin_user_id, action, resource_type, resource_id,
-      result, severity, request_id, metadata_json, created_at,
-      actor_type, actor_sub, actor_mode, actor_assurance, token_binding,
-      act_client_id, act_principal_id, grant_id, elevation_id, mcp_tool
-    ) ${guard ? `SELECT ${values.map(() => '?').join(', ')} FROM ${guard.from} WHERE ${guard.where}` : `VALUES (${values.map(() => '?').join(', ')})`}`,
-    params: guard ? [...values, ...guard.params] : values,
-  };
-}
-
 function parseObject<T>(value: string): T {
   return JSON.parse(value) as T;
 }
 
 export class AgentBaselineRepository {
-  constructor(private readonly adapter: DatabaseAdapter) {}
+  constructor(
+    private readonly adapter: DatabaseAdapter,
+    private readonly auditWriter?: AdminAgentAuditWriter
+  ) {}
 
   async publishTemplate(input: {
     id: string;
@@ -169,7 +138,7 @@ export class AgentBaselineRepository {
           input.publishedAt,
         ],
       },
-      auditStatement(input.audit),
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit)),
     ]);
   }
 
@@ -384,11 +353,11 @@ export class AgentBaselineRepository {
           input.targetTenantId,
         ],
       },
-      auditStatement(input.audit, {
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit, {
         from: 'agent_template_copies',
         where: 'id = ? AND template_id = ? AND template_version = ?',
         params: [input.id, input.templateId, input.templateVersion],
-      }),
+      })),
     ]);
     return (
       objectStatements.every((_, index) => results[index]?.rowsAffected === 1) &&
@@ -464,7 +433,7 @@ export class AgentBaselineRepository {
           input.createdAt,
         ],
       },
-      auditStatement(input.audit),
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit)),
     ]);
   }
 
@@ -548,11 +517,11 @@ export class AgentBaselineRepository {
           input.tenantId,
         ],
       },
-      auditStatement(input.audit, {
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit, {
         from: 'agent_baseline_assignments',
         where: 'id = ? AND baseline_id = ? AND baseline_version = ?',
         params: [input.id, input.baselineId, input.baselineVersion],
-      }),
+      })),
     ]);
     return (results[0]?.rowsAffected ?? 0) === 1;
   }
@@ -704,11 +673,11 @@ export class AgentBaselineRepository {
           input.controlTenantId,
         ],
       },
-      auditStatement(input.audit, {
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit, {
         from: 'agent_baseline_assignments',
         where: 'id = ? AND drift_digest = ?',
         params: [input.assignmentId, input.currentDigest],
-      }),
+      })),
     ]);
     return results[0]?.rowsAffected === 1 ? input.status : null;
   }
@@ -769,11 +738,11 @@ export class AgentBaselineRepository {
           input.controlTenantId,
         ],
       },
-      auditStatement(input.audit, {
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit, {
         from: 'agent_baseline_assignments',
         where: 'id = ? AND last_transition_id = ?',
         params: [input.assignmentId, input.audit.id],
-      }),
+      })),
     ]);
     return (results[0]?.rowsAffected ?? 0) === 1;
   }
@@ -818,11 +787,11 @@ export class AgentBaselineRepository {
           input.controlTenantId,
         ],
       },
-      auditStatement(input.audit, {
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit, {
         from: 'agent_baseline_assignments',
         where: 'id = ? AND last_transition_id = ?',
         params: [input.assignmentId, input.audit.id],
-      }),
+      })),
     ]);
     return (results[0]?.rowsAffected ?? 0) === 1;
   }
@@ -883,11 +852,11 @@ export class AgentBaselineRepository {
           input.controlTenantId,
         ],
       },
-      auditStatement(input.audit, {
+      ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit, {
         from: 'agent_baseline_exceptions',
         where: 'id = ? AND assignment_id = ?',
         params: [input.id, input.assignmentId],
-      }),
+      })),
     ]);
     return (results[0]?.rowsAffected ?? 0) === 1;
   }

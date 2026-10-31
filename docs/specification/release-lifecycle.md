@@ -134,6 +134,39 @@ and that exact version appears in `compatibleWorkerVersions`. A successful datab
 records `database_only_verified`, retains both the Workers and installed `productVersion`, and leaves
 the normal full update available. Compatibility is never inferred from schema shape or a SemVer range.
 
+### Guest erasure compatibility boundary
+
+Guest erasure requires the Core admission migration and the PII denial-marker migration on every
+physical account store before its version 2 deletion worker starts. It is a full release update:
+schema presence on one store and a successful Worker upload do not establish fleet readiness.
+There is no database-only compatibility declaration for the older Guest deletion worker.
+
+During this transition, exclude older and in-flight mutation producers, including authentication,
+Bridge/SAML provisioning, background jobs, queued retries, and restore workers. Use the environment's
+existing mutation admission and release procedure, drain admitted work, deploy the complete enabled
+release, and verify its physical-store inventory before resuming writes. Admin `read_only` alone
+does not stop authentication or background writers. The Guest runtime does not perform that fleet
+drain itself.
+
+A version 1, malformed, or unverifiable saved Guest deletion receipt remains blocked for inspection;
+it is not converted into fresh deletion authority. Once erasure starts, the receipt and its physical
+owner cannot be retargeted or reset to accepted. After completion, the local PII store retains the
+minimum denial record for that owner while it remains writable. Older code cannot safely resume this
+protocol; recovery must keep the admission guards and denial records in place.
+
+New legal holds are admitted until the same-Core irreversible boundary, including after the deletion
+request was accepted. A hold that wins that boundary preserves the original deletion task and its
+data without reactivating authentication. An active hold continues to block deletion until its
+audited release or expiry transition. The existing audit, webhook snapshot, tombstone, and anonymous
+identifier retention policies keep their existing lifetimes; the new terminal denial record adds no
+operation ID, timestamp, actor, or raw personal value.
+
+Tenant placement migration still stops on immutable Guest lifecycle/denial rows and existing
+immutable hold ledgers when its generic copy replay or source purge cannot preserve their guards.
+It must not remove these guards or denial records to finish a move. This release does not add a
+Guest-aware placement-migration protocol. The disposable DSQL identity experiment also remains
+unsupported for Guest erasure; it is not a serving-runtime compatibility claim.
+
 ## Managed database rollout
 
 Control must snapshot the eligible target inventory when accepting the handoff. Targets discovered
@@ -341,3 +374,49 @@ The implementation must include behavior tests, not source-text presence checks.
 Before publishing a product release, the setup package tests, lint, typecheck, monorepo typecheck,
 release-manifest validation, and the policy/entry-point/topology matrices above must pass. Passing unit
 tests alone is not evidence that all mutation entry points obey this specification.
+
+### Statement consent compatibility boundary
+
+Core D1 037 / PostgreSQL 020 and the compatible statement-consent Worker form one full release
+update. All metadata and physical account Core stores must receive the pinned schema before
+schema-dependent Worker activation. The manifest retains `setup_then_control`,
+`after_required_databases`, Admin `read_only`, and no `databaseOnly` declaration. Database-only
+rollout is prohibited. `pnpm migrate:manifest` preserves this policy; a failed remote-tag check in
+`pnpm migrate:manifest:check` is incomplete verification, never release evidence.
+
+Stop and drain all mutation producers, including authentication, Management, scheduled jobs,
+provisioning, queue retries and restores, before applying M2. Admin read-only mode alone is
+insufficient. D1 rebuilds `user_consent_records` transactionally, verifies the schema, counts and
+row contents, preserves columns/constraints/indexes and rowids, removes only the two definition
+foreign keys, then installs triggers. PostgreSQL already has no such foreign keys and only adds
+enforcement. Verify every target's sentinel and the complete compatible Worker release before
+resuming writes. No old writer may resume during rollout or rollback.
+
+Guard/key creation uses absent-row INSERT SELECT so the BEFORE INSERT overwrite defenses remain
+active. Projection co-commits monotone identity-matched UPDATE then absent-row INSERT, and rejects
+stale or mismatched results. Retention's short-lived row permits are created/deleted in the evidence
+purge transaction and classified as rebuild state; triggers still verify strict expiry, bound
+identity, terminal status and granted-history protection. Key states remain replay fences.
+
+Statement consent key states, terminal operations and admissions are users datasets. Guards,
+projection jobs and retention permits are rebuild state and never portable source authority.
+SQLite restore holds source admissions/executing operations. The direct PostgreSQL importer refuses
+nonempty source guards/admissions and rolls back on unfinished operations. `core.consent_item_history`
+retains history/log-window selection while exporting/restoring on `tenant_core/users`.
+
+The restore path derives the new binding from trusted target provisioning/import identities,
+rewrites key-state/terminal-receipt identity before insertion and during readback, then rebuilds
+the tenant guard and checks all atomic rows before sealing/committing staging. Source operations
+cannot authenticate new target work. Rebuild statement guards with metadata projection and finish
+reference audit before serving activation. Keep the target unpublished until rebinding/sealing;
+subsequent maintenance uses restored bindings under the stop fence. Any incomplete projection or
+audit keeps serving and writers stopped. One restore database per role remains the existing limit;
+restoring multiple users shards is outside this release.
+
+There is no safe down migration to earlier consent writers. Keep writes stopped on failure and
+use forward repair or a verified backup restore followed by fresh identity rebinding, projection
+and audit. Do not remove triggers/fences or reattach the cross-database foreign keys as rollback.
+See [statement consent rollout](../operations/statement-consent-storage-rollout.md) for the operational
+sequence and the 0.5.0 release-note summary. PostgreSQL triggers, functions and rebinding SQL were
+statically reviewed only in this implementation environment; real PostgreSQL validation is a release
+gate before enabling a PG deployment.

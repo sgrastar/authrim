@@ -1,6 +1,30 @@
 import type { Translation } from '../i18n-types';
 
 const ja = {
+	account_guestLogoutWarning:
+		'ログアウトすると、このゲストアカウントに戻れなくなります。アカウントとデータへのアクセスを維持するには、先に登録してください。ログアウトしますか？',
+	account_guestTitle: 'アカウントを登録',
+	account_guestDescription: '登録後も同じアカウントとデータを引き継ぎます。',
+	account_guestDue: '{date} 以降、自動削除の対象になります。',
+	account_guestNoExpiry: '自動削除は設定されていません。',
+	account_guestEmail: 'メールアドレス',
+	account_guestSend: 'メールアドレスで登録',
+	account_guestPasskey: 'パスキーで登録',
+	account_guestCode: '確認コード',
+	account_guestConfirm: '登録を完了',
+	account_guestPending: '登録処理中です。再試行して完了を確認できます。',
+	account_guestRetry: '再試行',
+	account_guestError: '登録を完了できませんでした。確認コードを確認するか、再試行してください。',
+	account_guestCollision:
+		'この認証情報は登録済みです。既存のアカウントにログインしてください。ゲストアカウントは統合されません。',
+	account_guestExistingLogin: '既存のアカウントにログイン',
+	account_guestRegistered: 'アカウントの登録が完了しました。',
+	account_guestChangeMethod: '別の方法を選ぶ',
+	login_guestContinue: 'ゲストとして続ける',
+	login_guestRetention:
+		'ゲストアカウントは作成から{days}日後に自動削除の対象になります。続けて利用するには通常アカウントへ登録してください。',
+	login_guestNoExpiry: '新規ゲストアカウントの自動削除は設定されていません。',
+
 	app_title: 'Authrim',
 	app_subtitle: 'アイデンティティ＆アクセスをあらゆる場所で',
 	button_openDialog: 'ダイアログを開く',
@@ -85,6 +109,32 @@ const ja = {
 	account_delete: '削除',
 	account_empty: '項目がありません',
 	account_planned: '今後対応予定',
+	account_socialEmpty: '連携しているアカウントはありません。',
+	account_socialLinkHeading: 'アカウントを連携',
+	account_socialLinkWith: '{provider} と連携',
+	account_socialNoProviders: 'ほかに連携できるプロバイダーはありません。',
+	account_socialLinkedAt: '{date} に連携',
+	account_socialLastUsed: '最終利用 {date}',
+	account_socialUnlink: '連携を解除',
+	account_socialUnlinkConfirm:
+		'{provider} との連携を解除しますか？このアカウントではログインできなくなります。',
+	account_socialUnlinkConfirmAction: '{provider} との連携を解除',
+	account_socialLinked: 'アカウントを連携しました。',
+	account_socialUnlinked: 'アカウントの連携を解除しました。',
+	account_socialErrorAlreadyLinked: 'そのアカウントは、ほかのユーザーに連携されています。',
+	account_socialErrorAlreadyLinkedHere: 'このプロバイダーとはすでに連携しています。',
+	account_socialErrorEmailNotVerified:
+		'そのアカウントのメールアドレスが、プロバイダーで確認されていません。',
+	account_socialErrorSessionExpired:
+		'連携が終わる前に、本人確認の有効期限が切れました。もう一度確認してからやり直してください。',
+	account_socialErrorCancelled: '連携を取り消しました。',
+	account_socialErrorFailed: 'アカウントを連携できませんでした。もう一度お試しください。',
+	account_socialErrorLastMethod:
+		'これが最後のログイン方法です。先に Passkey など、ほかのログイン方法を追加してください。',
+	account_socialErrorInProgress:
+		'ログイン方法の別の変更を処理中です。少し待ってからやり直してください。',
+	account_operationSocialLinked: '外部アカウントを連携',
+	account_operationSocialUnlinked: '外部アカウントの連携を解除',
 	account_passkeyUnsupported: 'このブラウザはPasskey登録に対応していません。',
 	account_passkeyRegistrationCancelled:
 		'Passkeyの登録がキャンセルされたか、時間切れになりました。もう一度お試しください。',
@@ -119,12 +169,30 @@ const ja = {
 	account_actionFailed: '操作に失敗しました',
 	account_remainingLoginMethodRequired:
 		'この認証方式を削除する前に、別のログイン手段を追加してください。',
+	account_activityIncomplete: '操作履歴の取得が不完全です。時間をおいて再試行してください。',
+	account_activityLoadMore: '過去の操作を読み込む',
 	account_activityTitle: 'アクティビティ',
 	account_operationNameUpdated: '名前を変更',
 	account_operationPasskeyCreated: 'Passkeyを追加',
 	account_operationPasskeyUpdated: 'Passkey名を変更',
 	account_operationPasskeyDeleted: 'Passkeyを削除',
 	account_operationSessionRevoked: 'セッションを終了',
+	account_operationGuestCreated: 'ゲストアカウント作成',
+	account_operationGuestUpgradeFailed: 'ゲストアカウント登録失敗',
+	account_operationGuestUpgradeStarted: 'ゲストアカウント登録開始',
+	account_operationGuestUpgraded: 'ゲストアカウント登録完了',
+	account_operationEmailAdded: 'メールアドレスを追加',
+	account_operationEmailChanged: 'メールアドレスを変更',
+	account_operationEmailReauthenticated: 'メールで再認証',
+	account_operationDeviceUpdated: '端末名を変更',
+	account_operationDeviceUnlinked: '端末を解除',
+	account_operationPasskeyReauthenticated: 'Passkeyで再認証',
+	account_operationTotpEnrollmentStarted: '認証アプリの設定を開始',
+	account_operationTotpActivated: '認証アプリを有効化',
+	account_operationTotpUpdated: '認証アプリ名を変更',
+	account_operationTotpRemoved: '認証アプリを削除',
+	account_operationTotpBackupCodesRegenerated: 'バックアップコードを再生成',
+	account_operationTotpReauthenticated: '認証アプリで再認証',
 	account_launcherTitle: 'マイアプリ',
 	account_launcherDescription: '利用できるアプリを検索して開きます。',
 	account_launcherLoadFailed: 'アプリを読み込めませんでした。',
@@ -193,6 +261,7 @@ const ja = {
 	login_humanVerificationLoading: 'セキュリティ確認を読み込んでいます...',
 	login_humanVerificationLoadFailed:
 		'セキュリティ確認を読み込めませんでした。ページを再読み込みしてもう一度お試しください。',
+	login_humanVerificationUnavailable: '人間確認が現在利用できません。管理者に連絡してください。',
 	login_noMethodsAvailable:
 		'このテナントで利用できるログイン方法がありません。管理者にお問い合わせください。',
 	login_passkeyPreparing: 'Passkey認証を準備しています。',
@@ -280,7 +349,7 @@ const ja = {
 	emailCode_title: 'メールを確認してください',
 	emailCode_subtitle: '認証コードを送信しました',
 	emailCode_instructions:
-		'メールに届いた6桁のコードを入力してください。コードは5分で期限切れになります。',
+		'メールに届いた6桁のコードを入力してください。コードの有効期限はメールに記載しています。',
 	emailCode_codeLabel: '認証コード',
 	emailCode_verifyButton: '確認',
 	emailCode_resendButton: 'コードを再送信',
@@ -342,12 +411,20 @@ const ja = {
 	error_temporarily_unavailable: '認可サーバーは一時的にリクエストを処理できません',
 	error_login_required: '認証が必要です。続行するにはログインしてください。',
 	error_unknown: '不明なエラーが発生しました',
+	error_rateLimited: '試行回数が多すぎます。しばらく待ってからもう一度お試しください。',
+	error_rateLimitedRetryAfter: '試行回数が多すぎます。約{minutes}分後にもう一度お試しください。',
+	error_unregisteredPostLogoutRedirectUri:
+		'ログアウトしました。アプリの戻り先が登録されていないため、アプリに戻れませんでした。アプリを開き直してください。',
+	error_invalidIdTokenHint:
+		'ログアウトしました。アプリからのログアウト要求を確認できなかったため、アプリに戻れませんでした。アプリを開き直してください。',
+	error_idTokenHintRequired:
+		'ログアウトしました。アプリからのログアウト要求に必要な情報が足りなかったため、アプリに戻れませんでした。アプリを開き直してください。',
 
 	device_title: 'デバイス認証',
 	device_subtitle: 'デバイスに表示されたコードを入力してください',
 	device_codeLabel: '認証コード',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint: 'デバイスに表示されている8文字のコードを入力してください（形式: XXXX-XXXX）',
+	device_codeHint: 'デバイスに表示されたコードを入力してください',
 	device_verifyButton: 'コードを確認',
 	device_confirmTitle: 'デバイスを承認',
 	device_requestedPermissions: 'リクエストされた権限',
@@ -360,6 +437,13 @@ const ja = {
 	device_errorApproveFailed: 'デバイスの承認に失敗しました',
 	device_errorDenyFailed: 'デバイスの承認を拒否できませんでした',
 	device_errorInvalidRedirect: 'サーバーから無効なリダイレクトURLを受け取りました',
+	device_errorConsentWithdrawn:
+		'このリクエストは、このアプリへのアクセスを取り消す前に作成されたものです。デバイスで最初からやり直し、新しいコードを取得してください。',
+	device_errorTryAgain:
+		'今は決定を保存できませんでした。何も変更されていません。しばらくしてからもう一度お試しください。',
+	device_errorTooManyAttempts: '試行回数が多すぎます。しばらく待ってからもう一度お試しください。',
+	device_errorOutcomeUnknown:
+		'決定が保存されたかどうかを確認できませんでした。デバイスを確認するか、もう一度コードを入力してください。',
 
 	ciba_title: '認証リクエスト',
 	ciba_subtitle: 'アプリケーションが承認を求めています',
@@ -380,6 +464,18 @@ const ja = {
 	ciba_errorGeneric: 'エラーが発生しました',
 	ciba_errorApproveFailed: 'リクエストの承認に失敗しました',
 	ciba_errorDenyFailed: 'リクエストの拒否に失敗しました',
+	ciba_errorConsentWithdrawn:
+		'このリクエストは、このアプリへのアクセスを取り消す前に作成されたものです。アプリから最初からやり直してください。',
+	ciba_errorRequestGone: 'このリクエストは期限切れか、すでに応答済みです。',
+	error_authorizationRequestExpired:
+		'ログインの要求の期限が切れました。アプリからもう一度始めてください。',
+	ciba_errorTryAgain:
+		'今は決定を保存できませんでした。何も変更されていません。しばらくしてからもう一度お試しください。',
+	ciba_errorTooManyAttempts: '試行回数が多すぎます。しばらく待ってからもう一度お試しください。',
+	ciba_errorOutcomeUnknown:
+		'回答が保存されたかどうかを確認できませんでした。更新して、まだ待機中のリクエストを確認してください。',
+	ciba_errorNoLongerWaiting:
+		'回答を確認できませんでしたが、このリクエストはすでに待機中ではありません。',
 
 	reauth_title: '本人確認',
 	reauth_subtitle: 'セキュリティのため、再認証を行ってください',
@@ -418,6 +514,9 @@ const ja = {
 		'外部プロバイダーからエラーが返されました。しばらくしてから再度お試しください。',
 	login_extError_callbackFailed_title: '認証に失敗しました',
 	login_extError_callbackFailed_message: '認証中にエラーが発生しました。再度お試しください。',
+	login_extError_reauthNotProven_title: 'サインインを確認できませんでした',
+	login_extError_reauthNotProven_message:
+		'サインインに使ったサービスから、もう一度サインインしたことを確認できませんでした。もう一度サインインするか、別の方法を選んでください。',
 	login_extError_default_title: '認証エラー',
 	login_extError_default_message: '外部認証中にエラーが発生しました。',
 

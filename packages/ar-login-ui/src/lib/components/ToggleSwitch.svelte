@@ -48,6 +48,10 @@
 		}
 	});
 
+	// The label needs something to point at, whether or not the caller passed an id.
+	const generatedId = $props.id();
+	const controlId = $derived(id ?? `toggle-${generatedId}`);
+
 	const sizeClasses = {
 		sm: 'toggle-switch-sm',
 		md: 'toggle-switch-md',
@@ -59,7 +63,7 @@
 	{#if label || description}
 		<div class="toggle-switch-content">
 			{#if label}
-				<label for={id} class="toggle-switch-label">{label}</label>
+				<label for={controlId} class="toggle-switch-label">{label}</label>
 			{/if}
 			{#if description}
 				<p class="toggle-switch-description">{description}</p>
@@ -68,7 +72,7 @@
 	{/if}
 	<button
 		use:melt={$root}
-		{id}
+		id={controlId}
 		class="toggle-switch {sizeClasses[size]}"
 		class:toggle-switch-checked={$switchChecked}
 		{disabled}

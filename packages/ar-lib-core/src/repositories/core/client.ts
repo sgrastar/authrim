@@ -19,6 +19,7 @@
 
 import type { DatabaseAdapter } from '../../db/adapter';
 import type { AttributeReleaseConsentPolicy } from '../../services/identity-release-consent';
+import type { IAL } from '../../types/settings/assurance-levels';
 import {
   type PaginationOptions,
   type PaginationResult,
@@ -57,6 +58,8 @@ export type BrowserPublicClientMode = 'strict' | 'cookie_fallback';
 export type BrowserRefreshTokenPolicy = 'disabled' | 'dpop_bound';
 
 export interface ClientIdentityFieldMappingSetSelector {
+  /** `none`: the app takes no mapping, whatever the tenant's and the platform's defaults say. */
+  mode?: 'none';
   fieldMappingSetId?: string;
   fieldMappingVersionId?: string;
   destinationNamespace?: string;
@@ -185,6 +188,10 @@ export interface OAuthClient {
   /** Whether PKCE is required for authorization requests */
   require_pkce: boolean;
 
+  // Identity assurance (NIST SP 800-63A)
+  /** The lowest IAL a person needs to be authorized by or issued tokens for this client (null: none) */
+  minimum_ial?: IAL | null;
+
   // OIDC Dynamic Client Registration
   initiate_login_uri: string | null;
   login_ui_url: string | null;
@@ -280,6 +287,8 @@ export interface CreateClientInput {
   requestable_scopes?: string[] | null;
   // PKCE (RFC 7636)
   require_pkce?: boolean;
+  // Identity assurance: set by the Admin API only, never by client registration
+  minimum_ial?: IAL | null;
   // OIDC Dynamic Client Registration
   initiate_login_uri?: string | null;
   login_ui_url?: string | null;
@@ -369,6 +378,8 @@ export interface UpdateClientInput {
   requestable_scopes?: string[] | null;
   // PKCE (RFC 7636)
   require_pkce?: boolean;
+  // Identity assurance: set by the Admin API only, never by client registration
+  minimum_ial?: IAL | null;
   // OIDC Dynamic Client Registration
   initiate_login_uri?: string | null;
   login_ui_url?: string | null;
@@ -380,6 +391,8 @@ export interface ClientUpdateOptions {
    * This is used by Agent plans to close the read/validate/write TOCTOU window.
    */
   expectedUpdatedAt?: number;
+  /** Internal evidence, committed atomically with an identity-mapping change. */
+  identityMappingHistoryReceipt?: import('../../services/identity-mapping-client-history-receipt').IdentityMappingClientHistoryReceiptInput;
 }
 
 /**
@@ -547,6 +560,7 @@ export class ClientRepository {
         : null,
       // PKCE (RFC 7636)
       require_pkce: input.require_pkce ?? false,
+      minimum_ial: input.minimum_ial ?? null,
       // OIDC Dynamic Client Registration
       initiate_login_uri: input.initiate_login_uri ?? null,
       login_ui_url: input.login_ui_url ?? null,
@@ -584,10 +598,10 @@ export class ClientRepository {
         frontchannel_logout_uri, frontchannel_logout_session_required,
         allowed_redirect_origins,
         software_id, software_version, requestable_scopes,
-        require_pkce,
+        require_pkce, minimum_ial,
         initiate_login_uri, login_ui_url,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         client.client_id,
         client.client_secret_hash,
@@ -669,6 +683,7 @@ export class ClientRepository {
         client.software_version,
         client.requestable_scopes,
         client.require_pkce ? 1 : 0,
+        client.minimum_ial ?? null,
         client.initiate_login_uri,
         client.login_ui_url,
         client.created_at,
@@ -702,11 +717,20 @@ export class ClientRepository {
     if (!existing) {
       return null;
     }
+    if (
+      options.expectedUpdatedAt !== undefined &&
+      existing.updated_at !== options.expectedUpdatedAt
+    ) {
+      return null;
+    }
 
-    // Keep the version monotonic even when two writes occur in the same millisecond.
+    // Decide against the current SQL row so a delayed, unconditional edit cannot roll back
+    // a version written after this read. A successful CAS still uses exactly `now`.
     const now = Math.max(getCurrentTimestamp(), existing.updated_at + 1);
-    const updates: string[] = ['updated_at = ?'];
-    const params: unknown[] = [now];
+    const updates: string[] = [
+      'updated_at = CASE WHEN updated_at >= ? THEN updated_at + 1 ELSE ? END',
+    ];
+    const params: unknown[] = [now, now];
 
     // Build dynamic update query
     if (input.client_name !== undefined) {
@@ -1037,6 +1061,10 @@ export class ClientRepository {
       updates.push('require_pkce = ?');
       params.push(input.require_pkce ? 1 : 0);
     }
+    if (input.minimum_ial !== undefined) {
+      updates.push('minimum_ial = ?');
+      params.push(input.minimum_ial ?? null);
+    }
     // OIDC Dynamic Client Registration
     if (input.initiate_login_uri !== undefined) {
       updates.push('initiate_login_uri = ?');
@@ -1053,10 +1081,58 @@ export class ClientRepository {
       params.push(options.expectedUpdatedAt);
     }
 
-    const result = await this.adapter.execute(
-      `UPDATE oauth_clients SET ${updates.join(', ')} WHERE tenant_id = ? AND client_id = ?${versionCondition}`,
-      params
-    );
+    const receipt = options.identityMappingHistoryReceipt;
+    let result: { rowsAffected: number };
+    if (receipt) {
+      const {
+        identityMappingClientHistoryReceiptId,
+        identityMappingClientHistoryReceiptStatement,
+      } = await import('../../services/identity-mapping-client-history-receipt');
+      if (
+        options.expectedUpdatedAt === undefined ||
+        receipt.tenantId !== this.tenantId ||
+        receipt.clientId !== clientId ||
+        input.identity_mapping === undefined ||
+        JSON.stringify(
+          (
+            await import('../../services/identity-mapping-level-history')
+          ).normalizeIdentityMappingLevelHistoryChoice('client', input.identity_mapping)
+        ) !== receipt.afterJson ||
+        JSON.stringify(
+          (
+            await import('../../services/identity-mapping-level-history')
+          ).normalizeIdentityMappingLevelHistoryChoice('client', existing.identity_mapping)
+        ) !== receipt.beforeJson
+      )
+        throw new Error('history_receipt_update_mismatch');
+      const statement = await identityMappingClientHistoryReceiptStatement(
+        receipt,
+        options.expectedUpdatedAt,
+        now
+      );
+      const update = {
+        sql: `UPDATE oauth_clients SET ${updates.join(', ')}
+          WHERE tenant_id = ? AND client_id = ?${versionCondition}
+            AND EXISTS (SELECT 1 FROM idempotency_keys WHERE id = ?)`,
+        params: [...params, identityMappingClientHistoryReceiptId(receipt.historyId)],
+      };
+      // The receipt SELECT and UPDATE name the same tenant, client and source version. D1's
+      // atomic batch keeps a failed CAS, receipt collision or failed UPDATE from writing either.
+      if (this.adapter.getType() === 'd1' || this.adapter.getType() === 'sqlite') {
+        const results = await this.adapter.batch([statement, update]);
+        result = results[1];
+        if (result.rowsAffected !== (results[0]?.rowsAffected ?? -1)) {
+          throw new Error('history_receipt_atomicity_failed');
+        }
+      } else {
+        throw new Error('history_receipt_adapter_unsupported');
+      }
+    } else {
+      result = await this.adapter.execute(
+        `UPDATE oauth_clients SET ${updates.join(', ')} WHERE tenant_id = ? AND client_id = ?${versionCondition}`,
+        params
+      );
+    }
 
     if (result.rowsAffected === 0) {
       return null;

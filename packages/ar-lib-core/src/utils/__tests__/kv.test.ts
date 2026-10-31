@@ -291,6 +291,45 @@ describe('KV Utilities', () => {
       });
     });
 
+    describe('minimum_ial', () => {
+      const clientRow = (minimum_ial: unknown) => ({
+        client_id: 'assurance-client',
+        client_name: 'Assurance Client',
+        redirect_uris: JSON.stringify(['http://localhost:3000/callback']),
+        grant_types: JSON.stringify(['authorization_code']),
+        response_types: JSON.stringify(['code']),
+        scope: 'openid',
+        token_endpoint_auth_method: 'client_secret_basic',
+        tenant_id: 'default',
+        minimum_ial,
+        created_at: 1,
+        updated_at: 1,
+      });
+      const read = async (minimum_ial: unknown) => {
+        (env.DB.prepare as ReturnType<typeof vi.fn>).mockReturnValue({
+          bind: vi.fn().mockReturnThis(),
+          first: vi.fn().mockResolvedValue(clientRow(minimum_ial)),
+        });
+        return getClient(env, 'default', 'assurance-client', env.DB);
+      };
+
+      it('reads the client minimum IAL', async () => {
+        expect((await read('IAL2'))?.minimum_ial).toBe('IAL2');
+        expect((await read('IAL3'))?.minimum_ial).toBe('IAL3');
+      });
+
+      it('has no minimum when none is set', async () => {
+        expect((await read(null))?.minimum_ial).toBeUndefined();
+        expect((await read(undefined))?.minimum_ial).toBeUndefined();
+      });
+
+      it('reads a value that is not an IAL as the highest level, never as no minimum', async () => {
+        expect((await read('IAL9'))?.minimum_ial).toBe('IAL3');
+        expect((await read(2))?.minimum_ial).toBe('IAL3');
+        expect((await read(''))?.minimum_ial).toBe('IAL3');
+      });
+    });
+
     it('should ignore stale client metadata cache when client caching is disabled', async () => {
       const clientId = 'cached-client';
       const cachedData = {
@@ -704,6 +743,7 @@ describe('KV Utilities', () => {
         scope: 'openid profile',
         granted_at: 1234,
         expires_at: null,
+        consent_generation: 2,
       });
       (env as unknown as { DB?: D1Database }).DB = undefined;
 
@@ -713,6 +753,8 @@ describe('KV Utilities', () => {
         scope: 'openid profile',
         granted_at: 1234,
         expires_at: null,
+        // The consent withdrawal generation it was given under.
+        consent_generation: 2,
       });
       expect(coreAdapter.queryOne).toHaveBeenCalledWith(
         expect.stringContaining('FROM oauth_client_consents'),
@@ -725,6 +767,7 @@ describe('KV Utilities', () => {
         scope: 'openid email',
         granted_at: 5678,
         expires_at: 9999,
+        consent_generation: 1,
       });
       const consentCacheKV = new MockKVNamespace();
       (env as unknown as { DB?: D1Database }).DB = undefined;
@@ -737,10 +780,39 @@ describe('KV Utilities', () => {
         scope: 'openid email',
         granted_at: 5678,
         expires_at: 9999,
+        consent_generation: 1,
       });
       expect(await consentCacheKV.get('tenant:tenant-b:consent:user-2:client-2')).toBe(
         JSON.stringify(consent)
       );
+    });
+
+    it('replaces a stale cached consent with the database one when asked to refresh', async () => {
+      const coreAdapter = createMockAdapter({
+        scope: 'openid',
+        granted_at: 2000,
+        expires_at: null,
+        consent_generation: 3,
+      });
+      const consentCacheKV = new MockKVNamespace();
+      const key = 'tenant:tenant-b:consent:user-2:client-2';
+      await consentCacheKV.put(
+        key,
+        JSON.stringify({
+          scope: 'openid',
+          granted_at: 1000,
+          expires_at: null,
+          consent_generation: 1,
+        })
+      );
+      (env as unknown as Env).CONSENT_CACHE = consentCacheKV as unknown as KVNamespace;
+
+      const consent = await getCachedConsent(env, 'user-2', 'client-2', 'tenant-b', coreAdapter, {
+        refresh: true,
+      });
+
+      expect(consent).toMatchObject({ granted_at: 2000, consent_generation: 3 });
+      expect(await consentCacheKV.get(key)).toBe(JSON.stringify(consent));
     });
 
     it('does not negative-cache a missing consent', async () => {

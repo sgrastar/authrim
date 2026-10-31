@@ -1,6 +1,23 @@
+import { createArchiveTestConfig, selectScheduledArchive } from './fixtures/log-archive.js';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { buildSetupCompletionNextSteps } from '../cli/commands/init.js';
+import {
+  buildSetupCompletionNextSteps,
+  resolveInitialLogStorageFeatures,
+} from '../cli/commands/init.js';
 import { initI18n } from '../i18n/index.js';
+
+describe('normal wizard archive feature finalization', () => {
+  for (const mode of ['pipeline', 'scheduled'] as const)
+    it(`keeps R2 selected for ${mode} after an earlier disabled answer`, () => {
+      const config = selectScheduledArchive(createArchiveTestConfig('test'));
+      config.logging!.archive.mode = mode;
+      const features = resolveInitialLogStorageFeatures(config, { r2: false, queue: false });
+      expect(features.r2.enabled).toBe(true);
+      expect(features.queue.enabled).toBe(mode === 'pipeline');
+      config.features = { ...config.features, ...features };
+      expect(config.features.r2.enabled).toBe(true);
+    });
+});
 
 describe('setup completion next steps', () => {
   beforeEach(async () => {

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { listD1MigrationSqlFiles } from '../core/cloudflare.js';
+
 import { renderPortableMigrationSql } from '../core/sql-portability.js';
 
 const migrationsDir = fileURLToPath(new URL('../../../../migrations', import.meta.url));
@@ -30,9 +30,7 @@ describe('SAML SP/OIDC RP Flow migrations', () => {
     const directory = mkdtempSync(join(tmpdir(), 'authrim-saml-oidc-flow-'));
     const database = join(directory, 'core.db');
     try {
-      const migrations = listD1MigrationSqlFiles(join(migrationsDir, 'core/d1')).map(
-        (migration) => `core/d1/${migration}`
-      );
+      const migrations = ['001_0_5_0_core_baseline.sql'].map((migration) => `core/d1/${migration}`);
       for (const migration of migrations) {
         execFileSync(sqlite3, [database], {
           input: `PRAGMA foreign_keys = ON;\n${renderPortableMigrationSql(

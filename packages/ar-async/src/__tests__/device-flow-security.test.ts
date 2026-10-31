@@ -10,8 +10,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Hono } from 'hono';
 import { deviceAuthorizationHandler } from '../device-authorization';
+import { formRequest, realRateLimiter } from './real-rate-limiter';
 import { deviceVerifyApiHandler } from '../device-verify-api';
 import type { Env } from '@authrim/ar-lib-core';
+import { settledAnswer } from './real-user-code-limiter';
 
 // Mock getClient and logger at module level - must use vi.hoisted for proper hoisting
 const mockGetClient = vi.hoisted(() => vi.fn());
@@ -49,6 +51,7 @@ describe('Device Flow Security', () => {
     mockEnv = {
       ISSUER_URL: 'https://auth.example.com',
       UI_URL: 'https://ui.example.com',
+      RATE_LIMITER: realRateLimiter().namespace as any,
       DB: {
         prepare: vi.fn().mockReturnValue({
           bind: vi.fn().mockReturnThis(),
@@ -64,16 +67,30 @@ describe('Device Flow Security', () => {
             .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 })),
         }),
       } as any,
+      // The user code APIs refuse to read codes without a working rate limiter.
+      USER_CODE_RATE_LIMITER: {
+        idFromName: vi.fn().mockReturnValue('rate-limiter-id'),
+        get: vi.fn().mockReturnValue({
+          fetch: vi.fn(async (request: Request) => {
+            const path = new URL(request.url).pathname;
+            return path === '/reserve'
+              ? Response.json({ blocked: false, reservation_id: 'r1' })
+              : settledAnswer(path);
+          }),
+        }),
+      } as any,
     };
   });
 
   describe('Client Validation', () => {
     it('allows a registered public client with the default scope and external UI', async () => {
-      mockGetClient.mockResolvedValue({ client_id: 'public-device-client' });
+      mockGetClient.mockResolvedValue({
+        client_id: 'public-device-client',
+        token_endpoint_auth_method: 'none',
+      });
       const mockContext = {
         req: {
-          parseBody: vi.fn().mockResolvedValue({ client_id: 'public-device-client' }),
-          raw: new Request('https://auth.example.com/device_authorization', { method: 'POST' }),
+          ...formRequest({ client_id: 'public-device-client' }),
         },
         json: vi.fn().mockImplementation((data, status) => {
           return new Response(JSON.stringify(data), { status });
@@ -94,7 +111,7 @@ describe('Device Flow Security', () => {
     it('should reject request with missing client_id', async () => {
       const mockContext = {
         req: {
-          parseBody: vi.fn().mockResolvedValue({
+          ...formRequest({
             scope: 'openid',
           }),
         },
@@ -119,7 +136,7 @@ describe('Device Flow Security', () => {
 
       const mockContext = {
         req: {
-          parseBody: vi.fn().mockResolvedValue({
+          ...formRequest({
             client_id: 'invalid-client-123',
             scope: 'openid',
           }),
@@ -143,6 +160,7 @@ describe('Device Flow Security', () => {
       // Mock client without device_code grant type
       const mockClient = {
         client_id: 'test-client',
+        token_endpoint_auth_method: 'none',
         grant_types: ['authorization_code'], // No device_code
       };
 
@@ -150,7 +168,7 @@ describe('Device Flow Security', () => {
 
       const mockContext = {
         req: {
-          parseBody: vi.fn().mockResolvedValue({
+          ...formRequest({
             client_id: 'test-client',
             scope: 'openid',
           }),
@@ -221,20 +239,21 @@ describe('Device Flow Security', () => {
       const mockRateLimiter = {
         fetch: vi.fn().mockImplementation(async (request: Request) => {
           const url = new URL(request.url);
-          if (url.pathname === '/check') {
-            return new Response(JSON.stringify({ blocked: false }), { status: 200 });
+          if (url.pathname === '/reserve') {
+            return new Response(JSON.stringify({ blocked: false, reservation_id: 'r1' }), {
+              status: 200,
+            });
           } else if (url.pathname === '/record-failure') {
             recordFailureCalls.push(request);
-            return new Response(JSON.stringify({ success: true }), { status: 200 });
+            return settledAnswer(url.pathname);
           }
           return new Response('Not found', { status: 404 });
         }),
       };
 
       const mockDeviceCodeStore = {
-        fetch: vi.fn().mockResolvedValue(
-          new Response(JSON.stringify({ error: 'not_found' }), { status: 404 }) // Invalid user code
-        ),
+        // The store answers an unknown user code with a JSON null
+        fetch: vi.fn().mockResolvedValue(new Response(JSON.stringify(null), { status: 200 })),
       };
 
       const mockEnvWithRateLimiter = {
@@ -339,8 +358,8 @@ describe('Device Flow Security', () => {
           if (url.pathname === '/get-by-user-code') {
             const body = (await request.json()) as any;
             receivedUserCodes.push(body.user_code);
-            // Return success with normalized code (WDJBMJHT -> WDJB-MJHT)
-            if (body.user_code === 'WDJB-MJHT') {
+            // Return success with the canonical code (wdjbmjht -> WDJBMJHT)
+            if (body.user_code === 'WDJBMJHT') {
               return new Response(
                 JSON.stringify({
                   device_code: 'device-123',
@@ -371,7 +390,7 @@ describe('Device Flow Security', () => {
       const mockContext = {
         req: {
           json: vi.fn().mockResolvedValue({
-            // No hyphen, lowercase - should be normalized to WDJB-MJHT
+            // No hyphen, lowercase - should be normalized to WDJBMJHT
             user_code: 'wdjbmjht',
           }),
           header: vi.fn().mockReturnValue('192.168.1.1'),
@@ -384,9 +403,9 @@ describe('Device Flow Security', () => {
 
       await deviceVerifyApiHandler(mockContext);
 
-      // Verify the store was called with normalized code (uppercase with hyphen)
+      // Verify the store was called with the canonical code (upper case, no separators)
       expect(receivedUserCodes.length).toBeGreaterThan(0);
-      expect(receivedUserCodes[0]).toBe('WDJB-MJHT');
+      expect(receivedUserCodes[0]).toBe('WDJBMJHT');
     });
   });
 });

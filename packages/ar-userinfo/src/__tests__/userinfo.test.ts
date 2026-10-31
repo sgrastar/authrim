@@ -7,9 +7,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { decodeProtectedHeader, exportPKCS8, generateKeyPair } from 'jose';
 import type { Env } from '@authrim/ar-lib-core';
+import type { IdentityMappingFailureRow } from '@authrim/ar-lib-core/services/identity-mapping-failures';
+import { adapterOver, migrate, type SqliteDatabase } from './helpers/real-sql';
 
 // Mock all functions at module level using vi.hoisted to survive vi.restoreAllMocks()
 const mockGetClient = vi.hoisted(() => vi.fn());
@@ -36,10 +38,8 @@ const mockCanonicalRuntimeUserProjectionRepository = vi.hoisted(() =>
   })
 );
 const mockCanonicalSensitiveValueResolver = vi.hoisted(() => vi.fn());
-const mockCreateOAuthConfigManager = vi.hoisted(() =>
-  vi.fn(() => ({
-    isUserInfoRequireOpenidScope: vi.fn().mockResolvedValue(false),
-  }))
+const mockResolveEffectiveSettings = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({ 'oauth.userinfo_require_openid': false })
 );
 const mockLoadFeatureConfig = vi.hoisted(() => vi.fn().mockResolvedValue({ enabled: false }));
 const mockResolveCustomClaimRuntimeSourcesFromEnv = vi.hoisted(() =>
@@ -75,7 +75,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
     getCachedUserCore: mockGetCachedUserCore,
     CanonicalRuntimeUserProjectionRepository: mockCanonicalRuntimeUserProjectionRepository,
     CanonicalSensitiveValueResolver: mockCanonicalSensitiveValueResolver,
-    createOAuthConfigManager: mockCreateOAuthConfigManager,
+    resolveEffectiveSettings: mockResolveEffectiveSettings,
     loadFeatureConfig: mockLoadFeatureConfig,
     resolveCustomClaimRuntimeSourcesFromEnv: mockResolveCustomClaimRuntimeSourcesFromEnv,
     resolveCustomClaimRuntimeSourcesFromHono: mockResolveCustomClaimRuntimeSourcesFromEnv,
@@ -259,9 +259,7 @@ describe('UserInfo Endpoint', () => {
       updated_at: 1700000000000,
     });
     mockCanonicalFindByLegacyUserId.mockResolvedValue(sampleCanonicalProjection());
-    mockCreateOAuthConfigManager.mockReturnValue({
-      isUserInfoRequireOpenidScope: vi.fn().mockResolvedValue(false),
-    });
+    mockResolveEffectiveSettings.mockResolvedValue({ 'oauth.userinfo_require_openid': false });
     mockLoadFeatureConfig.mockResolvedValue({ enabled: false });
     mockResolveCustomClaimRuntimeSourcesFromEnv.mockResolvedValue({
       schemaDb: null,
@@ -394,9 +392,7 @@ describe('UserInfo Endpoint', () => {
       const c = createMockContext({
         headers: { Authorization: 'Bearer valid-token' },
       });
-      mockCreateOAuthConfigManager.mockReturnValue({
-        isUserInfoRequireOpenidScope: vi.fn().mockResolvedValue(true),
-      });
+      mockResolveEffectiveSettings.mockResolvedValue({ 'oauth.userinfo_require_openid': true });
 
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
@@ -1124,6 +1120,89 @@ describe('UserInfo Endpoint', () => {
       return c;
     }
 
+    it.each([
+      'invalid set',
+      'lookup outage',
+      'counter write failure',
+      'missing lifetime',
+      'throwing lifetime',
+    ])('preserves the UserInfo response while recording safely: %s', async (scenario) => {
+      const db = migrate('admin') as SqliteDatabase & { close(): void };
+      const store = {
+        db,
+        adapter: adapterOver(db),
+        rows: () =>
+          db
+            .prepare('SELECT * FROM identity_mapping_failures')
+            .all() as IdentityMappingFailureRow[],
+      };
+      const pending: Promise<unknown>[] = [];
+      const c = prepareClientBoundRequest() as Context<{ Bindings: Env }>;
+      Object.assign(c.env, { DB_ADMIN: store.adapter });
+      vi.mocked(getClient).mockResolvedValue({
+        client_id: 'client-123',
+        identity_mapping: { fieldMappingSetId: 'set-gone' },
+      } as never);
+      const actual = await vi.importActual<
+        typeof import('@authrim/ar-lib-core/services/oidc-identity-mapping')
+      >('@authrim/ar-lib-core/services/oidc-identity-mapping');
+      mockApplyOIDCIdentityMapping.mockImplementation(actual.applyOIDCIdentityMapping);
+      if (scenario !== 'missing lifetime') {
+        Object.defineProperty(c, 'executionCtx', {
+          value: {
+            waitUntil(work: Promise<unknown>) {
+              pending.push(work);
+              if (scenario === 'throwing lifetime') throw new Error('lifetime unavailable');
+            },
+          },
+        });
+      }
+      if (scenario === 'lookup outage') {
+        const query = store.adapter.queryOne.bind(store.adapter);
+        store.adapter.queryOne = async (sql, params, options) => {
+          if (sql.includes('FROM field_mapping_sets')) throw new Error('private-db-canary');
+          return query(sql, params, options);
+        };
+      }
+      if (scenario === 'counter write failure') {
+        store.db
+          .exec(`CREATE TRIGGER deny_failure_counter BEFORE INSERT ON identity_mapping_failures
+            BEGIN SELECT RAISE(ABORT, 'private-write-canary'); END`);
+      }
+      try {
+        const response = await userinfoHandler(c);
+        const outage = scenario === 'lookup outage';
+        expect(response.status).toBe(outage ? 500 : 400);
+        expect(await response.json()).toEqual({
+          error: outage ? 'server_error' : 'invalid_client_metadata',
+          error_description: outage
+            ? 'Failed to apply identity mapping'
+            : 'Client identity mapping configuration is invalid',
+        });
+        await Promise.all(pending);
+        if (scenario === 'invalid set' || outage) {
+          expect(store.rows()).toHaveLength(1);
+          expect(store.rows()[0]).toMatchObject({
+            tenant_id: 'default',
+            client_id: 'client-123',
+            code: outage ? 'admin_database_unavailable' : 'set_missing',
+            tier: 'client',
+            set_id: 'set-gone',
+            count: 1,
+          });
+        } else {
+          expect(store.rows()).toEqual([]);
+        }
+        expect(JSON.stringify(store.rows())).not.toMatch(
+          /user-123|test@example.com|private-db-canary|private-write-canary|claims|stack/
+        );
+        expect(mockEnforceOIDCAttributeReleaseConsent).not.toHaveBeenCalled();
+      } finally {
+        await Promise.all(pending);
+        store.db.close();
+      }
+    });
+
     it('replaces released claims with the mapped claim set', async () => {
       const c = prepareClientBoundRequest();
       mockApplyOIDCIdentityMapping.mockResolvedValue({
@@ -1142,6 +1221,22 @@ describe('UserInfo Endpoint', () => {
           claims: { sub: 'pairwise-subject', department: 'security' },
         })
       );
+    });
+
+    it("gives the mapping the user's attributes, so it derives the ID token's sub whatever scope was released", async () => {
+      const c = prepareClientBoundRequest();
+      mockApplyOIDCIdentityMapping.mockResolvedValue({ claims: { sub: 'alice' } });
+
+      await userinfoHandler(c);
+
+      const input = mockApplyOIDCIdentityMapping.mock.calls.at(-1)?.[0] as {
+        claims: Record<string, unknown>;
+        sourceAttributes: Record<string, unknown>;
+      };
+      expect(input.sourceAttributes).toEqual(expect.objectContaining({ sub: 'user-123' }));
+      expect(input.sourceAttributes).toHaveProperty('email');
+      // What is released is still only what the scopes and consent allow.
+      expect(input.claims).not.toBe(input.sourceAttributes);
     });
 
     it.each([

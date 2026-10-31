@@ -13,7 +13,6 @@ import type {
   SdkCompatibilityEntry,
   SdkCompatibilityResult,
   SdkCompatibilityStatus,
-  ParsedSdkVersion,
 } from '../types/sdk-compatibility';
 import {
   SDK_COMPATIBILITY_PREFIX,
@@ -202,7 +201,7 @@ export async function getSdkCompatibilityConfig(env: Env): Promise<SdkCompatibil
         log.warn('Invalid config structure in KV');
       }
     }
-  } catch (error) {
+  } catch {
     // Security: Only log error type/message, not full stack traces
     log.warn('Error reading config from KV');
   }
@@ -259,7 +258,7 @@ export async function getSdkEntry(
     // Cache null result to avoid repeated KV lookups
     cacheSdkEntry(sdkName, null, env);
     return null;
-  } catch (error) {
+  } catch {
     // Security: Only log error type/message, not full stack traces
     log.warn('Error reading SDK entry', { sdkName });
 

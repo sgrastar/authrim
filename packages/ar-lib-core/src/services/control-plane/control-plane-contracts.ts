@@ -1,3 +1,8 @@
+import type { SamlDrWriterInventoryReceipt } from '../tenant-portability/saml-dr-writer-contract';
+import type {
+  TenantBackupBoundaryRequest,
+  TenantBackupBoundaryResponse,
+} from '../tenant-portability/boundary-rpc-contract';
 export type ControlOperationStatus =
   | 'queued'
   | 'running'
@@ -1410,10 +1415,45 @@ export interface ControlPluginResourceCleanupView {
 }
 
 export interface ControlServiceBinding {
+  getEnvironmentReplicationInventory?(input: Record<string, never>): Promise<{
+    environmentId: string;
+    complete: true;
+    pendingOperations: boolean;
+    tenants: Array<{ tenantId: string; policyState: string; policyGeneration: number }>;
+  }>;
+
+  /** Read-only deployed writer evidence; no caller-supplied readiness attestations. */
+  inspectSamlDrWriterCoverage?(input: {
+    tenantId: string;
+    expectedReceipt?: SamlDrWriterInventoryReceipt;
+  }): Promise<SamlDrWriterInventoryReceipt>;
+  /** Rebuild runtime registry snapshots required before a restored tenant can be activated. */
+  publishTenantBackupRuntimeState?(): Promise<{
+    lookupRegistry: { generation: number; status: 'published' | 'unchanged' | 'resumed' };
+    lookupHmacKeyState: {
+      generation: number;
+      stateRevision: number;
+      status: 'published' | 'unchanged' | 'resumed';
+    };
+    pluginRunnerRegistry: { generation: number; status: 'published' | 'unchanged' | 'resumed' };
+  }>;
+  tenantBackupSnapshotBoundary?(
+    input: TenantBackupBoundaryRequest
+  ): Promise<TenantBackupBoundaryResponse>;
   reportR2BucketMetrics?(
     request: ControlR2BucketMetricReportRequest
   ): Promise<ControlR2BucketMetricInventory>;
   getR2BucketMetrics?(): Promise<ControlR2BucketMetricInventory>;
+  /** Internal logical-writer admission; only trusted service-binding callers may invoke these. */
+  acquireTenantBackupMutationPermit?(input: {
+    tenantId: string;
+    permitId: string;
+  }): Promise<{ admitted: boolean }>;
+  completeTenantBackupMutationPermit?(input: { tenantId: string; permitId: string }): Promise<void>;
+  acquireEnvironmentBackupMutationPermit?(input: {
+    permitId: string;
+  }): Promise<{ admitted: boolean }>;
+  completeEnvironmentBackupMutationPermit?(input: { permitId: string }): Promise<void>;
   getReleaseMigrationRolloutStatus?(): Promise<ControlReleaseRolloutStatus>;
   retryReleaseMigrationRolloutTarget?(
     request: ControlReleaseRolloutRetryTargetRequest

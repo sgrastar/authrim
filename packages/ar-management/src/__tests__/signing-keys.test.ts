@@ -9,12 +9,18 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
+import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 import {
   adminSigningKeysStatusHandler,
   adminSigningKeysRotateHandler,
   adminSigningKeysEmergencyRotateHandler,
 } from '../signing-keys';
+
+const audit = vi.hoisted(() => ({ write: vi.fn(async () => {}) }));
+vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@authrim/ar-lib-core')>()),
+  createAuditLogFromContext: audit.write,
+}));
 
 // Type definitions for test data
 interface KeyInfo {
@@ -91,7 +97,7 @@ function createMockKeyManager(
       }
       return Promise.resolve(rotateResponse);
     }),
-    emergencyRotateKeysRpc: vi.fn().mockImplementation((reason: string) => {
+    emergencyRotateKeysRpc: vi.fn().mockImplementation((_reason: string) => {
       if (shouldFail) {
         return Promise.reject(new Error(failMessage));
       }
@@ -179,14 +185,15 @@ function createMockEnv(keyManagerOptions: Parameters<typeof createMockKeyManager
  * Create a test Hono app
  */
 function createTestApp() {
-  const app = new Hono<{ Bindings: Env }>();
+  const app = new Hono<{
+    Bindings: Env;
+    Variables: { adminAuth: AdminAuthContext; tenantId: string };
+  }>();
 
   // Mock admin auth middleware by setting adminAuth context
   app.use('/api/admin/*', async (c, next) => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (c as any).set('adminAuth', { userId: 'test-admin', authMethod: 'bearer', roles: ['admin'] });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (c as any).set('tenantId', 'default');
+    c.set('adminAuth', { userId: 'test-admin', authMethod: 'bearer', roles: ['admin'] });
+    c.set('tenantId', 'default');
     await next();
   });
 
@@ -214,7 +221,7 @@ describe('Signing Keys Admin API', () => {
       const response = await app.fetch(request, env);
 
       expect(response.status).toBe(200);
-      const data = (await response.json()) as StatusResponse;
+      const data = await response.json<StatusResponse>();
 
       expect(data).toHaveProperty('keys');
       expect(data).toHaveProperty('activeKeyId');
@@ -249,7 +256,7 @@ describe('Signing Keys Admin API', () => {
 
       const request = new Request('http://localhost/api/admin/signing-keys/status');
       const response = await app.fetch(request, env);
-      const data = (await response.json()) as StatusResponse;
+      const data = await response.json<StatusResponse>();
 
       const activeKey = data.keys.find((k) => k.kid === 'active-key');
       const overlapKey = data.keys.find((k) => k.kid === 'overlap-key');
@@ -271,7 +278,7 @@ describe('Signing Keys Admin API', () => {
       const response = await app.fetch(request, env);
 
       expect(response.status).toBe(500);
-      const data = (await response.json()) as ErrorResponse;
+      const data = await response.json<ErrorResponse>();
       expect(data).toHaveProperty('error', 'server_error');
     });
 
@@ -282,8 +289,14 @@ describe('Signing Keys Admin API', () => {
       const request = new Request('http://localhost/api/admin/signing-keys/status');
       await app.fetch(request, env);
 
-      // Verify audit log was created
-      expect(env.DB.prepare).toHaveBeenCalled();
+      expect(audit.write).toHaveBeenCalledWith(
+        expect.anything(),
+        'signing_keys.status.read',
+        'signing_keys',
+        'key-123',
+        { keyCount: 2 },
+        'info'
+      );
     });
   });
 
@@ -300,7 +313,7 @@ describe('Signing Keys Admin API', () => {
       const response = await app.fetch(request, env);
 
       expect(response.status).toBe(200);
-      const data = (await response.json()) as RotationResponse;
+      const data = await response.json<RotationResponse>();
 
       expect(data.success).toBe(true);
       expect(data).toHaveProperty('message');
@@ -311,6 +324,8 @@ describe('Signing Keys Admin API', () => {
     it('should invalidate JWKS cache after rotation', async () => {
       const app = createTestApp();
       const env = createMockEnv();
+      if (!env.AUTHRIM_CONFIG) throw new Error('Missing test config');
+      const deleteCache = vi.spyOn(env.AUTHRIM_CONFIG, 'delete');
 
       const request = new Request('http://localhost/api/admin/signing-keys/rotate', {
         method: 'POST',
@@ -320,9 +335,7 @@ describe('Signing Keys Admin API', () => {
       await app.fetch(request, env);
 
       // New implementation: JWKS cache key is per-tenant in AUTHRIM_CONFIG
-      expect(env.AUTHRIM_CONFIG?.delete).toHaveBeenCalledWith(
-        expect.stringContaining('cache:jwks:')
-      );
+      expect(deleteCache).toHaveBeenCalledWith(expect.stringContaining('cache:jwks:'));
     });
 
     it('should handle KeyManager errors gracefully', async () => {
@@ -337,7 +350,7 @@ describe('Signing Keys Admin API', () => {
       const response = await app.fetch(request, env);
 
       expect(response.status).toBe(500);
-      const data = (await response.json()) as ErrorResponse;
+      const data = await response.json<ErrorResponse>();
       expect(data).toHaveProperty('error', 'server_error');
     });
 
@@ -371,8 +384,14 @@ describe('Signing Keys Admin API', () => {
       });
       await app.fetch(request, env);
 
-      // Verify audit log was created
-      expect(env.DB.prepare).toHaveBeenCalled();
+      expect(audit.write).toHaveBeenCalledWith(
+        expect.anything(),
+        'signing_keys.rotate.normal',
+        'signing_keys',
+        'key-new-456',
+        { oldKeyId: 'previous-key', newKeyId: 'key-new-456', overlapPeriod: '24h' },
+        'warning'
+      );
     });
   });
 
@@ -391,7 +410,7 @@ describe('Signing Keys Admin API', () => {
       const response = await app.fetch(request, env);
 
       expect(response.status).toBe(200);
-      const data = (await response.json()) as RotationResponse;
+      const data = await response.json<RotationResponse>();
 
       expect(data.success).toBe(true);
       expect(data).toHaveProperty('revokedKeyId');
@@ -411,7 +430,7 @@ describe('Signing Keys Admin API', () => {
       const response = await app.fetch(request, env);
 
       expect(response.status).toBe(400);
-      const data = (await response.json()) as ErrorResponse;
+      const data = await response.json<ErrorResponse>();
       expect(data.error).toBe('invalid_request');
       // AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD uses standardized message
       expect(data.error_description).toContain('required');
@@ -448,6 +467,8 @@ describe('Signing Keys Admin API', () => {
     it('should invalidate JWKS cache immediately', async () => {
       const app = createTestApp();
       const env = createMockEnv();
+      if (!env.AUTHRIM_CONFIG) throw new Error('Missing test config');
+      const deleteCache = vi.spyOn(env.AUTHRIM_CONFIG, 'delete');
 
       const request = new Request('http://localhost/api/admin/signing-keys/emergency-rotate', {
         method: 'POST',
@@ -459,9 +480,7 @@ describe('Signing Keys Admin API', () => {
       await app.fetch(request, env);
 
       // New implementation: JWKS cache key is per-tenant in AUTHRIM_CONFIG
-      expect(env.AUTHRIM_CONFIG?.delete).toHaveBeenCalledWith(
-        expect.stringContaining('cache:jwks:')
-      );
+      expect(deleteCache).toHaveBeenCalledWith(expect.stringContaining('cache:jwks:'));
     });
 
     it('should handle KeyManager errors gracefully', async () => {
@@ -478,7 +497,7 @@ describe('Signing Keys Admin API', () => {
       const response = await app.fetch(request, env);
 
       expect(response.status).toBe(500);
-      const data = (await response.json()) as ErrorResponse;
+      const data = await response.json<ErrorResponse>();
       expect(data).toHaveProperty('error', 'server_error');
     });
 
@@ -495,8 +514,14 @@ describe('Signing Keys Admin API', () => {
       });
       await app.fetch(request, env);
 
-      // Verify audit log was created
-      expect(env.DB.prepare).toHaveBeenCalled();
+      expect(audit.write).toHaveBeenCalledWith(
+        expect.anything(),
+        'signing_keys.rotate.emergency',
+        'signing_keys',
+        'key-emergency-789',
+        expect.objectContaining({ reason: 'Critical security incident - key exposed' }),
+        'critical'
+      );
     });
 
     it('should continue even if cache invalidation fails', async () => {

@@ -84,6 +84,50 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       getCredentialPermissions = mocks.getCredentialPermissions;
       getPrincipalTenantScopes = mocks.getPrincipalTenantScopes;
       getCredentialTenantScopes = mocks.getCredentialTenantScopes;
+      // The snapshot read, composed from the per-table mocks this file sets up.
+      async resolveTenantMachineLimit(
+        tenantId: string,
+        principalId: string,
+        credentialId?: string
+      ) {
+        const explicit = (scopes: Array<{ scopeMode: string; tenantId: string | null }>): boolean =>
+          scopes.length > 0 &&
+          scopes.every((scope) => scope.scopeMode === 'allow') &&
+          scopes.some((scope) => scope.tenantId === tenantId);
+        const principal = await mocks.findPrincipalById(principalId);
+        if (!principal || principal.status !== 'active') return null;
+        const [scopes, permissions] = await Promise.all([
+          mocks.getPrincipalTenantScopes(principalId),
+          mocks.getPrincipalPermissions(principalId),
+        ]);
+        if (!explicit(scopes)) return null;
+        if (credentialId === undefined) return { principal, credential: null, permissions };
+        const credential = await mocks.findCredentialById(credentialId);
+        if (
+          !credential ||
+          credential.principalId !== principal.id ||
+          (credential.status !== 'active' && credential.status !== 'rotating')
+        ) {
+          return null;
+        }
+        const [credentialScopes, credentialPermissions] = await Promise.all([
+          mocks.getCredentialTenantScopes(credentialId),
+          mocks.getCredentialPermissions(credentialId),
+        ]);
+        if (credentialScopes.length > 0 && !explicit(credentialScopes)) return null;
+        return {
+          principal,
+          credential,
+          permissions:
+            credentialPermissions.length === 0
+              ? permissions
+              : permissions.filter((permission: string) =>
+                  credentialPermissions.some((limit: string) =>
+                    actual.hasAdminPermission([limit], permission)
+                  )
+                ),
+        };
+      }
     },
   };
 });

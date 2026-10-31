@@ -24,7 +24,8 @@
 		'rate-limit': ['platform', 'tenant'],
 		'feature-flags': ['platform', 'tenant'],
 		limits: ['platform', 'tenant'],
-		'check-api-audit': ['platform', 'tenant'],
+		'check-api-audit': ['platform'],
+		'log-storage': ['platform'],
 		// Tenant + Client (can be overridden at client level)
 		oauth: ['tenant', 'client'],
 		security: ['tenant', 'client'],
@@ -82,6 +83,7 @@
 		vc: { icon: '📜' },
 		assurance: { icon: '🔰' },
 		'check-api-audit': { icon: '📋' },
+		'log-storage': { icon: '🗄️' },
 		// Dynamic Client Registration (RFC 7591)
 		dcr: { icon: '📝' },
 		// Login UI Customization

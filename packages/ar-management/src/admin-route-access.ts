@@ -4,6 +4,8 @@ import {
   ADMIN_PERMISSIONS,
   getLogger,
   hasAdminPermission,
+  hasGlobalAdminRole,
+  ADMIN_ROLE_GROUPS,
   type AdminAuthContext,
 } from '@authrim/ar-lib-core';
 
@@ -27,8 +29,8 @@ const READ_METHODS: AdminRouteMethod[] = ['GET'];
 const WRITE_METHODS: AdminRouteMethod[] = ['POST', 'PUT', 'PATCH'];
 const DELETE_METHODS: AdminRouteMethod[] = ['DELETE'];
 const ALL_METHODS: AdminRouteMethod[] = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
-const TENANT_ADMIN_ROLES = ['system_admin', 'distributor_admin', 'tenant_admin', 'admin'];
-const PLATFORM_ADMIN_ROLES = ['super_admin', 'system_admin'];
+const TENANT_ADMIN_ROLES = [...ADMIN_ROLE_GROUPS.tenantAdmin];
+const PLATFORM_ADMIN_ROLES = [...ADMIN_ROLE_GROUPS.platform];
 
 function rule(input: RuleInput): AdminRouteAccessRule {
   return {
@@ -115,6 +117,47 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
   authenticated('/api/admin/me/passkeys/*', 'current admin passkey management'),
   authenticated('/api/admin/me/agent-consents', 'current admin Agent consent management'),
   authenticated('/api/admin/me/agent-consents/*', 'current admin Agent consent management'),
+
+  ...byMethod(
+    '/api/admin/tenant-backups',
+    ADMIN_PERMISSIONS.BACKUPS_READ,
+    ADMIN_PERMISSIONS.BACKUPS_MANAGE,
+    ADMIN_PERMISSIONS.BACKUPS_MANAGE,
+    'tenant backup operations'
+  ),
+  ...byMethod(
+    '/api/admin/tenant-backups/*',
+    ADMIN_PERMISSIONS.BACKUPS_READ,
+    ADMIN_PERMISSIONS.BACKUPS_MANAGE,
+    ADMIN_PERMISSIONS.BACKUPS_MANAGE,
+    'tenant backup operations'
+  ),
+
+  rule({
+    pattern: '/api/admin/replication-environments/grants',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.BACKUPS_MANAGE],
+    description: 'authorize metadata-only environment inventory delegation',
+  }),
+  rule({
+    pattern: '/api/admin/replication-environments/grants/:grantId/revoke',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.BACKUPS_MANAGE],
+    description: 'revoke metadata-only environment inventory delegation',
+  }),
+
+  rule({
+    pattern: '/api/admin/replication-backups/grants',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.BACKUPS_MANAGE, ADMIN_PERMISSIONS.BACKUPS_EXPORT],
+    description: 'authorize scoped automated backup export',
+  }),
+  rule({
+    pattern: '/api/admin/replication-backups/grants/:grantId/revoke',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.BACKUPS_MANAGE, ADMIN_PERMISSIONS.BACKUPS_EXPORT],
+    description: 'revoke scoped automated backup export',
+  }),
 
   rule({
     pattern: '/api/admin/agent-write/clients/:id/metadata',
@@ -215,6 +258,20 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     '/api/admin/users/:id/effective-permissions',
     ADMIN_PERMISSIONS.ROLES_READ,
     'end-user effective permissions'
+  ),
+  ...byMethod(
+    '/api/admin/service-groups',
+    ADMIN_PERMISSIONS.USERS_READ,
+    ADMIN_PERMISSIONS.USERS_WRITE,
+    ADMIN_PERMISSIONS.USERS_WRITE,
+    'service user membership computation'
+  ),
+  ...byMethod(
+    '/api/admin/service-groups/*',
+    ADMIN_PERMISSIONS.USERS_READ,
+    ADMIN_PERMISSIONS.USERS_WRITE,
+    ADMIN_PERMISSIONS.USERS_WRITE,
+    'service user membership computation'
   ),
   ...byMethod(
     '/api/admin/roles',
@@ -376,6 +433,22 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.ACCOUNT_LEGAL_HOLDS_WRITE,
     'account legal hold lifecycle'
   ),
+  readOnly(
+    '/api/admin/users/:id/assurance',
+    ADMIN_PERMISSIONS.ACCOUNT_ASSURANCE_READ,
+    'identity assurance of a person'
+  ),
+  writeOnly(
+    '/api/admin/users/:id/assurance/*',
+    ADMIN_PERMISSIONS.ACCOUNT_ASSURANCE_WRITE,
+    'identity assurance evidence'
+  ),
+  // The entry point named by the handle adds its own requirement (admin-investigations.ts).
+  readOnly(
+    '/api/admin/investigations/subjects/:handle/status',
+    ADMIN_PERMISSIONS.USERS_STATUS_READ,
+    'end-user account status without personal data'
+  ),
   ...byMethod(
     '/api/admin/users',
     ADMIN_PERMISSIONS.USERS_READ,
@@ -397,15 +470,33 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     'Login UI public assets'
   ),
+  rule({
+    pattern: '/api/admin/account-lifecycle/guests',
+    methods: ['GET'],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_READ],
+    description: 'Inspect guest lifecycle progress',
+  }),
+  rule({
+    pattern: '/api/admin/account-lifecycle/guest-retention/preview',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_READ],
+    description: 'Preview existing guest retention',
+  }),
+  rule({
+    pattern: '/api/admin/account-lifecycle/guest-retention/apply',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_WRITE],
+    description: 'Apply reviewed guest retention',
+  }),
   ...byMethod(
-    '/api/admin/anonymous-users',
+    '/api/admin/guest-users',
     ADMIN_PERMISSIONS.USERS_READ,
     ADMIN_PERMISSIONS.USERS_WRITE,
     ADMIN_PERMISSIONS.USERS_DELETE,
     'anonymous users'
   ),
   ...byMethod(
-    '/api/admin/anonymous-users/*',
+    '/api/admin/guest-users/*',
     ADMIN_PERMISSIONS.USERS_READ,
     ADMIN_PERMISSIONS.USERS_WRITE,
     ADMIN_PERMISSIONS.USERS_DELETE,
@@ -448,6 +539,15 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     'tenant settings'
   ),
+  // The same settings for several tenants: platform authority (the handler asks for it in full:
+  // a global assignment with a global tenant scope), then each tenant's own edit right.
+  rule({
+    pattern: '/api/admin/settings/bulk-apply',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_WRITE],
+    roles: PLATFORM_ADMIN_ROLES,
+    description: 'bulk apply of tenant settings',
+  }),
   ...byMethod(
     '/api/admin/settings/agent',
     ADMIN_PERMISSIONS.AGENT_SETTINGS_READ,
@@ -691,7 +791,7 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     'contract tenant policy',
-    ['system_admin', 'org_admin', 'admin']
+    TENANT_ADMIN_ROLES
   ),
   ...byMethod(
     '/api/admin/tenant-policy/*',
@@ -699,7 +799,7 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     'contract tenant policy',
-    ['system_admin', 'org_admin', 'admin']
+    TENANT_ADMIN_ROLES
   ),
   ...byMethod(
     '/api/admin/client-profile-presets',
@@ -832,6 +932,95 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     'identity field mapping'
   ),
+  ...byMethod(
+    '/api/admin/identity-mapping/sets',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'identity mapping sets'
+  ),
+  // Writes nothing: what a change of the content would do, app by app (so the apps' read too).
+  rule({
+    pattern: '/api/admin/identity-mapping/sets/:id/preview-change',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_READ, ADMIN_PERMISSIONS.CLIENTS_READ],
+    description: 'identity mapping set change preview',
+  }),
+  readOnly(
+    '/api/admin/identity-mapping/sets/compare',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    'identity mapping set comparison'
+  ),
+  ...byMethod(
+    '/api/admin/identity-mapping/sets/:id',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'identity mapping set'
+  ),
+  readOnly(
+    '/api/admin/identity-mapping/usage',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    'identity mapping set usage'
+  ),
+  readOnly(
+    '/api/admin/identity-mapping/effective',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    'identity mapping effective selection'
+  ),
+  readOnly(
+    '/api/admin/identity-mapping/history',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    'identity mapping level history'
+  ),
+  readOnly(
+    '/api/admin/identity-mapping/failures',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    'identity mapping failure records'
+  ),
+  rule({
+    pattern: '/api/admin/identity-mapping/history/:id/restore',
+    methods: ['POST'],
+    anyPermissions: [ADMIN_PERMISSIONS.SETTINGS_WRITE, ADMIN_PERMISSIONS.CLIENTS_UPDATE],
+    description: 'identity mapping level restore (the handler checks the entry level)',
+  }),
+  ...byMethod(
+    '/api/admin/identity-mapping/test-users',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'identity mapping test users'
+  ).filter((accessRule) => !accessRule.methods.includes('DELETE')),
+  // Trials and comparisons write nothing; a trial for an app also asks for the clients read.
+  rule({
+    pattern: '/api/admin/identity-mapping/preview-effective',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_READ],
+    description: 'identity mapping choice preview',
+  }),
+  // Reads the app and the settings, writes nothing: both read permissions.
+  rule({
+    pattern: '/api/admin/identity-mapping/explain',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_READ, ADMIN_PERMISSIONS.CLIENTS_READ],
+    description: 'identity mapping claim explanation',
+  }),
+  // Every tenant's source and app counts: platform authority (the handler asks for the settings
+  // read permission held for every tenant).
+  rule({
+    pattern: '/api/admin/platform/identity-mapping/tenants',
+    methods: READ_METHODS,
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_READ],
+    roles: PLATFORM_ADMIN_ROLES,
+    description: 'identity mapping sources of every tenant',
+  }),
+  rule({
+    pattern: '/api/admin/platform/identity-mapping/preview-default',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_READ],
+    roles: PLATFORM_ADMIN_ROLES,
+    description: 'platform identity mapping default inspection',
+  }),
   readOnly(
     '/api/admin/credential-profiles',
     ADMIN_PERMISSIONS.VC_CREDENTIAL_PROFILES_READ,
@@ -942,6 +1131,41 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SECURITY_WRITE,
     ADMIN_PERMISSIONS.SECURITY_WRITE,
     'SCIM inbound settings'
+  ),
+  ...byMethod(
+    '/api/admin/certification-profiles',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'certification profiles'
+  ),
+  ...byMethod(
+    '/api/admin/certification-profiles/*',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'certification profiles'
+  ),
+  ...byMethod(
+    '/api/admin/rate-limits/profile-override',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'rate limit profile override'
+  ),
+  ...byMethod(
+    '/api/admin/logout-failures',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'logout notification failures'
+  ),
+  ...byMethod(
+    '/api/admin/logout-failures/*',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'logout notification failures'
   ),
   ...byMethod(
     '/api/admin/check-api-keys',
@@ -1643,7 +1867,7 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.ROLES_WRITE,
     ADMIN_PERMISSIONS.ROLES_DELETE,
     'ReBAC definitions',
-    PLATFORM_ADMIN_ROLES
+    TENANT_ADMIN_ROLES
   ),
   ...byMethod(
     '/api/admin/rebac/*',
@@ -1651,7 +1875,7 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.ROLES_WRITE,
     ADMIN_PERMISSIONS.ROLES_DELETE,
     'ReBAC definitions',
-    PLATFORM_ADMIN_ROLES
+    TENANT_ADMIN_ROLES
   ),
   ...byMethod(
     '/api/admin/compliance',
@@ -1771,6 +1995,12 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     'platform plugins',
     PLATFORM_ADMIN_ROLES
   ),
+  rule({
+    pattern: '/api/admin/tombstones/email-check',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.USERS_READ],
+    description: 'Check whether an email address was deleted (address in the body)',
+  }),
   ...byMethod(
     '/api/admin/tombstones',
     ADMIN_PERMISSIONS.SETTINGS_READ,
@@ -1859,7 +2089,14 @@ function isAllowedByRule(authContext: AdminAuthContext, accessRule: AdminRouteAc
     return true;
   }
 
-  if (accessRule.roles && hasAnyRole(roles, accessRule.roles)) {
+  // A rule that names the platform roles guards a platform-wide operation, so the role has to come
+  // from a global assignment: `roles` also holds what is given for one tenant only.
+  if (
+    accessRule.roles &&
+    (accessRule.roles === PLATFORM_ADMIN_ROLES
+      ? hasGlobalAdminRole(authContext, accessRule.roles)
+      : hasAnyRole(roles, accessRule.roles))
+  ) {
     return true;
   }
 

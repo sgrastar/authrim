@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
+import type { AdminAgentAuditWriter } from '@authrim/ar-agent-access/core';
 import {
   ADMIN_PERMISSIONS,
-  adminAuthMiddleware,
   type AdminAuthContext,
+  type DatabaseAdapter,
 } from '@authrim/ar-lib-core';
 import {
   agentBaselinesRouter,
@@ -14,9 +15,14 @@ const adapter = {
   query: vi.fn(),
   queryOne: vi.fn(),
   execute: vi.fn(),
-  batch: vi.fn(),
+  batch: vi.fn<DatabaseAdapter['batch']>(),
   transaction: vi.fn(),
 };
+
+const audit = vi.hoisted(() => ({ prepare: vi.fn<AdminAgentAuditWriter>() }));
+vi.mock('@authrim/ar-agent-access/platform/cloudflare/admin-agent-audit-writer', () => ({
+  createCloudflareAdminAgentAuditWriter: () => audit.prepare,
+}));
 
 const reader = vi.hoisted(() => ({ readCurrent: vi.fn() }));
 const settings = vi.hoisted(() => ({ get: vi.fn() }));
@@ -93,6 +99,9 @@ function configurationProfile() {
 describe('Agent template and baseline control plane', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    audit.prepare.mockResolvedValue([
+      { sql: 'SELECT ? AS iceberg_audit_test_receipt', params: ['test-audit'] },
+    ]);
     authContext = {
       userId: 'platform-admin',
       authMethod: 'session',
@@ -110,9 +119,14 @@ describe('Agent template and baseline control plane', () => {
       mfaVerified: true,
       authenticationTimeMs: Date.now(),
     };
+    // The scope is global through a global assignment, which gives these permissions.
+    authContext = { ...authContext, globalPermissions: authContext.permissions };
     adapter.query.mockResolvedValue([]);
     adapter.queryOne.mockResolvedValue(null);
-    adapter.batch.mockResolvedValue([{ rowsAffected: 1 }, { rowsAffected: 1 }]);
+    adapter.batch.mockResolvedValue([
+      { success: true, rowsAffected: 1 },
+      { success: true, rowsAffected: 1 },
+    ]);
     reader.readCurrent.mockResolvedValue({ client_name: 'Changed client' });
     settings.get.mockResolvedValue({ bulkCanaryProtected: false });
   });
@@ -131,9 +145,28 @@ describe('Agent template and baseline control plane', () => {
     expect(response.status).toBe(201);
     expect(adapter.batch).toHaveBeenCalledWith(
       expect.arrayContaining([
-        expect.objectContaining({ sql: expect.stringContaining('INSERT INTO agent_baselines') }),
-        expect.objectContaining({ sql: expect.stringContaining('INSERT INTO admin_audit_log') }),
+        expect.objectContaining({
+          sql: 'SELECT ? AS iceberg_audit_test_receipt',
+          params: ['test-audit'],
+        }),
       ])
+    );
+    expect(
+      adapter.batch.mock.calls
+        .flatMap(([statements]) => statements)
+        .some(({ sql }) => sql.includes('INSERT INTO agent_baselines'))
+    ).toBe(true);
+    expect(audit.prepare).toHaveBeenCalledWith(
+      adapter,
+      expect.objectContaining({
+        tenantId: 'control',
+        action: 'agent.baseline.created',
+        resourceType: 'agent_baseline',
+        actorType: 'admin_user',
+        actorSub: 'admin_user:platform-admin',
+        severity: 'info',
+      }),
+      undefined
     );
   });
 
@@ -185,6 +218,48 @@ describe('Agent template and baseline control plane', () => {
 
   it('rejects a managed exception outside the administrator tenant scope', async () => {
     authContext = { ...authContext, tenantScope: ['tenant-allowed'] };
+    adapter.queryOne.mockResolvedValue({
+      assignment_id: 'assignment-1',
+      baseline_id: 'baseline-1',
+      baseline_version: 1,
+      tenant_id: 'tenant-other',
+      source_bulk_plan_id: 'bulk-1',
+      source_bulk_plan_version: 1,
+      assigned_by: 'platform-admin',
+      assigned_at: 1,
+      last_evaluated_at: null,
+      drift_status: 'drifted',
+      drift_digest: 'drift-1',
+      control_tenant_id: 'control',
+      baseline_name: 'Client baseline',
+      baseline_mode: 'managed',
+      baseline_enforcement: 'report_only',
+      definition_json: JSON.stringify({
+        schemaVersion: 'authrim-agent-baseline-v1',
+        taskSet: { id: 'task-set', version: 1, digest: 'x'.repeat(32) },
+        configurationProfile: configurationProfile(),
+      }),
+      definition_digest: 'baseline-definition-digest',
+      baseline_status: 'active',
+      baseline_created_by: 'platform-admin',
+      baseline_created_at: 1,
+    });
+    const response = await request(
+      '/api/admin/agent-baselines/assignments/assignment-1/exceptions',
+      'POST',
+      {
+        fields: ['client-metadata.client_name'],
+        reason: 'Temporary exception',
+        expires_at: Date.now() + 60_000,
+      }
+    );
+    expect(response.status).toBe(403);
+    expect(adapter.batch).not.toHaveBeenCalled();
+  });
+
+  it('rejects a managed exception in another tenant when the global scope does not bring the permission', async () => {
+    // The apply permission is held for the control tenant only; the global assignment is a viewer.
+    authContext = { ...authContext, tenantScope: ['*'], globalPermissions: [] };
     adapter.queryOne.mockResolvedValue({
       assignment_id: 'assignment-1',
       baseline_id: 'baseline-1',
@@ -309,15 +384,70 @@ describe('Agent template and baseline control plane', () => {
       'POST'
     );
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
-      drift_status: 'drifted',
-      remediation: {
-        status: 'queued',
-        bulk_plan_id: expect.stringMatching(/^abp_baseline_/u),
-      },
-    });
-    expect(JSON.stringify(adapter.batch.mock.calls)).toContain(
-      'agent.baseline.remediation_requested'
+    const body = await response.json<{
+      drift_status: string;
+      remediation: { status: string; bulk_plan_id: string };
+    }>();
+    expect(body).toMatchObject({ drift_status: 'drifted', remediation: { status: 'queued' } });
+    expect(body.remediation.bulk_plan_id).toMatch(/^abp_baseline_/u);
+    expect(audit.prepare).toHaveBeenCalledWith(
+      adapter,
+      expect.objectContaining({
+        action: 'agent.baseline.remediation_requested',
+        tenantId: 'control',
+      }),
+      expect.anything()
     );
+  });
+
+  describe('the copies of a template', () => {
+    const templateRow = (sourceTenantId: string) => ({
+      id: 'template-1',
+      version: 1,
+      source_tenant_id: sourceTenantId,
+      template_type: 'task_set',
+      source_object_id: 'obj-1',
+      source_object_version: 1,
+      definition_json: '{}',
+      definition_digest: 'digest',
+      status: 'active',
+      published_by: 'someone',
+      published_at: 1,
+    });
+
+    it('lists them for the tenant that published the template', async () => {
+      adapter.queryOne.mockResolvedValue(templateRow('control'));
+      adapter.query.mockResolvedValue([]);
+
+      const response = await request('/api/admin/agent-templates/template-1/1/copies');
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({ copies: [] });
+    });
+
+    it('does not list them for a template of another tenant, whatever its ID', async () => {
+      adapter.queryOne.mockResolvedValue(templateRow('another-tenant'));
+      adapter.query.mockResolvedValue([
+        { id: 'copy-1', template_id: 'template-1', target_tenant_id: 'victim' },
+      ]);
+
+      const response = await request('/api/admin/agent-templates/template-1/1/copies');
+
+      expect(response.status).toBe(404);
+      expect(adapter.query).not.toHaveBeenCalled();
+    });
+
+    it('does not copy a template of another tenant', async () => {
+      adapter.queryOne.mockResolvedValue(templateRow('another-tenant'));
+
+      const response = await request('/api/admin/agent-templates/template-1/1/copies', 'POST', {
+        target_tenant_ids: ['control'],
+        bulk_plan_id: 'plan-1',
+        bulk_plan_version: 1,
+      });
+
+      expect([404, 400]).toContain(response.status);
+      expect(adapter.batch).not.toHaveBeenCalled();
+    });
   });
 });

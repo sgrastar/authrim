@@ -166,6 +166,108 @@ describe('SessionStore', () => {
     sessionStore = new SessionStore(mockState as unknown as DurableObjectState, mockEnv);
   });
 
+  describe('updates conditional on the data read', () => {
+    const id = '0_evidence_update';
+    it('writes while the fields still hold what was read, and only then', async () => {
+      await sessionStore.createSessionRpc(id, 'user', 3600, { amr: ['totp'] }, 'tenant');
+
+      const written = await sessionStore.updateSessionDataRpc(
+        id,
+        { amr: ['pwd', 'totp'], proven_at: 5 },
+        { ifDataMatches: { amr: ['totp'], proven_at: undefined } }
+      );
+      expect(written?.data).toMatchObject({ amr: ['pwd', 'totp'], proven_at: 5 });
+
+      const stale = await sessionStore.updateSessionDataRpc(
+        id,
+        { amr: ['otp', 'totp'], proven_at: 7 },
+        { ifDataMatches: { amr: ['totp'], proven_at: undefined } }
+      );
+      expect(stale?.data).toMatchObject({ amr: ['pwd', 'totp'], proven_at: 5 });
+      expect((await mockState.storage.get<Session>(`session:${id}`))?.data).toMatchObject({
+        amr: ['pwd', 'totp'],
+        proven_at: 5,
+      });
+    });
+  });
+
+  describe('conditional guest upgrade session repair', () => {
+    const id = '0_guest_repair';
+    const repair = { is_guest_session: false, authTime: 100, amr: ['otp'] };
+    it('repairs a guest once while preserving unrelated metadata', async () => {
+      await sessionStore.createSessionRpc(
+        id,
+        'guest',
+        3600,
+        { is_guest_session: true, client_id: 'client' },
+        'tenant'
+      );
+      const result = await sessionStore.updateSessionDataRpc(id, repair, {
+        onlyIfGuestSession: true,
+      });
+      expect(result?.data).toMatchObject({ ...repair, client_id: 'client' });
+      const retry = await sessionStore.updateSessionDataRpc(
+        id,
+        { ...repair, authTime: 999 },
+        { onlyIfGuestSession: true }
+      );
+      expect(retry?.data?.authTime).toBe(100);
+    });
+    it('merges an unrelated delayed update into the latest session instead of restoring guest data', async () => {
+      const stale = await sessionStore.createSessionRpc(
+        id,
+        'guest',
+        3600,
+        { is_guest_session: true },
+        'tenant'
+      );
+      await sessionStore.updateSessionDataRpc(id, repair, { onlyIfGuestSession: true });
+      vi.spyOn(sessionStore, 'getSession').mockResolvedValueOnce(stale);
+      const result = await sessionStore.updateSessionDataRpc(id, { client_id: 'client' });
+      expect(result?.data).toMatchObject({ ...repair, client_id: 'client' });
+    });
+    it('preserves newer authentication written after the initiating read', async () => {
+      const stale = await sessionStore.createSessionRpc(
+        id,
+        'guest',
+        3600,
+        { is_guest_session: true },
+        'tenant'
+      );
+      await sessionStore.updateSessionDataRpc(id, {
+        is_guest_session: false,
+        authTime: 500,
+        amr: ['webauthn'],
+      });
+      vi.spyOn(sessionStore, 'getSession').mockResolvedValueOnce(stale);
+      const result = await sessionStore.updateSessionDataRpc(id, repair, {
+        onlyIfGuestSession: true,
+      });
+      expect(result?.data).toMatchObject({ authTime: 500, amr: ['webauthn'] });
+      expect((await mockState.storage.get<Session>(`session:${id}`))?.data?.authTime).toBe(500);
+    });
+    it.each(['deleted', 'expired'])(
+      'does not recreate a session that became %s after validation',
+      async (state) => {
+        const stale = await sessionStore.createSessionRpc(
+          id,
+          'guest',
+          3600,
+          { is_guest_session: true },
+          'tenant'
+        );
+        if (state === 'deleted') await mockState.storage.delete(`session:${id}`);
+        else await mockState.storage.put(`session:${id}`, { ...stale, expiresAt: Date.now() });
+        vi.spyOn(sessionStore, 'getSession').mockResolvedValueOnce(stale);
+        expect(
+          await sessionStore.updateSessionDataRpc(id, repair, { onlyIfGuestSession: true })
+        ).toBeNull();
+        const persisted = await mockState.storage.get<Session>(`session:${id}`);
+        expect(persisted?.data?.is_guest_session).not.toBe(false);
+      }
+    );
+  });
+
   describe('Session Creation', () => {
     it('should create a new session with valid data', async () => {
       const sessionId = '0_session_test_123';
@@ -306,7 +408,7 @@ describe('SessionStore', () => {
         '0_session_upgrade',
         'anonymous-user',
         3600,
-        { is_anonymous: true },
+        { is_guest_session: true },
         'tenant-a'
       );
       expect(created.accountId).toBe('account:anonymous-user');
@@ -609,6 +711,169 @@ describe('SessionStore', () => {
     });
   });
 
+  // scripts/asvs-check.mjs runs this block as the V7.4.1 evidence: keep its name.
+  describe('ASVS V7.4.1: a terminated session is not used again', () => {
+    const clearCache = () =>
+      (sessionStore as unknown as { sessionCache: Map<string, unknown> }).sessionCache.clear();
+    const create = (id: string) =>
+      sessionStore.createSessionRpc(id, 'user_123', 3600, undefined, 'tenant-a');
+    const expire = async (id: string) => {
+      const stored = await mockState.storage.get<Session>(`session:${id}`);
+      const expired = { ...stored!, expiresAt: Date.now() - 1 };
+      await mockState.storage.put(`session:${id}`, expired);
+      return expired;
+    };
+
+    for (const where of ['cache', 'storage'] as const) {
+      it(`after logout, from ${where}`, async () => {
+        const id = `0_session_terminated_logout_${where}`;
+        await create(id);
+        if (where === 'storage') clearCache();
+        await expect(sessionStore.invalidateSessionRpc(id)).resolves.toBe(true);
+        await expect(sessionStore.getSessionRpc(id)).resolves.toBeNull();
+        await expect(mockState.storage.get(`session:${id}`)).resolves.toBeUndefined();
+      });
+
+      it(`after it expires, from ${where}`, async () => {
+        const id = `0_session_terminated_expiry_${where}`;
+        await create(id);
+        const expired = await expire(id);
+        const cache = (sessionStore as unknown as { sessionCache: Map<string, unknown> })
+          .sessionCache;
+        if (where === 'cache') cache.set(id, expired);
+        else clearCache();
+        await expect(sessionStore.getSessionRpc(id)).resolves.toBeNull();
+        await expect(mockState.storage.get(`session:${id}`)).resolves.toBeUndefined();
+      });
+
+      it(`after all the user's sessions are revoked, from ${where}`, async () => {
+        const id = `0_session_terminated_revoked_${where}`;
+        await create(id);
+        if (where === 'storage') clearCache();
+        sessionRevocationStub.getSessionValidationStateRpc.mockResolvedValue({
+          revokedAfterMs: Date.now() + 1000,
+          lifecycle: 'active',
+        });
+        await expect(sessionStore.getSessionRpc(id)).resolves.toBeNull();
+        await expect(mockState.storage.get(`session:${id}`)).resolves.toBeUndefined();
+      });
+    }
+  });
+
+  // scripts/asvs-check.mjs runs this block as V7.4.1 evidence too: keep its name.
+  describe('an invalidation while another actor is awaited', () => {
+    const active = { revokedAfterMs: null, lifecycle: 'active' };
+    const create = (id: string) =>
+      sessionStore.createSessionRpc(id, 'user_123', 3600, undefined, 'tenant-a');
+    const clearCache = () =>
+      (sessionStore as unknown as { sessionCache: Map<string, unknown> }).sessionCache.clear();
+
+    it('does not bring a session read from storage back into the cache', async () => {
+      const id = '0_session_race_cold';
+      await create(id);
+      clearCache();
+      sessionRevocationStub.getSessionValidationStateRpc.mockImplementationOnce(async () => {
+        await sessionStore.invalidateSessionRpc(id);
+        return active;
+      });
+
+      await expect(sessionStore.getSessionRpc(id)).resolves.toBeNull();
+      await expect(sessionStore.getSessionRpc(id)).resolves.toBeNull();
+      await expect(mockState.storage.get(`session:${id}`)).resolves.toBeUndefined();
+    });
+
+    it('does not return a cached session invalidated meanwhile', async () => {
+      const id = '0_session_race_hot';
+      await create(id);
+      await expect(sessionStore.getSessionRpc(id)).resolves.not.toBeNull();
+      sessionRevocationStub.getSessionValidationStateRpc.mockImplementationOnce(async () => {
+        await sessionStore.invalidateSessionRpc(id);
+        return active;
+      });
+
+      await expect(sessionStore.getSessionRpc(id)).resolves.toBeNull();
+      await expect(sessionStore.getSessionRpc(id)).resolves.toBeNull();
+    });
+
+    it('does not write an extended session back', async () => {
+      const id = '0_session_race_extend';
+      await create(id);
+      sessionRevocationStub.updateSessionExpirationRpc.mockImplementationOnce(async () => {
+        await sessionStore.invalidateSessionRpc(id);
+        return true;
+      });
+
+      await expect(sessionStore.extendSessionRpc(id, 7200)).resolves.toBeNull();
+      await expect(mockState.storage.get(`session:${id}`)).resolves.toBeUndefined();
+      await expect(sessionStore.getSessionRpc(id)).resolves.toBeNull();
+    });
+
+    it('does not write a rebound session back, and withdraws its new registration', async () => {
+      const id = '0_session_race_rebind';
+      await create(id);
+      sessionRevocationStub.registerSessionRpc.mockImplementationOnce(async () => {
+        await sessionStore.invalidateSessionRpc(id);
+        return { revokedAfterMs: null, revocationBoundAtMs: Date.now() };
+      });
+      sessionRevocationStub.unregisterSessionRpc.mockClear();
+
+      await expect(sessionStore.updateSessionUserIdRpc(id, 'user_456')).resolves.toBeNull();
+      await expect(mockState.storage.get(`session:${id}`)).resolves.toBeUndefined();
+      expect(sessionRevocationStub.unregisterSessionRpc).toHaveBeenCalledWith(
+        'tenant-a',
+        'user_456',
+        'account:user_456',
+        id
+      );
+    });
+
+    it('keeps the index entry of concurrent rebinds to the same user', async () => {
+      const id = '0_session_race_rebind_twice';
+      await create(id);
+      sessionRevocationStub.registerSessionRpc.mockImplementation(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return { revokedAfterMs: null, revocationBoundAtMs: Date.now() };
+      });
+      sessionRevocationStub.registerSessionRpc.mockClear();
+      sessionRevocationStub.unregisterSessionRpc.mockClear();
+
+      const [first, second] = await Promise.all([
+        sessionStore.updateSessionUserIdRpc(id, 'user_456'),
+        sessionStore.updateSessionUserIdRpc(id, 'user_456'),
+      ]);
+
+      expect(first).toMatchObject({ userId: 'user_456' });
+      expect(second).toEqual(first);
+      // The second finds the session already bound to the user and registers nothing.
+      expect(sessionRevocationStub.registerSessionRpc).toHaveBeenCalledTimes(1);
+      expect(sessionRevocationStub.unregisterSessionRpc).not.toHaveBeenCalledWith(
+        'tenant-a',
+        'user_456',
+        'account:user_456',
+        id
+      );
+      await expect(mockState.storage.get(`session:${id}`)).resolves.toMatchObject({
+        userId: 'user_456',
+      });
+    });
+
+    it('keeps a session that was only updated meanwhile', async () => {
+      const id = '0_session_race_updated';
+      await create(id);
+      clearCache();
+      sessionRevocationStub.getSessionValidationStateRpc.mockImplementationOnce(async () => {
+        const stored = await mockState.storage.get<Session>(`session:${id}`);
+        await mockState.storage.put(`session:${id}`, { ...stored, data: { amr: ['pwd'] } });
+        return active;
+      });
+
+      await expect(sessionStore.getSessionRpc(id)).resolves.toMatchObject({
+        id,
+        data: { amr: ['pwd'] },
+      });
+    });
+  });
+
   describe('Session Invalidation', () => {
     it('should invalidate an existing session', async () => {
       // Create session
@@ -787,7 +1052,7 @@ describe('SessionStore', () => {
       const created = await sessionStore.createSessionRpc(
         sessionId,
         'user_123',
-        3600,
+        60,
         undefined,
         'default'
       );
@@ -801,6 +1066,66 @@ describe('SessionStore', () => {
       await expect(mockState.storage.get<Session>(`session:${sessionId}`)).resolves.toMatchObject({
         expiresAt: created.expiresAt,
       });
+    });
+
+    it('extends to the time from now, not by adding to the current expiry', async () => {
+      const sessionId = '0_session_extend_from_now';
+      const created = await sessionStore.createSessionRpc(
+        sessionId,
+        'user_123',
+        3600,
+        undefined,
+        'default'
+      );
+      // A shorter extension than the time left changes nothing.
+      const extended = await sessionStore.extendSessionRpc(sessionId, 60);
+      expect(extended?.expiresAt).toBe(created.expiresAt);
+    });
+
+    it('never extends past its creation plus the maximum lifetime', async () => {
+      const sessionId = '0_session_extend_capped';
+      const created = await sessionStore.createSessionRpc(
+        sessionId,
+        'user_123',
+        60,
+        undefined,
+        'default'
+      );
+      const extended = await sessionStore.extendSessionRpc(sessionId, 7200, 1800 * 1000);
+      expect(extended?.expiresAt).toBe(created.createdAt + 1800 * 1000);
+    });
+
+    it('does not shorten a session made under a longer limit, nor extend it', async () => {
+      const sessionId = '0_session_extend_past_cap';
+      const created = await sessionStore.createSessionRpc(
+        sessionId,
+        'user_123',
+        3600,
+        undefined,
+        'default'
+      );
+      const extended = await sessionStore.extendSessionRpc(sessionId, 7200, 1800 * 1000);
+      expect(extended?.expiresAt).toBe(created.expiresAt);
+      await expect(mockState.storage.get<Session>(`session:${sessionId}`)).resolves.toMatchObject({
+        expiresAt: created.expiresAt,
+      });
+    });
+
+    it('runs concurrent extensions one at a time, so a shorter one cannot undo a longer one', async () => {
+      const sessionId = '0_session_extend_concurrent';
+      await sessionStore.createSessionRpc(sessionId, 'user_123', 60, undefined, 'default');
+      const [longer, shorter] = await Promise.all([
+        sessionStore.extendSessionRpc(sessionId, 3600),
+        sessionStore.extendSessionRpc(sessionId, 120),
+      ]);
+      expect(shorter?.expiresAt).toBe(longer?.expiresAt);
+      await expect(mockState.storage.get<Session>(`session:${sessionId}`)).resolves.toMatchObject({
+        expiresAt: longer?.expiresAt,
+      });
+      const indexed = sessionRevocationStub.updateSessionExpirationRpc.mock.calls.filter(
+        (call: unknown[]) => call[3] === sessionId
+      );
+      expect(indexed.at(-1)?.[4]).toBe(longer?.expiresAt);
     });
 
     it('should reject extension with invalid seconds', async () => {

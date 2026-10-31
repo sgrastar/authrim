@@ -1,6 +1,14 @@
 import type { Translation } from '../i18n-types';
 
 const completion = {
+	error_rateLimited: '嘗試次數過多。請稍候片刻再試。',
+	error_rateLimitedRetryAfter: '嘗試次數過多。請在約 {minutes} 分鐘後再試。',
+	error_unregisteredPostLogoutRedirectUri:
+		'您已登出。由於應用程式的返回位址未註冊，無法將您帶回應用程式。請自行重新開啟應用程式。',
+	error_invalidIdTokenHint:
+		'您已登出。由於無法驗證應用程式的登出要求，無法將您帶回應用程式。請自行重新開啟應用程式。',
+	error_idTokenHintRequired:
+		'您已登出。由於應用程式的登出要求不完整，無法將您帶回應用程式。請自行重新開啟應用程式。',
 	common_logoAlt: '標誌',
 	common_footerLinks: '頁尾連結',
 	common_selectOption: '請選擇',
@@ -36,7 +44,7 @@ const completion = {
 	landing_signedInAs: '登入身分',
 	emailCode_title: '請查看您的電子郵件',
 	emailCode_subtitle: '我們已將驗證碼傳送至',
-	emailCode_instructions: '請輸入電子郵件中的 6 位數驗證碼。驗證碼將於 5 分鐘後到期。',
+	emailCode_instructions: '請輸入電子郵件中的 6 位數驗證碼。驗證碼的有效期限已寫在電子郵件中。',
 	emailCode_codeLabel: '驗證碼',
 	emailCode_resendSuccess: '驗證碼已傳送',
 	emailCode_success: '驗證成功！正在重新導向...',
@@ -82,7 +90,7 @@ const completion = {
 	device_subtitle: '請輸入裝置上顯示的代碼',
 	device_codeLabel: '驗證碼',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint: '請輸入裝置上的 8 字元代碼（格式：XXXX-XXXX）',
+	device_codeHint: '請輸入裝置上顯示的代碼',
 	device_verifyButton: '驗證代碼',
 	device_confirmTitle: '授權裝置',
 	device_requestedPermissions: '要求的權限',
@@ -95,6 +103,11 @@ const completion = {
 	device_errorApproveFailed: '無法核准裝置',
 	device_errorDenyFailed: '無法拒絕裝置授權要求',
 	device_errorInvalidRedirect: '從伺服器收到的重新導向網址無效',
+	device_errorConsentWithdrawn:
+		'此要求是在您撤銷該應用程式的存取權之前發出的。請在裝置上重新開始以取得新代碼。',
+	device_errorTryAgain: '目前無法儲存您的決定，且未進行任何變更。請稍後再試。',
+	device_errorTooManyAttempts: '嘗試次數過多。請稍候片刻再試。',
+	device_errorOutcomeUnknown: '無法確認您的決定是否已儲存。請檢查裝置，或重新輸入代碼。',
 	ciba_title: '驗證要求',
 	ciba_subtitle: '某個應用程式正在要求您的核准',
 	ciba_noPendingRequests: '沒有待處理的驗證要求',
@@ -114,6 +127,14 @@ const completion = {
 	ciba_errorGeneric: '發生錯誤',
 	ciba_errorApproveFailed: '無法核准要求',
 	ciba_errorDenyFailed: '無法拒絕要求',
+	ciba_errorConsentWithdrawn:
+		'此要求是在您撤銷該應用程式的存取權之前發出的。請從應用程式重新開始。',
+	ciba_errorRequestGone: '此要求已過期或已回覆。',
+	error_authorizationRequestExpired: '登入要求已過期。請從應用程式重新開始。',
+	ciba_errorTryAgain: '目前無法儲存您的決定，且未進行任何變更。請稍後再試。',
+	ciba_errorTooManyAttempts: '嘗試次數過多。請稍候片刻再試。',
+	ciba_errorOutcomeUnknown: '無法確認您的回覆是否已儲存。請重新整理以查看仍在等待的要求。',
+	ciba_errorNoLongerWaiting: '無法確認您的回覆，但此要求已不再等待處理。',
 	reauth_title: '驗證您的身分',
 	reauth_subtitle: '為確保安全，請重新驗證後繼續',
 	reauth_verifyWithPasskey: '使用 Passkey 驗證',

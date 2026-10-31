@@ -53,9 +53,6 @@ vi.mock('@authrim/ar-lib-core', async () => {
     revokeToken: vi.fn().mockResolvedValue(undefined),
     deleteRefreshToken: vi.fn().mockResolvedValue(undefined),
     getRefreshToken: vi.fn().mockResolvedValue(null),
-    createOAuthConfigManager: vi.fn().mockReturnValue({
-      getNumber: vi.fn().mockResolvedValue(3600),
-    }),
     publishEvent: vi.fn().mockResolvedValue(undefined),
     getKeyByKid: vi.fn().mockResolvedValue({
       kty: 'RSA',

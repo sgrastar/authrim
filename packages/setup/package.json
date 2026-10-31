@@ -1,6 +1,6 @@
 {
   "name": "@authrim/setup",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "CLI tool for setting up Authrim OIDC Provider on Cloudflare Workers",
   "type": "module",
   "bin": {
@@ -29,27 +29,28 @@
     "test:package": "node scripts/check-package.mjs"
   },
   "dependencies": {
-    "@hono/node-server": "^1.19.13",
+    "@hono/node-server": "^2.1.5",
     "@inquirer/prompts": "^7.2.1",
-    "chalk": "^5.3.0",
-    "commander": "^12.1.0",
+    "chalk": "^6.0.1",
+    "commander": "^15.0.0",
     "degit": "^2.8.6",
     "execa": "^10.0.1",
     "hono": "4.13.2",
     "ora": "^8.1.1",
     "tar": "^7.5.21",
     "tldts": "^7.0.18",
-    "zod": "^3.24.1"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^22.10.4",
-    "@types/tar": "^6.1.13",
-    "tsx": "^4.20.6",
+    "@types/tar": "^7.0.87",
+    "tsx": "^4.23.15",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.8",
-    "yaml": "2.8.3",
+    "vitest": "^4.1.12",
+    "yaml": "2.9.1",
     "@authrim/ar-control": "workspace:*",
-    "@authrim/ar-lib-core": "workspace:*"
+    "@authrim/ar-lib-core": "workspace:*",
+    "@authrim/ar-lib-logging": "workspace:*"
   },
   "keywords": [
     "authrim",
@@ -67,6 +68,6 @@
     "directory": "packages/setup"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.12.0"
   }
 }

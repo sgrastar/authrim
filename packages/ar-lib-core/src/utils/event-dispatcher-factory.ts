@@ -1,3 +1,4 @@
+import { samlDrTrackEffect } from '../services/tenant-portability/saml-dr-writer';
 /**
  * Event Dispatcher Factory
  *
@@ -26,7 +27,7 @@ import { createWebhookRegistry } from '../services/webhook-registry';
 import { resolveAuthCorePersistenceAdapterFromEnv } from '../services/auth-core-persistence-context';
 import { createTenantRegistryKeyResolver } from '../services/audit/tenant-key';
 import { resolveOptionalCoreAdapterFromHono } from '../context';
-import { createAuditLog } from './audit-log';
+import { createAuditLog, getWaitUntilFromContext, type CreateAuditLogOptions } from './audit-log';
 import { decryptValue } from './pii-encryption';
 
 // =============================================================================
@@ -73,7 +74,7 @@ function extractAuditResourceType(eventType: string): string {
   return parts[0] || 'unknown';
 }
 
-function buildRuntimeAuditLogWriter(env: Env) {
+function buildRuntimeAuditLogWriter(env: Env, waitUntil?: CreateAuditLogOptions['waitUntil']) {
   return async (event: {
     type: string;
     tenantId: string;
@@ -85,17 +86,21 @@ function buildRuntimeAuditLogWriter(env: Env) {
       (typeof event.data.userId === 'string' && event.data.userId) ||
       'event';
 
-    await createAuditLog(env, {
-      tenantId: event.tenantId,
-      userId: event.metadata?.actor?.id ?? 'system',
-      action: event.type,
-      resource: extractAuditResourceType(event.type),
-      resourceId,
-      ipAddress: 'system',
-      userAgent: 'event-dispatcher',
-      metadata: JSON.stringify(event.data),
-      severity: 'info',
-    });
+    await createAuditLog(
+      env,
+      {
+        tenantId: event.tenantId,
+        userId: event.metadata?.actor?.id ?? 'system',
+        action: event.type,
+        resource: extractAuditResourceType(event.type),
+        resourceId,
+        ipAddress: 'system',
+        userAgent: 'event-dispatcher',
+        metadata: JSON.stringify(event.data),
+        severity: 'info',
+      },
+      { waitUntil }
+    );
   };
 }
 
@@ -211,18 +216,16 @@ export async function createEventDispatcherFromContext(
 
   // Build config
   const config: EventDispatcherConfig = {
+    env: c.env,
     adapter,
     kv: settingsKv,
     webhookRegistry,
     handlerRegistry: getGlobalHandlerRegistry(),
     hookRegistry: getGlobalHookRegistry(),
     decryptSecret,
-    auditLogWriter: buildRuntimeAuditLogWriter(c.env),
+    auditLogWriter: buildRuntimeAuditLogWriter(c.env, getWaitUntilFromContext(c)),
     runtimeLogging: {
-      env: {
-        ...c.env,
-        DB_ADMIN: c.env.DB_ADMIN ?? adapter,
-      },
+      env: c.env,
       tenantKeyResolver: createTenantRegistryKeyResolver(adapter),
     },
     options: {
@@ -288,6 +291,7 @@ export async function createEventDispatcherFromEnv(
 
   // Build config
   const config: EventDispatcherConfig = {
+    env,
     adapter,
     kv: settingsKv,
     webhookRegistry,
@@ -296,10 +300,7 @@ export async function createEventDispatcherFromEnv(
     decryptSecret,
     auditLogWriter: buildRuntimeAuditLogWriter(env),
     runtimeLogging: {
-      env: {
-        ...env,
-        DB_ADMIN: env.DB_ADMIN ?? adapter,
-      },
+      env,
       tenantKeyResolver: createTenantRegistryKeyResolver(adapter),
     },
     options: {
@@ -333,11 +334,26 @@ export async function createEventDispatcherFromEnv(
  * @param options - Publish options
  * @returns Publish result
  */
-export async function publishEvent<T = unknown>(
+export function publishEvent<T = unknown>(
   c: Context<{ Bindings: Env }>,
   payload: EventPublishPayload<T>,
   options?: EventPublishOptions
 ): Promise<EventPublishResult> {
+  return samlDrTrackEffect(publishEventOwned(c, payload, options));
+}
+
+async function publishEventOwned<T = unknown>(
+  c: Context<{ Bindings: Env }>,
+  payload: EventPublishPayload<T>,
+  options?: EventPublishOptions
+): Promise<EventPublishResult> {
+  if (c.env.EVENT_RUNTIME_PORTS) {
+    const delivery = c.env.EVENT_RUNTIME_PORTS.publish(payload, options);
+    // Most auth callers intentionally do not await publishEvent. Keep the original promise
+    // request-scoped so Lambda can drain and surface a failed durable write before returning.
+    getWaitUntilFromContext(c)?.(delivery);
+    return delivery;
+  }
   const dispatcher = await createEventDispatcherFromContext(c);
   return dispatcher.publish(payload, options);
 }

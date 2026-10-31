@@ -33,7 +33,25 @@ export interface AuditPrimaryCleanupSummary {
   piiArchived: number;
   eventDeleted: number;
   piiDeleted: number;
+  /** Tenants whose cleanup threw. */
+  failedTenants: number;
+  /** What happened for each tenant: cleaned, or why its logs were not deleted this run. */
+  tenantOutcomes: Record<string, AuditCleanupTenantOutcome>;
 }
+
+/**
+ * cleaned: past-retention logs deleted (archived first when the profile says so);
+ * archive_only: the profile keeps logs only in the archive, which Authrim does not delete;
+ * not_supported: the profile or its primary store could not be used for cleanup;
+ * archive_copy_failed: a copy to the archive failed, so that log type was kept;
+ * failed: reading or deleting the tenant's logs threw (the next tenants are still cleaned).
+ */
+export type AuditCleanupTenantOutcome =
+  | 'cleaned'
+  | 'archive_only'
+  | 'not_supported'
+  | 'archive_copy_failed'
+  | 'failed';
 
 export interface CleanupResolvedAuditPrimariesOptions {
   tenantIds?: string[];
@@ -337,131 +355,145 @@ export async function cleanupResolvedAuditPrimaries(
     piiArchived: 0,
     eventDeleted: 0,
     piiDeleted: 0,
+    failedTenants: 0,
+    // No prototype: a tenant named like an Object member ('constructor') is a plain key.
+    tenantOutcomes: Object.create(null) as Record<string, AuditCleanupTenantOutcome>,
+  };
+
+  const cleanTenant = async (tenantId: string): Promise<void> => {
+    // A profile that cannot be read fails the tenant (caught below): its logs are not cleaned.
+    const profile: AuditProfile = await resolveAuditProfile(tenantId);
+
+    if (!profile.primary) {
+      summary.archiveOnlyTenants += 1;
+      summary.tenantOutcomes[tenantId] = 'archive_only';
+      return;
+    }
+
+    let eventAdapter: IAuditStorageAdapter | null;
+    let piiAdapter: IAuditStorageAdapter | null;
+
+    if (profile.primary.type === 'd1') {
+      eventAdapter =
+        options.d1EventAdapter ??
+        createAuditPrimaryStorageAdapter(
+          env as unknown as Record<string, unknown>,
+          profile.primary,
+          'event',
+          { id: 'scheduled-d1-event-cleanup' }
+        );
+      piiAdapter =
+        options.d1PiiAdapter ??
+        createAuditPrimaryStorageAdapter(
+          env as unknown as Record<string, unknown>,
+          profile.primary,
+          'pii',
+          { id: 'scheduled-d1-pii-cleanup' }
+        );
+    } else {
+      eventAdapter = await createPrimaryAdapter(profile.primary, 'event');
+      piiAdapter = await createPrimaryAdapter(profile.primary, 'pii');
+    }
+
+    if (!eventAdapter || !piiAdapter) {
+      summary.pendingSupportTenants += 1;
+      summary.tenantOutcomes[tenantId] = 'not_supported';
+      logger.warn('audit_primary_cleanup_not_supported', {
+        tenantId,
+        auditProfileId: profile.id,
+        primaryType: profile.primary.type,
+      });
+      return;
+    }
+    const now = Date.now();
+
+    if (profile.retention?.archiveBeforeDelete && profile.archive) {
+      const eventArchiveAdapter = await createArchiveAdapter(profile.archive, 'event', profile);
+      const piiArchiveAdapter = await createArchiveAdapter(profile.archive, 'pii', profile);
+
+      if (!eventArchiveAdapter || !piiArchiveAdapter) {
+        summary.pendingSupportTenants += 1;
+        summary.tenantOutcomes[tenantId] = 'not_supported';
+        logger.warn('audit_archive_cleanup_not_supported', {
+          tenantId,
+          auditProfileId: profile.id,
+          archiveType: profile.archive.type,
+        });
+        return;
+      }
+
+      const eventResult = await copyRetentionCandidatesToArchive({
+        primaryAdapter: eventAdapter,
+        archiveAdapter: eventArchiveAdapter,
+        logType: 'event',
+        beforeTime: now,
+        tenantId,
+        batchSize,
+      });
+      if (eventResult.failed) {
+        summary.archiveCopyFailures += 1;
+        summary.tenantOutcomes[tenantId] = 'archive_copy_failed';
+        logger.warn('audit_archive_copy_failed_before_delete', {
+          tenantId,
+          auditProfileId: profile.id,
+          logType: 'event',
+        });
+      } else {
+        summary.eventArchived += eventResult.archived;
+        summary.eventDeleted += eventResult.deleted;
+      }
+
+      const piiResult = await copyRetentionCandidatesToArchive({
+        primaryAdapter: piiAdapter,
+        archiveAdapter: piiArchiveAdapter,
+        logType: 'pii',
+        beforeTime: now,
+        tenantId,
+        batchSize,
+      });
+      if (piiResult.failed) {
+        summary.archiveCopyFailures += 1;
+        summary.tenantOutcomes[tenantId] = 'archive_copy_failed';
+        logger.warn('audit_archive_copy_failed_before_delete', {
+          tenantId,
+          auditProfileId: profile.id,
+          logType: 'pii',
+        });
+      } else {
+        summary.piiArchived += piiResult.archived;
+        summary.piiDeleted += piiResult.deleted;
+      }
+    } else {
+      summary.eventDeleted += await eventAdapter.deleteTenantByRetention(
+        'event',
+        now,
+        tenantId,
+        batchSize
+      );
+      summary.piiDeleted += await piiAdapter.deleteTenantByRetention(
+        'pii',
+        now,
+        tenantId,
+        batchSize
+      );
+    }
+    summary.processedTenants += 1;
+    summary.tenantOutcomes[tenantId] ??= 'cleaned';
   };
 
   try {
     for (const tenantId of tenantIds) {
-      let profile: AuditProfile;
       try {
-        profile = await resolveAuditProfile(tenantId);
+        await cleanTenant(tenantId);
       } catch (error) {
-        summary.pendingSupportTenants += 1;
-        logger.warn('audit_profile_resolve_failed_for_cleanup', {
+        // One tenant's store failing does not keep the others' logs past their retention.
+        summary.failedTenants += 1;
+        summary.tenantOutcomes[tenantId] = 'failed';
+        logger.warn('audit_retention_cleanup_failed', {
           tenantId,
           error: error instanceof Error ? error.message : String(error),
         });
-        continue;
       }
-
-      if (!profile.primary) {
-        summary.archiveOnlyTenants += 1;
-        continue;
-      }
-
-      let eventAdapter: IAuditStorageAdapter | null;
-      let piiAdapter: IAuditStorageAdapter | null;
-
-      if (profile.primary.type === 'd1') {
-        eventAdapter =
-          options.d1EventAdapter ??
-          createAuditPrimaryStorageAdapter(
-            env as unknown as Record<string, unknown>,
-            profile.primary,
-            'event',
-            { id: 'scheduled-d1-event-cleanup' }
-          );
-        piiAdapter =
-          options.d1PiiAdapter ??
-          createAuditPrimaryStorageAdapter(
-            env as unknown as Record<string, unknown>,
-            profile.primary,
-            'pii',
-            { id: 'scheduled-d1-pii-cleanup' }
-          );
-      } else {
-        eventAdapter = await createPrimaryAdapter(profile.primary, 'event');
-        piiAdapter = await createPrimaryAdapter(profile.primary, 'pii');
-      }
-
-      if (!eventAdapter || !piiAdapter) {
-        summary.pendingSupportTenants += 1;
-        logger.warn('audit_primary_cleanup_not_supported', {
-          tenantId,
-          auditProfileId: profile.id,
-          primaryType: profile.primary.type,
-        });
-        continue;
-      }
-      const now = Date.now();
-
-      if (profile.retention?.archiveBeforeDelete && profile.archive) {
-        const eventArchiveAdapter = await createArchiveAdapter(profile.archive, 'event', profile);
-        const piiArchiveAdapter = await createArchiveAdapter(profile.archive, 'pii', profile);
-
-        if (!eventArchiveAdapter || !piiArchiveAdapter) {
-          summary.pendingSupportTenants += 1;
-          logger.warn('audit_archive_cleanup_not_supported', {
-            tenantId,
-            auditProfileId: profile.id,
-            archiveType: profile.archive.type,
-          });
-          continue;
-        }
-
-        const eventResult = await copyRetentionCandidatesToArchive({
-          primaryAdapter: eventAdapter,
-          archiveAdapter: eventArchiveAdapter,
-          logType: 'event',
-          beforeTime: now,
-          tenantId,
-          batchSize,
-        });
-        if (eventResult.failed) {
-          summary.archiveCopyFailures += 1;
-          logger.warn('audit_archive_copy_failed_before_delete', {
-            tenantId,
-            auditProfileId: profile.id,
-            logType: 'event',
-          });
-        } else {
-          summary.eventArchived += eventResult.archived;
-          summary.eventDeleted += eventResult.deleted;
-        }
-
-        const piiResult = await copyRetentionCandidatesToArchive({
-          primaryAdapter: piiAdapter,
-          archiveAdapter: piiArchiveAdapter,
-          logType: 'pii',
-          beforeTime: now,
-          tenantId,
-          batchSize,
-        });
-        if (piiResult.failed) {
-          summary.archiveCopyFailures += 1;
-          logger.warn('audit_archive_copy_failed_before_delete', {
-            tenantId,
-            auditProfileId: profile.id,
-            logType: 'pii',
-          });
-        } else {
-          summary.piiArchived += piiResult.archived;
-          summary.piiDeleted += piiResult.deleted;
-        }
-      } else {
-        summary.eventDeleted += await eventAdapter.deleteTenantByRetention(
-          'event',
-          now,
-          tenantId,
-          batchSize
-        );
-        summary.piiDeleted += await piiAdapter.deleteTenantByRetention(
-          'pii',
-          now,
-          tenantId,
-          batchSize
-        );
-      }
-      summary.processedTenants += 1;
     }
   } finally {
     await Promise.all(

@@ -31,6 +31,11 @@ import {
 } from './cli/commands/signing-key-rotate.js';
 import { rotateLookupHmacKeyCommand } from './cli/commands/lookup-hmac-rotate.js';
 import { controlProvisionCommand } from './cli/commands/control-provision.js';
+import { registerLocalCommands } from './cli/commands/local.js';
+import { registerAwsCommands } from './cli/commands/aws.js';
+import { registerReplicationCommands } from './cli/commands/replication.js';
+import { recoverInitialD1Command } from './cli/commands/recover-initial-d1.js';
+import { recoverAbsentQueueCommand } from './cli/commands/recover-absent-queue.js';
 import {
   resolveApiBaseUrlCandidates,
   resolveAdminUiEntryUrl,
@@ -81,6 +86,11 @@ program
   .description('Initialize a new Authrim setup')
   .option('--cli', 'Use CLI mode instead of Web UI')
   .option('--config <path>', 'Load existing configuration file')
+  .option('--yes', 'Run setup from --config without interactive prompts')
+  .option(
+    '--dry-run',
+    'Print the resource plan from --config without changing Cloudflare or local files'
+  )
   .option('--keep <path>', 'Keep source files at specified path')
   .option('--env <name>', 'Environment name (prod, staging, dev)', 'prod')
   .option(
@@ -126,6 +136,21 @@ program
   )
   .option('-y, --yes', 'Skip confirmation prompts')
   .action(deployCommand);
+
+program
+  .command('recover-initial-d1')
+  .description('Verify and recover one D1 database left by an interrupted initial create')
+  .requiredOption('--env <name>', 'Environment name')
+  .requiredOption('--binding <name>', 'Expected initial tenant shard binding')
+  .requiredOption('--database-id <uuid>', 'Immutable D1 database ID shown by Cloudflare')
+  .action(recoverInitialD1Command);
+
+program
+  .command('recover-absent-queue')
+  .description('Verify a Queue is absent before retrying an interrupted initial create')
+  .requiredOption('--env <name>', 'Environment name')
+  .requiredOption('--binding <name>', 'Queue binding recorded by the provisioning attempt')
+  .action(recoverAbsentQueueCommand);
 
 program
   .command('update')
@@ -219,7 +244,7 @@ program
     const chalk = await import('chalk').then((m) => m.default);
     const ora = await import('ora').then((m) => m.default);
     const { confirm } = await import('@inquirer/prompts');
-    const { resolve, join } = await import('node:path');
+    const { resolve } = await import('node:path');
     const { existsSync } = await import('node:fs');
     const { readFile } = await import('node:fs/promises');
 
@@ -253,7 +278,8 @@ program
     } = await import('./core/worker-readiness.js');
     const { findAuthrimBaseDir, getEnvironmentPaths, resolvePaths, findKeysDirectory } =
       await import('./core/paths.js');
-    const { resolveUiDeploymentSettings } = await import('./core/ui-deployment.js');
+    const { resolveUiDeploymentSettings, resolveUiPackageDir } =
+      await import('./core/ui-deployment.js');
     const { mergeAndSaveUiEnv } = await import('./core/ui-env.js');
     const { getPackageVersion, getRootProductVersion } = await import('./core/version.js');
     const { evaluateReleaseDeploymentGuard, releaseDeploymentGuardMessage } =
@@ -415,7 +441,12 @@ program
         // Deploy UI Worker component.
         if (!dryRun) {
           const buildSpinner = ora(`Preparing ${componentName}...`).start();
-          const uiDir = join(baseDir, 'packages', componentName);
+          const adminUiVariant = cfg?.components?.adminUiVariant;
+          const uiDir = resolveUiPackageDir(
+            baseDir,
+            componentName as 'ar-admin-ui' | 'ar-login-ui',
+            adminUiVariant
+          );
 
           if (!existsSync(uiDir)) {
             buildSpinner.fail(`Package not found: ${componentName}`);
@@ -538,6 +569,7 @@ program
               serviceBindingName: uiSettings.serviceBindingName,
               workersDev: uiSettings.workersDev,
               routes: uiSettings.routes,
+              sourcePackage: uiSettings.sourcePackage,
               adminUiBffSecrets,
               skipBuild,
               deployConfigLockProof: deployConfigLock?.proof,
@@ -595,9 +627,7 @@ program
                     [componentName]: {
                       name: result.projectName,
                       deployedAt: result.deployedAt,
-                      version:
-                        (await getPackageVersion(join(baseDir, 'packages', componentName))) ??
-                        undefined,
+                      version: (await getPackageVersion(uiDir)) ?? undefined,
                       cloudflareVersionId: result.cloudflareVersionId,
                       cloudflareScriptTag: result.cloudflareScriptTag,
                     },
@@ -626,6 +656,7 @@ program
                 },
                 registeredBy: 'setup:upgrade-ui',
                 disableMissing: false,
+                adminUiVariant,
               });
             }
             deploySpinner.succeed(`${componentName} deployed successfully`);
@@ -705,12 +736,24 @@ program
             await ensureSupplementalKeyFiles(keysDirectory.path);
           }
           const secrets = keysDirectory
-            ? await loadDeploySecretsFromKeys(keysDirectory.path, [workerComponent])
+            ? await loadDeploySecretsFromKeys(keysDirectory.path, [workerComponent], {
+                rootDir: resolve(baseDir),
+                env,
+                replicationWriter: cfg?.features.replicationWriter !== undefined,
+              })
             : {};
+          const { resolveDeployLookupHmacState } =
+            await import('./core/control-generated-state.js');
+          const { lookupHmacDeployOptions } = await import('./core/deploy.js');
           const deployOptions = {
             env,
             rootDir: resolve(baseDir),
             deploymentStrategy: 'auto' as const,
+            ...lookupHmacDeployOptions(
+              upgradeLock
+                ? await resolveDeployLookupHmacState({ lock: upgradeLock, environmentId: env })
+                : undefined
+            ),
             existingComponents: WORKER_COMPONENTS.filter(
               (component) => upgradeLock?.workers?.[component] !== undefined
             ),
@@ -721,6 +764,7 @@ program
               ])
             ),
             secrets,
+            replicationWriter: cfg?.features.replicationWriter !== undefined,
             cleanupLegacyStaticSecrets: true,
             deployConfigLockProof: deployConfigLock?.proof,
             concurrency: 2,
@@ -996,6 +1040,10 @@ program
   .option('--no-kv', 'Keep KV namespaces')
   .option('--no-queues', 'Keep Queues')
   .option('--no-r2', 'Keep R2 buckets')
+  .option(
+    '--adopt-r2-ownership',
+    'Adopt unrecorded R2 buckets verified by Setup ownership markers before deletion'
+  )
   .option('--no-pages', 'Keep legacy Pages projects')
   .option('--all', 'Delete all resource types (default)')
   .action(deleteCommand);
@@ -1008,6 +1056,10 @@ program
   .option('--d1', 'Show only D1 database information')
   .option('--workers', 'Show only Worker information')
   .action(infoCommand);
+
+registerLocalCommands(program);
+registerAwsCommands(program);
+registerReplicationCommands(program);
 
 function normalizePnpmScriptArgv(argv: string[]): string[] {
   const [, , commandName, firstCommandArg] = argv;

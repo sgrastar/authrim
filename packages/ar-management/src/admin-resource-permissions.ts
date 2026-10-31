@@ -23,6 +23,11 @@ function isUserSessionSubresource(path: string): boolean {
   return /^\/api\/admin\/users\/[^/]+\/(sessions|refresh-tokens|device-secrets)(?:\/|$)/.test(path);
 }
 
+/** A person's identity assurance has its own permissions (admin:account_assurance:*) only. */
+function isUserAssuranceSubresource(path: string): boolean {
+  return /^\/api\/admin\/users\/[^/]+\/assurance(?:\/|$)/.test(path);
+}
+
 function isUserDeletePath(path: string): boolean {
   return /^\/api\/admin\/users\/[^/]+$/.test(path) || /\/pii$/.test(path);
 }
@@ -34,7 +39,11 @@ function isUserAnonymizePath(path: string): boolean {
 function requireUserManagementPermission(): AdminPermissionMiddleware {
   return async (c, next) => {
     const path = new URL(c.req.url).pathname;
-    if (isUserRbacSubresource(path) || isUserSessionSubresource(path)) {
+    if (
+      isUserRbacSubresource(path) ||
+      isUserSessionSubresource(path) ||
+      isUserAssuranceSubresource(path)
+    ) {
       return next();
     }
 
@@ -187,6 +196,11 @@ export function registerAdminResourcePermissionMiddleware(app: Hono<any, any, an
   app.use('/api/admin/settings/*', settingsPermission);
   app.use('/api/admin/attributes', userAttributePermission);
   app.use('/api/admin/attributes/*', userAttributePermission);
+  app.use('/api/admin/rate-limits/profile-override', settingsPermission);
+  app.use('/api/admin/certification-profiles', settingsPermission);
+  app.use('/api/admin/certification-profiles/*', settingsPermission);
+  app.use('/api/admin/logout-failures', settingsPermission);
+  app.use('/api/admin/logout-failures/*', settingsPermission);
   app.use('/api/admin/custom-claims', settingsPermission);
   app.use('/api/admin/custom-claims/*', settingsPermission);
   app.use('/api/admin/token-claim-rules', settingsPermission);

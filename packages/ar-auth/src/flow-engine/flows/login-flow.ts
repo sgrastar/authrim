@@ -87,7 +87,7 @@ export const HUMAN_BASIC_LOGIN_FLOW: GraphDefinition = {
               webauthn: {
                 mode: 'authenticate',
                 discoverable: true,
-                userVerification: 'preferred',
+                userVerification: 'required',
               },
             },
           },

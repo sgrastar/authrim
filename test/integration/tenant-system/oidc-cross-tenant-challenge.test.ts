@@ -14,9 +14,7 @@ vi.mock('$env/dynamic/public', () => ({ env: {} }));
 
 describe('multi-tenant OIDC challenge conformance', () => {
   it('OIDC-010 rejects a challenge_id that belongs to a different tenant', async () => {
-    const env = await buildEnvForTopology('D3_custom_subdomain', {
-      ENABLE_CONFORMANCE_MODE: 'true',
-    });
+    const env = await buildEnvForTopology('D3_custom_subdomain');
     await seedTenantDataset(env, 'default');
 
     const challengeId = 'challenge-owned-by-second';

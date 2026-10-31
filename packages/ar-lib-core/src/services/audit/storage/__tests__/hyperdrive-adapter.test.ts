@@ -16,7 +16,7 @@ function createEventEntry(overrides: Partial<EventLogEntry> = {}): EventLogEntry
 }
 
 describe('HyperdriveAuditAdapter', () => {
-  it('uses the injected client factory for event writes', async () => {
+  it('refuses retired writeEventLogBatch instead of creating an old primary copy', async () => {
     const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 1 });
     const end = vi.fn().mockResolvedValue(undefined);
     const clientFactory = vi.fn().mockResolvedValue({ query, end });
@@ -31,16 +31,28 @@ describe('HyperdriveAuditAdapter', () => {
       clientFactory,
     });
 
-    const result = await adapter.writeEventLogBatch([createEventEntry()]);
+    await expect(adapter.writeEventLogBatch([createEventEntry()])).rejects.toThrow(
+      'audit_primary_storage_retired_use_configured_iceberg_mode'
+    );
+  });
 
-    expect(result.success).toBe(true);
-    expect(result.entriesWritten).toBe(1);
-    expect(clientFactory).toHaveBeenCalledWith('postgres://user:pass@example.com:5432/authrim');
-    expect(query).toHaveBeenCalledTimes(1);
-    expect(query.mock.calls[0]?.[0]).toContain('WITH incoming');
-    expect(query.mock.calls[0]?.[0]).toContain('INSERT INTO audit.event_log');
-    expect(query.mock.calls[0]?.[0]).toContain('WHERE NOT EXISTS');
-    expect(query.mock.calls[0]?.[0]).not.toContain('ON CONFLICT');
+  it('refuses retired writeEventLogBatch instead of creating an old primary copy', async () => {
+    const adapter = new HyperdriveAuditAdapter({
+      id: 'audit-pg',
+      hyperdrive: {
+        connectionString: 'postgres://user:pass@example.com:5432/authrim',
+      } as Hyperdrive,
+      schema: 'audit',
+      isPiiDb: false,
+      clientFactory: async () => ({
+        query: async () => ({ rows: [], rowCount: 0 }),
+        end: async () => undefined,
+      }),
+    });
+
+    await expect(adapter.writeEventLogBatch([createEventEntry()])).rejects.toThrow(
+      'audit_primary_storage_retired_use_configured_iceberg_mode'
+    );
   });
 
   it('uses PostgreSQL-safe retention cleanup SQL with tenant scoping', async () => {

@@ -1,0 +1,865 @@
+openapi: 3.2.0
+info:
+  title: Authrim Replication Authority
+  version: 0.5.0
+  description: >-
+    Isolated, opt-in control API for one explicitly configured Cloudflare/AWS pair.
+    This API does not create its database schema, export data, restore a tenant or
+    deploy resources. Database initialization is an explicit operator action.
+    Outstanding write permits have no automatic expiry or forced promotion path.
+servers:
+  - url: /
+security:
+  - ReplicationSignature: []
+paths:
+  /replication/v1/rpc:
+    post:
+      operationId: executeReplicationAuthorityRpc
+      summary: Execute a scoped, signed replication authority operation
+      description: >-
+        Requires Content-Type exactly application/json and no URL query string.
+        The body must be canonical JSON: object keys recursively sorted, no
+        whitespace or trailing newline, and finite JSON numbers. The lowercase
+        hexadecimal HMAC-SHA256 signature covers the UTF-8 string consisting of
+        POST, a newline, /replication/v1/rpc, a newline, and the exact body.
+        The timestamp must be within 60 seconds of server time. The complete
+        body is limited to 65536 bytes. Each credential is bound by server
+        configuration to either a pair and tenant or a pair and environment. Environment-scoped writer credentials may only call environmentEnter, environmentComplete and environmentGetServingGeneration for their pinned deployment. Environment controller credentials cannot use writer actions or tenant-scoped actions. Writer credentials are additionally
+        bound to one deployment and may only call enter, complete, and
+        getServingGeneration for that deployment. Controller credentials may
+        call the other actions and getServingGeneration, but cannot enter or
+        complete writer permits. Request-body identities never grant authority.
+        Mutations use retained operation identities for idempotency; requestId
+        alone is not a durable operation identity. Promotion requires a completed
+        drain, no outstanding permits, and verified generation evidence. Planned
+        switching requires a final snapshot after the drain. Disaster failover
+        requires a previously registered exact standby snapshot and an explicit
+        accepted data-loss limit; it does not require the source to be reachable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RpcRequest'
+      responses:
+        '200':
+          description: >-
+            initialize/get return AuthorityState; enter returns the admitted
+            Permit; complete returns {completed:true}; beginDrain/beginFailoverDrain/
+            getOperation/verifyGeneration/verifyFailoverGeneration/promote return
+            SwitchOperation. registerGeneration/registerStandbyGeneration return
+            {registered:true}. getServingGeneration returns immutable
+            GenerationLocation only while the requested deployment is active. Environment actions return equivalent environment state, permit or operation records; environmentGetGeneration/environmentGetServingGeneration return the complete immutable EnvironmentGeneration. No partial tenant selection is returned.
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: '#/components/schemas/AuthorityState'
+                  - $ref: '#/components/schemas/Permit'
+                  - $ref: '#/components/schemas/SwitchOperation'
+                  - $ref: '#/components/schemas/GenerationLocation'
+                  - $ref: '#/components/schemas/EnvironmentState'
+                  - $ref: '#/components/schemas/EnvironmentPermit'
+                  - $ref: '#/components/schemas/EnvironmentOperation'
+                  - $ref: '#/components/schemas/EnvironmentGeneration'
+                  - type: object
+                    additionalProperties: false
+                    required: [completed]
+                    properties:
+                      completed: { type: boolean, const: true }
+                  - type: object
+                    additionalProperties: false
+                    required: [registered]
+                    properties:
+                      registered: { type: boolean, const: true }
+        '404':
+          description: Incorrect route, method, or a URL query string. Other methods also return 404.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                additionalProperties: false
+                properties:
+                  error: { type: string, const: not_found }
+        '409':
+          description: >-
+            Invalid signature, scope, timestamp, request, state transition, or
+            unavailable backing operation. The response does not disclose
+            credential validity, tenant existence, or database diagnostics.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                additionalProperties: false
+                properties:
+                  error: { type: string, const: replication_request_rejected }
+        '503':
+          description: Authority startup or pinned configuration is unavailable.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                additionalProperties: false
+                properties:
+                  error: { type: string, const: replication_authority_unavailable }
+components:
+  securitySchemes:
+    ReplicationSignature:
+      type: apiKey
+      in: header
+      name: X-Authrim-Replication-Signature
+      description: Lowercase hexadecimal HMAC-SHA256 over the canonical method, path and body.
+  schemas:
+    Identifier:
+      type: string
+      pattern: '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$'
+    Digest:
+      type: string
+      pattern: '^[a-f0-9]{64}$'
+    PositiveInteger:
+      type: integer
+      minimum: 1
+      maximum: 9007199254740991
+    RpcRequest:
+      type: object
+      additionalProperties: false
+      required: [version, credentialId, timestamp, requestId, action, payload]
+      properties:
+        version: { type: integer, const: 1 }
+        credentialId: { $ref: '#/components/schemas/Identifier' }
+        timestamp:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+          description: Unix milliseconds within the allowed server clock skew.
+        requestId: { $ref: '#/components/schemas/Identifier' }
+        action:
+          type: string
+          enum:
+            [
+              initialize,
+              get,
+              enter,
+              complete,
+              beginDrain,
+              beginFailoverDrain,
+              registerStandbyGeneration,
+              verifyFailoverGeneration,
+              getOperation,
+              verifyGeneration,
+              promote,
+              registerGeneration,
+              getServingGeneration,
+              environmentInitialize,
+              environmentGet,
+              environmentEnter,
+              environmentComplete,
+              environmentBeginDrain,
+              environmentGetOperation,
+              environmentRegisterGeneration,
+              environmentGetGeneration,
+              environmentGetServingGeneration,
+              environmentVerifyGeneration,
+              environmentPromote,
+              environmentCancelDrain,
+            ]
+        payload:
+          description: >-
+            initialize uses PairDefinition; get uses PairIdentity; enter/complete
+            use Permit; beginDrain/beginFailoverDrain use DrainRequest; getOperation/promote use
+            OperationIdentity; verifyGeneration uses VerifyRequest;
+            registerStandbyGeneration uses StandbyGeneration;
+            verifyFailoverGeneration uses VerifyFailoverRequest;
+            registerGeneration uses GenerationLocation; getServingGeneration uses
+            ServingRequest. Environment-prefixed actions use the corresponding Environment schemas. environmentGetGeneration adds generationId and epoch to EnvironmentServingRequest. environmentCancelDrain uses EnvironmentOperationIdentity and is allowed only before promotion; it never deletes outstanding permits. Payload shape must match the selected action.
+          anyOf:
+            - $ref: '#/components/schemas/PairDefinition'
+            - $ref: '#/components/schemas/PairIdentity'
+            - $ref: '#/components/schemas/Permit'
+            - $ref: '#/components/schemas/DrainRequest'
+            - $ref: '#/components/schemas/OperationIdentity'
+            - $ref: '#/components/schemas/VerifyRequest'
+            - $ref: '#/components/schemas/StandbyGeneration'
+            - $ref: '#/components/schemas/VerifyFailoverRequest'
+            - $ref: '#/components/schemas/GenerationLocation'
+            - $ref: '#/components/schemas/ServingRequest'
+            - $ref: '#/components/schemas/EnvironmentPairDefinition'
+            - $ref: '#/components/schemas/EnvironmentPairIdentity'
+            - $ref: '#/components/schemas/EnvironmentPermit'
+            - $ref: '#/components/schemas/EnvironmentDrainRequest'
+            - $ref: '#/components/schemas/EnvironmentOperationIdentity'
+            - $ref: '#/components/schemas/EnvironmentVerifyRequest'
+            - $ref: '#/components/schemas/EnvironmentGeneration'
+            - $ref: '#/components/schemas/EnvironmentServingRequest'
+            - $ref: '#/components/schemas/EnvironmentGenerationRequest'
+    PairIdentity:
+      type: object
+      required: [pairId, tenantId]
+      properties:
+        pairId: { $ref: '#/components/schemas/Identifier' }
+        tenantId: { $ref: '#/components/schemas/Identifier' }
+    PairDefinition:
+      allOf:
+        - $ref: '#/components/schemas/PairIdentity'
+        - type: object
+          required: [deployments, initialOwnerDeploymentId, initialGenerationId]
+          properties:
+            deployments:
+              type: array
+              minItems: 2
+              maxItems: 2
+              description: Two distinct deployment IDs, one for each provider.
+              items:
+                type: object
+                additionalProperties: false
+                required: [deploymentId, provider]
+                properties:
+                  deploymentId: { $ref: '#/components/schemas/Identifier' }
+                  provider: { type: string, enum: [cloudflare, aws] }
+            initialOwnerDeploymentId: { $ref: '#/components/schemas/Identifier' }
+            initialGenerationId: { $ref: '#/components/schemas/Identifier' }
+      unevaluatedProperties: false
+    Permit:
+      allOf:
+        - $ref: '#/components/schemas/PairIdentity'
+        - type: object
+          required: [deploymentId, epoch, generationId, permitId, operationDigest]
+          properties:
+            deploymentId: { $ref: '#/components/schemas/Identifier' }
+            epoch: { $ref: '#/components/schemas/PositiveInteger' }
+            generationId: { $ref: '#/components/schemas/Identifier' }
+            permitId: { $ref: '#/components/schemas/Identifier' }
+            operationDigest: { $ref: '#/components/schemas/Digest' }
+      unevaluatedProperties: false
+    OperationIdentity:
+      allOf:
+        - $ref: '#/components/schemas/PairIdentity'
+        - type: object
+          required: [operationId]
+          properties:
+            operationId: { $ref: '#/components/schemas/Identifier' }
+    DrainRequest:
+      allOf:
+        - $ref: '#/components/schemas/OperationIdentity'
+        - type: object
+          required: [sourceDeploymentId, destinationDeploymentId, expectedEpoch, expectedRevision]
+          properties:
+            sourceDeploymentId: { $ref: '#/components/schemas/Identifier' }
+            destinationDeploymentId: { $ref: '#/components/schemas/Identifier' }
+            expectedEpoch: { $ref: '#/components/schemas/PositiveInteger' }
+            expectedRevision: { $ref: '#/components/schemas/PositiveInteger' }
+    VerifiedGeneration:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          generationId,
+          sourceDeploymentId,
+          destinationDeploymentId,
+          sourceEpoch,
+          sourceFenceRevision,
+          capturedAtMs,
+          manifestSha256,
+          verificationSha256,
+        ]
+      properties:
+        generationId: { $ref: '#/components/schemas/Identifier' }
+        sourceDeploymentId: { $ref: '#/components/schemas/Identifier' }
+        destinationDeploymentId: { $ref: '#/components/schemas/Identifier' }
+        sourceEpoch: { $ref: '#/components/schemas/PositiveInteger' }
+        sourceFenceRevision: { $ref: '#/components/schemas/PositiveInteger' }
+        capturedAtMs: { $ref: '#/components/schemas/PositiveInteger' }
+        manifestSha256: { $ref: '#/components/schemas/Digest' }
+        verificationSha256: { $ref: '#/components/schemas/Digest' }
+    VerifyRequest:
+      allOf:
+        - $ref: '#/components/schemas/OperationIdentity'
+        - type: object
+          required: [generation]
+          properties:
+            generation: { $ref: '#/components/schemas/VerifiedGeneration' }
+      unevaluatedProperties: false
+    AuthorityState:
+      allOf:
+        - $ref: '#/components/schemas/PairIdentity'
+        - type: object
+          required:
+            [
+              ownerDeploymentId,
+              selectedGenerationId,
+              epoch,
+              revision,
+              phase,
+              activeOperationId,
+              drainedAtMs,
+              outstandingPermits,
+            ]
+          properties:
+            ownerDeploymentId: { $ref: '#/components/schemas/Identifier' }
+            selectedGenerationId: { $ref: '#/components/schemas/Identifier' }
+            epoch: { $ref: '#/components/schemas/PositiveInteger' }
+            revision: { $ref: '#/components/schemas/PositiveInteger' }
+            phase: { type: string, enum: [active, draining] }
+            activeOperationId: { type: [string, 'null'] }
+            drainedAtMs: { type: [integer, 'null'] }
+            outstandingPermits: { type: integer, minimum: 0 }
+      unevaluatedProperties: false
+    StandbyGeneration:
+      allOf:
+        - $ref: '#/components/schemas/PairIdentity'
+        - type: object
+          required: [sourceSyncOperationId, sourceSyncPlanSha256, generation]
+          properties:
+            sourceSyncOperationId: { $ref: '#/components/schemas/Identifier' }
+            sourceSyncPlanSha256: { $ref: '#/components/schemas/Digest' }
+            generation: { $ref: '#/components/schemas/VerifiedGeneration' }
+      unevaluatedProperties: false
+    AcceptedDataLoss:
+      type: object
+      additionalProperties: false
+      required: [sourceSyncOperationId, sourceSyncPlanSha256, maximumSnapshotAgeMs, acceptedAtMs]
+      properties:
+        sourceSyncOperationId: { $ref: '#/components/schemas/Identifier' }
+        sourceSyncPlanSha256: { $ref: '#/components/schemas/Digest' }
+        maximumSnapshotAgeMs:
+          $ref: '#/components/schemas/PositiveInteger'
+          description: Explicit maximum age of the registered snapshot at acceptance and promotion.
+        acceptedAtMs: { $ref: '#/components/schemas/PositiveInteger' }
+    FailoverProof:
+      type: object
+      additionalProperties: false
+      required: [generation, acceptedDataLoss]
+      properties:
+        generation: { $ref: '#/components/schemas/VerifiedGeneration' }
+        acceptedDataLoss: { $ref: '#/components/schemas/AcceptedDataLoss' }
+    VerifyFailoverRequest:
+      allOf:
+        - $ref: '#/components/schemas/OperationIdentity'
+        - type: object
+          required: [proof]
+          properties:
+            proof: { $ref: '#/components/schemas/FailoverProof' }
+      unevaluatedProperties: false
+    SwitchOperation:
+      allOf:
+        - $ref: '#/components/schemas/DrainRequest'
+        - type: object
+          required:
+            [state, kind, acceptedDataLoss, drainRevision, drainedAtMs, generation, promotedEpoch]
+          properties:
+            state: { type: string, enum: [draining, verified, promoted] }
+            kind: { type: string, enum: [planned, failover] }
+            acceptedDataLoss:
+              anyOf:
+                - $ref: '#/components/schemas/AcceptedDataLoss'
+                - type: 'null'
+            drainRevision: { $ref: '#/components/schemas/PositiveInteger' }
+            drainedAtMs: { type: [integer, 'null'] }
+            generation:
+              anyOf:
+                - $ref: '#/components/schemas/VerifiedGeneration'
+                - type: 'null'
+            promotedEpoch: { type: [integer, 'null'] }
+      unevaluatedProperties: false
+    ServingRequest:
+      allOf:
+        - $ref: '#/components/schemas/PairIdentity'
+        - type: object
+          required: [deploymentId]
+          properties:
+            deploymentId: { $ref: '#/components/schemas/Identifier' }
+      unevaluatedProperties: false
+    GenerationLocation:
+      allOf:
+        - $ref: '#/components/schemas/PairIdentity'
+        - type: object
+          required: [deploymentId, generationId, epoch, location]
+          properties:
+            deploymentId: { $ref: '#/components/schemas/Identifier' }
+            generationId: { $ref: '#/components/schemas/Identifier' }
+            epoch: { $ref: '#/components/schemas/PositiveInteger' }
+            location:
+              type: object
+              additionalProperties: false
+              required:
+                [
+                  region,
+                  issuerOrigin,
+                  secretArn,
+                  secretVersionId,
+                  bucket,
+                  bucketOwner,
+                  manifestKey,
+                  manifestVersionId,
+                  manifestSha256,
+                ]
+              properties:
+                region: { type: string }
+                issuerOrigin: { type: string, format: uri }
+                secretArn: { type: string }
+                secretVersionId: { type: string }
+                bucket: { type: string }
+                bucketOwner: { type: string, pattern: '^[0-9]{12}$' }
+                manifestKey: { type: string }
+                manifestVersionId: { type: string }
+                manifestSha256: { $ref: '#/components/schemas/Digest' }
+      unevaluatedProperties: false
+
+    EnvironmentPairIdentity:
+      {
+        'type': 'object',
+        'additionalProperties': false,
+        'required': ['pairId', 'environmentId'],
+        'properties':
+          {
+            'pairId': { '$ref': '#/components/schemas/Identifier' },
+            'environmentId': { '$ref': '#/components/schemas/Identifier' },
+          },
+      }
+
+    EnvironmentServingRequest:
+      {
+        'type': 'object',
+        'additionalProperties': false,
+        'required': ['pairId', 'environmentId', 'deploymentId'],
+        'properties':
+          {
+            'pairId': { '$ref': '#/components/schemas/Identifier' },
+            'environmentId': { '$ref': '#/components/schemas/Identifier' },
+            'deploymentId': { '$ref': '#/components/schemas/Identifier' },
+          },
+      }
+
+    EnvironmentOperationIdentity:
+      {
+        'type': 'object',
+        'additionalProperties': false,
+        'required': ['pairId', 'environmentId', 'operationId'],
+        'properties':
+          {
+            'pairId': { '$ref': '#/components/schemas/Identifier' },
+            'environmentId': { '$ref': '#/components/schemas/Identifier' },
+            'operationId': { '$ref': '#/components/schemas/Identifier' },
+          },
+      }
+
+    EnvironmentGenerationRequest:
+      {
+        'type': 'object',
+        'additionalProperties': false,
+        'required': ['pairId', 'environmentId', 'deploymentId', 'generationId', 'epoch'],
+        'properties':
+          {
+            'pairId': { '$ref': '#/components/schemas/Identifier' },
+            'environmentId': { '$ref': '#/components/schemas/Identifier' },
+            'deploymentId': { '$ref': '#/components/schemas/Identifier' },
+            'generationId': { '$ref': '#/components/schemas/Identifier' },
+            'epoch': { 'type': 'integer', 'minimum': 1 },
+          },
+      }
+
+    EnvironmentPairDefinition:
+      {
+        'type': 'object',
+        'additionalProperties': false,
+        'required':
+          [
+            'pairId',
+            'environmentId',
+            'deployments',
+            'initialOwnerDeploymentId',
+            'initialGenerationId',
+          ],
+        'properties':
+          {
+            'pairId': { '$ref': '#/components/schemas/Identifier' },
+            'environmentId': { '$ref': '#/components/schemas/Identifier' },
+            'deployments':
+              {
+                'type': 'array',
+                'minItems': 2,
+                'maxItems': 2,
+                'items':
+                  {
+                    'type': 'object',
+                    'additionalProperties': false,
+                    'required': ['deploymentId', 'provider'],
+                    'properties':
+                      {
+                        'deploymentId': { '$ref': '#/components/schemas/Identifier' },
+                        'provider': { 'type': 'string', 'enum': ['cloudflare', 'aws'] },
+                      },
+                  },
+              },
+            'initialOwnerDeploymentId': { '$ref': '#/components/schemas/Identifier' },
+            'initialGenerationId': { '$ref': '#/components/schemas/Identifier' },
+          },
+      }
+
+    EnvironmentPermit:
+      {
+        'type': 'object',
+        'additionalProperties': false,
+        'required':
+          [
+            'pairId',
+            'environmentId',
+            'deploymentId',
+            'epoch',
+            'generationId',
+            'permitId',
+            'operationDigest',
+          ],
+        'properties':
+          {
+            'pairId': { '$ref': '#/components/schemas/Identifier' },
+            'environmentId': { '$ref': '#/components/schemas/Identifier' },
+            'deploymentId': { '$ref': '#/components/schemas/Identifier' },
+            'epoch': { 'type': 'integer', 'minimum': 1 },
+            'generationId': { '$ref': '#/components/schemas/Identifier' },
+            'permitId': { '$ref': '#/components/schemas/Identifier' },
+            'operationDigest': { 'type': 'string', 'pattern': '^[a-f0-9]{64}$' },
+            'tenantId': { '$ref': '#/components/schemas/Identifier' },
+            'restoreId': { '$ref': '#/components/schemas/Identifier' },
+          },
+        'description': 'tenantId and restoreId are required together for any restored child. Only the original epoch-one owner may omit both. GenerationId identifies the entire environment generation.',
+      }
+
+    EnvironmentDrainRequest:
+      {
+        'type': 'object',
+        'additionalProperties': false,
+        'required':
+          [
+            'pairId',
+            'environmentId',
+            'operationId',
+            'kind',
+            'sourceDeploymentId',
+            'destinationDeploymentId',
+            'expectedEpoch',
+            'expectedRevision',
+          ],
+        'properties':
+          {
+            'pairId': { '$ref': '#/components/schemas/Identifier' },
+            'environmentId': { '$ref': '#/components/schemas/Identifier' },
+            'operationId': { '$ref': '#/components/schemas/Identifier' },
+            'kind': { 'type': 'string', 'enum': ['planned', 'failover'] },
+            'sourceDeploymentId': { '$ref': '#/components/schemas/Identifier' },
+            'destinationDeploymentId': { '$ref': '#/components/schemas/Identifier' },
+            'expectedEpoch': { 'type': 'integer', 'minimum': 1 },
+            'expectedRevision': { 'type': 'integer', 'minimum': 1 },
+          },
+      }
+
+    EnvironmentVerifyRequest:
+      {
+        'type': 'object',
+        'additionalProperties': false,
+        'required': ['pairId', 'environmentId', 'operationId', 'proof'],
+        'properties':
+          {
+            'pairId': { '$ref': '#/components/schemas/Identifier' },
+            'environmentId': { '$ref': '#/components/schemas/Identifier' },
+            'operationId': { '$ref': '#/components/schemas/Identifier' },
+            'proof':
+              {
+                'type': 'object',
+                'additionalProperties': false,
+                'required': ['generationId', 'digestSha256', 'acceptedDataLoss'],
+                'properties':
+                  {
+                    'generationId': { '$ref': '#/components/schemas/Identifier' },
+                    'digestSha256': { 'type': 'string', 'pattern': '^[a-f0-9]{64}$' },
+                    'acceptedDataLoss':
+                      {
+                        'anyOf':
+                          [
+                            { 'type': 'null' },
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required':
+                                [
+                                  'sourceSyncOperationId',
+                                  'sourceSyncPlanSha256',
+                                  'maximumSnapshotAgeMs',
+                                  'acceptedAtMs',
+                                ],
+                              'properties':
+                                {
+                                  'sourceSyncOperationId':
+                                    { '$ref': '#/components/schemas/Identifier' },
+                                  'sourceSyncPlanSha256':
+                                    { 'type': 'string', 'pattern': '^[a-f0-9]{64}$' },
+                                  'maximumSnapshotAgeMs': { 'type': 'integer', 'minimum': 1 },
+                                  'acceptedAtMs': { 'type': 'integer', 'minimum': 1 },
+                                },
+                            },
+                          ],
+                      },
+                  },
+              },
+          },
+      }
+
+    EnvironmentGeneration:
+      {
+        'type': 'object',
+        'additionalProperties': false,
+        'required':
+          [
+            'formatVersion',
+            'pairId',
+            'environmentId',
+            'deploymentId',
+            'sourceDeploymentId',
+            'generationId',
+            'epoch',
+            'sourceEpoch',
+            'sourceFenceRevision',
+            'sourceOperationId',
+            'sourcePlanSha256',
+            'inventory',
+            'children',
+            'digestSha256',
+          ],
+        'properties':
+          {
+            'formatVersion': { 'type': 'integer', 'const': 1 },
+            'pairId': { '$ref': '#/components/schemas/Identifier' },
+            'environmentId': { '$ref': '#/components/schemas/Identifier' },
+            'deploymentId': { '$ref': '#/components/schemas/Identifier' },
+            'sourceDeploymentId': { '$ref': '#/components/schemas/Identifier' },
+            'generationId': { '$ref': '#/components/schemas/Identifier' },
+            'epoch': { 'type': 'integer', 'minimum': 1 },
+            'sourceEpoch': { 'type': 'integer', 'minimum': 1 },
+            'sourceFenceRevision': { 'type': 'integer', 'minimum': 0 },
+            'sourceOperationId': { '$ref': '#/components/schemas/Identifier' },
+            'sourcePlanSha256': { 'type': 'string', 'pattern': '^[a-f0-9]{64}$' },
+            'inventory':
+              {
+                'type': 'object',
+                'additionalProperties': false,
+                'required':
+                  [
+                    'formatVersion',
+                    'environmentId',
+                    'sourceDeploymentId',
+                    'sourceEpoch',
+                    'sourceFenceRevision',
+                    'capturedAtMs',
+                    'sourceReceiptSha256',
+                    'complete',
+                    'tenants',
+                  ],
+                'properties':
+                  {
+                    'formatVersion': { 'type': 'integer', 'const': 1 },
+                    'environmentId': { '$ref': '#/components/schemas/Identifier' },
+                    'sourceDeploymentId': { '$ref': '#/components/schemas/Identifier' },
+                    'sourceEpoch': { 'type': 'integer', 'minimum': 1 },
+                    'sourceFenceRevision': { 'type': 'integer', 'minimum': 0 },
+                    'capturedAtMs': { 'type': 'integer', 'minimum': 1 },
+                    'sourceReceiptSha256': { 'type': 'string', 'pattern': '^[a-f0-9]{64}$' },
+                    'complete': { 'type': 'boolean', 'const': true },
+                    'tenants':
+                      {
+                        'type': 'array',
+                        'minItems': 1,
+                        'maxItems': 16,
+                        'items':
+                          {
+                            'type': 'object',
+                            'additionalProperties': false,
+                            'required': ['tenantId', 'issuer', 'lifecycle'],
+                            'properties':
+                              {
+                                'tenantId': { '$ref': '#/components/schemas/Identifier' },
+                                'issuer': { 'type': 'string', 'format': 'uri' },
+                                'lifecycle': { 'type': 'string', 'const': 'active' },
+                              },
+                          },
+                      },
+                  },
+              },
+            'children':
+              {
+                'type': 'array',
+                'minItems': 1,
+                'maxItems': 16,
+                'items':
+                  {
+                    'type': 'object',
+                    'additionalProperties': false,
+                    'required':
+                      [
+                        'tenantId',
+                        'restoreId',
+                        'sourceEpoch',
+                        'sourceFenceRevision',
+                        'capturedAtMs',
+                        'verificationSha256',
+                        'location',
+                      ],
+                    'properties':
+                      {
+                        'tenantId': { '$ref': '#/components/schemas/Identifier' },
+                        'restoreId': { '$ref': '#/components/schemas/Identifier' },
+                        'sourceEpoch': { 'type': 'integer', 'minimum': 1 },
+                        'sourceFenceRevision': { 'type': 'integer', 'minimum': 0 },
+                        'capturedAtMs': { 'type': 'integer', 'minimum': 1 },
+                        'verificationSha256': { 'type': 'string', 'pattern': '^[a-f0-9]{64}$' },
+                        'location':
+                          {
+                            'type': 'object',
+                            'additionalProperties': false,
+                            'required':
+                              [
+                                'region',
+                                'issuerOrigin',
+                                'secretArn',
+                                'secretVersionId',
+                                'bucket',
+                                'bucketOwner',
+                                'manifestKey',
+                                'manifestVersionId',
+                                'manifestSha256',
+                              ],
+                            'properties':
+                              {
+                                'region': { 'type': 'string' },
+                                'issuerOrigin': { 'type': 'string' },
+                                'secretArn': { 'type': 'string' },
+                                'secretVersionId': { 'type': 'string' },
+                                'bucket': { 'type': 'string' },
+                                'bucketOwner': { 'type': 'string' },
+                                'manifestKey': { 'type': 'string' },
+                                'manifestVersionId': { 'type': 'string' },
+                                'manifestSha256': { 'type': 'string' },
+                              },
+                          },
+                      },
+                  },
+              },
+            'digestSha256': { 'type': 'string', 'pattern': '^[a-f0-9]{64}$' },
+          },
+      }
+
+    EnvironmentState:
+      {
+        'type': 'object',
+        'additionalProperties': false,
+        'required':
+          [
+            'pairId',
+            'environmentId',
+            'ownerDeploymentId',
+            'selectedGenerationId',
+            'epoch',
+            'revision',
+            'phase',
+            'activeOperationId',
+            'drainedAtMs',
+            'outstandingPermits',
+          ],
+        'properties':
+          {
+            'pairId': { '$ref': '#/components/schemas/Identifier' },
+            'environmentId': { '$ref': '#/components/schemas/Identifier' },
+            'ownerDeploymentId': { '$ref': '#/components/schemas/Identifier' },
+            'selectedGenerationId': { '$ref': '#/components/schemas/Identifier' },
+            'epoch': { 'type': 'integer', 'minimum': 1 },
+            'revision': { 'type': 'integer', 'minimum': 1 },
+            'phase': { 'type': 'string', 'enum': ['active', 'draining'] },
+            'activeOperationId': { 'type': ['string', 'null'] },
+            'drainedAtMs': { 'type': ['integer', 'null'] },
+            'outstandingPermits': { 'type': 'integer', 'minimum': 0 },
+          },
+      }
+
+    EnvironmentOperation:
+      {
+        'type': 'object',
+        'additionalProperties': false,
+        'required':
+          [
+            'pairId',
+            'environmentId',
+            'operationId',
+            'kind',
+            'sourceDeploymentId',
+            'destinationDeploymentId',
+            'expectedEpoch',
+            'expectedRevision',
+            'state',
+            'drainRevision',
+            'drainedAtMs',
+            'generation',
+            'promotedEpoch',
+          ],
+        'properties':
+          {
+            'pairId': { '$ref': '#/components/schemas/Identifier' },
+            'environmentId': { '$ref': '#/components/schemas/Identifier' },
+            'operationId': { '$ref': '#/components/schemas/Identifier' },
+            'kind': { 'type': 'string', 'enum': ['planned', 'failover'] },
+            'sourceDeploymentId': { '$ref': '#/components/schemas/Identifier' },
+            'destinationDeploymentId': { '$ref': '#/components/schemas/Identifier' },
+            'expectedEpoch': { 'type': 'integer', 'minimum': 1 },
+            'expectedRevision': { 'type': 'integer', 'minimum': 1 },
+            'state':
+              { 'type': 'string', 'enum': ['draining', 'verified', 'promoted', 'cancelled'] },
+            'drainRevision': { 'type': 'integer', 'minimum': 1 },
+            'drainedAtMs': { 'type': ['integer', 'null'] },
+            'generation':
+              {
+                'anyOf':
+                  [
+                    {
+                      'type': 'object',
+                      'additionalProperties': false,
+                      'required': ['generationId', 'digestSha256', 'acceptedDataLoss'],
+                      'properties':
+                        {
+                          'generationId': { '$ref': '#/components/schemas/Identifier' },
+                          'digestSha256': { 'type': 'string', 'pattern': '^[a-f0-9]{64}$' },
+                          'acceptedDataLoss':
+                            {
+                              'anyOf':
+                                [
+                                  { 'type': 'null' },
+                                  {
+                                    'type': 'object',
+                                    'additionalProperties': false,
+                                    'required':
+                                      [
+                                        'sourceSyncOperationId',
+                                        'sourceSyncPlanSha256',
+                                        'maximumSnapshotAgeMs',
+                                        'acceptedAtMs',
+                                      ],
+                                    'properties':
+                                      {
+                                        'sourceSyncOperationId':
+                                          { '$ref': '#/components/schemas/Identifier' },
+                                        'sourceSyncPlanSha256':
+                                          { 'type': 'string', 'pattern': '^[a-f0-9]{64}$' },
+                                        'maximumSnapshotAgeMs': { 'type': 'integer', 'minimum': 1 },
+                                        'acceptedAtMs': { 'type': 'integer', 'minimum': 1 },
+                                      },
+                                  },
+                                ],
+                            },
+                        },
+                    },
+                    { 'type': 'null' },
+                  ],
+              },
+            'promotedEpoch': { 'type': ['integer', 'null'] },
+          },
+      }

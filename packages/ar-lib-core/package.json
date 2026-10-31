@@ -1,6 +1,6 @@
 {
   "name": "@authrim/ar-lib-core",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -26,6 +26,11 @@
     "./types/*": {
       "import": "./dist/types/*.js",
       "default": "./src/types/*.ts"
+    },
+    "./constants/admin-roles": {
+      "import": "./dist/constants/admin-roles.js",
+      "types": "./src/constants/admin-roles.ts",
+      "default": "./src/constants/admin-roles.ts"
     },
     "./types/login-ui-languages": {
       "import": "./src/types/login-ui-languages.ts",
@@ -94,7 +99,8 @@
     "deploy": "test -n \"$DEPLOY_ENV\" && pnpm --dir ../.. exec tsx scripts/deploy-api.ts --env=\"$DEPLOY_ENV\" --component=ar-lib-core --mode=auto --concurrency=1",
     "dev": "wrangler dev --config wrangler.dev.toml 2>/dev/null || wrangler dev",
     "typecheck": "tsc --noEmit",
-    "lint": "echo 'Shared package: lint skipped'",
+    "lint": "eslint src --pass-on-unpruned-suppressions",
+    "lint:prune-suppressions": "eslint src --prune-suppressions",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
@@ -106,16 +112,17 @@
     "@authrim/ar-lib-field-mapping": "workspace:*",
     "@authrim/ar-lib-logging": "workspace:*",
     "hono": "4.13.2",
-    "jose": "^6.2.9",
+    "jose": "^6.2.13",
     "mysql2": "^3.23.1",
-    "pg": "^8.16.3"
+    "pg": "^8.23.1"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260903.1",
-    "@types/node": "^20.19.25",
-    "@types/pg": "^8.15.6",
+    "@types/node": "^22.10.4",
+    "@types/pg": "^8.23.1",
     "fast-check": "^4.5.3",
     "typescript": "^5.9.3",
-    "yaml": "2.8.3"
+    "yaml": "2.9.1",
+    "zod": "^4.6.7"
   }
 }

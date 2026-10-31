@@ -26,6 +26,7 @@ export interface SupportOpsResourceDescriptor {
 	displayName: string;
 	minCount: number;
 	maxSnapshotCount: number;
+	maxSyncExecuteCount?: number;
 	fields: Record<string, SupportOpsFieldDescriptor>;
 	actions: Record<
 		string,
@@ -69,6 +70,13 @@ export interface SupportOpsCohortPreviewResponse {
 	actionable_count: number | null;
 	blocked_count: number | null;
 	blocked_reasons: string[];
+	/** Preview counts use the resource's minimum as their precision. */
+	privacy?: {
+		min_count: number;
+		low_count_suppressed: boolean;
+		count_exact: boolean;
+		count_precision: number;
+	};
 	risk: {
 		min_count: number;
 		matched_count: number | null;

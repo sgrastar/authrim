@@ -10,22 +10,39 @@
  */
 
 import type { Env } from '../types/env';
-import type { ClientMetadata, RefreshTokenData } from '../types/oidc';
+import type { ClientMetadata } from '../types/oidc';
 import { ensureDatabaseAdapter, type DatabaseSource } from '../db';
 import { buildKVKey, buildDOInstanceName } from './tenant-context';
-import { createOAuthConfigManager } from './oauth-config';
+import { resolveEffectiveSettings } from '../services/effective-settings';
+import { readClientMinimumIAL } from '../services/identity-assurance';
 import { getRevocationStoreByJti } from './token-revocation-sharding';
 import type { DatabaseAdapter, PIIStatus } from '../db/adapter';
 import { createLogger } from './logger';
 import { createCompatibilityError } from './errors';
-import { getDefaultTenantId } from './issuer';
 import { readResponseTextWithLimit } from './url-security';
-import {
-  storeRefreshToken as storeRefreshTokenCanonical,
-  getRefreshToken as getRefreshTokenCanonical,
-  deleteRefreshToken as deleteRefreshTokenCanonical,
-} from './refresh-token-store';
 import { CanonicalRuntimeUserStore } from '../repositories/identity';
+
+/** User cache lifetime unless USER_CACHE_TTL sets one (it includes PII). */
+const DEFAULT_USER_CACHE_TTL_SECONDS = 3600;
+/** Consent cache lifetime unless CONSENT_CACHE_TTL sets one (consent changes rarely). */
+const DEFAULT_CONSENT_CACHE_TTL_SECONDS = 86400;
+
+/** A cache lifetime from its environment variable (whole positive seconds), else the default. */
+function cacheTtlSeconds(value: string | undefined, fallback: number): number {
+  const parsed = value ? parseInt(value, 10) : NaN;
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+/** A state or nonce lifetime as the Settings API resolves it for the client. */
+async function oauthLifetime(
+  env: Env,
+  tenantId: string,
+  clientId: string,
+  key: 'oauth.state_expiry' | 'oauth.nonce_expiry'
+): Promise<number> {
+  const value = (await resolveEffectiveSettings(env, 'oauth', { tenantId, clientId }))[key];
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : 300;
+}
 
 const log = createLogger().module('KV');
 const textEncoder = new TextEncoder();
@@ -361,10 +378,9 @@ export async function getCachedUser(
     return null;
   }
 
-  // Step 3: Populate USER_CACHE (TTL from KV > env > default)
+  // Step 3: Populate USER_CACHE (TTL from USER_CACHE_TTL, else the default)
   try {
-    const configManager = createOAuthConfigManager(env);
-    const userCacheTTL = await configManager.getUserCacheTTL();
+    const userCacheTTL = cacheTtlSeconds(env.USER_CACHE_TTL, DEFAULT_USER_CACHE_TTL_SECONDS);
     if (piiCacheMode === 'encrypted_short_ttl') {
       const encrypted = await encryptCachedUser(
         env,
@@ -384,7 +400,7 @@ export async function getCachedUser(
         expirationTtl: userCacheTTL,
       });
     }
-  } catch (error) {
+  } catch {
     // Cache write failure should not block the response
     // PII Protection: Don't log userId (can be used for tracking)
     log.warn('Failed to cache user data');
@@ -453,7 +469,9 @@ async function getUserFromD1(
 export async function invalidateUserCache(
   env: Env,
   tenantId: string,
-  userId: string
+  userId: string,
+  /** `throwOnFailure`: report a failed delete (a caller that retries until the cache is gone). */
+  options: { throwOnFailure?: boolean } = {}
 ): Promise<void> {
   if (!env.USER_CACHE) {
     return;
@@ -464,9 +482,9 @@ export async function invalidateUserCache(
   try {
     await env.USER_CACHE.delete(cacheKey);
   } catch (error) {
-    // Log but don't throw - cache invalidation failure is not critical
     // PII Protection: Don't log userId
     log.warn('Failed to invalidate user cache');
+    if (options.throwOnFailure) throw error;
   }
 }
 
@@ -530,9 +548,7 @@ export async function getCachedUserCore(
       ? 'admin'
       : account.account_type === 'service_account'
         ? 'm2m'
-        : account.account_type === 'anonymous'
-          ? 'anonymous'
-          : 'end_user';
+        : 'end_user';
 
   return {
     id: userId,
@@ -555,6 +571,8 @@ export interface CachedConsent {
   scope: string;
   granted_at: number;
   expires_at: number | null;
+  /** The consent withdrawal generation it was given under; absent in entries cached before. */
+  consent_generation?: number;
 }
 
 /**
@@ -575,7 +593,12 @@ export async function getCachedConsent(
   userId: string,
   clientId: string,
   tenantId: string,
-  coreDbSource: DatabaseSource
+  coreDbSource: DatabaseSource,
+  /**
+   * `refresh` skips the cached entry and replaces it with the database's answer: for an entry the
+   * caller knows is stale (e.g. cached before the consent was withdrawn).
+   */
+  options: { refresh?: boolean } = {}
 ): Promise<CachedConsent | null> {
   // If CONSENT_CACHE is not configured, fall back to D1 directly
   if (!env.CONSENT_CACHE) {
@@ -585,7 +608,7 @@ export async function getCachedConsent(
   const cacheKey = buildKVKey('consent', `${userId}:${clientId}`, tenantId);
 
   // Step 1: Try CONSENT_CACHE (Read-Through Cache)
-  const cached = await env.CONSENT_CACHE.get(cacheKey);
+  const cached = options.refresh ? null : await env.CONSENT_CACHE.get(cacheKey);
 
   if (cached) {
     try {
@@ -604,17 +627,25 @@ export async function getCachedConsent(
   const consent = await getConsentFromDatabase(userId, clientId, tenantId, coreDbSource);
 
   if (!consent) {
+    if (options.refresh) {
+      // Misses are not cached: drop the stale entry instead.
+      await env.CONSENT_CACHE.delete(cacheKey).catch(() => {
+        log.warn('Failed to delete stale consent cache');
+      });
+    }
     return null;
   }
 
-  // Step 3: Populate CONSENT_CACHE (TTL from KV > env > default)
+  // Step 3: Populate CONSENT_CACHE (TTL from CONSENT_CACHE_TTL, else the default)
   try {
-    const configManager = createOAuthConfigManager(env);
-    const consentCacheTTL = await configManager.getConsentCacheTTL();
+    const consentCacheTTL = cacheTtlSeconds(
+      env.CONSENT_CACHE_TTL,
+      DEFAULT_CONSENT_CACHE_TTL_SECONDS
+    );
     await env.CONSENT_CACHE.put(cacheKey, JSON.stringify(consent), {
       expirationTtl: consentCacheTTL,
     });
-  } catch (error) {
+  } catch {
     // Cache write failure should not block the response
     // PII Protection: Don't log userId/clientId
     log.warn('Failed to cache consent data');
@@ -637,8 +668,9 @@ async function getConsentFromDatabase(
     scope: string;
     granted_at: number;
     expires_at: number | null;
+    consent_generation: number | string | null;
   }>(
-    `SELECT scope, granted_at, expires_at
+    `SELECT scope, granted_at, expires_at, consent_generation
        FROM oauth_client_consents
       WHERE tenant_id = ? AND user_id = ? AND client_id = ?`,
     [tenantId, userId, clientId]
@@ -652,6 +684,7 @@ async function getConsentFromDatabase(
     scope: result.scope,
     granted_at: result.granted_at,
     expires_at: result.expires_at,
+    consent_generation: Number(result.consent_generation ?? 0),
   };
 }
 
@@ -678,7 +711,7 @@ export async function invalidateConsentCache(
     const cacheKey = buildKVKey('consent', `${userId}:${clientId}`, tenantId);
     try {
       await env.CONSENT_CACHE.delete(cacheKey);
-    } catch (error) {
+    } catch {
       // PII Protection: Don't log userId/clientId
       log.warn('Failed to invalidate consent cache');
     }
@@ -706,9 +739,7 @@ export async function storeState(
   clientId: string,
   tenantId: string
 ): Promise<void> {
-  // KV > env > default priority
-  const configManager = createOAuthConfigManager(env);
-  const ttl = await configManager.getStateExpiry();
+  const ttl = await oauthLifetime(env, tenantId, clientId, 'oauth.state_expiry');
   const key = buildKVKey('state', state, tenantId);
 
   await env.STATE_STORE.put(key, clientId, {
@@ -757,9 +788,7 @@ export async function storeNonce(
   clientId: string,
   tenantId: string
 ): Promise<void> {
-  // KV > env > default priority
-  const configManager = createOAuthConfigManager(env);
-  const ttl = await configManager.getNonceExpiry();
+  const ttl = await oauthLifetime(env, tenantId, clientId, 'oauth.nonce_expiry');
   const key = buildKVKey('nonce', nonce, tenantId);
 
   await env.NONCE_STORE.put(key, clientId, {
@@ -1004,6 +1033,8 @@ export async function getClient(
     allowed_redirect_origins: string | null;
     // PKCE settings
     require_pkce: number | null;
+    // Identity assurance (NIST SP 800-63A)
+    minimum_ial?: string | number | null;
     // Multi-tenant support
     tenant_id: string;
     application_type: string | null;
@@ -1179,6 +1210,9 @@ export async function getClient(
     allowed_redirect_origins: normalizeOptionalStringArray(result.allowed_redirect_origins),
     // PKCE settings
     require_pkce: result.require_pkce === 1,
+    // Identity assurance: no value is no minimum; a value runtime does not know is the highest
+    // level (a minimum is never dropped by being unreadable).
+    minimum_ial: readClientMinimumIAL(result.minimum_ial),
     // Multi-tenant support
     tenant_id: result.tenant_id || tenantId,
     created_at: result.created_at,
@@ -1225,7 +1259,7 @@ export async function deleteClientFromKV(
   try {
     await env.CLIENTS_CACHE.delete(cacheKey);
     log.debug('Client data deleted from KV');
-  } catch (error) {
+  } catch {
     // Log error but don't throw - D1 is source of truth
     log.warn('Failed to delete client data from KV');
   }
@@ -1325,47 +1359,4 @@ export async function isTokenRevoked(env: Env, jti: string, tenantId: string): P
     log.error('Failed to check token revocation', {}, error as Error);
     return false;
   }
-}
-
-// RefreshTokenData is now imported from types/oidc
-
-/**
- * Legacy internal shim for refresh token storage.
- *
- * Canonical public exports live in `utils/refresh-token-store.ts`.
- * Keep this wrapper only to avoid rewriting every internal reference in one step.
- */
-async function storeRefreshToken(
-  env: Env,
-  jti: string,
-  data: RefreshTokenData,
-  tenantId: string
-): Promise<void> {
-  return storeRefreshTokenCanonical(env, jti, data, tenantId);
-}
-
-/**
- * Legacy internal shim for refresh token lookup.
- */
-async function getRefreshToken(
-  env: Env,
-  userId: string,
-  version: number,
-  clientId: string,
-  jti: string,
-  tenantId: string
-): Promise<RefreshTokenData | null> {
-  return getRefreshTokenCanonical(env, userId, version, clientId, jti, tenantId);
-}
-
-/**
- * Legacy internal shim for refresh token deletion.
- */
-async function deleteRefreshToken(
-  env: Env,
-  jti: string,
-  client_id: string,
-  tenantId: string
-): Promise<void> {
-  return deleteRefreshTokenCanonical(env, jti, client_id, tenantId);
 }

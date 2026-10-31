@@ -1,4 +1,80 @@
 const adminOther = {
+	admin_registration_label: 'Registration',
+	admin_registration_guest: 'Guest',
+	admin_registration_registered: 'Registered',
+	admin_lifecycle_progressTitle: 'Guest lifecycle progress',
+	admin_lifecycle_progressHelp:
+		'Deletion runs hourly. Attempt status may be delayed and is retained for 30 days. Refresh to see current progress.',
+	admin_lifecycle_refresh: 'Refresh',
+	admin_lifecycle_progressError: 'Could not load lifecycle progress. Please refresh.',
+	admin_lifecycle_subject: 'Subject',
+	admin_lifecycle_phase: 'Phase',
+	admin_lifecycle_due: 'Deletion due',
+	admin_lifecycle_delay: 'Overdue (minutes)',
+	admin_lifecycle_attempt: 'Latest attempt',
+	admin_lifecycle_phaseValue:
+		'{phase|{active: Guest, upgrading: Upgrading, registered: Registered, deleting: Deleting, deleted: Deleted}}',
+	admin_lifecycle_maintenanceValue:
+		'{state|{processing: Processing, pending: Pending, completed: Completed, retrying: Retry pending}}',
+	admin_lifecycle_noAccounts: 'No guest lifecycle records.',
+	admin_lifecycle_loadMore: 'Load more',
+	admin_retentionPreviewTitle: 'Apply retention to existing guests',
+	admin_retentionPreviewDescription:
+		'Save the policy first, then review up to 100 accounts per page. Only accounts in the reviewed page are changed. Deadlines are calculated from creation. Changed, registered or deleting accounts are skipped. Previews expire after 15 minutes.',
+	admin_retentionPreviewButton: 'Preview existing guests',
+	admin_retentionPreviewCounts:
+		'{count:number} accounts in this page; {due:number} become eligible for deletion immediately.',
+	admin_retentionApplyButton: 'Apply to these {count:number} accounts',
+	admin_retentionApplied:
+		'Applied: {applied:number}; unchanged: {unchanged:number}; skipped: {skipped:number}.',
+	admin_retentionNextPage: 'Preview next page',
+	admin_retentionAccount: 'Account',
+	admin_retentionBefore: 'Current deadline',
+	admin_retentionAfter: 'Previewed deadline',
+	admin_retentionNoDeadline: 'No automatic deletion',
+	admin_retentionPreviewError:
+		'Could not load the preview. Reload it using the current saved policy.',
+	admin_retentionApplyError:
+		'Could not finish applying the preview. It may have expired or the policy may have changed. Retry the same preview after a temporary error.',
+
+	admin_guestClientTitle: 'Guest access',
+	admin_guestClientDescription:
+		'Explicitly allow guest login for this client. Tenant guest login must also be enabled.',
+	admin_guestClientEnabled: 'Allow guest login',
+	admin_guestClientScopes: 'Allowed guest scopes',
+	admin_guestClientScopeHint:
+		'Enter one scope per line. The actual request and the client’s normal scope permissions must also allow each scope. Registration never increases existing grants.',
+	admin_guestClientScopesInvalid: 'Include openid and enter valid scope names.',
+	admin_guestClientSave: 'Save guest access',
+	admin_guestClientSaved: 'Guest access saved.',
+	admin_guestClientLoadError: 'Could not load guest access settings.',
+	admin_guestClientSaveError: 'Could not save guest access settings.',
+	admin_guestClientConflict: 'The client profile changed. Reload before saving.',
+	admin_guestClientTenantRequired: 'Configure the tenant policy before saving a client profile.',
+
+	admin_guest_login_title: 'Guest login',
+	admin_guest_login_description:
+		'Allow guests to start or resume an account. Each client must also explicitly allow guest login.',
+	admin_guest_upgrade_methods: 'Use for guest upgrade',
+	admin_guest_upgrade_methods_description:
+		'These switches are independent of login and signup. Account lifecycle settings must also allow upgrades.',
+	admin_account_lifecycle_saved: 'Account lifecycle settings saved.',
+	admin_lifecycle_title: 'Account lifecycle',
+	admin_lifecycle_description: 'Manage guest retention and promotion to a registered account.',
+	admin_lifecycle_new_only:
+		'Saving applies to newly created guests only. Existing guests keep their current deletion date.',
+	admin_lifecycle_delete: 'Automatically delete guest accounts',
+	admin_lifecycle_days: 'Days after account creation',
+	admin_lifecycle_delete_help:
+		'The hourly cleanup deletes eligible guests after this period. Upgrading cancels guest deletion.',
+	admin_lifecycle_upgrade: 'Allow guest upgrades',
+	admin_lifecycle_hold: 'Deletion hold when upgrading (minutes)',
+	admin_lifecycle_hold_help:
+		'One hold per guest, from 1 to 60 minutes. Retrying never extends it. The default is 10 minutes.',
+	admin_lifecycle_other:
+		'Registered accounts, including accounts with attributes, have no automatic deletion policy in this release. Device and agent policies will be managed separately.',
+	admin_lifecycle_invalid: 'Enter whole numbers: 1–3650 days and 1–60 minutes.',
+
 	admin_settings_title: 'Settings',
 	admin_settings_page_title: 'Settings - Admin Dashboard - Authrim',
 	admin_settings_description: 'Configure system settings, security policies, and feature flags',
@@ -227,6 +303,8 @@ const adminOther = {
 	admin_info_organizations: 'Organizations',
 	admin_info_roles: 'Roles',
 	admin_info_webhooks: 'Webhooks',
+	admin_theme_accent_not_applied:
+		"Authrim does not apply this color (use #rgb, #rrggbb or rgb()). The parent scope's accent, or the theme's own, is used instead.",
 	admin_theme_head_title: 'Theme - Authrim Admin',
 	admin_theme_page_description_list:
 		'Manage Login UI theme templates. Choose a template, then use it to create an editable copy.',
@@ -274,7 +352,7 @@ const adminOther = {
 	admin_theme_template_fullbleed_glass_description:
 		'Full-bleed visual background with a translucent form surface.',
 	admin_theme_template_classic_description:
-		'Legacy Authrim look driven by the light/dark color variants.',
+		'Legacy Authrim look, in its warm light and dark palettes.',
 	admin_theme_preview_controls: 'Theme preview controls',
 	admin_theme_preview_screen: 'Preview screen',
 	admin_theme_preview_color_mode: 'Preview color mode',
@@ -361,6 +439,9 @@ const adminOther = {
 	admin_authentication_methods_totp: 'Authenticator App',
 	admin_authentication_methods_totp_description:
 		'Use TOTP authenticator apps for login, signup, re-authentication, and account linking.',
+	admin_authentication_methods_did: 'DID',
+	admin_authentication_methods_did_description:
+		'Let accounts with a linked DID (did:web, did:key) sign in by signing a challenge. Off unless turned on here.',
 	admin_authentication_methods_totp_preset: 'TOTP preset',
 	admin_authentication_methods_totp_preset_compatible: 'Compatible',
 	admin_authentication_methods_totp_preset_strong: 'Strong',
@@ -392,6 +473,11 @@ const adminOther = {
 	admin_authentication_methods_login_enabled: 'Login',
 	admin_authentication_methods_signup_enabled: 'Signup',
 	admin_authentication_methods_reauth_enabled: 'Re-authentication',
+	admin_authentication_methods_reauth_without_auth_time: 'Accept without auth_time',
+	admin_authentication_methods_reauth_without_auth_time_hint:
+		'Accept a re-authentication this provider does not date (no auth_time in the ID token) because a new login was requested. Weaker evidence: turn on only for providers that cannot return auth_time.',
+	admin_authentication_methods_reauth_unavailable_oauth2:
+		'OAuth 2.0 providers return no ID token to date a new login, so they cannot be used to re-authenticate.',
 	admin_authentication_methods_account_link_enabled: 'Account linking',
 	admin_authentication_methods_configured: 'External Identity Providers',
 	admin_authentication_methods_empty: 'No external identity providers configured.',

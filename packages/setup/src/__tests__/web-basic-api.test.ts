@@ -842,6 +842,249 @@ describe('setup web basic API contracts', () => {
     });
   });
 
+  it('returns R2 adoption candidates and persists only on the explicit second request', async () => {
+    const env = 'prod';
+    const candidate = {
+      name: 'prod-public-assets',
+      binding: 'PUBLIC_ASSETS',
+      environment: env,
+      creationDate: '2026-08-31T00:00:00.000Z',
+      ownershipId: '11111111-1111-4111-8111-111111111111',
+      ownershipMarkerKey:
+        '__authrim_setup__/ownership-v1-11111111-1111-4111-8111-111111111111.json',
+    };
+    const base = {
+      success: false,
+      completion: 'failed',
+      environmentEmpty: false,
+      deleted: { workers: [], d1: [], kv: [], queues: [], r2: [], pages: [] },
+      manualR2: [],
+      errors: ['R2 ownership adoption required'],
+      adoptionCandidates: [candidate],
+    };
+    cloudflareMocks.deleteEnvironment
+      .mockImplementationOnce(async (options) => {
+        expect(options.adoptR2Ownership).toBe(false);
+        return base;
+      })
+      .mockImplementationOnce(async (options) => {
+        expect(options.adoptR2Ownership).toBe(true);
+        expect(await options.onR2OwnershipAdoption([candidate])).toBe(true);
+        await options.onR2OwnershipAdoptionPersist([candidate]);
+        const lock = JSON.parse(await readFile(join(root, '.authrim', env, 'lock.json'), 'utf8'));
+        expect(lock.r2.PUBLIC_ASSETS).toEqual({
+          name: candidate.name,
+          creationDate: candidate.creationDate,
+          ownershipId: candidate.ownershipId,
+          ownershipMarkerKey: candidate.ownershipMarkerKey,
+        });
+        return {
+          ...base,
+          success: true,
+          completion: 'complete',
+          errors: [],
+          adoptionCandidates: [],
+        };
+      });
+    const app = createApiRoutes();
+    const token = generateSessionToken();
+    const first = await app.request(`/environments/${env}/delete`, post('', {}, token));
+    expect(first.status).toBe(200);
+    expect(await first.json()).toMatchObject({ success: false, adoptionCandidates: [candidate] });
+    await expect(readFile(join(root, '.authrim', env, 'lock.json'), 'utf8')).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
+    const second = await app.request(
+      `/environments/${env}/delete`,
+      post(
+        '',
+        {
+          adoptR2Ownership: true,
+          confirmedR2Adoption: [
+            {
+              name: candidate.name,
+              creationDate: candidate.creationDate,
+              ownershipId: candidate.ownershipId,
+            },
+          ],
+        },
+        token
+      )
+    );
+    expect(second.status).toBe(200);
+    expect(await second.json()).toMatchObject({ success: true });
+    expect(cloudflareMocks.deleteEnvironment).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['creationDate', 'ownershipId', 'ownershipMarkerKey', 'added', 'removed', 'all removed'])(
+    'rejects a changed R2 adoption set without saving or deleting: %s',
+    async (change) => {
+      const candidate = {
+        name: 'prod-public-assets',
+        binding: 'PUBLIC_ASSETS',
+        environment: 'prod',
+        creationDate: '2026-08-31T00:00:00.000Z',
+        ownershipId: '11111111-1111-4111-8111-111111111111',
+        ownershipMarkerKey:
+          '__authrim_setup__/ownership-v1-11111111-1111-4111-8111-111111111111.json',
+      };
+      const discovered = [{ ...candidate }];
+      if (change === 'creationDate') discovered[0].creationDate = '2026-09-01T00:00:00.000Z';
+      if (change === 'ownershipId') {
+        discovered[0].ownershipId = '22222222-2222-4222-8222-222222222222';
+        discovered[0].ownershipMarkerKey =
+          '__authrim_setup__/ownership-v1-22222222-2222-4222-8222-222222222222.json';
+      }
+      if (change === 'ownershipMarkerKey') discovered[0].ownershipMarkerKey += '-changed';
+      if (change === 'added')
+        discovered.push({
+          ...candidate,
+          name: 'prod-import-artifacts',
+          binding: 'IMPORT_ARTIFACTS',
+        });
+      const confirmed = [
+        {
+          name: candidate.name,
+          creationDate: candidate.creationDate,
+          ownershipId: candidate.ownershipId,
+        },
+      ];
+      if (change === 'removed') confirmed.push({ ...confirmed[0], name: 'prod-import-artifacts' });
+      if (change === 'all removed') discovered.length = 0;
+      let mutations = 0;
+      cloudflareMocks.deleteEnvironment.mockImplementationOnce(async (options) => {
+        const approved = await options.onR2OwnershipAdoption(discovered);
+        if (approved) {
+          await options.onR2OwnershipAdoptionPersist(discovered);
+          mutations++;
+        }
+        return {
+          success: false,
+          completion: 'failed',
+          environmentEmpty: false,
+          deleted: { workers: [], d1: [], kv: [], queues: [], r2: [], pages: [] },
+          manualR2: [],
+          errors: ['R2 adoption required'],
+          adoptionCandidates: discovered,
+          adoptionReady: true,
+        };
+      });
+      const response = await createApiRoutes().request(
+        '/environments/prod/delete',
+        post('', { adoptR2Ownership: true, confirmedR2Adoption: confirmed }, generateSessionToken())
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        success: false,
+        errorCode: 'r2_adoption_candidates_changed',
+        adoptionCandidates: discovered,
+      });
+      expect(mutations).toBe(0);
+      await expect(readFile(join(root, '.authrim/prod/lock.json'), 'utf8')).rejects.toMatchObject({
+        code: 'ENOENT',
+      });
+    }
+  );
+
+  it('accepts the exact confirmed R2 adoption set regardless of order', async () => {
+    const candidates = ['public-assets', 'import-artifacts'].map((suffix) => ({
+      name: 'prod-' + suffix,
+      binding: suffix === 'public-assets' ? 'PUBLIC_ASSETS' : 'IMPORT_ARTIFACTS',
+      environment: 'prod',
+      creationDate: '2026-08-31T00:00:00.000Z',
+      ownershipId: '11111111-1111-4111-8111-111111111111',
+      ownershipMarkerKey:
+        '__authrim_setup__/ownership-v1-11111111-1111-4111-8111-111111111111.json',
+    }));
+    cloudflareMocks.deleteEnvironment.mockImplementationOnce(async (options) => {
+      expect(await options.onR2OwnershipAdoption([...candidates].reverse())).toBe(true);
+      await options.onR2OwnershipAdoptionPersist(candidates);
+      return {
+        success: true,
+        completion: 'complete',
+        environmentEmpty: false,
+        deleted: { workers: [], d1: [], kv: [], queues: [], r2: [], pages: [] },
+        manualR2: [],
+        errors: [],
+      };
+    });
+    const response = await createApiRoutes().request(
+      '/environments/prod/delete',
+      post(
+        '',
+        {
+          adoptR2Ownership: true,
+          confirmedR2Adoption: candidates.map(({ name, creationDate, ownershipId }) => ({
+            name,
+            creationDate,
+            ownershipId,
+          })),
+        },
+        generateSessionToken()
+      )
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ success: true });
+    const lock = JSON.parse(await readFile(join(root, '.authrim/prod/lock.json'), 'utf8'));
+    expect(Object.keys(lock.r2)).toEqual(['PUBLIC_ASSETS', 'IMPORT_ARTIFACTS']);
+  });
+
+  it('requires a nonempty, bounded, strict confirmed list for R2 adoption', async () => {
+    const valid = {
+      name: 'prod-public-assets',
+      creationDate: '2026-08-31T00:00:00.000Z',
+      ownershipId: '11111111-1111-4111-8111-111111111111',
+    };
+    for (const confirmedR2Adoption of [
+      undefined,
+      [],
+      [valid, valid],
+      Array.from({ length: 101 }, (_, i) => ({ ...valid, name: 'prod-bucket-' + i })),
+      [{ ...valid, ownershipId: 'invalid' }],
+      [{ ...valid, creationDate: 'invalid' }],
+      [{ ...valid, extra: true }],
+    ]) {
+      const response = await createApiRoutes().request(
+        '/environments/prod/delete',
+        post(
+          '',
+          {
+            adoptR2Ownership: true,
+            confirmedR2Adoption,
+          },
+          generateSessionToken()
+        )
+      );
+      expect(response.status).toBe(400);
+      expect(cloudflareMocks.deleteEnvironment).not.toHaveBeenCalled();
+    }
+  });
+
+  it('reports available R2 candidates with a real preflight blocker without offering adoption', async () => {
+    const candidates = [{ name: 'prod-public-assets' }];
+    cloudflareMocks.deleteEnvironment.mockResolvedValueOnce({
+      success: false,
+      completion: 'failed',
+      environmentEmpty: false,
+      deleted: { workers: [], d1: [], kv: [], queues: [], r2: [], pages: [] },
+      manualR2: [],
+      errors: ['DNS ownership mismatch'],
+      adoptionCandidates: candidates,
+      adoptionReady: false,
+    });
+    const response = await createApiRoutes().request(
+      '/environments/prod/delete',
+      post('', {}, generateSessionToken())
+    );
+    expect(response.status).toBe(500);
+    expect(await response.json()).toMatchObject({
+      success: false,
+      adoptionCandidates: candidates,
+      adoptionReady: false,
+      errors: ['DNS ownership mismatch'],
+    });
+  });
+
   it('reports large R2 cleanup as a manual action instead of an API error', async () => {
     const env = 'prod';
     await writeDeployedLock(env);
@@ -1403,6 +1646,53 @@ describe('setup web basic API contracts', () => {
       success: false,
       errors: expect.any(Array),
     });
+  });
+
+  it('preserves explicit SAML DR and replication identity when recreating default config', async () => {
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+    const features = {
+      samlDrExport: { enabled: true },
+      replicationWriter: {
+        version: 1,
+        endpoint: 'https://authority.example.test/replication/v1/rpc',
+        credentialId: 'cf-writer',
+        pairId: 'pair-a',
+        tenantId: 'default',
+        deploymentId: 'cf-a',
+        epoch: 1,
+        generationId: 'install-a',
+      },
+    };
+    const response = await app.request(
+      '/config/default',
+      post(
+        '/config/default',
+        {
+          env: 'prod',
+          features,
+        },
+        token
+      )
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      config: { features },
+    });
+
+    const invalid = await app.request(
+      '/config/default',
+      post(
+        '/config/default',
+        {
+          env: 'prod',
+          features: { ...features, samlDrExport: { enabled: false } },
+        },
+        token
+      )
+    );
+    expect(invalid.status).toBe(400);
   });
 
   it('validates a complete config, schema failures, domain conflicts, and malformed JSON', async () => {

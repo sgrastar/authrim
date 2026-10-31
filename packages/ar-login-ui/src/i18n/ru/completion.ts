@@ -1,6 +1,15 @@
 import type { Translation } from '../i18n-types';
 
 const completion = {
+	error_rateLimited: 'Слишком много попыток. Подождите немного и повторите попытку.',
+	error_rateLimitedRetryAfter:
+		'Слишком много попыток. Повторите попытку примерно через {minutes} мин.',
+	error_unregisteredPostLogoutRedirectUri:
+		'Вы вышли из системы. Вернуться в приложение не удалось: его адрес возврата не зарегистрирован. Откройте приложение снова сами.',
+	error_invalidIdTokenHint:
+		'Вы вышли из системы. Вернуться в приложение не удалось: его запрос на выход не удалось проверить. Откройте приложение снова сами.',
+	error_idTokenHintRequired:
+		'Вы вышли из системы. Вернуться в приложение не удалось: его запрос на выход был неполным. Откройте приложение снова сами.',
 	common_logoAlt: 'Логотип',
 	common_footerLinks: 'Ссылки в нижней части страницы',
 	common_selectOption: 'Выберите вариант',
@@ -40,8 +49,7 @@ const completion = {
 	landing_signedInAs: 'Выполнен вход как',
 	emailCode_title: 'Проверьте почту',
 	emailCode_subtitle: 'Мы отправили код подтверждения на адрес',
-	emailCode_instructions:
-		'Введите шестизначный код из письма. Срок действия кода истечёт через 5 минут.',
+	emailCode_instructions: 'Введите шестизначный код из письма. Срок действия кода указан в письме.',
 	emailCode_codeLabel: 'Код подтверждения',
 	emailCode_resendSuccess: 'Код успешно отправлен',
 	emailCode_success: 'Проверка завершена. Выполняется перенаправление...',
@@ -90,7 +98,7 @@ const completion = {
 	device_subtitle: 'Введите код, показанный на устройстве',
 	device_codeLabel: 'Код подтверждения',
 	device_codePlaceholder: 'XXXX-XXXX',
-	device_codeHint: 'Введите восьмизначный код с устройства (формат: XXXX-XXXX)',
+	device_codeHint: 'Введите код, показанный на вашем устройстве',
 	device_verifyButton: 'Проверить код',
 	device_confirmTitle: 'Авторизация устройства',
 	device_requestedPermissions: 'Запрошенные разрешения',
@@ -103,6 +111,13 @@ const completion = {
 	device_errorApproveFailed: 'Не удалось разрешить устройство',
 	device_errorDenyFailed: 'Не удалось отклонить запрос устройства',
 	device_errorInvalidRedirect: 'Сервер вернул недействительный URL перенаправления',
+	device_errorConsentWithdrawn:
+		'Этот запрос был создан до того, как вы отозвали доступ этого приложения. Начните заново на устройстве, чтобы получить новый код.',
+	device_errorTryAgain:
+		'Не удалось сохранить ваше решение, ничего не изменилось. Повторите попытку через некоторое время.',
+	device_errorTooManyAttempts: 'Слишком много попыток. Подождите немного и повторите попытку.',
+	device_errorOutcomeUnknown:
+		'Не удалось подтвердить, было ли сохранено ваше решение. Проверьте устройство или введите код ещё раз.',
 	ciba_title: 'Запрос аутентификации',
 	ciba_subtitle: 'Приложение запрашивает ваше одобрение',
 	ciba_noPendingRequests: 'Нет ожидающих запросов аутентификации',
@@ -122,6 +137,18 @@ const completion = {
 	ciba_errorGeneric: 'Произошла ошибка',
 	ciba_errorApproveFailed: 'Не удалось одобрить запрос',
 	ciba_errorDenyFailed: 'Не удалось отклонить запрос',
+	ciba_errorConsentWithdrawn:
+		'Этот запрос был создан до того, как вы отозвали доступ этого приложения. Начните заново в приложении.',
+	ciba_errorRequestGone: 'Срок действия запроса истёк, или на него уже был дан ответ.',
+	error_authorizationRequestExpired:
+		'Срок действия запроса на вход истёк. Начните заново в приложении.',
+	ciba_errorTryAgain:
+		'Не удалось сохранить ваше решение, ничего не изменилось. Повторите попытку через некоторое время.',
+	ciba_errorTooManyAttempts: 'Слишком много попыток. Подождите немного и повторите попытку.',
+	ciba_errorOutcomeUnknown:
+		'Не удалось подтвердить, был ли сохранён ваш ответ. Обновите страницу, чтобы увидеть ожидающие запросы.',
+	ciba_errorNoLongerWaiting:
+		'Не удалось подтвердить ваш ответ, но этот запрос больше не ожидает решения.',
 	reauth_title: 'Подтвердите личность',
 	reauth_subtitle: 'В целях безопасности выполните повторную аутентификацию',
 	reauth_verifyWithPasskey: 'Подтвердить с помощью Passkey',

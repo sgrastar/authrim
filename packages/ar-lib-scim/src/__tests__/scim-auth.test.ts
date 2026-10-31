@@ -191,3 +191,52 @@ describe('SCIM tenant-bound authentication', () => {
     expect(await listScimTokens(env, { tenantId: 'tenant-b' })).toHaveLength(1);
   });
 });
+
+describe('SCIM token reference', () => {
+  it('names the token that authenticated a request, by its stored key, for what it records', async () => {
+    const env = createEnv();
+    const first = await generateScimToken(env, { tenantId: 'default' });
+    const second = await generateScimToken(env, { tenantId: 'default' });
+    const app = new Hono<{ Bindings: Env }>();
+    app.use('*', async (c, next) => {
+      c.set('tenantId', 'default');
+      return scimAuthMiddleware(c, next);
+    });
+    app.get('/Users', (c) =>
+      c.json({ tokenRef: (c as unknown as { get(key: string): unknown }).get('scimTokenRef') })
+    );
+
+    const read = async (token: string) =>
+      (
+        (await (
+          await app.request('/Users', { headers: { Authorization: `Bearer ${token}` } }, env)
+        ).json()) as { tokenRef: string }
+      ).tokenRef;
+
+    expect(await read(first.token)).toBe(first.tokenHash);
+    expect(await read(second.token)).toBe(second.tokenHash);
+    expect(first.tokenHash).not.toBe(second.tokenHash);
+  });
+
+  it('sets none for a request that is refused', async () => {
+    const env = createEnv();
+    const app = new Hono<{ Bindings: Env }>();
+    let seen: unknown = 'unset';
+    app.use('*', async (c, next) => {
+      c.set('tenantId', 'default');
+      const response = await scimAuthMiddleware(c, next);
+      seen = (c as unknown as { get(key: string): unknown }).get('scimTokenRef');
+      return response;
+    });
+    app.get('/Users', (c) => c.json({}));
+
+    const response = await app.request(
+      '/Users',
+      { headers: { Authorization: 'Bearer not-a-token' } },
+      env
+    );
+
+    expect(response.status).toBe(401);
+    expect(seen).toBeUndefined();
+  });
+});
