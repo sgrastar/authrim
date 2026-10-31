@@ -615,10 +615,81 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain('provisionProgress.complete();');
     expect(html).toContain("markProgressBarError('provision');");
     // updateProgressUI must leave the provisioning spinner to the helpers above.
-    expect(html).toContain("if (spinner && prefix !== 'provision') {");
+    expect(html).toContain("if (spinner && prefix !== 'provision' && prefix !== 'delete') {");
     expect(html).toContain('provisionProgress.fail();');
     expect(html).toContain("if (prefix === 'provision') stopProvisionOraTimer('✕', 'error');");
     expect(html).toContain("if (prefix === 'provision') stopProvisionOraTimer('⠋', 'running');");
+  });
+
+  it('stops the deletion spinner when there was nothing to delete or the deletion failed', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'ja',
+      ja as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+    const source = html.match(
+      /function updateProgressBarVisual[\s\S]*?(?=\n\s{4}function renderDeploymentSnapshot)/u
+    )?.[0];
+    expect(source).toBeTruthy();
+    const elements = new Map<string, Record<string, unknown>>();
+    const element = (id: string) => {
+      if (!elements.has(id))
+        elements.set(id, {
+          style: { display: 'block', width: '0%' },
+          textContent: '',
+          classList: { toggle: () => undefined },
+          closest: () => null,
+        });
+      return elements.get(id)!;
+    };
+    const context = vm.createContext({
+      document: { getElementById: element },
+      stopProvisionOraTimer: () => undefined,
+    });
+    vm.runInContext(
+      `${source}\nglobalThis.api = { finish: finishProgressUI, fail: markProgressBarError };`,
+      context
+    );
+    const api = (context as { api: { finish: (p: string) => void; fail: (p: string) => void } })
+      .api;
+
+    // 0/0 is what a deletion with nothing left to remove reports.
+    api.finish('delete');
+    expect((element('delete-spinner').style as { display: string }).display).toBe('none');
+    expect(element('delete-percent').textContent).toBe('100');
+
+    (element('delete-spinner').style as { display: string }).display = 'block';
+    api.fail('delete');
+    expect((element('delete-spinner').style as { display: string }).display).toBe('none');
+
+    // Other operations keep their own spinner handling.
+    api.finish('deploy');
+    expect((element('deploy-spinner').style as { display: string }).display).toBe('block');
+
+    // The last resource finishing does not end a deletion: the spinner keeps going until the
+    // POST response, and a late poll response cannot repaint a finished run.
+    const progressSource = html.match(
+      /function updateProgressUI\(prefix[\s\S]*?(?=\n\s{4}\/\/ Parse progress message)/u
+    )?.[0];
+    expect(progressSource).toBeTruthy();
+    const spinnerEl = { style: { display: 'block' } };
+    const progressContext = vm.createContext({
+      document: {
+        getElementById: (id: string) => (id === 'delete-spinner' ? spinnerEl : null),
+      },
+      t: (key: string) => key,
+      updateProgressBarVisual: () => undefined,
+    });
+    vm.runInContext(`${progressSource}\nglobalThis.update = updateProgressUI;`, progressContext);
+    (progressContext as { update: (...args: unknown[]) => void }).update('delete', 1, 1);
+    expect(spinnerEl.style.display).toBe('block');
+    expect(html).toContain('if (deleteRunFinished) return;');
+    expect(html.match(/deleteRunFinished = true;/gu)).toHaveLength(2);
+
+    // Both success branches settle the bar after the final update.
+    expect(html.match(/finishProgressUI\('delete'\);/gu)).toHaveLength(2);
   });
 
   it('shows retryable deletion inventory errors without an empty error alert', () => {

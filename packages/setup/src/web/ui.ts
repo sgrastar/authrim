@@ -7874,10 +7874,22 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
     }
 
+    // Deleting an environment that has nothing left to remove reports 0/0, which updateProgressUI
+    // cannot tell apart from "not started yet". Settle the bar and spinner explicitly instead.
+    function finishProgressUI(prefix) {
+      updateProgressBarVisual(document.getElementById(prefix + '-progress-bar'), 100, 'complete');
+      const percentEl = document.getElementById(prefix + '-percent');
+      if (percentEl) percentEl.textContent = '100';
+      const spinner = document.getElementById(prefix + '-spinner');
+      if (spinner && prefix === 'delete') spinner.style.display = 'none';
+    }
+
     function markProgressBarError(prefix) {
       const progressBar = document.getElementById(prefix + '-progress-bar');
       const currentWidth = Number.parseFloat(progressBar?.style.width || '0');
       updateProgressBarVisual(progressBar, currentWidth, 'error');
+      const deleteSpinner = document.getElementById(prefix + '-spinner');
+      if (deleteSpinner && prefix === 'delete') deleteSpinner.style.display = 'none';
       if (prefix === 'provision') stopProvisionOraTimer('✕', 'error');
     }
 
@@ -8000,8 +8012,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         currentTaskEl.textContent = currentTask;
       }
       // Hide spinner when complete
-      // Provisioning paints its own terminal frame (✓ / ✕) instead of hiding the spinner.
-      if (spinner && prefix !== 'provision') {
+      // Provisioning paints its own terminal frame (✓ / ✕) instead of hiding the spinner, and a
+      // deletion keeps working after the last resource (verification, lock and local cleanup), so
+      // only finishProgressUI / markProgressBarError may stop it.
+      if (spinner && prefix !== 'provision' && prefix !== 'delete') {
         spinner.style.display = (current >= total && total > 0) ? 'none' : 'block';
       }
     }
@@ -15394,11 +15408,14 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       if (deleteOptions.deletePages) totalToDelete += selectedEnvForDelete.pages?.length || 0;
       updateProgressUI('delete', 0, totalToDelete, t('web.delete.starting'));
 
-      // Poll for progress
+      // Poll for progress. clearInterval cannot cancel a request already in flight, so a late
+      // response must not repaint the progress (and the spinner) after the run has ended.
+      let deleteRunFinished = false;
       let lastProgressLength = 0;
       const pollInterval = setInterval(async () => {
         try {
           const statusResult = await api('/deploy/status');
+          if (deleteRunFinished) return;
           const structuredProgress = statusResult.operationProgress?.operation === 'delete'
             ? statusResult.operationProgress
             : null;
@@ -15437,6 +15454,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         });
 
         clearInterval(pollInterval);
+        deleteRunFinished = true;
 
         // Show final progress
         if (deleteResult.progress) {
@@ -15462,6 +15480,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
             totalToDelete,
             t(environmentDeleted ? 'web.delete.complete' : 'web.delete.manualActionRequired')
           );
+          finishProgressUI('delete');
           result.textContent = '';
           const manualR2Targets = Array.isArray(deleteResult.manualR2) ? deleteResult.manualR2 : [];
           const manualDnsIssues = Array.isArray(deleteResult.manualDns) ? deleteResult.manualDns : [];
@@ -15489,6 +15508,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         } else if (deleteResult.success) {
           // Final progress update
           updateProgressUI('delete', totalToDelete, totalToDelete, t('web.delete.complete'));
+          finishProgressUI('delete');
           result.textContent = '';
           const environmentDeleted = deleteResult.environmentDeleted === true;
           if (environmentDeleted) markDeleteNavigationComplete();
@@ -15518,6 +15538,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         }
       } catch (error) {
         clearInterval(pollInterval);
+        deleteRunFinished = true;
         markProgressBarError('delete');
         result.classList.remove('hidden');
         result.textContent = '';
