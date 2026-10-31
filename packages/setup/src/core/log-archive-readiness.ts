@@ -61,6 +61,9 @@ export function prepareLogArchiveReadinessAttempt(
     ? { ...previous }
     : { attemptId: randomUUID(), startedAt: new Date().toISOString(), deploymentFingerprint };
 }
+/** The Pipeline sink commits a file about every 300 s, so a probe written just after a roll needs
+ * more than one interval before its row can be read; a limit equal to the interval is not enough. */
+export const LOG_ARCHIVE_READINESS_TIMEOUT_MS = 15 * 60_000;
 /** Uses the existing signed bootstrap bridge; only a real Worker/Catalog roundtrip can return ready. */
 export async function waitForLogArchiveReadiness(
   input: LogArchiveReadinessOptions
@@ -91,7 +94,7 @@ export async function waitForLogArchiveReadiness(
     typeof signBootstrapAcceleratorProof
   >[0]['privateJwk'];
   const now = input.now ?? Date.now,
-    deadline = now() + (input.timeoutMs ?? 5 * 60_000);
+    deadline = now() + (input.timeoutMs ?? LOG_ARCHIVE_READINESS_TIMEOUT_MS);
   const wait =
     input.wait ??
     ((milliseconds) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));

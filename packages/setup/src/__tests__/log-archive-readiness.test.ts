@@ -6,6 +6,7 @@ import { exportJWK, generateKeyPair } from 'jose';
 import { verifyBootstrapAcceleratorProof } from '@authrim/ar-lib-core/control-plane';
 import { logIcebergReadinessAttemptDigest } from '@authrim/ar-lib-core/services/log-iceberg-readiness';
 import {
+  LOG_ARCHIVE_READINESS_TIMEOUT_MS,
   prepareLogArchiveReadinessAttempt,
   waitForLogArchiveReadiness,
 } from '../core/log-archive-readiness.js';
@@ -154,6 +155,27 @@ describe('post-deploy archive readiness authority', () => {
       await expect(
         waitForLogArchiveReadiness({ ...f.input, fetch: async () => Response.json(wrong) })
       ).rejects.toThrow('log_archive_readiness_identity_mismatch');
+  });
+  it('keeps waiting past one Pipeline roll interval before giving up', async () => {
+    const f = await fixture();
+    let clock = 0;
+    let calls = 0;
+    await expect(
+      waitForLogArchiveReadiness({
+        ...f.input,
+        now: () => clock,
+        wait: async (ms) => {
+          clock += ms;
+        },
+        fetch: async () => {
+          calls += 1;
+          return new Response(null, { status: 202 });
+        },
+      })
+    ).rejects.toThrow('log_archive_readiness_not_confirmed_resume_setup');
+    expect(clock).toBeGreaterThanOrEqual(LOG_ARCHIVE_READINESS_TIMEOUT_MS);
+    expect(LOG_ARCHIVE_READINESS_TIMEOUT_MS).toBeGreaterThan(5 * 60_000);
+    expect(calls).toBeGreaterThan(60);
   });
   it('leaves the attempt resumable when visibility never arrives and never treats an empty 202 as ready', async () => {
     const f = await fixture();
