@@ -1,6 +1,6 @@
 import { logProducerFixture } from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
 import { DatabaseSync, type SQLiteDatabase, type SQLInputValue } from './test-sqlite';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
@@ -85,9 +85,7 @@ function renderSqliteMigration(sql: string): string {
 function freshDatabase(family: Family) {
   const database = new DatabaseSync(':memory:');
   const directory = `${root}migrations/${family}/d1`;
-  for (const file of readdirSync(directory)
-    .filter((name) => name.endsWith('.sql'))
-    .sort())
+  for (const file of [`001_0_5_0_${family}_baseline.sql`])
     database.exec(renderSqliteMigration(readFileSync(`${directory}/${file}`, 'utf8')));
   database.exec('PRAGMA foreign_keys = ON');
   return database;

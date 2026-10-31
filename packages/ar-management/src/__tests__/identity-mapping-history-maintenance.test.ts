@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readRenderedMigrationSql } from '../../../../test/helpers/migration-source.mjs';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter, Env, PreparedStatement } from '@authrim/ar-lib-core';
 import {
@@ -129,12 +130,9 @@ describe('identity mapping history maintenance', () => {
     vi.clearAllMocks();
     admin = new DatabaseSync(':memory:');
     admin.exec(
-      readFileSync(
-        new URL(
-          '../../../../migrations/admin/d1/050_identity_mapping_level_history.sql',
-          import.meta.url
-        ),
-        'utf8'
+      readRenderedMigrationSql(
+        new URL('../../../../migrations/admin/d1/', import.meta.url),
+        '001_0_5_0_admin_baseline.sql'
       )
     );
     core = new DatabaseSync(':memory:');

@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readRenderedMigrationSql } from '../../../../../../test/helpers/migration-source.mjs';
+
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { DatabaseAdapter } from '../../../db/adapter';
@@ -10,22 +11,16 @@ let db: DatabaseSync;
 let store: TenantBackupRestoreHoldStore;
 
 function migration(name: string): string {
-  return readFileSync(
-    new URL(`../../../../../../migrations/admin/d1/${name}`, import.meta.url),
-    'utf8'
+  return readRenderedMigrationSql(
+    new URL(`../../../../../../migrations/admin/d1/`, import.meta.url),
+    `${name}`
   );
 }
 
 beforeEach(() => {
   db = new DatabaseSync(':memory:');
   db.exec('PRAGMA foreign_keys=ON');
-  for (const name of [
-    '003_tenant_backup_operations.sql',
-    '004_tenant_backup_validation_index.sql',
-    '006_tenant_backup_request_intent.sql',
-    '030_tenant_backup_restored_holds.sql',
-  ])
-    db.exec(migration(name));
+  for (const name of ['001_0_5_0_admin_baseline.sql']) db.exec(migration(name));
   db.prepare(
     `INSERT INTO tenant_backup_operations
      (id,tenant_id,kind,idempotency_key,request_digest,state,phase,created_by,created_at,

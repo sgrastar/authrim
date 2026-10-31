@@ -1,5 +1,5 @@
 import { renderPortableMigrationSql } from '@authrim/ar-lib-core/control-plane';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
@@ -29,9 +29,7 @@ const OBJECT_KEY = `releases/${RELEASE_ID}/${DIGEST}/manifest.json`;
 
 function applyControlMigrations(target: DatabaseSync): void {
   const directory = resolve(REPO_ROOT, 'migrations/control/d1');
-  for (const file of readdirSync(directory)
-    .filter((name) => name.endsWith('.sql'))
-    .sort()) {
+  for (const file of ['001_0_5_0_control_baseline.sql']) {
     target.exec(
       renderPortableMigrationSql(readFileSync(resolve(directory, file), 'utf8'), 'sqlite')
     );

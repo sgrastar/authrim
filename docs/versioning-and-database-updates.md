@@ -229,6 +229,11 @@ or provenance. It records the current evidence in `migrations/semantic-baseline.
 release-specific copy in `migrations/evidence/<version>.json`. Existing environments continue through
 explicit deltas or bridges.
 
+Fresh baselines omit the setup ledger `authrim_migrations` and the engine sentinel
+`tenant_database_migration_state` in every schema family, including Admin. The unused Admin business
+table with that name is removed by a forward source migration before the 0.5.0 release. Control's
+`control_tenant_database_migration_state` remains the live tenant rollout state.
+
 ## 5. Fix the database update for the release
 
 After the test environment passes, stop adding SQL files and create the release files.
@@ -627,6 +632,12 @@ The following command deletes the test environment data:
 pnpm run setup delete --env test --all --yes
 pnpm run setup init --env test
 ```
+
+If deletion is attempted from another checkout without its local R2 lock entries, use
+`pnpm run setup delete --env test --all --adopt-r2-ownership` and confirm the verified buckets.
+Setup saves ownership proven by a unique Setup marker before repeating deletion preflight.
+`--yes` skips that confirmation only with `--adopt-r2-ownership`; unverified buckets block all
+resource deletion and require manual cleanup in Cloudflare.
 
 If the current product version has already been published, change the root and every package to the
 next product version before adding SQL. New SQL cannot be added to a published version.

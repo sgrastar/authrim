@@ -1,6 +1,7 @@
+import { readMigrationSource } from '../../../../../../test/helpers/migration-source.mjs';
 import { readSqliteRestoreSeedFingerprint } from '../sqlite-restore-seed';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import {
   invalidateSqliteRestoreTarget,
@@ -115,21 +116,15 @@ beforeEach(async () => {
   batchCalls = 0;
   aggregateVerifyCalls = 0;
   db.exec(
-    readFileSync(
-      new URL(
-        '../../../../../../migrations/core/d1/010_tenant_backup_restore_target.sql',
-        import.meta.url
-      ),
-      'utf8'
+    readMigrationSource(
+      new URL('../../../../../../migrations/core/d1/', import.meta.url),
+      '010_tenant_backup_restore_target.sql'
     )
   );
   db.exec(
-    readFileSync(
-      new URL(
-        '../../../../../../migrations/core/d1/011_tenant_backup_restore_target_cancellation.sql',
-        import.meta.url
-      ),
-      'utf8'
+    readMigrationSource(
+      new URL('../../../../../../migrations/core/d1/', import.meta.url),
+      '011_tenant_backup_restore_target_cancellation.sql'
     )
   );
   db.exec(

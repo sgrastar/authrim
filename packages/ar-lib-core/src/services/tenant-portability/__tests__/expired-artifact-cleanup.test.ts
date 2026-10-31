@@ -1,5 +1,6 @@
+import { readRenderedMigrationSql } from '../../../../../../test/helpers/migration-source.mjs';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+
 import { expect, it } from 'vitest';
 import { cleanupExpiredTenantBackupArtifact } from '../expired-artifact-cleanup';
 import type { DatabaseAdapter } from '../../../db/adapter';
@@ -8,17 +9,11 @@ it('expires only due artifacts, bounds work and resumes uncertain deletes and me
   const sql = new DatabaseSync(':memory:');
   try {
     sql.exec('PRAGMA foreign_keys=ON');
-    for (const name of [
-      '003_tenant_backup_operations',
-      '004_tenant_backup_validation_index',
-      '009_tenant_backup_artifact_parts',
-      '012_tenant_backup_cipher_journal',
-      '020_tenant_backup_publications',
-    ])
+    for (const name of ['001_0_5_0_admin_baseline'])
       sql.exec(
-        readFileSync(
-          new URL(`../../../../../../migrations/admin/d1/${name}.sql`, import.meta.url),
-          'utf8'
+        readRenderedMigrationSql(
+          new URL(`../../../../../../migrations/admin/d1/`, import.meta.url),
+          `${name}.sql`
         )
       );
     const database: Pick<DatabaseAdapter, 'queryOne' | 'execute'> = {

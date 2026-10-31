@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readRenderedMigrationSql } from '../../../../../../test/helpers/migration-source.mjs';
+
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { DatabaseAdapter } from '../../../db/adapter';
@@ -8,9 +9,9 @@ let database: DatabaseSync;
 let store: TenantBackupR2RestoreStore;
 
 function migration(name: string): string {
-  return readFileSync(
-    new URL(`../../../../../../migrations/admin/d1/${name}`, import.meta.url),
-    'utf8'
+  return readRenderedMigrationSql(
+    new URL(`../../../../../../migrations/admin/d1/`, import.meta.url),
+    `${name}`
   );
 }
 
@@ -42,13 +43,7 @@ const chunk = {
 beforeEach(() => {
   database = new DatabaseSync(':memory:');
   database.exec('PRAGMA foreign_keys=ON');
-  for (const name of [
-    '003_tenant_backup_operations.sql',
-    '004_tenant_backup_validation_index.sql',
-    '031_tenant_backup_r2_restores.sql',
-    '032_tenant_backup_r2_log_record_maps.sql',
-  ])
-    database.exec(migration(name));
+  for (const name of ['001_0_5_0_admin_baseline.sql']) database.exec(migration(name));
   database
     .prepare(
       `INSERT INTO tenant_backup_operations(

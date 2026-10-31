@@ -1,4 +1,8 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import {
+  readMigrationSource,
+  listMigrationSourceFiles,
+} from '../../../../test/helpers/migration-source.mjs';
+
 import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -17,15 +21,11 @@ describe('DSQL configuration schema contract', () => {
     const plan = createDsqlConfigurationSchemaPlan(schema);
     for (const table of plan.tables) {
       const sp = table.name === 'identity_providers';
-      const source = readFileSync(
-        resolve(
-          root,
-          'migrations/core/postgresql',
-          sp
-            ? '013_saml_passkey_configuration_and_route_generation.sql'
-            : '001_0_4_0_core_baseline.sql'
-        ),
-        'utf8'
+      const source = readMigrationSource(
+        resolve(root, 'migrations/core/postgresql'),
+        sp
+          ? '013_saml_passkey_configuration_and_route_generation.sql'
+          : '001_0_4_0_core_baseline.sql'
       );
       const body = source.match(
         new RegExp(`CREATE TABLE ${sp ? '' : 'public\\.'}${table.name} \\(([\\s\\S]*?)\\n\\);`)
@@ -61,8 +61,8 @@ describe('DSQL configuration schema contract', () => {
       // Later schema changes and trigger protections require explicit evaluation;
       // the isolated snapshot must not silently become a claim about a newer schema.
       const directory = resolve(root, 'migrations/core/postgresql');
-      for (const filename of readdirSync(directory).filter((name) => name.endsWith('.sql'))) {
-        const migration = readFileSync(resolve(directory, filename), 'utf8');
+      for (const filename of listMigrationSourceFiles(directory)) {
+        const migration = readMigrationSource(directory, filename);
         expect(migration).not.toMatch(
           new RegExp(`CREATE TRIGGER[^;]+ ON (?:public\\.)?${table.name}\\b`, 'u')
         );

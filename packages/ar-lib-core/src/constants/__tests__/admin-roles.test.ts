@@ -1,6 +1,7 @@
-import { readFileSync } from 'node:fs';
+import { readMigrationSource } from '../../../../../test/helpers/migration-source.mjs';
+
 import { DatabaseSync } from 'node:sqlite';
-import { resolve } from 'node:path';
+import { resolve, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
@@ -17,7 +18,7 @@ const REPO_ROOT = fileURLToPath(new URL('../../../../../', import.meta.url));
 
 function sql(path: string): string {
   return renderPortableMigrationSql(
-    readFileSync(resolve(REPO_ROOT, path), 'utf8')
+    readMigrationSource(dirname(resolve(REPO_ROOT, path)), basename(path))
       .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', '1')
       .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '1000'),
     'sqlite'

@@ -1,5 +1,6 @@
+import { readRenderedMigrationSql } from '../../../../../test/helpers/migration-source.mjs';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+
 import { TenantBackupMutationAdmission } from '../tenant-portability/mutation-admission';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '../../db';
@@ -67,15 +68,12 @@ async function fixture(mode: 'pipeline' | 'scheduled', actualControl = false, sa
   };
   const controlDb = new DatabaseSync(':memory:');
   close.push(() => controlDb.close());
-  for (const file of [
-    '005_tenant_backup_mutation_admission.sql',
-    '006_tenant_backup_mutation_environment_scope.sql',
-    '007_tenant_backup_boundary_receipts.sql',
-    '010_tenant_backup_snapshot_timestamp.sql',
-    '011_tenant_backup_boundary_deadline.sql',
-  ])
+  for (const file of ['001_0_5_0_control_baseline.sql'])
     controlDb.exec(
-      readFileSync(new URL(`../../../../../migrations/control/d1/${file}`, import.meta.url), 'utf8')
+      readRenderedMigrationSql(
+        new URL(`../../../../../migrations/control/d1/`, import.meta.url),
+        `${file}`
+      )
     );
   const admission = new TenantBackupMutationAdmission(
     {

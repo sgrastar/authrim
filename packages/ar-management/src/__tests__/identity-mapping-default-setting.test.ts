@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { logProducerFixture } from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
 import {
@@ -43,13 +41,6 @@ import { insertTenant, openCoreDatabase } from './helpers/core-database';
 const KEY = 'identity_mapping.oidc_default_set_id';
 const TENANT_URL = `/api/admin/tenants/${TENANT}/settings/identity-mapping`;
 const PLATFORM_URL = '/api/admin/platform/settings/identity-mapping';
-const REPO_ROOT = resolve(__dirname, '../../../..');
-const SETTINGS_MIGRATIONS = [
-  '028_tenant_settings_documents.sql',
-  '038_tenant_settings_reconciled_at.sql',
-  '039_platform_settings_documents.sql',
-  '040_settings_legacy_import_state.sql',
-];
 
 function kv() {
   const store = new Map<string, string>();
@@ -124,9 +115,6 @@ function setup(options: { agent?: boolean } = {}) {
       },
     }
   );
-  for (const file of SETTINGS_MIGRATIONS) {
-    context.db.exec(readFileSync(resolve(REPO_ROOT, `migrations/admin/d1/${file}`), 'utf8'));
-  }
   // The platform's set and profile; a tenant's own set, profile, and another tenant's.
   seedMapping(context.db, { owner: PLATFORM_MAPPING_TENANT_ID, id: 'plat' });
   seedDestinationProfile(context.db, { owner: PLATFORM_MAPPING_TENANT_ID, id: 'profile-plat' });

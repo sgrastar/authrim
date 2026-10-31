@@ -3,7 +3,7 @@ import { decryptLogIcebergRecord } from '@authrim/ar-lib-core/services/log-icebe
 import { decodeLogIcebergRow } from '@authrim/ar-lib-core/services/log-iceberg-row-codec';
 import type { LogArchiveRecord } from '@authrim/ar-lib-logging/iceberg/schema';
 /** Real Admin/Core schemas and actual DO RPCs; only routing/Workers transport are test seams. */
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import type { DatabaseAdapter, Env, PreparedStatement } from '@authrim/ar-lib-core';
 import { SessionRevocationStore } from '@authrim/ar-lib-core/durable-objects/SessionRevocationStore';
 import { renderPortableMigrationSql } from '../../../../ar-lib-core/dist/migrations/sql-portability';
@@ -85,9 +85,7 @@ class ReceiptStorage {
 function openAdminStore(): { db: SQLiteDatabase; adapter: DatabaseAdapter } {
   const db = new DatabaseSync(':memory:');
   const directory = new URL('../../../../../migrations/admin/d1/', import.meta.url);
-  for (const file of readdirSync(directory)
-    .filter((file) => file.endsWith('.sql'))
-    .sort())
+  for (const file of ['001_0_5_0_admin_baseline.sql'])
     db.exec(renderPortableMigrationSql(readFileSync(new URL(file, directory), 'utf8'), 'sqlite'));
   db.exec('PRAGMA foreign_keys=ON');
   const values = (params: unknown[] = []) =>

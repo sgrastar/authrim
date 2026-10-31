@@ -1,4 +1,8 @@
-import { readFileSync } from 'node:fs';
+import {
+  readMigrationSource,
+  readRenderedMigrationSql,
+} from '../../../../test/helpers/migration-source.mjs';
+
 import { resolve } from 'node:path';
 import { Hono } from 'hono';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -65,7 +69,10 @@ const USER_B = '22222222-2222-4222-8222-222222222222';
 function openAdminDatabase(): SQLiteDatabase {
   const db = new DatabaseSync(':memory:');
   db.exec(
-    readFileSync(resolve(REPO_ROOT, 'migrations/admin/d1/001_0_4_0_admin_baseline.sql'), 'utf8')
+    readRenderedMigrationSql(
+      resolve(REPO_ROOT, 'migrations/admin/d1/'),
+      '001_0_5_0_admin_baseline.sql'
+    )
       .replaceAll(
         '__AUTHRIM_NOW_PRECISE_EPOCH_MILLISECONDS__',
         "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
@@ -531,9 +538,9 @@ describe('core D1 027: jobs the admin API left in the Core database', () => {
     }
 
     core.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/core/d1/027_admin_api_jobs_moved_to_admin_store.sql'),
-        'utf8'
+      readMigrationSource(
+        resolve(REPO_ROOT, 'migrations/core/d1/'),
+        '027_admin_api_jobs_moved_to_admin_store.sql'
       ).replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', '1000')
     );
 

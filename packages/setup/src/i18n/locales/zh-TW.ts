@@ -1302,6 +1302,8 @@ const zhTW: Translations = {
   'web.status.adminNotConfigured': '管理員未配置',
   'web.status.initializing': '初始化中...',
   'web.status.found': '找到 {{count}} 個',
+  'web.status.serverUnreachable':
+    '無法連線到 Setup 伺服器。請確認它仍在終端機中執行，必要時重新啟動後再試。',
   'web.status.operationInProgress': '另一個設定操作正在進行中。請等待完成後再試一次。',
   'web.status.warning': '警告：',
 

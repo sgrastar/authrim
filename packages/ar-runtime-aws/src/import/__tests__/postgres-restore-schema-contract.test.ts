@@ -1,4 +1,4 @@
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { renderPortableMigrationSql } from '../../../../ar-lib-core/src/migrations/sql-portability';
 import type { VerifiedTenantBackupV2 } from '../backup-reader';
@@ -55,9 +55,7 @@ describe.each(['core', 'pii'] as const)(
     beforeAll(async () => {
       db = new DatabaseSync(':memory:');
       const migrations = new URL(`../../../../../migrations/${family}/d1/`, import.meta.url);
-      for (const file of (await readdir(migrations))
-        .filter((name) => /^\d+.*\.sql$/u.test(name))
-        .sort()) {
+      for (const file of [`001_0_5_0_${family}_baseline.sql`]) {
         db.exec(
           renderPortableMigrationSql(await readFile(new URL(file, migrations), 'utf8'), 'sqlite')
         );

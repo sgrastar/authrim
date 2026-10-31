@@ -92,7 +92,9 @@ export class DirectoryPasswordClient {
     private readonly config: DirectoryPasswordConnectorConfig,
     fetcher: DirectoryPasswordFetch = fetch
   ) {
-    this.fetcher = fetcher;
+    // Workers throw "Illegal invocation" when `fetch` is called as a method of another object, so
+    // keep it behind a plain call instead of storing it as a field.
+    this.fetcher = (input, init) => fetcher(input, init);
   }
 
   async verifyPassword(

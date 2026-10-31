@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readRenderedMigrationSql } from '../../../../test/helpers/migration-source.mjs';
+
 import { afterEach, describe, expect, it } from 'vitest';
 import type { DatabaseAdapter } from '@authrim/ar-lib-core/db/adapter';
 import {
@@ -15,12 +16,9 @@ function fixture() {
   const db = new DatabaseSync(':memory:');
   opened.push(db);
   db.exec(
-    readFileSync(
-      new URL(
-        '../../../../migrations/admin/d1/052_tenant_backup_replication_grants.sql',
-        import.meta.url
-      ),
-      'utf8'
+    readRenderedMigrationSql(
+      new URL('../../../../migrations/admin/d1/', import.meta.url),
+      '001_0_5_0_admin_baseline.sql'
     )
   );
   const adapter: Pick<DatabaseAdapter, 'queryOne' | 'execute'> = {

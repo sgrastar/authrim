@@ -1,3 +1,4 @@
+import { readMigrationSource } from '../../../../test/helpers/migration-source.mjs';
 import { emitLogIcebergRow } from '@authrim/ar-lib-core/services/log-iceberg-emitter';
 import type { LogIcebergStagedHead } from '@authrim/ar-lib-core/services/log-iceberg-store';
 import { filterPublishedCoreLogRecords } from '@authrim/ar-lib-core/services/log-iceberg-core-publication';
@@ -10,7 +11,7 @@ import { dispatchLogIcebergOutboxPage } from '@authrim/ar-lib-core/services/log-
 import { cleanupLogIcebergRetryPage } from '@authrim/ar-lib-core/services/log-iceberg-retry-cleanup';
 import { resolveLogIcebergConfig } from '@authrim/ar-lib-core/services/log-iceberg-config';
 import { isLogIcebergRetryErasureMarker } from '@authrim/ar-lib-core/services/log-iceberg-retry-marker';
-import { readFileSync } from 'node:fs';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core';
 import { TenantBackupOperationStore } from '@authrim/ar-lib-core/services/tenant-portability/operation-store';
@@ -103,7 +104,7 @@ async function setup(mode: 'scheduled' | 'pipeline') {
     '024_tenant_backup_restore_plan_inventory.sql',
   ])
     f.db.exec(
-      readFileSync(new URL('../../../../migrations/admin/d1/' + name, import.meta.url), 'utf8')
+      readMigrationSource(new URL('../../../../migrations/admin/d1/', import.meta.url), name)
     );
   f.db
     .prepare(

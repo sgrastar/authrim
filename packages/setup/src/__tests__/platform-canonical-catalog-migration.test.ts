@@ -1,3 +1,5 @@
+import { readMigrationSource } from '../../../../test/helpers/migration-source.mjs';
+
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -7,7 +9,6 @@ import { fileURLToPath } from 'node:url';
 import {
   buildDefaultCanonicalCatalogSeedSql,
   DEFAULT_CANONICAL_CATALOG_ENTRIES,
-  listD1MigrationSqlFiles,
 } from '../core/cloudflare.js';
 import { createDefaultConfig } from '../core/config.js';
 import { renderPortableMigrationSql } from '../core/sql-portability.js';
@@ -67,7 +68,7 @@ describe.skipIf(!sqlite3)('admin migration 041: the platform canonical field cat
   const apply = (file: string) =>
     run(
       `PRAGMA foreign_keys = ON;\n${renderPortableMigrationSql(
-        readFileSync(join(adminMigrationsDir, file), 'utf-8'),
+        readMigrationSource(adminMigrationsDir, file),
         'sqlite'
       )}`
     );
@@ -84,7 +85,7 @@ describe.skipIf(!sqlite3)('admin migration 041: the platform canonical field cat
   beforeAll(() => {
     templateDir = mkdtempSync(join(tmpdir(), 'authrim-platform-catalog-migration-template-'));
     dbPath = templatePath = join(templateDir, 'admin.db');
-    for (const file of listD1MigrationSqlFiles(adminMigrationsDir)) apply(file);
+    for (const file of ['001_0_5_0_admin_baseline.sql']) apply(file);
   });
 
   afterAll(() => rmSync(templateDir, { recursive: true, force: true }));
@@ -97,13 +98,31 @@ describe.skipIf(!sqlite3)('admin migration 041: the platform canonical field cat
 
   afterEach(() => rmSync(tempDir, { recursive: true, force: true }));
 
-  it('is one of the admin migrations, after the existing ones', () => {
-    const files = listD1MigrationSqlFiles(adminMigrationsDir);
-    expect(files).toContain(MIGRATION);
-    // Later migrations may follow; it must come right after the ones that existed before it.
-    expect(files.indexOf(MIGRATION)).toBe(
-      files.indexOf('040_settings_legacy_import_state.sql') + 1
-    );
+  it('preserves catalog seed ordering in the published bridge', () => {
+    const release = JSON.parse(
+      readMigrationSource(
+        new URL('../../../../migrations/releases/', import.meta.url),
+        '0.5.0.json'
+      )
+    ) as {
+      upgradePaths: Array<{
+        streams: Array<{
+          id: string;
+          files: Array<{ path: string; supersedes: Array<{ path: string }> }>;
+        }>;
+      }>;
+    };
+    const bundle = release.upgradePaths[0].streams.find((stream) => stream.id === 'admin-d1')!
+      .files[0];
+    const sources = bundle.supersedes.map((source) => source.path);
+    const previous = '040_settings_legacy_import_state.sql';
+    expect(sources).toContain(MIGRATION);
+    expect(sources.indexOf(MIGRATION)).toBe(sources.indexOf(previous) + 1);
+    const sql = readFileSync(join(adminMigrationsDir, bundle.path), 'utf8');
+    const before = sql.indexOf('-- Consolidated from ' + previous + '\n');
+    const after = sql.indexOf('-- Consolidated from ' + MIGRATION + '\n');
+    expect(before).toBeGreaterThanOrEqual(0);
+    expect(after).toBeGreaterThan(before);
   });
 
   it('makes exactly the rows that the field definition gives', () => {

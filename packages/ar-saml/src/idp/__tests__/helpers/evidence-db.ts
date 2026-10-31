@@ -3,7 +3,7 @@
  * person and their assurance evidence, so an IAL read runs the production query against the
  * production columns. Counts the reads of the evidence table.
  */
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import type { DatabaseAdapter } from '@authrim/ar-lib-core';
 
 type SqlValue = string | number | null;
@@ -61,9 +61,7 @@ export async function createEvidenceDb(userId: string = EVIDENCE_USER): Promise<
     DatabaseSync: new (path: string) => SqliteDatabase;
   };
   const db = new DatabaseSync(':memory:');
-  for (const file of readdirSync(MIGRATIONS)
-    .filter((name) => name.endsWith('.sql'))
-    .sort()) {
+  for (const file of ['001_0_5_0_core_baseline.sql']) {
     db.exec(renderForSqlite(readFileSync(new URL(file, MIGRATIONS), 'utf8')));
   }
   let reads = 0;

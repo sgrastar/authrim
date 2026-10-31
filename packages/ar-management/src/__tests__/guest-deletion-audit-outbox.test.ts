@@ -1,3 +1,4 @@
+import { readMigrationSource } from '../../../../test/helpers/migration-source.mjs';
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -56,18 +57,15 @@ describe('guest deletion audit reconciliation outbox', () => {
         VALUES ('tenant-a', 'guest-1', 'user', 'guest', NULL);
     `);
     db.exec(
-      readFileSync(
-        new URL('../../../../migrations/core/d1/002_guest_account_lifecycle.sql', import.meta.url),
-        'utf8'
+      readMigrationSource(
+        new URL('../../../../migrations/core/d1/', import.meta.url),
+        '002_guest_account_lifecycle.sql'
       )
     );
     db.exec(
-      readFileSync(
-        new URL(
-          '../../../../migrations/core/d1/004_guest_deletion_audit_outbox.sql',
-          import.meta.url
-        ),
-        'utf8'
+      readMigrationSource(
+        new URL('../../../../migrations/core/d1/', import.meta.url),
+        '004_guest_deletion_audit_outbox.sql'
       )
     );
     adapter = {

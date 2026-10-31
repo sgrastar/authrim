@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { Hono } from 'hono';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter, Env, PreparedStatement } from '@authrim/ar-lib-core';
@@ -89,9 +89,7 @@ const ADMIN_MIGRATIONS = new URL('../../../../migrations/admin/d1/', import.meta
 
 function openAdminStore(): { db: SQLiteDatabase; adapter: DatabaseAdapter } {
   const db = new DatabaseSync(':memory:');
-  for (const file of readdirSync(ADMIN_MIGRATIONS)
-    .filter((name) => name.endsWith('.sql'))
-    .sort()) {
+  for (const file of [`001_0_5_0_admin_baseline.sql`]) {
     db.exec(
       renderPortableMigrationSql(readFileSync(new URL(file, ADMIN_MIGRATIONS), 'utf8'), 'sqlite')
     );

@@ -83,6 +83,44 @@ describe('DirectoryPasswordClient', () => {
     }
   });
 
+  it('calls the injected and the global fetch as plain functions, as Workers require', async () => {
+    // workerd rejects `fetch` called as a method of another object ("Illegal invocation").
+    const receivers: unknown[] = [];
+    const workersFetch = function (this: unknown): Promise<Response> {
+      receivers.push(this);
+      if (this !== undefined && this !== globalThis)
+        throw new TypeError('Illegal invocation: function called with incorrect `this` reference');
+      return Promise.resolve(
+        Response.json({
+          request_id: 'req_123',
+          tenant_id: config.tenantId,
+          connector_id: config.connectorId,
+          result: 'failure',
+          reason: 'invalid_credentials',
+          directory_status: 'ok',
+        })
+      );
+    } as typeof fetch;
+    const input = {
+      username: 'alice',
+      password: 'password',
+      attributeNames: ['uid'],
+      requestId: 'req_123',
+      nonce: 'nonce_123',
+      timestamp: new Date('2026-06-04T12:00:00Z'),
+    };
+
+    await new DirectoryPasswordClient(config, workersFetch).verifyPassword(input);
+    vi.stubGlobal('fetch', workersFetch);
+    try {
+      await new DirectoryPasswordClient(config).verifyPassword(input);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    expect(receivers).toHaveLength(2);
+  });
+
   it('returns invalid credential verdicts as normal results', async () => {
     const fetcher = vi.fn(async () =>
       Response.json({

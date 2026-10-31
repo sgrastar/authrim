@@ -95,6 +95,216 @@ it('uses theme colors for visited deletion notice links and keyboard focus', () 
 });
 
 describe('getHtmlTemplate', () => {
+  it.each([true, false])(
+    'sends a second deletion request only after R2 adoption confirmation: %s',
+    async (confirmed) => {
+      const html = getHtmlTemplate('token', false, 'en', en, SUPPORTED_LOCALES);
+      const source = html.slice(
+        html.indexOf('    async function requestEnvironmentDeletion('),
+        html.indexOf('    async function confirmR2OwnershipAdoption(')
+      );
+      expect(source).toContain('adoptR2Ownership: true');
+      const calls: Array<{ body: Record<string, unknown> }> = [];
+      const candidates = [
+        {
+          name: '<bucket>',
+          binding: 'PUBLIC_ASSETS',
+          creationDate: '2026-08-31T00:00:00.000Z',
+          ownershipId: '11111111-1111-4111-8111-111111111111',
+        },
+      ];
+      const context = vm.createContext({
+        api: async (_path: string, options: { body: Record<string, unknown> }) => {
+          calls.push(options);
+          return calls.length === 1
+            ? { success: false, adoptionCandidates: candidates }
+            : { success: true };
+        },
+        confirmR2OwnershipAdoption: async (rows: unknown) => {
+          expect(rows).toEqual(candidates);
+          return confirmed
+            ? candidates.map(({ name, creationDate, ownershipId }) => ({
+                name,
+                creationDate,
+                ownershipId,
+              }))
+            : null;
+        },
+      });
+      vm.runInContext(source, context);
+      const result = await vm.runInContext(
+        "requestEnvironmentDeletion('test', { deleteR2: true })",
+        context
+      );
+      expect(calls).toHaveLength(confirmed ? 2 : 1);
+      expect(calls[0].body).toEqual({ deleteR2: true });
+      if (confirmed)
+        expect(calls[1].body).toEqual({
+          deleteR2: true,
+          adoptR2Ownership: true,
+          confirmedR2Adoption: candidates.map(({ name, creationDate, ownershipId }) => ({
+            name,
+            creationDate,
+            ownershipId,
+          })),
+        });
+      else expect(result.adoptionCancelled).toBe(true);
+    }
+  );
+
+  it('reopens the adoption dialog for changed candidates before resending confirmed identities', async () => {
+    const html = getHtmlTemplate('token', false, 'en', en, SUPPORTED_LOCALES);
+    const source = html.slice(
+      html.indexOf('    async function requestEnvironmentDeletion('),
+      html.indexOf('    async function confirmR2OwnershipAdoption(')
+    );
+    const original = {
+      name: 'test-public-assets',
+      creationDate: '2026-08-31T00:00:00.000Z',
+      ownershipId: '11111111-1111-4111-8111-111111111111',
+    };
+    const replacement = {
+      ...original,
+      creationDate: '2026-09-01T00:00:00.000Z',
+      ownershipId: '22222222-2222-4222-8222-222222222222',
+    };
+    const dialogs: unknown[] = [];
+    const bodies: unknown[] = [];
+    const context = vm.createContext({
+      api: async (_path: string, options: { body: unknown }) => {
+        bodies.push(options.body);
+        if (bodies.length === 1) return { adoptionCandidates: [original] };
+        if (bodies.length === 2)
+          return { errorCode: 'r2_adoption_candidates_changed', adoptionCandidates: [replacement] };
+        return { success: true };
+      },
+      confirmR2OwnershipAdoption: async (rows: unknown[]) => {
+        dialogs.push(rows);
+        return rows;
+      },
+    });
+    vm.runInContext(source, context);
+    expect(
+      await vm.runInContext("requestEnvironmentDeletion('test', {deleteR2:true})", context)
+    ).toEqual({ success: true });
+    expect(dialogs).toEqual([[original], [replacement]]);
+    expect(bodies).toEqual([
+      { deleteR2: true },
+      { deleteR2: true, adoptR2Ownership: true, confirmedR2Adoption: [original] },
+      { deleteR2: true, adoptR2Ownership: true, confirmedR2Adoption: [replacement] },
+    ]);
+  });
+
+  it.each(['ja', 'en'])(
+    'returns only the identities displayed by the real adoption dialog: %s',
+    async (locale) => {
+      const html = getHtmlTemplate('token', false, 'en', en, SUPPORTED_LOCALES);
+      const source = html.slice(
+        html.indexOf('    async function confirmR2OwnershipAdoption('),
+        html.indexOf('    async function initializeManageOnly(')
+      );
+      type Element = {
+        tag: string;
+        children: Element[];
+        listeners: Record<string, () => void>;
+        textContent: string;
+        returnValue: string;
+        append: (...children: Element[]) => void;
+        appendChild: (child: Element) => void;
+        addEventListener: (event: string, fn: () => void) => void;
+        close: (value: string) => void;
+        showModal: () => void;
+        focus: () => void;
+        remove: () => void;
+        className: string;
+      };
+      const nodes: Element[] = [];
+      const createElement = (tag: string): Element => {
+        const node: Element = {
+          tag,
+          children: [],
+          listeners: {},
+          textContent: '',
+          returnValue: '',
+          className: '',
+          append: (...children) => {
+            node.children.push(...children);
+          },
+          appendChild: (child) => {
+            node.children.push(child);
+          },
+          addEventListener: (event, fn) => {
+            node.listeners[event] = fn;
+          },
+          close: (value) => {
+            node.returnValue = value;
+            node.listeners.close();
+          },
+          showModal: () => {},
+          focus: () => {},
+          remove: () => {},
+        };
+        nodes.push(node);
+        return node;
+      };
+      const candidate = {
+        name: 'test-public-assets',
+        creationDate: '2026-08-31T00:00:00.000Z',
+        ownershipId: '11111111-1111-4111-8111-111111111111',
+        binding: 'PUBLIC_ASSETS',
+        ownershipMarkerKey: 'marker',
+      };
+      const expected = {
+        name: candidate.name,
+        creationDate: candidate.creationDate,
+        ownershipId: candidate.ownershipId,
+      };
+      const context = vm.createContext({
+        _currentLocale: locale,
+        document: { createElement, body: { appendChild: () => {} } },
+        candidates: [candidate],
+      });
+      vm.runInContext(source, context);
+      const result = vm.runInContext('confirmR2OwnershipAdoption(candidates)', context);
+      expect(nodes.find((node) => node.tag === 'li')!.textContent).toContain(
+        candidate.creationDate
+      );
+      candidate.creationDate = '2026-09-01T00:00:00.000Z';
+      nodes.filter((node) => node.tag === 'button')[1].listeners.click();
+      expect(await result).toEqual([expected]);
+    }
+  );
+
+  it('does not ask for R2 adoption when another preflight blocks deletion', async () => {
+    const html = getHtmlTemplate('token', false, 'en', en, SUPPORTED_LOCALES);
+    const source = html.slice(
+      html.indexOf('    async function requestEnvironmentDeletion('),
+      html.indexOf('    async function confirmR2OwnershipAdoption(')
+    );
+    let dialogs = 0;
+    let requests = 0;
+    const context = vm.createContext({
+      api: async () => {
+        requests++;
+        return {
+          success: false,
+          adoptionReady: false,
+          adoptionCandidates: [{ name: 'test-public-assets' }],
+          errors: ['DNS ownership mismatch'],
+        };
+      },
+      confirmR2OwnershipAdoption: async () => {
+        dialogs++;
+        return null;
+      },
+    });
+    vm.runInContext(source, context);
+    const result = await vm.runInContext("requestEnvironmentDeletion('test',{})", context);
+    expect(dialogs).toBe(0);
+    expect(requests).toBe(1);
+    expect(result.errors).toEqual(['DNS ownership mismatch']);
+  });
+
   it.each(['unregistered', 'unknown', 'registered', 'request_failed'])(
     'shows administrator status and permits registration only when confirmed absent: %s',
     async (state) => {
@@ -404,6 +614,292 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain("result?.errorCode === 'setup_operation_in_progress'");
     expect(html).toContain("result.error = t('web.status.operationInProgress')");
     expect(html).toContain(".replaceAll('⚠️', t('web.status.warning'))");
+  });
+
+  it('explains a lost Setup server connection instead of showing the raw fetch error', async () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'ja',
+      ja as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+    const start = html.indexOf('async function api(endpoint');
+    const end = html.indexOf('function apiErrorMessages', start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const run = async (fetchImpl: () => Promise<unknown>) => {
+      const context = vm.createContext({
+        SESSION_TOKEN: 'session-token',
+        inFlightMutationRequests: 0,
+        fetch: fetchImpl,
+        t: (key: string) => key,
+      });
+      vm.runInContext(`${html.slice(start, end)}\nglobalThis.api = api;`, context);
+      return (context as { api: (endpoint: string, options?: object) => Promise<unknown> }).api(
+        '/email/configure',
+        { method: 'POST', body: {} }
+      );
+    };
+
+    // Safari reports a refused or reset connection as TypeError("Load failed").
+    await expect(run(() => Promise.reject(new TypeError('Load failed')))).rejects.toThrow(
+      'web.status.serverUnreachable'
+    );
+    const abort = Object.assign(new Error('aborted'), { name: 'AbortError' });
+    await expect(run(() => Promise.reject(abort))).rejects.toThrow('aborted');
+    await expect(
+      run(() => Promise.resolve({ json: async () => ({ success: true }) }))
+    ).resolves.toEqual({ success: true });
+    expect(en['web.status.serverUnreachable']).toContain('Setup server');
+    expect(ja['web.status.serverUnreachable']).toContain('Setup サーバー');
+  });
+
+  it('names the resource being created instead of repeating the task counter', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'ja',
+      ja as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+    const start = html.indexOf('function parseProgressMessage');
+    const end = html.indexOf('// Safe DOM element creation helpers', start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const calls: Array<[string, number, number, string | undefined]> = [];
+    const context = vm.createContext({
+      t: (key: string) => key,
+      stopProvisionOraTimer: () => undefined,
+      updateProgressUI: (...args: [string, number, number, string | undefined]) => calls.push(args),
+    });
+    vm.runInContext(
+      `${html.slice(start, end)}\nglobalThis.tracker = createProvisionProgressTracker(8);`,
+      context
+    );
+    const tracker = (context as { tracker: { handle: (message: string) => void } }).tracker;
+
+    tracker.handle('\n📊 D1 Databases (0/6)');
+    tracker.handle(' ⏳ Creating: test-authrim-core-db...');
+    tracker.handle('Scanning R2 buckets...');
+
+    expect(calls.map((call) => call[3])).toEqual([
+      'D1 Databases 0/6',
+      'Creating test-authrim-core-db... · D1 Databases 0/6',
+    ]);
+    // A line that names no task leaves the previous task text on screen.
+    expect(calls).toHaveLength(2);
+
+    // Count-less headers replace the previous group, so a KV count does not outlive KV.
+    tracker.handle('🗄️ KV Namespaces (9/9) ✓');
+    tracker.handle('📨 Queues');
+    tracker.handle(' ⏳ Creating: test-authrim-queue...');
+    tracker.handle('📁 R2 Buckets');
+    tracker.handle(' ⏳ Creating: test-authrim-migration-releases...');
+    expect(calls.slice(2).map((call) => call[3])).toEqual([
+      'KV Namespaces 9/9',
+      'Queues',
+      'Creating test-authrim-queue... · Queues',
+      'R2 Buckets',
+      'Creating test-authrim-migration-releases... · R2 Buckets',
+    ]);
+
+    // After a failure, a poll that was already in flight must not repaint the panel as running.
+    (context as { tracker: { fail: () => void } }).tracker.fail();
+    const before = calls.length;
+    tracker.handle(' ⏳ Creating: test-authrim-late...');
+    expect(calls).toHaveLength(before);
+    // Never the "Task N / M running" string that the counter line already shows.
+    expect(calls.map((call) => call[3]).join('|')).not.toContain('web.provision.runningTasks');
+  });
+
+  it('shows the deploy-style spinner on the provisioning task line', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'ja',
+      ja as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    // The spinner used to be an `sr-control` element, which is visually hidden.
+    expect(html).toContain('id="provision-spinner" class="ora-frame"');
+    expect(html).not.toContain('sr-control" id="provision-spinner"');
+    expect(SETUP_WEB_UI_STYLE).toContain('.provision-progress-panel .ora-frame');
+  });
+
+  it('runs the provisioning spinner until the success response and stops it on error or reset', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'ja',
+      ja as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+    const timerSource = html.match(
+      /let provisionOraTimer = null;[\s\S]*?(?=\n\s{4}function updateProgressBarVisual)/u
+    )?.[0];
+    const trackerSource = html.match(
+      /function createProvisionProgressTracker\(totalResources\) \{[\s\S]*?(?=\n\s{4}\/\/ Safe DOM element creation helpers)/u
+    )?.[0];
+    expect(timerSource).toBeTruthy();
+    expect(trackerSource).toBeTruthy();
+
+    const spinner = { textContent: '' };
+    const line = { className: '' };
+    const intervals = new Set<number>();
+    let nextId = 1;
+    let tick: (() => void) | undefined;
+    const context = vm.createContext({
+      WEB_ORA_FRAMES: ['a', 'b', 'c'],
+      t: (key: string) => key,
+      parseProgressMessage: () => null,
+      updateProgressUI: () => undefined,
+      document: {
+        getElementById: (id: string) =>
+          id === 'provision-spinner'
+            ? spinner
+            : id === 'provision-current-message-line'
+              ? line
+              : null,
+      },
+      window: {
+        matchMedia: () => ({ matches: false }),
+        setInterval: (callback: () => void) => {
+          tick = callback;
+          intervals.add(nextId);
+          return nextId++;
+        },
+        clearInterval: (id: number) => intervals.delete(id),
+      },
+    });
+    vm.runInContext(
+      `${timerSource}\n${trackerSource}\nglobalThis.api = { start: startProvisionOraTimer, stop: stopProvisionOraTimer, create: createProvisionProgressTracker };`,
+      context
+    );
+    const api = (
+      context as {
+        api: {
+          start: () => void;
+          stop: (frame?: string, state?: string) => void;
+          create: (total: number) => {
+            handle: (message: string) => void;
+            complete: () => void;
+            fail: () => void;
+          };
+        };
+      }
+    ).api;
+
+    // Starting twice never leaves two timers behind.
+    api.start();
+    api.start();
+    expect(intervals.size).toBe(1);
+    expect(line.className).toBe('deploy-current-message running');
+    tick?.();
+    expect(spinner.textContent).toBe('b');
+
+    // The completion log line is not the end: config and lock writes follow it.
+    const tracker = api.create(8);
+    tracker.handle('✅ Provisioning complete!');
+    expect(intervals.size).toBe(1);
+    expect(line.className).toBe('deploy-current-message running');
+
+    // The success response ends the spinner on a green check.
+    tracker.complete();
+    expect(intervals.size).toBe(0);
+    expect(spinner.textContent).toBe('✓');
+    expect(line.className).toBe('deploy-current-message complete');
+
+    // A retry restarts it cleanly, and an error stops it on a cross.
+    api.start();
+    expect(intervals.size).toBe(1);
+    api.stop('✕', 'error');
+    expect(intervals.size).toBe(0);
+    expect(spinner.textContent).toBe('✕');
+    expect(line.className).toBe('deploy-current-message error');
+
+    // Wiring: failure and reset reach the stop helper.
+    expect(html).toContain('provisionProgress.complete();');
+    expect(html).toContain("markProgressBarError('provision');");
+    // updateProgressUI must leave the provisioning spinner to the helpers above.
+    expect(html).toContain("if (spinner && prefix !== 'provision' && prefix !== 'delete') {");
+    expect(html).toContain('provisionProgress.fail();');
+    expect(html).toContain("if (prefix === 'provision') stopProvisionOraTimer('✕', 'error');");
+    expect(html).toContain("if (prefix === 'provision') stopProvisionOraTimer('⠋', 'running');");
+  });
+
+  it('stops the deletion spinner when there was nothing to delete or the deletion failed', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'ja',
+      ja as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+    const source = html.match(
+      /function updateProgressBarVisual[\s\S]*?(?=\n\s{4}function renderDeploymentSnapshot)/u
+    )?.[0];
+    expect(source).toBeTruthy();
+    const elements = new Map<string, Record<string, unknown>>();
+    const element = (id: string) => {
+      if (!elements.has(id))
+        elements.set(id, {
+          style: { display: 'block', width: '0%' },
+          textContent: '',
+          classList: { toggle: () => undefined },
+          closest: () => null,
+        });
+      return elements.get(id)!;
+    };
+    const context = vm.createContext({
+      document: { getElementById: element },
+      stopProvisionOraTimer: () => undefined,
+    });
+    vm.runInContext(
+      `${source}\nglobalThis.api = { finish: finishProgressUI, fail: markProgressBarError };`,
+      context
+    );
+    const api = (context as { api: { finish: (p: string) => void; fail: (p: string) => void } })
+      .api;
+
+    // 0/0 is what a deletion with nothing left to remove reports.
+    api.finish('delete');
+    expect((element('delete-spinner').style as { display: string }).display).toBe('none');
+    expect(element('delete-percent').textContent).toBe('100');
+
+    (element('delete-spinner').style as { display: string }).display = 'block';
+    api.fail('delete');
+    expect((element('delete-spinner').style as { display: string }).display).toBe('none');
+
+    // Other operations keep their own spinner handling.
+    api.finish('deploy');
+    expect((element('deploy-spinner').style as { display: string }).display).toBe('block');
+
+    // The last resource finishing does not end a deletion: the spinner keeps going until the
+    // POST response, and a late poll response cannot repaint a finished run.
+    const progressSource = html.match(
+      /function updateProgressUI\(prefix[\s\S]*?(?=\n\s{4}\/\/ Parse progress message)/u
+    )?.[0];
+    expect(progressSource).toBeTruthy();
+    const spinnerEl = { style: { display: 'block' } };
+    const progressContext = vm.createContext({
+      document: {
+        getElementById: (id: string) => (id === 'delete-spinner' ? spinnerEl : null),
+      },
+      t: (key: string) => key,
+      updateProgressBarVisual: () => undefined,
+    });
+    vm.runInContext(`${progressSource}\nglobalThis.update = updateProgressUI;`, progressContext);
+    (progressContext as { update: (...args: unknown[]) => void }).update('delete', 1, 1);
+    expect(spinnerEl.style.display).toBe('block');
+    expect(html).toContain('if (deleteRunFinished) return;');
+    expect(html.match(/deleteRunFinished = true;/gu)).toHaveLength(2);
+
+    // Both success branches settle the bar after the final update.
+    expect(html.match(/finishProgressUI\('delete'\);/gu)).toHaveLength(2);
   });
 
   it('shows retryable deletion inventory errors without an empty error alert', () => {
@@ -812,7 +1308,7 @@ describe('getHtmlTemplate', () => {
     expect(html).not.toContain('If every administrator is locked out');
     expect(html).not.toContain('管理者が全員ロックアウト');
     expect(html).toContain('class="setup-recap"');
-    expect(html).toContain('data-i18n="web.common.setupTool">Setup Tool</span> v0.4.2');
+    expect(html).toContain('data-i18n="web.common.setupTool">Setup Tool</span> v0.5.0');
     expect(html).not.toContain('Mock list');
     expect(html).not.toContain('v0.9.4');
     expect(html).not.toContain('4分12秒で完了');
@@ -1371,6 +1867,7 @@ describe('getHtmlTemplate', () => {
         progressUpdates.push({ current, total, task });
       },
       parseProgressMessage: () => null,
+      stopProvisionOraTimer: () => undefined,
       t: (key: string) => key,
     });
     vm.runInContext(

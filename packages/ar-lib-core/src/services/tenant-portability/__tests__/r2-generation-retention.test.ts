@@ -1,6 +1,7 @@
-import { readFileSync } from 'node:fs';
+import { readMigrationSource } from '../../../../../../test/helpers/migration-source.mjs';
+
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import { fileURLToPath } from 'node:url';
+
 import { expect, it } from 'vitest';
 import type {
   DatabaseAdapter,
@@ -17,14 +18,9 @@ import {
   retireDeletedLogObjectGeneration,
 } from '../r2-generation-retention';
 
-const migration = readFileSync(
-  fileURLToPath(
-    new URL(
-      '../../../../../../migrations/admin/d1/033_tenant_backup_r2_generation_retention.sql',
-      import.meta.url
-    )
-  ),
-  'utf8'
+const migration = readMigrationSource(
+  new URL('../../../../../../migrations/admin/d1/', import.meta.url),
+  '033_tenant_backup_r2_generation_retention.sql'
 );
 
 function parameters(values: unknown[]): SQLInputValue[] {

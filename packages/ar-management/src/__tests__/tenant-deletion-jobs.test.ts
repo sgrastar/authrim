@@ -318,6 +318,12 @@ describe('tenant deletion jobs', () => {
       'DELETE FROM tenant_settings_documents WHERE tenant_id = ?',
       ['target-tenant']
     );
+    // Admin's removed business table must never be targeted; an engine sentinel may exist instead.
+    for (const execute of [mockControlTx.execute, mockControlAdapter.execute]) {
+      expect(
+        execute.mock.calls.some(([sql]) => /\btenant_database_migration_state\b/u.test(String(sql)))
+      ).toBe(false);
+    }
     expect(mockAdapter.transaction).not.toHaveBeenCalled();
     expect(mockAdapter.execute).toHaveBeenCalledWith(
       "UPDATE admin_jobs SET status = 'completed', completed_at = ?, updated_at = ?, progress = ? WHERE id = ? AND tenant_id = ?",

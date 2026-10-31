@@ -1,6 +1,7 @@
+import { readRenderedMigrationSql } from '../../../../../../test/helpers/migration-source.mjs';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+
 import type { DatabaseAdapter } from '../../../db/adapter';
 import { DatabaseTenantBackupRestorePlanInventory } from '../restore-plan-inventory';
 
@@ -18,17 +19,11 @@ const lease = {
 beforeEach(() => {
   db = new DatabaseSync(':memory:');
   db.exec('PRAGMA foreign_keys=ON');
-  for (const file of [
-    '003_tenant_backup_operations.sql',
-    '004_tenant_backup_validation_index.sql',
-    '010_tenant_backup_execution_inventory.sql',
-    '019_tenant_backup_input_validations.sql',
-    '024_tenant_backup_restore_plan_inventory.sql',
-  ])
+  for (const file of ['001_0_5_0_admin_baseline.sql'])
     db.exec(
-      readFileSync(
-        new URL(`../../../../../../migrations/admin/d1/${file}`, import.meta.url),
-        'utf8'
+      readRenderedMigrationSql(
+        new URL(`../../../../../../migrations/admin/d1/`, import.meta.url),
+        `${file}`
       )
     );
   now = 100;

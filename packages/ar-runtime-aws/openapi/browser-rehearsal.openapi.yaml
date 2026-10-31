@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim Synthetic Browser SAML Rehearsal
-  version: 0.4.2
+  version: 0.5.0
   description: >-
     An isolated, explicitly enabled synthetic service provider for browser testing.
     It shares one pinned HTTPS origin with the test IdP and is not a production SP.

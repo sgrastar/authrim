@@ -212,11 +212,11 @@ const TABLE_GROUPS: Partial<
       log_iceberg_outbox log_iceberg_export_batches log_iceberg_read_watermarks
       log_iceberg_erasure_artifacts log_iceberg_publications log_sign_in_attempt_receipts
       log_iceberg_retention_jobs log_iceberg_retention_artifacts log_iceberg_backup_seen log_iceberg_restore_holds log_iceberg_restore_activations
-      authrim_migrations migration_metadata
+      authrim_migrations migration_metadata tenant_database_migration_state
       admin_audit_coverage_status admin_search_projections federation_metadata_refresh_jobs
       identifier_replacement_scheduler_state mapping_activation_leases projection_jobs
       projection_outbox provider_reprojection_jobs provider_reprojection_tenant_state scheduled_task_leases
-      tenant_database_active_pointers tenant_database_migration_state tenant_database_probe_results tenant_database_registry
+      tenant_database_active_pointers tenant_database_probe_results tenant_database_registry
       tenant_database_stats tenant_discovery_indexes tenant_placement_migration_jobs tenant_provisioning_operation_steps
       tenant_provisioning_operations tenant_runtime_registry_snapshots
     `,

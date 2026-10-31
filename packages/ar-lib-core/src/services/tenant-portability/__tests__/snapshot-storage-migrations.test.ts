@@ -1,5 +1,9 @@
+import {
+  readMigrationSource,
+  listMigrationSourceFiles,
+} from '../../../../../../test/helpers/migration-source.mjs';
 import { DatabaseSync } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+
 import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 import { inventoryBackupSchemas } from '../../../../../../scripts/tenant-backup/schema-inventory';
@@ -7,9 +11,23 @@ import { renderPortableMigrationSql } from '../../../migrations/sql-portability'
 import { SQLITE_SNAPSHOT_SCHEMA } from '../sqlite-snapshot';
 
 const root = fileURLToPath(new URL('../../../../../../', import.meta.url));
-const streams = inventoryBackupSchemas(root).inspectedStreams.filter((stream) =>
-  stream.migrations.some((m) => m.file.endsWith('_tenant_backup_snapshot_storage.sql'))
-);
+const streams = inventoryBackupSchemas(root)
+  .inspectedStreams.filter((stream) =>
+    stream.tables.some((table) => table.name === 'tenant_backup_snapshots')
+  )
+  .map((stream) => {
+    const directory = 'migrations/' + stream.id.replace(/-(d1|postgresql)$/u, '/$1');
+    return {
+      ...stream,
+      migrations: listMigrationSourceFiles(root + directory).map((file) => ({
+        file: directory + '/' + file,
+      })),
+    };
+  });
+function source(file: string): string {
+  const index = file.lastIndexOf('/');
+  return readMigrationSource(root + file.slice(0, index), file.slice(index + 1));
+}
 function objects(db: DatabaseSync) {
   return db
     .prepare(
@@ -38,13 +56,13 @@ it.each(streams)(
         )
       );
       for (const migration of stream.migrations.filter((m) => !additions.includes(m)))
-        db.exec(renderPortableMigrationSql(readFileSync(root + migration.file, 'utf8'), 'sqlite'));
+        db.exec(renderPortableMigrationSql(source(migration.file), 'sqlite'));
       db.exec(
         "CREATE TABLE migration_fixture(id TEXT PRIMARY KEY NOT NULL,value TEXT DEFAULT 'seed'); INSERT INTO migration_fixture(id) VALUES ('preserved'); CREATE INDEX migration_fixture_value ON migration_fixture(value); CREATE TRIGGER migration_fixture_guard BEFORE DELETE ON migration_fixture BEGIN SELECT RAISE(ABORT,'fixture_keep'); END;"
       );
       const before = objects(db);
       db.exec('BEGIN');
-      for (const migration of additions) db.exec(readFileSync(root + migration.file, 'utf8'));
+      for (const migration of additions) db.exec(source(migration.file));
       db.exec('COMMIT');
       const after = objects(db);
       expect(after.filter((row) => before.some((old) => old.name === row.name))).toEqual(before);

@@ -18,10 +18,12 @@ import {
   LogArchiveApi,
   LOG_ARCHIVE_SCHEMA_DIGEST,
   planLogArchive,
+  preflightLogArchive,
   prepareLogArchiveDeletion,
   provisionLogArchive,
 } from '../core/log-archive.js';
 import {
+  loadIssuedLogArchiveAccountId,
   loadLogArchiveSecrets,
   publishLogArchiveSecrets,
   stageLogArchiveSecrets,
@@ -49,6 +51,7 @@ beforeEach(() => {
 });
 afterEach(async () => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   for (const directory of directories.splice(0))
     await rm(directory, { recursive: true, force: true });
 });
@@ -483,6 +486,19 @@ describe('log archive setup contract', () => {
     free.overrides.set('subscriptions', { result: [] });
     await expect(provisionLogArchive(free.options)).rejects.toThrow('workers_paid_required');
     expect(free.calls.some((call) => call.method !== 'GET')).toBe(false);
+    const unreadable = fixture('pipeline');
+    unreadable.overrides.set('subscriptions', { status: 403 });
+    const progress: string[] = [];
+    await expect(
+      preflightLogArchive({ ...unreadable.options, onProgress: (m) => progress.push(m) })
+    ).resolves.toBeUndefined();
+    expect(progress.join('\n')).toContain('Workers Paid could not be confirmed');
+    const unauthorized = fixture('pipeline');
+    unauthorized.overrides.set('subscriptions', { status: 401 });
+    await expect(preflightLogArchive(unauthorized.options)).resolves.toBeUndefined();
+    const unavailable = fixture('pipeline');
+    unavailable.overrides.set('subscriptions', { status: 500 });
+    await expect(preflightLogArchive(unavailable.options)).rejects.toThrow('request_failed');
     const denied = fixture('pipeline');
     denied.overrides.set('tokens/permission_groups?scope=com.cloudflare.api.account', {
       status: 403,
@@ -503,6 +519,65 @@ describe('log archive setup contract', () => {
     });
     await expect(provisionLogArchive(broad.options)).rejects.toThrow('not_read_only');
     expect(broad.calls.some((call) => call.method !== 'GET')).toBe(false);
+  });
+
+  it('can confirm token activity without reading token policies the login cannot inspect', async () => {
+    const f = fixture('scheduled');
+    f.overrides.set('tokens/permission_groups?scope=com.cloudflare.api.account', { status: 403 });
+    f.overrides.set('tokens/read-id', { status: 403 });
+    f.overrides.set('tokens/write-id', { status: 403 });
+    await expect(
+      f.options.api.verifyCatalogCredentials(tokenRead, tokenWrite, undefined, {
+        inspectPolicies: false,
+      })
+    ).resolves.toBeUndefined();
+    expect(f.calls.map((call) => call.path)).toEqual(['tokens/verify', 'tokens/verify']);
+    await expect(f.options.api.verifyCatalogCredentials(tokenRead, tokenWrite)).rejects.toThrow(
+      'permission_or_subscription'
+    );
+    await expect(
+      f.options.api.verifyCatalogCredentials(tokenRead, tokenRead, undefined, {
+        inspectPolicies: false,
+      })
+    ).rejects.toThrow('distinct_catalog_token_ids');
+  });
+
+  it('skips the policy read in deploy preflight only for tokens Setup issued for this account', async () => {
+    implemented.push('scheduled');
+    const f = fixture('scheduled');
+    f.overrides.set('tokens/permission_groups?scope=com.cloudflare.api.account', { status: 403 });
+    await expect(preflightLogArchive(f.options)).rejects.toThrow('permission_or_subscription');
+    await expect(
+      preflightLogArchive({ ...f.options, catalogPolicyVerified: true })
+    ).resolves.toBeUndefined();
+    // The issuance evidence, not the caller's say-so, decides who may skip.
+    const directory = await mkdtemp(join(process.cwd(), '.test-log-setup-'));
+    directories.push(directory);
+    const secrets = { readToken: tokenRead, writeToken: tokenWrite };
+    expect(await loadIssuedLogArchiveAccountId(directory, 'demo', 'scheduled')).toBeUndefined();
+    await stageLogArchiveSecrets(directory, 'demo', secrets, { accountId, mode: 'scheduled' });
+    expect(await loadIssuedLogArchiveAccountId(directory, 'demo', 'scheduled')).toBeUndefined();
+    await stageLogArchiveSecrets(directory, 'demo', secrets, {
+      accountId,
+      mode: 'scheduled',
+      issuance: {
+        readTokenId: '2'.repeat(32),
+        writeTokenId: '3'.repeat(32),
+        bootstrapTokenId: 'b'.repeat(32),
+        bootstrapTokenFingerprint: 'f'.repeat(64),
+      },
+    });
+    expect(await loadIssuedLogArchiveAccountId(directory, 'demo', 'scheduled')).toBe(accountId);
+    expect(await loadIssuedLogArchiveAccountId(directory, 'demo', 'pipeline')).toBeUndefined();
+    vi.stubEnv('LOG_ARCHIVE_CATALOG_READ_TOKEN', 'override-read');
+    expect(await loadIssuedLogArchiveAccountId(directory, 'demo', 'scheduled')).toBeUndefined();
+    vi.unstubAllEnvs();
+    await writeFile(
+      join(directory, '.authrim/demo/pending-log-archive-secrets.json'),
+      JSON.stringify({ readToken: 'swapped', writeToken: tokenWrite }),
+      { mode: 0o600 }
+    );
+    expect(await loadIssuedLogArchiveAccountId(directory, 'demo', 'scheduled')).toBeUndefined();
   });
 
   it('requires an explicitly usable subscription state instead of accepting cancelled or unknown states', async () => {

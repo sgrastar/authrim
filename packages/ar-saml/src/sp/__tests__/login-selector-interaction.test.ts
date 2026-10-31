@@ -5,7 +5,7 @@
  * captured context with the real HMAC recorder; the separate ACS tests cover consumption.
  */
 import { createRequire } from 'node:module';
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -88,9 +88,7 @@ describe('SAML selector preserves only a revalidated Flow association', () => {
     vi.clearAllMocks();
     db = new DatabaseSync(':memory:');
     const migrations = new URL('../../../../../migrations/core/d1/', import.meta.url);
-    for (const name of readdirSync(migrations)
-      .filter((s) => s.endsWith('.sql'))
-      .sort())
+    for (const name of ['001_0_5_0_core_baseline.sql'])
       db.exec(
         renderPortableMigrationSql(readFileSync(new URL(name, migrations), 'utf8'), 'sqlite')
       );

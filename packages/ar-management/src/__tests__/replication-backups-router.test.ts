@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readRenderedMigrationSql } from '../../../../test/helpers/migration-source.mjs';
+
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ADMIN_PERMISSIONS, type AdminAuthContext } from '@authrim/ar-lib-core';
@@ -100,12 +101,9 @@ beforeEach(() => {
   vi.resetAllMocks();
   db = new DatabaseSync(':memory:');
   db.exec(
-    readFileSync(
-      new URL(
-        '../../../../migrations/admin/d1/052_tenant_backup_replication_grants.sql',
-        import.meta.url
-      ),
-      'utf8'
+    readRenderedMigrationSql(
+      new URL('../../../../migrations/admin/d1/', import.meta.url),
+      '001_0_5_0_admin_baseline.sql'
     )
   );
   adapter = {

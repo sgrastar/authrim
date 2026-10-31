@@ -1,5 +1,6 @@
+import { readMigrationSource } from '../../../../../test/helpers/migration-source.mjs';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '../../db/adapter';
 import { GuestLifecycleRepository } from '../../repositories/guest-lifecycle';
@@ -24,9 +25,9 @@ describe('guest upgrade admission and crash recovery', () => {
       ['pii', 'guest_upgrade_operations'],
     ]) {
       db.exec(
-        readFileSync(
-          new URL(`../../../../../migrations/${family}/d1/002_${name}.sql`, import.meta.url),
-          'utf8'
+        readMigrationSource(
+          new URL(`../../../../../migrations/${family}/d1/`, import.meta.url),
+          `002_${name}.sql`
         )
       );
     }

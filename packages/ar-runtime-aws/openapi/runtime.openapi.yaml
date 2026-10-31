@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim AWS SAML Runtime
-  version: 0.4.2
+  version: 0.5.0
   description: >-
     Readiness and browser login pages owned by the AWS SAML disaster recovery runtime.
     The current login profile supports passkeys. Authentication and SAML operations

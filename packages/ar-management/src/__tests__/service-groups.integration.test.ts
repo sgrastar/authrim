@@ -1,3 +1,4 @@
+import { readRenderedMigrationSql } from '../../../../test/helpers/migration-source.mjs';
 import { logProducerFixture } from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
 import { CanonicalRuntimeUserWriter, CanonicalIdentityRepository } from '@authrim/ar-lib-core';
 import { Hono } from 'hono';
@@ -9,7 +10,7 @@ import {
   serviceGroupSubject,
   serviceGroupMembers,
 } from '../service-groups';
-import { readFileSync } from 'node:fs';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DatabaseSync, type SQLiteDatabase, type SQLInputValue } from './test-sqlite';
 import type { DatabaseAdapter } from '@authrim/ar-lib-core';
@@ -33,28 +34,13 @@ function database(family: 'core' | 'pii') {
   const db = new DatabaseSync(':memory:');
   databases.push(db);
   const files =
-    family === 'core'
-      ? [
-          '001_0_4_0_core_baseline.sql',
-          '002_guest_account_lifecycle.sql',
-          '003_account_registration_state.sql',
-          '005_account_webhook_outbox.sql',
-          '006_webhook_payload_fields.sql',
-          '007_service_dynamic_groups.sql',
-          '033_log_iceberg_core_publications.sql',
-        ]
-      : [
-          '001_0_4_0_pii_baseline.sql',
-          '003_account_webhook_outbox.sql',
-          '004_account_webhook_snapshots.sql',
-          '005_service_dynamic_groups.sql',
-        ];
+    family === 'core' ? ['001_0_5_0_core_baseline.sql'] : ['001_0_5_0_pii_baseline.sql'];
   for (const file of files)
     db.exec(
       renderPortableMigrationSql(
-        readFileSync(
-          new URL(`../../../../migrations/${family}/d1/${file}`, import.meta.url),
-          'utf8'
+        readRenderedMigrationSql(
+          new URL(`../../../../migrations/${family}/d1/`, import.meta.url),
+          `${file}`
         ),
         'sqlite'
       )

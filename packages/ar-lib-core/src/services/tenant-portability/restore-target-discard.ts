@@ -65,6 +65,7 @@ export const TENANT_DISCARD_UNPLANNED_TABLES: Readonly<
   core: {
     authrim_migrations: null,
     migration_metadata: null,
+    // Preserve this database's engine sentinel; it has no tenant-owned restore data.
     tenant_database_migration_state: null,
     authrim_control_plane_shard_metadata: null,
     refresh_token_shard_configs: null,
@@ -111,6 +112,7 @@ export const TENANT_DISCARD_UNPLANNED_TABLES: Readonly<
   pii: {
     authrim_migrations: null,
     migration_metadata: null,
+    // Preserve this database's engine sentinel; it has no tenant-owned restore data.
     tenant_database_migration_state: null,
     authrim_control_plane_shard_metadata: null,
     tenant_placement_migration_captures: null,

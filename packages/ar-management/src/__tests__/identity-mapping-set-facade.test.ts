@@ -51,7 +51,6 @@ import {
 } from './helpers/admin-authority-fixture';
 import { insertOAuthClient, insertTenant, openCoreDatabase } from './helpers/core-database';
 import { seedDestinationProfile } from './helpers/identity-mapping-seed';
-import type { SQLiteDatabase } from './test-sqlite';
 
 /**
  * The Mapping Set facade (`/api/admin/identity-mapping/sets`) on the real Admin schema, the real
@@ -259,20 +258,7 @@ async function setup(options: { bindToAuthority?: boolean } = {}) {
       adminIdentityMappingSetDeleteHandler
     );
   }, envExtras);
-  for (const file of [
-    '028_tenant_settings_documents.sql',
-    '038_tenant_settings_reconciled_at.sql',
-    '039_platform_settings_documents.sql',
-    '040_settings_legacy_import_state.sql',
-  ]) {
-    context.db.exec(readFileSync(resolve(REPO_ROOT, `migrations/admin/d1/${file}`), 'utf8'));
-  }
-  context.db.exec(
-    readFileSync(
-      resolve(REPO_ROOT, 'migrations/admin/d1/041_platform_default_canonical_catalog.sql'),
-      'utf8'
-    ).replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
-  );
+
   // Every request goes through the faulty adapter; the repository the test itself uses does not.
   envExtras.DB_ADMIN = faultyAdapter(context.adapter, faults);
   const repository = new IdentityMappingControlPlaneRepository(context.adapter);

@@ -4,12 +4,14 @@ type MockSpinner = {
   text: string;
   isSpinning: boolean;
   start: ReturnType<typeof vi.fn>;
+  stop: ReturnType<typeof vi.fn>;
   succeed: ReturnType<typeof vi.fn>;
   fail: ReturnType<typeof vi.fn>;
   warn: ReturnType<typeof vi.fn>;
 };
 
 const mocks = vi.hoisted(() => ({
+  confirm: vi.fn(),
   isWranglerInstalled: vi.fn(),
   checkAuth: vi.fn(),
   confirmEnvironmentObservedForDeletion: vi.fn(),
@@ -49,12 +51,15 @@ const mocks = vi.hoisted(() => ({
   oraSpinners: [] as MockSpinner[],
 }));
 
+vi.mock('@inquirer/prompts', () => ({ confirm: mocks.confirm }));
+
 vi.mock('ora', () => ({
   default: vi.fn(() => {
     const spinner = {
       text: '',
       isSpinning: true,
       start: vi.fn(),
+      stop: vi.fn(),
       succeed: vi.fn(),
       fail: vi.fn(),
       warn: vi.fn(),
@@ -93,7 +98,8 @@ vi.mock('../core/paths.js', () => ({
   findAuthrimBaseDir: mocks.findAuthrimBaseDir,
 }));
 
-vi.mock('../core/lock.js', () => ({
+vi.mock('../core/lock.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../core/lock.js')>()),
   acquireDeployConfigLock: mocks.acquireDeployConfigLock,
   acquireEnvironmentOperationForEnvironment: mocks.acquireEnvironmentOperationForEnvironment,
   reconcileLockAfterResourceDeletion: mocks.reconcileLockAfterResourceDeletion,
@@ -142,6 +148,87 @@ describe('CLI environment deletion', () => {
       adopted: [],
     }));
     mocks.inspectLocalEnvironmentState.mockReturnValue({ exists: false, paths: [] });
+  });
+
+  it.each([true, false])(
+    'passes explicit R2 adoption and confirms candidates (yes=%s)',
+    async (yes) => {
+      const candidate = {
+        name: 'test-public-assets',
+        binding: 'PUBLIC_ASSETS',
+        environment: 'test',
+        creationDate: '2026-08-31T00:00:00.000Z',
+        ownershipId: '11111111-1111-4111-8111-111111111111',
+        ownershipMarkerKey:
+          '__authrim_setup__/ownership-v1-11111111-1111-4111-8111-111111111111.json',
+      };
+      mocks.confirm.mockResolvedValue(true);
+      mocks.acquireEnvironmentOperationForEnvironment.mockResolvedValue({
+        lock: null,
+        lockFilePath: '/workspace/.authrim/test/lock.json',
+        release: mocks.release,
+      });
+      mocks.deleteEnvironment.mockImplementationOnce(async (options) => {
+        expect(options.adoptR2Ownership).toBe(true);
+        expect(await options.onR2OwnershipAdoption([candidate])).toBe(true);
+        await options.onR2OwnershipAdoptionPersist([candidate]);
+        expect(mocks.saveLockFile).toHaveBeenCalledWith(
+          expect.objectContaining({
+            env: 'test',
+            r2: {
+              PUBLIC_ASSETS: {
+                name: candidate.name,
+                creationDate: candidate.creationDate,
+                ownershipMarkerKey: candidate.ownershipMarkerKey,
+                ownershipId: candidate.ownershipId,
+              },
+            },
+          }),
+          '/workspace/.authrim/test/lock.json'
+        );
+        return {
+          success: true,
+          completion: 'complete',
+          environmentEmpty: false,
+          deleted: { workers: [], d1: [], kv: [], queues: [], r2: [], pages: [] },
+          manualR2: [],
+          errors: [],
+        };
+      });
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        await deleteCommand({ env: 'test', yes, adoptR2Ownership: true });
+        expect(mocks.confirm).toHaveBeenCalledTimes(yes ? 0 : 2);
+        expect(log.mock.calls.flat().join(' ')).toContain(candidate.ownershipId);
+      } finally {
+        log.mockRestore();
+      }
+    }
+  );
+
+  it('never enables R2 adoption with --yes alone', async () => {
+    mocks.deleteEnvironment.mockImplementationOnce(async (options) => {
+      expect(options.adoptR2Ownership).toBe(false);
+      return {
+        success: false,
+        completion: 'failed',
+        environmentEmpty: false,
+        deleted: { workers: [], d1: [], kv: [], queues: [], r2: [], pages: [] },
+        manualR2: [],
+        errors: ['unowned'],
+      };
+    });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const exit = vi.spyOn(process, 'exit').mockImplementation(() => {
+      throw new Error('exit');
+    });
+    try {
+      await expect(deleteCommand({ env: 'test', yes: true })).rejects.toThrow('exit');
+    } finally {
+      log.mockRestore();
+      exit.mockRestore();
+    }
+    expect(mocks.confirm).not.toHaveBeenCalled();
   });
 
   it('deletes config-and-intent-only interrupted provisioning state', async () => {

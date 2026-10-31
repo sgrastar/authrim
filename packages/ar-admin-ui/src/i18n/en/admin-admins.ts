@@ -137,6 +137,9 @@ const adminAdmins = {
 		'Create a Passkey, then verify it once to activate your Admin account.',
 	admin_join_create_passkey: 'Create and verify Passkey',
 	admin_join_creating_passkey: 'Waiting for Passkey...',
+	admin_join_done_title: 'Registration and sign-in complete',
+	admin_join_done_description:
+		'Your Passkey is registered and you are signed in. You can open the Admin dashboard.',
 	admin_join_success: 'Your Admin account is active.',
 	admin_join_open_dashboard: 'Open Admin dashboard',
 	admin_join_login_link: 'Already enrolled? Sign in',

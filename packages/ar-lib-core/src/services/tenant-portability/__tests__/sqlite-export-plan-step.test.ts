@@ -1,5 +1,6 @@
+import { readRenderedMigrationSql } from '../../../../../../test/helpers/migration-source.mjs';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import type { DatabaseAdapter } from '../../../db/adapter';
 import { TenantBackupExecutionInventory } from '../execution-inventory';
@@ -36,17 +37,11 @@ beforeEach(async () => {
   admin = new DatabaseSync(':memory:');
   source = new DatabaseSync(':memory:');
   admin.exec('PRAGMA foreign_keys=ON');
-  for (const file of [
-    '003_tenant_backup_operations.sql',
-    '004_tenant_backup_validation_index.sql',
-    '008_tenant_backup_retry_state.sql',
-    '046_tenant_backup_operation_failure_reason.sql',
-    '010_tenant_backup_execution_inventory.sql',
-  ])
+  for (const file of ['001_0_5_0_admin_baseline.sql'])
     admin.exec(
-      readFileSync(
-        new URL(`../../../../../../migrations/admin/d1/${file}`, import.meta.url),
-        'utf8'
+      readRenderedMigrationSql(
+        new URL(`../../../../../../migrations/admin/d1/`, import.meta.url),
+        `${file}`
       )
     );
   source.exec(`CREATE TABLE tenants(id TEXT PRIMARY KEY NOT NULL,value TEXT);

@@ -1,10 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import {
   AUTHRIM_MIGRATIONS_TABLE_SQL,
+  freshBaselineOwnedMigrationTableNames,
   validateAuthrimMigrationHistoryRows,
 } from '../migration-history-contract.js';
 
 describe('migration history contract', () => {
+  it('excludes the setup ledger and engine sentinel from every fresh baseline', () => {
+    expect(freshBaselineOwnedMigrationTableNames()).toEqual([
+      'authrim_migrations',
+      'tenant_database_migration_state',
+    ]);
+  });
+
   it('normalizes legacy-compatible rows for setup migration backfill', () => {
     expect(
       validateAuthrimMigrationHistoryRows([{ filename: ' 001_core.sql ', checksum: null }])

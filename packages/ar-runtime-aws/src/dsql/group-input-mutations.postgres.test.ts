@@ -1,7 +1,8 @@
+import { readMigrationSource } from '../../../../test/helpers/migration-source.mjs';
 import { logProducerFixture } from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
 import { PostgresAdapter } from '@authrim/ar-lib-core';
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+
 import { Pool } from 'pg';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -68,12 +69,9 @@ const databaseUrl = process.env.AUTHRIM_AWS_TEST_DATABASE_URL;
       CREATE TABLE synthetic_profile(id TEXT PRIMARY KEY,value TEXT)`);
       adapter = db;
       if (mode === 'native-postgres') {
-        const sql = readFileSync(
-          new URL(
-            '../../../../migrations/core/postgresql/007_service_dynamic_groups.sql',
-            import.meta.url
-          ),
-          'utf8'
+        const sql = readMigrationSource(
+          new URL('../../../../migrations/core/postgresql/', import.meta.url),
+          '007_service_dynamic_groups.sql'
         );
         await pool.query(sql.slice(sql.indexOf('CREATE FUNCTION sg_write_boundary_insert_fn')));
         native = new PostgresAdapter({

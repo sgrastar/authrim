@@ -1040,6 +1040,10 @@ program
   .option('--no-kv', 'Keep KV namespaces')
   .option('--no-queues', 'Keep Queues')
   .option('--no-r2', 'Keep R2 buckets')
+  .option(
+    '--adopt-r2-ownership',
+    'Adopt unrecorded R2 buckets verified by Setup ownership markers before deletion'
+  )
   .option('--no-pages', 'Keep legacy Pages projects')
   .option('--all', 'Delete all resource types (default)')
   .action(deleteCommand);

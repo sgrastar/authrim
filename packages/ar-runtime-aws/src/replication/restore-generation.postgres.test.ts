@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from 'pg';
+import { freshInstallMigrationFiles } from '../migrations/fresh-install-files';
 import { expect, it, vi } from 'vitest';
 import { createTenantBundleKeyEnvelope } from '@authrim/ar-lib-core/services/tenant-portability/bundle-key-envelope';
 import { encodeTenantBackupContainerV2 } from '@authrim/ar-lib-core/services/tenant-portability/backup-container-v2';
@@ -229,9 +230,7 @@ postgresIt(
         names?: readonly string[]
       ): Promise<ReplicationSqlFile[]> =>
         Promise.all(
-          (
-            names ?? (await readdir(directory)).filter((name) => /^\d+.*\.sql$/u.test(name)).sort()
-          ).map(async (name) => {
+          (names ?? freshInstallMigrationFiles(await readdir(directory))).map(async (name) => {
             const path = fileURLToPath(new URL(name, directory));
             return { path, sha256: hash(await readFile(path)) };
           })

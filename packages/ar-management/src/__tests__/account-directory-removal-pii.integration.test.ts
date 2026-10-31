@@ -1,3 +1,4 @@
+import { readMigrationSource } from '../../../../test/helpers/migration-source.mjs';
 // @ts-expect-error node:sqlite is available in the required runtime but this package omits Node types.
 import { DatabaseSync } from 'node:sqlite';
 import type {
@@ -8,7 +9,7 @@ import type {
   QueryOptions,
   TransactionContext,
 } from '@authrim/ar-lib-core';
-import { readFileSync } from 'node:fs';
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { eraseAccountPiiAfterDirectoryRemovalPrepared } from '../account-directory-removal-producer';
 
@@ -94,15 +95,15 @@ describe('account directory removal PII erasure', () => {
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
     database.exec(
-      readFileSync(
-        new URL('../../../../migrations/pii/d1/002_guest_upgrade_operations.sql', import.meta.url),
-        'utf8'
+      readMigrationSource(
+        new URL('../../../../migrations/pii/d1/', import.meta.url),
+        '002_guest_upgrade_operations.sql'
       )
     );
     database.exec(
-      readFileSync(
-        new URL('../../../../migrations/pii/d1/004_account_webhook_snapshots.sql', import.meta.url),
-        'utf8'
+      readMigrationSource(
+        new URL('../../../../migrations/pii/d1/', import.meta.url),
+        '004_account_webhook_snapshots.sql'
       )
     );
     database.exec(`

@@ -113,7 +113,13 @@ export async function runConsentMaintenanceTenants(
   );
   const afterTenantId = (await cursorStore.get(key)) ?? '';
   const tenants = env.TENANT_RUNTIME_REGISTRY
-    ? (await listEnvironmentTenantDefaultStores(env, { limit, afterTenantId })).map((t) => ({
+    ? // The directory takes an absent cursor as undefined; an empty string is an invalid cursor.
+      (
+        await listEnvironmentTenantDefaultStores(env, {
+          limit,
+          afterTenantId: afterTenantId || undefined,
+        })
+      ).map((t) => ({
         tenantId: t.tenantId,
         metadata: ensureDatabaseAdapter(t.store.source, `consent-${kind}`),
       }))

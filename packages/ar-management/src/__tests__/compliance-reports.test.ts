@@ -1,5 +1,6 @@
+import { readRenderedMigrationSql } from '../../../../test/helpers/migration-source.mjs';
 import { fixtureLogIcebergReader } from './helpers/fixture-log-iceberg-reader';
-import { readFileSync } from 'node:fs';
+
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from './test-sqlite';
@@ -72,15 +73,7 @@ import { MAX_REPORT_ROWS } from '../compliance/reports';
 
 const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const SCHEMA = [
-  readFileSync(resolve(REPO_ROOT, 'migrations/core/d1/001_0_4_0_core_baseline.sql'), 'utf8')
-    .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
-    .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()'),
-  ...[
-    '002_guest_account_lifecycle',
-    '003_account_registration_state',
-    '014_access_review_apply',
-    '015_compliance_report_artifacts',
-  ].map((name) => readFileSync(resolve(REPO_ROOT, `migrations/core/d1/${name}.sql`), 'utf8')),
+  readRenderedMigrationSql(resolve(REPO_ROOT, 'migrations/core/d1'), '001_0_5_0_core_baseline.sql'),
 ];
 
 type SqlValue = string | number | null;

@@ -1,3 +1,9 @@
+import {
+  logArchiveInputError,
+  logArchiveStagedChoice,
+  logArchiveErrorMessage,
+  LOG_ARCHIVE_ERROR_MESSAGES,
+} from './log-archive-input.js';
 import { implementedLogArchiveModes } from '../core/log-archive-config.js';
 /**
  * HTML Template for Authrim Setup Web UI
@@ -5779,17 +5785,27 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           ? `<section class="row" id="log-archive-options">
         <div class="rowlabel"><h2>${locale === 'ja' ? 'ログの保存方式' : 'Log storage'}</h2></div>
         <div class="rowbody">
-          <p>${locale === 'ja' ? 'Cloudflare Pipelinesを使用しますか？Pipeline利用時はログ本体をDBに保存せず、検索反映には数分かかる場合があります。Workers Paidが必要です。非利用時はDBから定期的にIcebergへ出力します。両方式でR2・Catalogの契約が必要です。' : 'Use Cloudflare Pipelines? Pipeline mode stores no log-body DB copy and search can lag by minutes. Workers Paid is required. Otherwise logs are exported from the DB to Iceberg on schedule. Both modes require R2 and Catalog subscriptions.'}</p>
+          <p>${locale === 'ja' ? 'Cloudflare Pipelinesを使用しますか？Pipeline利用時はログ本体をDBに保存せず、検索反映には数分かかる場合があります。Workers Paidが必要です。非利用時はDBから定期的にIcebergへ出力します。両方式でR2 Data Catalogと2つのAPIトークンが必要で、Setupから自動発行できます。' : 'Use Cloudflare Pipelines? Pipeline mode stores no log-body DB copy and search can lag by minutes. Workers Paid is required. Otherwise logs are exported from the DB to Iceberg on schedule. Both modes require R2 Data Catalog and two API tokens, which Setup can issue automatically.'}</p>
           <select id="log-archive-mode"><option value="">${locale === 'ja' ? '選択してください' : 'Choose a mode'}</option>${implementedLogArchiveModes()
             .map(
               (mode) =>
-                `<option value="${mode}">${mode === 'pipeline' ? (locale === 'ja' ? '使用する' : 'Use Pipelines') : locale === 'ja' ? '使用しない（定期出力）' : 'Scheduled export'}</option>`
+                `<option value="${mode}">${mode === 'pipeline' ? (locale === 'ja' ? '使用する' : 'Use Pipelines') : locale === 'ja' ? 'Pipelines を使わない（DB から定期出力）' : 'Without Pipelines (scheduled export from the DB)'}</option>`
             )
             .join('')}</select>
           <label id="log-archive-retention-label" class="hidden">${locale === 'ja' ? 'DB保持日数' : 'DB retention days'}<input id="log-archive-retention" type="number" min="1" max="3650" value="7"></label>
+          <label>${locale === 'ja' ? 'トークンの用意方法' : 'Token source'}<select id="log-archive-token-source"><option value="automatic">${locale === 'ja' ? '自動発行（おすすめ）' : 'Issue automatically (recommended)'}</option><option value="manual">${locale === 'ja' ? '手入力' : 'Enter tokens manually'}</option><option value="staged" id="log-archive-staged-choice" disabled hidden>${locale === 'ja' ? '発行済みのトークンを使用' : 'Use the already issued tokens'}</option></select></label>
+          <p id="log-archive-staged-status" aria-live="polite"></p>
+          <div id="log-archive-automatic-fields">
+            <p>${locale === 'ja' ? '一時トークンはAccount API Tokens Write権限だけで作成してください。Setupがログ専用トークンを作成して保存した後、一時トークンを失効します。Control用にはデプロイ時に別の一時トークンが必要です。' : 'Create a one-time token with only Account API Tokens Write. Setup creates and stages the log tokens, then revokes the one-time token. Control uses a separate one-time token at deployment.'}</p>
+            <button type="button" class="btn btn-ghost sm" id="btn-create-log-archive-bootstrap-token">${locale === 'ja' ? 'Cloudflareで一時トークンを作成' : 'Create one-time Cloudflare token'}</button>
+            <label>${locale === 'ja' ? '一時トークン' : 'One-time token'}<input id="log-archive-bootstrap-token" type="password" autocomplete="off" autocapitalize="none" spellcheck="false"></label>
+            <p id="log-archive-bootstrap-status" aria-live="polite"></p>
+          </div>
+          <div id="log-archive-manual-fields" class="hidden">
           <label>${locale === 'ja' ? 'Catalog・Basin SQLの読取り専用API token' : 'Read-only Catalog / Basin SQL API token'}<input id="log-archive-read-token" type="password" autocomplete="off"></label>
           <label>${locale === 'ja' ? 'Catalog書込み用の別API token' : 'Separate Catalog write API token'}<input id="log-archive-write-token" type="password" autocomplete="off"></label>
           <label id="log-archive-sink-token-label" class="hidden">${locale === 'ja' ? 'Pipeline Sink専用の別Catalog API token（Workerへ配布しません）' : 'Separate Pipeline Sink Catalog API token (never uploaded to Workers)'}<input id="log-archive-sink-token" type="password" autocomplete="off"></label>
+          </div>
         </div>
       </section>`
           : ''
@@ -5956,10 +5972,12 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
                   <i id="provision-progress-bar" class="setup-progress-fill" style="width: 46%"></i>
                 </div>
                 <div class="elapsed">
-                  <span id="provision-current-task" data-i18n="web.provision.runningMigrations">Running migrations</span>
+                  <div id="provision-current-message-line" class="deploy-current-message running" role="status" aria-live="polite" aria-atomic="true">
+                    <span id="provision-spinner" class="ora-frame" aria-hidden="true">⠋</span>
+                    <span id="provision-current-task" data-i18n="web.provision.runningMigrations">Running migrations</span>
+                  </div>
                   <span id="provision-progress-text" data-i18n="web.provision.elapsedPending">Waiting for progress...</span>
                 </div>
-                <div class="spinner sr-control" id="provision-spinner"></div>
               </div>
 
               <button type="button" class="log-toggle standalone open" id="provision-log-toggle">
@@ -7024,6 +7042,11 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     let workingDirectory = '';
     let workersSubdomain = ''; // e.g., 'sgrastar' for {worker}.sgrastar.workers.dev
 
+    const LOG_ARCHIVE_ERROR_MESSAGES = ${JSON.stringify(LOG_ARCHIVE_ERROR_MESSAGES)};
+    const logArchiveInputError = ${logArchiveInputError.toString()};
+    const logArchiveErrorMessage = ${logArchiveErrorMessage.toString()};
+    const logArchiveStagedChoice = ${logArchiveStagedChoice.toString()};
+    let logArchiveStagedStatus = null;
     // API helpers (with session token authentication)
     async function api(endpoint, options = {}) {
       const { headers: customHeaders, body, ...restOptions } = options;
@@ -7031,15 +7054,24 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const isMutation = method !== 'GET' && method !== 'HEAD';
       if (isMutation) inFlightMutationRequests += 1;
       try {
-        const response = await fetch('/api' + endpoint, {
-          ...restOptions,
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Session-Token': SESSION_TOKEN,
-            ...(customHeaders || {}),
-          },
-          body: body ? (typeof body === 'string' ? body : JSON.stringify(body)) : undefined,
-        });
+        let response;
+        try {
+          response = await fetch('/api' + endpoint, {
+            ...restOptions,
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Session-Token': SESSION_TOKEN,
+              ...(customHeaders || {}),
+            },
+            body: body ? (typeof body === 'string' ? body : JSON.stringify(body)) : undefined,
+          });
+        } catch (error) {
+          // A rejected fetch means no HTTP response arrived at all (the Setup process stopped or
+          // the connection was reset). Browsers word this differently ("Load failed" in Safari),
+          // so say what actually happened instead of surfacing the raw message.
+          if (error?.name === 'AbortError') throw error;
+          throw new Error(t('web.status.serverUnreachable'));
+        }
         const result = await response.json();
         if (result?.errorCode === 'setup_operation_in_progress') {
           result.error = t('web.status.operationInProgress');
@@ -7665,6 +7697,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           setLoadConfigHero();
         }
       }
+      if (name === 'email') void refreshLogArchiveStagedStatus();
       replaySetupEntrance(sections[name]);
       window.scrollTo(0, 0);
     }
@@ -7812,6 +7845,38 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }, 80);
     }
 
+    // Provisioning reuses the deploy step's braille frame so both steps read as one family.
+    let provisionOraTimer = null;
+    let provisionOraFrameIndex = 0;
+
+    function paintProvisionOraFrame(frame, state) {
+      const spinner = document.getElementById('provision-spinner');
+      if (spinner) spinner.textContent = frame;
+      const line = document.getElementById('provision-current-message-line');
+      if (line && state) line.className = 'deploy-current-message ' + state;
+    }
+
+    function stopProvisionOraTimer(frame, state) {
+      if (provisionOraTimer) window.clearInterval(provisionOraTimer);
+      provisionOraTimer = null;
+      if (frame) paintProvisionOraFrame(frame, state);
+    }
+
+    function startProvisionOraTimer() {
+      stopProvisionOraTimer();
+      provisionOraFrameIndex = 0;
+      if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+        paintProvisionOraFrame('•', 'running');
+        return;
+      }
+      paintProvisionOraFrame(WEB_ORA_FRAMES[provisionOraFrameIndex], 'running');
+      provisionOraFrameIndex += 1;
+      provisionOraTimer = window.setInterval(() => {
+        paintProvisionOraFrame(WEB_ORA_FRAMES[provisionOraFrameIndex % WEB_ORA_FRAMES.length]);
+        provisionOraFrameIndex += 1;
+      }, 80);
+    }
+
     function updateProgressBarVisual(progressBar, percent, status = 'running', indeterminate = false) {
       if (!progressBar) return;
       const normalizedPercent = Math.min(100, Math.max(0, Number(percent) || 0));
@@ -7831,10 +7896,23 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
     }
 
+    // Deleting an environment that has nothing left to remove reports 0/0, which updateProgressUI
+    // cannot tell apart from "not started yet". Settle the bar and spinner explicitly instead.
+    function finishProgressUI(prefix) {
+      updateProgressBarVisual(document.getElementById(prefix + '-progress-bar'), 100, 'complete');
+      const percentEl = document.getElementById(prefix + '-percent');
+      if (percentEl) percentEl.textContent = '100';
+      const spinner = document.getElementById(prefix + '-spinner');
+      if (spinner && prefix === 'delete') spinner.style.display = 'none';
+    }
+
     function markProgressBarError(prefix) {
       const progressBar = document.getElementById(prefix + '-progress-bar');
       const currentWidth = Number.parseFloat(progressBar?.style.width || '0');
       updateProgressBarVisual(progressBar, currentWidth, 'error');
+      const deleteSpinner = document.getElementById(prefix + '-spinner');
+      if (deleteSpinner && prefix === 'delete') deleteSpinner.style.display = 'none';
+      if (prefix === 'provision') stopProvisionOraTimer('✕', 'error');
     }
 
     function renderDeploymentSnapshot(snapshot) {
@@ -7956,7 +8034,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         currentTaskEl.textContent = currentTask;
       }
       // Hide spinner when complete
-      if (spinner) {
+      // Provisioning paints its own terminal frame (✓ / ✕) instead of hiding the spinner, and a
+      // deletion keeps working after the last resource (verification, lock and local cleanup), so
+      // only finishProgressUI / markProgressBarError may stop it.
+      if (spinner && prefix !== 'provision' && prefix !== 'delete') {
         spinner.style.display = (current >= total && total > 0) ? 'none' : 'block';
       }
     }
@@ -7972,13 +8053,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         }
       }
 
-      if (message.includes('Creating ')) {
-        const parts = message.split('Creating ')[1];
-        if (parts) {
-          const name = parts.split(' ')[0].split('.')[0];
-          if (name) return 'Creating ' + name + '...';
-        }
-      }
+      // Provisioning logs "Creating: <name>..." (with a colon); other steps log "Creating <name>".
+      const creating = message.match(/Creating:?\\s+([^\\s.]+)/);
+      if (creating) return 'Creating ' + creating[1] + '...';
 
       if (message.includes('Deleting')) {
         const parts = message.split('Deleting')[1];
@@ -8079,6 +8156,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     function createProvisionProgressTracker(totalResources) {
       const completedMilestones = new Set();
       let completed = false;
+      // Last resource group header seen, e.g. "D1 Databases 2/6". The "Task N / M" line already
+      // shows milestone progress, so the task line shows what is being created right now.
+      let resourceGroup = '';
       const milestonePatterns = [
         { key: 'keys', test: (message) => message.includes('Admin secrets generated') },
         { key: 'd1', test: (message) => /D1 Databases\\s*\\([^)]*\\)\\s*✓/.test(message) },
@@ -8097,6 +8177,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         if (completed) return;
         if (message.includes('Provisioning complete')) {
           completed = true;
+          // The API keeps writing wrangler config and the lock after this log line, so the spinner
+          // keeps running until the success response calls complete().
           updateProgressUI('provision', totalResources, totalResources, t('web.status.complete'));
           return;
         }
@@ -8104,17 +8186,29 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         for (const milestone of milestonePatterns) {
           if (milestone.test(message)) {
             completedMilestones.add(milestone.key);
+            // Migrations and configuration come after the resource groups, so drop the stale label.
+            if (milestone.key === 'migrations' || milestone.key === 'config') resourceGroup = '';
             break;
           }
         }
 
+        // Group headers: "📊 D1 Databases (0/6)", "🗄️ KV Namespaces (0/9) ✓" and the count-less
+        // "📨 Queues" / "📁 R2 Buckets". Anchored so "Scanning Queues..." is not a header.
+        const group = message.match(
+          /^\\s*[^\\sA-Za-z0-9]+\\s*(D1 Databases|KV Namespaces|Queues|R2 Buckets)(?:\\s*\\((\\d+\\/\\d+)\\))?(?:\\s*✓)?\\s*$/m
+        );
+        if (group) resourceGroup = group[2] ? group[1] + ' ' + group[2] : group[1];
+
         const taskInfo = parseProgressMessage(message);
-        if (taskInfo || completedMilestones.size > 0) {
+        if (taskInfo || group || completedMilestones.size > 0) {
+          // Leave the previous task text in place when this line names no task, so the two
+          // progress lines never show the same "Task N / M running" string.
+          const label = taskInfo || (group ? resourceGroup : '');
           updateProgressUI(
             'provision',
             current(),
             totalResources,
-            taskInfo || t('web.provision.runningTasks', { current: current(), total: totalResources })
+            label && resourceGroup && label !== resourceGroup ? label + ' · ' + resourceGroup : label
           );
         }
       }
@@ -8122,9 +8216,16 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       function complete() {
         completed = true;
         updateProgressUI('provision', totalResources, totalResources, t('web.status.complete'));
+        stopProvisionOraTimer('✓', 'complete');
       }
 
-      return { handle, complete };
+      // After a failure a poll that was already in flight can still deliver messages; ignoring them
+      // keeps the error state (stopped spinner, red bar) from being repainted as running.
+      function fail() {
+        completed = true;
+      }
+
+      return { handle, complete, fail };
     }
 
     // Safe DOM element creation helpers
@@ -8321,7 +8422,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
       updateProgressBarVisual(progressBar, 0);
       if (percentEl) percentEl.textContent = '0';
-      if (spinner) spinner.style.display = 'block';
+      if (spinner && prefix !== 'provision') spinner.style.display = 'block';
+      if (prefix === 'provision') stopProvisionOraTimer('⠋', 'running');
       if (progressDiv) progressDiv.classList.add('hidden');
 
       if (currentTaskEl) {
@@ -8555,8 +8657,11 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
     function resetDatabaseAndEmailForm() {
       setAutomaticProvisioningEnabled(true);
+      logArchiveStagedStatus = null;
+      const archiveSource = document.getElementById('log-archive-token-source');
+      if (archiveSource) { archiveSource.value = 'automatic'; renderLogArchiveStagedChoice(); }
       document.getElementById('feature-queue-enabled').checked = false;
-      if (document.getElementById('log-archive-mode')) { document.getElementById('log-archive-mode').value = ''; document.getElementById('log-archive-mode').disabled = false; document.getElementById('log-archive-retention').disabled = false; for (const role of ['read', 'write', 'sink']) document.getElementById('log-archive-' + role + '-token').value = ''; }
+      if (document.getElementById('log-archive-mode')) { document.getElementById('log-archive-bootstrap-token').dataset.stagedForMode = ''; document.getElementById('log-archive-bootstrap-token').value = ''; document.getElementById('log-archive-mode').value = ''; document.getElementById('log-archive-mode').disabled = false; document.getElementById('log-archive-retention').disabled = false; for (const role of ['read', 'write', 'sink']) document.getElementById('log-archive-' + role + '-token').value = ''; }
 
       document.querySelectorAll('input[name="db-core-location"]').forEach((input) => {
         input.checked = input.value === 'auto';
@@ -10759,10 +10864,54 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
     }
 
+    function syncLogArchiveTokenSource() {
+      const source = document.getElementById('log-archive-token-source')?.value;
+      document.getElementById('log-archive-manual-fields')?.classList.toggle('hidden', source !== 'manual');
+      document.getElementById('log-archive-automatic-fields')?.classList.toggle('hidden', source !== 'automatic');
+    }
+    function renderLogArchiveStagedChoice() {
+      const source = document.getElementById('log-archive-token-source');
+      if (!source) return;
+      const choice = logArchiveStagedChoice(logArchiveStagedStatus, document.getElementById('log-archive-mode').value);
+      const option = document.getElementById('log-archive-staged-choice');
+      option.disabled = !choice.useStaged;
+      option.hidden = !choice.useStaged;
+      if (choice.useStaged && source.value === 'automatic' && !document.getElementById('log-archive-bootstrap-token').value.trim()) source.value = 'staged';
+      else if (!choice.useStaged && source.value === 'staged') source.value = 'automatic';
+      document.getElementById('log-archive-staged-status').textContent = choice.messageCode ? logArchiveErrorMessage(choice.messageCode, _currentLocale) : '';
+      syncLogArchiveTokenSource();
+    }
+    async function refreshLogArchiveStagedStatus() {
+      if (!document.getElementById('log-archive-mode') || !config.env) return;
+      const environment = config.env;
+      logArchiveStagedStatus = null;
+      renderLogArchiveStagedChoice();
+      try {
+        const result = await api('/log-archive/staged-status?environment=' + encodeURIComponent(environment));
+        if (config.env !== environment) return;
+        if (!result.success) { document.getElementById('log-archive-staged-status').textContent = logArchiveErrorMessage(result.error || 'log_archive_configuration_invalid', _currentLocale); return; }
+        logArchiveStagedStatus = result;
+        renderLogArchiveStagedChoice();
+      } catch {
+        if (config.env === environment) document.getElementById('log-archive-staged-status').textContent = logArchiveErrorMessage('log_archive_cloudflare_request_failed', _currentLocale);
+      }
+    }
+    document.getElementById('log-archive-token-source')?.addEventListener('change', syncLogArchiveTokenSource);
+    document.getElementById('btn-create-log-archive-bootstrap-token')?.addEventListener('click', async () => {
+      const popup = window.open('about:blank', '_blank');
+      if (popup) popup.opener = null;
+      try {
+        const result = await api('/log-archive/token-template', { method: 'POST', body: { environment: config.env } });
+        if (!result.success) { popup?.close(); alert(logArchiveErrorMessage(result.error || 'log_archive_configuration_invalid', _currentLocale)); return; }
+        document.getElementById('log-archive-bootstrap-status').textContent = (_currentLocale === 'ja' ? '有効期限の目安: ' : 'Recommended end date: ') + result.expiresOnDate + ' (UTC)';
+        if (popup) popup.location.href = result.url;
+      } catch { popup?.close(); alert(logArchiveErrorMessage('log_archive_cloudflare_request_failed', _currentLocale)); }
+    });
     document.getElementById('log-archive-mode')?.addEventListener('change', (event) => {
       const pipeline = event.target.value === 'pipeline';
       document.getElementById('log-archive-sink-token-label').classList.toggle('hidden', !pipeline);
       document.getElementById('log-archive-retention-label').classList.toggle('hidden', event.target.value !== 'scheduled');
+      renderLogArchiveStagedChoice();
 
     });
 
@@ -10782,6 +10931,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     });
 
     document.getElementById('btn-continue-email').addEventListener('click', async () => {
+      const LOG_ARCHIVE_ERROR_MESSAGES = ${JSON.stringify(LOG_ARCHIVE_ERROR_MESSAGES)};
+      const logArchiveInputError = ${logArchiveInputError.toString()};
+      const logArchiveErrorMessage = ${logArchiveErrorMessage.toString()};
       const choice = document.querySelector('input[name="email-setup-choice"]:checked').value;
       const btn = document.getElementById('btn-continue-email');
       const queueEnabled = document.getElementById('feature-queue-enabled').checked === true;
@@ -10877,9 +11029,25 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
       const archiveMode = document.getElementById('log-archive-mode')?.value;
       if (document.getElementById('log-archive-mode') && !config.logging?.archive) {
-        if (!archiveMode) { alert('Choose a log storage mode'); return; }
-        const result = await api('/log-archive/configure', { method: 'POST', body: JSON.stringify({ environment: config.env, mode: archiveMode, ...(archiveMode === 'scheduled' ? { dbRetentionDays: Number(document.getElementById('log-archive-retention').value) } : {}), readToken: document.getElementById('log-archive-read-token').value, writeToken: document.getElementById('log-archive-write-token').value, ...(archiveMode === 'pipeline' ? { sinkToken: document.getElementById('log-archive-sink-token').value } : {}) }) });
-        if (!result.success) { alert(result.error || 'Log storage configuration failed'); return; }
+        const source = document.getElementById('log-archive-token-source').value;
+        const manual = source !== 'automatic' && source !== 'staged';
+        const fields = { mode: archiveMode, readToken: document.getElementById('log-archive-read-token').value, writeToken: document.getElementById('log-archive-write-token').value, ...(archiveMode === 'pipeline' ? { sinkToken: document.getElementById('log-archive-sink-token').value } : {}) };
+        const error = !archiveMode ? 'log_archive_mode_required' : manual ? logArchiveInputError(fields) : (source !== 'staged' && !document.getElementById('log-archive-bootstrap-token').value.trim() && document.getElementById('log-archive-bootstrap-token').dataset?.stagedForMode !== archiveMode ? 'log_archive_bootstrap_token_required' : null);
+        if (error) { alert(logArchiveErrorMessage(error, _currentLocale)); return; }
+        let result;
+        btn.disabled = true;
+        try {
+          if (!manual && source !== 'staged' && document.getElementById('log-archive-bootstrap-token').dataset?.stagedForMode !== archiveMode) {
+            const issued = await api('/log-archive/issue-tokens', { method: 'POST', body: JSON.stringify({ environment: config.env, mode: archiveMode, bootstrapToken: document.getElementById('log-archive-bootstrap-token').value.trim() }) });
+            document.getElementById('log-archive-bootstrap-token').value = '';
+            if (!issued.success) { alert(logArchiveErrorMessage(issued.error || 'log_archive_configuration_invalid', _currentLocale, issued.cleanupRequired === true || issued.childCleanupRequired === true)); return; }
+            if (issued.warning) document.getElementById('log-archive-bootstrap-status').textContent = logArchiveErrorMessage(issued.warning, _currentLocale);
+            document.getElementById('log-archive-bootstrap-token').dataset.stagedForMode = archiveMode;
+          }
+          result = await api('/log-archive/configure', { method: 'POST', body: JSON.stringify({ environment: config.env, mode: archiveMode, ...(archiveMode === 'scheduled' ? { dbRetentionDays: Number(document.getElementById('log-archive-retention').value) } : {}), ...(manual ? { readToken: fields.readToken.trim(), writeToken: fields.writeToken.trim(), ...(fields.sinkToken ? { sinkToken: fields.sinkToken.trim() } : {}) } : { tokenSource: 'staged' }) }) });
+          if (!result.success) { alert(logArchiveErrorMessage(result.error || 'log_archive_configuration_invalid', _currentLocale)); return; }
+        } catch { alert(logArchiveErrorMessage('log_archive_cloudflare_request_failed', _currentLocale)); return; }
+        finally { btn.disabled = false; }
         config.logging = { archive: result.archive };
         document.getElementById('log-archive-read-token').value = '';
         document.getElementById('log-archive-write-token').value = '';
@@ -10975,6 +11143,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
       const provisionProgress = createProvisionProgressTracker(totalProvisionTasks);
       updateProgressUI('provision', 0, totalProvisionTasks, t('web.status.initializing'));
+      startProvisionOraTimer();
 
       // Start polling for progress
       let lastProgressLength = 0;
@@ -11084,6 +11253,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           provisionPollInterval = null;
         }
 
+        provisionProgress.fail();
         output.textContent += '\\nError: ' + error.message + '\\n';
         markProgressBarError('provision');
         scrollToBottom(log);
@@ -15326,11 +15496,14 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       if (deleteOptions.deletePages) totalToDelete += selectedEnvForDelete.pages?.length || 0;
       updateProgressUI('delete', 0, totalToDelete, t('web.delete.starting'));
 
-      // Poll for progress
+      // Poll for progress. clearInterval cannot cancel a request already in flight, so a late
+      // response must not repaint the progress (and the spinner) after the run has ended.
+      let deleteRunFinished = false;
       let lastProgressLength = 0;
       const pollInterval = setInterval(async () => {
         try {
           const statusResult = await api('/deploy/status');
+          if (deleteRunFinished) return;
           const structuredProgress = statusResult.operationProgress?.operation === 'delete'
             ? statusResult.operationProgress
             : null;
@@ -15363,12 +15536,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }, 500);
 
       try {
-        const deleteResult = await api('/environments/' + selectedEnvForDelete.env + '/delete', {
-          method: 'POST',
-          body: deleteOptions,
-        });
+        const deleteResult = await requestEnvironmentDeletion(selectedEnvForDelete.env, deleteOptions);
 
         clearInterval(pollInterval);
+        deleteRunFinished = true;
 
         // Show final progress
         if (deleteResult.progress) {
@@ -15386,7 +15557,12 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
         result.classList.remove('hidden');
 
-        if (deleteResult.success && deleteResult.completion === 'manual_action_required') {
+        if (deleteResult.adoptionCancelled) {
+          result.textContent = '';
+          result.appendChild(createAlert('warning', t('delete.cancelled')));
+          btn.classList.remove('hidden');
+          btn.disabled = false;
+        } else if (deleteResult.success && deleteResult.completion === 'manual_action_required') {
           const environmentDeleted = deleteResult.environmentDeleted === true;
           updateProgressUI(
             'delete',
@@ -15394,6 +15570,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
             totalToDelete,
             t(environmentDeleted ? 'web.delete.complete' : 'web.delete.manualActionRequired')
           );
+          finishProgressUI('delete');
           result.textContent = '';
           const manualR2Targets = Array.isArray(deleteResult.manualR2) ? deleteResult.manualR2 : [];
           const manualDnsIssues = Array.isArray(deleteResult.manualDns) ? deleteResult.manualDns : [];
@@ -15421,6 +15598,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         } else if (deleteResult.success) {
           // Final progress update
           updateProgressUI('delete', totalToDelete, totalToDelete, t('web.delete.complete'));
+          finishProgressUI('delete');
           result.textContent = '';
           const environmentDeleted = deleteResult.environmentDeleted === true;
           if (environmentDeleted) markDeleteNavigationComplete();
@@ -15450,6 +15628,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         }
       } catch (error) {
         clearInterval(pollInterval);
+        deleteRunFinished = true;
         markProgressBarError('delete');
         result.classList.remove('hidden');
         result.textContent = '';
@@ -15461,6 +15640,56 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         btn.disabled = false;
       }
     });
+
+    async function requestEnvironmentDeletion(environment, options) {
+      const endpoint = '/environments/' + environment + '/delete';
+      let response = await api(endpoint, { method: 'POST', body: options });
+      while (response.adoptionReady !== false && Array.isArray(response.adoptionCandidates) && response.adoptionCandidates.length > 0) {
+        const confirmedR2Adoption = await confirmR2OwnershipAdoption(response.adoptionCandidates);
+        if (!confirmedR2Adoption) return { ...response, adoptionCancelled: true };
+        response = await api(endpoint, { method: 'POST', body: { ...options, adoptR2Ownership: true, confirmedR2Adoption } });
+        if (response.errorCode !== 'r2_adoption_candidates_changed') return response;
+      }
+      return response;
+    }
+
+    async function confirmR2OwnershipAdoption(candidates) {
+      const confirmedIdentities = candidates.map(({ name, creationDate, ownershipId }) => ({ name, creationDate, ownershipId }));
+      const ja = _currentLocale === 'ja';
+      const dialog = document.createElement('dialog');
+      dialog.className = 'modal-content';
+      const title = document.createElement('h3');
+      title.textContent = ja ? 'R2所有権の取り込み' : 'Adopt R2 ownership';
+      const description = document.createElement('p');
+      description.textContent = ja
+        ? 'これらの R2 バケットは Setup の所有者マーカーで所有が確認できますが lock.json に記録がありません。この環境の資源として取り込んで削除しますか？'
+        : 'These R2 buckets carry a valid Setup ownership marker but are not recorded in lock.json. Adopt them into this environment and delete?';
+      const list = document.createElement('ul');
+      for (const candidate of candidates) {
+        const item = document.createElement('li');
+        item.textContent = [candidate.name, candidate.binding, candidate.creationDate, candidate.ownershipId].join(' | ');
+        list.appendChild(item);
+      }
+      const cancel = document.createElement('button');
+      cancel.className = 'btn-secondary';
+      cancel.textContent = ja ? 'キャンセル' : 'Cancel';
+      const adopt = document.createElement('button');
+      adopt.className = 'btn-primary';
+      adopt.textContent = ja ? '取り込んで削除' : 'Adopt and delete';
+      dialog.append(title, description, list, cancel, adopt);
+      document.body.appendChild(dialog);
+      return new Promise(resolve => {
+        dialog.addEventListener('close', () => {
+          const confirmed = dialog.returnValue === 'adopt';
+          dialog.remove();
+          resolve(confirmed ? confirmedIdentities : null);
+        }, { once: true });
+        cancel.addEventListener('click', () => dialog.close('cancel'));
+        adopt.addEventListener('click', () => dialog.close('adopt'));
+        dialog.showModal();
+        cancel.focus();
+      });
+    }
 
     async function initializeManageOnly() {
       showSection('envList');

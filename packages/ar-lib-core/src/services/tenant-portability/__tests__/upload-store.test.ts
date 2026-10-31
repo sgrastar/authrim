@@ -1,5 +1,6 @@
+import { readRenderedMigrationSql } from '../../../../../../test/helpers/migration-source.mjs';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { TenantBackupUploadStore } from '../upload-store';
 import { uploadTenantBackupPart } from '../upload-part';
@@ -18,12 +19,9 @@ beforeEach(() => {
   db = new DatabaseSync(':memory:');
   db.exec('PRAGMA foreign_keys=ON');
   db.exec(
-    readFileSync(
-      new URL(
-        '../../../../../../migrations/admin/d1/022_tenant_backup_uploads.sql',
-        import.meta.url
-      ),
-      'utf8'
+    readRenderedMigrationSql(
+      new URL('../../../../../../migrations/admin/d1/', import.meta.url),
+      '001_0_5_0_admin_baseline.sql'
     )
   );
   store = new TenantBackupUploadStore({

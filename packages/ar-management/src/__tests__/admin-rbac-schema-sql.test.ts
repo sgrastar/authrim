@@ -2,7 +2,7 @@
  * The user-relationship and organisation-hierarchy handlers against the real core schema
  * (every core migration, in order), so a column the schema does not have fails here.
  */
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -78,9 +78,7 @@ function renderSqliteMigration(sql: string): string {
 function coreDatabase(): SQLiteDatabase {
   const db = new DatabaseSync(':memory:');
   const directory = `${REPO_ROOT}migrations/core/d1`;
-  for (const file of readdirSync(directory)
-    .filter((name) => name.endsWith('.sql'))
-    .sort()) {
+  for (const file of ['001_0_5_0_core_baseline.sql']) {
     db.exec(renderSqliteMigration(readFileSync(`${directory}/${file}`, 'utf8')));
   }
   // Users live in users_core / PII; the rows here stand alone.

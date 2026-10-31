@@ -1,16 +1,32 @@
+import {
+  readMigrationSource,
+  listMigrationSourceFiles,
+} from '../../../../../../test/helpers/migration-source.mjs';
 import { DatabaseSync } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+
 import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 import { inventoryBackupSchemas } from '../../../../../../scripts/tenant-backup/schema-inventory';
 import { renderPortableMigrationSql } from '../../../migrations/sql-portability';
 
 const root = fileURLToPath(new URL('../../../../../../', import.meta.url));
-const streams = inventoryBackupSchemas(root).inspectedStreams.filter((stream) =>
-  stream.migrations.some((migration) =>
-    migration.file.endsWith('_tenant_backup_restore_target_cancellation.sql')
+const streams = inventoryBackupSchemas(root)
+  .inspectedStreams.filter((stream) =>
+    stream.tables.some((table) => table.name === 'tenant_backup_restore_targets')
   )
-);
+  .map((stream) => {
+    const directory = 'migrations/' + stream.id.replace(/-(d1|postgresql)$/u, '/$1');
+    return {
+      ...stream,
+      migrations: listMigrationSourceFiles(root + directory).map((file) => ({
+        file: directory + '/' + file,
+      })),
+    };
+  });
+function source(file: string): string {
+  const index = file.lastIndexOf('/');
+  return readMigrationSource(root + file.slice(0, index), file.slice(index + 1));
+}
 
 it('installs sealed-target cancellation in every D1 restore family', () => {
   expect(streams.map((stream) => stream.id).sort()).toEqual([
@@ -26,9 +42,7 @@ it.each(streams)('$id keeps invalid terminal while allowing sealed cancellation'
   const database = new DatabaseSync(':memory:');
   try {
     for (const migration of stream.migrations)
-      database.exec(
-        renderPortableMigrationSql(readFileSync(root + migration.file, 'utf8'), 'sqlite')
-      );
+      database.exec(renderPortableMigrationSql(source(migration.file), 'sqlite'));
     database
       .prepare(
         `INSERT INTO tenant_backup_restore_targets

@@ -1,3 +1,17 @@
+import { loadPendingBootstrap } from '../../core/pending-control-bootstrap.js';
+import {
+  ensureLogArchiveTokens,
+  resolveLogArchiveTokenInput,
+} from '../../core/log-archive-token-issuance.js';
+import {
+  buildCloudflareBootstrapTemplateUrl,
+  buildCloudflareBootstrapTokenEndDate,
+} from '../../core/cloudflare-control-token-bootstrap.js';
+import {
+  logArchiveInputError,
+  logArchiveErrorMessage,
+  withLogArchiveCliErrors,
+} from '../../web/log-archive-input.js';
 import {
   assertLogArchiveImplemented,
   createLogArchiveConfig,
@@ -6,7 +20,9 @@ import {
 import { planLogArchive, hasCompleteLogArchiveState } from '../../core/log-archive.js';
 import {
   publishLogArchiveSecrets,
+  loadIssuedLogArchiveAccountId,
   stageLogArchiveSecrets,
+  assertLogArchiveManualEntryAllowed,
 } from '../../core/log-archive-secrets.js';
 /**
  * Init Command - Setup wizard for Authrim
@@ -156,6 +172,7 @@ let cliCapabilitySummaryShown = false;
 type PendingEmailSecretFiles = PendingEmailSecretsInput;
 
 interface ExecuteSetupOptions {
+  logArchiveTokenInput?: ReturnType<typeof resolveLogArchiveTokenInput>;
   /**
    * The caller entered through the canonical interrupted-provisioning recovery path. Re-read
    * that config only after both setup operation locks are held so a pre-lock snapshot can never
@@ -2061,9 +2078,9 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
   }
 
   // Run setup
-  if (logArchiveSecrets)
-    await stageLogArchiveSecrets(resolve(options.keep || '.'), envPrefix, logArchiveSecrets);
-  await executeSetup(config, options.keep, emailConfig);
+  await executeSetup(config, options.keep, emailConfig, {
+    logArchiveTokenInput: logArchiveSecrets,
+  });
 }
 
 // =============================================================================
@@ -2707,9 +2724,9 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
     return;
   }
 
-  if (logArchiveSecrets)
-    await stageLogArchiveSecrets(resolve(options.keep || '.'), envPrefix, logArchiveSecrets);
-  await executeSetup(config, options.keep, emailConfigNormal);
+  await executeSetup(config, options.keep, emailConfigNormal, {
+    logArchiveTokenInput: logArchiveSecrets,
+  });
 }
 
 // =============================================================================
@@ -2722,6 +2739,9 @@ async function executeSetup(
   pendingEmailSecrets?: PendingEmailSecretFiles,
   options: ExecuteSetupOptions = {}
 ): Promise<void> {
+  const archiveTokenInput =
+    options.logArchiveTokenInput ??
+    withLogArchiveCliErrors(getLocale(), () => resolveLogArchiveTokenInput(process.env));
   const outputDir = resolve(keepPath || '.');
   assertLogArchiveImplemented(config.logging?.archive);
   const env = config.environment.prefix;
@@ -2838,6 +2858,53 @@ async function executeSetup(
       includeSecrets: false,
       storageType: 'external',
     };
+    if (config.logging?.archive && archiveTokenInput && !('bootstrapToken' in archiveTokenInput))
+      await withLogArchiveCliErrors(getLocale(), () =>
+        assertLogArchiveManualEntryAllowed(outputDir, env)
+      );
+    const prepareArchiveTokens = async () => {
+      const archive = config.logging?.archive;
+      if (!archive || !archiveTokenInput) return;
+      if ('bootstrapToken' in archiveTokenInput) {
+        const result = await withLogArchiveCliErrors(getLocale(), () =>
+          ensureLogArchiveTokens({
+            baseDir: outputDir,
+            environment: env,
+            accountId,
+            mode: archive.mode,
+            bootstrapToken: archiveTokenInput.bootstrapToken,
+            keysDir: getExternalKeysDir(env, keysBaseDir),
+          })
+        );
+        if (result.reused)
+          console.log(
+            getLocale() === 'ja'
+              ? '検証済みのログ用トークンを再利用します。'
+              : 'Reusing verified log archive tokens.'
+          );
+        if (result.warning) console.log(logArchiveErrorMessage(result.warning, getLocale()));
+      } else {
+        const error = logArchiveInputError({
+          mode: archive.mode,
+          ...archiveTokenInput,
+        });
+        if (error) throw new Error(logArchiveErrorMessage(error, getLocale()));
+        await withLogArchiveCliErrors(getLocale(), () =>
+          stageLogArchiveSecrets(outputDir, env, archiveTokenInput)
+        );
+      }
+    };
+    const archiveRecoveryPending =
+      config.logging?.archive && archiveTokenInput && 'bootstrapToken' in archiveTokenInput
+        ? await withLogArchiveCliErrors(getLocale(), () =>
+            loadPendingBootstrap({
+              baseDir: outputDir,
+              environment: env,
+              purpose: 'log-archive',
+            })
+          )
+        : null;
+    if (archiveRecoveryPending) await prepareArchiveTokens();
     const resourceSpec = buildProvisioningResourceSpec(config);
     let provisioningAttempt = existingIntent
       ? await beginOrResumeProvisioningIntent({
@@ -2910,6 +2977,9 @@ async function executeSetup(
     if (!provisionDecision.allowed) {
       throw new Error(environmentOperationBlockMessage(provisionDecision));
     }
+
+    // Completed provisioning returns above without replaying an obsolete bootstrap credential.
+    if (!archiveRecoveryPending) await prepareArchiveTokens();
 
     await assertLocalDeploymentCapacity({
       rootDir: outputDir,
@@ -3047,6 +3117,12 @@ async function executeSetup(
                 externalKeysDir,
                 config.logging.archive.mode,
                 config.logging.archive.objectEncryptionKeyVersion
+              ),
+              logArchiveIssuedForAccountId: await loadIssuedLogArchiveAccountId(
+                outputDir,
+                env,
+                config.logging.archive.mode,
+                externalKeysDir
               ),
             }
           : {}),
@@ -4389,14 +4465,14 @@ export function resolveInitialLogStorageFeatures(
 
 async function promptLogArchive(
   config: AuthrimConfig
-): Promise<{ readToken: string; writeToken: string; sinkToken?: string } | undefined> {
+): Promise<ReturnType<typeof resolveLogArchiveTokenInput>> {
   const modes = implementedLogArchiveModes();
   if (modes.length === 0 || config.logging?.archive) return undefined;
   const ja = getLocale() === 'ja';
   console.log(
     ja
-      ? 'ログをParquet・Icebergへ保存します。PipelineはWorkers Paidが必要で、検索反映には数分かかる場合があります。非利用時もR2・Catalogの契約が必要です。'
-      : 'Store logs as Parquet managed by Iceberg. Pipelines requires Workers Paid and search visibility can lag by minutes. Both modes require R2 and Catalog subscriptions.'
+      ? 'ログをParquet・Icebergへ保存します。PipelineはWorkers Paidが必要で、検索反映には数分かかる場合があります。両方式でR2 Data Catalogと2つのAPIトークンが必要で、Setupから自動発行できます。'
+      : 'Store logs as Parquet managed by Iceberg. Pipelines requires Workers Paid and search visibility can lag by minutes. Both modes require R2 Data Catalog and two API tokens, which Setup can issue automatically.'
   );
   const mode = await select({
     message: ja
@@ -4411,8 +4487,8 @@ async function promptLogArchive(
       {
         value: 'scheduled' as const,
         name: ja
-          ? '使用しない（DBから定期的にIcebergへ出力）'
-          : 'Use scheduled DB-to-Iceberg export',
+          ? 'Pipelines を使わない（DB から定期出力）'
+          : 'Without Pipelines (scheduled export from the DB)',
         disabled: !modes.includes('scheduled'),
       },
     ],
@@ -4441,15 +4517,65 @@ async function promptLogArchive(
         : 'Durable logging delivery queues will also be provisioned for retries.'
     );
   }
+  const fromEnvironment = withLogArchiveCliErrors(getLocale(), () =>
+    resolveLogArchiveTokenInput(process.env)
+  );
+  if (fromEnvironment) return fromEnvironment;
+  const source = await select({
+    message: ja ? 'Catalogトークンの用意方法' : 'How to supply Catalog tokens',
+    choices: [
+      {
+        value: 'automatic',
+        name: ja ? '自動発行（おすすめ）' : 'Issue automatically (recommended)',
+      },
+      { value: 'manual', name: ja ? '手入力' : 'Enter tokens manually' },
+    ],
+  });
+  if (source === 'automatic') {
+    const accountId = config.cloudflare?.accountId ?? (await getAccountId());
+    if (!accountId) throw new Error('log_archive_cloudflare_credentials_invalid');
+    console.log(
+      buildCloudflareBootstrapTemplateUrl({
+        accountId,
+        environment: config.environment.prefix,
+        ownership: 'account',
+        purpose: 'log-archive',
+      })
+    );
+    console.log(
+      (ja ? '一時トークンの有効期限の目安: ' : 'Recommended one-time token end date: ') +
+        buildCloudflareBootstrapTokenEndDate() +
+        ' (UTC)'
+    );
+    console.log(
+      ja
+        ? 'Account API Tokens Write権限だけを指定してください。Setupがログ専用トークンを作成して保存した後、一時トークンを失効します。Control用には別の一時トークンが必要です。'
+        : 'Use only Account API Tokens Write. Setup creates and stages log tokens, then revokes this token. Control requires a separate one-time token.'
+    );
+    const bootstrapToken = await password({
+      message: ja ? '一時Cloudflareトークン' : 'One-time Cloudflare token',
+      mask: '*',
+      validate: (value) =>
+        (value.trim().length >= 20 && !/\s/u.test(value.trim())) ||
+        logArchiveErrorMessage('log_archive_bootstrap_token_required', getLocale()),
+    });
+    return { bootstrapToken: bootstrapToken.trim() };
+  }
   const readToken = await password({
     message: ja
       ? 'Catalog・Basin SQLの読取り専用API token'
       : 'Read-only Catalog / Basin SQL API token',
     mask: '*',
+    validate: (value) =>
+      Boolean(value.trim()) ||
+      logArchiveErrorMessage('log_archive_catalog_credentials_required', getLocale()),
   });
   const writeToken = await password({
     message: ja ? 'Catalog書込み用の別API token' : 'Separate Catalog write API token',
     mask: '*',
+    validate: (value) =>
+      (Boolean(value.trim()) && value.trim() !== readToken.trim()) ||
+      logArchiveErrorMessage('log_archive_distinct_catalog_credentials_required', getLocale()),
   });
   const sinkToken =
     mode === 'pipeline'
@@ -4458,6 +4584,10 @@ async function promptLogArchive(
             ? 'Pipeline Sink専用の別Catalog API token（Workerへ配布しません）'
             : 'Separate Pipeline Sink Catalog API token (never uploaded to Workers)',
           mask: '*',
+          validate: (value) =>
+            (Boolean(value.trim()) &&
+              ![readToken.trim(), writeToken.trim()].includes(value.trim())) ||
+            logArchiveErrorMessage('log_archive_distinct_sink_credential_required', getLocale()),
         })
       : undefined;
   return { readToken, writeToken, ...(sinkToken ? { sinkToken } : {}) };

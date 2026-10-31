@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readRenderedMigrationSql } from '../../../../test/helpers/migration-source.mjs';
+
 import { afterEach, expect, it, vi } from 'vitest';
 import { DatabaseSync, type SQLiteDatabase, type SQLInputValue } from './test-sqlite';
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
@@ -56,25 +57,17 @@ it.each([false, true])(
     const admin = new DatabaseSync(':memory:'),
       target = new DatabaseSync(':memory:');
     databases.push(admin, target);
-    for (const file of [
-      '003_tenant_backup_operations.sql',
-      '004_tenant_backup_validation_index.sql',
-      '008_tenant_backup_retry_state.sql',
-      '046_tenant_backup_operation_failure_reason.sql',
-      '010_tenant_backup_execution_inventory.sql',
-      '019_tenant_backup_input_validations.sql',
-      '024_tenant_backup_restore_plan_inventory.sql',
-    ])
+    for (const file of ['001_0_5_0_admin_baseline.sql'])
       admin.exec(
-        readFileSync(new URL(`../../../../migrations/admin/d1/${file}`, import.meta.url), 'utf8')
+        readRenderedMigrationSql(
+          new URL(`../../../../migrations/admin/d1/`, import.meta.url),
+          `${file}`
+        )
       );
     target.exec(
-      readFileSync(
-        new URL(
-          '../../../../migrations/core/d1/010_tenant_backup_restore_target.sql',
-          import.meta.url
-        ),
-        'utf8'
+      readRenderedMigrationSql(
+        new URL('../../../../migrations/core/d1/', import.meta.url),
+        '010_tenant_backup_restore_target.sql'
       )
     );
     target.exec('CREATE TABLE owners(id TEXT PRIMARY KEY NOT NULL,tenant_id TEXT NOT NULL)');

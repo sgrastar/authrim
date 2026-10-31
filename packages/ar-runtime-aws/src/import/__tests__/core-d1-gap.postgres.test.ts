@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { readFile, readdir } from 'node:fs/promises';
 import { expect, it } from 'vitest';
+import { freshInstallMigrationFiles } from '../../migrations/fresh-install-files';
 import { renderPortableMigrationSql } from '../../../../ar-lib-core/src/migrations/sql-portability';
 
 type TestPgClient = {
@@ -45,9 +46,7 @@ const coreMigrations = new URL('../../../../../migrations/core/postgresql/', imp
       await core.connect();
       coreConnected = true;
 
-      const filenames = (await readdir(coreMigrations))
-        .filter((name) => /^\d+.*\.sql$/u.test(name))
-        .sort();
+      const filenames = freshInstallMigrationFiles(await readdir(coreMigrations));
       for (const filename of filenames) {
         // The existing baseline leaves search_path empty; the migration executor restores it
         // before every later delta. This harness follows that contract explicitly.

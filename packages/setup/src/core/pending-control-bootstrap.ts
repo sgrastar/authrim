@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { open, rm } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { readPrivateFileSecurely, writePrivateFileAtomically } from './atomic-file.js';
 import type {
   CloudflareTokenOwnership,
@@ -383,4 +383,173 @@ export async function clearPendingControlBootstrap(input: {
   await removeDurably(
     getEnvironmentPaths({ baseDir: input.baseDir, env: input.environment }).pendingControlBootstrap
   );
+}
+
+/** Purpose-bound local WAL for Catalog issuance; never consumed by the Control orchestrator. */
+export interface PendingLogArchiveBootstrap {
+  version: 2;
+  phase: 'creating' | 'issued';
+  bootstrapRevoked: boolean;
+  purpose: 'log-archive';
+  environment: string;
+  accountId: string;
+  ownership: 'account';
+  bootstrapToken: string;
+  bootstrapTokenId: string;
+  /** Written before each POST so an interrupted or response-lost create can be reconciled. */
+  childTokenNames: string[];
+  preservedTokenIds: string[];
+  childTokenIds: string[];
+  pendingCreateName: string | null;
+  stagedSecretsFingerprint: string | null;
+  recoveryToken: { token: string; tokenId: string } | null;
+  revocationTargetTokenIds: string[];
+}
+
+function purposePath(input: {
+  baseDir: string;
+  environment: string;
+  purpose: 'log-archive';
+}): string {
+  if (!ENVIRONMENT.test(input.environment) || input.purpose !== 'log-archive')
+    throw new Error('log_archive_recovery_state_invalid');
+  const controlPath = getEnvironmentPaths({
+    baseDir: input.baseDir,
+    env: input.environment,
+  }).pendingControlBootstrap;
+  return join(dirname(controlPath), `pending-${input.purpose}-bootstrap.json`);
+}
+
+function parseLogArchiveArtifact(raw: unknown, environment: string): PendingLogArchiveBootstrap {
+  // Version 1 was always an uncommitted attempt; never infer successful issuance from it.
+  if (
+    raw &&
+    typeof raw === 'object' &&
+    !Array.isArray(raw) &&
+    (raw as { version?: unknown }).version === 1
+  ) {
+    if ('phase' in raw || 'bootstrapRevoked' in raw)
+      throw new Error('log_archive_recovery_state_invalid');
+    raw = { ...raw, version: 2, phase: 'creating', bootstrapRevoked: false };
+  }
+  const value = raw as PendingLogArchiveBootstrap;
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    !hasExactKeys(value as unknown as Record<string, unknown>, [
+      'version',
+      'phase',
+      'bootstrapRevoked',
+      'purpose',
+      'environment',
+      'accountId',
+      'ownership',
+      'bootstrapToken',
+      'bootstrapTokenId',
+      'childTokenNames',
+      'preservedTokenIds',
+      'childTokenIds',
+      'pendingCreateName',
+      'stagedSecretsFingerprint',
+      'recoveryToken',
+      'revocationTargetTokenIds',
+    ]) ||
+    value.version !== 2 ||
+    !['creating', 'issued'].includes(value.phase) ||
+    typeof value.bootstrapRevoked !== 'boolean' ||
+    (value.bootstrapRevoked && value.phase !== 'issued') ||
+    (value.phase === 'issued' &&
+      (!value.stagedSecretsFingerprint ||
+        value.pendingCreateName !== null ||
+        !Array.isArray(value.childTokenIds) ||
+        ![2, 3].includes(value.childTokenIds.length))) ||
+    value.purpose !== 'log-archive' ||
+    value.environment !== environment ||
+    typeof value.accountId !== 'string' ||
+    !ACCOUNT_ID.test(value.accountId) ||
+    value.ownership !== 'account' ||
+    typeof value.bootstrapToken !== 'string' ||
+    !value.bootstrapToken ||
+    /\s/u.test(value.bootstrapToken) ||
+    value.bootstrapToken.length > 4096 ||
+    typeof value.bootstrapTokenId !== 'string' ||
+    !TOKEN_ID.test(value.bootstrapTokenId) ||
+    !Array.isArray(value.childTokenNames) ||
+    value.childTokenNames.length > 3 ||
+    value.childTokenNames.some(
+      (name) =>
+        typeof name !== 'string' ||
+        !['read', 'write', 'sink'].some(
+          (role) =>
+            name === `authrim-${environment}-${value.accountId.slice(0, 8)}-log-archive-${role}`
+        )
+    ) ||
+    !Array.isArray(value.childTokenIds) ||
+    value.childTokenIds.some(
+      (id) => typeof id !== 'string' || !TOKEN_ID.test(id) || id === value.bootstrapTokenId
+    ) ||
+    (value.pendingCreateName !== null &&
+      (typeof value.pendingCreateName !== 'string' ||
+        !value.childTokenNames.includes(value.pendingCreateName))) ||
+    (value.stagedSecretsFingerprint !== null &&
+      (typeof value.stagedSecretsFingerprint !== 'string' ||
+        !FINGERPRINT.test(value.stagedSecretsFingerprint))) ||
+    !Array.isArray(value.revocationTargetTokenIds) ||
+    !value.revocationTargetTokenIds.includes(value.bootstrapTokenId) ||
+    value.revocationTargetTokenIds.some(
+      (id) => typeof id !== 'string' || !TOKEN_ID.test(id) || value.childTokenIds.includes(id)
+    ) ||
+    (value.recoveryToken !== null &&
+      (!value.recoveryToken ||
+        typeof value.recoveryToken.token !== 'string' ||
+        !value.recoveryToken.token ||
+        /\s/u.test(value.recoveryToken.token) ||
+        value.recoveryToken.token.length > 4096 ||
+        !TOKEN_ID.test(value.recoveryToken.tokenId) ||
+        value.revocationTargetTokenIds.includes(value.recoveryToken.tokenId) ||
+        value.childTokenIds.includes(value.recoveryToken.tokenId))) ||
+    !Array.isArray(value.preservedTokenIds) ||
+    value.preservedTokenIds.some((id) => typeof id !== 'string' || !TOKEN_ID.test(id))
+  )
+    throw new Error('log_archive_recovery_state_invalid');
+  return value;
+}
+
+export async function stagePendingBootstrap(input: {
+  baseDir: string;
+  artifact: PendingLogArchiveBootstrap;
+}): Promise<void> {
+  const artifact = parseLogArchiveArtifact(input.artifact, input.artifact.environment);
+  await writePrivateFileAtomically(
+    purposePath({ ...input, ...artifact }),
+    JSON.stringify(artifact),
+    0o600
+  );
+}
+
+export async function loadPendingBootstrap(input: {
+  baseDir: string;
+  environment: string;
+  purpose: 'log-archive';
+}): Promise<PendingLogArchiveBootstrap | null> {
+  const content = await readPrivateFileSecurely(purposePath(input), {
+    maxBytes: MAX_PENDING_CONTROL_BOOTSTRAP_BYTES,
+    invalidError: 'log_archive_recovery_state_invalid',
+    permissionsError: 'log_archive_recovery_state_permissions_invalid',
+  });
+  if (content === null) return null;
+  try {
+    return parseLogArchiveArtifact(JSON.parse(content), input.environment);
+  } catch {
+    throw new Error('log_archive_recovery_state_invalid');
+  }
+}
+
+export async function clearPendingBootstrap(input: {
+  baseDir: string;
+  environment: string;
+  purpose: 'log-archive';
+}): Promise<void> {
+  await removeDurably(purposePath(input));
 }

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { readFile, readdir } from 'node:fs/promises';
 import { Client, Pool } from 'pg';
+import { freshInstallMigrationFiles } from '../../migrations/fresh-install-files';
 import { verifyActivatedDatabaseRows } from '../../startup/live-database-verification';
 import { verifyActivatedLoginProjections } from '../../startup/live-login-projections';
 import { expect, it, vi } from 'vitest';
@@ -48,9 +49,7 @@ async function withFamilyDatabase<T>(
         `../../../../../migrations/${family}/postgresql/`,
         import.meta.url
       );
-      for (const file of (await readdir(migrations))
-        .filter((name) => /^\d+.*\.sql$/u.test(name))
-        .sort()) {
+      for (const file of freshInstallMigrationFiles(await readdir(migrations))) {
         await client.query<Record<string, unknown>>('SET search_path TO public');
         await client.query<Record<string, unknown>>(
           renderPortableMigrationSql(await readFile(new URL(file, migrations), 'utf8'), 'postgres')
@@ -591,9 +590,7 @@ async function actualSource(family: 'core' | 'pii', tenantId = 'tenant-a') {
   const db = new DatabaseSync(':memory:');
   try {
     const migrations = new URL(`../../../../../migrations/${family}/d1/`, import.meta.url);
-    for (const file of (await readdir(migrations))
-      .filter((name) => /^\d+.*\.sql$/u.test(name))
-      .sort())
+    for (const file of freshInstallMigrationFiles(await readdir(migrations)))
       db.exec(
         renderPortableMigrationSql(await readFile(new URL(file, migrations), 'utf8'), 'sqlite')
       );

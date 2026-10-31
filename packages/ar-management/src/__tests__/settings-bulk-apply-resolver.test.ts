@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   adminAuthMiddleware,
@@ -34,16 +32,9 @@ import { insertOAuthClient, insertTenant, openCoreDatabase } from './helpers/cor
  * preview must look without leaving either.
  */
 
-const REPO_ROOT = resolve(__dirname, '../../../..');
 const BULK = '/api/admin/settings/bulk-apply';
 const KEY = 'identity_mapping.oidc_default_set_id';
 const TARGET = 'edge-a';
-const SETTINGS_MIGRATIONS = [
-  '028_tenant_settings_documents.sql',
-  '038_tenant_settings_reconciled_at.sql',
-  '039_platform_settings_documents.sql',
-  '040_settings_legacy_import_state.sql',
-];
 
 async function keyPair() {
   const pair = (await crypto.subtle.generateKey('Ed25519', true, [
@@ -190,9 +181,6 @@ async function setup() {
     );
     app.route('/api/admin', settingsV2);
   }, env);
-  for (const file of SETTINGS_MIGRATIONS) {
-    context.db.exec(readFileSync(resolve(REPO_ROOT, `migrations/admin/d1/${file}`), 'utf8'));
-  }
   const cookie = signIn(context.db, GLOBAL_SUPER_ADMIN).cookie;
   const count = (table: string) =>
     (context.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;

@@ -1,5 +1,6 @@
+import { readMigrationSource } from '../../../../../test/helpers/migration-source.mjs';
 import { createRequire } from 'node:module';
-import { readFileSync } from 'node:fs';
+
 import { pathToFileURL } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import { createD1Adapter } from '../../db/adapters/d1-adapter';
@@ -49,12 +50,9 @@ async function fixture() {
     });
     for (let offset = 0; offset < ddl.length; offset += 40)
       await db.batch(ddl.slice(offset, offset + 40).map((sql) => db.prepare(sql)));
-    const migration = readFileSync(
-      new URL(
-        '../../../../../migrations/pii/d1/014_guest_pii_erasure_markers.sql',
-        import.meta.url
-      ),
-      'utf8'
+    const migration = readMigrationSource(
+      new URL('../../../../../migrations/pii/d1/', import.meta.url),
+      '014_guest_pii_erasure_markers.sql'
     );
     await db.batch(splitMigrationSql(migration).map((sql) => db.prepare(sql)));
   } finally {

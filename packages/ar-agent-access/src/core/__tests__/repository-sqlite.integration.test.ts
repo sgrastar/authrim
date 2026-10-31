@@ -1,6 +1,6 @@
 import { recordingAdminAgentAuditWriter } from './helpers/admin-audit-writer';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type {
@@ -1756,9 +1756,9 @@ describeWithSqlite('AgentBulkRepository SQLite lifecycle', () => {
     const migrationDirectory = existsSync(rootCandidate)
       ? rootCandidate
       : path.resolve(process.cwd(), '../../migrations/admin/d1');
-    const migrationSql = readdirSync(migrationDirectory)
-      .filter((name) => /^\d{3}_.*\.sql$/u.test(name))
-      .sort()
+    // The fresh-install baseline only: the 0.4.0 baseline and the 0.4.1 bridge delta in the same
+    // directory are for existing environments and would collide with it.
+    const migrationSql = ['001_0_5_0_admin_baseline.sql']
       .map((filename) =>
         readFileSync(path.join(migrationDirectory, filename), 'utf8')
           .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '0')

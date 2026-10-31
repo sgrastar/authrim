@@ -1,3 +1,10 @@
+import { loadPendingBootstrap } from '../core/pending-control-bootstrap.js';
+import type { Context } from 'hono';
+import type { ContentfulStatusCode } from 'hono/utils/http-status';
+import {
+  ensureLogArchiveTokens,
+  LogArchiveTokenIssuanceError,
+} from '../core/log-archive-token-issuance.js';
 import {
   waitForLogArchiveReadiness,
   prepareLogArchiveReadinessAttempt,
@@ -7,8 +14,22 @@ import {
   createLogArchiveConfig,
   implementedLogArchiveModes,
 } from '../core/log-archive-config.js';
-import { planLogArchive, hasCompleteLogArchiveState } from '../core/log-archive.js';
-import { publishLogArchiveSecrets, stageLogArchiveSecrets } from '../core/log-archive-secrets.js';
+import {
+  planLogArchive,
+  hasCompleteLogArchiveState,
+  LogArchiveApi,
+  LogArchiveApiError,
+} from '../core/log-archive.js';
+import {
+  publishLogArchiveSecrets,
+  loadIssuedLogArchiveAccountId,
+  stageLogArchiveSecrets,
+  assertLogArchiveManualEntryAllowed,
+  loadStagedLogArchiveEvidence,
+  hasStagedLogArchiveSecrets,
+  loadStagedLogArchiveSecrets,
+  requireStagedLogArchiveEvidence,
+} from '../core/log-archive-secrets.js';
 /**
  * API Routes for Authrim Setup Web UI
  *
@@ -40,6 +61,7 @@ import {
   confirmEnvironmentObservedForDeletion,
   detectEnvironments,
   deleteEnvironment,
+  buildR2OwnershipMarkerKey,
   EnvironmentInventoryUnavailableError,
   getWorkersSubdomain,
   checkAdminSetupStatus,
@@ -165,6 +187,7 @@ import {
 } from '../core/wrangler-sync.js';
 import { buildWorkerDeploymentResourceIds } from '../core/deployment-resource-ids.js';
 import { refreshWorkerDeploymentArtifacts } from '../core/worker-deployment-artifacts.js';
+import { withAdoptedR2Ownership } from '../core/r2-ownership-adoption.js';
 import { cleanupLocalEnvironmentArtifacts } from '../core/environment-cleanup.js';
 import { cleanupSetupManagedControlTokens } from '../core/control-token-environment-cleanup.js';
 import { buildControlTokenManualCleanupTarget } from '../core/control-token-manual-action.js';
@@ -543,8 +566,31 @@ const EnvironmentDeleteRequestSchema = z
     deleteR2: z.boolean().optional().default(true),
     deletePages: z.boolean().optional().default(true),
     finalizeEnvironment: z.boolean().optional().default(false),
+    adoptR2Ownership: z.boolean().optional().default(false),
+    // Comparison evidence only. Provider discovery remains the authority for every adopted row.
+    confirmedR2Adoption: z
+      .array(
+        z
+          .object({
+            name: z.string().min(1).max(63),
+            creationDate: z.iso.datetime({ offset: true }),
+            ownershipId: z.string().regex(/^[a-f0-9-]{36}$/u),
+          })
+          .strict()
+      )
+      .min(1)
+      .max(100)
+      .refine(
+        (rows) => new Set(rows.map((row) => row.name)).size === rows.length,
+        'Confirmed R2 bucket names must be unique'
+      )
+      .optional(),
   })
-  .strict();
+  .strict()
+  .refine((body) => !body.adoptR2Ownership || Boolean(body.confirmedR2Adoption?.length), {
+    message: 'R2 ownership adoption requires the confirmed candidate identities',
+    path: ['confirmedR2Adoption'],
+  });
 
 function isEnvironmentOperationConflict(message: unknown): boolean {
   return (
@@ -1665,6 +1711,7 @@ export function createApiRoutes(): Hono {
   api.use('/control', validateSession);
   api.use('/control/*', validateSession);
   api.use('/r2/*', validateSession);
+  api.use('/log-archive/*', validateSession);
 
   // AWS operations have their own token and same-loopback-origin checks, including status reads.
   api.route('/aws', createAwsSetupApi({ getToken: getSessionToken, rootDir: process.cwd() }));
@@ -2372,23 +2419,218 @@ export function createApiRoutes(): Hono {
     });
   });
 
+  function logArchiveFailure(c: Context, error: unknown, bootstrapCleanupRequired = false) {
+    if (error instanceof z.ZodError)
+      return c.json(
+        {
+          success: false,
+          error: 'log_archive_request_invalid',
+          fields: [...new Set(error.issues.map((issue) => String(issue.path[0] ?? 'request')))],
+        },
+        400
+      );
+    if (error instanceof SyntaxError)
+      return c.json(
+        { success: false, error: 'log_archive_request_invalid', fields: ['request'] },
+        400
+      );
+    const candidate =
+      error instanceof Error ? ('code' in error ? String(error.code) : error.message) : '';
+    const code = /^log_archive_[a-z0-9_]+$/u.test(candidate)
+      ? candidate
+      : 'log_archive_configuration_invalid';
+    const status =
+      error instanceof LogArchiveApiError && error.status >= 400 && error.status <= 599
+        ? (error.status as ContentfulStatusCode)
+        : 400;
+    return c.json(
+      {
+        success: false,
+        error: code,
+        ...(error instanceof LogArchiveTokenIssuanceError
+          ? {
+              cleanupRequired: error.cleanupRequired,
+              childCleanupRequired: error.childCleanupRequired,
+            }
+          : bootstrapCleanupRequired
+            ? { cleanupRequired: true }
+            : {}),
+      },
+      status
+    );
+  }
+
+  // The log bootstrap is account-owned and independent of the deploy-step Control bootstrap.
+  api.post('/log-archive/token-template', async (c) => {
+    try {
+      const request = z
+        .object({ environment: EnvNameSchema })
+        .strict()
+        .parse(await c.req.json());
+      const accountId = await getAccountId();
+      if (!accountId) throw new Error('log_archive_cloudflare_credentials_invalid');
+      return c.json({
+        success: true,
+        expiresOnDate: buildCloudflareBootstrapTokenEndDate(),
+        url: buildCloudflareBootstrapTemplateUrl({
+          accountId,
+          environment: request.environment,
+          ownership: 'account',
+          purpose: 'log-archive',
+        }),
+      });
+    } catch (error) {
+      return logArchiveFailure(c, error);
+    }
+  });
+
+  api.post('/log-archive/issue-tokens', async (c) =>
+    withLock(async () => {
+      let operation:
+        | Awaited<ReturnType<typeof acquireEnvironmentOperationForEnvironment>>
+        | undefined;
+      let bootstrapSubmitted = false;
+      let issuanceStarted = false;
+      try {
+        const request = z
+          .object({
+            environment: EnvNameSchema,
+            mode: z.enum(['pipeline', 'scheduled']),
+            bootstrapToken: z.string().trim().min(20).max(4096).regex(/^\S+$/u),
+          })
+          .strict()
+          .parse(await c.req.json());
+        bootstrapSubmitted = true;
+        if (!implementedLogArchiveModes().includes(request.mode))
+          throw new LogArchiveApiError(409, 'log_archive_mode_not_implemented');
+        const baseDir = findAuthrimBaseDir(process.cwd());
+        operation = await acquireEnvironmentOperationForEnvironment({
+          baseDir,
+          env: request.environment,
+          operation: 'web-log-archive-issue-tokens',
+        });
+        if (
+          operation.lock ||
+          (await loadProvisioningIntent({ baseDir, environment: request.environment }))
+        )
+          throw new LogArchiveApiError(
+            409,
+            'log_archive_generation_change_requires_explicit_transition'
+          );
+        const paths = getEnvironmentPaths({ baseDir, env: request.environment });
+        const config = existsSync(paths.config)
+          ? parseEnvironmentConfigForEnv(
+              JSON.parse(await readFile(paths.config, 'utf8')),
+              request.environment
+            )
+          : getStateConfigForEnv(request.environment);
+        if (!config) throw new LogArchiveApiError(409, 'log_archive_environment_config_required');
+        if (config.logging?.archive && config.logging.archive.mode !== request.mode)
+          throw new LogArchiveApiError(
+            409,
+            'log_archive_generation_change_requires_explicit_transition'
+          );
+        const accountId = await getAccountId();
+        if (
+          !accountId ||
+          (config.cloudflare?.accountId && config.cloudflare.accountId !== accountId)
+        )
+          throw new LogArchiveApiError(409, 'log_archive_cloudflare_credentials_invalid');
+        issuanceStarted = true;
+        const {
+          warning,
+          reused: _reused,
+          ...issued
+        } = await ensureLogArchiveTokens({ baseDir, accountId, ...request });
+        return c.json({ success: true, issued, ...(warning ? { warning } : {}) });
+      } catch (error) {
+        return logArchiveFailure(c, error, bootstrapSubmitted && !issuanceStarted);
+      } finally {
+        await operation?.release();
+      }
+    })
+  );
+
+  api.get('/log-archive/staged-status', async (c) => {
+    if (!sessionToken || c.req.header('X-Session-Token') !== sessionToken)
+      return c.json({ success: false, error: 'Invalid or missing session token' }, 401);
+    return withLock(async () => {
+      let operation:
+        | Awaited<ReturnType<typeof acquireEnvironmentOperationForEnvironment>>
+        | undefined;
+      try {
+        const environment = EnvNameSchema.parse(c.req.query('environment'));
+        const baseDir = findAuthrimBaseDir(process.cwd());
+        operation = await acquireEnvironmentOperationForEnvironment({
+          baseDir,
+          env: environment,
+          operation: 'web-log-archive-staged-status',
+        });
+        const accountId = await getAccountId();
+        if (!accountId) throw new Error('log_archive_cloudflare_credentials_invalid');
+        const pending = await loadPendingBootstrap({
+          baseDir,
+          environment,
+          purpose: 'log-archive',
+        });
+        const evidence = await loadStagedLogArchiveEvidence(baseDir, environment);
+        const secrets = hasStagedLogArchiveSecrets(baseDir, environment)
+          ? await loadStagedLogArchiveSecrets(baseDir, environment)
+          : null;
+        const mode = secrets ? (secrets.sinkToken ? 'pipeline' : 'scheduled') : null;
+        const complete = Boolean(
+          evidence &&
+          evidence.mode === mode &&
+          (!evidence.issuance ||
+            evidence.bootstrapRevoked ||
+            (pending?.phase === 'issued' && pending.bootstrapRevoked)) &&
+          (!pending ||
+            (pending.phase === 'issued' &&
+              pending.accountId === evidence.accountId &&
+              pending.stagedSecretsFingerprint === evidence.secretsFingerprint))
+        );
+        return c.json({
+          success: true,
+          complete,
+          mode,
+          accountMatches: evidence?.accountId === accountId,
+          pendingRecovery: pending !== null,
+        });
+      } catch (error) {
+        return logArchiveFailure(c, error);
+      } finally {
+        await operation?.release();
+      }
+    });
+  });
+
   api.post('/log-archive/configure', async (c) =>
     withLock(async () => {
       let operation:
         | Awaited<ReturnType<typeof acquireEnvironmentOperationForEnvironment>>
         | undefined;
       try {
-        const request = z
-          .object({
-            environment: EnvNameSchema,
-            mode: z.enum(['pipeline', 'scheduled']),
-            dbRetentionDays: z.number().int().min(1).max(3650).optional(),
-            readToken: z.string().min(1).max(16384),
-            writeToken: z.string().min(1).max(16384),
-            sinkToken: z.string().min(1).max(16384).optional(),
-          })
-          .strict()
-          .parse(await c.req.json());
+        const base = z.object({
+          environment: EnvNameSchema,
+          mode: z.enum(['pipeline', 'scheduled']),
+          dbRetentionDays: z.number().int().min(1).max(3650).optional(),
+        });
+        const body = await c.req.json();
+        const request =
+          body?.tokenSource === 'staged'
+            ? base
+                .extend({ tokenSource: z.literal('staged') })
+                .strict()
+                .parse(body)
+            : base
+                .extend({
+                  tokenSource: z.literal('manual').optional(),
+                  readToken: z.string().trim().min(1).max(16384),
+                  writeToken: z.string().trim().min(1).max(16384),
+                  sinkToken: z.string().trim().min(1).max(16384).optional(),
+                })
+                .strict()
+                .parse(body);
         if (!implementedLogArchiveModes().includes(request.mode))
           return c.json({ success: false, error: 'log_archive_mode_not_implemented' }, 409);
         const baseDir = findAuthrimBaseDir(process.cwd());
@@ -2444,16 +2686,75 @@ export function createApiRoutes(): Hono {
             queue: { enabled: archive.mode === 'pipeline' || source.features.queue.enabled },
           },
         });
-        await stageLogArchiveSecrets(baseDir, request.environment, {
-          readToken: request.readToken,
-          writeToken: request.writeToken,
-          sinkToken: request.sinkToken,
-        });
+        if ('readToken' in request)
+          await assertLogArchiveManualEntryAllowed(baseDir, request.environment);
+        const secrets =
+          'readToken' in request
+            ? {
+                readToken: request.readToken,
+                writeToken: request.writeToken,
+                sinkToken: request.sinkToken,
+              }
+            : await loadStagedLogArchiveSecrets(baseDir, request.environment);
+        if (request.mode === 'pipeline' && !secrets.sinkToken)
+          throw new Error('log_archive_sink_credential_required');
+        const values = [
+          secrets.readToken,
+          secrets.writeToken,
+          ...(secrets.sinkToken ? [secrets.sinkToken] : []),
+        ];
+        if (new Set(values).size !== values.length)
+          throw new Error('log_archive_distinct_catalog_credentials_required');
+        const accountId = await getAccountId();
+        const credential = await getCloudflareApiToken();
+        if (!accountId || !credential)
+          throw new Error('log_archive_cloudflare_credentials_invalid');
+        // Tokens issued by Setup had their exact policies verified with the one-time token, and the
+        // fingerprint check below binds the staged values to that issuance. The deploy login
+        // (OAuth) cannot read token policies, so asking it to re-inspect them would always fail.
+        let issuedBySetup = false;
+        if (!('readToken' in request)) {
+          const evidence = await requireStagedLogArchiveEvidence(
+            baseDir,
+            request.environment,
+            accountId,
+            request.mode
+          );
+          const pending = await loadPendingBootstrap({
+            baseDir,
+            environment: request.environment,
+            purpose: 'log-archive',
+          });
+          if (
+            pending &&
+            (pending.phase !== 'issued' ||
+              (!pending.bootstrapRevoked && !evidence.bootstrapRevoked) ||
+              pending.stagedSecretsFingerprint !== evidence.secretsFingerprint)
+          )
+            throw new LogArchiveTokenIssuanceError(
+              'log_archive_bootstrap_revocation_unconfirmed',
+              true
+            );
+          issuedBySetup = evidence.issuance !== undefined;
+        }
+        if (source.cloudflare?.accountId && source.cloudflare.accountId !== accountId)
+          throw new Error('log_archive_cloudflare_credentials_invalid');
+        await new LogArchiveApi(accountId, credential.token).verifyCatalogCredentials(
+          secrets.readToken,
+          secrets.writeToken,
+          secrets.sinkToken,
+          issuedBySetup ? { inspectPolicies: false } : undefined
+        );
+        if ('readToken' in request)
+          await stageLogArchiveSecrets(baseDir, request.environment, secrets, {
+            accountId,
+            mode: request.mode,
+          });
         await saveEnvironmentConfig(envPaths, committed);
         state.config = committed;
         return c.json({ success: true, archive });
-      } catch {
-        return c.json({ success: false, error: 'log_archive_configuration_invalid' }, 400);
+      } catch (error) {
+        return logArchiveFailure(c, error);
       } finally {
         await operation?.release();
       }
@@ -4050,6 +4351,12 @@ export function createApiRoutes(): Hono {
                   provisioningKeysDir,
                   config.logging.archive.mode,
                   config.logging.archive.objectEncryptionKeyVersion
+                ),
+                logArchiveIssuedForAccountId: await loadIssuedLogArchiveAccountId(
+                  rootDir,
+                  env,
+                  config.logging.archive.mode,
+                  provisioningKeysDir
                 ),
               }
             : {}),
@@ -8165,6 +8472,8 @@ export function createApiRoutes(): Hono {
           deleteR2,
           deletePages: requestedDeletePages,
           finalizeEnvironment,
+          adoptR2Ownership,
+          confirmedR2Adoption,
         } = bodyResult.data;
         let deletePages = requestedDeletePages;
         if (
@@ -8311,6 +8620,7 @@ export function createApiRoutes(): Hono {
             );
           }
         }
+        let r2AdoptionCandidatesChanged = false;
         const result = await deleteEnvironment({
           env,
           environmentKnownLocally: Boolean(operationLock.lock) || localEnvironmentState.exists,
@@ -8325,6 +8635,32 @@ export function createApiRoutes(): Hono {
           knownD1Resources: deletionLock ? Object.values(deletionLock.d1) : [],
           knownKVResources: deletionLock ? Object.values(deletionLock.kv) : [],
           knownQueueResources: deletionLock?.queues ? Object.values(deletionLock.queues) : [],
+          adoptR2Ownership,
+          expectR2OwnershipAdoption: adoptR2Ownership,
+          onR2OwnershipAdoption: async (candidates) => {
+            const confirmedByName = new Map(
+              (confirmedR2Adoption ?? []).map((row) => [row.name, row])
+            );
+            const matches =
+              adoptR2Ownership &&
+              candidates.length === confirmedByName.size &&
+              candidates.every((candidate) => {
+                const confirmed = confirmedByName.get(candidate.name);
+                return (
+                  confirmed !== undefined &&
+                  candidate.creationDate === confirmed.creationDate &&
+                  candidate.ownershipId === confirmed.ownershipId &&
+                  candidate.ownershipMarkerKey === buildR2OwnershipMarkerKey(confirmed.ownershipId)
+                );
+              });
+            r2AdoptionCandidatesChanged = !matches;
+            return matches;
+          },
+          onR2OwnershipAdoptionPersist: async (candidates) => {
+            const adopted = withAdoptedR2Ownership(deletionLock, env, candidates);
+            await saveLockFile(adopted, operationLock!.lockFilePath);
+            deletionLock = adopted;
+          },
           knownLogArchiveResource: deletionLock?.logArchive,
           knownR2Resources: deletionLock?.r2
             ? Object.entries(deletionLock.r2).map(([binding, resource]) => ({
@@ -8376,6 +8712,33 @@ export function createApiRoutes(): Hono {
             state.operationProgress = { operation: 'delete', current, total };
           },
         });
+
+        if (
+          r2AdoptionCandidatesChanged ||
+          (result.adoptionCandidates?.length && result.adoptionReady !== false && !adoptR2Ownership)
+        ) {
+          state.status = 'idle';
+          state.error = null;
+          addProgress('R2 ownership adoption requires confirmation. No resources were deleted.');
+          await flushProgressLog();
+          return c.json({
+            success: false,
+            adoptionCandidates: result.adoptionCandidates ?? [],
+            adoptionReady: Boolean(result.adoptionCandidates?.length),
+            ...(r2AdoptionCandidatesChanged
+              ? {
+                  errorCode: 'r2_adoption_candidates_changed',
+                  error:
+                    'R2 adoption candidates changed. Review and confirm the current identities.',
+                }
+              : {}),
+            deleted: result.deleted,
+            errors: result.errors,
+            progress: state.progress,
+            operationProgress: state.operationProgress,
+            logPath: state.logPath,
+          });
+        }
 
         const deletedLockResourceCount =
           result.deleted.workers.length +
@@ -8452,6 +8815,8 @@ export function createApiRoutes(): Hono {
             postDeleteVerification: result.postDeleteVerification,
             deleted: result.deleted,
             manualR2: result.manualR2,
+            adoptionCandidates: result.adoptionCandidates,
+            adoptionReady: result.adoptionReady,
             manualDns,
             manualControlTokens,
             errors: result.errors,

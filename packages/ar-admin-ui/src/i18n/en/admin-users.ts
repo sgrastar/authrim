@@ -108,6 +108,8 @@ const adminUsers = {
 	admin_user_detail_locked_at: 'Locked At',
 	admin_user_detail_last_used: 'Last Used',
 	admin_user_detail_unnamed_device: 'Unnamed Device',
+	admin_user_detail_restricted_credentials:
+		'Credentials are not shown while the account is locked or suspended.',
 	admin_user_detail_no_passkeys: 'No passkeys registered',
 	admin_user_detail_totp: 'Authenticator Apps',
 	admin_user_detail_totp_unnamed: 'Authenticator app',

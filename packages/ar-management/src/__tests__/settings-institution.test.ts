@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
   adminAuthMiddleware,
@@ -41,13 +39,6 @@ import {
  * credentials that run a tenant may read it and may not change it; only platform authority may.
  */
 
-const REPO_ROOT = resolve(__dirname, '../../../..');
-const SETTINGS_MIGRATIONS = [
-  '028_tenant_settings_documents.sql',
-  '038_tenant_settings_reconciled_at.sql',
-  '039_platform_settings_documents.sql',
-  '040_settings_legacy_import_state.sql',
-];
 const SCOPES = 'institution.scopes';
 const NAMES = 'institution.display_names';
 const URL = `/api/admin/tenants/${TENANT}/settings/institution`;
@@ -101,9 +92,6 @@ async function setup() {
     );
     app.route('/api/admin', settingsV2);
   }, envExtras);
-  for (const file of SETTINGS_MIGRATIONS) {
-    context.db.exec(readFileSync(resolve(REPO_ROOT, `migrations/admin/d1/${file}`), 'utf8'));
-  }
   const cookie = (assignments: Assignment[]) => signIn(context.db, assignments).cookie;
   const principal = (permissions: string[], scope: 'all' | 'allow') => {
     sequence += 1;

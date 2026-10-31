@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readRenderedMigrationSql } from '../../../../test/helpers/migration-source.mjs';
+
 import { resolve } from 'node:path';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
@@ -89,12 +90,9 @@ describe('PluginOutboundGateway', () => {
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
     database.exec('PRAGMA foreign_keys = ON');
-    for (const migration of [
-      '001_0_4_0_plugin_runner_baseline.sql',
-      '007_tenant_external_plugin_gates.sql',
-    ]) {
+    for (const migration of ['001_0_5_0_plugin_runner_baseline.sql']) {
       database.exec(
-        readFileSync(resolve(REPO_ROOT, 'migrations/plugin-runner/d1', migration), 'utf8')
+        readRenderedMigrationSql(resolve(REPO_ROOT, 'migrations/plugin-runner/d1'), migration)
       );
     }
     database.exec(
@@ -235,6 +233,27 @@ describe('PluginOutboundGateway', () => {
       credential_injected: 1,
       result_code: 'http_204',
     });
+  });
+
+  it('calls fetch as a plain function, as Workers require', async () => {
+    allowExactHost();
+    await insertBearerCredential();
+    // workerd rejects `fetch` called as a method of another object ("Illegal invocation").
+    const receivers: unknown[] = [];
+    const externalFetch = function (this: unknown): Promise<Response> {
+      receivers.push(this);
+      if (this !== undefined && this !== globalThis)
+        throw new TypeError('Illegal invocation: function called with incorrect `this` reference');
+      return Promise.resolve(new Response(null, { status: 204 }));
+    } as typeof fetch;
+    const gateway = new PluginOutboundGateway(environment(), externalFetch, () => 1_000);
+
+    const response = await gateway.fetch(
+      new Request('https://hooks.example.com/events', { method: 'POST', body: '{}' })
+    );
+
+    expect(response.status).toBe(204);
+    expect(receivers).toHaveLength(1);
   });
 
   it('fails closed before external fetch when credential AAD does not match the tenant', async () => {

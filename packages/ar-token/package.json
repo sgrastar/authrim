@@ -1,6 +1,6 @@
 {
   "name": "@authrim/ar-token",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "type": "module",
   "private": true,
   "scripts": {

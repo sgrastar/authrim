@@ -1,3 +1,4 @@
+import { readMigrationSource } from '../../../../test/helpers/migration-source.mjs';
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -10,6 +11,11 @@ const legacyDevicePaths = [`${legacyDeviceBase}/challenge`, `${legacyDeviceBase}
 const legacyAdminPath = ['/api/admin/settings', 'guest-auth'].join('/');
 const browserGuestPath = ['/api/auth/guest', 'login'].join('/');
 const readRepositoryFile = (path: string) => readFileSync(`${repositoryRoot}/${path}`, 'utf8');
+const readMigration = (dialect: string) =>
+  readMigrationSource(
+    `${repositoryRoot}/migrations/core/${dialect}`,
+    '003_account_registration_state.sql'
+  );
 
 describe('shared-HMAC device guest removal contract', () => {
   it('does not register the device challenge routes and retains browser guest login', () => {
@@ -135,10 +141,8 @@ describe('shared-HMAC device guest removal contract', () => {
   });
 
   it('does not retain legacy shared-HMAC credential rows as browser resume credentials', () => {
-    const d1Migration = readRepositoryFile('migrations/core/d1/003_account_registration_state.sql');
-    const postgresMigration = readRepositoryFile(
-      'migrations/core/postgresql/003_account_registration_state.sql'
-    );
+    const d1Migration = readMigration('d1');
+    const postgresMigration = readMigration('postgresql');
 
     expect(d1Migration).not.toMatch(/INSERT INTO guest_devices[\s\S]+FROM guest_devices_legacy/u);
     expect(postgresMigration).toContain('TRUNCATE TABLE guest_devices');

@@ -1357,6 +1357,8 @@ const ja: Translations = {
   'web.status.adminNotConfigured': '管理者未設定',
   'web.status.initializing': '初期化中...',
   'web.status.found': '{{count}}件検出',
+  'web.status.serverUnreachable':
+    'Setup サーバーに接続できません。起動しているターミナルで動作中か確認し、止まっていれば再起動してからやり直してください。',
   'web.status.operationInProgress':
     '別のセットアップ操作を実行中です。完了後にもう一度お試しください。',
   'web.status.warning': '警告：',

@@ -16,7 +16,7 @@ import { logProducerFixture } from '../../../../test/helpers/log-iceberg-produce
  * cryptographic verification, and the per-account replay state (a Durable Object).
  */
 
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { Hono } from 'hono';
@@ -261,9 +261,7 @@ import { passkeyCredentialLookupSubject } from '@authrim/ar-lib-core';
 function migrate(folder: string): SqliteDatabase {
   const db = new DatabaseSync(':memory:');
   const directory = path.resolve(__dirname, '../../../../migrations', folder, 'd1');
-  for (const file of readdirSync(directory)
-    .filter((name) => name.endsWith('.sql'))
-    .sort()) {
+  for (const file of [`001_0_5_0_${folder}_baseline.sql`]) {
     db.exec(renderPortableMigrationSql(readFileSync(path.join(directory, file), 'utf8'), 'sqlite'));
   }
   return db;

@@ -142,6 +142,74 @@ function managedCoreMigrations(): string {
   return root;
 }
 
+function minorBaselineBridgeFixture() {
+  const migrationsRoot = managedCoreMigrations();
+  const streamRoot = join(migrationsRoot, 'core/d1');
+  const migrationFile = (path: string) => ({
+    path,
+    checksum: calculateReleaseMigrationChecksum(join(streamRoot, path), 'sqlite'),
+  });
+  const legacy = '000_published_legacy.sql';
+  // Reapplying this absorbed source would try to create the existing table again.
+  writeFileSync(join(streamRoot, legacy), 'CREATE TABLE core_record (id TEXT PRIMARY KEY);\n');
+  const evidence = (version: string, generatedFrom: ReturnType<typeof migrationFile>[]) =>
+    JSON.stringify({
+      formatVersion: 2,
+      productVersion: version,
+      compatibility: 'fresh_install_only',
+      streams: [
+        {
+          id: 'core-d1',
+          schemaFamily: 'core',
+          dialect: 'sqlite',
+          targetKind: 'cloudflare-d1',
+          ...migrationFile(`001_${version.replaceAll('.', '_')}_core_baseline.sql`),
+          schemaChecksum: 'a'.repeat(64),
+          seedChecksum: 'b'.repeat(64),
+          objectCount: 1,
+          generatedFrom,
+        },
+      ],
+    });
+  mkdirSync(join(migrationsRoot, 'evidence'));
+  const previousEvidence = evidence('0.4.0', [migrationFile(legacy)]);
+  writeFileSync(join(migrationsRoot, 'evidence/0.4.0.json'), previousEvidence);
+  writeFileSync(join(migrationsRoot, 'semantic-baseline.evidence.json'), previousEvidence);
+  const baseline = generateReleaseMigrationManifest({ migrationsRoot, productVersion: '0.4.0' });
+  writeReleaseMigrationManifest(join(migrationsRoot, 'releases/0.4.0.json'), baseline);
+  const previous = generateReleaseMigrationManifest({
+    migrationsRoot,
+    productVersion: '0.4.1',
+    previousManifest: baseline,
+  });
+  writeReleaseMigrationManifest(join(migrationsRoot, 'releases/0.4.1.json'), previous);
+
+  const deltas = [
+    ['002_add_label.sql', 'ALTER TABLE core_record ADD COLUMN label TEXT;\n'],
+    ['003_add_label_index.sql', 'CREATE INDEX core_record_label_idx ON core_record(label);\n'],
+    ['004_add_seed.sql', "INSERT INTO core_record (id, label) VALUES ('seed', 'kept');\n"],
+  ];
+  for (const [path, sql] of deltas) writeFileSync(join(streamRoot, path), sql);
+  const unpublished = deltas.map(([path]) => migrationFile(path));
+  const freshPath = '001_0_5_0_core_baseline.sql';
+  writeFileSync(
+    join(streamRoot, freshPath),
+    "CREATE TABLE core_record (id TEXT PRIMARY KEY, label TEXT);\nCREATE INDEX core_record_label_idx ON core_record(label);\nINSERT INTO core_record (id, label) VALUES ('seed', 'kept');\n"
+  );
+  const currentEvidence = evidence('0.5.0', [migrationFile(legacy), ...unpublished]);
+  writeFileSync(join(migrationsRoot, 'evidence/0.5.0.json'), currentEvidence);
+  writeFileSync(join(migrationsRoot, 'semantic-baseline.evidence.json'), currentEvidence);
+  return {
+    migrationsRoot,
+    streamRoot,
+    previous,
+    history: [baseline, previous],
+    unpublished,
+    freshPath,
+    legacy,
+  };
+}
+
 function lock(d1: AuthrimLock['d1']): AuthrimLock {
   return AuthrimLockSchema.parse({
     version: '1.0.0',
@@ -276,6 +344,104 @@ describe('release migration manifests', () => {
         .streams.find((stream) => stream.id === 'core-d1')
         ?.files.map((file) => file.path)
     ).toEqual(['001_0_4_0_core_baseline.sql']);
+  });
+
+  it('keeps unpublished deltas in the minor bridge after absorbing them into fresh provenance', () => {
+    const fixture = minorBaselineBridgeFixture();
+    const generate = (previousManifest: ReleaseMigrationManifest) =>
+      generateReleaseMigrationManifest({
+        migrationsRoot: fixture.migrationsRoot,
+        productVersion: '0.5.0',
+        previousManifest,
+        previousManifests: fixture.history,
+      });
+    const manifest = generate(fixture.previous);
+    // Also recover the empty bridge produced by the former generator when syncing a draft.
+    const emptyBridgeDraft = structuredClone(manifest);
+    for (const stream of emptyBridgeDraft.upgradePaths?.[0]?.streams ?? []) stream.files = [];
+    for (const current of [manifest, generate(emptyBridgeDraft)]) {
+      expect(current.streams.find((stream) => stream.id === 'core-d1')?.files).toEqual([
+        expect.objectContaining({ path: fixture.freshPath }),
+      ]);
+      expect(current.upgradePaths?.[0]).toMatchObject({
+        fromProductVersion: '0.4.1',
+        kind: 'bridge',
+      });
+      expect(
+        current.upgradePaths?.[0]?.streams.find((stream) => stream.id === 'core-d1')?.files
+      ).toEqual(fixture.unpublished);
+    }
+  });
+
+  it('consolidates a minor bridge absorbed into fresh provenance and retains accepted history', () => {
+    const fixture = minorBaselineBridgeFixture();
+    const protectedPaths = [
+      'releases/0.4.0.json',
+      'releases/0.4.1.json',
+      'evidence/0.4.0.json',
+      'evidence/0.5.0.json',
+      'semantic-baseline.evidence.json',
+      'core/d1/001_0_4_0_core_baseline.sql',
+      `core/d1/${fixture.freshPath}`,
+      `core/d1/${fixture.legacy}`,
+    ];
+    const before = protectedPaths.map((path) =>
+      readFileSync(join(fixture.migrationsRoot, path), 'utf8')
+    );
+    prepareRelease({ migrationsRoot: fixture.migrationsRoot, version: '0.5.0', write: true });
+    const release = readReleaseMigrationManifest(
+      join(fixture.migrationsRoot, 'releases/0.5.0.json')
+    );
+    const files = release.upgradePaths?.[0]?.streams.find(
+      (stream) => stream.id === 'core-d1'
+    )?.files;
+    expect(files).toEqual([
+      expect.objectContaining({
+        path: '002_0_5_0_core_delta.sql',
+        supersedes: fixture.unpublished,
+        semanticEvidence: {
+          objectCount: 2,
+          schemaChecksum: expect.stringMatching(/^[a-f0-9]{64}$/u),
+          seedChecksum: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        },
+      }),
+    ]);
+    expect(release.streams.find((stream) => stream.id === 'core-d1')?.files).toEqual([
+      expect.objectContaining({ path: fixture.freshPath }),
+    ]);
+    expect(
+      fixture.unpublished.every((file) => !existsSync(join(fixture.streamRoot, file.path)))
+    ).toBe(true);
+    expect(
+      protectedPaths.map((path) => readFileSync(join(fixture.migrationsRoot, path), 'utf8'))
+    ).toEqual(before);
+
+    const artifact = buildReleaseMigrationArtifactManifest({
+      targetManifest: release,
+      installedProductVersion: '0.4.1',
+      availableManifests: fixture.history,
+    });
+    expect(
+      artifact.upgradePaths
+        ?.find((path) => path.fromProductVersion === '0.4.1')
+        ?.streams.find((stream) => stream.id === 'core-d1')?.files
+    ).toEqual(files);
+    expect(
+      artifact.acceptedMigrationHistory?.find((stream) => stream.id === 'core-d1')?.files
+    ).toEqual(expect.arrayContaining(fixture.unpublished));
+  });
+
+  it('refuses newer provenance when evidence for the installed baseline is missing', () => {
+    const fixture = minorBaselineBridgeFixture();
+    rmSync(join(fixture.migrationsRoot, 'evidence/0.4.0.json'));
+    expect(() =>
+      generateReleaseMigrationManifest({
+        migrationsRoot: fixture.migrationsRoot,
+        productVersion: '0.5.0',
+        previousManifest: fixture.previous,
+        previousManifests: fixture.history,
+      })
+    ).toThrow('semantic_baseline_provenance_missing:0.4.0');
   });
 
   it('resolves sequential deltas for upgrades and never applies a new baseline to an existing DB', () => {

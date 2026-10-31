@@ -5,6 +5,7 @@ import { expect, it, vi } from 'vitest';
 import { Client, Pool } from 'pg';
 import { PostgresAdapter } from '../../../ar-lib-core/src/db/adapters/postgres-adapter';
 import { renderPortableMigrationSql } from '../../../ar-lib-core/src/migrations/sql-portability';
+import { freshInstallMigrationFiles } from '../migrations/fresh-install-files';
 import {
   createLookupBlindIndex,
   encodeCanonicalSensitiveValueRef,
@@ -255,9 +256,7 @@ function dbUrl(name: string): string {
 }
 
 async function migrate(db: Client, directory: URL): Promise<void> {
-  for (const file of (await readdir(directory))
-    .filter((name) => /^\d+.*\.sql$/u.test(name))
-    .sort()) {
+  for (const file of freshInstallMigrationFiles(await readdir(directory))) {
     await db.query('SET search_path TO public');
     await db.query(
       renderPortableMigrationSql(await readFile(new URL(file, directory), 'utf8'), 'postgres')

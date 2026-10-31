@@ -55,6 +55,26 @@ describe('tenant request path classification', () => {
   });
 
   it.each([
+    '/api/admin/invitations/redeem',
+    '/api/admin/invitations/passkey/options',
+    '/api/admin/invitations/passkey/register',
+    '/api/admin/invitations/activate',
+  ])('classifies exact invited-administrator enrollment routes as platform-owned: %s', (path) => {
+    expect(classifyTenantRequestPath(path)).toBe('platform_admin');
+  });
+
+  it.each([
+    '/api/admin/invitations',
+    '/api/admin/invitations/unknown',
+    '/api/admin/invitations/redeem/extra',
+    '/api/admin/invitations/passkey',
+    '/api/admin/invitations/passkey/options/extra',
+    '/api/admin/invitations/activate/extra',
+  ])('retains tenant isolation for adjacent invitation routes: %s', (path) => {
+    expect(classifyTenantRequestPath(path)).toBe('tenant_scoped_admin');
+  });
+
+  it.each([
     '/.well-known/openid-configuration',
     '/.well-known/oauth-authorization-server',
     '/.well-known/oauth-protected-resource/mcp',

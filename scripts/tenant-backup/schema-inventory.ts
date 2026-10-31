@@ -11,6 +11,10 @@ import {
   calculateReleaseMigrationChecksum,
 } from '../../packages/setup/src/core/release-migrations.js';
 import { renderPortableMigrationSql } from '../../packages/ar-lib-core/src/migrations/sql-portability.js';
+import {
+  AUTHRIM_MIGRATIONS_TABLE_SQL,
+  TENANT_DATABASE_MIGRATION_STATE_TABLE_SQL,
+} from '../../packages/ar-lib-core/src/services/control-plane/migration-history-contract.js';
 
 // The workspace targets Node 22+ but retains Node 20 ambient types. Describe only
 // the built-in SQLite API used by this development tool, without changing Worker types.
@@ -53,15 +57,12 @@ export function inspectBackupSchema(sqlFiles: readonly string[]): {
   const db = new DatabaseSync(':memory:');
   try {
     for (const sql of sqlFiles) {
-      db.exec('BEGIN');
-      try {
-        db.exec(renderPortableMigrationSql(sql, 'sqlite'));
-        db.exec('COMMIT');
-      } catch (error) {
-        db.exec('ROLLBACK');
-        throw error;
-      }
+      // Fresh baselines own their foreign_keys PRAGMAs. SQLite ignores a change to
+      // foreign_keys inside a transaction, so an outer BEGIN changes their meaning.
+      db.exec(renderPortableMigrationSql(sql, 'sqlite'));
     }
+    if (db.prepare('PRAGMA foreign_key_check').all().length > 0)
+      throw new Error('backup_schema_foreign_key_check_failed');
     const schema = db
       .prepare(
         `SELECT type, name, tbl_name, sql FROM sqlite_schema
@@ -178,7 +179,13 @@ export function inventoryBackupSchemas(repositoryRoot: string): BackupSchemaInve
         sha256: createHash('sha256').update(source).digest('hex'),
         executionSha256: selected.files[index].checksum,
       })),
-      ...inspectBackupSchema(sources),
+      // Setup/engine tables are physical schema too, although fresh application baselines
+      // no longer own their DDL. The engine sentinel exists in every family, Admin included.
+      ...inspectBackupSchema([
+        AUTHRIM_MIGRATIONS_TABLE_SQL,
+        TENANT_DATABASE_MIGRATION_STATE_TABLE_SQL,
+        ...sources,
+      ]),
     });
   }
   return {

@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readRenderedMigrationSql } from '../../../../test/helpers/migration-source.mjs';
+
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
@@ -24,15 +25,9 @@ describe('control worker desired inventory registration', () => {
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
     database.exec(
-      readFileSync(
-        resolve(ROOT_DIR, 'migrations/control/d1/001_0_4_0_control_baseline.sql'),
-        'utf8'
-      )
-    );
-    database.exec(
-      readFileSync(
-        resolve(ROOT_DIR, 'migrations/control/d1/014_log_archive_pipeline_bindings.sql'),
-        'utf8'
+      readRenderedMigrationSql(
+        resolve(ROOT_DIR, 'migrations/control/d1/'),
+        '001_0_5_0_control_baseline.sql'
       )
     );
   });

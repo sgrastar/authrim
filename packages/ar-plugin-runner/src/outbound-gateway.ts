@@ -98,12 +98,18 @@ function encodeBoundedBody(value: string): ArrayBuffer {
 }
 
 export class PluginOutboundGateway {
+  private readonly fetcher: typeof fetch;
+
   constructor(
     private readonly env: PluginRunnerEnv,
-    private readonly fetcher: typeof fetch = fetch,
+    fetcher: typeof fetch = fetch,
     private readonly now: () => number = () => Math.floor(Date.now() / 1000),
     private readonly executionContext?: PluginEgressContext
-  ) {}
+  ) {
+    // Workers throw "Illegal invocation" when `fetch` is called as a method of another object, so
+    // keep it behind a plain call instead of storing it as a field.
+    this.fetcher = (input, init) => fetcher(input, init);
+  }
 
   async fetch(request: Request): Promise<Response> {
     const invocation = parsePluginExecutionContext(

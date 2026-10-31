@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readRenderedMigrationSql } from '../../../../../../test/helpers/migration-source.mjs';
+
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { DatabaseAdapter } from '../../../db/adapter';
@@ -9,9 +10,9 @@ let store: TenantBackupAdminMappingStore;
 let throwAfterApprovalCommit: boolean;
 
 function migration(name: string): string {
-  return readFileSync(
-    new URL(`../../../../../../migrations/admin/d1/${name}`, import.meta.url),
-    'utf8'
+  return readRenderedMigrationSql(
+    new URL(`../../../../../../migrations/admin/d1/`, import.meta.url),
+    `${name}`
   );
 }
 
@@ -27,26 +28,8 @@ beforeEach(() => {
   throwAfterApprovalCommit = false;
   db = new DatabaseSync(':memory:');
   db.exec('PRAGMA foreign_keys=ON');
-  db.exec(`CREATE TABLE admin_users (
-    id TEXT NOT NULL PRIMARY KEY,
-    tenant_id TEXT NOT NULL,
-    email TEXT NOT NULL,
-    name TEXT,
-    is_active INTEGER NOT NULL,
-    status TEXT NOT NULL
-  )`);
-  for (const name of [
-    '003_tenant_backup_operations.sql',
-    '006_tenant_backup_request_intent.sql',
-    '008_tenant_backup_retry_state.sql',
-    '046_tenant_backup_operation_failure_reason.sql',
-    '004_tenant_backup_validation_index.sql',
-    '017_tenant_backup_validation_record_sources.sql',
-    '019_tenant_backup_input_validations.sql',
-    '029_tenant_backup_admin_mappings.sql',
-    '035_tenant_backup_admin_mapping_operation_scope.sql',
-  ])
-    db.exec(migration(name));
+
+  for (const name of ['001_0_5_0_admin_baseline.sql']) db.exec(migration(name));
   db.prepare(
     `INSERT INTO tenant_backup_operations
       (id,tenant_id,kind,idempotency_key,request_digest,state,phase,created_by,created_at,updated_at,revision,request_json)
@@ -62,11 +45,11 @@ beforeEach(() => {
      VALUES ('operation-a','tenant-a','session-a','inventory-a',0,0);`
   );
   db.prepare(
-    `INSERT INTO admin_users(id,tenant_id,email,name,is_active,status) VALUES
-      ('target-a','tenant-a','a@example.test','Target A',1,'active'),
-      ('target-b','tenant-a','b@example.test','Target B',1,'active'),
-      ('target-disabled','tenant-a','disabled@example.test',NULL,0,'suspended'),
-      ('target-other','tenant-b','other@example.test',NULL,1,'active')`
+    `INSERT INTO admin_users(id,tenant_id,email,name,is_active,status,created_at,updated_at) VALUES
+      ('target-a','tenant-a','a@example.test','Target A',1,'active',1,1),
+      ('target-b','tenant-a','b@example.test','Target B',1,'active',1,1),
+      ('target-disabled','tenant-a','disabled@example.test',NULL,0,'suspended',1,1),
+      ('target-other','tenant-b','other@example.test',NULL,1,'active',1,1)`
   ).run();
   const adapter: Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'> = {
     async query<T>(sql: string, params: unknown[] = []) {

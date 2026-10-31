@@ -1,5 +1,6 @@
+import { readMigrationSource } from '../../../../../test/helpers/migration-source.mjs';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { DatabaseAdapter } from '../../db/adapter';
 import { GuestUpgradeRepository } from '../guest-upgrade';
@@ -32,12 +33,9 @@ describe.each(['d1', 'postgresql'])('guest upgrade operations (%s schema)', (dia
   beforeEach(async () => {
     db = new DatabaseSync(':memory:');
     db.exec(
-      readFileSync(
-        new URL(
-          `../../../../../migrations/pii/${dialect}/002_guest_upgrade_operations.sql`,
-          import.meta.url
-        ),
-        'utf8'
+      readMigrationSource(
+        new URL(`../../../../../migrations/pii/${dialect}/`, import.meta.url),
+        `002_guest_upgrade_operations.sql`
       )
     );
     const adapter = {

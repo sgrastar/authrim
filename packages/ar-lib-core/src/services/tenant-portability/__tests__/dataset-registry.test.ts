@@ -16,6 +16,26 @@ import { parseTenantBackupSelection, tenantDatasetSelectionRule } from '../selec
 const root = fileURLToPath(new URL('../../../../../../', import.meta.url));
 
 describe('tenant backup dataset registry coverage', () => {
+  it.each(['core', 'pii', 'admin', 'control', 'lookup', 'plugin_runner'] as const)(
+    'excludes the engine sentinel exactly once in %s, with no Admin business dataset',
+    (family) => {
+      expect(
+        TENANT_DATASET_POLICIES.filter(
+          (entry) => entry.family === family && entry.table === 'tenant_database_migration_state'
+        )
+      ).toEqual([{ family, table: 'tenant_database_migration_state', kind: 'rebuild' }]);
+      expect(
+        tenantDatasetSelectionRule('rebuild', {
+          settings: true,
+          users: true,
+          admin: true,
+          artifacts: true,
+          logs: { audit: true, other: true, sensitive: true, period: 'all' },
+        }).action
+      ).toBe('rebuild');
+    }
+  );
+
   it('never exports replication grants or their credential hashes', () => {
     const policy = TENANT_DATASET_POLICIES.find(
       (entry) => entry.family === 'admin' && entry.table === 'tenant_backup_replication_grants'

@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readRenderedMigrationSql } from '../../../../test/helpers/migration-source.mjs';
+
 import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
@@ -55,29 +56,14 @@ const PLATFORM_CATALOG_VERSION = 'platform_default_canonical_catalog_v1';
 function openAdminDatabase(): SQLiteDatabase {
   const db = new DatabaseSync(':memory:');
   db.exec(
-    readFileSync(resolve(REPO_ROOT, 'migrations/admin/d1/001_0_4_0_admin_baseline.sql'), 'utf8')
-      .replaceAll(
-        '__AUTHRIM_NOW_PRECISE_EPOCH_MILLISECONDS__',
-        "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)"
-      )
-      .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
-      .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
+    readRenderedMigrationSql(
+      resolve(REPO_ROOT, 'migrations/admin/d1/'),
+      '001_0_5_0_admin_baseline.sql'
+    )
   );
-  db.exec(
-    readFileSync(
-      resolve(REPO_ROOT, 'migrations/admin/d1/054_admin_roles_ar_prefix.sql'),
-      'utf8'
-    ).replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
-  );
+
   // The settings documents the reference search reads (the default Mapping Set lives there).
-  for (const file of [
-    '028_tenant_settings_documents.sql',
-    '038_tenant_settings_reconciled_at.sql',
-    '039_platform_settings_documents.sql',
-    '040_settings_legacy_import_state.sql',
-  ]) {
-    db.exec(readFileSync(resolve(REPO_ROOT, `migrations/admin/d1/${file}`), 'utf8'));
-  }
+
   return db;
 }
 
@@ -120,10 +106,10 @@ function sqliteAdapter(db: SQLiteDatabase): DatabaseAdapter {
 /** The platform catalog as the migration seeds it. */
 function seedPlatformCatalog(db: SQLiteDatabase): void {
   db.exec(
-    readFileSync(
-      resolve(REPO_ROOT, 'migrations/admin/d1/041_platform_default_canonical_catalog.sql'),
-      'utf8'
-    ).replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
+    readRenderedMigrationSql(
+      resolve(REPO_ROOT, 'migrations/admin/d1/'),
+      '041_platform_default_canonical_catalog.sql'
+    )
   );
 }
 

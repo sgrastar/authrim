@@ -1,3 +1,4 @@
+import { readRenderedMigrationSql } from '../../../../test/helpers/migration-source.mjs';
 /**
  * Settings API v2 Integration Tests
  *
@@ -8,7 +9,6 @@
  * - GET /settings/meta/:category
  */
 
-import { readFileSync } from 'node:fs';
 // @ts-expect-error node:sqlite is available in the required runtime but this package omits Node types.
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -101,29 +101,12 @@ class SqliteStatement {
 function createAdminD1(): D1Database {
   const database = new DatabaseSync(':memory:');
   database.exec(
-    readFileSync(
-      new URL('../../../../migrations/admin/d1/028_tenant_settings_documents.sql', import.meta.url),
-      'utf8'
+    readRenderedMigrationSql(
+      new URL('../../../../migrations/admin/d1/', import.meta.url),
+      '001_0_5_0_admin_baseline.sql'
     )
   );
-  database.exec(
-    readFileSync(
-      new URL(
-        '../../../../migrations/admin/d1/038_tenant_settings_reconciled_at.sql',
-        import.meta.url
-      ),
-      'utf8'
-    )
-  );
-  database.exec(
-    readFileSync(
-      new URL(
-        '../../../../migrations/admin/d1/039_platform_settings_documents.sql',
-        import.meta.url
-      ),
-      'utf8'
-    )
-  );
+
   adminDatabases.add(database);
   const session = {
     prepare: (sql: string) => new SqliteStatement(database.prepare(sql)),

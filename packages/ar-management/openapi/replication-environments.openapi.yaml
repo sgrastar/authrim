@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim environment replication inventory API
-  version: 0.4.2
+  version: 0.5.0
   description: Explicit metadata-only delegation for a complete environment inventory. Tenant export credentials remain separate.
 paths:
   /api/admin/replication-environments/grants:

@@ -1,3 +1,4 @@
+import { readRenderedMigrationSql } from '../../../../test/helpers/migration-source.mjs';
 /**
  * The tenant gate for external plugin code (plugin_runner_tenant_external_gates) is where
  * `plugin.enabled` is enforced: whatever state an external installation is in and however it got
@@ -5,7 +6,6 @@
  * (in_process) installations never depend on the gate. No row means closed.
  */
 
-import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import type { WorkerLoader } from '@cloudflare/workers-types';
@@ -113,12 +113,9 @@ describe('the tenant gate for external plugin code', () => {
 
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
-    for (const migration of [
-      '001_0_4_0_plugin_runner_baseline.sql',
-      '007_tenant_external_plugin_gates.sql',
-    ]) {
+    for (const migration of ['001_0_5_0_plugin_runner_baseline.sql']) {
       database.exec(
-        readFileSync(resolve(REPO_ROOT, 'migrations/plugin-runner/d1', migration), 'utf8')
+        readRenderedMigrationSql(resolve(REPO_ROOT, 'migrations/plugin-runner/d1'), migration)
       );
     }
     // An external installation, enabled and complete, and a built-in one, in tenant-a; and an

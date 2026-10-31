@@ -1,5 +1,6 @@
+import { readMigrationSource } from '../../../../../../test/helpers/migration-source.mjs';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+
 import { describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter, PreparedStatement } from '../../../db/adapter';
 import { AuditService } from '../audit-service';
@@ -15,12 +16,9 @@ function store() {
   db.exec(`CREATE TABLE user_anonymization_map (id TEXT PRIMARY KEY,tenant_id TEXT,user_id TEXT,anonymized_user_id TEXT,created_at INTEGER,UNIQUE(tenant_id,user_id));
     CREATE TABLE users_pii_tombstone (id TEXT,tenant_id TEXT,PRIMARY KEY(tenant_id,id));`);
   db.exec(
-    readFileSync(
-      new URL(
-        '../../../../../../migrations/pii/d1/013_pii_log_purge_operations.sql',
-        import.meta.url
-      ),
-      'utf8'
+    readMigrationSource(
+      new URL('../../../../../../migrations/pii/d1/', import.meta.url),
+      '013_pii_log_purge_operations.sql'
     )
   );
   const run = ({ sql, params }: PreparedStatement) => ({

@@ -531,10 +531,24 @@ function previousFileByStreamAndPath(
   return previous;
 }
 
-function semanticBaselineProvenancePaths(migrationsRoot: string): ReadonlyMap<string, Set<string>> {
-  const evidencePath = join(migrationsRoot, 'semantic-baseline.evidence.json');
+function semanticBaselineProvenancePaths(
+  migrationsRoot: string,
+  baselineVersion: string
+): ReadonlyMap<string, Set<string>> {
+  // Only the installed baseline's sources have already run. The current evidence may also
+  // contain unpublished deltas absorbed into a newer fresh baseline; those still need a bridge.
+  const baselineEvidencePath = join(migrationsRoot, 'evidence', `${baselineVersion}.json`);
+  const evidencePath = existsSync(baselineEvidencePath)
+    ? baselineEvidencePath
+    : join(migrationsRoot, 'semantic-baseline.evidence.json');
   if (!existsSync(evidencePath)) return new Map();
   const raw = JSON.parse(readFileSync(evidencePath, 'utf-8')) as unknown;
+  const { productVersion } = z.object({ productVersion: ProductVersionSchema }).parse(raw);
+  if (compareProductVersions(productVersion, baselineVersion) > 0) {
+    // Without historical evidence, guessing which current sources are legacy could either
+    // reapply published SQL or omit an upgrade. Require the older evidence instead.
+    throw new Error(`semantic_baseline_provenance_missing:${baselineVersion}`);
+  }
   if (
     raw &&
     typeof raw === 'object' &&
@@ -711,7 +725,13 @@ export function generateReleaseMigrationManifest(input: {
     throw new Error(`fresh_install_baseline_required:${input.productVersion}`);
   }
 
-  const provenancePaths = semanticBaselineProvenancePaths(input.migrationsRoot);
+  const provenancePaths = semanticBaselineProvenancePaths(
+    input.migrationsRoot,
+    priorRelease?.freshInstallBaseline?.productVersion ??
+      priorRelease?.productVersion ??
+      sameVersion?.freshInstallBaseline?.productVersion ??
+      input.productVersion
+  );
   const newFilesByStream = new Map(
     discoveredStreams.map((stream) => [
       stream.id,

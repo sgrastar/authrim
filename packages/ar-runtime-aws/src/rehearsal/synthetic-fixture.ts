@@ -3,6 +3,7 @@ import { generateKeyPairSync, hash as nodeHash, randomUUID, webcrypto } from 'no
 import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Client } from 'pg';
+import { freshInstallMigrationFiles } from '../migrations/fresh-install-files';
 import { encodeTenantBackupContainerV2 } from '@authrim/ar-lib-core/services/tenant-portability/backup-container-v2';
 import { createTenantBundleKeyEnvelope } from '@authrim/ar-lib-core/services/tenant-portability/bundle-key-envelope';
 import type { TenantBundleManifest } from '@authrim/ar-lib-core/services/tenant-portability/bundle-manifest';
@@ -108,9 +109,8 @@ const PASSPHRASE = 'synthetic-offline-test-passphrase';
 const NOW = Date.now();
 
 export async function migrate(db: Client, directory: URL): Promise<void> {
-  for (const file of (await readdir(directory))
-    .filter((name) => /^\d+.*\.sql$/u.test(name))
-    .sort()) {
+  const fresh = freshInstallMigrationFiles(await readdir(directory));
+  for (const file of fresh) {
     await db.query('SET search_path TO public');
     await db.query(
       renderPortableMigrationSql(await readFile(new URL(file, directory), 'utf8'), 'postgres')

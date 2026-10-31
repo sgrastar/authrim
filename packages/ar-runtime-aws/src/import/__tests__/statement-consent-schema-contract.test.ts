@@ -1,16 +1,14 @@
-import { readFileSync } from 'node:fs';
+import { readMigrationSource } from '../../../../../test/helpers/migration-source.mjs';
+
 import { describe, expect, it } from 'vitest';
 import { POSTGRES_RESTORE_EXTENSION_CONTRACTS } from '../postgres-restore-extension-contract';
 
 /** Static parity only: this does not execute PostgreSQL or prove trigger behavior. */
 describe('statement consent additive schema restore contracts', () => {
   const ddl = (dialect: string, number: string) =>
-    readFileSync(
-      new URL(
-        `../../../../../migrations/core/${dialect}/${number}_statement_consent_atomic_foundation.sql`,
-        import.meta.url
-      ),
-      'utf8'
+    readMigrationSource(
+      new URL(`../../../../../migrations/core/${dialect}/`, import.meta.url),
+      `${number}_statement_consent_atomic_foundation.sql`
     );
   for (const table of [
     'statement_consent_guards',
@@ -48,12 +46,9 @@ describe('statement consent additive schema restore contracts', () => {
   });
   it('keeps retention permits in matching D1/PG rebuild-only schemas', () => {
     const columns = (dialect: string, number: string) => {
-      const sql = readFileSync(
-        new URL(
-          `../../../../../migrations/core/${dialect}/${number}_statement_consent_enforcement.sql`,
-          import.meta.url
-        ),
-        'utf8'
+      const sql = readMigrationSource(
+        new URL(`../../../../../migrations/core/${dialect}/`, import.meta.url),
+        `${number}_statement_consent_enforcement.sql`
       );
       const body = sql.match(
         /CREATE TABLE statement_consent_retention_permits \(([\s\S]*?)\n\)/

@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readMigrationSource } from '../../../../test/helpers/migration-source.mjs';
+
 // @ts-expect-error node:sqlite is available in the required runtime but this package omits Node types.
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -15,7 +16,10 @@ let database: DatabaseSync;
 let query: Pick<DatabaseAdapter, 'query' | 'batch' | 'getType'>;
 
 function migration(name: string): string {
-  return readFileSync(new URL(`../../../../migrations/admin/d1/${name}`, import.meta.url), 'utf8');
+  return readMigrationSource(
+    new URL(`../../../../migrations/admin/d1/`, import.meta.url),
+    `${name}`
+  );
 }
 
 function context(): TenantBackupStepContext {

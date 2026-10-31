@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ADMIN_PERMISSIONS,
@@ -57,7 +55,6 @@ import { adminOpenApiSchemas, shapeErrors } from './helpers/openapi-shape';
  * admin authentication and route access, sets made and saved through the real facade.
  */
 
-const REPO_ROOT = resolve(__dirname, '../../../..');
 const SETS = '/api/admin/identity-mapping/sets';
 const KEY = 'identity_mapping.oidc_default_set_id';
 const PLATFORM_CATALOG_VERSION = 'platform_default_canonical_catalog_v1';
@@ -197,20 +194,7 @@ async function setup() {
       BASE_DOMAIN: 'example.com',
     }
   );
-  for (const file of [
-    '028_tenant_settings_documents.sql',
-    '038_tenant_settings_reconciled_at.sql',
-    '039_platform_settings_documents.sql',
-    '040_settings_legacy_import_state.sql',
-  ]) {
-    context.db.exec(readFileSync(resolve(REPO_ROOT, `migrations/admin/d1/${file}`), 'utf8'));
-  }
-  context.db.exec(
-    readFileSync(
-      resolve(REPO_ROOT, 'migrations/admin/d1/041_platform_default_canonical_catalog.sql'),
-      'utf8'
-    ).replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
-  );
+
   const repository = new IdentityMappingControlPlaneRepository(context.adapter);
   const entry = (path: string) => ({
     id: `field.profile.${path}`,

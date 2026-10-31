@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readMigrationSource } from '../../../../../test/helpers/migration-source.mjs';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sqliteAdapter } from '../../repositories/__tests__/sqlite-core-schema';
 import { buildLogIcebergRecord } from '../log-iceberg-record';
@@ -50,9 +51,9 @@ describe('new-generation encrypted DB staging (real SQL)', () => {
     fixture = sqliteAdapter();
     fixture.db.exec('PRAGMA foreign_keys=ON');
     fixture.db.exec(
-      readFileSync(
-        new URL('../../../../../migrations/admin/d1/053_log_iceberg_storage.sql', import.meta.url),
-        'utf8'
+      readMigrationSource(
+        new URL('../../../../../migrations/admin/d1/', import.meta.url),
+        '053_log_iceberg_storage.sql'
       )
     );
     store = new SqlLogIcebergRecordStore(fixture.adapter);

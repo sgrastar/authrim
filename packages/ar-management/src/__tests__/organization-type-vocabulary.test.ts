@@ -1,8 +1,12 @@
+import {
+  readMigrationSource,
+  listMigrationSourceFiles,
+} from '../../../../test/helpers/migration-source.mjs';
 /**
  * Organisation types are the core vocabulary (distributor, enterprise, department): the Admin API
  * accepts only those, and the core migration renames what the API wrote before.
  */
-import { readFileSync, readdirSync } from 'node:fs';
+
 import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '@authrim/ar-lib-core';
@@ -38,10 +42,11 @@ function render(sql: string): string {
 /** The core schema with every migration before `until` (or all of them) applied. */
 function coreDatabase(until?: string): SQLiteDatabase {
   const db = new DatabaseSync(':memory:');
-  for (const file of readdirSync(MIGRATIONS)
-    .filter((name) => name.endsWith('.sql') && (!until || name < until))
-    .sort()) {
-    db.exec(render(readFileSync(`${MIGRATIONS}${file}`, 'utf8')));
+  const files = until
+    ? listMigrationSourceFiles(MIGRATIONS).filter((name) => name < until)
+    : ['001_0_5_0_core_baseline.sql'];
+  for (const file of files) {
+    db.exec(render(readMigrationSource(MIGRATIONS, file)));
   }
   db.exec('PRAGMA foreign_keys = OFF');
   return db;
@@ -102,7 +107,7 @@ describe('organisation type migration', () => {
     insertOrganization(db, 'org-personal', 'personal');
     insertOrganization(db, 'org-team', 'team');
 
-    db.exec(render(readFileSync(`${MIGRATIONS}${VOCABULARY_MIGRATION}`, 'utf8')));
+    db.exec(render(readMigrationSource(MIGRATIONS, VOCABULARY_MIGRATION)));
 
     expect(orgTypes(db)).toEqual([
       { id: 'org-department', org_type: 'department' },

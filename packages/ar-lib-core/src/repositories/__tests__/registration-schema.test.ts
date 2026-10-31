@@ -1,5 +1,6 @@
+import { readRenderedMigrationSql } from '../../../../../test/helpers/migration-source.mjs';
 import { DatabaseSync } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 import { renderPortableMigrationSql } from '../../migrations/sql-portability';
 
@@ -8,16 +9,12 @@ describe('registration schema', () => {
   it('stores registration separately and exposes only the guest resume credential table', () => {
     const db = new DatabaseSync(':memory:');
     try {
-      for (const file of [
-        '001_0_4_0_core_baseline.sql',
-        '002_guest_account_lifecycle.sql',
-        '003_account_registration_state.sql',
-      ]) {
+      for (const file of ['001_0_5_0_core_baseline.sql']) {
         db.exec(
           renderPortableMigrationSql(
-            readFileSync(
-              new URL(`../../../../../migrations/core/d1/${file}`, import.meta.url),
-              'utf8'
+            readRenderedMigrationSql(
+              new URL(`../../../../../migrations/core/d1/`, import.meta.url),
+              `${file}`
             ),
             'sqlite'
           )
@@ -88,9 +85,9 @@ describe('registration schema', () => {
       for (const file of ['001_0_4_0_core_baseline.sql', '002_guest_account_lifecycle.sql']) {
         db.exec(
           renderPortableMigrationSql(
-            readFileSync(
-              new URL(`../../../../../migrations/core/d1/${file}`, import.meta.url),
-              'utf8'
+            readRenderedMigrationSql(
+              new URL(`../../../../../migrations/core/d1/`, import.meta.url),
+              `${file}`
             ),
             'sqlite'
           )
@@ -104,15 +101,9 @@ describe('registration schema', () => {
       ).run('legacy-device', 'tenant', 'guest', 'a'.repeat(64), 'installation', 1, 1, 1);
 
       db.exec(
-        renderPortableMigrationSql(
-          readFileSync(
-            new URL(
-              '../../../../../migrations/core/d1/003_account_registration_state.sql',
-              import.meta.url
-            ),
-            'utf8'
-          ),
-          'sqlite'
+        readRenderedMigrationSql(
+          new URL('../../../../../migrations/core/d1/', import.meta.url),
+          '003_account_registration_state.sql'
         )
       );
 

@@ -147,7 +147,25 @@ cleanup is pending. General audit, operational, and Access Trace defaults are 90
 unbounded rather than inheriting a new universal cutoff.
 
 Setup generates the owned resources, scoped bindings, stable content-HMAC key, and versioned
-encryption keys. It validates and stores separately supplied Catalog credentials. Activation requires signed deployment readiness checks, owned-table/schema verification,
+encryption keys. The wizard can issue Catalog credentials automatically from a one-time account
+Cloudflare token with only `Account API Tokens Write`, or validate manually entered credentials.
+Setup creates an account-scoped Catalog/SQL/R2 Storage read token and a separate Catalog/R2
+Storage write token for Management Worker secrets. Pipeline mode also creates a separate Sink
+write token that stays with Setup. Setup verifies and privately stages the credentials, then
+revokes the one-time token; interrupted revocation keeps purpose-bound recovery state and reports
+any cleanup still required. Control's deployment bootstrap remains separate. Noninteractive runs
+may use `LOG_ARCHIVE_BOOTSTRAP_TOKEN` instead of `LOG_ARCHIVE_CATALOG_READ_TOKEN` and
+`LOG_ARCHIVE_CATALOG_WRITE_TOKEN` (plus `LOG_ARCHIVE_CATALOG_SINK_TOKEN` in pipeline mode).
+Explicit Catalog tokens select manual entry over automatic defaults; setting both sources,
+even partial explicit credentials, is an error. Automatic issuance does not overwrite staged credentials.
+Staged evidence binds the verified values to an account, mode and fingerprint; configuration checks
+the authenticated account and verifies the credentials again. Successful issuance records confirmed
+bootstrap revocation, allowing CLI resume with the same bootstrap variable to reuse the credentials
+without token-authority requests. Local recovery-file cleanup failures after confirmed revocation
+produce a warning and preserve the successful result. After reloading the wizard, matching staged
+credentials can be reused without another bootstrap token. Pending recovery blocks manual entry
+so the original staged values remain available; complete automatic recovery first. CLI errors
+include readable recovery and Dashboard revocation guidance. Activation requires signed deployment readiness checks, owned-table/schema verification,
 and complete producer configuration. Pipeline setup verifies the paid
 Workers entitlement before creating resources. Neither a successful Queue send nor a Stream
 acknowledgement is proof that a row is already queryable.

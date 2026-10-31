@@ -1,3 +1,4 @@
+import { readMigrationSource } from '../../test/helpers/migration-source.mjs';
 import { readNextShardedSqliteDatasetChunk } from '../../packages/ar-lib-core/src/services/tenant-portability/sqlite-sharded-dataset-reader.js';
 import { saveTenantBackupExportManifest } from '../../packages/ar-lib-core/src/services/tenant-portability/export-manifest-store.js';
 import { runPrepareTenantBackupArtifactStep } from '../../packages/ar-lib-core/src/services/tenant-portability/prepare-artifact-step.js';
@@ -58,7 +59,7 @@ import {
 } from '../../packages/ar-lib-core/src/services/tenant-portability/sqlite-dataset-plan.js';
 import { TenantBackupExecutionInventory } from '../../packages/ar-lib-core/src/services/tenant-portability/execution-inventory.js';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+
 import { createRequire } from 'node:module';
 import { readSqliteSnapshotDataset } from '../../packages/ar-lib-core/src/services/tenant-portability/sqlite-dataset-source.js';
 import {
@@ -91,37 +92,28 @@ const runtime = new Miniflare(
 );
 try {
   const control = await runtime.getD1Database('FIXTURE_CONTROL');
-  const admissionSql = readFileSync(
-    new URL(
-      '../../migrations/control/d1/005_tenant_backup_mutation_admission.sql',
-      import.meta.url
-    ),
-    'utf8'
+  const admissionSql = readMigrationSource(
+    new URL('../../migrations/control/d1/', import.meta.url),
+    '005_tenant_backup_mutation_admission.sql'
   );
   await control.batch(
     splitMigrationSql(admissionSql).map((statement) => control.prepare(statement))
   );
-  const environmentAdmissionSql = readFileSync(
-    new URL(
-      '../../migrations/control/d1/006_tenant_backup_mutation_environment_scope.sql',
-      import.meta.url
-    ),
-    'utf8'
+  const environmentAdmissionSql = readMigrationSource(
+    new URL('../../migrations/control/d1/', import.meta.url),
+    '006_tenant_backup_mutation_environment_scope.sql'
   );
   await control.batch(
     splitMigrationSql(environmentAdmissionSql).map((statement) => control.prepare(statement))
   );
-  const receiptSql = readFileSync(
-    new URL('../../migrations/control/d1/007_tenant_backup_boundary_receipts.sql', import.meta.url),
-    'utf8'
+  const receiptSql = readMigrationSource(
+    new URL('../../migrations/control/d1/', import.meta.url),
+    '007_tenant_backup_boundary_receipts.sql'
   );
   await control.batch(splitMigrationSql(receiptSql).map((statement) => control.prepare(statement)));
-  const snapshotTimestampSql = readFileSync(
-    new URL(
-      '../../migrations/control/d1/010_tenant_backup_snapshot_timestamp.sql',
-      import.meta.url
-    ),
-    'utf8'
+  const snapshotTimestampSql = readMigrationSource(
+    new URL('../../migrations/control/d1/', import.meta.url),
+    '010_tenant_backup_snapshot_timestamp.sql'
   );
   await control.batch(
     splitMigrationSql(snapshotTimestampSql).map((statement) => control.prepare(statement))
@@ -212,114 +204,99 @@ try {
   );
   assert(await receiptAdmission.acquire('tenant-a', 'after-release', 4007));
   const db = await runtime.getD1Database('FIXTURE_ADMIN');
-  const sql = readFileSync(
-    new URL('../../migrations/admin/d1/003_tenant_backup_operations.sql', import.meta.url),
-    'utf8'
+  const sql = readMigrationSource(
+    new URL('../../migrations/admin/d1/', import.meta.url),
+    '003_tenant_backup_operations.sql'
   );
   await db.batch(splitMigrationSql(sql).map((statement) => db.prepare(statement)));
-  const indexSql = readFileSync(
-    new URL('../../migrations/admin/d1/004_tenant_backup_validation_index.sql', import.meta.url),
-    'utf8'
+  const indexSql = readMigrationSource(
+    new URL('../../migrations/admin/d1/', import.meta.url),
+    '004_tenant_backup_validation_index.sql'
   );
   await db.batch(splitMigrationSql(indexSql).map((statement) => db.prepare(statement)));
-  const keySql = readFileSync(
-    new URL('../../migrations/admin/d1/005_tenant_backup_key_handoffs.sql', import.meta.url),
-    'utf8'
+  const keySql = readMigrationSource(
+    new URL('../../migrations/admin/d1/', import.meta.url),
+    '005_tenant_backup_key_handoffs.sql'
   );
   await db.batch(splitMigrationSql(keySql).map((statement) => db.prepare(statement)));
-  const requestSql = readFileSync(
-    new URL('../../migrations/admin/d1/006_tenant_backup_request_intent.sql', import.meta.url),
-    'utf8'
+  const requestSql = readMigrationSource(
+    new URL('../../migrations/admin/d1/', import.meta.url),
+    '006_tenant_backup_request_intent.sql'
   );
   await db.batch(splitMigrationSql(requestSql).map((statement) => db.prepare(statement)));
-  const activeKeySql = readFileSync(
-    new URL('../../migrations/admin/d1/007_tenant_backup_active_key.sql', import.meta.url),
-    'utf8'
+  const activeKeySql = readMigrationSource(
+    new URL('../../migrations/admin/d1/', import.meta.url),
+    '007_tenant_backup_active_key.sql'
   );
   await db.batch(splitMigrationSql(activeKeySql).map((statement) => db.prepare(statement)));
-  const retrySql = readFileSync(
-    new URL('../../migrations/admin/d1/008_tenant_backup_retry_state.sql', import.meta.url),
-    'utf8'
+  const retrySql = readMigrationSource(
+    new URL('../../migrations/admin/d1/', import.meta.url),
+    '008_tenant_backup_retry_state.sql'
   );
   await db.batch(splitMigrationSql(retrySql).map((statement) => db.prepare(statement)));
-  const artifactSql = readFileSync(
-    new URL('../../migrations/admin/d1/009_tenant_backup_artifact_parts.sql', import.meta.url),
-    'utf8'
+  const artifactSql = readMigrationSource(
+    new URL('../../migrations/admin/d1/', import.meta.url),
+    '009_tenant_backup_artifact_parts.sql'
   );
   await db.batch(splitMigrationSql(artifactSql).map((statement) => db.prepare(statement)));
-  const inventorySql = readFileSync(
-    new URL('../../migrations/admin/d1/010_tenant_backup_execution_inventory.sql', import.meta.url),
-    'utf8'
+  const inventorySql = readMigrationSource(
+    new URL('../../migrations/admin/d1/', import.meta.url),
+    '010_tenant_backup_execution_inventory.sql'
   );
   await db.batch(splitMigrationSql(inventorySql).map((statement) => db.prepare(statement)));
   await db.batch(
     splitMigrationSql(
-      readFileSync(
-        new URL('../../migrations/admin/d1/015_tenant_backup_input_receipts.sql', import.meta.url),
-        'utf8'
+      readMigrationSource(
+        new URL('../../migrations/admin/d1/', import.meta.url),
+        '015_tenant_backup_input_receipts.sql'
       )
     ).map((statement) => db.prepare(statement))
   );
   await db.batch(
     splitMigrationSql(
-      readFileSync(
-        new URL(
-          '../../migrations/admin/d1/016_tenant_backup_input_dataset_boundaries.sql',
-          import.meta.url
-        ),
-        'utf8'
+      readMigrationSource(
+        new URL('../../migrations/admin/d1/', import.meta.url),
+        '016_tenant_backup_input_dataset_boundaries.sql'
       )
     ).map((statement) => db.prepare(statement))
   );
   await db.batch(
     splitMigrationSql(
-      readFileSync(
-        new URL(
-          '../../migrations/admin/d1/017_tenant_backup_validation_record_sources.sql',
-          import.meta.url
-        ),
-        'utf8'
+      readMigrationSource(
+        new URL('../../migrations/admin/d1/', import.meta.url),
+        '017_tenant_backup_validation_record_sources.sql'
       )
     ).map((statement) => db.prepare(statement))
   );
   await db.batch(
     splitMigrationSql(
-      readFileSync(
-        new URL(
-          '../../migrations/admin/d1/018_tenant_backup_dataset_inspections.sql',
-          import.meta.url
-        ),
-        'utf8'
+      readMigrationSource(
+        new URL('../../migrations/admin/d1/', import.meta.url),
+        '018_tenant_backup_dataset_inspections.sql'
       )
     ).map((statement) => db.prepare(statement))
   );
   await db.batch(
     splitMigrationSql(
-      readFileSync(
-        new URL(
-          '../../migrations/admin/d1/019_tenant_backup_input_validations.sql',
-          import.meta.url
-        ),
-        'utf8'
+      readMigrationSource(
+        new URL('../../migrations/admin/d1/', import.meta.url),
+        '019_tenant_backup_input_validations.sql'
       )
     ).map((statement) => db.prepare(statement))
   );
   await db.batch(
     splitMigrationSql(
-      readFileSync(
-        new URL('../../migrations/admin/d1/020_tenant_backup_publications.sql', import.meta.url),
-        'utf8'
+      readMigrationSource(
+        new URL('../../migrations/admin/d1/', import.meta.url),
+        '020_tenant_backup_publications.sql'
       )
     ).map((statement) => db.prepare(statement))
   );
   await db.batch(
     splitMigrationSql(
-      readFileSync(
-        new URL(
-          '../../migrations/admin/d1/024_tenant_backup_restore_plan_inventory.sql',
-          import.meta.url
-        ),
-        'utf8'
+      readMigrationSource(
+        new URL('../../migrations/admin/d1/', import.meta.url),
+        '024_tenant_backup_restore_plan_inventory.sql'
       )
     ).map((statement) => db.prepare(statement))
   );
@@ -327,9 +304,9 @@ try {
     '031_tenant_backup_r2_restores.sql',
     '032_tenant_backup_r2_log_record_maps.sql',
   ]) {
-    const migration = readFileSync(
-      new URL(`../../migrations/admin/d1/${file}`, import.meta.url),
-      'utf8'
+    const migration = readMigrationSource(
+      new URL(`../../migrations/admin/d1/`, import.meta.url),
+      `${file}`
     );
     await db.batch(splitMigrationSql(migration).map((statement) => db.prepare(statement)));
   }
@@ -839,9 +816,9 @@ try {
   await inventory.seal(2, inventoryHead.chain_digest);
   assert.equal((await inventory.readPage()).length, 2);
   await assert.rejects(inventory.append(2, 'extra', '{}'), /append_conflict/);
-  const resourceSql = readFileSync(
-    new URL('../../migrations/admin/d1/011_tenant_backup_snapshot_resources.sql', import.meta.url),
-    'utf8'
+  const resourceSql = readMigrationSource(
+    new URL('../../migrations/admin/d1/', import.meta.url),
+    '011_tenant_backup_snapshot_resources.sql'
   );
   await db.batch(splitMigrationSql(resourceSql).map((statement) => db.prepare(statement)));
   const coreDb = await runtime.getD1Database('FIXTURE_CORE');
@@ -928,17 +905,14 @@ try {
     database: coreAdapter,
     signal: new AbortController().signal,
   });
-  const snapshotStorage = readFileSync(
-    new URL('../../migrations/core/d1/009_tenant_backup_snapshot_storage.sql', import.meta.url),
-    'utf8'
+  const snapshotStorage = readMigrationSource(
+    new URL('../../migrations/core/d1/', import.meta.url),
+    '009_tenant_backup_snapshot_storage.sql'
   );
   for (const sql of splitMigrationSql(snapshotStorage)) await coreDb.prepare(sql).run();
-  const snapshotPartitions = readFileSync(
-    new URL(
-      '../../migrations/core/d1/012_tenant_backup_preimage_row_partitions.sql',
-      import.meta.url
-    ),
-    'utf8'
+  const snapshotPartitions = readMigrationSource(
+    new URL('../../migrations/core/d1/', import.meta.url),
+    '012_tenant_backup_preimage_row_partitions.sql'
   );
   for (const sql of splitMigrationSql(snapshotPartitions)) await coreDb.prepare(sql).run();
   await coreDb.prepare("INSERT INTO tenants VALUES ('tenant-a','before')").run();
@@ -1104,9 +1078,9 @@ try {
   await sqlInspector.finish();
   await sqlInspector.dispose();
   const restoreDb = await runtime.getD1Database('FIXTURE_RESTORE');
-  const restoreMigration = readFileSync(
-    new URL('../../migrations/core/d1/010_tenant_backup_restore_target.sql', import.meta.url),
-    'utf8'
+  const restoreMigration = readMigrationSource(
+    new URL('../../migrations/core/d1/', import.meta.url),
+    '010_tenant_backup_restore_target.sql'
   );
   await restoreDb.batch(splitMigrationSql(restoreMigration).map((sql) => restoreDb.prepare(sql)));
   await restoreDb.prepare('CREATE TABLE tenants(id TEXT PRIMARY KEY NOT NULL,value TEXT)').run();
@@ -1173,22 +1147,19 @@ try {
       return [];
     },
   };
-  const cipherSql = readFileSync(
-    new URL('../../migrations/admin/d1/012_tenant_backup_cipher_journal.sql', import.meta.url),
-    'utf8'
+  const cipherSql = readMigrationSource(
+    new URL('../../migrations/admin/d1/', import.meta.url),
+    '012_tenant_backup_cipher_journal.sql'
   );
   await db.batch(splitMigrationSql(cipherSql).map((sql) => db.prepare(sql)));
-  const exportManifestSql = readFileSync(
-    new URL('../../migrations/admin/d1/021_tenant_backup_export_manifests.sql', import.meta.url),
-    'utf8'
+  const exportManifestSql = readMigrationSource(
+    new URL('../../migrations/admin/d1/', import.meta.url),
+    '021_tenant_backup_export_manifests.sql'
   );
   await db.batch(splitMigrationSql(exportManifestSql).map((sql) => db.prepare(sql)));
-  const exportProgressSql = readFileSync(
-    new URL(
-      '../../migrations/admin/d1/044_tenant_backup_export_dataset_progress.sql',
-      import.meta.url
-    ),
-    'utf8'
+  const exportProgressSql = readMigrationSource(
+    new URL('../../migrations/admin/d1/', import.meta.url),
+    '044_tenant_backup_export_dataset_progress.sql'
   );
   await db.batch(splitMigrationSql(exportProgressSql).map((sql) => db.prepare(sql)));
   const restoreSession = await createTenantBundleKeyEnvelope('local fixture restore passphrase');

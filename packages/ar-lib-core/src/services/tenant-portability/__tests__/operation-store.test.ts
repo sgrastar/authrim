@@ -1,5 +1,6 @@
+import { readRenderedMigrationSql } from '../../../../../../test/helpers/migration-source.mjs';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { DatabaseAdapter } from '../../../db/adapter';
 import { TenantBackupOperationStore, type TenantBackupLease } from '../operation-store';
@@ -26,32 +27,12 @@ beforeEach(() => {
   db = new DatabaseSync(':memory:');
   db.exec('PRAGMA foreign_keys=ON');
   db.exec(
-    readFileSync(
-      new URL(
-        '../../../../../../migrations/admin/d1/003_tenant_backup_operations.sql',
-        import.meta.url
-      ),
-      'utf8'
+    readRenderedMigrationSql(
+      new URL('../../../../../../migrations/admin/d1/', import.meta.url),
+      '001_0_5_0_admin_baseline.sql'
     )
   );
-  db.exec(
-    readFileSync(
-      new URL(
-        '../../../../../../migrations/admin/d1/008_tenant_backup_retry_state.sql',
-        import.meta.url
-      ),
-      'utf8'
-    )
-  );
-  db.exec(
-    readFileSync(
-      new URL(
-        '../../../../../../migrations/admin/d1/046_tenant_backup_operation_failure_reason.sql',
-        import.meta.url
-      ),
-      'utf8'
-    )
-  );
+
   adapter = {
     async query<T>(sql: string, params: unknown[] = []) {
       return db.prepare(sql).all(...(params as SQLInputValue[])) as T[];
@@ -79,33 +60,6 @@ beforeEach(() => {
     },
   };
   store = new TenantBackupOperationStore(adapter);
-  db.exec(
-    readFileSync(
-      new URL(
-        '../../../../../../migrations/admin/d1/004_tenant_backup_validation_index.sql',
-        import.meta.url
-      ),
-      'utf8'
-    )
-  );
-  db.exec(
-    readFileSync(
-      new URL(
-        '../../../../../../migrations/admin/d1/019_tenant_backup_input_validations.sql',
-        import.meta.url
-      ),
-      'utf8'
-    )
-  );
-  db.exec(
-    readFileSync(
-      new URL(
-        '../../../../../../migrations/admin/d1/017_tenant_backup_validation_record_sources.sql',
-        import.meta.url
-      ),
-      'utf8'
-    )
-  );
 });
 afterEach(() => db.close());
 

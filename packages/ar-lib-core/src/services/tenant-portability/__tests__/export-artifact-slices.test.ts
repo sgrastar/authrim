@@ -1,5 +1,6 @@
+import { readRenderedMigrationSql } from '../../../../../../test/helpers/migration-source.mjs';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import type { DatabaseAdapter } from '../../../db/adapter';
 import { TenantBackupOperationStore, type TenantBackupOperation } from '../operation-store';
@@ -119,22 +120,11 @@ async function readNext(datasetId: string, cursor: string | null) {
 beforeEach(async () => {
   db = new DatabaseSync(':memory:');
   db.exec('PRAGMA foreign_keys=ON');
-  for (const file of [
-    '003_tenant_backup_operations.sql',
-    '004_tenant_backup_validation_index.sql',
-    '008_tenant_backup_retry_state.sql',
-    '009_tenant_backup_artifact_parts.sql',
-    '012_tenant_backup_cipher_journal.sql',
-    '036_tenant_backup_capacity_parts.sql',
-    '021_tenant_backup_export_manifests.sql',
-    '020_tenant_backup_publications.sql',
-    '044_tenant_backup_export_dataset_progress.sql',
-    '046_tenant_backup_operation_failure_reason.sql',
-  ])
+  for (const file of ['001_0_5_0_admin_baseline.sql'])
     db.exec(
-      readFileSync(
-        new URL('../../../../../../migrations/admin/d1/' + file, import.meta.url),
-        'utf8'
+      readRenderedMigrationSql(
+        new URL('../../../../../../migrations/admin/d1/', import.meta.url),
+        file
       )
     );
   adapter = {

@@ -1366,6 +1366,8 @@ const id: Translations = {
   'web.status.adminNotConfigured': 'Admin Belum Dikonfigurasi',
   'web.status.initializing': 'Menginisialisasi...',
   'web.status.found': '{{count}} ditemukan',
+  'web.status.serverUnreachable':
+    'Tidak dapat terhubung ke server Setup. Pastikan server masih berjalan di terminal Anda, mulai ulang jika perlu, lalu coba lagi.',
   'web.status.operationInProgress':
     'Operasi penyiapan lain sedang berlangsung. Tunggu hingga selesai, lalu coba lagi.',
   'web.status.warning': 'Peringatan:',

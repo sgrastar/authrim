@@ -1,3 +1,4 @@
+import { readRenderedMigrationSql } from '../../../../../../test/helpers/migration-source.mjs';
 import { runSqliteResourceDiscoveryStep } from '../sqlite-resource-discovery';
 import { executeTenantBackupSlice } from '../operation-executor';
 import { persistFixedBackupDatabaseResources } from '../fixed-database-resources';
@@ -12,7 +13,7 @@ import {
 } from '../sqlite-dataset-plan';
 import { inspectBackupSchema } from '../../../../../../scripts/tenant-backup/schema-inventory';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+
 import { beforeEach, afterEach, expect, it } from 'vitest';
 import type { DatabaseAdapter } from '../../../db/adapter';
 import { TenantBackupExecutionInventory } from '../execution-inventory';
@@ -26,17 +27,11 @@ let now: number;
 beforeEach(async () => {
   db = new DatabaseSync(':memory:');
   db.exec('PRAGMA foreign_keys=ON');
-  for (const file of [
-    '003_tenant_backup_operations.sql',
-    '004_tenant_backup_validation_index.sql',
-    '008_tenant_backup_retry_state.sql',
-    '046_tenant_backup_operation_failure_reason.sql',
-    '010_tenant_backup_execution_inventory.sql',
-  ])
+  for (const file of ['001_0_5_0_admin_baseline.sql'])
     db.exec(
-      readFileSync(
-        new URL(`../../../../../../migrations/admin/d1/${file}`, import.meta.url),
-        'utf8'
+      readRenderedMigrationSql(
+        new URL(`../../../../../../migrations/admin/d1/`, import.meta.url),
+        `${file}`
       )
     );
   adapter = {

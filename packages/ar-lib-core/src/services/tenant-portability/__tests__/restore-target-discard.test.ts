@@ -2,6 +2,7 @@ import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import {
   hasTenantDiscardRemaining,
+  TENANT_DISCARD_UNPLANNED_TABLES,
   planTenantDiscard,
   runTenantDiscardPage,
   type TenantDiscardDataset,
@@ -336,4 +337,11 @@ it('writes nothing once DDL changed the schema the plan was made against', async
   ).toEqual({ done: false });
   expect(db.prepare('SELECT id FROM grants').all()).toEqual([{ id: 'g-b' }]);
   expect(db.prepare('SELECT id FROM users').all()).toEqual([{ id: 'u1' }]);
+});
+
+it('protects Core/PII engine sentinels and has no Admin business table discard rule', () => {
+  for (const family of ['core', 'pii'] as const) {
+    expect(TENANT_DISCARD_UNPLANNED_TABLES[family]?.tenant_database_migration_state).toBeNull();
+  }
+  expect(TENANT_DISCARD_UNPLANNED_TABLES.admin?.tenant_database_migration_state).toBeUndefined();
 });
