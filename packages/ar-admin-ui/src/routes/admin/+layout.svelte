@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { adminAuth } from '$lib/stores/admin-auth.svelte';
+	import { canSeeNavPath } from '$lib/admin/nav-access';
 	import { themeStore } from '$lib/stores/theme.svelte';
 	import { adminBrandStore } from '$lib/stores/admin-brand.svelte';
 	import { releaseRolloutStore } from '$lib/stores/release-rollout.svelte';
@@ -58,6 +59,9 @@
 		mobileMenuOpen = false;
 	});
 
+	// Entries the signed-in administrator can use; platform-only ones are hidden from tenant admins.
+	const showNav = (item: { path: string }) => canSeeNavPath(item.path, adminAuth.user);
+
 	// END USER section - identity management for application users
 	const navEndUser = $derived({
 		identity: [
@@ -104,7 +108,7 @@
 			{ path: '/admin/clients', label: $LL.admin_nav_clients(), icon: 'i-ph-monitor' },
 			{ path: '/admin/webhooks', label: $LL.admin_nav_webhooks(), icon: 'i-ph-webhooks-logo' },
 			{ path: '/admin/iat-tokens', label: $LL.admin_nav_iat_tokens(), icon: 'i-ph-key' }
-		]
+		].filter(showNav)
 	});
 
 	// TENANT section - tenant-level configuration
@@ -205,7 +209,7 @@
 				icon: 'i-ph-envelope-open'
 			},
 			{ path: '/admin/plugins', label: $LL.admin_nav_plugins(), icon: 'i-ph-puzzle-piece' }
-		]
+		].filter(showNav)
 	});
 
 	// PLATFORM section - system administration
@@ -217,7 +221,7 @@
 				label: $LL.admin_nav_vanity_domains(),
 				icon: 'i-ph-globe'
 			}
-		],
+		].filter(showNav),
 		security: [
 			{ path: '/admin/security', label: $LL.admin_nav_security(), icon: 'i-ph-lock-key' },
 			{ path: '/admin/compliance', label: $LL.admin_nav_compliance(), icon: 'i-ph-certificate' }
@@ -257,7 +261,7 @@
 			{ path: '/admin/dr-backup', label: $LL.admin_nav_dr_backup(), icon: 'i-ph-cloud-arrow-up' },
 			{ path: '/admin/jobs', label: $LL.admin_nav_jobs(), icon: 'i-ph-queue' },
 			{ path: '/admin/approvals', label: $LL.admin_nav_approvals(), icon: 'i-ph-checks' }
-		],
+		].filter(showNav),
 		adminUsers: {
 			path: '/admin/admins',
 			label: $LL.admin_nav_admin_users(),
@@ -453,12 +457,17 @@
 
 		await ensureAdminContextReady();
 		await loadLoggingAlertBadge();
-		await releaseRolloutStore.refresh();
+		// The rollout status API is platform-only; a tenant admin would only collect 403s.
+		if (adminAuth.user?.isPlatformAdmin) await releaseRolloutStore.refresh();
 	});
 
 	onMount(() => {
 		const timer = window.setInterval(() => {
-			if (adminAuth.isAuthenticated && releaseRolloutStore.shouldPoll) {
+			if (
+				adminAuth.isAuthenticated &&
+				adminAuth.user?.isPlatformAdmin &&
+				releaseRolloutStore.shouldPoll
+			) {
 				void releaseRolloutStore.refresh();
 			}
 		}, 5000);
@@ -734,15 +743,17 @@
 
 			<!-- PLATFORM Section -->
 			<NavSection level="platform">
-				<NavGroupLabel label={$LL.admin_nav_group_tenant_management()} />
-				{#each navPlatform.tenantManagement as item (item.path)}
-					<NavItem
-						href={item.path}
-						icon={item.icon}
-						label={item.label}
-						active={isActive(item.path)}
-					/>
-				{/each}
+				{#if navPlatform.tenantManagement.length > 0}
+					<NavGroupLabel label={$LL.admin_nav_group_tenant_management()} />
+					{#each navPlatform.tenantManagement as item (item.path)}
+						<NavItem
+							href={item.path}
+							icon={item.icon}
+							label={item.label}
+							active={isActive(item.path)}
+						/>
+					{/each}
+				{/if}
 
 				<NavGroupLabel label={$LL.admin_nav_group_security_compliance()} />
 				{#each navPlatform.security as item (item.path)}
@@ -754,16 +765,18 @@
 					/>
 				{/each}
 
-				<NavGroupLabel label={$LL.admin_nav_group_operations()} />
-				{#each navPlatform.operations as item (item.path)}
-					<NavItem
-						href={item.path}
-						icon={item.icon}
-						label={item.label}
-						active={isActive(item.path)}
-						badge={navBadgeFor(item.path)}
-					/>
-				{/each}
+				{#if navPlatform.operations.length > 0}
+					<NavGroupLabel label={$LL.admin_nav_group_operations()} />
+					{#each navPlatform.operations as item (item.path)}
+						<NavItem
+							href={item.path}
+							icon={item.icon}
+							label={item.label}
+							active={isActive(item.path)}
+							badge={navBadgeFor(item.path)}
+						/>
+					{/each}
+				{/if}
 
 				<NavGroupLabel label={$LL.admin_nav_group_admin_operators()} />
 				<NavItem
