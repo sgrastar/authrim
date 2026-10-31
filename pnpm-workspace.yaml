@@ -72,3 +72,9 @@ auditConfig:
     # sprintf-js <=1.1.3 (DoS): only the dev-only Lighthouse CI reaches it (@lhci/cli > js-yaml 3 >
     # argparse 1), and no fixed release is published yet (latest 1.1.3). Drop when 1.1.4 ships.
     - GHSA-hp3w-g68c-fv3c
+    # minimatch <11.0.1 (DoS through crafted glob patterns, GHSA-g3hv-75wg-m249): the only fixed
+    # line is 11.x, whose API the 3.x/9.x consumers (eslint, glob, @lhci/cli) do not support. No
+    # production dependency reaches it (`pnpm why minimatch --prod` is empty); dev tooling only
+    # evaluates glob patterns from its own configuration. Review by 2026-12-01 or when those
+    # consumers accept minimatch 11.
+    - GHSA-g3hv-75wg-m249
