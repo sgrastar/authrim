@@ -142,9 +142,10 @@ export async function processStatementConsentProjectionJobs(
     );
     return;
   }
+  // The directory takes an absent cursor as undefined; an empty string is an invalid cursor.
   const tenants = await listEnvironmentTenantDefaultStores(env, {
     limit: tenantPageSize,
-    afterTenantId,
+    afterTenantId: afterTenantId || undefined,
   });
   for (const tenant of tenants) {
     const metadata = ensureDatabaseAdapter(
