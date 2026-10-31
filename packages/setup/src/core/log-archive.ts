@@ -21,6 +21,15 @@ import type {
   ProvisioningResourceIdentity,
 } from './provisioning-intent.js';
 
+/** Shared name contract for manual verification and automatic issuance. */
+export const LOG_ARCHIVE_CATALOG_PERMISSION_PATTERNS = {
+  catalogRead: /catalog.*read/iu,
+  sqlRead: /sql.*read/iu,
+  storageRead: /r2.*storage.*read/iu,
+  catalogWrite: /catalog.*(?:write|edit)/iu,
+  storageWrite: /r2.*storage.*(?:write|edit)/iu,
+};
+
 export const LOG_ARCHIVE_SCHEMA_DIGEST = createHash('sha256')
   .update(JSON.stringify(LOG_ARCHIVE_FIELDS))
   .digest('hex');
@@ -176,14 +185,26 @@ export class LogArchiveApi {
     return payload.result as T;
   }
 
+  /**
+   * `inspectPolicies: false` only proves each token is active and distinct, using the token itself.
+   * Policy inspection reads `tokens/{id}` with this API's own credential, which an OAuth login
+   * does not have (it lacks API Tokens Read). Callers may skip it only for tokens whose exact
+   * policy was already verified when they were issued and whose values are still bound to that
+   * issuance by fingerprint. If a token's policy is edited after issuance, this check will not
+   * notice: re-verify with a credential that can read tokens, or reissue.
+   */
   async verifyCatalogCredentials(
     readToken: string,
     writeToken: string,
-    sinkToken?: string
+    sinkToken?: string,
+    options: { inspectPolicies?: boolean } = {}
   ): Promise<void> {
-    const groups = await this.request<Array<{ id: string; name: string }>>(
-      'tokens/permission_groups?scope=com.cloudflare.api.account'
-    );
+    const inspectPolicies = options.inspectPolicies !== false;
+    const groups = inspectPolicies
+      ? await this.request<Array<{ id: string; name: string }>>(
+          'tokens/permission_groups?scope=com.cloudflare.api.account'
+        )
+      : [];
     const groupNames = new Map(groups.map((group) => [group.id, group.name]));
     const tokenIds = new Set<string>();
     for (const [role, token] of [
@@ -202,6 +223,7 @@ export class LogArchiveApi {
       if (tokenIds.has(verified.id))
         throw new Error('log_archive_distinct_catalog_token_ids_required');
       tokenIds.add(verified.id);
+      if (!inspectPolicies) continue;
       const record = await this.request<{
         policies: Array<{
           effect: string;
@@ -225,22 +247,39 @@ export class LogArchiveApi {
       if (role === 'read') {
         if (
           permissions.some((name) => /write|edit|admin/iu.test(name)) ||
-          !permissions.some((name) => /catalog.*read/iu.test(name)) ||
-          !permissions.some((name) => /sql.*read/iu.test(name)) ||
-          !permissions.some((name) => /r2.*storage.*read/iu.test(name))
+          !permissions.some((name) =>
+            LOG_ARCHIVE_CATALOG_PERMISSION_PATTERNS.catalogRead.test(name)
+          ) ||
+          !permissions.some((name) => LOG_ARCHIVE_CATALOG_PERMISSION_PATTERNS.sqlRead.test(name)) ||
+          !permissions.some((name) =>
+            LOG_ARCHIVE_CATALOG_PERMISSION_PATTERNS.storageRead.test(name)
+          )
         )
           throw new Error('log_archive_catalog_read_token_not_read_only');
       } else if (
-        !permissions.some((name) => /catalog.*(?:write|edit)/iu.test(name)) ||
-        !permissions.some((name) => /r2.*storage.*(?:write|edit)/iu.test(name))
+        !permissions.some((name) =>
+          LOG_ARCHIVE_CATALOG_PERMISSION_PATTERNS.catalogWrite.test(name)
+        ) ||
+        !permissions.some((name) => LOG_ARCHIVE_CATALOG_PERMISSION_PATTERNS.storageWrite.test(name))
       )
         throw new Error('log_archive_catalog_write_token_permission_missing');
     }
   }
 
-  async requireWorkersPaid(): Promise<void> {
-    const subscriptions =
-      await this.request<Array<{ rate_plan?: { id?: string }; state?: string }>>('subscriptions');
+  /**
+   * Billing is not readable with an OAuth login (401/403). That is reported as `unverifiable`
+   * rather than a refusal: Pipeline creation itself is rejected by Cloudflare without the plan,
+   * and the rejection is recorded so setup can resume.
+   */
+  async requireWorkersPaid(): Promise<'confirmed' | 'unverifiable'> {
+    let subscriptions: Array<{ rate_plan?: { id?: string }; state?: string }>;
+    try {
+      subscriptions = await this.request('subscriptions');
+    } catch (error) {
+      if (error instanceof LogArchiveApiError && (error.status === 401 || error.status === 403))
+        return 'unverifiable';
+      throw error;
+    }
     const accepted = new Set([
       'WORKERS_PAID',
       'PARTNERS_WORKERS_ENT',
@@ -257,6 +296,7 @@ export class LogArchiveApi {
     ) {
       throw new Error('log_archive_workers_paid_required');
     }
+    return 'confirmed';
   }
 }
 
@@ -268,6 +308,8 @@ export interface LogArchiveProvisionOptions {
   catalogReadToken: string;
   catalogWriteToken: string;
   catalogSinkToken?: string;
+  /** The tokens' exact policies were verified when Setup issued them; see `verifyCatalogCredentials`. */
+  catalogPolicyVerified?: boolean;
   checkpoints: Readonly<Record<string, ProvisioningResourceCheckpoint>>;
   checkpoint: (resource: ProvisioningResourceCheckpoint) => Promise<void>;
   /** R2 ownership must be verified with the existing marker + creation_date implementation. */
@@ -395,7 +437,13 @@ async function provisionPipelineResource(
 export async function preflightLogArchive(
   options: Pick<
     LogArchiveProvisionOptions,
-    'archive' | 'api' | 'catalogReadToken' | 'catalogWriteToken' | 'catalogSinkToken'
+    | 'archive'
+    | 'api'
+    | 'catalogReadToken'
+    | 'catalogWriteToken'
+    | 'catalogSinkToken'
+    | 'catalogPolicyVerified'
+    | 'onProgress'
   >
 ): Promise<void> {
   assertLogArchiveImplemented(options.archive);
@@ -412,12 +460,16 @@ export async function preflightLogArchive(
       options.catalogSinkToken === options.catalogWriteToken
     )
       throw new Error('log_archive_distinct_sink_credential_required');
-    await options.api.requireWorkersPaid();
+    if ((await options.api.requireWorkersPaid()) === 'unverifiable')
+      options.onProgress?.(
+        'Workers Paid could not be confirmed with this login. Pipeline creation will fail if the account is not on Workers Paid.'
+      );
   }
   await options.api.verifyCatalogCredentials(
     options.catalogReadToken,
     options.catalogWriteToken,
-    options.archive.mode === 'pipeline' ? options.catalogSinkToken : undefined
+    options.archive.mode === 'pipeline' ? options.catalogSinkToken : undefined,
+    options.catalogPolicyVerified ? { inspectPolicies: false } : undefined
   );
 }
 

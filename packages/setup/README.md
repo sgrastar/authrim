@@ -31,14 +31,37 @@ account or silently changes modes. A mode whose producer, query, retention, or r
 incomplete is hidden in interactive setup and rejected before resource creation or Worker config
 generation. Resource-plan previews report whether the selected mode is implemented.
 
-The wizard requests separate Catalog read-only and write tokens. The read token also needs Basin
-SQL and R2 Storage read permissions. Setup authentication needs permission to inspect these account token policies
-and, for pipeline mode, read account subscriptions. Noninteractive setup reads the tokens from
-`LOG_ARCHIVE_CATALOG_READ_TOKEN` and `LOG_ARCHIVE_CATALOG_WRITE_TOKEN`. Pipeline mode additionally
-requires a separate Setup-only `LOG_ARCHIVE_CATALOG_SINK_TOKEN`. Tokens are stored as
-private local secret files and are never written into config, lock, plans, or progress responses.
-Only Management receives the read and maintenance-write tokens in both modes. The third Pipeline
-Sink token is kept by Setup and is never uploaded as a Worker secret.
+The wizard offers **Issue automatically** (recommended) and manual Catalog token entry. For
+automatic issuance, create a one-time account Cloudflare token using Setup's template link with
+only `Account API Tokens Write`. Setup checks its authority, resolves the exact Catalog/SQL/R2
+permission groups, creates account-scoped read and write tokens, and verifies their policies
+before staging them. The read token has Catalog, Basin SQL and R2 Storage Read; the write token
+has Catalog and R2 Storage Write. Pipeline mode adds a separate Setup-only Sink token with the
+same write permissions. Setup then revokes the one-time token. Interrupted revocation retains
+purpose-bound private recovery state; retry automatic issuance to finish cleanup before creating
+a fresh one-time token. Unconfirmed cleanup is reported and may require Dashboard revocation.
+Setup prefers the exact Cloudflare permission names before using the shared name patterns; ambiguous
+fallback matches are rejected. Automatic re-issuance refuses to overwrite existing staged tokens.
+Verified staged credentials are bound to the account, mode and secret fingerprint. Setup verifies
+them again when configuring the archive. A successful issuance records the confirmed bootstrap
+revocation locally, so CLI resume with the same `LOG_ARCHIVE_BOOTSTRAP_TOKEN` reuses those credentials
+without calling the token authority again and prints a reuse message. A local recovery-file cleanup
+failure after confirmed revocation is reported as a warning and preserves the issued tokens.
+After a page reload, the wizard checks staged credentials and offers **Use the already issued tokens**
+when their account and mode match. While recovery is pending, manual entry is refused to preserve
+the original staged values; finish automatic recovery first. CLI issuance and source-selection
+errors include readable messages and any required Dashboard revocation guidance.
+The Control bootstrap at deployment requires its own separate one-time token.
+
+Noninteractive setup accepts `LOG_ARCHIVE_BOOTSTRAP_TOKEN` instead of explicit
+`LOG_ARCHIVE_CATALOG_READ_TOKEN` / `LOG_ARCHIVE_CATALOG_WRITE_TOKEN` (plus
+`LOG_ARCHIVE_CATALOG_SINK_TOKEN` in pipeline mode). Explicit Catalog tokens select the manual
+path and take precedence over automatic defaults; supplying both explicit tokens and a bootstrap
+token is an error, including partial explicit credentials. Manual verification requires Setup
+authentication that can inspect account token policies; pipeline provisioning also reads account
+subscriptions. Tokens are stored as private local secret files and never enter config, lock,
+plans, or progress responses. Only Management receives `LOG_ARCHIVE_CATALOG_READ_TOKEN` and
+`LOG_ARCHIVE_CATALOG_WRITE_TOKEN` as Worker secrets. The Pipeline Sink token stays with Setup.
 
 Reuse a saved config to preserve the storage generation and activation boundary:
 

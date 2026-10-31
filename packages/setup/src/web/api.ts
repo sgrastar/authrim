@@ -1,3 +1,10 @@
+import { loadPendingBootstrap } from '../core/pending-control-bootstrap.js';
+import type { Context } from 'hono';
+import type { ContentfulStatusCode } from 'hono/utils/http-status';
+import {
+  ensureLogArchiveTokens,
+  LogArchiveTokenIssuanceError,
+} from '../core/log-archive-token-issuance.js';
 import {
   waitForLogArchiveReadiness,
   prepareLogArchiveReadinessAttempt,
@@ -7,8 +14,22 @@ import {
   createLogArchiveConfig,
   implementedLogArchiveModes,
 } from '../core/log-archive-config.js';
-import { planLogArchive, hasCompleteLogArchiveState } from '../core/log-archive.js';
-import { publishLogArchiveSecrets, stageLogArchiveSecrets } from '../core/log-archive-secrets.js';
+import {
+  planLogArchive,
+  hasCompleteLogArchiveState,
+  LogArchiveApi,
+  LogArchiveApiError,
+} from '../core/log-archive.js';
+import {
+  publishLogArchiveSecrets,
+  loadIssuedLogArchiveAccountId,
+  stageLogArchiveSecrets,
+  assertLogArchiveManualEntryAllowed,
+  loadStagedLogArchiveEvidence,
+  hasStagedLogArchiveSecrets,
+  loadStagedLogArchiveSecrets,
+  requireStagedLogArchiveEvidence,
+} from '../core/log-archive-secrets.js';
 /**
  * API Routes for Authrim Setup Web UI
  *
@@ -1690,6 +1711,7 @@ export function createApiRoutes(): Hono {
   api.use('/control', validateSession);
   api.use('/control/*', validateSession);
   api.use('/r2/*', validateSession);
+  api.use('/log-archive/*', validateSession);
 
   // AWS operations have their own token and same-loopback-origin checks, including status reads.
   api.route('/aws', createAwsSetupApi({ getToken: getSessionToken, rootDir: process.cwd() }));
@@ -2397,23 +2419,218 @@ export function createApiRoutes(): Hono {
     });
   });
 
+  function logArchiveFailure(c: Context, error: unknown, bootstrapCleanupRequired = false) {
+    if (error instanceof z.ZodError)
+      return c.json(
+        {
+          success: false,
+          error: 'log_archive_request_invalid',
+          fields: [...new Set(error.issues.map((issue) => String(issue.path[0] ?? 'request')))],
+        },
+        400
+      );
+    if (error instanceof SyntaxError)
+      return c.json(
+        { success: false, error: 'log_archive_request_invalid', fields: ['request'] },
+        400
+      );
+    const candidate =
+      error instanceof Error ? ('code' in error ? String(error.code) : error.message) : '';
+    const code = /^log_archive_[a-z0-9_]+$/u.test(candidate)
+      ? candidate
+      : 'log_archive_configuration_invalid';
+    const status =
+      error instanceof LogArchiveApiError && error.status >= 400 && error.status <= 599
+        ? (error.status as ContentfulStatusCode)
+        : 400;
+    return c.json(
+      {
+        success: false,
+        error: code,
+        ...(error instanceof LogArchiveTokenIssuanceError
+          ? {
+              cleanupRequired: error.cleanupRequired,
+              childCleanupRequired: error.childCleanupRequired,
+            }
+          : bootstrapCleanupRequired
+            ? { cleanupRequired: true }
+            : {}),
+      },
+      status
+    );
+  }
+
+  // The log bootstrap is account-owned and independent of the deploy-step Control bootstrap.
+  api.post('/log-archive/token-template', async (c) => {
+    try {
+      const request = z
+        .object({ environment: EnvNameSchema })
+        .strict()
+        .parse(await c.req.json());
+      const accountId = await getAccountId();
+      if (!accountId) throw new Error('log_archive_cloudflare_credentials_invalid');
+      return c.json({
+        success: true,
+        expiresOnDate: buildCloudflareBootstrapTokenEndDate(),
+        url: buildCloudflareBootstrapTemplateUrl({
+          accountId,
+          environment: request.environment,
+          ownership: 'account',
+          purpose: 'log-archive',
+        }),
+      });
+    } catch (error) {
+      return logArchiveFailure(c, error);
+    }
+  });
+
+  api.post('/log-archive/issue-tokens', async (c) =>
+    withLock(async () => {
+      let operation:
+        | Awaited<ReturnType<typeof acquireEnvironmentOperationForEnvironment>>
+        | undefined;
+      let bootstrapSubmitted = false;
+      let issuanceStarted = false;
+      try {
+        const request = z
+          .object({
+            environment: EnvNameSchema,
+            mode: z.enum(['pipeline', 'scheduled']),
+            bootstrapToken: z.string().trim().min(20).max(4096).regex(/^\S+$/u),
+          })
+          .strict()
+          .parse(await c.req.json());
+        bootstrapSubmitted = true;
+        if (!implementedLogArchiveModes().includes(request.mode))
+          throw new LogArchiveApiError(409, 'log_archive_mode_not_implemented');
+        const baseDir = findAuthrimBaseDir(process.cwd());
+        operation = await acquireEnvironmentOperationForEnvironment({
+          baseDir,
+          env: request.environment,
+          operation: 'web-log-archive-issue-tokens',
+        });
+        if (
+          operation.lock ||
+          (await loadProvisioningIntent({ baseDir, environment: request.environment }))
+        )
+          throw new LogArchiveApiError(
+            409,
+            'log_archive_generation_change_requires_explicit_transition'
+          );
+        const paths = getEnvironmentPaths({ baseDir, env: request.environment });
+        const config = existsSync(paths.config)
+          ? parseEnvironmentConfigForEnv(
+              JSON.parse(await readFile(paths.config, 'utf8')),
+              request.environment
+            )
+          : getStateConfigForEnv(request.environment);
+        if (!config) throw new LogArchiveApiError(409, 'log_archive_environment_config_required');
+        if (config.logging?.archive && config.logging.archive.mode !== request.mode)
+          throw new LogArchiveApiError(
+            409,
+            'log_archive_generation_change_requires_explicit_transition'
+          );
+        const accountId = await getAccountId();
+        if (
+          !accountId ||
+          (config.cloudflare?.accountId && config.cloudflare.accountId !== accountId)
+        )
+          throw new LogArchiveApiError(409, 'log_archive_cloudflare_credentials_invalid');
+        issuanceStarted = true;
+        const {
+          warning,
+          reused: _reused,
+          ...issued
+        } = await ensureLogArchiveTokens({ baseDir, accountId, ...request });
+        return c.json({ success: true, issued, ...(warning ? { warning } : {}) });
+      } catch (error) {
+        return logArchiveFailure(c, error, bootstrapSubmitted && !issuanceStarted);
+      } finally {
+        await operation?.release();
+      }
+    })
+  );
+
+  api.get('/log-archive/staged-status', async (c) => {
+    if (!sessionToken || c.req.header('X-Session-Token') !== sessionToken)
+      return c.json({ success: false, error: 'Invalid or missing session token' }, 401);
+    return withLock(async () => {
+      let operation:
+        | Awaited<ReturnType<typeof acquireEnvironmentOperationForEnvironment>>
+        | undefined;
+      try {
+        const environment = EnvNameSchema.parse(c.req.query('environment'));
+        const baseDir = findAuthrimBaseDir(process.cwd());
+        operation = await acquireEnvironmentOperationForEnvironment({
+          baseDir,
+          env: environment,
+          operation: 'web-log-archive-staged-status',
+        });
+        const accountId = await getAccountId();
+        if (!accountId) throw new Error('log_archive_cloudflare_credentials_invalid');
+        const pending = await loadPendingBootstrap({
+          baseDir,
+          environment,
+          purpose: 'log-archive',
+        });
+        const evidence = await loadStagedLogArchiveEvidence(baseDir, environment);
+        const secrets = hasStagedLogArchiveSecrets(baseDir, environment)
+          ? await loadStagedLogArchiveSecrets(baseDir, environment)
+          : null;
+        const mode = secrets ? (secrets.sinkToken ? 'pipeline' : 'scheduled') : null;
+        const complete = Boolean(
+          evidence &&
+          evidence.mode === mode &&
+          (!evidence.issuance ||
+            evidence.bootstrapRevoked ||
+            (pending?.phase === 'issued' && pending.bootstrapRevoked)) &&
+          (!pending ||
+            (pending.phase === 'issued' &&
+              pending.accountId === evidence.accountId &&
+              pending.stagedSecretsFingerprint === evidence.secretsFingerprint))
+        );
+        return c.json({
+          success: true,
+          complete,
+          mode,
+          accountMatches: evidence?.accountId === accountId,
+          pendingRecovery: pending !== null,
+        });
+      } catch (error) {
+        return logArchiveFailure(c, error);
+      } finally {
+        await operation?.release();
+      }
+    });
+  });
+
   api.post('/log-archive/configure', async (c) =>
     withLock(async () => {
       let operation:
         | Awaited<ReturnType<typeof acquireEnvironmentOperationForEnvironment>>
         | undefined;
       try {
-        const request = z
-          .object({
-            environment: EnvNameSchema,
-            mode: z.enum(['pipeline', 'scheduled']),
-            dbRetentionDays: z.number().int().min(1).max(3650).optional(),
-            readToken: z.string().min(1).max(16384),
-            writeToken: z.string().min(1).max(16384),
-            sinkToken: z.string().min(1).max(16384).optional(),
-          })
-          .strict()
-          .parse(await c.req.json());
+        const base = z.object({
+          environment: EnvNameSchema,
+          mode: z.enum(['pipeline', 'scheduled']),
+          dbRetentionDays: z.number().int().min(1).max(3650).optional(),
+        });
+        const body = await c.req.json();
+        const request =
+          body?.tokenSource === 'staged'
+            ? base
+                .extend({ tokenSource: z.literal('staged') })
+                .strict()
+                .parse(body)
+            : base
+                .extend({
+                  tokenSource: z.literal('manual').optional(),
+                  readToken: z.string().trim().min(1).max(16384),
+                  writeToken: z.string().trim().min(1).max(16384),
+                  sinkToken: z.string().trim().min(1).max(16384).optional(),
+                })
+                .strict()
+                .parse(body);
         if (!implementedLogArchiveModes().includes(request.mode))
           return c.json({ success: false, error: 'log_archive_mode_not_implemented' }, 409);
         const baseDir = findAuthrimBaseDir(process.cwd());
@@ -2469,16 +2686,75 @@ export function createApiRoutes(): Hono {
             queue: { enabled: archive.mode === 'pipeline' || source.features.queue.enabled },
           },
         });
-        await stageLogArchiveSecrets(baseDir, request.environment, {
-          readToken: request.readToken,
-          writeToken: request.writeToken,
-          sinkToken: request.sinkToken,
-        });
+        if ('readToken' in request)
+          await assertLogArchiveManualEntryAllowed(baseDir, request.environment);
+        const secrets =
+          'readToken' in request
+            ? {
+                readToken: request.readToken,
+                writeToken: request.writeToken,
+                sinkToken: request.sinkToken,
+              }
+            : await loadStagedLogArchiveSecrets(baseDir, request.environment);
+        if (request.mode === 'pipeline' && !secrets.sinkToken)
+          throw new Error('log_archive_sink_credential_required');
+        const values = [
+          secrets.readToken,
+          secrets.writeToken,
+          ...(secrets.sinkToken ? [secrets.sinkToken] : []),
+        ];
+        if (new Set(values).size !== values.length)
+          throw new Error('log_archive_distinct_catalog_credentials_required');
+        const accountId = await getAccountId();
+        const credential = await getCloudflareApiToken();
+        if (!accountId || !credential)
+          throw new Error('log_archive_cloudflare_credentials_invalid');
+        // Tokens issued by Setup had their exact policies verified with the one-time token, and the
+        // fingerprint check below binds the staged values to that issuance. The deploy login
+        // (OAuth) cannot read token policies, so asking it to re-inspect them would always fail.
+        let issuedBySetup = false;
+        if (!('readToken' in request)) {
+          const evidence = await requireStagedLogArchiveEvidence(
+            baseDir,
+            request.environment,
+            accountId,
+            request.mode
+          );
+          const pending = await loadPendingBootstrap({
+            baseDir,
+            environment: request.environment,
+            purpose: 'log-archive',
+          });
+          if (
+            pending &&
+            (pending.phase !== 'issued' ||
+              (!pending.bootstrapRevoked && !evidence.bootstrapRevoked) ||
+              pending.stagedSecretsFingerprint !== evidence.secretsFingerprint)
+          )
+            throw new LogArchiveTokenIssuanceError(
+              'log_archive_bootstrap_revocation_unconfirmed',
+              true
+            );
+          issuedBySetup = evidence.issuance !== undefined;
+        }
+        if (source.cloudflare?.accountId && source.cloudflare.accountId !== accountId)
+          throw new Error('log_archive_cloudflare_credentials_invalid');
+        await new LogArchiveApi(accountId, credential.token).verifyCatalogCredentials(
+          secrets.readToken,
+          secrets.writeToken,
+          secrets.sinkToken,
+          issuedBySetup ? { inspectPolicies: false } : undefined
+        );
+        if ('readToken' in request)
+          await stageLogArchiveSecrets(baseDir, request.environment, secrets, {
+            accountId,
+            mode: request.mode,
+          });
         await saveEnvironmentConfig(envPaths, committed);
         state.config = committed;
         return c.json({ success: true, archive });
-      } catch {
-        return c.json({ success: false, error: 'log_archive_configuration_invalid' }, 400);
+      } catch (error) {
+        return logArchiveFailure(c, error);
       } finally {
         await operation?.release();
       }
@@ -4075,6 +4351,12 @@ export function createApiRoutes(): Hono {
                   provisioningKeysDir,
                   config.logging.archive.mode,
                   config.logging.archive.objectEncryptionKeyVersion
+                ),
+                logArchiveIssuedForAccountId: await loadIssuedLogArchiveAccountId(
+                  rootDir,
+                  env,
+                  config.logging.archive.mode,
+                  provisioningKeysDir
                 ),
               }
             : {}),

@@ -322,7 +322,11 @@ function fingerprintToken(token: string): string {
   return scryptSync(token, CONTROL_CHILD_TOKEN_FINGERPRINT_SALT, 32).toString('hex');
 }
 
-function deterministicTokenName(accountId: string, environment: string, suffix: string): string {
+export function deterministicTokenName(
+  accountId: string,
+  environment: string,
+  suffix: string
+): string {
   return `authrim-${requiredEnvironment(environment)}-${requiredAccountId(accountId).slice(0, 8)}-${suffix}`.slice(
     0,
     120
@@ -332,8 +336,13 @@ function deterministicTokenName(accountId: string, environment: string, suffix: 
 export function buildCloudflareBootstrapTokenName(input: {
   accountId: string;
   environment: string;
+  purpose?: 'control' | 'log-archive';
 }): string {
-  return deterministicTokenName(input.accountId, input.environment, 'bootstrap');
+  return deterministicTokenName(
+    input.accountId,
+    input.environment,
+    input.purpose === 'log-archive' ? 'log-archive-bootstrap' : 'bootstrap'
+  );
 }
 
 /**
@@ -366,6 +375,7 @@ export function buildCloudflareBootstrapTemplateUrl(input: {
   accountId: string;
   environment: string;
   ownership: CloudflareTokenOwnership;
+  purpose?: 'control' | 'log-archive';
 }): string {
   const accountId = requiredAccountId(input.accountId);
   const permissionGroupKeys = JSON.stringify([
@@ -388,7 +398,11 @@ export function buildCloudflareBootstrapTemplateUrl(input: {
   url.searchParams.set('permissionGroupKeys', permissionGroupKeys);
   url.searchParams.set(
     'name',
-    buildCloudflareBootstrapTokenName({ accountId, environment: input.environment })
+    buildCloudflareBootstrapTokenName({
+      accountId,
+      environment: input.environment,
+      purpose: input.purpose,
+    })
   );
   return url.toString();
 }
@@ -887,7 +901,7 @@ function validateExactChildPolicy(
   }
 }
 
-function validateBootstrapPolicy(
+export function validateBootstrapPolicy(
   token: CloudflareTokenRecord,
   ownership: CloudflareTokenOwnership,
   accountId: string
@@ -951,13 +965,32 @@ function validateNarrowRecoveryTokenPolicy(
   }
 }
 
+export interface CloudflareChildTokenCreationHooks {
+  beforePost?: (input: {
+    existingTokens: readonly CloudflareTokenRecord[];
+  }) => void | Promise<void>;
+  afterObserved?: (token: CloudflareTokenRecord) => void | Promise<void>;
+  afterDeleted?: (id: string) => void | Promise<void>;
+}
+
 async function reconcileAmbiguousChildTokenCreation(
   authority: CloudflareTokenAuthority,
   tokenName: string,
   preservedTokenIds: ReadonlySet<string>,
-  retryDelaysMs: readonly number[]
+  retryDelaysMs: readonly number[],
+  hooks?: CloudflareChildTokenCreationHooks
 ): Promise<void> {
   const observedTokenIds = new Set<string>();
+  const reportedDeletedIds = new Set<string>();
+  const reportConfirmedDeletions = async (inventory: readonly CloudflareTokenRecord[]) => {
+    if (!hooks?.afterDeleted) return;
+    for (const id of observedTokenIds) {
+      if (!reportedDeletedIds.has(id) && !inventory.some((token) => token.id === id)) {
+        await hooks.afterDeleted(id);
+        reportedDeletedIds.add(id);
+      }
+    }
+  };
   for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
     let inventory: readonly CloudflareTokenRecord[];
     try {
@@ -973,13 +1006,17 @@ async function reconcileAmbiguousChildTokenCreation(
       continue;
     }
 
+    await reportConfirmedDeletions(inventory);
     const unrecognized = inventory.filter(
       (token) => token.name === tokenName && !preservedTokenIds.has(token.id)
     );
     if (unrecognized.length === 0 && observedTokenIds.size > 0) return;
 
     for (const token of unrecognized) {
-      observedTokenIds.add(token.id);
+      if (!observedTokenIds.has(token.id)) {
+        observedTokenIds.add(token.id);
+        await hooks?.afterObserved?.(token);
+      }
       try {
         await authority.deleteToken(token.id);
       } catch {
@@ -995,6 +1032,7 @@ async function reconcileAmbiguousChildTokenCreation(
   if (observedTokenIds.size > 0) {
     try {
       const remaining = await authority.listTokens();
+      await reportConfirmedDeletions(remaining);
       if (
         !remaining.some((token) => token.name === tokenName && !preservedTokenIds.has(token.id))
       ) {
@@ -1063,21 +1101,29 @@ async function deleteStaleBootstrapTokens(
   }
 }
 
-async function createRecoverably(
+export async function createRecoverably(
   authority: CloudflareTokenAuthority,
   input: { name: string; policies: readonly CloudflareTokenPolicy[] },
-  reconciliationDelaysMs: readonly number[]
+  reconciliationDelaysMs: readonly number[] = CHILD_TOKEN_CREATE_RECONCILIATION_DELAYS_MS,
+  hooks?: CloudflareChildTokenCreationHooks
 ): Promise<{
   token: CloudflareTokenRecord;
   previousTokens: readonly CloudflareTokenRecord[];
 }> {
-  const previousTokens = (await authority.listTokens()).filter(
-    (token) => token.name === input.name
-  );
+  const initialInventory = await authority.listTokens();
+  const previousTokens = initialInventory.filter((token) => token.name === input.name);
   const preservedTokenIds = new Set(previousTokens.map((token) => token.id));
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    // Hook callers checkpoint a fresh pre-POST inventory on retries as well. Control's no-hook
+    // path keeps its existing request sequence and reconciliation behavior.
+    const existingTokens = attempt > 0 && hooks ? await authority.listTokens() : initialInventory;
+    for (const token of existingTokens) {
+      if (token.name === input.name) preservedTokenIds.add(token.id);
+    }
+    await hooks?.beforePost?.({ existingTokens });
+    let token: CloudflareTokenRecord;
     try {
-      return { token: await authority.createToken(input), previousTokens };
+      token = await authority.createToken(input);
     } catch (error) {
       const status = tokenApiHttpStatus(error);
       if (
@@ -1097,7 +1143,8 @@ async function createRecoverably(
         authority,
         input.name,
         preservedTokenIds,
-        reconciliationDelaysMs
+        reconciliationDelaysMs,
+        hooks
       );
       if (attempt === 1) {
         throw new CloudflareTokenBootstrapError(
@@ -1107,7 +1154,11 @@ async function createRecoverably(
           true
         );
       }
+      continue;
     }
+    // Local hook failures are not mistaken for an indeterminate remote POST.
+    await hooks?.afterObserved?.(token);
+    return { token, previousTokens };
   }
   throw new CloudflareTokenBootstrapError('cloudflare_child_token_create_failed');
 }
@@ -1133,7 +1184,7 @@ async function hasSecretWithRetry(
   throw new CloudflareTokenBootstrapError('cloudflare_control_secret_inventory_unavailable', true);
 }
 
-async function revokeBootstrap(
+export async function revokeBootstrap(
   authority: CloudflareTokenAuthority,
   bootstrapTokenId: string
 ): Promise<void> {

@@ -441,6 +441,8 @@ export interface DatabaseProvisionConfig {
 export interface ProvisionOptions {
   logArchive?: LogArchiveConfig;
   logArchiveCatalogSecrets?: { readToken: string; writeToken: string; sinkToken?: string };
+  /** Account the staged tokens were issued for by Setup; tokens bound to it skip policy re-inspection. */
+  logArchiveIssuedForAccountId?: string;
   prepareScheduledLogArchiveTable?: (catalog: {
     catalogUri: string;
     warehouse: string;
@@ -9151,17 +9153,21 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
   if (options.logArchive?.mode === 'pipeline' && options.createQueues !== true)
     throw new Error('log_archive_requires_durable_queues');
   let logArchiveApi: LogArchiveApi | undefined;
+  let logArchivePolicyVerified = false;
   if (options.logArchive) {
     const accountId = await getAccountId();
     const credential = await getCloudflareApiToken();
     if (!accountId || !credential) throw new Error('log_archive_cloudflare_credentials_required');
     logArchiveApi = new LogArchiveApi(accountId, credential.token);
+    logArchivePolicyVerified = options.logArchiveIssuedForAccountId === accountId;
     await preflightLogArchive({
+      catalogPolicyVerified: logArchivePolicyVerified,
       archive: options.logArchive,
       api: logArchiveApi,
       catalogReadToken: options.logArchiveCatalogSecrets?.readToken ?? '',
       catalogWriteToken: options.logArchiveCatalogSecrets?.writeToken ?? '',
       catalogSinkToken: options.logArchiveCatalogSecrets?.sinkToken,
+      onProgress,
     });
   }
   // Security: Validate environment name
@@ -9347,6 +9353,7 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
       catalogReadToken: options.logArchiveCatalogSecrets!.readToken,
       catalogWriteToken: options.logArchiveCatalogSecrets!.writeToken,
       catalogSinkToken: options.logArchiveCatalogSecrets!.sinkToken,
+      catalogPolicyVerified: logArchivePolicyVerified,
       checkpoints: options.provisioningIntentResources,
       checkpoint: async (resource) => {
         if (resource.state === 'create_issued') await options.onResourceCreateIssued(resource);
