@@ -890,6 +890,7 @@ import {
   adminConsentReferenceAuditHandler,
   processStatementConsentReferenceAuditJobs,
 } from './statement-consent-reference-audit';
+import { schedulerErrorMeta } from './scheduler-error-meta';
 import { processStatementConsentProjectionJobs } from './statement-consent-projection-jobs';
 import { processTenantDisasterRecoveryLookupReprojection } from './tenant-disaster-recovery-lookup';
 import {
@@ -4279,7 +4280,7 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
       );
   } catch (error) {
     log.warn('Log storage maintenance deferred', {
-      errorType: error instanceof Error ? error.name : 'Unknown',
+      ...schedulerErrorMeta(error),
     });
   }
   try {
@@ -4330,7 +4331,7 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
         log.info('Tenant backup operation scheduler completed', operations);
     } catch (error) {
       log.warn('Tenant backup operation scheduler failed', {
-        errorType: error instanceof Error ? error.name : 'Unknown',
+        ...schedulerErrorMeta(error),
       });
     }
   }
@@ -4343,7 +4344,7 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
     );
   } catch (error) {
     log.warn('Scheduled mutations deferred by backup admission', {
-      errorType: error instanceof Error ? error.name : 'Unknown',
+      ...schedulerErrorMeta(error),
     });
   }
 }
@@ -4360,7 +4361,7 @@ async function handleCoveredScheduled(
     }
   } catch (error) {
     log.warn('Dynamic plugin resource finalization scheduler failed', {
-      errorType: error instanceof Error ? error.name : 'Unknown',
+      ...schedulerErrorMeta(error),
     });
   }
   {
@@ -4374,7 +4375,7 @@ async function handleCoveredScheduled(
       }
     } catch (error) {
       log.warn('Tenant disaster recovery Lookup reprojection failed', {
-        errorType: error instanceof Error ? error.name : 'Unknown',
+        ...schedulerErrorMeta(error),
       });
     }
     try {
@@ -4387,7 +4388,7 @@ async function handleCoveredScheduled(
       }
     } catch (error) {
       log.warn('Tenant provisioning scheduler failed', {
-        errorType: error instanceof Error ? error.name : 'Unknown',
+        ...schedulerErrorMeta(error),
       });
     }
     try {
@@ -4400,7 +4401,7 @@ async function handleCoveredScheduled(
       }
     } catch (error) {
       log.warn('Tenant placement migration scheduler failed', {
-        errorType: error instanceof Error ? error.name : 'Unknown',
+        ...schedulerErrorMeta(error),
       });
     }
   }
@@ -4409,28 +4410,28 @@ async function handleCoveredScheduled(
     await processLegacySettingsImport(env);
   } catch (error) {
     log.warn('Settings import from the older stores did not complete', {
-      errorType: error instanceof Error ? error.name : 'Unknown',
+      ...schedulerErrorMeta(error),
     });
   }
   try {
     await processStatementConsentProjectionJobs(env, log.module('CONSENT-PROJECTION'));
   } catch (error) {
     log.warn('Statement consent projection scheduler failed', {
-      errorType: error instanceof Error ? error.name : 'Unknown',
+      ...schedulerErrorMeta(error),
     });
   }
   try {
     await processStatementConsentReferenceAuditJobs(env, log.module('CONSENT-REFERENCE-AUDIT'));
   } catch (error) {
     log.warn('Statement consent reference audit scheduler failed', {
-      errorType: error instanceof Error ? error.name : 'Unknown',
+      ...schedulerErrorMeta(error),
     });
   }
   try {
     await processProviderReprojectionJobs(env, log.module('PROVIDER-REPROJECTION'));
   } catch (error) {
     log.warn('Provider reprojection scheduler failed', {
-      errorType: error instanceof Error ? error.name : 'Unknown',
+      ...schedulerErrorMeta(error),
     });
   }
   if (isTenantRuntimeRegistryRefreshCron(event.cron)) {
@@ -4454,14 +4455,14 @@ async function handleCoveredScheduled(
       });
     } catch (error) {
       log.warn('Lookup bucket migration scheduler failed', {
-        errorType: error instanceof Error ? error.name : 'Unknown',
+        ...schedulerErrorMeta(error),
       });
     }
     try {
       await processScheduledIdentifierReplacements(env, log.module('IDENTIFIER-REPLACEMENT'));
     } catch (error) {
       log.warn('Identifier replacement scheduler failed', {
-        errorType: error instanceof Error ? error.name : 'Unknown',
+        ...schedulerErrorMeta(error),
       });
     }
     try {
@@ -4470,7 +4471,7 @@ async function handleCoveredScheduled(
       if (removed > 0) log.info('Expired bulk apply records removed', { removed });
     } catch (error) {
       log.warn('Bulk apply record sweep failed', {
-        errorType: error instanceof Error ? error.name : 'Unknown',
+        ...schedulerErrorMeta(error),
       });
     }
     try {
@@ -4479,7 +4480,7 @@ async function handleCoveredScheduled(
       if (removed > 0) log.info('Expired Mapping Set save records removed', { removed });
     } catch (error) {
       log.warn('Mapping Set save record sweep failed', {
-        errorType: error instanceof Error ? error.name : 'Unknown',
+        ...schedulerErrorMeta(error),
       });
     }
     await processScheduledDirectoryJobs(env, log.module('DIRECTORY'));
@@ -4494,7 +4495,7 @@ async function handleCoveredScheduled(
       await processPendingSessionEndLogoutJobs(env, log);
     } catch (error) {
       log.warn('Downstream logout job processing failed', {
-        errorType: error instanceof Error ? error.name : 'Unknown',
+        ...schedulerErrorMeta(error),
       });
     }
     return;
@@ -4507,7 +4508,7 @@ async function handleCoveredScheduled(
       await env.AUTHRIM_CONFIG.put(page.cursorKey, page.nextCursor);
     } catch (error) {
       log.warn('Account webhook scheduled delivery deferred', {
-        errorType: error instanceof Error ? error.name : 'Unknown',
+        ...schedulerErrorMeta(error),
       });
     }
     try {
@@ -4516,7 +4517,7 @@ async function handleCoveredScheduled(
       await env.AUTHRIM_CONFIG!.put(page.cursorKey, page.nextCursor);
     } catch (error) {
       log.warn('Service group reconciliation deferred', {
-        errorType: error instanceof Error ? error.name : 'Unknown',
+        ...schedulerErrorMeta(error),
       });
     }
     await processInteractiveAdminJobQueues(env, log);
