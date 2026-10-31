@@ -276,7 +276,22 @@ describe('Catalog setup API', () => {
     expect(LogArchiveApi.prototype.verifyCatalogCredentials).toHaveBeenCalledWith(
       'SENTINEL_READ',
       'SENTINEL_WRITE',
+      undefined,
       undefined
+    );
+  });
+  it('does not ask the deploy login to re-inspect policies of tokens Setup issued', async () => {
+    await issuedPending(true);
+    const response = await createApiRoutes().request(
+      '/log-archive/configure',
+      post({ environment: 'demo', mode: 'scheduled', tokenSource: 'staged' })
+    );
+    expect(await response.json()).toMatchObject({ success: true });
+    expect(LogArchiveApi.prototype.verifyCatalogCredentials).toHaveBeenCalledWith(
+      'SENTINEL_ISSUED_READ',
+      'SENTINEL_ISSUED_WRITE',
+      undefined,
+      { inspectPolicies: false }
     );
   });
   it('sanitizes unknown issuance failures', async () => {

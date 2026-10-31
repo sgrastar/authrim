@@ -20,6 +20,7 @@ import {
 import { planLogArchive, hasCompleteLogArchiveState } from '../../core/log-archive.js';
 import {
   publishLogArchiveSecrets,
+  loadIssuedLogArchiveAccountId,
   stageLogArchiveSecrets,
   assertLogArchiveManualEntryAllowed,
 } from '../../core/log-archive-secrets.js';
@@ -3116,6 +3117,12 @@ async function executeSetup(
                 externalKeysDir,
                 config.logging.archive.mode,
                 config.logging.archive.objectEncryptionKeyVersion
+              ),
+              logArchiveIssuedForAccountId: await loadIssuedLogArchiveAccountId(
+                outputDir,
+                env,
+                config.logging.archive.mode,
+                externalKeysDir
               ),
             }
           : {}),

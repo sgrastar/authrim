@@ -327,6 +327,34 @@ export async function loadStagedLogArchiveEvidence(
   return evidence;
 }
 
+/**
+ * Account that Setup issued the current log tokens for, or undefined when the values did not come
+ * from an issuance (manual entry, environment variables) or cannot be proven unchanged. Issuance
+ * verified each token's exact policy with the one-time token, and the evidence fingerprint binds
+ * the values to it, so deploy may skip the policy read an OAuth login is not allowed to make.
+ * Any doubt returns undefined, which keeps the full inspection. Environment overrides always do:
+ * `loadLogArchiveSecrets` prefers them over the staged values this evidence describes.
+ */
+export async function loadIssuedLogArchiveAccountId(
+  baseDir: string,
+  environment: string,
+  mode: 'scheduled' | 'pipeline',
+  keysDir?: string
+): Promise<string | undefined> {
+  if (
+    process.env.LOG_ARCHIVE_CATALOG_READ_TOKEN !== undefined ||
+    process.env.LOG_ARCHIVE_CATALOG_WRITE_TOKEN !== undefined ||
+    process.env.LOG_ARCHIVE_CATALOG_SINK_TOKEN !== undefined
+  )
+    return undefined;
+  try {
+    const evidence = await loadStagedLogArchiveEvidence(baseDir, environment, keysDir);
+    return evidence?.issuance && evidence.mode === mode ? evidence.accountId : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function requireStagedLogArchiveEvidence(
   baseDir: string,
   environment: string,

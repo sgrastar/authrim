@@ -7,6 +7,15 @@ import {
   LOG_ARCHIVE_ERROR_MESSAGES,
 } from '../web/log-archive-input.js';
 describe('log archive input UX', () => {
+  it('tells a wrong one-time token apart from a missing one and says nothing was created', () => {
+    const missing = logArchiveErrorMessage('log_archive_bootstrap_token_required', 'ja');
+    const invalid = logArchiveErrorMessage('log_archive_bootstrap_token_invalid', 'ja');
+    expect(invalid).not.toBe(missing);
+    expect(invalid).toContain('作成されていません');
+    expect(logArchiveErrorMessage('log_archive_bootstrap_token_invalid', 'en')).toContain(
+      'No tokens were created'
+    );
+  });
   it('validates mode, missing manual fields, pipeline sink and duplicate values', () => {
     expect(logArchiveInputError({ mode: '' })).toBe('log_archive_mode_required');
     expect(logArchiveInputError({ mode: 'scheduled' })).toBe(

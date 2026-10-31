@@ -185,14 +185,26 @@ export class LogArchiveApi {
     return payload.result as T;
   }
 
+  /**
+   * `inspectPolicies: false` only proves each token is active and distinct, using the token itself.
+   * Policy inspection reads `tokens/{id}` with this API's own credential, which an OAuth login
+   * does not have (it lacks API Tokens Read). Callers may skip it only for tokens whose exact
+   * policy was already verified when they were issued and whose values are still bound to that
+   * issuance by fingerprint. If a token's policy is edited after issuance, this check will not
+   * notice: re-verify with a credential that can read tokens, or reissue.
+   */
   async verifyCatalogCredentials(
     readToken: string,
     writeToken: string,
-    sinkToken?: string
+    sinkToken?: string,
+    options: { inspectPolicies?: boolean } = {}
   ): Promise<void> {
-    const groups = await this.request<Array<{ id: string; name: string }>>(
-      'tokens/permission_groups?scope=com.cloudflare.api.account'
-    );
+    const inspectPolicies = options.inspectPolicies !== false;
+    const groups = inspectPolicies
+      ? await this.request<Array<{ id: string; name: string }>>(
+          'tokens/permission_groups?scope=com.cloudflare.api.account'
+        )
+      : [];
     const groupNames = new Map(groups.map((group) => [group.id, group.name]));
     const tokenIds = new Set<string>();
     for (const [role, token] of [
@@ -211,6 +223,7 @@ export class LogArchiveApi {
       if (tokenIds.has(verified.id))
         throw new Error('log_archive_distinct_catalog_token_ids_required');
       tokenIds.add(verified.id);
+      if (!inspectPolicies) continue;
       const record = await this.request<{
         policies: Array<{
           effect: string;
@@ -283,6 +296,8 @@ export interface LogArchiveProvisionOptions {
   catalogReadToken: string;
   catalogWriteToken: string;
   catalogSinkToken?: string;
+  /** The tokens' exact policies were verified when Setup issued them; see `verifyCatalogCredentials`. */
+  catalogPolicyVerified?: boolean;
   checkpoints: Readonly<Record<string, ProvisioningResourceCheckpoint>>;
   checkpoint: (resource: ProvisioningResourceCheckpoint) => Promise<void>;
   /** R2 ownership must be verified with the existing marker + creation_date implementation. */
@@ -410,7 +425,12 @@ async function provisionPipelineResource(
 export async function preflightLogArchive(
   options: Pick<
     LogArchiveProvisionOptions,
-    'archive' | 'api' | 'catalogReadToken' | 'catalogWriteToken' | 'catalogSinkToken'
+    | 'archive'
+    | 'api'
+    | 'catalogReadToken'
+    | 'catalogWriteToken'
+    | 'catalogSinkToken'
+    | 'catalogPolicyVerified'
   >
 ): Promise<void> {
   assertLogArchiveImplemented(options.archive);
@@ -432,7 +452,8 @@ export async function preflightLogArchive(
   await options.api.verifyCatalogCredentials(
     options.catalogReadToken,
     options.catalogWriteToken,
-    options.archive.mode === 'pipeline' ? options.catalogSinkToken : undefined
+    options.archive.mode === 'pipeline' ? options.catalogSinkToken : undefined,
+    options.catalogPolicyVerified ? { inspectPolicies: false } : undefined
   );
 }
 

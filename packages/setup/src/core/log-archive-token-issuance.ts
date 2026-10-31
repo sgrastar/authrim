@@ -89,6 +89,22 @@ function exactPolicy(
 }
 
 /** IDs and safe codes only may cross this boundary, even when a provider throws a secret value. */
+/**
+ * Before the pending record exists nothing was created and nothing was revoked, so the one-time
+ * token is untouched. Report the real cause instead of an unconfirmed revocation, which would send
+ * the operator to hunt for tokens that were never issued.
+ */
+function preStageFailure(error: unknown): Error {
+  if (error instanceof LogArchiveTokenIssuanceError)
+    return new LogArchiveTokenIssuanceError(error.code);
+  if (
+    error instanceof CloudflareTokenBootstrapError &&
+    /^cloudflare_token_api_http_(?:400|401|403)$/u.test(error.code)
+  )
+    return new LogArchiveTokenIssuanceError('log_archive_bootstrap_token_invalid');
+  return new LogArchiveTokenIssuanceError('log_archive_cloudflare_request_failed');
+}
+
 function safeFailure(error: unknown): Error {
   if (error instanceof LogArchiveApiError) return error;
   if (error instanceof LogArchiveTokenIssuanceError) return error;
@@ -609,8 +625,7 @@ export async function issueLogArchiveTokens(
   } catch (error) {
     if (revoked && artifact)
       return { ...issuedIds(artifact), warning: 'log_archive_local_cleanup_pending' };
-    if (!artifact)
-      throw new LogArchiveTokenIssuanceError('log_archive_bootstrap_revocation_unconfirmed', true);
+    if (!artifact) throw preStageFailure(error);
     if (artifact.phase === 'issued') {
       // Only an independently observed still-active bootstrap permits rolling an issued phase back.
       // A lost self-DELETE response must retain the valid staged result for forward recovery.

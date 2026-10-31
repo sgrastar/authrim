@@ -317,12 +317,45 @@ describe('Catalog token issuance', () => {
     ).toEqual(['2'.padStart(32, '0')]);
     expect(f.records.has(bootstrapId)).toBe(false);
   });
-  it('reports unconfirmed revocation if bootstrap preflight cannot establish an identity', async () => {
+  it('reports a request failure, not an unconfirmed revocation, when the preflight call fails', async () => {
     const f = await fixture();
     vi.mocked(f.authority.verifySelf).mockRejectedValue(new Error(sentinel));
     await expect(issueLogArchiveTokens({ ...f.input, mode: 'scheduled' })).rejects.toMatchObject({
-      code: 'log_archive_bootstrap_revocation_unconfirmed',
-      cleanupRequired: true,
+      code: 'log_archive_cloudflare_request_failed',
+      cleanupRequired: false,
+      childCleanupRequired: false,
+    });
+    expect(f.authority.createToken).not.toHaveBeenCalled();
+    expect(f.authority.deleteToken).not.toHaveBeenCalled();
+    await expect(
+      loadPendingBootstrap({ baseDir: f.baseDir, environment: 'demo', purpose: 'log-archive' })
+    ).resolves.toBeNull();
+  });
+  it.each([400, 401, 403])(
+    'tells the operator the pasted value is not a usable one-time token on HTTP %i',
+    async (status) => {
+      const f = await fixture();
+      vi.mocked(f.authority.verifySelf).mockRejectedValue(
+        new CloudflareTokenBootstrapError(`cloudflare_token_api_http_${status}`)
+      );
+      await expect(issueLogArchiveTokens({ ...f.input, mode: 'scheduled' })).rejects.toMatchObject({
+        code: 'log_archive_bootstrap_token_invalid',
+        cleanupRequired: false,
+        childCleanupRequired: false,
+      });
+      expect(f.authority.createToken).not.toHaveBeenCalled();
+      expect(f.authority.deleteToken).not.toHaveBeenCalled();
+      await expect(
+        loadPendingBootstrap({ baseDir: f.baseDir, environment: 'demo', purpose: 'log-archive' })
+      ).resolves.toBeNull();
+    }
+  );
+  it('does not ask for a revocation review when the token is inactive and nothing was created', async () => {
+    const f = await fixture();
+    vi.mocked(f.authority.verifySelf).mockResolvedValue({ id: bootstrapId, status: 'expired' });
+    await expect(issueLogArchiveTokens({ ...f.input, mode: 'scheduled' })).rejects.toMatchObject({
+      code: 'log_archive_bootstrap_token_invalid',
+      cleanupRequired: false,
     });
     expect(f.authority.createToken).not.toHaveBeenCalled();
   });

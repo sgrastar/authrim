@@ -133,9 +133,14 @@ const messages = [
     'Use a different token in each field.',
   ],
   [
-    ['log_archive_bootstrap_token_required', 'log_archive_bootstrap_token_invalid'],
+    ['log_archive_bootstrap_token_required'],
     'Account API Tokens Write権限を持つ一時トークンを作成して入力してください。',
     'Create and enter a one-time token with Account API Tokens Write permission.',
+  ],
+  [
+    ['log_archive_bootstrap_token_invalid'],
+    '一時トークンを確認できませんでした。貼り付けた値が、Account API Tokens Write権限で作成した一時トークンか確認してください。トークンは作成されていません。',
+    'The one-time token could not be verified. Check that the pasted value is the one-time token created with Account API Tokens Write permission. No tokens were created.',
   ],
   [
     ['log_archive_permission_group_invalid'],
@@ -208,8 +213,8 @@ const messages = [
   ],
   [
     ['log_archive_permission_or_subscription_required'],
-    'Cloudflareのトークン権限とR2・Catalogの契約を確認してください。',
-    'Check Cloudflare token permissions and R2 / Catalog subscriptions.',
+    'Cloudflareのトークン権限とR2・Catalogの契約を確認してください。手動で入力したトークンを検証する場合は、ログイン中の認証情報にAPI Tokensの読み取り権限が必要です。',
+    'Check Cloudflare token permissions and R2 / Catalog subscriptions. Verifying manually entered tokens also needs a login credential that can read API Tokens.',
   ],
   [
     [

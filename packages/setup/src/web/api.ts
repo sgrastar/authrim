@@ -22,6 +22,7 @@ import {
 } from '../core/log-archive.js';
 import {
   publishLogArchiveSecrets,
+  loadIssuedLogArchiveAccountId,
   stageLogArchiveSecrets,
   assertLogArchiveManualEntryAllowed,
   loadStagedLogArchiveEvidence,
@@ -2683,6 +2684,10 @@ export function createApiRoutes(): Hono {
         const credential = await getCloudflareApiToken();
         if (!accountId || !credential)
           throw new Error('log_archive_cloudflare_credentials_invalid');
+        // Tokens issued by Setup had their exact policies verified with the one-time token, and the
+        // fingerprint check below binds the staged values to that issuance. The deploy login
+        // (OAuth) cannot read token policies, so asking it to re-inspect them would always fail.
+        let issuedBySetup = false;
         if (!('readToken' in request)) {
           const evidence = await requireStagedLogArchiveEvidence(
             baseDir,
@@ -2705,13 +2710,15 @@ export function createApiRoutes(): Hono {
               'log_archive_bootstrap_revocation_unconfirmed',
               true
             );
+          issuedBySetup = evidence.issuance !== undefined;
         }
         if (source.cloudflare?.accountId && source.cloudflare.accountId !== accountId)
           throw new Error('log_archive_cloudflare_credentials_invalid');
         await new LogArchiveApi(accountId, credential.token).verifyCatalogCredentials(
           secrets.readToken,
           secrets.writeToken,
-          secrets.sinkToken
+          secrets.sinkToken,
+          issuedBySetup ? { inspectPolicies: false } : undefined
         );
         if ('readToken' in request)
           await stageLogArchiveSecrets(baseDir, request.environment, secrets, {
@@ -4319,6 +4326,12 @@ export function createApiRoutes(): Hono {
                   provisioningKeysDir,
                   config.logging.archive.mode,
                   config.logging.archive.objectEncryptionKeyVersion
+                ),
+                logArchiveIssuedForAccountId: await loadIssuedLogArchiveAccountId(
+                  rootDir,
+                  env,
+                  config.logging.archive.mode,
+                  provisioningKeysDir
                 ),
               }
             : {}),
