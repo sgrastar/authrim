@@ -23,6 +23,7 @@ const ResultSchema = LogArchiveRuntimeProofSchema.extend({
     .regex(/^[0-9]+$/u)
     .nullable(),
 });
+const SAFE_CONTROL_ERROR_CODE = /^(?:bootstrap|cloudflare|control|runtime)_[a-z0-9_:,-]{1,159}$/u;
 export interface LogArchiveReadinessOptions {
   apiBaseUrl: string;
   environmentId: string;
@@ -116,8 +117,14 @@ export async function waitForLogArchiveReadiness(
         body: JSON.stringify(input.attempt),
       }
     );
-    if (response.status !== 200 && response.status !== 202)
+    if (response.status !== 200 && response.status !== 202) {
+      // Control reports why the probe failed in a header (a fixed, secret-free code). Without it a
+      // 503 cannot be told apart from a missing binding, a Catalog failure or a Management error.
+      const reason = response.headers?.get?.('x-authrim-error-code') ?? '';
+      if (SAFE_CONTROL_ERROR_CODE.test(reason))
+        input.onProgress?.(`Control rejected the log probe (HTTP ${response.status}): ${reason}`);
       throw new Error(`log_archive_readiness_http_${response.status}`);
+    }
     const text = await readResponseTextWithLimit(response, 16 * 1024);
     if (text) {
       const result = ResultSchema.parse(JSON.parse(text));

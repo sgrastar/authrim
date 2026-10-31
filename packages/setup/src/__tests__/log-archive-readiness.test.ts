@@ -171,4 +171,30 @@ describe('post-deploy archive readiness authority', () => {
     ).rejects.toThrow('log_archive_readiness_not_confirmed_resume_setup');
     expect(f.attempt.attemptId).toBeTruthy();
   });
+
+  it('reports the failure code Control returns with an HTTP error, and nothing unsafe', async () => {
+    const f = await fixture();
+    const messages: string[] = [];
+    const reject = (code: string) => async () =>
+      new Response(null, { status: 503, headers: { 'X-Authrim-Error-Code': code } });
+    await expect(
+      waitForLogArchiveReadiness({
+        ...f.input,
+        onProgress: (message) => messages.push(message),
+        fetch: reject('runtime_smoke_log_archive_binding_unavailable'),
+      })
+    ).rejects.toThrow('log_archive_readiness_http_503');
+    expect(messages).toEqual([
+      'Control rejected the log probe (HTTP 503): runtime_smoke_log_archive_binding_unavailable',
+    ]);
+    messages.length = 0;
+    await expect(
+      waitForLogArchiveReadiness({
+        ...f.input,
+        onProgress: (message) => messages.push(message),
+        fetch: reject('Bearer secret-token'),
+      })
+    ).rejects.toThrow('log_archive_readiness_http_503');
+    expect(messages).toEqual([]);
+  });
 });
