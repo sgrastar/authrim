@@ -40,6 +40,7 @@ import {
   confirmEnvironmentObservedForDeletion,
   detectEnvironments,
   deleteEnvironment,
+  buildR2OwnershipMarkerKey,
   EnvironmentInventoryUnavailableError,
   getWorkersSubdomain,
   checkAdminSetupStatus,
@@ -165,6 +166,7 @@ import {
 } from '../core/wrangler-sync.js';
 import { buildWorkerDeploymentResourceIds } from '../core/deployment-resource-ids.js';
 import { refreshWorkerDeploymentArtifacts } from '../core/worker-deployment-artifacts.js';
+import { withAdoptedR2Ownership } from '../core/r2-ownership-adoption.js';
 import { cleanupLocalEnvironmentArtifacts } from '../core/environment-cleanup.js';
 import { cleanupSetupManagedControlTokens } from '../core/control-token-environment-cleanup.js';
 import { buildControlTokenManualCleanupTarget } from '../core/control-token-manual-action.js';
@@ -543,8 +545,31 @@ const EnvironmentDeleteRequestSchema = z
     deleteR2: z.boolean().optional().default(true),
     deletePages: z.boolean().optional().default(true),
     finalizeEnvironment: z.boolean().optional().default(false),
+    adoptR2Ownership: z.boolean().optional().default(false),
+    // Comparison evidence only. Provider discovery remains the authority for every adopted row.
+    confirmedR2Adoption: z
+      .array(
+        z
+          .object({
+            name: z.string().min(1).max(63),
+            creationDate: z.iso.datetime({ offset: true }),
+            ownershipId: z.string().regex(/^[a-f0-9-]{36}$/u),
+          })
+          .strict()
+      )
+      .min(1)
+      .max(100)
+      .refine(
+        (rows) => new Set(rows.map((row) => row.name)).size === rows.length,
+        'Confirmed R2 bucket names must be unique'
+      )
+      .optional(),
   })
-  .strict();
+  .strict()
+  .refine((body) => !body.adoptR2Ownership || Boolean(body.confirmedR2Adoption?.length), {
+    message: 'R2 ownership adoption requires the confirmed candidate identities',
+    path: ['confirmedR2Adoption'],
+  });
 
 function isEnvironmentOperationConflict(message: unknown): boolean {
   return (
@@ -8165,6 +8190,8 @@ export function createApiRoutes(): Hono {
           deleteR2,
           deletePages: requestedDeletePages,
           finalizeEnvironment,
+          adoptR2Ownership,
+          confirmedR2Adoption,
         } = bodyResult.data;
         let deletePages = requestedDeletePages;
         if (
@@ -8311,6 +8338,7 @@ export function createApiRoutes(): Hono {
             );
           }
         }
+        let r2AdoptionCandidatesChanged = false;
         const result = await deleteEnvironment({
           env,
           environmentKnownLocally: Boolean(operationLock.lock) || localEnvironmentState.exists,
@@ -8325,6 +8353,32 @@ export function createApiRoutes(): Hono {
           knownD1Resources: deletionLock ? Object.values(deletionLock.d1) : [],
           knownKVResources: deletionLock ? Object.values(deletionLock.kv) : [],
           knownQueueResources: deletionLock?.queues ? Object.values(deletionLock.queues) : [],
+          adoptR2Ownership,
+          expectR2OwnershipAdoption: adoptR2Ownership,
+          onR2OwnershipAdoption: async (candidates) => {
+            const confirmedByName = new Map(
+              (confirmedR2Adoption ?? []).map((row) => [row.name, row])
+            );
+            const matches =
+              adoptR2Ownership &&
+              candidates.length === confirmedByName.size &&
+              candidates.every((candidate) => {
+                const confirmed = confirmedByName.get(candidate.name);
+                return (
+                  confirmed !== undefined &&
+                  candidate.creationDate === confirmed.creationDate &&
+                  candidate.ownershipId === confirmed.ownershipId &&
+                  candidate.ownershipMarkerKey === buildR2OwnershipMarkerKey(confirmed.ownershipId)
+                );
+              });
+            r2AdoptionCandidatesChanged = !matches;
+            return matches;
+          },
+          onR2OwnershipAdoptionPersist: async (candidates) => {
+            const adopted = withAdoptedR2Ownership(deletionLock, env, candidates);
+            await saveLockFile(adopted, operationLock!.lockFilePath);
+            deletionLock = adopted;
+          },
           knownLogArchiveResource: deletionLock?.logArchive,
           knownR2Resources: deletionLock?.r2
             ? Object.entries(deletionLock.r2).map(([binding, resource]) => ({
@@ -8376,6 +8430,33 @@ export function createApiRoutes(): Hono {
             state.operationProgress = { operation: 'delete', current, total };
           },
         });
+
+        if (
+          r2AdoptionCandidatesChanged ||
+          (result.adoptionCandidates?.length && result.adoptionReady !== false && !adoptR2Ownership)
+        ) {
+          state.status = 'idle';
+          state.error = null;
+          addProgress('R2 ownership adoption requires confirmation. No resources were deleted.');
+          await flushProgressLog();
+          return c.json({
+            success: false,
+            adoptionCandidates: result.adoptionCandidates ?? [],
+            adoptionReady: Boolean(result.adoptionCandidates?.length),
+            ...(r2AdoptionCandidatesChanged
+              ? {
+                  errorCode: 'r2_adoption_candidates_changed',
+                  error:
+                    'R2 adoption candidates changed. Review and confirm the current identities.',
+                }
+              : {}),
+            deleted: result.deleted,
+            errors: result.errors,
+            progress: state.progress,
+            operationProgress: state.operationProgress,
+            logPath: state.logPath,
+          });
+        }
 
         const deletedLockResourceCount =
           result.deleted.workers.length +
@@ -8452,6 +8533,8 @@ export function createApiRoutes(): Hono {
             postDeleteVerification: result.postDeleteVerification,
             deleted: result.deleted,
             manualR2: result.manualR2,
+            adoptionCandidates: result.adoptionCandidates,
+            adoptionReady: result.adoptionReady,
             manualDns,
             manualControlTokens,
             errors: result.errors,
