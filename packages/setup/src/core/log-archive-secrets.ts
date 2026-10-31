@@ -1,5 +1,5 @@
 import { loadPendingBootstrap } from './pending-control-bootstrap.js';
-import { createHash } from 'node:crypto';
+import { scryptSync } from 'node:crypto';
 import { ensureLogArchiveContentHmacKey } from './keys.js';
 import { existsSync } from 'node:fs';
 import { unlink } from 'node:fs/promises';
@@ -209,10 +209,14 @@ export async function publishLogArchiveSecrets(
 }
 
 /** Only remove a staged generation created by this issuance attempt, never unrelated credentials. */
+const SECRETS_FINGERPRINT_SALT = 'authrim-setup:log-archive-secrets-fingerprint:v1';
+
 export function logArchiveSecretsFingerprint(secrets: LogArchiveCatalogSecrets): string {
-  return createHash('sha256')
-    .update(JSON.stringify(validate(secrets)))
-    .digest('hex');
+  // A slow derivation, not a bare hash: the input is the tokens themselves, and the comparison
+  // only needs a deterministic value.
+  return scryptSync(JSON.stringify(validate(secrets)), SECRETS_FINGERPRINT_SALT, 32).toString(
+    'hex'
+  );
 }
 
 export async function discardIssuedLogArchiveSecrets(

@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { scryptSync } from 'node:crypto';
 import {
   CloudflareTokenAuthorityHttpClient,
   CloudflareTokenBootstrapError,
@@ -178,8 +178,10 @@ export type LogArchiveTokenIssuanceResult = LogArchiveIssuedTokenIds & {
   warning?: 'log_archive_local_cleanup_pending';
 };
 
+const BOOTSTRAP_FINGERPRINT_SALT = 'authrim-setup:log-archive-bootstrap-fingerprint:v1';
+
 function bootstrapFingerprint(token: string): string {
-  return createHash('sha256').update(token.trim()).digest('hex');
+  return scryptSync(token.trim(), BOOTSTRAP_FINGERPRINT_SALT, 32).toString('hex');
 }
 
 function issuedIds(artifact: PendingLogArchiveBootstrap): LogArchiveIssuedTokenIds {

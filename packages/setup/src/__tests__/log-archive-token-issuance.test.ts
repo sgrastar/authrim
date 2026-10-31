@@ -6,7 +6,11 @@ import {
   issueLogArchiveTokens,
   resolveLogArchiveTokenInput,
 } from '../core/log-archive-token-issuance.js';
-import { loadLogArchiveSecrets } from '../core/log-archive-secrets.js';
+import { createHash } from 'node:crypto';
+import {
+  loadLogArchiveSecrets,
+  logArchiveSecretsFingerprint,
+} from '../core/log-archive-secrets.js';
 import { loadPendingBootstrap } from '../core/pending-control-bootstrap.js';
 import { CloudflareTokenBootstrapError } from '../core/cloudflare-control-token-bootstrap.js';
 import * as issuance from '../core/log-archive-token-issuance.js';
@@ -135,6 +139,24 @@ async function fixture() {
     },
   };
 }
+
+describe('log archive secrets fingerprint', () => {
+  const secrets = { readToken: 'r'.repeat(40), writeToken: 'w'.repeat(40) };
+
+  it('is deterministic, depends on every token and is not a bare SHA-256 of the tokens', () => {
+    const fingerprint = logArchiveSecretsFingerprint(secrets);
+    expect(fingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(logArchiveSecretsFingerprint({ ...secrets })).toBe(fingerprint);
+    expect(logArchiveSecretsFingerprint({ ...secrets, readToken: 'x'.repeat(40) })).not.toBe(
+      fingerprint
+    );
+    expect(logArchiveSecretsFingerprint({ ...secrets, sinkToken: 's'.repeat(40) })).not.toBe(
+      fingerprint
+    );
+    const bare = createHash('sha256').update(JSON.stringify(secrets)).digest('hex');
+    expect(fingerprint).not.toBe(bare);
+  });
+});
 
 describe('Catalog token issuance', () => {
   it.each(['scheduled', 'pipeline'] as const)(
