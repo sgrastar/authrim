@@ -108,9 +108,13 @@ const PASSPHRASE = 'synthetic-offline-test-passphrase';
 const NOW = Date.now();
 
 export async function migrate(db: Client, directory: URL): Promise<void> {
-  for (const file of (await readdir(directory))
-    .filter((name) => /^\d+.*\.sql$/u.test(name))
-    .sort()) {
+  const files = (await readdir(directory)).filter((name) => /^\d+.*\.sql$/u.test(name)).sort();
+  // A release directory holds one fresh-install baseline per minor release and the upgrade deltas
+  // after it. A new database takes the newest baseline alone: older baselines and deltas describe
+  // the same schema (or upgrade from it) and would fail on the objects it already created.
+  const baselines = files.filter((name) => /_baseline\.sql$/u.test(name));
+  const fresh = baselines.length > 0 ? [baselines[baselines.length - 1]] : files;
+  for (const file of fresh) {
     await db.query('SET search_path TO public');
     await db.query(
       renderPortableMigrationSql(await readFile(new URL(file, directory), 'utf8'), 'postgres')
