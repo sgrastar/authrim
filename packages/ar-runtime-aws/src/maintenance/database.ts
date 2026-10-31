@@ -3,6 +3,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import { Client, type QueryResultRow } from 'pg';
 import { renderPortableMigrationSql } from '../../../ar-lib-core/src/migrations/sql-portability';
 import { AWS_RUNTIME_SCHEMA_FILES } from '../import/aws-schema-bootstrap';
+import { freshInstallMigrationFiles } from '../migrations/fresh-install-files';
 
 export const DATABASE_FAMILIES = ['core', 'pii', 'state'] as const;
 export type DatabaseFamily = (typeof DATABASE_FAMILIES)[number];
@@ -141,7 +142,7 @@ export async function loadMaintenanceMigrations(
   const files =
     family === 'state'
       ? [...AWS_RUNTIME_SCHEMA_FILES]
-      : (await readdir(directory)).filter((name) => /^\d+.*\.sql$/u.test(name)).sort();
+      : freshInstallMigrationFiles(await readdir(directory));
   if (files.length === 0) invalid();
   const sources = await Promise.all(
     files.map(async (file) => {
