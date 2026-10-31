@@ -5972,10 +5972,12 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
                   <i id="provision-progress-bar" class="setup-progress-fill" style="width: 46%"></i>
                 </div>
                 <div class="elapsed">
-                  <span id="provision-current-task" data-i18n="web.provision.runningMigrations">Running migrations</span>
+                  <div id="provision-current-message-line" class="deploy-current-message running" role="status" aria-live="polite" aria-atomic="true">
+                    <span id="provision-spinner" class="ora-frame" aria-hidden="true">⠋</span>
+                    <span id="provision-current-task" data-i18n="web.provision.runningMigrations">Running migrations</span>
+                  </div>
                   <span id="provision-progress-text" data-i18n="web.provision.elapsedPending">Waiting for progress...</span>
                 </div>
-                <div class="spinner sr-control" id="provision-spinner"></div>
               </div>
 
               <button type="button" class="log-toggle standalone open" id="provision-log-toggle">
@@ -7052,15 +7054,24 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const isMutation = method !== 'GET' && method !== 'HEAD';
       if (isMutation) inFlightMutationRequests += 1;
       try {
-        const response = await fetch('/api' + endpoint, {
-          ...restOptions,
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Session-Token': SESSION_TOKEN,
-            ...(customHeaders || {}),
-          },
-          body: body ? (typeof body === 'string' ? body : JSON.stringify(body)) : undefined,
-        });
+        let response;
+        try {
+          response = await fetch('/api' + endpoint, {
+            ...restOptions,
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Session-Token': SESSION_TOKEN,
+              ...(customHeaders || {}),
+            },
+            body: body ? (typeof body === 'string' ? body : JSON.stringify(body)) : undefined,
+          });
+        } catch (error) {
+          // A rejected fetch means no HTTP response arrived at all (the Setup process stopped or
+          // the connection was reset). Browsers word this differently ("Load failed" in Safari),
+          // so say what actually happened instead of surfacing the raw message.
+          if (error?.name === 'AbortError') throw error;
+          throw new Error(t('web.status.serverUnreachable'));
+        }
         const result = await response.json();
         if (result?.errorCode === 'setup_operation_in_progress') {
           result.error = t('web.status.operationInProgress');
@@ -7834,6 +7845,38 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }, 80);
     }
 
+    // Provisioning reuses the deploy step's braille frame so both steps read as one family.
+    let provisionOraTimer = null;
+    let provisionOraFrameIndex = 0;
+
+    function paintProvisionOraFrame(frame, state) {
+      const spinner = document.getElementById('provision-spinner');
+      if (spinner) spinner.textContent = frame;
+      const line = document.getElementById('provision-current-message-line');
+      if (line && state) line.className = 'deploy-current-message ' + state;
+    }
+
+    function stopProvisionOraTimer(frame, state) {
+      if (provisionOraTimer) window.clearInterval(provisionOraTimer);
+      provisionOraTimer = null;
+      if (frame) paintProvisionOraFrame(frame, state);
+    }
+
+    function startProvisionOraTimer() {
+      stopProvisionOraTimer();
+      provisionOraFrameIndex = 0;
+      if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+        paintProvisionOraFrame('•', 'running');
+        return;
+      }
+      paintProvisionOraFrame(WEB_ORA_FRAMES[provisionOraFrameIndex], 'running');
+      provisionOraFrameIndex += 1;
+      provisionOraTimer = window.setInterval(() => {
+        paintProvisionOraFrame(WEB_ORA_FRAMES[provisionOraFrameIndex % WEB_ORA_FRAMES.length]);
+        provisionOraFrameIndex += 1;
+      }, 80);
+    }
+
     function updateProgressBarVisual(progressBar, percent, status = 'running', indeterminate = false) {
       if (!progressBar) return;
       const normalizedPercent = Math.min(100, Math.max(0, Number(percent) || 0));
@@ -7853,10 +7896,23 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
     }
 
+    // Deleting an environment that has nothing left to remove reports 0/0, which updateProgressUI
+    // cannot tell apart from "not started yet". Settle the bar and spinner explicitly instead.
+    function finishProgressUI(prefix) {
+      updateProgressBarVisual(document.getElementById(prefix + '-progress-bar'), 100, 'complete');
+      const percentEl = document.getElementById(prefix + '-percent');
+      if (percentEl) percentEl.textContent = '100';
+      const spinner = document.getElementById(prefix + '-spinner');
+      if (spinner && prefix === 'delete') spinner.style.display = 'none';
+    }
+
     function markProgressBarError(prefix) {
       const progressBar = document.getElementById(prefix + '-progress-bar');
       const currentWidth = Number.parseFloat(progressBar?.style.width || '0');
       updateProgressBarVisual(progressBar, currentWidth, 'error');
+      const deleteSpinner = document.getElementById(prefix + '-spinner');
+      if (deleteSpinner && prefix === 'delete') deleteSpinner.style.display = 'none';
+      if (prefix === 'provision') stopProvisionOraTimer('✕', 'error');
     }
 
     function renderDeploymentSnapshot(snapshot) {
@@ -7978,7 +8034,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         currentTaskEl.textContent = currentTask;
       }
       // Hide spinner when complete
-      if (spinner) {
+      // Provisioning paints its own terminal frame (✓ / ✕) instead of hiding the spinner, and a
+      // deletion keeps working after the last resource (verification, lock and local cleanup), so
+      // only finishProgressUI / markProgressBarError may stop it.
+      if (spinner && prefix !== 'provision' && prefix !== 'delete') {
         spinner.style.display = (current >= total && total > 0) ? 'none' : 'block';
       }
     }
@@ -7994,13 +8053,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         }
       }
 
-      if (message.includes('Creating ')) {
-        const parts = message.split('Creating ')[1];
-        if (parts) {
-          const name = parts.split(' ')[0].split('.')[0];
-          if (name) return 'Creating ' + name + '...';
-        }
-      }
+      // Provisioning logs "Creating: <name>..." (with a colon); other steps log "Creating <name>".
+      const creating = message.match(/Creating:?\\s+([^\\s.]+)/);
+      if (creating) return 'Creating ' + creating[1] + '...';
 
       if (message.includes('Deleting')) {
         const parts = message.split('Deleting')[1];
@@ -8101,6 +8156,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     function createProvisionProgressTracker(totalResources) {
       const completedMilestones = new Set();
       let completed = false;
+      // Last resource group header seen, e.g. "D1 Databases 2/6". The "Task N / M" line already
+      // shows milestone progress, so the task line shows what is being created right now.
+      let resourceGroup = '';
       const milestonePatterns = [
         { key: 'keys', test: (message) => message.includes('Admin secrets generated') },
         { key: 'd1', test: (message) => /D1 Databases\\s*\\([^)]*\\)\\s*✓/.test(message) },
@@ -8119,6 +8177,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         if (completed) return;
         if (message.includes('Provisioning complete')) {
           completed = true;
+          // The API keeps writing wrangler config and the lock after this log line, so the spinner
+          // keeps running until the success response calls complete().
           updateProgressUI('provision', totalResources, totalResources, t('web.status.complete'));
           return;
         }
@@ -8126,17 +8186,29 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         for (const milestone of milestonePatterns) {
           if (milestone.test(message)) {
             completedMilestones.add(milestone.key);
+            // Migrations and configuration come after the resource groups, so drop the stale label.
+            if (milestone.key === 'migrations' || milestone.key === 'config') resourceGroup = '';
             break;
           }
         }
 
+        // Group headers: "📊 D1 Databases (0/6)", "🗄️ KV Namespaces (0/9) ✓" and the count-less
+        // "📨 Queues" / "📁 R2 Buckets". Anchored so "Scanning Queues..." is not a header.
+        const group = message.match(
+          /^\\s*[^\\sA-Za-z0-9]+\\s*(D1 Databases|KV Namespaces|Queues|R2 Buckets)(?:\\s*\\((\\d+\\/\\d+)\\))?(?:\\s*✓)?\\s*$/m
+        );
+        if (group) resourceGroup = group[2] ? group[1] + ' ' + group[2] : group[1];
+
         const taskInfo = parseProgressMessage(message);
-        if (taskInfo || completedMilestones.size > 0) {
+        if (taskInfo || group || completedMilestones.size > 0) {
+          // Leave the previous task text in place when this line names no task, so the two
+          // progress lines never show the same "Task N / M running" string.
+          const label = taskInfo || (group ? resourceGroup : '');
           updateProgressUI(
             'provision',
             current(),
             totalResources,
-            taskInfo || t('web.provision.runningTasks', { current: current(), total: totalResources })
+            label && resourceGroup && label !== resourceGroup ? label + ' · ' + resourceGroup : label
           );
         }
       }
@@ -8144,9 +8216,16 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       function complete() {
         completed = true;
         updateProgressUI('provision', totalResources, totalResources, t('web.status.complete'));
+        stopProvisionOraTimer('✓', 'complete');
       }
 
-      return { handle, complete };
+      // After a failure a poll that was already in flight can still deliver messages; ignoring them
+      // keeps the error state (stopped spinner, red bar) from being repainted as running.
+      function fail() {
+        completed = true;
+      }
+
+      return { handle, complete, fail };
     }
 
     // Safe DOM element creation helpers
@@ -8343,7 +8422,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
       updateProgressBarVisual(progressBar, 0);
       if (percentEl) percentEl.textContent = '0';
-      if (spinner) spinner.style.display = 'block';
+      if (spinner && prefix !== 'provision') spinner.style.display = 'block';
+      if (prefix === 'provision') stopProvisionOraTimer('⠋', 'running');
       if (progressDiv) progressDiv.classList.add('hidden');
 
       if (currentTaskEl) {
@@ -11063,6 +11143,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
       const provisionProgress = createProvisionProgressTracker(totalProvisionTasks);
       updateProgressUI('provision', 0, totalProvisionTasks, t('web.status.initializing'));
+      startProvisionOraTimer();
 
       // Start polling for progress
       let lastProgressLength = 0;
@@ -11172,6 +11253,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           provisionPollInterval = null;
         }
 
+        provisionProgress.fail();
         output.textContent += '\\nError: ' + error.message + '\\n';
         markProgressBarError('provision');
         scrollToBottom(log);
@@ -15414,11 +15496,14 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       if (deleteOptions.deletePages) totalToDelete += selectedEnvForDelete.pages?.length || 0;
       updateProgressUI('delete', 0, totalToDelete, t('web.delete.starting'));
 
-      // Poll for progress
+      // Poll for progress. clearInterval cannot cancel a request already in flight, so a late
+      // response must not repaint the progress (and the spinner) after the run has ended.
+      let deleteRunFinished = false;
       let lastProgressLength = 0;
       const pollInterval = setInterval(async () => {
         try {
           const statusResult = await api('/deploy/status');
+          if (deleteRunFinished) return;
           const structuredProgress = statusResult.operationProgress?.operation === 'delete'
             ? statusResult.operationProgress
             : null;
@@ -15454,6 +15539,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         const deleteResult = await requestEnvironmentDeletion(selectedEnvForDelete.env, deleteOptions);
 
         clearInterval(pollInterval);
+        deleteRunFinished = true;
 
         // Show final progress
         if (deleteResult.progress) {
@@ -15484,6 +15570,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
             totalToDelete,
             t(environmentDeleted ? 'web.delete.complete' : 'web.delete.manualActionRequired')
           );
+          finishProgressUI('delete');
           result.textContent = '';
           const manualR2Targets = Array.isArray(deleteResult.manualR2) ? deleteResult.manualR2 : [];
           const manualDnsIssues = Array.isArray(deleteResult.manualDns) ? deleteResult.manualDns : [];
@@ -15511,6 +15598,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         } else if (deleteResult.success) {
           // Final progress update
           updateProgressUI('delete', totalToDelete, totalToDelete, t('web.delete.complete'));
+          finishProgressUI('delete');
           result.textContent = '';
           const environmentDeleted = deleteResult.environmentDeleted === true;
           if (environmentDeleted) markDeleteNavigationComplete();
@@ -15540,6 +15628,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         }
       } catch (error) {
         clearInterval(pollInterval);
+        deleteRunFinished = true;
         markProgressBarError('delete');
         result.classList.remove('hidden');
         result.textContent = '';

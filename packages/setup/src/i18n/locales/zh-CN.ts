@@ -1303,6 +1303,8 @@ const zhCN: Translations = {
   'web.status.adminNotConfigured': '管理员未配置',
   'web.status.initializing': '初始化中...',
   'web.status.found': '找到 {{count}} 个',
+  'web.status.serverUnreachable':
+    '无法连接到 Setup 服务器。请检查它是否仍在终端中运行，必要时重新启动后再试。',
   'web.status.operationInProgress': '另一个设置操作正在进行中。请等待其完成后重试。',
   'web.status.warning': '警告：',
 

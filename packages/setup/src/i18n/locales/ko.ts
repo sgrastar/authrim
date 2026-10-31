@@ -1342,6 +1342,8 @@ const ko: Translations = {
   'web.status.adminNotConfigured': '관리자 미구성',
   'web.status.initializing': '초기화 중...',
   'web.status.found': '{{count}}개 발견됨',
+  'web.status.serverUnreachable':
+    'Setup 서버에 연결할 수 없습니다. 터미널에서 서버가 계속 실행 중인지 확인하고, 필요하면 다시 시작한 뒤 재시도하세요.',
   'web.status.operationInProgress':
     '다른 설정 작업이 이미 진행 중입니다. 완료될 때까지 기다린 후 다시 시도하세요.',
   'web.status.warning': '경고:',

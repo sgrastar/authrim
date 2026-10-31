@@ -1388,6 +1388,8 @@ const de: Translations = {
   'web.status.adminNotConfigured': 'Admin nicht konfiguriert',
   'web.status.initializing': 'Initialisiere...',
   'web.status.found': '{{count}} gefunden',
+  'web.status.serverUnreachable':
+    'Der Setup-Server ist nicht erreichbar. Prüfen Sie, ob er im Terminal noch läuft, starten Sie ihn bei Bedarf neu und versuchen Sie es erneut.',
   'web.status.operationInProgress':
     'Ein anderer Einrichtungsvorgang wird bereits ausgeführt. Warten Sie, bis er abgeschlossen ist, und versuchen Sie es erneut.',
   'web.status.warning': 'Warnung:',

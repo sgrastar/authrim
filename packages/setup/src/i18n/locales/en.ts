@@ -1364,6 +1364,8 @@ const en: Translations = {
   'web.status.adminNotConfigured': 'Admin Not Configured',
   'web.status.initializing': 'Initializing...',
   'web.status.found': '{{count}} found',
+  'web.status.serverUnreachable':
+    'Cannot reach the Setup server. Check that it is still running in your terminal, restart it if needed, and try again.',
   'web.status.operationInProgress':
     'Another setup operation is already in progress. Wait for it to finish and retry.',
   'web.status.warning': 'Warning:',
