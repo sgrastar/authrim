@@ -23,6 +23,7 @@ const ResultSchema = LogArchiveRuntimeProofSchema.extend({
     .regex(/^[0-9]+$/u)
     .nullable(),
 });
+const SAFE_CONTROL_ERROR_CODE = /^(?:bootstrap|cloudflare|control|runtime)_[a-z0-9_:,-]{1,159}$/u;
 export interface LogArchiveReadinessOptions {
   apiBaseUrl: string;
   environmentId: string;
@@ -60,6 +61,9 @@ export function prepareLogArchiveReadinessAttempt(
     ? { ...previous }
     : { attemptId: randomUUID(), startedAt: new Date().toISOString(), deploymentFingerprint };
 }
+/** The Pipeline sink commits a file about every 300 s, so a probe written just after a roll needs
+ * more than one interval before its row can be read; a limit equal to the interval is not enough. */
+export const LOG_ARCHIVE_READINESS_TIMEOUT_MS = 15 * 60_000;
 /** Uses the existing signed bootstrap bridge; only a real Worker/Catalog roundtrip can return ready. */
 export async function waitForLogArchiveReadiness(
   input: LogArchiveReadinessOptions
@@ -90,7 +94,7 @@ export async function waitForLogArchiveReadiness(
     typeof signBootstrapAcceleratorProof
   >[0]['privateJwk'];
   const now = input.now ?? Date.now,
-    deadline = now() + (input.timeoutMs ?? 5 * 60_000);
+    deadline = now() + (input.timeoutMs ?? LOG_ARCHIVE_READINESS_TIMEOUT_MS);
   const wait =
     input.wait ??
     ((milliseconds) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
@@ -116,8 +120,14 @@ export async function waitForLogArchiveReadiness(
         body: JSON.stringify(input.attempt),
       }
     );
-    if (response.status !== 200 && response.status !== 202)
+    if (response.status !== 200 && response.status !== 202) {
+      // Control reports why the probe failed in a header (a fixed, secret-free code). Without it a
+      // 503 cannot be told apart from a missing binding, a Catalog failure or a Management error.
+      const reason = response.headers?.get?.('x-authrim-error-code') ?? '';
+      if (SAFE_CONTROL_ERROR_CODE.test(reason))
+        input.onProgress?.(`Control rejected the log probe (HTTP ${response.status}): ${reason}`);
       throw new Error(`log_archive_readiness_http_${response.status}`);
+    }
     const text = await readResponseTextWithLimit(response, 16 * 1024);
     if (text) {
       const result = ResultSchema.parse(JSON.parse(text));
