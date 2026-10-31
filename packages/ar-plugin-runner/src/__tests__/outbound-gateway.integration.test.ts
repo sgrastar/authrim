@@ -237,6 +237,27 @@ describe('PluginOutboundGateway', () => {
     });
   });
 
+  it('calls fetch as a plain function, as Workers require', async () => {
+    allowExactHost();
+    await insertBearerCredential();
+    // workerd rejects `fetch` called as a method of another object ("Illegal invocation").
+    const receivers: unknown[] = [];
+    const externalFetch = function (this: unknown): Promise<Response> {
+      receivers.push(this);
+      if (this !== undefined && this !== globalThis)
+        throw new TypeError('Illegal invocation: function called with incorrect `this` reference');
+      return Promise.resolve(new Response(null, { status: 204 }));
+    } as typeof fetch;
+    const gateway = new PluginOutboundGateway(environment(), externalFetch, () => 1_000);
+
+    const response = await gateway.fetch(
+      new Request('https://hooks.example.com/events', { method: 'POST', body: '{}' })
+    );
+
+    expect(response.status).toBe(204);
+    expect(receivers).toHaveLength(1);
+  });
+
   it('fails closed before external fetch when credential AAD does not match the tenant', async () => {
     allowExactHost();
     await insertBearerCredential({ wrongAad: true });

@@ -93,7 +93,10 @@ export class IcebergRestCatalog implements IcebergCatalogPort {
     )
       throw new Error('Invalid archive catalog configuration');
     this.base = url.href.replace(/\/$/, '');
-    this.request = options.fetch ?? fetch;
+    // Workers throw "Illegal invocation" when `fetch` is called as a method of another object, so
+    // keep it behind a plain call instead of storing it as a field.
+    const send = options.fetch ?? fetch;
+    this.request = (input, init) => send(input, init);
     this.timeoutMs = options.timeoutMs ?? 10_000;
     this.maximumBytes = options.maxResponseBytes ?? 2 * 1024 * 1024;
     if (
