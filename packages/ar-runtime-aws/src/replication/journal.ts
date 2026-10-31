@@ -8,6 +8,11 @@ export interface ReplicationJournalRecord<T> {
   value: T;
 }
 
+const ignoreClientError = (): void => undefined;
+
+/** How long a closing session may spend giving back its advisory lock before it is discarded anyway. */
+const ADVISORY_UNLOCK_TIMEOUT_MS = 2_000;
+
 /** Durable operation checkpoints, independently of whether the operator's setup window is open. */
 export class ReplicationJournal {
   private readonly table: string;
@@ -51,19 +56,25 @@ export class ReplicationJournal {
       !/^[a-f0-9]{64}$/u.test(input.planSha256)
     )
       throw new Error('replication_journal_invalid');
+    const lockKey =
+      this.scope === 'environment'
+        ? `authrim:replication:environment:${input.pairId}`
+        : `authrim:replication:${input.pairId}`;
     let client: PoolClient | undefined;
+    let lockHeld = false;
     let active = true;
     try {
       client = await this.pool.connect();
+      // The pool detaches its own error listener while a client is checked out, and an
+      // unhandled 'error' event would end the process. A failure still reaches the pending
+      // query as a rejection; the session is discarded in `finally`.
+      client.on('error', ignoreClientError);
       const locked = await client.query<{ acquired: boolean }>(
         'SELECT pg_try_advisory_lock(hashtextextended($1,0)) AS acquired',
-        [
-          this.scope === 'environment'
-            ? `authrim:replication:environment:${input.pairId}`
-            : `authrim:replication:${input.pairId}`,
-        ]
+        [lockKey]
       );
       if (locked.rows[0]?.acquired !== true) throw new Error('replication_operation_busy');
+      lockHeld = true;
       await client.query(
         `INSERT INTO ${table} (operation_id,pair_id,plan_sha256,revision,value_json)
          VALUES ($1,$2,$3,1,$4) ON CONFLICT (operation_id) DO NOTHING`,
@@ -121,9 +132,30 @@ export class ReplicationJournal {
       });
     } finally {
       active = false;
+      // Give the lock back on the live session first. Destroying a session only closes its
+      // socket; the server releases the session's advisory lock when it notices that, which can
+      // lag behind a retry on a new session (replication_operation_busy). A broken or slow
+      // session just falls through to being destroyed, and its lock goes with it.
+      if (client && lockHeld) await releaseAdvisoryLock(client, lockKey);
       // Always discard the dedicated session: outstanding session advisory locks cannot leak
       // into the pool, including after an unknown protocol/commit result.
       client?.release(true);
     }
+  }
+}
+
+async function releaseAdvisoryLock(client: PoolClient, key: string): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      client.query('SELECT pg_advisory_unlock(hashtextextended($1,0))', [key]),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, ADVISORY_UNLOCK_TIMEOUT_MS);
+      }),
+    ]);
+  } catch {
+    // The session is unusable; destroying it releases the lock.
+  } finally {
+    clearTimeout(timer);
   }
 }
