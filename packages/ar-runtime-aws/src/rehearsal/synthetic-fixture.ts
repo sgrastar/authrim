@@ -3,6 +3,7 @@ import { generateKeyPairSync, hash as nodeHash, randomUUID, webcrypto } from 'no
 import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Client } from 'pg';
+import { freshInstallMigrationFiles } from '../migrations/fresh-install-files';
 import { encodeTenantBackupContainerV2 } from '@authrim/ar-lib-core/services/tenant-portability/backup-container-v2';
 import { createTenantBundleKeyEnvelope } from '@authrim/ar-lib-core/services/tenant-portability/bundle-key-envelope';
 import type { TenantBundleManifest } from '@authrim/ar-lib-core/services/tenant-portability/bundle-manifest';
@@ -108,12 +109,7 @@ const PASSPHRASE = 'synthetic-offline-test-passphrase';
 const NOW = Date.now();
 
 export async function migrate(db: Client, directory: URL): Promise<void> {
-  const files = (await readdir(directory)).filter((name) => /^\d+.*\.sql$/u.test(name)).sort();
-  // A release directory holds one fresh-install baseline per minor release and the upgrade deltas
-  // after it. A new database takes the newest baseline alone: older baselines and deltas describe
-  // the same schema (or upgrade from it) and would fail on the objects it already created.
-  const baselines = files.filter((name) => /_baseline\.sql$/u.test(name));
-  const fresh = baselines.length > 0 ? [baselines[baselines.length - 1]] : files;
+  const fresh = freshInstallMigrationFiles(await readdir(directory));
   for (const file of fresh) {
     await db.query('SET search_path TO public');
     await db.query(
