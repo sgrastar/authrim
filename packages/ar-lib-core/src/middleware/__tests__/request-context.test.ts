@@ -75,6 +75,9 @@ function buildApp(env: TestEnv, requireTenant = true) {
   app.all('/api/admin/me/passkeys/*', (c) => {
     return c.json({ tenantId: getTenantIdFromContext(c) });
   });
+  app.all('/api/admin/invitations/*', (c) => {
+    return c.json({ tenantId: getTenantIdFromContext(c) });
+  });
   app.get('/api/admin/me/passkeys', (c) => {
     return c.json({ tenantId: getTenantIdFromContext(c) });
   });
@@ -871,6 +874,10 @@ describe('requestContextMiddleware – tenant existence check', () => {
       ['GET', '/api/admin-init-setup/status'],
       ['POST', '/api/admin-init-setup/initialize'],
       ['POST', '/api/admin-init-setup/complete'],
+      ['POST', '/api/admin/invitations/redeem'],
+      ['POST', '/api/admin/invitations/passkey/options'],
+      ['POST', '/api/admin/invitations/passkey/register'],
+      ['POST', '/api/admin/invitations/activate'],
       ['GET', '/api/admin/me/passkeys'],
       ['POST', '/api/admin/me/passkeys/options'],
       ['POST', '/api/admin/me/passkeys/complete'],
