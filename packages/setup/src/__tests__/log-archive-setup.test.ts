@@ -486,6 +486,19 @@ describe('log archive setup contract', () => {
     free.overrides.set('subscriptions', { result: [] });
     await expect(provisionLogArchive(free.options)).rejects.toThrow('workers_paid_required');
     expect(free.calls.some((call) => call.method !== 'GET')).toBe(false);
+    const unreadable = fixture('pipeline');
+    unreadable.overrides.set('subscriptions', { status: 403 });
+    const progress: string[] = [];
+    await expect(
+      preflightLogArchive({ ...unreadable.options, onProgress: (m) => progress.push(m) })
+    ).resolves.toBeUndefined();
+    expect(progress.join('\n')).toContain('Workers Paid could not be confirmed');
+    const unauthorized = fixture('pipeline');
+    unauthorized.overrides.set('subscriptions', { status: 401 });
+    await expect(preflightLogArchive(unauthorized.options)).resolves.toBeUndefined();
+    const unavailable = fixture('pipeline');
+    unavailable.overrides.set('subscriptions', { status: 500 });
+    await expect(preflightLogArchive(unavailable.options)).rejects.toThrow('request_failed');
     const denied = fixture('pipeline');
     denied.overrides.set('tokens/permission_groups?scope=com.cloudflare.api.account', {
       status: 403,

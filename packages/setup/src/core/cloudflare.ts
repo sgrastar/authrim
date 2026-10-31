@@ -9146,6 +9146,7 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
       catalogReadToken: options.logArchiveCatalogSecrets?.readToken ?? '',
       catalogWriteToken: options.logArchiveCatalogSecrets?.writeToken ?? '',
       catalogSinkToken: options.logArchiveCatalogSecrets?.sinkToken,
+      onProgress,
     });
   }
   // Security: Validate environment name

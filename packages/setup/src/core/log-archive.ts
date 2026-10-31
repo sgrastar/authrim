@@ -266,9 +266,20 @@ export class LogArchiveApi {
     }
   }
 
-  async requireWorkersPaid(): Promise<void> {
-    const subscriptions =
-      await this.request<Array<{ rate_plan?: { id?: string }; state?: string }>>('subscriptions');
+  /**
+   * Billing is not readable with an OAuth login (401/403). That is reported as `unverifiable`
+   * rather than a refusal: Pipeline creation itself is rejected by Cloudflare without the plan,
+   * and the rejection is recorded so setup can resume.
+   */
+  async requireWorkersPaid(): Promise<'confirmed' | 'unverifiable'> {
+    let subscriptions: Array<{ rate_plan?: { id?: string }; state?: string }>;
+    try {
+      subscriptions = await this.request('subscriptions');
+    } catch (error) {
+      if (error instanceof LogArchiveApiError && (error.status === 401 || error.status === 403))
+        return 'unverifiable';
+      throw error;
+    }
     const accepted = new Set([
       'WORKERS_PAID',
       'PARTNERS_WORKERS_ENT',
@@ -285,6 +296,7 @@ export class LogArchiveApi {
     ) {
       throw new Error('log_archive_workers_paid_required');
     }
+    return 'confirmed';
   }
 }
 
@@ -431,6 +443,7 @@ export async function preflightLogArchive(
     | 'catalogWriteToken'
     | 'catalogSinkToken'
     | 'catalogPolicyVerified'
+    | 'onProgress'
   >
 ): Promise<void> {
   assertLogArchiveImplemented(options.archive);
@@ -447,7 +460,10 @@ export async function preflightLogArchive(
       options.catalogSinkToken === options.catalogWriteToken
     )
       throw new Error('log_archive_distinct_sink_credential_required');
-    await options.api.requireWorkersPaid();
+    if ((await options.api.requireWorkersPaid()) === 'unverifiable')
+      options.onProgress?.(
+        'Workers Paid could not be confirmed with this login. Pipeline creation will fail if the account is not on Workers Paid.'
+      );
   }
   await options.api.verifyCatalogCredentials(
     options.catalogReadToken,
