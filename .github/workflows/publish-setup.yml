@@ -47,6 +47,12 @@ jobs:
         # point as prepack; the full source CLI uses workspace build dependencies.
         run: pnpm --filter @authrim/setup run build:launcher
 
+      - name: Build workspace dependencies of Setup
+        # The source CLI imports workspace packages through their built `dist/` entry
+        # points (for example @authrim/ar-lib-logging/iceberg/capabilities), so the
+        # tests need them built. The launcher build above does not produce them.
+        run: pnpm run setup:bootstrap
+
       - name: Run tests
         run: pnpm --filter @authrim/setup test
 
