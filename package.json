@@ -235,6 +235,9 @@
           "proxy-agent": "8.0.1"
         }
       }
+    },
+    "patchedDependencies": {
+      "hyparquet-compressors@1.1.2": "patches/hyparquet-compressors@1.1.2.patch"
     }
   }
 }
