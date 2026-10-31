@@ -74,6 +74,8 @@ export interface User {
 	}>;
 	customFields?: UserCustomField[];
 	missing_required_fields?: UserMissingRequiredField[];
+	/** A locked or suspended user: credentials and custom fields are not read, not absent. */
+	restricted?: boolean;
 }
 
 export interface UserCustomField {
@@ -360,9 +362,11 @@ export const adminUsersAPI = {
 			totp_credentials?: User['totp_credentials'];
 			customFields?: UserCustomField[];
 			missing_required_fields?: UserMissingRequiredField[];
+			restricted?: boolean;
 		};
 		return {
 			...data.user,
+			restricted: data.restricted === true,
 			passkeys: data.user.passkeys ?? data.passkeys,
 			totp_credentials: data.user.totp_credentials ?? data.totp_credentials ?? [],
 			customFields: data.user.customFields ?? data.customFields ?? [],

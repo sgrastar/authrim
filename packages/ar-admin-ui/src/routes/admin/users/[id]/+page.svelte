@@ -1631,6 +1631,10 @@
 							{/each}
 						</tbody>
 					</AdminDataTable>
+				{:else if user.restricted}
+					<div class="empty-state">
+						<p class="empty-state-description">{$LL.admin_user_detail_restricted_credentials()}</p>
+					</div>
 				{:else}
 					<div class="empty-state">
 						<p class="empty-state-description">{$LL.admin_user_detail_no_passkeys()}</p>
@@ -1688,6 +1692,10 @@
 							{/each}
 						</tbody>
 					</AdminDataTable>
+				{:else if user.restricted}
+					<div class="empty-state">
+						<p class="empty-state-description">{$LL.admin_user_detail_restricted_credentials()}</p>
+					</div>
 				{:else}
 					<div class="empty-state">
 						<p class="empty-state-description">{$LL.admin_user_detail_no_totp()}</p>

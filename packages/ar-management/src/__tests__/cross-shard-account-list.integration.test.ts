@@ -370,6 +370,42 @@ describe('CrossShardAccountListService', () => {
     ]);
   });
 
+  it('lists suspended and locked accounts only when the administrator view asks for them', async () => {
+    await insertAccount(shardA, 'suspended-account', 10, { lifecycleState: 'suspended' });
+    await insertAccount(shardA, 'locked-account', 11, { lifecycleState: 'locked' });
+    await insertAccount(shardA, 'deleting-account', 12, { lifecycleState: 'deleting' });
+    const service = new CrossShardAccountListService(env(), () => 100);
+
+    const normal = await service.list({ tenantId: 'tenant-a', accountType: 'user' });
+    expect(normal.items.map((item) => item.id)).not.toContain('locked-account');
+    expect(normal.items.map((item) => item.id)).not.toContain('suspended-account');
+
+    const restricted = await service.list({
+      tenantId: 'tenant-a',
+      accountType: 'user',
+      includeRestricted: true,
+    });
+    const ids = restricted.items.map((item) => item.id);
+    expect(ids).toEqual(expect.arrayContaining(['locked-account', 'suspended-account']));
+    expect(ids).not.toContain('deleting-account');
+    expect(restricted.items.find((item) => item.id === 'locked-account')?.lifecycleState).toBe(
+      'locked'
+    );
+
+    // A continuation of one view cannot be replayed against the other.
+    const first = await service.list({ tenantId: 'tenant-a', accountType: 'user', limit: 2 });
+    if (!first.nextCursor) throw new Error('missing_test_cursor');
+    await expect(
+      service.list({
+        tenantId: 'tenant-a',
+        accountType: 'user',
+        limit: 2,
+        includeRestricted: true,
+        cursor: first.nextCursor,
+      })
+    ).rejects.toThrow('cross_shard_cursor_query_mismatch');
+  });
+
   it('pages regular and guest accounts together while excluding service accounts and other tenants', async () => {
     await insertAccount(shardA, 'guest-account', 6, { accountType: 'anonymous' });
     await insertAccount(shardA, 'service-account', 7, { accountType: 'service_account' });

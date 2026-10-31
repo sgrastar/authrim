@@ -108,6 +108,8 @@ const adminUsers = {
 	admin_user_detail_locked_at: 'ロック日時',
 	admin_user_detail_last_used: '最終使用',
 	admin_user_detail_unnamed_device: '名前なしのデバイス',
+	admin_user_detail_restricted_credentials:
+		'ロック中または停止中のアカウントでは、認証要素は表示されません。',
 	admin_user_detail_no_passkeys: '登録済みPasskeyはありません',
 	admin_user_detail_totp: '認証アプリ',
 	admin_user_detail_totp_unnamed: '認証アプリ',
