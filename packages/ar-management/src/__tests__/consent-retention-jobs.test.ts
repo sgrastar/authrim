@@ -69,7 +69,8 @@ describe('consent maintenance scheduler routing', () => {
     expect((await readConsentJob(f.metadata.adapter, 'tenant-a', 'retention'))?.status).toBe(
       'completed'
     );
-    expect(mocks.directory).toHaveBeenCalledWith(f.env, { limit: 4, afterTenantId: '' });
+    // No stored cursor means the first page: the directory rejects an empty string as a cursor.
+    expect(mocks.directory).toHaveBeenCalledWith(f.env, { limit: 4, afterTenantId: undefined });
   });
   it('fails closed before accessing a store when the routed directory is unavailable', async () => {
     const f = setup();
