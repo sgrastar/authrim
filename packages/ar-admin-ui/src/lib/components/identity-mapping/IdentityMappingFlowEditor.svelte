@@ -421,7 +421,7 @@
 		draftResetKey = 0,
 		onDraftDirtyChange = null,
 		onCompileDraft = null
-	} = $props<{
+	}: {
 		samples?: MappingSample[];
 		loading?: boolean;
 		loadError?: string | null;
@@ -449,7 +449,7 @@
 		draftResetKey?: number;
 		onDraftDirtyChange?: ((dirty: boolean) => void) | null;
 		onCompileDraft?: ((draft: MappingDraftPayload) => Promise<void> | void) | null;
-	}>();
+	} = $props();
 
 	const emptySample: MappingSample = {
 		id: 'empty-control-plane',
@@ -1751,7 +1751,12 @@
 			};
 		});
 
-		const laidOut = [...sourceLayout, ...transformLayout, ...targetLayout, ...destinationLayout];
+		const laidOut: LayoutNode[] = [
+			...sourceLayout,
+			...transformLayout,
+			...targetLayout,
+			...destinationLayout
+		];
 		return {
 			nodes: laidOut,
 			targetGroups,

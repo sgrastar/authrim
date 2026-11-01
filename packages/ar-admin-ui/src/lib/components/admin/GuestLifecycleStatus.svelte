@@ -2,7 +2,7 @@
 	import { LL } from '$i18n/i18n-svelte';
 	import { listGuestLifecycle, type GuestLifecycleItem } from '$lib/api/admin-guest-lifecycle';
 	import AdminSection from './AdminSection.svelte';
-	let { tenantId } = $props<{ tenantId: string }>();
+	let { tenantId }: { tenantId: string } = $props();
 	let items = $state<GuestLifecycleItem[]>([]);
 	let cursor = $state<string | null>(null);
 	let busy = $state(false);

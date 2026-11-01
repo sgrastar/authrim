@@ -4,12 +4,12 @@
 		height = '1rem',
 		radius = '0.5rem',
 		class: className = ''
-	} = $props<{
+	}: {
 		width?: string;
 		height?: string;
 		radius?: string;
 		class?: string;
-	}>();
+	} = $props();
 </script>
 
 <span

@@ -69,7 +69,7 @@
 			multipleSessions: null
 		},
 		initialAuthenticationMethods = null
-	} = $props<{
+	}: {
 		initialCapabilities?: AccountCapabilities | null;
 		initialCapabilitiesResolved?: boolean;
 		initialPlacementConditions?: {
@@ -77,7 +77,7 @@
 			multipleSessions: boolean | null;
 		};
 		initialAuthenticationMethods?: AuthenticationMethodsResponse | null;
-	}>();
+	} = $props();
 	const embeddedCapabilities = untrack(() => initialCapabilities);
 	const embeddedCapabilitiesResolved = untrack(() => initialCapabilitiesResolved);
 	const embeddedAuthenticationMethods = untrack(() => initialAuthenticationMethods);

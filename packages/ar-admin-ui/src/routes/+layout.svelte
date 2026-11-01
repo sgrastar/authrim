@@ -7,7 +7,7 @@
 	import type { LayoutData } from './$types';
 	import type { Snippet } from 'svelte';
 
-	let { children, data } = $props<{ children: Snippet; data: LayoutData }>();
+	let { children, data }: { children: Snippet; data: LayoutData } = $props();
 
 	function setInitialLocale() {
 		setLocale(resolveLocale(data.preferredLanguage));

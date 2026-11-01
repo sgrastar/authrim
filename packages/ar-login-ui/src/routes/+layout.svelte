@@ -15,7 +15,7 @@
 	import { isLoginUILocale, toDocumentDirection, toDocumentLanguage } from '$lib/i18n/locales';
 	import { applyAuthenticationMethodsToLoginUI } from '$lib/stores/login-ui-configuration';
 
-	let { children, data } = $props<{ children: Snippet; data: LayoutData }>();
+	let { children, data }: { children: Snippet; data: LayoutData } = $props();
 	const initialPreferredLanguage = untrack(() => data.preferredLanguage);
 	if (initialPreferredLanguage && isLoginUILocale(initialPreferredLanguage)) {
 		setLocale(initialPreferredLanguage);

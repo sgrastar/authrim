@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { LL } from '$i18n/i18n-svelte';
 	import type { AccountRegistrationState } from '@authrim/ar-lib-core';
-	let { state } = $props<{ state?: AccountRegistrationState }>();
+	let { state }: { state?: AccountRegistrationState } = $props();
 </script>
 
 <span

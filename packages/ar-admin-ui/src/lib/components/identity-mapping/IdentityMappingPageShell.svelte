@@ -62,7 +62,7 @@
 		showPolicySaveControl = false,
 		primaryActionLabel = 'Compile draft',
 		primaryActionBusyLabel = 'Compiling...'
-	} = $props<{
+	}: {
 		pageTitle?: string;
 		pageDescription?: string;
 		headTitle?: string;
@@ -83,7 +83,7 @@
 		showPolicySaveControl?: boolean;
 		primaryActionLabel?: string;
 		primaryActionBusyLabel?: string;
-	}>();
+	} = $props();
 
 	let loading = $state(true);
 	let loadError = $state<string | null>(null);
