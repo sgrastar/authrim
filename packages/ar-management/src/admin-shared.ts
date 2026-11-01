@@ -7,6 +7,7 @@ import {
   getLogger,
   createLogger,
   AdminAuditLogRepository,
+  adminSessionAuditDigest,
   type AdminAuthContext,
   requireAdminDatabaseAdapter,
   runTenantBackupCoveredEffect,
@@ -314,7 +315,9 @@ export async function writeAdminAuditLog(
       ip_address: ipAddress,
       user_agent: userAgent,
       request_id: requestId,
-      session_id: adminAuth?.sessionId ?? undefined,
+      session_id: adminAuth?.sessionId
+        ? await adminSessionAuditDigest(adminAuth.sessionId)
+        : undefined,
       before: input.before,
       after: input.after,
       metadata,

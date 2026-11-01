@@ -4,6 +4,7 @@ import type { LogArchiveRecord } from '@authrim/ar-lib-logging/iceberg/schema';
 import { decryptLogIcebergRecord } from '@authrim/ar-lib-core/services/log-iceberg-record';
 import { decryptProtectedLogIcebergDetail } from '@authrim/ar-lib-core/services/log-iceberg-row-codec';
 import { logProducerFixture } from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
+import { adminSessionAuditDigest } from '@authrim/ar-lib-core';
 import { writeAdminAuditLog } from '../admin-shared';
 
 vi.mock('@authrim/ar-lib-logging/iceberg/capabilities', async (original) => ({
@@ -145,6 +146,13 @@ for (const mode of ['scheduled', 'pipeline'] as const) {
         );
         expect(f.queueMessages).toHaveLength(1);
       }
+    });
+    it('records only a digest of the Admin session ID', async () => {
+      await writeAdminAuditLog(context(), input);
+      const [row] = await f.rows('admin.admin_audit_log', TENANT);
+      expect(row.session_id).toBe(await adminSessionAuditDigest('sess-1'));
+      expect(String(row.session_id)).toMatch(/^sha256:[a-f0-9]{32}$/u);
+      expect(JSON.stringify(row)).not.toContain('sess-1');
     });
     it('resolves the opaque tenant key through Core instead of the Admin store', async () => {
       f.db.prepare('UPDATE tenants SET tenant_key=? WHERE id=?').run('t_core_tenant', TENANT);
