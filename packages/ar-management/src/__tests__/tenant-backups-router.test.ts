@@ -171,7 +171,7 @@ beforeEach(() => {
   state.load.mockResolvedValue({
     kind: 'export',
     selection: { logs: { sensitive: false } },
-    source: { tenantId: 'tenant-a', issuer: 'https://canonical.example', productVersion: '0.5.0' },
+    source: { tenantId: 'tenant-a', issuer: 'https://canonical.example', productVersion: '0.5.1' },
   });
   state.startImport.mockResolvedValue({
     id: 'operation',
@@ -270,7 +270,7 @@ beforeEach(() => {
       source: {
         tenantId: 'tenant-a',
         issuer: 'https://canonical.example',
-        productVersion: '0.5.0',
+        productVersion: '0.5.1',
       },
     },
     view: {
@@ -453,7 +453,7 @@ it('creates an import from verified upload handles with the bundle source identi
   const source = {
     tenantId: 'tenant-a',
     issuer: 'https://source.example',
-    productVersion: '0.5.0',
+    productVersion: '0.5.1',
   };
   const response = await request(
     'imports',
@@ -518,7 +518,7 @@ it('records the authority of a platform operator who asks for an import', async 
     JSON.stringify({
       idempotencyKey: 'import-request',
       selection,
-      source: { tenantId: 'tenant-a', issuer: 'https://source.example', productVersion: '0.5.0' },
+      source: { tenantId: 'tenant-a', issuer: 'https://source.example', productVersion: '0.5.1' },
       uploadIds: ['upload-original'],
     }),
     { TENANT_BACKUP_WRAPPING_KEY: 'ab'.repeat(32), IMPORT_ARTIFACTS: {} }
@@ -542,7 +542,7 @@ it('rejects import creation without permission, storage, key service or valid ha
     source: {
       tenantId: 'tenant-a',
       issuer: 'https://source.example',
-      productVersion: '0.5.0',
+      productVersion: '0.5.1',
     },
     uploadIds: ['upload-original'],
   });
@@ -571,7 +571,7 @@ it('rejects import creation without permission, storage, key service or valid ha
           source: {
             tenantId: 'tenant-a',
             issuer: 'https://source.example',
-            productVersion: '0.5.0',
+            productVersion: '0.5.1',
           },
           uploadIds: [],
         }),
@@ -793,7 +793,7 @@ it('requires an operation-owned input identifier for each import key challenge',
   state.load.mockResolvedValue({
     kind: 'import',
     selection: { logs: { sensitive: false } },
-    source: { tenantId: 'tenant-a', issuer: 'https://canonical.example', productVersion: '0.5.0' },
+    source: { tenantId: 'tenant-a', issuer: 'https://canonical.example', productVersion: '0.5.1' },
   });
   expect((await request('operation/key-challenges', 'POST')).status).toBe(400);
   expect(
@@ -850,7 +850,7 @@ it('creates an export with the canonical source and returns only waiting progres
         source: {
           tenantId: 'tenant-a',
           issuer: 'https://canonical.example',
-          productVersion: '0.5.0',
+          productVersion: '0.5.1',
         },
         selection,
         inputs: [],
@@ -920,7 +920,7 @@ it('starts only a current export source and propagates key or revision conflicts
   state.load.mockResolvedValue({
     kind: 'export',
     selection,
-    source: { tenantId: 'tenant-a', issuer: 'https://canonical.example', productVersion: '0.5.0' },
+    source: { tenantId: 'tenant-a', issuer: 'https://canonical.example', productVersion: '0.5.1' },
   });
   state.start.mockResolvedValue({
     id: 'operation',
@@ -945,7 +945,7 @@ it('starts only a current export source and propagates key or revision conflicts
   state.load.mockResolvedValue({
     kind: 'export',
     selection,
-    source: { tenantId: 'tenant-a', issuer: 'https://changed.example', productVersion: '0.5.0' },
+    source: { tenantId: 'tenant-a', issuer: 'https://changed.example', productVersion: '0.5.1' },
   });
   expect((await request('operation/start', 'POST', body, env)).status).toBe(409);
   expect(state.start).not.toHaveBeenCalled();
@@ -955,7 +955,7 @@ it('starts an import with import permission and import storage', async () => {
   state.load.mockResolvedValue({
     kind: 'import',
     selection,
-    source: { tenantId: 'tenant-a', issuer: 'https://canonical.example', productVersion: '0.5.0' },
+    source: { tenantId: 'tenant-a', issuer: 'https://canonical.example', productVersion: '0.5.1' },
   });
   const body = JSON.stringify({
     challenges: [{ inputId: 'upload-original', challengeId: 'challenge' }],
@@ -986,7 +986,7 @@ it('rejects import start before enqueueing when the restore tenant is still acti
   state.load.mockResolvedValue({
     kind: 'import',
     selection,
-    source: { tenantId: 'tenant-a', issuer: 'https://canonical.example', productVersion: '0.5.0' },
+    source: { tenantId: 'tenant-a', issuer: 'https://canonical.example', productVersion: '0.5.1' },
   });
   state.platformQueryOne.mockResolvedValue({ lifecycle_state: 'active' });
   const response = await request(
@@ -1018,7 +1018,7 @@ it('rejects creation and start without artifact storage before enqueueing work',
   state.load.mockResolvedValue({
     kind: 'export',
     selection,
-    source: { tenantId: 'tenant-a', issuer: 'https://canonical.example', productVersion: '0.5.0' },
+    source: { tenantId: 'tenant-a', issuer: 'https://canonical.example', productVersion: '0.5.1' },
   });
   const start = await request(
     'operation/start',
