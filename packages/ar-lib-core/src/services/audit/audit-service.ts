@@ -423,6 +423,9 @@ export class AuditService implements IAuditService {
 
   /**
    * Log a PII change.
+   *
+   * Writes the `pii_log` change history (see `PIILogEntry`). Nothing calls this outside
+   * `logEventWithPII` yet; the table is intentionally kept until a writer is needed.
    */
   async logPIIChange(tenantId: string, params: PIILogParams): Promise<void> {
     const config = await this.getTenantPIIConfig(tenantId);
