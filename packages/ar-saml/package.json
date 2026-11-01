@@ -34,7 +34,7 @@
     "@cloudflare/workers-types": "^5.20260903.1",
     "@vitest/ui": "^4.1.12",
     "fast-check": "^4.5.3",
-    "typescript": "^5.9.3",
+    "typescript": "^6.0.3",
     "vitest": "^4.1.12",
     "wrangler": "^4.152.0",
     "yaml": "2.9.1"

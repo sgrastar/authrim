@@ -46,7 +46,7 @@
     "@types/node": "^20.19.25",
     "@types/pg": "^8.23.1",
     "esbuild": "0.28.1",
-    "typescript": "^5.9.3",
+    "typescript": "^6.0.3",
     "vitest": "^4.1.12"
   }
 }

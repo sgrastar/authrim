@@ -2,7 +2,6 @@
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true,
-    "baseUrl": ".",
     "paths": {
       "@authrim/ar-lib-core": ["./packages/ar-lib-core/src/index.ts"],
       "@authrim/ar-lib-core/*": ["./packages/ar-lib-core/src/*"]
