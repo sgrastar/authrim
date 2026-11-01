@@ -38,9 +38,10 @@ export interface AdminAuthenticationAuditInput {
 /**
  * The session ID is the value of the `authrim_admin_session` cookie, and the audit
  * overview is stored unencrypted, so only a one-way digest is recorded. Login and logout
- * of one session carry the same digest, which keeps them correlatable.
+ * of one session carry the same digest, which keeps them correlatable. Every Admin audit
+ * writer that records a session ID must go through this digest.
  */
-async function sessionDigest(sessionId: string): Promise<string> {
+export async function adminSessionAuditDigest(sessionId: string): Promise<string> {
   const bytes = new TextEncoder().encode(`authrim:admin-session-audit:${sessionId}`);
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
   return `sha256:${Array.from(digest.slice(0, 16), (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
@@ -76,7 +77,7 @@ export async function writeAdminAuthenticationAudit(
       env
     );
     const failed = input.action === 'admin.login_failed';
-    const session = input.sessionId ? await sessionDigest(input.sessionId) : undefined;
+    const session = input.sessionId ? await adminSessionAuditDigest(input.sessionId) : undefined;
     await repository.createAuditLog({
       tenant_id: input.tenantId,
       admin_user_id: input.adminUserId,

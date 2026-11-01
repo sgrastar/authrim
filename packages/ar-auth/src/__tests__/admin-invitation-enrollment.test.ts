@@ -27,10 +27,29 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 
 vi.mock('@simplewebauthn/server', () => webauthn);
 
+// Wrap the real emitter so a test can read the audit row before it is encrypted.
+const emitter = vi.hoisted(() => ({
+  rows: [] as Array<{ row: Record<string, unknown> }>,
+}));
+vi.mock('@authrim/ar-lib-core/services/log-iceberg-emitter', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@authrim/ar-lib-core/services/log-iceberg-emitter')>();
+  return {
+    ...actual,
+    prepareLogIcebergRowWrite: vi.fn(
+      (...args: Parameters<typeof actual.prepareLogIcebergRowWrite>) => {
+        emitter.rows.push({ row: args[2].row as Record<string, unknown> });
+        return actual.prepareLogIcebergRowWrite(...args);
+      }
+    ),
+  };
+});
+
 vi.mock('../session-ttl', () => ({
   resolveSessionTtl: vi.fn(async () => ({ seconds: 3600, milliseconds: 3_600_000 })),
 }));
 
+import { adminSessionAuditDigest } from '@authrim/ar-lib-core';
 import { adminInvitationEnrollmentApp } from '../admin-invitation-enrollment';
 
 const invitation = {
@@ -79,6 +98,7 @@ function createEnv() {
 
 describe('Admin invitation enrollment', () => {
   beforeEach(async () => {
+    emitter.rows.length = 0;
     logging = await logProducerFixture('scheduled');
     logging.db
       .prepare(
@@ -558,6 +578,15 @@ describe('Admin invitation enrollment', () => {
     expect(statements[0].params).toContain(await hashToken('enrollment-token'));
     expect(enrollments.has(await hashToken('enrollment-token'))).toBe(false);
     expect(response.headers.get('set-cookie')).toContain('authrim_admin_session=');
+    const sessionId = /authrim_admin_session=([^;]+)/u.exec(
+      response.headers.get('set-cookie') ?? ''
+    )?.[1];
+    expect(sessionId).toBeTruthy();
+    expect(statements[3].params).toContain(sessionId);
+    // The audit overview is stored unencrypted, so it may only carry a digest of the session.
+    const [{ row }] = emitter.rows;
+    expect(row.session_id).toBe(await adminSessionAuditDigest(String(sessionId)));
+    expect(JSON.stringify(row)).not.toContain(String(sessionId));
   });
 
   it('does not create a session when the atomic activation batch conflicts', async () => {

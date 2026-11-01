@@ -13,6 +13,7 @@ import type { Env } from '@authrim/ar-lib-core';
 import {
   ADMIN_UI_BFF_MODE_HEADER,
   ADMIN_UI_FORWARDED_ORIGIN_HEADER,
+  adminSessionAuditDigest,
   adminWebAuthnOriginMatchesRpId,
   generateId,
   getAdminCookieSameSite,
@@ -573,7 +574,7 @@ adminInvitationEnrollmentApp.post('/api/admin/invitations/activate', async (c) =
       severity: 'critical',
       ip_address: clientIp,
       user_agent: userAgent,
-      session_id: sessionId,
+      session_id: await adminSessionAuditDigest(sessionId),
       created_at: now,
       metadata_json: JSON.stringify({
         invitation_id: invitation.id,
