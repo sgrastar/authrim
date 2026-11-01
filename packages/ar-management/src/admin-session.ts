@@ -20,6 +20,7 @@ import {
   type DatabaseAdapter,
   AdminSessionRepository,
   requireDedicatedAdminDatabaseAdapter,
+  scheduleAdminAuthenticationAudit,
   // Event System
   publishEvent,
   USER_EVENTS,
@@ -368,6 +369,13 @@ export async function adminLogoutHandler(c: Context<{ Bindings: Env }>) {
         const deleted = await adminSessionRepo.deleteSession(sessionId);
 
         if (deleted && userId) {
+          scheduleAdminAuthenticationAudit(c, {
+            tenantId,
+            action: 'admin.logout',
+            adminUserId: userId,
+            sessionId,
+          });
+
           // Publish user.logout event (non-blocking)
           publishEvent(c, {
             type: USER_EVENTS.LOGOUT,

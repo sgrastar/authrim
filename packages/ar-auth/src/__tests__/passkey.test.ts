@@ -123,6 +123,7 @@ const registrationCheck = vi.hoisted(() => ({
   override: null as null | 'blocked' | 'unavailable',
 }));
 // Makes the address's account-route lookup fail with this error for one test (null: the real one).
+const adminAuditSpy = vi.hoisted(() => ({ schedule: vi.fn() }));
 const routeLookup = vi.hoisted(() => ({
   failure: null as null | { message: string; cause?: string },
 }));
@@ -131,6 +132,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
   const actual = await vi.importActual('@authrim/ar-lib-core');
   return {
     ...actual,
+    scheduleAdminAuthenticationAudit: adminAuditSpy.schedule,
     resolveAccountDataContextByIdentifierFromHono: async (...args: unknown[]) => {
       if (routeLookup.failure) {
         throw new Error(
@@ -1578,6 +1580,89 @@ describe('Passkey Handlers', () => {
         expect(mockSessionStoreStub.createSessionRpc).not.toHaveBeenCalled();
       } else {
         expect(mockSessionStoreStub.createSessionRpc).toHaveBeenCalled();
+      }
+    });
+
+    it.each([
+      ['an administrator signing in to the console', 'admin', 'https://example.com/admin/login', 1],
+      [
+        'an administrator outside the console (an Admin session is still created)',
+        'admin',
+        'https://example.com/login',
+        1,
+      ],
+      ['an end user', 'end_user', 'https://example.com/admin/login', 0],
+    ])('audits Admin sign-ins only: %s', async (_label, userType, referer, audits) => {
+      const challengeStore = createMockChallengeStore();
+      const sessionStore = createMockSessionStore();
+      challengeStore._challenges.set('passkey_auth:challenge-123', {
+        id: 'passkey_auth:challenge-123',
+        type: 'passkey_authentication',
+        challenge: 'mock-auth-challenge-base64',
+      });
+      mockPasskeyRepository.findByCredentialId.mockResolvedValue({
+        id: 'passkey-1',
+        user_id: 'user-123',
+        credential_id: 'mock-cred-id',
+        public_key: 'YmFzZTY0LXB1YmxpYy1rZXk=',
+        counter: 0,
+        transports: ['internal'],
+      });
+      mockUserCoreRepository.findById.mockResolvedValue({
+        id: 'user-123',
+        user_type: userType,
+        is_active: true,
+        email_verified: true,
+        created_at: Date.now(),
+        updated_at: Date.now(),
+        last_login_at: Date.now(),
+      });
+      mockUserPIIRepository.findById.mockResolvedValue({
+        id: 'user-123',
+        email: 'test@example.com',
+        name: 'Test User',
+      });
+      const context = createMockContext({
+        body: {
+          challengeId: 'challenge-123',
+          credential: {
+            id: 'mock-cred-id',
+            rawId: 'mock-raw-id',
+            type: 'public-key',
+            response: {
+              clientDataJSON: 'mock-client-data',
+              authenticatorData: 'mock-auth-data',
+              signature: 'mock-signature',
+            },
+          },
+        },
+        headers: { origin: 'https://example.com', referer },
+        challengeStore,
+        sessionStore,
+      }) as Parameters<typeof passkeyLoginVerifyHandler>[0];
+      Object.assign(context.env, {
+        DB_ADMIN: {
+          prepare: vi.fn(() => ({
+            bind: vi.fn().mockReturnThis(),
+            first: vi.fn(async () => null),
+            all: vi.fn(async () => ({ results: [] })),
+            run: vi.fn(async () => ({ success: true, meta: { changes: 1 } })),
+          })),
+        },
+      });
+
+      const response = await passkeyLoginVerifyHandler(context);
+
+      expect(response.status).toBe(200);
+      expect(adminAuditSpy.schedule).toHaveBeenCalledTimes(audits);
+      if (audits) {
+        const audit = adminAuditSpy.schedule.mock.calls[0]?.[1] as { sessionId?: unknown };
+        expect(audit).toMatchObject({
+          action: 'admin.login',
+          method: 'passkey',
+          adminUserId: 'user-123',
+        });
+        expect(typeof audit.sessionId).toBe('string');
       }
     });
 

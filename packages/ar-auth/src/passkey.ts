@@ -43,6 +43,7 @@ import {
   // Admin Session Repository
   AdminSessionRepository,
   requireDedicatedAdminDatabaseAdapter,
+  scheduleAdminAuthenticationAudit,
   CanonicalRuntimeUserStore,
   advancePasskeyAuthenticationState,
   isAccountAuthenticationDeniedError,
@@ -1247,6 +1248,14 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
 
         log.info('Admin session created in admin_sessions table', {
           action: 'admin_session_create',
+          sessionId: sessionData.id,
+        });
+
+        scheduleAdminAuthenticationAudit(c, {
+          tenantId,
+          action: 'admin.login',
+          method: 'passkey',
+          adminUserId: passkey.user_id,
           sessionId: sessionData.id,
         });
       } catch (error) {

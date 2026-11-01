@@ -7,8 +7,13 @@ const mocks = vi.hoisted(() => ({
   verifyAuthenticationResponse: vi.fn(),
   verifyRegistrationResponse: vi.fn(),
 }));
+const auditMocks = vi.hoisted(() => ({ scheduleAdminAuthenticationAudit: vi.fn() }));
 
 vi.mock('@simplewebauthn/server', () => mocks);
+vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@authrim/ar-lib-core')>()),
+  scheduleAdminAuthenticationAudit: auditMocks.scheduleAdminAuthenticationAudit,
+}));
 
 function createMockAdminDb(firstResults: unknown[], allResults: unknown[][] = []) {
   const queue = [...firstResults];
@@ -551,6 +556,7 @@ describe('admin setup API rejection matrix', () => {
       expect(response.status).toBe(status);
       await expect(response.json()).resolves.toMatchObject({ error_description: description });
       expect(config.delete).toHaveBeenCalledWith('admin_auth:challenge:c');
+      expect(auditMocks.scheduleAdminAuthenticationAudit).not.toHaveBeenCalled();
     }
   );
 
@@ -580,6 +586,15 @@ describe('admin setup API rejection matrix', () => {
 
     expect(response.status).toBe(401);
     expect(config.delete).toHaveBeenCalledWith('admin_auth:challenge:c');
+    expect(auditMocks.scheduleAdminAuthenticationAudit).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'admin.login_failed',
+        method: 'passkey',
+        adminUserId: 'admin-1',
+        reason: rejects ? 'passkey_verification_failed' : 'passkey_not_verified',
+      })
+    );
   });
 
   it('creates an admin session only after a verified passkey assertion', async () => {
@@ -622,6 +637,15 @@ describe('admin setup API rejection matrix', () => {
     expect(response.headers.get('Set-Cookie')).toContain('authrim_admin_session=');
     expect(config.delete).toHaveBeenCalledWith('admin_auth:challenge:c');
     expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining('UPDATE admin_passkeys'));
+    const audit = auditMocks.scheduleAdminAuthenticationAudit.mock.calls[0]?.[1] as {
+      sessionId?: unknown;
+    };
+    expect(audit).toMatchObject({
+      action: 'admin.login',
+      method: 'passkey',
+      adminUserId: 'admin-1',
+    });
+    expect(typeof audit.sessionId).toBe('string');
     expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO admin_sessions'));
 
     const sessionStatementIndex = db.prepare.mock.calls.findIndex((call) =>
