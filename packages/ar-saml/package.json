@@ -24,7 +24,7 @@
     "@authrim/ar-lib-core": "workspace:*",
     "@authrim/ar-lib-field-mapping": "workspace:*",
     "@xmldom/xmldom": "^0.8.15",
-    "hono": "4.13.2",
+    "hono": "4.13.12",
     "jose": "^6.2.13",
     "pako": "^3.0.2",
     "saxes": "6.0.0",
