@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim Local AWS Setup API
-  version: 0.5.0
+  version: 0.5.1
   description: |
     Local setup operations for PostgreSQL SAML DR deployment and experimental
     Aurora DSQL evaluation. Every request requires the current setup session token
