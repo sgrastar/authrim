@@ -117,6 +117,32 @@ describe('Admin authentication audit', () => {
     expect(entries.map((entry) => entry.resource_id)).toEqual([expectedDigest, expectedDigest]);
   });
 
+  it('takes the address from the trusted proxy hop, not from client-settable headers', async () => {
+    const awsEnv = { AUTH_RUNTIME_PORTS: {} } as unknown as Env;
+    await writeAdminAuthenticationAudit(
+      awsEnv,
+      {
+        header: (name) =>
+          ({
+            'CF-Connecting-IP': '203.0.113.50',
+            'X-Forwarded-For': '203.0.113.60, 198.51.100.7',
+            'X-Real-IP': '203.0.113.70',
+          })[name],
+      },
+      { tenantId: 'tenant-a', action: 'admin.logout' }
+    );
+    await writeAdminAuthenticationAudit(
+      env,
+      { header: () => undefined },
+      { tenantId: 'tenant-a', action: 'admin.logout' }
+    );
+
+    expect(state.createAuditLog.mock.calls.map(([entry]) => entry.ip_address)).toEqual([
+      '198.51.100.7',
+      'unknown',
+    ]);
+  });
+
   it('records a failed sign-in as a warning with its reason and no session', async () => {
     await writeAdminAuthenticationAudit(env, request, {
       tenantId: 'tenant-a',

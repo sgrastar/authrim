@@ -1,3 +1,5 @@
+import type { Context } from 'hono';
+import { getClientIP, getCloudProvider } from '../middleware/rate-limit';
 import { AdminAuditLogRepository } from '../repositories/admin/admin-audit-log';
 import type { Env } from '../types/env';
 import { createLogger } from '../utils/logger';
@@ -44,13 +46,16 @@ async function sessionDigest(sessionId: string): Promise<string> {
   return `sha256:${Array.from(digest.slice(0, 16), (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
 }
 
-function clientIp(request: AdminAuthenticationAuditRequest): string {
-  return (
-    request.header('CF-Connecting-IP') ||
-    request.header('X-Forwarded-For')?.split(',')[0]?.trim() ||
-    request.header('X-Real-IP') ||
-    'unknown'
-  );
+/**
+ * The client address follows the deployment's trusted edge, chosen by the configured cloud
+ * provider (the same rule rate limiting uses): `CF-Connecting-IP` on Cloudflare, and on the
+ * AWS runtime the last `X-Forwarded-For` hop, which the ingress overwrites with the verified
+ * source address. The shared helper still falls back to `X-Forwarded-For` / `X-Real-IP` when
+ * a Cloudflare request arrives without the Cloudflare headers.
+ */
+async function clientIp(env: Env, request: AdminAuthenticationAuditRequest): Promise<string> {
+  // getClientIP only reads request headers, so a request-shaped object is enough.
+  return getClientIP({ req: request } as unknown as Context, await getCloudProvider(env));
 }
 
 /**
@@ -81,7 +86,7 @@ export async function writeAdminAuthenticationAudit(
       result: failed ? 'failure' : 'success',
       error_code: failed ? input.reason : undefined,
       severity: failed ? 'warn' : 'info',
-      ip_address: clientIp(request),
+      ip_address: await clientIp(env, request),
       user_agent: request.header('User-Agent') || 'unknown',
       request_id:
         input.requestId ||
