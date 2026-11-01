@@ -634,6 +634,32 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     'tenant email settings'
   ),
+  // A tenant Admin reaches these for the tenant the handler resolves from the path (see
+  // requireTenantResourceAccess); the catch-all below stays platform-only for everything else.
+  rule({
+    pattern: '/api/admin/tenants/:tenantId/invitations',
+    methods: READ_METHODS,
+    permissions: [ADMIN_PERMISSIONS.USERS_READ],
+    description: 'tenant sign-up invitations read',
+  }),
+  rule({
+    // An invitation can carry a role, so creating one needs the same authority as assigning it.
+    pattern: '/api/admin/tenants/:tenantId/invitations',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.USERS_WRITE, ADMIN_PERMISSIONS.ROLES_WRITE],
+    description: 'tenant sign-up invitations create',
+  }),
+  rule({
+    pattern: '/api/admin/tenants/:tenantId/invitations/*',
+    methods: DELETE_METHODS,
+    permissions: [ADMIN_PERMISSIONS.USERS_WRITE, ADMIN_PERMISSIONS.ROLES_WRITE],
+    description: 'tenant sign-up invitations cancel',
+  }),
+  readOnly(
+    '/api/admin/tenants/:tenantId/runtime-profiles',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    'tenant effective runtime profiles'
+  ),
   ...byMethod(
     '/api/admin/tenants/:tenantId/directory-connectors',
     ADMIN_PERMISSIONS.DIRECTORY_AUTH_READ,

@@ -150,7 +150,8 @@ describe('adminTenantPolicyMiddleware', () => {
     expect(isTenantScopedAdminPath('/api/admin/tenants/tenant-a/settings/login-ui')).toBe(true);
     expect(isTenantScopedAdminPath('/api/admin/tenants/tenant-a/info')).toBe(true);
     expect(isTenantScopedAdminPath('/api/admin/tenants/tenant-a')).toBe(false);
-    expect(isTenantScopedAdminPath('/api/admin/tenants/tenant-a/email-settings')).toBe(false);
+    expect(isTenantScopedAdminPath('/api/admin/tenants/tenant-a/email-settings')).toBe(true);
+    expect(isTenantScopedAdminPath('/api/admin/tenants/tenant-a/provisioning')).toBe(false);
     expect(isTenantScopedAdminPath('/api/admin/tenants/tenant-a/info/extra')).toBe(false);
     expect(isTenantScopedAdminPath('/api/admin/tenants/tenant-a/information')).toBe(false);
   });

@@ -53,7 +53,16 @@ function createMockKV(initial: Record<string, string> = {}): KVNamespace {
   } as unknown as KVNamespace;
 }
 
-function createTestApp() {
+const PLATFORM_ADMIN_AUTH = {
+  userId: 'admin-1',
+  actorId: 'admin-1',
+  roles: ['ar_super_admin'],
+  globalRoles: ['ar_super_admin'],
+  tenantScope: ['*'],
+  authMethod: 'session' as const,
+};
+
+function createTestApp(adminAuth: Record<string, unknown> = PLATFORM_ADMIN_AUTH) {
   const app = new Hono<{
     Bindings: Env;
     Variables: {
@@ -68,14 +77,7 @@ function createTestApp() {
     };
   }>();
   app.use('*', async (c, next) => {
-    c.set('adminAuth', {
-      userId: 'admin-1',
-      actorId: 'admin-1',
-      roles: ['ar_super_admin'],
-      globalRoles: ['ar_super_admin'],
-      tenantScope: ['*'],
-      authMethod: 'session',
-    });
+    c.set('adminAuth', adminAuth as never);
     await next();
   });
   app.get('/api/admin/runtime-profiles', adminRuntimeProfileListHandler);
@@ -711,6 +713,108 @@ describe('runtime profile admin handlers', () => {
       'residencyProfileId',
     ]);
     expect(Object.keys(body.effective).sort()).toEqual(['audit', 'residency']);
+  });
+
+  it('shows a tenant administrator what applies to the tenant and none of where it is delivered', async () => {
+    const tenantAdmin = {
+      userId: 'admin-2',
+      actorId: 'admin-2',
+      roles: ['ar_tenant_admin'],
+      tenantId: 'acme',
+      tenantScope: ['acme'],
+      authMethod: 'session' as const,
+    };
+    const env = createEnv({
+      'profile-registry:audit:shared-audit': JSON.stringify({
+        id: 'shared-audit',
+        kind: 'audit',
+        label: 'Shared Audit',
+        metadata: { owner: 'platform' },
+        primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
+        archive: { type: 'r2', bucketRef: 'AUDIT_ARCHIVE', prefix: 'logs/v1' },
+        sinks: [
+          {
+            type: 'http',
+            url: 'https://sink.example.test/ingest',
+            headers: { Authorization: 'Bearer sink-secret' },
+          },
+        ],
+        retention: { eventLogRetentionDays: 30 },
+        sinkFailureMode: 'retry_until_ttl',
+      }),
+      'settings:tenant:acme:tenant': JSON.stringify({
+        'tenant.audit_profile_id': 'shared-audit',
+        'tenant.residency_profile_id': 'builtin:residency:eu',
+      }),
+    });
+
+    const tenantView = await createTestApp(tenantAdmin).request(
+      '/api/admin/tenants/acme/runtime-profiles',
+      undefined,
+      env
+    );
+    expect(tenantView.status).toBe(200);
+    const text = await tenantView.text();
+    const body: unknown = JSON.parse(text);
+    expect(body).not.toHaveProperty('registry_backend');
+    expect(body).toMatchObject({
+      effective: {
+        audit: {
+          id: 'shared-audit',
+          retention: { eventLogRetentionDays: 30 },
+          sinkFailureMode: 'retry_until_ttl',
+        },
+        residency: { id: 'builtin:residency:eu', jurisdiction: 'eu' },
+      },
+    });
+    for (const hidden of ['primary', 'archive', 'sinks', 'metadata']) {
+      expect(body).not.toHaveProperty(['effective', 'audit', hidden]);
+    }
+    expect(text).not.toContain('sink-secret');
+    expect(text).not.toContain('sink.example.test');
+
+    // A platform administrator still gets the profile as stored.
+    const platformView = await createTestApp().request(
+      '/api/admin/tenants/acme/runtime-profiles',
+      undefined,
+      env
+    );
+    const platformBody: unknown = await platformView.json();
+    expect(platformBody).toMatchObject({ registry_backend: 'kv' });
+    expect(platformBody).toHaveProperty(['effective', 'audit', 'sinks', 0, 'url']);
+  });
+
+  it('keeps the full profile from a global machine token that holds only a read permission', async () => {
+    const readOnlyToken = {
+      userId: 'machine-1',
+      actorId: 'machine-1',
+      roles: [],
+      tenantScope: ['*'],
+      permissions: ['admin:settings:read'],
+      globalPermissions: ['admin:settings:read'],
+      authMethod: 'machine_access_token' as const,
+    };
+    const env = createEnv({
+      'profile-registry:audit:shared-audit': JSON.stringify({
+        id: 'shared-audit',
+        kind: 'audit',
+        label: 'Shared Audit',
+        primary: null,
+        sinks: [{ type: 'http', url: 'https://sink.example.test/ingest' }],
+      }),
+      'settings:tenant:acme:tenant': JSON.stringify({ 'tenant.audit_profile_id': 'shared-audit' }),
+    });
+
+    const response = await createTestApp(readOnlyToken).request(
+      '/api/admin/tenants/acme/runtime-profiles',
+      undefined,
+      env
+    );
+
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(text).not.toContain('registry_backend');
+    expect(text).not.toContain('sink.example.test');
   });
 
   it('purges tenant runtime registry snapshots with break-glass confirmation and audit log', async () => {

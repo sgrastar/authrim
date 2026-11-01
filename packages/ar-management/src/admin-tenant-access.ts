@@ -95,7 +95,13 @@ export function isTenantScopedAdminPath(pathname: string): boolean {
     /^\/api\/admin\/tenants\/[^/]+\/directory-(?:auth|connectors)(?:\/|$)/.test(pathname) ||
     /^\/api\/admin\/tenants\/[^/]+\/settings(?:\/|$)/.test(pathname) ||
     // The handler checks the caller's own tenant scope; the page lists issuer and endpoint URLs.
-    /^\/api\/admin\/tenants\/[^/]+\/info\/?$/.test(pathname)
+    /^\/api\/admin\/tenants\/[^/]+\/info\/?$/.test(pathname) ||
+    // These handlers check the caller's own tenant scope too, and each one acts on that tenant
+    // only: its sign-up invitations, the order of its email providers, and (read only) the
+    // audit and residency profiles it ends up with. Editing profiles stays under /runtime-profiles.
+    /^\/api\/admin\/tenants\/[^/]+\/invitations(?:\/[^/]+)?\/?$/.test(pathname) ||
+    /^\/api\/admin\/tenants\/[^/]+\/email-settings\/?$/.test(pathname) ||
+    /^\/api\/admin\/tenants\/[^/]+\/runtime-profiles\/?$/.test(pathname)
   );
 }
 

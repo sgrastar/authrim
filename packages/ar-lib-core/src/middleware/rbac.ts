@@ -251,6 +251,18 @@ export function requireAllRoles(roleNames: readonly string[]) {
  * app.post('/admin/system/config', requireSystemAdmin(), handler);
  * ```
  */
+/**
+ * Whether the caller is a system administrator: the super admin role through a global assignment,
+ * or a machine token holding `admin:*` with a global scope. `admin:*` limited to some tenants is
+ * the tenants' own, and so is any narrower permission, however global the token.
+ */
+export function hasSystemAdminAuthority(authContext: AdminAuthContext): boolean {
+  return (
+    hasGlobalAdminRole(authContext, SUPER_ADMIN_ROLES) ||
+    hasGlobalMachinePermission(authContext, 'admin:*')
+  );
+}
+
 export function requireSystemAdmin() {
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
     const authContext = getAdminAuth(c);
@@ -265,12 +277,7 @@ export function requireSystemAdmin() {
       );
     }
 
-    // A machine token passes on `admin:*` only when its scope is global (so the permission is a
-    // global one); `admin:*` limited to some tenants is the tenants' own.
-    if (
-      hasGlobalAdminRole(authContext, SUPER_ADMIN_ROLES) ||
-      hasGlobalMachinePermission(authContext, 'admin:*')
-    ) {
+    if (hasSystemAdminAuthority(authContext)) {
       return next();
     }
 
