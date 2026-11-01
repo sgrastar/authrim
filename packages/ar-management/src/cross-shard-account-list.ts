@@ -801,6 +801,27 @@ function exactAccountStateClause(purpose: ExactAccountSearchPurpose): string {
         : "AND account.lifecycle_state = 'active' AND account.directory_publication_state = 'active'";
 }
 
+/**
+ * The PII owner row an account must have for each purpose. One place, so the Lookup path and the
+ * fan-out paths cannot treat a purpose differently. Only account_delete_retry takes two bind
+ * pairs (the live row, then the tombstone).
+ */
+function exactAccountPiiOwnerSql(purpose: ExactAccountSearchPurpose): string {
+  return purpose === 'account_delete_retry'
+    ? `SELECT owner_id FROM identity_sensitive_values
+         WHERE tenant_id = ? AND owner_type = 'runtime_user' AND owner_id = ?
+       UNION ALL
+       SELECT id AS owner_id FROM users_pii_tombstone
+         WHERE tenant_id = ? AND id = ?
+       LIMIT 1`
+    : purpose === 'account_lifecycle' || purpose === 'admin_view'
+      ? `SELECT owner_id FROM identity_sensitive_values
+           WHERE tenant_id = ? AND owner_type = 'runtime_user' AND owner_id = ? LIMIT 1`
+      : `SELECT owner_id FROM identity_sensitive_values
+           WHERE tenant_id = ? AND owner_type = 'runtime_user' AND owner_id = ?
+             AND lifecycle_state = 'active' LIMIT 1`;
+}
+
 async function primaryAccountRow(
   target: { source: D1Database },
   tenantId: string,
@@ -880,21 +901,7 @@ async function findAccountLifecycleByFanout(input: {
   if (!pii) throw new Error('cross_shard_account_route_invalid');
   const piiOwner = await pii.source
     .withSession('first-primary')
-    .prepare(
-      input.purpose === 'account_delete_retry'
-        ? `SELECT owner_id FROM identity_sensitive_values
-             WHERE tenant_id = ? AND owner_type = 'runtime_user' AND owner_id = ?
-           UNION ALL
-           SELECT id AS owner_id FROM users_pii_tombstone
-             WHERE tenant_id = ? AND id = ?
-           LIMIT 1`
-        : input.purpose === 'account_lifecycle' || input.purpose === 'admin_view'
-          ? `SELECT owner_id FROM identity_sensitive_values
-               WHERE tenant_id = ? AND owner_type = 'runtime_user' AND owner_id = ? LIMIT 1`
-          : `SELECT owner_id FROM identity_sensitive_values
-               WHERE tenant_id = ? AND owner_type = 'runtime_user' AND owner_id = ?
-                 AND lifecycle_state = 'active' LIMIT 1`
-    )
+    .prepare(exactAccountPiiOwnerSql(input.purpose))
     .bind(
       input.tenantId,
       row.legacy_user_id,
@@ -1035,21 +1042,7 @@ async function findAccountLifecycleAcrossBoundShards(input: {
   }
   const piiOwner = await piiSource
     .withSession('first-primary')
-    .prepare(
-      input.purpose === 'account_delete_retry'
-        ? `SELECT owner_id FROM identity_sensitive_values
-             WHERE tenant_id = ? AND owner_type = 'runtime_user' AND owner_id = ?
-           UNION ALL
-           SELECT id AS owner_id FROM users_pii_tombstone
-             WHERE tenant_id = ? AND id = ?
-           LIMIT 1`
-        : input.purpose === 'account_lifecycle' || input.purpose === 'admin_view'
-          ? `SELECT owner_id FROM identity_sensitive_values
-               WHERE tenant_id = ? AND owner_type = 'runtime_user' AND owner_id = ? LIMIT 1`
-          : `SELECT owner_id FROM identity_sensitive_values
-               WHERE tenant_id = ? AND owner_type = 'runtime_user' AND owner_id = ?
-                 AND lifecycle_state = 'active' LIMIT 1`
-    )
+    .prepare(exactAccountPiiOwnerSql(input.purpose))
     .bind(
       input.tenantId,
       row.legacy_user_id,
@@ -1339,21 +1332,7 @@ export class CrossShardAccountExactSearchService {
         verifyAtDestination: async (target) => {
           const row = await target.source
             .withSession('first-primary')
-            .prepare(
-              purpose === 'account_delete_retry'
-                ? `SELECT owner_id FROM identity_sensitive_values
-                     WHERE tenant_id = ? AND owner_type = 'runtime_user' AND owner_id = ?
-                   UNION ALL
-                   SELECT id AS owner_id FROM users_pii_tombstone
-                     WHERE tenant_id = ? AND id = ?
-                   LIMIT 1`
-                : purpose === 'account_lifecycle'
-                  ? `SELECT owner_id FROM identity_sensitive_values
-                       WHERE tenant_id = ? AND owner_type = 'runtime_user' AND owner_id = ? LIMIT 1`
-                  : `SELECT owner_id FROM identity_sensitive_values
-                       WHERE tenant_id = ? AND owner_type = 'runtime_user' AND owner_id = ?
-                         AND lifecycle_state = 'active' LIMIT 1`
-            )
+            .prepare(exactAccountPiiOwnerSql(purpose))
             .bind(
               input.tenantId,
               account!.legacy_user_id,
@@ -1384,6 +1363,14 @@ export class CrossShardAccountExactSearchService {
         error instanceof Error &&
         error.message === 'lookup_destination_revalidation_failed'
       ) {
+        // The account is not in a state this purpose can see (being deleted, for one). Only an
+        // account id can be looked for on the shards without the Lookup route; an email or an
+        // external subject has nothing else to match, so the account is not found. A delete retry
+        // still reports the failure rather than treat the account as gone.
+        if (indexKind !== 'account_id') {
+          if (purpose === 'account_delete_retry') throw error;
+          return [];
+        }
         const fallback = await findAccountLifecycleByFanout({
           env: this.env,
           tenantId: input.tenantId,

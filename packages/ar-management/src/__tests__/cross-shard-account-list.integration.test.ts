@@ -729,9 +729,10 @@ describe('CrossShardAccountListService', () => {
       },
     } as KVNamespace;
     (workerEnv as unknown as Record<string, unknown>).LOOKUP_A = d1(lookup);
+    const exactSearch = new CrossShardAccountExactSearchService(workerEnv);
 
     await expect(
-      new CrossShardAccountExactSearchService(workerEnv).find({
+      exactSearch.find({
         tenantId: 'tenant-a',
         identifier: 'USER@example.com',
       })
@@ -744,7 +745,7 @@ describe('CrossShardAccountListService', () => {
       }),
     ]);
     await expect(
-      new CrossShardAccountExactSearchService(workerEnv).find({
+      exactSearch.find({
         tenantId: 'tenant-a',
         identifier: 'user-name',
         indexKind: 'external_subject',
@@ -757,13 +758,63 @@ describe('CrossShardAccountListService', () => {
       }),
     ]);
 
+    const shard = d1(shardA);
+    // Restricting an account leaves its Lookup route in place. Only the administrator view looks
+    // past the state: an email search for sign-in or provisioning still refuses the account.
+    for (const lifecycleState of ['suspended', 'locked']) {
+      await shard
+        .prepare(`UPDATE identity_accounts SET lifecycle_state = ? WHERE id = 'account-5'`)
+        .bind(lifecycleState)
+        .all();
+      await expect(
+        exactSearch.find({
+          tenantId: 'tenant-a',
+          identifier: 'user@example.com',
+          purpose: 'admin_view',
+        })
+      ).resolves.toEqual([expect.objectContaining({ id: 'account-5', lifecycleState })]);
+      await expect(
+        exactSearch.find({
+          tenantId: 'tenant-a',
+          identifier: 'user@example.com',
+        })
+      ).rejects.toThrow('lookup_destination_revalidation_failed');
+    }
+    // The administrator view resolves the PII owner the same way for an email as for a user id:
+    // the row only has to exist, whatever state it is in.
+    await shard
+      .prepare(
+        `UPDATE identity_sensitive_values SET lifecycle_state = 'deleted'
+          WHERE tenant_id = 'tenant-a' AND owner_id = 'user-account-5'`
+      )
+      .bind()
+      .all();
+    await expect(
+      exactSearch.find({
+        tenantId: 'tenant-a',
+        identifier: 'user@example.com',
+        purpose: 'admin_view',
+      })
+    ).resolves.toEqual([expect.objectContaining({ id: 'account-5' })]);
+    await shard
+      .prepare(
+        `UPDATE identity_sensitive_values SET lifecycle_state = 'active'
+          WHERE tenant_id = 'tenant-a' AND owner_id = 'user-account-5'`
+      )
+      .bind()
+      .all();
+    await shard
+      .prepare(`UPDATE identity_accounts SET lifecycle_state = 'active' WHERE id = 'account-5'`)
+      .bind()
+      .all();
+
     shardA
       .prepare(
         `UPDATE identity_accounts SET account_type = 'service_account' WHERE id = 'account-5'`
       )
       .run();
     await expect(
-      new CrossShardAccountExactSearchService(workerEnv).find({
+      exactSearch.find({
         tenantId: 'tenant-a',
         identifier: 'user@example.com',
       })
@@ -814,7 +865,7 @@ describe('CrossShardAccountListService', () => {
       )
       .run();
     await expect(
-      new CrossShardAccountExactSearchService(workerEnv).find({
+      exactSearch.find({
         tenantId: 'tenant-a',
         identifier: 'user-account-5',
         purpose: 'account_lifecycle',
@@ -826,7 +877,7 @@ describe('CrossShardAccountListService', () => {
       }),
     ]);
     await expect(
-      new CrossShardAccountExactSearchService(workerEnv).find({
+      exactSearch.find({
         tenantId: 'tenant-a',
         identifier: 'user-account-5',
         purpose: 'account_delete_retry',
@@ -849,13 +900,21 @@ describe('CrossShardAccountListService', () => {
       .run();
 
     await expect(
-      new CrossShardAccountExactSearchService(workerEnv).find({
+      exactSearch.find({
         tenantId: 'tenant-a',
         identifier: 'user@example.com',
       })
     ).rejects.toThrow();
+    // An account being deleted is not visible to the administrator view: not found, not an error.
     await expect(
-      new CrossShardAccountExactSearchService(workerEnv).find({
+      exactSearch.find({
+        tenantId: 'tenant-a',
+        identifier: 'user@example.com',
+        purpose: 'admin_view',
+      })
+    ).resolves.toEqual([]);
+    await expect(
+      exactSearch.find({
         tenantId: 'tenant-a',
         identifier: 'user@example.com',
         purpose: 'account_delete_retry',
@@ -877,7 +936,7 @@ describe('CrossShardAccountListService', () => {
       .prepare(`INSERT INTO users_pii_tombstone (id, tenant_id) VALUES (?, ?)`)
       .run('user-account-5', 'tenant-a');
     await expect(
-      new CrossShardAccountExactSearchService(workerEnv).find({
+      exactSearch.find({
         tenantId: 'tenant-a',
         identifier: 'user@example.com',
         purpose: 'account_delete_retry',
@@ -886,7 +945,7 @@ describe('CrossShardAccountListService', () => {
 
     shardA.prepare(`UPDATE users_pii_tombstone SET tenant_id = 'tenant-b'`).run();
     await expect(
-      new CrossShardAccountExactSearchService(workerEnv).find({
+      exactSearch.find({
         tenantId: 'tenant-a',
         identifier: 'user@example.com',
         purpose: 'account_delete_retry',
