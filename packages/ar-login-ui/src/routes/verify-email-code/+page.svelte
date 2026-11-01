@@ -15,7 +15,7 @@
 	import { auth } from '$lib/stores/auth';
 	import { isValidRedirectUrl, isValidReturnUrl } from '$lib/utils/url-validation';
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import {
 		LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS,
 		LOGIN_UI_SESSION_STORAGE_KEYS,
@@ -98,16 +98,17 @@
 
 	onMount(() => {
 		// Get email and invite_token from URL parameters
-		email = $page.url.searchParams.get('email') || '';
-		inviteToken = $page.url.searchParams.get('invite_token') || '';
-		authorizationChallengeId = $page.url.searchParams.get('challenge_id') || '';
-		samlRequestId = $page.url.searchParams.get('saml_request_id') || '';
-		samlSpEntityId = $page.url.searchParams.get('saml_sp_entity_id') || '';
-		returnTo = $page.url.searchParams.get('return_to') || '';
-		accountReturn = $page.url.searchParams.get('account_return') || '';
-		runtimeInteractionId = $page.url.searchParams.get('runtime_interaction_id') || '';
+		email = page.url.searchParams.get('email') || '';
+
+		inviteToken = page.url.searchParams.get('invite_token') || '';
+		authorizationChallengeId = page.url.searchParams.get('challenge_id') || '';
+		samlRequestId = page.url.searchParams.get('saml_request_id') || '';
+		samlSpEntityId = page.url.searchParams.get('saml_sp_entity_id') || '';
+		returnTo = page.url.searchParams.get('return_to') || '';
+		accountReturn = page.url.searchParams.get('account_return') || '';
+		runtimeInteractionId = page.url.searchParams.get('runtime_interaction_id') || '';
 		runtimeFlowKind =
-			$page.url.searchParams.get('runtime_flow_kind') === 'registration' ? 'registration' : 'login';
+			page.url.searchParams.get('runtime_flow_kind') === 'registration' ? 'registration' : 'login';
 
 		// If no email, redirect to login
 		if (!email) {

@@ -1,16 +1,15 @@
 // @vitest-environment jsdom
 import { render, waitFor } from '@testing-library/svelte';
-import { readable } from 'svelte/store';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({ getData: vi.fn(), fetchMethods: vi.fn() }));
 
-vi.mock('$app/stores', () => ({
-	page: readable({
+vi.mock('$app/state', () => ({
+	page: {
 		url: new URL('https://tenant.example.test/reauth?challenge_id=challenge-1'),
 		params: {},
 		data: {}
-	})
+	}
 }));
 vi.mock('$lib/api/client', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('$lib/api/client')>();

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 	import { ToggleSwitch } from '$lib/components';
 	import {
@@ -21,10 +21,12 @@
 		type SAMLProviderConfig,
 		type SAMLTrustCertificatePreview
 	} from '$lib/api/admin-saml';
+
 	import {
 		adminConsentStatementsAPI,
 		type ConsentStatement
 	} from '$lib/api/admin-consent-statements';
+
 	import {
 		adminIdentityMappingAPI,
 		type IdentityMappingFieldMappingSetSummary,
@@ -222,8 +224,8 @@
 	);
 
 	onMount(() => {
-		const trustProfileId = $page.url.searchParams.get('trustProfileId');
-		const requestedType = $page.url.searchParams.get('type');
+		const trustProfileId = page.url.searchParams.get('trustProfileId');
+		const requestedType = page.url.searchParams.get('type');
 		if (trustProfileId) {
 			editingFederationProfileId = trustProfileId;
 			setupTarget = 'federation';
@@ -1055,6 +1057,7 @@
 		const roles: Array<'saml_idp' | 'saml_sp'> = [];
 		if (federationRuntimeIdP) roles.push('saml_idp');
 		if (federationRuntimeSP) roles.push('saml_sp');
+
 		if (
 			roles.length === 0 ||
 			(federationRuntimeIdP && !federationRuntimeIdPMappingSetId.trim()) ||
@@ -1075,6 +1078,7 @@
 			.filter(Boolean)
 			.map((line) => {
 				const [decision, entityCategory, attributePresetId, ...extra] = line.split(/\s+/);
+
 				if (
 					(decision !== 'allow' && decision !== 'deny') ||
 					!entityCategory ||
@@ -1088,7 +1092,9 @@
 					entityCategory,
 					decision: normalizedDecision,
 					...(attributePresetId
-						? { attributePresetId: attributePresetId as SAMLAttributePresetId }
+						? {
+								attributePresetId: attributePresetId as SAMLAttributePresetId
+							}
 						: {})
 				};
 			});
@@ -1101,13 +1107,19 @@
 			roles,
 			priority: federationRuntimePriority,
 			...(federationRuntimeIdP
-				? { idpFieldMappingSetId: federationRuntimeIdPMappingSetId.trim() }
+				? {
+						idpFieldMappingSetId: federationRuntimeIdPMappingSetId.trim()
+					}
 				: {}),
+
 			...(federationRuntimeSP
 				? { spFieldMappingSetId: federationRuntimeSPMappingSetId.trim() }
 				: {}),
+
 			...(federationRuntimeDefaultAttributePresetId
-				? { defaultAttributePresetId: federationRuntimeDefaultAttributePresetId }
+				? {
+						defaultAttributePresetId: federationRuntimeDefaultAttributePresetId
+					}
 				: {}),
 			registrationAuthorities: federationRuntimeRegistrationAuthorities
 				.split(/\r?\n/)
@@ -2331,6 +2343,7 @@
 							<label for="nameIdFormat" class="admin-field__label"
 								>{$LL.admin_saml_detail_nameid_format()}</label
 							>
+
 							<select id="nameIdFormat" bind:value={nameIdFormat} class="admin-select">
 								{#each nameIdFormats as format (format.value)}
 									<option value={format.value}>{format.label}</option>
@@ -3084,9 +3097,10 @@
 		{/if}
 
 		<div class="form-actions">
-			<button type="button" class="btn btn-secondary" onclick={navigateBack}>
-				{$LL.admin_saml_new_cancel()}
-			</button>
+			<button type="button" class="btn btn-secondary" onclick={navigateBack}
+				>{$LL.admin_saml_new_cancel()}</button
+			>
+
 			<button
 				type="submit"
 				class="btn btn-primary"

@@ -10,7 +10,7 @@
  * Until then, this module provides the same config values that the SDK would use.
  */
 
-import { browser } from '$app/environment';
+import { browser } from '$app/env';
 
 export interface AuthConfig {
 	issuer: string;

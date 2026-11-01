@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import {
 		adminReBACAPI,
@@ -56,7 +56,7 @@
 	let loadedTenantId = $state('');
 
 	$effect(() => {
-		const urlObjectType = $page.url.searchParams.get('object_type');
+		const urlObjectType = page.url.searchParams.get('object_type');
 		if (urlObjectType) {
 			filterObjectType = urlObjectType;
 		}
@@ -350,12 +350,9 @@
 				<tbody>
 					{#each definitions as def (def.id)}
 						<tr>
-							<td>
-								<span class="object-type">{def.object_type}</span>
-							</td>
-							<td>
-								<span class="relation-name mono">{def.relation_name}</span>
-							</td>
+							<td><span class="object-type">{def.object_type}</span></td>
+							<td><span class="relation-name mono">{def.relation_name}</span></td>
+
 							<td>
 								<div class="expression">
 									<span class="expr-type">{formatExpressionTypeLabel(def.definition.type)}</span>
@@ -504,6 +501,7 @@
 		<button class="btn btn-secondary" onclick={() => (showCreateDialog = false)}
 			>{$LL.admin_rebac_tuples_cancel()}</button
 		>
+
 		<button class="btn btn-primary" onclick={submitCreate} disabled={creating}>
 			{creating ? $LL.admin_rebac_tuples_creating() : $LL.admin_rebac_tuples_create()}
 		</button>
@@ -532,6 +530,7 @@
 		<button class="btn btn-secondary" onclick={() => (showDeleteDialog = false)}
 			>{$LL.admin_rebac_tuples_cancel()}</button
 		>
+
 		<button class="btn btn-danger" onclick={confirmDelete} disabled={deleting}>
 			{deleting ? $LL.admin_rebac_tuples_deleting() : $LL.admin_rebac_tuples_delete()}
 		</button>

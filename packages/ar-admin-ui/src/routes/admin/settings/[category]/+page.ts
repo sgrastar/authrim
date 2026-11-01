@@ -12,9 +12,7 @@ export function load({ params }: { params: { category: string } }) {
 
 	// Validate category name
 	if (!CATEGORY_NAMES.includes(category as CategoryName)) {
-		throw error(404, {
-			message: `Category '${category}' not found`
-		});
+		throw error(404, `Category '${category}' not found`);
 	}
 
 	return {

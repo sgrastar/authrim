@@ -1,4 +1,5 @@
 import { fail, redirect } from '@sveltejs/kit';
+import { redirectExternal } from '$lib/server/external-redirect';
 import type { Actions, PageServerLoad } from './$types';
 import {
 	fetchDiscoveryConfig,
@@ -210,10 +211,10 @@ async function redirectResolvedCandidate(
 			},
 			getDiscoveryRequestHeaders(event)
 		);
-		throw redirect(303, withPreferredLanguage(grant.login_url, event.cookies));
+		throw redirectExternal(303, withPreferredLanguage(grant.login_url, event.cookies));
 	}
 
-	throw redirect(303, withPreferredLanguage(candidate.login_url, event.cookies));
+	throw redirectExternal(303, withPreferredLanguage(candidate.login_url, event.cookies));
 }
 
 export const load: PageServerLoad = async (event) => {
@@ -239,11 +240,11 @@ export const load: PageServerLoad = async (event) => {
 		effectiveConfig.config.redirect_tenant_discover_to_common_entry &&
 		commonDiscoverTarget
 	) {
-		throw redirect(303, commonDiscoverTarget);
+		throw redirectExternal(303, commonDiscoverTarget);
 	}
 
 	if (effectiveConfig.single_tenant_mode && effectiveConfig.default_candidate && !inviteToken) {
-		throw redirect(
+		throw redirectExternal(
 			303,
 			withPreferredLanguage(effectiveConfig.default_candidate.login_url, event.cookies)
 		);
@@ -267,7 +268,7 @@ export const load: PageServerLoad = async (event) => {
 			},
 			discoveryHeaders
 		);
-		throw redirect(303, withPreferredLanguage(grant.login_url, event.cookies));
+		throw redirectExternal(303, withPreferredLanguage(grant.login_url, event.cookies));
 	}
 
 	if (
@@ -314,7 +315,7 @@ export const load: PageServerLoad = async (event) => {
 			if (effectiveConfig.config.remember_last_tenant) {
 				setRememberedTenantCookie(event.cookies, result.candidate);
 			}
-			throw redirect(
+			throw redirectExternal(
 				303,
 				buildSignupUrl(
 					result.candidate,
@@ -343,7 +344,7 @@ export const load: PageServerLoad = async (event) => {
 			if (effectiveConfig.config.remember_last_tenant) {
 				setRememberedTenantCookie(event.cookies, result.candidate);
 			}
-			throw redirect(303, withPreferredLanguage(result.candidate.login_url, event.cookies));
+			throw redirectExternal(303, withPreferredLanguage(result.candidate.login_url, event.cookies));
 		}
 	}
 
@@ -453,7 +454,7 @@ export const actions: Actions = {
 				}
 
 				if (inviteToken || result.candidate.source === 'invitation') {
-					throw redirect(
+					throw redirectExternal(
 						303,
 						buildSignupUrl(
 							result.candidate,
@@ -482,7 +483,10 @@ export const actions: Actions = {
 					loginHint: loginHint || (mode === 'email' && value ? value : null)
 				});
 
-				throw redirect(303, withPreferredLanguage(result.candidate.login_url, event.cookies));
+				throw redirectExternal(
+					303,
+					withPreferredLanguage(result.candidate.login_url, event.cookies)
+				);
 			}
 
 			if (result.result === 'multiple') {

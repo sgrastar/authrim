@@ -3,7 +3,7 @@
  * Handles communication with the backend API
  */
 
-import { browser } from '$app/environment';
+import { browser } from '$app/env';
 import { getAuthConfig } from '$lib/auth';
 import { getDiagnosticSessionId as getLoggerSessionId } from '$lib/stores/diagnostic';
 import { authrimFetch } from '$lib/authrim/fetch';
@@ -231,6 +231,7 @@ const DEFAULT_API_TIMEOUT = 30000; // 30 seconds
 function isTenantPlacementWriteFenceResponse(value: unknown): value is APIError {
 	if (!value || typeof value !== 'object') return false;
 	const error = value as APIError;
+
 	return (
 		error.error === 'temporarily_unavailable' &&
 		error.extensions?.reason === 'tenant_placement_write_fence' &&
@@ -434,6 +435,7 @@ interface AccountProvisioningAccepted {
 function isAccountProvisioningAccepted(value: unknown): value is AccountProvisioningAccepted {
 	if (!value || typeof value !== 'object') return false;
 	const candidate = value as Record<string, unknown>;
+
 	return (
 		candidate.status === 'provisioning' &&
 		typeof candidate.provisioning_token === 'string' &&
@@ -491,7 +493,7 @@ async function provisioningDelay(milliseconds: number, signal: AbortSignal): Pro
 }
 
 const loginUiDirectAuthHttp: HttpClient = {
-	async fetch<T = unknown>(url: string, options: HttpOptions = {}): Promise<HttpResponse<T>> {
+	async fetch<T>(url: string, options: HttpOptions = {}): Promise<HttpResponse<T>> {
 		const controller = new AbortController();
 		let timeoutId =
 			options.timeout && options.timeout > 0
@@ -531,10 +533,12 @@ const loginUiDirectAuthHttp: HttpClient = {
 							body: JSON.stringify({ provisioning_token: accepted.provisioning_token }),
 							signal: controller.signal
 						});
+
 						const statusPayload = (await statusResponse.json().catch(() => ({}))) as Record<
 							string,
 							unknown
 						>;
+
 						if (!statusResponse.ok) {
 							response = statusResponse;
 							payload = statusPayload as T;
@@ -602,7 +606,7 @@ function withSignupInvitation(invitation: {
 		fields.invitation_email_proof = invitation.invitationEmailProof;
 	}
 	return {
-		async fetch<T = unknown>(url: string, options: HttpOptions = {}): Promise<HttpResponse<T>> {
+		async fetch<T>(url: string, options: HttpOptions = {}): Promise<HttpResponse<T>> {
 			if (!INVITATION_SIGNUP_START_PATHS.some((path) => url.includes(path))) {
 				return loginUiDirectAuthHttp.fetch<T>(url, options);
 			}
@@ -690,6 +694,7 @@ function apiErrorFromDirectAuthError(error: unknown): APIError {
 			error.code === 'invalid_state' && /state is missing or expired/i.test(error.message)
 				? 'missing_pkce_state'
 				: (originalError ?? error.code);
+
 		// The seconds until another attempt, which rate-limit errors carry in error_details.
 		const errorDetails = error.details?.errorDetails;
 		const retryAfter =
@@ -718,6 +723,7 @@ function requireBrowserCrypto(): Crypto {
 function readLegacyDirectEmailCodeState(coreKey: string): string | null {
 	const email = parseCoreDirectEmailCodeKey(coreKey);
 	if (!email) return null;
+
 	return (
 		sessionStorage.getItem(`${LOGIN_UI_SESSION_STORAGE_KEYS.directEmailCodeStatePrefix}${email}`) ??
 		sessionStorage.getItem(

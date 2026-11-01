@@ -13,7 +13,8 @@ const AUTH_CONTEXT_QUERY_PARAMETERS = [
 
 export function buildAuthSwitchHref(
 	target: '/login' | '/signup',
-	searchParams: URLSearchParams
+	// Read-only is enough: `page.url.searchParams` is a ReadonlyURLSearchParams in SvelteKit 3.
+	searchParams: Pick<URLSearchParams, 'getAll'>
 ): string {
 	const targetParams = new URLSearchParams();
 	for (const key of AUTH_CONTEXT_QUERY_PARAMETERS) {

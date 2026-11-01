@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { LL } from '$i18n/i18n-svelte';
 
 	const items = $derived([
@@ -10,8 +10,16 @@
 		{ href: '/admin/agent-access/settings', label: $LL.admin_agent_access_tab_settings() }
 	]);
 	const advancedItems = $derived([
-		{ href: '/admin/agent-access/grants', label: $LL.admin_agent_access_tab_grants() },
-		{ href: '/admin/agent-access/task-sets', label: $LL.admin_agent_access_tab_task_sets() },
+		{
+			href: '/admin/agent-access/grants',
+			label: $LL.admin_agent_access_tab_grants()
+		},
+
+		{
+			href: '/admin/agent-access/task-sets',
+			label: $LL.admin_agent_access_tab_task_sets()
+		},
+
 		{
 			href: '/admin/agent-access/scope-policies',
 			label: $LL.admin_agent_access_tab_scope_policies()
@@ -22,8 +30,8 @@
 
 	function active(href: string): boolean {
 		return href === '/admin/agent-access'
-			? $page.url.pathname === href
-			: $page.url.pathname.startsWith(href);
+			? page.url.pathname === href
+			: page.url.pathname.startsWith(href);
 	}
 </script>
 

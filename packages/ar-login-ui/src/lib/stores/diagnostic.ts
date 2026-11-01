@@ -5,7 +5,7 @@
  * Enabled only when PUBLIC_DIAGNOSTIC_LOGGING_ENABLED=true.
  */
 
-import { browser } from '$app/environment';
+import { browser } from '$app/env';
 import { DiagnosticLogger } from '$lib/diagnostic/diagnostic-logger';
 
 let _logger: DiagnosticLogger | null = null;

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { LogPager } from '$lib/admin/log-pager.svelte';
 	import LogCursorPager from '$lib/components/admin/LogCursorPager.svelte';
 	const logPager = new LogPager();
@@ -90,7 +90,7 @@
 		events = [];
 		loadedTenantId = '';
 		try {
-			const id = $page.params.id;
+			const id = page.params.id;
 			if (!id) throw new Error($LL.admin_agent_access_load_error());
 			const [loadedGrant, loadedEvents] = await Promise.all([
 				adminAgentAccessAPI.getGrant(id, tenantId),
@@ -101,7 +101,7 @@
 			receiveEvents(loadedEvents);
 			loadedTenantId = tenantId;
 			notice =
-				$page.url.searchParams.get('created') === '1' ? $LL.admin_agent_access_grant_created() : '';
+				page.url.searchParams.get('created') === '1' ? $LL.admin_agent_access_grant_created() : '';
 		} catch (caught) {
 			if (generation !== loadGeneration || tenantId !== settingsContext.tenantId) return;
 			error = caught instanceof Error ? caught.message : $LL.admin_agent_access_load_error();
@@ -232,8 +232,13 @@
 	{:else if !grant}
 		<div class="alert alert-error">{error || $LL.admin_agent_access_load_error()}</div>
 	{:else}
-		{#if error}<div class="alert alert-error">{error}</div>{/if}
-		{#if notice}<div class="alert alert-success">{notice}</div>{/if}
+		{#if error}
+			<div class="alert alert-error">{error}</div>
+		{/if}
+
+		{#if notice}
+			<div class="alert alert-success">{notice}</div>
+		{/if}
 
 		<div class="detail-grid">
 			<AdminSection>
@@ -317,9 +322,9 @@
 				</fieldset>
 				{#if canWrite && grant.status === 'active'}
 					<div class="actions">
-						<button class="btn btn-primary" onclick={save} disabled={saving}
-							>{saving ? $LL.admin_agent_access_saving() : $LL.admin_agent_access_save()}</button
-						>
+						<button class="btn btn-primary" onclick={save} disabled={saving}>
+							{saving ? $LL.admin_agent_access_saving() : $LL.admin_agent_access_save()}
+						</button>
 					</div>
 				{/if}
 			</AdminSection>

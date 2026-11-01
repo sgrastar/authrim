@@ -31,10 +31,10 @@ describe('auth page resume recovery', () => {
 
 	it('preserves the authorization context in both auth switch links', () => {
 		expect(source('routes/login/+page.svelte')).toContain(
-			"buildAuthSwitchHref('/signup', $page.url.searchParams)"
+			"buildAuthSwitchHref('/signup', page.url.searchParams)"
 		);
 		expect(source('routes/signup/+page.svelte')).toContain(
-			"buildAuthSwitchHref('/login', $page.url.searchParams)"
+			"buildAuthSwitchHref('/login', page.url.searchParams)"
 		);
 	});
 });

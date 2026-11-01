@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 	import {
 		adminConsentStatementsAPI,
@@ -170,8 +170,8 @@
 	let loadedVersionId = $state('');
 	let loadedVersionName = $state(todayVersion());
 	let loadedVersionStatus = $state<'draft' | 'active' | 'retired' | string>('draft');
+	const editingStatementId = $derived(page.url.searchParams.get('edit') ?? '');
 
-	const editingStatementId = $derived($page.url.searchParams.get('edit') ?? '');
 	const selectedTemplate = $derived(
 		selectedTemplateId
 			? templates.find((template) => template.id === selectedTemplateId)
@@ -200,7 +200,7 @@
 		if (editingStatementId) {
 			await loadStatementForEdit(editingStatementId);
 		} else {
-			const templateId = templateIdFromParam($page.url.searchParams.get('template'));
+			const templateId = templateIdFromParam(page.url.searchParams.get('template'));
 			if (templateId) selectTemplate(templateId);
 		}
 	}
@@ -612,6 +612,7 @@
 		if (!requirement?.conditional_rules_json) return {};
 		try {
 			const parsed = JSON.parse(requirement.conditional_rules_json) as unknown;
+
 			return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
 				? (parsed as Record<string, unknown>)
 				: {};
@@ -648,10 +649,12 @@
 						? record.id.trim()
 						: `option-${index + 1}`;
 				const value = typeof record.value === 'string' ? record.value : '';
+
 				const labels =
 					record.labels && typeof record.labels === 'object' && !Array.isArray(record.labels)
 						? (record.labels as Partial<Record<ContentLanguageCode, string>>)
 						: {};
+
 				const descriptions =
 					record.descriptions &&
 					typeof record.descriptions === 'object' &&
@@ -675,6 +678,7 @@
 	): CollectionMode {
 		if (!requirement) {
 			const templateId = templateIdFromStatement(statement);
+
 			return (
 				templates.find((template) => template.id === templateId)?.defaultCollectionMode ??
 				'required'

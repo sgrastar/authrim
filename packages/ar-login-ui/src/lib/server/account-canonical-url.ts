@@ -1,5 +1,6 @@
-import { env as dynamicEnv } from '$env/dynamic/public';
+import { PUBLIC_AUTHRIM_ISSUER, PUBLIC_API_BASE_URL } from '$app/env/public';
 import type { RequestEvent } from '@sveltejs/kit';
+import { getPlatformEnv } from '$lib/server/platform-env';
 
 function isLoopbackHost(hostname: string): boolean {
 	return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
@@ -45,10 +46,6 @@ function getRequestHost(event: RequestEvent): string {
 	return event.url.host;
 }
 
-function getPlatformEnv(event: RequestEvent): Record<string, unknown> | undefined {
-	return (event.platform as { env?: Record<string, unknown> } | undefined)?.env;
-}
-
 function getConfiguredPublicApiOrigin(
 	event: RequestEvent,
 	platformEnv?: Record<string, unknown>
@@ -56,10 +53,10 @@ function getConfiguredPublicApiOrigin(
 	const effectivePlatformEnv = platformEnv ?? getPlatformEnv(event);
 	const candidates = [
 		effectivePlatformEnv?.PUBLIC_AUTHRIM_ISSUER,
-		dynamicEnv.PUBLIC_AUTHRIM_ISSUER,
+		PUBLIC_AUTHRIM_ISSUER,
 		import.meta.env.PUBLIC_AUTHRIM_ISSUER,
 		effectivePlatformEnv?.PUBLIC_API_BASE_URL,
-		dynamicEnv.PUBLIC_API_BASE_URL,
+		PUBLIC_API_BASE_URL,
 		import.meta.env.PUBLIC_API_BASE_URL,
 		typeof process !== 'undefined' ? process.env?.PUBLIC_AUTHRIM_ISSUER : undefined,
 		typeof process !== 'undefined' ? process.env?.PUBLIC_API_BASE_URL : undefined

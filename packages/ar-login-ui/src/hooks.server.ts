@@ -1,3 +1,5 @@
+import type { RequestEvent } from '@sveltejs/kit';
+
 /**
  * SvelteKit Server Hooks
  *
@@ -7,11 +9,19 @@
  * - CSRF protection via Origin/Referer header validation
  * - Accept-Language based locale detection
  */
+import {
+	PUBLIC_API_PROXY_BACKEND_URL,
+	PUBLIC_API_BASE_URL,
+	PUBLIC_AUTHRIM_ISSUER,
+	PUBLIC_HUMAN_VERIFICATION_PROVIDER
+} from '$app/env/public';
 
-import { env as dynamicEnv } from '$env/dynamic/public';
-import { env as privateEnv } from '$env/dynamic/private';
-import type { Handle, RequestEvent } from '@sveltejs/kit';
-import { sequence } from '@sveltejs/kit/hooks';
+import {
+	EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKENS,
+	EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKEN
+} from '$app/env/private';
+import { sequence, type Handle } from '@sveltejs/kit/hooks';
+
 import {
 	LOGIN_TENANT_HOST_COOKIE,
 	REMEMBERED_TENANT_COOKIE,
@@ -39,6 +49,7 @@ import {
 	type AccountPageInitialData
 } from '$lib/server/account-page-initial-data';
 import { sanitizeColor } from '$lib/utils/url-validation';
+import { getPlatformEnv } from '$lib/server/platform-env';
 import {
 	LOGIN_UI_THEME_HINT_COOKIE,
 	LOGIN_UI_THEME_HINT_MAX_AGE_SECONDS,
@@ -102,7 +113,7 @@ function getExplicitProxyBackendUrl(platformEnv?: Record<string, unknown>): stri
 	const candidates = [
 		platformEnv?.API_BACKEND_URL,
 		platformEnv?.PUBLIC_API_PROXY_BACKEND_URL,
-		dynamicEnv.PUBLIC_API_PROXY_BACKEND_URL,
+		PUBLIC_API_PROXY_BACKEND_URL,
 		import.meta.env.PUBLIC_API_PROXY_BACKEND_URL,
 		typeof process !== 'undefined' ? process.env?.API_BACKEND_URL : undefined,
 		typeof process !== 'undefined' ? process.env?.PUBLIC_API_PROXY_BACKEND_URL : undefined
@@ -128,10 +139,10 @@ export function getConfiguredApiBackendUrl(
 
 	const candidates = [
 		platformEnv?.PUBLIC_API_BASE_URL,
-		dynamicEnv.PUBLIC_API_BASE_URL,
+		PUBLIC_API_BASE_URL,
 		import.meta.env.PUBLIC_API_BASE_URL,
 		platformEnv?.PUBLIC_AUTHRIM_ISSUER,
-		dynamicEnv.PUBLIC_AUTHRIM_ISSUER,
+		PUBLIC_AUTHRIM_ISSUER,
 		import.meta.env.PUBLIC_AUTHRIM_ISSUER,
 		typeof process !== 'undefined' ? process.env?.PUBLIC_API_BASE_URL : undefined,
 		typeof process !== 'undefined' ? process.env?.PUBLIC_AUTHRIM_ISSUER : undefined
@@ -150,13 +161,13 @@ export function getConfiguredApiBackendUrl(
 function getConfiguredForwardedHost(platformEnv?: Record<string, unknown>): string | undefined {
 	const candidates = [
 		platformEnv?.PUBLIC_AUTHRIM_ISSUER,
-		dynamicEnv.PUBLIC_AUTHRIM_ISSUER,
+		PUBLIC_AUTHRIM_ISSUER,
 		import.meta.env.PUBLIC_AUTHRIM_ISSUER,
 		platformEnv?.PUBLIC_API_BASE_URL,
-		dynamicEnv.PUBLIC_API_BASE_URL,
+		PUBLIC_API_BASE_URL,
 		import.meta.env.PUBLIC_API_BASE_URL,
 		platformEnv?.PUBLIC_API_PROXY_BACKEND_URL,
-		dynamicEnv.PUBLIC_API_PROXY_BACKEND_URL,
+		PUBLIC_API_PROXY_BACKEND_URL,
 		import.meta.env.PUBLIC_API_PROXY_BACKEND_URL,
 		platformEnv?.API_BACKEND_URL,
 		typeof process !== 'undefined' ? process.env?.PUBLIC_AUTHRIM_ISSUER : undefined,
@@ -184,7 +195,7 @@ function getConfiguredForwardedHost(platformEnv?: Record<string, unknown>): stri
 function shouldUseRequestHostAsForwardedHost(platformEnv?: Record<string, unknown>): boolean {
 	const candidates = [
 		platformEnv?.PUBLIC_API_BASE_URL,
-		dynamicEnv.PUBLIC_API_BASE_URL,
+		PUBLIC_API_BASE_URL,
 		import.meta.env.PUBLIC_API_BASE_URL,
 		typeof process !== 'undefined' ? process.env?.PUBLIC_API_BASE_URL : undefined
 	];
@@ -259,8 +270,9 @@ function buildConnectSrc(platformEnv?: Record<string, unknown>): string {
 	// When proxy is disabled, add the API origin only if PUBLIC_API_BASE_URL is set to a full URL
 	const apiBaseUrl =
 		(platformEnv?.PUBLIC_API_BASE_URL as string | undefined)?.trim() ||
-		dynamicEnv.PUBLIC_API_BASE_URL?.trim() ||
+		PUBLIC_API_BASE_URL?.trim() ||
 		import.meta.env.PUBLIC_API_BASE_URL?.trim();
+
 	if (apiBaseUrl) {
 		try {
 			return `connect-src 'self' ${new URL(apiBaseUrl).origin}`;
@@ -357,6 +369,7 @@ async function fetchAuthenticationMethodsForRequest(
 			(platformEnv?.AR_ROUTER as ServiceBinding | undefined) ??
 			(platformEnv?.API_SERVICE as ServiceBinding | undefined) ??
 			null;
+
 		const upstreamBaseUrl = apiBinding
 			? getForwardedHostApiBackendUrl(apiBackendUrl, forwardedHost)
 			: apiBackendUrl;
@@ -414,6 +427,7 @@ export function createAccountPageBootstrapFetch(
 		(platformEnv?.AR_ROUTER as ServiceBinding | undefined) ??
 		(platformEnv?.API_SERVICE as ServiceBinding | undefined) ??
 		null;
+
 	const upstreamBaseUrl = apiBinding
 		? getForwardedHostApiBackendUrl(apiBackendUrl, forwardedHost)
 		: apiBackendUrl;
@@ -463,6 +477,7 @@ export async function fetchLoginChallengeThemeTargetForPageRequest(
 			(platformEnv?.AR_ROUTER as ServiceBinding | undefined) ??
 			(platformEnv?.API_SERVICE as ServiceBinding | undefined) ??
 			null;
+
 		const upstreamBaseUrl = apiBinding
 			? getForwardedHostApiBackendUrl(apiBackendUrl, forwardedHost)
 			: apiBackendUrl;
@@ -476,10 +491,12 @@ export async function fetchLoginChallengeThemeTargetForPageRequest(
 		if (!response.ok) {
 			return { challengeId, valid: false, clientId: null };
 		}
+
 		const data = (await response.json()) as {
 			protocol?: unknown;
 			client?: { client_id?: unknown };
 		};
+
 		// The challenge of a SAML request is valid and names no client: the default methods apply.
 		if (data.protocol === 'saml' && data.client === undefined) {
 			return { challengeId, valid: true, clientId: null };
@@ -666,7 +683,7 @@ function resolveHumanVerificationProviderForCsp(
 	const configured = [
 		platformEnv?.LOGIN_UI_CSP_HUMAN_VERIFICATION_PROVIDER,
 		platformEnv?.PUBLIC_HUMAN_VERIFICATION_PROVIDER,
-		dynamicEnv.PUBLIC_HUMAN_VERIFICATION_PROVIDER,
+		PUBLIC_HUMAN_VERIFICATION_PROVIDER,
 		import.meta.env.PUBLIC_HUMAN_VERIFICATION_PROVIDER
 	];
 	for (const value of configured) {
@@ -690,9 +707,11 @@ export function shouldProxyPath(pathname: string): boolean {
 	);
 }
 
-function getPlatformEnv(event: RequestEvent): Record<string, unknown> | undefined {
-	return (event.platform as { env?: Record<string, unknown> } | undefined)?.env;
-}
+/** The server-only variables declared in src/env.ts, by name. */
+const SERVER_ENV_VARIABLES: Readonly<Record<string, string | undefined>> = {
+	EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKENS,
+	EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKEN
+};
 
 function getServerEnvironmentValue(
 	platformEnv: Record<string, unknown> | undefined,
@@ -701,8 +720,9 @@ function getServerEnvironmentValue(
 	if (platformEnv && Object.prototype.hasOwnProperty.call(platformEnv, name)) {
 		return platformEnv[name];
 	}
-	if (Object.prototype.hasOwnProperty.call(privateEnv, name)) {
-		return privateEnv[name];
+	const privateValue = SERVER_ENV_VARIABLES[name];
+	if (privateValue !== undefined) {
+		return privateValue;
 	}
 
 	return typeof process !== 'undefined' ? process.env?.[name] : undefined;
@@ -714,6 +734,7 @@ function normalizeEmailVerificationOriginTrialToken(value: unknown): string | nu
 	}
 
 	const token = value.trim();
+
 	if (
 		token.length < EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKEN_MIN_LENGTH ||
 		token.length > EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKEN_MAX_LENGTH ||
@@ -1051,6 +1072,7 @@ export const apiProxyHandle: Handle = async ({ event, resolve }) => {
 		(platformEnv?.AR_ROUTER as ServiceBinding | undefined) ??
 		(platformEnv?.API_SERVICE as ServiceBinding | undefined) ??
 		null;
+
 	const upstreamBaseUrl = apiBinding
 		? getForwardedHostApiBackendUrl(apiBackendUrl, forwardedHost)
 		: apiBackendUrl;

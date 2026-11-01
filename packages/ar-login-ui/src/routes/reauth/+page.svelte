@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import AuthPageShell from '$lib/components/AuthPageShell.svelte';
 	import ReauthView, { type ChallengeData } from '$lib/views/ReauthView.svelte';
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
@@ -110,7 +110,7 @@
 			isDarkMode = checkDarkMode();
 		});
 
-		challengeId = $page.url.searchParams.get('challenge_id') || '';
+		challengeId = page.url.searchParams.get('challenge_id') || '';
 		if (!challengeId) {
 			error = $LL.error_invalid_request();
 			loading = false;

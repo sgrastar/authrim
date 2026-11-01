@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import { adminAgentAccessAPI, type AgentElevationReview } from '$lib/api/admin-agent-access';
 	import {
@@ -22,7 +22,7 @@
 	}
 
 	function reauthenticationHref(): string {
-		const id = $page.params.id ?? '';
+		const id = page.params.id ?? '';
 		const returnTo = `/admin/agent-access/elevations/${encodeURIComponent(id)}`;
 		return `/admin/login?return_to=${encodeURIComponent(returnTo)}`;
 	}
@@ -31,7 +31,7 @@
 		loading = true;
 		error = '';
 		try {
-			elevation = await adminAgentAccessAPI.getElevation($page.params.id ?? '');
+			elevation = await adminAgentAccessAPI.getElevation(page.params.id ?? '');
 		} catch (caught) {
 			error =
 				caught instanceof Error ? caught.message : $LL.admin_agent_access_elevation_load_error();

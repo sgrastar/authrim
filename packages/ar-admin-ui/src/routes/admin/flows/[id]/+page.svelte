@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { LL } from '$i18n/i18n-svelte';
 	import {
 		getFlowDestinationLabel,
@@ -24,7 +24,7 @@
 	} from '$lib/admin/new-flow-templates';
 	import { onMount } from 'svelte';
 
-	const flowId = $derived($page.params.id ?? '');
+	const flowId = $derived(page.params.id ?? '');
 	const flow = $derived(getNewFlowTemplate(flowId));
 	const flowText = $derived(flow ? getFlowTemplateText($LL, flow) : null);
 	const flowStatusLabel = $derived(
@@ -614,9 +614,10 @@
 	</p>
 
 	{#snippet footer()}
-		<button type="button" class="btn btn-secondary" onclick={closeDeleteModal} disabled={deleting}>
-			{$LL.admin_flows_cancel()}
-		</button>
+		<button type="button" class="btn btn-secondary" onclick={closeDeleteModal} disabled={deleting}
+			>{$LL.admin_flows_cancel()}</button
+		>
+
 		<button type="button" class="btn btn-danger" onclick={deleteFlow} disabled={deleting}>
 			{deleting ? $LL.admin_flows_deleting() : $LL.admin_flows_delete_flow()}
 		</button>

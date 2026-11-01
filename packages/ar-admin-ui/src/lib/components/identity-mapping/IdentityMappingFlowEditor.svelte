@@ -367,12 +367,21 @@
 	];
 	const transformOperationCategories: TransformOperationCategory[] = [
 		{ id: 'basic', operations: ['copy', 'fallback'] },
-		{ id: 'array', operations: ['as_array', 'split', 'join', 'first'] },
+		{
+			id: 'array',
+			operations: ['as_array', 'split', 'join', 'first']
+		},
+
 		{
 			id: 'text',
 			operations: ['trim', 'normalize', 'case', 'affix_text', 'concat', 'text_to_boolean']
 		},
-		{ id: 'identifier', operations: ['oidc_pairwise_sub', 'saml_edu_person_targeted_id'] },
+
+		{
+			id: 'identifier',
+			operations: ['oidc_pairwise_sub', 'saml_edu_person_targeted_id']
+		},
+
 		{
 			id: 'json',
 			operations: [
@@ -594,6 +603,7 @@
 	const policyModeHasSelection = $derived(
 		laneSelectorMode !== 'policy' || Boolean(resolvedSourcePolicyId || resolvedDestinationPolicyId)
 	);
+
 	const visibleNodes = $derived(
 		policyModeHasSelection
 			? nodes.filter(
@@ -605,6 +615,7 @@
 				)
 			: []
 	);
+
 	const overviewLayerSourceNodes = $derived(
 		viewMode === 'overview' && policyModeHasSelection
 			? samples
@@ -682,15 +693,19 @@
 			return fromNode && toNode;
 		})
 	);
+
 	const selectedEdge = $derived(
 		selectedEdgeId ? graphEdges.find((edge) => edge.id === selectedEdgeId) : null
 	);
+
 	const selectedEdges = $derived(
 		new Set([...connectedEdgeIds(selectedNodeId), ...(selectedEdgeId ? [selectedEdgeId] : [])])
 	);
+
 	const hoverEdges = $derived(
 		new Set([...connectedEdgeIds(hoverNodeId), ...connectedTargetGroupEdgeIds(hoverTargetGroupKey)])
 	);
+
 	const activeTargetGroupKeys = $derived.by(() => {
 		const keys: string[] = [];
 		if (hoverTargetGroupKey) addTargetGroupKey(keys, hoverTargetGroupKey);
@@ -700,6 +715,7 @@
 		addEdgeTargetGroupKeys(selectedEdgeId, keys);
 		return keys;
 	});
+
 	const invalidEdgeTargetNodeIds = $derived(
 		new Set(
 			graphEdges
@@ -833,6 +849,7 @@
 	});
 
 	beforeNavigate((navigation) => {
+		if (navigation.shallow && navigation.type === 'goto') return;
 		if (!editable || !hasUnsavedDraftChanges) return;
 		const shouldLeave = window.confirm($LL.admin_identity_mapping_flow_unsaved_leave_confirm());
 		if (!shouldLeave) {
@@ -1348,9 +1365,11 @@
 		const targetIds = new Set(resolvedEdges.map(({ toNode }) => toNode.id));
 		if (targetIds.size !== 1) return false;
 		if (rule.edges.some((edge) => edge.edgeKind === 'transform_input')) return true;
+
 		const transformEdgeIds = new Set(
 			transforms.flatMap((transform) => (transform.edgeId ? [transform.edgeId] : []))
 		);
+
 		return transformEdgeIds.size <= 1;
 	}
 
@@ -1792,6 +1811,7 @@
 			connectedNodeIds(hoverNodeId).has(node.id) ||
 			invalidEdgeTargetNodeIds.has(node.id) ||
 			(dragState?.validTarget === false && dragState.targetNodeId === node.id);
+
 		const zIndex =
 			node.id === infoOverlayNodeId
 				? 40
@@ -1925,6 +1945,7 @@
 		const toNode = nodeById(edge.to);
 		if (!fromNode || !toNode) return false;
 		if (fromNode.role === 'transform' || toNode.role === 'transform') return false;
+
 		return (
 			(fromNode.role === 'source' && toNode.role === 'target') ||
 			(fromNode.role === 'target' && toNode.role === 'destination')
@@ -1955,6 +1976,7 @@
 					destinationAdapter
 				);
 			}
+
 			return (
 				connectedAdapter(transformNode, 'source') ?? selectedSourcePolicy?.adapter ?? sourceAdapter
 			);
@@ -2115,6 +2137,7 @@
 	): boolean {
 		if (!fromNode || !toNode || fromNode.id === toNode.id) return false;
 		if (fromNode.locked || toNode.locked) return false;
+
 		return (
 			isConnectionDirectionAllowed(fromNode, toNode) &&
 			!connectionExists(fromNode.id, toNode.id, ignoredEdgeIds, extraEdges) &&
@@ -2277,6 +2300,7 @@
 
 	function targetInputCardinality(node: MappingNode): 'one' | 'many' {
 		if (node.role !== 'target') return 'many';
+
 		return (
 			node.inputCardinality ?? (normalizeNodeType(node.type) === 'multi-value' ? 'many' : 'one')
 		);
@@ -3306,10 +3330,7 @@
 			...sample,
 			rules: {
 				...sample.rules,
-				[ruleId]: {
-					...(sample.rules[ruleId] ?? fallbackRule()),
-					...patch
-				}
+				[ruleId]: { ...(sample.rules[ruleId] ?? fallbackRule()), ...patch }
 			}
 		};
 	}
@@ -3565,12 +3586,14 @@
 			fromNode?.role === 'source'
 				? `${fromNode.adapter} / ${fromNode.label}`
 				: (base.source ?? $LL.admin_identity_mapping_flow_not_connected());
+
 		const target =
 			fromNode?.role === 'target'
 				? fromNode.label
 				: toNode?.role === 'target'
 					? toNode.label
 					: (base.target ?? $LL.admin_identity_mapping_flow_no_schema_field_selected());
+
 		const destination =
 			toNode?.role === 'destination'
 				? `${toNode.adapter} / ${toNode.label}`
@@ -3879,6 +3902,7 @@
 						false
 					)[0] ?? ''
 				);
+
 			case 'affix_text':
 				return `${String(params.prefix ?? '')}${input}${String(params.suffix ?? '')}`;
 			case 'concat':
@@ -3942,6 +3966,7 @@
 		const normalized = values
 			.map((value) => (trimItems ? value.trim() : value))
 			.filter((value) => !omitEmpty || value.length > 0);
+
 		return unique ? [...new Set(normalized)] : normalized;
 	}
 
@@ -4312,7 +4337,7 @@
 						aria-label={$LL.admin_identity_mapping_flow_clear_selection_aria()}
 						onclick={clearCanvasSelection}
 						onkeydown={handleClearSelectionKeyDown}
-					/>
+					></rect>
 					{#each graphEdges as edge (edge.id)}
 						{#if !isOverviewLayerEdge(edge)}
 							<path
@@ -4336,13 +4361,13 @@
 										selectEdge(edge);
 									}
 								}}
-							/>
+							></path>
 						{/if}
 						<path
 							class={edgeClasses(edge)}
 							style={`--edge-accent:${edgeAccent(edge)}`}
 							d={edgePath(edge)}
-						/>
+						></path>
 						{#if editable && edge.id === selectedEdgeId}
 							{#each ['source', 'target'] as side (side)}
 								{@const reconnectPoint = edgeReconnectPoint(edge, side as 'source' | 'target')}
@@ -4353,14 +4378,11 @@
 										style={`--edge-accent:${edgeAccent(edge)}`}
 										role="button"
 										tabindex="0"
-										aria-label={$LL.admin_identity_mapping_flow_reconnect_edge_aria({
-											side
-										})}
+										aria-label={$LL.admin_identity_mapping_flow_reconnect_edge_aria({ side })}
 										onpointerdown={(event) =>
 											startReconnectDrag(event, edge, side as 'source' | 'target')}
+										><circle r="6"></circle></g
 									>
-										<circle r="6" />
-									</g>
 								{/if}
 							{/each}
 						{/if}
@@ -4385,8 +4407,8 @@
 										}
 									}}
 								>
-									<rect x="-9" y="-9" width="18" height="18" rx="3" />
-									<path d="M -4 0 H 4 M 0 -4 V 4" />
+									<rect x="-9" y="-9" width="18" height="18" rx="3"></rect>
+									<path d="M -4 0 H 4 M 0 -4 V 4"></path>
 								</g>
 							{/if}
 						{/if}
@@ -4410,8 +4432,8 @@
 										}
 									}}
 								>
-									<circle r="9" />
-									<path d="M -3.5 -3.5 L 3.5 3.5 M 3.5 -3.5 L -3.5 3.5" />
+									<circle r="9"></circle>
+									<path d="M -3.5 -3.5 L 3.5 3.5 M 3.5 -3.5 L -3.5 3.5"></path>
 								</g>
 							{/if}
 						{/if}
@@ -4420,15 +4442,15 @@
 						<path
 							class={`edge drag-edge ${dragState.validTarget === false ? 'drag-edge-invalid' : ''}`}
 							d={pathBetween(dragState.from, dragState.to)}
-						/>
+						></path>
 						{#if dragState.validTarget === false}
 							<g
 								class="drag-reject-marker"
 								transform={`translate(${dragState.to.x - 12} ${dragState.to.y - 12})`}
 								aria-hidden="true"
 							>
-								<circle r="8" />
-								<path d="M -3 -3 L 3 3 M 3 -3 L -3 3" />
+								<circle r="8"></circle>
+								<path d="M -3 -3 L 3 3 M 3 -3 L -3 3"></path>
 							</g>
 						{/if}
 					{/if}
@@ -4592,23 +4614,22 @@
 						class:active={activeTab === 'rule'}
 						type="button"
 						onclick={() => (activeTab = 'rule')}
+						>{$LL.admin_identity_mapping_flow_tab_rule()}</button
 					>
-						{$LL.admin_identity_mapping_flow_tab_rule()}
-					</button>
+
 					<button
 						class:active={activeTab === 'dryrun'}
 						type="button"
 						onclick={() => (activeTab = 'dryrun')}
+						>{$LL.admin_identity_mapping_flow_tab_dryrun()}</button
 					>
-						{$LL.admin_identity_mapping_flow_tab_dryrun()}
-					</button>
+
 					<button
 						class:active={activeTab === 'diff'}
 						type="button"
 						onclick={() => (activeTab = 'diff')}
+						>{$LL.admin_identity_mapping_flow_tab_diff()}</button
 					>
-						{$LL.admin_identity_mapping_flow_tab_diff()}
-					</button>
 				</div>
 
 				{#if activeTab === 'rule'}

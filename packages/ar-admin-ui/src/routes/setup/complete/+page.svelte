@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { startRegistration } from '@simplewebauthn/browser';
 	import { adminSetupAPI, SetupError, getSetupErrorMessage } from '$lib/api/setup';
 
@@ -13,7 +13,7 @@
 
 	onMount(async () => {
 		// Get token from URL
-		token = $page.url.searchParams.get('token') || '';
+		token = page.url.searchParams.get('token') || '';
 
 		if (!token) {
 			status = 'error';
@@ -88,12 +88,13 @@
 		<!-- Logo -->
 		<div class="logo">
 			<svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-				<circle cx="50" cy="50" r="45" fill="url(#grad)" />
-				<path d="M35 55 L50 40 L65 55 L50 70 Z" fill="white" />
+				<circle cx="50" cy="50" r="45" fill="url(#grad)"></circle>
+				<path d="M35 55 L50 40 L65 55 L50 70 Z" fill="white"></path>
+
 				<defs>
 					<linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
-						<stop offset="0%" style="stop-color:#667eea" />
-						<stop offset="100%" style="stop-color:#764ba2" />
+						<stop offset="0%" style="stop-color:#667eea"></stop>
+						<stop offset="100%" style="stop-color:#764ba2"></stop>
 					</linearGradient>
 				</defs>
 			</svg>
@@ -151,9 +152,9 @@
 					stroke="currentColor"
 					stroke-width="2"
 				>
-					<rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-					<circle cx="12" cy="16" r="1" />
-					<path d="M7 11V7a5 5 0 0 1 10 0v4" />
+					<rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+					<circle cx="12" cy="16" r="1"></circle>
+					<path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
 				</svg>
 				Register Passkey
 			</button>

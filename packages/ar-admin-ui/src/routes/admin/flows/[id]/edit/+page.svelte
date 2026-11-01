@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import { LL } from '$i18n/i18n-svelte';
 	import {
@@ -115,16 +115,9 @@
 		conditionTerminalMessage: string;
 	}
 
-	const nodeTypes: NodeTypes = {
-		editor: FlowEditorNode,
-		completionGroup: FlowEditorGroupNode
-	};
-
-	const edgeTypes: EdgeTypes = {
-		editor: FlowEditorEdge
-	};
-
-	const flowId = $derived($page.params.id ?? '');
+	const nodeTypes: NodeTypes = { editor: FlowEditorNode, completionGroup: FlowEditorGroupNode };
+	const edgeTypes: EdgeTypes = { editor: FlowEditorEdge };
+	const flowId = $derived(page.params.id ?? '');
 	const flow = $derived(getNewFlowTemplate(flowId));
 	const flowText = $derived(flow ? getFlowTemplateText($LL, flow) : null);
 	const localeMarker = $derived($LL.admin_flows_locale_marker());
@@ -170,15 +163,18 @@
 			? getSavedFlowDescription($LL, savedFlow)
 			: $LL.admin_flows_editor_header_description()
 	);
+
 	const pageEyebrow = $derived(
 		savedFlow ? getAdminFlowKindLabel(savedFlow.kind) : (flow?.protocol ?? '')
 	);
+
 	const showAuthoritativeConsentGate = $derived(
 		(savedFlow?.kind ?? flow?.flowKind ?? '') === 'login'
 	);
 	const authProfileOptions = $derived(
 		loadedAuthProfileOptions.length > 0 ? loadedAuthProfileOptions : fallbackAuthProfileOptions
 	);
+
 	const screenOptions = $derived.by(() => {
 		if (!screensLoaded) return fallbackScreenOptions;
 		if (loadedScreenOptions.length > 0) return loadedScreenOptions;
@@ -400,6 +396,7 @@
 		}
 		for (const provider of response.providers) {
 			if (!provider.enabled || (!provider.loginEnabled && !provider.signupEnabled)) continue;
+
 			if (
 				externalProviderKeys.includes(provider.id) ||
 				(provider.slug && externalProviderKeys.includes(provider.slug))
@@ -1549,12 +1546,36 @@
 		return [
 			{ value: 'always', label: $LL.admin_flows_condition_type_always() },
 			{ value: 'protocol', label: ft('プロトコル', 'Protocol') },
-			{ value: 'authenticated', label: $LL.admin_flows_condition_type_authenticated() },
-			{ value: 'first_login', label: $LL.admin_flows_condition_type_first_login() },
-			{ value: 'client_id', label: $LL.admin_flows_condition_type_client_id() },
-			{ value: 'saml_sp_id', label: $LL.admin_flows_condition_type_saml_sp_id() },
-			{ value: 'flow_kind', label: $LL.admin_flows_condition_type_flow_kind() },
-			{ value: 'requested_scope', label: $LL.admin_flows_condition_type_requested_scope() },
+			{
+				value: 'authenticated',
+				label: $LL.admin_flows_condition_type_authenticated()
+			},
+
+			{
+				value: 'first_login',
+				label: $LL.admin_flows_condition_type_first_login()
+			},
+
+			{
+				value: 'client_id',
+				label: $LL.admin_flows_condition_type_client_id()
+			},
+
+			{
+				value: 'saml_sp_id',
+				label: $LL.admin_flows_condition_type_saml_sp_id()
+			},
+
+			{
+				value: 'flow_kind',
+				label: $LL.admin_flows_condition_type_flow_kind()
+			},
+
+			{
+				value: 'requested_scope',
+				label: $LL.admin_flows_condition_type_requested_scope()
+			},
+
 			{
 				value: 'authentication_method',
 				label: $LL.admin_flows_condition_type_authentication_method()
@@ -2785,6 +2806,7 @@
 		) {
 			config.screen_ref = getConfigValue(node, 'screen', 'basic_profile');
 		}
+
 		if (
 			node.data.kind === 'consent' ||
 			((node.data.kind === 'registration' ||

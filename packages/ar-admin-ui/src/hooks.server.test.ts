@@ -1,4 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('$app/env/public', () => ({
+	PUBLIC_API_PROXY_BACKEND_URL: '',
+	PUBLIC_API_BASE_URL: '',
+	PUBLIC_AUTHRIM_ISSUER: ''
+}));
 import {
 	apiProxy,
 	buildProxyHeaders,

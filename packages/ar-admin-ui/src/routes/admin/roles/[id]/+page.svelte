@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { LL } from '$i18n/i18n-svelte';
 	import {
 		adminRolesAPI,
@@ -82,7 +82,7 @@
 	});
 
 	async function loadRole() {
-		const roleId = $page.params.id;
+		const roleId = page.params.id;
 		if (!roleId) {
 			error = $LL.admin_roles_role_id_required();
 			loading = false;
@@ -103,7 +103,7 @@
 	}
 
 	async function loadAssignedUsers(pageNum: number = 1) {
-		const roleId = $page.params.id;
+		const roleId = page.params.id;
 		if (!roleId) return;
 
 		assignedUsersLoading = true;

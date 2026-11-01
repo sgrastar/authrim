@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import {
 		adminAdminsAPI,
 		type AdminRoleAssignment,
@@ -46,7 +46,7 @@
 	let savingAssignment = $state(false);
 	let assignmentEditError = $state('');
 
-	const adminId = $derived($page.params.id);
+	const adminId = $derived(page.params.id);
 
 	async function loadAdmin() {
 		if (!adminId) {
@@ -648,9 +648,10 @@
 	{/if}
 
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={closeRoleDialog} disabled={assigningRole}>
-			{$LL.admin_admins_cancel()}
-		</button>
+		<button class="btn btn-secondary" onclick={closeRoleDialog} disabled={assigningRole}
+			>{$LL.admin_admins_cancel()}</button
+		>
+
 		<button
 			class="btn btn-primary"
 			onclick={handleAssignRole}

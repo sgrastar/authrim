@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { LL } from '$i18n/i18n-svelte';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import {
@@ -27,7 +27,7 @@
 	let error = $state('');
 
 	// Tab state - 'roles' or 'rules'
-	let activeTab = $derived($page.url.searchParams.get('tab') || 'roles');
+	let activeTab = $derived(page.url.searchParams.get('tab') || 'roles');
 
 	// Filter state
 	let filterType: 'all' | RoleType = $state('all');
@@ -73,13 +73,13 @@
 	});
 
 	function switchTab(tab: string) {
-		const url = new URL($page.url);
+		const url = new URL(page.url.href);
 		if (tab === 'roles') {
 			url.searchParams.delete('tab');
 		} else {
 			url.searchParams.set('tab', tab);
 		}
-		goto(url.toString(), { replaceState: true, noScroll: true });
+		goto(url.toString(), { replace: true, reset: false });
 	}
 
 	function navigateToRole(role: Role) {
@@ -213,31 +213,26 @@
 				<button
 					class="filter-btn"
 					class:active={filterType === 'all'}
-					onclick={() => (filterType = 'all')}
+					onclick={() => (filterType = 'all')}>{$LL.admin_roles_filter_all()}</button
 				>
-					{$LL.admin_roles_filter_all()}
-				</button>
+
 				<button
 					class="filter-btn"
 					class:active={filterType === 'system'}
-					onclick={() => (filterType = 'system')}
+					onclick={() => (filterType = 'system')}>{$LL.admin_roles_filter_system()}</button
 				>
-					{$LL.admin_roles_filter_system()}
-				</button>
+
 				<button
 					class="filter-btn"
 					class:active={filterType === 'builtin'}
-					onclick={() => (filterType = 'builtin')}
+					onclick={() => (filterType = 'builtin')}>{$LL.admin_roles_filter_builtin()}</button
 				>
-					{$LL.admin_roles_filter_builtin()}
-				</button>
+
 				<button
 					class="filter-btn"
 					class:active={filterType === 'custom'}
-					onclick={() => (filterType = 'custom')}
+					onclick={() => (filterType = 'custom')}>{$LL.admin_roles_filter_custom()}</button
 				>
-					{$LL.admin_roles_filter_custom()}
-				</button>
 			</div>
 		</AdminSection>
 

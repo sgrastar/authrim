@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { adminCustomClaimsAPI } from '$lib/api/admin-custom-claims';
@@ -24,6 +24,7 @@
 		MappingDraftPayload,
 		MappingSample
 	} from '$lib/components/identity-mapping/types';
+
 	import type {
 		IdentityMappingCatalogSummary,
 		IdentityMappingDestinationProfileSummary,
@@ -142,22 +143,24 @@
 		editSide === 'source' ? selectedSourceProfileId : selectedDestinationProfileId
 	);
 	const routePolicySide = $derived.by(() => {
-		const direction = $page.url.searchParams.get('direction');
+		const direction = page.url.searchParams.get('direction');
 		if (direction === 'source') return 'source';
 		if (direction === 'destination') return 'destination';
 		return null;
 	});
 	const routePolicyOptionId = $derived.by(() => {
-		const policyId = $page.url.searchParams.get('policyId');
+		const policyId = page.url.searchParams.get('policyId');
 		if (!policyId || !routePolicySide) return null;
 		const version = preferredVersionForPolicySide(policyId, routePolicySide);
 		return version ? `${policyId}:${version.id}:${routePolicySide}` : null;
 	});
+
 	const selectedFieldMappingVersions = $derived(
 		selectedFieldMappingSetId
 			? (fieldMappingVersionsByFieldMappingSetId[selectedFieldMappingSetId] ?? [])
 			: []
 	);
+
 	const selectedFieldMappingSetSummary = $derived(
 		fieldMappingSetSummaries.find((policy) => policy.id === selectedFieldMappingSetId) ?? null
 	);
@@ -165,6 +168,7 @@
 		selectedFieldMappingVersions.find((version) => version.id === selectedFieldMappingVersionId) ??
 			null
 	);
+
 	const selectedFieldMappingOptionId = $derived(
 		selectedFieldMappingSetId && selectedFieldMappingVersionId && selectedPolicySide
 			? `${selectedFieldMappingSetId}:${selectedFieldMappingVersionId}:${selectedPolicySide}`
@@ -243,6 +247,7 @@
 				? sideEditorSamples
 				: flowSamples
 	);
+
 	const showProfileSchemaSetupHint = $derived(
 		showProfileModeControl &&
 			!loading &&
@@ -264,7 +269,9 @@
 			return;
 		}
 		if (appliedRoutePolicyOptionId === routePolicyOptionId) return;
-		selectedFieldMappingSetId = $page.url.searchParams.get('policyId');
+
+		selectedFieldMappingSetId = page.url.searchParams.get('policyId');
+
 		const preferredVersion =
 			selectedFieldMappingSetId && routePolicySide
 				? preferredVersionForPolicySide(selectedFieldMappingSetId, routePolicySide)
@@ -398,6 +405,7 @@
 	) {
 		const references =
 			side === 'source' ? (version.sourceProfileIds ?? []) : (version.destinationProfileIds ?? []);
+
 		const options = side === 'source' ? sourceProfileOptions : destinationProfileOptions;
 		const selected = options.find((option) =>
 			references.some((reference) => profileReferencesMatch(reference, option.id, side))
@@ -653,6 +661,7 @@
 		const fieldMappingKey = fieldMappingKeyFromDisplayName(
 			displayName.trim() || $LL.admin_identity_mapping_editor_policy_default_name()
 		);
+
 		return (
 			fieldMappingSetSummaries.find(
 				(policy) =>
@@ -669,6 +678,7 @@
 			const sides = policyVersionSides(version);
 			return side === 'source' ? sides.source : sides.destination;
 		});
+
 		return (
 			versions.find((version) => version.lifecycleState === 'active') ??
 			versions.find((version) => version.latestSnapshot?.id) ??

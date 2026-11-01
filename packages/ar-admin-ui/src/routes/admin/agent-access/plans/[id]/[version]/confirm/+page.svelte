@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import {
 		adminAgentAccessAPI,
@@ -16,7 +16,7 @@
 	let error = $state('');
 
 	onMount(async () => {
-		confirmationId = $page.url.searchParams.get('confirmation_id') ?? '';
+		confirmationId = page.url.searchParams.get('confirmation_id') ?? '';
 		if (!confirmationId) {
 			error = $LL.admin_agent_access_plan_confirmation_invalid();
 			loading = false;
@@ -24,8 +24,8 @@
 		}
 		try {
 			item = await adminAgentAccessAPI.getConfigurationPlan(
-				$page.params.id ?? '',
-				Number($page.params.version)
+				page.params.id ?? '',
+				Number(page.params.version)
 			);
 		} catch (caught) {
 			error = caught instanceof Error ? caught.message : $LL.admin_agent_access_load_error();

@@ -20,11 +20,16 @@
  * To disable the proxy (e.g., when using custom domains on the same site):
  *   Set API_BACKEND_URL to an empty or invalid value in the deployment env
  */
+import {
+	PUBLIC_API_PROXY_BACKEND_URL,
+	PUBLIC_API_BASE_URL,
+	PUBLIC_AUTHRIM_ISSUER
+} from '$app/env/public';
 
-import { env as dynamicEnv } from '$env/dynamic/public';
 import { localeDir, LOCALE_COOKIE, resolveLocale } from '$lib/i18n/locales';
-import type { Handle, RequestEvent } from '@sveltejs/kit';
-import { sequence } from '@sveltejs/kit/hooks';
+import type { RequestEvent } from '@sveltejs/kit';
+import { sequence, type Handle } from '@sveltejs/kit/hooks';
+import { getPlatformEnv } from '$lib/server/platform-env';
 
 interface ServiceBinding {
 	fetch(request: Request): Promise<Response>;
@@ -149,7 +154,7 @@ function getBackendUrlCandidates(platformEnv?: Record<string, unknown>): unknown
 	return [
 		platformEnv?.API_BACKEND_URL,
 		platformEnv?.PUBLIC_API_PROXY_BACKEND_URL,
-		dynamicEnv.PUBLIC_API_PROXY_BACKEND_URL,
+		PUBLIC_API_PROXY_BACKEND_URL,
 		import.meta.env.PUBLIC_API_PROXY_BACKEND_URL,
 		typeof process !== 'undefined' ? process.env?.API_BACKEND_URL : undefined,
 		typeof process !== 'undefined' ? process.env?.PUBLIC_API_PROXY_BACKEND_URL : undefined
@@ -223,7 +228,7 @@ function isFixedHttpsBffProxyEnabled(platformEnv?: Record<string, unknown>): boo
 function getConfiguredForwardedHost(platformEnv?: Record<string, unknown>): string | undefined {
 	const candidates = [
 		platformEnv?.PUBLIC_API_BASE_URL,
-		dynamicEnv.PUBLIC_API_BASE_URL,
+		PUBLIC_API_BASE_URL,
 		import.meta.env.PUBLIC_API_BASE_URL,
 		typeof process !== 'undefined' ? process.env?.PUBLIC_API_BASE_URL : undefined
 	];
@@ -247,7 +252,7 @@ function getConfiguredForwardedHost(platformEnv?: Record<string, unknown>): stri
 function getApiPublicUrl(platformEnv?: Record<string, unknown>): string | undefined {
 	const candidates = [
 		platformEnv?.PUBLIC_AUTHRIM_ISSUER,
-		dynamicEnv.PUBLIC_AUTHRIM_ISSUER,
+		PUBLIC_AUTHRIM_ISSUER,
 		import.meta.env.PUBLIC_AUTHRIM_ISSUER
 	];
 	for (const candidate of candidates) {
@@ -459,8 +464,9 @@ function buildConnectSrc(platformEnv?: Record<string, unknown>): string {
 	// When proxy is disabled, add the API origin only if PUBLIC_API_BASE_URL is set to a full URL
 	const apiBaseUrl =
 		(platformEnv?.PUBLIC_API_BASE_URL as string | undefined)?.trim() ||
-		dynamicEnv.PUBLIC_API_BASE_URL?.trim() ||
+		PUBLIC_API_BASE_URL?.trim() ||
 		import.meta.env.PUBLIC_API_BASE_URL?.trim();
+
 	if (apiBaseUrl) {
 		try {
 			return `connect-src 'self' ${new URL(apiBaseUrl).origin} ${telemetrySources}`;
@@ -469,10 +475,6 @@ function buildConnectSrc(platformEnv?: Record<string, unknown>): string {
 		}
 	}
 	return `connect-src 'self' ${telemetrySources}`;
-}
-
-function getPlatformEnv(event: RequestEvent): Record<string, unknown> | undefined {
-	return (event.platform as { env?: Record<string, unknown> } | undefined)?.env;
 }
 
 function isAllowedProxyPath(pathname: string): boolean {
@@ -1100,11 +1102,15 @@ function isMockRequest(event: RequestEvent): boolean {
 	} catch {
 		// A malformed escape never matches a route.
 	}
+
+	// Widened from the generated route-id union: the mock tree is a catch-all, so `/mock` itself
+	// is not one of the literal ids.
+	const routeId: string = event.route?.id ?? '';
 	return (
 		path === '/mock' ||
 		path.startsWith('/mock/') ||
-		(event.route?.id ?? '') === '/mock' ||
-		(event.route?.id ?? '').startsWith('/mock/')
+		routeId === '/mock' ||
+		routeId.startsWith('/mock/')
 	);
 }
 

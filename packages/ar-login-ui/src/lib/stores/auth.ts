@@ -4,7 +4,7 @@
  */
 
 import { writable, derived } from 'svelte/store';
-import { browser } from '$app/environment';
+import { browser } from '$app/env';
 import { buildDiagnosticHeaders } from '$lib/api/client';
 import { authrimFetch } from '$lib/authrim/fetch';
 

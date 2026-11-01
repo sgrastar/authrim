@@ -1,7 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('$env/dynamic/public', () => ({ env: {} }));
-vi.mock('$env/dynamic/private', () => ({ env: {} }));
+vi.mock('$app/env/public', () => ({
+	PUBLIC_API_PROXY_BACKEND_URL: '',
+	PUBLIC_API_BASE_URL: '',
+	PUBLIC_AUTHRIM_ISSUER: '',
+	PUBLIC_HUMAN_VERIFICATION_PROVIDER: ''
+}));
+vi.mock('$app/env/private', () => ({
+	EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKENS: undefined,
+	EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKEN: undefined
+}));
 
 function createAuthenticationMethodsResponse(
 	provider: 'turnstile' | 'hcaptcha' | 'recaptcha' = 'turnstile',

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import {
 		adminWebhooksAPI,
 		type Webhook,
@@ -42,7 +42,7 @@
 	let replayError = $state('');
 
 	async function loadWebhook() {
-		const webhookId = $page.params.id;
+		const webhookId = page.params.id;
 		if (!webhookId) {
 			error = $LL.admin_webhooks_deliveries_webhook_id_required();
 			return;
@@ -56,7 +56,7 @@
 	}
 
 	async function loadDeliveries(append = false) {
-		const webhookId = $page.params.id;
+		const webhookId = page.params.id;
 		if (!webhookId) {
 			error = $LL.admin_webhooks_deliveries_webhook_id_required();
 			return;
@@ -117,7 +117,7 @@
 		detailLoading = true;
 		detailError = '';
 
-		const webhookId = $page.params.id;
+		const webhookId = page.params.id;
 		if (!webhookId) {
 			detailLoading = false;
 			detailError = $LL.admin_webhooks_deliveries_webhook_id_required();
@@ -142,7 +142,7 @@
 	}
 
 	async function handleReplay(delivery: WebhookDelivery) {
-		const webhookId = $page.params.id;
+		const webhookId = page.params.id;
 		if (!webhookId) {
 			replayError = $LL.admin_webhooks_deliveries_webhook_id_required();
 			return;
@@ -310,9 +310,10 @@
 	{#if replayError}
 		<div class="alert alert-error alert-inline">
 			<span>{replayError}</span>
-			<button class="btn btn-secondary btn-sm" onclick={() => (replayError = '')}>
-				{$LL.admin_webhooks_dismiss()}
-			</button>
+
+			<button class="btn btn-secondary btn-sm" onclick={() => (replayError = '')}
+				>{$LL.admin_webhooks_dismiss()}</button
+			>
 		</div>
 	{/if}
 
@@ -501,17 +502,14 @@
 				<button
 					class="tab-btn"
 					class:active={detailViewMode === 'pretty'}
-					onclick={() => (detailViewMode = 'pretty')}
+					onclick={() => (detailViewMode = 'pretty')}>{$LL.admin_webhooks_pretty()}</button
 				>
-					{$LL.admin_webhooks_pretty()}
-				</button>
+
 				<button
 					class="tab-btn"
 					class:active={detailViewMode === 'raw'}
-					onclick={() => (detailViewMode = 'raw')}
+					onclick={() => (detailViewMode = 'raw')}>{$LL.admin_webhooks_raw()}</button
 				>
-					{$LL.admin_webhooks_raw()}
-				</button>
 			</div>
 
 			{#if detailLoading}

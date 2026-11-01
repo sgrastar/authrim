@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { browser } from '$app/environment';
+	import { browser } from '$app/env';
 	import { onDestroy, onMount } from 'svelte';
 	import { LL } from '$i18n/i18n-svelte';
 	import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';

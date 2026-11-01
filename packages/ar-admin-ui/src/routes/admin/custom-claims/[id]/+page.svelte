@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import {
 		adminCustomClaimsAPI,
@@ -15,7 +15,7 @@
 	import { Modal } from '$lib/components';
 	import { LL } from '$i18n/i18n-svelte';
 
-	const schemaId = $derived($page.params.id ?? '');
+	const schemaId = $derived(page.params.id ?? '');
 
 	// Data
 	let schema = $state<CustomClaimSchema | null>(null);
@@ -727,6 +727,7 @@
 		<button class="btn btn-secondary" onclick={() => (showRenameDialog = false)}
 			>{$LL.admin_custom_claims_cancel()}</button
 		>
+
 		<button class="btn btn-warning" onclick={confirmRename} disabled={renaming || !renameNewKey}>
 			{renaming ? $LL.admin_custom_claims_renaming() : $LL.admin_custom_claims_rename_field_key()}
 		</button>
@@ -784,6 +785,7 @@
 		<button class="btn btn-secondary" onclick={() => (showDeleteDialog = false)}
 			>{$LL.admin_custom_claims_cancel()}</button
 		>
+
 		<button class="btn btn-danger" onclick={confirmDelete} disabled={deleting}>
 			{deleting ? $LL.admin_custom_claims_deleting() : $LL.admin_custom_claims_delete_schema_data()}
 		</button>

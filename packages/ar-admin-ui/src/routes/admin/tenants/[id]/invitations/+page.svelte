@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { API_BASE_URL, adminFetch } from '$lib/api/admin-request';
 	import { Modal } from '$lib/components';
 	import {
@@ -41,7 +41,7 @@
 	// State
 	// ==========================================================================
 
-	const tenantId = $derived($page.params.id);
+	const tenantId = $derived(page.params.id);
 
 	let invitations = $state<TenantInvitation[]>([]);
 	let loading = $state(true);
@@ -413,6 +413,7 @@
 				resetCreateForm();
 			}}>{$LL.admin_tenants_cancel()}</button
 		>
+
 		<button class="btn btn-primary" onclick={handleCreate} disabled={creating}>
 			{creating ? $LL.admin_tenants_creating() : $LL.admin_tenants_create_invitation()}
 		</button>
@@ -445,9 +446,10 @@
 					value={createResult.invite_url}
 					class="form-input url-input"
 				/>
-				<button class="btn btn-secondary" onclick={() => copyToClipboard(createResult!.invite_url)}>
-					{copySuccess ? $LL.admin_tenants_copied() : $LL.admin_tenants_copy()}
-				</button>
+
+				<button class="btn btn-secondary" onclick={() => copyToClipboard(createResult!.invite_url)}
+					>{copySuccess ? $LL.admin_tenants_copied() : $LL.admin_tenants_copy()}</button
+				>
 			</div>
 		</div>
 

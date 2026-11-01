@@ -12,7 +12,7 @@ const api = vi.hoisted(() => ({
 	listActions: vi.fn(),
 	listResourceTypes: vi.fn()
 }));
-vi.mock('$app/environment', () => ({ browser: true }));
+vi.mock('$app/env', () => ({ browser: true }));
 vi.mock('$i18n/i18n-svelte', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$i18n/i18n-svelte')>()),
 	LL: readable(new Proxy({}, { get: (_target, key) => () => String(key) }))

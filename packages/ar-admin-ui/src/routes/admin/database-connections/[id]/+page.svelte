@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import {
 		adminDatabaseConnectionsAPI,
@@ -11,7 +11,7 @@
 	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
 	import { LL } from '$i18n/i18n-svelte';
 
-	const connectionId = $derived($page.params.id ?? 'new');
+	const connectionId = $derived(page.params.id ?? 'new');
 	const isNew = $derived(connectionId === 'new');
 
 	let connection = $state<DatabaseConnection | null>(null);
@@ -158,7 +158,7 @@
 				status = created.status;
 				configJson = JSON.stringify(created.config ?? {}, null, 2);
 				await goto(`/admin/database-connections/${encodeURIComponent(created.id)}`, {
-					replaceState: true
+					replace: true
 				});
 				return;
 			}
@@ -285,9 +285,11 @@
 {/snippet}
 
 <AdminPageShell>
-	<button class="link-button" onclick={() => goto('/admin/database-connections')}
-		><i class="i-ph-arrow-left"></i>{$LL.admin_database_connections_back_connections()}</button
-	>
+	<button class="link-button" onclick={() => goto('/admin/database-connections')}>
+		<i class="i-ph-arrow-left"></i>
+		{$LL.admin_database_connections_back_connections()}
+	</button>
+
 	<AdminPageHeader
 		title={isNew
 			? $LL.admin_database_connections_create_title()
@@ -298,8 +300,13 @@
 		actions={pageActions}
 	/>
 
-	{#if error}<div class="alert alert-error">{error}</div>{/if}
-	{#if success}<div class="alert alert-success">{success}</div>{/if}
+	{#if error}
+		<div class="alert alert-error">{error}</div>
+	{/if}
+
+	{#if success}
+		<div class="alert alert-success">{success}</div>
+	{/if}
 
 	{#if loading}
 		<AdminSection><p class="text-muted">{$LL.admin_database_connections_loading()}</p></AdminSection

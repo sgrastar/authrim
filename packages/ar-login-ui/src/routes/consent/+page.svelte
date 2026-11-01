@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import AuthPageShell from '$lib/components/AuthPageShell.svelte';
 	import ConsentView, { type ConsentScreenData } from '$lib/views/ConsentView.svelte';
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
@@ -26,7 +26,7 @@
 	let selectedOrgId = $state<string | null>(null);
 	let consentItemDecisions = $state<Record<string, 'granted' | 'denied'>>({});
 
-	const challengeId = $derived($page.url.searchParams.get('challenge_id'));
+	const challengeId = $derived(page.url.searchParams.get('challenge_id'));
 
 	// ---------------------------------------------------------------------------
 	// Lifecycle

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { LL } from '$i18n/i18n-svelte';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
@@ -54,7 +54,7 @@
 	let isValid = $derived(selectedPermissions.size > 0);
 
 	async function loadRole() {
-		const roleId = $page.params.id;
+		const roleId = page.params.id;
 		if (!roleId) {
 			loadError = $LL.admin_roles_role_id_required();
 			loading = false;

@@ -69,7 +69,7 @@
 	} from '$lib/authrim/storage-keys';
 	import { resolveTurnstileLanguage as resolveConfiguredTurnstileLanguage } from '$lib/turnstile-options';
 	import { onMount, untrack } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import type { PageData } from './$types';
 
 	type SignupPageData = PageData & {
@@ -82,7 +82,7 @@
 
 	const loginUIStores = useLoginUIStores();
 	const { brandingStore, loginUIPageStore } = loginUIStores;
-	const loginHref = $derived(buildAuthSwitchHref('/login', $page.url.searchParams));
+	const loginHref = $derived(buildAuthSwitchHref('/login', page.url.searchParams));
 	const localizedRegistrationTitle = $derived(
 		loginUIPageStore.getLocalizedText(getLocale(), 'registrationTitle') ?? $LL.register_title()
 	);
@@ -658,6 +658,7 @@
 
 	function getRuntimeCurrentStep(flow: FlowRuntimeStartResponse | null): FlowRuntimeStep | null {
 		if (!flow?.interaction.current_step_id) return null;
+
 		return (
 			flow.contract.ui.steps.find((step) => step.id === flow.interaction.current_step_id) ?? null
 		);
@@ -953,6 +954,7 @@
 
 	function getRuntimeScreen(step: FlowRuntimeStep | null): Record<string, unknown> | null {
 		const screen = step?.config?.screen ?? step?.content?.screen;
+
 		return screen && typeof screen === 'object' && !Array.isArray(screen)
 			? (screen as Record<string, unknown>)
 			: null;
@@ -960,6 +962,7 @@
 
 	function isRuntimeScreenWide(screen: Record<string, unknown> | null): boolean {
 		const settings = screen?.settings;
+
 		return (
 			settings !== null &&
 			typeof settings === 'object' &&
@@ -983,6 +986,7 @@
 		const consent = step?.content?.destination_field_consent;
 		if (!consent || typeof consent !== 'object' || Array.isArray(consent)) return null;
 		const fields = (consent as FlowRuntimeDestinationFieldConsentContent).fields;
+
 		return Array.isArray(fields) ? (consent as FlowRuntimeDestinationFieldConsentContent) : null;
 	}
 
@@ -1024,6 +1028,7 @@
 			const record = field as Record<string, unknown>;
 			const blockType = typeof record.block_type === 'string' ? record.block_type : '';
 			const fieldName = typeof record.field === 'string' ? record.field.toLowerCase() : '';
+
 			return (
 				blockType === 'security_verification' ||
 				fieldName === 'security_verification' ||

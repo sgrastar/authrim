@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 	import {
 		adminClientsAPI,
@@ -40,7 +40,7 @@
 	import AdminTabs, { type AdminTabItem } from '$lib/components/admin/AdminTabs.svelte';
 	import { onMount } from 'svelte';
 
-	const clientId = $derived($page.params.id ?? '');
+	const clientId = $derived(page.params.id ?? '');
 
 	let client = $state<Client | null>(null);
 	let usage = $state<ClientUsage | null>(null);
@@ -485,6 +485,7 @@
 
 	function clientFormEquals(a: UpdateClientInput | null, b: UpdateClientInput | null): boolean {
 		if (!a || !b) return false;
+
 		return (
 			(a.client_name ?? '') === (b.client_name ?? '') &&
 			(a.description ?? '') === (b.description ?? '') &&
@@ -719,6 +720,7 @@
 			!initialDownstreamGrantEditForm
 		)
 			return false;
+
 		return (
 			!clientFormEquals(editForm, initialEditForm) ||
 			claimsParameterPolicyText !== initialClaimsParameterPolicyText ||
@@ -1537,9 +1539,10 @@
 								readonly
 								class="input-readonly"
 							/>
-							<button class="btn btn-warning btn-sm" onclick={() => (showRegenerateModal = true)}>
-								{$LL.admin_client_detail_regenerateSecret()}
-							</button>
+
+							<button class="btn btn-warning btn-sm" onclick={() => (showRegenerateModal = true)}
+								>{$LL.admin_client_detail_regenerateSecret()}</button
+							>
 						</div>
 						<p class="form-hint">{$LL.admin_client_detail_client_secret_hint()}</p>
 					</div>
@@ -1948,9 +1951,10 @@
 								{$LL.admin_client_detail_delete_desc()}
 							</p>
 						</div>
-						<button class="btn btn-danger" onclick={() => (showDeleteModal = true)}>
-							{$LL.admin_client_detail_deleteClient()}
-						</button>
+
+						<button class="btn btn-danger" onclick={() => (showDeleteModal = true)}
+							>{$LL.admin_client_detail_deleteClient()}</button
+						>
 					</div>
 				</section>
 			{:else if activeTab === 'tokens'}
@@ -2452,7 +2456,8 @@
 									class="form-input textarea-input"
 									rows="5"
 									bind:value={downstreamGrantEditForm.allowed_subject_token_clients}
-									placeholder="svc-client-a&#10;svc-client-b"
+									placeholder="svc-client-a
+svc-client-b"
 								></textarea>
 								<p class="form-hint">
 									{$LL.admin_client_detail_subject_token_clients_hint()}
@@ -2478,7 +2483,8 @@
 									class="form-input textarea-input"
 									rows="5"
 									bind:value={downstreamGrantEditForm.allowed_token_exchange_resources}
-									placeholder="svc://op-userinfo/customer-profile&#10;svc://op-userinfo/customer-export"
+									placeholder="svc://op-userinfo/customer-profile
+svc://op-userinfo/customer-export"
 								></textarea>
 								<p class="form-hint">
 									{$LL.admin_client_detail_token_exchange_resources_hint()}
@@ -2792,7 +2798,8 @@
 									class="form-input textarea-input"
 									rows="6"
 									bind:value={claimsParameterPolicyText}
-									placeholder="email: claims_allowed&#10;birthdate: claims_allowed"
+									placeholder="email: claims_allowed
+birthdate: claims_allowed"
 								></textarea>
 								<p class="form-hint">
 									{$LL.admin_clients_new_claims_policy_hint()}
@@ -3749,9 +3756,10 @@
 				{$LL.admin_client_detail_done()}
 			</button>
 		{:else}
-			<button class="btn btn-secondary" onclick={() => (showRegenerateModal = false)}>
-				{$LL.admin_client_detail_cancel()}
-			</button>
+			<button class="btn btn-secondary" onclick={() => (showRegenerateModal = false)}
+				>{$LL.admin_client_detail_cancel()}</button
+			>
+
 			<button class="btn btn-warning" onclick={handleRegenerateSecret} disabled={regenerating}>
 				{regenerating
 					? $LL.admin_client_detail_regenerating()

@@ -5,7 +5,7 @@
  * Tracks current scope level (platform/tenant/client) and selected entity IDs.
  */
 
-import { browser } from '$app/environment';
+import { browser } from '$app/env';
 import { adminFetch } from '$lib/api/admin-request';
 import { adminAuth } from './admin-auth.svelte';
 
