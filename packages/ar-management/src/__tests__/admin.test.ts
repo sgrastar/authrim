@@ -2269,8 +2269,60 @@ describe('Admin API Handlers', () => {
       expect(findExactCrossShardAccounts).toHaveBeenCalledWith({
         tenantId: 'default',
         identifier: 'metadata-route@example.com',
+        purpose: 'admin_view',
       });
       expect(listCrossShardAccounts).not.toHaveBeenCalled();
+    });
+
+    it('finds a suspended user by email and keeps it when filtering for stored PII', async () => {
+      const userId = 'user-suspended-email';
+      const createdAt = Date.UTC(2026, 6, 10, 10, 40, 0);
+      canonicalRuntimeUsers.set(userId, {
+        id: userId,
+        tenant_id: 'default',
+        lifecycle_state: 'suspended',
+        active: 0,
+        email: 'suspended-email@example.com',
+        name: 'Suspended User',
+        email_verified: 1,
+        phone_number_verified: 0,
+        created_at: new Date(createdAt).toISOString(),
+        updated_at: new Date(createdAt).toISOString(),
+      });
+      findExactCrossShardAccounts.mockResolvedValue([
+        {
+          id: `account:${userId}`,
+          legacyUserId: userId,
+          tenantId: 'default',
+          accountType: 'user',
+          lifecycleState: 'suspended',
+          displayLabel: 'Suspended User',
+          createdAt,
+          coreBindingRef: 'DB',
+          piiBindingRef: 'DB_PII',
+        },
+      ]);
+      const core = createMockDB({ allResults: [] });
+      const pii = createMockDB({ allResults: [] });
+      const tenantMetadataContext = {
+        tenantId: 'default',
+        coreDb: core,
+        route: { allocationScope: 'shared_pool' as const, source: core },
+      };
+
+      const active = await adminUsersListHandler(
+        createMockContext({
+          query: { search: 'suspended-email@example.com', pii_status: 'active' },
+          db: core,
+          dbPII: pii,
+          tenantMetadataContext,
+        }) as Parameters<typeof adminUsersListHandler>[0]
+      );
+      // The account is inactive, but its PII is still stored: the filter is about the PII.
+      const body: unknown = await active.json();
+      expect(body).toMatchObject({
+        users: [expect.objectContaining({ id: userId, pii_status: 'active' })],
+      });
     });
 
     it('returns retryable 503 while a scale-out route is waiting for registry publication', async () => {

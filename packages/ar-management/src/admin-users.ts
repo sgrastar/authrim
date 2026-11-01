@@ -474,9 +474,11 @@ async function crossShardAdminUsersList(
         items: await new CrossShardAccountExactSearchService(c.env).find({
           tenantId: input.tenantId,
           identifier: search,
-          // A user id is found whatever its state, so a suspended or locked user can be restored.
-          // Email search goes through the active-only Lookup index.
-          ...(search.includes('@') ? {} : { purpose: 'admin_view' as const }),
+          // A user is found whatever its state, so a suspended or locked user can be restored. An
+          // email goes through the Lookup index like any other search: restricting an account
+          // leaves its Lookup route in place, and the destination check below the route is what
+          // decides which states count, so `admin_view` is all it takes.
+          purpose: 'admin_view' as const,
         }),
         nextCursor: null,
       }
@@ -496,8 +498,7 @@ async function crossShardAdminUsersList(
         ({ user }) =>
           (input.verified === undefined ||
             Boolean(user.email_verified) === (input.verified === 'true')) &&
-          (input.piiStatus === undefined ||
-            input.piiStatus === (user.is_active ? 'active' : 'deleted')) &&
+          (input.piiStatus === undefined || input.piiStatus === user.pii_status) &&
           (input.lifecycleState === undefined || user.lifecycle_state === input.lifecycleState)
       )
     : projected;
