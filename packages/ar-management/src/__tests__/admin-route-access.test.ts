@@ -62,6 +62,10 @@ function createHarness(permissions: string[], roles: string[] = []) {
   app.patch('/api/admin/tenants/tenant-a/settings/session', (c) => c.json({ ok: true }));
   app.patch('/api/admin/tenants/tenant-a/settings/login-ui', (c) => c.json({ ok: true }));
   app.post('/api/admin/tenants/tenant-a/clone', (c) => c.json({ ok: true }));
+  app.get('/api/admin/tenants/tenant-a/invitations', (c) => c.json({ ok: true }));
+  app.post('/api/admin/tenants/tenant-a/invitations', (c) => c.json({ ok: true }));
+  app.delete('/api/admin/tenants/tenant-a/invitations/invitation-1', (c) => c.json({ ok: true }));
+  app.get('/api/admin/tenants/tenant-a/runtime-profiles', (c) => c.json({ ok: true }));
   app.post('/api/admin/clients', (c) => c.json({ ok: true }));
   app.put('/api/admin/clients/client-1', (c) => c.json({ ok: true }));
   app.post('/api/admin/clients/client-1/regenerate-secret', (c) => c.json({ ok: true }));
@@ -193,6 +197,35 @@ describe('declared admin route access', () => {
     await expect(
       writer.request('/api/admin/admin-invitations/invitation-1', { method: 'DELETE' })
     ).resolves.toMatchObject({ status: 200 });
+  });
+
+  it('lets a tenant Admin reach tenant invitations and runtime profiles without platform roles', async () => {
+    const reader = createHarness([ADMIN_PERMISSIONS.USERS_READ, ADMIN_PERMISSIONS.SETTINGS_READ]);
+    const partialWriter = createHarness([ADMIN_PERMISSIONS.USERS_WRITE]);
+    const writer = createHarness([ADMIN_PERMISSIONS.USERS_WRITE, ADMIN_PERMISSIONS.ROLES_WRITE]);
+    const invitations = '/api/admin/tenants/tenant-a/invitations';
+
+    await expect(reader.request(invitations)).resolves.toMatchObject({ status: 200 });
+    // An invitation can carry a role, so changing one needs role-assignment authority too.
+    await expect(reader.request(invitations, { method: 'POST' })).resolves.toMatchObject({
+      status: 403,
+    });
+    await expect(partialWriter.request(invitations, { method: 'POST' })).resolves.toMatchObject({
+      status: 403,
+    });
+    await expect(writer.request(invitations, { method: 'POST' })).resolves.toMatchObject({
+      status: 200,
+    });
+    await expect(
+      partialWriter.request(`${invitations}/invitation-1`, { method: 'DELETE' })
+    ).resolves.toMatchObject({ status: 403 });
+    await expect(
+      writer.request(`${invitations}/invitation-1`, { method: 'DELETE' })
+    ).resolves.toMatchObject({ status: 200 });
+
+    const profiles = '/api/admin/tenants/tenant-a/runtime-profiles';
+    await expect(reader.request(profiles)).resolves.toMatchObject({ status: 200 });
+    await expect(writer.request(profiles)).resolves.toMatchObject({ status: 403 });
   });
 
   it('enforces declared read/write/delete permissions before the handler runs', async () => {

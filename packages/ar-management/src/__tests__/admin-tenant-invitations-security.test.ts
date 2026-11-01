@@ -51,7 +51,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 });
 
 vi.mock('../single-tenant-guard', () => ({ ensureSupportedTenantId: mocks.ensureTenant }));
-vi.mock('../admin-tenant-access', () => ({ requireTenantResourceAccess: mocks.requireAccess }));
+vi.mock('../admin-tenant-access', () => ({
+  requireTenantResourceAccess: mocks.requireAccess,
+  getAdminAuth: (c: { get: (key: string) => unknown }) => c.get('adminAuth'),
+}));
 vi.mock('../request-issuer', () => ({
   getCanonicalTenantBaseUrl: (_env: unknown, tenantId: string) =>
     `https://${tenantId}.example.test`,
@@ -75,13 +78,13 @@ import {
   listTenantInvitationsHandler,
 } from '../admin-tenant-invitations';
 
-function app() {
+function app(hierarchyLevel = 80) {
   const instance = new Hono<{
     Bindings: { EMAIL_FROM?: string };
-    Variables: { adminAuth: { adminId: string } };
+    Variables: { adminAuth: { adminId: string; hierarchyLevel: number } };
   }>();
   instance.use('*', async (c, next) => {
-    c.set('adminAuth', { adminId: 'admin-actor' });
+    c.set('adminAuth', { adminId: 'admin-actor', hierarchyLevel });
     await next();
   });
   instance.post('/tenants/:id/invitations', createTenantInvitationHandler as never);
@@ -120,7 +123,7 @@ describe('tenant invitation security behavior', () => {
     mocks.query.mockResolvedValue([]);
     mocks.queryOne.mockImplementation(async (sql: string) => {
       if (sql.includes('FROM tenants')) return { id: 'tenant-a', name: 'Tenant A' };
-      if (sql.includes('FROM roles')) return { id: 'role-a' };
+      if (sql.includes('FROM roles')) return { id: 'role-a', hierarchy_level: 10 };
       if (sql.includes('FROM organizations')) return { id: 'org-a' };
       if (sql.includes('COUNT(*)')) return { count: 0 };
       if (sql.includes('FROM tenant_invitations')) return { id: 'invitation-a' };
@@ -252,6 +255,25 @@ describe('tenant invitation security behavior', () => {
       expect.any(String),
       expect.objectContaining({ tenant_id: 'tenant-a', role_id: 'role-a', org_id: 'org-a' })
     );
+  });
+
+  it.each([
+    ['above', 90],
+    ['at', 80],
+  ])('refuses a role %s the inviter level, as role assignment does', async (_name, level) => {
+    mocks.queryOne.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM tenants')) return { id: 'tenant-a', name: 'Tenant A' };
+      if (sql.includes('FROM roles')) return { id: 'role-a', hierarchy_level: level };
+      return null;
+    });
+    const response = await app(80).request('/tenants/tenant-a/invitations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role_id: 'role-a', max_uses: 1, expires_in_hours: 24 }),
+    });
+
+    expect(response.status).toBe(403);
+    expect(mocks.execute).not.toHaveBeenCalled();
   });
 
   it('escapes tenant-controlled HTML and sends an email without leaking the token to audit metadata', async () => {

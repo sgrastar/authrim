@@ -15,6 +15,7 @@ import {
   createRuntimeProfileRegistryFromEnv,
   createSettingsManager,
   getLogger,
+  hasSystemAdminAuthority,
   INFRASTRUCTURE_CATEGORY_META,
   loadEnvironmentProfileDefaultsFromEnv,
   loadTenantProfileOverridesFromEnv,
@@ -30,7 +31,7 @@ import {
   type RuntimeProfileReferenceCatalog,
 } from './runtime-profile-reference-status';
 import { ensureSupportedTenantId } from './single-tenant-guard';
-import { requireTenantResourceAccess } from './admin-tenant-access';
+import { getAdminAuth, requireTenantResourceAccess } from './admin-tenant-access';
 import { writeAdminAuditLog } from './admin-shared';
 
 type AdminRuntimeProfileKind = Extract<RuntimeProfileKind, 'audit' | 'residency'>;
@@ -648,6 +649,46 @@ export async function adminRuntimeProfileDefaultsUpdateHandler(c: Context<{ Bind
   }
 }
 
+function tenantViewOfAuditProfile(profile: AuditProfile) {
+  return {
+    id: profile.id,
+    kind: profile.kind,
+    label: profile.label,
+    description: profile.description,
+    builtin: profile.builtin,
+    version: profile.version,
+    // Each field is named: stored objects may carry attributes this view was not written for.
+    retention: profile.retention && {
+      eventLogRetentionDays: profile.retention.eventLogRetentionDays,
+      piiLogRetentionDays: profile.retention.piiLogRetentionDays,
+      archiveBeforeDelete: profile.retention.archiveBeforeDelete,
+      minimumRetentionDays: profile.retention.minimumRetentionDays,
+      primaryDays: profile.retention.primaryDays,
+      archiveDays: profile.retention.archiveDays,
+    },
+    archiveFailureMode: profile.archiveFailureMode,
+    sinkFailureMode: profile.sinkFailureMode,
+    backpressure: profile.backpressure && {
+      mode: profile.backpressure.mode,
+      allowTenantOverride: profile.backpressure.allowTenantOverride,
+    },
+  };
+}
+
+function tenantViewOfResidencyProfile(profile: ResidencyProfile) {
+  return {
+    id: profile.id,
+    kind: profile.kind,
+    label: profile.label,
+    description: profile.description,
+    builtin: profile.builtin,
+    version: profile.version,
+    locationHint: profile.locationHint,
+    jurisdiction: profile.jurisdiction,
+    allowedRegions: profile.allowedRegions,
+  };
+}
+
 export async function adminTenantRuntimeProfilesHandler(c: Context<{ Bindings: Env }>) {
   const tenantId = c.req.param('id')!;
   const log = getLogger(c).module('ADMIN-RUNTIME-PROFILES');
@@ -686,17 +727,34 @@ export async function adminTenantRuntimeProfilesHandler(c: Context<{ Bindings: E
       throw new Error(`residency_profile_not_found:${residencyProfileId}`);
     }
 
+    const refs = {
+      auditProfileId,
+      residencyProfileId,
+      inherited: {
+        audit: !overrides.auditProfileId,
+        residency: !overrides.residencyProfileId,
+      },
+    };
+    // A system administrator sees the profiles as stored, as before this route was opened to
+    // tenants. Anyone else sees what applies to the tenant (retention, failure handling,
+    // residency) and none of where the platform delivers it: targets, destinations, headers and
+    // metadata can name infrastructure and credentials shared by every tenant on the profile.
+    // That includes a global machine token with only a read permission.
+    const adminAuth = getAdminAuth(c);
+    if (!adminAuth || !hasSystemAdminAuthority(adminAuth)) {
+      return c.json({
+        tenant_id: tenantId,
+        refs,
+        effective: {
+          audit: tenantViewOfAuditProfile(auditProfile),
+          residency: tenantViewOfResidencyProfile(residencyProfile),
+        },
+      });
+    }
     return c.json({
       tenant_id: tenantId,
       registry_backend: getRegistryBackend(c.env),
-      refs: {
-        auditProfileId,
-        residencyProfileId,
-        inherited: {
-          audit: !overrides.auditProfileId,
-          residency: !overrides.residencyProfileId,
-        },
-      },
+      refs,
       effective: {
         audit: auditProfile,
         residency: residencyProfile,

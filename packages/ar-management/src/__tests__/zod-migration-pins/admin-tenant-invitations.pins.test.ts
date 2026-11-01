@@ -34,6 +34,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 vi.mock('../../single-tenant-guard', () => ({ ensureSupportedTenantId: vi.fn(async () => null) }));
 vi.mock('../../admin-tenant-access', () => ({
   requireTenantResourceAccess: vi.fn(async () => null),
+  getAdminAuth: () => ({ hierarchyLevel: 80 }),
 }));
 vi.mock('../../request-issuer', () => ({
   getCanonicalTenantBaseUrl: (_env: unknown, tenantId: string) =>
@@ -89,7 +90,7 @@ describe('zod pins: CreateInvitationSchema (flatten body)', () => {
     mocks.execute.mockResolvedValue({ rowsAffected: 1 });
     mocks.queryOne.mockImplementation(async (sql: string) => {
       if (sql.includes('FROM tenants')) return { id: 'tenant-a', name: 'Tenant A' };
-      if (sql.includes('FROM roles')) return { id: 'role-a' };
+      if (sql.includes('FROM roles')) return { id: 'role-a', hierarchy_level: 10 };
       if (sql.includes('FROM organizations')) return { id: 'org-a' };
       return null;
     });

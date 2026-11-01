@@ -23,7 +23,8 @@ import {
 import { z } from './zod';
 import { ensureSupportedTenantId } from './single-tenant-guard';
 import { getCanonicalTenantBaseUrl } from './request-issuer';
-import { requireTenantResourceAccess } from './admin-tenant-access';
+import { getAdminAuth, requireTenantResourceAccess } from './admin-tenant-access';
+import { canManageRoleHierarchy } from './admin-rbac';
 import {
   disableTenantDiscoveryAliasDirectory,
   ensureActiveTenantDiscoveryAliasDirectory,
@@ -147,12 +148,17 @@ export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }
     }
 
     if (role_id) {
-      const role = await adapter.queryOne<{ id: string }>(
-        'SELECT id FROM roles WHERE id = ? AND tenant_id = ? AND is_assignable = 1',
+      const role = await adapter.queryOne<{ id: string; hierarchy_level: number | null }>(
+        'SELECT id, hierarchy_level FROM roles WHERE id = ? AND tenant_id = ? AND is_assignable = 1',
         [role_id, tenantId]
       );
       if (!role) {
         return c.json({ error: 'invalid_request', message: 'role_id is not assignable' }, 400);
+      }
+      // Redeeming the invitation assigns the role, so the inviter needs the same standing as when
+      // assigning it to a user: only roles below their own level.
+      if (!canManageRoleHierarchy(getAdminAuth(c) ?? null, role.hierarchy_level)) {
+        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
       }
     }
 
