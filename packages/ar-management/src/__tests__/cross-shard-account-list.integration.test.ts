@@ -780,6 +780,29 @@ describe('CrossShardAccountListService', () => {
         })
       ).rejects.toThrow('lookup_destination_revalidation_failed');
     }
+    // The administrator view resolves the PII owner the same way for an email as for a user id:
+    // the row only has to exist, whatever state it is in.
+    await shard
+      .prepare(
+        `UPDATE identity_sensitive_values SET lifecycle_state = 'deleted'
+          WHERE tenant_id = 'tenant-a' AND owner_id = 'user-account-5'`
+      )
+      .bind()
+      .all();
+    await expect(
+      exactSearch.find({
+        tenantId: 'tenant-a',
+        identifier: 'user@example.com',
+        purpose: 'admin_view',
+      })
+    ).resolves.toEqual([expect.objectContaining({ id: 'account-5' })]);
+    await shard
+      .prepare(
+        `UPDATE identity_sensitive_values SET lifecycle_state = 'active'
+          WHERE tenant_id = 'tenant-a' AND owner_id = 'user-account-5'`
+      )
+      .bind()
+      .all();
     await shard
       .prepare(`UPDATE identity_accounts SET lifecycle_state = 'active' WHERE id = 'account-5'`)
       .bind()
@@ -882,6 +905,14 @@ describe('CrossShardAccountListService', () => {
         identifier: 'user@example.com',
       })
     ).rejects.toThrow();
+    // An account being deleted is not visible to the administrator view: not found, not an error.
+    await expect(
+      exactSearch.find({
+        tenantId: 'tenant-a',
+        identifier: 'user@example.com',
+        purpose: 'admin_view',
+      })
+    ).resolves.toEqual([]);
     await expect(
       exactSearch.find({
         tenantId: 'tenant-a',
