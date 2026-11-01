@@ -46,7 +46,7 @@ export default defineConfig({
       '@authrim/ar-lib-core': path.resolve(__dirname, 'packages/ar-lib-core/src'),
       'cloudflare:workers': path.resolve(__dirname, 'test/mocks/cloudflare-workers.ts'),
       $lib: path.resolve(__dirname, 'packages/ar-login-ui/src/lib'),
-      '$env/dynamic/public': path.resolve(__dirname, 'test/mocks/svelte-public-env.ts'),
+      '$app/env/public': path.resolve(__dirname, 'test/mocks/svelte-public-env.ts'),
     },
   },
 });

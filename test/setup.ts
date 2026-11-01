@@ -18,6 +18,8 @@ if (!(globalThis as any).crypto) {
 
 // Mock cloudflare:workers module (not available in Node.js test environment)
 vi.mock('cloudflare:workers', () => ({
+  // The SvelteKit 3 UIs read Worker bindings from this module-level `env` (no `event.platform`).
+  env: {},
   DurableObject: class DurableObject<Env = unknown> {
     ctx: DurableObjectState;
     env: Env;

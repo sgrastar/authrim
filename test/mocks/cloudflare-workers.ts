@@ -8,6 +8,12 @@
  */
 
 /**
+ * Module-level Worker bindings. The SvelteKit 3 UIs read them from here because the
+ * Cloudflare adapter no longer passes `event.platform`.
+ */
+export const env: Record<string, unknown> = {};
+
+/**
  * Mock DurableObject base class
  * Provides minimal implementation for testing purposes
  */
