@@ -9,6 +9,7 @@ const {
   mockParseAllowedOrigins,
   mockIsAllowedOrigin,
   mockPublishEvent,
+  mockScheduleAdminAuthenticationAudit,
   mockGetAdminCookieSameSite,
   mockGetLogger,
   mockLogger,
@@ -48,6 +49,7 @@ const {
     mockParseAllowedOrigins: vi.fn().mockReturnValue(['https://admin.example.com']),
     mockIsAllowedOrigin: vi.fn().mockReturnValue(true),
     mockPublishEvent: vi.fn().mockResolvedValue(undefined),
+    mockScheduleAdminAuthenticationAudit: vi.fn(),
     mockGetAdminCookieSameSite: vi.fn().mockReturnValue('Lax'),
     mockGetLogger: vi.fn().mockReturnValue(logger),
     mockLogger: logger,
@@ -75,6 +77,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     requireDedicatedAdminDatabaseAdapter: mockRequireDedicatedAdminDatabaseAdapter,
     AdminSessionRepository: MockAdminSessionRepository,
     publishEvent: mockPublishEvent,
+    scheduleAdminAuthenticationAudit: mockScheduleAdminAuthenticationAudit,
     getAdminCookieSameSite: mockGetAdminCookieSameSite,
   };
 });
@@ -422,5 +425,28 @@ describe('Admin Session Handlers', () => {
       })
     );
     expect(mockPublishEvent).toHaveBeenCalledTimes(2);
+    expect(mockScheduleAdminAuthenticationAudit).toHaveBeenCalledTimes(1);
+    expect(mockScheduleAdminAuthenticationAudit).toHaveBeenCalledWith(expect.anything(), {
+      tenantId: 'default',
+      action: 'admin.logout',
+      adminUserId: 'admin-user-1',
+      sessionId: 'admin-session-123',
+    });
+  });
+
+  it('does not audit a logout that removed no session', async () => {
+    mockGetCookie.mockReturnValue('admin-session-123');
+    mockAdminSessionRepo.getSessionIncludingExpired.mockResolvedValue({
+      admin_user_id: 'admin-user-1',
+    });
+    mockAdminSessionRepo.deleteSession.mockResolvedValue(false);
+
+    const context = createMockContext({
+      headers: { Origin: 'https://admin.example.com' },
+    }) as Parameters<typeof adminLogoutHandler>[0];
+    const response = await adminLogoutHandler(context);
+
+    expect(response.status).toBe(200);
+    expect(mockScheduleAdminAuthenticationAudit).not.toHaveBeenCalled();
   });
 });

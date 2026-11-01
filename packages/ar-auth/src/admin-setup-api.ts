@@ -24,6 +24,7 @@ import {
   getDefaultTenantId,
   getAdminCookieSameSite,
   requireDedicatedAdminDatabaseAdapter,
+  scheduleAdminAuthenticationAudit,
   timingSafeEqual,
   ADMIN_UI_BFF_MODE_HEADER,
   ADMIN_UI_FORWARDED_ORIGIN_HEADER,
@@ -720,6 +721,13 @@ adminSetupApiApp.post('/api/admin/auth/passkey/verify', async (c) => {
     } catch (error) {
       logger.error('Admin passkey verification failed', { action: 'admin_verify' }, error as Error);
       await c.env.AUTHRIM_CONFIG.delete(`admin_auth:challenge:${challengeId}`);
+      scheduleAdminAuthenticationAudit(c, {
+        tenantId: getDefaultTenantId(c.env),
+        action: 'admin.login_failed',
+        method: 'passkey',
+        adminUserId: adminUser.id,
+        reason: 'passkey_verification_failed',
+      });
       return c.json(
         { error: 'auth_failed', error_description: 'Passkey verification failed' },
         401
@@ -728,6 +736,13 @@ adminSetupApiApp.post('/api/admin/auth/passkey/verify', async (c) => {
 
     if (!verification.verified) {
       await c.env.AUTHRIM_CONFIG.delete(`admin_auth:challenge:${challengeId}`);
+      scheduleAdminAuthenticationAudit(c, {
+        tenantId: getDefaultTenantId(c.env),
+        action: 'admin.login_failed',
+        method: 'passkey',
+        adminUserId: adminUser.id,
+        reason: 'passkey_not_verified',
+      });
       return c.json({ error: 'auth_failed', error_description: 'Passkey not verified' }, 401);
     }
 
@@ -773,6 +788,14 @@ adminSetupApiApp.post('/api/admin/auth/passkey/verify', async (c) => {
       secure: true,
       sameSite: getAdminCookieSameSite(c.env),
       maxAge: sessionTtl.seconds,
+    });
+
+    scheduleAdminAuthenticationAudit(c, {
+      tenantId,
+      action: 'admin.login',
+      method: 'passkey',
+      adminUserId: adminUser.id,
+      sessionId,
     });
 
     logger.info('Admin login successful', {
