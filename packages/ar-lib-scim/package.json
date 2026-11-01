@@ -23,7 +23,7 @@
   },
   "dependencies": {
     "@authrim/ar-lib-core": "workspace:*",
-    "hono": "4.13.2"
+    "hono": "4.13.12"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260903.1",
