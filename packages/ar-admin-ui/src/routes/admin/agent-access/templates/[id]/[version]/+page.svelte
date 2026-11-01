@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import {
 		adminAgentAccessAPI,
@@ -22,8 +22,8 @@
 	let loading = $state(true);
 	let saving = $state(false);
 	let error = $state('');
-	const id = $derived($page.params.id ?? '');
-	const version = $derived(Number($page.params.version));
+	const id = $derived(page.params.id ?? '');
+	const version = $derived(Number(page.params.version));
 	const lines = (value: string) => [
 		...new Set(
 			value
@@ -108,31 +108,42 @@
 						min="1"
 						required
 						bind:value={bulkVersion}
-					/></label
-				><button class="btn btn-primary" disabled={saving}
+					/>
+				</label>
+
+				<button class="btn btn-primary" disabled={saving}
 					>{$LL.admin_agent_access_template_copy()}</button
 				>
-			</form></AdminSection
-		><AdminSection title={$LL.admin_agent_access_template_copies()}
-			><AdminDataTable
-				><thead
-					><tr
-						><th>Tenant</th><th>Object</th><th>Bulk Plan</th><th
-							>{$LL.admin_agent_access_plan_status()}</th
-						></tr
-					></thead
-				><tbody
-					>{#each copies as copyItem (copyItem.id)}<tr
-							><td>{copyItem.targetTenantId}</td><td
-								>{copyItem.targetObjectId} · v{copyItem.targetObjectVersion}</td
-							><td>{copyItem.bulkPlanId} · v{copyItem.bulkPlanVersion}</td><td
-								>{copyItem.targetObjectStatus}</td
-							></tr
-						>{:else}<tr><td colspan="4" class="state">—</td></tr>{/each}</tbody
-				></AdminDataTable
-			></AdminSection
-		>{/if}</AdminPageShell
->
+			</form>
+		</AdminSection>
+
+		<AdminSection title={$LL.admin_agent_access_template_copies()}>
+			<AdminDataTable>
+				<thead>
+					<tr>
+						<th>Tenant</th>
+						<th>Object</th>
+						<th>Bulk Plan</th>
+						<th>{$LL.admin_agent_access_plan_status()}</th>
+					</tr>
+				</thead>
+
+				<tbody>
+					{#each copies as copyItem (copyItem.id)}
+						<tr>
+							<td>{copyItem.targetTenantId}</td>
+							<td>{copyItem.targetObjectId} · v{copyItem.targetObjectVersion}</td>
+							<td>{copyItem.bulkPlanId} · v{copyItem.bulkPlanVersion}</td>
+							<td>{copyItem.targetObjectStatus}</td>
+						</tr>
+					{:else}
+						<tr><td colspan="4" class="state">—</td></tr>
+					{/each}
+				</tbody>
+			</AdminDataTable>
+		</AdminSection>
+	{/if}
+</AdminPageShell>
 
 <style>
 	.state {

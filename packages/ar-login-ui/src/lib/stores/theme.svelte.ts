@@ -16,7 +16,7 @@
  * colour variants any more.
  */
 
-import { browser } from '$app/environment';
+import { browser } from '$app/env';
 import {
 	LOGIN_UI_THEME_HINT_COOKIE,
 	LOGIN_UI_THEME_HINT_MAX_AGE_SECONDS

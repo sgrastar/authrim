@@ -23,7 +23,7 @@
 			const state = await adminSession.check();
 			if (cancelled) return;
 			if (state === 'anonymous') {
-				await goto('/admin/login', { replaceState: true });
+				await goto('/admin/login', { replace: true });
 				return;
 			}
 			if (state === 'authenticated') {

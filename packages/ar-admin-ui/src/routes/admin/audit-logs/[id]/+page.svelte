@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 	import { adminAuditLogsAPI, type AuditLogEntry } from '$lib/api/admin-audit-logs';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
@@ -17,7 +17,7 @@
 	let error = $state('');
 	let loadedTenantId = $state('');
 
-	const entryId = $derived($page.params.id ?? '');
+	const entryId = $derived(page.params.id ?? '');
 
 	async function loadEntry() {
 		if (!entryId) {
@@ -32,8 +32,8 @@
 		try {
 			entry = await adminAuditLogsAPI.get(
 				entryId,
-				$page.url.searchParams.has('event_at')
-					? Number($page.url.searchParams.get('event_at'))
+				page.url.searchParams.has('event_at')
+					? Number(page.url.searchParams.get('event_at'))
 					: undefined
 			);
 		} catch (err) {

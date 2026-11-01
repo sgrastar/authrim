@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import { adminAgentAccessAPI, type AgentScopePolicy } from '$lib/api/admin-agent-access';
 	import {
@@ -14,7 +14,7 @@
 	let error = $state('');
 	onMount(async () => {
 		try {
-			item = await adminAgentAccessAPI.getScopePolicy($page.params.id ?? '');
+			item = await adminAgentAccessAPI.getScopePolicy(page.params.id ?? '');
 		} catch (caught) {
 			error = caught instanceof Error ? caught.message : $LL.admin_agent_access_load_error();
 		} finally {
@@ -37,20 +37,25 @@
 						>v{item.current_version}</strong
 					>
 				</div>
-				<div><span>PII</span><strong>{item.definition.piiMode}</strong></div>
+
 				<div>
-					<span>{$LL.admin_agent_access_scope_policy_per_call()}</span><strong
-						>{item.definition.maxPerCall}</strong
-					>
+					<span>PII</span>
+					<strong>{item.definition.piiMode}</strong>
 				</div>
 				<div>
-					<span>{$LL.admin_agent_access_scope_policy_per_plan()}</span><strong
-						>{item.definition.maxPlanOperations}</strong
-					>
+					<span>{$LL.admin_agent_access_scope_policy_per_call()}</span>
+					<strong>{item.definition.maxPerCall}</strong>
 				</div>
-			</div></AdminSection
-		><AdminSection
-			><dl>
+
+				<div>
+					<span>{$LL.admin_agent_access_scope_policy_per_plan()}</span>
+					<strong>{item.definition.maxPlanOperations}</strong>
+				</div>
+			</div>
+		</AdminSection>
+
+		<AdminSection>
+			<dl>
 				<div>
 					<dt>{$LL.admin_agent_access_scope_policy_tenant()}</dt>
 					<dd>{item.definition.tenantIds.join(', ')}</dd>

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import {
 		adminPluginsAPI,
@@ -155,7 +155,7 @@
 				}
 			}
 
-			const pluginId = $page.url.searchParams.get('plugin');
+			const pluginId = page.url.searchParams.get('plugin');
 			if (pluginId) {
 				const selected = response.plugins.find((plugin) => plugin.id === pluginId);
 				if (selected) {
@@ -290,6 +290,7 @@
 			provisioningTimer = undefined;
 		}
 		const entries = Object.entries(provisioningOperations);
+
 		await Promise.all(
 			entries.map(async ([pluginId, tracked]) => {
 				if (
@@ -1315,9 +1316,10 @@
 									disabled={!isEditMode}
 									onchange={(e) => updateConfigValue(key, (e.target as HTMLInputElement).checked)}
 								/>
-								<span class="plugin-config-checkbox-label">
-									{(editedConfig[key] ?? prop.default) ? 'Enabled' : 'Disabled'}
-								</span>
+
+								<span class="plugin-config-checkbox-label"
+									>{(editedConfig[key] ?? prop.default) ? 'Enabled' : 'Disabled'}</span
+								>
 							</label>
 						{:else if prop.enum}
 							<select

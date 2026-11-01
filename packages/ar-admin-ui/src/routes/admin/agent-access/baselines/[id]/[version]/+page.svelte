@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import {
 		adminAgentAccessAPI,
@@ -26,8 +26,8 @@
 	let exceptionFields = $state('');
 	let exceptionReason = $state('');
 	let exceptionHours = $state(24);
-	const id = $derived($page.params.id ?? '');
-	const version = $derived(Number($page.params.version));
+	const id = $derived(page.params.id ?? '');
+	const version = $derived(Number(page.params.version));
 	const lines = (value: string) => [
 		...new Set(
 			value
@@ -105,23 +105,38 @@
 	><AdminPageHeader
 		title={$LL.admin_agent_access_baseline_detail()}
 		description={$LL.admin_agent_access_baselines_description()}
-	/><AgentAccessNav />{#if loading}<div class="state">
-			{$LL.admin_agent_access_loading()}
-		</div>{:else if error && !item}<div class="alert alert-error">
-			{error}
-		</div>{:else if item}{#if error}<div class="alert alert-error">{error}</div>{/if}<AdminSection
-			><div class="summary">
-				<div><span>{$LL.admin_agent_access_baseline_name()}</span><strong>{item.name}</strong></div>
-				<div><span>{$LL.admin_agent_access_baseline_mode()}</span><strong>{item.mode}</strong></div>
+	/>
+
+	<AgentAccessNav />
+
+	{#if loading}
+		<div class="state">{$LL.admin_agent_access_loading()}</div>
+	{:else if error && !item}
+		<div class="alert alert-error">{error}</div>
+	{:else if item}
+		{#if error}
+			<div class="alert alert-error">{error}</div>
+		{/if}
+
+		<AdminSection>
+			<div class="summary">
 				<div>
-					<span>{$LL.admin_agent_access_baseline_enforcement()}</span><strong
-						>{item.enforcement}</strong
-					>
+					<span>{$LL.admin_agent_access_baseline_name()}</span>
+					<strong>{item.name}</strong>
 				</div>
 				<div>
-					<span>{$LL.admin_agent_access_digest()}</span><strong class="mono"
-						>{item.definitionDigest}</strong
-					>
+					<span>{$LL.admin_agent_access_baseline_mode()}</span>
+					<strong>{item.mode}</strong>
+				</div>
+
+				<div>
+					<span>{$LL.admin_agent_access_baseline_enforcement()}</span>
+					<strong>{item.enforcement}</strong>
+				</div>
+
+				<div>
+					<span>{$LL.admin_agent_access_digest()}</span>
+					<strong class="mono">{item.definitionDigest}</strong>
 				</div>
 			</div>
 			<pre>{JSON.stringify(item.definition, null, 2)}</pre></AdminSection
@@ -182,11 +197,15 @@
 							max="8760"
 							required
 							bind:value={exceptionHours}
-						/></label
-					><button class="btn" disabled={working}>Create exception</button>
-				</form></AdminSection
-			>{/if}{/if}</AdminPageShell
->
+						/>
+					</label>
+
+					<button class="btn" disabled={working}>Create exception</button>
+				</form>
+			</AdminSection>
+		{/if}
+	{/if}
+</AdminPageShell>
 
 <style>
 	.state {

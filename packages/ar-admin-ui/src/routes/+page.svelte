@@ -4,7 +4,7 @@
 
 	onMount(() => {
 		// Redirect to admin dashboard
-		goto('/admin', { replaceState: true });
+		goto('/admin', { replace: true });
 	});
 </script>
 

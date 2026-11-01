@@ -137,7 +137,7 @@
 
 	async function signOut() {
 		await adminSession.signOut();
-		await goto('/admin/login', { replaceState: true });
+		await goto('/admin/login', { replace: true });
 	}
 </script>
 

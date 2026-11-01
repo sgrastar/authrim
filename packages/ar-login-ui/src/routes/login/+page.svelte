@@ -73,7 +73,7 @@
 	import { resolveTurnstileLanguage as resolveConfiguredTurnstileLanguage } from '$lib/turnstile-options';
 	import { onDestroy, onMount } from 'svelte';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import type { PageData } from './$types';
 
 	type LoginPageData = PageData & {
@@ -84,7 +84,7 @@
 	let { data: pageData }: { data: LoginPageData } = $props();
 	const loginUIStores = useLoginUIStores();
 	const { brandingStore, loginUIPageStore } = loginUIStores;
-	const signupHref = $derived(buildAuthSwitchHref('/signup', $page.url.searchParams));
+	const signupHref = $derived(buildAuthSwitchHref('/signup', page.url.searchParams));
 	const localizedLoginTitle = $derived(
 		loginUIPageStore.getLocalizedText(getLocale(), 'loginTitle') ?? $LL.login_title()
 	);
@@ -562,7 +562,7 @@
 		mql.addEventListener('change', handleMqlChange);
 
 		// Check for external IdP error in URL
-		const urlError = $page.url.searchParams.get('error');
+		const urlError = page.url.searchParams.get('error');
 		if (urlError) {
 			const errorInfo = getExternalIdpErrorMessage(urlError);
 			if (errorInfo) {
@@ -580,15 +580,15 @@
 		}
 
 		// Fetch authentication methods + challenge data in parallel
-		const urlChallengeId = $page.url.searchParams.get('challenge_id');
+		const urlChallengeId = page.url.searchParams.get('challenge_id');
 		authorizationChallengeId = urlChallengeId || '';
-		inviteToken = $page.url.searchParams.get('invite_token') || '';
-		samlRequestId = $page.url.searchParams.get('saml_request_id') || '';
-		samlSpEntityId = $page.url.searchParams.get('saml_sp_entity_id') || '';
-		returnTo = $page.url.searchParams.get('return_to') || '';
-		accountReturn = $page.url.searchParams.get('account_return') || '';
-		runtimeInteractionId = $page.url.searchParams.get('runtime_interaction_id') || '';
-		const urlLoginHint = $page.url.searchParams.get('login_hint');
+		inviteToken = page.url.searchParams.get('invite_token') || '';
+		samlRequestId = page.url.searchParams.get('saml_request_id') || '';
+		samlSpEntityId = page.url.searchParams.get('saml_sp_entity_id') || '';
+		returnTo = page.url.searchParams.get('return_to') || '';
+		accountReturn = page.url.searchParams.get('account_return') || '';
+		runtimeInteractionId = page.url.searchParams.get('runtime_interaction_id') || '';
+		const urlLoginHint = page.url.searchParams.get('login_hint');
 		if (urlLoginHint) {
 			email = urlLoginHint;
 			totpIdentifier = urlLoginHint;
@@ -1090,6 +1090,7 @@
 	function runtimeStepHasCodeInputWidget(step: FlowRuntimeStep | null): boolean {
 		const screen = getRuntimeScreen(step);
 		const fields = screen?.fields;
+
 		return (
 			Array.isArray(fields) &&
 			fields.some(
@@ -1317,6 +1318,7 @@
 			if (result.error) throw loginUiDisplayError(getApiErrorMessage(result.error));
 			if (result.data?.success !== true) throw loginUiDisplayError($LL.error_server_error());
 			await auth.refreshFromSession();
+
 			if (
 				!(await continueAfterRuntimeStep(
 					'guest',
@@ -1325,6 +1327,7 @@
 				))
 			)
 				return;
+
 			window.location.href = await buildCompletedAuthRedirect();
 		} catch (err) {
 			error = messageForCaughtError(err, $LL.error_unknown());
@@ -1912,6 +1915,7 @@
 					window.location.href = await buildCompletedAuthRedirect();
 					return;
 				}
+
 				const postAuthRedirect =
 					provider.startMode === 'saml_sp'
 						? accountReturnRedirect || (await buildPostAuthRedirect())
@@ -1985,6 +1989,7 @@
 
 	function getRuntimeScreen(step: FlowRuntimeStep | null): Record<string, unknown> | null {
 		const screen = step?.config?.screen ?? step?.content?.screen;
+
 		return screen && typeof screen === 'object' && !Array.isArray(screen)
 			? (screen as Record<string, unknown>)
 			: null;
@@ -1992,6 +1997,7 @@
 
 	function isRuntimeScreenWide(screen: Record<string, unknown> | null): boolean {
 		const settings = screen?.settings;
+
 		return (
 			settings !== null &&
 			typeof settings === 'object' &&
@@ -2015,6 +2021,7 @@
 		const consent = step?.content?.destination_field_consent;
 		if (!consent || typeof consent !== 'object' || Array.isArray(consent)) return null;
 		const fields = (consent as FlowRuntimeDestinationFieldConsentContent).fields;
+
 		return Array.isArray(fields) ? (consent as FlowRuntimeDestinationFieldConsentContent) : null;
 	}
 

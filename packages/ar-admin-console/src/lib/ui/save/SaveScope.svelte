@@ -71,6 +71,8 @@
 	let leaveTo = $state<URL | null>(null);
 
 	beforeNavigate((navigation) => {
+		if (navigation.shallow && navigation.type === 'goto') return;
+
 		const decision = leaveDecision(navigation, draft.dirty);
 		if (decision === 'allow') return;
 		// Cancelling an unload makes the browser show its own "leave site?" dialog.
@@ -123,4 +125,5 @@
 {#if bar}
 	<SaveBar dirty={draft.dirty} {saving} {invalid} onsave={save} ondiscard={() => draft.discard()} />
 {/if}
+
 <LeaveConfirm open={leaveTo !== null} onleave={leave} onstay={() => (leaveTo = null)} />

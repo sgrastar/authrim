@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import {
 		adminTenantsAPI,
 		type CloneTenantCompletedResponse,
@@ -47,7 +47,9 @@
 	onMount(async () => {
 		try {
 			await tenantStore.reload();
-			const requested = $page.url.searchParams.get('source');
+
+			const requested = page.url.searchParams.get('source');
+
 			sourceTenantId =
 				(requested &&
 				tenantStore.tenants.some(

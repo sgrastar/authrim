@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { SvelteSet } from 'svelte/reactivity';
 	import {
@@ -30,7 +30,7 @@
 		AdminSection
 	} from '$lib/components/admin';
 
-	const roleId = $derived($page.params.id);
+	const roleId = $derived(page.params.id);
 
 	let role: AdminRoleDetail | null = $state(null);
 	let loading = $state(true);
@@ -647,9 +647,10 @@
 	</div>
 
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={closeEditDialog} disabled={saving}>
-			{$LL.admin_admin_rbac_cancel()}
-		</button>
+		<button class="btn btn-secondary" onclick={closeEditDialog} disabled={saving}
+			>{$LL.admin_admin_rbac_cancel()}</button
+		>
+
 		<button class="btn btn-primary" onclick={handleSave} disabled={saving}>
 			{saving ? $LL.admin_admin_rbac_saving() : $LL.admin_admin_rbac_save()}
 		</button>
@@ -798,9 +799,10 @@
 	</div>
 
 	{#snippet footer()}
-		<button class="btn btn-secondary" onclick={closeAssignDialog} disabled={assigning}>
-			{$LL.admin_admin_rbac_cancel()}
-		</button>
+		<button class="btn btn-secondary" onclick={closeAssignDialog} disabled={assigning}
+			>{$LL.admin_admin_rbac_cancel()}</button
+		>
+
 		<button class="btn btn-primary" onclick={handleAssign} disabled={assigning}>
 			{assigning ? $LL.admin_admin_rbac_assigning() : $LL.admin_admin_rbac_assign_role()}
 		</button>

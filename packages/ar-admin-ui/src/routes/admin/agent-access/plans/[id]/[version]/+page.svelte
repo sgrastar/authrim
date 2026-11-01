@@ -1,10 +1,11 @@
 <script lang="ts">
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import {
 		adminAgentAccessAPI,
 		type AgentConfigurationPlanRecord
 	} from '$lib/api/admin-agent-access';
+
 	import {
 		AdminPageHeader,
 		AdminPageShell,
@@ -20,8 +21,8 @@
 	onMount(async () => {
 		try {
 			item = await adminAgentAccessAPI.getConfigurationPlan(
-				$page.params.id ?? '',
-				Number($page.params.version)
+				page.params.id ?? '',
+				Number(page.params.version)
 			);
 		} catch (caught) {
 			error = caught instanceof Error ? caught.message : $LL.admin_agent_access_load_error();
@@ -46,15 +47,23 @@
 	{:else if item}
 		<AdminSection>
 			<div class="summary">
-				<div><span>{$LL.admin_agent_access_plan_status()}</span><strong>{item.status}</strong></div>
-				<div><span>{$LL.admin_agent_access_plan_stage()}</span><strong>{item.stage}</strong></div>
 				<div>
-					<span>{$LL.admin_agent_access_plan_applied_steps()}</span><strong
-						>{item.appliedStepCount}</strong
-					>
+					<span>{$LL.admin_agent_access_plan_status()}</span>
+					<strong>{item.status}</strong>
 				</div>
 				<div>
-					<span>{$LL.admin_agent_access_task_set_version()}</span><strong>v{item.version}</strong>
+					<span>{$LL.admin_agent_access_plan_stage()}</span>
+					<strong>{item.stage}</strong>
+				</div>
+
+				<div>
+					<span>{$LL.admin_agent_access_plan_applied_steps()}</span>
+					<strong>{item.appliedStepCount}</strong>
+				</div>
+
+				<div>
+					<span>{$LL.admin_agent_access_task_set_version()}</span>
+					<strong>v{item.version}</strong>
 				</div>
 			</div>
 		</AdminSection>

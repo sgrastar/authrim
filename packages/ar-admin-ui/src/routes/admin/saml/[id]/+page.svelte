@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { ToggleSwitch } from '$lib/components';
 	import { onMount } from 'svelte';
 	import {
@@ -16,10 +16,12 @@
 		type SAMLProviderConfig,
 		type SAMLTrustCertificatePreview
 	} from '$lib/api/admin-saml';
+
 	import {
 		adminConsentStatementsAPI,
 		type ConsentStatement
 	} from '$lib/api/admin-consent-statements';
+
 	import {
 		adminIdentityMappingAPI,
 		type IdentityMappingFieldMappingSetSummary,
@@ -46,7 +48,7 @@
 	import { buildProviderIdentityMapping } from '$lib/saml/provider-identity-mapping';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 
-	const providerId = $derived($page.params.id);
+	const providerId = $derived(page.params.id);
 	const samlAttributeReleaseConfirmationCategory = 'saml_attribute_release_confirmation';
 	type AttributeReleaseConfirmationMode =
 		| 'disabled'
@@ -865,6 +867,7 @@
 						<label for="nameIdFormat" class="admin-field__label"
 							>{$LL.admin_saml_detail_nameid_format()}</label
 						>
+
 						<select id="nameIdFormat" bind:value={nameIdFormat} class="admin-select">
 							{#each nameIdFormats as format (format.value)}
 								<option value={format.value}>{format.label}</option>
@@ -1141,9 +1144,8 @@
 								/>
 								{$LL.admin_saml_detail_synthetic_email()}
 							</label>
-							<p class="field-hint">
-								{$LL.admin_saml_detail_synthetic_email_hint()}
-							</p>
+
+							<p class="field-hint">{$LL.admin_saml_detail_synthetic_email_hint()}</p>
 						</div>
 
 						<div class="admin-field admin-field--full">
@@ -1210,6 +1212,7 @@
 							<label for="samlProfile" class="admin-field__label"
 								>{$LL.admin_saml_detail_profile()}</label
 							>
+
 							<select id="samlProfile" bind:value={samlProfile} class="admin-select">
 								<option value="baseline">Baseline</option>
 								<option value="strict">Strict</option>

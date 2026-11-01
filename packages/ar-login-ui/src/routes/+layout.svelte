@@ -8,15 +8,14 @@
 		fetchAuthenticationMethods,
 		type AuthenticationMethodsResponse
 	} from '$lib/api/authentication-methods';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { onMount, untrack } from 'svelte';
-	import { get } from 'svelte/store';
 	import type { LayoutData } from './$types';
 	import type { Snippet } from 'svelte';
 	import { isLoginUILocale, toDocumentDirection, toDocumentLanguage } from '$lib/i18n/locales';
 	import { applyAuthenticationMethodsToLoginUI } from '$lib/stores/login-ui-configuration';
 
-	let { children, data } = $props<{ children: Snippet; data: LayoutData }>();
+	let { children, data }: { children: Snippet; data: LayoutData } = $props();
 	const initialPreferredLanguage = untrack(() => data.preferredLanguage);
 	if (initialPreferredLanguage && isLoginUILocale(initialPreferredLanguage)) {
 		setLocale(initialPreferredLanguage);
@@ -61,7 +60,7 @@
 
 	function getEmbeddedAuthenticationMethods(): AuthenticationMethodsResponse | null {
 		const authenticationMethods = (
-			get(page).data as {
+			page.data as {
 				authenticationMethods?: AuthenticationMethodsResponse;
 			}
 		).authenticationMethods;

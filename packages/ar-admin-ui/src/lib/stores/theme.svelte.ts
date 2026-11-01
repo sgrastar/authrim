@@ -8,7 +8,7 @@
  * - SSR-safe initialization
  */
 
-import { browser } from '$app/environment';
+import { browser } from '$app/env';
 
 // Theme types
 export type ThemeMode = 'light' | 'dark';

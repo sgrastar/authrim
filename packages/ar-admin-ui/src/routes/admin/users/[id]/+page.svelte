@@ -2,7 +2,7 @@
 	import AccountRegistrationState from '$lib/components/admin/AccountRegistrationState.svelte';
 	import { onMount } from 'svelte';
 	import { SvelteMap } from 'svelte/reactivity';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 	import {
@@ -19,6 +19,7 @@
 		adminEmailDeliveriesAPI,
 		type EmailDeliveryRecord
 	} from '$lib/api/admin-email-deliveries';
+
 	import {
 		adminRolesAPI,
 		type Role,
@@ -189,7 +190,7 @@
 	let withdrawLoading = $state(false);
 	let loadedTenantId = $state('');
 
-	const userId = $derived($page.params.id ?? '');
+	const userId = $derived(page.params.id ?? '');
 	const canWriteUsers = $derived(adminAuth.hasPermission('admin:users:write'));
 	const canDeleteUsers = $derived(adminAuth.hasPermission('admin:users:delete'));
 	const canManageRoles = $derived(adminAuth.hasPermission('admin:roles:write'));
@@ -723,7 +724,6 @@
 		else if (userAgent.includes('Chrome')) browser = 'Chrome';
 		else if (userAgent.includes('Firefox')) browser = 'Firefox';
 		else if (userAgent.includes('Safari')) browser = 'Safari';
-
 		if (userAgent.includes('iPhone') || userAgent.includes('iPad')) os = 'iOS';
 		else if (userAgent.includes('Windows')) os = 'Windows';
 		else if (userAgent.includes('Mac OS')) os = 'macOS';
@@ -925,6 +925,7 @@
 			await adminUsersAPI.createLegalHold(userId, {
 				reason_code: reasonCode,
 				...(legalHoldCaseReference.trim() ? { case_reference: legalHoldCaseReference.trim() } : {}),
+
 				...(legalHoldExpiresAt ? { expires_at: new Date(legalHoldExpiresAt).toISOString() } : {})
 			});
 			legalHoldReason = '';
@@ -2264,9 +2265,10 @@
 			{#if revokedSessionsCount !== null}
 				<button class="btn btn-primary" onclick={closeConfirmDialog}>{$LL.dialog_close()}</button>
 			{:else}
-				<button class="btn btn-secondary" onclick={closeConfirmDialog} disabled={confirmLoading}>
-					{$LL.dialog_cancel()}
-				</button>
+				<button class="btn btn-secondary" onclick={closeConfirmDialog} disabled={confirmLoading}
+					>{$LL.dialog_cancel()}</button
+				>
+
 				<button
 					class="btn {confirmAction === 'activate'
 						? 'btn-success'
@@ -2300,6 +2302,7 @@
 		<div class="form-group">
 			<label for="role-select" class="form-label">{$LL.admin_user_detail_select_role_label()}</label
 			>
+
 			<select id="role-select" class="form-select" bind:value={selectedRoleId}>
 				<option value="">{$LL.admin_user_detail_select_role_placeholder()}</option>
 				{#each availableRoles as role (role.id)}
@@ -2362,9 +2365,10 @@
 				{$LL.common_next()}
 			</button>
 		{:else}
-			<button class="btn btn-secondary" onclick={goBackToRoleStep} disabled={assignLoading}>
-				{$LL.common_previous()}
-			</button>
+			<button class="btn btn-secondary" onclick={goBackToRoleStep} disabled={assignLoading}
+				>{$LL.common_previous()}</button
+			>
+
 			<button
 				class="btn btn-success"
 				onclick={assignRole}

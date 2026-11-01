@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { adminBrandStore } from './admin-brand.svelte';
 import { themeStore } from './theme.svelte';
 
-vi.mock('$app/environment', () => ({
+vi.mock('$app/env', () => ({
 	browser: true,
 	building: false,
 	dev: true,

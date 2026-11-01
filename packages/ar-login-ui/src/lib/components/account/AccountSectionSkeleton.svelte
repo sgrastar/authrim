@@ -7,12 +7,12 @@
 		rows = 2,
 		showAction = false,
 		showIcon = false
-	} = $props<{
+	}: {
 		variant?: 'profile' | 'list' | 'form-list' | 'activity';
 		rows?: number;
 		showAction?: boolean;
 		showIcon?: boolean;
-	}>();
+	} = $props();
 </script>
 
 <div class="account-section-skeleton" data-variant={variant} role="status">

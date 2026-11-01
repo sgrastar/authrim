@@ -9,7 +9,7 @@
 	} from '$lib/api/admin-client-guest';
 	import { ToggleSwitch } from '$lib/components';
 	import AdminSection from './AdminSection.svelte';
-	let { clientId } = $props<{ clientId: string }>();
+	let { clientId }: { clientId: string } = $props();
 	let ready = $state(false);
 	let loading = $state(true);
 	let saving = $state(false);

@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import { render, waitFor } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
-import { readable } from 'svelte/store';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -14,8 +13,8 @@ const mocks = vi.hoisted(() => ({
 	evpChallenge: vi.fn()
 }));
 
-vi.mock('$app/stores', () => ({
-	page: readable({ url: new URL('https://tenant.example.test/login'), params: {}, data: {} })
+vi.mock('$app/state', () => ({
+	page: { url: new URL('https://tenant.example.test/login'), params: {}, data: {} }
 }));
 vi.mock('$lib/api/flow-runtime', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('$lib/api/flow-runtime')>();

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import {
 		adminReBACAPI,
@@ -42,7 +42,7 @@
 	let testError = $state('');
 	let loadedTenantId = $state('');
 
-	const definitionId = $derived($page.params.id);
+	const definitionId = $derived(page.params.id);
 	const pageTitle = $derived(formatPageTitle(definition));
 	const pageDescription = $derived(formatPageDescription(definition));
 	const expressionTypeLabel = $derived(formatDefinitionExpressionTypeLabel(definition));
@@ -288,9 +288,10 @@
 	{#if saveError}
 		<div class="alert alert-error">
 			<span>{saveError}</span>
-			<button class="btn btn-secondary btn-sm" onclick={() => (saveError = '')}>
-				{$LL.admin_rebac_definition_detail_dismiss()}
-			</button>
+
+			<button class="btn btn-secondary btn-sm" onclick={() => (saveError = '')}
+				>{$LL.admin_rebac_definition_detail_dismiss()}</button
+			>
 		</div>
 	{/if}
 
@@ -420,9 +421,9 @@
 						</span>
 					</div>
 				{:else if isEditing}
-					<button class="btn btn-secondary btn-sm" onclick={() => (showExpressionEditor = true)}>
-						{$LL.admin_rebac_definition_detail_edit_expression_json()}
-					</button>
+					<button class="btn btn-secondary btn-sm" onclick={() => (showExpressionEditor = true)}
+						>{$LL.admin_rebac_definition_detail_edit_expression_json()}</button
+					>
 				{/if}
 
 				<div class="expression-display">

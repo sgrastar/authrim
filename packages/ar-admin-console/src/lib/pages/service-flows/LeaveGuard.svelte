@@ -20,7 +20,8 @@
 	let leaving = false;
 	const text = $derived(leaveDialog());
 
-	beforeNavigate(({ cancel, from, to, type }) => {
+	beforeNavigate(({ cancel, from, to, type, shallow }) => {
+		if (shallow && type === 'goto') return;
 		if (!dirty || leaving) return;
 		// Staying on this page (the link to where we already are) loses nothing: leave it alone.
 		if (type !== 'leave' && from && to && from.url.pathname === to.url.pathname) return;

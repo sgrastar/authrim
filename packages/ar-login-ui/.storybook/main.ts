@@ -25,7 +25,8 @@ const config: StorybookConfig = {
 		// The Login UI stores write to <html>, cookies and localStorage whenever `browser` is true.
 		// Stories render several Login UIs side by side, so they run as if server-side: the stores
 		// stay reactive, nothing leaks to the document, and each frame carries its own attributes.
-		// SvelteKit resolves `$app/environment` through its own alias, so intercept the resolved path.
+		// SvelteKit resolves `$app/env` through its own alias, so intercept the resolved path too.
+		// Only the module itself: `$app/env/public` and `$app/env/private` stay real.
 		const environment = fileURLToPath(
 			new URL('../src/lib/storybook/app-environment.ts', import.meta.url)
 		);
@@ -35,7 +36,11 @@ const config: StorybookConfig = {
 				name: 'login-ui-storybook-environment',
 				enforce: 'pre',
 				resolveId(id: string) {
-					return id === '$app/environment' || /kit[\\/].*runtime[\\/]app[\\/]environment/.test(id)
+					// The alias leaves the module as a directory path (or `#app/env` inside kit); a file
+					// suffix is allowed too. `env/public` and `env/private` do not match.
+					return id === '$app/env' ||
+						id === '#app/env' ||
+						/kit[\\/].*runtime[\\/]app[\\/]env(?:[\\/](?:index|client|server)\.js)?$/.test(id)
 						? environment
 						: null;
 				}

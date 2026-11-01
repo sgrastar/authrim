@@ -1,4 +1,5 @@
 import { redirect } from '@sveltejs/kit';
+import { redirectExternal } from '$lib/server/external-redirect';
 import type { Actions, PageServerLoad } from './$types';
 import {
 	getDiscoveryRequestHeaders,
@@ -161,7 +162,7 @@ export const load: PageServerLoad = async (event) => {
 					sameSite: 'lax',
 					maxAge: 300
 				});
-				throw redirect(303, verifiedReturnTo);
+				throw redirectExternal(303, verifiedReturnTo);
 			}
 
 			if (event.url.toString() !== currentUrlWithoutGrant) {
@@ -172,13 +173,13 @@ export const load: PageServerLoad = async (event) => {
 					sameSite: 'lax',
 					maxAge: 300
 				});
-				throw redirect(303, currentUrlWithoutGrant);
+				throw redirectExternal(303, currentUrlWithoutGrant);
 			}
 			return {};
 		}
 
 		if (config.common_discover_url) {
-			throw redirect(
+			throw redirectExternal(
 				303,
 				buildCommonDiscoverRedirect(
 					event.url,
@@ -217,7 +218,7 @@ export const load: PageServerLoad = async (event) => {
 			return {};
 		}
 
-		throw redirect(
+		throw redirectExternal(
 			303,
 			buildCommonDiscoverRedirect(
 				event.url,

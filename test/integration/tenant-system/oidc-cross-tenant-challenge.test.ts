@@ -10,7 +10,10 @@ import {
   seedTenantDataset,
 } from './helpers';
 
-vi.mock('$env/dynamic/public', () => ({ env: {} }));
+vi.mock('$app/env/public', () => ({
+  PUBLIC_API_BASE_URL: '',
+  PUBLIC_AUTHRIM_ISSUER: '',
+}));
 
 describe('multi-tenant OIDC challenge conformance', () => {
   it('OIDC-010 rejects a challenge_id that belongs to a different tenant', async () => {

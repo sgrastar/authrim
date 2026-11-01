@@ -13,8 +13,9 @@ async function readPackageJson(component: 'ar-admin-ui' | 'ar-login-ui') {
   };
 }
 
-async function readSvelteConfig(component: 'ar-admin-ui' | 'ar-login-ui') {
-  return readFile(resolve(repoRoot, component, 'svelte.config.js'), 'utf-8');
+// SvelteKit 3 keeps the kit options (adapter, routes) in the Vite config instead of svelte.config.js.
+async function readKitConfig(component: 'ar-admin-ui' | 'ar-login-ui') {
+  return readFile(resolve(repoRoot, component, 'vite.config.ts'), 'utf-8');
 }
 
 describe('UI Workers deployment smoke tests', () => {
@@ -22,7 +23,7 @@ describe('UI Workers deployment smoke tests', () => {
     '%s uses the Cloudflare adapter and the shared staged deployment entry point',
     async (component) => {
       const pkg = await readPackageJson(component);
-      const svelteConfig = await readSvelteConfig(component);
+      const kitConfig = await readKitConfig(component);
 
       expect(pkg.devDependencies).toHaveProperty('@sveltejs/adapter-cloudflare');
       expect(pkg.scripts?.['deploy:preview']).toContain('scripts/deploy-ui.ts');
@@ -33,8 +34,8 @@ describe('UI Workers deployment smoke tests', () => {
       expect(pkg.scripts?.['deploy:production']).not.toContain('wrangler deploy');
       expect(pkg.scripts?.['deploy:preview']).not.toContain('wrangler pages');
       expect(pkg.scripts?.['deploy:production']).not.toContain('wrangler pages');
-      expect(svelteConfig).toContain('@sveltejs/adapter-cloudflare');
-      expect(svelteConfig).toContain('routes:');
+      expect(kitConfig).toContain('@sveltejs/adapter-cloudflare');
+      expect(kitConfig).toContain('routes:');
     }
   );
 
@@ -51,16 +52,16 @@ describe('UI Workers deployment smoke tests', () => {
   );
 
   it('keeps LoginUI OAuth endpoints excluded from the UI Worker route handler', async () => {
-    const svelteConfig = await readSvelteConfig('ar-login-ui');
+    const kitConfig = await readKitConfig('ar-login-ui');
 
     for (const path of ['/authorize', '/token', '/userinfo', '/introspect', '/revoke']) {
-      expect(svelteConfig).toContain(`'${path}'`);
+      expect(kitConfig).toContain(`'${path}'`);
     }
-    expect(svelteConfig).toContain("'/api/device/*'");
+    expect(kitConfig).toContain("'/api/device/*'");
   });
 
   it('keeps LoginUI session, callback, and proxy routes on the UI Worker', async () => {
-    const svelteConfig = await readSvelteConfig('ar-login-ui');
+    const kitConfig = await readKitConfig('ar-login-ui');
 
     for (const path of [
       '/callback',
@@ -69,8 +70,8 @@ describe('UI Workers deployment smoke tests', () => {
       '/handoff/finalize',
       '/logout',
     ]) {
-      expect(svelteConfig).not.toContain(`'${path}'`);
-      expect(svelteConfig).not.toContain(`'${path}/*'`);
+      expect(kitConfig).not.toContain(`'${path}'`);
+      expect(kitConfig).not.toContain(`'${path}/*'`);
     }
   });
 });

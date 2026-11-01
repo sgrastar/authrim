@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 
 	interface NavChild {
 		href: string;
@@ -21,15 +21,16 @@
 
 	// Check if any child or parent is active
 	function isParentActive(): boolean {
-		return $page.url.pathname === parent.href;
+		return page.url.pathname === parent.href;
 	}
 
 	function isChildActive(href: string): boolean {
 		const child = children.find((item) => item.href === href);
+
 		return (
-			$page.url.pathname.startsWith(href) ||
+			page.url.pathname.startsWith(href) ||
 			(child?.activePaths?.some(
-				(path) => $page.url.pathname === path || $page.url.pathname.startsWith(`${path}/`)
+				(path) => page.url.pathname === path || page.url.pathname.startsWith(`${path}/`)
 			) ??
 				false)
 		);

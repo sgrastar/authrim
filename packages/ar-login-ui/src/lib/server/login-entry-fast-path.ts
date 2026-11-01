@@ -1,9 +1,6 @@
-import { env as dynamicEnv } from '$env/dynamic/public';
+import { PUBLIC_API_BASE_URL, PUBLIC_AUTHRIM_ISSUER } from '$app/env/public';
 import type { RequestEvent } from '@sveltejs/kit';
-
-function getPlatformEnv(event: RequestEvent): Record<string, unknown> | undefined {
-	return (event.platform as { env?: Record<string, unknown> } | undefined)?.env;
-}
+import { getPlatformEnv } from '$lib/server/platform-env';
 
 function getConfiguredHost(value: unknown): string | null {
 	const text = String(value || '').trim();
@@ -26,8 +23,8 @@ function getConfiguredSameOriginHosts(event: RequestEvent): Set<string> {
 	const hosts = [
 		platformEnv?.PUBLIC_API_BASE_URL,
 		platformEnv?.PUBLIC_AUTHRIM_ISSUER,
-		dynamicEnv.PUBLIC_API_BASE_URL,
-		dynamicEnv.PUBLIC_AUTHRIM_ISSUER,
+		PUBLIC_API_BASE_URL,
+		PUBLIC_AUTHRIM_ISSUER,
 		import.meta.env.PUBLIC_API_BASE_URL,
 		import.meta.env.PUBLIC_AUTHRIM_ISSUER
 	]

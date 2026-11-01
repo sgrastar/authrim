@@ -5,7 +5,7 @@
  * Provides reactive state for authentication status, user info, and loading states.
  */
 
-import { browser } from '$app/environment';
+import { browser } from '$app/env';
 import { adminAuthAPI, AuthError } from '$lib/api/admin-auth';
 
 /**

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import AuthPageShell from '$lib/components/AuthPageShell.svelte';
 	import DeviceView from '$lib/views/DeviceView.svelte';
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
@@ -25,7 +25,7 @@
 	let view = $state<DeviceFlowState>(flow.state);
 
 	onMount(() => {
-		const code = $page.url.searchParams.get('user_code');
+		const code = page.url.searchParams.get('user_code');
 		if (code) {
 			flow.setUserCode(code);
 		}

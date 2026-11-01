@@ -2,7 +2,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('$app/environment', () => ({ browser: false }));
+vi.mock('$app/env', () => ({ browser: false }));
 
 describe('theme store SSR defaults', () => {
 	it('primes the rendered mode from tenant settings before hydration', async () => {

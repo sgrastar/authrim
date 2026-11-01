@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import {
@@ -163,8 +163,16 @@
 		},
 		{ value: 'email', label: $LL.admin_identity_mapping_profile_edit_nameid_email() },
 		{ value: 'eduPersonTargetedID', label: 'eduPersonTargetedID' },
-		{ value: 'eduPersonPrincipalName', label: 'eduPersonPrincipalName' },
-		{ value: 'pairwise_id', label: $LL.admin_identity_mapping_profile_edit_nameid_pairwise_id() },
+		{
+			value: 'eduPersonPrincipalName',
+			label: 'eduPersonPrincipalName'
+		},
+
+		{
+			value: 'pairwise_id',
+			label: $LL.admin_identity_mapping_profile_edit_nameid_pairwise_id()
+		},
+
 		{
 			value: customOptionValue,
 			label: $LL.admin_identity_mapping_profile_edit_nameid_custom_field()
@@ -307,6 +315,7 @@
 				(!['oidc', 'resource_server'].includes(destinationKind) &&
 					destinationBlockingWarningsConfirmed))
 	);
+
 	const canSaveCsvDraft = $derived(canSaveCsv && canSaveDraft(sourceProfileVersionState));
 	const canSaveScimDraft = $derived(canSaveScim && canSaveDraft(sourceProfileVersionState));
 	const canReviewCsvDraft = $derived(
@@ -362,11 +371,11 @@
 	});
 
 	function getRequestedKind(): EditorKind {
-		return $page.url.searchParams.get('kind') === 'destination' ? 'destination' : 'source';
+		return page.url.searchParams.get('kind') === 'destination' ? 'destination' : 'source';
 	}
 
 	function getRequestedId(): string | null {
-		return $page.url.searchParams.get('id');
+		return page.url.searchParams.get('id');
 	}
 
 	async function loadEditor() {
@@ -1076,6 +1085,7 @@
 
 	function currentScimTemplateCategory() {
 		const categories = scimTemplateCategories();
+
 		return categories.includes(selectedScimTemplateCategory)
 			? selectedScimTemplateCategory
 			: (categories[0] ?? '');
@@ -1088,6 +1098,7 @@
 
 	function selectedScimTemplate() {
 		const templates = scimTemplatesForCurrentCategory();
+
 		return (
 			templates.find((template) => template.id === selectedScimTemplateId) ?? templates[0] ?? null
 		);
@@ -1207,6 +1218,7 @@
 
 	function currentTemplateCategory() {
 		const categories = destinationTemplateCategories();
+
 		return categories.includes(selectedTemplateCategory)
 			? selectedTemplateCategory
 			: (categories[0] ?? '');
@@ -1727,6 +1739,7 @@
 	function getBlockingWarningCount(schema: IdentityMappingCsvSourceProfileSchema | null): number {
 		const summaryCount = schema?.summary?.blockingWarningCount;
 		if (typeof summaryCount === 'number') return summaryCount;
+
 		return (
 			schema?.columns.filter(
 				(column) =>
@@ -2052,23 +2065,22 @@
 							type="button"
 							class:active={scimCreateMode === 'existing'}
 							onclick={() => (scimCreateMode = 'existing')}
+							>{$LL.admin_identity_mapping_profile_edit_create_from_existing()}</button
 						>
-							{$LL.admin_identity_mapping_profile_edit_create_from_existing()}
-						</button>
+
 						<button
 							type="button"
 							class:active={scimCreateMode === 'template'}
 							onclick={() => (scimCreateMode = 'template')}
+							>{$LL.admin_identity_mapping_profile_edit_create_from_template()}</button
 						>
-							{$LL.admin_identity_mapping_profile_edit_create_from_template()}
-						</button>
+
 						<button
 							type="button"
 							class:active={scimCreateMode === 'manual'}
 							onclick={() => (scimCreateMode = 'manual')}
+							>{$LL.admin_identity_mapping_profile_edit_manual()}</button
 						>
-							{$LL.admin_identity_mapping_profile_edit_manual()}
-						</button>
 					</div>
 
 					{#if scimCreateMode === 'existing'}
@@ -2125,9 +2137,8 @@
 										type="button"
 										class:active={selectedScimTemplate()?.id === template.id}
 										onclick={() => (selectedScimTemplateId = template.id)}
+										>{template.displayName}</button
 									>
-										{template.displayName}
-									</button>
 								{/each}
 							</div>
 							<div class="template-detail">
@@ -2146,12 +2157,10 @@
 										</div>
 									</dl>
 									<div class="template-detail-actions">
-										<button
-											type="button"
-											onclick={() => (previewTemplate = selectedScimTemplate())}
+										<button type="button" onclick={() => (previewTemplate = selectedScimTemplate())}
+											>{$LL.admin_identity_mapping_profile_edit_preview()}</button
 										>
-											{$LL.admin_identity_mapping_profile_edit_preview()}
-										</button>
+
 										<button
 											type="button"
 											onclick={() => {
@@ -2453,9 +2462,8 @@
 									type="button"
 									class:active={csvDetailTab === tab}
 									onclick={() => (csvDetailTab = tab as CsvDetailTab)}
+									>{csvDetailTabLabel(tab as CsvDetailTab)}</button
 								>
-									{csvDetailTabLabel(tab as CsvDetailTab)}
-								</button>
 							{/each}
 						</div>
 						{#if csvDetailTab === 'summary'}
@@ -2697,23 +2705,22 @@
 							type="button"
 							class:active={destinationCreateMode === 'existing'}
 							onclick={() => (destinationCreateMode = 'existing')}
+							>{$LL.admin_identity_mapping_profile_edit_create_from_existing()}</button
 						>
-							{$LL.admin_identity_mapping_profile_edit_create_from_existing()}
-						</button>
+
 						<button
 							type="button"
 							class:active={destinationCreateMode === 'template'}
 							onclick={() => (destinationCreateMode = 'template')}
+							>{$LL.admin_identity_mapping_profile_edit_create_from_template()}</button
 						>
-							{$LL.admin_identity_mapping_profile_edit_create_from_template()}
-						</button>
+
 						<button
 							type="button"
 							class:active={destinationCreateMode === 'manual'}
 							onclick={() => (destinationCreateMode = 'manual')}
+							>{$LL.admin_identity_mapping_profile_edit_manual()}</button
 						>
-							{$LL.admin_identity_mapping_profile_edit_manual()}
-						</button>
 					</div>
 
 					{#if destinationCreateMode === 'existing'}
@@ -2774,9 +2781,8 @@
 										type="button"
 										class:active={selectedDestinationTemplate()?.id === template.id}
 										onclick={() => (selectedTemplateId = template.id)}
+										>{template.displayName}</button
 									>
-										{template.displayName}
-									</button>
 								{/each}
 							</div>
 							<div class="template-detail">
@@ -2799,12 +2805,13 @@
 										</div>
 									</dl>
 									<div class="template-detail-actions">
-										<button type="button" onclick={() => (previewTemplate = selectedTemplate)}>
-											{$LL.admin_identity_mapping_profile_edit_preview()}
-										</button>
-										<button type="button" onclick={() => copyDestinationTemplate(selectedTemplate)}>
-											{$LL.admin_identity_mapping_profile_edit_use_template()}
-										</button>
+										<button type="button" onclick={() => (previewTemplate = selectedTemplate)}
+											>{$LL.admin_identity_mapping_profile_edit_preview()}</button
+										>
+
+										<button type="button" onclick={() => copyDestinationTemplate(selectedTemplate)}
+											>{$LL.admin_identity_mapping_profile_edit_use_template()}</button
+										>
 									</div>
 								{:else}
 									<div class="empty-state">
@@ -3471,57 +3478,75 @@
 								value={groupProtocol}
 								onchange={(event) =>
 									(groupProtocol = getInputValue(event) as IdentityMappingAttributeProtocol)}
-								>{#each attributeProtocolOptions as option (option)}<option value={option}
-										>{option}</option
-									>{/each}</select
-							></label
-						>
-						<label
-							><span>{$LL.admin_identity_mapping_profile_edit_group_type()}</span><select
-								value={groupType}
-								onchange={(event) => (groupType = getInputValue(event))}
-								>{#each attributeGroupTypeOptions as option (option)}<option value={option}
-										>{option}</option
-									>{/each}</select
-							></label
-						>
-						<label
-							><span>{$LL.admin_identity_mapping_profile_edit_group_key()}</span><input
+							>
+								{#each attributeProtocolOptions as option (option)}
+									<option value={option}>{option}</option>
+								{/each}
+							</select>
+						</label>
+
+						<label>
+							<span>{$LL.admin_identity_mapping_profile_edit_group_type()}</span>
+
+							<select value={groupType} onchange={(event) => (groupType = getInputValue(event))}>
+								{#each attributeGroupTypeOptions as option (option)}
+									<option value={option}>{option}</option>
+								{/each}
+							</select>
+						</label>
+
+						<label>
+							<span>{$LL.admin_identity_mapping_profile_edit_group_key()}</span>
+
+							<input
 								value={groupKey}
 								placeholder={$LL.admin_identity_mapping_profile_edit_group_key_placeholder()}
 								oninput={(event) => (groupKey = getInputValue(event))}
-							/></label
-						>
-						<label
-							><span>{$LL.admin_identity_mapping_profile_edit_display_name()}</span><input
+							/>
+						</label>
+
+						<label>
+							<span>{$LL.admin_identity_mapping_profile_edit_display_name()}</span>
+
+							<input
 								value={groupDisplayName}
 								placeholder={$LL.admin_identity_mapping_profile_edit_group_display_placeholder()}
 								oninput={(event) => (groupDisplayName = getInputValue(event))}
-							/></label
-						>
-						<label
-							><span>{$LL.admin_identity_mapping_profile_edit_owner_scope()}</span><select
+							/>
+						</label>
+
+						<label>
+							<span>{$LL.admin_identity_mapping_profile_edit_owner_scope()}</span>
+
+							<select
 								value={groupOwnerScopeType}
 								onchange={(event) =>
 									(groupOwnerScopeType = getInputValue(event) as typeof groupOwnerScopeType)}
-								>{#each registryOwnerScopeOptions as option (option)}<option value={option}
-										>{option}</option
-									>{/each}</select
-							></label
-						>
-						<label
-							><span>{$LL.admin_identity_mapping_profile_edit_field_keys()}</span><input
+							>
+								{#each registryOwnerScopeOptions as option (option)}
+									<option value={option}>{option}</option>
+								{/each}
+							</select>
+						</label>
+
+						<label>
+							<span>{$LL.admin_identity_mapping_profile_edit_field_keys()}</span>
+
+							<input
 								value={groupFieldKeys}
 								placeholder={$LL.admin_identity_mapping_profile_edit_field_keys_placeholder()}
 								oninput={(event) => (groupFieldKeys = getInputValue(event))}
-							/></label
-						>
-						<label
-							><span>{$LL.admin_identity_mapping_profile_edit_description()}</span><input
+							/>
+						</label>
+
+						<label>
+							<span>{$LL.admin_identity_mapping_profile_edit_description()}</span>
+
+							<input
 								value={groupDescription}
 								oninput={(event) => (groupDescription = getInputValue(event))}
-							/></label
-						>
+							/>
+						</label>
 						<button
 							type="button"
 							onclick={saveAttributeGroup}
@@ -3539,52 +3564,73 @@
 								value={fieldProtocol}
 								onchange={(event) =>
 									(fieldProtocol = getInputValue(event) as IdentityMappingAttributeProtocol)}
-								>{#each attributeProtocolOptions as option (option)}<option value={option}
-										>{option}</option
-									>{/each}</select
-							></label
-						>
-						<label
-							><span>{$LL.admin_identity_mapping_profile_edit_field_key()}</span><input
+							>
+								{#each attributeProtocolOptions as option (option)}
+									<option value={option}>{option}</option>
+								{/each}
+							</select>
+						</label>
+
+						<label>
+							<span>{$LL.admin_identity_mapping_profile_edit_field_key()}</span>
+
+							<input
 								value={fieldKey}
 								placeholder={$LL.admin_identity_mapping_profile_edit_field_key_placeholder()}
 								oninput={(event) => (fieldKey = getInputValue(event))}
-							/></label
-						>
-						<label
-							><span>{$LL.admin_identity_mapping_profile_edit_display_name()}</span><input
+							/>
+						</label>
+
+						<label>
+							<span>{$LL.admin_identity_mapping_profile_edit_display_name()}</span>
+
+							<input
 								value={fieldDisplayName}
 								placeholder={$LL.admin_identity_mapping_profile_edit_field_display_placeholder()}
 								oninput={(event) => (fieldDisplayName = getInputValue(event))}
-							/></label
-						>
-						<label
-							><span>{$LL.admin_identity_mapping_profile_edit_owner_scope()}</span><select
+							/>
+						</label>
+
+						<label>
+							<span>{$LL.admin_identity_mapping_profile_edit_owner_scope()}</span>
+
+							<select
 								value={fieldOwnerScopeType}
 								onchange={(event) =>
 									(fieldOwnerScopeType = getInputValue(event) as typeof fieldOwnerScopeType)}
-								>{#each registryOwnerScopeOptions as option (option)}<option value={option}
-										>{option}</option
-									>{/each}</select
-							></label
-						>
-						<label
-							><span>{$LL.admin_identity_mapping_profile_edit_value_type()}</span><select
+							>
+								{#each registryOwnerScopeOptions as option (option)}
+									<option value={option}>{option}</option>
+								{/each}
+							</select>
+						</label>
+
+						<label>
+							<span>{$LL.admin_identity_mapping_profile_edit_value_type()}</span>
+
+							<select
 								value={fieldValueType}
 								onchange={(event) => (fieldValueType = getInputValue(event))}
-								>{#each valueTypeOptions as option (option)}<option value={option}>{option}</option
-									>{/each}</select
-							></label
-						>
-						<label
-							><span>{$LL.admin_identity_mapping_profile_edit_classification()}</span><select
+							>
+								{#each valueTypeOptions as option (option)}
+									<option value={option}>{option}</option>
+								{/each}
+							</select>
+						</label>
+
+						<label>
+							<span>{$LL.admin_identity_mapping_profile_edit_classification()}</span>
+
+							<select
 								value={fieldClassification}
 								onchange={(event) => (fieldClassification = getInputValue(event))}
-								>{#each classificationOptions as option (option)}<option value={option}
-										>{option}</option
-									>{/each}</select
-							></label
-						>
+							>
+								{#each classificationOptions as option (option)}
+									<option value={option}>{option}</option>
+								{/each}
+							</select>
+						</label>
+
 						<div class="surface-checks">
 							{#each oidcSurfaceOptions as surface (surface)}
 								<label class="mini-check"
@@ -3655,6 +3701,7 @@
 						<p class="eyebrow">{$LL.admin_identity_mapping_profile_edit_template_preview()}</p>
 						<h2 id="template-preview-title">{previewTemplate.displayName}</h2>
 					</div>
+
 					<button type="button" onclick={() => (previewTemplate = null)}
 						>{$LL.admin_identity_mapping_profile_edit_close()}</button
 					>

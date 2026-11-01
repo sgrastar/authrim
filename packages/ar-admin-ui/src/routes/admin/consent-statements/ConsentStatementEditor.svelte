@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import {
 		adminConsentStatementsAPI,
@@ -201,6 +201,7 @@
 
 	function populateRequirementForm(value: TenantConsentRequirement | null) {
 		collectionMode = value ? (value.is_required ? 'required' : 'optional') : 'hidden';
+
 		requirementFormData = value
 			? {
 					is_required: value.is_required,
@@ -556,21 +557,21 @@
 	}
 
 	function applyTemplateFromQuery() {
-		const template = $page.url.searchParams.get('template');
+		const template = page.url.searchParams.get('template');
 		if (isStatementTemplateId(template)) {
 			applyStatementTemplate(template);
 			applyCollectionMode(
-				normalizeCollectionMode($page.url.searchParams.get('collection'), template)
+				normalizeCollectionMode(page.url.searchParams.get('collection'), template)
 			);
 			applyBindingFromQuery(template);
 		}
 	}
 
 	function applyBindingFromQuery(template: StatementTemplateId) {
-		const bindingType = normalizeBindingType($page.url.searchParams.get('binding_type'), template);
+		const bindingType = normalizeBindingType(page.url.searchParams.get('binding_type'), template);
 		bindingDraft = {
 			binding_type: bindingType,
-			binding_value: $page.url.searchParams.get('binding_value') ?? undefined
+			binding_value: page.url.searchParams.get('binding_value') ?? undefined
 		};
 	}
 
@@ -1006,7 +1007,7 @@
 				</div>
 			</AdminSection>
 
-			{#if mode === 'new' && $page.url.searchParams.has('template')}
+			{#if mode === 'new' && page.url.searchParams.has('template')}
 				<AdminSection>
 					<div class="section-header">
 						<div>
@@ -1236,9 +1237,8 @@
 										class="preset-button"
 										class:selected-preset={statementFormData.record_retention_days === days}
 										onclick={() => (statementFormData.record_retention_days = days)}
+										>{getRecordRetentionPresetLabel(days)}</button
 									>
-										{getRecordRetentionPresetLabel(days)}
-									</button>
 								{/each}
 							</div>
 							<div class="form-group interval-input">
@@ -1275,9 +1275,8 @@
 										class="preset-button"
 										class:selected-preset={statementFormData.reconsent_interval_days === days}
 										onclick={() => (statementFormData.reconsent_interval_days = days)}
+										>{getReconsentIntervalPresetLabel(days)}</button
 									>
-										{getReconsentIntervalPresetLabel(days)}
-									</button>
 								{/each}
 							</div>
 							<div class="form-group interval-input">
@@ -1584,12 +1583,13 @@
 				<h3>{$LL.admin_consent_versions_dialog_title()}</h3>
 				<p>{$LL.admin_consent_versions_activate_confirm()}</p>
 				<div class="form-actions">
-					<button class="btn btn-secondary" onclick={() => (showActivateConfirm = false)}>
-						{$LL.admin_consent_statements_cancel()}
-					</button>
-					<button class="btn btn-primary" onclick={activateVersion}>
-						{$LL.admin_consent_versions_activate()}
-					</button>
+					<button class="btn btn-secondary" onclick={() => (showActivateConfirm = false)}
+						>{$LL.admin_consent_statements_cancel()}</button
+					>
+
+					<button class="btn btn-primary" onclick={activateVersion}
+						>{$LL.admin_consent_versions_activate()}</button
+					>
 				</div>
 			</div>
 		</div>

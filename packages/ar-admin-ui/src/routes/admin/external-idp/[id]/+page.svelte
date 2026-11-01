@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { LL } from '$i18n/i18n-svelte';
 	import { buildExternalIdPCallbackUrl } from '$lib/admin/external-idp-callback-url';
 	import { getTenantInfo } from '$lib/api/admin-info';
@@ -66,7 +66,7 @@
 	let callbackIssuer = $state<string | null>(null);
 	let callbackIssuerRequest = 0;
 
-	const providerId = $derived($page.params.id);
+	const providerId = $derived(page.params.id);
 	const providerIdentifier = $derived(slug || providerId || null);
 
 	// Validate slug format
@@ -432,6 +432,7 @@
 						<label for="providerType" class="admin-field__label"
 							>{$LL.admin_external_idp_provider_type()}</label
 						>
+
 						<select id="providerType" bind:value={providerType} class="admin-select">
 							<option value="oidc">OIDC (OpenID Connect)</option>
 							<option value="oauth2">OAuth 2.0</option>
@@ -777,6 +778,7 @@
 						>
 						<div class="color-picker-row">
 							<input type="color" bind:value={buttonColor} class="color-picker-input" />
+
 							<input
 								id="buttonColor"
 								type="text"
@@ -793,6 +795,7 @@
 						>
 						<div class="color-picker-row">
 							<input type="color" bind:value={buttonColorDark} class="color-picker-input" />
+
 							<input
 								id="buttonColorDark"
 								type="text"
@@ -823,9 +826,10 @@
 
 			<!-- Actions -->
 			<div class="form-actions">
-				<button type="button" class="btn btn-secondary" onclick={navigateBack}>
-					{$LL.dialog_cancel()}
-				</button>
+				<button type="button" class="btn btn-secondary" onclick={navigateBack}
+					>{$LL.dialog_cancel()}</button
+				>
+
 				<button type="submit" class="btn btn-primary" disabled={saving}>
 					{saving ? $LL.admin_client_detail_saving() : $LL.admin_user_detail_save()}
 				</button>

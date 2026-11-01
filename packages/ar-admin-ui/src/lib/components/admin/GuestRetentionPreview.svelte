@@ -10,7 +10,7 @@
 		tenantId,
 		policyVersion,
 		disabled = false
-	} = $props<{ tenantId: string; policyVersion: string; disabled?: boolean }>();
+	}: { tenantId: string; policyVersion: string; disabled?: boolean } = $props();
 	let preview = $state<GuestRetentionPreview | null>(null);
 	let result = $state<GuestRetentionResult | null>(null);
 	let busy = $state(false);

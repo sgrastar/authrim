@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import { adminAgentAccessAPI, type AgentTaskSet } from '$lib/api/admin-agent-access';
 	import {
@@ -15,7 +15,7 @@
 	let loading = $state(true);
 	onMount(async () => {
 		try {
-			item = await adminAgentAccessAPI.getTaskSet($page.params.id ?? '');
+			item = await adminAgentAccessAPI.getTaskSet(page.params.id ?? '');
 		} catch (caught) {
 			error = caught instanceof Error ? caught.message : $LL.admin_agent_access_load_error();
 		} finally {
@@ -29,17 +29,22 @@
 	><AdminPageHeader
 		title={item?.name || $LL.admin_agent_access_task_sets_title()}
 		description={item?.description || $LL.admin_agent_access_task_sets_description()}
-	/><AgentAccessNav />
-	{#if loading}<div class="state">{$LL.admin_agent_access_loading()}</div>{:else if error}<div
-			class="alert alert-error"
-		>
-			{error}
-		</div>{:else if item}<AdminSection
-			><dl>
+	/>
+
+	<AgentAccessNav />
+
+	{#if loading}
+		<div class="state">{$LL.admin_agent_access_loading()}</div>
+	{:else if error}
+		<div class="alert alert-error">{error}</div>
+	{:else if item}
+		<AdminSection>
+			<dl>
 				<div>
 					<dt>ID</dt>
 					<dd>{item.id}</dd>
 				</div>
+
 				<div>
 					<dt>{$LL.admin_agent_access_task_set_version()}</dt>
 					<dd>v{item.current_version}</dd>

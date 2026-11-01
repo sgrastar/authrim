@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { adminAuth } from '$lib/stores/admin-auth.svelte';
@@ -28,7 +28,7 @@
 
 	// Login and invitation enrollment are public Admin surfaces without dashboard chrome.
 	const isPublicAdminPage = $derived(
-		$page.url.pathname === '/admin/login' || $page.url.pathname === '/admin/join'
+		page.url.pathname === '/admin/login' || page.url.pathname === '/admin/join'
 	);
 
 	// Mobile menu state
@@ -53,7 +53,7 @@
 	// Close mobile menu on navigation
 	$effect(() => {
 		// Track pathname changes - assign to unused variable to satisfy linter
-		const _currentPath = $page.url.pathname;
+		const _currentPath = page.url.pathname;
 		void _currentPath;
 		// Close menu when path changes
 		mobileMenuOpen = false;
@@ -65,7 +65,12 @@
 	// END USER section - identity management for application users
 	const navEndUser = $derived({
 		identity: [
-			{ path: '/admin/users', label: $LL.admin_nav_end_users(), icon: 'i-ph-users' },
+			{
+				path: '/admin/users',
+				label: $LL.admin_nav_end_users(),
+				icon: 'i-ph-users'
+			},
+
 			{
 				path: '/admin/organizations',
 				label: $LL.admin_nav_organizations(),
@@ -91,9 +96,24 @@
 			]
 		},
 		monitoring: [
-			{ path: '/admin/audit-logs', label: $LL.admin_nav_user_audit_logs(), icon: 'i-ph-file-text' },
-			{ path: '/admin/access-trace', label: $LL.admin_nav_access_trace(), icon: 'i-ph-path' },
-			{ path: '/admin/support-ops', label: $LL.admin_nav_support_ops(), icon: 'i-ph-lifebuoy' },
+			{
+				path: '/admin/audit-logs',
+				label: $LL.admin_nav_user_audit_logs(),
+				icon: 'i-ph-file-text'
+			},
+
+			{
+				path: '/admin/access-trace',
+				label: $LL.admin_nav_access_trace(),
+				icon: 'i-ph-path'
+			},
+
+			{
+				path: '/admin/support-ops',
+				label: $LL.admin_nav_support_ops(),
+				icon: 'i-ph-lifebuoy'
+			},
+
 			{
 				path: '/admin/diagnostic-logging',
 				label: $LL.admin_nav_diagnostic_logging(),
@@ -124,8 +144,19 @@
 				label: $LL.admin_lifecycle_title(),
 				icon: 'i-ph-clock-clockwise'
 			},
-			{ path: '/admin/themes', label: $LL.admin_header_theme(), icon: 'i-ph-palette' },
-			{ path: '/admin/login-ui', label: $LL.admin_nav_login_ui(), icon: 'i-ph-paint-brush' },
+
+			{
+				path: '/admin/themes',
+				label: $LL.admin_header_theme(),
+				icon: 'i-ph-palette'
+			},
+
+			{
+				path: '/admin/login-ui',
+				label: $LL.admin_nav_login_ui(),
+				icon: 'i-ph-paint-brush'
+			},
+
 			{
 				path: '/admin/account-page',
 				label: $LL.admin_nav_account_page(),
@@ -141,8 +172,19 @@
 				label: $LL.admin_nav_tenant_discovery(),
 				icon: 'i-ph-signpost'
 			},
-			{ path: '/admin/flows', label: $LL.admin_nav_flows(), icon: 'i-ph-flow-arrow' },
-			{ path: '/admin/screens', label: $LL.admin_nav_screens(), icon: 'i-ph-textbox' },
+
+			{
+				path: '/admin/flows',
+				label: $LL.admin_nav_flows(),
+				icon: 'i-ph-flow-arrow'
+			},
+
+			{
+				path: '/admin/screens',
+				label: $LL.admin_nav_screens(),
+				icon: 'i-ph-textbox'
+			},
+
 			{
 				path: '/admin/consent-policies',
 				label: $LL.admin_consent_policies_nav(),
@@ -155,8 +197,18 @@
 			}
 		],
 		federationDirectory: [
-			{ path: '/admin/external-idp', label: $LL.admin_nav_external_idp(), icon: 'i-ph-globe' },
-			{ path: '/admin/saml', label: $LL.admin_nav_saml(), icon: 'i-ph-arrows-left-right' },
+			{
+				path: '/admin/external-idp',
+				label: $LL.admin_nav_external_idp(),
+				icon: 'i-ph-globe'
+			},
+
+			{
+				path: '/admin/saml',
+				label: $LL.admin_nav_saml(),
+				icon: 'i-ph-arrows-left-right'
+			},
+
 			{
 				path: '/admin/directory-authentication',
 				label: $LL.admin_nav_directory_authentication(),
@@ -169,7 +221,12 @@
 			}
 		],
 		identitySchema: [
-			{ path: '/admin/custom-claims', label: $LL.admin_nav_custom_claims(), icon: 'i-ph-tag' },
+			{
+				path: '/admin/custom-claims',
+				label: $LL.admin_nav_custom_claims(),
+				icon: 'i-ph-tag'
+			},
+
 			{
 				path: '/admin/scim-tokens',
 				label: $LL.admin_nav_scim_tokens(),
@@ -183,7 +240,11 @@
 				label: $LL.admin_nav_identity_mapping()
 			},
 			children: [
-				{ href: '/admin/field-mapping/profiles', label: $LL.admin_nav_source_destination() },
+				{
+					href: '/admin/field-mapping/profiles',
+					label: $LL.admin_nav_source_destination()
+				},
+
 				{
 					href: '/admin/field-mapping/persistent-identifiers',
 					label: $LL.admin_nav_persistent_identifiers()
@@ -196,8 +257,18 @@
 			]
 		},
 		settings: [
-			{ path: '/admin/info', label: $LL.admin_nav_info(), icon: 'i-ph-info' },
-			{ path: '/admin/settings', label: $LL.admin_nav_settings(), icon: 'i-ph-gear' },
+			{
+				path: '/admin/info',
+				label: $LL.admin_nav_info(),
+				icon: 'i-ph-info'
+			},
+
+			{
+				path: '/admin/settings',
+				label: $LL.admin_nav_settings(),
+				icon: 'i-ph-gear'
+			},
+
 			{
 				path: '/admin/email-settings',
 				label: $LL.admin_nav_email_settings(),
@@ -215,7 +286,12 @@
 	// PLATFORM section - system administration
 	const navPlatform = $derived({
 		tenantManagement: [
-			{ path: '/admin/tenants', label: $LL.admin_nav_tenants(), icon: 'i-ph-buildings' },
+			{
+				path: '/admin/tenants',
+				label: $LL.admin_nav_tenants(),
+				icon: 'i-ph-buildings'
+			},
+
 			{
 				path: '/admin/tenant-vanity-domains',
 				label: $LL.admin_nav_vanity_domains(),
@@ -227,7 +303,12 @@
 			{ path: '/admin/compliance', label: $LL.admin_nav_compliance(), icon: 'i-ph-certificate' }
 		],
 		operations: [
-			{ path: '/admin/scale', label: $LL.admin_nav_scale(), icon: 'i-ph-chart-bar' },
+			{
+				path: '/admin/scale',
+				label: $LL.admin_nav_scale(),
+				icon: 'i-ph-chart-bar'
+			},
+
 			{
 				path: '/admin/storage-topology',
 				label: 'Storage Topology',
@@ -281,7 +362,12 @@
 			]
 		},
 		adminOthers: [
-			{ path: '/admin/machine-access', label: $LL.admin_nav_machine_access(), icon: 'i-ph-robot' },
+			{
+				path: '/admin/machine-access',
+				label: $LL.admin_nav_machine_access(),
+				icon: 'i-ph-robot'
+			},
+
 			{
 				path: '/admin/agent-access',
 				label: $LL.admin_agent_access_nav(),
@@ -292,7 +378,13 @@
 				label: $LL.admin_nav_ip_allowlist(),
 				icon: 'i-ph-shield-check'
 			},
-			{ path: '/admin/admin-logging', label: $LL.admin_nav_admin_logging(), icon: 'i-ph-activity' },
+
+			{
+				path: '/admin/admin-logging',
+				label: $LL.admin_nav_admin_logging(),
+				icon: 'i-ph-activity'
+			},
+
 			{
 				path: '/admin/admin-audit',
 				label: $LL.admin_nav_admin_audit_log(),
@@ -386,14 +478,14 @@
 	// Check if nav item is active
 	function isActive(path: string, exact: boolean = false): boolean {
 		if (exact) {
-			return $page.url.pathname === path;
+			return page.url.pathname === path;
 		}
-		return $page.url.pathname.startsWith(path);
+		return page.url.pathname.startsWith(path);
 	}
 
 	// Get current page breadcrumb
 	const currentBreadcrumb = $derived(() => {
-		const path = $page.url.pathname;
+		const path = page.url.pathname;
 		if (path === '/admin') {
 			return [
 				{ label: $LL.admin_nav_dashboard(), icon: 'i-ph-squares-four', level: 'tenant' as const }
@@ -437,7 +529,7 @@
 		adminBrandStore.init();
 
 		// Capture current path at mount time to avoid race conditions with navigation
-		const currentPath = $page.url.pathname;
+		const currentPath = page.url.pathname;
 		const isOnPublicAdminPage = currentPath === '/admin/login' || currentPath === '/admin/join';
 
 		// Skip auth checks while logging in or accepting an invitation.
@@ -450,7 +542,7 @@
 		await adminAuth.checkAuth();
 
 		// Redirect to login if not authenticated and still on the same page
-		if (!adminAuth.isAuthenticated && $page.url.pathname === currentPath) {
+		if (!adminAuth.isAuthenticated && page.url.pathname === currentPath) {
 			goto('/admin/login');
 			return;
 		}
@@ -532,7 +624,7 @@
 
 	$effect(() => {
 		const isOnPublicAdminPage =
-			$page.url.pathname === '/admin/login' || $page.url.pathname === '/admin/join';
+			page.url.pathname === '/admin/login' || page.url.pathname === '/admin/join';
 		const isAuthenticated = adminAuth.isAuthenticated;
 
 		if (isOnPublicAdminPage) {
@@ -877,7 +969,7 @@
 				<fieldset
 					class="release-mutation-fence"
 					disabled={releaseRolloutStore.readOnly &&
-						!$page.url.pathname.startsWith('/admin/control-plane')}
+						!page.url.pathname.startsWith('/admin/control-plane')}
 				>
 					{@render children()}
 				</fieldset>

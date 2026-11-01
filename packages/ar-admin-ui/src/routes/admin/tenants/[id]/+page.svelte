@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import {
 		adminTenantsAPI,
@@ -15,10 +15,12 @@
 		type TenantPlacementMigrationStepKey,
 		type UpdateTenantRequest
 	} from '$lib/api/admin-tenants';
+
 	import {
 		tenantVanityDomainsAPI,
 		type TenantVanityDomain
 	} from '$lib/api/admin-tenant-vanity-domains';
+
 	import {
 		adminSettingsAPI,
 		scopedSettingsAPI,
@@ -34,7 +36,7 @@
 	// State
 	// ==========================================================================
 
-	const tenantId = $derived($page.params.id ?? '');
+	const tenantId = $derived(page.params.id ?? '');
 
 	let tenant = $state<Tenant | null>(null);
 	let loading = $state(true);
@@ -220,6 +222,7 @@
 		if (['queued', 'running', 'waiting_retry'].includes(placementMigration.status)) return true;
 		const control = placementMigration.control;
 		if (control?.state === 'purge_pending') return true;
+
 		return (
 			control?.state === 'source_quarantined' &&
 			!control.canApprovePurge &&
@@ -1183,9 +1186,14 @@
 						<button class="btn btn-secondary" onclick={cancelEdit} disabled={saving}
 							>{$LL.admin_tenants_cancel()}</button
 						>
+
 						<button class="btn btn-primary" onclick={handleSave} disabled={saving}>
-							{#if saving}<i class="i-ph-circle-notch animate-spin"></i>
-								{$LL.admin_tenants_saving()}{:else}{$LL.admin_tenants_save_changes()}{/if}
+							{#if saving}
+								<i class="i-ph-circle-notch animate-spin"></i>
+								{$LL.admin_tenants_saving()}
+							{:else}
+								{$LL.admin_tenants_save_changes()}
+							{/if}
 						</button>
 					</div>
 				</section>
@@ -1591,6 +1599,7 @@
 								<button class="btn btn-secondary" onclick={cancelDelete} disabled={deleting}
 									>{$LL.admin_tenants_cancel()}</button
 								>
+
 								<button
 									class="btn btn-danger"
 									onclick={handleDelete}
