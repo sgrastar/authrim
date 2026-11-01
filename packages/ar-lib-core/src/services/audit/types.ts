@@ -173,6 +173,19 @@ export type LegalBasis =
  * PII log entry stored in D1_PII.
  * Contains encrypted user data changes.
  *
+ * Purpose: the change history of personal data (what changed, by whom, on which legal basis),
+ * kept apart from `event_log` so that "right to be forgotten" only has to delete these rows.
+ * `event_log` carries `anonymizedUserId` alone; this row holds the real user ID and the
+ * encrypted values, and the two are joined through `anonymizedUserId` and `requestId`.
+ *
+ * Not to be confused with `audit_log_pii`, which records who READ personal data (actor, target,
+ * field names, never values) and is written by `PiiAccessLog`.
+ *
+ * Status: kept on purpose but not written yet. `logPIIChange` is only reached through
+ * `logEventWithPII`, which has no caller. The erasure, backup/restore and retention machinery
+ * for `pii.pii_log` already exists; connect a writer here when a change-history requirement
+ * (for example an evidence request about who changed which personal data) comes up.
+ *
  * Time units: epoch milliseconds
  */
 export interface PIILogEntry {
