@@ -4,7 +4,7 @@
 		adminGuestRetentionAPI,
 		type GuestRetentionPreview,
 		type GuestRetentionResult
-	} from '$lib/api/admin-guest-retention';
+	} from '#lib/api/admin-guest-retention.js';
 	import AdminSection from './AdminSection.svelte';
 	let {
 		tenantId,

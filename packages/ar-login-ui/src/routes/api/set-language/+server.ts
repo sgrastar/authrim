@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { isLoginUILocale } from '$lib/i18n/locales';
+import { isLoginUILocale } from '#lib/i18n/locales.js';
 
 export const POST: RequestHandler = async ({ request, cookies }) => {
 	const { language } = await request.json();

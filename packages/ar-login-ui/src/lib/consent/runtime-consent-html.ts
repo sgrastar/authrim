@@ -1,4 +1,4 @@
-import { escapeHtml } from '$lib/utils/sanitize';
+import { escapeHtml } from '#lib/utils/sanitize.js';
 
 export function sanitizeRuntimeConsentHtml(value: string | null | undefined): string {
 	if (!value) return '';

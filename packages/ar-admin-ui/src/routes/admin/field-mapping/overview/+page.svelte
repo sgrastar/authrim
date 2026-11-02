@@ -1,5 +1,5 @@
 <script lang="ts">
-	import IdentityMappingPageShell from '$lib/components/identity-mapping/IdentityMappingPageShell.svelte';
+	import IdentityMappingPageShell from '#lib/components/identity-mapping/IdentityMappingPageShell.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 </script>
 

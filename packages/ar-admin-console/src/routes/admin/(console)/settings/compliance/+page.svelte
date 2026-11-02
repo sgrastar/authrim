@@ -1,8 +1,8 @@
 <script lang="ts">
-	import { httpCompliance } from '$lib/api/compliance';
-	import { tenantScope } from '$lib/auth/tenant-scope.svelte';
-	import { t } from '$lib/i18n/i18n.svelte';
-	import ComplianceSettings from '$lib/pages/settings/compliance/ComplianceSettings.svelte';
+	import { httpCompliance } from '#lib/api/compliance.js';
+	import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import ComplianceSettings from '#lib/pages/settings/compliance/ComplianceSettings.svelte';
 </script>
 
 <svelte:head>

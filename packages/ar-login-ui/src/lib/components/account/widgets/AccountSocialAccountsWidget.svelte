@@ -4,13 +4,13 @@
 	 * unlinking behind an inline confirmation, and one button per provider that can still be linked.
 	 * Linking leaves the page for the provider and comes back with `notice`.
 	 */
-	import { Button } from '$lib/components';
+	import { Button } from '#lib/components/index.js';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
-	import type { AccountLinkedIdentity } from '$lib/api/account';
-	import type { ExternalProvider } from '$lib/api/authentication-methods';
-	import { getExternalProviderIconClass } from '$lib/login-provider-icons';
-	import { formatTimestamp } from '$lib/utils/date';
-	import { isValidImageUrl } from '$lib/utils/url-validation';
+	import type { AccountLinkedIdentity } from '#lib/api/account.js';
+	import type { ExternalProvider } from '#lib/api/authentication-methods.js';
+	import { getExternalProviderIconClass } from '#lib/login-provider-icons.js';
+	import { formatTimestamp } from '#lib/utils/date.js';
+	import { isValidImageUrl } from '#lib/utils/url-validation.js';
 	import AccountSectionSkeleton from '../AccountSectionSkeleton.svelte';
 	import AccountWidgetPanel from './AccountWidgetPanel.svelte';
 	import type { AccountWidgetCommonProps } from './types';

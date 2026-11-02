@@ -4,7 +4,7 @@
 	 * (or `LoginUIFrame` in Storybook) provides them. `setup` can configure the stores first.
 	 */
 	import { untrack, type Component } from 'svelte';
-	import { initializeLoginUIStores, type LoginUIStores } from '$lib/stores/login-ui-context';
+	import { initializeLoginUIStores, type LoginUIStores } from '#lib/stores/login-ui-context.js';
 
 	let {
 		component: Inner,

@@ -1,4 +1,4 @@
-import type { ApprovalTransportEvidenceEvent } from '$lib/api/admin-approvals';
+import type { ApprovalTransportEvidenceEvent } from '#lib/api/admin-approvals.js';
 
 export type ApprovalEvidenceTone = 'info' | 'success' | 'warning' | 'danger';
 

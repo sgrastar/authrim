@@ -1,4 +1,4 @@
-import type { APIError } from '$lib/api/client';
+import type { APIError } from '#lib/api/client.js';
 
 export interface LoginUiErrorMessages {
 	unknown(): string;

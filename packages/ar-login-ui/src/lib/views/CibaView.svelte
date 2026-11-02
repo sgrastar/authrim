@@ -20,9 +20,9 @@
 	 * to approve or deny. The route owns the requests and the clock; this view only draws what it is
 	 * given (colours from the theme, so every theme and scheme reads alike) and reports decisions.
 	 */
-	import { Alert, Button, Card } from '$lib/components';
+	import { Alert, Button, Card } from '#lib/components/index.js';
 	import { LL } from '$i18n/i18n-svelte';
-	import { isValidImageUrl } from '$lib/utils/url-validation';
+	import { isValidImageUrl } from '#lib/utils/url-validation.js';
 
 	type Props = {
 		loading: boolean;

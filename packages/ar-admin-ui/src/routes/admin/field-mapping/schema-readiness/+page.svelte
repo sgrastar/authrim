@@ -4,14 +4,14 @@
 		adminIdentityMappingAPI,
 		type IdentityMappingSchemaReadinessRow,
 		type IdentityMappingSchemaReadinessSummary
-	} from '$lib/api/admin-identity-mapping';
+	} from '#lib/api/admin-identity-mapping.js';
 	import {
 		AdminDataTable,
 		AdminPageHeader,
 		AdminPageShell,
 		AdminSection,
 		AdminToolbar
-	} from '$lib/components/admin';
+	} from '#lib/components/admin/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	type GateFilter = IdentityMappingSchemaReadinessRow['gateState'] | 'all';

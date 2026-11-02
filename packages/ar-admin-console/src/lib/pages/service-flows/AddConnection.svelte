@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { t } from '$lib/i18n/i18n.svelte';
-	import BackLink from '$lib/ui/primitives/BackLink.svelte';
-	import ChoiceCards from '$lib/ui/patterns/ChoiceCards.svelte';
-	import ConfirmDialog from '$lib/ui/patterns/ConfirmDialog.svelte';
-	import PageHeader from '$lib/ui/patterns/PageHeader.svelte';
-	import Wizard from '$lib/ui/patterns/Wizard.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import BackLink from '#lib/ui/primitives/BackLink.svelte';
+	import ChoiceCards from '#lib/ui/patterns/ChoiceCards.svelte';
+	import ConfirmDialog from '#lib/ui/patterns/ConfirmDialog.svelte';
+	import PageHeader from '#lib/ui/patterns/PageHeader.svelte';
+	import Wizard from '#lib/ui/patterns/Wizard.svelte';
 	import AccountFlowDetail from './AccountFlowDetail.svelte';
 	import AccountFlowStep from './AccountFlowStep.svelte';
 	import {

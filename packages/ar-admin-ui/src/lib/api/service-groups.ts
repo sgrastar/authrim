@@ -1,4 +1,4 @@
-import { settingsContext } from '$lib/stores/settings-context.svelte';
+import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 import { API_BASE_URL, adminFetch } from './admin-request';
 export type { Expression, Field, ServiceGroup, GroupSnapshot } from '@authrim/ar-lib-core';
 import type { Field, ServiceGroup } from '@authrim/ar-lib-core';

@@ -1,4 +1,4 @@
-import type { AccountCapabilities } from '$lib/api/account';
+import type { AccountCapabilities } from '#lib/api/account.js';
 
 export type AccountPageInitialData = {
 	capabilities: AccountCapabilities | null;

@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
-	import { getTenantInfo } from '$lib/api/admin-info';
-	import { adminClientsAPI, type Client } from '$lib/api/admin-clients';
-	import { adminConsentPoliciesAPI } from '$lib/api/admin-consent-policies';
+	import { getTenantInfo } from '#lib/api/admin-info.js';
+	import { adminClientsAPI, type Client } from '#lib/api/admin-clients.js';
+	import { adminConsentPoliciesAPI } from '#lib/api/admin-consent-policies.js';
 	import {
 		adminSettingsAPI,
 		scopedSettingsAPI,
@@ -12,10 +12,10 @@
 		type CategoryMetaFull,
 		type SettingsPatchRequest,
 		type ScopeContext
-	} from '$lib/api/admin-settings';
-	import { ToggleSwitch } from '$lib/components';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	} from '#lib/api/admin-settings.js';
+	import { ToggleSwitch } from '#lib/components/index.js';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
 	import {
 		ALL_LOGIN_UI_LOCALES,
 		LOGIN_UI_LOCALE_OPTIONS,
@@ -26,8 +26,8 @@
 		resolveEnabledLoginUILocales,
 		selectDefaultPrimaryLoginUILocales,
 		type LoginUILocale
-	} from '$lib/login-ui/locales';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	} from '#lib/login-ui/locales.js';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	const CATEGORY = 'login-ui';

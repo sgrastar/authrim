@@ -3,11 +3,11 @@
 	 * Registered authenticator apps. Deleting one needs proof: a current code or a backup code,
 	 * typed into that row's own field.
 	 */
-	import { Button } from '$lib/components';
+	import { Button } from '#lib/components/index.js';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
-	import { isTotpDeleteProofReady } from '$lib/account/totp-proof';
-	import type { AccountTotpCredential } from '$lib/api/account';
-	import { formatTimestamp } from '$lib/utils/date';
+	import { isTotpDeleteProofReady } from '#lib/account/totp-proof.js';
+	import type { AccountTotpCredential } from '#lib/api/account.js';
+	import { formatTimestamp } from '#lib/utils/date.js';
 	import AccountTotpCodeField from './AccountTotpCodeField.svelte';
 
 	let {

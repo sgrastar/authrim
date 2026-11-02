@@ -2,18 +2,18 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { LL } from '$i18n/i18n-svelte';
-	import { buildExternalIdPCallbackUrl } from '$lib/admin/external-idp-callback-url';
-	import { getTenantInfo } from '$lib/api/admin-info';
+	import { buildExternalIdPCallbackUrl } from '#lib/admin/external-idp-callback-url.js';
+	import { getTenantInfo } from '#lib/api/admin-info.js';
 	import {
 		adminExternalProvidersAPI,
 		type CreateProviderRequest,
 		type ProviderTemplate,
 		PROVIDER_TEMPLATES
-	} from '$lib/api/admin-external-providers';
-	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
-	import LoginProviderIconPicker from '$lib/components/admin/LoginProviderIconPicker.svelte';
-	import { ToggleSwitch } from '$lib/components';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	} from '#lib/api/admin-external-providers.js';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '#lib/components/admin/index.js';
+	import LoginProviderIconPicker from '#lib/components/admin/LoginProviderIconPicker.svelte';
+	import { ToggleSwitch } from '#lib/components/index.js';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 
 	let saving = $state(false);
 	let error = $state('');

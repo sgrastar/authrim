@@ -7,11 +7,11 @@
 		type AccessReviewDecision,
 		type AccessReviewDetail,
 		type AccessReviewItem
-	} from '$lib/api/admin-compliance';
-	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
-	import AdminSection from '$lib/components/admin/AdminSection.svelte';
+	} from '#lib/api/admin-compliance.js';
+	import AdminDataTable from '#lib/components/admin/AdminDataTable.svelte';
+	import AdminSection from '#lib/components/admin/AdminSection.svelte';
 	import { LL } from '$i18n/i18n-svelte';
-	import { toast } from '$lib/toast';
+	import { toast } from '#lib/toast.js';
 	import {
 		applyStatusClass,
 		applyStatusLabel,

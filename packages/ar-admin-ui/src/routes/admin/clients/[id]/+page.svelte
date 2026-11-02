@@ -11,11 +11,11 @@
 		type ClientIdentityMappingFieldMappingSetSelector,
 		type ClientUsage,
 		type UpdateClientInput
-	} from '$lib/api/admin-clients';
+	} from '#lib/api/admin-clients.js';
 	import {
 		adminIdentityMappingAPI,
 		type IdentityMappingFieldMappingSetSummary
-	} from '$lib/api/admin-identity-mapping';
+	} from '#lib/api/admin-identity-mapping.js';
 	import {
 		buildClientDownstreamGrantFormFromClient,
 		createDefaultClientDownstreamGrantForm,
@@ -23,21 +23,21 @@
 		formatClientListForTextarea,
 		toClientDownstreamGrantUpdateInput,
 		type ClientDownstreamGrantForm
-	} from '$lib/admin/client-downstream-grant';
+	} from '#lib/admin/client-downstream-grant.js';
 	import {
 		adminSettingsAPI,
 		scopedSettingsAPI,
 		type CategorySettings,
 		SettingsConflictError
-	} from '$lib/api/admin-settings';
-	import { Modal, ToggleSwitch } from '$lib/components';
-	import ClientGuestSettings from '$lib/components/admin/ClientGuestSettings.svelte';
-	import AdminDetailHeader from '$lib/components/admin/AdminDetailHeader.svelte';
-	import ConsentPolicyTargetSettings from '$lib/components/admin/ConsentPolicyTargetSettings.svelte';
-	import FlowAssignmentSettings from '$lib/components/admin/FlowAssignmentSettings.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
-	import AdminSection from '$lib/components/admin/AdminSection.svelte';
-	import AdminTabs, { type AdminTabItem } from '$lib/components/admin/AdminTabs.svelte';
+	} from '#lib/api/admin-settings.js';
+	import { Modal, ToggleSwitch } from '#lib/components/index.js';
+	import ClientGuestSettings from '#lib/components/admin/ClientGuestSettings.svelte';
+	import AdminDetailHeader from '#lib/components/admin/AdminDetailHeader.svelte';
+	import ConsentPolicyTargetSettings from '#lib/components/admin/ConsentPolicyTargetSettings.svelte';
+	import FlowAssignmentSettings from '#lib/components/admin/FlowAssignmentSettings.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '#lib/components/admin/AdminSection.svelte';
+	import AdminTabs, { type AdminTabItem } from '#lib/components/admin/AdminTabs.svelte';
 	import { onMount } from 'svelte';
 
 	const clientId = $derived(page.params.id ?? '');

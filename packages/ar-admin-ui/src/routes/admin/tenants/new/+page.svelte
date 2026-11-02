@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { adminTenantsAPI } from '$lib/api/admin-tenants';
-	import { AdminPageHeader, AdminPageShell } from '$lib/components/admin';
-	import { tenantStore } from '$lib/stores/tenants.svelte';
+	import { adminTenantsAPI } from '#lib/api/admin-tenants.js';
+	import { AdminPageHeader, AdminPageShell } from '#lib/components/admin/index.js';
+	import { tenantStore } from '#lib/stores/tenants.svelte.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	// ==========================================================================

@@ -6,9 +6,9 @@
 	 * Inside a parent panel (heading level 3) the widget draws nothing when there is nothing to
 	 * manage: no credentials, no enrollment and management turned off.
 	 */
-	import { Button, Input } from '$lib/components';
+	import { Button, Input } from '#lib/components/index.js';
 	import { LL } from '$i18n/i18n-svelte';
-	import type { AccountTotpCredential } from '$lib/api/account';
+	import type { AccountTotpCredential } from '#lib/api/account.js';
 	import AccountSectionSkeleton from '../AccountSectionSkeleton.svelte';
 	import AccountTotpCredentialList from './AccountTotpCredentialList.svelte';
 	import AccountTotpEnrollment from './AccountTotpEnrollment.svelte';

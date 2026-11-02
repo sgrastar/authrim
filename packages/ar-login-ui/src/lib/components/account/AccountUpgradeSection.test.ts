@@ -1,7 +1,7 @@
 import { render } from 'svelte/server';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { setLocale } from '$i18n/i18n-svelte';
-import type { GuestUpgradeStatus } from '$lib/api/account';
+import type { GuestUpgradeStatus } from '#lib/api/account.js';
 import AccountUpgradeSection from './AccountUpgradeSection.svelte';
 const guest: GuestUpgradeStatus = {
 	registration_state: 'guest',

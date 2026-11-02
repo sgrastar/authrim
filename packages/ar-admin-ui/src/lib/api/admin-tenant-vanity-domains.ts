@@ -1,4 +1,4 @@
-import { adminFetch, API_BASE_URL } from '$lib/api/admin-request';
+import { adminFetch, API_BASE_URL } from '#lib/api/admin-request.js';
 
 export interface TenantVanityDomain {
 	id: string;

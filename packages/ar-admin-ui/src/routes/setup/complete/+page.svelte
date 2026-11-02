@@ -3,7 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { startRegistration } from '@simplewebauthn/browser';
-	import { adminSetupAPI, SetupError, getSetupErrorMessage } from '$lib/api/setup';
+	import { adminSetupAPI, SetupError, getSetupErrorMessage } from '#lib/api/setup.js';
 
 	// State
 	let status: 'loading' | 'ready' | 'registering' | 'success' | 'error' = $state('loading');

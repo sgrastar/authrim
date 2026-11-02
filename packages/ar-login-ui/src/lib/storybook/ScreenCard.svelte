@@ -1,7 +1,7 @@
 <script lang="ts">
 	/** The container a screen sits in on the login and signup routes. */
 	import type { Snippet } from 'svelte';
-	import Card from '$lib/components/Card.svelte';
+	import Card from '#lib/components/Card.svelte';
 
 	let { children, wide = false }: { children: Snippet; wide?: boolean } = $props();
 </script>

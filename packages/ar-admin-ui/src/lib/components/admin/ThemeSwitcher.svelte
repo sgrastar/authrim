@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { formatAdminSkinName, getAdminSkinSwatch } from '$lib/admin/admin-skins-i18n';
-	import { ADMIN_SKINS, themeStore } from '$lib/stores/theme.svelte';
+	import { formatAdminSkinName, getAdminSkinSwatch } from '#lib/admin/admin-skins-i18n.js';
+	import { ADMIN_SKINS, themeStore } from '#lib/stores/theme.svelte.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	interface Props {

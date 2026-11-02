@@ -26,10 +26,10 @@
 	 * configuration and the form results; this view draws them. Forms post natively to
 	 * `/discover?/resolve`; tenants not on the common entry host are links to their login page.
 	 */
-	import { Alert, Button, Card } from '$lib/components';
-	import { getDefaultDiscoveryMode } from '$lib/discovery-ui';
+	import { Alert, Button, Card } from '#lib/components/index.js';
+	import { getDefaultDiscoveryMode } from '#lib/discovery-ui.js';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
-	import { isValidImageUrl, isValidLinkUrl } from '$lib/utils/url-validation';
+	import { isValidImageUrl, isValidLinkUrl } from '#lib/utils/url-validation.js';
 
 	type Props = {
 		kickerText: string;

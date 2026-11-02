@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { adminAdminRebacAPI } from '$lib/api/admin-admin-rebac';
-	import type { AdminRebacDefinition, AdminRelationship } from '$lib/api/admin-admin-rebac';
-	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
+	import { adminAdminRebacAPI } from '#lib/api/admin-admin-rebac.js';
+	import type { AdminRebacDefinition, AdminRelationship } from '#lib/api/admin-admin-rebac.js';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '#lib/components/admin/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	let definitions: AdminRebacDefinition[] = [];

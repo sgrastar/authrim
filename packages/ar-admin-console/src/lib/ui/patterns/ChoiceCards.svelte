@@ -1,5 +1,5 @@
 <script lang="ts" module>
-	import type { IconName } from '$lib/ui/icons/icons';
+	import type { IconName } from '#lib/ui/icons/icons.js';
 
 	export interface ChoiceCard {
 		value: string;
@@ -16,7 +16,7 @@
 </script>
 
 <script lang="ts">
-	import Icon from '$lib/ui/icons/Icon.svelte';
+	import Icon from '#lib/ui/icons/Icon.svelte';
 	import Badge from '../primitives/Badge.svelte';
 
 	/**

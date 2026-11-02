@@ -10,7 +10,7 @@ vi.mock('$app/env', () => ({
 	version: 'test'
 }));
 
-vi.mock('$lib/stores/diagnostic', () => ({
+vi.mock('#lib/stores/diagnostic.js', () => ({
 	getDiagnosticSessionId: vi.fn(() => 'diag-test')
 }));
 

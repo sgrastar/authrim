@@ -5,7 +5,7 @@
 	 * belong to the caller.
 	 */
 	import { LL, getLocale } from '$i18n/i18n-svelte';
-	import type { AccountLauncher } from '$lib/api/account';
+	import type { AccountLauncher } from '#lib/api/account.js';
 	import { launcherMatchesSearch } from '../account-launcher-filter';
 	import AccountWidgetPanel from './AccountWidgetPanel.svelte';
 	import type { AccountWidgetHeadingLevel } from './types';

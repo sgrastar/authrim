@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { setLocale } from '$i18n/i18n-svelte';
 import AccountSocialAccountsWidget from './AccountSocialAccountsWidget.svelte';
 import { linkedIdentity, socialProviders } from './social-fixtures';
-import { HYDRATION_MARKERS } from '$lib/testing/ssr-html';
+import { HYDRATION_MARKERS } from '#lib/testing/ssr-html.js';
 
 const handlers = {
 	onLink: (_providerId: string) => undefined,

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import SegmentedControl from '../primitives/SegmentedControl.svelte';
 	import Toggle from '../primitives/Toggle.svelte';
 	import DateTime from './DateTime.svelte';

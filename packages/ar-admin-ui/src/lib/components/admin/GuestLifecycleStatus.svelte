@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { LL } from '$i18n/i18n-svelte';
-	import { listGuestLifecycle, type GuestLifecycleItem } from '$lib/api/admin-guest-lifecycle';
+	import { listGuestLifecycle, type GuestLifecycleItem } from '#lib/api/admin-guest-lifecycle.js';
 	import AdminSection from './AdminSection.svelte';
 	let { tenantId }: { tenantId: string } = $props();
 	let items = $state<GuestLifecycleItem[]>([]);

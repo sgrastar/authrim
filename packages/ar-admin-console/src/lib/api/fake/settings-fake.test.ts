@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { persona } from '$lib/access/personas';
+import { persona } from '#lib/access/personas.js';
 import { ApiError, ConflictError, RejectedError } from '../api-error';
 import type { SettingsTarget } from '../settings';
 import { createFakeSettings } from './settings-fake';

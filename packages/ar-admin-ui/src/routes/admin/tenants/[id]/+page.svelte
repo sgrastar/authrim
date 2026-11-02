@@ -14,22 +14,22 @@
 		type TenantPlacementMigrationOperation,
 		type TenantPlacementMigrationStepKey,
 		type UpdateTenantRequest
-	} from '$lib/api/admin-tenants';
+	} from '#lib/api/admin-tenants.js';
 
 	import {
 		tenantVanityDomainsAPI,
 		type TenantVanityDomain
-	} from '$lib/api/admin-tenant-vanity-domains';
+	} from '#lib/api/admin-tenant-vanity-domains.js';
 
 	import {
 		adminSettingsAPI,
 		scopedSettingsAPI,
 		type CategorySettings,
 		type CategoryMetaFull
-	} from '$lib/api/admin-settings';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
-	import { tenantStore } from '$lib/stores/tenants.svelte';
+	} from '#lib/api/admin-settings.js';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
+	import { tenantStore } from '#lib/stores/tenants.svelte.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	// ==========================================================================

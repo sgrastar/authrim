@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { LL } from '$i18n/i18n-svelte';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import {
 		adminClientGuestAPI,
 		defaultClientGuestPolicy,
 		type ClientGuestPolicy
-	} from '$lib/api/admin-client-guest';
-	import { ToggleSwitch } from '$lib/components';
+	} from '#lib/api/admin-client-guest.js';
+	import { ToggleSwitch } from '#lib/components/index.js';
 	import AdminSection from './AdminSection.svelte';
 	let { clientId }: { clientId: string } = $props();
 	let ready = $state(false);

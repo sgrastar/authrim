@@ -10,7 +10,7 @@ import type {
 	AccountStatementConsent,
 	AccountTotpCredential,
 	GuestUpgradeStatus
-} from '$lib/api/account';
+} from '#lib/api/account.js';
 import type { AccountTotpEnrollment } from './types';
 
 /** 2026-08-09 10:30 UTC, so every story shows the same dates. */

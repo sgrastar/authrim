@@ -1,6 +1,6 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
-	import Catalog from '$lib/storybook/Catalog.svelte';
+	import Catalog from '#lib/storybook/Catalog.svelte';
 
 	const { Story } = defineMeta({
 		title: 'Foundations/Icons',

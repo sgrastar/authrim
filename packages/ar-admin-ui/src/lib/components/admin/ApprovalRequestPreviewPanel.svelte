@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { ApprovalRequestPreviewResult } from '$lib/api/admin-approvals';
+	import type { ApprovalRequestPreviewResult } from '#lib/api/admin-approvals.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	interface Props {

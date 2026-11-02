@@ -30,8 +30,8 @@ export default defineConfig({
 				// Route all requests through the generated Worker when no static asset matches.
 				routes: { include: ['/*'], exclude: ['<all>'] }
 			}),
-			// SvelteKit 3 drops the built-in `$lib`; keep it rather than rewriting every import.
-			alias: { $lib: 'src/lib', $i18n: 'src/i18n' }
+			// `#lib` comes from the `imports` field of package.json; `$i18n` stays a kit alias.
+			alias: { $i18n: 'src/i18n' }
 		}),
 		svelteTesting()
 	],

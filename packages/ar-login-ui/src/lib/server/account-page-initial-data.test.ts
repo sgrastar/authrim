@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AccountCapabilities } from '$lib/api/account';
+import type { AccountCapabilities } from '#lib/api/account.js';
 import { loadAccountPageInitialData } from './account-page-initial-data';
 
 function capabilitiesWithConditions(

@@ -1,14 +1,14 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { adminComplianceAPI, type ComplianceStatus } from '$lib/api/admin-compliance';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
-	import AdminTabs from '$lib/components/admin/AdminTabs.svelte';
-	import type { AdminTabItem } from '$lib/components/admin/AdminTabs.svelte';
-	import AccessReviews from '$lib/components/compliance/AccessReviews.svelte';
-	import ComplianceOverview from '$lib/components/compliance/ComplianceOverview.svelte';
-	import ComplianceReports from '$lib/components/compliance/ComplianceReports.svelte';
-	import DataRetention from '$lib/components/compliance/DataRetention.svelte';
+	import { adminComplianceAPI, type ComplianceStatus } from '#lib/api/admin-compliance.js';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
+	import AdminTabs from '#lib/components/admin/AdminTabs.svelte';
+	import type { AdminTabItem } from '#lib/components/admin/AdminTabs.svelte';
+	import AccessReviews from '#lib/components/compliance/AccessReviews.svelte';
+	import ComplianceOverview from '#lib/components/compliance/ComplianceOverview.svelte';
+	import ComplianceReports from '#lib/components/compliance/ComplianceReports.svelte';
+	import DataRetention from '#lib/components/compliance/DataRetention.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 
 	const TABS = ['overview', 'reviews', 'reports', 'retention'] as const;

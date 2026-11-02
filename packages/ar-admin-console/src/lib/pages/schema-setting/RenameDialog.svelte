@@ -1,14 +1,14 @@
 <script lang="ts">
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import {
 		failureOf,
 		type RenameResult,
 		type Schema,
 		type SchemaSettingClient
-	} from '$lib/api/schema-setting';
-	import Callout from '$lib/ui/patterns/Callout.svelte';
-	import FormDialog from '$lib/ui/patterns/FormDialog.svelte';
-	import TextRow from '$lib/ui/patterns/TextRow.svelte';
+	} from '#lib/api/schema-setting.js';
+	import Callout from '#lib/ui/patterns/Callout.svelte';
+	import FormDialog from '#lib/ui/patterns/FormDialog.svelte';
+	import TextRow from '#lib/ui/patterns/TextRow.svelte';
 	import { FAILURE_KEY, KEY_PROBLEM_KEY } from './labels';
 	import { checkKey } from './schema-validation';
 

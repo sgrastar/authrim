@@ -5,8 +5,8 @@ import type {
 	FlowNodePreview,
 	NewFlowTemplate,
 	NewFlowTemplateId
-} from '$lib/admin/new-flow-templates';
-import { getNewFlowTemplate } from '$lib/admin/new-flow-templates';
+} from '#lib/admin/new-flow-templates.js';
+import { getNewFlowTemplate } from '#lib/admin/new-flow-templates.js';
 
 type FlowEditorNodeKind =
 	| 'start'

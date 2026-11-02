@@ -3,10 +3,10 @@
 	 * Registered passkeys by authenticator provider (name, light/dark icon, registration date) and
 	 * a form to register another. The technical device label and credential ID are not shown.
 	 */
-	import { Button, Input } from '$lib/components';
+	import { Button, Input } from '#lib/components/index.js';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
-	import type { AccountPasskey } from '$lib/api/account';
-	import { formatTimestamp } from '$lib/utils/date';
+	import type { AccountPasskey } from '#lib/api/account.js';
+	import { formatTimestamp } from '#lib/utils/date.js';
 	import AccountSectionSkeleton from '../AccountSectionSkeleton.svelte';
 	import AccountWidgetPanel from './AccountWidgetPanel.svelte';
 	import type { AccountWidgetCommonProps } from './types';

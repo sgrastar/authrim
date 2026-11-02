@@ -2,22 +2,22 @@
 	import { onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { LL } from '$i18n/i18n-svelte';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import {
 		adminOrganizationsAPI,
 		type OrgDomainMapping,
 		type Organization,
 		type OrganizationNode,
 		type OrganizationHierarchyResponse
-	} from '$lib/api/admin-organizations';
-	import OrganizationTree from '$lib/components/OrganizationTree.svelte';
-	import { Modal, ToggleSwitch } from '$lib/components';
-	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
-	import AdminSection from '$lib/components/admin/AdminSection.svelte';
-	import AdminTabs, { type AdminTabItem } from '$lib/components/admin/AdminTabs.svelte';
-	import AdminToolbar from '$lib/components/admin/AdminToolbar.svelte';
+	} from '#lib/api/admin-organizations.js';
+	import OrganizationTree from '#lib/components/OrganizationTree.svelte';
+	import { Modal, ToggleSwitch } from '#lib/components/index.js';
+	import AdminDataTable from '#lib/components/admin/AdminDataTable.svelte';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '#lib/components/admin/AdminSection.svelte';
+	import AdminTabs, { type AdminTabItem } from '#lib/components/admin/AdminTabs.svelte';
+	import AdminToolbar from '#lib/components/admin/AdminToolbar.svelte';
 
 	// Tab state
 	type OrganizationTab = 'hierarchy' | 'mappings';

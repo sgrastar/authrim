@@ -6,11 +6,11 @@
 		type AccessReview,
 		type ComplianceReport,
 		type ComplianceReportType
-	} from '$lib/api/admin-compliance';
-	import { Modal } from '$lib/components';
-	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
+	} from '#lib/api/admin-compliance.js';
+	import { Modal } from '#lib/components/index.js';
+	import AdminDataTable from '#lib/components/admin/AdminDataTable.svelte';
 	import { LL } from '$i18n/i18n-svelte';
-	import { toast } from '$lib/toast';
+	import { toast } from '#lib/toast.js';
 	import { formatDateTime, reportStatusClass, reportStatusLabel, reportTypeLabel } from './format';
 
 	const PAGE_SIZE = 20;

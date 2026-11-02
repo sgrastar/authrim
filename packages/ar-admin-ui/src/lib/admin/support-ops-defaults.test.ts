@@ -1,6 +1,6 @@
 import { listSupportOpsResources } from '@authrim/ar-lib-core/services/support-ops';
 import { describe, expect, it } from 'vitest';
-import type { SupportOpsResourceDescriptor } from '$lib/api/admin-support-ops';
+import type { SupportOpsResourceDescriptor } from '#lib/api/admin-support-ops.js';
 import { aggregatableGroupBy, initialSelectorValue } from './support-ops-defaults';
 
 // The registry the API serves: a field the page groups by must be one it aggregates.

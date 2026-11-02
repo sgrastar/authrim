@@ -1,6 +1,6 @@
 <script lang="ts">
 	/** Remaining backup codes and regenerating them with a current authenticator code. */
-	import { Button } from '$lib/components';
+	import { Button } from '#lib/components/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 	import AccountTotpCodeField from './AccountTotpCodeField.svelte';
 	import { TOTP_CODE_PATTERN } from './types';

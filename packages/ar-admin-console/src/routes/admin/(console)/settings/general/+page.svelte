@@ -1,8 +1,8 @@
 <script lang="ts">
-	import { httpTenantInfo } from '$lib/api/tenant-info';
-	import { tenantScope } from '$lib/auth/tenant-scope.svelte';
-	import { t } from '$lib/i18n/i18n.svelte';
-	import TenantGeneral from '$lib/pages/tenant-general/TenantGeneral.svelte';
+	import { httpTenantInfo } from '#lib/api/tenant-info.js';
+	import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import TenantGeneral from '#lib/pages/tenant-general/TenantGeneral.svelte';
 </script>
 
 <svelte:head>

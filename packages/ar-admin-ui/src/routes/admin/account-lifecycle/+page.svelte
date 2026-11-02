@@ -1,12 +1,12 @@
 <script lang="ts">
-	import GuestLifecycleStatus from '$lib/components/admin/GuestLifecycleStatus.svelte';
-	import GuestRetentionPreview from '$lib/components/admin/GuestRetentionPreview.svelte';
+	import GuestLifecycleStatus from '#lib/components/admin/GuestLifecycleStatus.svelte';
+	import GuestRetentionPreview from '#lib/components/admin/GuestRetentionPreview.svelte';
 	import { onMount } from 'svelte';
 	import { LL } from '$i18n/i18n-svelte';
-	import { adminSettingsAPI, type CategorySettings } from '$lib/api/admin-settings';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
-	import { ToggleSwitch } from '$lib/components';
-	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
+	import { adminSettingsAPI, type CategorySettings } from '#lib/api/admin-settings.js';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
+	import { ToggleSwitch } from '#lib/components/index.js';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '#lib/components/admin/index.js';
 
 	let ready = $state(false);
 	let loading = $state(true);

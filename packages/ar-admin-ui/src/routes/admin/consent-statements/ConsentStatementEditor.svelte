@@ -8,15 +8,15 @@
 		type ConsentStatementLocalization,
 		type ConsentStatementVersion,
 		type TenantConsentRequirement
-	} from '$lib/api/admin-consent-statements';
+	} from '#lib/api/admin-consent-statements.js';
 	import {
 		AdminDataTable,
 		AdminPageHeader,
 		AdminPageShell,
 		AdminSection,
 		MonacoTextEditor
-	} from '$lib/components/admin';
-	import { ToggleSwitch } from '$lib/components';
+	} from '#lib/components/admin/index.js';
+	import { ToggleSwitch } from '#lib/components/index.js';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 
 	type Mode = 'new' | 'edit';

@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import HomeView from '$lib/views/HomeView.svelte';
+	import HomeView from '#lib/views/HomeView.svelte';
 	import { LL } from '$i18n/i18n-svelte';
-	import { fetchAuthenticationMethods } from '$lib/api/authentication-methods';
-	import { auth, isAuthenticated } from '$lib/stores/auth';
-	import { useLoginUIStores } from '$lib/stores/login-ui-context';
+	import { fetchAuthenticationMethods } from '#lib/api/authentication-methods.js';
+	import { auth, isAuthenticated } from '#lib/stores/auth.js';
+	import { useLoginUIStores } from '#lib/stores/login-ui-context.js';
 
 	const { brandingStore } = useLoginUIStores();
 

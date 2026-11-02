@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { t } from '$lib/i18n/i18n.svelte';
-	import Button from '$lib/ui/primitives/Button.svelte';
-	import EmptyState from '$lib/ui/patterns/EmptyState.svelte';
-	import Page from '$lib/ui/templates/Page.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import Button from '#lib/ui/primitives/Button.svelte';
+	import EmptyState from '#lib/ui/patterns/EmptyState.svelte';
+	import Page from '#lib/ui/templates/Page.svelte';
 
 	const notFound = $derived(page.status === 404);
 </script>

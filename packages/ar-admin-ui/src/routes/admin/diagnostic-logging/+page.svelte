@@ -1,17 +1,17 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import Alert from '$lib/components/Alert.svelte';
-	import ToggleSwitch from '$lib/components/ToggleSwitch.svelte';
-	import { adminSettingsAPI, type CategorySettings } from '$lib/api/admin-settings';
+	import Alert from '#lib/components/Alert.svelte';
+	import ToggleSwitch from '#lib/components/ToggleSwitch.svelte';
+	import { adminSettingsAPI, type CategorySettings } from '#lib/api/admin-settings.js';
 	import {
 		AdminDataTable,
 		AdminPageHeader,
 		AdminPageShell,
 		AdminTabs,
 		type AdminTabItem
-	} from '$lib/components/admin';
-	import { adminFetch } from '$lib/api/admin-request';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	} from '#lib/components/admin/index.js';
+	import { adminFetch } from '#lib/api/admin-request.js';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 
 	type ExportFormat = 'json' | 'jsonl' | 'text';

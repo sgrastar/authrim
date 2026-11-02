@@ -1,4 +1,4 @@
-import type { ExternalProvider } from '$lib/api/authentication-methods';
+import type { ExternalProvider } from '#lib/api/authentication-methods.js';
 
 const SELECTABLE_ICON_NAMES = new Set([
 	'buildings',

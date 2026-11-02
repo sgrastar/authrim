@@ -3,7 +3,7 @@ import { render } from 'svelte/server';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { setLocale } from '$i18n/i18n-svelte';
 import AccountReauthDialog from './AccountReauthDialog.svelte';
-import { HYDRATION_MARKERS } from '$lib/testing/ssr-html';
+import { HYDRATION_MARKERS } from '#lib/testing/ssr-html.js';
 
 const source = readFileSync(new URL('./AccountReauthDialog.svelte', import.meta.url), 'utf8');
 

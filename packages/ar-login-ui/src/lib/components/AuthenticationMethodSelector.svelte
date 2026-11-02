@@ -1,9 +1,9 @@
 <script lang="ts">
-	import { Button, Input, Alert } from '$lib/components';
+	import { Button, Input, Alert } from '#lib/components/index.js';
 	import { LL } from '$i18n/i18n-svelte';
-	import type { ExternalProvider } from '$lib/api/authentication-methods';
-	import { getExternalProviderIconClass } from '$lib/login-provider-icons';
-	import { isValidImageUrl, sanitizeColor } from '$lib/utils/url-validation';
+	import type { ExternalProvider } from '#lib/api/authentication-methods.js';
+	import { getExternalProviderIconClass } from '#lib/login-provider-icons.js';
+	import { isValidImageUrl, sanitizeColor } from '#lib/utils/url-validation.js';
 
 	interface Props {
 		passkeyEnabled: boolean;

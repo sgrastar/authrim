@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 
 	/**
 	 * A table cell where the column does not apply to the row (a method that cannot be used for

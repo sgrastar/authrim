@@ -1,15 +1,15 @@
 <script lang="ts">
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import {
 		failureOf,
 		type Preset,
 		type PresetResult,
 		type SchemaSettingClient
-	} from '$lib/api/schema-setting';
-	import Badge from '$lib/ui/primitives/Badge.svelte';
-	import Checkbox from '$lib/ui/primitives/Checkbox.svelte';
-	import FormDialog from '$lib/ui/patterns/FormDialog.svelte';
-	import SelectRow from '$lib/ui/patterns/SelectRow.svelte';
+	} from '#lib/api/schema-setting.js';
+	import Badge from '#lib/ui/primitives/Badge.svelte';
+	import Checkbox from '#lib/ui/primitives/Checkbox.svelte';
+	import FormDialog from '#lib/ui/patterns/FormDialog.svelte';
+	import SelectRow from '#lib/ui/patterns/SelectRow.svelte';
 	import { TYPE_KEY } from './labels';
 
 	/**

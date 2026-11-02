@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { LL } from '$i18n/i18n-svelte';
-	import { ToggleSwitch } from '$lib/components';
-	import { adminSettingsAPI } from '$lib/api/admin-settings';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import { ToggleSwitch } from '#lib/components/index.js';
+	import { adminSettingsAPI } from '#lib/api/admin-settings.js';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 
 	/**
 	 * The profile fields a login from one IdP updates: null follows the tenant's

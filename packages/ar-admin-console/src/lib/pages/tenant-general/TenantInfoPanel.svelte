@@ -1,15 +1,15 @@
 <script lang="ts">
-	import { t } from '$lib/i18n/i18n.svelte';
-	import { ApiError } from '$lib/api/api-error';
-	import { isWebUrl, type TenantInfo, type TenantInfoClient } from '$lib/api/tenant-info';
-	import Callout from '$lib/ui/patterns/Callout.svelte';
-	import Card from '$lib/ui/patterns/Card.svelte';
-	import CopyButton from '$lib/ui/primitives/CopyButton.svelte';
-	import DetailItem from '$lib/ui/patterns/DetailItem.svelte';
-	import DetailList from '$lib/ui/patterns/DetailList.svelte';
-	import LoadingState from '$lib/ui/patterns/LoadingState.svelte';
-	import Badge from '$lib/ui/primitives/Badge.svelte';
-	import Button from '$lib/ui/primitives/Button.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import { ApiError } from '#lib/api/api-error.js';
+	import { isWebUrl, type TenantInfo, type TenantInfoClient } from '#lib/api/tenant-info.js';
+	import Callout from '#lib/ui/patterns/Callout.svelte';
+	import Card from '#lib/ui/patterns/Card.svelte';
+	import CopyButton from '#lib/ui/primitives/CopyButton.svelte';
+	import DetailItem from '#lib/ui/patterns/DetailItem.svelte';
+	import DetailList from '#lib/ui/patterns/DetailList.svelte';
+	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
+	import Badge from '#lib/ui/primitives/Badge.svelte';
+	import Button from '#lib/ui/primitives/Button.svelte';
 	import AddressValue from './AddressValue.svelte';
 	import EndpointList from './EndpointList.svelte';
 

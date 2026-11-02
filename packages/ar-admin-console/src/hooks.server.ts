@@ -26,10 +26,10 @@ import {
 	PUBLIC_AUTHRIM_ISSUER
 } from '$app/env/public';
 
-import { localeDir, LOCALE_COOKIE, resolveLocale } from '$lib/i18n/locales';
+import { localeDir, LOCALE_COOKIE, resolveLocale } from '#lib/i18n/locales.js';
 import type { RequestEvent } from '@sveltejs/kit';
 import { sequence, type Handle } from '@sveltejs/kit/hooks';
-import { getPlatformEnv } from '$lib/server/platform-env';
+import { getPlatformEnv } from '#lib/server/platform-env.js';
 
 interface ServiceBinding {
 	fetch(request: Request): Promise<Response>;
@@ -146,7 +146,7 @@ async function handleDevAdminMockIfEnabled(
 	if (!isLoopbackHost(event.url.hostname)) return null;
 	if (!isAdminUiDevMockFlagEnabled(platformEnv)) return null;
 
-	const { handleDevAdminMock } = await import('$lib/server/dev-console-mock');
+	const { handleDevAdminMock } = await import('#lib/server/dev-console-mock.js');
 	return handleDevAdminMock(event, platformEnv);
 }
 

@@ -4,19 +4,19 @@
 		type ComplianceClient,
 		type RetentionCategory,
 		type RetentionStatus
-	} from '$lib/api/compliance';
-	import { ApiError } from '$lib/api/api-error';
-	import { i18n, t } from '$lib/i18n/i18n.svelte';
-	import { formatNumber } from '$lib/ui/format';
-	import Callout from '$lib/ui/patterns/Callout.svelte';
-	import Card from '$lib/ui/patterns/Card.svelte';
-	import DataTable from '$lib/ui/patterns/DataTable.svelte';
-	import FormDialog from '$lib/ui/patterns/FormDialog.svelte';
-	import LoadingState from '$lib/ui/patterns/LoadingState.svelte';
-	import Button from '$lib/ui/primitives/Button.svelte';
-	import Checkbox from '$lib/ui/primitives/Checkbox.svelte';
-	import NumberField from '$lib/ui/primitives/NumberField.svelte';
-	import { toast } from '$lib/ui/toast/toast.svelte';
+	} from '#lib/api/compliance.js';
+	import { ApiError } from '#lib/api/api-error.js';
+	import { i18n, t } from '#lib/i18n/i18n.svelte.js';
+	import { formatNumber } from '#lib/ui/format.js';
+	import Callout from '#lib/ui/patterns/Callout.svelte';
+	import Card from '#lib/ui/patterns/Card.svelte';
+	import DataTable from '#lib/ui/patterns/DataTable.svelte';
+	import FormDialog from '#lib/ui/patterns/FormDialog.svelte';
+	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
+	import Button from '#lib/ui/primitives/Button.svelte';
+	import Checkbox from '#lib/ui/primitives/Checkbox.svelte';
+	import NumberField from '#lib/ui/primitives/NumberField.svelte';
+	import { toast } from '#lib/ui/toast/toast.svelte.js';
 	import { deletionText, duration, editText, label, retentionText, timeText } from './labels';
 
 	interface Props {

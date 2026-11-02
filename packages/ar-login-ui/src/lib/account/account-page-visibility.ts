@@ -1,5 +1,5 @@
 import type { AccountRegistrationState } from '@authrim/ar-lib-core';
-import type { AccountPageDefinition } from '$lib/api/account';
+import type { AccountPageDefinition } from '#lib/api/account.js';
 
 type AccountPagePlacement = AccountPageDefinition['screens'][number];
 

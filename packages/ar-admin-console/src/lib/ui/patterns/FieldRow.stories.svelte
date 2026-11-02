@@ -1,6 +1,6 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import Checkbox from '../primitives/Checkbox.svelte';
 	import DurationField from '../primitives/DurationField.svelte';
 	import Select from '../primitives/Select.svelte';

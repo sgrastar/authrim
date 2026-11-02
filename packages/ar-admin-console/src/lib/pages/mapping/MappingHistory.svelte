@@ -1,21 +1,21 @@
 <script lang="ts">
-	import { ApiError } from '$lib/api/api-error';
+	import { ApiError } from '#lib/api/api-error.js';
 	import type {
 		HistoryEntry,
 		IdentityMappingClient,
 		RestorePreview
-	} from '$lib/api/identity-mapping';
-	import { t } from '$lib/i18n/i18n.svelte';
-	import Callout from '$lib/ui/patterns/Callout.svelte';
-	import Card from '$lib/ui/patterns/Card.svelte';
-	import DataTable from '$lib/ui/patterns/DataTable.svelte';
-	import EmptyState from '$lib/ui/patterns/EmptyState.svelte';
-	import FormDialog from '$lib/ui/patterns/FormDialog.svelte';
-	import LoadingState from '$lib/ui/patterns/LoadingState.svelte';
-	import Button from '$lib/ui/primitives/Button.svelte';
-	import DateTime from '$lib/ui/time/DateTime.svelte';
+	} from '#lib/api/identity-mapping.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import Callout from '#lib/ui/patterns/Callout.svelte';
+	import Card from '#lib/ui/patterns/Card.svelte';
+	import DataTable from '#lib/ui/patterns/DataTable.svelte';
+	import EmptyState from '#lib/ui/patterns/EmptyState.svelte';
+	import FormDialog from '#lib/ui/patterns/FormDialog.svelte';
+	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
+	import Button from '#lib/ui/primitives/Button.svelte';
+	import DateTime from '#lib/ui/time/DateTime.svelte';
 	import MappingSection from './MappingSection.svelte';
-	import { toast } from '$lib/ui/toast/toast.svelte';
+	import { toast } from '#lib/ui/toast/toast.svelte.js';
 	import { changeText, label, levelValueText } from './labels';
 
 	/**

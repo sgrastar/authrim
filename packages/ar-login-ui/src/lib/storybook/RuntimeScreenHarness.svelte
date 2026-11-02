@@ -3,7 +3,7 @@
 	 * RuntimeScreen with the state the login route keeps for it, so a story can type, tick and
 	 * click. Every callback is also reported through `onAction` (wired to the Actions panel).
 	 */
-	import RuntimeScreen from '$lib/components/RuntimeScreen.svelte';
+	import RuntimeScreen from '#lib/components/RuntimeScreen.svelte';
 	import { untrack } from 'svelte';
 	import {
 		allMethods,

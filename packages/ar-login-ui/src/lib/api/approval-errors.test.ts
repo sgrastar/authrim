@@ -2,7 +2,7 @@ import { get } from 'svelte/store';
 import { afterEach, describe, expect, it } from 'vitest';
 import { LL, setLocale } from '$i18n/i18n-svelte';
 import type { Locales } from '$i18n/i18n-types';
-import { LOGIN_UI_LOCALES } from '$lib/i18n/locales';
+import { LOGIN_UI_LOCALES } from '#lib/i18n/locales.js';
 import {
 	cibaApprovalErrorMessage,
 	classifyApprovalFailure,

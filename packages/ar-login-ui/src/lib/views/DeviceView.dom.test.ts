@@ -11,7 +11,7 @@ import {
 	type DeviceDecisionApi,
 	type DeviceFlowState
 } from '../../routes/device/device-decision';
-import { handleCodeEnterKey } from '$lib/utils/code-enter-key';
+import { handleCodeEnterKey } from '#lib/utils/code-enter-key.js';
 import DeviceView from './DeviceView.svelte';
 
 // The real DeviceView in a DOM, wired to the real device flow the way the route wires it, with

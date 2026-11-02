@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { adminAuth } from '$lib/stores/admin-auth.svelte';
+	import { adminAuth } from '#lib/stores/admin-auth.svelte.js';
 	import {
 		adminLoggingControlAPI,
 		type LoggingDeliveryEvent,
@@ -23,9 +23,9 @@
 		type LoggingUsageAggregate,
 		type LoggingQuotaPolicy,
 		type LoggingQuotaEvaluation
-	} from '$lib/api/admin-logging-control';
-	import { AdminDataTable, AdminPageHeader, AdminPageShell } from '$lib/components/admin';
-	import DangerConfirmationModal from '$lib/components/admin/DangerConfirmationModal.svelte';
+	} from '#lib/api/admin-logging-control.js';
+	import { AdminDataTable, AdminPageHeader, AdminPageShell } from '#lib/components/admin/index.js';
+	import DangerConfirmationModal from '#lib/components/admin/DangerConfirmationModal.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 
 	type DangerConfirmationRequest = {

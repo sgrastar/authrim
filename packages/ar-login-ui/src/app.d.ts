@@ -68,9 +68,9 @@ declare global {
 		interface Locals {
 			locale?: string;
 			emailVerificationProtocolEnabled?: boolean;
-			accountPageInitial?: import('$lib/server/account-page-initial-data').AccountPageInitialData;
+			accountPageInitial?: import('#lib/server/account-page-initial-data.js').AccountPageInitialData;
 			authenticationMethods?:
-				| import('$lib/api/authentication-methods').AuthenticationMethodsResponse
+				| import('#lib/api/authentication-methods.js').AuthenticationMethodsResponse
 				| null;
 			loginChallengeThemeTarget?: {
 				challengeId: string;

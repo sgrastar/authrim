@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createFakeSettings } from '$lib/api/fake/settings-fake';
-import type { SettingsTarget } from '$lib/api/settings';
+import { createFakeSettings } from '#lib/api/fake/settings-fake.js';
+import type { SettingsTarget } from '#lib/api/settings.js';
 import { STAYING_SIGNED_IN, type SettingsSection } from './placement';
 import {
 	changedBetween,

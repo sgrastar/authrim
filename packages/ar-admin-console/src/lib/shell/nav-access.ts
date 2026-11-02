@@ -10,7 +10,7 @@ import {
 	widest,
 	type AccessLevel,
 	type AdminAccess
-} from '$lib/access/access';
+} from '#lib/access/access.js';
 import type { NavItem, ScopeKind } from './nav-types';
 
 export interface NavRequirement {

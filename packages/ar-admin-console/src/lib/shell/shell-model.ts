@@ -2,9 +2,9 @@
  * Turns the navigation model plus the current location into what the shell renders.
  * Pure (translation is passed in) so it can be unit-tested and reused by stories.
  */
-import type { AdminAccess } from '$lib/access/access';
-import type { MessageKey } from '$lib/i18n/messages/ja';
-import type { IconName } from '$lib/ui/icons/icons';
+import type { AdminAccess } from '#lib/access/access.js';
+import type { MessageKey } from '#lib/i18n/messages/ja.js';
+import type { IconName } from '#lib/ui/icons/icons.js';
 import {
 	areasOfTop,
 	landingAreaOf,

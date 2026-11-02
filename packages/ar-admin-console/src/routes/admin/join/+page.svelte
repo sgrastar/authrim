@@ -3,15 +3,15 @@
 	import {
 		adminInvitationEnrollmentAPI,
 		enrollmentErrorKey
-	} from '$lib/api/admin-invitation-enrollment';
-	import { t, type MessageKey } from '$lib/i18n/i18n.svelte';
-	import DisplayMenu from '$lib/shell/DisplayMenu.svelte';
-	import LanguageSwitch from '$lib/shell/LanguageSwitch.svelte';
-	import Button from '$lib/ui/primitives/Button.svelte';
-	import TextField from '$lib/ui/primitives/TextField.svelte';
-	import Callout from '$lib/ui/patterns/Callout.svelte';
-	import Form from '$lib/ui/patterns/Form.svelte';
-	import AuthLayout from '$lib/ui/templates/AuthLayout.svelte';
+	} from '#lib/api/admin-invitation-enrollment.js';
+	import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
+	import DisplayMenu from '#lib/shell/DisplayMenu.svelte';
+	import LanguageSwitch from '#lib/shell/LanguageSwitch.svelte';
+	import Button from '#lib/ui/primitives/Button.svelte';
+	import TextField from '#lib/ui/primitives/TextField.svelte';
+	import Callout from '#lib/ui/patterns/Callout.svelte';
+	import Form from '#lib/ui/patterns/Form.svelte';
+	import AuthLayout from '#lib/ui/templates/AuthLayout.svelte';
 
 	type Invitation = {
 		email: string;

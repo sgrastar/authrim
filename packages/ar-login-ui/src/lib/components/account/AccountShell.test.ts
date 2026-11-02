@@ -3,12 +3,12 @@ import { createRawSnippet } from 'svelte';
 import { render } from 'svelte/server';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { setLocale } from '$i18n/i18n-svelte';
-import { buildLoginUIConfig, type LoginUIOverrides } from '$lib/storybook/config';
-import { applyAuthenticationMethodsToLoginUI } from '$lib/stores/login-ui-configuration';
-import type { AuthenticationMethodsResponse } from '$lib/api/authentication-methods';
-import WithLoginUIStores from '$lib/testing/WithLoginUIStores.svelte';
+import { buildLoginUIConfig, type LoginUIOverrides } from '#lib/storybook/config.js';
+import { applyAuthenticationMethodsToLoginUI } from '#lib/stores/login-ui-configuration.js';
+import type { AuthenticationMethodsResponse } from '#lib/api/authentication-methods.js';
+import WithLoginUIStores from '#lib/testing/WithLoginUIStores.svelte';
 import AccountShell from './AccountShell.svelte';
-import { HYDRATION_MARKERS } from '$lib/testing/ssr-html';
+import { HYDRATION_MARKERS } from '#lib/testing/ssr-html.js';
 
 const source = readFileSync(new URL('./AccountShell.svelte', import.meta.url), 'utf8');
 

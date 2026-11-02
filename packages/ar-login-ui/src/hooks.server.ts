@@ -28,34 +28,34 @@ import {
 	getLoginTenantHost,
 	getRememberedTenantHost,
 	normalizeTenantHost
-} from '$lib/discovery-session';
-import { getAuthConfig } from '$lib/auth';
-import type { AuthenticationMethodsResponse } from '$lib/api/authentication-methods';
+} from '#lib/discovery-session.js';
+import { getAuthConfig } from '#lib/auth.js';
+import type { AuthenticationMethodsResponse } from '#lib/api/authentication-methods.js';
 import {
 	getCachedAuthenticationMethods,
 	resolveHumanVerificationProviderFromAuthenticationMethods,
 	type HumanVerificationProvider
-} from '$lib/server/authentication-methods-cache';
-import { getAccountPageCanonicalRedirectUrl } from '$lib/server/account-canonical-url';
-import { toDocumentDirection, toDocumentLanguage, type LoginUILocale } from '$lib/i18n/locales';
+} from '#lib/server/authentication-methods-cache.js';
+import { getAccountPageCanonicalRedirectUrl } from '#lib/server/account-canonical-url.js';
+import { toDocumentDirection, toDocumentLanguage, type LoginUILocale } from '#lib/i18n/locales.js';
 import {
 	getLoginUILanguageConfig,
 	resolveEnabledLoginUILocale,
 	resolveEnabledLoginUILocalePreferenceList
-} from '$lib/i18n/config';
-import { shouldUseFastPlainLoginShell } from '$lib/server/login-entry-fast-path';
+} from '#lib/i18n/config.js';
+import { shouldUseFastPlainLoginShell } from '#lib/server/login-entry-fast-path.js';
 import {
 	loadAccountPageInitialData,
 	type AccountPageInitialData
-} from '$lib/server/account-page-initial-data';
-import { sanitizeColor } from '$lib/utils/url-validation';
-import { getPlatformEnv } from '$lib/server/platform-env';
+} from '#lib/server/account-page-initial-data.js';
+import { sanitizeColor } from '#lib/utils/url-validation.js';
+import { getPlatformEnv } from '#lib/server/platform-env.js';
 import {
 	LOGIN_UI_THEME_HINT_COOKIE,
 	LOGIN_UI_THEME_HINT_MAX_AGE_SECONDS,
 	normalizeLoginUIThemeMode,
 	resolveLoginUIThemeBackground
-} from '$lib/theme-bootstrap';
+} from '#lib/theme-bootstrap.js';
 
 type ContentSecurityPolicyHumanVerificationProvider = HumanVerificationProvider | 'all';
 

@@ -4,9 +4,9 @@
 		adminDirectoryConnectorsAPI,
 		type DirectoryConnectorFleetInstance,
 		type DirectoryConnectorStatusEpisode
-	} from '$lib/api/admin-directory-connectors';
-	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	} from '#lib/api/admin-directory-connectors.js';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '#lib/components/admin/index.js';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import { LL } from '$i18n/i18n-svelte';
 	import DirectoryAuthenticationTabs from '../DirectoryAuthenticationTabs.svelte';
 

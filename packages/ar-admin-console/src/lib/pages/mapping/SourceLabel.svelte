@@ -1,7 +1,7 @@
 <script lang="ts">
-	import type { EffectiveSelection } from '$lib/api/identity-mapping';
-	import { t } from '$lib/i18n/i18n.svelte';
-	import Icon from '$lib/ui/icons/Icon.svelte';
+	import type { EffectiveSelection } from '#lib/api/identity-mapping.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import Icon from '#lib/ui/icons/Icon.svelte';
 	import { effectText, setUsable, sourceText } from './labels';
 
 	/**

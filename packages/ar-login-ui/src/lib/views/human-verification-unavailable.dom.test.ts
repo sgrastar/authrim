@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { render } from '@testing-library/svelte';
 import { describe, expect, it } from 'vitest';
-import { blocks, screenOf } from '$lib/storybook/fixtures';
+import { blocks, screenOf } from '#lib/storybook/fixtures.js';
 import LoginView from './LoginView.svelte';
 import ReauthView from './ReauthView.svelte';
 import SignupView from './SignupView.svelte';

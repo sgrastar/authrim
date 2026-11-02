@@ -1,5 +1,5 @@
 <script lang="ts" module>
-	import type { IconName } from '$lib/ui/icons/icons';
+	import type { IconName } from '#lib/ui/icons/icons.js';
 
 	export type SubNavRow =
 		| { type: 'scope'; key: string; label: string }
@@ -19,9 +19,9 @@
 </script>
 
 <script lang="ts">
-	import CountBadge from '$lib/ui/primitives/CountBadge.svelte';
+	import CountBadge from '#lib/ui/primitives/CountBadge.svelte';
 	import { untrack } from 'svelte';
-	import Icon from '$lib/ui/icons/Icon.svelte';
+	import Icon from '#lib/ui/icons/Icon.svelte';
 	import { motionReduced, SUBNAV_RISE_DELAY_MS, SUBNAV_SETTLE_MS, SUBNAV_STEP_MS } from './motion';
 
 	/**

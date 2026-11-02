@@ -1,9 +1,9 @@
 <script lang="ts">
-	import { t, type MessageKey } from '$lib/i18n/i18n.svelte';
-	import type { UsageBinding } from '$lib/api/schema-setting';
-	import Card from '$lib/ui/patterns/Card.svelte';
-	import DataTable from '$lib/ui/patterns/DataTable.svelte';
-	import Badge from '$lib/ui/primitives/Badge.svelte';
+	import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
+	import type { UsageBinding } from '#lib/api/schema-setting.js';
+	import Card from '#lib/ui/patterns/Card.svelte';
+	import DataTable from '#lib/ui/patterns/DataTable.svelte';
+	import Badge from '#lib/ui/primitives/Badge.svelte';
 	import { PROTECTION_KEY } from './labels';
 
 	/**

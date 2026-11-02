@@ -1,17 +1,17 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
-	import { getTenantInfo, type TenantInfo } from '$lib/api/admin-info';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
+	import { getTenantInfo, type TenantInfo } from '#lib/api/admin-info.js';
 	import {
 		adminSettingsAPI,
 		type CategoryMetaFull,
 		type CategorySettings
-	} from '$lib/api/admin-settings';
-	import { adminSAMLAPI, type SAMLSettings } from '$lib/api/admin-saml';
-	import { parseDiscoveryMethods } from '$lib/admin/tenant-discovery-settings';
+	} from '#lib/api/admin-settings.js';
+	import { adminSAMLAPI, type SAMLSettings } from '#lib/api/admin-saml.js';
+	import { parseDiscoveryMethods } from '#lib/admin/tenant-discovery-settings.js';
 	import { LL } from '$i18n/i18n-svelte';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
 
 	type LoginEntryMode = 'tenant_only' | 'discovery_optional' | 'discovery_required';
 

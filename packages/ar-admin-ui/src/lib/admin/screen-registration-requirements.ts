@@ -1,4 +1,4 @@
-import type { ScreenField, ScreenKind, ScreenValueType } from '$lib/api/admin-screens';
+import type { ScreenField, ScreenKind, ScreenValueType } from '#lib/api/admin-screens.js';
 
 export interface RegistrationSchemaFieldOption {
 	field: string;

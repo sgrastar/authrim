@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import Disclosure from '../patterns/Disclosure.svelte';
 	import Badge from '../primitives/Badge.svelte';
 	import NumberField from '../primitives/NumberField.svelte';

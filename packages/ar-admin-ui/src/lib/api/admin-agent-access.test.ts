@@ -7,7 +7,7 @@ import {
 	type AgentAccessSettings
 } from './admin-agent-access';
 import { API_BASE_URL } from './admin-request';
-import { settingsContext } from '$lib/stores/settings-context.svelte';
+import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 
 function adminUrl(path: string): string {
 	return `${API_BASE_URL}${path}`;

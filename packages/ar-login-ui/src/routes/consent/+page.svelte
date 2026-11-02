@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
-	import AuthPageShell from '$lib/components/AuthPageShell.svelte';
-	import ConsentView, { type ConsentScreenData } from '$lib/views/ConsentView.svelte';
-	import { useLoginUIStores } from '$lib/stores/login-ui-context';
+	import AuthPageShell from '#lib/components/AuthPageShell.svelte';
+	import ConsentView, { type ConsentScreenData } from '#lib/views/ConsentView.svelte';
+	import { useLoginUIStores } from '#lib/stores/login-ui-context.js';
 	import { LL } from '$i18n/i18n-svelte';
-	import { API_BASE_URL, consentAPI, type ConsentSubmission } from '$lib/api/client';
-	import { loginUiDisplayError, messageForCaughtError } from '$lib/errors/display-error';
-	import { isValidRedirectUrl } from '$lib/utils/url-validation';
+	import { API_BASE_URL, consentAPI, type ConsentSubmission } from '#lib/api/client.js';
+	import { loginUiDisplayError, messageForCaughtError } from '#lib/errors/display-error.js';
+	import { isValidRedirectUrl } from '#lib/utils/url-validation.js';
 
 	const { brandingStore } = useLoginUIStores();
 

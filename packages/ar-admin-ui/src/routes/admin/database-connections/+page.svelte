@@ -4,8 +4,8 @@
 	import {
 		adminDatabaseConnectionsAPI,
 		type DatabaseConnection
-	} from '$lib/api/admin-database-connections';
-	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
+	} from '#lib/api/admin-database-connections.js';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '#lib/components/admin/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	let items = $state<DatabaseConnection[]>([]);

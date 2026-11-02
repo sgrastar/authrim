@@ -19,7 +19,7 @@
  * setting the API adds cannot silently go missing from the console.
  */
 import { ALL_CATEGORY_META, type CategoryName } from '@authrim/ar-lib-core/types/settings/catalog';
-import type { MessageKey } from '$lib/i18n/i18n.svelte';
+import type { MessageKey } from '#lib/i18n/i18n.svelte.js';
 
 export type Depth = 'primary' | 'advanced' | 'search' | 'hidden';
 

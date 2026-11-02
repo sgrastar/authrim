@@ -2,10 +2,10 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { getLocale } from '$i18n/i18n-svelte';
-	import { adminScreensAPI, type Screen, type ScreenField } from '$lib/api/admin-screens';
-	import { adminSettingsAPI, type CategorySettings } from '$lib/api/admin-settings';
-	import { AdminPageHeader, AdminPageShell } from '$lib/components/admin';
-	import { LOGIN_UI_LOCALE_OPTIONS, type LoginUILocale } from '$lib/login-ui/locales';
+	import { adminScreensAPI, type Screen, type ScreenField } from '#lib/api/admin-screens.js';
+	import { adminSettingsAPI, type CategorySettings } from '#lib/api/admin-settings.js';
+	import { AdminPageHeader, AdminPageShell } from '#lib/components/admin/index.js';
+	import { LOGIN_UI_LOCALE_OPTIONS, type LoginUILocale } from '#lib/login-ui/locales.js';
 
 	type PlacementWidth = 'full' | 'half';
 	type VisibilityCondition =

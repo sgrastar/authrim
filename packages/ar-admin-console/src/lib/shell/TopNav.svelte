@@ -1,5 +1,5 @@
 <script lang="ts" module>
-	import type { IconName } from '$lib/ui/icons/icons';
+	import type { IconName } from '#lib/ui/icons/icons.js';
 
 	export interface TopNavEntry {
 		id: string;
@@ -14,9 +14,9 @@
 </script>
 
 <script lang="ts">
-	import CountBadge from '$lib/ui/primitives/CountBadge.svelte';
+	import CountBadge from '#lib/ui/primitives/CountBadge.svelte';
 	import { untrack } from 'svelte';
-	import Icon from '$lib/ui/icons/Icon.svelte';
+	import Icon from '#lib/ui/icons/Icon.svelte';
 	import { afterPaint, motionReduced, TOPNAV_FLIP_MS, TOPNAV_FLIP_STEP_MS } from './motion';
 
 	/**

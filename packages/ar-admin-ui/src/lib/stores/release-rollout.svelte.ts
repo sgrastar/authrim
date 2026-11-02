@@ -1,4 +1,4 @@
-import { adminControlPlaneAPI, type ReleaseRolloutStatus } from '$lib/api/admin-control-plane';
+import { adminControlPlaneAPI, type ReleaseRolloutStatus } from '#lib/api/admin-control-plane.js';
 
 const IDLE: ReleaseRolloutStatus = {
 	operationId: null,

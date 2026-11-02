@@ -3,12 +3,12 @@
 		getDefaultDiscoveryMode,
 		getInteractiveDiscoveryMethods,
 		resolveDiscoveryHiddenFields
-	} from '$lib/discovery-ui';
-	import AuthPageShell from '$lib/components/AuthPageShell.svelte';
-	import DiscoverView, { type DiscoveryCandidate } from '$lib/views/DiscoverView.svelte';
-	import { useLoginUIStores } from '$lib/stores/login-ui-context';
+	} from '#lib/discovery-ui.js';
+	import AuthPageShell from '#lib/components/AuthPageShell.svelte';
+	import DiscoverView, { type DiscoveryCandidate } from '#lib/views/DiscoverView.svelte';
+	import { useLoginUIStores } from '#lib/stores/login-ui-context.js';
 	import { LL } from '$i18n/i18n-svelte';
-	import { isValidImageUrl } from '$lib/utils/url-validation';
+	import { isValidImageUrl } from '#lib/utils/url-validation.js';
 	import { onMount } from 'svelte';
 
 	const { themeStore } = useLoginUIStores();

@@ -17,49 +17,49 @@
 		type AccountPageScreen,
 		type AccountPageScreenField,
 		type AccountTotpCredential
-	} from '$lib/api/account';
-	import AccountLauncherSection from '$lib/components/account/AccountLauncherSection.svelte';
+	} from '#lib/api/account.js';
+	import AccountLauncherSection from '#lib/components/account/AccountLauncherSection.svelte';
 	import AccountReauthDialog, {
 		type AccountReauthMethod
-	} from '$lib/components/account/AccountReauthDialog.svelte';
+	} from '#lib/components/account/AccountReauthDialog.svelte';
 	import AccountScreenBlock, {
 		isAccountScreenStaticBlock
-	} from '$lib/components/account/AccountScreenBlock.svelte';
-	import AccountScreenPlacement from '$lib/components/account/AccountScreenPlacement.svelte';
-	import AccountShell from '$lib/components/account/AccountShell.svelte';
-	import AccountUpgradeSection from '$lib/components/account/AccountUpgradeSection.svelte';
-	import AccountActivityWidget from '$lib/components/account/widgets/AccountActivityWidget.svelte';
-	import AccountConsentWidget from '$lib/components/account/widgets/AccountConsentWidget.svelte';
-	import AccountDevicesWidget from '$lib/components/account/widgets/AccountDevicesWidget.svelte';
-	import AccountPasskeysWidget from '$lib/components/account/widgets/AccountPasskeysWidget.svelte';
-	import AccountProfileWidget from '$lib/components/account/widgets/AccountProfileWidget.svelte';
-	import AccountSessionsWidget from '$lib/components/account/widgets/AccountSessionsWidget.svelte';
-	import AccountSocialAccountsWidget from '$lib/components/account/widgets/AccountSocialAccountsWidget.svelte';
-	import AccountTotpWidget from '$lib/components/account/widgets/AccountTotpWidget.svelte';
-	import AccountWidgetPanel from '$lib/components/account/widgets/AccountWidgetPanel.svelte';
+	} from '#lib/components/account/AccountScreenBlock.svelte';
+	import AccountScreenPlacement from '#lib/components/account/AccountScreenPlacement.svelte';
+	import AccountShell from '#lib/components/account/AccountShell.svelte';
+	import AccountUpgradeSection from '#lib/components/account/AccountUpgradeSection.svelte';
+	import AccountActivityWidget from '#lib/components/account/widgets/AccountActivityWidget.svelte';
+	import AccountConsentWidget from '#lib/components/account/widgets/AccountConsentWidget.svelte';
+	import AccountDevicesWidget from '#lib/components/account/widgets/AccountDevicesWidget.svelte';
+	import AccountPasskeysWidget from '#lib/components/account/widgets/AccountPasskeysWidget.svelte';
+	import AccountProfileWidget from '#lib/components/account/widgets/AccountProfileWidget.svelte';
+	import AccountSessionsWidget from '#lib/components/account/widgets/AccountSessionsWidget.svelte';
+	import AccountSocialAccountsWidget from '#lib/components/account/widgets/AccountSocialAccountsWidget.svelte';
+	import AccountTotpWidget from '#lib/components/account/widgets/AccountTotpWidget.svelte';
+	import AccountWidgetPanel from '#lib/components/account/widgets/AccountWidgetPanel.svelte';
 	import {
 		fetchAuthenticationMethods,
 		type AuthenticationMethods,
 		type AuthenticationMethodsResponse
-	} from '$lib/api/authentication-methods';
-	import { logoutWithGuestWarning } from '$lib/account/guest-logout';
-	import { isPlacementVisibleForRegistrationState } from '$lib/account/account-page-visibility';
-	import { safeAccountScreenHref } from '$lib/account/account-screen-href';
-	import { auth } from '$lib/stores/auth';
+	} from '#lib/api/authentication-methods.js';
+	import { logoutWithGuestWarning } from '#lib/account/guest-logout.js';
+	import { isPlacementVisibleForRegistrationState } from '#lib/account/account-page-visibility.js';
+	import { safeAccountScreenHref } from '#lib/account/account-screen-href.js';
+	import { auth } from '#lib/stores/auth.js';
 	import {
 		signalAllAcceptedCredentials,
 		signalCurrentUserDetails,
 		signalUnknownCredential,
 		shouldSignalUnknownCredentialAfterRegistrationFailure
-	} from '$lib/webauthn/signal';
-	import { classifyPasskeyRegistrationError } from '$lib/webauthn/passkey-registration-error';
-	import { buildTotpDeleteProof } from '$lib/account/totp-proof';
-	import { getAuthConfig } from '$lib/auth';
-	import type { APIError } from '$lib/api/client';
-	import { appendApiSupportReference, messageForCaughtError } from '$lib/errors/display-error';
+	} from '#lib/webauthn/signal.js';
+	import { classifyPasskeyRegistrationError } from '#lib/webauthn/passkey-registration-error.js';
+	import { buildTotpDeleteProof } from '#lib/account/totp-proof.js';
+	import { getAuthConfig } from '#lib/auth.js';
+	import type { APIError } from '#lib/api/client.js';
+	import { appendApiSupportReference, messageForCaughtError } from '#lib/errors/display-error.js';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
 	import type { Locales } from '$i18n/i18n-types';
-	import { useLoginUIStores } from '$lib/stores/login-ui-context';
+	import { useLoginUIStores } from '#lib/stores/login-ui-context.js';
 
 	let {
 		initialCapabilities = null,

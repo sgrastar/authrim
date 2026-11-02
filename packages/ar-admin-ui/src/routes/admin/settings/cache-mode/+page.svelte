@@ -1,17 +1,17 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { LL } from '$i18n/i18n-svelte';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import {
 		adminCacheModeAPI,
 		type CacheMode,
 		type PlatformCacheModeResponse,
 		type CacheModeInfoResponse
-	} from '$lib/api/admin-cache-mode';
-	import Alert from '$lib/components/Alert.svelte';
-	import { AdminDataTable } from '$lib/components/admin';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	} from '#lib/api/admin-cache-mode.js';
+	import Alert from '#lib/components/Alert.svelte';
+	import { AdminDataTable } from '#lib/components/admin/index.js';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
 
 	// State
 	let platformMode = $state<PlatformCacheModeResponse | null>(null);

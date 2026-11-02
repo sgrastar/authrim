@@ -4,13 +4,13 @@
 		adminIatTokensAPI,
 		type IatToken,
 		type CreateIatTokenResponse
-	} from '$lib/api/admin-iat-tokens';
-	import { ToggleSwitch, Modal } from '$lib/components';
+	} from '#lib/api/admin-iat-tokens.js';
+	import { ToggleSwitch, Modal } from '#lib/components/index.js';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
-	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
-	import AdminSection from '$lib/components/admin/AdminSection.svelte';
+	import AdminDataTable from '#lib/components/admin/AdminDataTable.svelte';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '#lib/components/admin/AdminSection.svelte';
 
 	let tokens: IatToken[] = $state([]);
 	let loading = $state(true);

@@ -3,9 +3,9 @@
 	 * "Or continue with" and one button per external identity provider, each with the
 	 * human-verification widget it may be waiting on. Shared by the login and signup views.
 	 */
-	import { Button } from '$lib/components';
+	import { Button } from '#lib/components/index.js';
 	import { LL } from '$i18n/i18n-svelte';
-	import { isValidImageUrl } from '$lib/utils/url-validation';
+	import { isValidImageUrl } from '#lib/utils/url-validation.js';
 	import type { ExternalProviderButton, HumanVerificationView } from '../auth-entry-types';
 	import HumanVerification from './HumanVerification.svelte';
 

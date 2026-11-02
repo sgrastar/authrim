@@ -11,26 +11,26 @@
 		type ReportType,
 		type ScheduledMaintenanceTask,
 		type R2BucketOperationalMetric
-	} from '$lib/api/admin-jobs';
+	} from '#lib/api/admin-jobs.js';
 	import {
 		adminStorageDestinationsAPI,
 		type StorageDestination
-	} from '$lib/api/admin-storage-destinations';
+	} from '#lib/api/admin-storage-destinations.js';
 	import {
 		formatDate,
 		isValidDownloadUrl,
 		DEFAULT_PAGE_SIZE,
 		JOB_POLLING_INTERVAL,
 		sanitizeText
-	} from '$lib/utils';
-	import { Modal } from '$lib/components';
+	} from '#lib/utils/index.js';
+	import { Modal } from '#lib/components/index.js';
 	import {
 		AdminDataTable,
 		AdminPageHeader,
 		AdminPageShell,
 		AdminSection,
 		AdminToolbar
-	} from '$lib/components/admin';
+	} from '#lib/components/admin/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	// State

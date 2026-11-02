@@ -12,7 +12,7 @@ import type {
 	ComplianceReportStatus,
 	ComplianceReportType,
 	RetentionCategoryId
-} from '$lib/api/admin-compliance';
+} from '#lib/api/admin-compliance.js';
 
 export function statusBadgeClass(status: ComplianceCheckStatus): string {
 	switch (status) {

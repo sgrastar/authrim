@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import {
 		adminPluginsAPI,
 		type PluginWithStatus,
@@ -9,18 +9,18 @@
 		type ProviderProjectionJob,
 		type PluginResourceSelection,
 		PLUGIN_CATEGORIES
-	} from '$lib/api/admin-plugins';
+	} from '#lib/api/admin-plugins.js';
 	import {
 		adminControlPlaneAPI,
 		type ControlProvisioningOperation
-	} from '$lib/api/admin-control-plane';
-	import { Modal, ToggleSwitch } from '$lib/components';
+	} from '#lib/api/admin-control-plane.js';
+	import { Modal, ToggleSwitch } from '#lib/components/index.js';
 	import { LL } from '$i18n/i18n-svelte';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
-	import AdminSection from '$lib/components/admin/AdminSection.svelte';
-	import AdminToolbar from '$lib/components/admin/AdminToolbar.svelte';
-	import { shouldShowProviderProjectionStatus } from '$lib/admin/provider-projection';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '#lib/components/admin/AdminSection.svelte';
+	import AdminToolbar from '#lib/components/admin/AdminToolbar.svelte';
+	import { shouldShowProviderProjectionStatus } from '#lib/admin/provider-projection.js';
 
 	let plugins: PluginWithStatus[] = $state([]);
 	let loading = $state(true);

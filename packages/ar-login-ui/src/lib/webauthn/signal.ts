@@ -1,5 +1,5 @@
-import type { AccountProfile, WebAuthnCredentialSignal } from '$lib/api/account';
-import type { APIError } from '$lib/api/client';
+import type { AccountProfile, WebAuthnCredentialSignal } from '#lib/api/account.js';
+import type { APIError } from '#lib/api/client.js';
 
 type WebAuthnSignalCredentialConstructor = typeof PublicKeyCredential & {
 	signalUnknownCredential?: (options: { rpId: string; credentialId: string }) => Promise<void>;

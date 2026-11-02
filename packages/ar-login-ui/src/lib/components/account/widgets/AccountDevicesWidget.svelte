@@ -1,8 +1,8 @@
 <script lang="ts">
 	/** Apps and devices linked to the account (not browser sign-ins: see the sessions widget). */
 	import { LL, getLocale } from '$i18n/i18n-svelte';
-	import type { AccountDevice } from '$lib/api/account';
-	import { formatTimestamp } from '$lib/utils/date';
+	import type { AccountDevice } from '#lib/api/account.js';
+	import { formatTimestamp } from '#lib/utils/date.js';
 	import AccountSectionSkeleton from '../AccountSectionSkeleton.svelte';
 	import AccountWidgetPanel from './AccountWidgetPanel.svelte';
 	import type { AccountWidgetCommonProps } from './types';

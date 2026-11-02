@@ -1,24 +1,24 @@
 <script lang="ts">
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import {
 		failureOf,
 		type SchemaDetail as Detail,
 		type SchemaSettingClient
-	} from '$lib/api/schema-setting';
-	import Callout from '$lib/ui/patterns/Callout.svelte';
-	import Card from '$lib/ui/patterns/Card.svelte';
-	import ConfirmDialog from '$lib/ui/patterns/ConfirmDialog.svelte';
-	import DetailItem from '$lib/ui/patterns/DetailItem.svelte';
-	import DetailList from '$lib/ui/patterns/DetailList.svelte';
-	import LoadingState from '$lib/ui/patterns/LoadingState.svelte';
-	import PageHeader from '$lib/ui/patterns/PageHeader.svelte';
-	import Badge from '$lib/ui/primitives/Badge.svelte';
-	import BackLink from '$lib/ui/primitives/BackLink.svelte';
-	import Button from '$lib/ui/primitives/Button.svelte';
-	import { Draft } from '$lib/ui/save/draft.svelte';
-	import { toast } from '$lib/ui/toast/toast.svelte';
-	import DateTime from '$lib/ui/time/DateTime.svelte';
-	import Page from '$lib/ui/templates/Page.svelte';
+	} from '#lib/api/schema-setting.js';
+	import Callout from '#lib/ui/patterns/Callout.svelte';
+	import Card from '#lib/ui/patterns/Card.svelte';
+	import ConfirmDialog from '#lib/ui/patterns/ConfirmDialog.svelte';
+	import DetailItem from '#lib/ui/patterns/DetailItem.svelte';
+	import DetailList from '#lib/ui/patterns/DetailList.svelte';
+	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
+	import PageHeader from '#lib/ui/patterns/PageHeader.svelte';
+	import Badge from '#lib/ui/primitives/Badge.svelte';
+	import BackLink from '#lib/ui/primitives/BackLink.svelte';
+	import Button from '#lib/ui/primitives/Button.svelte';
+	import { Draft } from '#lib/ui/save/draft.svelte.js';
+	import { toast } from '#lib/ui/toast/toast.svelte.js';
+	import DateTime from '#lib/ui/time/DateTime.svelte';
+	import Page from '#lib/ui/templates/Page.svelte';
 	import DeleteDialog from './DeleteDialog.svelte';
 	import { changeOf, formOf, type EditForm } from './edit-model';
 	import HistoryPanel from './HistoryPanel.svelte';

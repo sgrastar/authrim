@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import type { CheckboxOption } from './CheckboxGroup.svelte';
 	import Checkbox from '../primitives/Checkbox.svelte';
 	import FieldRow from './FieldRow.svelte';

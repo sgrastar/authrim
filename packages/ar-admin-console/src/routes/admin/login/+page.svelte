@@ -2,18 +2,18 @@
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { startAuthentication, WebAuthnAbortService } from '@simplewebauthn/browser';
-	import { adminAuthAPI, authErrorKey } from '$lib/api/admin-auth';
+	import { adminAuthAPI, authErrorKey } from '#lib/api/admin-auth.js';
 	import {
 		resolveAdminAgentLoginHandoffId,
 		resolveAdminLoginReturnTo
-	} from '$lib/auth/admin-login-return';
-	import { AdminLoginTimeoutError, withAdminLoginTimeout } from '$lib/auth/admin-login-timeout';
-	import { t, type MessageKey } from '$lib/i18n/i18n.svelte';
-	import DisplayMenu from '$lib/shell/DisplayMenu.svelte';
-	import LanguageSwitch from '$lib/shell/LanguageSwitch.svelte';
-	import Button from '$lib/ui/primitives/Button.svelte';
-	import Callout from '$lib/ui/patterns/Callout.svelte';
-	import AuthLayout from '$lib/ui/templates/AuthLayout.svelte';
+	} from '#lib/auth/admin-login-return.js';
+	import { AdminLoginTimeoutError, withAdminLoginTimeout } from '#lib/auth/admin-login-timeout.js';
+	import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
+	import DisplayMenu from '#lib/shell/DisplayMenu.svelte';
+	import LanguageSwitch from '#lib/shell/LanguageSwitch.svelte';
+	import Button from '#lib/ui/primitives/Button.svelte';
+	import Callout from '#lib/ui/patterns/Callout.svelte';
+	import AuthLayout from '#lib/ui/templates/AuthLayout.svelte';
 
 	const ADMIN_API_TIMEOUT_MS = 30_000;
 	const PASSKEY_CEREMONY_TIMEOUT_MS = 120_000;

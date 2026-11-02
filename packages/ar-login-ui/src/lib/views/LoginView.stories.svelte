@@ -3,9 +3,9 @@
 	import { get } from 'svelte/store';
 	import { LL } from '$i18n/i18n-svelte';
 	import { expect, fn, userEvent, within } from 'storybook/test';
-	import type { FlowRuntimeConsentPolicyContent } from '$lib/api/flow-runtime';
-	import AuthPageShell from '$lib/components/AuthPageShell.svelte';
-	import LoginUIFrame from '$lib/storybook/LoginUIFrame.svelte';
+	import type { FlowRuntimeConsentPolicyContent } from '#lib/api/flow-runtime.js';
+	import AuthPageShell from '#lib/components/AuthPageShell.svelte';
+	import LoginUIFrame from '#lib/storybook/LoginUIFrame.svelte';
 	import {
 		blocks,
 		consentPolicy,
@@ -14,7 +14,7 @@
 		externalProviders as sampleProviders,
 		screenOf,
 		type SampleScreen
-	} from '$lib/storybook/fixtures';
+	} from '#lib/storybook/fixtures.js';
 	import type {
 		ExternalProviderButton,
 		HumanVerificationView,
@@ -356,10 +356,7 @@
 
 <Story
 	name="Too many authenticator app attempts"
-	args={{
-		methods: { totp: true, any: true },
-		alerts: { error: get(LL).error_rateLimitedRetryAfter({ minutes: 15 }) }
-	}}
+	args={{ methods: { totp: true, any: true } }}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await expect(
@@ -367,7 +364,11 @@
 		).toBeVisible();
 	}}
 >
-	{#snippet template(args)}{@render page(args)}{/snippet}
+	<!-- The message is built when the story renders: the toolbar locale is applied after this file loads, so a message built in `args` would stay in the load-time language. -->
+	{#snippet template(args)}{@render page({
+			...args,
+			alerts: { error: get(LL).error_rateLimitedRetryAfter({ minutes: 15 }) }
+		})}{/snippet}
 </Story>
 
 <Story

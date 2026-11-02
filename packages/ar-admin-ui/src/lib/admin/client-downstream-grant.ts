@@ -1,4 +1,4 @@
-import type { Client, CreateClientInput, UpdateClientInput } from '$lib/api/admin-clients';
+import type { Client, CreateClientInput, UpdateClientInput } from '#lib/api/admin-clients.js';
 
 export type DelegationMode = 'none' | 'delegation' | 'impersonation';
 

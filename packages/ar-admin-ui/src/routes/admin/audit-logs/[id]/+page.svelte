@@ -2,15 +2,15 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
-	import { adminAuditLogsAPI, type AuditLogEntry } from '$lib/api/admin-audit-logs';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
-	import AdminSection from '$lib/components/admin/AdminSection.svelte';
+	import { adminAuditLogsAPI, type AuditLogEntry } from '#lib/api/admin-audit-logs.js';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '#lib/components/admin/AdminSection.svelte';
 	import {
 		formatGuestAwareAuditAction,
 		getGuestAuditDetails
-	} from '$lib/admin/account-audit-action-label';
+	} from '#lib/admin/account-audit-action-label.js';
 
 	let entry: AuditLogEntry | null = $state(null);
 	let loading = $state(true);

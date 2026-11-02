@@ -5,7 +5,7 @@
 	import {
 		adminIdentityMappingAPI,
 		type PersistentIdentifierProfileSummary
-	} from '$lib/api/admin-identity-mapping';
+	} from '#lib/api/admin-identity-mapping.js';
 	import { suggestAutoMapConnections } from './auto-map-candidates';
 	import {
 		missingMappingRequiredSourceNodes,

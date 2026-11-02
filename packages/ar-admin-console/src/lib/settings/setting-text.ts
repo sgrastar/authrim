@@ -4,7 +4,7 @@
  * milliseconds"); the console words them for admins, in every language, under
  * `set.k.<key>` (label), `set.k.<key>.desc` (optional) and `set.k.<key>.<choice>`.
  */
-import { hasMessage, type MessageKey } from '$lib/i18n/i18n.svelte';
+import { hasMessage, type MessageKey } from '#lib/i18n/i18n.svelte.js';
 
 export function settingText(key: string) {
 	const base = `set.k.${key}`;

@@ -4,9 +4,9 @@
 	 * requires the invited email to be proved: the code went to that email, the person enters it,
 	 * and the signup continues. The route sends and checks the code.
 	 */
-	import { Button, Input } from '$lib/components';
+	import { Button, Input } from '#lib/components/index.js';
 	import { LL } from '$i18n/i18n-svelte';
-	import { handleCodeEnterKey } from '$lib/utils/code-enter-key';
+	import { handleCodeEnterKey } from '#lib/utils/code-enter-key.js';
 	import type { InvitationEmailCodeView } from '../auth-entry-types';
 
 	type Props = {

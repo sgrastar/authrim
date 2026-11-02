@@ -10,16 +10,16 @@
 		type SupportOpsResourceDescriptor,
 		type SupportOpsSelector,
 		type SupportOpsSelectorOperator
-	} from '$lib/api/admin-support-ops';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
-	import { aggregatableGroupBy, initialSelectorValue } from '$lib/admin/support-ops-defaults';
+	} from '#lib/api/admin-support-ops.js';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
+	import { aggregatableGroupBy, initialSelectorValue } from '#lib/admin/support-ops-defaults.js';
 	import { LL } from '$i18n/i18n-svelte';
-	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
-	import AdminSection from '$lib/components/admin/AdminSection.svelte';
-	import AdminTabs, { type AdminTabItem } from '$lib/components/admin/AdminTabs.svelte';
-	import AdminToolbar from '$lib/components/admin/AdminToolbar.svelte';
+	import AdminDataTable from '#lib/components/admin/AdminDataTable.svelte';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '#lib/components/admin/AdminSection.svelte';
+	import AdminTabs, { type AdminTabItem } from '#lib/components/admin/AdminTabs.svelte';
+	import AdminToolbar from '#lib/components/admin/AdminToolbar.svelte';
 
 	type TabId = 'aggregate' | 'cohort' | 'action';
 	type SelectorRow = {

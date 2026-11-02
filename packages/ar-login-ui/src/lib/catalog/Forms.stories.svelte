@@ -1,13 +1,13 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
-	import Input from '$lib/components/Input.svelte';
-	import PinCodeInput from '$lib/components/PinCodeInput.svelte';
-	import ToggleSwitch from '$lib/components/ToggleSwitch.svelte';
-	import TurnstileWidget from '$lib/components/TurnstileWidget.svelte';
-	import Catalog from '$lib/storybook/Catalog.svelte';
-	import { blocks, screenOf } from '$lib/storybook/fixtures';
-	import RuntimeScreenHarness from '$lib/storybook/RuntimeScreenHarness.svelte';
-	import Specimen from '$lib/storybook/Specimen.svelte';
+	import Input from '#lib/components/Input.svelte';
+	import PinCodeInput from '#lib/components/PinCodeInput.svelte';
+	import ToggleSwitch from '#lib/components/ToggleSwitch.svelte';
+	import TurnstileWidget from '#lib/components/TurnstileWidget.svelte';
+	import Catalog from '#lib/storybook/Catalog.svelte';
+	import { blocks, screenOf } from '#lib/storybook/fixtures.js';
+	import RuntimeScreenHarness from '#lib/storybook/RuntimeScreenHarness.svelte';
+	import Specimen from '#lib/storybook/Specimen.svelte';
 
 	const { Story } = defineMeta({
 		title: 'Catalog/Forms',

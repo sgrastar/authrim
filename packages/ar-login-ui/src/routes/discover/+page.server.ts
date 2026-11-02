@@ -1,5 +1,5 @@
 import { fail, redirect } from '@sveltejs/kit';
-import { redirectExternal } from '$lib/server/external-redirect';
+import { redirectExternal } from '#lib/server/external-redirect.js';
 import type { Actions, PageServerLoad } from './$types';
 import {
 	fetchDiscoveryConfig,
@@ -11,7 +11,7 @@ import {
 	type DiscoveryConfigResponse
 } from '../../lib/discovery-entry';
 import { REMEMBERED_TENANT_COOKIE, readRememberedTenant } from '../../lib/discovery-session';
-import { normalizeLoginUILocale } from '$lib/i18n/locales';
+import { normalizeLoginUILocale } from '#lib/i18n/locales.js';
 const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 const MAX_DISCOVERY_RESPONSE_BYTES = 256 * 1024;
 

@@ -1,10 +1,10 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
-	import LoginUIFrame from '$lib/storybook/LoginUIFrame.svelte';
-	import PageSample from '$lib/storybook/PageSample.svelte';
-	import ShellGallery from '$lib/storybook/ShellGallery.svelte';
-	import { SAMPLE_BACKGROUND_URL } from '$lib/storybook/config';
-	import type { LoginUIOverrides } from '$lib/storybook/config';
+	import LoginUIFrame from '#lib/storybook/LoginUIFrame.svelte';
+	import PageSample from '#lib/storybook/PageSample.svelte';
+	import ShellGallery from '#lib/storybook/ShellGallery.svelte';
+	import { SAMPLE_BACKGROUND_URL } from '#lib/storybook/config.js';
+	import type { LoginUIOverrides } from '#lib/storybook/config.js';
 
 	const { Story } = defineMeta({
 		title: 'Page shell/Settings',

@@ -5,8 +5,8 @@
 		adminConsentPoliciesAPI,
 		type ClientTrustPolicy,
 		type ClientTrustPolicyTargetType
-	} from '$lib/api/admin-consent-policies';
-	import { ToggleSwitch } from '$lib/components';
+	} from '#lib/api/admin-consent-policies.js';
+	import { ToggleSwitch } from '#lib/components/index.js';
 
 	type TargetType = ClientTrustPolicyTargetType;
 

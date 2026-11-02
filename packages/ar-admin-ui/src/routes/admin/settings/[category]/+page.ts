@@ -1,5 +1,5 @@
 import { error } from '@sveltejs/kit';
-import { CATEGORY_NAMES, type CategoryName } from '$lib/api/admin-settings';
+import { CATEGORY_NAMES, type CategoryName } from '#lib/api/admin-settings.js';
 
 /**
  * Page load function for dynamic category settings page

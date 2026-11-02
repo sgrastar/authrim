@@ -1,8 +1,8 @@
 <script lang="ts">
-	import type { TenantInfoClient } from '$lib/api/tenant-info';
-	import { t } from '$lib/i18n/i18n.svelte';
-	import PageHeader from '$lib/ui/patterns/PageHeader.svelte';
-	import Page from '$lib/ui/templates/Page.svelte';
+	import type { TenantInfoClient } from '#lib/api/tenant-info.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import PageHeader from '#lib/ui/patterns/PageHeader.svelte';
+	import Page from '#lib/ui/templates/Page.svelte';
 	import TenantInfoPanel from './TenantInfoPanel.svelte';
 
 	/**

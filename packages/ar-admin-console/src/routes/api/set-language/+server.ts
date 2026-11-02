@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { isSupportedLocale, LOCALE_COOKIE } from '$lib/i18n/locales';
+import { isSupportedLocale, LOCALE_COOKIE } from '#lib/i18n/locales.js';
 
 export const POST: RequestHandler = async ({ request, cookies }) => {
 	const body = (await request.json().catch(() => null)) as { language?: unknown } | null;

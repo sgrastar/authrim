@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { setLocale } from '$i18n/i18n-svelte';
 import AccountUpgradeWidget from './AccountUpgradeWidget.svelte';
 import { guestUpgradeStatus } from './fixtures';
-import { HYDRATION_MARKERS } from '$lib/testing/ssr-html';
+import { HYDRATION_MARKERS } from '#lib/testing/ssr-html.js';
 
 function renderUpgrade(props: Partial<Parameters<typeof AccountUpgradeWidget>[1]> = {}) {
 	return render(AccountUpgradeWidget, {

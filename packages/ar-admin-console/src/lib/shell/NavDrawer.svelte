@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { t } from '$lib/i18n/i18n.svelte';
-	import Icon from '$lib/ui/icons/Icon.svelte';
-	import IconButton from '$lib/ui/primitives/IconButton.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import Icon from '#lib/ui/icons/Icon.svelte';
+	import IconButton from '#lib/ui/primitives/IconButton.svelte';
 	import type { DrawerSection } from './shell-model';
 
 	/**

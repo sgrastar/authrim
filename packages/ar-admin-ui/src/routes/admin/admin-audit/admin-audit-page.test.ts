@@ -4,7 +4,7 @@ import { readable } from 'svelte/store';
 import { tick } from 'svelte';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AdminAuditLogStats } from '$lib/api/admin-admin-audit';
+import type { AdminAuditLogStats } from '#lib/api/admin-admin-audit.js';
 
 const api = vi.hoisted(() => ({
 	list: vi.fn(),
@@ -17,11 +17,11 @@ vi.mock('$i18n/i18n-svelte', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$i18n/i18n-svelte')>()),
 	LL: readable(new Proxy({}, { get: (_target, key) => () => String(key) }))
 }));
-vi.mock('$lib/api/admin-admin-audit', async (importOriginal) => ({
-	...(await importOriginal<typeof import('$lib/api/admin-admin-audit')>()),
+vi.mock('#lib/api/admin-admin-audit.js', async (importOriginal) => ({
+	...(await importOriginal<typeof import('#lib/api/admin-admin-audit.js')>()),
 	adminAdminAuditAPI: api
 }));
-import { settingsContext } from '$lib/stores/settings-context.svelte';
+import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 import AdminAuditPage from './+page.svelte';
 
 function deferred<T>() {

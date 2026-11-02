@@ -53,7 +53,7 @@ export default ts.config(
 	},
 	{
 		// The whole-console mock (src/lib/mock) has no API behind it: no real API client, no session
-		// or server code, no network. The in-memory fakes in $lib/api/fake are fine.
+		// or server code, no network. The in-memory fakes in #lib/api/fake are fine.
 		files: [
 			'src/lib/mock/**/*.ts',
 			'src/lib/mock/**/*.svelte',
@@ -66,16 +66,17 @@ export default ts.config(
 				'error',
 				{
 					paths: [
-						{ name: '$lib/api', message: 'The mock does not call the API.', allowTypeImports: true }
+						{ name: '#lib/api', message: 'The mock does not call the API.', allowTypeImports: true }
 					],
 					patterns: [
 						{
-							regex: '^\\$lib/api/(?!fake/)',
-							message: 'The mock does not call the API. Use sample data, or $lib/api/fake.',
+							regex: '^#lib/api/(?!fake/)',
+							message: 'The mock does not call the API. Use sample data, or #lib/api/fake.',
 							allowTypeImports: true
 						},
 						{
-							group: ['$lib/auth/*', '$lib/server/*', '$env/*'],
+							// gitignore syntax: a leading `#` starts a comment, so it is escaped.
+							group: ['\\#lib/auth/*', '\\#lib/server/*', '$env/*'],
 							message: 'The mock has no session, server code or environment.'
 						}
 					]

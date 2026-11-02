@@ -1,5 +1,5 @@
-import { adminFetch } from '$lib/api/admin-request';
-import type { MessageKey } from '$lib/i18n/i18n.svelte';
+import { adminFetch } from '#lib/api/admin-request.js';
+import type { MessageKey } from '#lib/i18n/i18n.svelte.js';
 /**
  * Admin Authentication API Client
  *

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AuthenticationMethods } from '$lib/api/authentication-methods';
+import type { AuthenticationMethods } from '#lib/api/authentication-methods.js';
 import { resolveReauthMethods } from './reauth-methods';
 
 function methods(overrides: {

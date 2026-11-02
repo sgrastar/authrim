@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import {
 		failureOf,
 		FIELD_TYPES,
@@ -7,13 +7,13 @@
 		type FieldType,
 		type Schema,
 		type SchemaSettingClient
-	} from '$lib/api/schema-setting';
-	import CheckRow from '$lib/ui/patterns/CheckRow.svelte';
-	import FormDialog from '$lib/ui/patterns/FormDialog.svelte';
-	import SelectRow from '$lib/ui/patterns/SelectRow.svelte';
-	import TextAreaRow from '$lib/ui/patterns/TextAreaRow.svelte';
-	import TextRow from '$lib/ui/patterns/TextRow.svelte';
-	import InfoTip from '$lib/ui/primitives/InfoTip.svelte';
+	} from '#lib/api/schema-setting.js';
+	import CheckRow from '#lib/ui/patterns/CheckRow.svelte';
+	import FormDialog from '#lib/ui/patterns/FormDialog.svelte';
+	import SelectRow from '#lib/ui/patterns/SelectRow.svelte';
+	import TextAreaRow from '#lib/ui/patterns/TextAreaRow.svelte';
+	import TextRow from '#lib/ui/patterns/TextRow.svelte';
+	import InfoTip from '#lib/ui/primitives/InfoTip.svelte';
 	import { FAILURE_KEY, KEY_PROBLEM_KEY, TYPE_KEY } from './labels';
 	import RulesEditor from './RulesEditor.svelte';
 	import {

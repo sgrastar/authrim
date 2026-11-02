@@ -1,7 +1,7 @@
 <script lang="ts">
-	import type { ComplianceCheck, ComplianceStatus } from '$lib/api/admin-compliance';
-	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
-	import AdminSection from '$lib/components/admin/AdminSection.svelte';
+	import type { ComplianceCheck, ComplianceStatus } from '#lib/api/admin-compliance.js';
+	import AdminDataTable from '#lib/components/admin/AdminDataTable.svelte';
+	import AdminSection from '#lib/components/admin/AdminSection.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 	import {
 		checkLabel,

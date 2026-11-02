@@ -6,7 +6,7 @@
  */
 
 import { browser } from '$app/env';
-import { adminFetch } from '$lib/api/admin-request';
+import { adminFetch } from '#lib/api/admin-request.js';
 import { adminAuth } from './admin-auth.svelte';
 
 /**

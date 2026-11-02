@@ -1,22 +1,26 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { adminAdminsAPI, type AdminUser, type AdminUserListParams } from '$lib/api/admin-admins';
+	import {
+		adminAdminsAPI,
+		type AdminUser,
+		type AdminUserListParams
+	} from '#lib/api/admin-admins.js';
 	import {
 		adminInvitationsAPI,
 		AdminInvitationDeliveryError,
 		type AdminInvitation
-	} from '$lib/api/admin-invitations';
-	import { adminAdminRolesAPI, type AdminRole } from '$lib/api/admin-admin-roles';
-	import { adminAuth } from '$lib/stores/admin-auth.svelte';
-	import { Modal } from '$lib/components';
+	} from '#lib/api/admin-invitations.js';
+	import { adminAdminRolesAPI, type AdminRole } from '#lib/api/admin-admin-roles.js';
+	import { adminAuth } from '#lib/stores/admin-auth.svelte.js';
+	import { Modal } from '#lib/components/index.js';
 	import { LL } from '$i18n/i18n-svelte';
-	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
-	import AdminPagination from '$lib/components/admin/AdminPagination.svelte';
-	import AdminSection from '$lib/components/admin/AdminSection.svelte';
-	import AdminToolbar from '$lib/components/admin/AdminToolbar.svelte';
+	import AdminDataTable from '#lib/components/admin/AdminDataTable.svelte';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
+	import AdminPagination from '#lib/components/admin/AdminPagination.svelte';
+	import AdminSection from '#lib/components/admin/AdminSection.svelte';
+	import AdminToolbar from '#lib/components/admin/AdminToolbar.svelte';
 
 	let admins: AdminUser[] = $state([]);
 	let total = $state(0);

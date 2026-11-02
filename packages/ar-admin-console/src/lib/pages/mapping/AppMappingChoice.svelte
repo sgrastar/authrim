@@ -5,17 +5,17 @@
 		EffectiveMapping,
 		IdentityMappingClient,
 		MappingSetSummary
-	} from '$lib/api/identity-mapping';
-	import { t } from '$lib/i18n/i18n.svelte';
-	import Callout from '$lib/ui/patterns/Callout.svelte';
-	import Card from '$lib/ui/patterns/Card.svelte';
-	import DataTable from '$lib/ui/patterns/DataTable.svelte';
-	import LoadingState from '$lib/ui/patterns/LoadingState.svelte';
-	import Button from '$lib/ui/primitives/Button.svelte';
-	import RadioGroup from '$lib/ui/primitives/RadioGroup.svelte';
-	import Select from '$lib/ui/primitives/Select.svelte';
-	import { Draft } from '$lib/ui/save/draft.svelte';
-	import SaveScope from '$lib/ui/save/SaveScope.svelte';
+	} from '#lib/api/identity-mapping.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import Callout from '#lib/ui/patterns/Callout.svelte';
+	import Card from '#lib/ui/patterns/Card.svelte';
+	import DataTable from '#lib/ui/patterns/DataTable.svelte';
+	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
+	import Button from '#lib/ui/primitives/Button.svelte';
+	import RadioGroup from '#lib/ui/primitives/RadioGroup.svelte';
+	import Select from '#lib/ui/primitives/Select.svelte';
+	import { Draft } from '#lib/ui/save/draft.svelte.js';
+	import SaveScope from '#lib/ui/save/SaveScope.svelte';
 	import MappingSection from './MappingSection.svelte';
 	import ChainList from './ChainList.svelte';
 	import SourceLabel from './SourceLabel.svelte';

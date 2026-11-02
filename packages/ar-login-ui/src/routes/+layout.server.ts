@@ -1,6 +1,6 @@
 import type { LayoutServerLoad } from './$types';
 import { fetchDiscoveryConfig, getDiscoveryRequestHeaders } from '../lib/discovery-entry';
-import { getLoginUILanguageConfig, resolveEnabledLoginUILocale } from '$lib/i18n/config';
+import { getLoginUILanguageConfig, resolveEnabledLoginUILocale } from '#lib/i18n/config.js';
 
 const RESOLVED_TENANT_AUTH_ROUTES = new Set([
 	'/callback',

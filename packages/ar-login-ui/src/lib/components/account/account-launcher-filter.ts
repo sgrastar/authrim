@@ -1,4 +1,4 @@
-import type { AccountLauncher } from '$lib/api/account';
+import type { AccountLauncher } from '#lib/api/account.js';
 
 function normalizeSearch(value: string, locale: string): string {
 	return value.toLocaleLowerCase(locale);

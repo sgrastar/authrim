@@ -1,19 +1,19 @@
 <script lang="ts">
-	import AuthPageShell from '$lib/components/AuthPageShell.svelte';
-	import VerifyEmailCodeView from '$lib/views/VerifyEmailCodeView.svelte';
+	import AuthPageShell from '#lib/components/AuthPageShell.svelte';
+	import VerifyEmailCodeView from '#lib/views/VerifyEmailCodeView.svelte';
 	import { LL } from '$i18n/i18n-svelte';
-	import { accountAPI } from '$lib/api/account';
-	import { emailCodeAPI } from '$lib/api/client';
+	import { accountAPI } from '#lib/api/account.js';
+	import { emailCodeAPI } from '#lib/api/client.js';
 	import {
 		flowRuntimeAPI,
 		type FlowRuntimeStartResponse,
 		type FlowRuntimeStep
-	} from '$lib/api/flow-runtime';
-	import { messageForApiError } from '$lib/errors/sdk-error-mapper';
-	import { loginUiDisplayError, messageForCaughtError } from '$lib/errors/display-error';
-	import { useLoginUIStores } from '$lib/stores/login-ui-context';
-	import { auth } from '$lib/stores/auth';
-	import { isValidRedirectUrl, isValidReturnUrl } from '$lib/utils/url-validation';
+	} from '#lib/api/flow-runtime.js';
+	import { messageForApiError } from '#lib/errors/sdk-error-mapper.js';
+	import { loginUiDisplayError, messageForCaughtError } from '#lib/errors/display-error.js';
+	import { useLoginUIStores } from '#lib/stores/login-ui-context.js';
+	import { auth } from '#lib/stores/auth.js';
+	import { isValidRedirectUrl, isValidReturnUrl } from '#lib/utils/url-validation.js';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import {
@@ -22,13 +22,13 @@
 		consumeLoginUiSessionItem,
 		getLoginUiSessionItem,
 		removeLoginUiSessionItems
-	} from '$lib/authrim/storage-keys';
+	} from '#lib/authrim/storage-keys.js';
 	import {
 		consumeFlowRuntimeState,
 		peekFlowRuntimeState,
 		persistFlowRuntimeState
-	} from '$lib/authrim/flow-runtime-state';
-	import { completionRedirect } from '$lib/authrim/completion-redirect';
+	} from '#lib/authrim/flow-runtime-state.js';
+	import { completionRedirect } from '#lib/authrim/completion-redirect.js';
 
 	const { brandingStore } = useLoginUIStores();
 

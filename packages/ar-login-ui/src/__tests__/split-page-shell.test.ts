@@ -35,7 +35,7 @@ describe('split page shell', () => {
 			const pageSource = source(page);
 
 			expect(pageSource).toContain(
-				"import AuthPageShell from '$lib/components/AuthPageShell.svelte'"
+				"import AuthPageShell from '#lib/components/AuthPageShell.svelte'"
 			);
 			expect(pageSource).toContain('<AuthPageShell');
 			// The shell markup lives in the component; a page that repeats it would drift from it.
@@ -88,7 +88,7 @@ describe('split page shell', () => {
 		]) {
 			const page = source(pagePath);
 
-			expect(page).toContain("import AuthPageShell from '$lib/components/AuthPageShell.svelte'");
+			expect(page).toContain("import AuthPageShell from '#lib/components/AuthPageShell.svelte'");
 			expect(page).toContain('<AuthPageShell');
 			expect(page).not.toContain('<LanguageSwitcher');
 			expect(page).not.toContain('<footer class="auth-footer">');
@@ -98,12 +98,12 @@ describe('split page shell', () => {
 			'routes/logout-complete/+page.svelte'
 		]) {
 			expect(source(pagePath)).toContain(
-				"import LogoutCompletePage from '$lib/components/LogoutCompletePage.svelte'"
+				"import LogoutCompletePage from '#lib/components/LogoutCompletePage.svelte'"
 			);
 		}
 		const logoutComplete = source('lib/components/LogoutCompletePage.svelte');
 		expect(logoutComplete).toContain(
-			"import AuthPageShell from '$lib/components/AuthPageShell.svelte'"
+			"import AuthPageShell from '#lib/components/AuthPageShell.svelte'"
 		);
 		expect(logoutComplete).toContain('<AuthPageShell>');
 		expect(logoutComplete).not.toContain('<LanguageSwitcher');

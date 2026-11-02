@@ -1,8 +1,11 @@
 import type {
 	IdentityMappingDestinationProfileSummary,
 	IdentityMappingFieldMappingVersionSummary
-} from '$lib/api/admin-identity-mapping';
-import type { SAMLDestinationFieldReleaseMode, SAMLRequestedAttribute } from '$lib/api/admin-saml';
+} from '#lib/api/admin-identity-mapping.js';
+import type {
+	SAMLDestinationFieldReleaseMode,
+	SAMLRequestedAttribute
+} from '#lib/api/admin-saml.js';
 
 export interface SAMLMappingSetReleaseField {
 	key: string;

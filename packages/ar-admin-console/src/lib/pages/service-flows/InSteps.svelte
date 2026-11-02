@@ -1,15 +1,15 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { t } from '$lib/i18n/i18n.svelte';
-	import Callout from '$lib/ui/patterns/Callout.svelte';
-	import ChoiceCards from '$lib/ui/patterns/ChoiceCards.svelte';
-	import FieldRow from '$lib/ui/patterns/FieldRow.svelte';
-	import DetailItem from '$lib/ui/patterns/DetailItem.svelte';
-	import DetailList from '$lib/ui/patterns/DetailList.svelte';
-	import Button from '$lib/ui/primitives/Button.svelte';
-	import SecretField from '$lib/ui/primitives/SecretField.svelte';
-	import SelectRow from '$lib/ui/patterns/SelectRow.svelte';
-	import TextRow from '$lib/ui/patterns/TextRow.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import Callout from '#lib/ui/patterns/Callout.svelte';
+	import ChoiceCards from '#lib/ui/patterns/ChoiceCards.svelte';
+	import FieldRow from '#lib/ui/patterns/FieldRow.svelte';
+	import DetailItem from '#lib/ui/patterns/DetailItem.svelte';
+	import DetailList from '#lib/ui/patterns/DetailList.svelte';
+	import Button from '#lib/ui/primitives/Button.svelte';
+	import SecretField from '#lib/ui/primitives/SecretField.svelte';
+	import SelectRow from '#lib/ui/patterns/SelectRow.svelte';
+	import TextRow from '#lib/ui/patterns/TextRow.svelte';
 	import ConnectionTest from './ConnectionTest.svelte';
 	import { httpsUrlProblem, type IdpForm, type LinkRule, type OpForm } from './connection-model';
 	import MetadataImport from './MetadataImport.svelte';

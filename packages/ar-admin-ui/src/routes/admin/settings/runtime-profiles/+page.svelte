@@ -8,7 +8,7 @@
 		type RuntimeProfileRecord,
 		type RuntimeProfileReferenceManagementPolicy,
 		type RuntimeProfileReferenceStatusEntry
-	} from '$lib/api/admin-runtime-profiles';
+	} from '#lib/api/admin-runtime-profiles.js';
 	import {
 		clearAuditArchiveTemplate,
 		createEmptyAuditProfileDraftJson,
@@ -31,9 +31,9 @@
 		updateAuditRetentionBoolean,
 		updateAuditRetentionNumber,
 		updateAuditSinkField
-	} from '$lib/admin/runtime-profile-audit-editor';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	} from '#lib/admin/runtime-profile-audit-editor.js';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
 
 	let loading = $state(true);
 	let saving = $state(false);

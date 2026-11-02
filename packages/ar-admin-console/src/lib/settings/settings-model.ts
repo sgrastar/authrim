@@ -16,9 +16,9 @@ import type {
 	InheritedSettingSource,
 	SettingMeta
 } from '@authrim/ar-lib-core/utils/settings-manager';
-import type { AccessLevel } from '$lib/access/access';
-import type { SettingsGetResult, SettingsPatchRequest } from '$lib/api/settings';
-import { sameValue } from '$lib/ui/save/draft.svelte';
+import type { AccessLevel } from '#lib/access/access.js';
+import type { SettingsGetResult, SettingsPatchRequest } from '#lib/api/settings.js';
+import { sameValue } from '#lib/ui/save/draft.svelte.js';
 import {
 	categoriesOf,
 	categoryOf,

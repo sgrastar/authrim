@@ -1,5 +1,5 @@
 import { logDetailQuery, type LogCursorPagination } from './log-pagination';
-import { adminFetch } from '$lib/api/admin-request';
+import { adminFetch } from '#lib/api/admin-request.js';
 /**
  * Admin Audit Log API Client
  *

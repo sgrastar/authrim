@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { i18n } from '$lib/i18n/i18n.svelte';
+	import { i18n } from '#lib/i18n/i18n.svelte.js';
 
 	/**
 	 * Progress of a task. Without `value` it loops (the duration is unknown); with `value`

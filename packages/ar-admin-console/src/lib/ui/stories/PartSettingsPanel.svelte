@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import type { LayoutPart, LayoutRow } from '../builder/layout-model';
 	import OptionListEditor from '../builder/OptionListEditor.svelte';
 	import Callout from '../patterns/Callout.svelte';

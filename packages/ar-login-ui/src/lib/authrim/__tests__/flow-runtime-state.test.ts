@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { FlowRuntimeStartResponse } from '$lib/api/flow-runtime';
+import type { FlowRuntimeStartResponse } from '#lib/api/flow-runtime.js';
 import {
 	clearExternalFlowRuntimeHandoff,
 	consumeFlowRuntimeState,

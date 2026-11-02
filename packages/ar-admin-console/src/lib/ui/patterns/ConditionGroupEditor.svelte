@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import { useBusy } from '../busy/busy';
 	import Icon from '../icons/Icon.svelte';
 	import IconButton from '../primitives/IconButton.svelte';

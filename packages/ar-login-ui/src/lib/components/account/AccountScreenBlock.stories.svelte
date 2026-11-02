@@ -1,8 +1,8 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, within } from 'storybook/test';
-	import type { AccountPageScreenField } from '$lib/api/account';
-	import LoginUIFrame from '$lib/storybook/LoginUIFrame.svelte';
+	import type { AccountPageScreenField } from '#lib/api/account.js';
+	import LoginUIFrame from '#lib/storybook/LoginUIFrame.svelte';
 	import AccountScreenBlock from './AccountScreenBlock.svelte';
 	import AccountScreenPlacement from './AccountScreenPlacement.svelte';
 

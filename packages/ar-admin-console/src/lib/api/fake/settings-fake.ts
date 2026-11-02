@@ -20,7 +20,7 @@ import type {
 	SettingMeta,
 	SettingScope
 } from '@authrim/ar-lib-core/utils/settings-manager';
-import { settingsLevel, type AdminAccess } from '$lib/access/access';
+import { settingsLevel, type AdminAccess } from '#lib/access/access.js';
 import { ApiError, ConflictError, RejectedError } from '../api-error';
 import {
 	targetKey,

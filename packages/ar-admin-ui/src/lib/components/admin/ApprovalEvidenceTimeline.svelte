@@ -1,12 +1,12 @@
 <script lang="ts">
-	import type { ApprovalTransportEvidence } from '$lib/api/admin-approvals';
+	import type { ApprovalTransportEvidence } from '#lib/api/admin-approvals.js';
 	import {
 		getApprovalEvidenceArtifactSwitch,
 		getApprovalEvidenceCompletionArtifact,
 		getApprovalEvidenceDecisionReceipt,
 		getApprovalEvidenceGrantSubjectTokenIssue,
 		getApprovalEvidenceEventDescriptor
-	} from '$lib/admin/approval-evidence-timeline';
+	} from '#lib/admin/approval-evidence-timeline.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	type Props = {

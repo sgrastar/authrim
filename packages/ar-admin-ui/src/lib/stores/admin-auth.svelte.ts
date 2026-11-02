@@ -6,7 +6,7 @@
  */
 
 import { browser } from '$app/env';
-import { adminAuthAPI, AuthError } from '$lib/api/admin-auth';
+import { adminAuthAPI, AuthError } from '#lib/api/admin-auth.js';
 
 /**
  * Admin user information

@@ -14,16 +14,16 @@
 		type SettingSource,
 		type CategoryName,
 		type ScopeContext
-	} from '$lib/api/admin-settings';
-	import { shouldRenderRuntimeFeatureFlag } from '$lib/admin/runtime-feature-flags';
+	} from '#lib/api/admin-settings.js';
+	import { shouldRenderRuntimeFeatureFlag } from '#lib/admin/runtime-feature-flags.js';
 	import {
 		AdminPageHeader,
 		AdminPageShell,
 		AdminSection,
 		InheritanceIndicator
-	} from '$lib/components/admin';
-	import { ToggleSwitch } from '$lib/components';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	} from '#lib/components/admin/index.js';
+	import { ToggleSwitch } from '#lib/components/index.js';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	interface PageData {

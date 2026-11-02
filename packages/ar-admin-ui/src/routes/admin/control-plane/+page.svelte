@@ -10,14 +10,14 @@
 		type TenantDisasterRecovery,
 		type WorkerInventoryDriftFinding,
 		type WorkerInventoryDriftReviewState
-	} from '$lib/api/admin-control-plane';
-	import { toDateTimeLocalValue } from '$lib/datetime-local';
+	} from '#lib/api/admin-control-plane.js';
+	import { toDateTimeLocalValue } from '#lib/datetime-local.js';
 	import {
 		AdminDataTable,
 		AdminPageHeader,
 		AdminPageShell,
 		AdminSection
-	} from '$lib/components/admin';
+	} from '#lib/components/admin/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	let findings = $state<WorkerInventoryDriftFinding[]>([]);

@@ -5,24 +5,24 @@
 		SetContent,
 		SetContentDraft,
 		TestUser
-	} from '$lib/api/identity-mapping';
-	import { ApiError } from '$lib/api/api-error';
-	import { i18n, t } from '$lib/i18n/i18n.svelte';
-	import { formatNumber } from '$lib/ui/format';
-	import Callout from '$lib/ui/patterns/Callout.svelte';
-	import Card from '$lib/ui/patterns/Card.svelte';
-	import ConfirmDialog from '$lib/ui/patterns/ConfirmDialog.svelte';
-	import DataTable from '$lib/ui/patterns/DataTable.svelte';
-	import LoadingState from '$lib/ui/patterns/LoadingState.svelte';
-	import MappingEditor from '$lib/ui/patterns/MappingEditor.svelte';
-	import type { Mapping, MappingField, MappingType } from '$lib/ui/patterns/mapping-model';
-	import Button from '$lib/ui/primitives/Button.svelte';
-	import Select from '$lib/ui/primitives/Select.svelte';
-	import { Draft } from '$lib/ui/save/draft.svelte';
-	import { SaveStopped } from '$lib/ui/save/save-scope';
-	import SaveScope, { type SaveControls } from '$lib/ui/save/SaveScope.svelte';
+	} from '#lib/api/identity-mapping.js';
+	import { ApiError } from '#lib/api/api-error.js';
+	import { i18n, t } from '#lib/i18n/i18n.svelte.js';
+	import { formatNumber } from '#lib/ui/format.js';
+	import Callout from '#lib/ui/patterns/Callout.svelte';
+	import Card from '#lib/ui/patterns/Card.svelte';
+	import ConfirmDialog from '#lib/ui/patterns/ConfirmDialog.svelte';
+	import DataTable from '#lib/ui/patterns/DataTable.svelte';
+	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
+	import MappingEditor from '#lib/ui/patterns/MappingEditor.svelte';
+	import type { Mapping, MappingField, MappingType } from '#lib/ui/patterns/mapping-model.js';
+	import Button from '#lib/ui/primitives/Button.svelte';
+	import Select from '#lib/ui/primitives/Select.svelte';
+	import { Draft } from '#lib/ui/save/draft.svelte.js';
+	import { SaveStopped } from '#lib/ui/save/save-scope.js';
+	import SaveScope, { type SaveControls } from '#lib/ui/save/SaveScope.svelte';
 	import MappingSection from './MappingSection.svelte';
-	import { toast } from '$lib/ui/toast/toast.svelte';
+	import { toast } from '#lib/ui/toast/toast.svelte.js';
 	import { changeText } from './labels';
 	import SourceLabel from './SourceLabel.svelte';
 

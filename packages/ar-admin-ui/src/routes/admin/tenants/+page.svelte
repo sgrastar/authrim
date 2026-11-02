@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { AdminDataTable, AdminPageHeader, AdminPageShell } from '$lib/components/admin';
-	import { tenantStore } from '$lib/stores/tenants.svelte';
+	import { AdminDataTable, AdminPageHeader, AdminPageShell } from '#lib/components/admin/index.js';
+	import { tenantStore } from '#lib/stores/tenants.svelte.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	// ==========================================================================

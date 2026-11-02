@@ -10,15 +10,15 @@
 		type FieldType,
 		type ValidationRules,
 		type OperationStatus
-	} from '$lib/api/admin-custom-claims';
+	} from '#lib/api/admin-custom-claims.js';
 	import {
 		AdminDataTable,
 		AdminPageHeader,
 		AdminPageShell,
 		AdminSection,
 		AdminToolbar
-	} from '$lib/components/admin';
-	import { Modal } from '$lib/components';
+	} from '#lib/components/admin/index.js';
+	import { Modal } from '#lib/components/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	// State

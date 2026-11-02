@@ -1,5 +1,5 @@
 import type { TranslationFunctions } from '$i18n/i18n-types';
-import type { AdminSkin } from '$lib/stores/theme.svelte';
+import type { AdminSkin } from '#lib/stores/theme.svelte.js';
 
 const ADMIN_SKIN_SWATCHES: Record<AdminSkin, string> = {
 	classic: 'linear-gradient(135deg, #f9f8f3 0%, #234168 62%, #b58b3b 100%)',

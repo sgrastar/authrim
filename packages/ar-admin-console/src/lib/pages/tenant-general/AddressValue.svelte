@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { isWebUrl } from '$lib/api/tenant-info';
-	import Link from '$lib/ui/primitives/Link.svelte';
+	import { isWebUrl } from '#lib/api/tenant-info.js';
+	import Link from '#lib/ui/primitives/Link.svelte';
 
 	/**
 	 * An address as a value: monospace, at the size of the text beside it (it is an identifier to

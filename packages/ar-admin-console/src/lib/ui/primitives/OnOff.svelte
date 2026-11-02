@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 
 	/**
 	 * An on/off value shown as text, for pages where it cannot be changed (a view-only

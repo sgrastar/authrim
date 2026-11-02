@@ -3,7 +3,7 @@ import type { RequestEvent } from '@sveltejs/kit';
 import {
 	createLoginUiRuntimeContractPreview,
 	getNewFlowTemplate
-} from '$lib/admin/new-flow-templates';
+} from '#lib/admin/new-flow-templates.js';
 
 const DEV_ADMIN_MOCK_FLAG = 'AUTHRIM_ADMIN_UI_DEV_MOCK';
 const DEV_ADMIN_MOCK_SENTINEL = '__AUTHRIM_ADMIN_UI_DEV_MOCK_SENTINEL__';

@@ -1,9 +1,9 @@
 <script lang="ts">
-	import { t } from '$lib/i18n/i18n.svelte';
-	import { failureOf, type Schema, type SchemaSettingClient } from '$lib/api/schema-setting';
-	import Callout from '$lib/ui/patterns/Callout.svelte';
-	import Button from '$lib/ui/primitives/Button.svelte';
-	import { toast } from '$lib/ui/toast/toast.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import { failureOf, type Schema, type SchemaSettingClient } from '#lib/api/schema-setting.js';
+	import Callout from '#lib/ui/patterns/Callout.svelte';
+	import Button from '#lib/ui/primitives/Button.svelte';
+	import { toast } from '#lib/ui/toast/toast.svelte.js';
 	import { FAILURE_KEY, isStuck, statusText } from './labels';
 
 	/**

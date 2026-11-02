@@ -1,5 +1,5 @@
-import { adminFetch } from '$lib/api/admin-request';
-import { settingsContext } from '$lib/stores/settings-context.svelte';
+import { adminFetch } from '#lib/api/admin-request.js';
+import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 /**
  * Admin Info / Metadata API Client
  *

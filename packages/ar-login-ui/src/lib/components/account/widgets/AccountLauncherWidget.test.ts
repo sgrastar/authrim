@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { setLocale } from '$i18n/i18n-svelte';
 import AccountLauncherWidget from './AccountLauncherWidget.svelte';
 import { launcher, launchers } from './fixtures';
-import { HYDRATION_MARKERS } from '$lib/testing/ssr-html';
+import { HYDRATION_MARKERS } from '#lib/testing/ssr-html.js';
 
 function renderLauncher(props: Partial<Parameters<typeof AccountLauncherWidget>[1]> = {}) {
 	return render(AccountLauncherWidget, {
