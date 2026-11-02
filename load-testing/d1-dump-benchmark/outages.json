@@ -1,0 +1,287 @@
+[
+  {
+    "targetMiB": 100,
+    "repeat": 1,
+    "target": "source",
+    "operation": "read",
+    "failures": 7,
+    "requests": 30,
+    "firstFailureAt": "2026-10-16T13:09:38.768Z",
+    "lastFailureAt": "2026-10-16T13:09:44.774Z",
+    "failureSampleSpanMs": 6006,
+    "firstRecoveredAt": "2026-10-16T13:09:45.850Z",
+    "maxMs": 446.27245799999946,
+    "workerColos": [
+      "NRT"
+    ],
+    "databaseColos": [
+      "HKG"
+    ]
+  },
+  {
+    "targetMiB": 100,
+    "repeat": 1,
+    "target": "source",
+    "operation": "write",
+    "failures": 7,
+    "requests": 30,
+    "firstFailureAt": "2026-10-16T13:09:38.769Z",
+    "lastFailureAt": "2026-10-16T13:09:44.774Z",
+    "failureSampleSpanMs": 6005,
+    "firstRecoveredAt": "2026-10-16T13:09:45.901Z",
+    "maxMs": 444.90466699999524,
+    "workerColos": [
+      "NRT"
+    ],
+    "databaseColos": [
+      "HKG"
+    ]
+  },
+  {
+    "targetMiB": 100,
+    "repeat": 1,
+    "target": "control",
+    "operation": "read",
+    "failures": 0,
+    "requests": 30,
+    "firstFailureAt": null,
+    "lastFailureAt": null,
+    "failureSampleSpanMs": 0,
+    "firstRecoveredAt": null,
+    "maxMs": 331.07687499999884,
+    "workerColos": [
+      "NRT"
+    ],
+    "databaseColos": [
+      "SIN"
+    ]
+  },
+  {
+    "targetMiB": 100,
+    "repeat": 2,
+    "target": "source",
+    "operation": "read",
+    "failures": 8,
+    "requests": 33,
+    "firstFailureAt": "2026-10-16T13:10:44.432Z",
+    "lastFailureAt": "2026-10-16T13:10:51.437Z",
+    "failureSampleSpanMs": 7005,
+    "firstRecoveredAt": "2026-10-16T13:10:52.559Z",
+    "maxMs": 513.9598330000008,
+    "workerColos": [
+      "NRT"
+    ],
+    "databaseColos": [
+      "HKG"
+    ]
+  },
+  {
+    "targetMiB": 100,
+    "repeat": 2,
+    "target": "source",
+    "operation": "write",
+    "failures": 8,
+    "requests": 33,
+    "firstFailureAt": "2026-10-16T13:10:44.433Z",
+    "lastFailureAt": "2026-10-16T13:10:51.438Z",
+    "failureSampleSpanMs": 7005,
+    "firstRecoveredAt": "2026-10-16T13:10:52.640Z",
+    "maxMs": 513.897667000012,
+    "workerColos": [
+      "NRT"
+    ],
+    "databaseColos": [
+      "HKG"
+    ]
+  },
+  {
+    "targetMiB": 100,
+    "repeat": 2,
+    "target": "control",
+    "operation": "read",
+    "failures": 0,
+    "requests": 33,
+    "firstFailureAt": null,
+    "lastFailureAt": null,
+    "failureSampleSpanMs": 0,
+    "firstRecoveredAt": null,
+    "maxMs": 221.5383329999895,
+    "workerColos": [
+      "NRT"
+    ],
+    "databaseColos": [
+      "SIN"
+    ]
+  },
+  {
+    "targetMiB": 100,
+    "repeat": 3,
+    "target": "source",
+    "operation": "read",
+    "failures": 7,
+    "requests": 32,
+    "firstFailureAt": "2026-10-16T13:11:42.245Z",
+    "lastFailureAt": "2026-10-16T13:11:48.252Z",
+    "failureSampleSpanMs": 6007,
+    "firstRecoveredAt": "2026-10-16T13:11:49.329Z",
+    "maxMs": 365.3274580000143,
+    "workerColos": [
+      "NRT"
+    ],
+    "databaseColos": [
+      "HKG"
+    ]
+  },
+  {
+    "targetMiB": 100,
+    "repeat": 3,
+    "target": "source",
+    "operation": "write",
+    "failures": 7,
+    "requests": 32,
+    "firstFailureAt": "2026-10-16T13:11:42.246Z",
+    "lastFailureAt": "2026-10-16T13:11:48.252Z",
+    "failureSampleSpanMs": 6006,
+    "firstRecoveredAt": "2026-10-16T13:11:49.437Z",
+    "maxMs": 250.34645800001454,
+    "workerColos": [
+      "NRT"
+    ],
+    "databaseColos": [
+      "HKG"
+    ]
+  },
+  {
+    "targetMiB": 100,
+    "repeat": 3,
+    "target": "control",
+    "operation": "read",
+    "failures": 0,
+    "requests": 32,
+    "firstFailureAt": null,
+    "lastFailureAt": null,
+    "failureSampleSpanMs": 0,
+    "firstRecoveredAt": null,
+    "maxMs": 250.23937500000466,
+    "workerColos": [
+      "NRT"
+    ],
+    "databaseColos": [
+      "SIN"
+    ]
+  },
+  {
+    "targetMiB": 1024,
+    "repeat": 1,
+    "target": "source",
+    "operation": "read",
+    "failures": 47,
+    "requests": 142,
+    "firstFailureAt": "2026-10-16T13:15:57.507Z",
+    "lastFailureAt": "2026-10-16T13:16:43.558Z",
+    "failureSampleSpanMs": 46051,
+    "firstRecoveredAt": "2026-10-16T13:16:44.693Z",
+    "maxMs": 303.6420419999995,
+    "workerColos": [
+      "NRT"
+    ],
+    "databaseColos": [
+      "HKG"
+    ]
+  },
+  {
+    "targetMiB": 1024,
+    "repeat": 1,
+    "target": "source",
+    "operation": "write",
+    "failures": 47,
+    "requests": 142,
+    "firstFailureAt": "2026-10-16T13:15:57.508Z",
+    "lastFailureAt": "2026-10-16T13:16:43.559Z",
+    "failureSampleSpanMs": 46051,
+    "firstRecoveredAt": "2026-10-16T13:16:44.724Z",
+    "maxMs": 302.80941600000006,
+    "workerColos": [
+      "NRT"
+    ],
+    "databaseColos": [
+      "HKG"
+    ]
+  },
+  {
+    "targetMiB": 1024,
+    "repeat": 1,
+    "target": "control",
+    "operation": "read",
+    "failures": 0,
+    "requests": 142,
+    "firstFailureAt": null,
+    "lastFailureAt": null,
+    "failureSampleSpanMs": 0,
+    "firstRecoveredAt": null,
+    "maxMs": 278.8188339999979,
+    "workerColos": [
+      "NRT"
+    ],
+    "databaseColos": [
+      "SIN"
+    ]
+  },
+  {
+    "targetMiB": 5120,
+    "repeat": 1,
+    "target": "source",
+    "operation": "read",
+    "failures": 250,
+    "requests": 675,
+    "firstFailureAt": "2026-10-16T13:39:18.742Z",
+    "lastFailureAt": "2026-10-16T13:43:27.983Z",
+    "failureSampleSpanMs": 249241,
+    "firstRecoveredAt": "2026-10-16T13:43:29.106Z",
+    "maxMs": 3810.612165999948,
+    "workerColos": [
+      "NRT"
+    ],
+    "databaseColos": [
+      "HKG"
+    ]
+  },
+  {
+    "targetMiB": 5120,
+    "repeat": 1,
+    "target": "source",
+    "operation": "write",
+    "failures": 250,
+    "requests": 675,
+    "firstFailureAt": "2026-10-16T13:39:18.742Z",
+    "lastFailureAt": "2026-10-16T13:43:27.983Z",
+    "failureSampleSpanMs": 249241,
+    "firstRecoveredAt": "2026-10-16T13:43:29.150Z",
+    "maxMs": 723.9934169999906,
+    "workerColos": [
+      "NRT"
+    ],
+    "databaseColos": [
+      "HKG"
+    ]
+  },
+  {
+    "targetMiB": 5120,
+    "repeat": 1,
+    "target": "control",
+    "operation": "read",
+    "failures": 0,
+    "requests": 675,
+    "firstFailureAt": null,
+    "lastFailureAt": null,
+    "failureSampleSpanMs": 0,
+    "firstRecoveredAt": null,
+    "maxMs": 1106.9666660000003,
+    "workerColos": [
+      "NRT"
+    ],
+    "databaseColos": [
+      "SIN"
+    ]
+  }
+]
