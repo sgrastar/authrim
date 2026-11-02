@@ -4,7 +4,7 @@
  * `.storybook/preview.ts` writes here when the toolbar changes; `LoginUIFrame` reads from here.
  * A frame that is given an explicit prop (an "All themes" gallery cell) ignores the toolbar.
  */
-import type { LoginUILocale } from '$lib/i18n/locales';
+import type { LoginUILocale } from '#lib/i18n/locales.js';
 
 export const THEME_TEMPLATES = [
 	'meridian',

@@ -1,14 +1,14 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { adminStatsAPI, type DashboardStats } from '$lib/api/admin-stats';
-	import { adminCacheModeAPI, type PlatformCacheModeResponse } from '$lib/api/admin-cache-mode';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
-	import Card from '$lib/components/Card.svelte';
-	import StatCard from '$lib/components/StatCard.svelte';
-	import Alert from '$lib/components/Alert.svelte';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
-	import AdminSection from '$lib/components/admin/AdminSection.svelte';
+	import { adminStatsAPI, type DashboardStats } from '#lib/api/admin-stats.js';
+	import { adminCacheModeAPI, type PlatformCacheModeResponse } from '#lib/api/admin-cache-mode.js';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
+	import Card from '#lib/components/Card.svelte';
+	import StatCard from '#lib/components/StatCard.svelte';
+	import Alert from '#lib/components/Alert.svelte';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '#lib/components/admin/AdminSection.svelte';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 
 	let stats = $state<DashboardStats | null>(null);

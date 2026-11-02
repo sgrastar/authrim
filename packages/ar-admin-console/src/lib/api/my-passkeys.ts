@@ -7,8 +7,8 @@ import type {
 	PublicKeyCredentialCreationOptionsJSON,
 	RegistrationResponseJSON
 } from '@simplewebauthn/browser';
-import { adminFetch } from '$lib/api/admin-request';
-import type { MessageKey } from '$lib/i18n/i18n.svelte';
+import { adminFetch } from '#lib/api/admin-request.js';
+import type { MessageKey } from '#lib/i18n/i18n.svelte.js';
 
 /** Authenticator vendor resolved from the AAGUID (from the Admin API). */
 export interface PasskeyProvider {

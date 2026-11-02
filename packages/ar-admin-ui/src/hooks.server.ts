@@ -24,7 +24,7 @@ import {
 
 import { resolveLocale } from '$i18n/locales';
 import { sequence, type Handle } from '@sveltejs/kit/hooks';
-import { getPlatformEnv } from '$lib/server/platform-env';
+import { getPlatformEnv } from '#lib/server/platform-env.js';
 
 interface ServiceBinding {
 	fetch(request: Request): Promise<Response>;
@@ -141,7 +141,7 @@ async function handleDevAdminMockIfEnabled(
 	if (!isLoopbackHost(event.url.hostname)) return null;
 	if (!isAdminUiDevMockFlagEnabled(platformEnv)) return null;
 
-	const { handleDevAdminMock } = await import('$lib/server/dev-admin-mock');
+	const { handleDevAdminMock } = await import('#lib/server/dev-admin-mock.js');
 	return handleDevAdminMock(event, platformEnv);
 }
 

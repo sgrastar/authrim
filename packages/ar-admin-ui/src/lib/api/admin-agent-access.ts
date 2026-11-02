@@ -1,4 +1,4 @@
-import { API_BASE_URL, adminFetch } from '$lib/api/admin-request';
+import { API_BASE_URL, adminFetch } from '#lib/api/admin-request.js';
 
 /** Builds the MCP resource URL from the selected tenant's canonical issuer, not the Admin UI host. */
 export function buildAgentAccessMcpUrl(issuer: string): string {

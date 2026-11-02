@@ -9,7 +9,7 @@ import {
 	cibaApprovalErrorMessage,
 	classifyApprovalFailure,
 	type ApprovalApiError
-} from '$lib/api/approval-errors';
+} from '#lib/api/approval-errors.js';
 
 interface ApiResult {
 	error?: ApprovalApiError;

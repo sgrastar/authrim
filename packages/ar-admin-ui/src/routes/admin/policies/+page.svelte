@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import {
 		adminPoliciesAPI,
 		type PolicyRule,
@@ -13,16 +13,16 @@
 		createEmptyContext,
 		conditionParamsForSave,
 		initialConditionParams
-	} from '$lib/api/admin-policies';
-	import { adminSettingsAPI } from '$lib/api/admin-settings';
+	} from '#lib/api/admin-policies.js';
+	import { adminSettingsAPI } from '#lib/api/admin-settings.js';
 	import {
 		AdminPageHeader,
 		AdminPageShell,
 		AdminPagination,
 		AdminSection,
 		AdminToolbar
-	} from '$lib/components/admin';
-	import { Modal, ToggleSwitch } from '$lib/components';
+	} from '#lib/components/admin/index.js';
+	import { Modal, ToggleSwitch } from '#lib/components/index.js';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 
 	// State

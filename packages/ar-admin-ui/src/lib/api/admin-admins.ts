@@ -1,5 +1,5 @@
-import { adminFetch } from '$lib/api/admin-request';
-import type { PasskeyProvider } from '$lib/api/admin-users';
+import { adminFetch } from '#lib/api/admin-request.js';
+import type { PasskeyProvider } from '#lib/api/admin-users.js';
 /**
  * Admin Users Management API Client
  *

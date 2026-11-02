@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import Page from '$lib/ui/templates/Page.svelte';
+	import Page from '#lib/ui/templates/Page.svelte';
 	import AccountFlowDetail from './AccountFlowDetail.svelte';
 	import { emptyFlowState, sampleState, type FlowId } from './account-flow-model';
 

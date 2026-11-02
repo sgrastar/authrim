@@ -1,4 +1,4 @@
-import { adminFetch } from '$lib/api/admin-request';
+import { adminFetch } from '#lib/api/admin-request.js';
 /**
  * Admin Compliance API client: the compliance status (checks and the facts behind them), access
  * reviews, compliance reports and data retention.

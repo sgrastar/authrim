@@ -1,12 +1,15 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { adminAgentAccessAPI, type AgentBaselineDefinition } from '$lib/api/admin-agent-access';
+	import {
+		adminAgentAccessAPI,
+		type AgentBaselineDefinition
+	} from '#lib/api/admin-agent-access.js';
 	import {
 		AdminPageHeader,
 		AdminPageShell,
 		AdminSection,
 		AgentAccessNav
-	} from '$lib/components/admin';
+	} from '#lib/components/admin/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 	let name = $state('');
 	let mode: 'one_time' | 'managed' = $state('managed');

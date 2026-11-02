@@ -2,12 +2,12 @@
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { page } from '$app/state';
-	import AuthPageShell from '$lib/components/AuthPageShell.svelte';
-	import DeviceView from '$lib/views/DeviceView.svelte';
-	import { useLoginUIStores } from '$lib/stores/login-ui-context';
+	import AuthPageShell from '#lib/components/AuthPageShell.svelte';
+	import DeviceView from '#lib/views/DeviceView.svelte';
+	import { useLoginUIStores } from '#lib/stores/login-ui-context.js';
 	import { LL } from '$i18n/i18n-svelte';
-	import { deviceFlowAPI } from '$lib/api/client';
-	import { handleCodeEnterKey } from '$lib/utils/code-enter-key';
+	import { deviceFlowAPI } from '#lib/api/client.js';
+	import { handleCodeEnterKey } from '#lib/utils/code-enter-key.js';
 	import { applyUserCodeInput, createDeviceFlow, type DeviceFlowState } from './device-decision';
 
 	const { brandingStore } = useLoginUIStores();

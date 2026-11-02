@@ -3,8 +3,8 @@
  * so a story shows the Login UI as a tenant configuration would. Stories change only what they
  * demonstrate; everything else keeps the values below.
  */
-import type { LoginUIConfig } from '$lib/api/authentication-methods';
-import { LOGIN_UI_LOCALES } from '$lib/i18n/locales';
+import type { LoginUIConfig } from '#lib/api/authentication-methods.js';
+import { LOGIN_UI_LOCALES } from '#lib/i18n/locales.js';
 import type { Scheme, ThemeTemplate } from './globals.svelte';
 
 type PageTemplate = NonNullable<LoginUIConfig['pageTemplate']>;

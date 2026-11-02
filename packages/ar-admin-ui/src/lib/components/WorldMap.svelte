@@ -20,7 +20,7 @@
 		isLocationHintRegion,
 		isNativeDoPlacementRegion,
 		resolveNativeDoPlacementRegions
-	} from '$lib/region-map';
+	} from '#lib/region-map.js';
 
 	// =========================================================================
 	// Types

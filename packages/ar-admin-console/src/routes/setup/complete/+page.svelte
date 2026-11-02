@@ -8,14 +8,14 @@
 		SetupError,
 		setupErrorKey,
 		type SetupUserInfo
-	} from '$lib/api/admin-setup';
-	import { t, type MessageKey } from '$lib/i18n/i18n.svelte';
-	import DisplayMenu from '$lib/shell/DisplayMenu.svelte';
-	import LanguageSwitch from '$lib/shell/LanguageSwitch.svelte';
-	import Button from '$lib/ui/primitives/Button.svelte';
-	import Callout from '$lib/ui/patterns/Callout.svelte';
-	import SettingRow from '$lib/ui/patterns/SettingRow.svelte';
-	import AuthLayout from '$lib/ui/templates/AuthLayout.svelte';
+	} from '#lib/api/admin-setup.js';
+	import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
+	import DisplayMenu from '#lib/shell/DisplayMenu.svelte';
+	import LanguageSwitch from '#lib/shell/LanguageSwitch.svelte';
+	import Button from '#lib/ui/primitives/Button.svelte';
+	import Callout from '#lib/ui/patterns/Callout.svelte';
+	import SettingRow from '#lib/ui/patterns/SettingRow.svelte';
+	import AuthLayout from '#lib/ui/templates/AuthLayout.svelte';
 
 	/**
 	 * First administrator: the initial setup on the router issues a one-time token and links

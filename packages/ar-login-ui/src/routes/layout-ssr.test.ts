@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { createRawSnippet } from 'svelte';
 import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
-import type { AuthenticationMethodsResponse } from '$lib/api/authentication-methods';
+import type { AuthenticationMethodsResponse } from '#lib/api/authentication-methods.js';
 import Layout from './+layout.svelte';
 import { getLocale, setLocale } from '$i18n/i18n-svelte';
 

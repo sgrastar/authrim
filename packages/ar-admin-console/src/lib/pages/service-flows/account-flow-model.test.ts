@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { en } from '$lib/i18n/messages/en';
-import { ja } from '$lib/i18n/messages/ja';
+import { en } from '#lib/i18n/messages/en.js';
+import { ja } from '#lib/i18n/messages/ja.js';
 import {
 	aboutPart,
 	aboutState,

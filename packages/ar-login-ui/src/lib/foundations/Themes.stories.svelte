@@ -1,7 +1,7 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
-	import LoginUIFrame from '$lib/storybook/LoginUIFrame.svelte';
-	import { THEME_TEMPLATES, THEME_TEMPLATE_LABELS } from '$lib/storybook/globals.svelte';
+	import LoginUIFrame from '#lib/storybook/LoginUIFrame.svelte';
+	import { THEME_TEMPLATES, THEME_TEMPLATE_LABELS } from '#lib/storybook/globals.svelte.js';
 	import TokenSwatches from './TokenSwatches.svelte';
 
 	const { Story } = defineMeta({

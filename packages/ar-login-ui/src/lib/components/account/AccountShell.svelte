@@ -10,11 +10,11 @@
 	 * --control-*, --button-* and --surface-* properties Card, Button and Input read.
 	 */
 	import type { Snippet } from 'svelte';
-	import { Button } from '$lib/components';
-	import ConfiguredFooter from '$lib/components/ConfiguredFooter.svelte';
-	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
+	import { Button } from '#lib/components/index.js';
+	import ConfiguredFooter from '#lib/components/ConfiguredFooter.svelte';
+	import LanguageSwitcher from '#lib/components/LanguageSwitcher.svelte';
 	import { LL } from '$i18n/i18n-svelte';
-	import { useLoginUIStores } from '$lib/stores/login-ui-context';
+	import { useLoginUIStores } from '#lib/stores/login-ui-context.js';
 
 	let {
 		brandName = '',

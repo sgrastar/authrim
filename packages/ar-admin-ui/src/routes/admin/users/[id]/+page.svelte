@@ -1,5 +1,5 @@
 <script lang="ts">
-	import AccountRegistrationState from '$lib/components/admin/AccountRegistrationState.svelte';
+	import AccountRegistrationState from '#lib/components/admin/AccountRegistrationState.svelte';
 	import { onMount } from 'svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 	import { page } from '$app/state';
@@ -12,40 +12,40 @@
 		type IdentifierReplacementOperation,
 		type User,
 		type UpdateUserInput
-	} from '$lib/api/admin-users';
-	import { adminSessionsAPI, type Session } from '$lib/api/admin-sessions';
-	import { adminAuditLogsAPI, type AuditLogEntry } from '$lib/api/admin-audit-logs';
+	} from '#lib/api/admin-users.js';
+	import { adminSessionsAPI, type Session } from '#lib/api/admin-sessions.js';
+	import { adminAuditLogsAPI, type AuditLogEntry } from '#lib/api/admin-audit-logs.js';
 	import {
 		adminEmailDeliveriesAPI,
 		type EmailDeliveryRecord
-	} from '$lib/api/admin-email-deliveries';
+	} from '#lib/api/admin-email-deliveries.js';
 
 	import {
 		adminRolesAPI,
 		type Role,
 		type RoleAssignment,
 		type ScopeType
-	} from '$lib/api/admin-roles';
+	} from '#lib/api/admin-roles.js';
 	import {
 		adminConsentStatementsAPI,
 		type UserConsentRecord,
 		type ConsentItemHistory
-	} from '$lib/api/admin-consent-statements';
-	import OrganizationSelectDialog from '$lib/components/OrganizationSelectDialog.svelte';
-	import { Modal, ToggleSwitch } from '$lib/components';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
-	import AdminSection from '$lib/components/admin/AdminSection.svelte';
-	import AdminTabs, { type AdminTabItem } from '$lib/components/admin/AdminTabs.svelte';
-	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
-	import EmailDeliveryTable from '$lib/components/admin/EmailDeliveryTable.svelte';
-	import UserAssuranceSection from '$lib/components/admin/UserAssuranceSection.svelte';
-	import type { OrganizationNode } from '$lib/api/admin-organizations';
-	import { adminAuth } from '$lib/stores/admin-auth.svelte';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
-	import { sanitizeText, isValidUUID } from '$lib/utils';
-	import { normalizeTimestampMs } from '$lib/utils/timestamp';
-	import { formatGuestAwareAuditAction } from '$lib/admin/account-audit-action-label';
+	} from '#lib/api/admin-consent-statements.js';
+	import OrganizationSelectDialog from '#lib/components/OrganizationSelectDialog.svelte';
+	import { Modal, ToggleSwitch } from '#lib/components/index.js';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '#lib/components/admin/AdminSection.svelte';
+	import AdminTabs, { type AdminTabItem } from '#lib/components/admin/AdminTabs.svelte';
+	import AdminDataTable from '#lib/components/admin/AdminDataTable.svelte';
+	import EmailDeliveryTable from '#lib/components/admin/EmailDeliveryTable.svelte';
+	import UserAssuranceSection from '#lib/components/admin/UserAssuranceSection.svelte';
+	import type { OrganizationNode } from '#lib/api/admin-organizations.js';
+	import { adminAuth } from '#lib/stores/admin-auth.svelte.js';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
+	import { sanitizeText, isValidUUID } from '#lib/utils/index.js';
+	import { normalizeTimestampMs } from '#lib/utils/timestamp.js';
+	import { formatGuestAwareAuditAction } from '#lib/admin/account-audit-action-label.js';
 
 	let user: User | null = $state(null);
 	let loading = $state(true);

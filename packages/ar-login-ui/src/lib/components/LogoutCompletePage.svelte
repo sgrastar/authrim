@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { Button, Card } from '$lib/components';
-	import AuthPageShell from '$lib/components/AuthPageShell.svelte';
-	import { useLoginUIStores } from '$lib/stores/login-ui-context';
+	import { Button, Card } from '#lib/components/index.js';
+	import AuthPageShell from '#lib/components/AuthPageShell.svelte';
+	import { useLoginUIStores } from '#lib/stores/login-ui-context.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	const { brandingStore } = useLoginUIStores();

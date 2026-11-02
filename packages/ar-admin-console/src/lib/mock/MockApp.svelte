@@ -1,16 +1,16 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { i18n } from '$lib/i18n/i18n.svelte';
-	import { adminAccess } from '$lib/access/admin-access.svelte';
-	import { persona } from '$lib/access/personas';
-	import AppShell from '$lib/shell/AppShell.svelte';
-	import { isStandalonePath, resolveNavPath } from '$lib/shell/nav';
-	import PlaceholderPage from '$lib/shell/PlaceholderPage.svelte';
-	import { overrideLanguageChange } from '$lib/shell/language';
-	import type { ScopeOption } from '$lib/shell/ScopeSwitcher.svelte';
-	import EmptyState from '$lib/ui/patterns/EmptyState.svelte';
-	import Page from '$lib/ui/templates/Page.svelte';
+	import { i18n } from '#lib/i18n/i18n.svelte.js';
+	import { adminAccess } from '#lib/access/admin-access.svelte.js';
+	import { persona } from '#lib/access/personas.js';
+	import AppShell from '#lib/shell/AppShell.svelte';
+	import { isStandalonePath, resolveNavPath } from '#lib/shell/nav.js';
+	import PlaceholderPage from '#lib/shell/PlaceholderPage.svelte';
+	import { overrideLanguageChange } from '#lib/shell/language.js';
+	import type { ScopeOption } from '#lib/shell/ScopeSwitcher.svelte';
+	import EmptyState from '#lib/ui/patterns/EmptyState.svelte';
+	import Page from '#lib/ui/templates/Page.svelte';
 	import { mockAccount, mockNotifications, mockScopes } from './fixtures/shell';
 	import { consoleToMockHref, DEFAULT_PERSONA, mockToConsolePath, withPersona } from './paths';
 	import { mockPageFor } from './registry';

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ApprovalTransportEvidenceEvent } from '$lib/api/admin-approvals';
+import type { ApprovalTransportEvidenceEvent } from '#lib/api/admin-approvals.js';
 import {
 	getApprovalEvidenceArtifactSwitch,
 	getApprovalEvidenceCompletionArtifact,

@@ -4,8 +4,8 @@
 	import {
 		adminAdminAccessControlAPI,
 		type AdminAccessControlStats
-	} from '$lib/api/admin-admin-access-control';
-	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
+	} from '#lib/api/admin-admin-access-control.js';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '#lib/components/admin/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	let stats: AdminAccessControlStats | null = $state(null);

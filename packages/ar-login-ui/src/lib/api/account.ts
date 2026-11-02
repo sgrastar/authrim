@@ -1,6 +1,6 @@
 import type { AccountRegistrationState } from '@authrim/ar-lib-core';
-import { buildDiagnosticHeaders, type APIError } from '$lib/api/client';
-import { authrimFetch } from '$lib/authrim/fetch';
+import { buildDiagnosticHeaders, type APIError } from '#lib/api/client.js';
+import { authrimFetch } from '#lib/authrim/fetch.js';
 import type {
 	AuthenticationResponseJSON,
 	PublicKeyCredentialCreationOptionsJSON,

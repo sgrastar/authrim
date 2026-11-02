@@ -10,20 +10,20 @@
 		type IdentityMappingClient,
 		type MappingSetSummary,
 		type PlatformTenantsOverview
-	} from '$lib/api/identity-mapping';
-	import { ApiError } from '$lib/api/api-error';
-	import { i18n, t } from '$lib/i18n/i18n.svelte';
-	import { formatNumber } from '$lib/ui/format';
-	import Callout from '$lib/ui/patterns/Callout.svelte';
-	import Card from '$lib/ui/patterns/Card.svelte';
-	import DataTable from '$lib/ui/patterns/DataTable.svelte';
-	import FormDialog from '$lib/ui/patterns/FormDialog.svelte';
-	import LoadingState from '$lib/ui/patterns/LoadingState.svelte';
-	import Badge from '$lib/ui/primitives/Badge.svelte';
-	import Button from '$lib/ui/primitives/Button.svelte';
-	import RadioGroup from '$lib/ui/primitives/RadioGroup.svelte';
-	import Select from '$lib/ui/primitives/Select.svelte';
-	import TextField from '$lib/ui/primitives/TextField.svelte';
+	} from '#lib/api/identity-mapping.js';
+	import { ApiError } from '#lib/api/api-error.js';
+	import { i18n, t } from '#lib/i18n/i18n.svelte.js';
+	import { formatNumber } from '#lib/ui/format.js';
+	import Callout from '#lib/ui/patterns/Callout.svelte';
+	import Card from '#lib/ui/patterns/Card.svelte';
+	import DataTable from '#lib/ui/patterns/DataTable.svelte';
+	import FormDialog from '#lib/ui/patterns/FormDialog.svelte';
+	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
+	import Badge from '#lib/ui/primitives/Badge.svelte';
+	import Button from '#lib/ui/primitives/Button.svelte';
+	import RadioGroup from '#lib/ui/primitives/RadioGroup.svelte';
+	import Select from '#lib/ui/primitives/Select.svelte';
+	import TextField from '#lib/ui/primitives/TextField.svelte';
 	import MappingSection from './MappingSection.svelte';
 	import { chainValueText, label } from './labels';
 	import SourceLabel from './SourceLabel.svelte';

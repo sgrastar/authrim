@@ -4,18 +4,18 @@
 		FlowRuntimeConsentPolicyContent,
 		FlowRuntimeConsentPolicyOption,
 		FlowRuntimeDestinationFieldConsentContent
-	} from '$lib/api/flow-runtime';
-	import PinCodeInput from '$lib/components/PinCodeInput.svelte';
-	import SanitizedHtml from '$lib/components/SanitizedHtml.svelte';
-	import TurnstileWidget from '$lib/components/TurnstileWidget.svelte';
-	import { sanitizeRuntimeConsentHtml } from '$lib/consent/runtime-consent-html';
-	import { withRequestedTotpCodeInput } from '$lib/authrim/runtime-code-input';
+	} from '#lib/api/flow-runtime.js';
+	import PinCodeInput from '#lib/components/PinCodeInput.svelte';
+	import SanitizedHtml from '#lib/components/SanitizedHtml.svelte';
+	import TurnstileWidget from '#lib/components/TurnstileWidget.svelte';
+	import { sanitizeRuntimeConsentHtml } from '#lib/consent/runtime-consent-html.js';
+	import { withRequestedTotpCodeInput } from '#lib/authrim/runtime-code-input.js';
 	import {
 		authWidgetMethod as readAuthWidgetMethod,
 		isDisplayConditionMet,
 		shownEntryMethods
-	} from '$lib/runtime-screen-methods';
-	import { localizeRuntimeScreen } from '$lib/i18n/runtime-screen-localization';
+	} from '#lib/runtime-screen-methods.js';
+	import { localizeRuntimeScreen } from '#lib/i18n/runtime-screen-localization.js';
 
 	type RuntimeField = {
 		field: string;

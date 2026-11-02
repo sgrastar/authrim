@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import type { ComplianceClient } from '$lib/api/compliance';
-	import { t } from '$lib/i18n/i18n.svelte';
-	import PageHeader from '$lib/ui/patterns/PageHeader.svelte';
-	import Tabs from '$lib/ui/patterns/Tabs.svelte';
-	import Page from '$lib/ui/templates/Page.svelte';
+	import type { ComplianceClient } from '#lib/api/compliance.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import PageHeader from '#lib/ui/patterns/PageHeader.svelte';
+	import Tabs from '#lib/ui/patterns/Tabs.svelte';
+	import Page from '#lib/ui/templates/Page.svelte';
 	import AccessReviews from './AccessReviews.svelte';
 	import ComplianceOverview from './ComplianceOverview.svelte';
 	import ComplianceReports from './ComplianceReports.svelte';

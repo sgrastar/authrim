@@ -1,6 +1,6 @@
 import { PUBLIC_API_BASE_URL, PUBLIC_AUTHRIM_ISSUER } from '$app/env/public';
 import type { RequestEvent } from '@sveltejs/kit';
-import { getPlatformEnv } from '$lib/server/platform-env';
+import { getPlatformEnv } from '#lib/server/platform-env.js';
 
 function getConfiguredHost(value: unknown): string | null {
 	const text = String(value || '').trim();

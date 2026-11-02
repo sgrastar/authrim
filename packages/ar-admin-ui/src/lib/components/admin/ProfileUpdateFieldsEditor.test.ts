@@ -11,8 +11,8 @@ vi.mock('$i18n/i18n-svelte', () => ({
 	// Each message renders as its key, so the test reads which one is shown.
 	LL: readable(new Proxy({}, { get: (_target, key) => () => String(key) }))
 }));
-vi.mock('$lib/api/admin-settings', () => ({ adminSettingsAPI: { getSettings } }));
-vi.mock('$lib/stores/settings-context.svelte', () => ({
+vi.mock('#lib/api/admin-settings.js', () => ({ adminSettingsAPI: { getSettings } }));
+vi.mock('#lib/stores/settings-context.svelte.js', () => ({
 	settingsContext: { tenantId: 'default' }
 }));
 

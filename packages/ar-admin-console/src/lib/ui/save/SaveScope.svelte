@@ -14,7 +14,7 @@
 	import { tick, type Snippet } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { beforeNavigate, goto } from '$app/navigation';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import { provideBusy } from '../busy/busy';
 	import SaveBar from '../patterns/SaveBar.svelte';
 	import { toast } from '../toast/toast.svelte';

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ReleaseRolloutStatus } from '$lib/api/admin-control-plane';
+import type { ReleaseRolloutStatus } from '#lib/api/admin-control-plane.js';
 import { createReleaseRolloutStore } from './release-rollout.svelte';
 
 const ACTIVE_ROLLOUT: ReleaseRolloutStatus = {

@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { t } from '$lib/i18n/i18n.svelte';
-	import Badge from '$lib/ui/primitives/Badge.svelte';
-	import Card from '$lib/ui/patterns/Card.svelte';
-	import DataTable from '$lib/ui/patterns/DataTable.svelte';
-	import PageHeader from '$lib/ui/patterns/PageHeader.svelte';
-	import Page from '$lib/ui/templates/Page.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import Badge from '#lib/ui/primitives/Badge.svelte';
+	import Card from '#lib/ui/patterns/Card.svelte';
+	import DataTable from '#lib/ui/patterns/DataTable.svelte';
+	import PageHeader from '#lib/ui/patterns/PageHeader.svelte';
+	import Page from '#lib/ui/templates/Page.svelte';
 
 	/**
 	 * A sample mock page: parts from the design system and sample data written here, nothing

@@ -4,8 +4,8 @@
 	import {
 		adminAgentAccessAPI,
 		type AgentConfigurationPlanRecord
-	} from '$lib/api/admin-agent-access';
-	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
+	} from '#lib/api/admin-agent-access.js';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '#lib/components/admin/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	let item: AgentConfigurationPlanRecord | null = $state(null);

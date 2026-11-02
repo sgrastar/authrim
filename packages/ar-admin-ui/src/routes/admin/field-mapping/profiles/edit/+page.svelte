@@ -16,18 +16,18 @@
 		type IdentityMappingScimSourceProfileSchema,
 		type IdentityMappingSourceProfileColumn,
 		type IdentityMappingSourceProfileSummary
-	} from '$lib/api/admin-identity-mapping';
-	import { adminOidcScopesAPI, type OidcScope } from '$lib/api/admin-oidc-scopes';
+	} from '#lib/api/admin-identity-mapping.js';
+	import { adminOidcScopesAPI, type OidcScope } from '#lib/api/admin-oidc-scopes.js';
 	import {
 		destinationTemplates,
 		type DestinationTemplate
-	} from '$lib/admin/identity-mapping-destination-templates';
+	} from '#lib/admin/identity-mapping-destination-templates/index.js';
 	import {
 		sourceTemplates,
 		type ScimSourceTemplate
-	} from '$lib/admin/identity-mapping-source-templates';
-	import { completeProfileLifecycle } from '$lib/admin/profile-lifecycle';
-	import { AdminPageHeader, AdminPageShell } from '$lib/components/admin';
+	} from '#lib/admin/identity-mapping-source-templates/index.js';
+	import { completeProfileLifecycle } from '#lib/admin/profile-lifecycle.js';
+	import { AdminPageHeader, AdminPageShell } from '#lib/components/admin/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	type EditorKind = 'source' | 'destination';

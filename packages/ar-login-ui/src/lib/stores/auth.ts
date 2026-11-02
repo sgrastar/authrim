@@ -5,8 +5,8 @@
 
 import { writable, derived } from 'svelte/store';
 import { browser } from '$app/env';
-import { buildDiagnosticHeaders } from '$lib/api/client';
-import { authrimFetch } from '$lib/authrim/fetch';
+import { buildDiagnosticHeaders } from '#lib/api/client.js';
+import { authrimFetch } from '#lib/authrim/fetch.js';
 
 export interface AuthUser {
 	userId: string;

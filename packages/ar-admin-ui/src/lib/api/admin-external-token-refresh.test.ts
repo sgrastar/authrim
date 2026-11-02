@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const adminFetch = vi.hoisted(() => vi.fn());
 
-vi.mock('$lib/api/admin-request', () => ({ adminFetch }));
+vi.mock('#lib/api/admin-request.js', () => ({ adminFetch }));
 
 const apiBaseUrl = 'https://tenant.example.test';
 

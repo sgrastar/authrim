@@ -5,11 +5,11 @@
 		type AdminAgentGrant,
 		type AgentAccessSettings,
 		type AgentScope
-	} from '$lib/api/admin-agent-access';
-	import { getTenantInfo } from '$lib/api/admin-info';
-	import { AdminPageHeader, AdminPageShell, AgentAccessNav } from '$lib/components/admin';
-	import { adminAuth } from '$lib/stores/admin-auth.svelte';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	} from '#lib/api/admin-agent-access.js';
+	import { getTenantInfo } from '#lib/api/admin-info.js';
+	import { AdminPageHeader, AdminPageShell, AgentAccessNav } from '#lib/components/admin/index.js';
+	import { adminAuth } from '#lib/stores/admin-auth.svelte.js';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	let grants: AdminAgentGrant[] = $state([]);

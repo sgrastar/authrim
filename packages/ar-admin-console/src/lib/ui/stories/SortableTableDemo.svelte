@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { i18n } from '$lib/i18n/i18n.svelte';
+	import { i18n } from '#lib/i18n/i18n.svelte.js';
 	import Badge from '../primitives/Badge.svelte';
 	import Card from '../patterns/Card.svelte';
 	import DataTable, { type SortState } from '../patterns/DataTable.svelte';

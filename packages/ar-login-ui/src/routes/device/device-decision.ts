@@ -14,12 +14,12 @@ import {
 	formatUserCode,
 	isUserCodeComplete,
 	userCodeCharacters
-} from '$lib/utils/device-user-code';
+} from '#lib/utils/device-user-code.js';
 import {
 	classifyApprovalFailure,
 	deviceApprovalErrorMessage,
 	type ApprovalApiError
-} from '$lib/api/approval-errors';
+} from '#lib/api/approval-errors.js';
 
 interface ApiResult<T> {
 	data?: T;

@@ -3,9 +3,9 @@
 	 * The account's name and email: rename the account, and change the email address through a
 	 * confirmation code sent to the new one. The caller runs each request and reports its stage.
 	 */
-	import { Button, Input } from '$lib/components';
+	import { Button, Input } from '#lib/components/index.js';
 	import { LL } from '$i18n/i18n-svelte';
-	import type { AccountProfile } from '$lib/api/account';
+	import type { AccountProfile } from '#lib/api/account.js';
 	import AccountSectionSkeleton from '../AccountSectionSkeleton.svelte';
 	import AccountWidgetPanel from './AccountWidgetPanel.svelte';
 	import type { AccountWidgetHeadingLevel } from './types';

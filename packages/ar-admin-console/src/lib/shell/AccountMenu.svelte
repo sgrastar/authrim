@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { t } from '$lib/i18n/i18n.svelte';
-	import Button from '$lib/ui/primitives/Button.svelte';
-	import Popover from '$lib/ui/patterns/Popover.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import Button from '#lib/ui/primitives/Button.svelte';
+	import Popover from '#lib/ui/patterns/Popover.svelte';
 
 	/** Entry point for personal settings and sign-out. */
 	interface Props {

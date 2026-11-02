@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { normalizePinCode, normalizePinCodeLength } from '$lib/utils/pin-code';
+	import { normalizePinCode, normalizePinCodeLength } from '#lib/utils/pin-code.js';
 	import { LL } from '$i18n/i18n-svelte';
-	import { handleCodeEnterKey } from '$lib/utils/code-enter-key';
+	import { handleCodeEnterKey } from '#lib/utils/code-enter-key.js';
 
 	type Props = {
 		value?: string;

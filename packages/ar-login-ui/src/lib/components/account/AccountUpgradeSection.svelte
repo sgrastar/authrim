@@ -2,7 +2,11 @@
 	/** Runs guest registration (email code or passkey) against the account API for the widget. */
 	import { onMount, untrack } from 'svelte';
 	import { startRegistration, type RegistrationResponseJSON } from '@simplewebauthn/browser';
-	import { accountAPI, type GuestUpgradeAttempt, type GuestUpgradeStatus } from '$lib/api/account';
+	import {
+		accountAPI,
+		type GuestUpgradeAttempt,
+		type GuestUpgradeStatus
+	} from '#lib/api/account.js';
 	import AccountUpgradeWidget from './widgets/AccountUpgradeWidget.svelte';
 	import type { AccountWidgetHeadingLevel } from './widgets/types';
 

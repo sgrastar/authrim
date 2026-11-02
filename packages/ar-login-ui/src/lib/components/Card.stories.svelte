@@ -1,6 +1,6 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
-	import LoginUIFrame from '$lib/storybook/LoginUIFrame.svelte';
+	import LoginUIFrame from '#lib/storybook/LoginUIFrame.svelte';
 	import Button from './Button.svelte';
 	import Card from './Card.svelte';
 

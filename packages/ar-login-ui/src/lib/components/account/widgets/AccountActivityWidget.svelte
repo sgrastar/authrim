@@ -1,10 +1,10 @@
 <script lang="ts">
 	/** Recent changes made to the account, newest first, each with its time. */
 	import AccountSectionSkeleton from '../AccountSectionSkeleton.svelte';
-	import type { AccountOperation } from '$lib/api/account';
+	import type { AccountOperation } from '#lib/api/account.js';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
 	import type { TranslationFunctions } from '$i18n/i18n-types';
-	import { formatTimestamp, normalizeTimestampToMillis } from '$lib/utils/date';
+	import { formatTimestamp, normalizeTimestampToMillis } from '#lib/utils/date.js';
 	import AccountWidgetPanel from './AccountWidgetPanel.svelte';
 	import type { AccountWidgetHeadingLevel } from './types';
 

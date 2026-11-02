@@ -25,9 +25,9 @@
 	 * The re-authentication page, as the user sees it. The route owns the state and the requests;
 	 * this component only draws what it is given and reports what the user does.
 	 */
-	import { Button, Card, Alert, Input, TurnstileWidget } from '$lib/components';
+	import { Button, Card, Alert, Input, TurnstileWidget } from '#lib/components/index.js';
 	import { LL } from '$i18n/i18n-svelte';
-	import { isValidImageUrl } from '$lib/utils/url-validation';
+	import { isValidImageUrl } from '#lib/utils/url-validation.js';
 
 	type HumanVerificationProvider = 'turnstile' | 'hcaptcha' | 'recaptcha' | 'custom';
 	type HumanVerificationMode = 'managed' | 'checkbox' | 'invisible' | 'score';

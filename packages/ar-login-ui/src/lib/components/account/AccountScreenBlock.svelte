@@ -1,5 +1,5 @@
 <script module lang="ts">
-	import type { AccountPageScreenField } from '$lib/api/account';
+	import type { AccountPageScreenField } from '#lib/api/account.js';
 
 	/** The block types a published account page draws itself, without an account widget. */
 	export type AccountScreenStaticBlockType = 'heading' | 'text' | 'link' | 'divider';

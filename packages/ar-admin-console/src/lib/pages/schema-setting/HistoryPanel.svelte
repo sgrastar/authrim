@@ -1,12 +1,16 @@
 <script lang="ts">
-	import { t, type MessageKey } from '$lib/i18n/i18n.svelte';
-	import type { HistoryDetail, HistoryEntry, SchemaSettingClient } from '$lib/api/schema-setting';
-	import Callout from '$lib/ui/patterns/Callout.svelte';
-	import Card from '$lib/ui/patterns/Card.svelte';
-	import DataTable from '$lib/ui/patterns/DataTable.svelte';
-	import LoadingState from '$lib/ui/patterns/LoadingState.svelte';
-	import Button from '$lib/ui/primitives/Button.svelte';
-	import DateTime from '$lib/ui/time/DateTime.svelte';
+	import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
+	import type {
+		HistoryDetail,
+		HistoryEntry,
+		SchemaSettingClient
+	} from '#lib/api/schema-setting.js';
+	import Callout from '#lib/ui/patterns/Callout.svelte';
+	import Card from '#lib/ui/patterns/Card.svelte';
+	import DataTable from '#lib/ui/patterns/DataTable.svelte';
+	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
+	import Button from '#lib/ui/primitives/Button.svelte';
+	import DateTime from '#lib/ui/time/DateTime.svelte';
 
 	/**
 	 * The changes made to an attribute, newest first: which version, what was done, when, by whom.

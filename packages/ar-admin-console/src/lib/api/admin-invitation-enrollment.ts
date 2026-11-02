@@ -4,7 +4,7 @@ import type {
 	PublicKeyCredentialRequestOptionsJSON,
 	RegistrationResponseJSON
 } from '@simplewebauthn/browser';
-import type { MessageKey } from '$lib/i18n/i18n.svelte';
+import type { MessageKey } from '#lib/i18n/i18n.svelte.js';
 
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
 

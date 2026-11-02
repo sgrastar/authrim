@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Button, Card, Alert } from '$lib/components';
-	import AuthPageShell from '$lib/components/AuthPageShell.svelte';
+	import { Button, Card, Alert } from '#lib/components/index.js';
+	import AuthPageShell from '#lib/components/AuthPageShell.svelte';
 	import { LL } from '$i18n/i18n-svelte';
-	import { useLoginUIStores } from '$lib/stores/login-ui-context';
-	import { errorPageMessage } from '$lib/errors/error-page-message';
+	import { useLoginUIStores } from '#lib/stores/login-ui-context.js';
+	import { errorPageMessage } from '#lib/errors/error-page-message.js';
 
 	const { brandingStore } = useLoginUIStores();
 

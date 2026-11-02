@@ -1,32 +1,32 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import type { CategoryName } from '@authrim/ar-lib-core/types/settings/catalog';
-	import { settingsLevel, widest, type AccessLevel, type AdminAccess } from '$lib/access/access';
-	import { adminAccess } from '$lib/access/admin-access.svelte';
-	import { ApiError, ConflictError, RejectedError } from '$lib/api/api-error';
+	import { settingsLevel, widest, type AccessLevel, type AdminAccess } from '#lib/access/access.js';
+	import { adminAccess } from '#lib/access/admin-access.svelte.js';
+	import { ApiError, ConflictError, RejectedError } from '#lib/api/api-error.js';
 	import {
 		targetKey,
 		type SettingsClient,
 		type SettingsPatchResult,
 		type SettingsTarget
-	} from '$lib/api/settings';
-	import { t } from '$lib/i18n/i18n.svelte';
-	import Callout from '$lib/ui/patterns/Callout.svelte';
+	} from '#lib/api/settings.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import Callout from '#lib/ui/patterns/Callout.svelte';
 	import { sectionNotices } from './setting-notices';
-	import Card from '$lib/ui/patterns/Card.svelte';
-	import DetailItem from '$lib/ui/patterns/DetailItem.svelte';
-	import DetailList from '$lib/ui/patterns/DetailList.svelte';
-	import Disclosure from '$lib/ui/patterns/Disclosure.svelte';
-	import EmptyState from '$lib/ui/patterns/EmptyState.svelte';
-	import LoadingState from '$lib/ui/patterns/LoadingState.svelte';
-	import PageHeader from '$lib/ui/patterns/PageHeader.svelte';
-	import Badge from '$lib/ui/primitives/Badge.svelte';
-	import Button from '$lib/ui/primitives/Button.svelte';
-	import OnOff from '$lib/ui/primitives/OnOff.svelte';
-	import { copyValue, Draft } from '$lib/ui/save/draft.svelte';
-	import { SaveStopped } from '$lib/ui/save/save-scope';
-	import SaveScope from '$lib/ui/save/SaveScope.svelte';
-	import Page from '$lib/ui/templates/Page.svelte';
+	import Card from '#lib/ui/patterns/Card.svelte';
+	import DetailItem from '#lib/ui/patterns/DetailItem.svelte';
+	import DetailList from '#lib/ui/patterns/DetailList.svelte';
+	import Disclosure from '#lib/ui/patterns/Disclosure.svelte';
+	import EmptyState from '#lib/ui/patterns/EmptyState.svelte';
+	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
+	import PageHeader from '#lib/ui/patterns/PageHeader.svelte';
+	import Badge from '#lib/ui/primitives/Badge.svelte';
+	import Button from '#lib/ui/primitives/Button.svelte';
+	import OnOff from '#lib/ui/primitives/OnOff.svelte';
+	import { copyValue, Draft } from '#lib/ui/save/draft.svelte.js';
+	import { SaveStopped } from '#lib/ui/save/save-scope.js';
+	import SaveScope from '#lib/ui/save/SaveScope.svelte';
+	import Page from '#lib/ui/templates/Page.svelte';
 	import ConflictDialog, { type ConflictChoice } from './ConflictDialog.svelte';
 	import { categoriesOf, categoryOf, type PlacedSetting, type SettingsPageDef } from './placement';
 	import SettingField from './SettingField.svelte';

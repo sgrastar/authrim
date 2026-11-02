@@ -3,8 +3,8 @@
 	import { get } from 'svelte/store';
 	import { LL } from '$i18n/i18n-svelte';
 	import { expect, fn, userEvent, within } from 'storybook/test';
-	import AuthPageShell from '$lib/components/AuthPageShell.svelte';
-	import LoginUIFrame from '$lib/storybook/LoginUIFrame.svelte';
+	import AuthPageShell from '#lib/components/AuthPageShell.svelte';
+	import LoginUIFrame from '#lib/storybook/LoginUIFrame.svelte';
 	import CibaView, { type CibaRequest } from './CibaView.svelte';
 
 	const NOW = 1_800_000_000;

@@ -2,9 +2,9 @@ import { readFileSync } from 'node:fs';
 import { createRawSnippet } from 'svelte';
 import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
-import type { AccountPageScreenField } from '$lib/api/account';
+import type { AccountPageScreenField } from '#lib/api/account.js';
 import AccountScreenPlacement from './AccountScreenPlacement.svelte';
-import { HYDRATION_MARKERS } from '$lib/testing/ssr-html';
+import { HYDRATION_MARKERS } from '#lib/testing/ssr-html.js';
 
 const placementSource = readFileSync(
 	new URL('./AccountScreenPlacement.svelte', import.meta.url),

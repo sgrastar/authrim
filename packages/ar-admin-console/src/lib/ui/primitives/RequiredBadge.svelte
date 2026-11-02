@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 
 	/**
 	 * "Required" as a property of an item in a list, a row or a step of a flow: an attribute a

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { IdentityMappingFieldMappingVersionSummary } from '$lib/api/admin-identity-mapping';
+import type { IdentityMappingFieldMappingVersionSummary } from '#lib/api/admin-identity-mapping.js';
 import type { MappingDraftPayload } from '../types';
 import { mergeMappingVersionSide } from '../version-side-merge';
 

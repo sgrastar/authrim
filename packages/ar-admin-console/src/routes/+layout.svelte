@@ -1,9 +1,9 @@
 <script lang="ts">
-	import '$lib/ui/styles.css';
+	import '#lib/ui/styles.css';
 	import { onMount, untrack } from 'svelte';
-	import { i18n } from '$lib/i18n/i18n.svelte';
-	import { theme } from '$lib/ui/theme/theme.svelte';
-	import Toaster from '$lib/ui/toast/Toaster.svelte';
+	import { i18n } from '#lib/i18n/i18n.svelte.js';
+	import { theme } from '#lib/ui/theme/theme.svelte.js';
+	import Toaster from '#lib/ui/toast/Toaster.svelte';
 
 	let { data, children } = $props();
 

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { ToggleSwitch } from '$lib/components';
+	import { ToggleSwitch } from '#lib/components/index.js';
 	import { onMount } from 'svelte';
 	import {
 		adminSAMLAPI,
@@ -15,37 +15,37 @@
 		type SAMLProvider,
 		type SAMLProviderConfig,
 		type SAMLTrustCertificatePreview
-	} from '$lib/api/admin-saml';
+	} from '#lib/api/admin-saml.js';
 
 	import {
 		adminConsentStatementsAPI,
 		type ConsentStatement
-	} from '$lib/api/admin-consent-statements';
+	} from '#lib/api/admin-consent-statements.js';
 
 	import {
 		adminIdentityMappingAPI,
 		type IdentityMappingFieldMappingSetSummary,
 		type IdentityMappingFieldMappingVersionSummary
-	} from '$lib/api/admin-identity-mapping';
+	} from '#lib/api/admin-identity-mapping.js';
 	import {
 		AdminDataTable,
 		AdminPageHeader,
 		AdminPageShell,
 		AdminSection
-	} from '$lib/components/admin';
-	import ConsentPolicyTargetSettings from '$lib/components/admin/ConsentPolicyTargetSettings.svelte';
-	import FlowAssignmentSettings from '$lib/components/admin/FlowAssignmentSettings.svelte';
-	import LoginProviderIconPicker from '$lib/components/admin/LoginProviderIconPicker.svelte';
-	import ProfileUpdateFieldsEditor from '$lib/components/admin/ProfileUpdateFieldsEditor.svelte';
-	import SAMLMappingSetReleasePolicy from '$lib/components/saml/SAMLMappingSetReleasePolicy.svelte';
+	} from '#lib/components/admin/index.js';
+	import ConsentPolicyTargetSettings from '#lib/components/admin/ConsentPolicyTargetSettings.svelte';
+	import FlowAssignmentSettings from '#lib/components/admin/FlowAssignmentSettings.svelte';
+	import LoginProviderIconPicker from '#lib/components/admin/LoginProviderIconPicker.svelte';
+	import ProfileUpdateFieldsEditor from '#lib/components/admin/ProfileUpdateFieldsEditor.svelte';
+	import SAMLMappingSetReleasePolicy from '#lib/components/saml/SAMLMappingSetReleasePolicy.svelte';
 	import {
 		buildSAMLFieldReleasePolicies,
 		resolveSAMLMappingSetDestinationProfileIds,
 		resolveSAMLMappingSetReleaseFields,
 		type SAMLMappingSetReleaseField
-	} from '$lib/saml/mapping-set-release-policy';
-	import { buildSelectableFieldMappingSets } from '$lib/saml/field-mapping-options';
-	import { buildProviderIdentityMapping } from '$lib/saml/provider-identity-mapping';
+	} from '#lib/saml/mapping-set-release-policy.js';
+	import { buildSelectableFieldMappingSets } from '#lib/saml/field-mapping-options.js';
+	import { buildProviderIdentityMapping } from '#lib/saml/provider-identity-mapping.js';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 
 	const providerId = $derived(page.params.id);

@@ -7,8 +7,8 @@ const mocks = vi.hoisted(() => ({ flowStart: vi.fn() }));
 vi.mock('$app/state', () => ({
 	page: { url: new URL('https://tenant.example.test/signup'), params: {}, data: {} }
 }));
-vi.mock('$lib/api/flow-runtime', async (importOriginal) => {
-	const actual = await importOriginal<typeof import('$lib/api/flow-runtime')>();
+vi.mock('#lib/api/flow-runtime.js', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('#lib/api/flow-runtime.js')>();
 	return {
 		...actual,
 		flowRuntimeAPI: {
@@ -19,7 +19,7 @@ vi.mock('$lib/api/flow-runtime', async (importOriginal) => {
 	};
 });
 
-import Harness from '$lib/testing/SignupPageHarness.svelte';
+import Harness from '#lib/testing/SignupPageHarness.svelte';
 
 const MESSAGE = /Human verification is currently unavailable/i;
 

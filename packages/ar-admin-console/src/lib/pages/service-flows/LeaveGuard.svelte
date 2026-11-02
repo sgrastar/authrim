@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { beforeNavigate, goto } from '$app/navigation';
-	import ConfirmDialog from '$lib/ui/patterns/ConfirmDialog.svelte';
+	import ConfirmDialog from '#lib/ui/patterns/ConfirmDialog.svelte';
 	import { leaveDialog } from './connection-model';
 
 	/**

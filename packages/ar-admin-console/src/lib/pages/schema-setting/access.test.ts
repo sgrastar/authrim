@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ADMIN_ROLES } from '@authrim/ar-lib-core/constants/admin-roles';
-import type { AdminAccess } from '$lib/access/access';
-import { PERSONAS } from '$lib/access/personas';
+import type { AdminAccess } from '#lib/access/access.js';
+import { PERSONAS } from '#lib/access/personas.js';
 import { schemaLevel } from './access';
 
 const who = (roles: string[], permissions: string[]): AdminAccess => ({

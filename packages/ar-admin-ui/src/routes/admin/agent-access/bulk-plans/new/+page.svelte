@@ -3,13 +3,13 @@
 	import {
 		adminAgentAccessAPI,
 		type AgentConfigurationPlanDefinition
-	} from '$lib/api/admin-agent-access';
+	} from '#lib/api/admin-agent-access.js';
 	import {
 		AdminPageHeader,
 		AdminPageShell,
 		AdminSection,
 		AgentAccessNav
-	} from '$lib/components/admin';
+	} from '#lib/components/admin/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	let grantId = $state('');

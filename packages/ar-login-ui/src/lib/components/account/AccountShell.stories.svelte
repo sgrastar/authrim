@@ -3,8 +3,8 @@
 	import { get } from 'svelte/store';
 	import { expect, fn, waitFor, within } from 'storybook/test';
 	import { LL } from '$i18n/i18n-svelte';
-	import type { AccountPageScreenField } from '$lib/api/account';
-	import LoginUIFrame from '$lib/storybook/LoginUIFrame.svelte';
+	import type { AccountPageScreenField } from '#lib/api/account.js';
+	import LoginUIFrame from '#lib/storybook/LoginUIFrame.svelte';
 	import AccountReauthDialog from './AccountReauthDialog.svelte';
 	import AccountScreenBlock, { isAccountScreenStaticBlock } from './AccountScreenBlock.svelte';
 	import AccountScreenPlacement from './AccountScreenPlacement.svelte';

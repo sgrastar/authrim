@@ -4,8 +4,8 @@
 	 * belongs to, the code to type, and resend. The route owns the requests and the countdown; this
 	 * view only draws what it is given and reports what the person does.
 	 */
-	import { Alert, Button, Card } from '$lib/components';
-	import PinCodeInput from '$lib/components/PinCodeInput.svelte';
+	import { Alert, Button, Card } from '#lib/components/index.js';
+	import PinCodeInput from '#lib/components/PinCodeInput.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 
 	type Props = {

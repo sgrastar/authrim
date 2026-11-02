@@ -1,14 +1,14 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
-	import { adminAgentAccessAPI, type AgentTaskSet } from '$lib/api/admin-agent-access';
+	import { adminAgentAccessAPI, type AgentTaskSet } from '#lib/api/admin-agent-access.js';
 	import {
 		AdminDataTable,
 		AdminPageHeader,
 		AdminPageShell,
 		AdminSection,
 		AgentAccessNav
-	} from '$lib/components/admin';
+	} from '#lib/components/admin/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 	let item: AgentTaskSet | null = $state(null);
 	let error = $state('');

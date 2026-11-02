@@ -3,7 +3,7 @@
 	 * The tenant's human-verification widget under one method. It shows only while that method is
 	 * waiting on a token; the route decides when (`show`) and clears the token (`resetKey`).
 	 */
-	import { TurnstileWidget } from '$lib/components';
+	import { TurnstileWidget } from '#lib/components/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 	import type { HumanVerificationView } from '../auth-entry-types';
 

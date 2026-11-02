@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { t } from '$lib/i18n/i18n.svelte';
-	import Badge from '$lib/ui/primitives/Badge.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import Badge from '#lib/ui/primitives/Badge.svelte';
 
 	/**
 	 * Whether a sign-up or sign-in flow can be used. One that is still being set up is not in

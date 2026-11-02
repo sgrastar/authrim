@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { getAvatarUrl, getInitials } from '$lib/utils/gravatar';
+	import { getAvatarUrl, getInitials } from '#lib/utils/gravatar.js';
 
 	/** User's email address (used for Gravatar) */
 	export let email: string | null | undefined = undefined;

@@ -1,7 +1,7 @@
 import type {
 	IdentityMappingScimSourceAttribute,
 	IdentityMappingScimSourceProfileSchema
-} from '$lib/api/admin-identity-mapping';
+} from '#lib/api/admin-identity-mapping.js';
 import type { ScimSourceTemplate } from './types';
 
 const CORE_USER_SCHEMA = 'urn:ietf:params:scim:schemas:core:2.0:User';

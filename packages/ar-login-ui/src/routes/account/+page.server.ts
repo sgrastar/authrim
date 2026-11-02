@@ -1,7 +1,7 @@
-import { redirectExternal } from '$lib/server/external-redirect';
+import { redirectExternal } from '#lib/server/external-redirect.js';
 import type { PageServerLoad } from './$types';
-import { getAccountPageCanonicalRedirectUrl } from '$lib/server/account-canonical-url';
-import { loadAccountPageInitialData } from '$lib/server/account-page-initial-data';
+import { getAccountPageCanonicalRedirectUrl } from '#lib/server/account-canonical-url.js';
+import { loadAccountPageInitialData } from '#lib/server/account-page-initial-data.js';
 
 export const load: PageServerLoad = async (event) => {
 	const redirectUrl = getAccountPageCanonicalRedirectUrl(event);

@@ -2,8 +2,8 @@
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import type { ComponentProps } from 'svelte';
 	import { expect, userEvent, waitFor, within } from 'storybook/test';
-	import { t } from '$lib/i18n/i18n.svelte';
-	import Page from '$lib/ui/templates/Page.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import Page from '#lib/ui/templates/Page.svelte';
 	import AddConnection from './AddConnection.svelte';
 
 	const { Story } = defineMeta({

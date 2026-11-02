@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { ExternalProvider } from '$lib/api/authentication-methods';
-import type { FlowRuntimeStep } from '$lib/api/flow-runtime';
+import type { ExternalProvider } from '#lib/api/authentication-methods.js';
+import type { FlowRuntimeStep } from '#lib/api/flow-runtime.js';
 import {
 	runtimeAllowsAuthenticationHandle,
 	runtimeAllowsExternalProvider

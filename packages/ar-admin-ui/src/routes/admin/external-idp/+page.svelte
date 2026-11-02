@@ -6,12 +6,12 @@
 		adminExternalProvidersAPI,
 		type ExternalIdPProvider,
 		PROVIDER_TEMPLATES
-	} from '$lib/api/admin-external-providers';
-	import { Modal } from '$lib/components';
-	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
-	import AdminSection from '$lib/components/admin/AdminSection.svelte';
+	} from '#lib/api/admin-external-providers.js';
+	import { Modal } from '#lib/components/index.js';
+	import AdminDataTable from '#lib/components/admin/AdminDataTable.svelte';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '#lib/components/admin/AdminSection.svelte';
 
 	let providers: ExternalIdPProvider[] = $state([]);
 	let loading = $state(true);

@@ -1,5 +1,5 @@
-import { t, type MessageKey } from '$lib/i18n/i18n.svelte';
-import type { WizardStep } from '$lib/ui/patterns/WizardSteps.svelte';
+import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
+import type { WizardStep } from '#lib/ui/patterns/WizardSteps.svelte';
 
 /**
  * What "Add connection" asks, what the connection's detail screen lays out, and when each lets

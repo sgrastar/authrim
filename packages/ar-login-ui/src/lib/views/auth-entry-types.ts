@@ -5,8 +5,8 @@
 import type {
 	FlowRuntimeConsentPolicyContent,
 	FlowRuntimeDestinationFieldConsentContent
-} from '$lib/api/flow-runtime';
-import type { RuntimeAuthMethod } from '$lib/authrim/runtime-auth-handles';
+} from '#lib/api/flow-runtime.js';
+import type { RuntimeAuthMethod } from '#lib/authrim/runtime-auth-handles.js';
 
 export type HumanVerificationProvider = 'turnstile' | 'hcaptcha' | 'recaptcha' | 'custom';
 export type HumanVerificationMode = 'managed' | 'checkbox' | 'invisible' | 'score';

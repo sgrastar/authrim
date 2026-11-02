@@ -68,12 +68,12 @@
 	 * owns the state, the requests, WebAuthn and the redirects; this view only draws what it is
 	 * given and reports what the person does.
 	 */
-	import { Button, Input, Card, Alert } from '$lib/components';
-	import AuthSwitchLink from '$lib/components/AuthSwitchLink.svelte';
-	import RuntimeScreen from '$lib/components/RuntimeScreen.svelte';
+	import { Button, Input, Card, Alert } from '#lib/components/index.js';
+	import AuthSwitchLink from '#lib/components/AuthSwitchLink.svelte';
+	import RuntimeScreen from '#lib/components/RuntimeScreen.svelte';
 	import { LL } from '$i18n/i18n-svelte';
-	import type { RuntimeAuthMethod } from '$lib/authrim/runtime-auth-handles';
-	import { isValidImageUrl, isValidLinkUrl } from '$lib/utils/url-validation';
+	import type { RuntimeAuthMethod } from '#lib/authrim/runtime-auth-handles.js';
+	import { isValidImageUrl, isValidLinkUrl } from '#lib/utils/url-validation.js';
 	import type {
 		EmailVerificationView,
 		ExternalProviderButton,

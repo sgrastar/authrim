@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { useChangeMark } from '../save/save-scope';
 	import { useBusy } from '../busy/busy';
-	import { i18n, t } from '$lib/i18n/i18n.svelte';
+	import { i18n, t } from '#lib/i18n/i18n.svelte.js';
 
 	/**
 	 * Numeric value on a range (native <input type="range">, so keyboard, touch and screen

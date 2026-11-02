@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { adminAgentAccessAPI } from '$lib/api/admin-agent-access';
+	import { adminAgentAccessAPI } from '#lib/api/admin-agent-access.js';
 	import {
 		AdminPageHeader,
 		AdminPageShell,
 		AdminSection,
 		AgentAccessNav
-	} from '$lib/components/admin';
+	} from '#lib/components/admin/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 	let type: 'task_set' | 'scope_policy' = $state('task_set');
 	let sourceId = $state('');

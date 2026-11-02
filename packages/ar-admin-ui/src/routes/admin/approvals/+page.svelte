@@ -1,14 +1,14 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Modal } from '$lib/components';
-	import ApprovalCompletionGuideCard from '$lib/components/admin/ApprovalCompletionGuideCard.svelte';
-	import ApprovalDecisionReceiptsPanel from '$lib/components/admin/ApprovalDecisionReceiptsPanel.svelte';
-	import ApprovalGrantGuideCard from '$lib/components/admin/ApprovalGrantGuideCard.svelte';
-	import ApprovalGrantIntegrationCard from '$lib/components/admin/ApprovalGrantIntegrationCard.svelte';
-	import ApprovalEvidenceTimeline from '$lib/components/admin/ApprovalEvidenceTimeline.svelte';
-	import { AdminDataTable, AdminPageHeader, AdminPageShell } from '$lib/components/admin';
-	import ApprovalRequestPreviewPanel from '$lib/components/admin/ApprovalRequestPreviewPanel.svelte';
-	import ApprovalStepGuideCard from '$lib/components/admin/ApprovalStepGuideCard.svelte';
+	import { Modal } from '#lib/components/index.js';
+	import ApprovalCompletionGuideCard from '#lib/components/admin/ApprovalCompletionGuideCard.svelte';
+	import ApprovalDecisionReceiptsPanel from '#lib/components/admin/ApprovalDecisionReceiptsPanel.svelte';
+	import ApprovalGrantGuideCard from '#lib/components/admin/ApprovalGrantGuideCard.svelte';
+	import ApprovalGrantIntegrationCard from '#lib/components/admin/ApprovalGrantIntegrationCard.svelte';
+	import ApprovalEvidenceTimeline from '#lib/components/admin/ApprovalEvidenceTimeline.svelte';
+	import { AdminDataTable, AdminPageHeader, AdminPageShell } from '#lib/components/admin/index.js';
+	import ApprovalRequestPreviewPanel from '#lib/components/admin/ApprovalRequestPreviewPanel.svelte';
+	import ApprovalStepGuideCard from '#lib/components/admin/ApprovalStepGuideCard.svelte';
 	import {
 		adminApprovalsAPI,
 		type ApprovalCompletionArtifactIssueResult,
@@ -23,7 +23,7 @@
 		type ApprovalRequestStatus,
 		type ApprovalTransportMethod,
 		type ElevationGrantRecord
-	} from '$lib/api/admin-approvals';
+	} from '#lib/api/admin-approvals.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	let loading = $state(true);

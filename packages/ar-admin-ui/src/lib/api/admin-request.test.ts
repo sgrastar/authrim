@@ -5,8 +5,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('$app/env', () => ({ browser: true }));
 
 import { adminFetch, buildAdminHeaders } from './admin-request';
-import { settingsContext } from '$lib/stores/settings-context.svelte';
-import { adminAuth } from '$lib/stores/admin-auth.svelte';
+import { settingsContext } from '#lib/stores/settings-context.svelte.js';
+import { adminAuth } from '#lib/stores/admin-auth.svelte.js';
 import { setLocale } from '$i18n/i18n-svelte';
 
 describe('buildAdminHeaders', () => {

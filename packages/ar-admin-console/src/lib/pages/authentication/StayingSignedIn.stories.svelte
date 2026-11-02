@@ -1,9 +1,9 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, userEvent, waitFor, within } from 'storybook/test';
-	import { persona } from '$lib/access/personas';
-	import { t } from '$lib/i18n/i18n.svelte';
-	import { settingText } from '$lib/settings/setting-text';
+	import { persona } from '#lib/access/personas.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import { settingText } from '#lib/settings/setting-text.js';
 	import { DEMO_TENANT, demoSettings } from './staying-signed-in.fixtures';
 	import StayingSignedIn from './StayingSignedIn.svelte';
 

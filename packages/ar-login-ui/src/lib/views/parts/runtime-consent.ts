@@ -2,8 +2,8 @@
  * Consent text for the plain runtime step panel. Both helpers return HTML that has been through
  * `sanitizeRuntimeConsentHtml`, so the panel can hand it to SanitizedHtml as is.
  */
-import type { FlowRuntimeConsentPolicyContent } from '$lib/api/flow-runtime';
-import { sanitizeRuntimeConsentHtml } from '$lib/consent/runtime-consent-html';
+import type { FlowRuntimeConsentPolicyContent } from '#lib/api/flow-runtime.js';
+import { sanitizeRuntimeConsentHtml } from '#lib/consent/runtime-consent-html.js';
 
 type ConsentItem = FlowRuntimeConsentPolicyContent['items'][number];
 type ConsentOption = NonNullable<ConsentItem['options']>[number];

@@ -11,18 +11,18 @@
 		IdentityMappingClient,
 		MappingSetSummary,
 		SetContentDraft
-	} from '$lib/api/identity-mapping';
-	import { t } from '$lib/i18n/i18n.svelte';
-	import Callout from '$lib/ui/patterns/Callout.svelte';
-	import Card from '$lib/ui/patterns/Card.svelte';
-	import DataTable from '$lib/ui/patterns/DataTable.svelte';
-	import LoadingState from '$lib/ui/patterns/LoadingState.svelte';
-	import PageHeader from '$lib/ui/patterns/PageHeader.svelte';
-	import Tabs from '$lib/ui/patterns/Tabs.svelte';
-	import Button from '$lib/ui/primitives/Button.svelte';
-	import TextField from '$lib/ui/primitives/TextField.svelte';
-	import LeaveConfirm from '$lib/ui/save/LeaveConfirm.svelte';
-	import Page from '$lib/ui/templates/Page.svelte';
+	} from '#lib/api/identity-mapping.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import Callout from '#lib/ui/patterns/Callout.svelte';
+	import Card from '#lib/ui/patterns/Card.svelte';
+	import DataTable from '#lib/ui/patterns/DataTable.svelte';
+	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
+	import PageHeader from '#lib/ui/patterns/PageHeader.svelte';
+	import Tabs from '#lib/ui/patterns/Tabs.svelte';
+	import Button from '#lib/ui/primitives/Button.svelte';
+	import TextField from '#lib/ui/primitives/TextField.svelte';
+	import LeaveConfirm from '#lib/ui/save/LeaveConfirm.svelte';
+	import Page from '#lib/ui/templates/Page.svelte';
 	import AppMappingChoice from './AppMappingChoice.svelte';
 	import ClaimInvestigation from './ClaimInvestigation.svelte';
 	import MappingHistory from './MappingHistory.svelte';

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const adminFetch = vi.hoisted(() => vi.fn());
 
-vi.mock('$lib/api/admin-request', () => ({ adminFetch }));
+vi.mock('#lib/api/admin-request.js', () => ({ adminFetch }));
 
 import { adminAuthAPI, AuthError } from './admin-auth';
 

@@ -23,7 +23,7 @@
 
 <script lang="ts">
 	import { tick, type Snippet } from 'svelte';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import Button from '../primitives/Button.svelte';
 	import IconButton from '../primitives/IconButton.svelte';
 	import SearchField from '../primitives/SearchField.svelte';

@@ -1,30 +1,30 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { adminClientsAPI, type Client } from '$lib/api/admin-clients';
+	import { adminClientsAPI, type Client } from '#lib/api/admin-clients.js';
 	import {
 		adminConsentPoliciesAPI,
 		type ClientTrustPolicy,
 		type ClientTrustPolicyTargetType,
 		type ConsentPolicy,
 		type ConsentPolicyItem
-	} from '$lib/api/admin-consent-policies';
+	} from '#lib/api/admin-consent-policies.js';
 	import type {
 		SignInConfirmationMode,
 		SignInConfirmationPolicy
-	} from '$lib/api/admin-consent-policies';
+	} from '#lib/api/admin-consent-policies.js';
 	import {
 		adminConsentStatementsAPI,
 		type ConsentStatement
-	} from '$lib/api/admin-consent-statements';
-	import { adminSAMLAPI, type SAMLProvider } from '$lib/api/admin-saml';
+	} from '#lib/api/admin-consent-statements.js';
+	import { adminSAMLAPI, type SAMLProvider } from '#lib/api/admin-saml.js';
 	import {
 		AdminDataTable,
 		AdminPageHeader,
 		AdminPageShell,
 		AdminSection
-	} from '$lib/components/admin';
-	import { ToggleSwitch } from '$lib/components';
-	import { adminAuth } from '$lib/stores/admin-auth.svelte';
+	} from '#lib/components/admin/index.js';
+	import { ToggleSwitch } from '#lib/components/index.js';
+	import { adminAuth } from '#lib/stores/admin-auth.svelte.js';
 	import { LL } from '$i18n/i18n-svelte';
 	import { onMount } from 'svelte';
 

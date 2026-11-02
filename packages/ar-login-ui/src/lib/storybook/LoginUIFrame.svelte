@@ -9,10 +9,10 @@
 	import type { Snippet } from 'svelte';
 	import { untrack } from 'svelte';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
-	import type { AuthenticationMethodsResponse } from '$lib/api/authentication-methods';
-	import { toDocumentDirection } from '$lib/i18n/locales';
-	import { applyAuthenticationMethodsToLoginUI } from '$lib/stores/login-ui-configuration';
-	import { initializeLoginUIStores } from '$lib/stores/login-ui-context';
+	import type { AuthenticationMethodsResponse } from '#lib/api/authentication-methods.js';
+	import { toDocumentDirection } from '#lib/i18n/locales.js';
+	import { applyAuthenticationMethodsToLoginUI } from '#lib/stores/login-ui-configuration.js';
+	import { initializeLoginUIStores } from '#lib/stores/login-ui-context.js';
 	import { buildLoginUIConfig, type LoginUIOverrides } from './config';
 	import { sbGlobals, type Scheme, type ThemeTemplate } from './globals.svelte';
 

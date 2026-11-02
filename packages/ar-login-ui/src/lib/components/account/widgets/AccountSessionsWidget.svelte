@@ -3,10 +3,10 @@
 	 * Browsers and devices signed in to the account, each with a log-out action. The session ID is
 	 * never shown; the country is always named in English (edge geolocation, not UI copy).
 	 */
-	import { Button } from '$lib/components';
+	import { Button } from '#lib/components/index.js';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
-	import type { AccountSession } from '$lib/api/account';
-	import { formatTimestamp } from '$lib/utils/date';
+	import type { AccountSession } from '#lib/api/account.js';
+	import { formatTimestamp } from '#lib/utils/date.js';
 	import AccountSectionSkeleton from '../AccountSectionSkeleton.svelte';
 	import AccountWidgetPanel from './AccountWidgetPanel.svelte';
 	import type { AccountWidgetCommonProps } from './types';

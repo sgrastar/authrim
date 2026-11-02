@@ -7,7 +7,7 @@
 	 * parent panel that owns the card.
 	 */
 	import type { Snippet } from 'svelte';
-	import { Button, Card } from '$lib/components';
+	import { Button, Card } from '#lib/components/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 	import type { AccountWidgetHeadingLevel } from './types';
 

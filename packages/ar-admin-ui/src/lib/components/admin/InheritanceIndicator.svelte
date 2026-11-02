@@ -8,8 +8,8 @@
 	 * - The parent value if overridden
 	 */
 
-	import type { SettingSource } from '$lib/api/admin-settings';
-	import type { SettingScopeLevel } from '$lib/stores/settings-context.svelte';
+	import type { SettingSource } from '#lib/api/admin-settings.js';
+	import type { SettingScopeLevel } from '#lib/stores/settings-context.svelte.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	interface Props {

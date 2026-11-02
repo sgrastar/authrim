@@ -4,15 +4,15 @@
 	import {
 		platformTenantVanityDomainsAPI,
 		type TenantVanityDomain
-	} from '$lib/api/admin-tenant-vanity-domains';
+	} from '#lib/api/admin-tenant-vanity-domains.js';
 	import {
 		AdminDataTable,
 		AdminPageHeader,
 		AdminPageShell,
 		AdminSection,
 		AdminToolbar
-	} from '$lib/components/admin';
-	import { tenantStore } from '$lib/stores/tenants.svelte';
+	} from '#lib/components/admin/index.js';
+	import { tenantStore } from '#lib/stores/tenants.svelte.js';
 
 	let domains = $state<TenantVanityDomain[]>([]);
 	let cloudflareConfigured = $state(false);

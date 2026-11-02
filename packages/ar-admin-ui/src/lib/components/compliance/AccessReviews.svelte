@@ -5,9 +5,9 @@
 		ComplianceAPIError,
 		type AccessReview,
 		type AccessReviewScope
-	} from '$lib/api/admin-compliance';
-	import { Modal } from '$lib/components';
-	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
+	} from '#lib/api/admin-compliance.js';
+	import { Modal } from '#lib/components/index.js';
+	import AdminDataTable from '#lib/components/admin/AdminDataTable.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 	import AccessReviewDetail from './AccessReviewDetail.svelte';
 	import { formatDateTime, reviewStatusClass, reviewStatusLabel } from './format';

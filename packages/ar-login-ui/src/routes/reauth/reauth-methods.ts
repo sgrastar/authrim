@@ -1,4 +1,4 @@
-import type { AuthenticationMethods } from '$lib/api/authentication-methods';
+import type { AuthenticationMethods } from '#lib/api/authentication-methods.js';
 
 /**
  * The methods the re-authentication screen offers, and whether it asks for human verification:

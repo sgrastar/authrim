@@ -3,13 +3,13 @@
 	import { get } from 'svelte/store';
 	import { LL } from '$i18n/i18n-svelte';
 	import { expect, fn, userEvent, within } from 'storybook/test';
-	import AuthPageShell from '$lib/components/AuthPageShell.svelte';
-	import LoginUIFrame from '$lib/storybook/LoginUIFrame.svelte';
+	import AuthPageShell from '#lib/components/AuthPageShell.svelte';
+	import LoginUIFrame from '#lib/storybook/LoginUIFrame.svelte';
 	import {
 		consentPolicy,
 		externalProviders as sampleProviders,
 		registrationScreen
-	} from '$lib/storybook/fixtures';
+	} from '#lib/storybook/fixtures.js';
 	import type {
 		ExternalProviderButton,
 		HumanVerificationView,

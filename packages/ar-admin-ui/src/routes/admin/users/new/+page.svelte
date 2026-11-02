@@ -1,14 +1,14 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
-	import { adminUsersAPI, type CreateUserInput } from '$lib/api/admin-users';
-	import { ToggleSwitch } from '$lib/components';
-	import { adminAuth } from '$lib/stores/admin-auth.svelte';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import { adminUsersAPI, type CreateUserInput } from '#lib/api/admin-users.js';
+	import { ToggleSwitch } from '#lib/components/index.js';
+	import { adminAuth } from '#lib/stores/admin-auth.svelte.js';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import { LL } from '$i18n/i18n-svelte';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
-	import AdminSection from '$lib/components/admin/AdminSection.svelte';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '#lib/components/admin/AdminSection.svelte';
 
 	let saving = $state(false);
 	let error = $state('');

@@ -1,12 +1,12 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
-	import AuthSwitchLink from '$lib/components/AuthSwitchLink.svelte';
-	import ConfiguredFooter from '$lib/components/ConfiguredFooter.svelte';
-	import Catalog from '$lib/storybook/Catalog.svelte';
-	import LoginUIFrame from '$lib/storybook/LoginUIFrame.svelte';
-	import { blocks, screenOf } from '$lib/storybook/fixtures';
-	import RuntimeScreenHarness from '$lib/storybook/RuntimeScreenHarness.svelte';
-	import Specimen from '$lib/storybook/Specimen.svelte';
+	import AuthSwitchLink from '#lib/components/AuthSwitchLink.svelte';
+	import ConfiguredFooter from '#lib/components/ConfiguredFooter.svelte';
+	import Catalog from '#lib/storybook/Catalog.svelte';
+	import LoginUIFrame from '#lib/storybook/LoginUIFrame.svelte';
+	import { blocks, screenOf } from '#lib/storybook/fixtures.js';
+	import RuntimeScreenHarness from '#lib/storybook/RuntimeScreenHarness.svelte';
+	import Specimen from '#lib/storybook/Specimen.svelte';
 
 	const { Story } = defineMeta({
 		title: 'Catalog/Links',

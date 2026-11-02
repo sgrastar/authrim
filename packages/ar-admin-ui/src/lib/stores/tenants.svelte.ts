@@ -6,7 +6,7 @@
  * admin/tenants/+page.svelte (management page) to stay in sync.
  */
 
-import { adminTenantsAPI, type Tenant } from '$lib/api/admin-tenants';
+import { adminTenantsAPI, type Tenant } from '#lib/api/admin-tenants.js';
 
 function createTenantStore() {
 	let tenants = $state<Tenant[]>([]);

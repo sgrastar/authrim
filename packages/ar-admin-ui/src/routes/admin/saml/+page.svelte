@@ -5,12 +5,12 @@
 		adminSAMLAPI,
 		type SAMLFederationTrustProfile,
 		type SAMLProvider
-	} from '$lib/api/admin-saml';
-	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
-	import AdminSection from '$lib/components/admin/AdminSection.svelte';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	} from '#lib/api/admin-saml.js';
+	import AdminDataTable from '#lib/components/admin/AdminDataTable.svelte';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '#lib/components/admin/AdminSection.svelte';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 
 	let providers = $state<SAMLProvider[]>([]);

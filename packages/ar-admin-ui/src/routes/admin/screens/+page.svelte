@@ -6,24 +6,24 @@
 		adminCustomClaimsAPI,
 		type CustomClaimSchema,
 		type FieldType
-	} from '$lib/api/admin-custom-claims';
+	} from '#lib/api/admin-custom-claims.js';
 	import {
 		SCREEN_LOCALIZATION_LANGUAGES,
 		isDefaultScreenText,
 		localizeDefaultScreenText,
 		mergeLocalizedDefaultScreenText,
 		type ScreenLocalizationLanguage
-	} from '$lib/admin/screen-localizations';
-	import { shouldShowAuthWidgetEmailInput } from '$lib/admin/screen-auth-widget-layout';
+	} from '#lib/admin/screen-localizations.js';
+	import { shouldShowAuthWidgetEmailInput } from '#lib/admin/screen-auth-widget-layout.js';
 	import {
 		createDefaultRegistrationScreenFields,
 		createGuestLoginWidget
-	} from '$lib/admin/screen-default-drafts';
+	} from '#lib/admin/screen-default-drafts.js';
 	import {
 		findMissingRequiredRegistrationFields,
 		normalizeRegistrationFieldKey,
 		type RegistrationSchemaFieldOption
-	} from '$lib/admin/screen-registration-requirements';
+	} from '#lib/admin/screen-registration-requirements.js';
 	import {
 		adminScreensAPI,
 		type Screen,
@@ -37,7 +37,7 @@
 		type ScreenLocalization,
 		type ScreenSettings,
 		type ScreenValueType
-	} from '$lib/api/admin-screens';
+	} from '#lib/api/admin-screens.js';
 	import {
 		AdminDataTable,
 		AdminPageHeader,
@@ -45,7 +45,7 @@
 		AdminSection,
 		AdminTabs,
 		type AdminTabItem
-	} from '$lib/components/admin';
+	} from '#lib/components/admin/index.js';
 
 	type Draft = {
 		id: string | null;

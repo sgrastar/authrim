@@ -1,16 +1,16 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { getLocale } from '$i18n/i18n-svelte';
-	import { AdminPageHeader, AdminPageShell } from '$lib/components/admin';
+	import { AdminPageHeader, AdminPageShell } from '#lib/components/admin/index.js';
 	import {
 		adminLaunchersAPI,
 		type ApplicationLauncher,
 		type LauncherAttributeOperator,
 		type LauncherInput,
 		type LauncherOptions
-	} from '$lib/api/admin-launchers';
-	import { adminUsersAPI, type User } from '$lib/api/admin-users';
-	import { adminSAMLAPI, type SAMLProvider } from '$lib/api/admin-saml';
+	} from '#lib/api/admin-launchers.js';
+	import { adminUsersAPI, type User } from '#lib/api/admin-users.js';
+	import { adminSAMLAPI, type SAMLProvider } from '#lib/api/admin-saml.js';
 	import { defaultLaunchTypeForApplication } from './launcher-editor';
 
 	let launchers = $state<ApplicationLauncher[]>([]);

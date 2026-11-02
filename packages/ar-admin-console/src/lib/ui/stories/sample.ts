@@ -2,9 +2,9 @@
  * Sample copy for stories, in every console locale, so the toolbar language switch shows how
  * components cope with long German compounds and right-to-left Arabic. Not used by the app.
  */
-import { i18n } from '$lib/i18n/i18n.svelte';
-import { pseudoLocalize } from '$lib/i18n/pseudo';
-import type { Locale } from '$lib/i18n/locales';
+import { i18n } from '#lib/i18n/i18n.svelte.js';
+import { pseudoLocalize } from '#lib/i18n/pseudo.js';
+import type { Locale } from '#lib/i18n/locales.js';
 
 const SAMPLES = {
 	create: ['作成', 'Create', 'Erstellen', 'إنشاء'],

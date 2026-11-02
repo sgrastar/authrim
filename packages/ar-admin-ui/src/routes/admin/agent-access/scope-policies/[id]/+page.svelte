@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
-	import { adminAgentAccessAPI, type AgentScopePolicy } from '$lib/api/admin-agent-access';
+	import { adminAgentAccessAPI, type AgentScopePolicy } from '#lib/api/admin-agent-access.js';
 	import {
 		AdminPageHeader,
 		AdminPageShell,
 		AdminSection,
 		AgentAccessNav
-	} from '$lib/components/admin';
+	} from '#lib/components/admin/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 	let item: AgentScopePolicy | null = $state(null);
 	let loading = $state(true);

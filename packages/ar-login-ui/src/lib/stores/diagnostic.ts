@@ -6,7 +6,7 @@
  */
 
 import { browser } from '$app/env';
-import { DiagnosticLogger } from '$lib/diagnostic/diagnostic-logger';
+import { DiagnosticLogger } from '#lib/diagnostic/diagnostic-logger.js';
 
 let _logger: DiagnosticLogger | null = null;
 

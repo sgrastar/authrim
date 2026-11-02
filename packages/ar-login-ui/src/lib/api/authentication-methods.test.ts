@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const authrimFetchMock = vi.hoisted(() => vi.fn<typeof fetch>());
 
-vi.mock('$lib/authrim/fetch', () => ({
+vi.mock('#lib/authrim/fetch.js', () => ({
 	authrimFetch: authrimFetchMock
 }));
 

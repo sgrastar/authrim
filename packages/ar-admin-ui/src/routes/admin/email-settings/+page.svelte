@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import {
 		adminEmailSettingsAPI,
 		type EmailProviderEntry,
 		type TenantEmailSettings
-	} from '$lib/api/admin-email-settings';
-	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
+	} from '#lib/api/admin-email-settings.js';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '#lib/components/admin/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	let loading = $state(true);

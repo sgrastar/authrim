@@ -1,25 +1,25 @@
 <script lang="ts">
-	import { t, type MessageKey } from '$lib/i18n/i18n.svelte';
+	import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
 	import { tick, untrack } from 'svelte';
-	import FlowCanvas from '$lib/ui/flow/FlowCanvas.svelte';
-	import FlowEdge from '$lib/ui/flow/FlowEdge.svelte';
-	import FlowEndpoint from '$lib/ui/flow/FlowEndpoint.svelte';
-	import FlowScope from '$lib/ui/flow/FlowScope.svelte';
-	import FlowSequence from '$lib/ui/flow/FlowSequence.svelte';
-	import FlowStepGroup from '$lib/ui/flow/FlowStepGroup.svelte';
-	import { revealPanel } from '$lib/ui/flow/reveal-panel';
-	import Callout from '$lib/ui/patterns/Callout.svelte';
-	import Card from '$lib/ui/patterns/Card.svelte';
-	import DetailItem from '$lib/ui/patterns/DetailItem.svelte';
-	import DetailList from '$lib/ui/patterns/DetailList.svelte';
-	import PageHeader from '$lib/ui/patterns/PageHeader.svelte';
-	import PanelHeader from '$lib/ui/patterns/PanelHeader.svelte';
-	import Badge from '$lib/ui/primitives/Badge.svelte';
-	import BackLink from '$lib/ui/primitives/BackLink.svelte';
-	import RequiredBadge from '$lib/ui/primitives/RequiredBadge.svelte';
-	import Button from '$lib/ui/primitives/Button.svelte';
-	import { copyValue, Draft } from '$lib/ui/save/draft.svelte';
-	import SaveScope from '$lib/ui/save/SaveScope.svelte';
+	import FlowCanvas from '#lib/ui/flow/FlowCanvas.svelte';
+	import FlowEdge from '#lib/ui/flow/FlowEdge.svelte';
+	import FlowEndpoint from '#lib/ui/flow/FlowEndpoint.svelte';
+	import FlowScope from '#lib/ui/flow/FlowScope.svelte';
+	import FlowSequence from '#lib/ui/flow/FlowSequence.svelte';
+	import FlowStepGroup from '#lib/ui/flow/FlowStepGroup.svelte';
+	import { revealPanel } from '#lib/ui/flow/reveal-panel.js';
+	import Callout from '#lib/ui/patterns/Callout.svelte';
+	import Card from '#lib/ui/patterns/Card.svelte';
+	import DetailItem from '#lib/ui/patterns/DetailItem.svelte';
+	import DetailList from '#lib/ui/patterns/DetailList.svelte';
+	import PageHeader from '#lib/ui/patterns/PageHeader.svelte';
+	import PanelHeader from '#lib/ui/patterns/PanelHeader.svelte';
+	import Badge from '#lib/ui/primitives/Badge.svelte';
+	import BackLink from '#lib/ui/primitives/BackLink.svelte';
+	import RequiredBadge from '#lib/ui/primitives/RequiredBadge.svelte';
+	import Button from '#lib/ui/primitives/Button.svelte';
+	import { copyValue, Draft } from '#lib/ui/save/draft.svelte.js';
+	import SaveScope from '#lib/ui/save/SaveScope.svelte';
 	import {
 		canActivate,
 		EXTRA_PARTS,

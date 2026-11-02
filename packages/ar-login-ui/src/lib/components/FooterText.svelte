@@ -1,6 +1,6 @@
 <script lang="ts">
-	import SanitizedHtml from '$lib/components/SanitizedHtml.svelte';
-	import { sanitizeFooterHtml } from '$lib/footer/footer-html';
+	import SanitizedHtml from '#lib/components/SanitizedHtml.svelte';
+	import { sanitizeFooterHtml } from '#lib/footer/footer-html.js';
 
 	type Props = {
 		value: string | null | undefined;

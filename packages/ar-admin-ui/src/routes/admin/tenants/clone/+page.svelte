@@ -7,9 +7,9 @@
 		type CloneTenantResponse,
 		type TenantCloneOptions,
 		type TenantProvisioningOperation
-	} from '$lib/api/admin-tenants';
-	import { AdminPageHeader, AdminPageShell } from '$lib/components/admin';
-	import { tenantStore } from '$lib/stores/tenants.svelte';
+	} from '#lib/api/admin-tenants.js';
+	import { AdminPageHeader, AdminPageShell } from '#lib/components/admin/index.js';
+	import { tenantStore } from '#lib/stores/tenants.svelte.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	const TENANT_ID_REGEX = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;

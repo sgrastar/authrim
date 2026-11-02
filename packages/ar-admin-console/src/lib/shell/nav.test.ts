@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { ja } from '$lib/i18n/messages/ja';
-import { ICON_PATHS } from '$lib/ui/icons/icons';
+import { ja } from '#lib/i18n/messages/ja.js';
+import { ICON_PATHS } from '#lib/ui/icons/icons.js';
 import {
 	allNavHrefs,
 	isStandalonePath,

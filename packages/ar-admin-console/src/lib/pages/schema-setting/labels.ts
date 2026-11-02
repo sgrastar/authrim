@@ -1,11 +1,11 @@
-import type { MessageKey } from '$lib/i18n/i18n.svelte';
+import type { MessageKey } from '#lib/i18n/i18n.svelte.js';
 import type {
 	FieldType,
 	OperationStatus,
 	Schema,
 	SchemaFailureKind,
 	UsageProtection
-} from '$lib/api/schema-setting';
+} from '#lib/api/schema-setting.js';
 import type { KeyProblem, RulesProblem } from './schema-validation';
 
 export const TYPE_KEY: Record<FieldType, MessageKey> = {

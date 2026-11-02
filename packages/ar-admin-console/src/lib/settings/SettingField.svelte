@@ -1,16 +1,16 @@
 <script lang="ts">
 	import type { SettingMeta } from '@authrim/ar-lib-core/utils/settings-manager';
-	import { t } from '$lib/i18n/i18n.svelte';
-	import Icon from '$lib/ui/icons/Icon.svelte';
-	import FieldRow from '$lib/ui/patterns/FieldRow.svelte';
-	import OnOff from '$lib/ui/primitives/OnOff.svelte';
-	import Checkbox from '$lib/ui/primitives/Checkbox.svelte';
-	import DurationField from '$lib/ui/primitives/DurationField.svelte';
-	import NumberField from '$lib/ui/primitives/NumberField.svelte';
-	import { DURATION_UNITS } from '$lib/ui/primitives/number-input';
-	import Select from '$lib/ui/primitives/Select.svelte';
-	import TextField from '$lib/ui/primitives/TextField.svelte';
-	import { useChangeMark } from '$lib/ui/save/save-scope';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import Icon from '#lib/ui/icons/Icon.svelte';
+	import FieldRow from '#lib/ui/patterns/FieldRow.svelte';
+	import OnOff from '#lib/ui/primitives/OnOff.svelte';
+	import Checkbox from '#lib/ui/primitives/Checkbox.svelte';
+	import DurationField from '#lib/ui/primitives/DurationField.svelte';
+	import NumberField from '#lib/ui/primitives/NumberField.svelte';
+	import { DURATION_UNITS } from '#lib/ui/primitives/number-input.js';
+	import Select from '#lib/ui/primitives/Select.svelte';
+	import TextField from '#lib/ui/primitives/TextField.svelte';
+	import { useChangeMark } from '#lib/ui/save/save-scope.js';
 	import { formatSetting } from './setting-format';
 	import { settingText } from './setting-text';
 	import { fieldOf, type Entry, type FallbackSource } from './settings-model';

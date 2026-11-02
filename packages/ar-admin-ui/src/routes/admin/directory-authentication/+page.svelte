@@ -8,10 +8,10 @@
 		type DirectoryConnectorSecretResponse,
 		type DirectoryConnectorsResponse,
 		type DirectoryPendingUser
-	} from '$lib/api/admin-directory-connectors';
-	import { ToggleSwitch } from '$lib/components';
-	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	} from '#lib/api/admin-directory-connectors.js';
+	import { ToggleSwitch } from '#lib/components/index.js';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '#lib/components/admin/index.js';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import { LL } from '$i18n/i18n-svelte';
 	import DirectoryAuthenticationTabs from './DirectoryAuthenticationTabs.svelte';
 

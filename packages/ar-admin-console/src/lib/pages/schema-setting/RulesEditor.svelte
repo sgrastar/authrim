@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { t } from '$lib/i18n/i18n.svelte';
-	import type { FieldType } from '$lib/api/schema-setting';
-	import ListField from '$lib/ui/patterns/ListField.svelte';
-	import ColumnSpan from '$lib/ui/patterns/ColumnSpan.svelte';
-	import Columns from '$lib/ui/patterns/Columns.svelte';
-	import TextField from '$lib/ui/primitives/TextField.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import type { FieldType } from '#lib/api/schema-setting.js';
+	import ListField from '#lib/ui/patterns/ListField.svelte';
+	import ColumnSpan from '#lib/ui/patterns/ColumnSpan.svelte';
+	import Columns from '#lib/ui/patterns/Columns.svelte';
+	import TextField from '#lib/ui/primitives/TextField.svelte';
 	import { RULES_PROBLEM_KEY } from './labels';
 	import { ENUM_VALUES_MAX, type RulesForm, type RulesProblem } from './schema-validation';
 

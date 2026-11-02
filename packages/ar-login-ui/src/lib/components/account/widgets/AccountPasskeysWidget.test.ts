@@ -2,7 +2,7 @@ import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
 import { setLocale } from '$i18n/i18n-svelte';
 import AccountPasskeysWidget from './AccountPasskeysWidget.svelte';
-import { HYDRATION_MARKERS } from '$lib/testing/ssr-html';
+import { HYDRATION_MARKERS } from '#lib/testing/ssr-html.js';
 
 const handlers = {
 	onAddPasskey: (_deviceName: string) => undefined,

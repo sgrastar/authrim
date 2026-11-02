@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { OrganizationNode } from '$lib/api/admin-organizations';
+	import type { OrganizationNode } from '#lib/api/admin-organizations.js';
 	import { LL } from '$i18n/i18n-svelte';
 	import OrganizationTree from './OrganizationTree.svelte';
 

@@ -1,12 +1,12 @@
 <script lang="ts">
-	import { LogPager } from '$lib/admin/log-pager.svelte';
-	import LogCursorPager from '$lib/components/admin/LogCursorPager.svelte';
+	import { LogPager } from '#lib/admin/log-pager.svelte.js';
+	import LogCursorPager from '#lib/components/admin/LogCursorPager.svelte';
 	const logPager = new LogPager();
 	let loadGeneration = 0;
 	let statsGeneration = 0;
 	let optionsGeneration = 0;
 	import { onMount, untrack } from 'svelte';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	let loadedTenantId = '';
 	import {
 		adminAdminAuditAPI,
@@ -16,15 +16,15 @@
 		getSeverityBadgeClass,
 		getResultBadgeClass,
 		formatAction
-	} from '$lib/api/admin-admin-audit';
-	import { Modal } from '$lib/components';
+	} from '#lib/api/admin-admin-audit.js';
+	import { Modal } from '#lib/components/index.js';
 	import { LL } from '$i18n/i18n-svelte';
-	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
-	import AdminPagination from '$lib/components/admin/AdminPagination.svelte';
-	import AdminSection from '$lib/components/admin/AdminSection.svelte';
-	import AdminToolbar from '$lib/components/admin/AdminToolbar.svelte';
+	import AdminDataTable from '#lib/components/admin/AdminDataTable.svelte';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
+	import AdminPagination from '#lib/components/admin/AdminPagination.svelte';
+	import AdminSection from '#lib/components/admin/AdminSection.svelte';
+	import AdminToolbar from '#lib/components/admin/AdminToolbar.svelte';
 
 	let entries: AdminAuditLogEntry[] = $state([]);
 	let total = $state(0);

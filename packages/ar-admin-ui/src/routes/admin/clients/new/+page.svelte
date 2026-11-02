@@ -6,18 +6,18 @@
 		type ClaimsParameterPolicy,
 		type Client,
 		type CreateClientInput
-	} from '$lib/api/admin-clients';
+	} from '#lib/api/admin-clients.js';
 	import {
 		adminIdentityMappingAPI,
 		type IdentityMappingFieldMappingSetSummary
-	} from '$lib/api/admin-identity-mapping';
+	} from '#lib/api/admin-identity-mapping.js';
 	import {
 		createPresetClientDownstreamGrantForm,
 		toClientDownstreamGrantCreateInput
-	} from '$lib/admin/client-downstream-grant';
-	import { adminSettingsAPI, type CategorySettings } from '$lib/api/admin-settings';
-	import { ToggleSwitch } from '$lib/components';
-	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
+	} from '#lib/admin/client-downstream-grant.js';
+	import { adminSettingsAPI, type CategorySettings } from '#lib/api/admin-settings.js';
+	import { ToggleSwitch } from '#lib/components/index.js';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '#lib/components/admin/index.js';
 	import { onMount } from 'svelte';
 
 	// Preset configuration

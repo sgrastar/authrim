@@ -6,13 +6,13 @@
 		type AdminRole,
 		ADMIN_PERMISSION_DEFINITIONS,
 		type CreateAdminRoleInput
-	} from '$lib/api/admin-admin-roles';
+	} from '#lib/api/admin-admin-roles.js';
 	import { LL } from '$i18n/i18n-svelte';
 	import {
 		formatAdminPermissionCategory,
 		formatAdminPermissionCategoryDescription
-	} from '$lib/admin/admin-admin-rbac-i18n';
-	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
+	} from '#lib/admin/admin-admin-rbac-i18n.js';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '#lib/components/admin/index.js';
 
 	// Form state
 	let name = $state('');

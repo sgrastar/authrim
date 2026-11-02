@@ -1,15 +1,15 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
-	import { adminAgentAccessAPI, type AgentScopePolicy } from '$lib/api/admin-agent-access';
+	import { adminAgentAccessAPI, type AgentScopePolicy } from '#lib/api/admin-agent-access.js';
 	import {
 		AdminDataTable,
 		AdminPageHeader,
 		AdminPageShell,
 		AdminSection,
 		AgentAccessNav
-	} from '$lib/components/admin';
-	import { adminAuth } from '$lib/stores/admin-auth.svelte';
+	} from '#lib/components/admin/index.js';
+	import { adminAuth } from '#lib/stores/admin-auth.svelte.js';
 	import { LL } from '$i18n/i18n-svelte';
 	let items: AgentScopePolicy[] = $state([]);
 	let loading = $state(true);

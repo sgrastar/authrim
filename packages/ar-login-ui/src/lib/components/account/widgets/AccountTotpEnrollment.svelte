@@ -3,7 +3,7 @@
 	 * An authenticator app enrollment in progress: the QR code and manual key with the activation
 	 * code, then (once activated) the one-time backup codes.
 	 */
-	import { Button } from '$lib/components';
+	import { Button } from '#lib/components/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 	import AccountTotpCodeField from './AccountTotpCodeField.svelte';
 	import { TOTP_CODE_PATTERN, type AccountTotpEnrollment } from './types';

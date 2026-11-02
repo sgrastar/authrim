@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { adminConsentPoliciesAPI, type ConsentPolicy } from '$lib/api/admin-consent-policies';
+	import { adminConsentPoliciesAPI, type ConsentPolicy } from '#lib/api/admin-consent-policies.js';
 	import {
 		AdminDataTable,
 		AdminPageHeader,
 		AdminPageShell,
 		AdminSection
-	} from '$lib/components/admin';
-	import { adminAuth } from '$lib/stores/admin-auth.svelte';
+	} from '#lib/components/admin/index.js';
+	import { adminAuth } from '#lib/stores/admin-auth.svelte.js';
 	import { LL } from '$i18n/i18n-svelte';
 	import { onMount } from 'svelte';
 

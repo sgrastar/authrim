@@ -1,6 +1,6 @@
 <script lang="ts">
-	import type { SAMLDestinationFieldReleaseMode } from '$lib/api/admin-saml';
-	import type { SAMLMappingSetReleaseField } from '$lib/saml/mapping-set-release-policy';
+	import type { SAMLDestinationFieldReleaseMode } from '#lib/api/admin-saml.js';
+	import type { SAMLMappingSetReleaseField } from '#lib/saml/mapping-set-release-policy.js';
 	import { getLocale } from '$i18n/i18n-svelte';
 
 	let {

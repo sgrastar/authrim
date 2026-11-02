@@ -1,8 +1,8 @@
 <script lang="ts">
-	import type { AdminAccess } from '$lib/access/access';
-	import type { SettingsClient } from '$lib/api/settings';
-	import { PROTECTION } from '$lib/settings/placement';
-	import SettingsPage from '$lib/settings/SettingsPage.svelte';
+	import type { AdminAccess } from '#lib/access/access.js';
+	import type { SettingsClient } from '#lib/api/settings.js';
+	import { PROTECTION } from '#lib/settings/placement.js';
+	import SettingsPage from '#lib/settings/SettingsPage.svelte';
 
 	/**
 	 * Authentication → Attack protection. A settings page: what it shows is its placement

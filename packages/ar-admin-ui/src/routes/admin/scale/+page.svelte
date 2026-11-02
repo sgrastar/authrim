@@ -16,30 +16,30 @@
 		type ShardConfig,
 		type RegionShardConfig,
 		type RefreshTokenShardConfig
-	} from '$lib/api/admin-infrastructure';
+	} from '#lib/api/admin-infrastructure.js';
 	import {
 		adminControlPlaneAPI,
 		type ControlCapacityProfile,
 		type ControlCapacityProvisioningOperation,
 		type ControlCapacityProvisioningPreview,
 		type ControlCapacityScope
-	} from '$lib/api/admin-control-plane';
+	} from '#lib/api/admin-control-plane.js';
 	import {
 		adminReadReplicationAPI,
 		ReadReplicationApiError,
 		type ReadReplicationStatus
-	} from '$lib/api/admin-read-replication';
-	import WorldMap from '$lib/components/WorldMap.svelte';
-	import { buildRegionMapRenderKey, isScaleRegionSelectable } from '$lib/region-map';
+	} from '#lib/api/admin-read-replication.js';
+	import WorldMap from '#lib/components/WorldMap.svelte';
+	import { buildRegionMapRenderKey, isScaleRegionSelectable } from '#lib/region-map.js';
 	import {
 		getShardScaleRange,
 		isShardCountValidForRegions,
 		normalizeShardCountForRegions
-	} from '$lib/scale-shards';
-	import { Modal, ToggleSwitch } from '$lib/components';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
-	import { tenantStore } from '$lib/stores/tenants.svelte';
+	} from '#lib/scale-shards.js';
+	import { Modal, ToggleSwitch } from '#lib/components/index.js';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
+	import { tenantStore } from '#lib/stores/tenants.svelte.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	// =========================================================================

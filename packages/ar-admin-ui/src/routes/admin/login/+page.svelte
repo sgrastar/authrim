@@ -2,15 +2,15 @@
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { startAuthentication, WebAuthnAbortService } from '@simplewebauthn/browser';
-	import { adminAuthAPI, getAuthErrorMessage } from '$lib/api/admin-auth';
-	import { AdminLoginTimeoutError, withAdminLoginTimeout } from '$lib/admin/admin-login-timeout';
+	import { adminAuthAPI, getAuthErrorMessage } from '#lib/api/admin-auth.js';
+	import { AdminLoginTimeoutError, withAdminLoginTimeout } from '#lib/admin/admin-login-timeout.js';
 	import {
 		resolveAdminAgentLoginHandoffId,
 		resolveAdminLoginReturnTo
-	} from '$lib/admin/admin-login-return';
-	import { adminAuth } from '$lib/stores/admin-auth.svelte';
-	import { adminBrandStore } from '$lib/stores/admin-brand.svelte';
-	import { themeStore, type ThemeMode } from '$lib/stores/theme.svelte';
+	} from '#lib/admin/admin-login-return.js';
+	import { adminAuth } from '#lib/stores/admin-auth.svelte.js';
+	import { adminBrandStore } from '#lib/stores/admin-brand.svelte.js';
+	import { themeStore, type ThemeMode } from '#lib/stores/theme.svelte.js';
 	import { LL, getLocale, setLocale } from '$i18n/i18n-svelte';
 	import { LOCALE_LABELS, SUPPORTED_LOCALES, isSupportedLocale } from '$i18n/locales';
 	import type { Locales } from '$i18n/i18n-types';

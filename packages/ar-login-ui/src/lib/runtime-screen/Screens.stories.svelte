@@ -1,15 +1,15 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, fn, userEvent, within } from 'storybook/test';
-	import LoginUIFrame from '$lib/storybook/LoginUIFrame.svelte';
+	import LoginUIFrame from '#lib/storybook/LoginUIFrame.svelte';
 	import {
 		blocks,
 		codeInputScreen,
 		defaultLoginScreen,
 		registrationScreen,
 		screenOf
-	} from '$lib/storybook/fixtures';
-	import RuntimeScreenHarness from '$lib/storybook/RuntimeScreenHarness.svelte';
+	} from '#lib/storybook/fixtures.js';
+	import RuntimeScreenHarness from '#lib/storybook/RuntimeScreenHarness.svelte';
 
 	const { Story } = defineMeta({
 		title: 'Runtime screen/Screens',

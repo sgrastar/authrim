@@ -1,7 +1,7 @@
 import type {
 	IdentityMappingFieldMappingVersionRuleSummary,
 	IdentityMappingFieldMappingVersionSummary
-} from '$lib/api/admin-identity-mapping';
+} from '#lib/api/admin-identity-mapping.js';
 import type { MappingDraftPayload, MappingDraftRuleInput, TransformOperation } from './types';
 
 export type MappingVersionSide = 'source' | 'destination';

@@ -1,15 +1,15 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { LL } from '$i18n/i18n-svelte';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import {
 		adminEmailDeliveriesAPI,
 		type EmailDeliveryRecord
-	} from '$lib/api/admin-email-deliveries';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
-	import AdminSection from '$lib/components/admin/AdminSection.svelte';
-	import EmailDeliveryTable from '$lib/components/admin/EmailDeliveryTable.svelte';
+	} from '#lib/api/admin-email-deliveries.js';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '#lib/components/admin/AdminSection.svelte';
+	import EmailDeliveryTable from '#lib/components/admin/EmailDeliveryTable.svelte';
 
 	let items = $state<EmailDeliveryRecord[]>([]);
 	let loading = $state(true);

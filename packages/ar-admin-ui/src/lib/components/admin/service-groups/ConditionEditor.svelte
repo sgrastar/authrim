@@ -1,6 +1,6 @@
 <script lang="ts">
-	import type { Expression, Field, ServiceGroup } from '$lib/api/service-groups';
-	import { groupFieldLabel, type GroupText } from '$lib/admin/service-groups-i18n';
+	import type { Expression, Field, ServiceGroup } from '#lib/api/service-groups.js';
+	import { groupFieldLabel, type GroupText } from '#lib/admin/service-groups-i18n.js';
 	import ConditionEditor from './ConditionEditor.svelte';
 	let {
 		value = $bindable<Expression>({

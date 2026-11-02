@@ -5,16 +5,19 @@
 		adminAgentAccessAPI,
 		type AgentScopePolicy,
 		type AgentTaskSet
-	} from '$lib/api/admin-agent-access';
-	import { adminClientsAPI, type Client } from '$lib/api/admin-clients';
-	import { adminAdminsAPI, type AdminUser } from '$lib/api/admin-admins';
-	import { adminMachineAccessAPI, type AdminMachinePrincipal } from '$lib/api/admin-machine-access';
+	} from '#lib/api/admin-agent-access.js';
+	import { adminClientsAPI, type Client } from '#lib/api/admin-clients.js';
+	import { adminAdminsAPI, type AdminUser } from '#lib/api/admin-admins.js';
+	import {
+		adminMachineAccessAPI,
+		type AdminMachinePrincipal
+	} from '#lib/api/admin-machine-access.js';
 	import {
 		AdminPageHeader,
 		AdminPageShell,
 		AdminSection,
 		AgentAccessNav
-	} from '$lib/components/admin';
+	} from '#lib/components/admin/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	let clients: Client[] = $state([]);

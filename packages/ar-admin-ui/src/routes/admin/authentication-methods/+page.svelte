@@ -7,10 +7,10 @@
 		type AuthenticationMethodDirectoryPasswordSettings,
 		type AuthenticationMethodExternalProviderUsage,
 		type AuthenticationMethodHumanVerificationSettings
-	} from '$lib/api/admin-authentication-methods';
-	import type { CategorySettings } from '$lib/api/admin-settings';
-	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	} from '#lib/api/admin-authentication-methods.js';
+	import type { CategorySettings } from '#lib/api/admin-settings.js';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '#lib/components/admin/index.js';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 
 	const DEFAULT_BUILT_IN: AuthenticationMethodBuiltInSettings = {
 		guestLoginEnabled: false,

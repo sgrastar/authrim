@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { t } from '$lib/i18n/i18n.svelte';
-	import Icon from '$lib/ui/icons/Icon.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import Icon from '#lib/ui/icons/Icon.svelte';
 	import { tick } from 'svelte';
 	import {
 		SEVERITIES,

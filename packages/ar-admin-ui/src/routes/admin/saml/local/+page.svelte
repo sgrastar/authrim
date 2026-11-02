@@ -2,8 +2,8 @@
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { SvelteSet, SvelteURL } from 'svelte/reactivity';
-	import { getTenantInfo, type TenantInfo } from '$lib/api/admin-info';
-	import { adminSettingsAPI, type CategorySettings } from '$lib/api/admin-settings';
+	import { getTenantInfo, type TenantInfo } from '#lib/api/admin-info.js';
+	import { adminSettingsAPI, type CategorySettings } from '#lib/api/admin-settings.js';
 	import {
 		adminSAMLAPI,
 		type SAMLEntityIdStyle,
@@ -14,16 +14,16 @@
 		type SAMLSigningKeyPolicy,
 		type SAMLSettings,
 		type SAMLTrustCertificatePreview
-	} from '$lib/api/admin-saml';
-	import { parseDiscoveryMethods } from '$lib/admin/tenant-discovery-settings';
+	} from '#lib/api/admin-saml.js';
+	import { parseDiscoveryMethods } from '#lib/admin/tenant-discovery-settings.js';
 	import {
 		AdminDataTable,
 		AdminPageHeader,
 		AdminPageShell,
 		AdminSection
-	} from '$lib/components/admin';
-	import ToggleSwitch from '$lib/components/ToggleSwitch.svelte';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	} from '#lib/components/admin/index.js';
+	import ToggleSwitch from '#lib/components/ToggleSwitch.svelte';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 
 	type MetadataRole = 'idp' | 'sp';

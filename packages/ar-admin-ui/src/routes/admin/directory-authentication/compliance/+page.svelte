@@ -10,14 +10,14 @@
 		type DirectoryAuthRetentionPolicy,
 		type DirectoryAuthSummaryLink,
 		type DirectoryAuthSupportBundle
-	} from '$lib/api/admin-directory-auth';
+	} from '#lib/api/admin-directory-auth.js';
 	import {
 		AdminDataTable,
 		AdminPageHeader,
 		AdminPageShell,
 		AdminSection
-	} from '$lib/components/admin';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	} from '#lib/components/admin/index.js';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import { LL } from '$i18n/i18n-svelte';
 	import DirectoryAuthenticationTabs from '../DirectoryAuthenticationTabs.svelte';
 

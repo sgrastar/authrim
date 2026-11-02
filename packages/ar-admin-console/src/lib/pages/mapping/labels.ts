@@ -10,8 +10,8 @@ import type {
 	LevelValue,
 	MappingTier,
 	SetFacts
-} from '$lib/api/identity-mapping';
-import { hasMessage, t } from '$lib/i18n/i18n.svelte';
+} from '#lib/api/identity-mapping.js';
+import { hasMessage, t } from '#lib/i18n/i18n.svelte.js';
 
 /** The message for `key`, or the raw value when there is none (a code the API adds later). */
 export function label(prefix: string, value: string): string {

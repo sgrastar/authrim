@@ -4,8 +4,8 @@
 	import {
 		adminIdentityMappingAPI,
 		type PersistentIdentifierProfileSummary
-	} from '$lib/api/admin-identity-mapping';
-	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
+	} from '#lib/api/admin-identity-mapping.js';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '#lib/components/admin/index.js';
 
 	let loading = $state(true);
 	let errorMessage = $state<string | null>(null);

@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { adminAccess } from '$lib/access/admin-access.svelte';
-	import type { AdminAccess } from '$lib/access/access';
-	import type { SchemaSettingClient } from '$lib/api/schema-setting';
-	import type { SettingsClient } from '$lib/api/settings';
-	import { t } from '$lib/i18n/i18n.svelte';
-	import Callout from '$lib/ui/patterns/Callout.svelte';
+	import { adminAccess } from '#lib/access/admin-access.svelte.js';
+	import type { AdminAccess } from '#lib/access/access.js';
+	import type { SchemaSettingClient } from '#lib/api/schema-setting.js';
+	import type { SettingsClient } from '#lib/api/settings.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import Callout from '#lib/ui/patterns/Callout.svelte';
 	import { schemaLevel } from './access';
 	import SchemaDetail from './SchemaDetail.svelte';
 	import SchemaList from './SchemaList.svelte';

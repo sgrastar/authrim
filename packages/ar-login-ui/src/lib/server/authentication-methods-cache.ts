@@ -1,4 +1,4 @@
-import type { AuthenticationMethodsResponse } from '$lib/api/authentication-methods';
+import type { AuthenticationMethodsResponse } from '#lib/api/authentication-methods.js';
 
 export type HumanVerificationProvider = 'turnstile' | 'hcaptcha' | 'recaptcha';
 

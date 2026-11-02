@@ -1,23 +1,23 @@
 <script lang="ts">
 	import { tick } from 'svelte';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import {
 		FIELD_TYPES,
 		type Cardinality,
 		type FieldType,
 		type Schema
-	} from '$lib/api/schema-setting';
-	import Card from '$lib/ui/patterns/Card.svelte';
-	import CheckRow from '$lib/ui/patterns/CheckRow.svelte';
-	import FieldRow from '$lib/ui/patterns/FieldRow.svelte';
-	import RowStack from '$lib/ui/patterns/RowStack.svelte';
-	import SelectRow from '$lib/ui/patterns/SelectRow.svelte';
-	import TextAreaRow from '$lib/ui/patterns/TextAreaRow.svelte';
-	import TextRow from '$lib/ui/patterns/TextRow.svelte';
-	import Button from '$lib/ui/primitives/Button.svelte';
-	import type { Draft } from '$lib/ui/save/draft.svelte';
-	import { SaveStopped } from '$lib/ui/save/save-scope';
-	import SaveScope from '$lib/ui/save/SaveScope.svelte';
+	} from '#lib/api/schema-setting.js';
+	import Card from '#lib/ui/patterns/Card.svelte';
+	import CheckRow from '#lib/ui/patterns/CheckRow.svelte';
+	import FieldRow from '#lib/ui/patterns/FieldRow.svelte';
+	import RowStack from '#lib/ui/patterns/RowStack.svelte';
+	import SelectRow from '#lib/ui/patterns/SelectRow.svelte';
+	import TextAreaRow from '#lib/ui/patterns/TextAreaRow.svelte';
+	import TextRow from '#lib/ui/patterns/TextRow.svelte';
+	import Button from '#lib/ui/primitives/Button.svelte';
+	import type { Draft } from '#lib/ui/save/draft.svelte.js';
+	import { SaveStopped } from '#lib/ui/save/save-scope.js';
+	import SaveScope from '#lib/ui/save/SaveScope.svelte';
 	import { problemsOf, type EditForm } from './edit-model';
 	import { TYPE_KEY } from './labels';
 	import RulesEditor from './RulesEditor.svelte';

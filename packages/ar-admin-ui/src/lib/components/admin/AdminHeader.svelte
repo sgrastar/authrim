@@ -1,8 +1,8 @@
 <script lang="ts">
-	import { adminAuthAPI } from '$lib/api/admin-auth';
-	import AdminBreadcrumbs from '$lib/components/admin/AdminBreadcrumbs.svelte';
-	import ThemeSwitcher from '$lib/components/admin/ThemeSwitcher.svelte';
-	import Avatar from '$lib/components/Avatar.svelte';
+	import { adminAuthAPI } from '#lib/api/admin-auth.js';
+	import AdminBreadcrumbs from '#lib/components/admin/AdminBreadcrumbs.svelte';
+	import ThemeSwitcher from '#lib/components/admin/ThemeSwitcher.svelte';
+	import Avatar from '#lib/components/Avatar.svelte';
 	import { getLocale, LL, setLocale } from '$i18n/i18n-svelte';
 	import { LOCALE_LABELS, SUPPORTED_LOCALES } from '$i18n/locales';
 	import type { Locales } from '$i18n/i18n-types';

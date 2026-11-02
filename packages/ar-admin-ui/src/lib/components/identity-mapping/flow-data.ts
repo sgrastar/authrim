@@ -6,8 +6,8 @@ import type {
 	IdentityMappingProtocolSchemaSummary,
 	IdentityMappingSchemaReadinessRow,
 	IdentityMappingSourceProfileSummary
-} from '$lib/api/admin-identity-mapping';
-import type { CustomClaimSchema } from '$lib/api/admin-custom-claims';
+} from '#lib/api/admin-identity-mapping.js';
+import type { CustomClaimSchema } from '#lib/api/admin-custom-claims.js';
 import type {
 	MappingAdapter,
 	MappingEdge,

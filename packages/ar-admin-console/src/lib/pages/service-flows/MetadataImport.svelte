@@ -1,13 +1,13 @@
 <script lang="ts" generics="T extends ImportForm">
 	import { untrack } from 'svelte';
-	import { t } from '$lib/i18n/i18n.svelte';
-	import Callout from '$lib/ui/patterns/Callout.svelte';
-	import DetailItem from '$lib/ui/patterns/DetailItem.svelte';
-	import DetailList from '$lib/ui/patterns/DetailList.svelte';
-	import FileDrop from '$lib/ui/patterns/FileDrop.svelte';
-	import Button from '$lib/ui/primitives/Button.svelte';
-	import SegmentedControl from '$lib/ui/primitives/SegmentedControl.svelte';
-	import TextField from '$lib/ui/primitives/TextField.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import Callout from '#lib/ui/patterns/Callout.svelte';
+	import DetailItem from '#lib/ui/patterns/DetailItem.svelte';
+	import DetailList from '#lib/ui/patterns/DetailList.svelte';
+	import FileDrop from '#lib/ui/patterns/FileDrop.svelte';
+	import Button from '#lib/ui/primitives/Button.svelte';
+	import SegmentedControl from '#lib/ui/primitives/SegmentedControl.svelte';
+	import TextField from '#lib/ui/primitives/TextField.svelte';
 	import {
 		dummyMetadata,
 		entityIdProblem,

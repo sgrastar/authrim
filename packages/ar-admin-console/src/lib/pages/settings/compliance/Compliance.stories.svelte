@@ -1,8 +1,8 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, userEvent, waitFor, within } from 'storybook/test';
-	import { createFakeCompliance } from '$lib/api/fake/compliance-fake';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { createFakeCompliance } from '#lib/api/fake/compliance-fake.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import ComplianceSettings from './ComplianceSettings.svelte';
 
 	const { Story } = defineMeta({

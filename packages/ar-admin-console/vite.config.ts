@@ -25,8 +25,6 @@ export default defineConfig({
 			// `/_authrim_admin/*` to the Admin UI Worker when the UI shares the API origin, so the
 			// asset directory must stay identical.
 			appDir: '_authrim_admin',
-			// SvelteKit 3 drops the built-in `$lib`; keep it rather than rewriting every import.
-			alias: { $lib: 'src/lib' },
 			adapter: adapter({ routes: { include: ['/*'], exclude: ['<all>'] } })
 		})
 	],

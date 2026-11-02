@@ -5,7 +5,7 @@
 		type AdminEvidenceType,
 		type AssuranceEvidence,
 		type UserAssurance
-	} from '$lib/api/admin-users';
+	} from '#lib/api/admin-users.js';
 	import AdminSection from './AdminSection.svelte';
 
 	interface Props {

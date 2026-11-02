@@ -3,12 +3,12 @@
  * signup routes hand to RuntimeScreen. Block order, labels and conditions follow the shipped
  * default screens (`DEFAULT_SCREENS` in ar-management) plus the blocks an admin can add.
  */
-import type { ExternalProvider } from '$lib/api/authentication-methods';
+import type { ExternalProvider } from '#lib/api/authentication-methods.js';
 import type {
 	FlowRuntimeConsentPolicyContent,
 	FlowRuntimeDestinationFieldConsentContent
-} from '$lib/api/flow-runtime';
-import { getExternalProviderIconClass } from '$lib/login-provider-icons';
+} from '#lib/api/flow-runtime.js';
+import { getExternalProviderIconClass } from '#lib/login-provider-icons.js';
 
 export type SampleField = Record<string, unknown> & { field: string; label: string };
 

@@ -1,11 +1,11 @@
 <script lang="ts">
-	import { t, type MessageKey } from '$lib/i18n/i18n.svelte';
-	import Callout from '$lib/ui/patterns/Callout.svelte';
-	import CheckboxRow from '$lib/ui/patterns/CheckboxRow.svelte';
-	import ListField from '$lib/ui/patterns/ListField.svelte';
-	import SelectRow from '$lib/ui/patterns/SelectRow.svelte';
-	import TextRow from '$lib/ui/patterns/TextRow.svelte';
-	import ToggleRow from '$lib/ui/patterns/ToggleRow.svelte';
+	import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
+	import Callout from '#lib/ui/patterns/Callout.svelte';
+	import CheckboxRow from '#lib/ui/patterns/CheckboxRow.svelte';
+	import ListField from '#lib/ui/patterns/ListField.svelte';
+	import SelectRow from '#lib/ui/patterns/SelectRow.svelte';
+	import TextRow from '#lib/ui/patterns/TextRow.svelte';
+	import ToggleRow from '#lib/ui/patterns/ToggleRow.svelte';
 	import OurDetails from './OurDetails.svelte';
 	import {
 		APP_TYPES,

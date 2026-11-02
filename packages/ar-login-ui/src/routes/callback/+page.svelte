@@ -1,23 +1,23 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import AuthPageShell from '$lib/components/AuthPageShell.svelte';
-	import CallbackView from '$lib/views/CallbackView.svelte';
+	import AuthPageShell from '#lib/components/AuthPageShell.svelte';
+	import CallbackView from '#lib/views/CallbackView.svelte';
 	import { LL } from '$i18n/i18n-svelte';
-	import { useLoginUIStores } from '$lib/stores/login-ui-context';
-	import { isValidRedirectUrl, isValidReturnUrl } from '$lib/utils/url-validation';
-	import { getAuthConfig } from '$lib/auth';
-	import { auth } from '$lib/stores/auth';
-	import { API_BASE_URL } from '$lib/api/client';
-	import { authrimFetch } from '$lib/authrim/fetch';
-	import { assertNoBrowserTokenMaterial } from '$lib/authrim/session-profile';
-	import { getDiagnosticLogger } from '$lib/stores/diagnostic';
+	import { useLoginUIStores } from '#lib/stores/login-ui-context.js';
+	import { isValidRedirectUrl, isValidReturnUrl } from '#lib/utils/url-validation.js';
+	import { getAuthConfig } from '#lib/auth.js';
+	import { auth } from '#lib/stores/auth.js';
+	import { API_BASE_URL } from '#lib/api/client.js';
+	import { authrimFetch } from '#lib/authrim/fetch.js';
+	import { assertNoBrowserTokenMaterial } from '#lib/authrim/session-profile.js';
+	import { getDiagnosticLogger } from '#lib/stores/diagnostic.js';
 	import {
 		LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS,
 		LOGIN_UI_SESSION_STORAGE_KEYS,
 		consumeLoginUiSessionItem,
 		removeLoginUiSessionItems
-	} from '$lib/authrim/storage-keys';
-	import { updateFlowRuntimePostAuthRedirect } from '$lib/authrim/flow-runtime-state';
+	} from '#lib/authrim/storage-keys.js';
+	import { updateFlowRuntimePostAuthRedirect } from '#lib/authrim/flow-runtime-state.js';
 
 	const { brandingStore } = useLoginUIStores();
 

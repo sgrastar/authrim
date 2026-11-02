@@ -1,12 +1,12 @@
 <script lang="ts">
-	import AuthPageShell from '$lib/components/AuthPageShell.svelte';
+	import AuthPageShell from '#lib/components/AuthPageShell.svelte';
 	import LoginView, {
 		type DirectoryMigrationView,
 		type LoginClientInfo
-	} from '$lib/views/LoginView.svelte';
-	import type { ExternalProviderButton, RuntimeStepView } from '$lib/views/auth-entry-types';
+	} from '#lib/views/LoginView.svelte';
+	import type { ExternalProviderButton, RuntimeStepView } from '#lib/views/auth-entry-types.js';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
-	import { normalizeLoginUILocale } from '$lib/i18n/locales';
+	import { normalizeLoginUILocale } from '#lib/i18n/locales.js';
 	import {
 		passkeyAPI,
 		guestAPI,
@@ -16,26 +16,26 @@
 		externalIdpAPI,
 		loginChallengeAPI,
 		type APIError
-	} from '$lib/api/client';
-	import { getAuthConfig } from '$lib/auth';
-	import { accountAPI } from '$lib/api/account';
-	import { messageForApiError } from '$lib/errors/sdk-error-mapper';
-	import { loginUiDisplayError, messageForCaughtError } from '$lib/errors/display-error';
-	import { handleCodeEnterKey } from '$lib/utils/code-enter-key';
-	import { combineEntryMethods, handleEmailFieldEnterKey } from '$lib/login-email-enter';
+	} from '#lib/api/client.js';
+	import { getAuthConfig } from '#lib/auth.js';
+	import { accountAPI } from '#lib/api/account.js';
+	import { messageForApiError } from '#lib/errors/sdk-error-mapper.js';
+	import { loginUiDisplayError, messageForCaughtError } from '#lib/errors/display-error.js';
+	import { handleCodeEnterKey } from '#lib/utils/code-enter-key.js';
+	import { combineEntryMethods, handleEmailFieldEnterKey } from '#lib/login-email-enter.js';
 	import {
 		isValidRedirectUrl,
 		isValidReturnUrl,
 		isValidImageUrl,
 		sanitizeColor
-	} from '$lib/utils/url-validation';
+	} from '#lib/utils/url-validation.js';
 	import {
 		fetchAuthenticationMethods,
 		isHumanVerificationUnavailableFor,
 		fetchAuthenticationMethodsForClient,
 		type AuthenticationMethodsResponse,
 		type ExternalProvider
-	} from '$lib/api/authentication-methods';
+	} from '#lib/api/authentication-methods.js';
 	import {
 		flowRuntimeAPI,
 		type FlowRuntimeEmailVerificationChallenge,
@@ -43,34 +43,37 @@
 		type FlowRuntimeDestinationFieldConsentContent,
 		type FlowRuntimeStartResponse,
 		type FlowRuntimeStep
-	} from '$lib/api/flow-runtime';
+	} from '#lib/api/flow-runtime.js';
 	import {
 		clearExternalFlowRuntimeHandoff,
 		consumeFlowRuntimeState,
 		peekFlowRuntimeState,
 		recordExternalFlowRuntimeHandoff,
 		persistFlowRuntimeState
-	} from '$lib/authrim/flow-runtime-state';
+	} from '#lib/authrim/flow-runtime-state.js';
 	import {
 		isRuntimeAuthStep,
 		runtimeAllowsAuthenticationHandle as runtimeStepAllowsAuthenticationHandle,
 		runtimeAllowsExternalProvider as runtimeStepAllowsExternalProvider,
 		type RuntimeAuthMethod
-	} from '$lib/authrim/runtime-auth-handles';
-	import { getExternalProviderIconClass } from '$lib/login-provider-icons';
+	} from '#lib/authrim/runtime-auth-handles.js';
+	import { getExternalProviderIconClass } from '#lib/login-provider-icons.js';
 	import { startAuthentication, startRegistration } from '@simplewebauthn/browser';
-	import { auth } from '$lib/stores/auth';
+	import { auth } from '#lib/stores/auth.js';
 	import {
 		signalUnknownCredential,
 		shouldSignalUnknownCredentialAfterLoginFailure
-	} from '$lib/webauthn/signal';
-	import { useLoginUIStores } from '$lib/stores/login-ui-context';
-	import { applyAuthenticationMethodsToLoginUI } from '$lib/stores/login-ui-configuration';
-	import { installPageResumeHandler } from '$lib/browser/page-resume';
-	import { buildAuthSwitchHref } from '$lib/authrim/auth-switch-url';
-	import { consentInputKey, destinationInputKey } from '$lib/authrim/runtime-consent-key';
-	import { LOGIN_UI_SESSION_STORAGE_KEYS, setLoginUiSessionItem } from '$lib/authrim/storage-keys';
-	import { resolveTurnstileLanguage as resolveConfiguredTurnstileLanguage } from '$lib/turnstile-options';
+	} from '#lib/webauthn/signal.js';
+	import { useLoginUIStores } from '#lib/stores/login-ui-context.js';
+	import { applyAuthenticationMethodsToLoginUI } from '#lib/stores/login-ui-configuration.js';
+	import { installPageResumeHandler } from '#lib/browser/page-resume.js';
+	import { buildAuthSwitchHref } from '#lib/authrim/auth-switch-url.js';
+	import { consentInputKey, destinationInputKey } from '#lib/authrim/runtime-consent-key.js';
+	import {
+		LOGIN_UI_SESSION_STORAGE_KEYS,
+		setLoginUiSessionItem
+	} from '#lib/authrim/storage-keys.js';
+	import { resolveTurnstileLanguage as resolveConfiguredTurnstileLanguage } from '#lib/turnstile-options.js';
 	import { onDestroy, onMount } from 'svelte';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import { page } from '$app/state';

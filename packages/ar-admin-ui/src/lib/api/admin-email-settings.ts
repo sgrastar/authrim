@@ -1,4 +1,4 @@
-import { API_BASE_URL, adminFetch } from '$lib/api/admin-request';
+import { API_BASE_URL, adminFetch } from '#lib/api/admin-request.js';
 
 export interface EmailProviderEntry {
 	id: string;

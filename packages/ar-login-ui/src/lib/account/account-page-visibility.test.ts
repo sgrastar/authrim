@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AccountPageDefinition } from '$lib/api/account';
+import type { AccountPageDefinition } from '#lib/api/account.js';
 import { isPlacementVisibleForRegistrationState } from './account-page-visibility';
 
 function placement(showForGuests: boolean): AccountPageDefinition['screens'][number] {

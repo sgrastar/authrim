@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { LL } from '$i18n/i18n-svelte';
-	import { adminInfrastructureAPI, type ShardConfig } from '$lib/api/admin-infrastructure';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	import { adminInfrastructureAPI, type ShardConfig } from '#lib/api/admin-infrastructure.js';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
 
 	// State for each shard type
 	interface ShardState {

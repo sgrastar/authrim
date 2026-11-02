@@ -98,7 +98,7 @@ async function runAuthPageRequest(options: {
 describe('Login UI proxy hooks', () => {
 	beforeEach(async () => {
 		const { clearAuthenticationMethodsServerCache } =
-			await import('$lib/server/authentication-methods-cache');
+			await import('#lib/server/authentication-methods-cache.js');
 		clearAuthenticationMethodsServerCache();
 		vi.clearAllMocks();
 	});
@@ -542,7 +542,7 @@ describe('Login UI proxy hooks', () => {
 
 	it('redirects direct Account Page requests on the Login UI host to the public API origin', async () => {
 		const { getAccountPageCanonicalRedirectUrl } =
-			await import('$lib/server/account-canonical-url');
+			await import('#lib/server/account-canonical-url.js');
 		const request = new Request('https://login.example.com/account/security?tab=passkeys');
 		const event = {
 			request,
@@ -558,7 +558,7 @@ describe('Login UI proxy hooks', () => {
 
 	it('uses the request Host header when the runtime URL has already been normalized', async () => {
 		const { getAccountPageCanonicalRedirectUrl } =
-			await import('$lib/server/account-canonical-url');
+			await import('#lib/server/account-canonical-url.js');
 		const request = new Request('https://first.example.com/account/security', {
 			headers: {
 				host: 'login.example.com'
@@ -578,7 +578,7 @@ describe('Login UI proxy hooks', () => {
 
 	it('keeps router-proxied Account Page requests on their original tenant host', async () => {
 		const { getAccountPageCanonicalRedirectUrl } =
-			await import('$lib/server/account-canonical-url');
+			await import('#lib/server/account-canonical-url.js');
 		const request = new Request('https://phase9-ar-login-ui.example.workers.dev/account/security', {
 			headers: {
 				'x-authrim-original-host': 'second.example.com'
@@ -598,7 +598,7 @@ describe('Login UI proxy hooks', () => {
 
 	it('redirects direct Account Page requests even when the original host header repeats the request host', async () => {
 		const { getAccountPageCanonicalRedirectUrl } =
-			await import('$lib/server/account-canonical-url');
+			await import('#lib/server/account-canonical-url.js');
 		const request = new Request('https://login.example.com/account/security', {
 			headers: {
 				'x-authrim-original-host': 'login.example.com'
@@ -618,7 +618,7 @@ describe('Login UI proxy hooks', () => {
 
 	it('keeps Account Page requests already on the public API origin', async () => {
 		const { getAccountPageCanonicalRedirectUrl } =
-			await import('$lib/server/account-canonical-url');
+			await import('#lib/server/account-canonical-url.js');
 		const request = new Request('https://first.example.com/account');
 		const event = {
 			request,
@@ -649,7 +649,7 @@ describe('Login UI proxy hooks', () => {
 
 	it('uses the short-lived login tenant cookie for proxied auth requests', async () => {
 		const { getForwardedHost } = await import('../hooks.server');
-		const { LOGIN_TENANT_HOST_COOKIE } = await import('$lib/discovery-session');
+		const { LOGIN_TENANT_HOST_COOKIE } = await import('#lib/discovery-session.js');
 		const event = {
 			request: new Request('https://login.example.com/api/auth/authentication-methods'),
 			url: new URL('https://login.example.com/api/auth/authentication-methods'),
@@ -668,7 +668,7 @@ describe('Login UI proxy hooks', () => {
 
 	it('uses the login tenant cookie before a router-provided Login UI original host', async () => {
 		const { getForwardedHost } = await import('../hooks.server');
-		const { LOGIN_TENANT_HOST_COOKIE } = await import('$lib/discovery-session');
+		const { LOGIN_TENANT_HOST_COOKIE } = await import('#lib/discovery-session.js');
 		const event = {
 			request: new Request('https://login.example.com/api/auth/authentication-methods', {
 				headers: { 'x-authrim-original-host': 'login.example.com' }
@@ -689,7 +689,7 @@ describe('Login UI proxy hooks', () => {
 
 	it('keeps the router-selected tenant host despite a stale shared-login cookie', async () => {
 		const { getForwardedHost } = await import('../hooks.server');
-		const { LOGIN_TENANT_HOST_COOKIE } = await import('$lib/discovery-session');
+		const { LOGIN_TENANT_HOST_COOKIE } = await import('#lib/discovery-session.js');
 		const event = {
 			request: new Request('https://login.example.com/login', {
 				headers: { 'x-authrim-original-host': 'first.test.authrim.com' }
@@ -710,7 +710,7 @@ describe('Login UI proxy hooks', () => {
 
 	it('preserves tenant selection on a shared login host proxied to an internal Worker host', async () => {
 		const { getForwardedHost } = await import('../hooks.server');
-		const { LOGIN_TENANT_HOST_COOKIE } = await import('$lib/discovery-session');
+		const { LOGIN_TENANT_HOST_COOKIE } = await import('#lib/discovery-session.js');
 		const event = {
 			request: new Request(
 				'https://login-worker.example.workers.dev/api/auth/authentication-methods',
@@ -1089,7 +1089,7 @@ describe('Login UI proxy hooks', () => {
 
 	it('does not share a never-settling authentication methods loader across requests', async () => {
 		const { getCachedAuthenticationMethods } =
-			await import('$lib/server/authentication-methods-cache');
+			await import('#lib/server/authentication-methods-cache.js');
 		let callCount = 0;
 		let resolveFirstLoaderStarted: (() => void) | undefined;
 		let resolveFirstLoader:
@@ -1135,7 +1135,7 @@ describe('Login UI proxy hooks', () => {
 
 	it('does not use the login tenant cookie for common discovery config requests', async () => {
 		const { getForwardedHost } = await import('../hooks.server');
-		const { LOGIN_TENANT_HOST_COOKIE } = await import('$lib/discovery-session');
+		const { LOGIN_TENANT_HOST_COOKIE } = await import('#lib/discovery-session.js');
 		const event = {
 			request: new Request('https://login.example.com/api/auth/discovery'),
 			url: new URL('https://login.example.com/api/auth/discovery'),

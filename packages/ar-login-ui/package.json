@@ -76,5 +76,9 @@
 		"@authrim/core": "^0.2.1",
 		"@simplewebauthn/browser": "^14.0.0",
 		"qrcode": "^1.5.4"
+	},
+	"imports": {
+		"#lib": "./src/lib/index.js",
+		"#lib/*": "./src/lib/*"
 	}
 }

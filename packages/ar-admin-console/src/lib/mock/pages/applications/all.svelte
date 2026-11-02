@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import {
 		ALL_FLOW_IDS,
 		isSyncFlow,
@@ -10,26 +10,26 @@
 		isReady,
 		type FlowId,
 		type AccountFlowState
-	} from '$lib/pages/service-flows/account-flow-model';
-	import AccountFlowDetail from '$lib/pages/service-flows/AccountFlowDetail.svelte';
-	import AccountFlowStatus from '$lib/pages/service-flows/AccountFlowStatus.svelte';
-	import AddConnection from '$lib/pages/service-flows/AddConnection.svelte';
+	} from '#lib/pages/service-flows/account-flow-model.js';
+	import AccountFlowDetail from '#lib/pages/service-flows/AccountFlowDetail.svelte';
+	import AccountFlowStatus from '#lib/pages/service-flows/AccountFlowStatus.svelte';
+	import AddConnection from '#lib/pages/service-flows/AddConnection.svelte';
 	import {
 		KIND_MARK,
 		nameOf,
 		sampleAnswers,
 		type Answers,
 		type ConnectionKind
-	} from '$lib/pages/service-flows/connection-model';
-	import LeaveGuard from '$lib/pages/service-flows/LeaveGuard.svelte';
-	import ServiceFlowDetail from '$lib/pages/service-flows/ServiceFlowDetail.svelte';
-	import Badge from '$lib/ui/primitives/Badge.svelte';
-	import Button from '$lib/ui/primitives/Button.svelte';
-	import Card from '$lib/ui/patterns/Card.svelte';
-	import DataTable from '$lib/ui/patterns/DataTable.svelte';
-	import PageHeader from '$lib/ui/patterns/PageHeader.svelte';
-	import Page from '$lib/ui/templates/Page.svelte';
-	import DateTime from '$lib/ui/time/DateTime.svelte';
+	} from '#lib/pages/service-flows/connection-model.js';
+	import LeaveGuard from '#lib/pages/service-flows/LeaveGuard.svelte';
+	import ServiceFlowDetail from '#lib/pages/service-flows/ServiceFlowDetail.svelte';
+	import Badge from '#lib/ui/primitives/Badge.svelte';
+	import Button from '#lib/ui/primitives/Button.svelte';
+	import Card from '#lib/ui/patterns/Card.svelte';
+	import DataTable from '#lib/ui/patterns/DataTable.svelte';
+	import PageHeader from '#lib/ui/patterns/PageHeader.svelte';
+	import Page from '#lib/ui/templates/Page.svelte';
+	import DateTime from '#lib/ui/time/DateTime.svelte';
 
 	/**
 	 * Service flows → all service flows, with "Add service flow" opening the wizard in place and a

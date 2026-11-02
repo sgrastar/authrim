@@ -1,11 +1,11 @@
 <script lang="ts">
-	import { t } from '$lib/i18n/i18n.svelte';
-	import Callout from '$lib/ui/patterns/Callout.svelte';
-	import Card from '$lib/ui/patterns/Card.svelte';
-	import DetailItem from '$lib/ui/patterns/DetailItem.svelte';
-	import DetailList from '$lib/ui/patterns/DetailList.svelte';
-	import Button from '$lib/ui/primitives/Button.svelte';
-	import TextRow from '$lib/ui/patterns/TextRow.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import Callout from '#lib/ui/patterns/Callout.svelte';
+	import Card from '#lib/ui/patterns/Card.svelte';
+	import DetailItem from '#lib/ui/patterns/DetailItem.svelte';
+	import DetailList from '#lib/ui/patterns/DetailList.svelte';
+	import Button from '#lib/ui/primitives/Button.svelte';
+	import TextRow from '#lib/ui/patterns/TextRow.svelte';
 
 	/**
 	 * A one-shot run of a sync flow from its overview: a CSV import (a file is chosen at each run,

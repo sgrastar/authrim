@@ -5,17 +5,17 @@
 		type ScimToken,
 		type CreateScimTokenResponse,
 		type ScimInboundSettings
-	} from '$lib/api/admin-scim-tokens';
+	} from '#lib/api/admin-scim-tokens.js';
 	import {
 		adminIdentityMappingAPI,
 		type IdentityMappingFieldMappingSetSummary
-	} from '$lib/api/admin-identity-mapping';
-	import { Modal } from '$lib/components';
+	} from '#lib/api/admin-identity-mapping.js';
+	import { Modal } from '#lib/components/index.js';
 	import { LL } from '$i18n/i18n-svelte';
-	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
-	import AdminSection from '$lib/components/admin/AdminSection.svelte';
+	import AdminDataTable from '#lib/components/admin/AdminDataTable.svelte';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '#lib/components/admin/AdminSection.svelte';
 
 	let tokens: ScimToken[] = $state([]);
 	let loading = $state(true);

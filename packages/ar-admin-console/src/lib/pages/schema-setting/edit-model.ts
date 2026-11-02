@@ -4,8 +4,8 @@ import type {
 	Schema,
 	SchemaChange,
 	ValidationRules
-} from '$lib/api/schema-setting';
-import { sameValue } from '$lib/ui/save/draft.svelte';
+} from '#lib/api/schema-setting.js';
+import { sameValue } from '#lib/ui/save/draft.svelte.js';
 import {
 	checkLabel,
 	checkLength,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ScreenField } from '$lib/api/admin-screens';
+import type { ScreenField } from '#lib/api/admin-screens.js';
 import {
 	findMissingRequiredRegistrationFields,
 	normalizeRegistrationFieldKey,

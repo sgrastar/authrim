@@ -6,13 +6,13 @@
 		type NotificationCenterResponse,
 		type NotificationDeliveryRoute,
 		type NotificationCenterSummaryRow
-	} from '$lib/api/admin-logging-control';
+	} from '#lib/api/admin-logging-control.js';
 	import {
 		AdminDataTable,
 		AdminPageHeader,
 		AdminPageShell,
 		AdminToolbar
-	} from '$lib/components/admin';
+	} from '#lib/components/admin/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	const CATEGORY_OPTIONS = [

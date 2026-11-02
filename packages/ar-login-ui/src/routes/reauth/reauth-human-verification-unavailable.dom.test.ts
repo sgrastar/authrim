@@ -11,16 +11,16 @@ vi.mock('$app/state', () => ({
 		data: {}
 	}
 }));
-vi.mock('$lib/api/client', async (importOriginal) => {
-	const actual = await importOriginal<typeof import('$lib/api/client')>();
+vi.mock('#lib/api/client.js', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('#lib/api/client.js')>();
 	return { ...actual, loginChallengeAPI: { ...actual.loginChallengeAPI, getData: mocks.getData } };
 });
-vi.mock('$lib/api/authentication-methods', async (importOriginal) => {
-	const actual = await importOriginal<typeof import('$lib/api/authentication-methods')>();
+vi.mock('#lib/api/authentication-methods.js', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('#lib/api/authentication-methods.js')>();
 	return { ...actual, fetchAuthenticationMethods: mocks.fetchMethods };
 });
 
-import Harness from '$lib/testing/ReauthPageHarness.svelte';
+import Harness from '#lib/testing/ReauthPageHarness.svelte';
 
 const MESSAGE = /Human verification is currently unavailable/i;
 

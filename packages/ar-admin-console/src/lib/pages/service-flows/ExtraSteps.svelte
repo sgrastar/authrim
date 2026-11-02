@@ -1,9 +1,9 @@
 <script lang="ts">
-	import { t } from '$lib/i18n/i18n.svelte';
-	import Callout from '$lib/ui/patterns/Callout.svelte';
-	import CheckboxRow from '$lib/ui/patterns/CheckboxRow.svelte';
-	import ListField from '$lib/ui/patterns/ListField.svelte';
-	import SelectRow from '$lib/ui/patterns/SelectRow.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import Callout from '#lib/ui/patterns/Callout.svelte';
+	import CheckboxRow from '#lib/ui/patterns/CheckboxRow.svelte';
+	import ListField from '#lib/ui/patterns/ListField.svelte';
+	import SelectRow from '#lib/ui/patterns/SelectRow.svelte';
 	import {
 		consentStatements,
 		SIGNUP_FLOWS,

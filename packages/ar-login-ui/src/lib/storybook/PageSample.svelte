@@ -3,11 +3,11 @@
 	 * A login or signup page: the shared shell around a card holding a runtime screen, with the
 	 * switch link and optional "signing in to" card that the routes add.
 	 */
-	import AuthPageShell from '$lib/components/AuthPageShell.svelte';
-	import AuthSwitchLink from '$lib/components/AuthSwitchLink.svelte';
-	import Card from '$lib/components/Card.svelte';
+	import AuthPageShell from '#lib/components/AuthPageShell.svelte';
+	import AuthSwitchLink from '#lib/components/AuthSwitchLink.svelte';
+	import Card from '#lib/components/Card.svelte';
 	import { LL } from '$i18n/i18n-svelte';
-	import { useLoginUIStores } from '$lib/stores/login-ui-context';
+	import { useLoginUIStores } from '#lib/stores/login-ui-context.js';
 	import { blocks, screenOf } from './fixtures';
 	import RuntimeScreenHarness from './RuntimeScreenHarness.svelte';
 

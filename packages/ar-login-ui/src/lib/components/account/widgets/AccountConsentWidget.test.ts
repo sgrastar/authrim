@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { setLocale } from '$i18n/i18n-svelte';
 import AccountConsentWidget from './AccountConsentWidget.svelte';
 import { clientConsent, statementConsent } from './fixtures';
-import { HYDRATION_MARKERS } from '$lib/testing/ssr-html';
+import { HYDRATION_MARKERS } from '#lib/testing/ssr-html.js';
 
 function renderConsents(props: Partial<Parameters<typeof AccountConsentWidget>[1]> = {}) {
 	return render(AccountConsentWidget, { props }).body.replace(HYDRATION_MARKERS, '');

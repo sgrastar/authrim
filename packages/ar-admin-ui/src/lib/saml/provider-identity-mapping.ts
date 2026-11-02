@@ -1,4 +1,4 @@
-import type { SAMLDestinationFieldReleaseMode, SAMLProviderConfig } from '$lib/api/admin-saml';
+import type { SAMLDestinationFieldReleaseMode, SAMLProviderConfig } from '#lib/api/admin-saml.js';
 
 type SAMLIdentityMapping = NonNullable<SAMLProviderConfig['identityMapping']>;
 

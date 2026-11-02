@@ -6,7 +6,7 @@
 	 * Shows dropdown selectors for Tenant and Client when applicable.
 	 */
 
-	import { settingsContext, type SettingScopeLevel } from '$lib/stores/settings-context.svelte';
+	import { settingsContext, type SettingScopeLevel } from '#lib/stores/settings-context.svelte.js';
 	import { LL } from '$i18n/i18n-svelte';
 	import { onMount } from 'svelte';
 

@@ -1,8 +1,8 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, userEvent, within } from 'storybook/test';
-	import { createFakeIdentityMapping, DEMO_TENANT } from '$lib/api/fake/identity-mapping-fake';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { createFakeIdentityMapping, DEMO_TENANT } from '#lib/api/fake/identity-mapping-fake.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import MappingPageContent from './MappingPageContent.svelte';
 
 	const { Story } = defineMeta({

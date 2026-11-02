@@ -1,14 +1,14 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { adminAdminAbacAPI, type AdminAttribute } from '$lib/api/admin-admin-abac';
+	import { adminAdminAbacAPI, type AdminAttribute } from '#lib/api/admin-admin-abac.js';
 	import {
 		AdminPageHeader,
 		AdminPageShell,
 		AdminSection,
 		AdminToolbar
-	} from '$lib/components/admin';
+	} from '#lib/components/admin/index.js';
 	import { LL } from '$i18n/i18n-svelte';
-	import { Modal } from '$lib/components';
+	import { Modal } from '#lib/components/index.js';
 
 	// State
 	let attributes: AdminAttribute[] = $state([]);

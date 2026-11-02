@@ -1,8 +1,8 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, within } from 'storybook/test';
-	import { createFakeTenantInfo } from '$lib/api/fake/tenant-info-fake';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { createFakeTenantInfo } from '#lib/api/fake/tenant-info-fake.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import TenantGeneral from './TenantGeneral.svelte';
 
 	const { Story } = defineMeta({

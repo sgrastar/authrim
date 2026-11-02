@@ -2,7 +2,7 @@
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, within } from 'storybook/test';
 	import { named, subcomponents } from '../stories/subcomponents';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import Badge from '../primitives/Badge.svelte';
 	import CopyButton from '../primitives/CopyButton.svelte';
 	import DateTime from '../time/DateTime.svelte';

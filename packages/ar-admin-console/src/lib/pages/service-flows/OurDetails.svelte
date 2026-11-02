@@ -1,9 +1,9 @@
 <script lang="ts">
-	import { t } from '$lib/i18n/i18n.svelte';
-	import CopyButton from '$lib/ui/primitives/CopyButton.svelte';
-	import Button from '$lib/ui/primitives/Button.svelte';
-	import DetailItem from '$lib/ui/patterns/DetailItem.svelte';
-	import DetailList from '$lib/ui/patterns/DetailList.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import CopyButton from '#lib/ui/primitives/CopyButton.svelte';
+	import Button from '#lib/ui/primitives/Button.svelte';
+	import DetailItem from '#lib/ui/patterns/DetailItem.svelte';
+	import DetailList from '#lib/ui/patterns/DetailList.svelte';
 
 	/**
 	 * What Authrim gives the other side to register on its own side: addresses, an entity ID,

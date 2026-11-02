@@ -1,10 +1,10 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, within } from 'storybook/test';
-	import { adminAccess } from '$lib/access/admin-access.svelte';
-	import { createFakeSettings } from '$lib/api/fake/settings-fake';
-	import { t } from '$lib/i18n/i18n.svelte';
-	import { settingText } from '$lib/settings/setting-text';
+	import { adminAccess } from '#lib/access/admin-access.svelte.js';
+	import { createFakeSettings } from '#lib/api/fake/settings-fake.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import { settingText } from '#lib/settings/setting-text.js';
 	import Protection from './Protection.svelte';
 
 	const { Story } = defineMeta({

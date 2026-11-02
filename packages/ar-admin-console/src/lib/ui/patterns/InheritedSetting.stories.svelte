@@ -1,7 +1,7 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, userEvent, waitFor, within } from 'storybook/test';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import FieldsDemo from '../stories/FieldsDemo.svelte';
 	import InheritedSetting from './InheritedSetting.svelte';
 

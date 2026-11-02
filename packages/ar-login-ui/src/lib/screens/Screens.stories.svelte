@@ -1,7 +1,7 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
-	import LogoutCompletePage from '$lib/components/LogoutCompletePage.svelte';
-	import LoginUIFrame from '$lib/storybook/LoginUIFrame.svelte';
+	import LogoutCompletePage from '#lib/components/LogoutCompletePage.svelte';
+	import LoginUIFrame from '#lib/storybook/LoginUIFrame.svelte';
 	import ErrorPage from '../../routes/error/+page.svelte';
 
 	const { Story } = defineMeta({

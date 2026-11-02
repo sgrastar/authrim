@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { t } from '$lib/i18n/i18n.svelte';
-	import type { MessageKey } from '$lib/i18n/messages/ja';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import type { MessageKey } from '#lib/i18n/messages/ja.js';
 	import { useBusy } from '../busy/busy';
 	import Select from '../primitives/Select.svelte';
 	import { useChangeMark } from '../save/save-scope';

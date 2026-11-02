@@ -1,5 +1,5 @@
 import { ADMIN_ROLE_GROUPS } from '@authrim/ar-lib-core/constants/admin-roles';
-import { permissionLevel, type AccessLevel, type AdminAccess } from '$lib/access/access';
+import { permissionLevel, type AccessLevel, type AdminAccess } from '#lib/access/access.js';
 
 /**
  * Who may use the attribute schema API. It asks for two things at once: the settings permission

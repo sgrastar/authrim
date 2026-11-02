@@ -6,7 +6,7 @@
 		type AdminFlowAssignmentTargetType,
 		type AdminFlowKind,
 		type FlowAssignment
-	} from '$lib/api/admin-flows';
+	} from '#lib/api/admin-flows.js';
 	import { onMount } from 'svelte';
 
 	type AssignableFlowKind = Extract<AdminFlowKind, 'login' | 'registration'>;

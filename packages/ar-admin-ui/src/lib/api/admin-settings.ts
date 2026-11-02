@@ -9,8 +9,8 @@
 
 // API Base URL - empty string for same-origin, or full URL for cross-origin
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
-import { adminFetch } from '$lib/api/admin-request';
-import { settingsContext } from '$lib/stores/settings-context.svelte';
+import { adminFetch } from '#lib/api/admin-request.js';
+import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 
 function resolveTenantId(tenantId?: string): string {
 	const resolved =

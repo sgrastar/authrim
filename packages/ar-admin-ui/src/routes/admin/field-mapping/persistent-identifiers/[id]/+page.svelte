@@ -9,8 +9,8 @@
 		type PersistentIdentifierAudienceMode,
 		type PersistentIdentifierMode,
 		type PersistentIdentifierProtocolScope
-	} from '$lib/api/admin-identity-mapping';
-	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
+	} from '#lib/api/admin-identity-mapping.js';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '#lib/components/admin/index.js';
 
 	const profileId = $derived(page.params.id ?? '');
 

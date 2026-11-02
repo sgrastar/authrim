@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { accentTextColor, normalizeAccentColor } from '$lib/utils/accent-color';
+	import { accentTextColor, normalizeAccentColor } from '#lib/utils/accent-color.js';
 	import { onDestroy, onMount } from 'svelte';
 	import {
 		scopedSettingsAPI,
@@ -11,11 +11,11 @@
 		type ScopeContext,
 		type SettingsPatchResult,
 		type UIPatch
-	} from '$lib/api/admin-settings';
-	import { API_BASE_URL, adminFetch } from '$lib/api/admin-request';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
-	import SanitizedHtmlPreview from '$lib/components/admin/SanitizedHtmlPreview.svelte';
+	} from '#lib/api/admin-settings.js';
+	import { API_BASE_URL, adminFetch } from '#lib/api/admin-request.js';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
+	import SanitizedHtmlPreview from '#lib/components/admin/SanitizedHtmlPreview.svelte';
 	import {
 		DEFAULT_LOGIN_UI_FOOTER_TEXTS,
 		DEFAULT_LOGIN_UI_PAGE_TITLES,
@@ -24,9 +24,9 @@
 		isLoginUILocale,
 		resolveEnabledLoginUILocalesByEnglishName,
 		type LoginUILocale
-	} from '$lib/login-ui/locales';
-	import { sanitizeFooterHtml } from '$lib/login-ui/footer-html';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	} from '#lib/login-ui/locales.js';
+	import { sanitizeFooterHtml } from '#lib/login-ui/footer-html.js';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 	import { createAccordion, melt } from '@melt-ui/svelte';
 
