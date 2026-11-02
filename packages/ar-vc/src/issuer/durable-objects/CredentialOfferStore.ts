@@ -2,6 +2,7 @@ import {
   initializeCredentialStoreSchema,
   VCI_INITIAL_SCHEMA,
   VCI_PRIMARY_KEY_MIGRATION,
+  upgradeCredentialOfferIssuanceSchema,
 } from '../../common/primary-key-schema.js';
 /**
  * Region-sharded SQLite coordinator for OpenID4VCI one-time state.
@@ -18,8 +19,27 @@ import type { Env } from '../../types';
 const log = createLogger().module('VCI-COORDINATOR');
 const DEFAULT_LEASE_MS = 30_000;
 const RETENTION_MS = 24 * 60 * 60 * 1000;
+/** An `issuing` claim that does not finish within this window becomes `failed`, never claimable. */
+const ISSUANCE_LEASE_MS = 60_000;
 
 export type CredentialOfferStatus = 'pending' | 'processing' | 'consumed' | 'locked' | 'expired';
+export type CredentialOfferSubjectKind = 'end_user' | 'admin';
+export type CredentialOfferIssuanceStatus = 'issuing' | 'issued' | 'failed';
+export type AdminOfferProgressState =
+  | 'pending'
+  | 'fetched'
+  | 'token_issued'
+  | 'issued'
+  | 'failed'
+  | 'expired'
+  | 'locked';
+
+export interface AdminOfferProgress {
+  offerId: string;
+  state: AdminOfferProgressState;
+  expiresAt: number;
+  holderKeyThumbprint?: string;
+}
 
 export interface CredentialOfferRecord {
   id: string;
@@ -35,6 +55,7 @@ export interface CredentialOfferRecord {
   claims: Record<string, unknown>;
   txCodeRequired: boolean;
   status: CredentialOfferStatus;
+  subjectKind: CredentialOfferSubjectKind;
   failedAttempts: number;
   maxAttempts: number;
   createdAt: number;
@@ -55,6 +76,8 @@ export interface CreateCredentialOfferInput {
   claims?: Record<string, unknown>;
   preAuthorizedCodeHash: string;
   txCodeHash?: string;
+  /** Defaults to `end_user`. */
+  subjectKind?: CredentialOfferSubjectKind;
   maxAttempts?: number;
   createdAt: number;
   expiresAt: number;
@@ -71,7 +94,16 @@ export interface ReserveCredentialOfferInput {
 
 export type ReserveCredentialOfferResult =
   | { reserved: true; reservationId: string; offer: CredentialOfferRecord }
-  | { reserved: false; reason: 'not_found' | 'invalid_code' | 'invalid_tx_code' | 'unavailable' };
+  | {
+      reserved: false;
+      reason:
+        | 'not_found'
+        | 'invalid_code'
+        | 'invalid_tx_code'
+        | 'tx_code_required'
+        | 'tx_code_not_expected'
+        | 'unavailable';
+    };
 
 export interface CreateProofNonceInput {
   id: string;
@@ -117,6 +149,20 @@ interface OfferRow {
   lease_expires_at: number | null;
   created_at: number;
   expires_at: number;
+  subject_kind: CredentialOfferSubjectKind;
+  fetched_at: number | null;
+}
+
+interface IssuanceRow {
+  [key: string]: SqlStorageValue;
+  offer_id: string;
+  tenant_id: string;
+  status: CredentialOfferIssuanceStatus;
+  access_token_jti: string;
+  holder_jkt: string | null;
+  lease_expires_at: number;
+  created_at: number;
+  updated_at: number;
 }
 
 interface NonceRow {
@@ -154,6 +200,7 @@ function offerFromRow(row: OfferRow): CredentialOfferRecord {
     claims: JSON.parse(row.claims_json) as Record<string, unknown>,
     txCodeRequired: row.tx_code_hash !== null,
     status: row.status,
+    subjectKind: row.subject_kind ?? 'end_user',
     failedAttempts: row.failed_attempts,
     maxAttempts: row.max_attempts,
     createdAt: row.created_at,
@@ -176,6 +223,7 @@ export class CredentialOfferStoreV2 extends DurableObject<Env> {
       VCI_PRIMARY_KEY_MIGRATION,
       ['credential_offers', 'proof_nonces']
     );
+    upgradeCredentialOfferIssuanceSchema(this.ctx.storage);
   }
 
   createOfferRpc(input: CreateCredentialOfferInput): CredentialOfferRecord {
@@ -203,6 +251,10 @@ export class CredentialOfferStoreV2 extends DurableObject<Env> {
     const codeHash = required(input.preAuthorizedCodeHash, 'code_hash');
     if (input.expiresAt <= input.createdAt) throw new Error('vci_invalid_offer_expiry');
     const maxAttempts = Math.min(Math.max(input.maxAttempts ?? 5, 1), 10);
+    const subjectKind = input.subjectKind ?? 'end_user';
+    if (subjectKind !== 'end_user' && subjectKind !== 'admin') {
+      throw new Error('vci_invalid_subject_kind');
+    }
 
     this.ctx.storage.sql.exec(
       `INSERT INTO credential_offers
@@ -210,8 +262,8 @@ export class CredentialOfferStoreV2 extends DurableObject<Env> {
         credential_profile_snapshot_hash,
         credential_configuration_id, mapping_version_id, mapping_snapshot_hash,
         claim_manifest_hash, claims_json, code_hash, tx_code_hash, status,
-        failed_attempts, max_attempts, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?)`,
+        failed_attempts, max_attempts, created_at, expires_at, subject_kind)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?)`,
       id,
       tenantId,
       userId,
@@ -227,7 +279,8 @@ export class CredentialOfferStoreV2 extends DurableObject<Env> {
       input.txCodeHash ?? null,
       maxAttempts,
       input.createdAt,
-      input.expiresAt
+      input.expiresAt,
+      subjectKind
     );
     this.scheduleAlarm(input.expiresAt);
     return this.getOfferRequired(id, tenantId);
@@ -283,6 +336,14 @@ export class CredentialOfferStoreV2 extends DurableObject<Env> {
     }
     if (row.code_hash !== input.preAuthorizedCodeHash) {
       return { reserved: false, reason: 'invalid_code' };
+    }
+    // A missing or unexpected tx_code is a malformed request (OpenID4VCI §6.3), not a guess:
+    // it neither counts as a failed attempt nor reserves the offer.
+    if (row.tx_code_hash && !input.txCodeHash) {
+      return { reserved: false, reason: 'tx_code_required' };
+    }
+    if (!row.tx_code_hash && input.txCodeHash) {
+      return { reserved: false, reason: 'tx_code_not_expected' };
     }
     if (row.tx_code_hash && row.tx_code_hash !== input.txCodeHash) {
       const nextAttempts = row.failed_attempts + 1;
@@ -354,6 +415,158 @@ export class CredentialOfferStoreV2 extends DurableObject<Env> {
       Date.now()
     );
     return cursor.rowsWritten === 1;
+  }
+
+  /** Records the first successful offer fetch only; later fetches keep the original time. */
+  markOfferFetchedRpc(input: { id: string; tenantId: string; now: number }): boolean {
+    return (
+      this.ctx.storage.sql
+        .exec<{ id: string }>(
+          `UPDATE credential_offers SET fetched_at = ?
+           WHERE id = ? AND tenant_id = ? AND fetched_at IS NULL AND status = 'pending'
+           AND expires_at > ? RETURNING id`,
+          input.now,
+          required(input.id, 'offer_id'),
+          required(input.tenantId, 'tenant_id'),
+          input.now
+        )
+        .toArray().length === 1
+    );
+  }
+
+  /**
+   * Starts the single issuance of a consumed offer. The insert succeeds only while the offer is
+   * `consumed` and unexpired and no issuance row exists, so exactly one caller can ever win; every
+   * concurrent or later caller (including one holding the same access token) is refused.
+   */
+  claimIssuanceRpc(input: {
+    id: string;
+    tenantId: string;
+    accessTokenJti: string;
+    now: number;
+    leaseMs?: number;
+  }): boolean {
+    const id = required(input.id, 'offer_id');
+    const tenantId = required(input.tenantId, 'tenant_id');
+    const leaseExpiresAt = input.now + (input.leaseMs ?? ISSUANCE_LEASE_MS);
+    const claimed =
+      this.ctx.storage.sql
+        .exec<{ offer_id: string }>(
+          `INSERT INTO credential_offer_issuances
+           (offer_id, tenant_id, status, access_token_jti, lease_expires_at, created_at, updated_at)
+           SELECT id, tenant_id, 'issuing', ?, ?, ?, ? FROM credential_offers
+           WHERE id = ? AND tenant_id = ? AND status = 'consumed' AND expires_at > ?
+           ON CONFLICT(offer_id) DO NOTHING RETURNING offer_id`,
+          required(input.accessTokenJti, 'access_token_jti'),
+          leaseExpiresAt,
+          input.now,
+          input.now,
+          id,
+          tenantId,
+          input.now
+        )
+        .toArray().length === 1;
+    if (claimed) this.scheduleAlarm(leaseExpiresAt);
+    return claimed;
+  }
+
+  /** `issuing → issued`; refused once the lease has run out (the issuance is then `failed`). */
+  completeIssuanceRpc(input: {
+    id: string;
+    tenantId: string;
+    accessTokenJti: string;
+    /** RFC 7638 thumbprint of the holder key; null when the credential is not holder-bound. */
+    holderJkt: string | null;
+    now: number;
+  }): boolean {
+    this.expireStaleIssuances(input.now);
+    return (
+      this.ctx.storage.sql
+        .exec<{ offer_id: string }>(
+          `UPDATE credential_offer_issuances SET status = 'issued', holder_jkt = ?, updated_at = ?
+           WHERE offer_id = ? AND tenant_id = ? AND status = 'issuing' AND access_token_jti = ?
+           RETURNING offer_id`,
+          input.holderJkt ?? null,
+          input.now,
+          required(input.id, 'offer_id'),
+          required(input.tenantId, 'tenant_id'),
+          required(input.accessTokenJti, 'access_token_jti')
+        )
+        .toArray().length === 1
+    );
+  }
+
+  /** `issuing → failed`. An `issued` or already `failed` row is never touched. */
+  failIssuanceRpc(input: {
+    id: string;
+    tenantId: string;
+    accessTokenJti: string;
+    now: number;
+  }): boolean {
+    return (
+      this.ctx.storage.sql
+        .exec<{ offer_id: string }>(
+          `UPDATE credential_offer_issuances SET status = 'failed', updated_at = ?
+           WHERE offer_id = ? AND tenant_id = ? AND status = 'issuing' AND access_token_jti = ?
+           RETURNING offer_id`,
+          input.now,
+          required(input.id, 'offer_id'),
+          required(input.tenantId, 'tenant_id'),
+          required(input.accessTokenJti, 'access_token_jti')
+        )
+        .toArray().length === 1
+    );
+  }
+
+  /**
+   * Progress of an admin offer for its owner. Null unless the offer is an admin offer of exactly
+   * this tenant and admin; nothing else about the offer is revealed.
+   */
+  getAdminOfferProgressRpc(input: {
+    id: string;
+    tenantId: string;
+    userId: string;
+    now: number;
+  }): AdminOfferProgress | null {
+    const id = required(input.id, 'offer_id');
+    const tenantId = required(input.tenantId, 'tenant_id');
+    const row = this.getOfferRow(id, tenantId);
+    if (!row || row.subject_kind !== 'admin' || row.user_id !== input.userId) return null;
+
+    this.expireStaleIssuances(input.now);
+    const issuance = this.ctx.storage.sql
+      .exec<IssuanceRow>(
+        `SELECT * FROM credential_offer_issuances WHERE offer_id = ? AND tenant_id = ?`,
+        id,
+        tenantId
+      )
+      .toArray()[0];
+    const progress = (state: AdminOfferProgressState): AdminOfferProgress => ({
+      offerId: id,
+      state,
+      expiresAt: row.expires_at,
+    });
+
+    if (issuance) {
+      if (issuance.status === 'issued' && issuance.holder_jkt) {
+        return { ...progress('issued'), holderKeyThumbprint: issuance.holder_jkt };
+      }
+      return progress(issuance.status === 'failed' ? 'failed' : 'token_issued');
+    }
+    if (row.status === 'locked') return progress('locked');
+    if (row.status === 'expired' || row.expires_at <= input.now) return progress('expired');
+    if (row.status === 'consumed') return progress('token_issued');
+    // `processing` is a token exchange in flight: the wallet has necessarily fetched the offer.
+    return progress(row.fetched_at !== null || row.status === 'processing' ? 'fetched' : 'pending');
+  }
+
+  private expireStaleIssuances(now: number): void {
+    this.ctx.storage.sql.exec(
+      `UPDATE credential_offer_issuances SET status = 'failed', updated_at = ?
+       WHERE status = 'issuing' AND lease_expires_at <= ?`,
+      now,
+      now
+    );
   }
 
   createProofNonceRpc(input: CreateProofNonceInput): void {
@@ -477,10 +690,18 @@ export class CredentialOfferStoreV2 extends DurableObject<Env> {
        lease_expires_at = NULL WHERE status IN ('issued','processing') AND expires_at <= ?`,
       now
     );
+    this.expireStaleIssuances(now);
+    // Only the claims are scrubbed: progress reads need just the offer and issuance rows.
     this.ctx.storage.sql.exec(
       `UPDATE credential_offers SET claims_json = '{}'
        WHERE status = 'consumed' AND expires_at <= ? AND claims_json <> '{}'`,
       now
+    );
+    // Issuance rows leave together with their offer (and before it).
+    this.ctx.storage.sql.exec(
+      `DELETE FROM credential_offer_issuances
+       WHERE offer_id IN (SELECT id FROM credential_offers WHERE expires_at < ?)`,
+      now - RETENTION_MS
     );
     this.ctx.storage.sql.exec(
       `DELETE FROM credential_offers WHERE expires_at < ?`,
@@ -507,7 +728,13 @@ export class CredentialOfferStoreV2 extends DurableObject<Env> {
         now
       )
       .one().next_at;
-    const nextAlarm = [nextOffer, nextNonce]
+    const nextLease = this.ctx.storage.sql
+      .exec<{ next_at: number | null }>(
+        `SELECT MIN(lease_expires_at) AS next_at FROM credential_offer_issuances
+         WHERE status = 'issuing'`
+      )
+      .one().next_at;
+    const nextAlarm = [nextOffer, nextNonce, nextLease]
       .filter((value): value is number => typeof value === 'number')
       .reduce<number | null>((earliest, value) => Math.min(earliest ?? value, value), null);
     if (nextAlarm !== null) await this.ctx.storage.setAlarm(Math.max(nextAlarm, now + 1_000));
@@ -541,6 +768,14 @@ export class CredentialOfferStoreV2 extends DurableObject<Env> {
           return Response.json({ completed: this.completeOfferRpc(body as never) });
         case '/release':
           return Response.json({ released: this.releaseOfferRpc(body as never) });
+        case '/offer/fetched':
+          return Response.json({ marked: this.markOfferFetchedRpc(body as never) });
+        case '/issuance/claim':
+          return Response.json({ claimed: this.claimIssuanceRpc(body as never) });
+        case '/issuance/complete':
+          return Response.json({ completed: this.completeIssuanceRpc(body as never) });
+        case '/issuance/fail':
+          return Response.json({ failed: this.failIssuanceRpc(body as never) });
         case '/nonce/create':
           this.createProofNonceRpc(body as unknown as CreateProofNonceInput);
           return Response.json({ created: true }, { status: 201 });

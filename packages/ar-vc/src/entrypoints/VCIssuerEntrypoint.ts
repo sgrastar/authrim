@@ -1,14 +1,21 @@
 import { runSamlDrCoveredOperation } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type {
+  AdminCredentialOfferStatus,
+  CreateAdminCredentialOfferServiceInput,
+  CreateAdminCredentialOfferServiceResult,
   CreateCredentialOfferServiceInput,
   CreateCredentialOfferServiceResult,
 } from '@authrim/ar-lib-core';
-import { isValidTenantIdentifier } from '@authrim/ar-lib-core';
+import { ADMIN_CREDENTIAL_CONFIGURATION_ID, isValidTenantIdentifier } from '@authrim/ar-lib-core';
 import type { Env } from '../types';
-import type { CreateCredentialOfferInput } from '../issuer/durable-objects/CredentialOfferStore';
+import type {
+  AdminOfferProgress,
+  CreateCredentialOfferInput,
+} from '../issuer/durable-objects/CredentialOfferStore';
 import {
   generatePreAuthorizedCode,
+  getCredentialOfferStoreById,
   getCredentialOfferStoreForNewOffer,
 } from '../utils/credential-offer-sharding';
 import { generateRandomString, hashTransactionCode, sha256Base64url } from '../utils/crypto';
@@ -21,8 +28,29 @@ const MAX_CLAIMS = 128;
 const SAFE_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
 const SNAPSHOT_HASH = /^[A-Za-z0-9_-]{32,128}$/;
 
+/** Admin offers always require a 6-digit transaction code and live five minutes. */
+const ADMIN_OFFER_EXPIRY_SECONDS = 300;
+
+/**
+ * Fixed values stored in the offer columns that are NOT NULL for Credential Profile offers
+ * (profile, mapping, claim manifest). Admin offers carry no profile and no claims: the credential's
+ * claims come from the issuance-time eligibility check. The hashes are digests of constant strings
+ * so the columns hold valid-looking, non-secret evidence that can never match a real profile.
+ */
+const ADMIN_OFFER_PROFILE_ID = 'admin';
+const ADMIN_OFFER_PROFILE_VERSION = 1;
+const ADMIN_OFFER_MAPPING_VERSION_ID = 'admin';
+const ADMIN_OFFER_SNAPSHOT_CONTRACT = 'authrim:admin-credential-offer-profile:v1';
+const ADMIN_OFFER_MAPPING_CONTRACT = 'authrim:admin-credential-offer-mapping:v1';
+
 type CredentialOfferStoreRpcStub = {
   createOfferRpc(input: CreateCredentialOfferInput): Promise<unknown>;
+  getAdminOfferProgressRpc(input: {
+    id: string;
+    tenantId: string;
+    userId: string;
+    now: number;
+  }): Promise<AdminOfferProgress | null>;
 };
 
 function requireIdentifier(value: string, field: string): string {
@@ -118,6 +146,11 @@ async function verifyProfileContract(
   );
 }
 
+/** Same-device and cross-device offer by reference (OpenID4VCI §4.1.3). */
+function toCredentialOfferQrValue(credentialOfferUri: string): string {
+  return `openid-credential-offer://?credential_offer_uri=${encodeURIComponent(credentialOfferUri)}`;
+}
+
 /** RPC-only facade. It is not mounted on ar-vc's public Hono routes. */
 export class VCIssuerEntrypoint extends WorkerEntrypoint<Env> {
   async createCredentialOffer(
@@ -136,6 +169,10 @@ export class VCIssuerEntrypoint extends WorkerEntrypoint<Env> {
         input.credentialConfigurationId,
         'credential_configuration_id'
       );
+      // Admin credentials have their own issuance path; Credential Profiles cannot offer them.
+      if (credentialConfigurationId === ADMIN_CREDENTIAL_CONFIGURATION_ID) {
+        throw new Error('reserved_credential_configuration');
+      }
       const mappingVersionId = requireIdentifier(input.mappingVersionId, 'mapping_version_id');
       if (
         !Number.isSafeInteger(input.credentialProfileVersion) ||
@@ -202,15 +239,119 @@ export class VCIssuerEntrypoint extends WorkerEntrypoint<Env> {
         expiresAt,
       });
 
+      const credentialOfferUri = `${credentialIssuer}/vci/offers/${encodeURIComponent(preAuthorizedCode)}`;
       return {
         offerId,
-        credentialOfferUri: `${credentialIssuer}/vci/offers/${encodeURIComponent(preAuthorizedCode)}`,
+        credentialOfferUri,
+        credentialOffer: toCredentialOfferQrValue(credentialOfferUri),
         expiresAt,
         claimManifestHash,
         ...(transactionCode ? { transactionCode } : {}),
       };
     });
   }
+
+  /**
+   * Offer of the admin credential to an administrator's own wallet (design D4). The transaction
+   * code is always required and the offer stores no claims: `email` and `name` come from the
+   * eligibility check at issuance time.
+   */
+  async createAdminCredentialOffer(
+    input: CreateAdminCredentialOfferServiceInput
+  ): Promise<CreateAdminCredentialOfferServiceResult> {
+    return runSamlDrCoveredOperation(this.env, this.ctx, async (env) => {
+      if (!isValidTenantIdentifier(input.tenantId)) {
+        throw new Error('invalid_tenant_id');
+      }
+      const adminUserId = requireIdentifier(input.adminUserId, 'admin_user_id');
+      const credentialIssuer = normalizeIssuer(input.credentialIssuer);
+
+      const createdAt = Date.now();
+      const expiresAt = createdAt + ADMIN_OFFER_EXPIRY_SECONDS * 1000;
+      const { stub, offerId } = await getCredentialOfferStoreForNewOffer(
+        env,
+        input.tenantId,
+        adminUserId,
+        crypto.randomUUID()
+      );
+      const preAuthorizedCode = generatePreAuthorizedCode(offerId, generateRandomString(32));
+      const transactionCode = generateNumericTransactionCode();
+
+      await (stub as unknown as CredentialOfferStoreRpcStub).createOfferRpc({
+        id: offerId,
+        tenantId: input.tenantId,
+        userId: adminUserId,
+        subjectKind: 'admin',
+        credentialProfileId: ADMIN_OFFER_PROFILE_ID,
+        credentialProfileVersion: ADMIN_OFFER_PROFILE_VERSION,
+        credentialProfileSnapshotHash: await sha256Base64url(ADMIN_OFFER_SNAPSHOT_CONTRACT),
+        credentialConfigurationId: ADMIN_CREDENTIAL_CONFIGURATION_ID,
+        mappingVersionId: ADMIN_OFFER_MAPPING_VERSION_ID,
+        mappingSnapshotHash: await sha256Base64url(ADMIN_OFFER_MAPPING_CONTRACT),
+        claimManifestHash: await sha256Base64url(JSON.stringify([])),
+        claims: {},
+        preAuthorizedCodeHash: await sha256Base64url(preAuthorizedCode),
+        txCodeHash: await hashTransactionCode(
+          env.VC_TRANSACTION_CODE_HMAC_SECRET,
+          input.tenantId,
+          offerId,
+          transactionCode
+        ),
+        createdAt,
+        expiresAt,
+      });
+
+      const credentialOfferUri = `${credentialIssuer}/vci/offers/${encodeURIComponent(preAuthorizedCode)}`;
+      return {
+        offerId,
+        credentialOfferUri,
+        credentialOffer: toCredentialOfferQrValue(credentialOfferUri),
+        expiresAt,
+        transactionCode,
+      };
+    });
+  }
+
+  /** Null unless the offer is an admin offer of exactly this tenant and administrator. */
+  async getAdminCredentialOfferStatus(input: {
+    tenantId: string;
+    adminUserId: string;
+    offerId: string;
+  }): Promise<AdminCredentialOfferStatus | null> {
+    return runSamlDrCoveredOperation(this.env, this.ctx, async (env) => {
+      if (!isValidTenantIdentifier(input.tenantId)) {
+        throw new Error('invalid_tenant_id');
+      }
+      const adminUserId = requireIdentifier(input.adminUserId, 'admin_user_id');
+      let stub: CredentialOfferStoreRpcStub;
+      try {
+        stub = getCredentialOfferStoreById(env, input.offerId, input.tenantId)
+          .stub as unknown as CredentialOfferStoreRpcStub;
+      } catch {
+        return null;
+      }
+      const progress = await stub.getAdminOfferProgressRpc({
+        id: input.offerId,
+        tenantId: input.tenantId,
+        userId: adminUserId,
+        now: Date.now(),
+      });
+      return progress
+        ? {
+            offerId: progress.offerId,
+            state: progress.state,
+            expiresAt: progress.expiresAt,
+            ...(progress.holderKeyThumbprint
+              ? { holderKeyThumbprint: progress.holderKeyThumbprint }
+              : {}),
+          }
+        : null;
+    });
+  }
 }
 
-export const SAML_DR_WRITER_SURFACES = ['rpc:VCIssuerEntrypoint.createCredentialOffer'] as const;
+export const SAML_DR_WRITER_SURFACES = [
+  'rpc:VCIssuerEntrypoint.createAdminCredentialOffer',
+  'rpc:VCIssuerEntrypoint.createCredentialOffer',
+  'rpc:VCIssuerEntrypoint.getAdminCredentialOfferStatus',
+] as const;

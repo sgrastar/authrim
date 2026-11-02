@@ -298,6 +298,10 @@
 		{/if}
 	</Card>
 
+	<Card title={t('me.keyring')} description={t('me.keyringDesc')}>
+		<Button icon="plus" size="sm" href="/admin/me/keyring">{t('keyring.start.button')}</Button>
+	</Card>
+
 	<Card title={t('me.session')} flush>
 		<SettingRow title={t('account.signOut')} description={t('me.signOutDesc')}>
 			<Button icon="logout" size="sm" onclick={signOut}>{t('account.signOut')}</Button>

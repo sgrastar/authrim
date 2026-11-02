@@ -132,15 +132,25 @@ export async function suspendCredentialHandler(c: Context<{ Bindings: Env }>): P
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
+    // Only an active credential can be suspended. The conditional update keeps a concurrent
+    // revocation, or a credential still being issued (`pending`), from being overwritten.
+    if (
+      !(await issuedCredentialRepo.updateStatusIfCurrent(
+        tenantId,
+        credentialId,
+        'active',
+        'suspended'
+      ))
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
+    }
+
     // Update status in the status list
     await statusListManager.suspend(
       tenantId,
       credential.status_list_id,
       credential.status_list_index
     );
-
-    // Update credential status in database
-    await issuedCredentialRepo.updateStatus(tenantId, credentialId, 'suspended');
 
     return c.json({
       id: credentialId,
@@ -199,15 +209,25 @@ export async function activateCredentialHandler(c: Context<{ Bindings: Env }>): 
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
+    // Only a suspended credential is reactivated: never a revoked one, and never a `pending`
+    // credential, which only the issuance path may activate.
+    if (
+      !(await issuedCredentialRepo.updateStatusIfCurrent(
+        tenantId,
+        credentialId,
+        'suspended',
+        'active'
+      ))
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
+    }
+
     // Update status in the status list
     await statusListManager.activate(
       tenantId,
       credential.status_list_id,
       credential.status_list_index
     );
-
-    // Update credential status in database
-    await issuedCredentialRepo.updateStatus(tenantId, credentialId, 'active');
 
     return c.json({
       id: credentialId,

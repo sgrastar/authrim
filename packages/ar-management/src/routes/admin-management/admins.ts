@@ -20,6 +20,7 @@ import {
   AdminPasskeyRepository,
   createErrorResponse,
   AR_ERROR_CODES,
+  getDefaultTenantId,
   getTenantIdFromContext,
   adminAuthMiddleware,
   ADMIN_PERMISSIONS,
@@ -33,6 +34,7 @@ import {
 } from '@authrim/ar-lib-core';
 import { resolveAaguidAuthenticator } from '@authrim/ar-lib-core/webauthn/aaguid-metadata';
 import { writeAdminAuditLog } from '../../admin-shared';
+import { ensureCrossTenantPlacement } from './cross-tenant-placement';
 import {
   callerOutranks,
   callerOutranksGlobally,
@@ -312,6 +314,59 @@ adminUsersRouter.get('/', async (c) => {
       totalPages: result.totalPages,
     });
   } catch (error) {
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+});
+
+/**
+ * GET /api/admin/admins/cross-tenant-exceptions
+ * Legacy cross-tenant administrators: admins with a current global assignment whose home tenant
+ * is not the deployment default tenant (admin credential design D9). Read-only; callers without
+ * the global wildcard only see their own tenant's admins.
+ */
+adminUsersRouter.get('/cross-tenant-exceptions', async (c) => {
+  try {
+    const authContext = c.get('adminAuth') as AdminAuthContext;
+    const adapter = getAdminAdapter(c);
+    const tenantId = getTenantIdFromContext(c);
+    const defaultTenantId = getDefaultTenantId(c.env);
+    const allTenants = hasGlobalAdminPermission(authContext, '*');
+
+    const rows = await adapter.query<{
+      id: string;
+      email: string;
+      tenant_id: string;
+      assignment_id: string;
+    }>(
+      `SELECT u.id, u.email, u.tenant_id, ra.id AS assignment_id
+         FROM admin_users u
+         JOIN admin_role_assignments ra ON ra.admin_user_id = u.id
+        WHERE ra.scope_type = 'global'
+          AND (ra.expires_at IS NULL OR ra.expires_at > ?)
+          AND u.tenant_id <> ?
+          ${allTenants ? '' : 'AND u.tenant_id = ?'}
+        ORDER BY u.tenant_id, u.email, ra.id
+        LIMIT 1000`,
+      allTenants ? [Date.now(), defaultTenantId] : [Date.now(), defaultTenantId, tenantId]
+    );
+
+    const byAdmin = new Map<
+      string,
+      { id: string; email: string; tenant_id: string; assignment_ids: string[] }
+    >();
+    for (const row of rows) {
+      const entry = byAdmin.get(row.id) ?? {
+        id: row.id,
+        email: row.email,
+        tenant_id: row.tenant_id,
+        assignment_ids: [],
+      };
+      entry.assignment_ids.push(row.assignment_id);
+      byAdmin.set(row.id, entry);
+    }
+    const items = [...byAdmin.values()];
+    return c.json({ items, total: items.length, default_tenant_id: defaultTenantId });
+  } catch {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 });
@@ -809,6 +864,14 @@ adminUsersRouter.post('/:id/roles', async (c) => {
       (!Number.isFinite(body.expires_at) || body.expires_at <= 0)
     ) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+    }
+
+    const placementRefusal = ensureCrossTenantPlacement(c, c.env, {
+      scopeType: normalizedScope.scopeType,
+      homeTenantId: user.tenant_id,
+    });
+    if (placementRefusal) {
+      return placementRefusal;
     }
 
     const duplicate = await roleAssignmentRepo.assignmentExists({

@@ -20,6 +20,7 @@ import { getTenantIdFromContext } from './request-context';
 import { createLogger } from '../utils/logger';
 import { resolvePlatformSettingsWithSources } from '../services/effective-settings';
 import { rateLimitProfileKeys } from '../types/settings/rate-limit';
+import { redactSecretPathSegments } from '../utils/diagnostic-redaction';
 
 const log = createLogger().module('RATE-LIMIT');
 
@@ -164,7 +165,7 @@ function finishRateLimitTiming(
     diagnosticSessionId: sanitizeDiagnosticSessionId(
       c.req.raw.headers.get(DIAGNOSTIC_SESSION_ID_HEADER)
     ),
-    path: c.req.path,
+    path: redactSecretPathSegments(c.req.path),
     mode: metadata.mode,
     tenantId: metadata.tenantId,
     endpointClass: metadata.endpointClass,
@@ -588,7 +589,7 @@ function scheduleNonBlockingRateLimit(
     .then((result) => {
       if (!result.allowed) {
         log.warn('Non-blocking read rate limit exceeded after response', {
-          path: c.req.path,
+          path: redactSecretPathSegments(c.req.path),
           tenantId,
           endpointClass: config.endpointClass,
           resetAt: result.resetAt,
@@ -888,7 +889,7 @@ export function rateLimitMiddleware(config: RateLimitConfig) {
           type: SECURITY_EVENTS.RATE_LIMIT_EXCEEDED,
           tenantId: getTenantIdFromContext(c),
           data: {
-            endpoint: c.req.path,
+            endpoint: redactSecretPathSegments(c.req.path),
             clientIpHash: ipHash,
             rateLimit: {
               maxRequests: activeConfig.maxRequests,

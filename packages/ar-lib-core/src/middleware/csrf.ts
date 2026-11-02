@@ -26,6 +26,7 @@ import { isAllowedOrigin, parseAllowedOrigins } from '../utils/origin-validator'
 import { createLogger } from '../utils/logger';
 import { getTenantIdFromContext } from './request-context';
 import { getTenantSettingsDocument } from '../utils/tenant-settings';
+import { redactSecretPathSegments } from '../utils/diagnostic-redaction';
 
 const log = createLogger().module('CSRF');
 
@@ -92,7 +93,7 @@ function finishCsrfTiming(
   });
   appendServerTiming(c, spans);
   log.info('CSRF timing', {
-    path: c.req.path,
+    path: redactSecretPathSegments(c.req.path),
     result,
     duration_ms: roundDiagnosticDurationMs(Date.now() - startedAtMs),
     spans_ms: Object.fromEntries(spans.map((span) => [span.name, span.durationMs])),

@@ -5,7 +5,11 @@ import type { SamlDrWriterEnv } from '@authrim/ar-lib-core/services/tenant-porta
  * Type definitions for the unified VC worker (VP + VCI + DID).
  */
 
-import type { PresentationDefinition, DCQLQuery } from '@authrim/ar-lib-core';
+import type {
+  AdminCredentialEligibilityServiceBinding,
+  PresentationDefinition,
+  DCQLQuery,
+} from '@authrim/ar-lib-core';
 
 // =============================================================================
 // Environment Bindings
@@ -29,6 +33,12 @@ export interface Env extends SamlDrWriterEnv {
 
   // Service Bindings
   POLICY_SERVICE: Fetcher;
+  /**
+   * ar-management RPC (`AdminCredentialEligibilityEntrypoint`): re-checks an administrator's
+   * eligibility right before an admin credential is signed. Optional: without it admin
+   * credentials are never issued.
+   */
+  ADMIN_CREDENTIAL_ELIGIBILITY?: AdminCredentialEligibilityServiceBinding;
 
   // Verifier Environment Variables
   VERIFIER_IDENTIFIER: string;

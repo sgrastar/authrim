@@ -845,5 +845,47 @@ export const en = {
 	'map.fix.join': 'Join with commas',
 	'map.fix.bool': 'Convert to true or false',
 	'map.unusedList': '{source} not used: {list}',
-	'map.nothing': 'No attributes match'
+	'map.nothing': 'No attributes match',
+	'me.keyring': 'Authrim Keyring',
+	'me.keyringDesc':
+		'Add your administrator credential to Authrim Keyring on your iPhone. The credential is used to approve sensitive operations.',
+	'keyring.page.title': 'Add to Authrim Keyring',
+	'keyring.page.desc':
+		'Issue your administrator credential to Authrim Keyring. The QR code is valid for a short time and can be used only once.',
+	'keyring.back': 'Back to account',
+	'keyring.start.title': 'Issue a credential',
+	'keyring.start.body':
+		'Press the button to show a QR code, then scan it with Authrim Keyring on your iPhone. The confirmation code appears after Keyring has scanned the QR code.',
+	'keyring.start.button': 'Add to Keyring',
+	'keyring.creating': 'Creating the QR code…',
+	'keyring.step1.title': 'Step 1: Scan the QR code',
+	'keyring.step1.body':
+		'Open Authrim Keyring on your iPhone and scan this QR code. Do not let anyone else see or photograph this screen.',
+	'keyring.qr.alt': 'QR code for adding your administrator credential to Authrim Keyring',
+	'keyring.expiresIn': 'Expires in {time}',
+	'keyring.step2.title': 'Step 2: Enter the code in Keyring',
+	'keyring.step2.body': 'Keyring has scanned the QR code. Enter this 6-digit code in Keyring.',
+	'keyring.code.label': 'Transaction code (6 digits)',
+	'keyring.issued.title': 'Credential issued',
+	'keyring.issued.body': 'Check the key of the credential that was added to Keyring.',
+	'keyring.confirm.label': 'Key confirmation code',
+	'keyring.confirm.check':
+		'Check that the key confirmation code shown in Keyring is the same as the code shown here.',
+	'keyring.confirm.mismatch':
+		'If the codes differ, or Keyring did not receive a credential, someone else may have taken the QR code. Revoking a credential will be added in a later version. Until then, contact an administrator.',
+	'keyring.ended.failed': 'Issuing failed',
+	'keyring.ended.failedBody':
+		'The credential could not be issued. Create a new code and try again.',
+	'keyring.ended.expired': 'The code has expired',
+	'keyring.ended.expiredBody': 'The QR code has expired. Create a new code.',
+	'keyring.ended.locked': 'The code is locked',
+	'keyring.ended.lockedBody':
+		'Too many wrong codes were entered, so this QR code can no longer be used. Create a new code.',
+	'keyring.again': 'Create a new code',
+	'keyring.reauth.button': 'Sign in again',
+	'keyring.error.freshAuth': 'This action needs a recent sign-in. Sign in again, then retry.',
+	'keyring.error.notEligible': 'This account cannot add a credential to Authrim Keyring.',
+	'keyring.error.unavailable': 'Credential issuing is not enabled in this environment.',
+	'keyring.error.generic': 'The action could not be completed. Try again in a moment.',
+	'keyring.error.polling': 'The status could not be checked. Create a new code and try again.'
 } satisfies Messages;

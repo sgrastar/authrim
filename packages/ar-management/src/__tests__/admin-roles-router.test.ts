@@ -141,6 +141,7 @@ function createTestApp() {
     app,
     env: {
       DB_ADMIN: {} as D1Database,
+      DEFAULT_TENANT_ID: 'tenant_123',
     } as unknown as Env,
   };
 }
@@ -644,6 +645,115 @@ describe('adminRolesRouter', () => {
     );
   });
 
+  describe('cross-tenant placement (global scope only for admins homed in the default tenant)', () => {
+    const platformHeaders = {
+      'Content-Type': 'application/json',
+      'x-test-permissions': `*,${ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE},${ADMIN_PERMISSIONS.ADMIN_ROLES_READ}`,
+      'x-test-global-permissions': '*',
+      'x-test-tenant-scope': '*',
+      'x-test-hierarchy-level': '50',
+      'x-test-global-hierarchy-level': '50',
+    };
+
+    beforeEach(() => {
+      repoMocks.getRole.mockResolvedValue({
+        id: 'role_ar_support',
+        tenant_id: 'tenant_123',
+        is_system: false,
+        permissions: ['admin:users:read'],
+        hierarchy_level: 10,
+        name: 'support',
+      });
+      repoMocks.findAdminUserByTenantAndId.mockResolvedValue({
+        id: 'admin_2',
+        tenant_id: 'tenant_123',
+      });
+      repoMocks.assignmentExists.mockResolvedValue(false);
+    });
+
+    it('refuses a global assignment for an admin homed in another tenant', async () => {
+      const { app, env } = createTestApp();
+      const response = await app.request(
+        '/api/admin/admin-roles/role_ar_support/assignments',
+        {
+          method: 'POST',
+          headers: platformHeaders,
+          body: JSON.stringify({ admin_user_id: 'admin_2', scope_type: 'global' }),
+        },
+        { ...env, DEFAULT_TENANT_ID: 'platform' }
+      );
+
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({
+        error: 'cross_tenant_admin_requires_default_home',
+      });
+      expect(repoMocks.assignRole).not.toHaveBeenCalled();
+    });
+
+    it('still allows a tenant-scoped assignment for an admin homed in another tenant', async () => {
+      repoMocks.assignRole.mockResolvedValue({ id: 'assignment_t', scope_type: 'tenant' });
+      const { app, env } = createTestApp();
+      const response = await app.request(
+        '/api/admin/admin-roles/role_ar_support/assignments',
+        {
+          method: 'POST',
+          headers: platformHeaders,
+          body: JSON.stringify({ admin_user_id: 'admin_2', scope_type: 'tenant' }),
+        },
+        { ...env, DEFAULT_TENANT_ID: 'platform' }
+      );
+
+      expect(response.status).toBe(201);
+    });
+
+    it('refuses widening a tenant assignment to global for an admin homed elsewhere', async () => {
+      repoMocks.getAssignment.mockResolvedValue({
+        id: 'assignment_1',
+        admin_role_id: 'role_ar_support',
+        admin_user_id: 'admin_2',
+        scope_type: 'tenant',
+        scope_id: 'tenant_123',
+      });
+      const { app, env } = createTestApp();
+      const response = await app.request(
+        '/api/admin/admin-roles/role_ar_support/assignments/assignment_1',
+        {
+          method: 'PATCH',
+          headers: platformHeaders,
+          body: JSON.stringify({ scope_type: 'global' }),
+        },
+        { ...env, DEFAULT_TENANT_ID: 'platform' }
+      );
+
+      expect(response.status).toBe(409);
+      expect(repoMocks.updateAssignment).not.toHaveBeenCalled();
+    });
+
+    it('keeps an existing global assignment updatable (expiry only) wherever the admin is homed', async () => {
+      repoMocks.getAssignment.mockResolvedValue({
+        id: 'assignment_g',
+        admin_role_id: 'role_ar_support',
+        admin_user_id: 'admin_2',
+        scope_type: 'global',
+        scope_id: null,
+      });
+      repoMocks.updateAssignment.mockResolvedValue({ id: 'assignment_g', scope_type: 'global' });
+      const { app, env } = createTestApp();
+      const response = await app.request(
+        '/api/admin/admin-roles/role_ar_support/assignments/assignment_g',
+        {
+          method: 'PATCH',
+          headers: platformHeaders,
+          body: JSON.stringify({ expires_at: Date.now() + 86_400_000 }),
+        },
+        { ...env, DEFAULT_TENANT_ID: 'platform' }
+      );
+
+      expect(response.status).toBe(200);
+      expect(repoMocks.updateAssignment).toHaveBeenCalled();
+    });
+  });
+
   describe('a global scope takes the wildcard from a global assignment', () => {
     // `permissions` adds up every assignment, so a wildcard held for the tenant is in it.
     const summedOnly = {
@@ -667,7 +777,10 @@ describe('adminRolesRouter', () => {
         hierarchy_level: 10,
         name: 'support',
       });
-      repoMocks.findAdminUserByTenantAndId.mockResolvedValue({ id: 'admin_2' });
+      repoMocks.findAdminUserByTenantAndId.mockResolvedValue({
+        id: 'admin_2',
+        tenant_id: 'tenant_123',
+      });
       repoMocks.getAssignment.mockResolvedValue({
         id: 'assignment_1',
         admin_role_id: 'role_ar_support',

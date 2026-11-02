@@ -5,6 +5,7 @@
  * - GET /api/admin/signing-keys/status - Get status of all keys
  * - POST /api/admin/signing-keys/rotate - Perform normal key rotation
  * - POST /api/admin/signing-keys/emergency-rotate - Perform emergency rotation
+ * - POST /api/admin/signing-keys/vc/:kid/revoke - Revoke one VC issuer key by kid
  */
 
 import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
@@ -204,6 +205,62 @@ export async function adminSigningKeysEmergencyRotateHandler(c: Context<{ Bindin
   } catch (error) {
     const log = getLogger(c).module('SIGNING-KEYS');
     log.error('Failed to perform emergency key rotation', {}, error as Error);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+/**
+ * POST /api/admin/signing-keys/vc/:kid/revoke
+ *
+ * Revoke a VC issuer (EC) signing key by kid, including a key already retired by normal rotation
+ * whose public half is still published for credential verification. Use when a key is known to be
+ * compromised; every credential it signed stops verifying.
+ *
+ * Request body: { "reason": "Key compromise detected - [details]" } (10 characters to 2048 bytes)
+ */
+export async function adminVcIssuerKeyRevokeHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('SIGNING-KEYS');
+  try {
+    const kid = c.req.param('kid');
+    const body = (await c.req.json().catch(() => null)) as { reason?: unknown } | null;
+    const reason = typeof body?.reason === 'string' ? body.reason.trim() : '';
+    if (!kid || kid.length > 256) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'kid' },
+      });
+    }
+    // The stored reason must stay within what the DR backup of KeyManager state accepts
+    if (reason.length < 10 || new TextEncoder().encode(reason).byteLength > 2048) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'reason' },
+      });
+    }
+
+    const tenantId = getTenantIdFromContext(c);
+    const keyManager = c.env.KEY_MANAGER.get(c.env.KEY_MANAGER.idFromName(`${tenantId}-v3`));
+    const result = await keyManager.revokeVcIssuerKeyRpc(kid, reason);
+    if (!result.revoked) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+
+    await createAuditLogFromContext(
+      c,
+      'signing_keys.vc_issuer.revoke',
+      'signing_keys',
+      kid,
+      { reason, ...(result.replacedBy ? { replacedBy: result.replacedBy } : {}) },
+      'critical'
+    );
+
+    return c.json({
+      success: true,
+      revokedKeyId: kid,
+      ...(result.replacedBy ? { newKeyId: result.replacedBy } : {}),
+      warning:
+        'Credentials signed with this key no longer verify once cached issuer metadata expires (up to 5 minutes)',
+    });
+  } catch (error) {
+    log.error('Failed to revoke VC issuer key', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

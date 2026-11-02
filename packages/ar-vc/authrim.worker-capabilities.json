@@ -99,6 +99,12 @@
       "required": true
     },
     {
+      "name": "ADMIN_CREDENTIAL_ELIGIBILITY",
+      "kind": "service",
+      "required": false,
+      "capability": "admin_credential.eligibility"
+    },
+    {
       "name": "LOG_ARCHIVE_WRITER",
       "kind": "service",
       "required": false,

@@ -365,3 +365,46 @@ export function initializeCredentialStoreSchema(
     if (needsMigration) storage.sql.exec(migrationSql);
   });
 }
+
+/**
+ * Append-only upgrade of the offer store for the issuance state machine (design D4). It runs after
+ * the primary-key step and only adds: the offer's subject kind, the first-fetch time, and the
+ * per-offer issuance table. The offer status CHECK constraint is left untouched; `issuing`,
+ * `issued` and `failed` live in `credential_offer_issuances`, where the primary key makes the
+ * claim single-winner.
+ */
+export const VCI_OFFER_ISSUANCE_TABLE = `
+      CREATE TABLE IF NOT EXISTS credential_offer_issuances (
+        offer_id TEXT PRIMARY KEY NOT NULL,
+        tenant_id TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('issuing','issued','failed')),
+        access_token_jti TEXT NOT NULL,
+        holder_jkt TEXT,
+        lease_expires_at INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+`;
+
+/** Idempotent: columns are detected through `PRAGMA table_info`, so existing rows are kept. */
+export function upgradeCredentialOfferIssuanceSchema(
+  storage: Pick<DurableObjectStorage, 'sql' | 'transactionSync'>
+): void {
+  storage.transactionSync(() => {
+    const columns = new Set(
+      storage.sql
+        .exec<{ name: string }>(`PRAGMA table_info("credential_offers")`)
+        .toArray()
+        .map((column) => column.name)
+    );
+    if (!columns.has('subject_kind')) {
+      storage.sql.exec(
+        `ALTER TABLE credential_offers ADD COLUMN subject_kind TEXT NOT NULL DEFAULT 'end_user' CHECK (subject_kind IN ('end_user','admin'))`
+      );
+    }
+    if (!columns.has('fetched_at')) {
+      storage.sql.exec(`ALTER TABLE credential_offers ADD COLUMN fetched_at INTEGER`);
+    }
+    storage.sql.exec(VCI_OFFER_ISSUANCE_TABLE);
+  });
+}

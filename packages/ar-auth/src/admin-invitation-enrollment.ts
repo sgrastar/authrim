@@ -17,6 +17,7 @@ import {
   adminWebAuthnOriginMatchesRpId,
   generateId,
   getAdminCookieSameSite,
+  getDefaultTenantId,
   getAdminInvitationClientIp,
   getAdminWebAuthnRpIdForOrigin,
   hashAdminInvitationCode,
@@ -538,6 +539,12 @@ adminInvitationEnrollmentApp.post('/api/admin/invitations/activate', async (c) =
   if (!verification.verified) return c.json({ error: 'passkey_authentication_failed' }, 401);
 
   const invitation = checked.invitation;
+  // Placement policy (admin credential design D9): a global assignment may only be held by an
+  // admin homed in the deployment default tenant. An invitation created before the policy, or
+  // for another home, is refused here rather than turned into a new cross-tenant assignment.
+  if (invitation.scope_type === 'global' && invitation.tenant_id !== getDefaultTenantId(c.env)) {
+    return c.json({ error: 'cross_tenant_admin_requires_default_home' }, 409);
+  }
   const now = Date.now();
   const passkeyId = generateId();
   const assignmentId = generateId();

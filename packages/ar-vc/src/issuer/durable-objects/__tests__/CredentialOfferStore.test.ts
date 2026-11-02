@@ -29,7 +29,16 @@ class MemoryVciSql {
     ...p: SqlStorageValue[]
   ): SqlStorageCursor<T> {
     const q = query.replace(/\s+/g, ' ').trim();
-    if (q.startsWith('PRAGMA table_info')) return cursor([{ pk: 1, notnull: 1 }]) as never;
+    if (q.startsWith('PRAGMA table_info'))
+      return cursor([
+        { name: 'id', pk: 1, notnull: 1 },
+        { name: 'subject_kind', pk: 0, notnull: 1 },
+        { name: 'fetched_at', pk: 0, notnull: 0 },
+      ]) as never;
+    // The issuance table has its own tests against real SQLite (CredentialOfferIssuance.test.ts).
+    if (q.includes('credential_offer_issuances')) {
+      return cursor(q.startsWith('SELECT MIN(') ? [{ next_at: null }] : []) as never;
+    }
     if (q.startsWith('CREATE TABLE') || q.startsWith('CREATE INDEX')) return cursor() as never;
     if (q.startsWith('INSERT INTO credential_offers')) {
       const [
@@ -344,6 +353,50 @@ describe('CredentialOfferStore security state machine', () => {
     expect(store.getOfferRpc({ id: 'offer-a', tenantId: 'tenant-a', now: 3_000 })?.status).toBe(
       'locked'
     );
+  });
+
+  it('treats a missing or unexpected tx_code as malformed without spending an attempt', () => {
+    store.createOfferRpc(offer('offer-pin', { txCodeHash: 'pin-ok', maxAttempts: 1 }));
+    store.createOfferRpc(offer('offer-open'));
+
+    for (let i = 0; i < 3; i++) {
+      expect(
+        store.reserveOfferRpc({
+          id: 'offer-pin',
+          tenantId: 'tenant-a',
+          preAuthorizedCodeHash: 'hash-offer-pin',
+          now: 2_000 + i,
+        })
+      ).toEqual({ reserved: false, reason: 'tx_code_required' });
+    }
+    expect(
+      store.reserveOfferRpc({
+        id: 'offer-open',
+        tenantId: 'tenant-a',
+        preAuthorizedCodeHash: 'hash-offer-open',
+        txCodeHash: 'pin-anything',
+        now: 2_000,
+      })
+    ).toEqual({ reserved: false, reason: 'tx_code_not_expected' });
+
+    // Neither offer was locked nor reserved, so the right request still succeeds.
+    expect(
+      store.reserveOfferRpc({
+        id: 'offer-pin',
+        tenantId: 'tenant-a',
+        preAuthorizedCodeHash: 'hash-offer-pin',
+        txCodeHash: 'pin-ok',
+        now: 2_010,
+      }).reserved
+    ).toBe(true);
+    expect(
+      store.reserveOfferRpc({
+        id: 'offer-open',
+        tenantId: 'tenant-a',
+        preAuthorizedCodeHash: 'hash-offer-open',
+        now: 2_010,
+      }).reserved
+    ).toBe(true);
   });
 
   it('does not expose an offer across tenants', () => {

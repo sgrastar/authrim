@@ -3889,6 +3889,46 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  /api/admin/admins/cross-tenant-exceptions:
+    get:
+      tags:
+        - Admin Users
+      summary: List legacy cross-tenant administrators.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+      responses:
+        '200':
+          description: Administrators with a current global assignment whose home tenant is not the deployment default tenant.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        email:
+                          type: string
+                        tenant_id:
+                          type: string
+                        assignment_ids:
+                          type: array
+                          items:
+                            type: string
+                  total:
+                    type: integer
+                  default_tenant_id:
+                    type: string
+      description: >-
+        Read-only listing for the migration described in the admin credential design (D9). Callers
+        holding the global wildcard see all tenants; others only their own tenant's administrators.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   '/api/admin/admins/{id}':
     get:
       tags:
@@ -23069,6 +23109,67 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  /api/admin/signing-keys/vc/{kid}/revoke:
+    post:
+      tags:
+        - Admin Miscellaneous
+      operationId: postApiAdminSigningKeysVcKidRevoke
+      summary: Revoke a VC issuer signing key
+      description: >-
+        Revokes one VC issuer (EC) signing key by kid, including a key already retired by normal
+        rotation whose public half is still published for credential verification. An active key is
+        replaced through emergency rotation. Every credential the key signed stops verifying once
+        cached issuer metadata expires (up to 5 minutes). Records a critical audit event.
+      parameters:
+        - name: kid
+          in: path
+          required: true
+          schema:
+            type: string
+            maxLength: 256
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - reason
+              properties:
+                reason:
+                  type: string
+                  minLength: 10
+      responses:
+        '200':
+          description: Key revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - success
+                  - revokedKeyId
+                properties:
+                  success:
+                    type: boolean
+                  revokedKeyId:
+                    type: string
+                  newKeyId:
+                    type: string
+                    description: Present when the revoked key was active and has been replaced.
+                  warning:
+                    type: string
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   /api/admin/stats/auth:
     get:
       tags:
@@ -31379,6 +31480,126 @@ paths:
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/AdminPasskeyOptions'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/me/wallet-credentials/offers:
+    post:
+      tags:
+        - Admin Wallet Credentials
+      operationId: postApiAdminMeWalletCredentialsOffers
+      summary: Create an admin credential offer.
+      description: >-
+        Create a one-time OpenID4VCI offer of the signed-in Admin's own admin credential. Requires a
+        fresh human session (MFA verified, authenticated within 5 minutes); otherwise 403
+        wallet_credential_fresh_auth_required. The session must be the Admin's own home-tenant
+        session, not a tenant-switched one. The Admin must be eligible (active, unlocked, with a
+        role assignment effective in the home tenant), otherwise 403 wallet_credential_not_eligible.
+        The response is never cached; a replay of the same Idempotency-Key returns it without the
+        offer URI and transaction code.
+      x-authrim-route-coverage: inferred-from-source
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        '201':
+          description: Offer created.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum:
+                  - no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - offerId
+                  - credentialOffer
+                  - transactionCode
+                  - expiresAt
+                properties:
+                  offerId:
+                    type: string
+                  credentialOffer:
+                    type: string
+                    description: openid-credential-offer:// URI carrying credential_offer_uri.
+                  transactionCode:
+                    type: string
+                    description: One-time code the wallet asks for; shown only after the wallet fetched the offer.
+                  expiresAt:
+                    type: integer
+                    description: Expiry in epoch milliseconds.
+        '403':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/me/wallet-credentials/offers/{offerId}':
+    get:
+      tags:
+        - Admin Wallet Credentials
+      operationId: getApiAdminMeWalletCredentialsOffersByOfferId
+      summary: Get admin credential offer progress.
+      description: >-
+        Progress of an offer created by the signed-in Admin, for the console's polling. 404 for an
+        unknown offer or one owned by another Admin. The response is never cached.
+      x-authrim-route-coverage: inferred-from-source
+      parameters:
+        - name: offerId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Offer progress.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum:
+                  - no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - offerId
+                  - state
+                  - expiresAt
+                properties:
+                  offerId:
+                    type: string
+                  state:
+                    type: string
+                    enum:
+                      - pending
+                      - fetched
+                      - token_issued
+                      - issued
+                      - failed
+                      - expired
+                      - locked
+                  expiresAt:
+                    type: integer
+                  holderKeyThumbprint:
+                    type: string
+                    description: RFC 7638 thumbprint of the issued credential's cnf.jwk, once issued.
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -49324,10 +49545,19 @@ components:
         transaction_code_required: { type: boolean, default: false }
     CredentialOfferResult:
       type: object
-      required: [offerId, credentialOfferUri, expiresAt, claimManifestHash]
+      required: [offerId, credentialOfferUri, credentialOffer, expiresAt, claimManifestHash]
       properties:
         offerId: { type: string }
-        credentialOfferUri: { type: string, format: uri }
+        credentialOfferUri:
+          type: string
+          format: uri
+          description: https URI of the Credential Offer object (the wallet's credential_offer_uri).
+        credentialOffer:
+          type: string
+          format: uri
+          description: >-
+            `openid-credential-offer://?credential_offer_uri=...`; the value to render as a QR code
+            or open on the same device. Contains a bearer secret; never log or persist it.
         expiresAt: { type: integer }
         claimManifestHash: { type: string }
         transactionCode: { type: string, writeOnly: true }

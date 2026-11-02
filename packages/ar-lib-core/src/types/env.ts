@@ -17,7 +17,10 @@ import type { AuthRuntimePorts } from './auth-runtime-ports';
 import type { RuntimeDataPorts } from './runtime-data-ports';
 import type { AuditRuntimePorts } from './audit-runtime-ports';
 import type { EventRuntimePorts } from './event-runtime-ports';
-import type { VCIssuerServiceBinding } from './vc-service';
+import type {
+  AdminCredentialEligibilityServiceBinding,
+  VCIssuerServiceBinding,
+} from './vc-service';
 import type { ControlServiceBinding } from '../services/control-plane/control-plane-contracts';
 import type { AccountDirectoryServiceBinding } from '../services/lookup-directory/publication';
 import type {
@@ -518,6 +521,7 @@ export interface Env extends LogIcebergSettingsEnv {
   EXTERNAL_IDP_ACCOUNT_PROVISIONER?: ExternalIdpAccountProvisioningServiceBinding;
   PLUGIN_RUNNER?: PluginRunnerServiceBinding; // Narrow Plugin Runner RPC facade
   VC_ISSUER?: VCIssuerServiceBinding; // Least-privilege credential-offer creation facade
+  ADMIN_CREDENTIAL_ELIGIBILITY?: AdminCredentialEligibilityServiceBinding; // ar-vc → ar-management issuance-time admin eligibility re-check
   VC_PROFILE_CONTRACT_HMAC_SECRET?: string;
   VC_ATTRIBUTE_ELEVATION_AUDIENCE?: string;
   EMAIL?: EmailServiceBinding; // Cloudflare Email Service send_email binding

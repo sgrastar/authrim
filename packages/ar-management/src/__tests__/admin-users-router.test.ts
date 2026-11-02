@@ -877,7 +877,7 @@ describe('adminUsersRouter', () => {
   });
 
   it('allows a platform-authorized caller to assign a shared system role globally', async () => {
-    repoMocks.findByTenantAndId.mockResolvedValue({ id: 'admin_target' });
+    repoMocks.findByTenantAndId.mockResolvedValue({ id: 'admin_target', tenant_id: 'tenant_123' });
     repoMocks.getRole.mockResolvedValue({
       id: 'role_system',
       tenant_id: 'default',
@@ -887,7 +887,8 @@ describe('adminUsersRouter', () => {
     });
     repoMocks.assignmentExists.mockResolvedValue(false);
     repoMocks.assignRole.mockResolvedValue({ id: 'assignment_global' });
-    const { app, env } = createTestApp();
+    const { app, env: baseEnv } = createTestApp();
+    const env = { ...baseEnv, DEFAULT_TENANT_ID: 'tenant_123' } as Env;
 
     const response = await app.request(
       '/api/admin/admins/admin_target/roles',
@@ -910,6 +911,100 @@ describe('adminUsersRouter', () => {
     expect(repoMocks.assignRole).toHaveBeenCalledWith(
       expect.objectContaining({ scope_type: 'global', scope_id: undefined })
     );
+  });
+
+  it('refuses a global role for an admin whose home tenant is not the deployment default', async () => {
+    repoMocks.findByTenantAndId.mockResolvedValue({ id: 'admin_target', tenant_id: 'tenant_123' });
+    repoMocks.getRole.mockResolvedValue({
+      id: 'role_system',
+      tenant_id: 'default',
+      is_system: true,
+      hierarchy_level: 100,
+      name: 'system-auditor',
+    });
+    repoMocks.assignmentExists.mockResolvedValue(false);
+    const { app, env } = createTestApp();
+
+    const response = await app.request(
+      '/api/admin/admins/admin_target/roles',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-test-permissions': '*',
+          'x-test-global-permissions': '*',
+          'x-test-tenant-scope': '*',
+          'x-test-hierarchy-level': '150',
+          'x-test-global-hierarchy-level': '150',
+        },
+        body: JSON.stringify({ role_id: 'role_system', scope_type: 'global' }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: 'cross_tenant_admin_requires_default_home',
+    });
+    expect(repoMocks.assignRole).not.toHaveBeenCalled();
+  });
+
+  describe('GET /cross-tenant-exceptions', () => {
+    const rows = [
+      { id: 'a1', email: 'a@example.com', tenant_id: 'tenant_123', assignment_id: 'g1' },
+      { id: 'a1', email: 'a@example.com', tenant_id: 'tenant_123', assignment_id: 'g2' },
+    ];
+
+    it('groups the assignments of admins homed outside the default tenant', async () => {
+      mockAdminAdapter.query.mockResolvedValue(rows);
+      const { app, env } = createTestApp();
+      const response = await app.request(
+        '/api/admin/admins/cross-tenant-exceptions',
+        { headers: { 'x-test-permissions': ADMIN_PERMISSIONS.ADMIN_USERS_READ } },
+        env
+      );
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({
+        items: [
+          {
+            id: 'a1',
+            email: 'a@example.com',
+            tenant_id: 'tenant_123',
+            assignment_ids: ['g1', 'g2'],
+          },
+        ],
+        total: 1,
+        default_tenant_id: 'default',
+      });
+      // Without the global wildcard the listing is limited to the request tenant.
+      expect(mockAdminAdapter.query).toHaveBeenCalledWith(
+        expect.stringContaining('AND u.tenant_id = ?'),
+        [expect.any(Number), 'default', 'tenant_123']
+      );
+    });
+
+    it('lists all tenants for a global wildcard', async () => {
+      mockAdminAdapter.query.mockResolvedValue([]);
+      const { app, env } = createTestApp();
+      const response = await app.request(
+        '/api/admin/admins/cross-tenant-exceptions',
+        {
+          headers: {
+            'x-test-permissions': ADMIN_PERMISSIONS.ADMIN_USERS_READ,
+            'x-test-global-permissions': '*',
+            'x-test-tenant-scope': '*',
+          },
+        },
+        env
+      );
+
+      expect(response.status).toBe(200);
+      expect(mockAdminAdapter.query).toHaveBeenCalledWith(
+        expect.not.stringContaining('AND u.tenant_id = ?'),
+        [expect.any(Number), 'default']
+      );
+    });
   });
 
   it.each([

@@ -30,6 +30,28 @@ describe('Worker placement generation', () => {
       expect.objectContaining({ binding: 'ACCOUNT_PROVISIONER' })
     );
   });
+  it('binds ar-vc to the admin credential eligibility entrypoint only when VC is enabled', () => {
+    const config = createArchiveTestConfig('test');
+    config.components.adminUi = false;
+    const binding = {
+      binding: 'ADMIN_CREDENTIAL_ELIGIBILITY',
+      service: 'test-ar-management',
+      entrypoint: 'AdminCredentialEligibilityEntrypoint',
+      props: { caller: 'ar-vc', environmentId: 'test' },
+    };
+    const enabled = generateArchiveTestWrangler(
+      'ar-vc',
+      { ...config, components: { ...config.components, vc: true } },
+      { d1: {}, kv: {} }
+    );
+    expect(enabled.services).toContainEqual(binding);
+    const disabled = generateArchiveTestWrangler(
+      'ar-vc',
+      { ...config, components: { ...config.components, vc: false } },
+      { d1: {}, kv: {} }
+    );
+    expect(disabled.services ?? []).not.toContainEqual(binding);
+  });
   it('binds the Admin database to UserInfo for the identity mapping and Destination Profile', () => {
     const config = createArchiveTestConfig('test');
     config.components.adminUi = false;

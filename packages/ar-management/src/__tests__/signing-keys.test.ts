@@ -14,6 +14,7 @@ import {
   adminSigningKeysStatusHandler,
   adminSigningKeysRotateHandler,
   adminSigningKeysEmergencyRotateHandler,
+  adminVcIssuerKeyRevokeHandler,
 } from '../signing-keys';
 
 const audit = vi.hoisted(() => ({ write: vi.fn(async () => {}) }));
@@ -574,5 +575,79 @@ describe('Signing Keys Admin API', () => {
       // Verify KeyManager RPC was called for status
       expect(keyManager.getStatusRpc).toHaveBeenCalled();
     });
+  });
+});
+
+describe('POST /api/admin/signing-keys/vc/:kid/revoke', () => {
+  function createRevokeApp(result: { revoked: boolean; replacedBy?: string }) {
+    const revokeVcIssuerKeyRpc = vi.fn().mockResolvedValue(result);
+    const env = createMockEnv();
+    (env.KEY_MANAGER.get as ReturnType<typeof vi.fn>).mockReturnValue({ revokeVcIssuerKeyRpc });
+    const app = new Hono<{
+      Bindings: Env;
+      Variables: { adminAuth: AdminAuthContext; tenantId: string };
+    }>();
+    app.use('/api/admin/*', async (c, next) => {
+      c.set('adminAuth', { userId: 'test-admin', authMethod: 'bearer', roles: ['admin'] });
+      c.set('tenantId', 'default');
+      await next();
+    });
+    app.post('/api/admin/signing-keys/vc/:kid/revoke', adminVcIssuerKeyRevokeHandler);
+    return { app, env, revokeVcIssuerKeyRpc };
+  }
+
+  function revokeRequest(kid: string, body: unknown) {
+    return new Request(`http://localhost/api/admin/signing-keys/vc/${kid}/revoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  beforeEach(() => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  it('revokes a retired key through the tenant KeyManager', async () => {
+    const { app, env, revokeVcIssuerKeyRpc } = createRevokeApp({ revoked: true });
+    const response = await app.fetch(
+      revokeRequest('vc-key-1', { reason: 'Leaked in a support bundle' }),
+      env
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ success: true, revokedKeyId: 'vc-key-1' });
+    expect(revokeVcIssuerKeyRpc).toHaveBeenCalledWith('vc-key-1', 'Leaked in a support bundle');
+    expect(env.KEY_MANAGER.idFromName).toHaveBeenCalledWith('default-v3');
+  });
+
+  it('reports the replacement when the active key was revoked', async () => {
+    const { app, env } = createRevokeApp({ revoked: true, replacedBy: 'vc-key-2' });
+    const response = await app.fetch(
+      revokeRequest('vc-key-1', { reason: 'Active key compromised' }),
+      env
+    );
+
+    expect(await response.json()).toMatchObject({ revokedKeyId: 'vc-key-1', newKeyId: 'vc-key-2' });
+  });
+
+  it('returns 404 for an unknown kid', async () => {
+    const { app, env } = createRevokeApp({ revoked: false });
+    const response = await app.fetch(
+      revokeRequest('missing', { reason: 'Leaked in a support bundle' }),
+      env
+    );
+
+    expect(response.status).toBe(404);
+  });
+
+  it('requires a reason of at least 10 characters before touching the KeyManager', async () => {
+    const { app, env, revokeVcIssuerKeyRpc } = createRevokeApp({ revoked: true });
+    const response = await app.fetch(revokeRequest('vc-key-1', { reason: 'short' }), env);
+
+    expect(response.status).toBe(400);
+    expect(revokeVcIssuerKeyRpc).not.toHaveBeenCalled();
   });
 });

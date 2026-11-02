@@ -1203,6 +1203,16 @@ export function generateWranglerConfig(
     }
   }
 
+  if (component === 'ar-vc' && config.components.vc === true) {
+    wranglerConfig.services ??= [];
+    wranglerConfig.services.push({
+      binding: 'ADMIN_CREDENTIAL_ELIGIBILITY',
+      service: `${env}-ar-management`,
+      entrypoint: 'AdminCredentialEligibilityEntrypoint',
+      props: { caller: 'ar-vc', environmentId: env },
+    });
+  }
+
   if (component === 'ar-plugin-runner') {
     wranglerConfig.services ??= [];
     wranglerConfig.services.push({

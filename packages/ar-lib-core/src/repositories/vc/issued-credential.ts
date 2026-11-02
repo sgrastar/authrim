@@ -17,8 +17,11 @@ import {
 
 /**
  * Credential status
+ *
+ * `pending`: recorded before signing (issuance state machine); never presented as valid. It only
+ * ever moves to `active` through `updateStatusIfCurrent`, or to `revoked`.
  */
-export type CredentialStatus = 'active' | 'revoked' | 'suspended' | 'deferred';
+export type CredentialStatus = 'pending' | 'active' | 'revoked' | 'suspended' | 'deferred';
 
 /**
  * Issued Credential entity
@@ -219,6 +222,23 @@ export class IssuedCredentialRepository extends BaseRepository<IssuedCredential>
     const result = await this.adapter.execute(
       'UPDATE issued_credentials SET status = ?, updated_at = ? WHERE tenant_id = ? AND public_id = ?',
       [status, getCurrentTimestamp(), tenantId, id]
+    );
+    return result.rowsAffected > 0;
+  }
+
+  /**
+   * Compare-and-set status change: applies only while the row still has `expected`, so a
+   * revocation that happened meanwhile is never overwritten. Returns whether a row changed.
+   */
+  async updateStatusIfCurrent(
+    tenantId: string,
+    id: string,
+    expected: CredentialStatus,
+    next: CredentialStatus
+  ): Promise<boolean> {
+    const result = await this.adapter.execute(
+      'UPDATE issued_credentials SET status = ?, updated_at = ? WHERE tenant_id = ? AND public_id = ? AND status = ?',
+      [next, getCurrentTimestamp(), tenantId, id, expected]
     );
     return result.rowsAffected > 0;
   }

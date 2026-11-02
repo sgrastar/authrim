@@ -858,5 +858,54 @@ export const de = {
 	'map.fix.join': 'Mit Kommas verbinden',
 	'map.fix.bool': 'In true/false umwandeln',
 	'map.unusedList': '{source} nicht verwendet: {list}',
-	'map.nothing': 'Keine passenden Attribute'
+	'map.nothing': 'Keine passenden Attribute',
+	'me.keyring': 'Authrim Keyring',
+	'me.keyringDesc':
+		'Fügen Sie Ihre Administrator-Berechtigung zu Authrim Keyring auf Ihrem iPhone hinzu. Sie dient zur Freigabe sensibler Vorgänge.',
+	'keyring.page.title': 'Zu Authrim Keyring hinzufügen',
+	'keyring.page.desc':
+		'Stellen Sie Ihre Administrator-Berechtigung für Authrim Keyring aus. Der QR-Code ist nur kurz gültig und kann nur einmal verwendet werden.',
+	'keyring.back': 'Zurück zum Konto',
+	'keyring.start.title': 'Berechtigung ausstellen',
+	'keyring.start.body':
+		'Mit der Schaltfläche zeigen Sie einen QR-Code an, den Sie mit Authrim Keyring auf Ihrem iPhone scannen. Der Bestätigungscode erscheint, nachdem Keyring den QR-Code gescannt hat.',
+	'keyring.start.button': 'Zu Keyring hinzufügen',
+	'keyring.creating': 'QR-Code wird erstellt…',
+	'keyring.step1.title': 'Schritt 1: QR-Code scannen',
+	'keyring.step1.body':
+		'Öffnen Sie Authrim Keyring auf Ihrem iPhone und scannen Sie diesen QR-Code. Zeigen Sie diesen Bildschirm niemandem und lassen Sie ihn nicht fotografieren.',
+	'keyring.qr.alt': 'QR-Code zum Hinzufügen Ihrer Administrator-Berechtigung zu Authrim Keyring',
+	'keyring.expiresIn': 'Läuft ab in {time}',
+	'keyring.step2.title': 'Schritt 2: Code in Keyring eingeben',
+	'keyring.step2.body':
+		'Keyring hat den QR-Code gescannt. Geben Sie diesen 6-stelligen Code in Keyring ein.',
+	'keyring.code.label': 'Transaktionscode (6 Ziffern)',
+	'keyring.issued.title': 'Berechtigung ausgestellt',
+	'keyring.issued.body':
+		'Prüfen Sie den Schlüssel der Berechtigung, die zu Keyring hinzugefügt wurde.',
+	'keyring.confirm.label': 'Schlüssel-Bestätigungscode',
+	'keyring.confirm.check':
+		'Prüfen Sie, ob der in Keyring angezeigte Schlüssel-Bestätigungscode mit dem hier angezeigten Code übereinstimmt.',
+	'keyring.confirm.mismatch':
+		'Weichen die Codes ab oder hat Keyring keine Berechtigung erhalten, hat möglicherweise jemand anderes den QR-Code verwendet. Das Widerrufen einer Berechtigung folgt in einer späteren Version. Wenden Sie sich bis dahin an einen Administrator.',
+	'keyring.ended.failed': 'Ausstellung fehlgeschlagen',
+	'keyring.ended.failedBody':
+		'Die Berechtigung konnte nicht ausgestellt werden. Erstellen Sie einen neuen Code und versuchen Sie es erneut.',
+	'keyring.ended.expired': 'Der Code ist abgelaufen',
+	'keyring.ended.expiredBody': 'Der QR-Code ist abgelaufen. Erstellen Sie einen neuen Code.',
+	'keyring.ended.locked': 'Der Code ist gesperrt',
+	'keyring.ended.lockedBody':
+		'Es wurden zu oft falsche Codes eingegeben, daher kann dieser QR-Code nicht mehr verwendet werden. Erstellen Sie einen neuen Code.',
+	'keyring.again': 'Neuen Code erstellen',
+	'keyring.reauth.button': 'Erneut anmelden',
+	'keyring.error.freshAuth':
+		'Dafür ist eine aktuelle Anmeldung nötig. Melden Sie sich erneut an und versuchen Sie es dann noch einmal.',
+	'keyring.error.notEligible':
+		'Mit diesem Konto kann keine Berechtigung zu Authrim Keyring hinzugefügt werden.',
+	'keyring.error.unavailable':
+		'Das Ausstellen von Berechtigungen ist in dieser Umgebung nicht aktiviert.',
+	'keyring.error.generic':
+		'Die Aktion konnte nicht abgeschlossen werden. Versuchen Sie es gleich noch einmal.',
+	'keyring.error.polling':
+		'Der Status konnte nicht geprüft werden. Erstellen Sie einen neuen Code und versuchen Sie es erneut.'
 } satisfies Messages;

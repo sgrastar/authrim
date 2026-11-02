@@ -1,137 +1,67 @@
 /**
- * Issuer Metadata Route
+ * Issuer Metadata Routes
  *
- * Returns OpenID4VCI Issuer metadata.
- * @see https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html
+ * Credential Issuer metadata and the RFC 8414 metadata of the pre-authorized Authorization
+ * Server that ar-vc runs at `<issuer>/vci`. The OIDC/FAPI discovery documents served by
+ * ar-discovery are not involved.
+ *
+ * @see https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html#section-12.2
  */
 
 import type { Context } from 'hono';
 import type { Env } from '../../types';
 import { getRequestIssuerUrl } from '../../request-identifiers';
+import {
+  listCredentialConfigurations,
+  toCredentialConfigurationMetadata,
+} from '../credential-configurations';
 
-/**
- * Issuer Metadata Response
- */
-interface IssuerMetadata {
-  credential_issuer: string;
-  credential_endpoint: string;
-  nonce_endpoint: string;
-  deferred_credential_endpoint?: string;
-  credential_configurations_supported: Record<string, CredentialConfiguration>;
-  display?: IssuerDisplay[];
-}
+export const PRE_AUTHORIZED_CODE_GRANT = 'urn:ietf:params:oauth:grant-type:pre-authorized_code';
 
-interface CredentialConfiguration {
-  format: string;
-  vct?: string;
-  cryptographic_binding_methods_supported?: string[];
-  credential_signing_alg_values_supported?: string[];
-  proof_types_supported?: Record<string, { proof_signing_alg_values_supported: string[] }>;
-  claims?: Record<string, ClaimDefinition>;
-  display?: CredentialDisplay[];
-}
-
-interface ClaimDefinition {
-  mandatory?: boolean;
-  display?: { name: string; locale: string }[];
-}
-
-interface CredentialDisplay {
-  name: string;
-  locale: string;
-  background_color?: string;
-  text_color?: string;
-}
-
-interface IssuerDisplay {
-  name: string;
-  locale: string;
+/** Identifier of the pre-authorized Authorization Server for a Credential Issuer. */
+export function getVciAuthorizationServer(credentialIssuer: string): string {
+  return `${credentialIssuer}/vci`;
 }
 
 /**
  * GET /.well-known/openid-credential-issuer
- *
- * Returns the Issuer's metadata including supported credential types.
  */
 export async function issuerMetadataRoute(c: Context<{ Bindings: Env }>): Promise<Response> {
   const baseUrl = getRequestIssuerUrl(c);
 
-  const metadata: IssuerMetadata = {
+  const metadata = {
     credential_issuer: baseUrl,
+    authorization_servers: [getVciAuthorizationServer(baseUrl)],
     credential_endpoint: `${baseUrl}/vci/credential`,
     nonce_endpoint: `${baseUrl}/vci/nonce`,
     deferred_credential_endpoint: `${baseUrl}/vci/deferred`,
-
-    credential_configurations_supported: {
-      // Identity Credential
-      AuthrimIdentityCredential: {
-        format: 'dc+sd-jwt',
-        vct: 'https://authrim.com/credentials/identity/v1',
-        cryptographic_binding_methods_supported: ['jwk'],
-        credential_signing_alg_values_supported: ['ES256', 'ES384', 'ES512'],
-        proof_types_supported: {
-          jwt: { proof_signing_alg_values_supported: ['ES256', 'ES384', 'ES512'] },
-        },
-        claims: {
-          given_name: {
-            display: [{ name: 'Given Name', locale: 'en' }],
-          },
-          family_name: {
-            display: [{ name: 'Family Name', locale: 'en' }],
-          },
-          email: {
-            display: [{ name: 'Email', locale: 'en' }],
-          },
-          birthdate: {
-            display: [{ name: 'Date of Birth', locale: 'en' }],
-          },
-        },
-        display: [
-          {
-            name: 'Authrim Identity Credential',
-            locale: 'en',
-            background_color: '#1E3A8A',
-            text_color: '#FFFFFF',
-          },
-        ],
-      },
-
-      // Age Verification Credential
-      AuthrimAgeVerification: {
-        format: 'dc+sd-jwt',
-        vct: 'https://authrim.com/credentials/age-verification/v1',
-        cryptographic_binding_methods_supported: ['jwk'],
-        credential_signing_alg_values_supported: ['ES256', 'ES384', 'ES512'],
-        proof_types_supported: {
-          jwt: { proof_signing_alg_values_supported: ['ES256', 'ES384', 'ES512'] },
-        },
-        claims: {
-          age_over_18: {
-            mandatory: true,
-            display: [{ name: 'Age Over 18', locale: 'en' }],
-          },
-          age_over_21: {
-            display: [{ name: 'Age Over 21', locale: 'en' }],
-          },
-        },
-        display: [
-          {
-            name: 'Age Verification',
-            locale: 'en',
-            background_color: '#047857',
-            text_color: '#FFFFFF',
-          },
-        ],
-      },
-    },
-
-    display: [
-      {
-        name: 'Authrim',
-        locale: 'en',
-      },
-    ],
+    display: [{ name: 'Authrim', locale: 'en' }],
+    credential_configurations_supported: Object.fromEntries(
+      listCredentialConfigurations().map((configuration) => [
+        configuration.id,
+        toCredentialConfigurationMetadata(configuration),
+      ])
+    ),
   };
 
   return c.json(metadata);
+}
+
+/**
+ * GET /.well-known/oauth-authorization-server/vci
+ *
+ * Pre-authorized-only AS: no authorization endpoint, so `response_types_supported` is omitted
+ * (RFC 8414 §3.2 forbids empty arrays; OpenID4VCI §12.2.4 allows the omission).
+ */
+export async function vciAuthorizationServerMetadataRoute(
+  c: Context<{ Bindings: Env }>
+): Promise<Response> {
+  const baseUrl = getRequestIssuerUrl(c);
+  return c.json({
+    issuer: getVciAuthorizationServer(baseUrl),
+    token_endpoint: `${baseUrl}/vci/token`,
+    grant_types_supported: [PRE_AUTHORIZED_CODE_GRANT],
+    token_endpoint_auth_methods_supported: ['none'],
+    'pre-authorized_grant_anonymous_access_supported': true,
+  });
 }

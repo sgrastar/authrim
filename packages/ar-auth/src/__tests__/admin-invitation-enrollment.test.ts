@@ -589,6 +589,77 @@ describe('Admin invitation enrollment', () => {
     expect(JSON.stringify(row)).not.toContain(String(sessionId));
   });
 
+  it.each([
+    ['refuses', 'tenant_123', undefined, 409],
+    ['accepts', 'tenant_123', 'tenant_123', 200],
+  ])(
+    '%s a global invitation by the home tenant placement policy',
+    async (_label, tenantId, defaultTenantId, status) => {
+      const original = { tenant_id: invitation.tenant_id, scope_type: invitation.scope_type };
+      Object.assign(invitation, { tenant_id: tenantId, scope_type: 'global' });
+      try {
+        const env = {
+          ...createEnv(),
+          ...(defaultTenantId ? { DEFAULT_TENANT_ID: defaultTenantId } : {}),
+        };
+        await seedEnrollment('enrollment-token', {
+          invitationId: invitation.id,
+          phase: 'authentication',
+          clientIp: '203.0.113.42',
+          authentication: {
+            challengeId: 'challenge-id',
+            challenge: 'authentication-challenge',
+            rpID: 'admin.example.com',
+            origin: 'https://admin.example.com',
+            credentialId: 'credential-id',
+            publicKey: 'AQID',
+            counter: 1,
+            transports: ['internal'],
+            aaguid: null,
+          },
+        });
+
+        const response = await adminInvitationEnrollmentApp.request(
+          '/api/admin/invitations/activate',
+          {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              'cf-connecting-ip': '203.0.113.42',
+              'user-agent': 'test-browser',
+            },
+            body: JSON.stringify({
+              enrollment_token: 'enrollment-token',
+              challenge_id: 'challenge-id',
+              credential: {
+                id: 'credential-id',
+                rawId: 'credential-id',
+                response: {
+                  clientDataJSON: 'client-data',
+                  authenticatorData: 'authenticator-data',
+                  signature: 'signature',
+                },
+                type: 'public-key',
+                clientExtensionResults: {},
+              },
+            }),
+          },
+          env
+        );
+
+        expect(response.status).toBe(status);
+        if (status === 409) {
+          await expect(response.json()).resolves.toEqual({
+            error: 'cross_tenant_admin_requires_default_home',
+          });
+          expect(adapter.batch).not.toHaveBeenCalled();
+        }
+      } finally {
+        Object.assign(invitation, original);
+      }
+    }
+  );
+
   it('does not create a session when the atomic activation batch conflicts', async () => {
     const env = createEnv();
     await seedEnrollment('enrollment-token', {

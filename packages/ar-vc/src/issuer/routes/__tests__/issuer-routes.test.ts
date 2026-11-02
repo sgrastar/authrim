@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { issuerMetadataRoute } from '../metadata';
+import { issuerMetadataRoute, vciAuthorizationServerMetadataRoute } from '../metadata';
 import { credentialOfferRoute } from '../offer';
 import { credentialRoute } from '../credential';
 import { deferredCredentialRoute } from '../deferred';
@@ -45,6 +45,7 @@ vi.mock('jose', () => ({
 let mockDeferredCredential: unknown = null;
 const routeCoreMocks = vi.hoisted(() => ({
   createCredential: vi.fn(),
+  updateStatusIfCurrent: vi.fn(),
   allocateIndex: vi.fn(),
   resolveTenantMetadataContext: vi.fn(),
 }));
@@ -89,6 +90,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     IssuedCredentialRepository: class {
       constructor() {}
       createCredential = routeCoreMocks.createCredential;
+      updateStatusIfCurrent = routeCoreMocks.updateStatusIfCurrent;
       findDeferredByIdAndUser = vi.fn().mockImplementation(async () => mockDeferredCredential);
       updateStatus = vi.fn().mockResolvedValue(undefined);
       parseClaims = vi
@@ -271,36 +273,69 @@ describe('Issuer Metadata Route', () => {
     expect(data.credential_configurations_supported).toBeDefined();
   });
 
-  it('should include supported credential configurations', async () => {
+  it('should publish Final credential configurations with scopes and array-form claims', async () => {
     const c = createMockContext();
     const response = await issuerMetadataRoute(c);
     const data = (await response.json()) as {
+      authorization_servers: string[];
       credential_configurations_supported: Record<
         string,
         {
           format: string;
+          scope: string;
           vct: string;
-          claims: object;
+          cryptographic_binding_methods_supported: string[];
+          credential_signing_alg_values_supported: string[];
+          proof_types_supported: { jwt: { proof_signing_alg_values_supported: string[] } };
+          credential_metadata: {
+            display: Array<{ name: string; locale: string }>;
+            claims: Array<{ path: string[]; mandatory?: boolean }>;
+          };
+          claims?: unknown;
+          display?: unknown;
         }
       >;
     };
 
-    expect(data.credential_configurations_supported).toHaveProperty('AuthrimIdentityCredential');
-    expect(data.credential_configurations_supported).toHaveProperty('AuthrimAgeVerification');
+    expect(data.authorization_servers).toEqual(['https://authrim.com/vci']);
+    expect(Object.keys(data.credential_configurations_supported).sort()).toEqual([
+      'AuthrimAdminCredential',
+      'AuthrimAgeVerification',
+      'AuthrimIdentityCredential',
+    ]);
+
+    for (const configuration of Object.values(data.credential_configurations_supported)) {
+      expect(configuration.format).toBe('dc+sd-jwt');
+      expect(configuration.scope).toMatch(/^authrim_/);
+      expect(configuration.cryptographic_binding_methods_supported).toEqual(['jwk']);
+      expect(configuration.credential_signing_alg_values_supported).toEqual(['ES256']);
+      expect(configuration.proof_types_supported).toEqual({
+        jwt: { proof_signing_alg_values_supported: ['ES256'] },
+      });
+      // Final moved display and claims under credential_metadata
+      expect(configuration.claims).toBeUndefined();
+      expect(configuration.display).toBeUndefined();
+      expect(configuration.credential_metadata.display.length).toBeGreaterThan(0);
+    }
 
     const identityCred = data.credential_configurations_supported.AuthrimIdentityCredential;
-    expect(identityCred.format).toBe('dc+sd-jwt');
     expect(identityCred.vct).toBe('https://authrim.com/credentials/identity/v1');
-    expect(identityCred.claims).toHaveProperty('given_name');
-    expect(identityCred.claims).toHaveProperty('family_name');
-    expect(identityCred.claims).toHaveProperty('email');
-    expect(identityCred.claims).toHaveProperty('birthdate');
+    expect(identityCred.credential_metadata.claims.map((claim) => claim.path)).toEqual([
+      ['given_name'],
+      ['family_name'],
+      ['email'],
+      ['birthdate'],
+    ]);
 
     const ageCred = data.credential_configurations_supported.AuthrimAgeVerification;
-    expect(ageCred.format).toBe('dc+sd-jwt');
     expect(ageCred.vct).toBe('https://authrim.com/credentials/age-verification/v1');
-    expect(ageCred.claims).toHaveProperty('age_over_18');
-    expect(ageCred.claims).toHaveProperty('age_over_21');
+    expect(ageCred.credential_metadata.claims).toContainEqual(
+      expect.objectContaining({ path: ['age_over_18'], mandatory: true })
+    );
+
+    const adminCred = data.credential_configurations_supported.AuthrimAdminCredential;
+    expect(adminCred.vct).toBe('https://authrim.com/credentials/admin/v1');
+    expect(adminCred.scope).toBe('authrim_admin_credential');
   });
 
   it('uses the request host as credential issuer even when ISSUER_IDENTIFIER is configured', async () => {
@@ -313,6 +348,23 @@ describe('Issuer Metadata Route', () => {
     const data = (await response.json()) as { credential_issuer: string };
 
     expect(data.credential_issuer).toBe('https://tenant1.example.com');
+  });
+});
+
+describe('VCI Authorization Server Metadata Route', () => {
+  it('describes a pre-authorized-only AS at <issuer>/vci', async () => {
+    const c = createMockContext({
+      req: { url: 'https://tenant1.example.com/.well-known/oauth-authorization-server/vci' },
+    });
+    const response = await vciAuthorizationServerMetadataRoute(c);
+
+    expect(await response.json()).toEqual({
+      issuer: 'https://tenant1.example.com/vci',
+      token_endpoint: 'https://tenant1.example.com/vci/token',
+      grant_types_supported: ['urn:ietf:params:oauth:grant-type:pre-authorized_code'],
+      token_endpoint_auth_methods_supported: ['none'],
+      'pre-authorized_grant_anonymous_access_supported': true,
+    });
   });
 });
 
@@ -483,7 +535,7 @@ describe('Credential Offer Route', () => {
     expect(preAuthGrant.tx_code.length).toBe(6);
   });
 
-  it('should return 400 when offer ID is missing', async () => {
+  it('should return 404 when offer ID is missing', async () => {
     const c = createMockContext({
       req: {
         param: vi.fn().mockReturnValue(undefined),
@@ -493,10 +545,8 @@ describe('Credential Offer Route', () => {
     const response = await credentialOfferRoute(c);
     const data = (await response.json()) as { error: string; error_description: string };
 
-    expect(response.status).toBe(400);
-    expect(data.error).toBe('invalid_request');
-    // AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD uses standardized message
-    expect(data.error_description).toContain('required');
+    expect(response.status).toBe(404);
+    expect(data.error).toBe('not_found');
   });
 
   it('should return 404 when offer not found', async () => {
@@ -524,11 +574,10 @@ describe('Credential Offer Route', () => {
     const data = (await response.json()) as { error: string };
 
     expect(response.status).toBe(404);
-    // RFC compliance: not_found is not standard, use invalid_request with 404 status
-    expect(data.error).toBe('invalid_request');
+    expect(data.error).toBe('not_found');
   });
 
-  it('should return 400 when offer is expired', async () => {
+  it('should return 404 when offer is expired', async () => {
     const offer = {
       id: VALID_OFFER_ID,
       credentialConfigurationId: 'AuthrimIdentityCredential',
@@ -556,13 +605,12 @@ describe('Credential Offer Route', () => {
     const response = await credentialOfferRoute(c);
     const data = (await response.json()) as { error: string; error_description: string };
 
-    expect(response.status).toBe(400);
-    expect(data.error).toBe('invalid_request');
-    // AR_ERROR_CODES.VALIDATION_INVALID_VALUE uses standardized message
-    expect(data.error_description).toContain('invalid');
+    // Expired and consumed offers are indistinguishable from unknown ones
+    expect(response.status).toBe(404);
+    expect(data.error).toBe('not_found');
   });
 
-  it('should return 400 when offer is already consumed', async () => {
+  it('should return 404 when offer is already consumed', async () => {
     const offer = {
       id: VALID_OFFER_ID,
       credentialConfigurationId: 'AuthrimIdentityCredential',
@@ -590,13 +638,12 @@ describe('Credential Offer Route', () => {
     const response = await credentialOfferRoute(c);
     const data = (await response.json()) as { error: string; error_description: string };
 
-    expect(response.status).toBe(400);
-    expect(data.error).toBe('invalid_request');
-    // AR_ERROR_CODES.VALIDATION_INVALID_VALUE uses standardized message
-    expect(data.error_description).toContain('invalid');
+    // Expired and consumed offers are indistinguishable from unknown ones
+    expect(response.status).toBe(404);
+    expect(data.error).toBe('not_found');
   });
 
-  it('should return 500 for invalid offer ID format', async () => {
+  it('should return 404 for invalid offer ID format', async () => {
     const c = createMockContext({
       req: {
         param: vi.fn().mockReturnValue('invalid-format-offer-id'),
@@ -607,9 +654,7 @@ describe('Credential Offer Route', () => {
     const data = (await response.json()) as { error: string; error_description: string };
 
     expect(response.status).toBe(404);
-    expect(data.error).toBe('invalid_request');
-    // ErrorFactory returns standardized message for internal errors
-    expect(data.error_description).toBeDefined();
+    expect(data.error).toBe('not_found');
   });
 });
 
@@ -630,7 +675,8 @@ describe('Credential Route', () => {
       listInternalId: 'status-list-internal-1',
       index: 42,
     });
-    routeCoreMocks.createCredential.mockResolvedValue(undefined);
+    routeCoreMocks.createCredential.mockResolvedValue({ id: 'credential-1' });
+    routeCoreMocks.updateStatusIfCurrent.mockResolvedValue(true);
     tokenValidationMocks.mockDecodeVCIProofNonce.mockReturnValue(PROOF_NONCE);
     // Reset mock to default invalid response (no token provided tests should fail auth)
     mockValidateVCIAccessToken.mockResolvedValue({
@@ -648,13 +694,12 @@ describe('Credential Route', () => {
     });
 
     const response = await credentialRoute(c);
-    const data = (await response.json()) as { error: string; error_description: string };
+    const data = (await response.json()) as { error: string };
 
-    // AR_ERROR_CODES.TOKEN_INVALID uses status 400 and rfcError: invalid_grant
-    expect(response.status).toBe(400);
-    expect(data.error).toBe('invalid_grant');
-    // Token errors use masked security level, so detailed message is not exposed
-    expect(data.error_description).toBeDefined();
+    // RFC 6750 §3: invalid_token with a Bearer challenge
+    expect(response.status).toBe(401);
+    expect(data.error).toBe('invalid_token');
+    expect(c.header).toHaveBeenCalledWith('WWW-Authenticate', 'Bearer error="invalid_token"');
   });
 
   it('should reject invalid access token', async () => {
@@ -672,37 +717,72 @@ describe('Credential Route', () => {
     const response = await credentialRoute(c);
     const data = (await response.json()) as { error: string; error_description: string };
 
-    // AR_ERROR_CODES.TOKEN_INVALID uses status 400 and rfcError: invalid_grant
-    expect(response.status).toBe(400);
-    expect(data.error).toBe('invalid_grant');
-    // Token errors use masked security level, so detailed message is not exposed
-    expect(data.error_description).toBeDefined();
+    // RFC 6750 §3: invalid_token with a Bearer challenge
+    expect(response.status).toBe(401);
+    expect(data.error).toBe('invalid_token');
+    expect(c.header).toHaveBeenCalledWith('WWW-Authenticate', 'Bearer error="invalid_token"');
   });
 
-  it('should reject unsupported credential format', async () => {
+  it.each([
+    [
+      'an unknown credential configuration',
+      { credential_configuration_id: 'jwt_vc', proofs: { jwt: ['proof.jwt'] } },
+      'unknown_credential_configuration',
+    ],
+    [
+      'a credential_identifier (none are issued)',
+      { credential_identifier: 'credential-1', proofs: { jwt: ['proof.jwt'] } },
+      'invalid_credential_request',
+    ],
+    [
+      'a missing credential_configuration_id',
+      { proofs: { jwt: ['proof.jwt'] } },
+      'invalid_credential_request',
+    ],
+    [
+      'a configuration the access token does not authorize',
+      { credential_configuration_id: 'AuthrimAgeVerification', proofs: { jwt: ['proof.jwt'] } },
+      'invalid_credential_request',
+    ],
+    [
+      'the pre-Final single proof parameter',
+      {
+        credential_configuration_id: 'AuthrimIdentityCredential',
+        proof: { proof_type: 'jwt', jwt: 'proof.jwt' },
+        proofs: { jwt: ['proof.jwt'] },
+      },
+      'invalid_credential_request',
+    ],
+    [
+      'more than one proof',
+      {
+        credential_configuration_id: 'AuthrimIdentityCredential',
+        proofs: { jwt: ['proof-1.jwt', 'proof-2.jwt'] },
+      },
+      'invalid_proof',
+    ],
+  ])('should reject %s', async (_label, body, expectedError) => {
     mockValidateVCIAccessToken.mockResolvedValue({
       valid: true,
       userId: 'user-123',
       tenantId: 'tenant-1',
-      vct: 'https://authrim.com/credentials/identity/v1',
-      claims: {},
+      credentialConfigurationId: 'AuthrimIdentityCredential',
+      jti: 'token-jti',
     });
 
     const c = createMockContext({
       req: {
         header: vi.fn().mockReturnValue('Bearer valid-token'),
-        json: vi.fn().mockResolvedValue({
-          format: 'jwt_vc', // Unsupported format
-        }),
+        json: vi.fn().mockResolvedValue(body),
       },
     });
 
     const response = await credentialRoute(c);
-    const data = (await response.json()) as { error: string; error_description: string };
+    const data = (await response.json()) as { error: string };
 
     expect(response.status).toBe(400);
-    expect(data.error).toBe('unsupported_credential_format');
-    expect(data.error_description).toBeDefined();
+    expect(data.error).toBe(expectedError);
+    expect(mockValidateProofOfPossession).not.toHaveBeenCalled();
   });
 
   it('should reject valid token results that are missing required subject claims', async () => {
@@ -725,8 +805,8 @@ describe('Credential Route', () => {
     const response = await credentialRoute(c);
     const data = (await response.json()) as { error: string };
 
-    expect(response.status).toBe(400);
-    expect(data.error).toBe('invalid_grant');
+    expect(response.status).toBe(401);
+    expect(data.error).toBe('invalid_token');
     expect(parseBody).not.toHaveBeenCalled();
   });
 
@@ -807,7 +887,7 @@ describe('Credential Route', () => {
     });
     mockValidateProofOfPossession.mockResolvedValue({
       valid: true,
-      holderPublicKey: { kty: 'EC', crv: 'P-256', x: 'holder-x' },
+      holderPublicKey: { kty: 'EC', crv: 'P-256', x: 'holder-x', y: 'holder-y' },
     });
     const nonceStub = {
       fetch: vi.fn(async (request: Request) => {
@@ -816,11 +896,14 @@ describe('Credential Route', () => {
           return Response.json({ reserved: true, reservationId: 'nonce-reservation' });
         }
         if (path === '/nonce/complete') return Response.json({ completed: true });
+        if (path === '/issuance/claim') return Response.json({ claimed: true });
+        if (path === '/issuance/complete') return Response.json({ completed: true });
         if (path === '/get') {
           return Response.json({
             userId: 'user-123',
             credentialConfigurationId: 'AuthrimIdentityCredential',
             claims: { given_name: 'Alice', email: 'alice@example.com' },
+            subjectKind: 'end_user',
             status: 'consumed',
             expiresAt: Date.now() + 60_000,
           });
@@ -847,20 +930,30 @@ describe('Credential Route', () => {
 
     const response = await credentialRoute(c);
     const data = (await response.json()) as {
-      credentials: string[];
+      credentials: Array<{ credential: string }>;
     };
 
     expect(response.status).toBe(200);
     expect(data).toEqual({
-      credentials: ['header.payload.signature~disclosure1~disclosure2~'],
+      credentials: [{ credential: 'header.payload.signature~disclosure1~disclosure2~' }],
     });
+    const keyManager = (
+      c.env.KEY_MANAGER as unknown as {
+        get: () => { signSDJWTIssuerRpc: ReturnType<typeof vi.fn> };
+      }
+    ).get();
+    // The credential iss is the https Credential Issuer, not a did:web fallback
+    expect(keyManager.signSDJWTIssuerRpc).toHaveBeenCalledWith(
+      expect.objectContaining({ iss: 'https://authrim.com' })
+    );
     expect(mockValidateProofOfPossession).toHaveBeenCalledWith(
       c.env,
       { proof_type: 'jwt', jwt: 'proof.jwt' },
       PROOF_NONCE,
       'https://authrim.com'
     );
-    expect(nonceStub.fetch).toHaveBeenCalledTimes(3);
+    // nonce reserve + offer read + issuance claim + nonce complete + issuance complete
+    expect(nonceStub.fetch).toHaveBeenCalledTimes(5);
     expect(routeCoreMocks.allocateIndex).toHaveBeenCalledWith('tenant-1', 'revocation');
     expect(routeCoreMocks.createCredential).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -868,12 +961,18 @@ describe('Credential Route', () => {
         user_id: 'user-123',
         credential_type: 'https://authrim.com/credentials/identity/v1',
         format: 'dc+sd-jwt',
-        status: 'active',
+        status: 'pending',
         status_list_id: 'status-list-1',
         status_list_internal_id: 'status-list-internal-1',
         status_list_index: 42,
-        holder_binding: { kty: 'EC', crv: 'P-256', x: 'holder-x' },
+        holder_binding: { kty: 'EC', crv: 'P-256', x: 'holder-x', y: 'holder-y' },
       })
+    );
+    expect(routeCoreMocks.updateStatusIfCurrent).toHaveBeenCalledWith(
+      'tenant-1',
+      'credential-1',
+      'pending',
+      'active'
     );
   });
 });
@@ -907,11 +1006,10 @@ describe('Deferred Credential Route', () => {
     const response = await deferredCredentialRoute(c);
     const data = (await response.json()) as { error: string; error_description: string };
 
-    // AR_ERROR_CODES.TOKEN_INVALID uses status 400 and rfcError: invalid_grant
-    expect(response.status).toBe(400);
-    expect(data.error).toBe('invalid_grant');
-    // Token errors use masked security level, so detailed message is not exposed
-    expect(data.error_description).toBeDefined();
+    // RFC 6750 §3: invalid_token with a Bearer challenge
+    expect(response.status).toBe(401);
+    expect(data.error).toBe('invalid_token');
+    expect(c.header).toHaveBeenCalledWith('WWW-Authenticate', 'Bearer error="invalid_token"');
   });
 
   it('should reject invalid access token', async () => {
@@ -932,11 +1030,10 @@ describe('Deferred Credential Route', () => {
     const response = await deferredCredentialRoute(c);
     const data = (await response.json()) as { error: string; error_description: string };
 
-    // AR_ERROR_CODES.TOKEN_INVALID uses status 400 and rfcError: invalid_grant
-    expect(response.status).toBe(400);
-    expect(data.error).toBe('invalid_grant');
-    // Token errors use masked security level, so detailed message is not exposed
-    expect(data.error_description).toBeDefined();
+    // RFC 6750 §3: invalid_token with a Bearer challenge
+    expect(response.status).toBe(401);
+    expect(data.error).toBe('invalid_token');
+    expect(c.header).toHaveBeenCalledWith('WWW-Authenticate', 'Bearer error="invalid_token"');
   });
 
   it('should reject request without transaction_id', async () => {
@@ -951,12 +1048,10 @@ describe('Deferred Credential Route', () => {
     const data = (await response.json()) as { error: string; error_description: string };
 
     expect(response.status).toBe(400);
-    expect(data.error).toBe('invalid_request');
-    // AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD uses standardized message
-    expect(data.error_description).toContain('required');
+    expect(data.error).toBe('invalid_credential_request');
   });
 
-  it('should return 404 when deferred credential not found', async () => {
+  it('should return invalid_transaction_id when deferred credential not found', async () => {
     // Set mock to return null (credential not found)
     setMockDeferredCredential(null);
 
@@ -972,13 +1067,11 @@ describe('Deferred Credential Route', () => {
     const response = await deferredCredentialRoute(c);
     const data = (await response.json()) as { error: string; error_description: string };
 
-    // AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND uses status 404
-    expect(response.status).toBe(404);
-    expect(data.error).toBe('invalid_request');
-    expect(data.error_description).toBeDefined();
+    expect(response.status).toBe(400);
+    expect(data.error).toBe('invalid_transaction_id');
   });
 
-  it('should return issuance_pending when credential not ready', async () => {
+  it('should return 202 with the transaction_id when credential not ready', async () => {
     // Set mock to return a deferred credential with 'pending' claims
     setMockDeferredCredential({
       id: 'tx-123',
@@ -1000,17 +1093,11 @@ describe('Deferred Credential Route', () => {
     });
 
     const response = await deferredCredentialRoute(c);
-    const data = (await response.json()) as {
-      error: string;
-      error_description: string;
-    };
+    const data = (await response.json()) as { transaction_id: string; interval: number };
 
-    // AR_ERROR_CODES.VC_ISSUANCE_PENDING uses status 200 (not an error, just a status)
-    // OpenID4VCI spec: issuance_pending indicates the credential is not yet ready
-    expect(response.status).toBe(200);
-    expect(data.error).toBe('issuance_pending');
-    // Note: interval field is optional per OpenID4VCI spec
-    expect(data.error_description).toBeDefined();
+    // Final §9.2: a pending deferred credential is a 202 repeating the transaction_id
+    expect(response.status).toBe(202);
+    expect(data).toEqual({ transaction_id: 'tx-123', interval: 5 });
   });
 
   it('should issue credential when ready', async () => {
@@ -1040,10 +1127,12 @@ describe('Deferred Credential Route', () => {
 
     const response = await deferredCredentialRoute(c);
     const data = (await response.json()) as {
-      credentials: string[];
+      credentials: Array<{ credential: string }>;
     };
 
     expect(response.status).toBe(200);
-    expect(data.credentials).toEqual(['header.payload.signature~disclosure1~disclosure2~']);
+    expect(data.credentials).toEqual([
+      { credential: 'header.payload.signature~disclosure1~disclosure2~' },
+    ]);
   });
 });

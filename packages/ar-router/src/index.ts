@@ -20,6 +20,7 @@ import {
   validateAccountPagePath,
   BodyLimitExceededError,
   readRequestBytesWithLimit,
+  redactSecretPathSegments,
 } from '@authrim/ar-lib-core';
 
 // Module-level logger for router (no Hono context available in error handler)
@@ -1319,6 +1320,27 @@ app.get('/.well-known/openid-credential-verifier', async (c) => {
   return c.env.OP_VC.fetch(request);
 });
 
+/**
+ * SD-JWT VC issuer key metadata and the RFC 8414 metadata of the VCI authorization server
+ * (issuer `<origin>/vci`, so the well-known suffix is `/vci`). Registered before the
+ * `/.well-known/*` catch-all so the suffixless oauth-authorization-server stays on OP_DISCOVERY.
+ */
+app.get('/.well-known/jwt-vc-issuer', async (c) => {
+  if (!c.env.OP_VC) {
+    return notFoundResponse();
+  }
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_VC.fetch(request);
+});
+
+app.get('/.well-known/oauth-authorization-server/vci', async (c) => {
+  if (!c.env.OP_VC) {
+    return notFoundResponse();
+  }
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_VC.fetch(request);
+});
+
 app.get('/.well-known/did.json', async (c) => {
   if (!c.env.OP_VC) {
     return notFoundResponse();
@@ -2175,7 +2197,11 @@ app.notFound((c) => {
 
 // Error handler
 app.onError((err, c) => {
-  log.error('Router error occurred', { path: c.req.path, method: c.req.method }, err);
+  log.error(
+    'Router error occurred',
+    { path: redactSecretPathSegments(c.req.path), method: c.req.method },
+    err
+  );
   return c.json(
     {
       error: 'server_error',

@@ -12,8 +12,6 @@ import {
   IssuedCredentialRepository,
   D1StatusListRepository,
   StatusListManager,
-  createErrorResponse,
-  AR_ERROR_CODES,
   getLogger,
   loadFeatureConfig,
   createCustomClaimSchemaResolver,
@@ -26,6 +24,7 @@ import {
   type Env as CoreEnv,
 } from '@authrim/ar-lib-core';
 import { sha256Base64url } from '../../utils/crypto';
+import { calculateJwkThumbprint } from '../../utils/jwk-thumbprint';
 import { createVCConfigManager } from '../../utils/vc-config';
 import type { JWTPayload } from 'jose';
 import {
@@ -33,19 +32,28 @@ import {
   validateVCIAccessToken,
   validateProofOfPossession,
 } from '../services/token-validation';
-import { getRequestIssuerIdentifier, getRequestIssuerUrl } from '../../request-identifiers';
-import { getCredentialOfferStoreByProofNonce } from '../../utils/credential-offer-sharding';
-import { getCredentialOfferStoreById } from '../../utils/credential-offer-sharding';
+import { getRequestIssuerUrl } from '../../request-identifiers';
+import {
+  getCredentialConfiguration,
+  type CredentialSubjectKind,
+} from '../credential-configurations';
+import { invalidTokenError, vciError } from '../oauth-errors';
+import {
+  getCredentialOfferStoreById,
+  getCredentialOfferStoreByProofNonce,
+} from '../../utils/credential-offer-sharding';
 
 interface CredentialRequest {
-  credential_configuration_id: string;
-  proofs: {
-    jwt?: string[];
+  credential_configuration_id?: unknown;
+  credential_identifier?: unknown;
+  proofs?: {
+    jwt?: unknown;
   };
+  proof?: unknown;
 }
 
 interface CredentialResponse {
-  credentials?: string[];
+  credentials?: Array<{ credential: string }>;
   transaction_id?: string;
 }
 
@@ -63,9 +71,10 @@ function validateCredentialResponse(response: CredentialResponse): void {
     if (!Array.isArray(response.credentials) || response.credentials.length === 0) {
       throw new Error('credentials must be a non-empty array');
     }
-    for (const credential of response.credentials) {
+    for (const entry of response.credentials) {
+      const credential = entry?.credential;
       if (typeof credential !== 'string' || credential.length === 0) {
-        throw new Error('credentials entries must be non-empty strings');
+        throw new Error('credentials entries must carry a non-empty credential string');
       }
       if (credential.split('~')[0].split('.').length !== 3) {
         throw new Error('Invalid JWT format in credential');
@@ -88,16 +97,67 @@ function validateCredentialResponse(response: CredentialResponse): void {
  */
 export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Response> {
   const log = getLogger(c).module('VC-ISSUER');
-  const requestIssuerIdentifier = getRequestIssuerIdentifier(c);
+  // The Credential Issuer identifier: credential `iss`, proof `aud` and token `aud`.
   const requestIssuerUrl = getRequestIssuerUrl(c);
   let nonceReservation:
     | { stub: DurableObjectStub; nonceId: string; tenantId: string; reservationId: string }
     | undefined;
+  // Set once the offer's single issuance is claimed (D4 step 1) and cleared when it completes.
+  let issuance:
+    | { stub: DurableObjectStub; offerId: string; tenantId: string; accessTokenJti: string }
+    | undefined;
+  // The `issued_credentials` row recorded before signing; cleared once the credential is delivered.
+  let pendingCredential:
+    | { repo: IssuedCredentialRepository; tenantId: string; id: string }
+    | undefined;
+
+  /**
+   * Ends a request that will not deliver a credential: releases the proof nonce, fails the
+   * issuance (never back to claimable) and revokes a recorded credential. Best effort, in order of
+   * importance for the offer: the issuance stays `issuing` only until its lease expires.
+   */
+  const abandon = async (): Promise<void> => {
+    if (nonceReservation) {
+      const reservation = nonceReservation;
+      nonceReservation = undefined;
+      await reservation.stub
+        .fetch(
+          new Request('https://internal/nonce/release', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              id: reservation.nonceId,
+              tenantId: reservation.tenantId,
+              reservationId: reservation.reservationId,
+            }),
+          })
+        )
+        .catch(() => undefined);
+    }
+    if (pendingCredential) {
+      const credential = pendingCredential;
+      pendingCredential = undefined;
+      await credential.repo
+        .updateStatus(credential.tenantId, credential.id, 'revoked')
+        .catch(() => undefined);
+    }
+    if (issuance) {
+      const claimed = issuance;
+      issuance = undefined;
+      await callOfferStore(claimed.stub, '/issuance/fail', {
+        id: claimed.offerId,
+        tenantId: claimed.tenantId,
+        accessTokenJti: claimed.accessTokenJti,
+        now: Date.now(),
+      }).catch(() => undefined);
+    }
+  };
+
   try {
     // Verify access token
     const authHeader = c.req.header('Authorization');
     if (!authHeader?.startsWith('Bearer ')) {
-      return createErrorResponse(c, AR_ERROR_CODES.TOKEN_INVALID);
+      return invalidTokenError(c);
     }
 
     const accessToken = authHeader.substring(7);
@@ -111,35 +171,66 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     );
 
     if (!tokenResult.valid) {
-      return createErrorResponse(c, AR_ERROR_CODES.TOKEN_INVALID);
+      return invalidTokenError(c);
     }
 
-    // Ensure required fields are present
     // SECURITY: tenantId comes from the signed access token, which was validated above.
-    // The token signature verification ensures these claims cannot be tampered with.
-    // This is the standard OAuth 2.0 / OpenID4VCI security model.
-    if (!tokenResult.userId || !tokenResult.tenantId) {
-      return createErrorResponse(c, AR_ERROR_CODES.TOKEN_INVALID);
+    if (!tokenResult.userId || !tokenResult.tenantId || !tokenResult.jti) {
+      return invalidTokenError(c);
     }
     const tenantId = tokenResult.tenantId;
 
-    const body = await c.req.json<CredentialRequest>();
+    let body: CredentialRequest;
+    try {
+      body = await c.req.json<CredentialRequest>();
+    } catch {
+      return vciError(c, 400, 'invalid_credential_request', 'Request body must be JSON');
+    }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return vciError(c, 400, 'invalid_credential_request', 'Request body must be a JSON object');
+    }
 
-    if (
-      !body.credential_configuration_id ||
-      body.credential_configuration_id !== tokenResult.credentialConfigurationId
-    ) {
-      return createErrorResponse(c, AR_ERROR_CODES.VC_UNSUPPORTED_FORMAT);
+    // No credential_identifiers are issued (the token response carries no authorization_details).
+    if (body.credential_identifier !== undefined) {
+      return vciError(
+        c,
+        400,
+        'invalid_credential_request',
+        'credential_identifier is not supported; use credential_configuration_id'
+      );
+    }
+    if (typeof body.credential_configuration_id !== 'string') {
+      return vciError(
+        c,
+        400,
+        'invalid_credential_request',
+        'credential_configuration_id is required'
+      );
+    }
+    const configuration = getCredentialConfiguration(body.credential_configuration_id);
+    if (!configuration) {
+      return vciError(c, 400, 'unknown_credential_configuration');
+    }
+    if (configuration.id !== tokenResult.credentialConfigurationId) {
+      return vciError(
+        c,
+        400,
+        'invalid_credential_request',
+        'credential_configuration_id is not authorized by the access token'
+      );
+    }
+    // The pre-Final single `proof` parameter is not accepted next to `proofs`.
+    if (body.proof !== undefined) {
+      return vciError(c, 400, 'invalid_credential_request', 'Use proofs instead of proof');
     }
     const proofJwts = body.proofs?.jwt;
     if (!Array.isArray(proofJwts) || proofJwts.length !== 1 || typeof proofJwts[0] !== 'string') {
-      return createErrorResponse(c, AR_ERROR_CODES.VC_INVALID_PROOF);
+      return vciError(c, 400, 'invalid_proof', 'Exactly one jwt proof is required');
     }
     const proofJwt = proofJwts[0];
     const expectedNonce = decodeVCIProofNonce(proofJwt);
-    if (!expectedNonce || !tokenResult.jti) {
-      c.header('Cache-Control', 'no-store');
-      return c.json({ error: 'invalid_nonce' }, 400);
+    if (!expectedNonce) {
+      return vciError(c, 400, 'invalid_nonce');
     }
     const expectedAudience = requestIssuerUrl;
 
@@ -151,7 +242,7 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
       expectedAudience
     );
     if (!proofResult.valid) {
-      return createErrorResponse(c, AR_ERROR_CODES.VC_INVALID_PROOF);
+      return vciError(c, 400, 'invalid_proof');
     }
     if (proofResult.holderPublicKey && !holderBinding) holderBinding = proofResult.holderPublicKey;
 
@@ -159,8 +250,7 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     try {
       nonceStore = getCredentialOfferStoreByProofNonce(c.env, expectedNonce, tokenResult.tenantId);
     } catch {
-      c.header('Cache-Control', 'no-store');
-      return c.json({ error: 'invalid_nonce' }, 400);
+      return vciError(c, 400, 'invalid_nonce');
     }
     const reserveResponse = await nonceStore.stub.fetch(
       new Request('https://internal/nonce/reserve', {
@@ -180,8 +270,7 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
       ? ((await reserveResponse.json()) as { reserved: boolean; reservationId?: string })
       : null;
     if (!reserveResult?.reserved || !reserveResult.reservationId) {
-      c.header('Cache-Control', 'no-store');
-      return c.json({ error: 'invalid_nonce' }, 400);
+      return vciError(c, 400, 'invalid_nonce');
     }
     nonceReservation = {
       stub: nonceStore.stub,
@@ -190,66 +279,95 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
       reservationId: reserveResult.reservationId,
     };
 
+    const isAdminCredential = configuration.subjectKind === 'admin';
     const vcConfig = createVCConfigManager(c.env);
-    if ((await vcConfig.isHolderBindingRequired()) && !holderBinding) {
-      return createErrorResponse(c, AR_ERROR_CODES.VC_INVALID_PROOF);
+    // An admin credential is always holder-bound (design D3), whatever the tenant configures.
+    if ((isAdminCredential || (await vcConfig.isHolderBindingRequired())) && !holderBinding) {
+      await abandon();
+      return vciError(c, 400, 'invalid_proof');
     }
 
-    // Get user claims from token result
-    const claims = await loadOfferClaims(c.env, {
-      offerId: tokenResult.offerId,
-      tenantId: tokenResult.tenantId,
+    if (!tokenResult.offerId) throw new Error('vci_access_token_missing_offer_id');
+    const offerId = tokenResult.offerId;
+    const offerStore = getCredentialOfferStoreById(c.env, offerId, tenantId).stub;
+    const offer = await loadOffer(offerStore, {
+      offerId,
+      tenantId,
       userId: tokenResult.userId,
-      credentialConfigurationId: body.credential_configuration_id,
+      credentialConfigurationId: configuration.id,
     });
+    // An end-user offer can never yield an admin credential, nor an admin offer an end-user one.
+    if (offer.subjectKind !== configuration.subjectKind) {
+      await abandon();
+      return vciError(c, 400, 'invalid_credential_request');
+    }
+
+    // D4 step 1: exactly one issuance per offer. A concurrent, repeated or later request —
+    // including one with the same access token — loses here and gets no credential.
+    const claimResult = await callOfferStore<{ claimed: boolean }>(offerStore, '/issuance/claim', {
+      id: offerId,
+      tenantId,
+      accessTokenJti: tokenResult.jti,
+      now: Date.now(),
+    });
+    if (!claimResult.claimed) {
+      await abandon();
+      return vciError(c, 400, 'invalid_credential_request');
+    }
+    issuance = { stub: offerStore, offerId, tenantId, accessTokenJti: tokenResult.jti };
+
+    // D4 step 2: admin credentials never resolve end-user custom claims; theirs are built below
+    // from the eligibility result.
+    let claims: Record<string, unknown> = isAdminCredential ? {} : { ...offer.claims };
 
     // Custom Claim Schema: merge is_vc_claim=1 claims + collect PII names for SD-JWT
     let vcPiiClaimNames: string[] = [];
-    try {
-      const ccFeatureConfig = await loadFeatureConfig(
-        c.env as unknown as CoreEnv,
-        tokenResult.tenantId
-      );
-      if (ccFeatureConfig.enabled && tokenResult.userId) {
-        const runtimeSources = await resolveCustomClaimRuntimeSourcesFromEnv(
+    if (!isAdminCredential) {
+      try {
+        const ccFeatureConfig = await loadFeatureConfig(
           c.env as unknown as CoreEnv,
-          tokenResult.tenantId,
-          { accountId: `account:${tokenResult.userId}` }
+          tokenResult.tenantId
         );
-        const ccResolver = createCustomClaimSchemaResolver(
-          runtimeSources.schemaDb,
-          runtimeSources.piiDb,
-          c.env.AUTHRIM_CONFIG || null,
-          ccFeatureConfig
-        );
-        const vcResult = await ccResolver.resolveClaimsForTarget(
-          tokenResult.tenantId,
-          tokenResult.userId,
-          [],
-          'vc'
-        );
-        Object.assign(claims, vcResult.claims);
-
-        // Collect PII claim names for SD-JWT selective disclosure
-        if (vcResult.pii_accessed) {
-          const schemaLoader = new SchemaLoader(
-            runtimeSources.schemaDb,
-            c.env.AUTHRIM_CONFIG || null
+        if (ccFeatureConfig.enabled && tokenResult.userId) {
+          const runtimeSources = await resolveCustomClaimRuntimeSourcesFromEnv(
+            c.env as unknown as CoreEnv,
+            tokenResult.tenantId,
+            { accountId: `account:${tokenResult.userId}` }
           );
-          const allSchemas = await schemaLoader.loadActiveSchemas(tokenResult.tenantId);
-          const nameResolver = new ClaimNameResolver();
-          vcPiiClaimNames = allSchemas
-            .filter((s) => s.is_vc_claim === 1 && s.is_pii === 1)
-            .map((s) => nameResolver.resolve(s))
-            .filter((name) => name in vcResult.claims);
+          const ccResolver = createCustomClaimSchemaResolver(
+            runtimeSources.schemaDb,
+            runtimeSources.piiDb,
+            c.env.AUTHRIM_CONFIG || null,
+            ccFeatureConfig
+          );
+          const vcResult = await ccResolver.resolveClaimsForTarget(
+            tokenResult.tenantId,
+            tokenResult.userId,
+            [],
+            'vc'
+          );
+          Object.assign(claims, vcResult.claims);
+
+          // Collect PII claim names for SD-JWT selective disclosure
+          if (vcResult.pii_accessed) {
+            const schemaLoader = new SchemaLoader(
+              runtimeSources.schemaDb,
+              c.env.AUTHRIM_CONFIG || null
+            );
+            const allSchemas = await schemaLoader.loadActiveSchemas(tokenResult.tenantId);
+            const nameResolver = new ClaimNameResolver();
+            vcPiiClaimNames = allSchemas
+              .filter((s) => s.is_vc_claim === 1 && s.is_pii === 1)
+              .map((s) => nameResolver.resolve(s))
+              .filter((name) => name in vcResult.claims);
+          }
         }
+      } catch (ccError) {
+        log.error('Failed to resolve VC custom claims', {}, ccError as Error);
       }
-    } catch (ccError) {
-      log.error('Failed to resolve VC custom claims', {}, ccError as Error);
     }
 
-    // Get issuer key from KeyManager
-    const vct = resolveVct(body.credential_configuration_id);
+    const vct = configuration.vct;
 
     // Initialize repositories
     const tenantMetadata = await resolveTenantMetadataContext(
@@ -260,12 +378,52 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     const statusListRepo = new D1StatusListRepository(adapter);
     const statusListManager = new StatusListManager(statusListRepo);
     const issuedCredentialRepo = new IssuedCredentialRepository(adapter);
+    const holderJkt = holderBinding ? await calculateJwkThumbprint(holderBinding) : null;
 
-    // Allocate status list index for revocation tracking
+    // D4 step 3: allocate the status list index and record the credential as `pending` before
+    // anything is signed, so a revocation can always find it.
     const { listId, listInternalId, index } = await statusListManager.allocateIndex(
       tokenResult.tenantId,
       'revocation'
     );
+    const recorded = await issuedCredentialRepo.createCredential({
+      tenant_id: tokenResult.tenantId,
+      user_id: tokenResult.userId,
+      credential_type: vct,
+      format: 'dc+sd-jwt',
+      claims: {}, // Don't store actual claims
+      status: 'pending',
+      status_list_id: listId,
+      status_list_internal_id: listInternalId,
+      status_list_index: index,
+      holder_binding: holderBinding ? holderBinding : null,
+    });
+    pendingCredential = { repo: issuedCredentialRepo, tenantId, id: recorded.id };
+
+    // D4 step 4 (admin): the administrator must still be eligible right now. A missing binding
+    // counts as ineligible, so admin credentials are never issued without the check.
+    if (isAdminCredential) {
+      const eligibility = await c.env.ADMIN_CREDENTIAL_ELIGIBILITY?.checkAdminCredentialEligibility(
+        {
+          tenantId,
+          adminUserId: tokenResult.userId,
+        }
+      );
+      if (!eligibility?.eligible) {
+        await abandon();
+        return vciError(c, 400, 'invalid_credential_request');
+      }
+      claims = {
+        sub: tokenResult.userId,
+        tenant_id: tenantId,
+        ...(typeof eligibility.email === 'string' && eligibility.email
+          ? { email: eligibility.email }
+          : {}),
+        ...(typeof eligibility.name === 'string' && eligibility.name
+          ? { name: eligibility.name }
+          : {}),
+      };
+    }
 
     // Add credentialStatus claim (W3C VC compatible format)
     const credentialStatus = {
@@ -278,37 +436,40 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     // Create SD-JWT VC with credentialStatus
     const options: SDJWTVCCreateOptions = {
       vct,
-      selectiveDisclosureClaims: getSDClaims(vct, vcPiiClaimNames),
+      selectiveDisclosureClaims: [
+        ...new Set([...configuration.selectivelyDisclosableClaims, ...vcPiiClaimNames]),
+      ],
       holderBinding,
+      expiresAt: Math.floor(Date.now() / 1000) + configuration.validitySeconds,
     };
 
+    // D4 step 5: sign.
     const sdjwtvc = await createSDJWTVCWithSigner(
       { ...claims, credentialStatus },
-      requestIssuerIdentifier,
+      requestIssuerUrl,
       (payload) => signSDJWTIssuer(c.env, tenantId, payload),
       options
     );
 
     const response: CredentialResponse = {
-      credentials: [sdjwtvc.combined],
+      credentials: [{ credential: sdjwtvc.combined }],
     };
 
     // Validate response format before returning
     validateCredentialResponse(response);
 
-    // Store issued credential record with status list info
-    await issuedCredentialRepo.createCredential({
-      tenant_id: tokenResult.tenantId,
-      user_id: tokenResult.userId,
-      credential_type: vct,
-      format: 'dc+sd-jwt',
-      claims: {}, // Don't store actual claims
-      status: 'active',
-      status_list_id: listId,
-      status_list_internal_id: listInternalId,
-      status_list_index: index,
-      holder_binding: holderBinding ? holderBinding : null,
-    });
+    // D4 step 6: `pending → active` only if the row is still `pending`. A revocation that
+    // happened while signing leaves no credential behind.
+    const activated = await issuedCredentialRepo.updateStatusIfCurrent(
+      tenantId,
+      recorded.id,
+      'pending',
+      'active'
+    );
+    if (!activated) {
+      await abandon();
+      return vciError(c, 400, 'invalid_credential_request');
+    }
 
     const completeResponse = await nonceReservation.stub.fetch(
       new Request('https://internal/nonce/complete', {
@@ -326,41 +487,53 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
       : null;
     if (!completion?.completed) throw new Error('vci_nonce_completion_failed');
     nonceReservation = undefined;
+
+    // D4 step 7: `issuing → issued`, remembering the holder key for the console's confirmation.
+    const issued = await callOfferStore<{ completed: boolean }>(offerStore, '/issuance/complete', {
+      id: offerId,
+      tenantId,
+      accessTokenJti: tokenResult.jti,
+      holderJkt,
+      now: Date.now(),
+    });
+    if (!issued.completed) throw new Error('vci_issuance_completion_failed');
+    issuance = undefined;
+    pendingCredential = undefined;
     c.header('Cache-Control', 'no-store');
     c.header('Pragma', 'no-cache');
     return c.json(response);
   } catch (error) {
-    if (nonceReservation) {
-      await nonceReservation.stub
-        .fetch(
-          new Request('https://internal/nonce/release', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              id: nonceReservation.nonceId,
-              tenantId: nonceReservation.tenantId,
-              reservationId: nonceReservation.reservationId,
-            }),
-          })
-        )
-        .catch(() => undefined);
-    }
+    await abandon();
     log.error('Credential issuance failed', {}, error as Error);
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    return vciError(c, 500, 'server_error');
   }
 }
 
-async function loadOfferClaims(
-  env: Env,
+async function callOfferStore<T>(
+  stub: DurableObjectStub,
+  path: string,
+  body: Record<string, unknown>
+): Promise<T> {
+  const response = await stub.fetch(
+    new Request(`https://internal${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  );
+  if (!response.ok) throw new Error(`vci_offer_store_${path.replace(/\W+/g, '_')}_failed`);
+  return (await response.json()) as T;
+}
+
+async function loadOffer(
+  stub: DurableObjectStub,
   input: {
-    offerId?: string;
+    offerId: string;
     tenantId: string;
     userId: string;
     credentialConfigurationId: string;
   }
-): Promise<Record<string, unknown>> {
-  if (!input.offerId) throw new Error('vci_access_token_missing_offer_id');
-  const { stub } = getCredentialOfferStoreById(env, input.offerId, input.tenantId);
+): Promise<{ claims: Record<string, unknown>; subjectKind: CredentialSubjectKind }> {
   const response = await stub.fetch(
     new Request(
       `https://internal/get?id=${encodeURIComponent(input.offerId)}&tenant_id=${encodeURIComponent(input.tenantId)}`
@@ -371,6 +544,8 @@ async function loadOfferClaims(
     userId: string;
     credentialConfigurationId: string;
     claims: Record<string, unknown>;
+    // Absent only on a store that predates the issuance upgrade: those offers are end-user.
+    subjectKind?: CredentialSubjectKind;
     status: string;
     expiresAt: number;
   };
@@ -382,17 +557,7 @@ async function loadOfferClaims(
   ) {
     throw new Error('vci_offer_binding_mismatch');
   }
-  return { ...offer.claims };
-}
-
-function resolveVct(configurationId: string): string {
-  const configurations: Record<string, string> = {
-    AuthrimIdentityCredential: 'https://authrim.com/credentials/identity/v1',
-    AuthrimAgeVerification: 'https://authrim.com/credentials/age-verification/v1',
-  };
-  const vct = configurations[configurationId];
-  if (!vct) throw new Error('vci_unsupported_credential_configuration');
-  return vct;
+  return { claims: { ...offer.claims }, subjectKind: offer.subjectKind ?? 'end_user' };
 }
 
 /**
@@ -404,26 +569,4 @@ async function signSDJWTIssuer(env: Env, tenantId: string, payload: JWTPayload):
     signSDJWTIssuerRpc(input: JWTPayload): Promise<{ token: string }>;
   };
   return (await stub.signSDJWTIssuerRpc(payload)).token;
-}
-
-/**
- * Get selective disclosure claims for a VCT
- */
-function getSDClaims(vct: string, additionalPiiClaimNames: string[] = []): string[] {
-  const sdClaimsMap: Record<string, string[]> = {
-    'https://authrim.com/credentials/identity/v1': [
-      'given_name',
-      'family_name',
-      'email',
-      'birthdate',
-    ],
-    'https://authrim.com/credentials/age-verification/v1': ['age_over_18', 'age_over_21'],
-  };
-
-  const baseClaims = sdClaimsMap[vct] || [];
-  if (additionalPiiClaimNames.length === 0) return baseClaims;
-
-  // Deduplicate
-  const combined = new Set([...baseClaims, ...additionalPiiClaimNames]);
-  return Array.from(combined);
 }

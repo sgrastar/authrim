@@ -10,8 +10,6 @@ import {
   createSDJWTVCWithSigner,
   type SDJWTVCCreateOptions,
   IssuedCredentialRepository,
-  createErrorResponse,
-  AR_ERROR_CODES,
   ensureDatabaseAdapter,
   getLogger,
   getTenantIdFromContext,
@@ -20,7 +18,9 @@ import {
 } from '@authrim/ar-lib-core';
 import { validateVCIAccessToken } from '../services/token-validation';
 import type { JWTPayload } from 'jose';
-import { getRequestIssuerIdentifier, getRequestIssuerUrl } from '../../request-identifiers';
+import { getRequestIssuerUrl } from '../../request-identifiers';
+import { listCredentialConfigurations } from '../credential-configurations';
+import { invalidTokenError } from '../oauth-errors';
 
 interface DeferredCredentialRequest {
   transaction_id: string;
@@ -33,13 +33,12 @@ interface DeferredCredentialRequest {
  */
 export async function deferredCredentialRoute(c: Context<{ Bindings: Env }>): Promise<Response> {
   const log = getLogger(c).module('VC-ISSUER');
-  const requestIssuerIdentifier = getRequestIssuerIdentifier(c);
   const requestIssuerUrl = getRequestIssuerUrl(c);
   try {
     // Verify access token
     const authHeader = c.req.header('Authorization');
     if (!authHeader?.startsWith('Bearer ')) {
-      return createErrorResponse(c, AR_ERROR_CODES.TOKEN_INVALID);
+      return invalidTokenError(c);
     }
 
     const accessToken = authHeader.substring(7);
@@ -51,20 +50,18 @@ export async function deferredCredentialRoute(c: Context<{ Bindings: Env }>): Pr
     );
 
     if (!tokenResult.valid) {
-      return createErrorResponse(c, AR_ERROR_CODES.TOKEN_INVALID);
+      return invalidTokenError(c);
     }
 
     // Ensure userId is present
     if (!tokenResult.userId || !tokenResult.tenantId) {
-      return createErrorResponse(c, AR_ERROR_CODES.TOKEN_INVALID);
+      return invalidTokenError(c);
     }
 
-    const body = await c.req.json<DeferredCredentialRequest>();
+    const body = await c.req.json<DeferredCredentialRequest>().catch(() => null);
 
-    if (!body.transaction_id) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
-        variables: { field: 'transaction_id' },
-      });
+    if (!body || typeof body.transaction_id !== 'string' || !body.transaction_id) {
+      return deferredError(c, 'invalid_credential_request');
     }
 
     // Look up deferred credential using repository
@@ -82,7 +79,7 @@ export async function deferredCredentialRoute(c: Context<{ Bindings: Env }>): Pr
     );
 
     if (!result) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+      return deferredError(c, 'invalid_transaction_id');
     }
 
     // Check if credential is ready (has claims populated)
@@ -94,7 +91,16 @@ export async function deferredCredentialRoute(c: Context<{ Bindings: Env }>): Pr
       Object.keys(claims).length > 0;
 
     if (!isReady) {
-      return createErrorResponse(c, AR_ERROR_CODES.VC_ISSUANCE_PENDING);
+      // Final §9.2: still pending is a 202 that repeats the transaction_id with a poll interval.
+      c.header('Cache-Control', 'no-store');
+      return c.json({ transaction_id: body.transaction_id, interval: 5 }, 202);
+    }
+
+    const configuration = listCredentialConfigurations().find(
+      (candidate) => candidate.vct === result.credential_type
+    );
+    if (!configuration || configuration.subjectKind !== 'end_user') {
+      return deferredError(c, 'invalid_transaction_id');
     }
 
     // Parse holder binding
@@ -104,14 +110,15 @@ export async function deferredCredentialRoute(c: Context<{ Bindings: Env }>): Pr
 
     // Create SD-JWT VC
     const options: SDJWTVCCreateOptions = {
-      vct: result.credential_type,
-      selectiveDisclosureClaims: getSDClaims(result.credential_type),
+      vct: configuration.vct,
+      selectiveDisclosureClaims: configuration.selectivelyDisclosableClaims,
       holderBinding,
+      expiresAt: Math.floor(Date.now() / 1000) + configuration.validitySeconds,
     };
 
     const sdjwtvc = await createSDJWTVCWithSigner(
       claims,
-      requestIssuerIdentifier,
+      requestIssuerUrl,
       (payload) => signSDJWTIssuer(c.env, result.tenant_id, payload),
       options
     );
@@ -122,12 +129,22 @@ export async function deferredCredentialRoute(c: Context<{ Bindings: Env }>): Pr
     c.header('Cache-Control', 'no-store');
     c.header('Pragma', 'no-cache');
     return c.json({
-      credentials: [sdjwtvc.combined],
+      credentials: [{ credential: sdjwtvc.combined }],
     });
   } catch (error) {
     log.error('Deferred credential retrieval failed', {}, error as Error);
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    c.header('Cache-Control', 'no-store');
+    return c.json({ error: 'server_error' }, 500);
   }
+}
+
+/** OpenID4VCI deferred credential errors (§9.3). */
+function deferredError(
+  c: Context,
+  error: 'invalid_credential_request' | 'invalid_transaction_id'
+): Response {
+  c.header('Cache-Control', 'no-store');
+  return c.json({ error }, 400);
 }
 
 /**
@@ -139,21 +156,4 @@ async function signSDJWTIssuer(env: Env, tenantId: string, payload: JWTPayload):
     signSDJWTIssuerRpc(input: JWTPayload): Promise<{ token: string }>;
   };
   return (await stub.signSDJWTIssuerRpc(payload)).token;
-}
-
-/**
- * Get selective disclosure claims for a VCT
- */
-function getSDClaims(vct: string): string[] {
-  const sdClaimsMap: Record<string, string[]> = {
-    'https://authrim.com/credentials/identity/v1': [
-      'given_name',
-      'family_name',
-      'email',
-      'birthdate',
-    ],
-    'https://authrim.com/credentials/age-verification/v1': ['age_over_18', 'age_over_21'],
-  };
-
-  return sdClaimsMap[vct] || [];
 }

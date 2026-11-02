@@ -832,5 +832,46 @@ export const ar = {
 	'map.fix.join': 'الدمج بفواصل',
 	'map.fix.bool': 'التحويل إلى true أو false',
 	'map.unusedList': '{source} غير مستخدمة: {list}',
-	'map.nothing': 'لا توجد سمات مطابقة'
+	'map.nothing': 'لا توجد سمات مطابقة',
+	'me.keyring': 'Authrim Keyring',
+	'me.keyringDesc':
+		'أضف بيانات اعتماد المسؤول الخاصة بك إلى Authrim Keyring على جهاز iPhone. تُستخدم بيانات الاعتماد للموافقة على العمليات الحساسة.',
+	'keyring.page.title': 'الإضافة إلى Authrim Keyring',
+	'keyring.page.desc':
+		'أصدر بيانات اعتماد المسؤول الخاصة بك إلى Authrim Keyring. رمز QR صالح لوقت قصير ويمكن استخدامه مرة واحدة فقط.',
+	'keyring.back': 'العودة إلى الحساب',
+	'keyring.start.title': 'إصدار بيانات اعتماد',
+	'keyring.start.body':
+		'اضغط الزر لعرض رمز QR، ثم امسحه باستخدام Authrim Keyring على جهاز iPhone. يظهر رمز التأكيد بعد أن يمسح Keyring رمز QR.',
+	'keyring.start.button': 'الإضافة إلى Keyring',
+	'keyring.creating': 'جارٍ إنشاء رمز QR…',
+	'keyring.step1.title': 'الخطوة 1: امسح رمز QR',
+	'keyring.step1.body':
+		'افتح Authrim Keyring على جهاز iPhone وامسح رمز QR هذا. لا تدع أحدًا يرى هذه الشاشة أو يصوّرها.',
+	'keyring.qr.alt': 'رمز QR لإضافة بيانات اعتماد المسؤول الخاصة بك إلى Authrim Keyring',
+	'keyring.expiresIn': 'ينتهي خلال {time}',
+	'keyring.step2.title': 'الخطوة 2: أدخل الرمز في Keyring',
+	'keyring.step2.body': 'مسح Keyring رمز QR. أدخل هذا الرمز المكوّن من 6 أرقام في Keyring.',
+	'keyring.code.label': 'رمز المعاملة (6 أرقام)',
+	'keyring.issued.title': 'تم إصدار بيانات الاعتماد',
+	'keyring.issued.body': 'تحقق من مفتاح بيانات الاعتماد التي أُضيفت إلى Keyring.',
+	'keyring.confirm.label': 'رمز تأكيد المفتاح',
+	'keyring.confirm.check': 'تأكد من أن رمز تأكيد المفتاح المعروض في Keyring هو نفسه المعروض هنا.',
+	'keyring.confirm.mismatch':
+		'إذا اختلف الرمزان، أو لم يتلقَّ Keyring بيانات اعتماد، فقد يكون شخص آخر قد استخدم رمز QR. ستتم إضافة إمكانية إلغاء بيانات الاعتماد في إصدار لاحق. وإلى ذلك الحين، تواصل مع مسؤول.',
+	'keyring.ended.failed': 'فشل الإصدار',
+	'keyring.ended.failedBody': 'تعذّر إصدار بيانات الاعتماد. أنشئ رمزًا جديدًا وحاول مرة أخرى.',
+	'keyring.ended.expired': 'انتهت صلاحية الرمز',
+	'keyring.ended.expiredBody': 'انتهت صلاحية رمز QR. أنشئ رمزًا جديدًا.',
+	'keyring.ended.locked': 'الرمز مقفل',
+	'keyring.ended.lockedBody':
+		'أُدخلت رموز خاطئة مرات كثيرة، لذلك لم يعد بالإمكان استخدام رمز QR هذا. أنشئ رمزًا جديدًا.',
+	'keyring.again': 'إنشاء رمز جديد',
+	'keyring.reauth.button': 'تسجيل الدخول مرة أخرى',
+	'keyring.error.freshAuth':
+		'يتطلب هذا الإجراء تسجيل دخول حديثًا. سجّل الدخول مرة أخرى ثم أعد المحاولة.',
+	'keyring.error.notEligible': 'لا يمكن لهذا الحساب إضافة بيانات اعتماد إلى Authrim Keyring.',
+	'keyring.error.unavailable': 'إصدار بيانات الاعتماد غير مفعّل في هذه البيئة.',
+	'keyring.error.generic': 'تعذّر إكمال الإجراء. حاول مرة أخرى بعد قليل.',
+	'keyring.error.polling': 'تعذّر التحقق من الحالة. أنشئ رمزًا جديدًا وحاول مرة أخرى.'
 } satisfies Messages;

@@ -11,8 +11,6 @@ import type { Context } from 'hono';
 import type { Env } from '../../types';
 import type { VCITokenResponse } from '@authrim/ar-lib-core';
 import {
-  createErrorResponse,
-  AR_ERROR_CODES,
   getLogger,
   getTenantIdFromContext,
   resolveEffectiveSettings,
@@ -26,11 +24,15 @@ import {
 } from '../../utils/credential-offer-sharding';
 import { hashTransactionCode, sha256Base64url } from '../../utils/crypto';
 import { getRequestIssuerUrl } from '../../request-identifiers';
+import { vciError } from '../oauth-errors';
+import { getVciAuthorizationServer, PRE_AUTHORIZED_CODE_GRANT } from './metadata';
 
 /**
- * Grant type for pre-authorized code
+ * Bearer VCI access tokens stay short-lived until DPoP-bound tokens exist
+ * (OpenID4VCI §13.10 treats issuance tokens beyond five minutes as long-lived).
  */
-const PRE_AUTHORIZED_CODE_GRANT = 'urn:ietf:params:oauth:grant-type:pre-authorized_code';
+const MAX_ACCESS_TOKEN_TTL_SECONDS = 300;
+const MIN_ACCESS_TOKEN_TTL_SECONDS = 60;
 
 /**
  * POST /vci/token
@@ -44,33 +46,40 @@ export async function vciTokenRoute(c: Context<{ Bindings: Env }>): Promise<Resp
     // Parse form-urlencoded body
     const contentType = c.req.header('Content-Type') || '';
     if (!contentType.includes('application/x-www-form-urlencoded')) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+      return vciError(c, 400, 'invalid_request', 'Expected application/x-www-form-urlencoded');
     }
 
     const formData = await c.req.parseBody();
 
-    // Validate grant_type
-    const grantType = formData['grant_type'] as string;
-    if (!grantType) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
-        variables: { field: 'grant_type' },
-      });
+    const grantType = formData['grant_type'];
+    if (typeof grantType !== 'string' || !grantType) {
+      return vciError(c, 400, 'invalid_request', 'grant_type is required');
     }
 
     if (grantType !== PRE_AUTHORIZED_CODE_GRANT) {
-      return createErrorResponse(c, AR_ERROR_CODES.CLIENT_NOT_ALLOWED_GRANT);
+      return vciError(c, 400, 'unsupported_grant_type');
     }
 
-    // Handle pre-authorized code grant
+    // Requesting authorization_details would oblige the response to return
+    // credential_identifiers (OpenID4VCI §6.2), which this issuer does not issue.
+    if (formData['authorization_details'] !== undefined) {
+      return vciError(
+        c,
+        400,
+        'invalid_authorization_details',
+        'authorization_details is not supported for the pre-authorized code grant'
+      );
+    }
+
     return await handlePreAuthorizedCodeGrant(
       c,
       log,
-      formData as unknown as Record<string, string>,
+      formData as unknown as Record<string, unknown>,
       getRequestIssuerUrl(c)
     );
   } catch (error) {
     log.error('VCI token request failed', {}, error as Error);
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    return vciError(c, 500, 'server_error');
   }
 }
 
@@ -82,19 +91,20 @@ export async function vciTokenRoute(c: Context<{ Bindings: Env }>): Promise<Resp
 async function handlePreAuthorizedCodeGrant(
   c: Context<{ Bindings: Env }>,
   log: Logger,
-  formData: Record<string, string>,
-  issuerIdentifier: string
+  formData: Record<string, unknown>,
+  credentialIssuer: string
 ): Promise<Response> {
-  // Extract pre-authorized_code (required)
   const preAuthorizedCode = formData['pre-authorized_code'];
-  if (!preAuthorizedCode) {
-    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
-      variables: { field: 'pre-authorized_code' },
-    });
+  if (typeof preAuthorizedCode !== 'string' || !preAuthorizedCode) {
+    return vciError(c, 400, 'invalid_request', 'pre-authorized_code is required');
   }
 
   // Extract tx_code (optional, for PIN-protected offers)
-  const txCode = formData['tx_code'];
+  const rawTxCode = formData['tx_code'];
+  if (rawTxCode !== undefined && typeof rawTxCode !== 'string') {
+    return vciError(c, 400, 'invalid_request', 'tx_code must be a single value');
+  }
+  const txCode = rawTxCode;
 
   // Assurance: this grant issues a bearer token from no pushed request, so it meets neither FAL2
   // with DPoP nor FAL3 and is refused then. Decided before the offer is reserved.
@@ -109,24 +119,19 @@ async function handlePreAuthorizedCodeGrant(
       { action: 'assurance_settings' },
       error as Error
     );
-    c.header('Cache-Control', 'no-store');
-    return c.json(
-      {
-        error: 'temporarily_unavailable',
-        error_description: 'Assurance settings are temporarily unavailable',
-      },
-      503
+    return vciError(
+      c,
+      503,
+      'temporarily_unavailable',
+      'Assurance settings are temporarily unavailable'
     );
   }
   if (falRequiresDpop(assurance) || falRequiresSignedPushedRequest(assurance)) {
-    c.header('Cache-Control', 'no-store');
-    return c.json(
-      {
-        error: 'unauthorized_client',
-        error_description:
-          'A pre-authorized code grant does not meet the required federation assurance level',
-      },
-      400
+    return vciError(
+      c,
+      400,
+      'unauthorized_client',
+      'A pre-authorized code grant does not meet the required federation assurance level'
     );
   }
 
@@ -139,44 +144,57 @@ async function handlePreAuthorizedCodeGrant(
     txCode,
     getTenantIdFromContext(c)
   );
+  if (reservation === 'malformed_tx_code') {
+    return vciError(
+      c,
+      400,
+      'invalid_request',
+      'tx_code must be sent exactly when the credential offer requires it'
+    );
+  }
   if (!reservation) {
-    return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+    return vciError(c, 400, 'invalid_grant');
   }
   const offerInfo = reservation.offer;
+  const expiresIn = resolveAccessTokenTtlSeconds(offerInfo.expiresAt, Date.now());
   let accessToken: string;
   try {
     accessToken = await generateVCIAccessToken(
       c.env,
       { ...offerInfo, offerId: reservation.offerId },
-      issuerIdentifier
+      { credentialIssuer, expiresInSeconds: expiresIn }
     );
   } catch (error) {
     await releaseOfferReservation(c.env, reservation, log);
     throw error;
   }
-  if (!(await completeOfferReservation(c.env, reservation))) {
+  // The offer keeps its issuance state only for as long as the token can be used.
+  if (!(await completeOfferReservation(c.env, reservation, Date.now() + expiresIn * 1000))) {
     await releaseOfferReservation(c.env, reservation, log);
     throw new Error('Credential offer reservation completion failed');
   }
 
-  // Build response per OpenID4VCI spec
+  // No authorization_details: the wallet requests by credential_configuration_id (§6.2, §8.2).
   const response: VCITokenResponse = {
     access_token: accessToken,
     token_type: 'Bearer',
-    expires_in: 3600, // 1 hour
-    authorization_details: [
-      {
-        type: 'openid_credential',
-        credential_configuration_id: offerInfo.credentialConfigurationId,
-      },
-    ],
+    expires_in: expiresIn,
   };
 
-  // Validate response format before returning
   validateTokenResponse(response);
   c.header('Cache-Control', 'no-store');
   c.header('Pragma', 'no-cache');
   return c.json(response);
+}
+
+/** Token lifetime: at most five minutes and at most a minute past the offer's own expiry. */
+export function resolveAccessTokenTtlSeconds(offerExpiresAt: number, now: number): number {
+  if (!Number.isFinite(offerExpiresAt)) return MIN_ACCESS_TOKEN_TTL_SECONDS;
+  const untilOfferExpiry = Math.floor((offerExpiresAt - now) / 1000) + 60;
+  return Math.max(
+    MIN_ACCESS_TOKEN_TTL_SECONDS,
+    Math.min(MAX_ACCESS_TOKEN_TTL_SECONDS, untilOfferExpiry)
+  );
 }
 
 /**
@@ -188,17 +206,22 @@ async function reserveOfferByCode(
   preAuthorizedCode: string,
   txCode: string | undefined,
   tenantId: string
-): Promise<{
-  offerId: string;
-  tenantId: string;
-  reservationId: string;
-  offer: {
-    userId: string;
-    tenantId: string;
-    credentialConfigurationId: string;
-    claims: Record<string, unknown>;
-  };
-} | null> {
+): Promise<
+  | {
+      offerId: string;
+      tenantId: string;
+      reservationId: string;
+      offer: {
+        userId: string;
+        tenantId: string;
+        credentialConfigurationId: string;
+        claims: Record<string, unknown>;
+        expiresAt: number;
+      };
+    }
+  | 'malformed_tx_code'
+  | null
+> {
   try {
     const parsedCode = parsePreAuthorizedCode(preAuthorizedCode);
     if (!parsedCode) return null;
@@ -223,14 +246,19 @@ async function reserveOfferByCode(
     if (!response.ok) return null;
     const result = (await response.json()) as {
       reserved: boolean;
+      reason?: string;
       reservationId?: string;
       offer?: {
         userId: string;
         tenantId: string;
         credentialConfigurationId: string;
         claims: Record<string, unknown>;
+        expiresAt: number;
       };
     };
+    if (result.reason === 'tx_code_required' || result.reason === 'tx_code_not_expected') {
+      return 'malformed_tx_code';
+    }
     if (!result.reserved || !result.reservationId || !result.offer) return null;
     return { offerId, tenantId, reservationId: result.reservationId, offer: result.offer };
   } catch (error) {
@@ -241,7 +269,8 @@ async function reserveOfferByCode(
 
 async function completeOfferReservation(
   env: Env,
-  reservation: { offerId: string; tenantId: string; reservationId: string }
+  reservation: { offerId: string; tenantId: string; reservationId: string },
+  claimsExpiresAt: number
 ): Promise<boolean> {
   const { stub } = getCredentialOfferStoreById(env, reservation.offerId, reservation.tenantId);
   const response = await stub.fetch(
@@ -252,7 +281,7 @@ async function completeOfferReservation(
         id: reservation.offerId,
         tenantId: reservation.tenantId,
         reservationId: reservation.reservationId,
-        claimsExpiresAt: Date.now() + 3600 * 1000,
+        claimsExpiresAt,
       }),
     })
   );
@@ -286,7 +315,7 @@ async function releaseOfferReservation(
 /**
  * Generate VCI access token
  *
- * Creates a JWT access token for the credential endpoint.
+ * Issued by the pre-authorized AS (`<issuer>/vci`) for the Credential Issuer audience.
  */
 export async function generateVCIAccessToken(
   env: Env,
@@ -296,7 +325,7 @@ export async function generateVCIAccessToken(
     credentialConfigurationId: string;
     offerId: string;
   },
-  issuer: string
+  options: { credentialIssuer: string; expiresInSeconds: number }
 ): Promise<string> {
   const doId = env.KEY_MANAGER.idFromName(`${offerInfo.tenantId}-v3`);
   const stub = env.KEY_MANAGER.get(doId) as unknown as {
@@ -306,6 +335,7 @@ export async function generateVCIAccessToken(
       offerId: string;
       credentialConfigurationId: string;
       issuer: string;
+      audience: string;
       expiresInSeconds: number;
     }): Promise<{ token: string }>;
   };
@@ -314,8 +344,9 @@ export async function generateVCIAccessToken(
     userId: offerInfo.userId,
     offerId: offerInfo.offerId,
     credentialConfigurationId: offerInfo.credentialConfigurationId,
-    issuer,
-    expiresInSeconds: 3600,
+    issuer: getVciAuthorizationServer(options.credentialIssuer),
+    audience: options.credentialIssuer,
+    expiresInSeconds: options.expiresInSeconds,
   });
   return result.token;
 }

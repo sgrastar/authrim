@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Context } from 'hono';
 import type { Env } from '../../../types';
-import { vciTokenRoute } from '../token';
+import { resolveAccessTokenTtlSeconds, vciTokenRoute } from '../token';
 
 const mocks = vi.hoisted(() => ({
   parsePreAuthorizedCode: vi.fn(),
@@ -43,6 +43,7 @@ function createOfferStub(handler?: (request: Request) => Promise<Response> | Res
             tenantId: 'tenant-1',
             credentialConfigurationId: 'IdentityCredential',
             claims: { given_name: 'Alice' },
+            expiresAt: Date.now() + 10 * 60 * 1000,
           },
         });
       }
@@ -129,7 +130,15 @@ describe('VCI token route', () => {
 
   it.each([
     [{ 'pre-authorized_code': 'code' }, 'invalid_request'],
-    [{ grant_type: 'authorization_code', 'pre-authorized_code': 'code' }, 'unauthorized_client'],
+    [{ grant_type: 'authorization_code', 'pre-authorized_code': 'code' }, 'unsupported_grant_type'],
+    [
+      {
+        grant_type: PRE_AUTHORIZED_CODE_GRANT,
+        'pre-authorized_code': 'code',
+        authorization_details: '[{"type":"openid_credential"}]',
+      },
+      'invalid_authorization_details',
+    ],
     [{ grant_type: PRE_AUTHORIZED_CODE_GRANT }, 'invalid_request'],
   ])('rejects an invalid grant request %#', async (form, expectedError) => {
     const response = await vciTokenRoute(createContext({ form }));
@@ -161,6 +170,7 @@ describe('VCI token route', () => {
     mocks.parsePreAuthorizedCode.mockReturnValue(null);
     const response = await vciTokenRoute(createContext());
     expect(response.status).toBe(400);
+    expect((await response.json()) as { error: string }).toMatchObject({ error: 'invalid_grant' });
     expect(mocks.getCredentialOfferStoreById).not.toHaveBeenCalled();
   });
 
@@ -190,10 +200,10 @@ describe('VCI token route', () => {
     const response = await vciTokenRoute(c);
     const data = (await response.json()) as Record<string, unknown>;
     expect(response.status).toBe(200);
-    expect(data).toMatchObject({
+    expect(data).toEqual({
       access_token: 'signed-access-token',
       token_type: 'Bearer',
-      expires_in: 3600,
+      expires_in: 300,
     });
     expect(mocks.hashTransactionCode).toHaveBeenCalledWith(
       c.env.VC_TRANSACTION_CODE_HMAC_SECRET,
@@ -213,12 +223,52 @@ describe('VCI token route', () => {
       userId: 'user-1',
       offerId: OFFER_ID,
       credentialConfigurationId: 'IdentityCredential',
-      issuer: 'https://issuer.example.com',
-      expiresInSeconds: 3600,
+      issuer: 'https://issuer.example.com/vci',
+      audience: 'https://issuer.example.com',
+      expiresInSeconds: 300,
     });
     expect(await requestPaths(stub)).toEqual(['/reserve', '/complete']);
+    const completeRequest = stub.fetch.mock.calls[1]?.[0];
+    const { claimsExpiresAt } = (await completeRequest?.clone().json()) as {
+      claimsExpiresAt: number;
+    };
+    expect(claimsExpiresAt).toBeGreaterThan(Date.now() + 290_000);
+    expect(claimsExpiresAt).toBeLessThanOrEqual(Date.now() + 300_000);
     expect(c.header).toHaveBeenCalledWith('Cache-Control', 'no-store');
     expect(c.header).toHaveBeenCalledWith('Pragma', 'no-cache');
+  });
+
+  it.each([
+    ['far from offer expiry', 10 * 60_000, 300],
+    ['close to offer expiry', 30_000, 90],
+    ['past offer expiry', -120_000, 60],
+    ['unknown offer expiry', Number.NaN, 60],
+  ])('bounds the access token lifetime %s', (_label, offset, expected) => {
+    const now = 1_700_000_000_000;
+    expect(resolveAccessTokenTtlSeconds(now + offset, now)).toBe(expected);
+  });
+
+  it.each(['tx_code_required', 'tx_code_not_expected'])(
+    'answers %s from the offer store with invalid_request',
+    async (reason) => {
+      const stub = createOfferStub(() => Response.json({ reserved: false, reason }));
+      const response = await vciTokenRoute(createContext({ offerStub: stub }));
+
+      expect(response.status).toBe(400);
+      expect((await response.json()) as { error: string }).toMatchObject({
+        error: 'invalid_request',
+      });
+    }
+  );
+
+  it('answers a wrong tx_code with invalid_grant', async () => {
+    const stub = createOfferStub(() =>
+      Response.json({ reserved: false, reason: 'invalid_tx_code' })
+    );
+    const response = await vciTokenRoute(createContext({ offerStub: stub }));
+
+    expect(response.status).toBe(400);
+    expect((await response.json()) as { error: string }).toMatchObject({ error: 'invalid_grant' });
   });
 
   it('does not derive a transaction-code hash for an unprotected offer', async () => {

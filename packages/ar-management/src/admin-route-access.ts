@@ -117,6 +117,11 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
   authenticated('/api/admin/me/passkeys/*', 'current admin passkey management'),
   authenticated('/api/admin/me/agent-consents', 'current admin Agent consent management'),
   authenticated('/api/admin/me/agent-consents/*', 'current admin Agent consent management'),
+  authenticated('/api/admin/me/wallet-credentials/offers', 'current admin wallet credential offer'),
+  authenticated(
+    '/api/admin/me/wallet-credentials/offers/*',
+    'current admin wallet credential offer progress'
+  ),
 
   ...byMethod(
     '/api/admin/tenant-backups',

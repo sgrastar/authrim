@@ -38,6 +38,15 @@ export interface PortableEcKey {
   revokedReason?: string;
 }
 
+/** Public half of a normally retired EC key, kept so long-lived credentials keep verifying. */
+export interface PortableRetiredPublicKey {
+  kid: string;
+  algorithm: PortableECAlgorithm;
+  publicJWK: JWK;
+  retiredAt: number;
+  retainUntil: number;
+}
+
 interface RotationConfig {
   rotationIntervalDays: number;
   retentionPeriodDays: number;
@@ -71,6 +80,8 @@ export interface KeyManagerTenantBackupSnapshot {
     activeKeyIds: Record<PortableECAlgorithm, string | null>;
     config: RotationConfig;
     lastRotation: number | null;
+    /** Absent in snapshots made before public-key retention. */
+    retiredPublicKeys?: PortableRetiredPublicKey[];
   };
   oidcEs256: {
     keys: PortableEcKey[];
@@ -98,6 +109,8 @@ const REQUEST_OBJECT_ENC_ALG = 'RSA-OAEP-256';
 
 const MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024;
 const MAX_KEYS_PER_STATE = 128;
+/** Public halves retained for 365 days after normal rotation; matches KeyManager's own cap. */
+export const MAX_RETIRED_PUBLIC_KEYS = 1024;
 const MAX_SECRETS = 256;
 const SECRET_REF = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/u;
 
@@ -251,6 +264,24 @@ function ecKey(value: unknown, requiredAlgorithm?: PortableECAlgorithm): Portabl
   };
 }
 
+function retiredPublicKey(value: unknown): PortableRetiredPublicKey {
+  const source = object(value);
+  exactKeys(source, ['kid', 'algorithm', 'publicJWK', 'retiredAt', 'retainUntil']);
+  const kid = string(source.kid);
+  const algorithm = source.algorithm as PortableECAlgorithm;
+  if (!Object.hasOwn(curves, algorithm)) invalid();
+  const retiredAt = timestamp(source.retiredAt);
+  const retainUntil = timestamp(source.retainUntil);
+  if (retainUntil < retiredAt) invalid();
+  return {
+    kid,
+    algorithm,
+    publicJWK: jwk(source.publicJWK, kid, algorithm, curves[algorithm]),
+    retiredAt,
+    retainUntil,
+  };
+}
+
 async function verifyPair(key: PortableRsaKey | PortableEcKey, algorithm: string): Promise<void> {
   if (algorithm === REQUEST_OBJECT_ENC_ALG) return verifyEncryptionPair(key);
   try {
@@ -302,8 +333,12 @@ function assertActive(
   return activeKeyId;
 }
 
-function keyArray<T>(value: unknown, read: (item: unknown) => T & { kid: string }): T[] {
-  if (!Array.isArray(value) || value.length > MAX_KEYS_PER_STATE) invalid();
+function keyArray<T>(
+  value: unknown,
+  read: (item: unknown) => T & { kid: string },
+  maxKeys = MAX_KEYS_PER_STATE
+): T[] {
+  if (!Array.isArray(value) || value.length > maxKeys) invalid();
   const keys = value.map(read);
   if (new Set(keys.map(({ kid }) => kid)).size !== keys.length) invalid();
   return keys;
@@ -373,7 +408,7 @@ export async function normalizeKeyManagerTenantBackupSnapshot(
   const requestObjectEncSource =
     source.requestObjectEnc === undefined ? emptyPurposeState() : object(source.requestObjectEnc);
   exactKeys(rsaSource, ['keys', 'activeKeyId', 'config', 'lastRotation', 'secrets']);
-  exactKeys(vcSource, ['keys', 'activeKeyIds', 'config', 'lastRotation']);
+  exactKeys(vcSource, ['keys', 'activeKeyIds', 'config', 'lastRotation'], ['retiredPublicKeys']);
   exactKeys(oidcEsSource, ['keys', 'activeKeyId', 'config', 'lastRotation']);
   exactKeys(oidcPsSource, ['keys', 'activeKeyId', 'config', 'lastRotation']);
   exactKeys(requestObjectEncSource, ['keys', 'activeKeyId', 'config', 'lastRotation']);
@@ -384,6 +419,11 @@ export async function normalizeKeyManagerTenantBackupSnapshot(
   const requestObjectEncKeys = keyArray(requestObjectEncSource.keys, (key) =>
     rsaKey(key, REQUEST_OBJECT_ENC_ALG)
   );
+  const retiredPublicKeys =
+    vcSource.retiredPublicKeys === undefined
+      ? undefined
+      : keyArray(vcSource.retiredPublicKeys, retiredPublicKey, MAX_RETIRED_PUBLIC_KEYS);
+  if (retiredPublicKeys?.some(({ kid }) => vcKeys.some((key) => key.kid === kid))) invalid();
   const vcActiveSource = object(vcSource.activeKeyIds);
   exactKeys(vcActiveSource, ['ES256', 'ES384', 'ES512']);
   const vcActive = Object.fromEntries(
@@ -417,6 +457,7 @@ export async function normalizeKeyManagerTenantBackupSnapshot(
       activeKeyIds: vcActive,
       config: rotationConfig(vcSource.config),
       lastRotation: nullableTimestamp(vcSource.lastRotation),
+      ...(retiredPublicKeys ? { retiredPublicKeys } : {}),
     },
     oidcEs256: {
       keys: oidcEsKeys,

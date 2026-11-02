@@ -843,7 +843,52 @@ export const ja = {
 	'map.fix.join': 'カンマでつなげる',
 	'map.fix.bool': 'true／false に変換する',
 	'map.unusedList': '使われていない{source}: {list}',
-	'map.nothing': '該当する属性はありません'
+	'map.nothing': '該当する属性はありません',
+	'me.keyring': 'Authrim Keyring',
+	'me.keyringDesc':
+		'iPhone の Authrim Keyring に、あなたの管理者資格情報を追加します。追加した資格情報は、重要な操作の承認に使います。',
+	'keyring.page.title': 'Authrim Keyring に追加',
+	'keyring.page.desc':
+		'あなたの管理者資格情報を Authrim Keyring に発行します。QR コードは短時間だけ有効で、1 回しか使えません。',
+	'keyring.back': '個人設定に戻る',
+	'keyring.start.title': '資格情報を発行する',
+	'keyring.start.body':
+		'ボタンを押すと QR コードが表示されます。iPhone の Authrim Keyring で読み取ってください。確認コードは、Keyring が QR コードを読み取った後に表示します。',
+	'keyring.start.button': 'Authrim Keyring に追加',
+	'keyring.creating': 'QR コードを作成しています…',
+	'keyring.step1.title': '手順 1: QR コードを読み取る',
+	'keyring.step1.body':
+		'iPhone で Authrim Keyring を開き、この QR コードを読み取ってください。画面を他の人に見せたり、撮影させたりしないでください。',
+	'keyring.qr.alt': 'Authrim Keyring に管理者資格情報を追加するための QR コード',
+	'keyring.expiresIn': '有効期限まで {time}',
+	'keyring.step2.title': '手順 2: コードを Keyring に入力する',
+	'keyring.step2.body':
+		'Keyring が QR コードを読み取りました。Keyring の画面に、次の 6 桁のコードを入力してください。',
+	'keyring.code.label': '確認コード（6 桁）',
+	'keyring.issued.title': '資格情報を発行しました',
+	'keyring.issued.body': 'Keyring に追加された資格情報の鍵を確認してください。',
+	'keyring.confirm.label': '鍵の確認コード',
+	'keyring.confirm.check':
+		'Keyring に表示されている鍵の確認コードが、ここに表示されているコードと同じであることを確認してください。',
+	'keyring.confirm.mismatch':
+		'コードが違う場合や、Keyring に資格情報が追加されていない場合は、他の人に QR コードを取られた可能性があります。資格情報を取り消す機能は、今後のバージョンで追加されます。それまでは管理者に連絡してください。',
+	'keyring.ended.failed': '発行に失敗しました',
+	'keyring.ended.failedBody':
+		'資格情報を発行できませんでした。新しいコードを作成して、もう一度お試しください。',
+	'keyring.ended.expired': '有効期限が切れました',
+	'keyring.ended.expiredBody': 'QR コードの有効期限が切れました。新しいコードを作成してください。',
+	'keyring.ended.locked': 'ロックされました',
+	'keyring.ended.lockedBody':
+		'コードの入力を間違えた回数が上限に達したため、この QR コードは使えなくなりました。新しいコードを作成してください。',
+	'keyring.again': '新しいコードを作成',
+	'keyring.reauth.button': 'もう一度ログインする',
+	'keyring.error.freshAuth':
+		'この操作には、直前のログインが必要です。もう一度ログインしてから、やり直してください。',
+	'keyring.error.notEligible': 'このアカウントでは Authrim Keyring に資格情報を追加できません。',
+	'keyring.error.unavailable': 'この環境では資格情報の発行が有効になっていません。',
+	'keyring.error.generic': '操作を完了できませんでした。しばらくしてからもう一度お試しください。',
+	'keyring.error.polling':
+		'状態を確認できませんでした。新しいコードを作成して、もう一度お試しください。'
 } as const;
 
 export type MessageKey = keyof typeof ja;

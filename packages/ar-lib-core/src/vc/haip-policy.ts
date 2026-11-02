@@ -55,8 +55,8 @@ export interface HaipPolicy {
   /** Allowed client ID schemes (HAIP: x509_san_dns, verifier_attestation required; did, x509_san_uri optional) */
   allowedClientIdSchemes?: HaipClientIdScheme[];
 
-  /** Require confirmation claim (cnf) to use JWK thumbprint (jkt) vs full JWK */
-  requireJktInCnf?: boolean;
+  /** Require the confirmation claim (cnf) to carry the holder's full JWK (HAIP 1.0 §6.1.1) */
+  requireJwkInCnf?: boolean;
 
   /** Require type header (typ: "dc+sd-jwt") in issuer JWT */
   requireTypHeader?: boolean;
@@ -118,7 +118,7 @@ export const HAIP_DRAFT_06: HaipPolicy = {
   requireNonceInKBJWT: true,
   requireAudienceInKBJWT: true,
   allowedClientIdSchemes: ['x509_san_dns', 'verifier_attestation', 'did', 'x509_san_uri'],
-  requireJktInCnf: true,
+  requireJwkInCnf: true,
   requireTypHeader: true,
   maxClockSkew: 300, // 5 minutes
   requireTrustChain: false, // Optional per spec
@@ -362,9 +362,9 @@ export class HaipPolicyEvaluator {
       }
     }
 
-    // Check cnf JKT requirement
-    if (this.policy.requireJktInCnf && result.cnfUsesJkt === false) {
-      warnings.push('Confirmation claim should use JWK thumbprint (jkt) for HAIP compliance');
+    // Check cnf JWK requirement
+    if (this.policy.requireJwkInCnf && result.cnfUsesJwk === false) {
+      warnings.push('Confirmation claim should carry the holder JWK (cnf.jwk) for HAIP compliance');
     }
 
     // Check type header requirement
@@ -453,8 +453,8 @@ export interface HaipVerificationInput {
   /** Client ID scheme used */
   clientIdScheme?: HaipClientIdScheme;
 
-  /** Does cnf claim use JWK thumbprint (jkt) */
-  cnfUsesJkt?: boolean;
+  /** Does the cnf claim carry the holder's full JWK */
+  cnfUsesJwk?: boolean;
 
   /** Does issuer JWT have correct type header (dc+sd-jwt) */
   hasCorrectTypHeader?: boolean;

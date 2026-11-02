@@ -48,7 +48,8 @@ import {
 } from './verifier/routes/attribute-verify';
 
 // Issuer routes
-import { issuerMetadataRoute } from './issuer/routes/metadata';
+import { issuerMetadataRoute, vciAuthorizationServerMetadataRoute } from './issuer/routes/metadata';
+import { jwtVcIssuerMetadataRoute } from './issuer/routes/jwt-vc-issuer';
 import { credentialOfferRoute } from './issuer/routes/offer';
 import { credentialRoute } from './issuer/routes/credential';
 import { deferredCredentialRoute } from './issuer/routes/deferred';
@@ -184,6 +185,12 @@ app.get('/vp/attributes', getAttributes);
 
 // Issuer metadata
 app.get('/.well-known/openid-credential-issuer', issuerMetadataRoute);
+
+// RFC 8414 metadata of the pre-authorized Authorization Server at <issuer>/vci
+app.get('/.well-known/oauth-authorization-server/vci', vciAuthorizationServerMetadataRoute);
+
+// SD-JWT VC issuer key resolution (JWT VC Issuer Metadata)
+app.get('/.well-known/jwt-vc-issuer', jwtVcIssuerMetadataRoute);
 
 // Token endpoint (pre-authorized_code grant)
 app.post('/vci/token', vciTokenRoute);
