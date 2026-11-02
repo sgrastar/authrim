@@ -356,10 +356,7 @@
 
 <Story
 	name="Too many authenticator app attempts"
-	args={{
-		methods: { totp: true, any: true },
-		alerts: { error: get(LL).error_rateLimitedRetryAfter({ minutes: 15 }) }
-	}}
+	args={{ methods: { totp: true, any: true } }}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await expect(
@@ -367,7 +364,11 @@
 		).toBeVisible();
 	}}
 >
-	{#snippet template(args)}{@render page(args)}{/snippet}
+	<!-- The message is built when the story renders: the toolbar locale is applied after this file loads, so a message built in `args` would stay in the load-time language. -->
+	{#snippet template(args)}{@render page({
+			...args,
+			alerts: { error: get(LL).error_rateLimitedRetryAfter({ minutes: 15 }) }
+		})}{/snippet}
 </Story>
 
 <Story
