@@ -1,8 +1,8 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { fn } from 'storybook/test';
-	import AuthPageShell from '$lib/components/AuthPageShell.svelte';
-	import LoginUIFrame from '$lib/storybook/LoginUIFrame.svelte';
+	import AuthPageShell from '#lib/components/AuthPageShell.svelte';
+	import LoginUIFrame from '#lib/storybook/LoginUIFrame.svelte';
 	import ReauthView, { type ChallengeData } from './ReauthView.svelte';
 
 	const { Story } = defineMeta({

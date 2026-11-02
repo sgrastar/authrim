@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import { useChangeMark, useInvalidReport } from '../save/save-scope';
 	import ConditionGroupEditor from './ConditionGroupEditor.svelte';
 	import {

@@ -1,5 +1,5 @@
-import type { ScopeOption } from '$lib/shell/ScopeSwitcher.svelte';
-import type { ShellNotification } from '$lib/shell/notifications';
+import type { ScopeOption } from '#lib/shell/ScopeSwitcher.svelte';
+import type { ShellNotification } from '#lib/shell/notifications.js';
 
 /** What the shell frame shows around a mock page. Sample data only. */
 export const mockScopes: ScopeOption[] = [

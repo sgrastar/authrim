@@ -9,8 +9,8 @@
 		type AdminMachinePrincipalType,
 		type AdminMachineTenantScope,
 		type AdminMachineTenantScopeMode
-	} from '$lib/api/admin-machine-access';
-	import { AdminPageHeader, AdminPageShell } from '$lib/components/admin';
+	} from '#lib/api/admin-machine-access.js';
+	import { AdminPageHeader, AdminPageShell } from '#lib/components/admin/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	const PRINCIPAL_TYPES: AdminMachinePrincipalType[] = [

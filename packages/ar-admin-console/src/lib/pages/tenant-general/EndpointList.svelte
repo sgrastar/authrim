@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { hasMessage, t, type MessageKey } from '$lib/i18n/i18n.svelte';
-	import type { EndpointGroup } from '$lib/api/tenant-info';
-	import Card from '$lib/ui/patterns/Card.svelte';
-	import CopyButton from '$lib/ui/primitives/CopyButton.svelte';
-	import DetailItem from '$lib/ui/patterns/DetailItem.svelte';
-	import DetailList from '$lib/ui/patterns/DetailList.svelte';
+	import { hasMessage, t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
+	import type { EndpointGroup } from '#lib/api/tenant-info.js';
+	import Card from '#lib/ui/patterns/Card.svelte';
+	import CopyButton from '#lib/ui/primitives/CopyButton.svelte';
+	import DetailItem from '#lib/ui/patterns/DetailItem.svelte';
+	import DetailList from '#lib/ui/patterns/DetailList.svelte';
 	import AddressValue from './AddressValue.svelte';
 
 	/**

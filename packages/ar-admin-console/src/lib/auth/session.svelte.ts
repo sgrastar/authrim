@@ -2,7 +2,7 @@
  * Admin session state, backed by the HttpOnly admin session cookie (never readable here).
  * `check()` asks the Admin API who is signed in; the console layout uses it as its guard.
  */
-import { adminAuthAPI, AuthError, type SessionStatus } from '$lib/api/admin-auth';
+import { adminAuthAPI, AuthError, type SessionStatus } from '#lib/api/admin-auth.js';
 
 export type SessionState = 'unknown' | 'authenticated' | 'anonymous' | 'forbidden';
 

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const list = vi.hoisted(() => vi.fn());
 
-vi.mock('$lib/api/admin-tenants', () => ({
+vi.mock('#lib/api/admin-tenants.js', () => ({
 	adminTenantsAPI: { list }
 }));
 

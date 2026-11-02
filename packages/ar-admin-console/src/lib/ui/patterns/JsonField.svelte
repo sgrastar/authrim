@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import Icon from '../icons/Icon.svelte';
 	import Button from '../primitives/Button.svelte';
 	import CodeField from '../code/CodeField.svelte';

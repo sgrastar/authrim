@@ -1,9 +1,9 @@
 import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
 import { setLocale } from '$i18n/i18n-svelte';
-import type { AccountTotpCredential } from '$lib/api/account';
+import type { AccountTotpCredential } from '#lib/api/account.js';
 import AccountTotpWidget from './AccountTotpWidget.svelte';
-import { HYDRATION_MARKERS } from '$lib/testing/ssr-html';
+import { HYDRATION_MARKERS } from '#lib/testing/ssr-html.js';
 
 const handlers = {
 	onStartEnrollment: (_label: string) => undefined,

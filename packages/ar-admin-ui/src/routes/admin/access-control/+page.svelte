@@ -2,11 +2,11 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { LL } from '$i18n/i18n-svelte';
-	import { adminAccessControlAPI, type AccessControlStats } from '$lib/api/admin-access-control';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
-	import AdminSection from '$lib/components/admin/AdminSection.svelte';
+	import { adminAccessControlAPI, type AccessControlStats } from '#lib/api/admin-access-control.js';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '#lib/components/admin/AdminSection.svelte';
 
 	let stats: AccessControlStats | null = $state(null);
 	let loading = $state(true);

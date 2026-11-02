@@ -1,16 +1,16 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { LL } from '$i18n/i18n-svelte';
-	import { getFlowKindLabel, getSavedFlowDescription } from '$lib/admin/flow-i18n';
+	import { getFlowKindLabel, getSavedFlowDescription } from '#lib/admin/flow-i18n.js';
 	import {
 		adminFlowsAPI,
 		type AdminFlow,
 		type AdminFlowStatus,
 		type FlowRuntimeContractPackage,
 		type FlowValidationIssue
-	} from '$lib/api/admin-flows';
-	import { Modal } from '$lib/components';
-	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
+	} from '#lib/api/admin-flows.js';
+	import { Modal } from '#lib/components/index.js';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '#lib/components/admin/index.js';
 	import { onMount } from 'svelte';
 
 	const MAX_IMPORT_JSON_BYTES = 512 * 1024;

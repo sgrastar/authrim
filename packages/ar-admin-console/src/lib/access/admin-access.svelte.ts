@@ -4,7 +4,7 @@
  *
  * Storybook and the dev mock set an override (a persona) instead of signing in.
  */
-import { adminSession } from '$lib/auth/session.svelte';
+import { adminSession } from '#lib/auth/session.svelte.js';
 import { accessFromSession, NO_ACCESS, type AdminAccess } from './access';
 
 let override = $state<AdminAccess | null>(null);

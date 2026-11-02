@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { LoginUIConfig } from '$lib/api/authentication-methods';
+import type { LoginUIConfig } from '#lib/api/authentication-methods.js';
 import { createLoginUIPageStore } from './login-ui-page.svelte';
 
 vi.mock('$app/env', () => ({ browser: true }));

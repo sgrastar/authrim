@@ -1,5 +1,5 @@
 import { redirect } from '@sveltejs/kit';
-import { redirectExternal } from '$lib/server/external-redirect';
+import { redirectExternal } from '#lib/server/external-redirect.js';
 import type { Actions, PageServerLoad } from './$types';
 import {
 	getDiscoveryRequestHeaders,

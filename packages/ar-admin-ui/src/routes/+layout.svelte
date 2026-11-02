@@ -1,7 +1,7 @@
 <script lang="ts">
 	import 'virtual:uno.css';
 	import '../app.css';
-	import favicon from '$lib/assets/favicon.svg';
+	import favicon from '#lib/assets/favicon.svg';
 	import { setLocale } from '$i18n/i18n-svelte';
 	import { resolveLocale } from '$i18n/locales';
 	import type { LayoutData } from './$types';

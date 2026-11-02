@@ -4,8 +4,8 @@
 	 * (terms, policies) with their version and choice. Read-only.
 	 */
 	import AccountSectionSkeleton from '../AccountSectionSkeleton.svelte';
-	import type { AccountConsent } from '$lib/api/account';
-	import { formatTimestamp } from '$lib/utils/date';
+	import type { AccountConsent } from '#lib/api/account.js';
+	import { formatTimestamp } from '#lib/utils/date.js';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
 	import AccountWidgetPanel from './AccountWidgetPanel.svelte';
 	import type { AccountWidgetHeadingLevel } from './types';

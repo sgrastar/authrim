@@ -1,5 +1,5 @@
 import { getLocale } from '$i18n/i18n-svelte';
-import { settingsContext } from '$lib/stores/settings-context.svelte';
+import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 
 export const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
 const MAX_ADMIN_API_RESPONSE_BYTES = 2 * 1024 * 1024;

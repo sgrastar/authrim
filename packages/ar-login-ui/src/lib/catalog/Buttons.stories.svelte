@@ -1,11 +1,11 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
-	import Button from '$lib/components/Button.svelte';
-	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
-	import Catalog from '$lib/storybook/Catalog.svelte';
-	import { blocks, screenOf } from '$lib/storybook/fixtures';
-	import RuntimeScreenHarness from '$lib/storybook/RuntimeScreenHarness.svelte';
-	import Specimen from '$lib/storybook/Specimen.svelte';
+	import Button from '#lib/components/Button.svelte';
+	import LanguageSwitcher from '#lib/components/LanguageSwitcher.svelte';
+	import Catalog from '#lib/storybook/Catalog.svelte';
+	import { blocks, screenOf } from '#lib/storybook/fixtures.js';
+	import RuntimeScreenHarness from '#lib/storybook/RuntimeScreenHarness.svelte';
+	import Specimen from '#lib/storybook/Specimen.svelte';
 
 	const { Story } = defineMeta({
 		title: 'Catalog/Buttons',

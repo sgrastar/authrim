@@ -5,13 +5,13 @@
 		adminConsentStatementsAPI,
 		type ConsentStatement,
 		type TenantConsentRequirement
-	} from '$lib/api/admin-consent-statements';
+	} from '#lib/api/admin-consent-statements.js';
 	import {
 		AdminDataTable,
 		AdminPageHeader,
 		AdminPageShell,
 		AdminSection
-	} from '$lib/components/admin';
+	} from '#lib/components/admin/index.js';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 
 	let statements = $state<ConsentStatement[]>([]);

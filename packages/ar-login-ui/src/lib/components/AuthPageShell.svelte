@@ -1,8 +1,8 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
-	import { useLoginUIStores } from '$lib/stores/login-ui-context';
-	import { isValidImageUrl } from '$lib/utils/url-validation';
+	import { useLoginUIStores } from '#lib/stores/login-ui-context.js';
+	import { isValidImageUrl } from '#lib/utils/url-validation.js';
 	import ConfiguredFooter from './ConfiguredFooter.svelte';
 	import LanguageSwitcher from './LanguageSwitcher.svelte';
 	import LocalizedTagline from './LocalizedTagline.svelte';

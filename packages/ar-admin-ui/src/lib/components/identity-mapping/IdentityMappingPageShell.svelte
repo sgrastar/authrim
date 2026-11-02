@@ -3,27 +3,27 @@
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
-	import { adminCustomClaimsAPI } from '$lib/api/admin-custom-claims';
-	import { adminIdentityMappingAPI } from '$lib/api/admin-identity-mapping';
-	import { AdminPageHeader, AdminPageShell } from '$lib/components/admin';
-	import IdentityMappingFlowEditor from '$lib/components/identity-mapping/IdentityMappingFlowEditor.svelte';
+	import { adminCustomClaimsAPI } from '#lib/api/admin-custom-claims.js';
+	import { adminIdentityMappingAPI } from '#lib/api/admin-identity-mapping.js';
+	import { AdminPageHeader, AdminPageShell } from '#lib/components/admin/index.js';
+	import IdentityMappingFlowEditor from '#lib/components/identity-mapping/IdentityMappingFlowEditor.svelte';
 	import {
 		buildIdentityMappingDestinationSamples,
 		buildIdentityMappingFlowSamples,
 		buildIdentityMappingSourceSamples
-	} from '$lib/components/identity-mapping/flow-data';
-	import { profileReferencesMatch } from '$lib/components/identity-mapping/profile-reference';
+	} from '#lib/components/identity-mapping/flow-data.js';
+	import { profileReferencesMatch } from '#lib/components/identity-mapping/profile-reference.js';
 	import {
 		resolveMappingEditorLaneSelectorMode,
 		shouldExposeFieldMappingVersion
-	} from '$lib/components/identity-mapping/policy-version-visibility';
-	import { mergeMappingVersionSide } from '$lib/components/identity-mapping/version-side-merge';
+	} from '#lib/components/identity-mapping/policy-version-visibility.js';
+	import { mergeMappingVersionSide } from '#lib/components/identity-mapping/version-side-merge.js';
 	import { LL } from '$i18n/i18n-svelte';
 	import type {
 		MappingAdapter,
 		MappingDraftPayload,
 		MappingSample
-	} from '$lib/components/identity-mapping/types';
+	} from '#lib/components/identity-mapping/types.js';
 
 	import type {
 		IdentityMappingCatalogSummary,
@@ -31,7 +31,7 @@
 		IdentityMappingFieldMappingVersionSummary,
 		IdentityMappingFieldMappingSetSummary,
 		IdentityMappingSourceProfileSummary
-	} from '$lib/api/admin-identity-mapping';
+	} from '#lib/api/admin-identity-mapping.js';
 
 	type ViewMode = 'overview' | 'source' | 'destination';
 	type MappingSide = Extract<ViewMode, 'source' | 'destination'>;

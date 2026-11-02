@@ -8,7 +8,7 @@ import {
 	shouldSignalUnknownCredentialAfterLoginFailure,
 	shouldSignalUnknownCredentialAfterRegistrationFailure
 } from './signal';
-import type { AccountProfile } from '$lib/api/account';
+import type { AccountProfile } from '#lib/api/account.js';
 
 function setPublicKeyCredential(value: unknown) {
 	Object.defineProperty(window, 'PublicKeyCredential', {

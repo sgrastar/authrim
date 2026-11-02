@@ -1,19 +1,19 @@
 <script lang="ts">
 	import 'virtual:uno.css';
 	import '../app.css';
-	import favicon from '$lib/assets/favicon.svg';
+	import favicon from '#lib/assets/favicon.svg';
 	import { setLocale, getLocale } from '$i18n/i18n-svelte';
-	import { initializeLoginUIStores } from '$lib/stores/login-ui-context';
+	import { initializeLoginUIStores } from '#lib/stores/login-ui-context.js';
 	import {
 		fetchAuthenticationMethods,
 		type AuthenticationMethodsResponse
-	} from '$lib/api/authentication-methods';
+	} from '#lib/api/authentication-methods.js';
 	import { page } from '$app/state';
 	import { onMount, untrack } from 'svelte';
 	import type { LayoutData } from './$types';
 	import type { Snippet } from 'svelte';
-	import { isLoginUILocale, toDocumentDirection, toDocumentLanguage } from '$lib/i18n/locales';
-	import { applyAuthenticationMethodsToLoginUI } from '$lib/stores/login-ui-configuration';
+	import { isLoginUILocale, toDocumentDirection, toDocumentLanguage } from '#lib/i18n/locales.js';
+	import { applyAuthenticationMethodsToLoginUI } from '#lib/stores/login-ui-configuration.js';
 
 	let { children, data }: { children: Snippet; data: LayoutData } = $props();
 	const initialPreferredLanguage = untrack(() => data.preferredLanguage);

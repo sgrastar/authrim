@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { i18n } from '$lib/i18n/i18n.svelte';
+	import { i18n } from '#lib/i18n/i18n.svelte.js';
 	import { formatTime, type TimeInput, type TimeStyle, type TimeZoneMode } from './format-time';
 	import { timePreference } from './time-preference.svelte';
 

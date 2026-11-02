@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { LogPager } from '$lib/admin/log-pager.svelte';
-	import LogCursorPager from '$lib/components/admin/LogCursorPager.svelte';
+	import { LogPager } from '#lib/admin/log-pager.svelte.js';
+	import LogCursorPager from '#lib/components/admin/LogCursorPager.svelte';
 	const logPager = new LogPager();
 	let auditLoading = $state(false);
 	let auditError = $state('');
@@ -10,15 +10,15 @@
 		type AdminAgentGrant,
 		type AdminAgentGrantAuditEvent,
 		type AgentGrantStatus
-	} from '$lib/api/admin-agent-access';
+	} from '#lib/api/admin-agent-access.js';
 	import {
 		AdminPageHeader,
 		AdminPageShell,
 		AdminSection,
 		AgentAccessNav
-	} from '$lib/components/admin';
-	import { adminAuth } from '$lib/stores/admin-auth.svelte';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	} from '#lib/components/admin/index.js';
+	import { adminAuth } from '#lib/stores/admin-auth.svelte.js';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	let grant: AdminAgentGrant | null = $state(null);

@@ -3,8 +3,8 @@
  * pages and for "Default: …" lines. Durations take the largest unit that shows a whole number.
  */
 import type { SettingMeta } from '@authrim/ar-lib-core/utils/settings-manager';
-import { i18n, t } from '$lib/i18n/i18n.svelte';
-import { formatNumber } from '$lib/ui/format';
+import { i18n, t } from '#lib/i18n/i18n.svelte.js';
+import { formatNumber } from '#lib/ui/format.js';
 import { settingText } from './setting-text';
 
 const UNITS = [

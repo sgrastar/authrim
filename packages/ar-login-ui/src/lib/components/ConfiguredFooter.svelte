@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { LL, getLocale } from '$i18n/i18n-svelte';
-	import FooterText from '$lib/components/FooterText.svelte';
-	import { useLoginUIStores } from '$lib/stores/login-ui-context';
+	import FooterText from '#lib/components/FooterText.svelte';
+	import { useLoginUIStores } from '#lib/stores/login-ui-context.js';
 
 	type Props = {
 		locale?: string;

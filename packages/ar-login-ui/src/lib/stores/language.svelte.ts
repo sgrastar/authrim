@@ -1,5 +1,5 @@
-import { getLoginUILanguageConfig, type LoginUILanguageConfig } from '$lib/i18n/config';
-import type { LoginUILocale } from '$lib/i18n/locales';
+import { getLoginUILanguageConfig, type LoginUILanguageConfig } from '#lib/i18n/config.js';
+import type { LoginUILocale } from '#lib/i18n/locales.js';
 
 export function createLanguageStore() {
 	let config = $state<LoginUILanguageConfig>(getLoginUILanguageConfig(null));

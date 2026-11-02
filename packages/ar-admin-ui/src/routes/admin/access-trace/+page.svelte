@@ -1,12 +1,12 @@
 <script lang="ts">
-	import { LogPager } from '$lib/admin/log-pager.svelte';
-	import LogCursorPager from '$lib/components/admin/LogCursorPager.svelte';
+	import { LogPager } from '#lib/admin/log-pager.svelte.js';
+	import LogCursorPager from '#lib/components/admin/LogCursorPager.svelte';
 	const logPager = new LogPager();
 	let loadGeneration = 0;
 	import { onMount, untrack } from 'svelte';
 	import { LL } from '$i18n/i18n-svelte';
-	import { Modal } from '$lib/components';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import { Modal } from '#lib/components/index.js';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import {
 		adminAccessTraceAPI,
 		type AccessTraceEntry,
@@ -14,14 +14,14 @@
 		type TimelineDataPoint,
 		formatPermission,
 		formatTimestamp
-	} from '$lib/api/admin-access-trace';
-	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
-	import AdminPagination from '$lib/components/admin/AdminPagination.svelte';
-	import AdminSection from '$lib/components/admin/AdminSection.svelte';
-	import AdminTabs, { type AdminTabItem } from '$lib/components/admin/AdminTabs.svelte';
-	import AdminToolbar from '$lib/components/admin/AdminToolbar.svelte';
+	} from '#lib/api/admin-access-trace.js';
+	import AdminDataTable from '#lib/components/admin/AdminDataTable.svelte';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
+	import AdminPagination from '#lib/components/admin/AdminPagination.svelte';
+	import AdminSection from '#lib/components/admin/AdminSection.svelte';
+	import AdminTabs, { type AdminTabItem } from '#lib/components/admin/AdminTabs.svelte';
+	import AdminToolbar from '#lib/components/admin/AdminToolbar.svelte';
 
 	// =============================================================================
 	// State

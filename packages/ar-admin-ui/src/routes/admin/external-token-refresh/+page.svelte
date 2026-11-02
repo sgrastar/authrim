@@ -4,12 +4,12 @@
 		adminExternalTokenRefreshAPI,
 		type ExternalTokenRefreshConfig,
 		type ExternalTokenRefreshRunSummary
-	} from '$lib/api/admin-external-token-refresh';
+	} from '#lib/api/admin-external-token-refresh.js';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
-	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
-	import AdminSection from '$lib/components/admin/AdminSection.svelte';
+	import AdminDataTable from '#lib/components/admin/AdminDataTable.svelte';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '#lib/components/admin/AdminSection.svelte';
 
 	let config: ExternalTokenRefreshConfig = $state({
 		enabled: false,

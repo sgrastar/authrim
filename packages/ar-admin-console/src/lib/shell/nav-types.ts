@@ -1,5 +1,5 @@
-import type { MessageKey } from '$lib/i18n/messages/ja';
-import type { IconName } from '$lib/ui/icons/icons';
+import type { MessageKey } from '#lib/i18n/messages/ja.js';
+import type { IconName } from '#lib/ui/icons/icons.js';
 import type { NavRequirement } from './nav-access';
 
 /** Which kind of subject an area manages. Drives the accent colour of the category. */

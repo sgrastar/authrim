@@ -1,4 +1,4 @@
-import { isValidRedirectUrl } from '$lib/utils/url-validation';
+import { isValidRedirectUrl } from '#lib/utils/url-validation.js';
 
 /**
  * Where the browser goes when a Flow is complete: the continuation the server gave (the

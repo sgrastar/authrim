@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { AdminPageShell } from '$lib/components/admin';
+	import { AdminPageShell } from '#lib/components/admin/index.js';
 	import { onMount } from 'svelte';
 
 	const statementId = $derived(page.params.id ?? '');

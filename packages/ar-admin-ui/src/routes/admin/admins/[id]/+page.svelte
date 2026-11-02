@@ -7,15 +7,15 @@
 		type AdminRoleAssignment,
 		type AdminUserDetail,
 		type UpdateAdminUserInput
-	} from '$lib/api/admin-admins';
+	} from '#lib/api/admin-admins.js';
 	import {
 		adminAdminRolesAPI,
 		type AdminRole,
 		type AssignableAdminRoleScopeType
-	} from '$lib/api/admin-admin-roles';
-	import { Modal } from '$lib/components';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	} from '#lib/api/admin-admin-roles.js';
+	import { Modal } from '#lib/components/index.js';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 
 	let admin: AdminUserDetail | null = $state(null);

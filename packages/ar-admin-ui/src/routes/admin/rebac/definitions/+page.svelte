@@ -1,14 +1,14 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import {
 		adminReBACAPI,
 		type RelationDefinition,
 		formatRelationExpression,
 		type RelationExpressionType
-	} from '$lib/api/admin-rebac';
-	import { Modal } from '$lib/components';
+	} from '#lib/api/admin-rebac.js';
+	import { Modal } from '#lib/components/index.js';
 	import {
 		AdminDataTable,
 		AdminPageHeader,
@@ -16,7 +16,7 @@
 		AdminPagination,
 		AdminSection,
 		AdminToolbar
-	} from '$lib/components/admin';
+	} from '#lib/components/admin/index.js';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 
 	// State

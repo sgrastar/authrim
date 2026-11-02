@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { LL, getLocale, setLocale } from '$i18n/i18n-svelte';
 	import type { Locales } from '$i18n/i18n-types';
-	import { useLoginUIStores } from '$lib/stores/login-ui-context';
-	import { buildDiagnosticHeaders } from '$lib/api/client';
-	import { isLoginUILocale, toDocumentDirection, toDocumentLanguage } from '$lib/i18n/locales';
-	import { buildLoginUILanguageSelectorModel } from '$lib/i18n/language-selector';
+	import { useLoginUIStores } from '#lib/stores/login-ui-context.js';
+	import { buildDiagnosticHeaders } from '#lib/api/client.js';
+	import { isLoginUILocale, toDocumentDirection, toDocumentLanguage } from '#lib/i18n/locales.js';
+	import { buildLoginUILanguageSelectorModel } from '#lib/i18n/language-selector.js';
 
 	const { languageStore, themeStore } = useLoginUIStores();
 

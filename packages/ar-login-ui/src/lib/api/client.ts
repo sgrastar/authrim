@@ -4,14 +4,14 @@
  */
 
 import { browser } from '$app/env';
-import { getAuthConfig } from '$lib/auth';
-import { getDiagnosticSessionId as getLoggerSessionId } from '$lib/stores/diagnostic';
-import { authrimFetch } from '$lib/authrim/fetch';
+import { getAuthConfig } from '#lib/auth.js';
+import { getDiagnosticSessionId as getLoggerSessionId } from '#lib/stores/diagnostic.js';
+import { authrimFetch } from '#lib/authrim/fetch.js';
 import { APPROVAL_ENDPOINTS, approvalEndpointPath } from './approval-endpoints';
 import {
 	LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS,
 	LOGIN_UI_SESSION_STORAGE_KEYS
-} from '$lib/authrim/storage-keys';
+} from '#lib/authrim/storage-keys.js';
 import {
 	AuthrimError,
 	base64urlEncode,

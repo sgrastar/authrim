@@ -1,8 +1,8 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, within } from 'storybook/test';
-	import { t } from '$lib/i18n/i18n.svelte';
-	import LanguageSwitch from '$lib/shell/LanguageSwitch.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import LanguageSwitch from '#lib/shell/LanguageSwitch.svelte';
 	import Callout from '../patterns/Callout.svelte';
 	import Button from '../primitives/Button.svelte';
 	import TextField from '../primitives/TextField.svelte';

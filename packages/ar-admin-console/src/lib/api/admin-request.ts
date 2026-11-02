@@ -3,7 +3,7 @@
  * tenant header comes from the console's scope store instead of the legacy settings context.
  * Keep the retry and size-limit behaviour identical; it is part of the Admin API contract.
  */
-import { tenantScope } from '$lib/auth/tenant-scope.svelte';
+import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
 
 export const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
 const MAX_ADMIN_API_RESPONSE_BYTES = 2 * 1024 * 1024;

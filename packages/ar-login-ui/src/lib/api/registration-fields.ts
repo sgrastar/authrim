@@ -1,4 +1,4 @@
-import { API_BASE_URL } from '$lib/api/client';
+import { API_BASE_URL } from '#lib/api/client.js';
 
 export interface RegistrationField {
 	field_key: string;

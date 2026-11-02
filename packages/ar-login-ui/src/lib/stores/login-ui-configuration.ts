@@ -1,8 +1,8 @@
 import { getLocale, setLocale } from '$i18n/i18n-svelte';
-import type { AuthenticationMethodsResponse } from '$lib/api/authentication-methods';
-import { toDocumentDirection, toDocumentLanguage } from '$lib/i18n/locales';
+import type { AuthenticationMethodsResponse } from '#lib/api/authentication-methods.js';
+import { toDocumentDirection, toDocumentLanguage } from '#lib/i18n/locales.js';
 import type { LoginUIStores } from './login-ui-context';
-import { isValidImageUrl } from '$lib/utils/url-validation';
+import { isValidImageUrl } from '#lib/utils/url-validation.js';
 
 export function applyAuthenticationMethodsToLoginUI(
 	authenticationMethods: AuthenticationMethodsResponse,

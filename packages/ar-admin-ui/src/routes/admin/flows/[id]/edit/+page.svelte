@@ -13,38 +13,38 @@
 		getSavedFlowDescription,
 		type FlowEditorAuthProfileOption,
 		type FlowEditorOption
-	} from '$lib/admin/flow-i18n';
-	import { getNewFlowTemplate, type NewFlowTemplate } from '$lib/admin/new-flow-templates';
+	} from '#lib/admin/flow-i18n.js';
+	import { getNewFlowTemplate, type NewFlowTemplate } from '#lib/admin/new-flow-templates.js';
 	import {
 		adminAuthenticationMethodsAPI,
 		type AuthenticationMethodSettingsResponse
-	} from '$lib/api/admin-authentication-methods';
-	import { adminConsentPoliciesAPI, type ConsentPolicy } from '$lib/api/admin-consent-policies';
-	import { adminScreensAPI, type Screen, type ScreenKind } from '$lib/api/admin-screens';
+	} from '#lib/api/admin-authentication-methods.js';
+	import { adminConsentPoliciesAPI, type ConsentPolicy } from '#lib/api/admin-consent-policies.js';
+	import { adminScreensAPI, type Screen, type ScreenKind } from '#lib/api/admin-screens.js';
 	import {
 		adminFlowsAPI,
 		type AdminFlow,
 		type AdminFlowKind,
 		type FlowEditorState,
 		type FlowValidationIssue
-	} from '$lib/api/admin-flows';
-	import { Modal } from '$lib/components';
-	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
+	} from '#lib/api/admin-flows.js';
+	import { Modal } from '#lib/components/index.js';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '#lib/components/admin/index.js';
 	import FlowEditorEdge, {
 		type FlowEditorEdgeData
-	} from '$lib/components/flow-editor/FlowEditorEdge.svelte';
+	} from '#lib/components/flow-editor/FlowEditorEdge.svelte';
 	import FlowEditorGroupNode, {
 		type FlowEditorGroupData
-	} from '$lib/components/flow-editor/FlowEditorGroupNode.svelte';
+	} from '#lib/components/flow-editor/FlowEditorGroupNode.svelte';
 	import FlowEditorNode, {
 		type FlowEditorCompletionBlock,
 		type FlowEditorNodeData,
 		type FlowEditorNodeKind,
 		type FlowEditorNodeOutput
-	} from '$lib/components/flow-editor/FlowEditorNode.svelte';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
-	import { themeStore } from '$lib/stores/theme.svelte';
-	import { toast } from '$lib/toast';
+	} from '#lib/components/flow-editor/FlowEditorNode.svelte';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
+	import { themeStore } from '#lib/stores/theme.svelte.js';
+	import { toast } from '#lib/toast.js';
 	import {
 		Background,
 		BackgroundVariant,

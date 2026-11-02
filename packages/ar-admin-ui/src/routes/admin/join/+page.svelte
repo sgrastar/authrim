@@ -3,8 +3,8 @@
 	import {
 		adminInvitationEnrollmentAPI,
 		AdminInvitationEnrollmentError
-	} from '$lib/api/admin-invitation-enrollment';
-	import { adminBrandStore } from '$lib/stores/admin-brand.svelte';
+	} from '#lib/api/admin-invitation-enrollment.js';
+	import { adminBrandStore } from '#lib/stores/admin-brand.svelte.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	type InvitationSummary = {

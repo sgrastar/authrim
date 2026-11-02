@@ -10,11 +10,11 @@ import type {
 	ReportStatus,
 	RetentionCategory,
 	ReviewStatus
-} from '$lib/api/compliance';
-import { hasMessage, i18n, t } from '$lib/i18n/i18n.svelte';
-import { formatNumber } from '$lib/ui/format';
-import { formatTime } from '$lib/ui/time/format-time';
-import { timePreference } from '$lib/ui/time/time-preference.svelte';
+} from '#lib/api/compliance.js';
+import { hasMessage, i18n, t } from '#lib/i18n/i18n.svelte.js';
+import { formatNumber } from '#lib/ui/format.js';
+import { formatTime } from '#lib/ui/time/format-time.js';
+import { timePreference } from '#lib/ui/time/time-preference.svelte.js';
 
 type Tone = 'neutral' | 'success' | 'warning' | 'danger' | 'info';
 

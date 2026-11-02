@@ -3,18 +3,18 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { LL } from '$i18n/i18n-svelte';
-	import { buildExternalIdPCallbackUrl } from '$lib/admin/external-idp-callback-url';
-	import { getTenantInfo } from '$lib/api/admin-info';
+	import { buildExternalIdPCallbackUrl } from '#lib/admin/external-idp-callback-url.js';
+	import { getTenantInfo } from '#lib/api/admin-info.js';
 	import {
 		adminExternalProvidersAPI,
 		type ExternalIdPProvider,
 		type UpdateProviderRequest
-	} from '$lib/api/admin-external-providers';
-	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
-	import LoginProviderIconPicker from '$lib/components/admin/LoginProviderIconPicker.svelte';
-	import ProfileUpdateFieldsEditor from '$lib/components/admin/ProfileUpdateFieldsEditor.svelte';
-	import { ToggleSwitch } from '$lib/components';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	} from '#lib/api/admin-external-providers.js';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '#lib/components/admin/index.js';
+	import LoginProviderIconPicker from '#lib/components/admin/LoginProviderIconPicker.svelte';
+	import ProfileUpdateFieldsEditor from '#lib/components/admin/ProfileUpdateFieldsEditor.svelte';
+	import { ToggleSwitch } from '#lib/components/index.js';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 
 	let provider: ExternalIdPProvider | null = $state(null);
 	let loading = $state(true);

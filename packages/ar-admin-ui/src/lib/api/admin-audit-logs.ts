@@ -8,7 +8,7 @@ import { logDetailQuery, type LogCursorPagination } from './log-pagination';
  */
 
 import { API_BASE_URL, adminFetch } from './admin-request';
-import { ACCOUNT_AUDIT_ACTIONS } from '$lib/admin/account-audit-action-label';
+import { ACCOUNT_AUDIT_ACTIONS } from '#lib/admin/account-audit-action-label.js';
 
 /**
  * Pagination info

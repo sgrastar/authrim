@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { LL } from '$i18n/i18n-svelte';
-	import { useLoginUIStores } from '$lib/stores/login-ui-context';
-	import AuthPageShell from '$lib/components/AuthPageShell.svelte';
-	import CibaView, { type CibaRequest } from '$lib/views/CibaView.svelte';
-	import { cibaAPI } from '$lib/api/client';
-	import { cibaApprovalErrorMessage } from '$lib/api/approval-errors';
+	import { useLoginUIStores } from '#lib/stores/login-ui-context.js';
+	import AuthPageShell from '#lib/components/AuthPageShell.svelte';
+	import CibaView, { type CibaRequest } from '#lib/views/CibaView.svelte';
+	import { cibaAPI } from '#lib/api/client.js';
+	import { cibaApprovalErrorMessage } from '#lib/api/approval-errors.js';
 	import { decideCibaRequest } from './ciba-decision';
-	import { messageForCaughtError } from '$lib/errors/display-error';
+	import { messageForCaughtError } from '#lib/errors/display-error.js';
 	import { onMount } from 'svelte';
 
 	const { brandingStore } = useLoginUIStores();

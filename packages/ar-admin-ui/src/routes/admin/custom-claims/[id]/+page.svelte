@@ -10,9 +10,9 @@
 		type ValidationRules,
 		type OperationStatus,
 		parseValidationRules
-	} from '$lib/api/admin-custom-claims';
-	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
-	import { Modal } from '$lib/components';
+	} from '#lib/api/admin-custom-claims.js';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '#lib/components/admin/index.js';
+	import { Modal } from '#lib/components/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	const schemaId = $derived(page.params.id ?? '');

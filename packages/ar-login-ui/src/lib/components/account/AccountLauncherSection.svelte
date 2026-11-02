@@ -2,7 +2,7 @@
 	/** Loads the account's launchers and saves favourites for the launcher widget. */
 	import { onMount } from 'svelte';
 	import { LL } from '$i18n/i18n-svelte';
-	import { accountAPI, type AccountLauncher } from '$lib/api/account';
+	import { accountAPI, type AccountLauncher } from '#lib/api/account.js';
 	import AccountLauncherWidget from './widgets/AccountLauncherWidget.svelte';
 	import type { AccountWidgetHeadingLevel } from './widgets/types';
 

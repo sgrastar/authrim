@@ -1,7 +1,7 @@
 import { ALL_CATEGORY_META } from '@authrim/ar-lib-core/types/settings/catalog';
 import { describe, expect, it } from 'vitest';
-import { hasMessage } from '$lib/i18n/i18n.svelte';
-import { PLATFORM_AREAS, TENANT_AREAS } from '$lib/shell/nav-data';
+import { hasMessage } from '#lib/i18n/i18n.svelte.js';
+import { PLATFORM_AREAS, TENANT_AREAS } from '#lib/shell/nav-data.js';
 import { API_GROUPS, API_PAGES, groupOf } from './api-inventory';
 import { API_OPERATIONS } from './api-operations';
 import { NOT_APPLIED } from './effect';

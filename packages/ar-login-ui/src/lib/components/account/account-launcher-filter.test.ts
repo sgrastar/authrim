@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AccountLauncher } from '$lib/api/account';
+import type { AccountLauncher } from '#lib/api/account.js';
 import { launcherMatchesSearch } from './account-launcher-filter';
 
 const launcher: AccountLauncher = {

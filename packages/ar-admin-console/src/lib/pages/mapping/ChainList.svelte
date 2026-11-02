@@ -1,8 +1,8 @@
 <script lang="ts">
-	import type { ChainEntry, EffectiveSelection, MappingTier } from '$lib/api/identity-mapping';
-	import { t } from '$lib/i18n/i18n.svelte';
-	import DataTable from '$lib/ui/patterns/DataTable.svelte';
-	import Badge from '$lib/ui/primitives/Badge.svelte';
+	import type { ChainEntry, EffectiveSelection, MappingTier } from '#lib/api/identity-mapping.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import DataTable from '#lib/ui/patterns/DataTable.svelte';
+	import Badge from '#lib/ui/primitives/Badge.svelte';
 	import { chainValueText, tierLabel } from './labels';
 
 	/**

@@ -3,7 +3,7 @@
  * admin-request.ts. Platform administrators can pick any tenant; tenant administrators only
  * ever see their own, so the switcher offers no choice to them.
  */
-import { adminFetch, API_BASE_URL } from '$lib/api/admin-request';
+import { adminFetch, API_BASE_URL } from '#lib/api/admin-request.js';
 
 export interface TenantRef {
 	id: string;

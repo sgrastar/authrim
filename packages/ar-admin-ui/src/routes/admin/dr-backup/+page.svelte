@@ -1,17 +1,17 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import Alert from '$lib/components/Alert.svelte';
+	import Alert from '#lib/components/Alert.svelte';
 	import {
 		AdminDataTable,
 		AdminPageHeader,
 		AdminPageShell,
 		AdminSection
-	} from '$lib/components/admin';
-	import { adminSettingsAPI, type CategorySettings } from '$lib/api/admin-settings';
+	} from '#lib/components/admin/index.js';
+	import { adminSettingsAPI, type CategorySettings } from '#lib/api/admin-settings.js';
 	import {
 		adminStorageDestinationsAPI,
 		type StorageDestination
-	} from '$lib/api/admin-storage-destinations';
+	} from '#lib/api/admin-storage-destinations.js';
 	import {
 		adminTenantBackupsAPI,
 		saveTenantBackupResponse,
@@ -19,15 +19,15 @@
 		type TenantBackupOperation,
 		type TenantBackupOperationSummary,
 		type TenantBackupSelection
-	} from '$lib/api/admin-tenant-backups';
+	} from '#lib/api/admin-tenant-backups.js';
 	import {
 		adminSAMLAPI,
 		type SAMLSettings,
 		type SAMLSigningKeyPolicy,
 		type SAMLSigningKeyReference,
 		type SAMLTrustCertificatePreview
-	} from '$lib/api/admin-saml';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	} from '#lib/api/admin-saml.js';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	type MetadataRole = 'idp' | 'sp';

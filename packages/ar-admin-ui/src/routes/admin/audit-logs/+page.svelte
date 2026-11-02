@@ -1,31 +1,31 @@
 <script lang="ts">
-	import { LogPager } from '$lib/admin/log-pager.svelte';
-	import LogCursorPager from '$lib/components/admin/LogCursorPager.svelte';
+	import { LogPager } from '#lib/admin/log-pager.svelte.js';
+	import LogCursorPager from '#lib/components/admin/LogCursorPager.svelte';
 	const logPager = new LogPager();
 	let loadGeneration = 0;
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import {
 		adminAuditLogsAPI,
 		type AuditLogEntry,
 		type Pagination,
 		type AuditLogListParams,
 		AUDIT_ACTION_TYPES
-	} from '$lib/api/admin-audit-logs';
-	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
-	import AdminPagination from '$lib/components/admin/AdminPagination.svelte';
-	import AdminSection from '$lib/components/admin/AdminSection.svelte';
-	import AdminToolbar from '$lib/components/admin/AdminToolbar.svelte';
-	import { formatGuestAwareAuditAction } from '$lib/admin/account-audit-action-label';
+	} from '#lib/api/admin-audit-logs.js';
+	import AdminDataTable from '#lib/components/admin/AdminDataTable.svelte';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
+	import AdminPagination from '#lib/components/admin/AdminPagination.svelte';
+	import AdminSection from '#lib/components/admin/AdminSection.svelte';
+	import AdminToolbar from '#lib/components/admin/AdminToolbar.svelte';
+	import { formatGuestAwareAuditAction } from '#lib/admin/account-audit-action-label.js';
 	import {
 		adminEmailDeliveriesAPI,
 		type EmailDeliveryRecord
-	} from '$lib/api/admin-email-deliveries';
-	import EmailDeliveryTable from '$lib/components/admin/EmailDeliveryTable.svelte';
+	} from '#lib/api/admin-email-deliveries.js';
+	import EmailDeliveryTable from '#lib/components/admin/EmailDeliveryTable.svelte';
 
 	let entries: AuditLogEntry[] = $state([]);
 	let pagination: Pagination | null = $state(null);

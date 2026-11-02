@@ -4,14 +4,14 @@
 		adminSettingsAPI,
 		type CategoryMeta,
 		PLATFORM_CATEGORIES
-	} from '$lib/api/admin-settings';
+	} from '#lib/api/admin-settings.js';
 	import {
 		AdminPageHeader,
 		AdminPageShell,
 		AdminSection,
 		SettingsScopeSelector
-	} from '$lib/components/admin';
-	import { settingsContext, type SettingScopeLevel } from '$lib/stores/settings-context.svelte';
+	} from '#lib/components/admin/index.js';
+	import { settingsContext, type SettingScopeLevel } from '#lib/stores/settings-context.svelte.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	// Category scope configuration (which categories are available at which scope)

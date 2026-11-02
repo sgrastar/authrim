@@ -4,9 +4,9 @@
 		adminIdentityMappingAPI,
 		type IdentityMappingFederationMetadataDocument,
 		type IdentityMappingFederationTrustSourceSummary
-	} from '$lib/api/admin-identity-mapping';
-	import { adminSAMLAPI, type SAMLMetadataEntitySummary } from '$lib/api/admin-saml';
-	import { AdminPageHeader, AdminPageShell } from '$lib/components/admin';
+	} from '#lib/api/admin-identity-mapping.js';
+	import { adminSAMLAPI, type SAMLMetadataEntitySummary } from '#lib/api/admin-saml.js';
+	import { AdminPageHeader, AdminPageShell } from '#lib/components/admin/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	let trustSources = $state<IdentityMappingFederationTrustSourceSummary[]>([]);

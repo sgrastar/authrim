@@ -1,12 +1,15 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { adminControlPlaneAPI, type ControlStorageTopology } from '$lib/api/admin-control-plane';
+	import {
+		adminControlPlaneAPI,
+		type ControlStorageTopology
+	} from '#lib/api/admin-control-plane.js';
 	import {
 		AdminDataTable,
 		AdminPageHeader,
 		AdminPageShell,
 		AdminSection
-	} from '$lib/components/admin';
+	} from '#lib/components/admin/index.js';
 
 	let topology = $state<ControlStorageTopology | null>(null);
 	let selectedTenantId = $state('all');

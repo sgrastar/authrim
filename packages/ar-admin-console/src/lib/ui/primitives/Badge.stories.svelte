@@ -1,7 +1,7 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, within } from 'storybook/test';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import { sample } from '../stories/sample';
 	import { named, subcomponents } from '../stories/subcomponents';
 	import Badge from './Badge.svelte';

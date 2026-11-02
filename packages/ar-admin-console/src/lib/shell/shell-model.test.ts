@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { persona } from '$lib/access/personas';
-import type { MessageKey } from '$lib/i18n/messages/ja';
+import { persona } from '#lib/access/personas.js';
+import type { MessageKey } from '#lib/i18n/messages/ja.js';
 import { resolveNavPath } from './nav';
 import { drawerSections, showsSubNav, subNavRows, topNavEntries } from './shell-model';
 

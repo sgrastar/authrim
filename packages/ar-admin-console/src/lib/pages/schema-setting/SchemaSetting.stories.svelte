@@ -2,11 +2,11 @@
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, userEvent, waitFor, within } from 'storybook/test';
 	import { ADMIN_ROLES } from '@authrim/ar-lib-core/constants/admin-roles';
-	import type { AdminAccess } from '$lib/access/access';
-	import { persona } from '$lib/access/personas';
-	import { createFakeSchemaSetting } from '$lib/api/fake/schema-setting-fake';
-	import { createFakeSettings } from '$lib/api/fake/settings-fake';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import type { AdminAccess } from '#lib/access/access.js';
+	import { persona } from '#lib/access/personas.js';
+	import { createFakeSchemaSetting } from '#lib/api/fake/schema-setting-fake.js';
+	import { createFakeSettings } from '#lib/api/fake/settings-fake.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import SchemaSetting from './SchemaSetting.svelte';
 
 	const { Story } = defineMeta({

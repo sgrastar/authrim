@@ -1,8 +1,8 @@
 <script lang="ts">
-	import type { AdminAccess } from '$lib/access/access';
-	import type { SettingsClient } from '$lib/api/settings';
-	import { SIGNING_KEYS } from '$lib/settings/placement';
-	import SettingsPage from '$lib/settings/SettingsPage.svelte';
+	import type { AdminAccess } from '#lib/access/access.js';
+	import type { SettingsClient } from '#lib/api/settings.js';
+	import { SIGNING_KEYS } from '#lib/settings/placement.js';
+	import SettingsPage from '#lib/settings/SettingsPage.svelte';
 
 	/**
 	 * Settings → Signing keys. A settings page: what it shows is its placement (`SIGNING_KEYS`);

@@ -4,7 +4,7 @@
  * blocks already localized the way AccountPage resolves them. Factories, so each story gets its
  * own objects.
  */
-import type { AccountPageDefinition, AccountPageScreenField } from '$lib/api/account';
+import type { AccountPageDefinition, AccountPageScreenField } from '#lib/api/account.js';
 
 export type AccountPagePlacementFixture = Pick<
 	AccountPageDefinition['screens'][number],

@@ -1,5 +1,5 @@
 import type { TranslationFunctions } from '$i18n/i18n-types';
-import type { RoleType } from '$lib/api/admin-roles';
+import type { RoleType } from '#lib/api/admin-roles.js';
 
 export function formatRoleType(
 	type: RoleType | null | undefined,

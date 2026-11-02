@@ -20,8 +20,8 @@ import { browser } from '$app/env';
 import {
 	LOGIN_UI_THEME_HINT_COOKIE,
 	LOGIN_UI_THEME_HINT_MAX_AGE_SECONDS
-} from '$lib/theme-bootstrap';
-import { syncLoginUIDocumentSurface } from '$lib/document-surface';
+} from '#lib/theme-bootstrap.js';
+import { syncLoginUIDocumentSurface } from '#lib/document-surface.js';
 
 // Theme types
 export type ThemeMode = 'light' | 'dark';

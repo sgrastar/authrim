@@ -1,5 +1,5 @@
-import { i18n } from '$lib/i18n/i18n.svelte';
-import type { Locale } from '$lib/i18n/locales';
+import { i18n } from '#lib/i18n/i18n.svelte.js';
+import type { Locale } from '#lib/i18n/locales.js';
 
 let override: ((locale: Locale) => void) | null = null;
 

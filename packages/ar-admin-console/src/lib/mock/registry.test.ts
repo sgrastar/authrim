@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isStandalonePath, resolveNavPath } from '$lib/shell/nav';
+import { isStandalonePath, resolveNavPath } from '#lib/shell/nav.js';
 import { consolePathOfFile, mockPageFor, mockPagePaths } from './registry';
 
 describe('mock page registry', () => {

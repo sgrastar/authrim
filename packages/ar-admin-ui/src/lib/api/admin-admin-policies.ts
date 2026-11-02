@@ -1,4 +1,4 @@
-import { adminFetch } from '$lib/api/admin-request';
+import { adminFetch } from '#lib/api/admin-request.js';
 /**
  * Admin Policies API Client (for Admin Operators)
  *

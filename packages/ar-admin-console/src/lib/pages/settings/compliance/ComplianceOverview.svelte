@@ -1,15 +1,15 @@
 <script lang="ts">
-	import type { ComplianceClient, ComplianceStatus } from '$lib/api/compliance';
-	import { i18n, t } from '$lib/i18n/i18n.svelte';
-	import { formatNumber } from '$lib/ui/format';
-	import Callout from '$lib/ui/patterns/Callout.svelte';
-	import Card from '$lib/ui/patterns/Card.svelte';
-	import DataTable from '$lib/ui/patterns/DataTable.svelte';
-	import DetailItem from '$lib/ui/patterns/DetailItem.svelte';
-	import DetailList from '$lib/ui/patterns/DetailList.svelte';
-	import LoadingState from '$lib/ui/patterns/LoadingState.svelte';
-	import Badge from '$lib/ui/primitives/Badge.svelte';
-	import Button from '$lib/ui/primitives/Button.svelte';
+	import type { ComplianceClient, ComplianceStatus } from '#lib/api/compliance.js';
+	import { i18n, t } from '#lib/i18n/i18n.svelte.js';
+	import { formatNumber } from '#lib/ui/format.js';
+	import Callout from '#lib/ui/patterns/Callout.svelte';
+	import Card from '#lib/ui/patterns/Card.svelte';
+	import DataTable from '#lib/ui/patterns/DataTable.svelte';
+	import DetailItem from '#lib/ui/patterns/DetailItem.svelte';
+	import DetailList from '#lib/ui/patterns/DetailList.svelte';
+	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
+	import Badge from '#lib/ui/primitives/Badge.svelte';
+	import Button from '#lib/ui/primitives/Button.svelte';
 	import {
 		checkFacts,
 		duration,

@@ -1,4 +1,4 @@
-import type { LogCursorPagination } from '$lib/api/log-pagination';
+import type { LogCursorPagination } from '#lib/api/log-pagination.js';
 
 /** Cursor history belongs to one tenant/filter selection, with no inferred total or page number. */
 export class LogPager {

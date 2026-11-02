@@ -12,22 +12,22 @@
 		canDeleteRole,
 		PERMISSION_DEFINITIONS,
 		type RoleType
-	} from '$lib/api/admin-roles';
-	import { Modal } from '$lib/components';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	} from '#lib/api/admin-roles.js';
+	import { Modal } from '#lib/components/index.js';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import {
 		formatPermissionCategory,
 		formatPermissionLabel,
 		formatRoleType,
 		formatScope
-	} from '$lib/admin/roles-i18n';
+	} from '#lib/admin/roles-i18n.js';
 	import {
 		AdminDataTable,
 		AdminPageHeader,
 		AdminPageShell,
 		AdminPagination,
 		AdminSection
-	} from '$lib/components/admin';
+	} from '#lib/components/admin/index.js';
 
 	let role: RoleDetail | null = $state(null);
 	let loading = $state(true);

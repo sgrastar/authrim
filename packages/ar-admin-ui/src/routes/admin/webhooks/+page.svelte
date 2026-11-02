@@ -6,13 +6,13 @@
 		type Webhook,
 		type WebhookTestResult,
 		COMMON_EVENT_PATTERNS
-	} from '$lib/api/admin-webhooks';
-	import { Modal } from '$lib/components';
+	} from '#lib/api/admin-webhooks.js';
+	import { Modal } from '#lib/components/index.js';
 	import { LL } from '$i18n/i18n-svelte';
-	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
-	import AdminSection from '$lib/components/admin/AdminSection.svelte';
+	import AdminDataTable from '#lib/components/admin/AdminDataTable.svelte';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '#lib/components/admin/AdminSection.svelte';
 
 	let webhooks: Webhook[] = $state([]);
 	let loading = $state(true);

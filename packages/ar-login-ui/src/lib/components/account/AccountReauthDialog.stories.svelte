@@ -3,8 +3,8 @@
 	import { get } from 'svelte/store';
 	import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 	import { LL } from '$i18n/i18n-svelte';
-	import { Button } from '$lib/components';
-	import LoginUIFrame from '$lib/storybook/LoginUIFrame.svelte';
+	import { Button } from '#lib/components/index.js';
+	import LoginUIFrame from '#lib/storybook/LoginUIFrame.svelte';
 	import AccountReauthDialog from './AccountReauthDialog.svelte';
 
 	const { Story } = defineMeta({

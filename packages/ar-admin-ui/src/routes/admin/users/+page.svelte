@@ -1,9 +1,9 @@
 <script lang="ts">
-	import AccountRegistrationState from '$lib/components/admin/AccountRegistrationState.svelte';
+	import AccountRegistrationState from '#lib/components/admin/AccountRegistrationState.svelte';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { SvelteSet } from 'svelte/reactivity';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import {
 		adminUsersAPI,
 		type User,
@@ -11,17 +11,17 @@
 		type OffsetPagination,
 		type Pagination,
 		type UserListParams
-	} from '$lib/api/admin-users';
-	import { adminAuth } from '$lib/stores/admin-auth.svelte';
-	import { normalizeTimestampMs } from '$lib/utils/timestamp';
-	import { Modal } from '$lib/components';
+	} from '#lib/api/admin-users.js';
+	import { adminAuth } from '#lib/stores/admin-auth.svelte.js';
+	import { normalizeTimestampMs } from '#lib/utils/timestamp.js';
+	import { Modal } from '#lib/components/index.js';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
-	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPagination from '$lib/components/admin/AdminPagination.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
-	import AdminSection from '$lib/components/admin/AdminSection.svelte';
-	import AdminToolbar from '$lib/components/admin/AdminToolbar.svelte';
+	import AdminDataTable from '#lib/components/admin/AdminDataTable.svelte';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPagination from '#lib/components/admin/AdminPagination.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '#lib/components/admin/AdminSection.svelte';
+	import AdminToolbar from '#lib/components/admin/AdminToolbar.svelte';
 
 	let users: User[] = $state([]);
 	let pagination: Pagination | null = $state(null);

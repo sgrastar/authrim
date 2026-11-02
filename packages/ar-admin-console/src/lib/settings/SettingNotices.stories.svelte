@@ -1,9 +1,9 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, within } from 'storybook/test';
-	import { createFakeSettings } from '$lib/api/fake/settings-fake';
-	import { persona } from '$lib/access/personas';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { createFakeSettings } from '#lib/api/fake/settings-fake.js';
+	import { persona } from '#lib/access/personas.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import type { SettingsPageDef } from './placement';
 	import SettingsPage from './SettingsPage.svelte';
 

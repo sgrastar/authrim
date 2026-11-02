@@ -21,20 +21,20 @@ const {
 	}
 }));
 
-vi.mock('$lib/api/admin-settings', () => ({
+vi.mock('#lib/api/admin-settings.js', () => ({
 	SettingsConflictError: class SettingsConflictError extends Error {},
 	adminSettingsAPI: mockAdminSettingsAPI
 }));
 
-vi.mock('$lib/api/admin-external-providers', () => ({
+vi.mock('#lib/api/admin-external-providers.js', () => ({
 	adminExternalProvidersAPI: mockAdminExternalProvidersAPI
 }));
 
-vi.mock('$lib/api/admin-saml', () => ({
+vi.mock('#lib/api/admin-saml.js', () => ({
 	adminSAMLAPI: mockAdminSAMLAPI
 }));
 
-vi.mock('$lib/api/admin-directory-connectors', () => ({
+vi.mock('#lib/api/admin-directory-connectors.js', () => ({
 	adminDirectoryConnectorsAPI: mockAdminDirectoryConnectorsAPI
 }));
 

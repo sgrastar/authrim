@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { formatNumber } from '../format';
-	import { i18n, t } from '$lib/i18n/i18n.svelte';
+	import { i18n, t } from '#lib/i18n/i18n.svelte.js';
 	import Icon from '../icons/Icon.svelte';
 	import Select from '../primitives/Select.svelte';
 	import { pageItems } from './pagination';

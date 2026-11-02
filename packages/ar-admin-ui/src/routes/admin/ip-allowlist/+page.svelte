@@ -4,14 +4,14 @@
 		adminIpAllowlistAPI,
 		type IpAllowlistEntry,
 		validateIpRange
-	} from '$lib/api/admin-ip-allowlist';
-	import { Modal } from '$lib/components';
+	} from '#lib/api/admin-ip-allowlist.js';
+	import { Modal } from '#lib/components/index.js';
 	import {
 		AdminDataTable,
 		AdminPageHeader,
 		AdminPageShell,
 		AdminToolbar
-	} from '$lib/components/admin';
+	} from '#lib/components/admin/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	let entries: IpAllowlistEntry[] = $state([]);

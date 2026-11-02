@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { LL } from '$i18n/i18n-svelte';
-	import RoleAssignmentRules from '$lib/components/admin/RoleAssignmentRules.svelte';
-	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
+	import RoleAssignmentRules from '#lib/components/admin/RoleAssignmentRules.svelte';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '#lib/components/admin/index.js';
 </script>
 
 <svelte:head>

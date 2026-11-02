@@ -11,7 +11,7 @@
 	 * A modal dialog: focus moves to the first method when it opens, Tab and Shift+Tab stay inside,
 	 * Escape or the backdrop closes it, and focus returns to the control that opened it.
 	 */
-	import { Button } from '$lib/components';
+	import { Button } from '#lib/components/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 	import { TOTP_CODE_PATTERN } from './widgets/types';
 

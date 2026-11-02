@@ -4,14 +4,14 @@
 		adminSigningKeysAPI,
 		type SigningKeysStatus,
 		type KeyStatus
-	} from '$lib/api/admin-signing-keys';
-	import { Modal } from '$lib/components';
+	} from '#lib/api/admin-signing-keys.js';
+	import { Modal } from '#lib/components/index.js';
 	import {
 		AdminDataTable,
 		AdminPageHeader,
 		AdminPageShell,
 		AdminSection
-	} from '$lib/components/admin';
+	} from '#lib/components/admin/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	// State

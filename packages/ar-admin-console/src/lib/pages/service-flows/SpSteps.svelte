@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { t } from '$lib/i18n/i18n.svelte';
-	import SelectRow from '$lib/ui/patterns/SelectRow.svelte';
-	import ToggleRow from '$lib/ui/patterns/ToggleRow.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import SelectRow from '#lib/ui/patterns/SelectRow.svelte';
+	import ToggleRow from '#lib/ui/patterns/ToggleRow.svelte';
 	import ConnectionTest from './ConnectionTest.svelte';
 	import type { SpForm } from './connection-model';
 	import MetadataImport from './MetadataImport.svelte';

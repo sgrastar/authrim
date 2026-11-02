@@ -93,9 +93,9 @@
 	 * The consent page, as the user sees it. The route owns the state and the requests; this
 	 * component only draws what it is given and reports what the user does.
 	 */
-	import { Button, Card, Spinner } from '$lib/components';
+	import { Button, Card, Spinner } from '#lib/components/index.js';
 	import { LL } from '$i18n/i18n-svelte';
-	import { isValidImageUrl, isValidLinkUrl } from '$lib/utils/url-validation';
+	import { isValidImageUrl, isValidLinkUrl } from '#lib/utils/url-validation.js';
 
 	type Props = {
 		loading?: boolean;

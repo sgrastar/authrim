@@ -16,8 +16,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock('$app/state', () => ({
 	page: { url: new URL('https://tenant.example.test/login'), params: {}, data: {} }
 }));
-vi.mock('$lib/api/flow-runtime', async (importOriginal) => {
-	const actual = await importOriginal<typeof import('$lib/api/flow-runtime')>();
+vi.mock('#lib/api/flow-runtime.js', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('#lib/api/flow-runtime.js')>();
 	return {
 		...actual,
 		flowRuntimeAPI: {
@@ -27,8 +27,8 @@ vi.mock('$lib/api/flow-runtime', async (importOriginal) => {
 		}
 	};
 });
-vi.mock('$lib/api/client', async (importOriginal) => {
-	const actual = await importOriginal<typeof import('$lib/api/client')>();
+vi.mock('#lib/api/client.js', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('#lib/api/client.js')>();
 	return {
 		...actual,
 		totpAPI: { ...actual.totpAPI, startLogin: mocks.totpStart, verifyLogin: mocks.totpVerify },
@@ -36,8 +36,8 @@ vi.mock('$lib/api/client', async (importOriginal) => {
 	};
 });
 
-import { blocks, screenOf } from '$lib/storybook/fixtures';
-import Harness from '$lib/testing/LoginPageHarness.svelte';
+import { blocks, screenOf } from '#lib/storybook/fixtures.js';
+import Harness from '#lib/testing/LoginPageHarness.svelte';
 
 function methodsResponse(emailCode = false) {
 	return {

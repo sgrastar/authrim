@@ -1,4 +1,4 @@
-import type { LauncherApplicationType, LauncherLaunchType } from '$lib/api/admin-launchers';
+import type { LauncherApplicationType, LauncherLaunchType } from '#lib/api/admin-launchers.js';
 
 export function defaultLaunchTypeForApplication(
 	applicationType: LauncherApplicationType

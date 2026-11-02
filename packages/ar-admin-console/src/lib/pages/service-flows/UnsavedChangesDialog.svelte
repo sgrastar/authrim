@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { t } from '$lib/i18n/i18n.svelte';
-	import ConfirmDialog from '$lib/ui/patterns/ConfirmDialog.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import ConfirmDialog from '#lib/ui/patterns/ConfirmDialog.svelte';
 
 	/**
 	 * Asked when someone goes back from a flow's detail while it holds changes that were not saved

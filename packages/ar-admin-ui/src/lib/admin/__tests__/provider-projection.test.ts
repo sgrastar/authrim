@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ProviderProjectionJob } from '$lib/api/admin-plugins';
+import type { ProviderProjectionJob } from '#lib/api/admin-plugins.js';
 import { shouldShowProviderProjectionStatus } from '../provider-projection';
 
 function job(status: ProviderProjectionJob['status']): ProviderProjectionJob {

@@ -1,5 +1,5 @@
 import { error } from '@sveltejs/kit';
-import { resolveNavPath } from '$lib/shell/nav';
+import { resolveNavPath } from '#lib/shell/nav.js';
 import type { PageLoad } from './$types';
 
 /**

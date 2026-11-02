@@ -8,8 +8,8 @@ import type {
 	PublicKeyCredentialCreationOptionsJSON,
 	RegistrationResponseJSON
 } from '@simplewebauthn/browser';
-import { adminFetch } from '$lib/api/admin-request';
-import type { PasskeyProvider } from '$lib/api/admin-users';
+import { adminFetch } from '#lib/api/admin-request.js';
+import type { PasskeyProvider } from '#lib/api/admin-users.js';
 
 // API Base URL - empty string for same-origin, or full URL for cross-origin
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';

@@ -1,9 +1,9 @@
 <script lang="ts">
-	import { httpSchemaSetting } from '$lib/api/schema-setting';
-	import { httpSettings } from '$lib/api/settings';
-	import { tenantScope } from '$lib/auth/tenant-scope.svelte';
-	import { t } from '$lib/i18n/i18n.svelte';
-	import SchemaSetting from '$lib/pages/schema-setting/SchemaSetting.svelte';
+	import { httpSchemaSetting } from '#lib/api/schema-setting.js';
+	import { httpSettings } from '#lib/api/settings.js';
+	import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import SchemaSetting from '#lib/pages/schema-setting/SchemaSetting.svelte';
 </script>
 
 <svelte:head>

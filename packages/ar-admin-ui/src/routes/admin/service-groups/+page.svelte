@@ -1,22 +1,22 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import {
 		serviceGroupsRequest as request,
 		type ServiceGroupCatalog,
 		type ServiceGroup,
 		type Expression,
 		type GroupSnapshot
-	} from '$lib/api/service-groups';
-	import { groupText, groupFieldLabel } from '$lib/admin/service-groups-i18n';
-	import ConditionEditor from '$lib/components/admin/service-groups/ConditionEditor.svelte';
+	} from '#lib/api/service-groups.js';
+	import { groupText, groupFieldLabel } from '#lib/admin/service-groups-i18n.js';
+	import ConditionEditor from '#lib/components/admin/service-groups/ConditionEditor.svelte';
 	import {
 		AdminDataTable,
 		AdminPageHeader,
 		AdminPageShell,
 		AdminSection
-	} from '$lib/components/admin';
+	} from '#lib/components/admin/index.js';
 	let text = $derived.by(() => {
 		const marker = $LL.dialog_cancel();
 		return marker && getLocale() === 'ja' ? groupText.ja : groupText.en;

@@ -22,8 +22,8 @@ vi.mock('$i18n/i18n-svelte', () => ({
 	// Each message renders as its key, so the test finds controls by it.
 	LL: readable(new Proxy({}, { get: (_target, key) => () => String(key) }))
 }));
-vi.mock('$lib/api/admin-support-ops', () => ({ adminSupportOpsAPI: api }));
-vi.mock('$lib/stores/settings-context.svelte', () => ({
+vi.mock('#lib/api/admin-support-ops.js', () => ({ adminSupportOpsAPI: api }));
+vi.mock('#lib/stores/settings-context.svelte.js', () => ({
 	settingsContext: { initialize: vi.fn(async () => undefined) }
 }));
 

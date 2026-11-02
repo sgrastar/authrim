@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import Checkbox from '../primitives/Checkbox.svelte';
 	import { useBusy } from '../busy/busy';
 	import CopyButton from '../primitives/CopyButton.svelte';

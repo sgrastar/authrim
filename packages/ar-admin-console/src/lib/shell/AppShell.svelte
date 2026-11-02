@@ -1,12 +1,12 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import type { NavLocation } from './nav';
 	import Header from './Header.svelte';
 	import type { ShellNotification } from './notifications';
 	import NavDrawer from './NavDrawer.svelte';
 	import type { ScopeOption } from './ScopeSwitcher.svelte';
-	import { adminAccess } from '$lib/access/admin-access.svelte';
+	import { adminAccess } from '#lib/access/admin-access.svelte.js';
 	import { areaColor, drawerSections, showsSubNav, subNavRows, topNavEntries } from './shell-model';
 	import SubNav from './SubNav.svelte';
 	import TopNav from './TopNav.svelte';

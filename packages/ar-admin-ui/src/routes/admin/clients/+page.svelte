@@ -2,14 +2,14 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { SvelteSet } from 'svelte/reactivity';
-	import { adminClientsAPI, type Client, type ClientListParams } from '$lib/api/admin-clients';
-	import { Modal } from '$lib/components';
-	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
-	import AdminPagination from '$lib/components/admin/AdminPagination.svelte';
-	import AdminSection from '$lib/components/admin/AdminSection.svelte';
-	import AdminToolbar from '$lib/components/admin/AdminToolbar.svelte';
+	import { adminClientsAPI, type Client, type ClientListParams } from '#lib/api/admin-clients.js';
+	import { Modal } from '#lib/components/index.js';
+	import AdminDataTable from '#lib/components/admin/AdminDataTable.svelte';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
+	import AdminPagination from '#lib/components/admin/AdminPagination.svelte';
+	import AdminSection from '#lib/components/admin/AdminSection.svelte';
+	import AdminToolbar from '#lib/components/admin/AdminToolbar.svelte';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 
 	interface Pagination {

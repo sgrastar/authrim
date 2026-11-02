@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Skeleton } from '$lib/components';
+	import { Skeleton } from '#lib/components/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	let {

@@ -1,4 +1,4 @@
-import type { FieldType, ValidationRules } from '$lib/api/schema-setting';
+import type { FieldType, ValidationRules } from '#lib/api/schema-setting.js';
 
 /**
  * What the Admin API refuses, checked before sending. Its answer to every refused value is the

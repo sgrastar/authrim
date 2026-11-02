@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { i18n } from '$lib/i18n/i18n.svelte';
+	import { i18n } from '#lib/i18n/i18n.svelte.js';
 	import Callout from '../patterns/Callout.svelte';
 	import Card from '../patterns/Card.svelte';
 	import ChoiceGrid, { type GridChoice } from '../patterns/ChoiceGrid.svelte';

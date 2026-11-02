@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { LL } from '$i18n/i18n-svelte';
-	import { getFlowTemplateText } from '$lib/admin/flow-i18n';
-	import { adminFlowsAPI, type AdminFlowKind, type FlowEditorState } from '$lib/api/admin-flows';
-	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
-	import { newFlowTemplates, type NewFlowTemplate } from '$lib/admin/new-flow-templates';
+	import { getFlowTemplateText } from '#lib/admin/flow-i18n.js';
+	import { adminFlowsAPI, type AdminFlowKind, type FlowEditorState } from '#lib/api/admin-flows.js';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '#lib/components/admin/index.js';
+	import { newFlowTemplates, type NewFlowTemplate } from '#lib/admin/new-flow-templates.js';
 
 	let creatingTemplateId = $state('');
 	let createError = $state('');

@@ -7,12 +7,12 @@
 		type AuthenticationMethodHumanVerificationSettings,
 		type AuthenticationMethodExternalProvider,
 		type AuthenticationMethodExternalProviderUsage
-	} from '$lib/api/admin-authentication-methods';
-	import { adminPluginsAPI, type PluginWithStatus } from '$lib/api/admin-plugins';
-	import type { CategorySettings } from '$lib/api/admin-settings';
-	import { ToggleSwitch } from '$lib/components';
-	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	} from '#lib/api/admin-authentication-methods.js';
+	import { adminPluginsAPI, type PluginWithStatus } from '#lib/api/admin-plugins.js';
+	import type { CategorySettings } from '#lib/api/admin-settings.js';
+	import { ToggleSwitch } from '#lib/components/index.js';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '#lib/components/admin/index.js';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	const DEFAULT_BUILT_IN: AuthenticationMethodBuiltInSettings = {

@@ -1,9 +1,9 @@
 import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
 import { setLocale } from '$i18n/i18n-svelte';
-import type { AccountSession } from '$lib/api/account';
+import type { AccountSession } from '#lib/api/account.js';
 import AccountSessionsWidget from './AccountSessionsWidget.svelte';
-import { HYDRATION_MARKERS } from '$lib/testing/ssr-html';
+import { HYDRATION_MARKERS } from '#lib/testing/ssr-html.js';
 
 const session = (overrides: Partial<AccountSession> = {}): AccountSession => ({
 	id: 'g1:weur:2:session_private_identifier',

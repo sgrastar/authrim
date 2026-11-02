@@ -1,12 +1,12 @@
 <script lang="ts">
-	import AuthPageShell from '$lib/components/AuthPageShell.svelte';
+	import AuthPageShell from '#lib/components/AuthPageShell.svelte';
 	import SignupView, {
 		type RegistrationFieldView,
 		type TotpSetupView
-	} from '$lib/views/SignupView.svelte';
-	import type { ExternalProviderButton, RuntimeStepView } from '$lib/views/auth-entry-types';
+	} from '#lib/views/SignupView.svelte';
+	import type { ExternalProviderButton, RuntimeStepView } from '#lib/views/auth-entry-types.js';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
-	import { normalizeLoginUILocale } from '$lib/i18n/locales';
+	import { normalizeLoginUILocale } from '#lib/i18n/locales.js';
 	import {
 		passkeyAPI,
 		emailCodeAPI,
@@ -15,22 +15,22 @@
 		invitationAPI,
 		loginChallengeAPI,
 		type APIError
-	} from '$lib/api/client';
-	import { messageForApiError } from '$lib/errors/sdk-error-mapper';
-	import { loginUiDisplayError, messageForCaughtError } from '$lib/errors/display-error';
-	import { fetchRegistrationFields, type RegistrationField } from '$lib/api/registration-fields';
-	import { useLoginUIStores } from '$lib/stores/login-ui-context';
-	import { isValidImageUrl, isValidRedirectUrl, sanitizeColor } from '$lib/utils/url-validation';
+	} from '#lib/api/client.js';
+	import { messageForApiError } from '#lib/errors/sdk-error-mapper.js';
+	import { loginUiDisplayError, messageForCaughtError } from '#lib/errors/display-error.js';
+	import { fetchRegistrationFields, type RegistrationField } from '#lib/api/registration-fields.js';
+	import { useLoginUIStores } from '#lib/stores/login-ui-context.js';
+	import { isValidImageUrl, isValidRedirectUrl, sanitizeColor } from '#lib/utils/url-validation.js';
 	import {
 		fetchAuthenticationMethods,
 		isHumanVerificationUnavailableFor,
 		fetchAuthenticationMethodsForClient,
 		type AuthenticationMethodsResponse,
 		type ExternalProvider
-	} from '$lib/api/authentication-methods';
-	import { applyAuthenticationMethodsToLoginUI } from '$lib/stores/login-ui-configuration';
-	import { installPageResumeHandler } from '$lib/browser/page-resume';
-	import { buildAuthSwitchHref } from '$lib/authrim/auth-switch-url';
+	} from '#lib/api/authentication-methods.js';
+	import { applyAuthenticationMethodsToLoginUI } from '#lib/stores/login-ui-configuration.js';
+	import { installPageResumeHandler } from '#lib/browser/page-resume.js';
+	import { buildAuthSwitchHref } from '#lib/authrim/auth-switch-url.js';
 	import {
 		flowRuntimeAPI,
 		type FlowRuntimeEmailVerificationChallenge,
@@ -39,35 +39,35 @@
 		type FlowRuntimeStartResponse,
 		type FlowRuntimeSubmitResponse,
 		type FlowRuntimeStep
-	} from '$lib/api/flow-runtime';
+	} from '#lib/api/flow-runtime.js';
 	import {
 		clearExternalFlowRuntimeHandoff,
 		consumeFlowRuntimeState,
 		peekFlowRuntimeState,
 		recordExternalFlowRuntimeHandoff,
 		persistFlowRuntimeState
-	} from '$lib/authrim/flow-runtime-state';
-	import { consentInputKey, destinationInputKey } from '$lib/authrim/runtime-consent-key';
+	} from '#lib/authrim/flow-runtime-state.js';
+	import { consentInputKey, destinationInputKey } from '#lib/authrim/runtime-consent-key.js';
 	import {
 		isRuntimeAuthStep,
 		runtimeAllowsAuthenticationHandle as runtimeStepAllowsAuthenticationHandle,
 		runtimeAllowsExternalProvider as runtimeStepAllowsExternalProvider,
 		type RuntimeAuthMethod
-	} from '$lib/authrim/runtime-auth-handles';
-	import { getExternalProviderIconClass } from '$lib/login-provider-icons';
+	} from '#lib/authrim/runtime-auth-handles.js';
+	import { getExternalProviderIconClass } from '#lib/login-provider-icons.js';
 	import { startRegistration } from '@simplewebauthn/browser';
-	import { auth } from '$lib/stores/auth';
+	import { auth } from '#lib/stores/auth.js';
 	import {
 		signalUnknownCredential,
 		shouldSignalUnknownCredentialAfterRegistrationFailure
-	} from '$lib/webauthn/signal';
+	} from '#lib/webauthn/signal.js';
 	import {
 		LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS,
 		LOGIN_UI_SESSION_STORAGE_KEYS,
 		removeLoginUiSessionItems,
 		setLoginUiSessionItem
-	} from '$lib/authrim/storage-keys';
-	import { resolveTurnstileLanguage as resolveConfiguredTurnstileLanguage } from '$lib/turnstile-options';
+	} from '#lib/authrim/storage-keys.js';
+	import { resolveTurnstileLanguage as resolveConfiguredTurnstileLanguage } from '#lib/turnstile-options.js';
 	import { onMount, untrack } from 'svelte';
 	import { page } from '$app/state';
 	import type { PageData } from './$types';

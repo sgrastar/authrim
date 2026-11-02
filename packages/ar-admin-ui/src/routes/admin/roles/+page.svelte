@@ -3,24 +3,24 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { LL } from '$i18n/i18n-svelte';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import {
 		adminRolesAPI,
 		type Role,
 		getRoleType,
 		canDeleteRole,
 		type RoleType
-	} from '$lib/api/admin-roles';
+	} from '#lib/api/admin-roles.js';
 	import {
 		AdminDataTable,
 		AdminPageHeader,
 		AdminPageShell,
 		AdminSection,
 		AdminTabs
-	} from '$lib/components/admin';
-	import RoleAssignmentRules from '$lib/components/admin/RoleAssignmentRules.svelte';
-	import { Modal } from '$lib/components';
-	import { formatRoleFilterType, formatRoleType } from '$lib/admin/roles-i18n';
+	} from '#lib/components/admin/index.js';
+	import RoleAssignmentRules from '#lib/components/admin/RoleAssignmentRules.svelte';
+	import { Modal } from '#lib/components/index.js';
+	import { formatRoleFilterType, formatRoleType } from '#lib/admin/roles-i18n.js';
 
 	let roles: Role[] = $state([]);
 	let loading = $state(true);

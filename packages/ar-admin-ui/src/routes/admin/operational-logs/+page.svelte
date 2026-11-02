@@ -1,24 +1,24 @@
 <script lang="ts">
-	import { LogPager } from '$lib/admin/log-pager.svelte';
-	import LogCursorPager from '$lib/components/admin/LogCursorPager.svelte';
+	import { LogPager } from '#lib/admin/log-pager.svelte.js';
+	import LogCursorPager from '#lib/components/admin/LogCursorPager.svelte';
 	const logPager = new LogPager();
 	let loadGeneration = 0;
 	import { onMount, untrack } from 'svelte';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	let loadedTenantId = '';
-	import { Modal } from '$lib/components';
+	import { Modal } from '#lib/components/index.js';
 	import {
 		AdminDataTable,
 		AdminPageHeader,
 		AdminPageShell,
 		AdminSection,
 		AdminToolbar
-	} from '$lib/components/admin';
+	} from '#lib/components/admin/index.js';
 	import {
 		adminOperationalLogsAPI,
 		type OperationalLogDetail,
 		type OperationalLogSummary
-	} from '$lib/api/admin-operational-logs';
+	} from '#lib/api/admin-operational-logs.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	let loading = $state(true);

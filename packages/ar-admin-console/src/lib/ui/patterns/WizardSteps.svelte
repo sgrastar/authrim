@@ -9,8 +9,8 @@
 
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { t } from '$lib/i18n/i18n.svelte';
-	import Icon from '$lib/ui/icons/Icon.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import Icon from '#lib/ui/icons/Icon.svelte';
 
 	/**
 	 * Where you are in a wizard: the steps in order, those behind you ticked, the current one

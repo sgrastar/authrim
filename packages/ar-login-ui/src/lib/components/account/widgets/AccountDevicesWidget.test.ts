@@ -2,7 +2,7 @@ import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
 import { setLocale } from '$i18n/i18n-svelte';
 import AccountDevicesWidget from './AccountDevicesWidget.svelte';
-import { HYDRATION_MARKERS } from '$lib/testing/ssr-html';
+import { HYDRATION_MARKERS } from '#lib/testing/ssr-html.js';
 
 describe('AccountDevicesWidget', () => {
 	it('explains that connected devices are separate from browser sign-ins', () => {

@@ -1,4 +1,4 @@
-import type { ScreenField } from '$lib/api/admin-screens';
+import type { ScreenField } from '#lib/api/admin-screens.js';
 
 type Translate = (japanese: string, english: string) => string;
 

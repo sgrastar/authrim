@@ -1,8 +1,8 @@
 <script lang="ts">
-	import { t } from '$lib/i18n/i18n.svelte';
-	import Callout from '$lib/ui/patterns/Callout.svelte';
-	import Badge from '$lib/ui/primitives/Badge.svelte';
-	import Button from '$lib/ui/primitives/Button.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import Callout from '#lib/ui/patterns/Callout.svelte';
+	import Badge from '#lib/ui/primitives/Badge.svelte';
+	import Button from '#lib/ui/primitives/Button.svelte';
 
 	/**
 	 * Try the connection before it is used: a test user signs in and the result is listed stage

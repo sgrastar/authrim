@@ -4,20 +4,20 @@
 		scopedSettingsAPI,
 		SettingsConflictError,
 		type CategorySettings
-	} from '$lib/api/admin-settings';
-	import { ToggleSwitch } from '$lib/components';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
-	import { getTenantInfo } from '$lib/api/admin-info';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
-	import { tenantStore } from '$lib/stores/tenants.svelte';
-	import { adminAuth } from '$lib/stores/admin-auth.svelte';
+	} from '#lib/api/admin-settings.js';
+	import { ToggleSwitch } from '#lib/components/index.js';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
+	import { getTenantInfo } from '#lib/api/admin-info.js';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
+	import { tenantStore } from '#lib/stores/tenants.svelte.js';
+	import { adminAuth } from '#lib/stores/admin-auth.svelte.js';
 	import {
 		buildDiscoveryMethodsValue,
 		getMethodToggles,
 		resolveEmailResolutionPolicy,
 		type EmailResolutionPolicy
-	} from '$lib/admin/tenant-discovery-settings';
+	} from '#lib/admin/tenant-discovery-settings.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	interface LoginEntryForm {

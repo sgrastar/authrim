@@ -1,11 +1,11 @@
 <script lang="ts">
-	import { t } from '$lib/i18n/i18n.svelte';
-	import Icon from '$lib/ui/icons/Icon.svelte';
-	import type { IconName } from '$lib/ui/icons/icons';
-	import Popover from '$lib/ui/patterns/Popover.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import Icon from '#lib/ui/icons/Icon.svelte';
+	import type { IconName } from '#lib/ui/icons/icons.js';
+	import Popover from '#lib/ui/patterns/Popover.svelte';
 	import LanguageSwitch from './LanguageSwitch.svelte';
-	import { theme, type ThemeLook, type ThemeMode } from '$lib/ui/theme/theme.svelte';
-	import TimeSettings from '$lib/ui/time/TimeSettings.svelte';
+	import { theme, type ThemeLook, type ThemeMode } from '#lib/ui/theme/theme.svelte.js';
+	import TimeSettings from '#lib/ui/time/TimeSettings.svelte';
 
 	const MODES: Array<{
 		id: ThemeMode;

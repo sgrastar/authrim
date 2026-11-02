@@ -8,13 +8,17 @@
 		type ConsentStatementLocalization,
 		type ConsentStatementVersion,
 		type TenantConsentRequirement
-	} from '$lib/api/admin-consent-statements';
+	} from '#lib/api/admin-consent-statements.js';
 	import {
 		adminIdentityMappingAPI,
 		type IdentityMappingFieldMappingSetSummary
-	} from '$lib/api/admin-identity-mapping';
-	import { ToggleSwitch } from '$lib/components';
-	import { AdminPageShell, MonacoTextEditor, SanitizedHtmlPreview } from '$lib/components/admin';
+	} from '#lib/api/admin-identity-mapping.js';
+	import { ToggleSwitch } from '#lib/components/index.js';
+	import {
+		AdminPageShell,
+		MonacoTextEditor,
+		SanitizedHtmlPreview
+	} from '#lib/components/admin/index.js';
 	import { onMount } from 'svelte';
 
 	type TemplateId =

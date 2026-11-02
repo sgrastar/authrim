@@ -2,16 +2,16 @@ import {
 	adminSettingsAPI,
 	SettingsConflictError,
 	type CategorySettings
-} from '$lib/api/admin-settings';
+} from '#lib/api/admin-settings.js';
 import {
 	adminExternalProvidersAPI,
 	type ExternalIdPProvider
-} from '$lib/api/admin-external-providers';
+} from '#lib/api/admin-external-providers.js';
 import {
 	adminDirectoryConnectorsAPI,
 	type DirectoryConnectorsResponse
-} from '$lib/api/admin-directory-connectors';
-import { adminSAMLAPI, type SAMLProvider } from '$lib/api/admin-saml';
+} from '#lib/api/admin-directory-connectors.js';
+import { adminSAMLAPI, type SAMLProvider } from '#lib/api/admin-saml.js';
 
 const CATEGORY = 'authentication-methods';
 const EXTERNAL_PROVIDERS_KEY = 'authentication-methods.external_providers';

@@ -1,16 +1,16 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import {
 		adminReBACAPI,
 		type RelationDefinition,
 		type RelationExpression,
 		formatRelationExpression,
 		type RelationExpressionType
-	} from '$lib/api/admin-rebac';
-	import { ToggleSwitch } from '$lib/components';
-	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
+	} from '#lib/api/admin-rebac.js';
+	import { ToggleSwitch } from '#lib/components/index.js';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '#lib/components/admin/index.js';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 
 	// State

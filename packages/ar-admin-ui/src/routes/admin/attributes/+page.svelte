@@ -1,22 +1,22 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import {
 		adminAttributesAPI,
 		type UserAttribute,
 		type AttributeStats,
 		type AttributeSourceType,
 		isAttributeExpired
-	} from '$lib/api/admin-attributes';
-	import { adminSettingsAPI } from '$lib/api/admin-settings';
-	import { Modal, ToggleSwitch } from '$lib/components';
+	} from '#lib/api/admin-attributes.js';
+	import { adminSettingsAPI } from '#lib/api/admin-settings.js';
+	import { Modal, ToggleSwitch } from '#lib/components/index.js';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
-	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
-	import AdminPagination from '$lib/components/admin/AdminPagination.svelte';
-	import AdminSection from '$lib/components/admin/AdminSection.svelte';
-	import AdminToolbar from '$lib/components/admin/AdminToolbar.svelte';
+	import AdminDataTable from '#lib/components/admin/AdminDataTable.svelte';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
+	import AdminPagination from '#lib/components/admin/AdminPagination.svelte';
+	import AdminSection from '#lib/components/admin/AdminSection.svelte';
+	import AdminToolbar from '#lib/components/admin/AdminToolbar.svelte';
 
 	// State
 	let attributes: UserAttribute[] = $state([]);

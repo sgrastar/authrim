@@ -5,7 +5,7 @@
 	import FlowSequence from './FlowSequence.svelte';
 	import FlowStepGroup from './FlowStepGroup.svelte';
 	import { expect, userEvent, waitFor, within } from 'storybook/test';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import { sample } from '../stories/sample';
 	import FlowDemo from '../stories/FlowDemo.svelte';
 	import FlowLoginDemo from '../stories/FlowLoginDemo.svelte';

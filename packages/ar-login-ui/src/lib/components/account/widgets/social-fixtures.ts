@@ -1,6 +1,6 @@
 /** Linked external accounts and providers for the social accounts widget's stories and tests. */
-import type { AccountLinkedIdentity } from '$lib/api/account';
-import type { ExternalProvider } from '$lib/api/authentication-methods';
+import type { AccountLinkedIdentity } from '#lib/api/account.js';
+import type { ExternalProvider } from '#lib/api/authentication-methods.js';
 import { FIXTURE_NOW } from './fixtures';
 
 const DAY = 24 * 60 * 60 * 1000;

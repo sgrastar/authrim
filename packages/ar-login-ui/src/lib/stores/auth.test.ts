@@ -8,7 +8,7 @@ vi.mock('$app/env', () => ({
 	version: 'test'
 }));
 
-vi.mock('$lib/api/client', () => ({
+vi.mock('#lib/api/client.js', () => ({
 	buildDiagnosticHeaders: vi.fn(() => new Headers())
 }));
 

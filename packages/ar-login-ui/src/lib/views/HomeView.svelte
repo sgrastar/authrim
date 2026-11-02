@@ -3,9 +3,9 @@
 	 * The landing page, as a visitor sees it: the brand, and sign-in and sign-up (or the account
 	 * page once signed in). The route owns the session and the settings; this view only draws them.
 	 */
-	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
-	import FooterText from '$lib/components/FooterText.svelte';
-	import { Button } from '$lib/components';
+	import LanguageSwitcher from '#lib/components/LanguageSwitcher.svelte';
+	import FooterText from '#lib/components/FooterText.svelte';
+	import { Button } from '#lib/components/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	type Props = {

@@ -5,7 +5,7 @@
 	import { localized } from '../stories/sample';
 	import { PART_DEFS, PART_GROUPS, type PartGroup } from '../stories/screen-parts';
 	import { expect, userEvent, waitFor, within } from 'storybook/test';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import ScreenBuilderDemo from '../stories/ScreenBuilderDemo.svelte';
 	import ScreenPreview from '../stories/ScreenPreview.svelte';
 	import { sample } from '../stories/sample';

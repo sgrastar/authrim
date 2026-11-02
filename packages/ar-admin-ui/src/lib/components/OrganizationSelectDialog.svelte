@@ -7,7 +7,7 @@
 		adminOrganizationsAPI,
 		type OrganizationNode,
 		type OrganizationHierarchyResponse
-	} from '$lib/api/admin-organizations';
+	} from '#lib/api/admin-organizations.js';
 
 	interface Props {
 		open: boolean;

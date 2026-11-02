@@ -1,11 +1,11 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
-	import Alert from '$lib/components/Alert.svelte';
-	import Skeleton from '$lib/components/Skeleton.svelte';
-	import Spinner from '$lib/components/Spinner.svelte';
-	import StatusBadge from '$lib/components/StatusBadge.svelte';
-	import Catalog from '$lib/storybook/Catalog.svelte';
-	import Specimen from '$lib/storybook/Specimen.svelte';
+	import Alert from '#lib/components/Alert.svelte';
+	import Skeleton from '#lib/components/Skeleton.svelte';
+	import Spinner from '#lib/components/Spinner.svelte';
+	import StatusBadge from '#lib/components/StatusBadge.svelte';
+	import Catalog from '#lib/storybook/Catalog.svelte';
+	import Specimen from '#lib/storybook/Specimen.svelte';
 
 	const { Story } = defineMeta({
 		title: 'Catalog/Feedback',

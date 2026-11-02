@@ -5,7 +5,7 @@ targets a component or page class, and it never changes spacing, sizes or layout
 information design independent of the look: a page reviewed under one theme is the same page
 under every theme.
 
-`<html>` carries two independent axes, set by `$lib/ui/theme/theme.svelte.ts` before first paint:
+`<html>` carries two independent axes, set by `#lib/ui/theme/theme.svelte.ts` before first paint:
 
 | Attribute          | Values                              | Meaning                          |
 | ------------------ | ----------------------------------- | -------------------------------- |

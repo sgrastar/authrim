@@ -12,9 +12,9 @@
 		type IPReputationResult,
 		type AlertStatus,
 		type AlertSeverity
-	} from '$lib/api/admin-security';
-	import { formatDate, DEFAULT_PAGE_SIZE, sanitizeText } from '$lib/utils';
-	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
+	} from '#lib/api/admin-security.js';
+	import { formatDate, DEFAULT_PAGE_SIZE, sanitizeText } from '#lib/utils/index.js';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '#lib/components/admin/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	// State

@@ -6,7 +6,7 @@
 	 * The account overview is drawn as a card of its own.
 	 */
 	import type { Snippet } from 'svelte';
-	import type { AccountPageScreenField } from '$lib/api/account';
+	import type { AccountPageScreenField } from '#lib/api/account.js';
 
 	let {
 		id,

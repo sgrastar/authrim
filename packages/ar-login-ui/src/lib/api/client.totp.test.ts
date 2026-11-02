@@ -9,7 +9,7 @@ vi.mock('$app/env', () => ({
 	version: 'test'
 }));
 
-vi.mock('$lib/stores/diagnostic', () => ({
+vi.mock('#lib/stores/diagnostic.js', () => ({
 	getDiagnosticSessionId: vi.fn(() => 'diag-test')
 }));
 
@@ -39,7 +39,7 @@ describe('LoginUI TOTP API adapter', () => {
 		);
 		Object.defineProperty(globalThis, 'fetch', { value: fetchMock, configurable: true });
 		const { totpAPI } = await loadClient();
-		const { messageForApiError } = await import('$lib/errors/sdk-error-mapper');
+		const { messageForApiError } = await import('#lib/errors/sdk-error-mapper.js');
 
 		const { error } = await totpAPI.startLogin({ identifier: 'person@example.com' });
 

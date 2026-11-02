@@ -7,10 +7,10 @@
 import type { RequestEvent } from '@sveltejs/kit';
 import type { CategoryName } from '@authrim/ar-lib-core/types/settings/catalog';
 import type { SettingsPatchRequest } from '@authrim/ar-lib-core/utils/settings-manager';
-import { persona, type PersonaId } from '$lib/access/personas';
-import { ApiError } from '$lib/api/api-error';
-import { createFakeSettings } from '$lib/api/fake/settings-fake';
-import type { SettingsTarget } from '$lib/api/settings';
+import { persona, type PersonaId } from '#lib/access/personas.js';
+import { ApiError } from '#lib/api/api-error.js';
+import { createFakeSettings } from '#lib/api/fake/settings-fake.js';
+import type { SettingsTarget } from '#lib/api/settings.js';
 
 const DEV_ADMIN_MOCK_FLAG = 'AUTHRIM_ADMIN_UI_DEV_MOCK';
 const DEV_ADMIN_MOCK_SENTINEL = '__AUTHRIM_ADMIN_UI_DEV_MOCK_SENTINEL__';

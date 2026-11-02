@@ -8,20 +8,20 @@
 		getLocalizedContractSummary,
 		getLocalizedFlowNodes,
 		getSavedFlowDescription
-	} from '$lib/admin/flow-i18n';
+	} from '#lib/admin/flow-i18n.js';
 	import {
 		adminFlowsAPI,
 		type AdminFlow,
 		type AdminFlowStatus,
 		type FlowAssignment,
 		type FlowVersion
-	} from '$lib/api/admin-flows';
-	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
-	import { Modal } from '$lib/components';
+	} from '#lib/api/admin-flows.js';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '#lib/components/admin/index.js';
+	import { Modal } from '#lib/components/index.js';
 	import {
 		formatLoginUiRuntimeContractPreview,
 		getNewFlowTemplate
-	} from '$lib/admin/new-flow-templates';
+	} from '#lib/admin/new-flow-templates.js';
 	import { onMount } from 'svelte';
 
 	const flowId = $derived(page.params.id ?? '');

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { useChangeMark } from '../save/save-scope';
 	import { useBusy } from '../busy/busy';
-	import { t } from '$lib/i18n/i18n.svelte';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import Icon from '../icons/Icon.svelte';
 	import InfoTip from './InfoTip.svelte';
 	import type { ChoiceOption } from './RadioGroup.svelte';

@@ -70,5 +70,9 @@
 		"d3": "^7.9.0",
 		"monaco-editor": "^0.55.1",
 		"qrcode": "^1.5.4"
+	},
+	"imports": {
+		"#lib": "./src/lib/index.js",
+		"#lib/*": "./src/lib/*"
 	}
 }

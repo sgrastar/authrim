@@ -12,8 +12,8 @@
 		canEditAdminRole,
 		canDeleteAdminRole,
 		getRoleTypeBadgeClass
-	} from '$lib/api/admin-admin-roles';
-	import { adminAdminsAPI, type AdminUser } from '$lib/api/admin-admins';
+	} from '#lib/api/admin-admin-roles.js';
+	import { adminAdminsAPI, type AdminUser } from '#lib/api/admin-admins.js';
 	import { LL } from '$i18n/i18n-svelte';
 	import {
 		formatAdminPermissionCategory,
@@ -21,14 +21,14 @@
 		formatAdminRoleAssignmentStatus,
 		formatAdminRoleScope,
 		formatAdminRoleType
-	} from '$lib/admin/admin-admin-rbac-i18n';
-	import { Modal } from '$lib/components';
+	} from '#lib/admin/admin-admin-rbac-i18n.js';
+	import { Modal } from '#lib/components/index.js';
 	import {
 		AdminDataTable,
 		AdminPageHeader,
 		AdminPageShell,
 		AdminSection
-	} from '$lib/components/admin';
+	} from '#lib/components/admin/index.js';
 
 	const roleId = $derived(page.params.id);
 

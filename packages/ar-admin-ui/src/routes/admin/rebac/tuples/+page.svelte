@@ -1,7 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { adminReBACAPI, type RelationshipTuple, formatTupleString } from '$lib/api/admin-rebac';
-	import { Modal, ToggleSwitch } from '$lib/components';
+	import {
+		adminReBACAPI,
+		type RelationshipTuple,
+		formatTupleString
+	} from '#lib/api/admin-rebac.js';
+	import { Modal, ToggleSwitch } from '#lib/components/index.js';
 	import {
 		AdminDataTable,
 		AdminPageHeader,
@@ -9,8 +13,8 @@
 		AdminPagination,
 		AdminSection,
 		AdminToolbar
-	} from '$lib/components/admin';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	} from '#lib/components/admin/index.js';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 
 	// State

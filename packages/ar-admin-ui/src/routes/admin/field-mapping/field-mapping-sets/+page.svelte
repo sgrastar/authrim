@@ -4,9 +4,9 @@
 		adminIdentityMappingAPI,
 		type IdentityMappingFieldMappingVersionSummary,
 		type IdentityMappingFieldMappingSetSummary
-	} from '$lib/api/admin-identity-mapping';
-	import { adminAdminsAPI, type AdminUser } from '$lib/api/admin-admins';
-	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
+	} from '#lib/api/admin-identity-mapping.js';
+	import { adminAdminsAPI, type AdminUser } from '#lib/api/admin-admins.js';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '#lib/components/admin/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	type PolicySide = 'source' | 'destination';

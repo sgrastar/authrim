@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { i18n, t } from '$lib/i18n/i18n.svelte';
+import { i18n, t } from '#lib/i18n/i18n.svelte.js';
 import {
 	canActivate,
 	canProceed,

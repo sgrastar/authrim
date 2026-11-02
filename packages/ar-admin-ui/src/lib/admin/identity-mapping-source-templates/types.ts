@@ -1,4 +1,4 @@
-import type { IdentityMappingScimSourceProfileSchema } from '$lib/api/admin-identity-mapping';
+import type { IdentityMappingScimSourceProfileSchema } from '#lib/api/admin-identity-mapping.js';
 
 export interface ScimSourceTemplate {
 	id: string;

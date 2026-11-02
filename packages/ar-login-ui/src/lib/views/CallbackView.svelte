@@ -3,7 +3,7 @@
 	 * The sign-in callback page, as the person sees it: finishing the sign-in, done, or what went
 	 * wrong. The route owns the handoff and provisioning; this view only draws the status it is given.
 	 */
-	import { Alert, Button, Card } from '$lib/components';
+	import { Alert, Button, Card } from '#lib/components/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	type Props = {

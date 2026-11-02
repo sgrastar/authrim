@@ -2,7 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
-	import { ToggleSwitch } from '$lib/components';
+	import { ToggleSwitch } from '#lib/components/index.js';
 	import {
 		adminSAMLAPI,
 		type CreateSAMLProviderRequest,
@@ -20,38 +20,38 @@
 		type SAMLProvider,
 		type SAMLProviderConfig,
 		type SAMLTrustCertificatePreview
-	} from '$lib/api/admin-saml';
+	} from '#lib/api/admin-saml.js';
 
 	import {
 		adminConsentStatementsAPI,
 		type ConsentStatement
-	} from '$lib/api/admin-consent-statements';
+	} from '#lib/api/admin-consent-statements.js';
 
 	import {
 		adminIdentityMappingAPI,
 		type IdentityMappingFieldMappingSetSummary,
 		type IdentityMappingFieldMappingVersionSummary
-	} from '$lib/api/admin-identity-mapping';
+	} from '#lib/api/admin-identity-mapping.js';
 	import {
 		AdminDataTable,
 		AdminPageHeader,
 		AdminPageShell,
 		AdminSection
-	} from '$lib/components/admin';
-	import LoginProviderIconPicker from '$lib/components/admin/LoginProviderIconPicker.svelte';
-	import SAMLMappingSetReleasePolicy from '$lib/components/saml/SAMLMappingSetReleasePolicy.svelte';
+	} from '#lib/components/admin/index.js';
+	import LoginProviderIconPicker from '#lib/components/admin/LoginProviderIconPicker.svelte';
+	import SAMLMappingSetReleasePolicy from '#lib/components/saml/SAMLMappingSetReleasePolicy.svelte';
 	import {
 		buildSAMLFieldReleasePolicies,
 		resolveSAMLMappingSetDestinationProfileIds,
 		resolveSAMLMappingSetReleaseFields,
 		type SAMLMappingSetReleaseField
-	} from '$lib/saml/mapping-set-release-policy';
+	} from '#lib/saml/mapping-set-release-policy.js';
 	import {
 		isMetadataUrlPreviewCurrent,
 		type SAMLMetadataAggregateImportMode
-	} from '$lib/saml/metadata-aggregate-import';
-	import { filterCompatibleActiveFieldMappingSets } from '$lib/saml/field-mapping-options';
-	import { selectMetadataNameIdFormat } from '$lib/saml/metadata-nameid';
+	} from '#lib/saml/metadata-aggregate-import.js';
+	import { filterCompatibleActiveFieldMappingSets } from '#lib/saml/field-mapping-options.js';
+	import { selectMetadataNameIdFormat } from '#lib/saml/metadata-nameid.js';
 	import { onMount } from 'svelte';
 
 	type SetupMode = 'metadata_url' | 'metadata_xml' | 'manual';

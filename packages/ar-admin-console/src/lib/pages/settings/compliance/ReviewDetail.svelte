@@ -5,19 +5,19 @@
 		type ComplianceClient,
 		type Decision,
 		type ReviewItem
-	} from '$lib/api/compliance';
-	import { t } from '$lib/i18n/i18n.svelte';
-	import Callout from '$lib/ui/patterns/Callout.svelte';
-	import Card from '$lib/ui/patterns/Card.svelte';
-	import ConfirmDialog from '$lib/ui/patterns/ConfirmDialog.svelte';
-	import DataTable from '$lib/ui/patterns/DataTable.svelte';
-	import LoadingState from '$lib/ui/patterns/LoadingState.svelte';
-	import Badge from '$lib/ui/primitives/Badge.svelte';
-	import BackLink from '$lib/ui/primitives/BackLink.svelte';
-	import Button from '$lib/ui/primitives/Button.svelte';
-	import SegmentedControl from '$lib/ui/primitives/SegmentedControl.svelte';
-	import TextField from '$lib/ui/primitives/TextField.svelte';
-	import { toast } from '$lib/ui/toast/toast.svelte';
+	} from '#lib/api/compliance.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import Callout from '#lib/ui/patterns/Callout.svelte';
+	import Card from '#lib/ui/patterns/Card.svelte';
+	import ConfirmDialog from '#lib/ui/patterns/ConfirmDialog.svelte';
+	import DataTable from '#lib/ui/patterns/DataTable.svelte';
+	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
+	import Badge from '#lib/ui/primitives/Badge.svelte';
+	import BackLink from '#lib/ui/primitives/BackLink.svelte';
+	import Button from '#lib/ui/primitives/Button.svelte';
+	import SegmentedControl from '#lib/ui/primitives/SegmentedControl.svelte';
+	import TextField from '#lib/ui/primitives/TextField.svelte';
+	import { toast } from '#lib/ui/toast/toast.svelte.js';
 	import { applyTone, label, reviewTone, timeText } from './labels';
 
 	interface Props {

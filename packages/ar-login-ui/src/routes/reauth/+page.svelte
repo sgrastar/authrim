@@ -1,19 +1,19 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
-	import AuthPageShell from '$lib/components/AuthPageShell.svelte';
-	import ReauthView, { type ChallengeData } from '$lib/views/ReauthView.svelte';
-	import { useLoginUIStores } from '$lib/stores/login-ui-context';
+	import AuthPageShell from '#lib/components/AuthPageShell.svelte';
+	import ReauthView, { type ChallengeData } from '#lib/views/ReauthView.svelte';
+	import { useLoginUIStores } from '#lib/stores/login-ui-context.js';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
-	import { passkeyAPI, emailCodeAPI, loginChallengeAPI, totpAPI } from '$lib/api/client';
-	import { loginUiDisplayError, messageForCaughtError } from '$lib/errors/display-error';
-	import { messageForRateLimitError } from '$lib/errors/sdk-error-mapper';
-	import { isValidRedirectUrl } from '$lib/utils/url-validation';
+	import { passkeyAPI, emailCodeAPI, loginChallengeAPI, totpAPI } from '#lib/api/client.js';
+	import { loginUiDisplayError, messageForCaughtError } from '#lib/errors/display-error.js';
+	import { messageForRateLimitError } from '#lib/errors/sdk-error-mapper.js';
+	import { isValidRedirectUrl } from '#lib/utils/url-validation.js';
 	import {
 		fetchAuthenticationMethods,
 		isHumanVerificationUnavailableFor
-	} from '$lib/api/authentication-methods';
-	import { resolveTurnstileLanguage as resolveConfiguredTurnstileLanguage } from '$lib/turnstile-options';
+	} from '#lib/api/authentication-methods.js';
+	import { resolveTurnstileLanguage as resolveConfiguredTurnstileLanguage } from '#lib/turnstile-options.js';
 	import { startAuthentication } from '@simplewebauthn/browser';
 	import { startTotpReauth, verifyTotpReauth } from './reauth-totp';
 	import { resolveReauthMethods } from './reauth-methods';
@@ -21,7 +21,7 @@
 	import {
 		signalUnknownCredential,
 		shouldSignalUnknownCredentialAfterLoginFailure
-	} from '$lib/webauthn/signal';
+	} from '#lib/webauthn/signal.js';
 
 	const { brandingStore } = useLoginUIStores();
 

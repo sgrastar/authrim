@@ -2,7 +2,7 @@
 import { render } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import { blocks, screenOf } from '$lib/storybook/fixtures';
+import { blocks, screenOf } from '#lib/storybook/fixtures.js';
 import LoginView from './LoginView.svelte';
 
 // The real LoginView -> RuntimeScreen -> PinCodeInput in a DOM, with real key presses.

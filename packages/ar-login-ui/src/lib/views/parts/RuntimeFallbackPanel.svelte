@@ -4,9 +4,9 @@
 	 * items and destination fields to answer when it is a consent step, and Continue. Shared by the
 	 * login and signup views; the route submits the answers.
 	 */
-	import { Alert, Button, SanitizedHtml } from '$lib/components';
+	import { Alert, Button, SanitizedHtml } from '#lib/components/index.js';
 	import { LL } from '$i18n/i18n-svelte';
-	import { isValidLinkUrl } from '$lib/utils/url-validation';
+	import { isValidLinkUrl } from '#lib/utils/url-validation.js';
 	import type { RuntimeStepView } from '../auth-entry-types';
 	import { getRuntimeConsentItemHtml, getRuntimeConsentOptionHtml } from './runtime-consent';
 

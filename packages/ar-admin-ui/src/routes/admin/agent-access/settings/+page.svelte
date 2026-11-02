@@ -1,14 +1,14 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
-	import { adminAgentAccessAPI, type AgentAccessSettings } from '$lib/api/admin-agent-access';
+	import { adminAgentAccessAPI, type AgentAccessSettings } from '#lib/api/admin-agent-access.js';
 	import {
 		AdminPageHeader,
 		AdminPageShell,
 		AdminSection,
 		AgentAccessNav
-	} from '$lib/components/admin';
-	import { adminAuth } from '$lib/stores/admin-auth.svelte';
+	} from '#lib/components/admin/index.js';
+	import { adminAuth } from '#lib/stores/admin-auth.svelte.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	let settings: AgentAccessSettings | null = $state(null);

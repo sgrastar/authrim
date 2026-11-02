@@ -1,4 +1,4 @@
-import { adminFetch } from '$lib/api/admin-request';
+import { adminFetch } from '#lib/api/admin-request.js';
 /**
  * Admin Access Control Hub API Client (for Admin Operators)
  *

@@ -1,8 +1,8 @@
 <script lang="ts">
-	import type { AdminAccess } from '$lib/access/access';
-	import type { SettingsClient } from '$lib/api/settings';
-	import { STAYING_SIGNED_IN } from '$lib/settings/placement';
-	import SettingsPage from '$lib/settings/SettingsPage.svelte';
+	import type { AdminAccess } from '#lib/access/access.js';
+	import type { SettingsClient } from '#lib/api/settings.js';
+	import { STAYING_SIGNED_IN } from '#lib/settings/placement.js';
+	import SettingsPage from '#lib/settings/SettingsPage.svelte';
 
 	/**
 	 * Authentication → Staying signed in. A settings page: what it shows and how deep is its

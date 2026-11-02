@@ -1,17 +1,17 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { adminSession } from '$lib/auth/session.svelte';
-	import { tenantScope } from '$lib/auth/tenant-scope.svelte';
-	import { t } from '$lib/i18n/i18n.svelte';
-	import AppShell from '$lib/shell/AppShell.svelte';
-	import { isStandalonePath, resolveNavPath } from '$lib/shell/nav';
-	import { timePreference } from '$lib/ui/time/time-preference.svelte';
-	import type { ScopeOption } from '$lib/shell/ScopeSwitcher.svelte';
-	import Button from '$lib/ui/primitives/Button.svelte';
-	import EmptyState from '$lib/ui/patterns/EmptyState.svelte';
-	import LoadingState from '$lib/ui/patterns/LoadingState.svelte';
-	import Page from '$lib/ui/templates/Page.svelte';
+	import { adminSession } from '#lib/auth/session.svelte.js';
+	import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import AppShell from '#lib/shell/AppShell.svelte';
+	import { isStandalonePath, resolveNavPath } from '#lib/shell/nav.js';
+	import { timePreference } from '#lib/ui/time/time-preference.svelte.js';
+	import type { ScopeOption } from '#lib/shell/ScopeSwitcher.svelte';
+	import Button from '#lib/ui/primitives/Button.svelte';
+	import EmptyState from '#lib/ui/patterns/EmptyState.svelte';
+	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
+	import Page from '#lib/ui/templates/Page.svelte';
 
 	let { children } = $props();
 

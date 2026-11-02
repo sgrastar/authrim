@@ -9,9 +9,9 @@
 		type RuleAction,
 		createEqualsCondition,
 		createAssignRoleAction
-	} from '$lib/api/admin-role-rules';
-	import { Modal, ToggleSwitch } from '$lib/components';
-	import { formatScope } from '$lib/admin/roles-i18n';
+	} from '#lib/api/admin-role-rules.js';
+	import { Modal, ToggleSwitch } from '#lib/components/index.js';
+	import { formatScope } from '#lib/admin/roles-i18n.js';
 	import AdminDataTable from './AdminDataTable.svelte';
 
 	interface Props {

@@ -5,8 +5,8 @@
 		adminIdentityMappingAPI,
 		type IdentityMappingDestinationProfileSummary,
 		type IdentityMappingSourceProfileSummary
-	} from '$lib/api/admin-identity-mapping';
-	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
+	} from '#lib/api/admin-identity-mapping.js';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '#lib/components/admin/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 
 	type ProfileKind = 'source' | 'destination' | 'template';

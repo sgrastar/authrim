@@ -3,7 +3,7 @@
 	import { get } from 'svelte/store';
 	import { expect, within } from 'storybook/test';
 	import { LL } from '$i18n/i18n-svelte';
-	import LoginUIFrame from '$lib/storybook/LoginUIFrame.svelte';
+	import LoginUIFrame from '#lib/storybook/LoginUIFrame.svelte';
 	import AccountConsentWidget from './AccountConsentWidget.svelte';
 	import { clientConsent, statementConsent } from './fixtures';
 

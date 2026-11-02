@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { LL } from '$i18n/i18n-svelte';
-	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
-	import FlowAssignmentSettings from '$lib/components/admin/FlowAssignmentSettings.svelte';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '#lib/components/admin/index.js';
+	import FlowAssignmentSettings from '#lib/components/admin/FlowAssignmentSettings.svelte';
 </script>
 
 <svelte:head>

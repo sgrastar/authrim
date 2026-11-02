@@ -4,20 +4,20 @@
 		type AccessReview,
 		type ComplianceClient,
 		type ReviewScope
-	} from '$lib/api/compliance';
-	import { t } from '$lib/i18n/i18n.svelte';
-	import Callout from '$lib/ui/patterns/Callout.svelte';
-	import Card from '$lib/ui/patterns/Card.svelte';
-	import DataTable from '$lib/ui/patterns/DataTable.svelte';
-	import EmptyState from '$lib/ui/patterns/EmptyState.svelte';
-	import FormDialog from '$lib/ui/patterns/FormDialog.svelte';
-	import LoadingState from '$lib/ui/patterns/LoadingState.svelte';
-	import Badge from '$lib/ui/primitives/Badge.svelte';
-	import Button from '$lib/ui/primitives/Button.svelte';
-	import NumberField from '$lib/ui/primitives/NumberField.svelte';
-	import Select from '$lib/ui/primitives/Select.svelte';
-	import TextArea from '$lib/ui/primitives/TextArea.svelte';
-	import TextField from '$lib/ui/primitives/TextField.svelte';
+	} from '#lib/api/compliance.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import Callout from '#lib/ui/patterns/Callout.svelte';
+	import Card from '#lib/ui/patterns/Card.svelte';
+	import DataTable from '#lib/ui/patterns/DataTable.svelte';
+	import EmptyState from '#lib/ui/patterns/EmptyState.svelte';
+	import FormDialog from '#lib/ui/patterns/FormDialog.svelte';
+	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
+	import Badge from '#lib/ui/primitives/Badge.svelte';
+	import Button from '#lib/ui/primitives/Button.svelte';
+	import NumberField from '#lib/ui/primitives/NumberField.svelte';
+	import Select from '#lib/ui/primitives/Select.svelte';
+	import TextArea from '#lib/ui/primitives/TextArea.svelte';
+	import TextField from '#lib/ui/primitives/TextField.svelte';
 	import ReviewDetail from './ReviewDetail.svelte';
 	import { duration, label, reviewTone, timeText } from './labels';
 

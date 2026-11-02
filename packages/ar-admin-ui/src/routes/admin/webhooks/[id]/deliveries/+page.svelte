@@ -6,14 +6,14 @@
 		type Webhook,
 		type WebhookDelivery,
 		type DeliveryStatus
-	} from '$lib/api/admin-webhooks';
-	import { Modal } from '$lib/components';
+	} from '#lib/api/admin-webhooks.js';
+	import { Modal } from '#lib/components/index.js';
 	import { LL } from '$i18n/i18n-svelte';
-	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
-	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
-	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
-	import AdminSection from '$lib/components/admin/AdminSection.svelte';
-	import AdminToolbar from '$lib/components/admin/AdminToolbar.svelte';
+	import AdminDataTable from '#lib/components/admin/AdminDataTable.svelte';
+	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
+	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
+	import AdminSection from '#lib/components/admin/AdminSection.svelte';
+	import AdminToolbar from '#lib/components/admin/AdminToolbar.svelte';
 
 	let webhook: Webhook | null = $state(null);
 	let deliveries: WebhookDelivery[] = $state([]);

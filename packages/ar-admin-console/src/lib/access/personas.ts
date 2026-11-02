@@ -9,7 +9,7 @@ import {
 	ADMIN_ROLES,
 	type AdminRoleName
 } from '@authrim/ar-lib-core/constants/admin-roles';
-import type { MessageKey } from '$lib/i18n/i18n.svelte';
+import type { MessageKey } from '#lib/i18n/i18n.svelte.js';
 import type { AdminAccess } from './access';
 
 export type PersonaId = 'platform' | 'tenant' | 'support' | 'viewer';

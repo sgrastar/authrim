@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { setLocale } from '$i18n/i18n-svelte';
 import AccountActivityWidget from './AccountActivityWidget.svelte';
 import { FIXTURE_NOW, operation } from './fixtures';
-import { HYDRATION_MARKERS } from '$lib/testing/ssr-html';
+import { HYDRATION_MARKERS } from '#lib/testing/ssr-html.js';
 
 function renderActivity(props: Partial<Parameters<typeof AccountActivityWidget>[1]> = {}) {
 	return render(AccountActivityWidget, { props }).body.replace(HYDRATION_MARKERS, '');

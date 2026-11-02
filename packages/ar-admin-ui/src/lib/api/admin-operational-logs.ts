@@ -1,5 +1,5 @@
 import { logDetailQuery, type LogCursorPagination } from './log-pagination';
-import { API_BASE_URL, adminFetch } from '$lib/api/admin-request';
+import { API_BASE_URL, adminFetch } from '#lib/api/admin-request.js';
 
 export interface OperationalLogSummary {
 	id: string;

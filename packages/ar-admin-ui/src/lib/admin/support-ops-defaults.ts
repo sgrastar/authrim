@@ -1,7 +1,7 @@
 import type {
 	SupportOpsFieldDescriptor,
 	SupportOpsResourceDescriptor
-} from '$lib/api/admin-support-ops';
+} from '#lib/api/admin-support-ops.js';
 
 /**
  * The field a Support Ops aggregate groups by: `current` while the resource can be grouped by

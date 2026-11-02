@@ -1,12 +1,12 @@
-import { accentTextColor, normalizeAccentColor } from '$lib/utils/accent-text';
+import { accentTextColor, normalizeAccentColor } from '#lib/utils/accent-text.js';
 import { browser } from '$app/env';
 import type {
 	LoginUIConfig,
 	LoginUITextField,
 	LoginUITextLocalizations
-} from '$lib/api/authentication-methods';
-import { syncLoginUIDocumentSurface } from '$lib/document-surface';
-import { isValidImageUrl, isValidLinkUrl, sanitizeColor } from '$lib/utils/url-validation';
+} from '#lib/api/authentication-methods.js';
+import { syncLoginUIDocumentSurface } from '#lib/document-surface.js';
+import { isValidImageUrl, isValidLinkUrl, sanitizeColor } from '#lib/utils/url-validation.js';
 
 type ThemeTemplate = 'classic' | 'meridian' | 'split-brand-panel' | 'fullbleed-glass';
 type PageLayout = 'centered_card' | 'split_panel' | 'fullbleed_card';

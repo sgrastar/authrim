@@ -1,8 +1,8 @@
 <script lang="ts">
-	import { httpSettings } from '$lib/api/settings';
-	import { tenantScope } from '$lib/auth/tenant-scope.svelte';
-	import { t } from '$lib/i18n/i18n.svelte';
-	import SigningKeys from '$lib/pages/settings/SigningKeys.svelte';
+	import { httpSettings } from '#lib/api/settings.js';
+	import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
+	import SigningKeys from '#lib/pages/settings/SigningKeys.svelte';
 </script>
 
 <svelte:head>

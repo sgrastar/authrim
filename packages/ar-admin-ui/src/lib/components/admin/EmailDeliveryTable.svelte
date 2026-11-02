@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { LL } from '$i18n/i18n-svelte';
-	import type { EmailDeliveryRecord } from '$lib/api/admin-email-deliveries';
+	import type { EmailDeliveryRecord } from '#lib/api/admin-email-deliveries.js';
 	import AdminDataTable from './AdminDataTable.svelte';
 
 	interface Props {

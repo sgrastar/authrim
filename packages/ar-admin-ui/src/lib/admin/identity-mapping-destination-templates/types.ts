@@ -1,4 +1,4 @@
-import type { IdentityMappingDestinationType } from '$lib/api/admin-identity-mapping';
+import type { IdentityMappingDestinationType } from '#lib/api/admin-identity-mapping.js';
 
 export interface DestinationTemplate {
 	id: string;

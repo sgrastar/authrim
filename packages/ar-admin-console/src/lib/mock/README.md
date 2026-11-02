@@ -25,7 +25,7 @@ A page is a file. Its place under `pages/` is its URL, and it has to be somewher
 | `pages/platform/tenants/list.svelte` | `/admin/platform/tenants/list` | `/mock/platform/tenants/list` |
 
 Nothing is registered by hand. A navigation item without a file shows the console's placeholder.
-A page draws its own `Page` (like the real pages do) from parts under `$lib/ui`, with its sample
+A page draws its own `Page` (like the real pages do) from parts under `#lib/ui`, with its sample
 data written next to it or in `fixtures/`. `pages/users/all.svelte` is a sample to copy or delete.
 
 Because the URLs follow the navigation data, changing the menu does not move the pages: rename an
@@ -33,7 +33,7 @@ item there and the file follows its new path.
 
 ## Rules (the linter enforces the first)
 
-- No API: no `$lib/api/*` (except `$lib/api/fake/*`, in-memory), no `$lib/auth`, `$lib/server`,
+- No API: no `#lib/api/*` (except `#lib/api/fake/*`, in-memory), no `#lib/auth`, `#lib/server`,
   `$env`, and no `fetch` or other network calls.
 - Same rules as the console: tokens only (colours, type sizes), no styles in routes.
 - Sample data is made up. No real names, and no customer names.

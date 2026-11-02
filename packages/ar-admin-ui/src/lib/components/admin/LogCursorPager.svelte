@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { LL } from '$i18n/i18n-svelte';
-	import type { LogPager } from '$lib/admin/log-pager.svelte';
+	import type { LogPager } from '#lib/admin/log-pager.svelte.js';
 	import AdminPagination from './AdminPagination.svelte';
 	let {
 		pager,

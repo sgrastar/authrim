@@ -2,9 +2,9 @@
  * Sample data for Staying signed in (Storybook, tests): a tenant that has set a few values
  * itself, and a deployment that sets one, so every kind of source shows.
  */
-import { adminAccess } from '$lib/access/admin-access.svelte';
-import { createFakeSettings, type FakeSettingsOptions } from '$lib/api/fake/settings-fake';
-import type { SettingsClient } from '$lib/api/settings';
+import { adminAccess } from '#lib/access/admin-access.svelte.js';
+import { createFakeSettings, type FakeSettingsOptions } from '#lib/api/fake/settings-fake.js';
+import type { SettingsClient } from '#lib/api/settings.js';
 
 export const DEMO_TENANT = 'acme';
 

@@ -1,21 +1,21 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { adminAuth } from '$lib/stores/admin-auth.svelte';
+	import { adminAuth } from '#lib/stores/admin-auth.svelte.js';
 	import {
 		adminStorageDestinationsAPI,
 		type ResourceScopeType,
 		type StorageDestination,
 		type StorageDestinationProvider
-	} from '$lib/api/admin-storage-destinations';
+	} from '#lib/api/admin-storage-destinations.js';
 	import {
 		adminLoggingControlAPI,
 		type AdminDestination,
 		type AdminDestinationCredentialState,
 		type AdminDestinationDiffPreview,
 		type AdminDestinationScope
-	} from '$lib/api/admin-logging-control';
-	import { AdminDataTable, AdminPageHeader, AdminPageShell } from '$lib/components/admin';
-	import DangerConfirmationModal from '$lib/components/admin/DangerConfirmationModal.svelte';
+	} from '#lib/api/admin-logging-control.js';
+	import { AdminDataTable, AdminPageHeader, AdminPageShell } from '#lib/components/admin/index.js';
+	import DangerConfirmationModal from '#lib/components/admin/DangerConfirmationModal.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 
 	type DangerConfirmationRequest = {

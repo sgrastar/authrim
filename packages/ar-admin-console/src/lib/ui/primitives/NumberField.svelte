@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { i18n, t } from '$lib/i18n/i18n.svelte';
+	import { i18n, t } from '#lib/i18n/i18n.svelte.js';
 	import { useBusy } from '../busy/busy';
 	import { formatNumber } from '../format';
 	import { useChangeMark, useInvalidReport } from '../save/save-scope';

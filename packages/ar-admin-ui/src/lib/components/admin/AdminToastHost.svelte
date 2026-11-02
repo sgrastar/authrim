@@ -4,8 +4,8 @@
 	import { fly } from 'svelte/transition';
 	import { melt } from '@melt-ui/svelte';
 	import { LL } from '$i18n/i18n-svelte';
-	import { findToastSources, readToastSource, TOAST_SOURCE_SELECTOR } from '$lib/toast-dom';
-	import { toast, toastElements, toastPortal, toastState, type ToastTone } from '$lib/toast';
+	import { findToastSources, readToastSource, TOAST_SOURCE_SELECTOR } from '#lib/toast-dom.js';
+	import { toast, toastElements, toastPortal, toastState, type ToastTone } from '#lib/toast.js';
 	const { content, title, description, close } = toastElements;
 	const lastMessageByElement = new WeakMap<Element, string>();
 

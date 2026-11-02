@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import { i18n, t } from '$lib/i18n/i18n.svelte';
+	import { i18n, t } from '#lib/i18n/i18n.svelte.js';
 	import {
 		failureOf,
 		FIELD_TYPES,
@@ -11,24 +11,24 @@
 		type SchemaPage,
 		type SchemaSettingClient,
 		type SchemaStats
-	} from '$lib/api/schema-setting';
-	import Callout from '$lib/ui/patterns/Callout.svelte';
-	import Card from '$lib/ui/patterns/Card.svelte';
-	import DataTable, { type SortState } from '$lib/ui/patterns/DataTable.svelte';
-	import EmptyState from '$lib/ui/patterns/EmptyState.svelte';
-	import FilterBar from '$lib/ui/patterns/FilterBar.svelte';
-	import LoadingState from '$lib/ui/patterns/LoadingState.svelte';
-	import PageHeader from '$lib/ui/patterns/PageHeader.svelte';
-	import Pagination from '$lib/ui/patterns/Pagination.svelte';
-	import { sortRows } from '$lib/ui/patterns/table-sort';
-	import Badge from '$lib/ui/primitives/Badge.svelte';
-	import Button from '$lib/ui/primitives/Button.svelte';
-	import RequiredBadge from '$lib/ui/primitives/RequiredBadge.svelte';
-	import TypeBadge from '$lib/ui/primitives/TypeBadge.svelte';
-	import SearchField from '$lib/ui/primitives/SearchField.svelte';
-	import Select from '$lib/ui/primitives/Select.svelte';
-	import { toast } from '$lib/ui/toast/toast.svelte';
-	import Page from '$lib/ui/templates/Page.svelte';
+	} from '#lib/api/schema-setting.js';
+	import Callout from '#lib/ui/patterns/Callout.svelte';
+	import Card from '#lib/ui/patterns/Card.svelte';
+	import DataTable, { type SortState } from '#lib/ui/patterns/DataTable.svelte';
+	import EmptyState from '#lib/ui/patterns/EmptyState.svelte';
+	import FilterBar from '#lib/ui/patterns/FilterBar.svelte';
+	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
+	import PageHeader from '#lib/ui/patterns/PageHeader.svelte';
+	import Pagination from '#lib/ui/patterns/Pagination.svelte';
+	import { sortRows } from '#lib/ui/patterns/table-sort.js';
+	import Badge from '#lib/ui/primitives/Badge.svelte';
+	import Button from '#lib/ui/primitives/Button.svelte';
+	import RequiredBadge from '#lib/ui/primitives/RequiredBadge.svelte';
+	import TypeBadge from '#lib/ui/primitives/TypeBadge.svelte';
+	import SearchField from '#lib/ui/primitives/SearchField.svelte';
+	import Select from '#lib/ui/primitives/Select.svelte';
+	import { toast } from '#lib/ui/toast/toast.svelte.js';
+	import Page from '#lib/ui/templates/Page.svelte';
 	import CreateSchemaDialog from './CreateSchemaDialog.svelte';
 	import { statusBadge, TYPE_KEY } from './labels';
 	import PresetDialog from './PresetDialog.svelte';

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createFakeSchemaSetting } from '$lib/api/fake/schema-setting-fake';
-import type { Schema } from '$lib/api/schema-setting';
+import { createFakeSchemaSetting } from '#lib/api/fake/schema-setting-fake.js';
+import type { Schema } from '#lib/api/schema-setting.js';
 import { changeOf, formOf, problemsOf } from './edit-model';
 
 async function load(id: string): Promise<Schema> {

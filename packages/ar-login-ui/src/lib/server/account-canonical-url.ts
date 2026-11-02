@@ -1,6 +1,6 @@
 import { PUBLIC_AUTHRIM_ISSUER, PUBLIC_API_BASE_URL } from '$app/env/public';
 import type { RequestEvent } from '@sveltejs/kit';
-import { getPlatformEnv } from '$lib/server/platform-env';
+import { getPlatformEnv } from '#lib/server/platform-env.js';
 
 function isLoopbackHost(hostname: string): boolean {
 	return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';

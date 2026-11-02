@@ -1,4 +1,4 @@
-import { adminFetch } from '$lib/api/admin-request';
+import { adminFetch } from '#lib/api/admin-request.js';
 /**
  * Admin Custom Claims Schema API Client
  *

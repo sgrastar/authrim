@@ -1,4 +1,4 @@
-import { t, type MessageKey } from '$lib/i18n/i18n.svelte';
+import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
 
 /**
  * The pieces every table-defined flow is made of (sign-up, sign-in, and the user sync flows of

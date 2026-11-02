@@ -1,4 +1,4 @@
-import type { RuntimeProfileRecord } from '$lib/api/admin-runtime-profiles';
+import type { RuntimeProfileRecord } from '#lib/api/admin-runtime-profiles.js';
 
 export type EditableAuditSinkType = 'http' | 'logpush';
 export type EditableAuditFailureMode = 'archiveFailureMode' | 'sinkFailureMode';

@@ -3,19 +3,19 @@
 	import { onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { LL } from '$i18n/i18n-svelte';
-	import { settingsContext } from '$lib/stores/settings-context.svelte';
+	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import {
 		adminRolesAPI,
 		type Role,
 		PERMISSION_DEFINITIONS,
 		type CreateRoleRequest
-	} from '$lib/api/admin-roles';
+	} from '#lib/api/admin-roles.js';
 	import {
 		formatPermissionCategory,
 		formatPermissionDescription,
 		formatPermissionLabel
-	} from '$lib/admin/roles-i18n';
-	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
+	} from '#lib/admin/roles-i18n.js';
+	import { AdminPageHeader, AdminPageShell, AdminSection } from '#lib/components/admin/index.js';
 
 	// Form state
 	let name = $state('');

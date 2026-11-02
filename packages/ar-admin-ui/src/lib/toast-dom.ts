@@ -1,4 +1,4 @@
-import type { ToastTone } from '$lib/toast';
+import type { ToastTone } from '#lib/toast.js';
 
 // Legacy message containers are centralized here so existing and newly discovered page patterns can
 // be covered without duplicating MutationObserver or toast logic in individual routes.

@@ -1,4 +1,4 @@
-import { API_BASE_URL, adminFetch } from '$lib/api/admin-request';
+import { API_BASE_URL, adminFetch } from '#lib/api/admin-request.js';
 
 export type AdminFlowKind = 'login' | 'registration' | 'approve' | 'account' | `custom:${string}`;
 export type AdminFlowStatus = 'draft' | 'published' | 'disabled';
