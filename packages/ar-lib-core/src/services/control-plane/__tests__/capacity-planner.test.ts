@@ -86,7 +86,7 @@ describe('planControlCapacity', () => {
   });
 
   it('counts in-flight units so concurrent executors do not over-provision', () => {
-    const target = input().targets[0]!;
+    const target = input().targets[0];
     const plan = planControlCapacity(
       input({
         profile: 'recommended',

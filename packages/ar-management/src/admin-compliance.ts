@@ -134,7 +134,7 @@ export async function roleUsage(env: Env, tenantId: string, adapter: DatabaseAda
         );
         for (const row of page) if (roleIds.has(row.role_id)) users.add(row.user_id);
         if (page.length < ROLE_USER_PAGE) break;
-        const last = page[page.length - 1]!;
+        const last = page[page.length - 1];
         after = { userId: last.user_id, roleId: last.role_id };
       }
     })

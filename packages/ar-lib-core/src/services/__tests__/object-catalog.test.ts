@@ -272,7 +272,7 @@ describe('object-catalog helpers', () => {
     expect(deleted[0]?.objectKey).toBe('exports/tenant-1/report.json');
 
     const purged = await purgeDeletedObjectCatalogObjectsForSystemCleanup(adapter, [
-      deleted[0]!.physicalId,
+      deleted[0].physicalId,
     ]);
     expect(purged).toBe(1);
     expect(await listDeletedObjectCatalogObjectsForSystemCleanup(adapter)).toHaveLength(0);

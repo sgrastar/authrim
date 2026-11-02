@@ -177,7 +177,7 @@ export function createReplayIdempotency(options: ReplayIdempotencyOptions): Midd
     c.json({ error: 'result_unknown', error_description: options.unknownMessage }, 409);
 
   return async (c, next) => {
-    if (options.bypass?.(c as unknown as Context)) {
+    if (options.bypass?.(c)) {
       await next();
       return;
     }
@@ -219,7 +219,7 @@ export function createReplayIdempotency(options: ReplayIdempotencyOptions): Midd
     }
     const scopeParts = [
       ...(options.bindToAuthority ? [`authority=${authorityFingerprint(c.get('adminAuth'))}`] : []),
-      ...(options.requestScope ? [options.requestScope(c as unknown as Context)] : []),
+      ...(options.requestScope ? [options.requestScope(c)] : []),
     ];
     const hash = await sha256Hex(
       scopeParts.length === 0
@@ -228,7 +228,7 @@ export function createReplayIdempotency(options: ReplayIdempotencyOptions): Midd
     );
     // The principal is part of the operation: the same key of another administrator is another record.
     const operation = options.operation(principal);
-    const recordTenantId = options.tenantId(c as unknown as Context);
+    const recordTenantId = options.tenantId(c);
 
     let adapter: DatabaseAdapter;
     try {
@@ -270,11 +270,7 @@ export function createReplayIdempotency(options: ReplayIdempotencyOptions): Midd
             } catch {
               storedAnswer = null;
             }
-            const refused = await options.authorizeReplay(
-              c as unknown as Context,
-              bytes,
-              storedAnswer
-            );
+            const refused = await options.authorizeReplay(c, bytes, storedAnswer);
             if (refused) return refused;
           }
           if (existing.expires_at <= now) {
@@ -287,7 +283,7 @@ export function createReplayIdempotency(options: ReplayIdempotencyOptions): Midd
           }
           if (existing.request_hash !== hash) return conflict(c);
           if (existing.status === 'unknown') return resultUnknown(c);
-          return replay(c as unknown as Context, existing) ?? inProgress(c);
+          return replay(c, existing) ?? inProgress(c);
         } catch {
           return unavailable(c);
         }

@@ -75,7 +75,7 @@ describe('pii partition stats routes', () => {
   });
 
   it('uses the context tenant for partition routing tests', async () => {
-    const c = createMockContext() as any;
+    const c = createMockContext();
     c.req.json = vi.fn().mockResolvedValue({
       tenantId: 'acme',
       attributes: { plan: 'enterprise' },
@@ -89,7 +89,7 @@ describe('pii partition stats routes', () => {
   });
 
   it('rejects cross-tenant partition routing test input', async () => {
-    const c = createMockContext() as any;
+    const c = createMockContext();
     c.req.json = vi.fn().mockResolvedValue({
       tenantId: 'other-tenant',
     });

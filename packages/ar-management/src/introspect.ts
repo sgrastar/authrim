@@ -610,7 +610,7 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   const exp = tokenPayload.exp as number;
   const iat = tokenPayload.iat as number;
   // RFC 7519: nbf (not before) claim - token SHOULD NOT be valid before this time
-  const nbf = tokenPayload.nbf as number | undefined;
+  const nbf = tokenPayload.nbf;
   const tokenClientId =
     typeof tokenPayload.client_id === 'string' ? tokenPayload.client_id : undefined;
   // V2: Extract version for refresh token validation

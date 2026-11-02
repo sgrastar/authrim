@@ -13,10 +13,7 @@
  */
 
 import type { Env } from '../types/env';
-import {
-  resolvePlatformSettingsWithSources,
-  type EffectiveSettingsEnv,
-} from '../services/effective-settings';
+import { resolvePlatformSettingsWithSources } from '../services/effective-settings';
 
 /**
  * Conformance mode configuration
@@ -55,11 +52,7 @@ export async function getConformanceConfig(
   env: Partial<Pick<Env, 'SETTINGS' | 'AUTHRIM_CONFIG' | 'ENABLE_CONFORMANCE_MODE'>>
 ): Promise<ConformanceConfig> {
   try {
-    const { values } = await resolvePlatformSettingsWithSources(
-      env as EffectiveSettingsEnv,
-      'feature-flags',
-      {}
-    );
+    const { values } = await resolvePlatformSettingsWithSources(env, 'feature-flags', {});
     return {
       enabled: values['feature.conformance_enabled'] === true,
     };

@@ -330,7 +330,7 @@ export async function createSDJWT(
   }
 
   // Sign the JWT
-  const jwt = await new SignJWT(payload as JWTPayload)
+  const jwt = await new SignJWT(payload)
     .setProtectedHeader({ alg: algorithm, typ: 'sd+jwt', kid })
     .sign(privateKey);
 
@@ -798,7 +798,7 @@ export function processNestedDisclosures(
 
         // Recursively process if value is an object with _sd
         if (value && typeof value === 'object' && !Array.isArray(value) && '_sd' in value) {
-          const nested = processNestedDisclosures(value as Record<string, unknown>, disclosureMap);
+          const nested = processNestedDisclosures(value, disclosureMap);
           value = nested.result;
           totalUndisclosed += nested.undisclosedCount;
         }
@@ -948,7 +948,7 @@ export async function createAdvancedSDJWT(
   }
 
   // Sign the JWT
-  const jwt = await new SignJWT(payload as JWTPayload)
+  const jwt = await new SignJWT(payload)
     .setProtectedHeader({ alg: 'RS256', typ: 'sd+jwt', kid })
     .sign(privateKey);
 
@@ -1000,7 +1000,7 @@ export async function verifyAdvancedSDJWT(
 
   // Process all disclosures including nested and array elements
   const { result: disclosedClaims, undisclosedCount } = processNestedDisclosures(
-    sdPayload as Record<string, unknown>,
+    sdPayload,
     disclosures
   );
 

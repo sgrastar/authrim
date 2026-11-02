@@ -33,30 +33,24 @@ describe('SAML assertion encryption', () => {
     const encrypted = await encryptSAMLAssertion(baseResponse, publicKeyPem);
     const doc = parseXml(encrypted);
     const response = findElement(doc, SAML_NAMESPACES.SAML2P, 'Response');
-    const assertion = findElement(response!, SAML_NAMESPACES.SAML2, 'Assertion');
-    const encryptedAssertion = findElement(response!, SAML_NAMESPACES.SAML2, 'EncryptedAssertion');
-    const encryptedData = findElement(encryptedAssertion!, SAML_NAMESPACES.XENC, 'EncryptedData');
+    const assertion = findElement(response, SAML_NAMESPACES.SAML2, 'Assertion');
+    const encryptedAssertion = findElement(response, SAML_NAMESPACES.SAML2, 'EncryptedAssertion');
+    const encryptedData = findElement(encryptedAssertion, SAML_NAMESPACES.XENC, 'EncryptedData');
     const dataEncryptionMethod = findElement(
-      encryptedData!,
+      encryptedData,
       SAML_NAMESPACES.XENC,
       'EncryptionMethod'
     );
-    const encryptedKey = findElement(encryptedData!, SAML_NAMESPACES.XENC, 'EncryptedKey');
-    const keyEncryptionMethod = findElement(
-      encryptedKey!,
-      SAML_NAMESPACES.XENC,
-      'EncryptionMethod'
-    );
+    const encryptedKey = findElement(encryptedData, SAML_NAMESPACES.XENC, 'EncryptedKey');
+    const keyEncryptionMethod = findElement(encryptedKey, SAML_NAMESPACES.XENC, 'EncryptionMethod');
 
     expect(assertion).toBeNull();
     expect(encryptedAssertion).toBeDefined();
-    expect(getAttribute(encryptedData!, 'Type')).toBe('http://www.w3.org/2001/04/xmlenc#Element');
-    expect(getAttribute(dataEncryptionMethod!, 'Algorithm')).toBe(
+    expect(getAttribute(encryptedData, 'Type')).toBe('http://www.w3.org/2001/04/xmlenc#Element');
+    expect(getAttribute(dataEncryptionMethod, 'Algorithm')).toBe(
       XML_ENCRYPTION_ALGORITHMS.AES256_GCM
     );
-    expect(getAttribute(keyEncryptionMethod!, 'Algorithm')).toBe(
-      XML_ENCRYPTION_ALGORITHMS.RSA_OAEP
-    );
+    expect(getAttribute(keyEncryptionMethod, 'Algorithm')).toBe(XML_ENCRYPTION_ALGORITHMS.RSA_OAEP);
   });
 
   it('replaces NameID with EncryptedID when full assertion encryption is disabled', async () => {
@@ -64,8 +58,8 @@ describe('SAML assertion encryption', () => {
     const encrypted = await encryptSAMLNameID(baseResponse, publicKeyPem);
     const doc = parseXml(encrypted);
     const assertion = findElement(doc, SAML_NAMESPACES.SAML2, 'Assertion');
-    const nameId = findElement(assertion!, SAML_NAMESPACES.SAML2, 'NameID');
-    const encryptedId = findElement(assertion!, SAML_NAMESPACES.SAML2, 'EncryptedID');
+    const nameId = findElement(assertion, SAML_NAMESPACES.SAML2, 'NameID');
+    const encryptedId = findElement(assertion, SAML_NAMESPACES.SAML2, 'EncryptedID');
 
     expect(assertion).toBeDefined();
     expect(nameId).toBeNull();
@@ -103,25 +97,21 @@ describe('SAML assertion encryption', () => {
     });
     const doc = parseXml(encrypted);
     const encryptedAssertion = findElement(doc, SAML_NAMESPACES.SAML2, 'EncryptedAssertion');
-    const encryptedData = findElement(encryptedAssertion!, SAML_NAMESPACES.XENC, 'EncryptedData');
+    const encryptedData = findElement(encryptedAssertion, SAML_NAMESPACES.XENC, 'EncryptedData');
     const dataEncryptionMethod = findElement(
-      encryptedData!,
+      encryptedData,
       SAML_NAMESPACES.XENC,
       'EncryptionMethod'
     );
-    const encryptedKey = findElement(encryptedData!, SAML_NAMESPACES.XENC, 'EncryptedKey');
-    const keyEncryptionMethod = findElement(
-      encryptedKey!,
-      SAML_NAMESPACES.XENC,
-      'EncryptionMethod'
-    );
-    const digestMethod = findElement(keyEncryptionMethod!, SAML_NAMESPACES.DS, 'DigestMethod');
-    const mgf = findElement(keyEncryptionMethod!, SAML_NAMESPACES.XENC11, 'MGF');
+    const encryptedKey = findElement(encryptedData, SAML_NAMESPACES.XENC, 'EncryptedKey');
+    const keyEncryptionMethod = findElement(encryptedKey, SAML_NAMESPACES.XENC, 'EncryptionMethod');
+    const digestMethod = findElement(keyEncryptionMethod, SAML_NAMESPACES.DS, 'DigestMethod');
+    const mgf = findElement(keyEncryptionMethod, SAML_NAMESPACES.XENC11, 'MGF');
 
-    expect(getAttribute(dataEncryptionMethod!, 'Algorithm')).toBe(
+    expect(getAttribute(dataEncryptionMethod, 'Algorithm')).toBe(
       XML_ENCRYPTION_ALGORITHMS.AES256_CBC
     );
-    expect(getAttribute(keyEncryptionMethod!, 'Algorithm')).toBe(
+    expect(getAttribute(keyEncryptionMethod, 'Algorithm')).toBe(
       XML_ENCRYPTION_ALGORITHMS.RSA_OAEP_MGF1P
     );
     expect(digestMethod).toBeNull();

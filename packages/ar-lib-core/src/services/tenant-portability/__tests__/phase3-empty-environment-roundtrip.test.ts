@@ -312,7 +312,7 @@ describe('Phase 3 empty-environment roundtrip', () => {
       await expect(
         verifyPhase3LogicalReferences({
           tenantId: 'tenant-a',
-          admin: adapter(targetAdmin) as never,
+          admin: adapter(targetAdmin),
         })
       ).resolves.toBeUndefined();
       expect(targetCore.prepare('PRAGMA foreign_key_check').all()).toEqual([]);

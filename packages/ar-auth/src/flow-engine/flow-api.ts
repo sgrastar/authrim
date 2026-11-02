@@ -26,7 +26,6 @@ import type {
   FlowStateResponse,
 } from './types';
 import { createFlowExecutor } from './flow-executor';
-import type { FlowType } from './flow-registry';
 
 // =============================================================================
 // Flow API Router
@@ -101,7 +100,7 @@ flowApi.post('/init', async (c) => {
 
     // Flow initialization
     const response = await executor.initFlow({
-      flowType: (body.flowType || 'login') as FlowType,
+      flowType: body.flowType || 'login',
       clientId: body.clientId,
       tenantId,
       oauthParams: body.oauthParams,

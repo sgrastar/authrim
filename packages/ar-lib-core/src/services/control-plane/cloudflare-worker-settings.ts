@@ -191,7 +191,7 @@ function writablePreservedSetting(field: string, value: unknown): unknown {
     sanitized &&
     typeof sanitized === 'object' &&
     !Array.isArray(sanitized) &&
-    Object.keys(sanitized as Record<string, unknown>).length === 0
+    Object.keys(sanitized).length === 0
   ) {
     return undefined;
   }
@@ -236,7 +236,7 @@ function assertBindings(value: unknown): CloudflareWorkerBinding[] {
     ) {
       throw new Error(`worker_settings_binding_${index}_inherit_version_id_required`);
     }
-    return { ...record, name, type } as CloudflareWorkerBinding;
+    return { ...record, name, type };
   });
 }
 

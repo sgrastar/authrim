@@ -325,7 +325,7 @@ export async function advanceEnvironmentReplicationOperation(
               drainedAtMs: null,
               generation: null,
               promotedEpoch: null,
-            } as EnvironmentSwitchOperation,
+            },
           }
         : {}),
     });

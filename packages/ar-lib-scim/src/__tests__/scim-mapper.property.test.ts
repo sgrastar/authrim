@@ -20,7 +20,7 @@ import {
   generateEtag,
   parseEtag,
 } from '../utils/scim-mapper';
-import type { InternalUser, InternalGroup } from '../utils/scim-mapper';
+import type { InternalGroup } from '../utils/scim-mapper';
 import {
   internalUserArb,
   minimalInternalUserArb,
@@ -89,7 +89,7 @@ describe('SCIM Mapper Property Tests', () => {
       fc.assert(
         fc.property(userWithNameArb, (user) => {
           const context = { baseUrl: 'https://example.com' };
-          const scimUser = userToScim(user as InternalUser, context);
+          const scimUser = userToScim(user, context);
 
           expect(scimUser.name).toBeDefined();
           expect(scimUser.name!.givenName).toBe(user.given_name);

@@ -140,7 +140,7 @@ export function normalizeIdentityMappingLevelHistoryChoice(
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('identity_mapping_history_choice_invalid');
   }
-  const safe = sanitizeObject(value as Record<string, unknown>);
+  const safe = sanitizeObject(value);
   return Object.fromEntries(
     Object.entries(safe).sort(([left], [right]) => left.localeCompare(right))
   );

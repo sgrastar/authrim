@@ -1446,7 +1446,7 @@ describe('Webhook Admin API - Get Delivery', () => {
         detail_artifact_id: 'oa_test',
       });
 
-      const response = (await getWebhookDelivery(c)) as Response;
+      const response = await getWebhookDelivery(c);
       const { body, status } = await getResponseData(response);
 
       expect(status).toBe(403);
@@ -1549,7 +1549,7 @@ describe('Webhook Admin API - Get Delivery', () => {
         return null;
       });
 
-      const response = (await getWebhookDelivery(c)) as Response;
+      const response = await getWebhookDelivery(c);
       const { body, status } = await getResponseData(response);
       const chunkIndexQueryParams = mockD1AdapterQueryOne.mock.calls
         .filter(([sql]) => String(sql).includes('FROM sensitive_detail_chunk_index'))
@@ -1699,7 +1699,7 @@ describe('Webhook Admin API - Get Delivery', () => {
         };
       });
 
-      const response = (await getWebhookDelivery(c)) as Response;
+      const response = await getWebhookDelivery(c);
       const { status } = await getResponseData(response);
       expect(status).toBe(200);
     });
@@ -1729,7 +1729,7 @@ describe('Webhook Admin API - Replay Delivery', () => {
         adminPermissions: ['admin:webhooks:write'],
       });
 
-      const response = (await replayWebhookDelivery(c)) as Response;
+      const response = await replayWebhookDelivery(c);
       const { body, status } = await getResponseData(response);
 
       expect(status).toBe(403);

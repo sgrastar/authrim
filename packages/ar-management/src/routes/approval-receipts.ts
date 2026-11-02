@@ -16,7 +16,7 @@ approvalReceiptsRouter.get('/:receiptId', async (c) => {
   try {
     const receipt = await getApprovalDecisionReceipt(
       c.env,
-      c.req.param('receiptId')!,
+      c.req.param('receiptId'),
       getTenantIdFromContext(c)
     );
     if (!receipt) {
@@ -37,7 +37,7 @@ approvalReceiptsRouter.get('/:receiptId/portal', async (c) => {
   try {
     const receipt = await getApprovalDecisionReceipt(
       c.env,
-      c.req.param('receiptId')!,
+      c.req.param('receiptId'),
       getTenantIdFromContext(c)
     );
     if (!receipt) {

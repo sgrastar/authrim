@@ -162,7 +162,7 @@ function timestampToIso(value: number | string): string | null {
 }
 
 async function loadHmacKeys(env: Env, now: number): Promise<ResolvedLookupHmacKeys> {
-  const cached = hmacKeyCache.get(env as object);
+  const cached = hmacKeyCache.get(env);
   if (cached && now - cached.loadedAt < RUNTIME_STATE_CACHE_TTL_MS) return cached.value;
   const runtime = requiredEnvironment(env);
   const state = await loadVerifiedLookupHmacKeyState({
@@ -176,7 +176,7 @@ async function loadHmacKeys(env: Env, now: number): Promise<ResolvedLookupHmacKe
     slotA: env.LOOKUP_HMAC_KEY_SLOT_A,
     slotB: env.LOOKUP_HMAC_KEY_SLOT_B,
   });
-  hmacKeyCache.set(env as object, { value, loadedAt: now });
+  hmacKeyCache.set(env, { value, loadedAt: now });
   return value;
 }
 
@@ -281,7 +281,7 @@ function resolveRouteTargetSource(
   return resolveTenantDatabaseSourceFromRegistry(env, {
     tenantId,
     role,
-    dataRole: target.dataRole as 'tenant_core/users' | 'tenant_pii',
+    dataRole: target.dataRole,
     residencyPartition: target.residencyPartition,
     shardId: target.shardId,
     bindingRef: target.bindingRef,

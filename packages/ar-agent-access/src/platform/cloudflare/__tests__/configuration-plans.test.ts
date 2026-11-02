@@ -1,11 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentConfigurationRepository, AgentConfigurationPlanRecord } from '../../../core';
 import { createAdminToolCatalog, McpSdkJsonSchemaValidator } from '../../../protocol/mcp';
-import type {
-  AgentAuthorizationPort,
-  AgentConfigurationOperationRequest,
-  ManagementApiPort,
-} from '../../ports';
+import type { AgentAuthorizationPort, AgentConfigurationOperationRequest } from '../../ports';
 import { CloudflareAgentConfigurationPlanAdapter } from '../configuration-plans';
 
 const now = 1_800_000_000_000;
@@ -147,7 +143,7 @@ describe('Cloudflare Agent configuration Plan adapter', () => {
     return new CloudflareAgentConfigurationPlanAdapter(
       repository as unknown as AgentConfigurationRepository,
       createAdminToolCatalog(),
-      managementApi as unknown as ManagementApiPort,
+      managementApi,
       { now: () => now },
       authorization,
       schemaValidator

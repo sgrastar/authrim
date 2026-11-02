@@ -764,42 +764,39 @@ describe('the identity mapping of an SP in a deployed tenant', () => {
 
     it('are not read from the subject’s prototype', async () => {
       const read = (path: string) =>
-        buildSAMLAttributesForSPWithDiagnostics(
-          { id: 'user-a' } as never,
-          {
-            attributeMapping: {},
+        buildSAMLAttributesForSPWithDiagnostics({ id: 'user-a' }, {
+          attributeMapping: {},
+          tenantId: 'tenant-a',
+          localEntityId: 'https://idp.example.test',
+          entityId: PRODUCTION_SP_ENTITY_ID,
+          identityMapping: {
+            role: 'idp',
             tenantId: 'tenant-a',
             localEntityId: 'https://idp.example.test',
-            entityId: PRODUCTION_SP_ENTITY_ID,
-            identityMapping: {
-              role: 'idp',
-              tenantId: 'tenant-a',
-              localEntityId: 'https://idp.example.test',
-              partnerEntityId: PRODUCTION_SP_ENTITY_ID,
-              catalog: {
-                identity: { id: 'c', version: '1', contentHash: 'h', compatibilityRange: '*' },
-                entries: [
-                  {
-                    id: 'dest.x',
-                    namespace: 'saml.attribute',
-                    path: 'x',
-                    valueType: 'string',
-                    cardinality: 'single',
-                    classification: 'internal',
-                    targetType: 'destination-only',
-                  },
-                ],
-              },
-              edges: [
+            partnerEntityId: PRODUCTION_SP_ENTITY_ID,
+            catalog: {
+              identity: { id: 'c', version: '1', contentHash: 'h', compatibilityRange: '*' },
+              entries: [
                 {
-                  id: 'e',
-                  sourceRef: { side: 'source', namespace: 'authrim.profile', path },
-                  targetRef: { side: 'destination', namespace: 'saml.attribute', path: 'x' },
+                  id: 'dest.x',
+                  namespace: 'saml.attribute',
+                  path: 'x',
+                  valueType: 'string',
+                  cardinality: 'single',
+                  classification: 'internal',
+                  targetType: 'destination-only',
                 },
               ],
             },
-          } as never
-        ).attributes;
+            edges: [
+              {
+                id: 'e',
+                sourceRef: { side: 'source', namespace: 'authrim.profile', path },
+                targetRef: { side: 'destination', namespace: 'saml.attribute', path: 'x' },
+              },
+            ],
+          },
+        } as never).attributes;
       for (const path of ['constructor', '__proto__.polluted', 'toString', 'constructor.name']) {
         expect(read(path)).toEqual([]);
       }

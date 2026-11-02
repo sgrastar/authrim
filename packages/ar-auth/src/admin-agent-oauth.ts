@@ -193,7 +193,7 @@ async function resolveAdminAgentClient(
   clientId: string,
   canonicalResource: string
 ): Promise<ClientMetadata | null> {
-  const existing = (await getClientCached(c, c.env, clientId)) as ClientMetadata | null;
+  const existing = await getClientCached(c, c.env, clientId);
   if (existing?.agent_access_registration_mode === 'cimd') {
     const document = await fetchClientIdMetadataDocument(clientId);
     if (!document) return null;
@@ -297,7 +297,7 @@ async function resolveAdminAgentClient(
     client_metadata_hash: document.hash,
     client_metadata_fetched_at: now,
     dpop_bound_access_tokens: document.metadata.dpop_bound_access_tokens,
-  } as ClientMetadata;
+  };
 }
 
 function oauthError(
@@ -717,7 +717,7 @@ export async function adminAgentParHandler(c: Context<{ Bindings: Env }>): Promi
   }
   // A private_key_jwt client normally has no secret hash; absence of a secret is therefore not
   // evidence that a client is public. Only an explicit `none` registration is public.
-  const publicClient = (client.token_endpoint_auth_method as string | undefined) === 'none';
+  const publicClient = client.token_endpoint_auth_method === 'none';
   if (publicClient) {
     const methodValidation = validateRegisteredClientAuthenticationMethod(
       client,

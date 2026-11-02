@@ -363,7 +363,7 @@ function parseJwks(value: unknown): JWK[] | null {
     if (!isRecord(key)) {
       return null;
     }
-    keys.push(key as JWK);
+    keys.push(key);
   }
   return keys;
 }

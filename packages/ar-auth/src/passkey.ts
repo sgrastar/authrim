@@ -257,7 +257,7 @@ function toBase64URLString(input: CredentialIDLike): string {
     return isoBase64URL.fromBuffer(new Uint8Array(input));
   }
 
-  const view = input as ArrayBufferView;
+  const view = input;
   const typedArray = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
   // @ts-ignore - TypeScript strict buffer type mismatch
   return isoBase64URL.fromBuffer(typedArray);
@@ -512,7 +512,7 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
       rpName: RP_NAME,
       rpID,
       // @ts-ignore - TextEncoder.encode() returns compatible Uint8Array
-      userID: encoder.encode(user.id as string),
+      userID: encoder.encode(user.id),
       userName: normalizedEmail ?? user.id,
       userDisplayName: (user.name as string) || normalizedEmail || user.id,
       excludeCredentials: excludeCredentials,
@@ -528,7 +528,7 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
     // Use userId-based sharding (UUID, no PII in DO instance name)
     const challengeStore = await getChallengeStoreByUserId(
       c.env,
-      user.id as string,
+      user.id,
       getTenantIdFromContext(c)
     );
 
@@ -536,7 +536,7 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
       id: `passkey_reg:${user.id}`,
       tenantId: getTenantIdFromContext(c),
       type: 'passkey_registration',
-      userId: user.id as string,
+      userId: user.id,
       challenge: options.challenge,
       ttl: 300, // 5 minutes
       email: normalizedEmail ?? undefined,
@@ -678,7 +678,7 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
 
     // Convert credentialPublicKey (Uint8Array) to base64
     const publicKeyBase64 = Buffer.from(credentialPublicKey).toString('base64');
-    const credentialIDBase64URL = toBase64URLString(credentialID as CredentialIDLike);
+    const credentialIDBase64URL = toBase64URLString(credentialID);
 
     const passkeyId = crypto.randomUUID();
     const now = Date.now();
@@ -1006,13 +1006,13 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Convert stored public key from base64 to Uint8Array
-    const normalizedCredentialId = normalizeStoredCredentialId(passkey.credential_id as string);
+    const normalizedCredentialId = normalizeStoredCredentialId(passkey.credential_id);
     if (!normalizedCredentialId) {
       // PII Protection: Don't log passkey.id
       log.error('Stored credential ID could not be normalized', { action: 'credential_normalize' });
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
-    const publicKey = Uint8Array.from(Buffer.from(passkey.public_key as string, 'base64'));
+    const publicKey = Uint8Array.from(Buffer.from(passkey.public_key, 'base64'));
 
     // Verify authentication response
     let verification: VerifiedAuthenticationResponse;
@@ -1023,9 +1023,9 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         expectedOrigin: origin,
         expectedRPID: rpID,
         credential: {
-          id: normalizedCredentialId as string,
+          id: normalizedCredentialId,
           publicKey: publicKey,
-          counter: passkey.counter as number,
+          counter: passkey.counter,
         },
         // Explicit (the library default): a sign-in without the user-verified flag is refused.
         requireUserVerification: true,
@@ -1187,7 +1187,7 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
     try {
       const createdSession = (await sessionStore.createSessionRpc(
         sessionId,
-        passkey.user_id as string,
+        passkey.user_id,
         sessionTtl.seconds,
         {
           ...getSessionClientMetadata(c.req.raw),

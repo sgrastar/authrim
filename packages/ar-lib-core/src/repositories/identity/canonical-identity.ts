@@ -2315,8 +2315,7 @@ function assuranceEvidenceParams(row: AssuranceEvidenceRow): unknown[] {
 
 /** Times as numbers, whichever store the row came from (PostgreSQL returns BIGINT as text). */
 export function normalizeAssuranceEvidenceRow<T extends Partial<AssuranceEvidenceRow>>(row: T): T {
-  const time = (value: unknown) =>
-    value === null || value === undefined ? null : Number(value as number | string);
+  const time = (value: unknown) => (value === null || value === undefined ? null : Number(value));
   return {
     ...row,
     ...('verified_at' in row ? { verified_at: time(row.verified_at) } : {}),

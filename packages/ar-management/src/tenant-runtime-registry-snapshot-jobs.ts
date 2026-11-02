@@ -214,7 +214,7 @@ export async function synchronizeTenantRuntimeRegistryRoutes(input: {
     if (generations.size !== 1) {
       throw new Error('tenant_runtime_registry_control_generation_mismatch');
     }
-    const generation = ordered[0]!.routeGeneration;
+    const generation = ordered[0].routeGeneration;
     for (const [shardIndex, target] of ordered.entries()) {
       await input.repository.upsertRegistryRow({
         tenant_id: input.tenantId,
@@ -252,7 +252,7 @@ export async function synchronizeTenantRuntimeRegistryRoutes(input: {
       shard_group: shardGroup,
       generation,
       shard_count: ordered.length,
-      shard_key_strategy: ordered[0]!.dataRole === 'tenant_core/default' ? 'none' : 'account_id',
+      shard_key_strategy: ordered[0].dataRole === 'tenant_core/default' ? 'none' : 'account_id',
       runtime_generation: runtimeGeneration,
       status: 'active',
       updated_by: input.actorId,

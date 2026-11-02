@@ -41,7 +41,7 @@ describe('portable webhook signing secret', () => {
       targetKey,
       targetKeyVersion: 7,
     });
-    expect((await decryptValue(stored!, targetKey)).decrypted).toBe('signing-secret');
+    expect((await decryptValue(stored, targetKey)).decrypted).toBe('signing-secret');
     await verifyPortableWebhookSecret({
       target,
       policy,

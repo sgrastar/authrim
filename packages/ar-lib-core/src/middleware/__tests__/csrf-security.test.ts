@@ -39,7 +39,7 @@ async function request(
   env: Partial<Env> = {},
   path = '/resource'
 ) {
-  return instance.request(path, { method, headers }, env as Env);
+  return instance.request(path, { method, headers }, env);
 }
 
 describe('CSRF middleware security decision table', () => {
@@ -252,9 +252,13 @@ describe('CSRF middleware security decision table', () => {
       reached();
       return c.json({ ok: true });
     });
-    const response = await instance.request(path, { method: 'POST', headers: { Origin: origin } }, {
-      BASE_DOMAIN: 'authrim.example.test',
-    } as Env);
+    const response = await instance.request(
+      path,
+      { method: 'POST', headers: { Origin: origin } },
+      {
+        BASE_DOMAIN: 'authrim.example.test',
+      }
+    );
     expect(response.status).toBe(allowed ? 200 : 403);
     expect(reached).toHaveBeenCalledTimes(allowed ? 1 : 0);
   });

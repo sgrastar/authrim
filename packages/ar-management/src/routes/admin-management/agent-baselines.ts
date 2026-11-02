@@ -15,7 +15,6 @@ import {
   type AgentBaselineDefinition,
   type AgentBaselineEnforcement,
   type AgentBaselineMode,
-  type AgentConfigurationTemplateType,
   type JsonObject,
 } from '@authrim/ar-agent-access/core';
 import {
@@ -224,12 +223,12 @@ agentTemplatesRouter.post('/', async (c) => {
     id,
     version: 1,
     sourceTenantId: controlTenant(c),
-    templateType: templateType as AgentConfigurationTemplateType,
+    templateType: templateType,
     sourceObjectId,
     sourceObjectVersion,
     definition,
     definitionDigest,
-    publishedBy: auth(c).userId!,
+    publishedBy: auth(c).userId,
     publishedAt: now,
     audit: audit(c, 'agent.template.published', 'agent_configuration_template', id, {
       template_type: templateType,
@@ -319,7 +318,7 @@ agentTemplatesRouter.post('/:id/:version/copies', async (c) => {
       targetObjectId,
       bulkPlanId: plan.id,
       bulkPlanVersion: plan.version,
-      copiedBy: auth(c).userId!,
+      copiedBy: auth(c).userId,
       copiedAt: Date.now(),
       audit: audit(c, 'agent.template.copied', 'agent_template_copy', copyId, {
         template_id: template.id,
@@ -385,7 +384,7 @@ agentBaselinesRouter.post('/', async (c) => {
     enforcement,
     definition: resolved.definition,
     definitionDigest: resolved.digest,
-    createdBy: auth(c).userId!,
+    createdBy: auth(c).userId,
     createdAt: now,
     audit: audit(c, 'agent.baseline.created', 'agent_baseline', id, {
       version: 1,
@@ -460,7 +459,7 @@ agentBaselinesRouter.post('/:id/:version/assignments', async (c) => {
     tenantId,
     sourceBulkPlanId: bulkPlanId,
     sourceBulkPlanVersion: bulkPlanVersion,
-    assignedBy: auth(c).userId!,
+    assignedBy: auth(c).userId,
     assignedAt: Date.now(),
     audit: audit(c, 'agent.baseline.assigned', 'agent_baseline_assignment', id, {
       baseline_id: c.req.param('id'),
@@ -629,7 +628,7 @@ agentBaselinesRouter.post('/assignments/:assignmentId/exceptions', async (c) => 
     assignmentId,
     fields: exception.fields,
     reason: exception.reason,
-    approvedBy: auth(c).userId!,
+    approvedBy: auth(c).userId,
     approvedAt: Date.now(),
     expiresAt: exception.expiresAt,
     audit: audit(c, 'agent.baseline.exception_approved', 'agent_baseline_exception', id, {

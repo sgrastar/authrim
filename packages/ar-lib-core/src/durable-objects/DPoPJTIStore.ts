@@ -303,7 +303,7 @@ export class DPoPJTIStore {
           if (!(error instanceof DPoPJTIReplayError)) {
             throw error;
           }
-          this.log.warn('checkAndStoreJTI replay detected', {}, error as Error);
+          this.log.warn('checkAndStoreJTI replay detected', {}, error);
           return new Response(
             JSON.stringify({
               error: 'replay_detected',

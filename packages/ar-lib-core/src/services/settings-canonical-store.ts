@@ -102,7 +102,7 @@ function decode(row: StoredRow): CanonicalSettingsDocument {
     return invalid();
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) invalid();
-  const data = sanitizeObject(parsed as Record<string, unknown>);
+  const data = sanitizeObject(parsed);
   if (generateVersion(data) !== row.version) invalid();
   return { data, version: row.version };
 }

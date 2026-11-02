@@ -304,7 +304,7 @@ describe('RBAC admin views under routed account storage', () => {
       summary: { total_members: number };
     };
     expect(hierarchy.organization.member_count).toBe(2);
-    expect(hierarchy.organization.children[0]!.member_count).toBe(1);
+    expect(hierarchy.organization.children[0].member_count).toBe(1);
     expect(hierarchy.summary.total_members).toBe(3);
   });
 

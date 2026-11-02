@@ -429,7 +429,7 @@ export class D1AuditAdapter implements IAuditStorageAdapter {
   async count(options: Omit<AuditQueryOptions, 'limit' | 'offset'>): Promise<number> {
     try {
       if (options.logType === 'event') {
-        const { sql, params } = this.buildEventLogQuery(options as AuditQueryOptions);
+        const { sql, params } = this.buildEventLogQuery(options);
         const countSql = sql.replace(/^[\s\S]*?FROM/, 'SELECT COUNT(*) as count FROM');
         const result = await this.db
           .prepare(countSql)
@@ -437,7 +437,7 @@ export class D1AuditAdapter implements IAuditStorageAdapter {
           .first<{ count: number }>();
         return result?.count ?? 0;
       } else {
-        const { sql, params } = this.buildPIILogQuery(options as AuditQueryOptions);
+        const { sql, params } = this.buildPIILogQuery(options);
         const countSql = sql.replace(/^[\s\S]*?FROM/, 'SELECT COUNT(*) as count FROM');
         const result = await this.db
           .prepare(countSql)

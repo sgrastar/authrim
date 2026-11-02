@@ -1370,10 +1370,7 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
         },
         {
           tenantCoreUsers,
-          directory: internalDirectoryBinding(
-            this.ctx as unknown as { exports?: Partial<ManagementInternalExports> },
-            environmentId
-          ),
+          directory: internalDirectoryBinding(this.ctx, environmentId),
         }
       );
       return {
@@ -1461,10 +1458,7 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
         },
         {
           tenantCoreUsers,
-          directory: internalDirectoryBinding(
-            this.ctx as unknown as { exports?: Partial<ManagementInternalExports> },
-            environmentId
-          ),
+          directory: internalDirectoryBinding(this.ctx, environmentId),
         }
       );
       return {
@@ -1534,10 +1528,7 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
         },
         {
           tenantCoreUsers,
-          directory: internalDirectoryBinding(
-            this.ctx as unknown as { exports?: Partial<ManagementInternalExports> },
-            environmentId
-          ),
+          directory: internalDirectoryBinding(this.ctx, environmentId),
         }
       );
       return {
@@ -1620,10 +1611,7 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
         },
         {
           tenantCoreUsers,
-          directory: internalDirectoryBinding(
-            this.ctx as unknown as { exports?: Partial<ManagementInternalExports> },
-            environmentId
-          ),
+          directory: internalDirectoryBinding(this.ctx, environmentId),
         }
       );
       return {
@@ -1710,12 +1698,7 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
       if (validated.externalIdentity !== undefined && validated.externalIdentity !== null) {
         throw new Error('auth_account_provisioning_input_invalid');
       }
-      return await provisionValidatedAccount(
-        env,
-        this.ctx as unknown as { exports?: Partial<ManagementInternalExports> },
-        environmentId,
-        validated
-      );
+      return await provisionValidatedAccount(env, this.ctx, environmentId, validated);
     } catch (error) {
       logProvisioningFailure(error);
       rethrowBackupMutationUnavailable(error);
@@ -1747,12 +1730,7 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
       if (validated.flow !== 'external_idp' || !validated.externalIdentity) {
         throw new Error('external_idp_account_provisioning_input_invalid');
       }
-      return await provisionValidatedAccount(
-        env,
-        this.ctx as unknown as { exports?: Partial<ManagementInternalExports> },
-        environmentId,
-        validated
-      );
+      return await provisionValidatedAccount(env, this.ctx, environmentId, validated);
     } catch (error) {
       // Keep external-IdP JIT failures diagnosable without exposing request payloads or secrets.
       // The public RPC error remains intentionally generic below.

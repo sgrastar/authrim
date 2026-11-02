@@ -167,14 +167,9 @@ describe('tenantIssuerUrls with a failing custom domain lookup', () => {
       }),
     };
     await expect(
-      tenantIssuerUrls(
-        { BASE_DOMAIN: 'example.com', AUTHRIM_CONFIG: kv({}) } as never,
-        'acme',
-        [],
-        {
-          tenantCoreDb: failing as never,
-        }
-      )
+      tenantIssuerUrls({ BASE_DOMAIN: 'example.com', AUTHRIM_CONFIG: kv({}) }, 'acme', [], {
+        tenantCoreDb: failing as never,
+      })
     ).rejects.toThrow();
   });
 });
@@ -207,8 +202,7 @@ describe('resolveDcrDefaultTarget', () => {
   const doc = (value: Record<string, unknown>) => ({
     'settings:tenant:acme:dcr': JSON.stringify(value),
   });
-  const resolve = (env: Record<string, unknown>) =>
-    resolveDcrDefaultTarget(env as never, 'acme', [ISSUER]);
+  const resolve = (env: Record<string, unknown>) => resolveDcrDefaultTarget(env, 'acme', [ISSUER]);
 
   it('is empty when nothing is set', async () => {
     await expect(resolve({ SETTINGS: kv({}) })).resolves.toEqual({ ignored: [] });
@@ -372,7 +366,7 @@ describe('resolveDcrDefaultTarget reads the document fresh', () => {
       'settings:tenant:acme:dcr': JSON.stringify({ 'dcr.default_audience': 'urn:first' }),
     };
     const env = { SETTINGS: kv(documents) };
-    const read = () => resolveDcrDefaultTarget(env as never, 'acme', [ISSUER]);
+    const read = () => resolveDcrDefaultTarget(env, 'acme', [ISSUER]);
 
     await expect(read()).resolves.toMatchObject({ audience: 'urn:first' });
     documents['settings:tenant:acme:dcr'] = JSON.stringify({

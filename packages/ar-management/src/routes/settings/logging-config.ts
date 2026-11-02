@@ -56,9 +56,9 @@ export async function getLoggingConfig(c: Context<{ Bindings: Env }>) {
   }
 
   // Get environment variable overrides
-  const envLevel = c.env.LOG_LEVEL as string | undefined;
-  const envFormat = c.env.LOG_FORMAT as string | undefined;
-  const envHashUserId = c.env.ENABLE_LOG_HASH_USER_ID as string | undefined;
+  const envLevel = c.env.LOG_LEVEL;
+  const envFormat = c.env.LOG_FORMAT;
+  const envHashUserId = c.env.ENABLE_LOG_HASH_USER_ID;
 
   return c.json({
     level: {
@@ -262,7 +262,7 @@ export async function getTenantLoggingConfig(c: Context<{ Bindings: Env }>) {
     }
   }
 
-  const envLevel = c.env.LOG_LEVEL as string | undefined;
+  const envLevel = c.env.LOG_LEVEL;
   const effectiveGlobalLevel = globalLevel ?? envLevel ?? DEFAULT_LOG_LEVEL;
 
   return c.json({

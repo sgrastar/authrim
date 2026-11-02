@@ -73,9 +73,9 @@ const mockKV = {
 
 function createResolver(maxClaimsPerTarget = 50): CustomClaimSchemaResolver {
   return new CustomClaimSchemaResolver({
-    schemaLoader: new SchemaLoader(mockDb as any, mockKV as any),
+    schemaLoader: new SchemaLoader(mockDb, mockKV as any),
     scopeEvaluator: new ClaimScopeEvaluator(),
-    dataFetcher: new UserCustomDataFetcher(mockDb as any, mockPiiDb as any),
+    dataFetcher: new UserCustomDataFetcher(mockDb, mockPiiDb),
     valueCaster: new ClaimValueCaster(),
     nameResolver: new ClaimNameResolver(),
     maxClaimsPerTarget,
@@ -154,9 +154,9 @@ describe('CustomClaimSchemaResolver', () => {
     };
 
     const resolver = createCustomClaimSchemaResolverFromSources({
-      schemaDb: schemaDb as any,
-      nonPiiDb: nonPiiDb as any,
-      piiDb: piiDb as any,
+      schemaDb: schemaDb,
+      nonPiiDb: nonPiiDb,
+      piiDb: piiDb,
       cache: null,
     });
     const result = await resolver.resolveClaimsForTarget('default', 'user-1', [], 'id_token');

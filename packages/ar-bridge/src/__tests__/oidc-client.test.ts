@@ -570,7 +570,7 @@ describe('OIDCRPClient', () => {
           'https://example.com/request-object'
         );
         expect(signedUrl.searchParams.has('request')).toBe(false);
-        expect(publishSigned.mock.calls[0]![0].split('.')).toHaveLength(3);
+        expect(publishSigned.mock.calls[0][0].split('.')).toHaveLength(3);
 
         const publishUnsigned = vi.fn(async (_requestObject: string): Promise<void> => undefined);
         const unsignedClient = new OIDCRPClient({
@@ -586,7 +586,7 @@ describe('OIDCRPClient', () => {
           requestUri: 'https://example.com/request-object',
           publishRequestObject: publishUnsigned,
         });
-        const unsigned = publishUnsigned.mock.calls[0]![0];
+        const unsigned = publishUnsigned.mock.calls[0][0];
         expect(unsigned.endsWith('.')).toBe(true);
         expect(
           JSON.parse(Buffer.from(unsigned.split('.')[0], 'base64url').toString())

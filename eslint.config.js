@@ -113,6 +113,15 @@ export default [
     },
   },
 
+  // Tests pass mock methods to expect() unbound (`expect(db.prepare).toHaveBeenCalled()`); the
+  // mock does not use `this`, which typescript-eslint documents as the case to switch this off.
+  {
+    files: ['**/__tests__/**/*.ts', '**/*.test.ts'],
+    rules: {
+      '@typescript-eslint/unbound-method': 'off',
+    },
+  },
+
   // The structured logger's console sink, and the Node migration CLI whose
   // output is its console report.
   {

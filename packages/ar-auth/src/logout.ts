@@ -290,7 +290,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     if (c.req.method === 'POST') {
       const body = await c.req.parseBody();
       const bodyString = (name: string) =>
-        typeof body[name] === 'string' ? (body[name] as string) : undefined;
+        typeof body[name] === 'string' ? body[name] : undefined;
       const confirmationToken = bodyString('confirmation_token');
       idTokenHint = bodyString('id_token_hint');
       postLogoutRedirectUri = bodyString('post_logout_redirect_uri');
@@ -365,7 +365,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         const hintAccount = await resolvePresentedTokenAccount(
           c.env,
           getTenantIdFromContext(c),
-          (idTokenResult.payload ?? {}) as Record<string, unknown>
+          idTokenResult.payload ?? {}
         );
         if (hintAccount.ok) {
           userId = hintAccount.userId;
@@ -1334,7 +1334,7 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         algorithms: ['RS256'],
       });
 
-      logoutClaims = payload as LogoutTokenPayload;
+      logoutClaims = payload;
     } catch (error) {
       log.error('Logout token validation error', {}, error as Error);
       return c.json(
@@ -1387,7 +1387,7 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     let userId: string | undefined;
     const sessionId = logoutClaims.sid as string | undefined;
     if (!sessionId) {
-      if (tokenSubjectAccountSource(logoutClaims as Record<string, unknown>) !== 'sub') {
+      if (tokenSubjectAccountSource(logoutClaims) !== 'sub') {
         log.warn('Back-channel logout token without sid does not name an account', {
           action: 'BackchannelLogout',
         });
@@ -1399,7 +1399,7 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
           400
         );
       }
-      userId = logoutClaims.sub as string;
+      userId = logoutClaims.sub;
     }
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);

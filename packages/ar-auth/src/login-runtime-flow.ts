@@ -483,7 +483,7 @@ function selectRuntimeScreenLocalization(
   ];
   for (const candidate of candidates) {
     if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
-      return candidate as RuntimeScreenLocalization;
+      return candidate;
     }
   }
   return null;
@@ -1004,18 +1004,18 @@ function normalizeRuntime(
             requestContext.client_id ||
             requestContext.authorization_challenge_id ||
             requestContext.requested_scope.length > 0
-              ? ({
+              ? {
                   client_id: requestContext.client_id,
                   authorization_challenge_id: requestContext.authorization_challenge_id,
                   requested_scope: requestContext.requested_scope,
-                } as FlowRuntimeJsonObject)
+                }
               : null,
           saml: requestContext.saml_sp_id
-            ? ({
+            ? {
                 saml_sp_id: requestContext.saml_sp_id,
                 saml_request_id: requestContext.saml_request_id,
                 saml_sp_entity_id: requestContext.saml_sp_entity_id,
-              } as FlowRuntimeJsonObject)
+              }
             : null,
         }
       : runtime.protocol_context,
@@ -3034,7 +3034,7 @@ async function resolveSessionForChallenge(
 /** What the session proves for a re-authentication: the server-recorded method and proof time. */
 function getSessionReauthProof(session: Session) {
   return reauthProofFromRecord(
-    session.data as Record<string, unknown> | undefined,
+    session.data,
     Array.isArray(session.data?.amr) ? session.data.amr : undefined,
     Array.isArray(session.data?.unverified_amr) ? session.data.unverified_amr : undefined
   );

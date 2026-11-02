@@ -834,7 +834,7 @@ describe('SAML Integration', () => {
         }),
       } as any,
     };
-    mockEnv.DB_ADMIN = mockEnv.TDB_TEST_CORE as Env['DB_ADMIN'];
+    mockEnv.DB_ADMIN = mockEnv.TDB_TEST_CORE;
 
     // Create Hono app
     app = new Hono();

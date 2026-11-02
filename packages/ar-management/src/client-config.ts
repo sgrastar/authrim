@@ -14,7 +14,7 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import type { ClientRegistrationResponse, ClientMetadata, JWKS } from '@authrim/ar-lib-core';
+import type { ClientRegistrationResponse, ClientMetadata } from '@authrim/ar-lib-core';
 import {
   getClientCached,
   timingSafeEqual,
@@ -494,38 +494,35 @@ function buildClientResponse(
   idTokenSigning: IDTokenSigningPolicy
 ): Partial<ClientRegistrationResponse> {
   const response: Partial<ClientRegistrationResponse> = {
-    client_id: client.client_id as string,
+    client_id: client.client_id,
     // registration_client_uri is dynamically generated
     registration_client_uri: `${issuerUrl}/clients/${client.client_id}`,
   };
 
   // Add optional fields if present
-  if (client.client_name) response.client_name = client.client_name as string;
-  if (client.redirect_uris) response.redirect_uris = client.redirect_uris as string[];
-  if (client.grant_types) response.grant_types = client.grant_types as string[];
-  if (client.response_types) response.response_types = client.response_types as string[];
+  if (client.client_name) response.client_name = client.client_name;
+  if (client.redirect_uris) response.redirect_uris = client.redirect_uris;
+  if (client.grant_types) response.grant_types = client.grant_types;
+  if (client.response_types) response.response_types = client.response_types;
   if (client.token_endpoint_auth_method)
-    response.token_endpoint_auth_method = client.token_endpoint_auth_method as string;
+    response.token_endpoint_auth_method = client.token_endpoint_auth_method;
   if (client.token_endpoint_auth_signing_alg)
     response.token_endpoint_auth_signing_alg = client.token_endpoint_auth_signing_alg;
-  if (client.scope) response.scope = client.scope as string;
-  if (client.contacts) response.contacts = client.contacts as string[];
-  if (client.logo_uri) response.logo_uri = client.logo_uri as string;
-  if (client.client_uri) response.client_uri = client.client_uri as string;
-  if (client.policy_uri) response.policy_uri = client.policy_uri as string;
-  if (client.tos_uri) response.tos_uri = client.tos_uri as string;
-  if (client.jwks_uri) response.jwks_uri = client.jwks_uri as string;
-  if (client.jwks) response.jwks = client.jwks as JWKS;
-  if (client.subject_type) response.subject_type = client.subject_type as 'public' | 'pairwise';
-  if (client.sector_identifier_uri)
-    response.sector_identifier_uri = client.sector_identifier_uri as string;
+  if (client.scope) response.scope = client.scope;
+  if (client.contacts) response.contacts = client.contacts;
+  if (client.logo_uri) response.logo_uri = client.logo_uri;
+  if (client.client_uri) response.client_uri = client.client_uri;
+  if (client.policy_uri) response.policy_uri = client.policy_uri;
+  if (client.tos_uri) response.tos_uri = client.tos_uri;
+  if (client.jwks_uri) response.jwks_uri = client.jwks_uri;
+  if (client.jwks) response.jwks = client.jwks;
+  if (client.subject_type) response.subject_type = client.subject_type;
+  if (client.sector_identifier_uri) response.sector_identifier_uri = client.sector_identifier_uri;
   if (client.userinfo_signed_response_alg)
-    response.userinfo_signed_response_alg = client.userinfo_signed_response_alg as string;
+    response.userinfo_signed_response_alg = client.userinfo_signed_response_alg;
   // The algorithm the app's ID tokens are actually signed with: its own, or the tenant's (named
   // when it is not RS256, which an omitted value means).
-  let idTokenAlgorithm: string | undefined = client.id_token_signed_response_alg as
-    | string
-    | undefined;
+  let idTokenAlgorithm: string | undefined = client.id_token_signed_response_alg;
   try {
     idTokenAlgorithm = resolveIDTokenSigningAlgorithm(client, idTokenSigning);
   } catch {
@@ -534,7 +531,7 @@ function buildClientResponse(
   if (idTokenAlgorithm && (client.id_token_signed_response_alg || idTokenAlgorithm !== 'RS256'))
     response.id_token_signed_response_alg = idTokenAlgorithm;
   if (client.request_object_signing_alg)
-    response.request_object_signing_alg = client.request_object_signing_alg as string;
+    response.request_object_signing_alg = client.request_object_signing_alg;
   if (client.authorization_signed_response_alg)
     response.authorization_signed_response_alg = client.authorization_signed_response_alg;
   if (client.authorization_encrypted_response_alg)
@@ -542,27 +539,25 @@ function buildClientResponse(
   if (client.authorization_encrypted_response_enc)
     response.authorization_encrypted_response_enc = client.authorization_encrypted_response_enc;
   if (client.post_logout_redirect_uris)
-    response.post_logout_redirect_uris = client.post_logout_redirect_uris as string[];
+    response.post_logout_redirect_uris = client.post_logout_redirect_uris;
   if (client.backchannel_logout_uri)
-    response.backchannel_logout_uri = client.backchannel_logout_uri as string;
+    response.backchannel_logout_uri = client.backchannel_logout_uri;
   if (client.backchannel_logout_session_required !== undefined)
-    response.backchannel_logout_session_required =
-      client.backchannel_logout_session_required as boolean;
+    response.backchannel_logout_session_required = client.backchannel_logout_session_required;
   if (client.frontchannel_logout_uri)
-    response.frontchannel_logout_uri = client.frontchannel_logout_uri as string;
+    response.frontchannel_logout_uri = client.frontchannel_logout_uri;
   if (client.frontchannel_logout_session_required !== undefined)
-    response.frontchannel_logout_session_required =
-      client.frontchannel_logout_session_required as boolean;
+    response.frontchannel_logout_session_required = client.frontchannel_logout_session_required;
   // OIDC 3rd Party Initiated Login
-  if (client.initiate_login_uri) response.initiate_login_uri = client.initiate_login_uri as string;
+  if (client.initiate_login_uri) response.initiate_login_uri = client.initiate_login_uri;
 
   // Timestamps
   if (client.created_at) {
     // Convert to Unix timestamp if stored in milliseconds
     const createdAt =
       typeof client.created_at === 'number' && client.created_at > 1e12
-        ? Math.floor((client.created_at as number) / 1000)
-        : (client.created_at as number);
+        ? Math.floor(client.created_at / 1000)
+        : client.created_at;
     response.client_id_issued_at = createdAt;
   }
 
@@ -763,7 +758,7 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
       let refusedRedirectUri: string | null;
       try {
         refusedRedirectUri = await redirectUriRefusedByPolicy(c.env, tenantId, {
-          redirectUris: body.redirect_uris as string[],
+          redirectUris: body.redirect_uris,
           applicationType: existingClient.application_type ?? 'web',
           clientId,
         });
@@ -933,10 +928,7 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
             body.initiate_login_uri,
             existingClient.initiate_login_uri as string | null | undefined
           ),
-          coalesceNullable(
-            body.login_ui_url,
-            existingClient.login_ui_url as string | null | undefined
-          ),
+          coalesceNullable(body.login_ui_url, existingClient.login_ui_url),
           // Timestamp
           now,
           // WHERE clause

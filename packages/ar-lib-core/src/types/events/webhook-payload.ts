@@ -265,7 +265,7 @@ export function toWebhookPayload<T extends Record<string, unknown>>(
     context,
     actor: webhookActor,
     target,
-    data: event.data as Record<string, unknown>,
+    data: event.data,
   };
 }
 

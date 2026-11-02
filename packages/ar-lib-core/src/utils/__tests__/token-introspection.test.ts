@@ -59,12 +59,7 @@ describe('Token Introspection Utility', () => {
         client_id: 'test-client',
       };
 
-      const tokenResult = await createAccessToken(
-        claims,
-        privateKey as unknown as Parameters<typeof createAccessToken>[1],
-        mockEnv.KEY_ID!,
-        3600
-      );
+      const tokenResult = await createAccessToken(claims, privateKey, mockEnv.KEY_ID!, 3600);
 
       const headers = new Headers();
       headers.set('Authorization', `Bearer ${tokenResult.token}`);
@@ -94,7 +89,7 @@ describe('Token Introspection Utility', () => {
           scope: 'fapi',
           client_id: 'test-client',
         },
-        privateKey as unknown as Parameters<typeof createAccessToken>[1],
+        privateKey,
         mockEnv.KEY_ID!,
         3600
       );
@@ -136,7 +131,7 @@ describe('Token Introspection Utility', () => {
           client_id: 'test-client',
           cnf: { 'x5t#S256': thumbprint },
         },
-        privateKey as unknown as Parameters<typeof createAccessToken>[1],
+        privateKey,
         mockEnv.KEY_ID!,
         3600
       );
@@ -259,12 +254,7 @@ describe('Token Introspection Utility', () => {
         client_id: 'test-client',
       };
 
-      const tokenResult = await createAccessToken(
-        claims,
-        privateKey as unknown as Parameters<typeof createAccessToken>[1],
-        mockEnv.KEY_ID!,
-        3600
-      );
+      const tokenResult = await createAccessToken(claims, privateKey, mockEnv.KEY_ID!, 3600);
 
       const headers = new Headers();
       headers.set('Authorization', `DPoP ${tokenResult.token}`);
@@ -375,7 +365,7 @@ describe('Token Introspection Utility', () => {
         method: 'GET',
         url: 'https://test.example.com/userinfo',
         headers,
-        env: invalidEnv as Env,
+        env: invalidEnv,
         tenantId: TEST_TENANT_ID,
       });
 
@@ -551,7 +541,7 @@ describe('Token Introspection Utility', () => {
             client_id: 'test-client',
             authrim_subject_ref: 'sr1.iv.ciphertext',
           } as Parameters<typeof createAccessToken>[0],
-          privateKey as unknown as Parameters<typeof createAccessToken>[1],
+          privateKey,
           mockEnv.KEY_ID!,
           3600
         );

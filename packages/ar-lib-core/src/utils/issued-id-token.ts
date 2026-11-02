@@ -24,7 +24,7 @@ export const ISSUED_ID_TOKEN_ALGORITHMS: readonly OIDCSigningAlgorithm[] = OIDC_
 export async function getIssuedIDTokenKeys(env: Env, tenantId: string): Promise<JWK[]> {
   if (env.KEY_MANAGER) {
     const keyManager = env.KEY_MANAGER.get(env.KEY_MANAGER.idFromName(`${tenantId}-v3`));
-    return (await keyManager.getAllOIDCPublicKeysRpc()) as JWK[];
+    return await keyManager.getAllOIDCPublicKeysRpc();
   }
   if (env.KEY_MANAGER_PUBLIC) {
     return env.KEY_MANAGER_PUBLIC.getAllPublicKeys(tenantId);

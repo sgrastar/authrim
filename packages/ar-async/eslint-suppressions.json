@@ -4,7 +4,20 @@
       "count": 1
     }
   },
+  "src/__tests__/authenticated-session-account-routing.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 2
+    }
+  },
+  "src/__tests__/authenticated-session-security.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 7
+    }
+  },
   "src/__tests__/ciba-approve-security-branches.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
+    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
     },
@@ -18,6 +31,11 @@
     },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 2
+    }
+  },
+  "src/__tests__/ciba-decision-store-errors.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
     }
   },
   "src/__tests__/ciba-flow-integration.test.ts": {
@@ -81,7 +99,7 @@
   },
   "src/__tests__/ciba-session-authorization.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
+      "count": 2
     }
   },
   "src/__tests__/ciba-settings.test.ts": {
@@ -103,6 +121,11 @@
       "count": 3
     }
   },
+  "src/__tests__/cors.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
+    }
+  },
   "src/__tests__/device-authorization-client-auth.test.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
@@ -116,7 +139,7 @@
       "count": 4
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
+      "count": 2
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
@@ -258,7 +281,7 @@
   },
   "src/__tests__/device-verify-ui.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 2
+      "count": 3
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 4
@@ -267,6 +290,11 @@
   "src/__tests__/real-rate-limiter.ts": {
     "@typescript-eslint/no-base-to-string": {
       "count": 1
+    }
+  },
+  "src/__tests__/saml-dr-entrypoint.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 2
     }
   },
   "src/ciba-approve.ts": {

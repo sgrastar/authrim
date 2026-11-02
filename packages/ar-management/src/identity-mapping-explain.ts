@@ -380,11 +380,7 @@ export async function adminIdentityMappingExplainHandler(c: ExplainContext) {
     // The test user's attributes are named as the field catalog names them; the standard claims
     // are built from them as the endpoints build them from an account's.
     const userData = {
-      ...buildStandardUserClaims(
-        withStandardUserAttributeNames(testUser.attributes) as Parameters<
-          typeof buildStandardUserClaims
-        >[0]
-      ),
+      ...buildStandardUserClaims(withStandardUserAttributeNames(testUser.attributes)),
       sub,
     };
     const evaluated = evaluateClaimsForTarget({

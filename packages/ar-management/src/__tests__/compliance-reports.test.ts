@@ -191,7 +191,7 @@ describe('compliance reports', () => {
       downloadable: true,
     });
     expect(Date.parse(report.expires_at) - Date.parse(report.created_at)).toBe(30 * 86400000);
-    const [adapter, , options] = mocks.materialize.mock.calls[0]!;
+    const [adapter, , options] = mocks.materialize.mock.calls[0];
     // Catalogued in the admin database, where the artifact cleanup deletes from.
     expect(adapter).toBe(mocks.admin);
     expect(options).toMatchObject({
@@ -290,7 +290,7 @@ describe('compliance reports', () => {
     mocks.status.mockResolvedValue({ overall_status: 'warning', checks: [] });
     const response = await createComplianceReport(context({ body: { type: 'compliance_status' } }));
     expect(response.status).toBe(201);
-    const [, , options] = mocks.materialize.mock.calls[0]!;
+    const [, , options] = mocks.materialize.mock.calls[0];
     expect(options).toMatchObject({
       representation: 'canonical_json',
       contentType: 'application/json',
@@ -335,13 +335,13 @@ describe('compliance reports', () => {
       })
     );
     expect(response.status).toBe(201);
-    const lines = (mocks.materialize.mock.calls[0]![2].content as string).split('\n');
+    const lines = (mocks.materialize.mock.calls[0][2].content as string).split('\n');
     expect(lines[0]).toBe(
       'id,occurred_at,action,event_category,result,severity,actor,subject_user,client_id,error_code'
     );
     expect(lines.slice(1).map((line) => line.split(',')[0])).toEqual(['e-1', 'e-2']);
     // The event's user is not reported as who acted.
-    expect(lines[1]!.split(',').slice(6, 8)).toEqual(['', 'anon-1']);
+    expect(lines[1].split(',').slice(6, 8)).toEqual(['', 'anon-1']);
     const report: unknown = await response.json();
     expect(report).toMatchObject({
       parameters: {
@@ -461,7 +461,7 @@ describe('compliance reports', () => {
     mocks.admin = admin as never;
     const response = await createComplianceReport(context({ body: { type: 'mfa_coverage' } }));
     expect(response.status).toBe(201);
-    expect((mocks.materialize.mock.calls[0]![2].content as string).split('\n')).toEqual([
+    expect((mocks.materialize.mock.calls[0][2].content as string).split('\n')).toEqual([
       'kind,id,registration_state,passkey,totp',
       'admin,admin-1,,yes,',
       'user,u-1,registered,yes,no',
@@ -549,8 +549,8 @@ describe('compliance reports', () => {
       .prepare('SELECT * FROM compliance_reports WHERE object_key_base IS NOT NULL')
       .all() as Array<{ status: string; expires_at: string }>;
     expect(left).toHaveLength(1);
-    expect(left[0]!.status).toBe('failed');
-    expect(Date.parse(left[0]!.expires_at)).toBeLessThanOrEqual(Date.now());
+    expect(left[0].status).toBe('failed');
+    expect(Date.parse(left[0].expires_at)).toBeLessThanOrEqual(Date.now());
   });
 
   it('fails a report whose completion cannot be recorded, removing its file', async () => {

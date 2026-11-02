@@ -463,7 +463,7 @@ describe('idempotency middleware', () => {
         error: 'idempotency_in_progress',
         reservation_id: expect.any(String),
       });
-      const [releaseSql, releaseParams] = mockAdapter.execute.mock.calls[1]!;
+      const [releaseSql, releaseParams] = mockAdapter.execute.mock.calls[1];
       expect(String(releaseSql)).toMatch(
         /WHERE id = \? AND body_hash = \? AND response_status = 425 AND response_body = \?/
       );
@@ -485,10 +485,10 @@ describe('idempotency middleware', () => {
 
       expect(res.status).toBe(200);
       expect(calls.handler).toBe(1);
-      const [takeoverSql, takeoverParams] = mockAdapter.execute.mock.calls[0]!;
+      const [takeoverSql, takeoverParams] = mockAdapter.execute.mock.calls[0];
       expect(String(takeoverSql)).toMatch(/AND response_status = 0/);
       expect(takeoverParams?.[0]).toBe(425);
-      const [storeSql, storeParams] = mockAdapter.execute.mock.calls[1]!;
+      const [storeSql, storeParams] = mockAdapter.execute.mock.calls[1];
       expect(String(storeSql)).toContain('response_status = 425 AND response_body = ?');
       expect(storeParams?.[0]).toBe(200);
       // Finalizing requires the reservation body this request wrote when it re-reserved.
@@ -533,7 +533,7 @@ describe('idempotency middleware', () => {
       expect(sqlCalls('INSERT INTO idempotency_keys')).toHaveLength(2);
       // The conflicting row is not live: only an expired outcome for this key is swept, never an
       // expired reservation whose handler may still be running.
-      const [sweepSql, sweepParams] = sqlCalls('DELETE FROM idempotency_keys')[0]!;
+      const [sweepSql, sweepParams] = sqlCalls('DELETE FROM idempotency_keys')[0];
       expect(String(sweepSql)).toContain('expires_at <= ?');
       expect(String(sweepSql)).toContain('response_status <> 425');
       expect(sweepParams?.[0]).toBe(keyId);
@@ -599,7 +599,7 @@ describe('idempotency middleware', () => {
 
     await expect(cleanupExpiredIdempotencyKeys(mockAdapter as DatabaseAdapter)).resolves.toBe(2);
 
-    const [sql, params] = mockAdapter.execute.mock.calls[0]!;
+    const [sql, params] = mockAdapter.execute.mock.calls[0];
     expect(String(sql)).toBe(
       'DELETE FROM idempotency_keys WHERE expires_at < ? AND (response_status <> 425 OR expires_at < ?)'
     );

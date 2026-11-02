@@ -18,7 +18,6 @@ import {
   adminWebAuthnOriginMatchesRpId,
   getAdminWebAuthnRpIdForOrigin,
   resolveAdminWebAuthnBrowserOrigin,
-  type ApprovalDecisionStatus,
   type ApprovalTransportMethod,
   type ApprovalApproverSubjectType,
   type StepUpInputState,
@@ -362,7 +361,7 @@ approvalArtifactsRouter.post('/:artifactId/passkey/options', async (c) => {
     const body = ApprovalArtifactPasskeyOptionsSchema.parse(await c.req.json().catch(() => ({})));
     const state = await loadPendingApprovalArtifactState(
       c.env,
-      c.req.param('artifactId')!,
+      c.req.param('artifactId'),
       getTenantIdFromContext(c)
     );
     if (!state) {
@@ -475,7 +474,7 @@ approvalArtifactsRouter.post('/:artifactId/passkey/verify', async (c) => {
     const body = ApprovalArtifactPasskeyVerifySchema.parse(await c.req.json());
     const state = await loadPendingApprovalArtifactState(
       c.env,
-      c.req.param('artifactId')!,
+      c.req.param('artifactId'),
       getTenantIdFromContext(c)
     );
     if (!state) {
@@ -637,7 +636,7 @@ approvalArtifactsRouter.post('/:artifactId/otp/verify', async (c) => {
     const body = ApprovalArtifactOtpVerifySchema.parse(await c.req.json());
     const state = await loadPendingApprovalArtifactState(
       c.env,
-      c.req.param('artifactId')!,
+      c.req.param('artifactId'),
       getTenantIdFromContext(c)
     );
     stepUpState = state;
@@ -722,7 +721,7 @@ approvalArtifactsRouter.post('/:artifactId/ciba/start', async (c) => {
   try {
     const state = await loadPendingApprovalArtifactState(
       c.env,
-      c.req.param('artifactId')!,
+      c.req.param('artifactId'),
       getTenantIdFromContext(c)
     );
     if (!state) {
@@ -801,7 +800,7 @@ approvalArtifactsRouter.get('/:artifactId/ciba/status', async (c) => {
   try {
     const state = await loadPendingApprovalArtifactState(
       c.env,
-      c.req.param('artifactId')!,
+      c.req.param('artifactId'),
       getTenantIdFromContext(c)
     );
     if (!state) {
@@ -855,7 +854,7 @@ approvalArtifactsRouter.get('/:artifactId/ciba/device', async (c) => {
   try {
     const state = await loadPendingApprovalArtifactState(
       c.env,
-      c.req.param('artifactId')!,
+      c.req.param('artifactId'),
       getTenantIdFromContext(c)
     );
     if (!state) {
@@ -892,7 +891,7 @@ approvalArtifactsRouter.post('/:artifactId/ciba/respond', async (c) => {
     const body = ApprovalArtifactCibaRespondSchema.parse(await c.req.json());
     const state = await loadPendingApprovalArtifactState(
       c.env,
-      c.req.param('artifactId')!,
+      c.req.param('artifactId'),
       getTenantIdFromContext(c)
     );
     if (!state) {
@@ -956,7 +955,7 @@ approvalArtifactsRouter.get('/:artifactId', async (c) => {
   try {
     const state = await loadPendingApprovalArtifactState(
       c.env,
-      c.req.param('artifactId')!,
+      c.req.param('artifactId'),
       getTenantIdFromContext(c)
     );
     if (!state) {
@@ -1002,7 +1001,7 @@ approvalArtifactsRouter.post('/:artifactId/switch-method', async (c) => {
     const body = ApprovalArtifactSwitchMethodSchema.parse(await c.req.json());
     const state = await loadPendingApprovalArtifactState(
       c.env,
-      c.req.param('artifactId')!,
+      c.req.param('artifactId'),
       getTenantIdFromContext(c)
     );
     if (!state) {
@@ -1092,7 +1091,7 @@ approvalArtifactsRouter.get('/:artifactId/portal', async (c) => {
   try {
     const state = await loadPendingApprovalArtifactState(
       c.env,
-      c.req.param('artifactId')!,
+      c.req.param('artifactId'),
       getTenantIdFromContext(c)
     );
     if (!state) {
@@ -1127,7 +1126,7 @@ approvalArtifactsRouter.post('/:artifactId/complete', async (c) => {
     const body = ApprovalArtifactDecisionSchema.parse(await c.req.json());
     const state = await loadPendingApprovalArtifactState(
       c.env,
-      c.req.param('artifactId')!,
+      c.req.param('artifactId'),
       getTenantIdFromContext(c)
     );
     if (!state) {
@@ -1211,7 +1210,7 @@ approvalArtifactsRouter.post('/:artifactId/complete', async (c) => {
     const occurredAt = Date.now();
     const artifact = await consumeApprovalCompletionArtifact(
       c.env,
-      c.req.param('artifactId')!,
+      c.req.param('artifactId'),
       getTenantIdFromContext(c)
     );
 
@@ -1226,13 +1225,10 @@ approvalArtifactsRouter.post('/:artifactId/complete', async (c) => {
       {
         request: state.request,
         approval: state.approval,
-        nextStatus: body.decision as ApprovalDecisionStatus,
+        nextStatus: body.decision,
         actorSubjectType: artifact.approver_subject_type,
         actorSubjectId: artifact.approver_subject_id,
-        method: (body.method ??
-          artifact.method ??
-          state.approval.method ??
-          null) as ApprovalTransportMethod | null,
+        method: body.method ?? artifact.method ?? state.approval.method ?? null,
         transportChannel:
           body.transport_channel ?? artifact.transport_channel ?? state.approval.transport_channel,
         reasonCode: body.reason_code ?? state.request.reason_code,
@@ -1269,7 +1265,7 @@ approvalArtifactsRouter.post('/:artifactId/complete', async (c) => {
         artifact,
         request: result.request,
         approval: updatedApproval,
-        decision: body.decision as ApprovalDecisionStatus,
+        decision: body.decision,
         requestStatus: result.request.status,
         grants: result.grants,
         completedAt: occurredAt,
@@ -1281,10 +1277,7 @@ approvalArtifactsRouter.post('/:artifactId/complete', async (c) => {
         actorSubjectId: artifact.approver_subject_id,
         requestStatus: result.request.status,
         approval: updatedApproval,
-        method: (body.method ??
-          artifact.method ??
-          state.approval.method ??
-          null) as ApprovalTransportMethod | null,
+        method: body.method ?? artifact.method ?? state.approval.method ?? null,
         transportChannel:
           body.transport_channel ?? artifact.transport_channel ?? state.approval.transport_channel,
         reasonCode: body.reason_code ?? state.request.reason_code,

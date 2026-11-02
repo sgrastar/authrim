@@ -79,7 +79,7 @@ describe('Phase 8 SQL restore target placement', () => {
         manifest: input,
         policy: {
           dataset,
-          schema: { table: dataset.id.split('.')[1]!, columns: [], primaryKey: ['id'] },
+          schema: { table: dataset.id.split('.')[1], columns: [], primaryKey: ['id'] },
         },
       }))
     );

@@ -30,7 +30,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     // As the resolver does: the tenant's Core database for a tenant, DB_ADMIN without one.
     resolveAuthCorePersistenceAdapterFromEnv: vi.fn(
       async (env: Env, partition: string, options?: { tenantId?: string }) =>
-        options?.tenantId ? mocks.core : actual.ensureDatabaseAdapter(env.DB_ADMIN!, partition)
+        options?.tenantId ? mocks.core : actual.ensureDatabaseAdapter(env.DB_ADMIN, partition)
     ),
     // The tenant's metadata (accounts not routed: memberships are kept in the same database).
     resolveTenantMetadataContext: vi.fn(async (_env: Env, tenantId: string) => ({

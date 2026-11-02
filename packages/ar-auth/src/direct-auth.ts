@@ -62,28 +62,20 @@ import {
   createPIIContextFromHono,
   createErrorResponse,
   createTenantPlacementWriteFenceResponse,
-  AR_ERROR_CODES,
-  // Event System
+  AR_ERROR_CODES, // Event System
   publishEvent,
   AUTH_EVENTS,
   SESSION_EVENTS,
   type AuthEventData,
-  type SessionEventData,
-  // Logging
-  getLogger,
-  // Audit Log
-  createAuditLog,
-  // Timing-safe comparison
-  timingSafeEqual,
-  // Cookie Configuration
-  getSessionCookieSameSite,
-  // KV Client Cache
+  type SessionEventData, // Logging
+  getLogger, // Audit Log
+  createAuditLog, // Timing-safe comparison
+  timingSafeEqual, // Cookie Configuration
+  getSessionCookieSameSite, // KV Client Cache
   getClient,
-  getWebOriginRegistry,
-  // Native SSO logout propagation
+  getWebOriginRegistry, // Native SSO logout propagation
   isNativeSSOEnabled,
-  normalizeDeviceSecretLogoutScope,
-  // Refresh Token
+  normalizeDeviceSecretLogoutScope, // Refresh Token
   listRefreshTokenFamiliesByUser,
   expireRefreshTokenFamiliesByUser,
   createCompatibilityErrorResponse,
@@ -483,7 +475,7 @@ function toBase64URLString(input: CredentialIDLike): string {
     return isoBase64URL.fromBuffer(new Uint8Array(input));
   }
 
-  const view = input as ArrayBufferView;
+  const view = input;
   const typedArray = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
   // @ts-ignore - TypeScript strict buffer type mismatch
   return isoBase64URL.fromBuffer(typedArray);
@@ -1853,12 +1845,12 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
     }
 
     // Verify authentication response
-    const normalizedCredentialId = normalizeStoredCredentialId(passkey.credential_id as string);
+    const normalizedCredentialId = normalizeStoredCredentialId(passkey.credential_id);
     if (!normalizedCredentialId) {
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
 
-    const publicKey = Uint8Array.from(Buffer.from(passkey.public_key as string, 'base64'));
+    const publicKey = Uint8Array.from(Buffer.from(passkey.public_key, 'base64'));
 
     let verification: VerifiedAuthenticationResponse;
     try {
@@ -1870,7 +1862,7 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
         credential: {
           id: normalizedCredentialId,
           publicKey: publicKey,
-          counter: passkey.counter as number,
+          counter: passkey.counter,
         },
         // Explicit (the library default): a sign-in without the user-verified flag is refused.
         requireUserVerification: true,
@@ -2606,7 +2598,7 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
       ? createAccountAuthContextFromHono(c, tenantId)
       : createAuthContextFromHono(c, tenantId);
     const publicKeyBase64 = Buffer.from(credentialPublicKey).toString('base64');
-    const credentialIDBase64URL = toBase64URLString(credentialID as CredentialIDLike);
+    const credentialIDBase64URL = toBase64URLString(credentialID);
     const passkeyId = crypto.randomUUID();
 
     failureStage = 'passkey_create';
@@ -4550,7 +4542,7 @@ export async function directPasskeyRegisterFinishHandler(c: Context<{ Bindings: 
       ? createAccountAuthContextFromHono(c, tenantId)
       : createAuthContextFromHono(c, tenantId);
     const publicKeyBase64 = Buffer.from(credentialPublicKey).toString('base64');
-    const credentialIDBase64URL = toBase64URLString(credentialID as CredentialIDLike);
+    const credentialIDBase64URL = toBase64URLString(credentialID);
     const passkeyId = crypto.randomUUID();
     const transports = (credential.response.transports || []) as AuthenticatorTransport[];
 
@@ -4648,7 +4640,7 @@ function publicSessionData(data: Session['data']): Session['data'] {
   if (!data) return data;
   return Object.fromEntries(
     Object.entries(data).filter(([key]) => !INTERNAL_SESSION_DATA_KEYS.includes(key))
-  ) as Session['data'];
+  );
 }
 
 export async function directSessionHandler(c: Context<{ Bindings: Env }>) {

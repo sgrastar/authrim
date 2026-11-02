@@ -31,9 +31,7 @@ export function getFapi2ProviderQuirks(
   provider: UpstreamProvider
 ): Fapi2ProviderQuirks | undefined {
   const value = provider.providerQuirks?.fapi2;
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Fapi2ProviderQuirks)
-    : undefined;
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : undefined;
 }
 
 export function isFapi2Provider(provider: UpstreamProvider): boolean {

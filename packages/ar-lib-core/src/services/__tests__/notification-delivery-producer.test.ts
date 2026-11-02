@@ -174,10 +174,7 @@ describe('notification delivery producer', () => {
   });
 
   it('stores an encrypted recipient, masked fallback, and account correlation without the body', async () => {
-    const env = environment() as ReturnType<typeof environment> & {
-      PII_ENCRYPTION_KEY: string;
-      PII_ENCRYPTION_KEY_VERSION: string;
-    };
+    const env = environment();
     env.PII_ENCRYPTION_KEY = '12'.repeat(32);
     env.PII_ENCRYPTION_KEY_VERSION = '4';
     await produceNotificationDelivery(env, { ...input, accountId: '_account-a' });

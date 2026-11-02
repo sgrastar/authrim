@@ -115,7 +115,7 @@ it('checks logical references before persisting activation intent', async () => 
   expect(logicalReferenceDatabase.query).toHaveBeenCalledTimes(2);
   expect(prepareActivation).toHaveBeenCalledWith(context, 'ab'.repeat(32));
   expect(logicalReferenceDatabase.query.mock.invocationCallOrder[0]).toBeLessThan(
-    prepareActivation.mock.invocationCallOrder[0]!
+    prepareActivation.mock.invocationCallOrder[0]
   );
 });
 

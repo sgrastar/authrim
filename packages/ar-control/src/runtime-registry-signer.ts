@@ -23,7 +23,7 @@ function privateKey(env: ControlEnv): { keyId: string; jwk: RuntimeRegistryPriva
   ) {
     throw new Error('runtime_registry_signing_key_invalid');
   }
-  return { keyId, jwk: jwk as RuntimeRegistryPrivateJwk };
+  return { keyId, jwk: jwk };
 }
 
 export function runtimeRegistrySignerMetadata(

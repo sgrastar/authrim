@@ -479,9 +479,7 @@ describe('source writer inventory API reads', () => {
     const client = new CloudflareControlApiClient({
       accountId,
       tokens,
-      fetcher: vi
-        .fn()
-        .mockResolvedValue(success(scripts, info as Record<string, unknown> | undefined)),
+      fetcher: vi.fn().mockResolvedValue(success(scripts, info)),
     });
     await expect(client.listWorkerScriptsForInventory(1)).rejects.toThrow(
       'cloudflare_workers_inventory_incomplete'

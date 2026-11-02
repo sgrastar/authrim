@@ -77,7 +77,7 @@ export const localeRoutingFlow: GraphDefinition = {
             },
           ],
           defaultCase: 'case_default',
-        } as any,
+        },
       },
     },
     // Case 1: Japanese → Additional Fields (e.g., Furigana)

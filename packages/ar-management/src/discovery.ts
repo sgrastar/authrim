@@ -356,7 +356,7 @@ async function mapDiscoveryTenantsBounded<T, R>(
     Array.from({ length: Math.min(DISCOVERY_TENANT_READ_CONCURRENCY, values.length) }, async () => {
       while (cursor < values.length) {
         const index = cursor++;
-        results[index] = await operation(values[index]!);
+        results[index] = await operation(values[index]);
       }
     })
   );
@@ -940,7 +940,7 @@ function cacheTenantCandidatePresentation(
     if (entry.expiresAt <= now) tenantCandidatePresentationCache.delete(key);
   }
   while (tenantCandidatePresentationCache.size >= MAX_TENANT_CANDIDATE_PRESENTATION_CACHE_ENTRIES) {
-    const oldest = tenantCandidatePresentationCache.keys().next().value as string | undefined;
+    const oldest = tenantCandidatePresentationCache.keys().next().value;
     if (oldest === undefined) break;
     tenantCandidatePresentationCache.delete(oldest);
   }
@@ -953,7 +953,7 @@ function cacheTenantCandidatePresentation(
 function tenantCandidatePresentationCacheKey(env: Env, tenantId: string): string {
   const scopeId = (value: unknown): string => {
     if (!value || (typeof value !== 'object' && typeof value !== 'function')) return '';
-    const scope = value as object;
+    const scope = value;
     let id = tenantCandidatePresentationScopeIds.get(scope);
     if (!id) {
       id = nextTenantCandidatePresentationScopeId;

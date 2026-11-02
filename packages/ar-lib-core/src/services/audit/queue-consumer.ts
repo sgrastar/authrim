@@ -1063,9 +1063,6 @@ async function writeArchiveTarget(
               actorType: (entry as PIILogEntry).actorType,
             },
     })),
-  } as Parameters<typeof writeLogChunkToR2>[0] & {
-    chunkId?: string;
-    objectCatalogId?: string;
   });
 }
 
@@ -2840,9 +2837,6 @@ async function processChunkWritePayload(input: {
         logType: payload.log_type,
         plane: payload.plane,
       }),
-    } as Parameters<typeof writeLogChunkToR2>[0] & {
-      chunkId: string;
-      objectCatalogId: string;
     });
     await recordDeliveryEvent(deliveryEventStore, logger, {
       id: await createQueueStableLoggingId('lde', message, stablePurpose),

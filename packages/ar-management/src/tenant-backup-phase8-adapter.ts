@@ -163,9 +163,9 @@ export function createPhase8TenantBackupInstalledAdapter(
       }
     | {
         planned?: never;
-        loadPlanned(
+        loadPlanned: (
           context: TenantBackupStepContext
-        ): Promise<readonly PlannedInstalledSqliteDataset[]>;
+        ) => Promise<readonly PlannedInstalledSqliteDataset[]>;
       }
   )
 ) {
@@ -610,7 +610,7 @@ export function createPhase8TenantBackupInstalledAdapter(
           const rule = tenantDatasetSelectionRule(dataset.kind, context.selection);
           if (rule.action !== 'selected' && rule.action !== 'resolve_references') continue;
           targets.push({
-            datasetId: dataset.id as TenantBackupR2PlanTarget['datasetId'],
+            datasetId: dataset.id,
             port,
             snapshotId: await tenantBackupRecordSnapshotId(context, port.resourceId),
           });

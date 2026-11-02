@@ -498,10 +498,10 @@ function validateAIAgentAction(
     };
 
     if (obj.session_context) {
-      sanitized.session_context = obj.session_context as AIAgentActionDetail['session_context'];
+      sanitized.session_context = obj.session_context;
     }
     if (obj.tools) {
-      sanitized.tools = obj.tools as AIAgentActionDetail['tools'];
+      sanitized.tools = obj.tools;
     }
     if (obj.expires_at) {
       sanitized.expires_at = obj.expires_at as string;

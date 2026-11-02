@@ -114,7 +114,7 @@ export const FACEBOOK_DEFAULT_CONFIG: Partial<UpstreamProvider> = {
     apiVersion: 'v20.0',
     useAppSecretProof: true,
     fields: ['id', 'name', 'email', 'first_name', 'last_name', 'picture.type(large)'],
-  } as Record<string, unknown>,
+  },
 };
 
 // =============================================================================

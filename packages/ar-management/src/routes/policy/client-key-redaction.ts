@@ -49,7 +49,7 @@ export function redactClientContract<T>(contract: T): T {
   if (!isRecord(contract) || !isRecord(contract.encryption) || !('jwks' in contract.encryption)) {
     return contract;
   }
-  return { ...contract, encryption: withPublicJwks(contract.encryption) } as T;
+  return { ...contract, encryption: withPublicJwks(contract.encryption) };
 }
 
 /**
@@ -67,5 +67,5 @@ export function redactResolutionDebug<T>(debug: T): T {
         : withPublicJwks(client);
     return { ...step, input: { ...step.input, client: redacted } };
   });
-  return { ...debug, steps } as T;
+  return { ...debug, steps };
 }

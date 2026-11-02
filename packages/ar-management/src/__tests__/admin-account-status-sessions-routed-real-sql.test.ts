@@ -345,7 +345,7 @@ for (const topology of ['shared_pool', 'tenant_exclusive', 'single'] as const) {
         await seed(metadata, defaultPii, USER, TENANT, 'metadata-decoy@example.test');
       app = new Hono<{ Bindings: Env }>();
       app.use('*', async (c, next) => {
-        c.set('tenantId' as never, TENANT as never);
+        c.set('tenantId' as never, TENANT);
         c.set(
           'tenantMetadataContext' as never,
           {

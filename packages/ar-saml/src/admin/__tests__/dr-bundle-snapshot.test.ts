@@ -86,7 +86,7 @@ describe('SAML DR bundle snapshots', () => {
       'custom/exports/library-a/dr-bundles/drb_library_a_001/checksums.json',
     ]);
     expect(
-      bucket.objects.get(artifacts.webhookEvent.storage.objects[0]!.key)?.options
+      bucket.objects.get(artifacts.webhookEvent.storage.objects[0].key)?.options
     ).toMatchObject({
       httpMetadata: {
         contentType: 'application/vnd.authrim.dr-bundle+json;version=1',

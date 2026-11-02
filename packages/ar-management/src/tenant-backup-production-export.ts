@@ -435,7 +435,7 @@ export async function createProductionTenantBackupExportAdapter(
         },
         assertUnpublishedTarget: async (restoreContext) =>
           restore ? restore.assertUnpublished(restoreContext) : unavailable(),
-      } as Phase8InstalledAdapterPorts['import'],
+      },
       otherStores: (importing
         ? {
             phase4: {

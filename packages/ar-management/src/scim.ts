@@ -1069,8 +1069,7 @@ import {
   type ScimBulkOperationResponse,
   type ScimBulkMethod,
   type BulkOperationConfig,
-  type ScimFilterNode,
-  // Mapper utilities
+  type ScimFilterNode, // Mapper utilities
   userToScim,
   groupToScim,
   scimToGroup,
@@ -1081,11 +1080,9 @@ import {
   validateScimGroup,
   validateScimPatchOp,
   type InternalUser,
-  type InternalGroup,
-  // Filter utilities
+  type InternalGroup, // Filter utilities
   parseScimFilter,
-  filterToSql,
-  // Auth middleware
+  filterToSql, // Auth middleware
   scimAuthMiddleware,
 } from '@authrim/ar-lib-scim';
 
@@ -1551,7 +1548,7 @@ function copyScimPath(
   let sourceCursor: unknown = source;
   let destinationCursor = destination;
   for (let index = 0; index < parts.length; index += 1) {
-    const part = parts[index]!;
+    const part = parts[index];
     if (!sourceCursor || typeof sourceCursor !== 'object' || !(part in sourceCursor)) return;
     const value = (sourceCursor as Record<string, unknown>)[part];
     if (index === parts.length - 1) {
@@ -1570,7 +1567,7 @@ function deleteScimPath(resource: Record<string, unknown>, path: string): void {
   const parts = scimPathParts(path);
   let cursor = resource;
   for (let index = 0; index < parts.length - 1; index += 1) {
-    const next = cursor[parts[index]!];
+    const next = cursor[parts[index]];
     if (!next || typeof next !== 'object' || Array.isArray(next)) return;
     cursor = next as Record<string, unknown>;
   }
@@ -1744,7 +1741,7 @@ app.get('/ResourceTypes', (c) => {
  * GET /scim/v2/ResourceTypes/:name - Single Resource Type
  */
 app.get('/ResourceTypes/:name', (c) => {
-  const name = c.req.param('name')!;
+  const name = c.req.param('name');
   const baseUrl = getBaseUrl(c);
 
   if (name === 'User') {
@@ -2067,7 +2064,7 @@ app.get('/Schemas', (c) => {
  * GET /scim/v2/Schemas/:id - Single Schema
  */
 app.get('/Schemas/:id', (c) => {
-  const schemaId = decodeURIComponent(c.req.param('id')!);
+  const schemaId = decodeURIComponent(c.req.param('id'));
   const baseUrl = getBaseUrl(c);
 
   // Return schema based on ID
@@ -2465,7 +2462,7 @@ app.get('/Users', async (c) => {
  */
 app.get('/Users/:id', async (c) => {
   try {
-    const userId = c.req.param('id')!;
+    const userId = c.req.param('id');
     const baseUrl = getBaseUrl(c);
     const params = parseQueryParams(c);
     if (invalidProjectionParameters(params)) {
@@ -2544,7 +2541,7 @@ app.get('/Operations/:id', async (c) => {
     const actorId = await scimActorId(c);
     const operation = await new AccountCreationOperationRepository(
       createAuthContextFromHono(c, tenantId).coreAdapter
-    ).findForActor({ tenantId, actorId, operationId: c.req.param('id')! });
+    ).findForActor({ tenantId, actorId, operationId: c.req.param('id') });
     if (!operation) {
       return scimError(c, 404, 'The requested resource was not found');
     }
@@ -2725,7 +2722,7 @@ app.post('/Users', async (c) => {
  */
 app.put('/Users/:id', async (c) => {
   try {
-    const userId = c.req.param('id')!;
+    const userId = c.req.param('id');
     const parsed = await readScimJson<unknown>(c);
     if (!parsed.ok) return parsed.response;
     if (!isRecord(parsed.value)) {
@@ -2867,7 +2864,7 @@ app.put('/Users/:id', async (c) => {
  */
 app.patch('/Users/:id', async (c) => {
   try {
-    const userId = c.req.param('id')!;
+    const userId = c.req.param('id');
     const parsed = await readScimJson<unknown>(c);
     if (!parsed.ok) return parsed.response;
     const patchValidation = validateScimPatchOp(parsed.value);
@@ -3022,7 +3019,7 @@ app.patch('/Users/:id', async (c) => {
  */
 app.delete('/Users/:id', async (c) => {
   try {
-    const userId = c.req.param('id')!;
+    const userId = c.req.param('id');
     const tenantId = getTenantIdFromContext(c);
     const adapters = await resolveScimAccountAdaptersFromContext(c, userId, 'account_delete_retry');
     if (!adapters) {
@@ -3205,12 +3202,7 @@ app.get('/Groups', async (c) => {
     const scimGroups: ScimGroup[] = [];
     for (const group of groups) {
       // Fetch members if needed (PII/Non-PII DB separation)
-      const members = await fetchGroupMembersWithPII(
-        c.env,
-        coreAdapter,
-        group.id as string,
-        tenantId
-      );
+      const members = await fetchGroupMembersWithPII(c.env, coreAdapter, group.id, tenantId);
 
       scimGroups.push(
         projectScimResource(groupToScim(group, { baseUrl, includeMembers: true }, members), params)
@@ -3238,7 +3230,7 @@ app.get('/Groups', async (c) => {
  */
 app.get('/Groups/:id', async (c) => {
   try {
-    const groupId = c.req.param('id')!;
+    const groupId = c.req.param('id');
     const baseUrl = getBaseUrl(c);
     const params = parseQueryParams(c);
     if (invalidProjectionParameters(params)) {
@@ -3391,7 +3383,7 @@ app.post('/Groups', async (c) => {
  */
 app.put('/Groups/:id', async (c) => {
   try {
-    const groupId = c.req.param('id')!;
+    const groupId = c.req.param('id');
     const parsed = await readScimJson<unknown>(c);
     if (!parsed.ok) return parsed.response;
     if (!isRecord(parsed.value)) {
@@ -3502,7 +3494,7 @@ app.put('/Groups/:id', async (c) => {
  */
 app.patch('/Groups/:id', async (c) => {
   try {
-    const groupId = c.req.param('id')!;
+    const groupId = c.req.param('id');
     const parsed = await readScimJson<unknown>(c);
     if (!parsed.ok) return parsed.response;
     const patchValidation = validateScimPatchOp(parsed.value);
@@ -3626,7 +3618,7 @@ app.patch('/Groups/:id', async (c) => {
  */
 app.delete('/Groups/:id', async (c) => {
   try {
-    const groupId = c.req.param('id')!;
+    const groupId = c.req.param('id');
     const tenantId = getTenantIdFromContext(c);
     const coreAdapter = createTenantMetadataAdapterFromContext(c);
 
@@ -4269,10 +4261,7 @@ async function processUserOperation(
             result.operation.operationId
           )}`,
           status: '202',
-          response: scimAccountCreationPending(baseUrl, result.operation.operationId) as Record<
-            string,
-            unknown
-          >,
+          response: scimAccountCreationPending(baseUrl, result.operation.operationId),
         };
       }
 

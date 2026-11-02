@@ -148,7 +148,7 @@ async function resolveTenantDefaultStore(env: Partial<Env>, tenantId: string) {
   ) {
     throw new Error('tenant_vanity_runtime_registry_unavailable');
   }
-  return resolveTenantDatabaseSourceFromRegistry(env as Env, {
+  return resolveTenantDatabaseSourceFromRegistry(env, {
     tenantId,
     role: 'tenant_core',
     dataRole: 'tenant_core/default',
@@ -219,10 +219,7 @@ export async function resolveTenantFromVanityHost(
       environmentId: env.AUTHRIM_ENVIRONMENT_NAME,
       publicJwks: env.TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS,
     });
-    const alias = await new LookupRouteResolver(
-      env as Record<string, unknown>,
-      assignments
-    ).resolveAlias({ index });
+    const alias = await new LookupRouteResolver(env, assignments).resolveAlias({ index });
     if (!alias) return null;
 
     const store = await resolveTenantDefaultStore(env, alias.tenantId);

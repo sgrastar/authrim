@@ -2139,7 +2139,7 @@ describe('Authorization Handler', () => {
       prepare.mockImplementation((sql: string) => {
         const statement = basePrepare(sql);
         if (sql.includes('FROM oauth_client_consents')) {
-          vi.mocked(statement.first).mockResolvedValue(consentRow as never);
+          vi.mocked(statement.first).mockResolvedValue(consentRow);
           vi.mocked(statement.all).mockResolvedValue({ results: [consentRow] } as never);
         }
         return statement;
@@ -2197,7 +2197,7 @@ describe('Authorization Handler', () => {
               : undefined;
           if (sql.includes('FROM oauth_client_consent')) reads.push(sql);
           if (row) {
-            vi.mocked(statement.first).mockResolvedValue(row as never);
+            vi.mocked(statement.first).mockResolvedValue(row);
             vi.mocked(statement.all).mockResolvedValue({ results: [row] } as never);
           }
           return statement;

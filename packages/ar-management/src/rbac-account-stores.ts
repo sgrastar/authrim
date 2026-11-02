@@ -128,12 +128,12 @@ async function inactiveAccountDatabases(
     throw error;
   }
   if (routes.length === 0) return null;
-  if (routes.length !== 1 || routes[0]!.legacyUserId !== userId) {
+  if (routes.length !== 1 || routes[0].legacyUserId !== userId) {
     throw new Error('rbac_contact_route_invalid');
   }
   return {
-    coreDb: bindingSource(env, routes[0]!.coreBindingRef),
-    piiDb: bindingSource(env, routes[0]!.piiBindingRef),
+    coreDb: bindingSource(env, routes[0].coreBindingRef),
+    piiDb: bindingSource(env, routes[0].piiBindingRef),
   };
 }
 

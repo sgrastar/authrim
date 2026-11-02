@@ -30,8 +30,8 @@ describe('SD-JWT', () => {
   beforeAll(async () => {
     // Generate test keypair
     const keyPair = await generateKeyPair('RS256');
-    privateKey = keyPair.privateKey as CryptoKey;
-    publicKey = keyPair.publicKey as CryptoKey;
+    privateKey = keyPair.privateKey;
+    publicKey = keyPair.publicKey;
   });
 
   describe('createDisclosure', () => {
@@ -409,7 +409,7 @@ describe('SD-JWT', () => {
 
       // Generate different keypair
       const otherKeyPair = await generateKeyPair('RS256');
-      const otherPublicKey = otherKeyPair.publicKey as CryptoKey;
+      const otherPublicKey = otherKeyPair.publicKey;
 
       await expect(verifySDJWT(sdJwt.combined, otherPublicKey, issuer, audience)).rejects.toThrow();
     });

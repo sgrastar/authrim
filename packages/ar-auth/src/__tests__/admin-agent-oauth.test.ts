@@ -621,7 +621,7 @@ describe('Admin Agent PAR', () => {
         scope: 'agent:read',
         dpop_bound_access_tokens: false,
       };
-      const metadataHash = await sha256Base64Url(canonicalizeJson(normalizedMetadata as never));
+      const metadataHash = await sha256Base64Url(canonicalizeJson(normalizedMetadata));
       mocks.getClientCached.mockResolvedValue({
         client_id: clientId,
         redirect_uris: ['http://localhost/callback'],
@@ -848,7 +848,7 @@ describe('Admin Agent PAR', () => {
       scope: 'agent:read',
       dpop_bound_access_tokens: false,
     };
-    const metadataHash = await sha256Base64Url(canonicalizeJson(normalizedMetadata as never));
+    const metadataHash = await sha256Base64Url(canonicalizeJson(normalizedMetadata));
     mocks.getClientCached.mockResolvedValue({
       ...normalizedMetadata,
       requestable_scopes: ['agent:read'],

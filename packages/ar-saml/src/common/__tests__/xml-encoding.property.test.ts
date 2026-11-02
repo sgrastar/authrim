@@ -239,8 +239,8 @@ describe('XML Encoding Property Tests', () => {
           const root = doc.documentElement;
 
           expect(root).not.toBeNull();
-          expect(root!.getAttribute('ID')).toBe(id);
-          expect(root!.getAttribute('IssueInstant')).toBe(instant);
+          expect(root.getAttribute('ID')).toBe(id);
+          expect(root.getAttribute('IssueInstant')).toBe(instant);
         }),
         { numRuns: 100 }
       );

@@ -225,13 +225,10 @@ describe('Direct Auth logout scope', () => {
   });
 
   it('keeps the index when a rotator could not revoke, so a retry can find the family', async () => {
-    getRefreshTokenRotatorStubByJti.mockImplementation(
-      () =>
-        ({
-          stub: { revokeFamilyRpc },
-          resolution: { instanceName: 'rotator:shared' },
-        }) as never
-    );
+    getRefreshTokenRotatorStubByJti.mockImplementation(() => ({
+      stub: { revokeFamilyRpc },
+      resolution: { instanceName: 'rotator:shared' },
+    }));
     revokeFamilyRpc.mockReset().mockRejectedValueOnce(new Error('unavailable'));
     expireRefreshTokenFamiliesByUser.mockClear();
     const { directLogoutHandler } = await import('../direct-auth');
@@ -247,13 +244,10 @@ describe('Direct Auth logout scope', () => {
   });
 
   it('revokes the user’s family once in a rotator the index names twice', async () => {
-    getRefreshTokenRotatorStubByJti.mockImplementation(
-      () =>
-        ({
-          stub: { revokeFamilyRpc },
-          resolution: { instanceName: 'rotator:shared' },
-        }) as never
-    );
+    getRefreshTokenRotatorStubByJti.mockImplementation(() => ({
+      stub: { revokeFamilyRpc },
+      resolution: { instanceName: 'rotator:shared' },
+    }));
     revokeFamilyRpc.mockClear();
     const { directLogoutHandler } = await import('../direct-auth');
 

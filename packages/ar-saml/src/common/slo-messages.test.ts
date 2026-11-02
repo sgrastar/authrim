@@ -32,22 +32,22 @@ describe('SLO Message Builder', () => {
       // Check LogoutRequest element
       const logoutRequest = findElement(doc, SAML_NAMESPACES.SAML2P, 'LogoutRequest');
       expect(logoutRequest).toBeDefined();
-      expect(getAttribute(logoutRequest!, 'ID')).toBe('_logout_req_123');
-      expect(getAttribute(logoutRequest!, 'Destination')).toBe('https://idp.example.com/slo');
+      expect(getAttribute(logoutRequest, 'ID')).toBe('_logout_req_123');
+      expect(getAttribute(logoutRequest, 'Destination')).toBe('https://idp.example.com/slo');
 
       // Check Issuer
-      const issuer = findElement(logoutRequest!, SAML_NAMESPACES.SAML2, 'Issuer');
+      const issuer = findElement(logoutRequest, SAML_NAMESPACES.SAML2, 'Issuer');
       expect(getTextContent(issuer)).toBe('https://sp.example.com');
 
       // Check NameID
-      const nameId = findElement(logoutRequest!, SAML_NAMESPACES.SAML2, 'NameID');
+      const nameId = findElement(logoutRequest, SAML_NAMESPACES.SAML2, 'NameID');
       expect(getTextContent(nameId)).toBe('user@example.com');
-      expect(getAttribute(nameId!, 'Format')).toBe(
+      expect(getAttribute(nameId, 'Format')).toBe(
         'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress'
       );
 
       // Check SessionIndex
-      const sessionIndex = findElement(logoutRequest!, SAML_NAMESPACES.SAML2P, 'SessionIndex');
+      const sessionIndex = findElement(logoutRequest, SAML_NAMESPACES.SAML2P, 'SessionIndex');
       expect(getTextContent(sessionIndex)).toBe('_session_456');
     });
 
@@ -65,7 +65,7 @@ describe('SLO Message Builder', () => {
       const logoutRequest = findElement(doc, SAML_NAMESPACES.SAML2P, 'LogoutRequest');
 
       // SessionIndex should not be present
-      const sessionIndex = findElement(logoutRequest!, SAML_NAMESPACES.SAML2P, 'SessionIndex');
+      const sessionIndex = findElement(logoutRequest, SAML_NAMESPACES.SAML2P, 'SessionIndex');
       expect(sessionIndex).toBeNull();
     });
   });
@@ -88,12 +88,12 @@ describe('SLO Message Builder', () => {
       // Check LogoutResponse element
       const logoutResponse = findElement(doc, SAML_NAMESPACES.SAML2P, 'LogoutResponse');
       expect(logoutResponse).toBeDefined();
-      expect(getAttribute(logoutResponse!, 'ID')).toBe('_logout_resp_123');
-      expect(getAttribute(logoutResponse!, 'InResponseTo')).toBe('_logout_req_456');
+      expect(getAttribute(logoutResponse, 'ID')).toBe('_logout_resp_123');
+      expect(getAttribute(logoutResponse, 'InResponseTo')).toBe('_logout_req_456');
 
       // Check Status
-      const statusCode = findElement(logoutResponse!, SAML_NAMESPACES.SAML2P, 'StatusCode');
-      expect(getAttribute(statusCode!, 'Value')).toBe(STATUS_CODES.SUCCESS);
+      const statusCode = findElement(logoutResponse, SAML_NAMESPACES.SAML2P, 'StatusCode');
+      expect(getAttribute(statusCode, 'Value')).toBe(STATUS_CODES.SUCCESS);
     });
 
     it('should build an error LogoutResponse with message', () => {
@@ -110,7 +110,7 @@ describe('SLO Message Builder', () => {
       const doc = parseXml(xml);
 
       const statusCode = findElement(doc, SAML_NAMESPACES.SAML2P, 'StatusCode');
-      expect(getAttribute(statusCode!, 'Value')).toBe(STATUS_CODES.RESPONDER);
+      expect(getAttribute(statusCode, 'Value')).toBe(STATUS_CODES.RESPONDER);
 
       const statusMessage = findElement(doc, SAML_NAMESPACES.SAML2P, 'StatusMessage');
       expect(getTextContent(statusMessage)).toBe('Session not found');

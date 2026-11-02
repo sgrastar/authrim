@@ -9,7 +9,7 @@ import { createAdminToolCatalog } from '../admin-tools';
 
 describe('Admin discovery profile Tool', () => {
   it('pins a closed, session-only Tool contract', () => {
-    const tool = ADMIN_DISCOVERY_TOOL_DEFINITIONS[0]!;
+    const tool = ADMIN_DISCOVERY_TOOL_DEFINITIONS[0];
     expect(tool.schemaDigest).toBe(computeAgentToolContractDigest(tool));
     expect(tool).toMatchObject({
       id: 'admin.session.discovery-profiles.select',

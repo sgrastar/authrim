@@ -84,7 +84,7 @@ describe('Agent secret reference repository', () => {
         },
       })
     ).resolves.toBe(true);
-    const statements = batch.mock.calls[0]![0];
+    const statements = batch.mock.calls[0][0];
     expect(statements[0].sql).toContain("status = 'revoked'");
     expect(statements[1].sql).toContain('FROM agent_secret_refs');
     expect(statements[1].params).toContain('audit-1');

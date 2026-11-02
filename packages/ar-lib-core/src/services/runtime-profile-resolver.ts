@@ -2,7 +2,6 @@ import { ensureDatabaseAdapter, type DatabaseSource } from '../db/adapter-source
 import { createSettingsManager } from '../utils/settings-manager';
 import { getTenantSettingsDocument } from '../utils/tenant-settings';
 import { INFRASTRUCTURE_CATEGORY_META } from '../types/settings/infrastructure';
-import type { InfrastructureSettings } from '../types/settings/infrastructure';
 import {
   DatabaseProfileRegistryBackend,
   KVProfileRegistryBackend,
@@ -73,7 +72,7 @@ export async function loadEnvironmentProfileDefaultsFromEnv(
   manager.registerCategory(INFRASTRUCTURE_CATEGORY_META);
 
   const resolved = await manager.getAll('infrastructure', { type: 'platform' });
-  return readEnvironmentProfileDefaults(resolved.values as Partial<InfrastructureSettings>);
+  return readEnvironmentProfileDefaults(resolved.values);
 }
 
 export async function loadTenantProfileOverridesFromEnv(

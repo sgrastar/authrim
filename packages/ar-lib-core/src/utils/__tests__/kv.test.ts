@@ -600,7 +600,7 @@ describe('KV Utilities', () => {
 
     it('should isolate cached user metadata by tenant', async () => {
       const userCacheKV = new MockKVNamespace();
-      (env as unknown as Env).USER_CACHE = userCacheKV as unknown as KVNamespace;
+      env.USER_CACHE = userCacheKV as unknown as KVNamespace;
       const userId = 'shared-user-id';
 
       await userCacheKV.put(
@@ -628,7 +628,7 @@ describe('KV Utilities', () => {
 
     it('should ignore old user cache entries when route scope changes', async () => {
       const userCacheKV = new MockKVNamespace();
-      (env as unknown as Env).USER_CACHE = userCacheKV as unknown as KVNamespace;
+      env.USER_CACHE = userCacheKV as unknown as KVNamespace;
       const userId = 'profile-scoped-user';
 
       await userCacheKV.put(
@@ -673,7 +673,7 @@ describe('KV Utilities', () => {
 
     it('encrypts short-TTL cross-request PII cache entries', async () => {
       const userCacheKV = new MockKVNamespace();
-      (env as unknown as Env).USER_CACHE = userCacheKV as unknown as KVNamespace;
+      env.USER_CACHE = userCacheKV as unknown as KVNamespace;
       env.OBJECT_ENCRYPTION_ROOT_KEY =
         '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
       env.OBJECT_ENCRYPTION_KEY_VERSION = '7';
@@ -708,7 +708,7 @@ describe('KV Utilities', () => {
 
     it('does not read or write cross-request PII cache when no_cross_request_pii mode is enabled', async () => {
       const userCacheKV = new MockKVNamespace();
-      (env as unknown as Env).USER_CACHE = userCacheKV as unknown as KVNamespace;
+      env.USER_CACHE = userCacheKV as unknown as KVNamespace;
       const { coreAdapter, piiAdapter } = createCanonicalUserAdapters();
 
       const user = await getCachedUser(env, 'tenant-a', 'user-1', {
@@ -771,7 +771,7 @@ describe('KV Utilities', () => {
       });
       const consentCacheKV = new MockKVNamespace();
       (env as unknown as { DB?: D1Database }).DB = undefined;
-      (env as unknown as Env).CONSENT_CACHE = consentCacheKV as unknown as KVNamespace;
+      env.CONSENT_CACHE = consentCacheKV as unknown as KVNamespace;
       (env as unknown as Record<string, string>).CONSENT_CACHE_TTL = '120';
 
       const consent = await getCachedConsent(env, 'user-2', 'client-2', 'tenant-b', coreAdapter);
@@ -805,7 +805,7 @@ describe('KV Utilities', () => {
           consent_generation: 1,
         })
       );
-      (env as unknown as Env).CONSENT_CACHE = consentCacheKV as unknown as KVNamespace;
+      env.CONSENT_CACHE = consentCacheKV as unknown as KVNamespace;
 
       const consent = await getCachedConsent(env, 'user-2', 'client-2', 'tenant-b', coreAdapter, {
         refresh: true,
@@ -818,7 +818,7 @@ describe('KV Utilities', () => {
     it('does not negative-cache a missing consent', async () => {
       const coreAdapter = createMockAdapter(null);
       const consentCacheKV = new MockKVNamespace();
-      (env as unknown as Env).CONSENT_CACHE = consentCacheKV as unknown as KVNamespace;
+      env.CONSENT_CACHE = consentCacheKV as unknown as KVNamespace;
 
       await expect(
         getCachedConsent(env, 'user-3', 'client-3', 'tenant-c', coreAdapter)

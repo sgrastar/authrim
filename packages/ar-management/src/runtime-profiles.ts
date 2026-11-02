@@ -252,15 +252,11 @@ function parseRuntimeProfileBody(
 ): RuntimeProfileDraft | null {
   if (kind === 'audit') {
     const parsed = AuditProfileBodySchema.safeParse(body);
-    return parsed.success
-      ? ({ kind, ...parsed.data } as Omit<AuditProfile, 'id' | 'builtin'>)
-      : null;
+    return parsed.success ? { kind, ...parsed.data } : null;
   }
 
   const parsed = ResidencyProfileBodySchema.safeParse(body);
-  return parsed.success
-    ? ({ kind, ...parsed.data } as Omit<ResidencyProfile, 'id' | 'builtin'>)
-    : null;
+  return parsed.success ? { kind, ...parsed.data } : null;
 }
 
 function buildPersistedProfile(
@@ -287,12 +283,13 @@ function buildRuntimeProfileActivationStatusMap(
   return Object.fromEntries(
     Object.entries(profiles).map(([profileKind, entries]) => [
       profileKind,
-      (entries as RuntimeProfile[]).reduce<
-        Record<string, ReturnType<typeof describeRuntimeProfileActivationStatus>>
-      >((acc, profile) => {
-        acc[profile.id] = describeRuntimeProfileActivationStatus(env, profile);
-        return acc;
-      }, {}),
+      entries.reduce<Record<string, ReturnType<typeof describeRuntimeProfileActivationStatus>>>(
+        (acc, profile) => {
+          acc[profile.id] = describeRuntimeProfileActivationStatus(env, profile);
+          return acc;
+        },
+        {}
+      ),
     ])
   );
 }
@@ -345,18 +342,16 @@ export async function adminRuntimeProfileListHandler(c: Context<{ Bindings: Env 
     const referenceStatus = Object.fromEntries(
       Object.entries(profiles).map(([profileKind, entries]) => [
         profileKind,
-        (entries as RuntimeProfile[]).reduce<
-          Record<string, ReturnType<typeof describeRuntimeProfileReferenceStatus>>
-        >((acc, profile) => {
-          acc[profile.id] = describeRuntimeProfileReferenceStatus(c.env, profile);
-          return acc;
-        }, {}),
+        entries.reduce<Record<string, ReturnType<typeof describeRuntimeProfileReferenceStatus>>>(
+          (acc, profile) => {
+            acc[profile.id] = describeRuntimeProfileReferenceStatus(c.env, profile);
+            return acc;
+          },
+          {}
+        ),
       ])
     );
-    const activationStatus = buildRuntimeProfileActivationStatusMap(
-      c.env,
-      profiles as Partial<Record<RuntimeProfileKind, RuntimeProfile[]>>
-    );
+    const activationStatus = buildRuntimeProfileActivationStatusMap(c.env, profiles);
     const referenceCatalog = await loadRuntimeProfileReferenceCatalog(c.env);
 
     return c.json({

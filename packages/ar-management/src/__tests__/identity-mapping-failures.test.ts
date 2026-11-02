@@ -44,7 +44,7 @@ function setup() {
 function direct(auth: AdminAuthContext | undefined, env: Partial<Env> = {}, tenantId = TENANT) {
   const app = new Hono<{ Bindings: Env }>();
   app.use('*', async (c, next) => {
-    c.set('tenantId' as never, tenantId as never);
+    c.set('tenantId' as never, tenantId);
     if (auth) c.set('adminAuth' as never, auth as never);
     await next();
   });

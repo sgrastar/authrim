@@ -102,7 +102,7 @@ export const socialLoginFlow: GraphDefinition = {
             },
           ],
           defaultBranch: 'branch_default',
-        } as any,
+        },
       },
     },
     // Branch 1: UID Match → Success

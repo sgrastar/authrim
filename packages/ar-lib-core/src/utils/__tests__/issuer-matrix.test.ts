@@ -26,7 +26,7 @@ import {
 describe('buildIssuerUrl - default tenant', () => {
   it.each(SCENARIOS.map((s) => [scenarioLabel(s), s] as const))('%s', (_label, scenario) => {
     const env = buildEnvFromScenario(scenario) as Partial<Env>;
-    const result = buildIssuerUrl(env as Env, getDefaultTenantId(env));
+    const result = buildIssuerUrl(env, getDefaultTenantId(env));
     expect(result).toBe(scenario.expected.issuerUrl);
   });
 });
@@ -34,7 +34,7 @@ describe('buildIssuerUrl - default tenant', () => {
 describe('buildIssuerUrl - with tenant "acme"', () => {
   it.each(SCENARIOS.map((s) => [scenarioLabel(s), s] as const))('%s', (_label, scenario) => {
     const env = buildEnvFromScenario(scenario) as Partial<Env>;
-    const result = buildIssuerUrl(env as Env, 'acme');
+    const result = buildIssuerUrl(env, 'acme');
     expect(result).toBe(scenario.expected.issuerUrlWithTenant);
   });
 });

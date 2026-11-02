@@ -1,11 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { EffectiveSettingsEnv } from '../effective-settings';
 import { resolveTotpAttemptLimit } from '../sign-in-limits';
 
 // Through the real settings resolver: the environment variables of the authenticator-app limit.
 describe('resolveTotpAttemptLimit from the environment', () => {
-  const resolve = (vars: Record<string, string>) =>
-    resolveTotpAttemptLimit(vars as unknown as EffectiveSettingsEnv, 'tenant-a');
+  const resolve = (vars: Record<string, string>) => resolveTotpAttemptLimit(vars, 'tenant-a');
 
   it('applies values in range', async () => {
     await expect(

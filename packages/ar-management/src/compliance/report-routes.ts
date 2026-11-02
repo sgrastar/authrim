@@ -287,7 +287,7 @@ export async function listComplianceReports(c: Context<{ Bindings: Env }>) {
       data: page.map((row) => serializeReport(row, now)),
       pagination: {
         has_more: rows.length > limit,
-        ...(rows.length > limit ? { next_cursor: encodeCursor(page[page.length - 1]!) } : {}),
+        ...(rows.length > limit ? { next_cursor: encodeCursor(page[page.length - 1]) } : {}),
       },
     });
   } catch (error) {

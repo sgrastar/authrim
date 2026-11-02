@@ -91,7 +91,7 @@ function summarizeValue(value: unknown): unknown {
     return { type: 'array', length: value.length };
   }
   if (typeof value === 'object') {
-    return { type: 'object', keys: Object.keys(value as Record<string, unknown>).sort() };
+    return { type: 'object', keys: Object.keys(value).sort() };
   }
   return { type: typeof value };
 }

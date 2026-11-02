@@ -28,7 +28,7 @@ export async function parsePostBindingFormDataWithLimit(
         : undefined;
 
   if (!rawRequest) {
-    if (typeof (requestLike as { formData?: () => Promise<FormData> }).formData === 'function') {
+    if (typeof requestLike.formData === 'function') {
       return (requestLike as { formData: () => Promise<FormData> }).formData();
     }
     throw new Error('Invalid SAML POST request');

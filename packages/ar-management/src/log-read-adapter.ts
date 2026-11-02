@@ -11,7 +11,7 @@ import {
   LogQueryInvalidRequestError,
   type LogReadWindow,
 } from './log-archive-query';
-import { executeLogQuery, type LogQueryValue } from './log-iceberg-query-engine';
+import { executeLogQuery } from './log-iceberg-query-engine';
 
 const COLUMNS: Readonly<Record<string, string>> = {
   'core.event_log':
@@ -404,7 +404,7 @@ export function createLogReadAdapter(input: {
       });
       const rows = await executeLogQuery({
         sql,
-        params: values as LogQueryValue[],
+        params: values,
         tables: { [table]: { columns, rows: prepared } },
         now,
         ...(options?.timeoutMs

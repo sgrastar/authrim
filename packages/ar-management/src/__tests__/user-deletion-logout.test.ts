@@ -462,7 +462,7 @@ function captureDownstream() {
       userPresent: mocks.users.has('user-1'),
     });
     return new Response(null, { status: 200 });
-  }) as typeof fetch;
+  });
   return sent;
 }
 
@@ -526,7 +526,7 @@ describe('deleting or anonymizing a user notifies downstream relying parties', (
     if (!op) {
       const { privateKey, publicKey } = await jose.generateKeyPair('RS256', { extractable: true });
       op = {
-        privateKey: privateKey as CryptoKey,
+        privateKey: privateKey,
         publicJwk: { ...(await jose.exportJWK(publicKey)), kid: 'op-key', alg: 'RS256' },
       };
       opPrivatePem = await jose.exportPKCS8(op.privateKey);

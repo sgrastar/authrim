@@ -312,12 +312,12 @@ describe('resolveLoggingPolicy', () => {
       })
     );
     expect(objectWrites).toHaveLength(1);
-    expect(JSON.parse(objectWrites[0]!.value)).toMatchObject({
+    expect(JSON.parse(objectWrites[0].value)).toMatchObject({
       snapshotId: 'snap_test',
       version: 3,
     });
     expect(kvWrites).toHaveLength(1);
-    expect(JSON.parse(kvWrites[0]!.value)).toMatchObject({
+    expect(JSON.parse(kvWrites[0].value)).toMatchObject({
       schemaVersion: 1,
       snapshotId: 'snap_test',
       version: 3,

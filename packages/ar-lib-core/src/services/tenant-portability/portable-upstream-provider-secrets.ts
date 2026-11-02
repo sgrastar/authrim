@@ -1,4 +1,4 @@
-import { calculateJwkThumbprint, type JWK } from 'jose';
+import { calculateJwkThumbprint } from 'jose';
 import type { TenantBundleManifest } from './bundle-manifest.js';
 import type {
   PortableSqliteRow,
@@ -164,8 +164,7 @@ async function assertPrivateJwkMatchesPublic(
       typeof publicJwk !== 'object' ||
       Array.isArray(publicJwk) ||
       (publicJwk as Record<string, unknown>).d !== undefined ||
-      (await calculateJwkThumbprint(privateJwk as JWK)) !==
-        (await calculateJwkThumbprint(publicJwk as JWK))
+      (await calculateJwkThumbprint(privateJwk)) !== (await calculateJwkThumbprint(publicJwk))
     )
       invalid();
   } catch {

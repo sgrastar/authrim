@@ -123,9 +123,7 @@ function sessionDataMatches(
   expected: Partial<SessionData>
 ): boolean {
   return Object.entries(expected).every(
-    ([field, value]) =>
-      JSON.stringify((data as Record<string, unknown> | undefined)?.[field]) ===
-      JSON.stringify(value)
+    ([field, value]) => JSON.stringify(data?.[field]) === JSON.stringify(value)
   );
 }
 

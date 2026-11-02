@@ -130,7 +130,7 @@ function setup(
   };
   const executor = { execute: vi.fn() };
   const coordinator = new CloudflareAgentBulkCoordinator(
-    repository as never,
+    repository,
     executor,
     { now: () => 1_000 },
     { getIssuerOrigin: (tenantId) => `https://${tenantId}.auth.example` }

@@ -1138,10 +1138,10 @@ export class OIDCRPClient {
         });
       };
       try {
-        userInfo = (await verify(false)).payload as Record<string, unknown>;
+        userInfo = (await verify(false)).payload;
       } catch (error) {
         if (error instanceof Error && /signature|jws|key|kid/i.test(error.message)) {
-          userInfo = (await verify(true)).payload as Record<string, unknown>;
+          userInfo = (await verify(true)).payload;
         } else {
           throw error;
         }

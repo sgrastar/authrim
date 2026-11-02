@@ -132,6 +132,6 @@ describe('Admin API compatibility surface', () => {
 
     expect(response.status).toBe(403);
     expect(acquire).toHaveBeenCalledWith({ permitId: expect.any(String) });
-    expect(complete).toHaveBeenCalledWith({ permitId: acquire.mock.calls[0]![0].permitId });
+    expect(complete).toHaveBeenCalledWith({ permitId: acquire.mock.calls[0][0].permitId });
   });
 });

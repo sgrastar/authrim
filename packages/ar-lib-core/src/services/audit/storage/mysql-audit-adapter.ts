@@ -329,7 +329,7 @@ export class MysqlAuditAdapter implements IAuditStorageAdapter {
   async count(options: Omit<AuditQueryOptions, 'limit' | 'offset'>): Promise<number> {
     try {
       const client = await this.getClient();
-      const { conditions, params } = this.buildWhereClause(options as AuditQueryOptions, []);
+      const { conditions, params } = this.buildWhereClause(options, []);
       const table = options.logType === 'event' ? 'event_log' : 'pii_log';
       const result = await client.query<{ count: number }>(
         `SELECT COUNT(*) as count FROM ${qualifyTable(this.schema, table)} WHERE ${conditions.join(' AND ')}`,

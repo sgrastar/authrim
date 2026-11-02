@@ -1956,8 +1956,8 @@ async function processBulkUserUpdateJob(
     const accepted: string[] = [];
     const refused: string[] = [];
     for (const [index, outcome] of outcomes.entries()) {
-      if (outcome.status === 'fulfilled') accepted.push(userIds[index]!);
-      else if (isLifecycleTransitionRefused(outcome.reason)) refused.push(userIds[index]!);
+      if (outcome.status === 'fulfilled') accepted.push(userIds[index]);
+      else if (isLifecycleTransitionRefused(outcome.reason)) refused.push(userIds[index]);
       else throw outcome.reason;
     }
     return { accepted, refused };

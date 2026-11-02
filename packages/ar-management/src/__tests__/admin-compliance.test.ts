@@ -155,7 +155,7 @@ describe('admin compliance APIs', () => {
       sql.includes('SELECT id FROM roles WHERE')
         ? [{ id: 'role-1' }, { id: 'role-2' }]
         : sql.includes('FROM role_assignments')
-          ? storeUsers[storeIndex++]!.map((user_id) => ({ user_id, role_id: 'role-1' }))
+          ? storeUsers[storeIndex++].map((user_id) => ({ user_id, role_id: 'role-1' }))
           : []
     );
     const response = await adminComplianceStatusHandler(context());

@@ -4815,8 +4815,8 @@ export function createTrackedExecutionContext(executionContext: ExecutionContext
         const batch = [...pending];
         const results = await Promise.allSettled(batch);
         for (let index = 0; index < batch.length; index += 1) {
-          pending.delete(batch[index]!);
-          const result = results[index]!;
+          pending.delete(batch[index]);
+          const result = results[index];
           if (result.status === 'rejected' && !hasFirstError) {
             firstError = result.reason;
             hasFirstError = true;

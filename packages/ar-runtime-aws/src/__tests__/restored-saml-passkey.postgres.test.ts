@@ -23,7 +23,6 @@ import { createAwsSamlRuntime } from '../http-runtime';
 import { bootstrapFreshAwsRuntimeSchema } from '../import/aws-schema-bootstrap';
 import { createPostgresAuditRuntimePorts } from '../storage/postgres-audit';
 import { PostgresAccountAuthStateStore } from '../storage/postgres-account-auth-state';
-import type { PostgresQueryClient } from '../storage/postgres-transient-state';
 
 const databaseUrl = process.env.AUTHRIM_AWS_TEST_DATABASE_URL;
 const useBundledRuntime = process.env.AUTHRIM_AWS_TEST_BUNDLE === 'true';
@@ -533,17 +532,17 @@ postgresIt(
       piiConnected = true;
       await migrate(core, new URL('../../../../migrations/core/postgresql/', import.meta.url));
       await migrate(pii, new URL('../../../../migrations/pii/postgresql/', import.meta.url));
-      await bootstrapFreshAwsRuntimeSchema(core as unknown as PostgresQueryClient);
+      await bootstrapFreshAwsRuntimeSchema(core);
       const tenants = ['tenant-a', 'tenant-b'];
       const settings = settingsReader(tenants);
       const configuration = { get: async (_key: string) => null };
       const coreAdapter = new PostgresAdapter({
         connectionString: dbUrl(names[0]),
-        clientFactory: () => coreRuntimePool as never,
+        clientFactory: () => coreRuntimePool,
       });
       const piiAdapter = new PostgresAdapter({
         connectionString: dbUrl(names[1]),
-        clientFactory: () => piiRuntimePool as never,
+        clientFactory: () => piiRuntimePool,
       });
       const runtimeTenants = [];
       const passkeys = new Map<string, Awaited<ReturnType<typeof softwarePasskey>>>();
@@ -556,9 +555,7 @@ postgresIt(
         const account = await seedAccount(core, pii, tenantId, passkey, origin);
         const bundle = await signingBundle(tenantId);
         signingCertificates.set(tenantId, bundle.keys[0].certificate);
-        await new PostgresAccountAuthStateStore(
-          coreRuntimePool as unknown as PostgresQueryClient
-        ).initializeAccountStateRpc(
+        await new PostgresAccountAuthStateStore(coreRuntimePool).initializeAccountStateRpc(
           tenantId,
           account.userId,
           account.accountId,
@@ -580,11 +577,8 @@ postgresIt(
               coreAccountRouteGenerations: { [account.accountId]: 1 },
               lookupReadKeys: [lookupReadKey],
             },
-            stateDb: coreRuntimePool as unknown as PostgresQueryClient,
-            auditPorts: createPostgresAuditRuntimePorts(
-              coreRuntimePool as unknown as PostgresQueryClient,
-              tenants
-            ),
+            stateDb: coreRuntimePool,
+            auditPorts: createPostgresAuditRuntimePorts(coreRuntimePool, tenants),
             settings,
             configuration,
             signingBundle: bundle,

@@ -1387,10 +1387,10 @@ describe('support operations admin router', () => {
     );
     expect(jobSql.some((sql) => sql.includes("SET status = 'processing'"))).toBe(true);
     // The page's targets, in one batch, each once.
-    const [inserts] = mockAdapter.batch.mock.calls[0]! as [Array<{ sql: string }>];
+    const [inserts] = mockAdapter.batch.mock.calls[0] as [Array<{ sql: string }>];
     expect(inserts).toHaveLength(2);
-    expect(inserts[0]!.sql).toContain('INSERT INTO support_operation_cohort_targets');
-    expect(inserts[0]!.sql).toContain('ON CONFLICT (cohort_id, target_id) DO NOTHING');
+    expect(inserts[0].sql).toContain('INSERT INTO support_operation_cohort_targets');
+    expect(inserts[0].sql).toContain('ON CONFLICT (cohort_id, target_id) DO NOTHING');
     expect(
       executedSql.some(
         (sql) => sql.includes('UPDATE support_operation_cohorts') && sql.includes('completed')

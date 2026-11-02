@@ -41,7 +41,7 @@ async function getUserIdFromContext(c: Context<{ Bindings: Env }>): Promise<stri
   if (authHeader && authHeader.startsWith('Bearer ')) {
     const introspection = await introspectTokenFromContext(c);
     if (introspection.valid && introspection.claims?.sub) {
-      return introspection.claims.sub as string;
+      return introspection.claims.sub;
     }
     // Token present but invalid - don't fall through to session
     return null;

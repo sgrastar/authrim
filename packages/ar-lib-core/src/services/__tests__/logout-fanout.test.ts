@@ -18,7 +18,7 @@ describe('logout fan-out summary', () => {
       put: vi.fn(async () => undefined),
       delete: vi.fn(async () => undefined),
     };
-    globalThis.fetch = vi.fn(async () => new Response(null, { status: 200 })) as typeof fetch;
+    globalThis.fetch = vi.fn(async () => new Response(null, { status: 200 }));
     const webhookClient = (sessionId: string) => ({
       id: `sc-${sessionId}`,
       session_id: sessionId,
@@ -139,7 +139,7 @@ describe('logout fan-out that broke off before sending', () => {
       put: vi.fn(async () => undefined),
       delete: vi.fn(async () => undefined),
     };
-    globalThis.fetch = vi.fn(async () => new Response(null, { status: 200 })) as typeof fetch;
+    globalThis.fetch = vi.fn(async () => new Response(null, { status: 200 }));
     const session = (sessionId: string) => ({
       sessionId,
       userId: 'user-1',

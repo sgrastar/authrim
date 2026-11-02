@@ -450,7 +450,7 @@ describe('Plugin Admin API - List Plugins', () => {
 
       await listPluginsHandler(c);
 
-      const response = (c.json as any).mock.calls[0][0];
+      const response = c.json.mock.calls[0][0];
       expect(response.plugins[0].meta.name).toBe('Alpha Plugin');
       expect(response.plugins[1].meta.name).toBe('Zebra Plugin');
     });
@@ -557,7 +557,7 @@ describe('Plugin Admin API - Get Plugin', () => {
 
       await getPluginHandler(c);
 
-      const response = (c.json as any).mock.calls[0][0];
+      const response = c.json.mock.calls[0][0];
       expect(response.config.apiKey).toContain('****');
       expect(response.config.endpoint).toBe('https://api.example.com');
     });
@@ -753,7 +753,7 @@ describe('Plugin Admin API - Get Plugin Config', () => {
 
       await getPluginConfigHandler(c);
 
-      const response = (c.json as any).mock.calls[0][0];
+      const response = c.json.mock.calls[0][0];
       expect(response.config.apiKey).toContain('****');
       expect(response.config.password).toContain('****');
       expect(response.config.endpoint).toBe('https://api.example.com');
@@ -888,7 +888,7 @@ describe('Plugin Admin API - Update Plugin Config', () => {
         kv,
       });
 
-      const response = (await updatePluginConfigHandler(c)) as Response;
+      const response = await updatePluginConfigHandler(c);
       const { body } = await getResponseData(response);
 
       expect(body.config.apiKey).toContain('****');
@@ -1144,7 +1144,7 @@ describe('Plugin Admin API - Update Plugin Config', () => {
       await updatePluginConfigHandler(c);
 
       // Verify merged config is returned (apiKey preserved, timeout updated)
-      const response = (c.json as any).mock.calls[0][0];
+      const response = c.json.mock.calls[0][0];
       expect(response.config.timeout).toBe(3000);
     });
 
@@ -1245,7 +1245,7 @@ describe('Plugin Admin API - Update Plugin Config', () => {
         kv,
       });
 
-      const response = (await updatePluginConfigHandler(c)) as Response;
+      const response = await updatePluginConfigHandler(c);
       const { status } = await getResponseData(response);
 
       expect(status).toBe(500);
@@ -1311,7 +1311,7 @@ describe('Plugin Admin API - Reset Plugin Config', () => {
       kv,
     });
 
-    const response = (await resetPluginConfigHandler(c)) as Response;
+    const response = await resetPluginConfigHandler(c);
 
     expect((await getResponseData(response)).status).toBe(404);
     expect(kv.delete).not.toHaveBeenCalled();
@@ -2082,7 +2082,7 @@ describe('Plugin Admin API - Test Email', () => {
         },
       });
 
-      const response = (await sendPluginTestEmailHandler(c)) as Response;
+      const response = await sendPluginTestEmailHandler(c);
       const { body, status } = await getResponseData(response);
 
       expect(status).toBe(200);
@@ -2128,7 +2128,7 @@ describe('Plugin Admin API - Test Email', () => {
         envOverrides: { EMAIL: { send: emailSend } },
       });
 
-      const response = (await sendPluginTestEmailHandler(c)) as Response;
+      const response = await sendPluginTestEmailHandler(c);
       const { body, status } = await getResponseData(response);
 
       expect(status).toBe(202);
@@ -2896,7 +2896,7 @@ describe('Plugin Admin API - Traceability', () => {
       await updatePluginConfigHandler(c);
 
       // Get the response
-      const jsonCalls = (c.json as any).mock.calls;
+      const jsonCalls = c.json.mock.calls;
       const responseStr = JSON.stringify(jsonCalls);
 
       // Response should not contain raw secrets
@@ -3041,7 +3041,7 @@ describe('Plugin Admin API - Security', () => {
 
       await getPluginHandler(c);
 
-      const response = (c.json as any).mock.calls[0][0];
+      const response = c.json.mock.calls[0][0];
       // Undecryptable encrypted fields are omitted rather than exposing ciphertext.
       expect(response.config).not.toHaveProperty('apiKey');
       expect(JSON.stringify(response.config)).not.toContain('enc:v1:');
@@ -3126,7 +3126,7 @@ describe('Plugin Admin API - Pagination and Filtering', () => {
         })
       );
 
-      const response = (c.json as any).mock.calls[0][0];
+      const response = c.json.mock.calls[0][0];
       expect(response.plugins.length).toBe(50);
     });
 
@@ -3156,8 +3156,8 @@ describe('Plugin Admin API - Pagination and Filtering', () => {
       await listPluginsHandler(c1);
       await listPluginsHandler(c2);
 
-      const response1 = (c1.json as any).mock.calls[0][0];
-      const response2 = (c2.json as any).mock.calls[0][0];
+      const response1 = c1.json.mock.calls[0][0];
+      const response2 = c2.json.mock.calls[0][0];
 
       // Order should be consistent
       expect(response1.plugins.map((p: any) => p.id)).toEqual(
@@ -3493,7 +3493,7 @@ describe('Plugin Admin API - Tenant Isolation', () => {
 
       await getPluginConfigHandler(cA);
 
-      const responseA = (cA.json as any).mock.calls[0][0];
+      const responseA = cA.json.mock.calls[0][0];
       expect(responseA.config).not.toHaveProperty('secretKey', 'tenant-B-secret');
     });
 
@@ -3516,7 +3516,7 @@ describe('Plugin Admin API - Tenant Isolation', () => {
 
       await getPluginConfigHandler(cGlobal);
 
-      const globalResponse = (cGlobal.json as any).mock.calls[0][0];
+      const globalResponse = cGlobal.json.mock.calls[0][0];
       expect(globalResponse.config.globalSetting).toBe('global');
       expect(globalResponse.config).not.toHaveProperty('tenantSetting');
     });
@@ -3818,7 +3818,7 @@ describe('Plugin Admin API - Approved Dynamic Workers', () => {
       envOverrides: { PLUGIN_RUNNER: service },
     });
 
-    const response = (await updatePluginConfigHandler(c)) as Response;
+    const response = await updatePluginConfigHandler(c);
     const { body } = await getResponseData(response);
 
     expect(service.replaceDynamicPluginCredentials).toHaveBeenCalledWith(

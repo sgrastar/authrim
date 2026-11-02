@@ -613,14 +613,14 @@ agentConfigurationPlansRouter.post('/:id/:version/cancel', async (c) => {
     tenantId: tenant(c),
     id: existing.id,
     version: existing.version,
-    cancelledBy: auth(c).userId!,
-    reason: (reason as string | undefined) ?? 'operator_requested',
+    cancelledBy: auth(c).userId,
+    reason: reason ?? 'operator_requested',
     now,
     audit: audit(c, 'agent.configuration.plan.cancelled', 'agent_configuration_plan', existing.id, {
       plan_version: existing.version,
       plan_digest: existing.definitionDigest,
       prior_status: existing.status,
-      reason: (reason as string | undefined) ?? 'operator_requested',
+      reason: reason ?? 'operator_requested',
     }),
   });
   return cancelled
@@ -687,15 +687,15 @@ agentSecretRefsRouter.post('/', async (c) => {
     id,
     tenantId,
     resourceType,
-    resourceId: resourceId as string | undefined,
+    resourceId: resourceId,
     purpose,
     providerKey,
     createdBy: auth(c).userId,
     now,
-    expiresAt: expiresAt as number | undefined,
+    expiresAt: expiresAt,
     audit: audit(c, 'agent.secret_ref.enrolled', 'agent_secret_ref', id, {
       resource_type: resourceType,
-      resource_id: (resourceId as string | undefined) ?? null,
+      resource_id: resourceId ?? null,
       purpose,
     }),
   });

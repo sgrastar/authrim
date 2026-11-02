@@ -251,7 +251,7 @@ async function sendViaNotifier(
             }
           : null,
       detail: {
-        request: payload as unknown as Record<string, unknown>,
+        request: payload,
         response: {
           success,
           messageId: delivery.reference.intentId,
@@ -308,7 +308,7 @@ async function sendViaNotifier(
             }
           : null,
       detail: {
-        request: payload as unknown as Record<string, unknown>,
+        request: payload,
         response: {
           success: false,
           error: message,

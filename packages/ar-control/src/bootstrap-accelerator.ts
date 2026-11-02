@@ -54,7 +54,7 @@ function activeSmokePublicJwk(
   const privateJwk = parsed as Record<string, unknown>;
   const publicJwk = { ...privateJwk };
   Reflect.deleteProperty(publicJwk, 'd');
-  return publicJwk as Parameters<typeof verifyBootstrapAcceleratorProof>[1]['publicJwk'];
+  return publicJwk;
 }
 
 export async function admitInitialBootstrapAcceleration(input: {

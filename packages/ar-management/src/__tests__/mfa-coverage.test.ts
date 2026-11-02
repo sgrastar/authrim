@@ -72,7 +72,7 @@ describe('MFA coverage', () => {
       admins: 4,
       with_passkey: 3,
     });
-    const [sql, params] = queryOne.mock.calls[0]!;
+    const [sql, params] = queryOne.mock.calls[0];
     // Only the roles admin sign-in accepts give access.
     expect(params).toEqual([
       'ar_super_admin',
@@ -130,7 +130,7 @@ describe('MFA coverage', () => {
       expect.anything(),
       expect.not.objectContaining({ dataRole: expect.anything() })
     );
-    const [sql, params] = queryOne.mock.calls[0]!;
+    const [sql, params] = queryOne.mock.calls[0];
     expect(params).toEqual(['tenant-a']);
     expect(sql).toContain("t.status = 'active'");
     expect(sql).toContain("a.account_type = 'user'");

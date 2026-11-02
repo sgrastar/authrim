@@ -304,15 +304,15 @@ describe('data retention', () => {
     );
 
     expect(response.status).toBe(200);
-    const statements = mocks.adapter.batch.mock.calls[0]![0] as Array<{
+    const statements = mocks.adapter.batch.mock.calls[0][0] as Array<{
       sql: string;
       params: unknown[];
     }>;
     expect(statements).toHaveLength(3);
-    expect(statements[0]!.sql).toContain('INSERT INTO lookup_retention_policies');
-    expect(statements[0]!.params.slice(0, 3)).toEqual(['tenant-a', 365, 'admin-a']);
-    expect(statements[1]!.sql).toContain('lookup_retention_policy_projection_outbox');
-    expect(statements[2]!.sql).toContain('INSERT INTO settings_history');
+    expect(statements[0].sql).toContain('INSERT INTO lookup_retention_policies');
+    expect(statements[0].params.slice(0, 3)).toEqual(['tenant-a', 365, 'admin-a']);
+    expect(statements[1].sql).toContain('lookup_retention_policy_projection_outbox');
+    expect(statements[2].sql).toContain('INSERT INTO settings_history');
     expect(statements.some((statement) => statement.sql.includes('tenants'))).toBe(false);
     expect(applyLookupRetentionPolicyProjection).toHaveBeenCalledWith(
       expect.objectContaining({ tenantId: 'tenant-a', retentionDays: 365, policyGeneration: 2 })

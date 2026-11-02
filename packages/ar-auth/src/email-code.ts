@@ -449,7 +449,7 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
         }
 
         // The account the code is for (found or just created); fixed here for the closures below.
-        const account = user as { id: string; email: string; name: string | null };
+        const account = user;
 
         // Generate OTP session ID for session binding
         const otpSessionId = crypto.randomUUID();
@@ -903,7 +903,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
         await timeAuthRequestDiagnosticOperation(c, 'auth_otp_session_create', () =>
           sessionStore.createSessionRpc(
             newSessionId,
-            user.id as string,
+            user.id,
             sessionTtl.seconds,
             {
               ...getSessionClientMetadata(c.req.raw),
@@ -982,7 +982,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
         type: AUTH_EVENTS.EMAIL_CODE_SUCCEEDED,
         tenantId,
         data: {
-          userId: user.id as string,
+          userId: user.id,
           method: 'email_code',
           clientId: 'email-auth', // Direct email auth has no OAuth client
           sessionId,
@@ -1001,7 +1001,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
         tenantId,
         data: {
           sessionId,
-          userId: user.id as string,
+          userId: user.id,
           ttlSeconds: sessionTtl.seconds,
         } satisfies SessionEventData,
       }).catch((err) => {
@@ -1023,7 +1023,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
       // Schedule audit log with waitUntil to ensure it completes after response
       const auditPromise = createAuditLog(c.env, {
         tenantId,
-        userId: user.id as string,
+        userId: user.id,
         action: 'user.login',
         resource: 'session',
         resourceId: sessionId,
@@ -1047,7 +1047,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
       return c.json({
         success: true,
         sessionId,
-        userId: user.id as string,
+        userId: user.id,
         user: {
           id: user.id,
           email: user.email,

@@ -7383,7 +7383,7 @@ describe('Client Authentication Tests', () => {
       );
 
       expect(response.status).toBe(200);
-      const claims = mocks.mockCreateAccessToken.mock.calls[0]![0] as {
+      const claims = mocks.mockCreateAccessToken.mock.calls[0][0] as {
         scope: string;
         tenant_scope: string[];
       };
@@ -7448,7 +7448,7 @@ describe('Client Authentication Tests', () => {
 
         expect(response.status).toBe(200);
         expect(lookups).toBe(2);
-        expect(mocks.mockCreateAccessToken.mock.calls[0]![3]).toBeLessThanOrEqual(limit);
+        expect(mocks.mockCreateAccessToken.mock.calls[0][3]).toBeLessThanOrEqual(limit);
       }
     );
 

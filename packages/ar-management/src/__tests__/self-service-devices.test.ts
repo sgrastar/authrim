@@ -657,7 +657,7 @@ describe('/me/devices with a token whose sub is not an account id', () => {
             client_id: 'native-client-001',
             ...claims,
           } as Parameters<typeof actual.createAccessToken>[0],
-          privateKey as unknown as Parameters<typeof actual.createAccessToken>[1],
+          privateKey,
           'kid-1',
           3600
         )

@@ -84,7 +84,7 @@ export const MICROSOFT_DEFAULT_CONFIG: Partial<UpstreamProvider> = {
   buttonText: 'Continue with Microsoft',
   providerQuirks: {
     tenantType: 'common',
-  } as Record<string, unknown>,
+  },
 };
 
 /**

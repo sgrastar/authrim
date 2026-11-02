@@ -202,9 +202,7 @@ function parseSupportOpsSelectorJson(value: string | null): SupportOpsSelector |
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       throw new Error('invalid_snapshot_selector_json');
     }
-    return Object.keys(parsed as Record<string, unknown>).length === 0
-      ? undefined
-      : (parsed as SupportOpsSelector);
+    return Object.keys(parsed).length === 0 ? undefined : parsed;
   } catch {
     throw new Error('invalid_snapshot_selector_json');
   }
@@ -631,7 +629,7 @@ async function assertGroupsCountedOnce(
       found.set(key, (found.get(key) ?? 0) + 1);
     }
     for (const key of checked) {
-      if ((found.get(key) ?? 0) !== (storeGroups[index]!.get(key) ?? 0)) {
+      if ((found.get(key) ?? 0) !== (storeGroups[index].get(key) ?? 0)) {
         throw new SupportOpsCountUnverifiedError();
       }
     }

@@ -157,7 +157,7 @@ function providerRow(overrides: Record<string, unknown> = {}) {
 }
 
 async function responseBody<T>(response: Response): Promise<T> {
-  return (await response.json()) as T;
+  return await response.json();
 }
 
 describe('SAML provider CRUD boundaries', () => {

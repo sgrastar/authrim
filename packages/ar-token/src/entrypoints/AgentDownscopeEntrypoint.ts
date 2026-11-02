@@ -169,7 +169,7 @@ async function defaultSignToken(
     (await stub.getActiveKeyWithPrivateRpc()) ?? (await stub.rotateKeysWithPrivateRpc());
   const key = await importPKCS8(keyData.privatePEM, 'RS256');
   const issued = await createAccessToken(
-    claims as Parameters<typeof createAccessToken>[0],
+    claims,
     key,
     keyData.kid,
     DOWNSCOPE_TTL_SECONDS,

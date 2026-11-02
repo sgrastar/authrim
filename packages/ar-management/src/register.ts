@@ -138,13 +138,13 @@ async function validateSectorIdentifierContent(
       return { valid: false, error: ssrfError };
     }
 
-    const content = (await safeFetchJson<unknown>(sectorUri, {
+    const content = await safeFetchJson<unknown>(sectorUri, {
       headers: {
         Accept: 'application/json',
       },
       timeoutMs: 5000,
       maxResponseSize: 64 * 1024,
-    })) as unknown;
+    });
 
     if (!Array.isArray(content)) {
       return {

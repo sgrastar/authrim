@@ -357,7 +357,7 @@ describe('SAML aggregate provider API', () => {
       `<md:Extensions>${'x'.repeat(1024 * 1024)}</md:Extensions></md:EntityDescriptor>`
     );
     const response = await handlePreviewMetadata(
-      createContext({ body: { metadataXml: oversizedSingleMetadata } }) as never
+      createContext({ body: { metadataXml: oversizedSingleMetadata } })
     );
 
     expect(response.status).toBe(400);

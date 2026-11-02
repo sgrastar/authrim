@@ -5454,7 +5454,7 @@ describe('Admin API Handlers', () => {
         sql.includes('INSERT INTO users_pii_tombstone')
       );
       expect((piiDb.prepare as any).mock.invocationCallOrder[tombstoneCall]).toBeLessThan(
-        eraseAccountPii.mock.invocationCallOrder[0]!
+        eraseAccountPii.mock.invocationCallOrder[0]
       );
       expect(coreSqls).toContainEqual(
         expect.stringContaining('DELETE FROM subject_org_membership')
@@ -6400,7 +6400,7 @@ describe('Admin API Handlers', () => {
             ...body,
           },
           db: createMockDB({ firstResult: null, runResult: { success: true } }),
-          envOverrides: envOverrides as Partial<Env>,
+          envOverrides: envOverrides,
         });
         await adminClientCreateHandler(c);
         return c;

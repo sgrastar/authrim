@@ -345,7 +345,7 @@ async function getUserIdFromContext(c: Context<{ Bindings: Env }>): Promise<stri
       introspection.claims?.sub &&
       (scopes.includes('data_export') || scopes.includes('authrim:data_export'))
     ) {
-      return introspection.claims.sub as string;
+      return introspection.claims.sub;
     }
     return null;
   }
@@ -398,9 +398,7 @@ export async function dataExportRequestHandler(c: Context<{ Bindings: Env }>) {
         }>();
         if (body.sections && Array.isArray(body.sections)) {
           // Validate sections
-          const validSections = body.sections.filter((s) =>
-            ALL_SECTIONS.includes(s as DataExportSection)
-          );
+          const validSections = body.sections.filter((s) => ALL_SECTIONS.includes(s));
           if (validSections.length > 0) {
             sections = validSections;
           }

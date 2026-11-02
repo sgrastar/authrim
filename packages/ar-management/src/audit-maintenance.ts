@@ -211,7 +211,7 @@ async function copyRetentionCandidatesToArchive(input: {
       return { archived: 0, deleted: 0, failed: false };
     }
 
-    const writeResult = await archiveAdapter.writeEventLogBatch(candidates as EventLogEntry[]);
+    const writeResult = await archiveAdapter.writeEventLogBatch(candidates);
     if (!writeResult.success || writeResult.entriesWritten < candidates.length) {
       return { archived: 0, deleted: 0, failed: true };
     }
@@ -239,7 +239,7 @@ async function copyRetentionCandidatesToArchive(input: {
     return { archived: 0, deleted: 0, failed: false };
   }
 
-  const writeResult = await archiveAdapter.writePIILogBatch(candidates as PIILogEntry[]);
+  const writeResult = await archiveAdapter.writePIILogBatch(candidates);
   if (!writeResult.success || writeResult.entriesWritten < candidates.length) {
     return { archived: 0, deleted: 0, failed: true };
   }

@@ -270,7 +270,7 @@ export function parseAwsSamlDeploymentManifest(raw: string): AwsSamlDeploymentMa
       value.backup.parts.length > 128 ||
       !Array.isArray(value.backup.receipt.parts as unknown) ||
       value.backup.receipt.parts.length !== value.backup.parts.length ||
-      !Array.isArray(value.spEntityIds as unknown) ||
+      !Array.isArray(value.spEntityIds) ||
       value.spEntityIds.length === 0 ||
       !['shared_pool', 'tenant_exclusive'].includes(value.allocationScope)
     )

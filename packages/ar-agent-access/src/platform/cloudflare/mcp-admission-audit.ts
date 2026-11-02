@@ -30,7 +30,7 @@ export class CloudflareAgentMcpAdmissionAuditAdapter implements AgentMcpAdmissio
         return entry[1] !== undefined;
       })
     );
-    const eventDigest = await sha256Base64Url(canonicalizeJson(digestEvent as never));
+    const eventDigest = await sha256Base64Url(canonicalizeJson(digestEvent));
     const safe = {
       eventType: event.eventType,
       occurredAt: event.occurredAt,

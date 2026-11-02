@@ -19,10 +19,7 @@ import {
   hasGlobalPlatformAuthority,
   requireDedicatedAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
-import {
-  validateDestinationProviderConfig,
-  type DestinationProvider,
-} from '@authrim/ar-lib-logging/destinations';
+import { validateDestinationProviderConfig } from '@authrim/ar-lib-logging/destinations';
 import { requireAdminPermissionOrElevationGrant } from '../../admin-elevation-access';
 import { writeAdminAuditLog } from '../../admin-shared';
 import { testStorageDestinationConnectivity } from './connectivity-tests';
@@ -211,7 +208,7 @@ function validateStorageDestinationConfig(
   provider: StorageDestinationProvider,
   config: Record<string, unknown>
 ): { valid: true } | { valid: false; fields: ReturnType<typeof fieldError>[] } {
-  const result = validateDestinationProviderConfig(provider as DestinationProvider, config);
+  const result = validateDestinationProviderConfig(provider, config);
   const fields = result.errors.map((error) =>
     fieldError(`config.${error.field}`, error.message, `Config field ${error.field} is required.`)
   );
@@ -478,7 +475,7 @@ storageDestinationsRouter.get('/:id', async (c) => {
 
   try {
     const repo = new AdminStorageDestinationRepository(getAdminAdapter(c));
-    const destination = await repo.getDestination(c.req.param('id')!);
+    const destination = await repo.getDestination(c.req.param('id'));
     if (!destination) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -506,7 +503,7 @@ storageDestinationsRouter.patch('/:id', async (c) => {
 
   try {
     const repo = new AdminStorageDestinationRepository(getAdminAdapter(c));
-    const existing = await repo.getDestination(c.req.param('id')!);
+    const existing = await repo.getDestination(c.req.param('id'));
     if (!existing) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -564,7 +561,7 @@ storageDestinationsRouter.put('/:id/credentials', async (c) => {
 
   try {
     const repo = new AdminStorageDestinationRepository(getAdminAdapter(c));
-    const existing = await repo.getDestination(c.req.param('id')!);
+    const existing = await repo.getDestination(c.req.param('id'));
     if (!existing) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -630,7 +627,7 @@ storageDestinationsRouter.get('/:id/usage', async (c) => {
 
   try {
     const repo = new AdminStorageDestinationRepository(getAdminAdapter(c));
-    const destination = await repo.getDestination(c.req.param('id')!);
+    const destination = await repo.getDestination(c.req.param('id'));
     if (!destination) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -659,7 +656,7 @@ storageDestinationsRouter.post('/:id/usage', async (c) => {
 
   try {
     const repo = new AdminStorageDestinationRepository(getAdminAdapter(c));
-    const destination = await repo.getDestination(c.req.param('id')!);
+    const destination = await repo.getDestination(c.req.param('id'));
     if (!destination) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -707,7 +704,7 @@ storageDestinationsRouter.post('/:id/test', async (c) => {
 
   try {
     const repo = new AdminStorageDestinationRepository(getAdminAdapter(c));
-    const destination = await repo.getDestinationWithCredential(c.req.param('id')!);
+    const destination = await repo.getDestinationWithCredential(c.req.param('id'));
     if (!destination) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -747,7 +744,7 @@ storageDestinationsRouter.delete('/:id', async (c) => {
 
   try {
     const repo = new AdminStorageDestinationRepository(getAdminAdapter(c));
-    const existing = await repo.getDestination(c.req.param('id')!);
+    const existing = await repo.getDestination(c.req.param('id'));
     if (!existing) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }

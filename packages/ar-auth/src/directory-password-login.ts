@@ -1294,7 +1294,7 @@ export async function directoryMigrationPasskeyVerifyHandler(c: Context<{ Bindin
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
 
-    const credentialIDBase64URL = toBase64URLString(credentialID as CredentialIDLike);
+    const credentialIDBase64URL = toBase64URLString(credentialID);
     const passkeyId = crypto.randomUUID();
     const accountStores = await resolveDirectoryAccountStores(c, tenantId, transaction.user_id);
     await accountStores.passkeys.create({
@@ -2328,7 +2328,7 @@ function toBase64URLString(input: CredentialIDLike): string {
   if (input instanceof ArrayBuffer) {
     return isoBase64URL.fromBuffer(new Uint8Array(input));
   }
-  const view = input as ArrayBufferView;
+  const view = input;
   const typedArray = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
   // @ts-ignore - TypeScript strict buffer type mismatch
   return isoBase64URL.fromBuffer(typedArray);

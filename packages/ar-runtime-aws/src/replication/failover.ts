@@ -220,7 +220,7 @@ export async function advanceReplicationFailover(input: {
   assertProgress(progress);
   const save = async (value: FailoverProgress) => {
     assertProgress(value);
-    progress = (await input.checkpoint.save(value)).value as FailoverProgress;
+    progress = (await input.checkpoint.save(value)).value;
     assertProgress(progress);
   };
   if (progress.phase === 'complete') {
@@ -316,7 +316,7 @@ export async function advanceReplicationFailover(input: {
     await save({ ...progress, phase: 'complete', cutover: promoted, writerAuthorityChanged: true });
   }
   const result = input.checkpoint.current().value;
-  assertProgress(result as FailoverProgress);
+  assertProgress(result);
   if (result.phase !== 'complete' && result.phase !== 'draining') invalid();
   return result;
 }

@@ -183,8 +183,8 @@ describe('Fapi2Client', () => {
 
     expect(result.token_type).toBe('dPoP');
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    const first = fetchMock.mock.calls[0]![1] as RequestInit;
-    const second = fetchMock.mock.calls[1]![1] as RequestInit;
+    const first = fetchMock.mock.calls[0][1] as RequestInit;
+    const second = fetchMock.mock.calls[1][1] as RequestInit;
     const firstHeaders = first.headers as Record<string, string>;
     const secondHeaders = second.headers as Record<string, string>;
     expect(jose.decodeJwt(firstHeaders.DPoP).nonce).toBeUndefined();

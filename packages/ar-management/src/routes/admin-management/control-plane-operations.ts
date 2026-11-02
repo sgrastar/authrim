@@ -1590,13 +1590,7 @@ controlPlaneOperationsRouter.get('/lookup-hmac/rotations/:operationId', async (c
     return error(c, 403, 'CONTROL_PLANE_READ_AUTHORITY_REQUIRED');
   }
   const control = c.env.CONTROL;
-  const lookupControl = control as
-    | (NonNullable<Env['CONTROL']> & {
-        getLookupHmacRotation?: (input: {
-          operationId: string;
-        }) => Promise<ControlLookupHmacRotationView | null>;
-      })
-    | undefined;
+  const lookupControl = control;
   if (!lookupControl?.getLookupHmacRotation) {
     return error(c, 503, 'CONTROL_PLANE_CONTROL_UNAVAILABLE');
   }
@@ -1629,14 +1623,7 @@ controlPlaneOperationsRouter.get(
     ) {
       return error(c, 400, 'CONTROL_PLANE_LOOKUP_HMAC_INVALID_REQUEST');
     }
-    const control = c.env.CONTROL as
-      | (NonNullable<Env['CONTROL']> & {
-          getLookupHmacVerificationStatus?: (input: {
-            operationId: string;
-            phase: 'distribution' | 'generation';
-          }) => Promise<LookupHmacVerificationStatus>;
-        })
-      | undefined;
+    const control = c.env.CONTROL;
     if (!control?.getLookupHmacVerificationStatus) {
       return error(c, 503, 'CONTROL_PLANE_CONTROL_UNAVAILABLE');
     }

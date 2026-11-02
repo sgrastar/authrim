@@ -739,7 +739,7 @@ describe('JIT Provisioning Integration', () => {
         tokens: mockTokenResponse,
         tenantId: 'default',
       });
-      const key = getEncryptionKey(mockEnv as never);
+      const key = getEncryptionKey(mockEnv);
       const identity = provisioningState.request!.externalIdentity;
       const plan = JSON.parse(await decrypt(identity.profileDataEncrypted, key));
       plan.roleAssignments = [{ roleId: 'role_doc', scopeType: 'resource', scopeTarget: '' }];

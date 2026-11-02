@@ -67,7 +67,7 @@ describe('UserCustomDataFetcher', () => {
     const schemas = [makeSchema({ field_key: 'department', is_pii: 0 })];
     mockDb.query.mockResolvedValue([{ field_name: 'department', field_value: 'engineering' }]);
 
-    const fetcher = new UserCustomDataFetcher(mockDb as any, null);
+    const fetcher = new UserCustomDataFetcher(mockDb, null);
     const result = await fetcher.fetch('default', 'user-1', schemas);
 
     expect(result.get('department')).toBe('engineering');
@@ -84,7 +84,7 @@ describe('UserCustomDataFetcher', () => {
       { value_key: 'custom_attribute:ssn', value_json: JSON.stringify('123-45-6789') },
     ]);
 
-    const fetcher = new UserCustomDataFetcher(mockDb as any, mockPiiDb as any);
+    const fetcher = new UserCustomDataFetcher(mockDb, mockPiiDb);
     const result = await fetcher.fetch('default', 'user-1', schemas);
 
     expect(result.get('ssn')).toBe('123-45-6789');
@@ -100,7 +100,7 @@ describe('UserCustomDataFetcher', () => {
       { value_key: 'custom_attribute:ssn', value_json: JSON.stringify('999') },
     ]);
 
-    const fetcher = new UserCustomDataFetcher(mockDb as any, mockPiiDb as any);
+    const fetcher = new UserCustomDataFetcher(mockDb, mockPiiDb);
     const result = await fetcher.fetch('default', 'user-1', schemas);
 
     expect(result.get('department')).toBe('eng');
@@ -110,7 +110,7 @@ describe('UserCustomDataFetcher', () => {
   it('skips PII fetch when no PII DB', async () => {
     const schemas = [makeSchema({ field_key: 'ssn', is_pii: 1 })];
 
-    const fetcher = new UserCustomDataFetcher(mockDb as any, null);
+    const fetcher = new UserCustomDataFetcher(mockDb, null);
     const result = await fetcher.fetch('default', 'user-1', schemas);
 
     expect(result.size).toBe(0);
@@ -122,7 +122,7 @@ describe('UserCustomDataFetcher', () => {
       { value_key: 'custom_attribute:ssn', value_json: 'not-json' },
     ]);
 
-    const fetcher = new UserCustomDataFetcher(mockDb as any, mockPiiDb as any);
+    const fetcher = new UserCustomDataFetcher(mockDb, mockPiiDb);
     const result = await fetcher.fetch('default', 'user-1', schemas);
 
     expect(result.size).toBe(0);
@@ -132,7 +132,7 @@ describe('UserCustomDataFetcher', () => {
     const schemas = [makeSchema({ field_key: 'department', is_pii: 0 })];
     mockDb.query.mockResolvedValue([{ field_name: 'department', field_value: null }]);
 
-    const fetcher = new UserCustomDataFetcher(mockDb as any, null);
+    const fetcher = new UserCustomDataFetcher(mockDb, null);
     const result = await fetcher.fetch('default', 'user-1', schemas);
 
     expect(result.has('department')).toBe(false);
@@ -141,7 +141,7 @@ describe('UserCustomDataFetcher', () => {
   it('skips query when no non-PII schemas', async () => {
     const schemas = [makeSchema({ field_key: 'ssn', is_pii: 1 })];
 
-    const fetcher = new UserCustomDataFetcher(mockDb as any, mockPiiDb as any);
+    const fetcher = new UserCustomDataFetcher(mockDb, mockPiiDb);
     await fetcher.fetch('default', 'user-1', schemas);
 
     expect(mockDb.query).not.toHaveBeenCalled();
@@ -151,7 +151,7 @@ describe('UserCustomDataFetcher', () => {
     const schemas = [makeSchema({ field_key: 'department', is_pii: 0 })];
     mockDb.query.mockRejectedValue(new Error('DB error'));
 
-    const fetcher = new UserCustomDataFetcher(mockDb as any, null);
+    const fetcher = new UserCustomDataFetcher(mockDb, null);
     const result = await fetcher.fetch('default', 'user-1', schemas);
 
     expect(result.size).toBe(0);

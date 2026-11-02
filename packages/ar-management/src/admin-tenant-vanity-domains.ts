@@ -164,7 +164,7 @@ async function mapBounded<T, R>(
     Array.from({ length: Math.min(PLATFORM_FANOUT_CONCURRENCY, values.length) }, async () => {
       while (cursor < values.length) {
         const index = cursor++;
-        results[index] = await operation(values[index]!);
+        results[index] = await operation(values[index]);
       }
     })
   );
@@ -468,7 +468,7 @@ async function createDomain(
       cloudflare?.ssl?.status ?? null,
       cloudflare?.status ?? null,
       cloudflare?.ssl?.method ?? 'http',
-      JSON.stringify(collectValidationRecords(cloudflare ?? ({ hostname, id: '' } as never))),
+      JSON.stringify(collectValidationRecords(cloudflare ?? { hostname, id: '' })),
       cloudflare ? now : null,
       auth?.userId ?? null,
       now,

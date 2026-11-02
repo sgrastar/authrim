@@ -1039,20 +1039,20 @@ describe('generic admin job executor', () => {
       operationId: 'bulk-job:job-1:user-1',
       revokeSessions: true,
     });
-    const [statements] = mockAdapter.batch.mock.calls[0]! as [
+    const [statements] = mockAdapter.batch.mock.calls[0] as [
       Array<{ sql: string; params: unknown[] }>,
     ];
-    expect(statements[0]!.sql).toContain('SET lifecycle_state = ?');
+    expect(statements[0].sql).toContain('SET lifecycle_state = ?');
     // An account being deleted, or deleted, is never set otherwise.
-    expect(statements[0]!.sql).toContain("lifecycle_state NOT IN ('deleting', 'deleted')");
-    expect(statements[0]!.sql).toContain("'$.lifecycle_operation_id', ? || legacy_user_id");
-    expect(statements[0]!.params).toEqual(
+    expect(statements[0].sql).toContain("lifecycle_state NOT IN ('deleting', 'deleted')");
+    expect(statements[0].sql).toContain("'$.lifecycle_operation_id', ? || legacy_user_id");
+    expect(statements[0].params).toEqual(
       expect.arrayContaining(['suspended', 1000, 'bulk-job:job-1:', 'tenant-a', 'user-1'])
     );
-    expect(statements[1]!.sql).toContain('UPDATE identity_subjects SET lifecycle_state = ?');
+    expect(statements[1].sql).toContain('UPDATE identity_subjects SET lifecycle_state = ?');
     // A subject being deleted is never set back, and only along with its account's change.
-    expect(statements[1]!.sql).toContain("lifecycle_state NOT IN ('deleting', 'deleted')");
-    expect(statements[1]!.params).toEqual(expect.arrayContaining(['suspended']));
+    expect(statements[1].sql).toContain("lifecycle_state NOT IN ('deleting', 'deleted')");
+    expect(statements[1].params).toEqual(expect.arrayContaining(['suspended']));
     expect(mockAdapter.execute).toHaveBeenLastCalledWith(
       expect.stringContaining('SET status = ?, progress = ?, result = ?'),
       expect.arrayContaining([
@@ -1153,7 +1153,7 @@ describe('generic admin job executor', () => {
 
     await processPendingGenericAdminJobs({} as never, logger);
 
-    const [claimSql] = mockAdapter.execute.mock.calls[0]! as [string];
+    const [claimSql] = mockAdapter.execute.mock.calls[0] as [string];
     expect(claimSql).toContain("SET status = 'processing'");
     expect(claimSql).toContain('next_run_at = NULL');
   });
@@ -1337,14 +1337,14 @@ describe('generic admin job executor', () => {
     await processPendingGenericAdminJobs({} as never, logger);
 
     // The accounts first, with their subjects, then the authentication state.
-    const [statements] = mockAdapter.batch.mock.calls[0]! as [
+    const [statements] = mockAdapter.batch.mock.calls[0] as [
       Array<{ sql: string; params: unknown[] }>,
     ];
-    expect(statements[0]!.params.slice(0, 2)).toEqual(['active', 'active']);
-    expect(statements[0]!.params).toEqual(expect.arrayContaining(['user-1', 'user-2']));
-    expect(statements[1]!.params[0]).toBe('active');
+    expect(statements[0].params.slice(0, 2)).toEqual(['active', 'active']);
+    expect(statements[0].params).toEqual(expect.arrayContaining(['user-1', 'user-2']));
+    expect(statements[1].params[0]).toBe('active');
     expect(mockAdapter.batch.mock.invocationCallOrder[0]).toBeLessThan(
-      mockTransition.mock.invocationCallOrder[0]!
+      mockTransition.mock.invocationCallOrder[0]
     );
     expect(mockTransition).toHaveBeenCalledWith(
       expect.anything(),
@@ -1474,7 +1474,7 @@ describe('generic admin job executor', () => {
     await processPendingGenericAdminJobs({} as never, logger);
 
     // Selected again although it left the filter, as an account this job changed.
-    const [selectSql, selectParams] = mockAdapter.query.mock.calls[1]!;
+    const [selectSql, selectParams] = mockAdapter.query.mock.calls[1];
     expect(selectSql).toContain("json_extract(metadata_json, '$.lifecycle_operation_id') = ?");
     expect(selectParams).toContain('bulk-job:job-1:');
     expect(mockTransition).toHaveBeenCalledWith(
@@ -1510,7 +1510,7 @@ describe('generic admin job executor', () => {
       sourceVersionMs: 2000,
     });
     expect(initialize.mock.invocationCallOrder[0]).toBeLessThan(
-      mockAdapter.batch.mock.invocationCallOrder[0]!
+      mockAdapter.batch.mock.invocationCallOrder[0]
     );
   });
 

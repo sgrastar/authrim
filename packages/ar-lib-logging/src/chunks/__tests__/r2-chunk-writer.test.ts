@@ -528,7 +528,7 @@ describe('writeLogChunkToR2', () => {
       decodeStoredLogChunkRecord({
         storedBody: storedBody as Uint8Array,
         compression: 'gzip_block',
-        recordIndex: indexRows[0]!,
+        recordIndex: indexRows[0],
         encryption: {
           keyBytes: new Uint8Array(32).fill(7),
           tenantKey: 't_safeopaque',

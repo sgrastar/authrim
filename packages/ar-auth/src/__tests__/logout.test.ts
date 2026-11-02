@@ -224,7 +224,7 @@ function mockValidBackchannelClient(
       all: vi.fn().mockResolvedValue({ results: [] }),
       run: vi.fn().mockResolvedValue({ success: true, meta: { changes: 0 } }),
     }),
-  }) as unknown as D1Database['prepare'];
+  });
 }
 
 describe('Front-channel Logout', () => {

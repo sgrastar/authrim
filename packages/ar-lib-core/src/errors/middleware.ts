@@ -182,7 +182,7 @@ async function readErrorSettings(c: Context): Promise<{
   if (!c.env) return null;
   const env = c.env as EffectiveSettingsEnv;
   // Failures are remembered per settings binding (one per deployment; one per test env).
-  const settingsBinding = (env.SETTINGS ?? env) as object;
+  const settingsBinding = env.SETTINGS ?? env;
   let tenantId: string | undefined;
   try {
     tenantId = getTenantIdFromContext(c);

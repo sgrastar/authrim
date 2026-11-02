@@ -99,7 +99,7 @@ describe('SAMLRequestStore', () => {
         `request:${expiredData.requestId}`
       )) as typeof expiredData;
       expect(stored).toBeDefined();
-      expect(stored!.expiresAt).toBeLessThan(Date.now());
+      expect(stored.expiresAt).toBeLessThan(Date.now());
     });
   });
 
@@ -123,7 +123,7 @@ describe('SAMLRequestStore', () => {
         expiresAt: number;
       };
       expect(stored).toBeDefined();
-      expect(stored!.responseXml).toBe(responseXml);
+      expect(stored.responseXml).toBe(responseXml);
 
       // Delete after resolve (one-time use)
       await mockState.storage.delete(`artifact:${artifact}`);

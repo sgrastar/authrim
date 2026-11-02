@@ -114,8 +114,8 @@ describe('downstream protected resource client helpers', () => {
         requiredDetailClass: 'profile_export',
       },
       resourceUrl: 'https://service.example.com/profiles/profile-1',
-      resourceFetchImpl: fetchMock as unknown as typeof fetch,
-      fetchImpl: fetchMock as unknown as typeof fetch,
+      resourceFetchImpl: fetchMock,
+      fetchImpl: fetchMock,
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(3);
@@ -187,8 +187,8 @@ describe('downstream protected resource client helpers', () => {
           requiredDetailClass: 'profile_export',
         },
         resourceUrl: 'https://service.example.com/profiles/profile-2',
-        resourceFetchImpl: fetchMock as unknown as typeof fetch,
-        fetchImpl: fetchMock as unknown as typeof fetch,
+        resourceFetchImpl: fetchMock,
+        fetchImpl: fetchMock,
       })
     ).rejects.toBeInstanceOf(DownstreamGrantProtectedResourceAccessError);
 
@@ -260,8 +260,8 @@ describe('downstream protected resource client helpers', () => {
           requiredDetailClass: 'profile_export',
         },
         resourceUrl: 'https://service.example.com/profiles/profile-1',
-        resourceFetchImpl: fetchMock as unknown as typeof fetch,
-        fetchImpl: fetchMock as unknown as typeof fetch,
+        resourceFetchImpl: fetchMock,
+        fetchImpl: fetchMock,
         resourceMaxResponseSize: 16,
       })
     ).rejects.toThrow('Response body exceeds limit');

@@ -17,10 +17,14 @@ describe('async tenant and test surface boundaries', () => {
     });
     app.get('/api/ciba/test', cibaTestPageHandler);
 
-    const response = await app.request('https://tenant-a.example.com/api/ciba/test', {}, {
-      BASE_DOMAIN: 'example.com',
-      ...flags,
-    } as Env);
+    const response = await app.request(
+      'https://tenant-a.example.com/api/ciba/test',
+      {},
+      {
+        BASE_DOMAIN: 'example.com',
+        ...flags,
+      }
+    );
     expect(response.status).toBe(404);
   });
 
@@ -32,10 +36,14 @@ describe('async tenant and test surface boundaries', () => {
     });
     app.get('/api/ciba/test', cibaTestPageHandler);
 
-    const response = await app.request('https://tenant-a.example.com/api/ciba/test', {}, {
-      BASE_DOMAIN: 'example.com',
-      ENABLE_TEST_ENDPOINTS: 'true',
-    } as Env);
+    const response = await app.request(
+      'https://tenant-a.example.com/api/ciba/test',
+      {},
+      {
+        BASE_DOMAIN: 'example.com',
+        ENABLE_TEST_ENDPOINTS: 'true',
+      }
+    );
     expect(response.status).toBe(200);
     expect(response.headers.get('Content-Type')).toContain('text/html');
     expect(await response.text()).toContain('CIBA Flow Test');
@@ -49,20 +57,28 @@ describe('async tenant and test surface boundaries', () => {
     });
     app.get('/api/ciba/test', cibaTestPageHandler);
 
-    const response = await app.request('https://tenant-a.example.com/api/ciba/test', {}, {
-      BASE_DOMAIN: 'example.com',
-      ENABLE_TEST_ENDPOINTS: 'TRUE',
-    } as Env);
+    const response = await app.request(
+      'https://tenant-a.example.com/api/ciba/test',
+      {},
+      {
+        BASE_DOMAIN: 'example.com',
+        ENABLE_TEST_ENDPOINTS: 'TRUE',
+      }
+    );
     expect(response.status).toBe(404);
   });
 
   it('fails closed when the CIBA test page has no tenant context', async () => {
     const app = new Hono<{ Bindings: Env }>();
     app.get('/api/ciba/test', cibaTestPageHandler);
-    const response = await app.request('https://example.com/api/ciba/test', {}, {
-      BASE_DOMAIN: 'example.com',
-      ENABLE_TEST_ENDPOINTS: 'true',
-    } as Env);
+    const response = await app.request(
+      'https://example.com/api/ciba/test',
+      {},
+      {
+        BASE_DOMAIN: 'example.com',
+        ENABLE_TEST_ENDPOINTS: 'true',
+      }
+    );
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({ error: 'invalid_request' });
   });

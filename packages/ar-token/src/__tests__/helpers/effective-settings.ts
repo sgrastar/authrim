@@ -3,7 +3,7 @@
  * older `system_settings` document (as the one-time import saves them), over env and the catalog
  * defaults, for tests that describe settings by that document.
  */
-import { ALL_CATEGORY_META, createSettingsManager, type CategoryMeta } from '@authrim/ar-lib-core';
+import { ALL_CATEGORY_META, createSettingsManager } from '@authrim/ar-lib-core';
 import { systemSettingsFieldValues } from '@authrim/ar-lib-core/utils/system-settings-fields';
 
 export async function settingsFromSystemSettings(
@@ -16,8 +16,7 @@ export async function settingsFromSystemSettings(
     kv: null,
     cacheTTL: 0,
   });
-  for (const meta of Object.values(ALL_CATEGORY_META))
-    manager.registerCategory(meta as CategoryMeta);
+  for (const meta of Object.values(ALL_CATEGORY_META)) manager.registerCategory(meta);
   const { values } = await manager.getAll(category, { type: 'platform' });
   return { ...values, ...systemSettingsFieldValues(systemSettings, category) };
 }

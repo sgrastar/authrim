@@ -10,7 +10,7 @@ import {
 } from '../consent-config';
 
 function consentEnv(values: Record<string, string>): Partial<Env> {
-  return values as Partial<Env>;
+  return values;
 }
 
 describe('consent options from env', () => {

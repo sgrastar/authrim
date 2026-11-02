@@ -122,8 +122,7 @@ function resolveStorageMode(
   settings: DiagnosticLoggingSettings,
   clientId: string | undefined
 ): DiagnosticLogPrivacyMode {
-  const defaultMode =
-    (settings['diagnostic-logging.storage_mode.default'] as DiagnosticLogPrivacyMode) || 'masked';
+  const defaultMode = settings['diagnostic-logging.storage_mode.default'] || 'masked';
   if (!clientId) return defaultMode;
 
   const rawOverrides = settings['diagnostic-logging.storage_mode.by_client'];

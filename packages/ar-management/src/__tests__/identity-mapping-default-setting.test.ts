@@ -141,11 +141,10 @@ function setup(options: { agent?: boolean } = {}) {
   const get = async (cookie: string, url: string) =>
     (await context.call(cookie, 'GET', url)).json as unknown as SettingsGetResult;
   const effective = (tenantId: string) =>
-    resolveEffectiveSettingsWithSources(
-      { SETTINGS: settings.namespace } as never,
-      'identity-mapping',
-      { tenantId, fresh: true }
-    );
+    resolveEffectiveSettingsWithSources({ SETTINGS: settings.namespace }, 'identity-mapping', {
+      tenantId,
+      fresh: true,
+    });
   return { ...context, directory, directoryHooks, settings, admin, version, patch, get, effective };
 }
 

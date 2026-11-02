@@ -448,7 +448,7 @@ describe('logging delivery queue consumer', () => {
         DB: coreDb as never,
         DB_PII: {} as D1Database,
         DB_ADMIN: adminDb,
-        LOGGING_INDEX_DB: logIndexDb as never,
+        LOGGING_INDEX_DB: logIndexDb,
         SENSITIVE_DETAILS: bucket,
         OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
       }

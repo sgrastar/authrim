@@ -2708,9 +2708,7 @@ function readLogPlane(value: unknown): LogPlane | null {
 }
 
 function readLoggingDeliveryLane(value: unknown): LoggingDeliveryLane | null {
-  return value === 'critical' || value === 'default' || value === 'bulk'
-    ? (value as LoggingDeliveryLane)
-    : null;
+  return value === 'critical' || value === 'default' || value === 'bulk' ? value : null;
 }
 
 function readLoggingQuotaMetric(value: unknown): LoggingQuotaMetric | null {
@@ -3211,20 +3209,11 @@ async function resolveResidencyProfileForLoggingPolicy(
   tenantId: string | null
 ): Promise<ResidencyProfile | null> {
   if (tenantId) {
-    return (
-      await resolveTenantRuntimeProfilesFromEnv(
-        c.env as unknown as Parameters<typeof resolveTenantRuntimeProfilesFromEnv>[0],
-        tenantId
-      )
-    ).residencyProfile;
+    return (await resolveTenantRuntimeProfilesFromEnv(c.env, tenantId)).residencyProfile;
   }
 
-  const defaults = await loadEnvironmentProfileDefaultsFromEnv(
-    c.env as unknown as Parameters<typeof loadEnvironmentProfileDefaultsFromEnv>[0]
-  );
-  const registry = createRuntimeProfileRegistryFromEnv(
-    c.env as unknown as Parameters<typeof createRuntimeProfileRegistryFromEnv>[0]
-  );
+  const defaults = await loadEnvironmentProfileDefaultsFromEnv(c.env);
+  const registry = createRuntimeProfileRegistryFromEnv(c.env);
   return registry.get<ResidencyProfile>('residency', defaults.residencyProfileId);
 }
 
@@ -6788,7 +6777,7 @@ async function handleLoggingDestinationOverrideRollback(
       result: 'success',
       severity: isCriticalLoggingPolicy(current.log_type, current.plane) ? 'warn' : 'info',
       before: current as unknown as Record<string, unknown>,
-      after: next as unknown as Record<string, unknown>,
+      after: next,
     });
 
     return c.json(
@@ -6813,19 +6802,19 @@ async function handleLoggingDestinationOverrideRollback(
 }
 
 loggingPoliciesRouter.patch('/rows/:rowId', async (c) =>
-  handleLoggingDestinationOverridePatch(c, c.req.param('rowId')!)
+  handleLoggingDestinationOverridePatch(c, c.req.param('rowId'))
 );
 
 loggingPoliciesRouter.post('/rows/:rowId/rollback', async (c) =>
-  handleLoggingDestinationOverrideRollback(c, c.req.param('rowId')!)
+  handleLoggingDestinationOverrideRollback(c, c.req.param('rowId'))
 );
 
 loggingPoliciesRouter.post('/overrides/:rowId/rollback', async (c) =>
-  handleLoggingDestinationOverrideRollback(c, c.req.param('rowId')!)
+  handleLoggingDestinationOverrideRollback(c, c.req.param('rowId'))
 );
 
 loggingPoliciesRouter.patch('/:policy_id', async (c) =>
-  handleLoggingDestinationOverridePatch(c, c.req.param('policy_id')!)
+  handleLoggingDestinationOverridePatch(c, c.req.param('policy_id'))
 );
 
 loggingPoliciesRouter.get('/delivery-events', async (c) => {
@@ -7470,15 +7459,12 @@ loggingPoliciesRouter.post('/runtime/tenant-db-probe', async (c) => {
   let resolved: Awaited<ReturnType<typeof resolveTenantDatabaseSourceFromRegistry>> | null = null;
 
   try {
-    resolved = await resolveTenantDatabaseSourceFromRegistry(
-      c.env as Parameters<typeof resolveTenantDatabaseSourceFromRegistry>[0],
-      {
-        tenantId,
-        role,
-        shardGroup,
-        shardIndex,
-      }
-    );
+    resolved = await resolveTenantDatabaseSourceFromRegistry(c.env, {
+      tenantId,
+      role,
+      shardGroup,
+      shardIndex,
+    });
     const tenantAdapter = ensureDatabaseAdapter(resolved.source, 'tenant-db-probe');
     await tenantAdapter.execute(
       `CREATE TABLE IF NOT EXISTS authrim_runtime_probes (

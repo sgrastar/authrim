@@ -1237,7 +1237,7 @@ describe('SCIM 2.0 Endpoints', () => {
   describe('Authentication', () => {
     it('should advertise that SCIM password changes are not supported', async () => {
       const req = new Request('http://localhost/scim/v2/ServiceProviderConfig');
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
@@ -1248,7 +1248,7 @@ describe('SCIM 2.0 Endpoints', () => {
       const req = new Request('http://localhost/scim/v2/Users', {
         headers: { 'Content-Type': 'application/json' },
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(401);
       const body = (await res.json()) as any;
@@ -1257,10 +1257,7 @@ describe('SCIM 2.0 Endpoints', () => {
 
     it('does not treat reserved-looking user IDs as discovery routes', async () => {
       for (const id of ['Schemas', 'ResourceTypes', 'ServiceProviderConfig']) {
-        const res = await app.fetch(
-          new Request(`http://localhost/scim/v2/Users/${id}`),
-          mockEnv as Env
-        );
+        const res = await app.fetch(new Request(`http://localhost/scim/v2/Users/${id}`), mockEnv);
         expect(res.status).toBe(401);
       }
     });
@@ -1268,7 +1265,7 @@ describe('SCIM 2.0 Endpoints', () => {
     it('only exempts GET requests to SCIM discovery routes', async () => {
       const res = await app.fetch(
         new Request('http://localhost/scim/v2/Schemas', { method: 'DELETE' }),
-        mockEnv as Env
+        mockEnv
       );
       expect(res.status).toBe(401);
     });
@@ -1280,7 +1277,7 @@ describe('SCIM 2.0 Endpoints', () => {
           'Content-Type': 'application/json',
         },
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(401);
       const body = (await res.json()) as any;
@@ -1294,7 +1291,7 @@ describe('SCIM 2.0 Endpoints', () => {
           'Content-Type': 'application/json',
         },
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(401);
       const body = (await res.json()) as any;
@@ -1308,7 +1305,7 @@ describe('SCIM 2.0 Endpoints', () => {
           'Content-Type': 'application/json',
         },
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(401);
       const body = (await res.json()) as any;
@@ -1317,7 +1314,7 @@ describe('SCIM 2.0 Endpoints', () => {
 
     it('should accept valid SCIM token', async () => {
       const req = createRequest('/scim/v2/Users');
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       // Should not be 401/403
       expect(res.status).not.toBe(401);
@@ -1337,7 +1334,7 @@ describe('SCIM 2.0 Endpoints', () => {
   describe('GET /scim/v2/Users - List Users', () => {
     it('should return list of users with pagination', async () => {
       const req = createRequest('/scim/v2/Users');
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
@@ -1350,7 +1347,7 @@ describe('SCIM 2.0 Endpoints', () => {
 
     it('should support startIndex and count pagination parameters', async () => {
       const req = createRequest('/scim/v2/Users?startIndex=1&count=10');
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
@@ -1359,7 +1356,7 @@ describe('SCIM 2.0 Endpoints', () => {
     });
 
     it('returns no resources for count=0 while preserving totalResults', async () => {
-      const res = await app.fetch(createRequest('/scim/v2/Users?count=0'), mockEnv as Env);
+      const res = await app.fetch(createRequest('/scim/v2/Users?count=0'), mockEnv);
 
       expect(res.status).toBe(200);
       await expect(res.json()).resolves.toMatchObject({
@@ -1372,14 +1369,14 @@ describe('SCIM 2.0 Endpoints', () => {
     it.each(['startIndex=0', 'count=-1', 'count=1x', 'sortOrder=sideways'])(
       'rejects invalid pagination parameter %s',
       async (query) => {
-        const res = await app.fetch(createRequest(`/scim/v2/Users?${query}`), mockEnv as Env);
+        const res = await app.fetch(createRequest(`/scim/v2/Users?${query}`), mockEnv);
         expect(res.status).toBe(400);
       }
     );
 
     it('should limit count to maximum allowed', async () => {
       const req = createRequest('/scim/v2/Users?count=5000');
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
@@ -1389,7 +1386,7 @@ describe('SCIM 2.0 Endpoints', () => {
 
     it('should support filter parameter', async () => {
       const req = createRequest('/scim/v2/Users?filter=userName%20eq%20%22johndoe%22');
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       // Filter parsing might fail or succeed depending on implementation
       // Important: should not return 500
@@ -1398,7 +1395,7 @@ describe('SCIM 2.0 Endpoints', () => {
 
     it('should reject invalid filter syntax', async () => {
       const req = createRequest('/scim/v2/Users?filter=invalid_syntax!!!');
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(400);
       const body = (await res.json()) as any;
@@ -1409,7 +1406,7 @@ describe('SCIM 2.0 Endpoints', () => {
       'unknownAttribute%20eq%20%22value%22',
       'emails%5Btype%20eq%20%22work%22%5D.value%20eq%20%22john.doe%40example.com%22',
     ])('rejects unsupported filter %s consistently', async (filter) => {
-      const res = await app.fetch(createRequest(`/scim/v2/Users?filter=${filter}`), mockEnv as Env);
+      const res = await app.fetch(createRequest(`/scim/v2/Users?filter=${filter}`), mockEnv);
 
       expect(res.status).toBe(400);
       await expect(res.json()).resolves.toMatchObject({ scimType: 'invalidFilter' });
@@ -1418,7 +1415,7 @@ describe('SCIM 2.0 Endpoints', () => {
     it('fails closed when a routed account PII binding is unavailable', async () => {
       delete (mockEnv as Partial<Record<keyof Env, unknown>>).DB_PII;
 
-      const res = await app.fetch(createRequest('/scim/v2/Users'), mockEnv as Env);
+      const res = await app.fetch(createRequest('/scim/v2/Users'), mockEnv);
 
       expect(res.status).toBe(500);
       await expect(res.json()).resolves.toMatchObject({
@@ -1430,7 +1427,7 @@ describe('SCIM 2.0 Endpoints', () => {
   describe('GET /scim/v2/Users/:id - Get User', () => {
     it('should return user by ID', async () => {
       const req = createRequest('/scim/v2/Users/user-001');
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
@@ -1444,7 +1441,7 @@ describe('SCIM 2.0 Endpoints', () => {
       mockUsers.get('user-001').active = 0;
       mockUsers.get('user-001').lifecycle_state = 'deprovisioned';
 
-      const res = await app.fetch(createRequest('/scim/v2/Users/user-001'), mockEnv as Env);
+      const res = await app.fetch(createRequest('/scim/v2/Users/user-001'), mockEnv);
 
       expect(res.status).toBe(200);
       await expect(res.json()).resolves.toMatchObject({ id: 'user-001', active: false });
@@ -1456,7 +1453,7 @@ describe('SCIM 2.0 Endpoints', () => {
       });
 
       const req = createRequest('/scim/v2/Users/user-001');
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
@@ -1469,7 +1466,7 @@ describe('SCIM 2.0 Endpoints', () => {
     it('returns direct group memberships for the user', async () => {
       mockUserRoles.set('group-001', [{ user_id: 'user-001', email: 'john.doe@example.com' }]);
 
-      const res = await app.fetch(createRequest('/scim/v2/Users/user-001'), mockEnv as Env);
+      const res = await app.fetch(createRequest('/scim/v2/Users/user-001'), mockEnv);
 
       expect(res.status).toBe(200);
       await expect(res.json()).resolves.toMatchObject({
@@ -1487,7 +1484,7 @@ describe('SCIM 2.0 Endpoints', () => {
     it('projects requested attributes while preserving always-returned fields', async () => {
       const res = await app.fetch(
         createRequest('/scim/v2/Users/user-001?attributes=userName,name.givenName'),
-        mockEnv as Env
+        mockEnv
       );
 
       expect(res.status).toBe(200);
@@ -1506,7 +1503,7 @@ describe('SCIM 2.0 Endpoints', () => {
     it('rejects attributes together with excludedAttributes', async () => {
       const res = await app.fetch(
         createRequest('/scim/v2/Users/user-001?attributes=userName&excludedAttributes=emails'),
-        mockEnv as Env
+        mockEnv
       );
 
       expect(res.status).toBe(400);
@@ -1516,7 +1513,7 @@ describe('SCIM 2.0 Endpoints', () => {
     it('preserves always-returned fields when excludedAttributes requests them', async () => {
       const res = await app.fetch(
         createRequest('/scim/v2/Users/user-001?excludedAttributes=id,schemas,meta,emails'),
-        mockEnv as Env
+        mockEnv
       );
 
       expect(res.status).toBe(200);
@@ -1531,7 +1528,7 @@ describe('SCIM 2.0 Endpoints', () => {
 
     it('should return 404 for non-existent user', async () => {
       const req = createRequest('/scim/v2/Users/non-existent-user');
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(404);
       const body = (await res.json()) as any;
@@ -1541,7 +1538,7 @@ describe('SCIM 2.0 Endpoints', () => {
     it('fails closed on stale account routing without using tenant metadata fallback', async () => {
       accountRoutingState.error = new Error('account_data_binding_generation_stale');
 
-      const res = await app.fetch(createRequest('/scim/v2/Users/user-001'), mockEnv as Env);
+      const res = await app.fetch(createRequest('/scim/v2/Users/user-001'), mockEnv);
 
       expect(res.status).toBe(500);
       expect(accountRoutingState.calls).toEqual(['user-001']);
@@ -1551,7 +1548,7 @@ describe('SCIM 2.0 Endpoints', () => {
     it('should return 304 Not Modified when ETag matches', async () => {
       // First get the user to obtain ETag
       const req1 = createRequest('/scim/v2/Users/user-001');
-      const res1 = await app.fetch(req1, mockEnv as Env);
+      const res1 = await app.fetch(req1, mockEnv);
       const etag = res1.headers.get('ETag');
 
       if (etag) {
@@ -1562,7 +1559,7 @@ describe('SCIM 2.0 Endpoints', () => {
             'If-None-Match': etag,
           },
         });
-        const res2 = await app.fetch(req2, mockEnv as Env);
+        const res2 = await app.fetch(req2, mockEnv);
 
         expect(res2.status).toBe(304);
       }
@@ -1586,7 +1583,7 @@ describe('SCIM 2.0 Endpoints', () => {
         method: 'POST',
         body: JSON.stringify(newUser),
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(201);
       const body = (await res.json()) as any;
@@ -1618,7 +1615,7 @@ describe('SCIM 2.0 Endpoints', () => {
         }),
       });
 
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(202);
       const body = (await res.json()) as any;
@@ -1644,7 +1641,7 @@ describe('SCIM 2.0 Endpoints', () => {
         }),
       });
 
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(400);
       expect(accountCreationState.calls).toHaveLength(0);
@@ -1661,7 +1658,7 @@ describe('SCIM 2.0 Endpoints', () => {
         }),
       });
 
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(503);
       const body = (await res.json()) as any;
@@ -1680,7 +1677,7 @@ describe('SCIM 2.0 Endpoints', () => {
         }),
       });
 
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(503);
       expect(res.headers.get('Retry-After')).toBe('1');
@@ -1701,7 +1698,7 @@ describe('SCIM 2.0 Endpoints', () => {
         }),
       });
 
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(503);
       expect(res.headers.get('Retry-After')).toBe('1');
@@ -1722,7 +1719,7 @@ describe('SCIM 2.0 Endpoints', () => {
         }),
       });
 
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(201);
       expect(accountCreationState.calls[0]?.externalSubject).toEqual({
@@ -1743,7 +1740,7 @@ describe('SCIM 2.0 Endpoints', () => {
               emails: [{ value: `${userName.toLowerCase()}-duplicate@example.com`, primary: true }],
             }),
           }),
-          mockEnv as Env
+          mockEnv
         );
 
         expect(res.status).toBe(409);
@@ -1763,7 +1760,7 @@ describe('SCIM 2.0 Endpoints', () => {
             emails: [{ value: 'external.id.not.unique@example.com', primary: true }],
           }),
         }),
-        mockEnv as Env
+        mockEnv
       );
 
       expect(res.status).toBe(201);
@@ -1791,7 +1788,7 @@ describe('SCIM 2.0 Endpoints', () => {
     ])('rejects invalid user input with a SCIM 400 error', async (body, detail) => {
       const res = await app.fetch(
         createRequest('/scim/v2/Users', { method: 'POST', body: JSON.stringify(body) }),
-        mockEnv as Env
+        mockEnv
       );
 
       expect(res.status).toBe(400);
@@ -1804,7 +1801,7 @@ describe('SCIM 2.0 Endpoints', () => {
     it('rejects malformed JSON with invalidSyntax instead of returning 500', async () => {
       const res = await app.fetch(
         createRequest('/scim/v2/Users', { method: 'POST', body: '{"schemas":[' }),
-        mockEnv as Env
+        mockEnv
       );
 
       expect(res.status).toBe(400);
@@ -1824,7 +1821,7 @@ describe('SCIM 2.0 Endpoints', () => {
         method: 'POST',
         body: JSON.stringify(newUser),
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(400);
       const body = (await res.json()) as any;
@@ -1847,7 +1844,7 @@ describe('SCIM 2.0 Endpoints', () => {
         method: 'POST',
         body: JSON.stringify(newUser),
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(409);
       const body = (await res.json()) as any;
@@ -1864,7 +1861,7 @@ describe('SCIM 2.0 Endpoints', () => {
         method: 'POST',
         body: JSON.stringify(invalidUser),
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(400);
       const body = (await res.json()) as any;
@@ -1885,7 +1882,7 @@ describe('SCIM 2.0 Endpoints', () => {
         method: 'POST',
         body: JSON.stringify(newUser),
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(400);
       const body = (await res.json()) as any;
@@ -1920,7 +1917,7 @@ describe('SCIM 2.0 Endpoints', () => {
         method: 'POST',
         body: JSON.stringify(newUser),
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(201);
       const body = (await res.json()) as any;
@@ -1949,7 +1946,7 @@ describe('SCIM 2.0 Endpoints', () => {
         method: 'POST',
         body: JSON.stringify(newUser),
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(201);
       const body = (await res.json()) as any;
@@ -1969,7 +1966,7 @@ describe('SCIM 2.0 Endpoints', () => {
 
       const res = await app.fetch(
         createRequest('/scim/v2/Operations/operation-account-a'),
-        mockEnv as Env
+        mockEnv
       );
 
       expect(res.status).toBe(200);
@@ -1980,10 +1977,7 @@ describe('SCIM 2.0 Endpoints', () => {
     });
 
     it('does not disclose an unavailable operation', async () => {
-      const res = await app.fetch(
-        createRequest('/scim/v2/Operations/operation-unknown'),
-        mockEnv as Env
-      );
+      const res = await app.fetch(createRequest('/scim/v2/Operations/operation-unknown'), mockEnv);
 
       expect(res.status).toBe(404);
       const body = (await res.json()) as any;
@@ -1995,7 +1989,7 @@ describe('SCIM 2.0 Endpoints', () => {
 
       const res = await app.fetch(
         createRequest('/scim/v2/Operations/operation-account-a'),
-        mockEnv as Env
+        mockEnv
       );
 
       expect(res.status).toBe(500);
@@ -2021,7 +2015,7 @@ describe('SCIM 2.0 Endpoints', () => {
         method: 'PUT',
         body: JSON.stringify(updatedUser),
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
@@ -2045,7 +2039,7 @@ describe('SCIM 2.0 Endpoints', () => {
             active: true,
           }),
         }),
-        mockEnv as Env
+        mockEnv
       );
 
       expect(res.status).toBe(200);
@@ -2066,7 +2060,7 @@ describe('SCIM 2.0 Endpoints', () => {
         method: 'PUT',
         body: JSON.stringify(updatedUser),
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(400);
       const body = (await res.json()) as any;
@@ -2083,7 +2077,7 @@ describe('SCIM 2.0 Endpoints', () => {
           emails: [{ value: 'test@example.com', primary: true }],
         }),
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(404);
     });
@@ -2091,7 +2085,7 @@ describe('SCIM 2.0 Endpoints', () => {
     it('should enforce ETag with If-Match header', async () => {
       // Get user to obtain current ETag
       const req1 = createRequest('/scim/v2/Users/user-001');
-      const res1 = await app.fetch(req1, mockEnv as Env);
+      const res1 = await app.fetch(req1, mockEnv);
       const body1 = await res1.json();
 
       // Use mismatched ETag
@@ -2107,7 +2101,7 @@ describe('SCIM 2.0 Endpoints', () => {
           emails: [{ value: 'test@example.com', primary: true }],
         }),
       });
-      const res2 = await app.fetch(req2, mockEnv as Env);
+      const res2 = await app.fetch(req2, mockEnv);
 
       expect(res2.status).toBe(412);
       const body2 = (await res2.json()) as any;
@@ -2131,7 +2125,7 @@ describe('SCIM 2.0 Endpoints', () => {
         method: 'PUT',
         body: JSON.stringify(updatedUser),
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(400);
       const body = (await res.json()) as any;
@@ -2158,7 +2152,7 @@ describe('SCIM 2.0 Endpoints', () => {
         method: 'PATCH',
         body: JSON.stringify(patchOp),
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
@@ -2185,7 +2179,7 @@ describe('SCIM 2.0 Endpoints', () => {
             Operations: [{ op: 'replace', path: 'active', value: true }],
           }),
         }),
-        mockEnv as Env
+        mockEnv
       );
 
       expect(res.status).toBe(200);
@@ -2206,7 +2200,7 @@ describe('SCIM 2.0 Endpoints', () => {
           method: 'PATCH',
           body: JSON.stringify(patchOp),
         }),
-        mockEnv as Env
+        mockEnv
       );
 
       expect(res.status).toBe(400);
@@ -2224,7 +2218,7 @@ describe('SCIM 2.0 Endpoints', () => {
         method: 'PATCH',
         body: JSON.stringify(patchOp),
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(400);
       const body = (await res.json()) as any;
@@ -2247,7 +2241,7 @@ describe('SCIM 2.0 Endpoints', () => {
         method: 'PATCH',
         body: JSON.stringify(patchOp),
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
@@ -2266,7 +2260,7 @@ describe('SCIM 2.0 Endpoints', () => {
         method: 'PATCH',
         body: JSON.stringify(patchOp),
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(404);
     });
@@ -2277,7 +2271,7 @@ describe('SCIM 2.0 Endpoints', () => {
       activeLegalHolds.set('user-001', 'legal-hold:scim-held');
       const res = await app.fetch(
         createRequest('/scim/v2/Users/user-001', { method: 'DELETE' }),
-        mockEnv as Env
+        mockEnv
       );
 
       expect(res.status).toBe(409);
@@ -2294,7 +2288,7 @@ describe('SCIM 2.0 Endpoints', () => {
       const req = createRequest('/scim/v2/Users/user-001', {
         method: 'DELETE',
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(204);
       // The deletion record keeps the address only as its keyed index, for the default 90 days.
@@ -2315,10 +2309,7 @@ describe('SCIM 2.0 Endpoints', () => {
         )
       ).toEqual(['deleting', 'deleted']);
 
-      const getAfterDelete = await app.fetch(
-        createRequest('/scim/v2/Users/user-001'),
-        mockEnv as Env
-      );
+      const getAfterDelete = await app.fetch(createRequest('/scim/v2/Users/user-001'), mockEnv);
       expect(getAfterDelete.status).toBe(404);
     });
 
@@ -2329,7 +2320,7 @@ describe('SCIM 2.0 Endpoints', () => {
 
       const res = await app.fetch(
         createRequest('/scim/v2/Users/user-001', { method: 'DELETE' }),
-        mockEnv as Env
+        mockEnv
       );
 
       expect(res.status).toBe(204);
@@ -2365,7 +2356,7 @@ describe('SCIM 2.0 Endpoints', () => {
             Operations: [{ op: 'replace', path: 'active', value: false }],
           }),
         }),
-        mockEnv as Env
+        mockEnv
       );
 
       expect(res.status).toBe(200);
@@ -2404,7 +2395,7 @@ describe('SCIM 2.0 Endpoints', () => {
       const req = createRequest('/scim/v2/Users/non-existent', {
         method: 'DELETE',
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(404);
     });
@@ -2417,7 +2408,7 @@ describe('SCIM 2.0 Endpoints', () => {
           'If-Match': '"wrong-etag"',
         },
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(412);
     });
@@ -2426,7 +2417,7 @@ describe('SCIM 2.0 Endpoints', () => {
   describe('GET /scim/v2/Groups - List Groups', () => {
     it('should return list of groups', async () => {
       const req = createRequest('/scim/v2/Groups');
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
@@ -2436,14 +2427,11 @@ describe('SCIM 2.0 Endpoints', () => {
     });
 
     it('supports count=0 and validates pagination like the Users endpoint', async () => {
-      const zero = await app.fetch(createRequest('/scim/v2/Groups?count=0'), mockEnv as Env);
+      const zero = await app.fetch(createRequest('/scim/v2/Groups?count=0'), mockEnv);
       expect(zero.status).toBe(200);
       await expect(zero.json()).resolves.toMatchObject({ itemsPerPage: 0, Resources: [] });
 
-      const invalid = await app.fetch(
-        createRequest('/scim/v2/Groups?startIndex=0'),
-        mockEnv as Env
-      );
+      const invalid = await app.fetch(createRequest('/scim/v2/Groups?startIndex=0'), mockEnv);
       expect(invalid.status).toBe(400);
     });
   });
@@ -2460,7 +2448,7 @@ describe('SCIM 2.0 Endpoints', () => {
         method: 'POST',
         body: JSON.stringify(newGroup),
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(201);
       const body = (await res.json()) as any;
@@ -2477,7 +2465,7 @@ describe('SCIM 2.0 Endpoints', () => {
         method: 'POST',
         body: JSON.stringify(newGroup),
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(409);
       const body = (await res.json()) as any;
@@ -2488,7 +2476,7 @@ describe('SCIM 2.0 Endpoints', () => {
   describe('SCIM Error Response Format', () => {
     it('should return RFC 7644 compliant error response', async () => {
       const req = createRequest('/scim/v2/Users/non-existent');
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(404);
       const body = (await res.json()) as any;
@@ -2510,7 +2498,7 @@ describe('SCIM 2.0 Endpoints', () => {
             Operations: [{ method: 'DELETE', path: '/Users/user-001' }],
           }),
         }),
-        mockEnv as Env
+        mockEnv
       );
 
       expect(res.status).toBe(200);
@@ -2552,7 +2540,7 @@ describe('SCIM 2.0 Endpoints', () => {
             Operations: operations,
           }),
         }),
-        mockEnv as Env
+        mockEnv
       );
 
       expect(res.status).toBe(200);
@@ -2591,7 +2579,7 @@ describe('SCIM 2.0 Endpoints', () => {
             ],
           }),
         }),
-        mockEnv as Env
+        mockEnv
       );
 
       expect(res.status).toBe(200);
@@ -2623,7 +2611,7 @@ describe('SCIM 2.0 Endpoints', () => {
         method: 'POST',
         body: JSON.stringify(bulkRequest),
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
@@ -2657,7 +2645,7 @@ describe('SCIM 2.0 Endpoints', () => {
             ],
           }),
         }),
-        mockEnv as Env
+        mockEnv
       );
 
       expect(res.status).toBe(200);
@@ -2696,7 +2684,7 @@ describe('SCIM 2.0 Endpoints', () => {
             ],
           }),
         }),
-        mockEnv as Env
+        mockEnv
       );
 
       expect(res.status).toBe(200);
@@ -2730,7 +2718,7 @@ describe('SCIM 2.0 Endpoints', () => {
             ],
           }),
         }),
-        mockEnv as Env
+        mockEnv
       );
 
       expect(res.status).toBe(200);
@@ -2757,7 +2745,7 @@ describe('SCIM 2.0 Endpoints', () => {
             ],
           }),
         }),
-        mockEnv as Env
+        mockEnv
       );
 
       expect(res.status).toBe(200);
@@ -2787,7 +2775,7 @@ describe('SCIM 2.0 Endpoints', () => {
         }),
       });
 
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
@@ -2818,7 +2806,7 @@ describe('SCIM 2.0 Endpoints', () => {
         }),
       });
 
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
@@ -2851,7 +2839,7 @@ describe('SCIM 2.0 Endpoints', () => {
         method: 'POST',
         body: JSON.stringify(bulkRequest),
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
@@ -2889,7 +2877,7 @@ describe('SCIM 2.0 Endpoints', () => {
         method: 'POST',
         body: JSON.stringify(bulkRequest),
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
@@ -2935,7 +2923,7 @@ describe('SCIM 2.0 Endpoints', () => {
         method: 'POST',
         body: JSON.stringify(bulkRequest),
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
@@ -2975,7 +2963,7 @@ describe('SCIM 2.0 Endpoints', () => {
         method: 'POST',
         body: JSON.stringify(bulkRequest),
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
@@ -3015,7 +3003,7 @@ describe('SCIM 2.0 Endpoints', () => {
         method: 'POST',
         body: JSON.stringify(bulkRequest),
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
@@ -3048,7 +3036,7 @@ describe('SCIM 2.0 Endpoints', () => {
         method: 'POST',
         body: JSON.stringify(bulkRequest),
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(413);
       const body = (await res.json()) as any;
@@ -3065,7 +3053,7 @@ describe('SCIM 2.0 Endpoints', () => {
         method: 'POST',
         body: JSON.stringify(bulkRequest),
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(400);
       const body = (await res.json()) as any;
@@ -3087,7 +3075,7 @@ describe('SCIM 2.0 Endpoints', () => {
         method: 'POST',
         body: JSON.stringify(bulkRequest),
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
@@ -3111,7 +3099,7 @@ describe('SCIM 2.0 Endpoints', () => {
         method: 'POST',
         body: JSON.stringify(bulkRequest),
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
@@ -3129,7 +3117,7 @@ describe('SCIM 2.0 Endpoints', () => {
         method: 'POST',
         body: JSON.stringify(bulkRequest),
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.headers.get('Content-Type')).toContain('application/scim+json');
     });
@@ -3154,7 +3142,7 @@ describe('SCIM 2.0 Endpoints', () => {
         method: 'POST',
         body: JSON.stringify(bulkRequest),
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
@@ -3179,7 +3167,7 @@ describe('SCIM 2.0 Endpoints', () => {
         method: 'POST',
         body: JSON.stringify(bulkRequest),
       });
-      const res = await app.fetch(req, mockEnv as Env);
+      const res = await app.fetch(req, mockEnv);
 
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;

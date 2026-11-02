@@ -1,5 +1,4 @@
 import { expect, it } from 'vitest';
-import type { Env } from '@authrim/ar-lib-core/types/env';
 import { describeScimTestHarness } from './scim-test-harness';
 
 const USER_SCHEMA = 'urn:ietf:params:scim:schemas:core:2.0:User';
@@ -7,7 +6,7 @@ const PATCH_SCHEMA = 'urn:ietf:params:scim:api:messages:2.0:PatchOp';
 
 describeScimTestHarness('SCIM user and directory lifecycle', (harness) => {
   const fetchScim = (path: string, options?: RequestInit) =>
-    harness.app.fetch(harness.createRequest(path, options), harness.env as Env);
+    harness.app.fetch(harness.createRequest(path, options), harness.env);
 
   const replaceBody = (active: boolean) => ({
     schemas: [USER_SCHEMA],

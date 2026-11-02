@@ -21,7 +21,7 @@ describe('record block encoding', () => {
       const block = encoded.blocks[location.blockIndex];
       expect(block).toBeDefined();
       await expect(
-        decodeLogRecordFromBlock(encoded.body, block!, location, encoded.compression)
+        decodeLogRecordFromBlock(encoded.body, block, location, encoded.compression)
       ).resolves.toEqual(records[index].payload);
       expect(location.recordId).toBe(records[index].id);
       expect(location.recordLength).toBeGreaterThan(0);
@@ -45,7 +45,7 @@ describe('record block encoding', () => {
       }),
     ]);
     await expect(
-      decodeLogRecordFromBlock(encoded.body, encoded.blocks[0]!, encoded.records[1]!, 'none')
+      decodeLogRecordFromBlock(encoded.body, encoded.blocks[0], encoded.records[1], 'none')
     ).resolves.toEqual(records[1].payload);
   });
 });

@@ -245,7 +245,7 @@ export async function processTenantPlacementLookupCutoverPage(
   let rowId = cursor.rowId;
   let emptyRangeCount = 0;
   while (rangeIndex < ranges.length) {
-    const range = ranges[rangeIndex]!;
+    const range = ranges[rangeIndex];
     const database = (dependencies.resolveBinding ?? ((ref) => binding(env, ref)))(
       range.bindingRef
     );
@@ -344,8 +344,8 @@ export async function processTenantPlacementLookupCutoverPage(
       throw new Error('tenant_placement_lookup_reflection_failed');
     }
     for (let index = 0; index < reflected.length; index += 1) {
-      const row = reflected[index]!;
-      const target = expected[index]!;
+      const row = reflected[index];
+      const target = expected[index];
       const expectedState = input.phase === 'prepare' ? 'pending' : 'active';
       const expectedRuntime = input.phase === 'prepare' ? 'pending' : 'active';
       if (

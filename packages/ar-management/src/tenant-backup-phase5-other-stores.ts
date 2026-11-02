@@ -246,9 +246,7 @@ export function createPhase5OtherStoreHandlers(
         invalid();
       if (datasetId === 'core.webhook_configs') {
         const common = {
-          target: source.target as unknown as Parameters<
-            typeof restorePortableWebhookSecret
-          >[0]['target'],
+          target: source.target,
           policy: source.policy,
           manifest: source.manifest,
         };

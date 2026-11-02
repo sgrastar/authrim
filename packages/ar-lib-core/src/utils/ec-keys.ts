@@ -181,8 +181,8 @@ export async function generateECKeyPair(algorithm: ECAlgorithm = 'ES256'): Promi
   });
 
   return {
-    publicKey: publicKey as CryptoKey,
-    privateKey: privateKey as CryptoKey,
+    publicKey: publicKey,
+    privateKey: privateKey,
     algorithm,
     curve: ALGORITHM_TO_CURVE[algorithm],
   };

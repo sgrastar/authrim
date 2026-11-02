@@ -436,9 +436,7 @@ export function createLogger(
           ? hashSessionIdForLog(mergedContext.sessionId, hashSalt)
           : undefined;
 
-    const sanitizedExtra = extra
-      ? sanitizeLogFields(extra as Record<string, unknown>, RESERVED_LOG_CONTEXT_KEYS)
-      : {};
+    const sanitizedExtra = extra ? sanitizeLogFields(extra, RESERVED_LOG_CONTEXT_KEYS) : {};
 
     const errorPayload = error
       ? {

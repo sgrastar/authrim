@@ -735,8 +735,8 @@ export class UnifiedCheckService {
       ).map(({ role, assignment }) => ({
         name: role.name,
         permissions: rolePermissions(role),
-        scope_type: assignment.scope_type as string | null,
-        scope_target: assignment.scope_target as string | null,
+        scope_type: assignment.scope_type,
+        scope_target: assignment.scope_target,
         expires_at: assignment.expires_at,
       }));
 

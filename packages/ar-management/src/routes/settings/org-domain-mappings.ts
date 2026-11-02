@@ -23,16 +23,14 @@ import {
   createDomainMapping,
   updateDomainMapping,
   deleteDomainMapping,
-  getDomainMappingById,
-  // DNS Verification
+  getDomainMappingById, // DNS Verification
   generateVerificationToken,
   getVerificationRecordName,
   getExpectedRecordValue,
   verifyDomainDnsTxt,
   calculateVerificationExpiry,
   isVerificationExpired,
-  type VerificationStatus,
-  // Event System
+  type VerificationStatus, // Event System
   publishEvent,
   DOMAIN_EVENTS,
   type DomainEventData,

@@ -378,7 +378,7 @@ describe('Conditions Validation - SAML 2.0 Core Section 2.5', () => {
         put: vi.fn().mockResolvedValue(undefined),
       } as unknown as Env['NONCE_STORE'],
     };
-    mockEnv.DB_ADMIN = mockEnv.TDB_TEST_CORE as Env['DB_ADMIN'];
+    mockEnv.DB_ADMIN = mockEnv.TDB_TEST_CORE;
   });
 
   /**

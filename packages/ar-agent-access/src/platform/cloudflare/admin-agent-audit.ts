@@ -67,7 +67,7 @@ export class CloudflareAdminAgentAuditAdapter implements AgentAuditPort {
         actor: canonicalActor,
         outcome: event.outcome,
         details: event.details,
-      } as never)
+      })
     );
     await this.repository.writeAudit({
       id: this.createId(),

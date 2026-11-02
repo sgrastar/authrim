@@ -226,7 +226,7 @@ export class FlowRegistry {
     const stored = await this.kv.get(key, 'json');
 
     if (stored && this.isValidGraphDefinition(stored)) {
-      return stored as GraphDefinition;
+      return stored;
     }
 
     return null;

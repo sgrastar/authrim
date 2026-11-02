@@ -217,9 +217,7 @@ describe('immutable replication generation publication', () => {
     expect(published.generationId).toBe(generationId);
     expect(published.epoch).toBe(2);
     expect(published.location.secretVersionId).toBe(generationId);
-    const calls = mocked.send.mock.calls.map(
-      ([command]) => command as { constructor: { name: string }; input: Record<string, unknown> }
-    );
+    const calls = mocked.send.mock.calls.map(([command]) => command);
     const puts = calls.filter((call) => call.constructor.name === 'PutObjectCommand');
     expect(puts).toHaveLength(3);
     for (const put of puts) {
@@ -291,9 +289,7 @@ describe('immutable replication generation publication', () => {
       await expect(publishReplicationGeneration(input)).rejects.toThrow(
         'replication_generation_publication_failed'
       );
-      const commands = mocked.send.mock.calls.map(
-        ([command]) => command as { constructor: { name: string }; input: Record<string, unknown> }
-      );
+      const commands = mocked.send.mock.calls.map(([command]) => command);
       expect(
         commands.filter((command) => command.constructor.name === 'PutObjectCommand')
       ).toHaveLength(2);

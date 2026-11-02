@@ -144,7 +144,7 @@ describe('admin-rbac schema alignment', () => {
       '_WdnkLInMNDz8yJNZUlzA'
     );
     expect(mocked.resolveAccountDataContextFromHono.mock.invocationCallOrder[0]).toBeLessThan(
-      mocked.createPIIContextFromHono.mock.invocationCallOrder[0]!
+      mocked.createPIIContextFromHono.mock.invocationCallOrder[0]
     );
   });
 

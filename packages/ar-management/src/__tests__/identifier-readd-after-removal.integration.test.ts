@@ -399,13 +399,13 @@ describe('adding an identifier again after it was removed', () => {
     (lookup.binding as { withSession: unknown }).withSession = (constraint: string) => {
       const session = original(constraint);
       const prepare = session.prepare.bind(session);
-      session.prepare = ((sql: string) => {
+      session.prepare = (sql: string) => {
         if (!fired && sql.includes(fragment)) {
           fired = true;
           action();
         }
         return prepare(sql);
-      }) as typeof session.prepare;
+      };
       return session;
     };
     return () => fired;
@@ -730,7 +730,7 @@ describe('adding an identifier again after it was removed', () => {
         (lookup.binding as { withSession: unknown }).withSession = (constraint: string) => {
           const session = original(constraint);
           const prepare = session.prepare.bind(session);
-          session.prepare = ((sql: string) => {
+          session.prepare = (sql: string) => {
             if (!swapped && sql.includes('INSERT OR IGNORE INTO lookup_identifiers')) {
               swapped = true;
               lookupDatabase
@@ -738,7 +738,7 @@ describe('adding an identifier again after it was removed', () => {
                 .run();
             }
             return prepare(sql);
-          }) as typeof session.prepare;
+          };
           return session;
         };
         await expect(racing.publish(publication)).rejects.toThrow();

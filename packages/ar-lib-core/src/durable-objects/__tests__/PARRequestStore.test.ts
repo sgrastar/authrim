@@ -398,7 +398,7 @@ describe('PARRequestStore', () => {
 
       const responseText = await response.text();
       expect(response.status, responseText).toBe(400);
-      const body = JSON.parse(responseText) as any;
+      const body = JSON.parse(responseText);
       expect(body.error_description).toContain('PAR request');
     });
 

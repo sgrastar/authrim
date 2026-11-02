@@ -1029,9 +1029,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       default_resource?: string | null;
     }>();
 
-    const unsupportedLegacyField = findUnsupportedLegacyClientField(
-      body as Record<string, unknown>
-    );
+    const unsupportedLegacyField = findUnsupportedLegacyClientField(body);
     if (unsupportedLegacyField) {
       if (unsupportedLegacyField === 'app_suite') {
         return createCompatibilityErrorResponse('legacy_app_suite_not_supported', 400);
@@ -2004,8 +2002,8 @@ export async function adminClientGetHandler(c: Context<{ Bindings: Env }>) {
         ? parseClientStringArray(client.asc_allowed_transformed_claims, [])
         : null,
       web_origin_registry: webOriginRegistry,
-      created_at: toMilliseconds(client.created_at as number),
-      updated_at: toMilliseconds(client.updated_at as number),
+      created_at: toMilliseconds(client.created_at),
+      updated_at: toMilliseconds(client.updated_at),
     };
 
     return c.json({

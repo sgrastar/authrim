@@ -107,7 +107,7 @@ describe('Phase 1 Admin machine token provider', () => {
           JSON.stringify(privateJwk)
         ),
       },
-      fetcher: fetcher as typeof fetch,
+      fetcher: fetcher,
       nowMs: () => nowMs,
     });
 

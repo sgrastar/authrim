@@ -213,7 +213,7 @@ async function resolveSource(
     }
   );
   if (
-    logIcebergCanonicalJson(coreLogPublicationSource(env as Partial<Env>, route)) !==
+    logIcebergCanonicalJson(coreLogPublicationSource(env, route)) !==
     logIcebergCanonicalJson(source)
   )
     throw new Error('log_core_publication_source_changed');

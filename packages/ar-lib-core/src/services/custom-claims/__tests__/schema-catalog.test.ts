@@ -54,7 +54,7 @@ describe('schema-catalog', () => {
   });
 
   it('can include hidden required registration field schemas for submission validation', async () => {
-    await listRegistrationFieldSchemas(mockAdapter as any, 'tenant-1', {
+    await listRegistrationFieldSchemas(mockAdapter, 'tenant-1', {
       includeRequiredHidden: true,
     });
 
@@ -167,7 +167,7 @@ describe('schema-catalog', () => {
     mockAdapter.queryOne.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'existing-id' });
 
     const created = await seedCustomClaimSchemas({
-      db: mockAdapter as any,
+      db: mockAdapter,
       tenantId: 'tenant-1',
       schemas: [
         {
@@ -220,7 +220,7 @@ describe('schema-catalog', () => {
 
   it('seeds deterministic system schemas for each tenant', async () => {
     const created = await seedBuiltinProfileClaimSchemas({
-      db: mockAdapter as any,
+      db: mockAdapter,
       tenantId: 'tenant-1',
       now: 1700000000,
     });
@@ -244,7 +244,7 @@ describe('schema-catalog', () => {
     mockAdapter.getType.mockReturnValueOnce('postgres');
 
     await seedCustomClaimSchemas({
-      db: mockAdapter as any,
+      db: mockAdapter,
       tenantId: 'tenant-1',
       schemas: [BUILTIN_PROFILE_CLAIM_SCHEMAS[0]],
       idFactory: () => 'generated-id',

@@ -301,7 +301,7 @@ app.notFound((c) => {
 // Error handler
 app.onError((err, c) => {
   const log = getLogger(c).module('EXTERNAL-IDP');
-  log.error('External IdP Worker Error', { err: err.message }, err as Error);
+  log.error('External IdP Worker Error', { err: err.message }, err);
   return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
 });
 

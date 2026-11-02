@@ -671,7 +671,7 @@ export async function validateClientAssertion(
     } else if (client.jwks?.keys && client.jwks.keys.length > 0) {
       // Use embedded JWKS only if jwks_uri is not provided
       log.debug('Using embedded JWKS (no jwks_uri configured)');
-      jwksKeys = client.jwks.keys as JWK[];
+      jwksKeys = client.jwks.keys;
     }
 
     // Find key by kid (or use first key if no kid specified)

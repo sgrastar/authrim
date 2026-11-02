@@ -2354,7 +2354,7 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
   const timing = createAuthenticationMethodsDiagnosticTiming(c.req.raw);
 
   try {
-    const env = c.env as Env;
+    const env = c.env;
     const tenantId = getTenantIdFromContext(c);
     const requestedClientId = c.req.query('client_id')?.trim() || null;
     const forwardedHost = getRequestHost(c.req.raw);
@@ -2589,7 +2589,7 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
         putAuthenticationMethodsEdgeCache(
           c,
           edgeCache,
-          edgeCacheRequest as Request,
+          edgeCacheRequest,
           httpResponse.clone(),
           edgeCacheTTL
         )

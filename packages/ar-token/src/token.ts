@@ -2166,7 +2166,7 @@ async function handleAuthorizationCodeGrant(
     () =>
       resolveTokenClientAuthenticationPolicy(
         c,
-        clientMetadata as unknown as ClientMetadata,
+        clientMetadata,
         client_assertion,
         client_assertion_type,
         {
@@ -2185,7 +2185,7 @@ async function handleAuthorizationCodeGrant(
     const assertionValidation = await validateClientAssertion(
       client_assertion,
       `${getRequestIssuer(c)}/token`,
-      clientMetadata as unknown as ClientMetadata,
+      clientMetadata,
       {
         ...clientAuthenticationPolicy.assertionOptions,
         replayProtection: { env: c.env, tenantId: getTenantIdFromContext(c) },
@@ -2696,7 +2696,7 @@ async function handleAuthorizationCodeGrant(
     tenantId,
     userId: authCodeData.sub,
     scope: authCodeData.scope,
-    clientMetadata: clientMetadata as { minimum_ial?: IAL },
+    clientMetadata: clientMetadata,
     assuranceSettings: assurance.settings,
     clientId: client_id,
     refusal: { error: 'invalid_grant', status: 400 },
@@ -3873,7 +3873,7 @@ async function handleRefreshTokenGrant(
   }
 
   // Cast to ClientMetadata for type safety
-  const typedClient = clientMetadata as unknown as ClientMetadata;
+  const typedClient = clientMetadata;
   const dpopProof = extractDPoPProof(c.req.raw.headers);
   // A refresh token continues its family's grant: whether that met FAL3 is recorded on the family,
   // checked once it is read (below).
@@ -5118,7 +5118,7 @@ async function handleDeviceCodeGrant(
 
   if (isDeviceCodePublicClient(clientMetadata)) {
     const methodValidation = validateRegisteredClientAuthenticationMethod(
-      clientMetadata as unknown as ClientMetadata,
+      clientMetadata,
       clientAuth.credentials.presentation
     );
     if (!methodValidation.valid) {
@@ -5126,7 +5126,7 @@ async function handleDeviceCodeGrant(
     }
   } else {
     const authenticated = await authenticateConfidentialOAuthClient(
-      clientMetadata as unknown as ClientMetadata,
+      clientMetadata,
       `${getRequestIssuer(c)}/token`,
       clientAuth.credentials,
       { replayProtection: { env: c.env, tenantId: getTenantIdFromContext(c) } }
@@ -5263,10 +5263,7 @@ async function handleDeviceCodeGrant(
     fromPushedSignedRequest: false,
   });
   if ('error' in assurance) return assurance.error;
-  if (
-    (await isDPoPRequiredForTokenRequest(c, clientMetadata as unknown as ClientMetadata)) &&
-    !dpopProof
-  ) {
+  if ((await isDPoPRequiredForTokenRequest(c, clientMetadata)) && !dpopProof) {
     return oauthError(c, 'invalid_request', 'DPoP proof is required for this request', 400);
   }
 
@@ -5331,7 +5328,7 @@ async function handleDeviceCodeGrant(
     tenantId,
     userId: metadata.sub,
     scope: metadata.scope,
-    clientMetadata: clientMetadata as { minimum_ial?: IAL },
+    clientMetadata: clientMetadata,
     assuranceSettings: assurance.settings,
     clientId: client_id,
     refusal: { error: 'access_denied', status: 403 },
@@ -5766,7 +5763,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   }
 
   const clientAuthentication = await authenticateConfidentialOAuthClient(
-    clientMetadata as unknown as ClientMetadata,
+    clientMetadata,
     `${getRequestIssuer(c)}/token`,
     clientAuth.credentials,
     { replayProtection: { env: c.env, tenantId: getTenantIdFromContext(c) } }
@@ -5778,10 +5775,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
 
   let mtlsThumbprint: string | undefined;
   if (clientMetadata.tls_client_certificate_bound_access_tokens === true) {
-    const certificateBinding = await validateClientCertificateBinding(
-      c.req.raw,
-      clientMetadata as unknown as ClientMetadata
-    );
+    const certificateBinding = await validateClientCertificateBinding(c.req.raw, clientMetadata);
     if (!certificateBinding.valid || !certificateBinding.thumbprint) {
       log.warn('CIBA client certificate binding failed', {
         reason: certificateBinding.error ?? 'missing_thumbprint',
@@ -5936,7 +5930,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   if ('error' in assurance) return assurance.error;
   if (
     clientMetadata.tls_client_certificate_bound_access_tokens !== true &&
-    (await isDPoPRequiredForTokenRequest(c, clientMetadata as unknown as ClientMetadata)) &&
+    (await isDPoPRequiredForTokenRequest(c, clientMetadata)) &&
     !dpopProof
   ) {
     return oauthError(c, 'invalid_request', 'DPoP proof is required for this request', 400);
@@ -6004,7 +5998,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     tenantId,
     userId: metadata.sub,
     scope: metadata.scope,
-    clientMetadata: clientMetadata as { minimum_ial?: IAL },
+    clientMetadata: clientMetadata,
     assuranceSettings: assurance.settings,
     clientId: client_id,
     refusal: { error: 'access_denied', status: 400 },
@@ -6762,7 +6756,7 @@ async function handleTokenExchangeGrant(
   }
 
   // Cast to ClientMetadata for type safety
-  const typedClient = clientMetadata as unknown as ClientMetadata;
+  const typedClient = clientMetadata;
   const dpopProof = extractDPoPProof(c.req.raw.headers);
   const assurance = await tokenAssurance(c, getTenantIdFromContext(c), {
     hasDpopProof: Boolean(dpopProof),
@@ -7048,11 +7042,11 @@ async function handleTokenExchangeGrant(
 
     const externalAudiences = [client_id, ...(typedClient.allowed_subject_token_clients || [])];
     try {
-      subjectTokenPayload = (await verifyExternalIdJagSubjectToken({
+      subjectTokenPayload = await verifyExternalIdJagSubjectToken({
         token: subject_token,
         issuer: subjectIssuer,
         audiences: [...new Set(externalAudiences)],
-      })) as Record<string, unknown>;
+      });
       log.info('ID-JAG: Verified external IdP subject token', {
         subjectIssuer,
         subjectTokenKid,
@@ -7736,7 +7730,7 @@ async function handleTokenExchangeGrant(
     // Generate region-aware JTI for token revocation sharding
     const { jti: regionAwareJti } = await generateRegionAwareJti(c.env, getTenantIdFromContext(c));
     const result = await createAccessToken(
-      accessTokenClaims as Parameters<typeof createAccessToken>[0],
+      accessTokenClaims,
       privateKey,
       keyId,
       effectiveExpiresIn,
@@ -8500,7 +8494,7 @@ async function handleNativeSSOTokenExchange(
   try {
     const { jti: regionAwareJti } = await generateRegionAwareJti(c.env, getTenantIdFromContext(c));
     const result = await createAccessToken(
-      accessTokenClaims as Parameters<typeof createAccessToken>[0],
+      accessTokenClaims,
       privateKey,
       keyId,
       expiresIn,
@@ -8957,7 +8951,7 @@ async function handleClientCredentialsGrant(
   }
 
   // Cast to ClientMetadata for type safety
-  const typedClient = clientMetadata as unknown as ClientMetadata;
+  const typedClient = clientMetadata;
   const dpopProof = extractDPoPProof(c.req.raw.headers);
   if ((await isDPoPRequiredForTokenRequest(c, typedClient)) && !dpopProof) {
     return oauthError(c, 'invalid_request', 'DPoP proof is required for this request', 400);
@@ -9123,7 +9117,7 @@ async function handleClientCredentialsGrant(
     // Generate region-aware JTI for token revocation sharding
     const { jti: regionAwareJti } = await generateRegionAwareJti(c.env, getTenantIdFromContext(c));
     const result = await createAccessToken(
-      accessTokenClaims as Parameters<typeof createAccessToken>[0],
+      accessTokenClaims,
       privateKey,
       keyId,
       expiresIn,
@@ -9192,7 +9186,7 @@ async function handleAdminMachineClientCredentialsGrant(
 
   let assertionPayload: Record<string, unknown>;
   try {
-    assertionPayload = parseToken(clientAssertion) as Record<string, unknown>;
+    assertionPayload = parseToken(clientAssertion);
   } catch {
     return oauthError(c, 'invalid_client', 'Invalid client_assertion format', 401);
   }
@@ -9419,7 +9413,7 @@ async function handleAdminMachineClientCredentialsGrant(
       expiresIn = Math.min(expiresIn, remainingCredentialLifetimeSeconds);
     }
     const result = await createAccessToken(
-      accessTokenClaims as Parameters<typeof createAccessToken>[0],
+      accessTokenClaims,
       privateKey,
       keyId,
       expiresIn,

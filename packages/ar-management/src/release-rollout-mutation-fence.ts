@@ -171,7 +171,7 @@ async function isAuthorizedInitialSystemClientBootstrap(
   ) {
     return false;
   }
-  const redirectOrigin = new URL((body.redirect_uris as string[])[0]!).origin;
+  const redirectOrigin = new URL(body.redirect_uris[0]).origin;
   return isExactLoginUiOriginRegistry(body.web_origin_registry, redirectOrigin);
 }
 

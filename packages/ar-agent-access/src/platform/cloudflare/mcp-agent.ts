@@ -363,5 +363,5 @@ export function createCloudflareAgentAccessMcpAgent<Env extends Cloudflare.Env &
       return evaluateCloudflareAgentAccessMcpSession({ state: this.state, context, now });
     }
   }
-  return AgentAccessMcpAgent as unknown as CloudflareAgentAccessMcpAgentClass<Env>;
+  return AgentAccessMcpAgent;
 }

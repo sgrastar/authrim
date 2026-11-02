@@ -37,7 +37,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     // As the resolver does: the tenant's Core database for a tenant, DB_ADMIN without one.
     resolveAuthCorePersistenceAdapterFromEnv: vi.fn(
       async (env: Env, partition: string, options?: { tenantId?: string }) => {
-        if (!options?.tenantId) return actual.ensureDatabaseAdapter(env.DB_ADMIN!, partition);
+        if (!options?.tenantId) return actual.ensureDatabaseAdapter(env.DB_ADMIN, partition);
         mocks.beforeTenantResolve?.(partition);
         return mocks.core;
       }

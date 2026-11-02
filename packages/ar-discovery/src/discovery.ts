@@ -212,7 +212,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   // An explicit setting wins; the legacy flag (flag:ENABLE_FLOW_ENGINE or env) applies only
   // when the tenant and platform documents leave it unset (request-level cached).
   const flowEngineEnabled =
-    readSettingsFlag(tenantFlags as Record<string, unknown> | null, 'feature.enable_flow_engine') ??
+    readSettingsFlag(tenantFlags, 'feature.enable_flow_engine') ??
     (await getFeatureFlagCached(c, 'ENABLE_FLOW_ENGINE', c.env, false));
 
   // Load TenantProfile for profile-based grant_types filtering (request-level cached)

@@ -437,7 +437,7 @@ function buildElevationGrantSubjectClaims(
       target_audience: grant.target_audience,
       scope: grant.scope_json,
     },
-  } as Parameters<typeof createAccessToken>[0];
+  };
 }
 
 export async function createElevationGrantSubjectToken(input: {
@@ -685,7 +685,7 @@ export function resolveDownstreamGrantServiceDecisionFromAuthorizationHeader(
   }
 
   try {
-    return resolveDownstreamGrantServiceDecision(parseToken(token) as JwtLikePayload);
+    return resolveDownstreamGrantServiceDecision(parseToken(token));
   } catch {
     return null;
   }

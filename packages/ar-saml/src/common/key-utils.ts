@@ -217,7 +217,7 @@ export async function getKeyManagerSecret(
   const keyManagerId = env.KEY_MANAGER.idFromName(options.secretRef);
   const keyManager = env.KEY_MANAGER.get(keyManagerId);
 
-  return (await keyManager.getOrCreateSecretRpc(options.secretRef)) as KeyManagerSecret;
+  return await keyManager.getOrCreateSecretRpc(options.secretRef);
 }
 
 async function getOrPersistSigningCertificate(

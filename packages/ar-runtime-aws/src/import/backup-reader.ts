@@ -122,10 +122,10 @@ async function withPinnedFile<T>(
   if (!sameFile(pathStat, part.stat)) invalid();
   const file = await open(part.path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
-    if (!sameFile((await file.stat({ bigint: true })) as FileStat, part.stat)) invalid();
+    if (!sameFile(await file.stat({ bigint: true }), part.stat)) invalid();
     const result = await use(file);
     if (
-      !sameFile((await file.stat({ bigint: true })) as FileStat, part.stat) ||
+      !sameFile(await file.stat({ bigint: true }), part.stat) ||
       !sameFile(await noSymlink(part.path), part.stat)
     ) {
       invalid();
