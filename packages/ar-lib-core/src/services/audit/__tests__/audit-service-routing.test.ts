@@ -148,6 +148,29 @@ describe('AuditService canonical storage', () => {
     expect(env.PII_ENCRYPTION_KEY).toBeUndefined();
   });
 
+  it('derives PII retention from the event time even when the clock advances between reads', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_800_000_000_000);
+      // Advance the clock by 1 ms right after every Date.now() read. A second clock read
+      // (Date.now() or new Date()) then lands on a later millisecond, exactly like a real
+      // millisecond-boundary crossing, so expiry must be derived from the event time.
+      const readNow = Date.now.bind(Date);
+      vi.spyOn(Date, 'now').mockImplementation(() => {
+        const t = readNow();
+        vi.setSystemTime(t + 1);
+        return t;
+      });
+      const { service } = fixture('pipeline');
+      await service.logPIIChange('tenant-1', pii);
+      const input = vi.mocked(emitLogIcebergRow).mock.calls[0][1];
+      expect(input.expiresAt! - input.eventAt).toBe(365 * 86_400_000);
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    }
+  });
+
   it('rejects an invalid anonymous subject before emitting PII', async () => {
     mapping.current.mockResolvedValue('raw-user');
     await expect(fixture().service.logPIIChange('tenant-1', pii)).rejects.toThrow(
