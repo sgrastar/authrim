@@ -4,6 +4,7 @@ import {
 	NOT_ELIGIBLE,
 	WalletCredentialError,
 	httpWalletCredentials,
+	revokeErrorKey,
 	walletCredentialErrorKey
 } from './wallet-credentials';
 
@@ -114,5 +115,81 @@ describe('walletCredentialErrorKey', () => {
 			'keyring.error.generic'
 		);
 		expect(walletCredentialErrorKey(new Error('x'))).toBe('keyring.error.generic');
+	});
+});
+
+describe('listCredentials', () => {
+	it('GETs the list and returns the credentials', async () => {
+		const fetchMock = stubFetch(
+			json(200, {
+				items: [
+					{ id: 'c2', status: 'active', issuedAt: 2, expiresAt: 9, holderKeyThumbprint: 'abc' },
+					{ id: 'c1', status: 'revoked', issuedAt: 1, expiresAt: null }
+				]
+			})
+		);
+		await expect(httpWalletCredentials.listCredentials()).resolves.toEqual([
+			{ id: 'c2', status: 'active', issuedAt: 2, expiresAt: 9, holderKeyThumbprint: 'abc' },
+			{ id: 'c1', status: 'revoked', issuedAt: 1, expiresAt: null }
+		]);
+		expect((fetchMock.mock.calls[0] as unknown as [string])[0]).toBe(
+			'/api/admin/me/wallet-credentials'
+		);
+	});
+
+	it('rejects a malformed list or an unknown status', async () => {
+		stubFetch(json(200, { items: [{ id: 'c', status: 'weird', issuedAt: 1, expiresAt: null }] }));
+		await expect(httpWalletCredentials.listCredentials()).rejects.toMatchObject({
+			code: 'invalid_response'
+		});
+		stubFetch(json(200, {}));
+		await expect(httpWalletCredentials.listCredentials()).rejects.toMatchObject({
+			code: 'invalid_response'
+		});
+	});
+
+	it('keeps the API error code', async () => {
+		stubFetch(json(403, { error: 'wallet_credential_home_session_required' }));
+		await expect(httpWalletCredentials.listCredentials()).rejects.toMatchObject({
+			code: 'wallet_credential_home_session_required',
+			status: 403
+		});
+	});
+});
+
+describe('revokeCredential', () => {
+	it('POSTs to the revoke path of the encoded id', async () => {
+		const fetchMock = stubFetch(json(200, { id: 'c/1', status: 'revoked' }));
+		await expect(httpWalletCredentials.revokeCredential('c/1')).resolves.toBeUndefined();
+		const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+		expect(url).toBe('/api/admin/me/wallet-credentials/c%2F1/revoke');
+		expect(init.method).toBe('POST');
+	});
+
+	it('keeps the API error code, including the fresh sign-in refusal', async () => {
+		stubFetch(json(403, { error: FRESH_AUTH_REQUIRED }));
+		await expect(httpWalletCredentials.revokeCredential('c')).rejects.toMatchObject({
+			code: FRESH_AUTH_REQUIRED,
+			status: 403
+		});
+		stubFetch(json(404, { error: 'not_found' }));
+		await expect(httpWalletCredentials.revokeCredential('c')).rejects.toMatchObject({
+			status: 404
+		});
+	});
+});
+
+describe('revokeErrorKey', () => {
+	it('maps a fresh sign-in refusal, a concurrent change and anything else', () => {
+		expect(revokeErrorKey(new WalletCredentialError(FRESH_AUTH_REQUIRED, 403))).toBe(
+			'keyring.error.freshAuth'
+		);
+		expect(revokeErrorKey(new WalletCredentialError('wallet_credential_unavailable', 503))).toBe(
+			'keyring.credentials.error.busy'
+		);
+		expect(revokeErrorKey(new WalletCredentialError('not_found', 404))).toBe(
+			'keyring.error.generic'
+		);
+		expect(revokeErrorKey(new Error('x'))).toBe('keyring.error.generic');
 	});
 });

@@ -887,7 +887,7 @@ export const de = {
 	'keyring.confirm.check':
 		'Prüfen Sie, ob der in Keyring angezeigte Schlüssel-Bestätigungscode mit dem hier angezeigten Code übereinstimmt.',
 	'keyring.confirm.mismatch':
-		'Weichen die Codes ab oder hat Keyring keine Berechtigung erhalten, hat möglicherweise jemand anderes den QR-Code verwendet. Das Widerrufen einer Berechtigung folgt in einer späteren Version. Wenden Sie sich bis dahin an einen Administrator.',
+		'Weichen die Codes ab oder hat Keyring keine Berechtigung erhalten, hat möglicherweise jemand anderes den QR-Code verwendet. Widerrufen Sie die Berechtigung in der Liste unten und erstellen Sie dann einen neuen Code.',
 	'keyring.ended.failed': 'Ausstellung fehlgeschlagen',
 	'keyring.ended.failedBody':
 		'Die Berechtigung konnte nicht ausgestellt werden. Erstellen Sie einen neuen Code und versuchen Sie es erneut.',
@@ -907,5 +907,24 @@ export const de = {
 	'keyring.error.generic':
 		'Die Aktion konnte nicht abgeschlossen werden. Versuchen Sie es gleich noch einmal.',
 	'keyring.error.polling':
-		'Der Status konnte nicht geprüft werden. Erstellen Sie einen neuen Code und versuchen Sie es erneut.'
+		'Der Status konnte nicht geprüft werden. Erstellen Sie einen neuen Code und versuchen Sie es erneut.',
+	'keyring.credentials.title': 'Ihre Berechtigungen',
+	'keyring.credentials.desc':
+		'Für Authrim Keyring an Sie ausgestellte Berechtigungen. Widerrufen Sie eine Berechtigung, die Sie nicht mehr nutzen oder nicht kennen.',
+	'keyring.credentials.empty': 'Es wurde noch keine Berechtigung ausgestellt.',
+	'keyring.credentials.loadFailed': 'Die Berechtigungen konnten nicht geladen werden.',
+	'keyring.credentials.noCode': 'Kein Schlüsselcode',
+	'keyring.credentials.status.active': 'Aktiv',
+	'keyring.credentials.status.suspended': 'Ausgesetzt',
+	'keyring.credentials.status.revoked': 'Widerrufen',
+	'keyring.credentials.issued': 'Ausgestellt',
+	'keyring.credentials.expires': 'Läuft ab',
+	'keyring.credentials.noExpiry': 'Nicht festgelegt',
+	'keyring.credentials.revoke': 'Widerrufen',
+	'keyring.credentials.revokeTitle': 'Berechtigung {code} widerrufen?',
+	'keyring.credentials.revokeBody':
+		'Die Berechtigung funktioniert sofort nicht mehr und kann nicht wiederhergestellt werden. Um Keyring wieder zu nutzen, müssen Sie eine neue Berechtigung hinzufügen.',
+	'keyring.credentials.revoked': 'Berechtigung widerrufen.',
+	'keyring.credentials.error.busy':
+		'Die Berechtigung wird gerade durch eine andere Anfrage geändert. Versuchen Sie es gleich noch einmal.'
 } satisfies Messages;

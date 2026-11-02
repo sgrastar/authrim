@@ -9,6 +9,16 @@
 import { jwtVerify, importJWK } from 'jose';
 import type { JWK, JWTPayload } from 'jose';
 import { readResponseTextWithLimit, safeFetch, safeFetchJson } from '../utils/url-security';
+import {
+  IETF_TSL_FORMAT,
+  W3C_BITSTRING_FORMAT,
+  bitOrderForFormat,
+  decodeStatusListBytes,
+  isValidStatusBits,
+  readStatusEntry,
+  type StatusListBitOrder,
+  type StatusListFormat,
+} from './status-list-codec';
 
 /**
  * Decode base64url to string
@@ -71,11 +81,31 @@ export type StatusListKeyResolver = (issuerUri: string, kid?: string) => Promise
 const statusListCache = new Map<
   string,
   {
-    bitstring: Uint8Array;
+    list: DecodedStatusList;
     fetchedAt: number;
     ttl: number;
+    signatureVerified: boolean;
   }
 >();
+
+/**
+ * A decoded status list with what the token declared about itself. Cache entries keep all of it so
+ * every hit can be checked against what the credential expects.
+ */
+export interface DecodedStatusList {
+  bitstring: Uint8Array;
+  /** Bits per entry (1 for W3C lists) */
+  bits: number;
+  format: StatusListFormat;
+  /** Verified `iss` of a Token Status List */
+  issuer?: string;
+  /** `sub` of a Token Status List (must equal the referenced URI) */
+  subject?: string;
+  /** Token expiry, epoch ms */
+  expiresAtMs?: number;
+  /** Token `ttl` (how often to re-fetch), ms */
+  ttlMs?: number;
+}
 
 /**
  * Cache for issuer JWKS
@@ -182,6 +212,16 @@ export interface StatusListFetchOptions {
    * If not provided, the default resolver will fetch JWKS from the issuer
    */
   keyResolver?: StatusListKeyResolver;
+  /**
+   * Format the credential's signed status claim declares (default: W3C Bitstring). Token Status
+   * Lists are read only when the credential says so; there is no fallback between formats.
+   */
+  format?: StatusListFormat;
+  /**
+   * Issuer the credential declares. A Token Status List's verified `iss` must equal it; checked
+   * again on every cache hit.
+   */
+  expectedIssuer?: string;
 }
 
 /**
@@ -196,25 +236,70 @@ export async function fetchStatusList(
   statusListUri: string,
   options: StatusListFetchOptions = {}
 ): Promise<Uint8Array> {
+  return (await fetchDecodedStatusList(statusListUri, options)).bitstring;
+}
+
+/** Cached lists are only reused for the same format and only while their own expiry allows. */
+function statusListCacheKey(format: StatusListFormat, uri: string): string {
+  return `${format}\n${uri}`;
+}
+
+/**
+ * Check a decoded list against what the credential expects. Run on fresh fetches and on every
+ * cache hit so a cached list can never answer for a different issuer, subject or format.
+ */
+function assertStatusListExpectations(
+  list: DecodedStatusList,
+  uri: string,
+  format: StatusListFormat,
+  expectedIssuer: string | undefined,
+  now: number
+): void {
+  if (list.format !== format) throw new Error('Status list format mismatch');
+  if (format === IETF_TSL_FORMAT && list.subject !== uri) {
+    throw new Error('Status list subject does not match its URI');
+  }
+  // Both formats: the verified issuer and the token expiry are rechecked on every cache hit.
+  if (expectedIssuer !== undefined && list.issuer !== expectedIssuer) {
+    throw new Error('Status list issuer does not match the credential issuer');
+  }
+  if (list.expiresAtMs !== undefined && list.expiresAtMs <= now) {
+    throw new Error('Status list token has expired');
+  }
+}
+
+/**
+ * Fetch, verify and decode a status list, keeping the bits per entry and the token's claims.
+ */
+export async function fetchDecodedStatusList(
+  statusListUri: string,
+  options: StatusListFetchOptions = {}
+): Promise<DecodedStatusList> {
   const {
     cacheTtlMs = DEFAULT_CACHE_TTL_MS,
     forceRefresh = false,
     verifySignature = true,
     keyResolver,
+    format = W3C_BITSTRING_FORMAT,
+    expectedIssuer,
   } = options;
 
   // Run periodic cache cleanup to prevent memory leaks
   cleanupExpiredCaches();
 
-  // Check cache
-  const cached = statusListCache.get(statusListUri);
+  const cacheKey = statusListCacheKey(format, statusListUri);
+  const cached = statusListCache.get(cacheKey);
   if (cached && !forceRefresh) {
-    const age = Date.now() - cached.fetchedAt;
-    if (age < cached.ttl) {
-      return cached.bitstring;
+    const now = Date.now();
+    const expired =
+      now - cached.fetchedAt >= cached.ttl ||
+      (cached.list.expiresAtMs !== undefined && cached.list.expiresAtMs <= now);
+    // An unverified entry never answers a request that requires a verified signature.
+    if (!expired && (cached.signatureVerified || !verifySignature)) {
+      assertStatusListExpectations(cached.list, statusListUri, format, expectedIssuer, now);
+      return cached.list;
     }
-    // Delete expired entry immediately
-    statusListCache.delete(statusListUri);
+    statusListCache.delete(cacheKey);
   }
 
   // Fetch status list with SSRF protection, timeout, and response size limits
@@ -232,28 +317,37 @@ export async function fetchStatusList(
   }
 
   const contentType = response.headers.get('content-type') || '';
+  let list: DecodedStatusList;
 
-  let bitstring: Uint8Array;
-
-  if (
+  if (format === IETF_TSL_FORMAT) {
+    // The content type is not evidence of anything: the token's own checks decide.
+    const jwt = await readResponseTextWithLimit(response, 2 * 1024 * 1024);
+    list = await parseTokenStatusListJWT(jwt, statusListUri, {
+      verifySignature,
+      keyResolver,
+      expectedIssuer,
+    });
+  } else if (
     contentType.includes('application/statuslist+jwt') ||
     contentType.includes('application/jwt')
   ) {
     // Parse as JWT with signature verification
     const jwt = await readResponseTextWithLimit(response, 2 * 1024 * 1024);
-    bitstring = await parseStatusListJWT(jwt, { verifySignature, keyResolver });
+    list = await parseStatusListJWT(jwt, { verifySignature, keyResolver });
   } else if (contentType.includes('application/json')) {
-    // Parse as JSON-LD credential (no JWT signature to verify)
+    // A JSON-LD credential carries no signature this reader can verify.
+    if (verifySignature) throw new Error('Unsigned status list cannot be verified');
     const credential = JSON.parse(
       await readResponseTextWithLimit(response, 2 * 1024 * 1024)
     ) as StatusListCredential;
-    bitstring = await decodeStatusList(credential.credentialSubject.encodedList);
+    list = await decodeLegacyList(credential.credentialSubject.encodedList);
   } else {
     // Try to parse as JWT first, then JSON
     const text = await readResponseTextWithLimit(response, 2 * 1024 * 1024);
     if (text.split('.').length === 3) {
-      bitstring = await parseStatusListJWT(text, { verifySignature, keyResolver });
+      list = await parseStatusListJWT(text, { verifySignature, keyResolver });
     } else {
+      if (verifySignature) throw new Error('Unsigned status list cannot be verified');
       // SECURITY: Handle JSON parse errors consistently with explicit error message
       let credential: StatusListCredential;
       try {
@@ -269,18 +363,27 @@ export async function fetchStatusList(
         throw new Error('Invalid Status List credential: missing credentialSubject.encodedList');
       }
 
-      bitstring = await decodeStatusList(credential.credentialSubject.encodedList);
+      list = await decodeLegacyList(credential.credentialSubject.encodedList);
     }
   }
 
-  // Cache the result
-  statusListCache.set(statusListUri, {
-    bitstring,
-    fetchedAt: Date.now(),
-    ttl: cacheTtlMs,
-  });
+  const now = Date.now();
+  assertStatusListExpectations(list, statusListUri, format, expectedIssuer, now);
 
-  return bitstring;
+  // Cache for min(configured TTL, token ttl, time to token expiry)
+  let ttl = cacheTtlMs;
+  if (list.ttlMs !== undefined) ttl = Math.min(ttl, list.ttlMs);
+  if (list.expiresAtMs !== undefined) ttl = Math.min(ttl, list.expiresAtMs - now);
+  if (ttl > 0) {
+    statusListCache.set(cacheKey, {
+      list,
+      fetchedAt: now,
+      ttl,
+      signatureVerified: verifySignature,
+    });
+  }
+
+  return list;
 }
 
 /**
@@ -290,8 +393,10 @@ interface StatusListJWTPayload extends JWTPayload {
   /** New format (draft-ietf-oauth-status-list) */
   status_list?: {
     bits: number;
-    lst: string; // Base64url encoded GZIP compressed bitstring
+    lst: string; // Base64url encoded compressed bitstring
   };
+  /** Token Status List refresh hint, seconds */
+  ttl?: unknown;
   /** Legacy VC format */
   sub?: string;
   vc?: StatusListCredential;
@@ -305,39 +410,59 @@ interface ParseStatusListJWTOptions {
   keyResolver?: StatusListKeyResolver;
 }
 
+function parseJwtParts(jwt: string): {
+  header: { alg: string; kid?: string; typ?: string };
+  payload: StatusListJWTPayload;
+} {
+  const parts = jwt.split('.');
+  if (parts.length !== 3) {
+    throw new Error('Invalid Status List JWT format');
+  }
+  return {
+    header: JSON.parse(decodeBase64UrlString(parts[0])) as {
+      alg: string;
+      kid?: string;
+      typ?: string;
+    },
+    payload: JSON.parse(decodeBase64UrlString(parts[1])) as StatusListJWTPayload,
+  };
+}
+
+/** Decode a W3C-format list (gzip, MSB-first, one bit per entry). */
+async function decodeLegacyList(
+  encoded: string,
+  claims: { issuer?: string; expiresAtMs?: number } = {}
+): Promise<DecodedStatusList> {
+  return {
+    bitstring: await decodeStatusListBytes(encoded, W3C_BITSTRING_FORMAT),
+    bits: 1,
+    format: W3C_BITSTRING_FORMAT,
+    ...(claims.issuer !== undefined ? { issuer: claims.issuer } : {}),
+    ...(claims.expiresAtMs !== undefined ? { expiresAtMs: claims.expiresAtMs } : {}),
+  };
+}
+
 /**
- * Parse a Status List JWT and extract the bitstring
+ * Parse a W3C-format Status List JWT and extract the bitstring
  *
  * SECURITY: By default, this function verifies the JWT signature.
  * Signature verification ensures the status list hasn't been tampered with.
  *
  * @param jwt - The Status List JWT to parse
  * @param options - Parsing options
- * @returns Decoded bitstring
+ * @returns Decoded list
  * @throws Error if signature verification fails or format is invalid
  */
 async function parseStatusListJWT(
   jwt: string,
   options: ParseStatusListJWTOptions = {}
-): Promise<Uint8Array> {
+): Promise<DecodedStatusList> {
   const { verifySignature = true, keyResolver } = options;
+  const { header, payload } = parseJwtParts(jwt);
 
-  const parts = jwt.split('.');
-  if (parts.length !== 3) {
-    throw new Error('Invalid Status List JWT format');
-  }
-
-  // Parse header to get kid and alg
-  const headerStr = decodeBase64UrlString(parts[0]);
-  const header = JSON.parse(headerStr) as { alg: string; kid?: string };
-
-  // Parse payload to get issuer
-  const payloadStr = decodeBase64UrlString(parts[1]);
-  const payload = JSON.parse(payloadStr) as StatusListJWTPayload;
-
+  const issuer = payload.iss || payload.sub;
   // Verify signature if required
   if (verifySignature) {
-    const issuer = payload.iss || payload.sub;
     if (!issuer) {
       throw new Error('Status List JWT missing issuer (iss or sub claim)');
     }
@@ -345,17 +470,90 @@ async function parseStatusListJWT(
     await verifyStatusListJWTSignature(jwt, issuer, header.kid, header.alg, keyResolver);
   }
 
-  // New format (draft-ietf-oauth-status-list)
-  if (payload.status_list?.lst) {
-    return await decodeStatusList(payload.status_list.lst);
+  // A credential that declared a W3C status never accepts a Token Status List payload: the two
+  // use different compression and bit order, and must not be read with each other's decoder.
+  if (payload.status_list !== undefined) {
+    throw new Error('Status list format mismatch');
   }
 
-  // Legacy VC format
   if (payload.vc?.credentialSubject?.encodedList) {
-    return await decodeStatusList(payload.vc.credentialSubject.encodedList);
+    return decodeLegacyList(payload.vc.credentialSubject.encodedList, {
+      // Only claims that the verified signature covers are kept for later cache checks.
+      ...(verifySignature && typeof issuer === 'string' ? { issuer } : {}),
+      ...(typeof payload.exp === 'number' ? { expiresAtMs: payload.exp * 1000 } : {}),
+    });
   }
 
   throw new Error('Invalid Status List JWT: no encoded list found');
+}
+
+/**
+ * Parse a Token Status List token (draft-14): `statuslist+jwt` header type, `sub` equal to the
+ * referenced URI, `iat` and `status_list` present with the right types, a positive `ttl` when
+ * present, `bits` in {1, 2, 4, 8}, and a zlib/LSB-first list.
+ */
+async function parseTokenStatusListJWT(
+  jwt: string,
+  statusListUri: string,
+  options: ParseStatusListJWTOptions & { expectedIssuer?: string }
+): Promise<DecodedStatusList> {
+  const { verifySignature = true, keyResolver, expectedIssuer } = options;
+  const { header, payload } = parseJwtParts(jwt);
+
+  if (header.typ !== 'statuslist+jwt') throw new Error('Status List token type mismatch');
+  if (typeof header.alg !== 'string' || header.alg === 'none') {
+    throw new Error('Status List token algorithm is not allowed');
+  }
+  if (typeof payload.sub !== 'string' || payload.sub !== statusListUri) {
+    throw new Error('Status List token subject does not match its URI');
+  }
+  if (typeof payload.iat !== 'number' || !Number.isFinite(payload.iat)) {
+    throw new Error('Status List token iat is missing');
+  }
+  if (
+    payload.exp !== undefined &&
+    (typeof payload.exp !== 'number' || !Number.isFinite(payload.exp))
+  ) {
+    throw new Error('Status List token exp is malformed');
+  }
+  if (typeof payload.exp === 'number' && payload.exp * 1000 <= Date.now()) {
+    throw new Error('Status List token has expired');
+  }
+  if (
+    payload.ttl !== undefined &&
+    (typeof payload.ttl !== 'number' || !Number.isFinite(payload.ttl) || payload.ttl <= 0)
+  ) {
+    throw new Error('Status List token ttl is malformed');
+  }
+  const statusList = payload.status_list;
+  if (
+    !statusList ||
+    typeof statusList !== 'object' ||
+    typeof statusList.lst !== 'string' ||
+    !isValidStatusBits(statusList.bits)
+  ) {
+    throw new Error('Status List token status_list is malformed');
+  }
+  if (typeof payload.iss !== 'string' || payload.iss.length === 0) {
+    throw new Error('Status List token missing issuer');
+  }
+  if (expectedIssuer !== undefined && payload.iss !== expectedIssuer) {
+    throw new Error('Status List token issuer does not match the credential issuer');
+  }
+
+  if (verifySignature) {
+    await verifyStatusListJWTSignature(jwt, payload.iss, header.kid, header.alg, keyResolver);
+  }
+
+  return {
+    bitstring: await decodeStatusListBytes(statusList.lst, IETF_TSL_FORMAT),
+    bits: statusList.bits,
+    format: IETF_TSL_FORMAT,
+    issuer: payload.iss,
+    subject: payload.sub,
+    expiresAtMs: typeof payload.exp === 'number' ? payload.exp * 1000 : undefined,
+    ttlMs: typeof payload.ttl === 'number' ? payload.ttl * 1000 : undefined,
+  };
 }
 
 /**
@@ -491,109 +689,34 @@ function findKeyInJWKS(keys: JWK[], kid: string | undefined, alg: string): JWK {
 }
 
 /**
- * Decode a base64url encoded, optionally GZIP compressed bitstring
- */
-async function decodeStatusList(encodedList: string): Promise<Uint8Array> {
-  // Decode base64url
-  const decoded = Uint8Array.from(atob(encodedList.replace(/-/g, '+').replace(/_/g, '/')), (c) =>
-    c.charCodeAt(0)
-  );
-
-  // Check for GZIP magic bytes (0x1f 0x8b)
-  if (decoded.length >= 2 && decoded[0] === 0x1f && decoded[1] === 0x8b) {
-    // Decompress GZIP
-    try {
-      const ds = new DecompressionStream('gzip');
-      const writer = ds.writable.getWriter();
-      const reader = ds.readable.getReader();
-
-      // Write data and close
-      await writer.write(decoded);
-      await writer.close();
-
-      const chunks: Uint8Array[] = [];
-      let done = false;
-
-      while (!done) {
-        const result = await reader.read();
-        if (result.value) {
-          chunks.push(result.value);
-        }
-        done = result.done;
-      }
-
-      // Concatenate chunks
-      const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-      const bitstring = new Uint8Array(totalLength);
-      let offset = 0;
-      for (const chunk of chunks) {
-        bitstring.set(chunk, offset);
-        offset += chunk.length;
-      }
-
-      return bitstring;
-    } catch {
-      // If GZIP decompression fails, return as-is
-      return decoded;
-    }
-  }
-
-  // Not GZIP compressed, return as-is
-  return decoded;
-}
-
-/**
  * Get the status value at a specific index in the bitstring
  *
  * @param bitstring The decoded bitstring
  * @param index The index to check
  * @param bitsPerStatus Number of bits per status (default: 1)
+ * @param bitOrder Entry order inside a byte: 'msb' for W3C lists (default), 'lsb' for Token
+ *   Status Lists
  * @returns The status value at the index
  */
 export function getStatusAtIndex(
   bitstring: Uint8Array,
   index: number,
-  bitsPerStatus: number = 1
+  bitsPerStatus: number = 1,
+  bitOrder: StatusListBitOrder = 'msb'
 ): number {
-  // SECURITY: Validate index is a non-negative integer
-  if (!Number.isInteger(index) || index < 0) {
-    throw new Error(`Index must be a non-negative integer, got: ${index}`);
-  }
-
-  if (bitsPerStatus !== 1 && bitsPerStatus !== 2 && bitsPerStatus !== 4 && bitsPerStatus !== 8) {
-    throw new Error('bitsPerStatus must be 1, 2, 4, or 8');
-  }
-
-  const statusesPerByte = 8 / bitsPerStatus;
-  const byteIndex = Math.floor(index / statusesPerByte);
-
-  if (byteIndex >= bitstring.length) {
-    throw new Error(
-      `Index ${index} out of bounds (max: ${bitstring.length * statusesPerByte - 1})`
-    );
-  }
-
-  const positionInByte = index % statusesPerByte;
-  const byte = bitstring[byteIndex];
-
-  // Extract the bits for this status
-  // Bits are stored from most significant to least significant
-  const shift = (statusesPerByte - 1 - positionInByte) * bitsPerStatus;
-  const mask = (1 << bitsPerStatus) - 1;
-
-  return (byte >> shift) & mask;
+  return readStatusEntry(bitstring, index, bitsPerStatus, bitOrder);
 }
 
 /**
  * Options for checking credential status
  */
 export interface CheckStatusOptions extends StatusListFetchOptions {
-  /** Bits per status value (default: 1) */
+  /** Bits per status value; defaults to what the status list declares (1 for W3C lists) */
   bitsPerStatus?: number;
 }
 
 /**
- * Check if a credential is valid (not revoked/suspended)
+ * Read the status value of a credential from its status list.
  *
  * SECURITY: By default, this function verifies the Status List JWT signature.
  * This ensures the status list hasn't been tampered with (MITM protection).
@@ -601,14 +724,14 @@ export interface CheckStatusOptions extends StatusListFetchOptions {
  * @param statusListUri URI to the status list
  * @param index Index in the status list
  * @param options Fetch and verification options
- * @returns true if valid, false if revoked/suspended
- * @throws Error if status list fetch or signature verification fails
+ * @returns The status value (0 = valid; any other value is not usable)
+ * @throws Error if the status list can't be fetched or validated, or the index is out of range
  */
-export async function checkCredentialStatus(
+export async function getCredentialStatusValue(
   statusListUri: string,
   index: number,
   options: CheckStatusOptions = {}
-): Promise<boolean> {
+): Promise<number> {
   // SECURITY: Validate index early before expensive fetch operation
   // This prevents DoS via malformed index values
   if (!Number.isInteger(index) || index < 0) {
@@ -623,13 +746,34 @@ export async function checkCredentialStatus(
     );
   }
 
-  const { bitsPerStatus = 1, ...fetchOptions } = options;
+  const { bitsPerStatus, ...fetchOptions } = options;
 
-  const bitstring = await fetchStatusList(statusListUri, fetchOptions);
-  const status = getStatusAtIndex(bitstring, index, bitsPerStatus);
+  const list = await fetchDecodedStatusList(statusListUri, fetchOptions);
+  return getStatusAtIndex(
+    list.bitstring,
+    index,
+    bitsPerStatus ?? list.bits,
+    bitOrderForFormat(list.format)
+  );
+}
 
-  // Status 0 = valid, any other value = invalid
-  return status === StatusValue.VALID;
+/**
+ * Check if a credential is valid (not revoked/suspended)
+ *
+ * @returns true if valid (status 0), false for any other status or an index outside the list
+ * @throws Error if status list fetch or signature verification fails
+ */
+export async function checkCredentialStatus(
+  statusListUri: string,
+  index: number,
+  options: CheckStatusOptions = {}
+): Promise<boolean> {
+  try {
+    return (await getCredentialStatusValue(statusListUri, index, options)) === StatusValue.VALID;
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('out of bounds')) return false;
+    throw error;
+  }
 }
 
 /**

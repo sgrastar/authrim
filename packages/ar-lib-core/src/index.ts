@@ -413,6 +413,9 @@ export * from './vc/haip-policy';
 export * from './vc/sd-jwt-vc';
 export * from './vc/status-list';
 export * from './vc/status-list-manager';
+export * from './vc/status-list-codec';
+export * from './vc/credential-status-transition';
+export * from './vc/credential-status-reservation';
 
 // Services
 export * from './services/rule-evaluator';

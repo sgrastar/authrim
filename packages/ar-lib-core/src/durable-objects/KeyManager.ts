@@ -383,6 +383,73 @@ export const SAML_DR_KEY_MANAGER_SURFACE = {
   readonly: ['exportTenantBackupStateRpc', 'verifyTenantBackupStateRpc', 'getExistingSecretRpc'],
 } as const;
 
+const TOKEN_STATUS_LIST_CLAIMS = new Set(['iss', 'sub', 'iat', 'exp', 'ttl', 'status_list']);
+const MAX_STATUS_LIST_TTL_SECONDS = 86400;
+
+function sameHttpsOrigin(a: string, b: string): boolean {
+  try {
+    const left = new URL(a);
+    const right = new URL(b);
+    return (
+      left.protocol === 'https:' && right.protocol === 'https:' && left.origin === right.origin
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Token Status List (draft-14): https issuer, `sub` the list URI on the issuer's origin */
+function isValidTokenStatusListPayload(payload: JWTPayload, now: number): boolean {
+  const statusList = payload.status_list as { bits?: unknown; lst?: unknown } | undefined;
+  return (
+    Object.keys(payload).every((claim) => TOKEN_STATUS_LIST_CLAIMS.has(claim)) &&
+    typeof payload.iss === 'string' &&
+    typeof payload.sub === 'string' &&
+    sameHttpsOrigin(payload.iss, payload.sub) &&
+    typeof payload.iat === 'number' &&
+    payload.iat <= now + 60 &&
+    payload.iat >= now - 600 &&
+    typeof payload.exp === 'number' &&
+    payload.exp > now &&
+    payload.exp <= now + 86400 &&
+    typeof payload.ttl === 'number' &&
+    Number.isInteger(payload.ttl) &&
+    payload.ttl > 0 &&
+    payload.ttl <= MAX_STATUS_LIST_TTL_SECONDS &&
+    typeof statusList === 'object' &&
+    statusList !== null &&
+    [1, 2, 4, 8].includes(statusList.bits as number) &&
+    typeof statusList.lst === 'string'
+  );
+}
+
+/** Legacy Bitstring Status List JWT (did:web issuer, `vc` credential) */
+function isValidLegacyStatusListPayload(payload: JWTPayload, now: number): boolean {
+  const vc = payload.vc as
+    | {
+        type?: unknown;
+        credentialSubject?: { type?: unknown; statusPurpose?: unknown; encodedList?: unknown };
+      }
+    | undefined;
+  const subject = vc?.credentialSubject;
+  return (
+    typeof payload.iss === 'string' &&
+    payload.iss.startsWith('did:web:') &&
+    typeof payload.sub === 'string' &&
+    payload.sub.startsWith('https://') &&
+    typeof payload.iat === 'number' &&
+    Math.abs(payload.iat - now) <= 300 &&
+    typeof payload.exp === 'number' &&
+    payload.exp > now &&
+    payload.exp <= now + 86400 &&
+    Array.isArray(vc?.type) &&
+    vc.type.includes('BitstringStatusListCredential') &&
+    subject?.type === 'BitstringStatusList' &&
+    ['revocation', 'suspension'].includes(String(subject.statusPurpose)) &&
+    typeof subject.encodedList === 'string'
+  );
+}
+
 export class KeyManager extends DurableObject<Env> {
   private keyManagerState: KeyManagerState | null = null;
   private ecKeyManagerState: ECKeyManagerState | null = null;
@@ -1034,40 +1101,23 @@ export class KeyManager extends DurableObject<Env> {
     });
   }
 
-  /** Sign the fixed Bitstring Status List JWT contract without exporting key material. */
+  /**
+   * Sign a status list token without exporting key material. Two fixed shapes are accepted:
+   * the Token Status List (https `iss`, `sub` the list URI on the same origin, `ttl`,
+   * `status_list: { bits, lst }`) and the legacy Bitstring Status List JWT (did:web `iss`, `vc`).
+   */
   async signStatusListCredentialRpc(payload: JWTPayload): Promise<SignStatusListCredentialResult> {
     return runSamlDrCoveredOperation(this.env, undefined, async () => {
       await this.#initializeState();
       const now = Math.floor(Date.now() / 1000);
-      const vc = payload.vc as
-        | {
-            type?: unknown;
-            credentialSubject?: {
-              type?: unknown;
-              statusPurpose?: unknown;
-              encodedList?: unknown;
-            };
-          }
-        | undefined;
-      const subject = vc?.credentialSubject;
       const encodedPayload = JSON.stringify(payload);
-      if (
-        typeof payload.iss !== 'string' ||
-        !payload.iss.startsWith('did:web:') ||
-        typeof payload.sub !== 'string' ||
-        !payload.sub.startsWith('https://') ||
-        typeof payload.iat !== 'number' ||
-        Math.abs(payload.iat - now) > 300 ||
-        typeof payload.exp !== 'number' ||
-        payload.exp <= now ||
-        payload.exp > now + 86400 ||
-        !Array.isArray(vc?.type) ||
-        !vc.type.includes('BitstringStatusListCredential') ||
-        subject?.type !== 'BitstringStatusList' ||
-        !['revocation', 'suspension'].includes(String(subject.statusPurpose)) ||
-        typeof subject.encodedList !== 'string' ||
-        encodedPayload.length > 4 * 1024 * 1024
-      ) {
+      if (encodedPayload.length > 4 * 1024 * 1024)
+        throw new Error('invalid_status_list_signing_input');
+      const valid =
+        'status_list' in payload
+          ? isValidTokenStatusListPayload(payload, now)
+          : isValidLegacyStatusListPayload(payload, now);
+      if (!valid) {
         throw new Error('invalid_status_list_signing_input');
       }
       const activeKey = await this.getActiveECKey('ES256');

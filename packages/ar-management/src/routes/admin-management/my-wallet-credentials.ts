@@ -7,6 +7,8 @@
  * Endpoints:
  * - POST /api/admin/me/wallet-credentials/offers          - Create an offer (fresh authentication)
  * - GET  /api/admin/me/wallet-credentials/offers/:offerId - Offer progress for the console
+ * - GET  /api/admin/me/wallet-credentials                 - The caller's own admin credentials
+ * - POST /api/admin/me/wallet-credentials/:credentialId/revoke - Revoke one (fresh authentication)
  */
 
 import { Hono } from 'hono';
@@ -14,6 +16,7 @@ import type { Context } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 import {
   adminAuthMiddleware,
+  createAuthContextFromHono,
   evaluateAdminCredentialEligibility,
   getRateLimitProfileAsync,
   getTenantIdFromContext,
@@ -24,6 +27,11 @@ import {
 import { writeAdminAuditLog } from '../../admin-shared';
 import { isFreshAdminHuman } from '../../agent-fresh-auth';
 import { getCanonicalTenantBaseUrlAsync } from '../../request-issuer';
+import {
+  isOwnAdminCredential,
+  listOwnAdminCredentials,
+  revokeAdminCredential,
+} from './admin-wallet-credential-store';
 
 type WalletContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
 
@@ -32,6 +40,7 @@ interface SessionRow {
   derived_target_tenant_id: string | null;
 }
 
+const CREDENTIAL_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
 const OFFER_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
 
 export const myWalletCredentialsRouter = new Hono<{
@@ -180,3 +189,80 @@ myWalletCredentialsRouter.get('/offers/:offerId', async (c) => {
   c.header('Cache-Control', 'no-store');
   return c.json(status);
 });
+
+myWalletCredentialsRouter.get('/', async (c) => {
+  const home = await resolveHome(c);
+  if (home instanceof Response) return home;
+  const adapter = createAuthContextFromHono(
+    c as unknown as Context<{ Bindings: Env }>,
+    home.tenantId
+  ).coreAdapter;
+  const items = await listOwnAdminCredentials(adapter, home.tenantId, home.adminUserId);
+  c.header('Cache-Control', 'no-store');
+  return c.json({ items });
+});
+
+myWalletCredentialsRouter.post(
+  '/:credentialId/revoke',
+  async (c, next) => {
+    const profile = await getRateLimitProfileAsync(c.env, 'strict');
+    return rateLimitMiddleware({
+      ...profile,
+      endpoints: ['/api/admin/me/wallet-credentials/*/revoke'],
+      endpointClass: 'mgmt_admin_wallet_credential_revoke',
+    })(c as unknown as Context<{ Bindings: Env }>, next);
+  },
+  // Before the idempotency reservation, so a refusal is never replayed after re-authentication.
+  async (c, next) => {
+    const auth = c.get('adminAuth');
+    if (!auth || !isFreshAdminHuman(auth, Date.now())) {
+      return refuse(c, 'wallet_credential_fresh_auth_required', 403);
+    }
+    return next();
+  },
+  requiredIdempotencyMiddleware({
+    ttlSeconds: 900,
+    failClosedOnStorageError: true,
+    reserveBeforeExecution: true,
+  }) as never,
+  async (c) => {
+    const home = await resolveHome(c);
+    if (home instanceof Response) return home;
+    const credentialId = c.req.param('credentialId');
+    if (!CREDENTIAL_ID_PATTERN.test(credentialId)) {
+      return refuse(c, 'not_found', 404);
+    }
+
+    const adapter = createAuthContextFromHono(
+      c as unknown as Context<{ Bindings: Env }>,
+      home.tenantId
+    ).coreAdapter;
+    // Another admin's credential, or one of another type, is indistinguishable from none.
+    if (!(await isOwnAdminCredential(adapter, home.tenantId, home.adminUserId, credentialId))) {
+      return refuse(c, 'not_found', 404);
+    }
+
+    const outcome = await revokeAdminCredential(adapter, home.tenantId, credentialId);
+    if (outcome === 'not_found') return refuse(c, 'not_found', 404);
+    if (outcome === 'conflict' || outcome === 'error') {
+      c.header('Retry-After', '1');
+      return refuse(c, 'wallet_credential_unavailable', 503);
+    }
+    if (outcome === 'not_allowed') {
+      c.header('Cache-Control', 'no-store');
+      return c.json({ error: 'wallet_credential_not_revocable' }, 409);
+    }
+
+    // Only the credential id: nothing about the key or the claims.
+    await writeAdminAuditLog(c, {
+      action: 'admin_wallet_credential.revoked',
+      resourceType: 'admin_wallet_credential',
+      resourceId: credentialId,
+      result: 'success',
+      metadata: { credential_id: credentialId },
+    });
+
+    c.header('Cache-Control', 'no-store');
+    return c.json({ id: credentialId, status: 'revoked' });
+  }
+);

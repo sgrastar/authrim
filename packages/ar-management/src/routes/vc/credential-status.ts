@@ -12,12 +12,11 @@
  */
 
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
+import type { Env, CredentialStatus, CredentialStatusTransitionTarget } from '@authrim/ar-lib-core';
 import {
-  IssuedCredentialRepository,
   D1StatusListRepository,
   StatusListManager,
-  StatusValue,
+  transitionCredentialStatus,
   createAuthContextFromHono,
   getTenantIdFromContext,
   createErrorResponse,
@@ -25,13 +24,41 @@ import {
   getLogger,
 } from '@authrim/ar-lib-core';
 
+type TransitionSpec = {
+  from: CredentialStatus[];
+  to: CredentialStatusTransitionTarget;
+  timestampField: 'revoked_at' | 'suspended_at' | 'activated_at';
+  label: string;
+};
+
+const REVOKE: TransitionSpec = {
+  from: ['pending', 'active', 'suspended'],
+  to: 'revoked',
+  timestampField: 'revoked_at',
+  label: 'Revoke',
+};
+const SUSPEND: TransitionSpec = {
+  from: ['active'],
+  to: 'suspended',
+  timestampField: 'suspended_at',
+  label: 'Suspend',
+};
+const ACTIVATE: TransitionSpec = {
+  from: ['suspended'],
+  to: 'active',
+  timestampField: 'activated_at',
+  label: 'Activate',
+};
+
 /**
- * POST /api/admin/vc/credentials/:id/revoke
- *
- * Revoke a credential by setting its status to invalid in the status list.
- * This is permanent and cannot be undone.
+ * Every status change goes through the one ar-lib-core transition, which updates the credential
+ * row and the status-list bit atomically. Outcomes: changed/unchanged -> 200 with the resulting
+ * status (idempotent), not_found -> 404, not_allowed -> 409, conflict -> 503 (retry).
  */
-export async function revokeCredentialHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
+async function applyTransition(
+  c: Context<{ Bindings: Env }>,
+  spec: TransitionSpec
+): Promise<Response> {
   const log = getLogger(c).module('CredentialStatusAPI');
   const credentialId = c.req.param('id')!;
 
@@ -44,202 +71,72 @@ export async function revokeCredentialHandler(c: Context<{ Bindings: Env }>): Pr
   try {
     // SECURITY: Get tenant ID from authenticated context, not from request
     const tenantId = getTenantIdFromContext(c);
-
     const adapter = createAuthContextFromHono(c, tenantId).coreAdapter;
-    const issuedCredentialRepo = new IssuedCredentialRepository(adapter);
-    const statusListRepo = new D1StatusListRepository(adapter);
-    const statusListManager = new StatusListManager(statusListRepo);
+    const now = Date.now();
 
-    // Get credential by tenant and ID
-    const credential = await issuedCredentialRepo.findByIdForTenant(tenantId, credentialId);
-
-    if (!credential) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-    }
-
-    if (credential.status === 'revoked') {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
-    }
-
-    if (!credential.status_list_id || credential.status_list_index === null) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
-    }
-
-    // Update status in the status list
-    await statusListManager.revoke(
+    const result = await transitionCredentialStatus(adapter, {
       tenantId,
-      credential.status_list_id,
-      credential.status_list_index
-    );
-
-    // Update credential status in database
-    await issuedCredentialRepo.updateStatus(tenantId, credentialId, 'revoked');
-
-    return c.json({
-      id: credentialId,
-      status: 'revoked',
-      status_list_id: credential.status_list_id,
-      status_list_index: credential.status_list_index,
-      revoked_at: new Date().toISOString(),
+      credentialId,
+      from: spec.from,
+      to: spec.to,
+      now,
     });
+
+    switch (result.outcome) {
+      case 'changed':
+      case 'unchanged':
+        return c.json({
+          id: credentialId,
+          status: spec.to,
+          [spec.timestampField]: new Date(now).toISOString(),
+        });
+      case 'not_found':
+        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+      case 'not_allowed':
+        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
+      case 'conflict':
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description: 'The credential changed concurrently. Retry shortly.',
+          },
+          503,
+          { 'Retry-After': '1' }
+        );
+      default:
+        return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    }
   } catch (error) {
-    log.error('Revoke credential error', {}, error as Error);
+    log.error(`${spec.label} credential error`, {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
+}
+
+/**
+ * POST /api/admin/vc/credentials/:id/revoke
+ *
+ * Revoke a credential (pending, active or suspended). Permanent; repeating it is a no-op.
+ */
+export async function revokeCredentialHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
+  return applyTransition(c, REVOKE);
 }
 
 /**
  * POST /api/admin/vc/credentials/:id/suspend
  *
- * Suspend a credential temporarily. Can be reactivated later.
- * Suspension uses a separate status list from revocation.
+ * Suspend an active credential temporarily. Can be reactivated later.
  */
 export async function suspendCredentialHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
-  const log = getLogger(c).module('CredentialStatusAPI');
-  const credentialId = c.req.param('id')!;
-
-  if (!credentialId) {
-    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
-      variables: { field: 'id' },
-    });
-  }
-
-  try {
-    // SECURITY: Get tenant ID from authenticated context, not from request
-    const tenantId = getTenantIdFromContext(c);
-
-    const adapter = createAuthContextFromHono(c, tenantId).coreAdapter;
-    const issuedCredentialRepo = new IssuedCredentialRepository(adapter);
-    const statusListRepo = new D1StatusListRepository(adapter);
-    const statusListManager = new StatusListManager(statusListRepo);
-
-    // Get credential by tenant and ID
-    const credential = await issuedCredentialRepo.findByIdForTenant(tenantId, credentialId);
-
-    if (!credential) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-    }
-
-    if (credential.status === 'revoked') {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
-    }
-
-    if (credential.status === 'suspended') {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
-    }
-
-    if (!credential.status_list_id || credential.status_list_index === null) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
-    }
-
-    // Only an active credential can be suspended. The conditional update keeps a concurrent
-    // revocation, or a credential still being issued (`pending`), from being overwritten.
-    if (
-      !(await issuedCredentialRepo.updateStatusIfCurrent(
-        tenantId,
-        credentialId,
-        'active',
-        'suspended'
-      ))
-    ) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
-    }
-
-    // Update status in the status list
-    await statusListManager.suspend(
-      tenantId,
-      credential.status_list_id,
-      credential.status_list_index
-    );
-
-    return c.json({
-      id: credentialId,
-      status: 'suspended',
-      status_list_id: credential.status_list_id,
-      status_list_index: credential.status_list_index,
-      suspended_at: new Date().toISOString(),
-    });
-  } catch (error) {
-    log.error('Suspend credential error', {}, error as Error);
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-  }
+  return applyTransition(c, SUSPEND);
 }
 
 /**
  * POST /api/admin/vc/credentials/:id/activate
  *
- * Reactivate a suspended credential.
- * Note: Revoked credentials cannot be reactivated.
+ * Reactivate a suspended credential. A revoked credential never comes back.
  */
 export async function activateCredentialHandler(c: Context<{ Bindings: Env }>): Promise<Response> {
-  const log = getLogger(c).module('CredentialStatusAPI');
-  const credentialId = c.req.param('id')!;
-
-  if (!credentialId) {
-    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
-      variables: { field: 'id' },
-    });
-  }
-
-  try {
-    // SECURITY: Get tenant ID from authenticated context, not from request
-    const tenantId = getTenantIdFromContext(c);
-
-    const adapter = createAuthContextFromHono(c, tenantId).coreAdapter;
-    const issuedCredentialRepo = new IssuedCredentialRepository(adapter);
-    const statusListRepo = new D1StatusListRepository(adapter);
-    const statusListManager = new StatusListManager(statusListRepo);
-
-    // Get credential by tenant and ID
-    const credential = await issuedCredentialRepo.findByIdForTenant(tenantId, credentialId);
-
-    if (!credential) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-    }
-
-    if (credential.status === 'revoked') {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
-    }
-
-    if (credential.status === 'active') {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
-    }
-
-    if (!credential.status_list_id || credential.status_list_index === null) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
-    }
-
-    // Only a suspended credential is reactivated: never a revoked one, and never a `pending`
-    // credential, which only the issuance path may activate.
-    if (
-      !(await issuedCredentialRepo.updateStatusIfCurrent(
-        tenantId,
-        credentialId,
-        'suspended',
-        'active'
-      ))
-    ) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
-    }
-
-    // Update status in the status list
-    await statusListManager.activate(
-      tenantId,
-      credential.status_list_id,
-      credential.status_list_index
-    );
-
-    return c.json({
-      id: credentialId,
-      status: 'active',
-      status_list_id: credential.status_list_id,
-      status_list_index: credential.status_list_index,
-      activated_at: new Date().toISOString(),
-    });
-  } catch (error) {
-    log.error('Activate credential error', {}, error as Error);
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-  }
+  return applyTransition(c, ACTIVATE);
 }
 
 /**

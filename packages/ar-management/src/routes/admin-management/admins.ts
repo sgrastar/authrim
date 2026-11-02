@@ -31,9 +31,16 @@ import {
   type AdminWriteGuard,
   requireDedicatedAdminDatabaseAdapter,
   type AdminUser,
+  createAuthContextFromHono,
 } from '@authrim/ar-lib-core';
 import { resolveAaguidAuthenticator } from '@authrim/ar-lib-core/webauthn/aaguid-metadata';
 import { writeAdminAuditLog } from '../../admin-shared';
+import {
+  endedRevoked,
+  listRevocableAdminCredentialIds,
+  revokeAdminCredential,
+  type RevocationResult,
+} from './admin-wallet-credential-store';
 import { ensureCrossTenantPlacement } from './cross-tenant-placement';
 import {
   callerOutranks,
@@ -685,6 +692,90 @@ adminUsersRouter.post('/:id/suspend', async (c) => {
 
     return c.json({ success: true, message: 'Admin user suspended' });
   } catch (error) {
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+});
+
+/**
+ * POST /api/admin/admins/:id/wallet-credentials/revoke
+ * Revoke every pending, active or suspended wallet (Keyring) credential of an Admin user.
+ *
+ * Idempotent and retryable at any time, for an active, suspended or deactivated admin. Responds
+ * 200 only when every credential ended revoked (already revoked counts); 503 with Retry-After when
+ * any revocation hit a concurrent change or an error (retry); 409 when a credential cannot be
+ * revoked from its state. The body always lists per-credential results.
+ */
+adminUsersRouter.post('/:id/wallet-credentials/revoke', async (c) => {
+  const authContext = c.get('adminAuth') as AdminAuthContext;
+
+  if (!hasWritePermission(authContext)) {
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+  }
+
+  try {
+    const adapter = getAdminAdapter(c);
+
+    const id = c.req.param('id');
+    const tenantId = getTenantIdFromContext(c);
+
+    // The admin's home tenant is the tenant the account is stored under. A deactivated (soft
+    // deleted) account is included: its credentials must still be revocable.
+    const existing = await adapter.queryOne<{ id: string }>(
+      'SELECT id FROM admin_users WHERE tenant_id = ? AND id = ?',
+      [tenantId, id]
+    );
+    if (!existing) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+
+    const authorityResponse = await requireAuthorityOverAccount(
+      c,
+      adapter,
+      tenantId,
+      authContext,
+      id,
+      ADMIN_PERMISSIONS.ADMIN_USERS_WRITE
+    );
+    if (authorityResponse) {
+      return authorityResponse;
+    }
+
+    const coreAdapter = createAuthContextFromHono(
+      c as unknown as Context<{ Bindings: Env }>,
+      tenantId
+    ).coreAdapter;
+    const credentialIds = await listRevocableAdminCredentialIds(coreAdapter, tenantId, id);
+
+    const results: RevocationResult[] = [];
+    for (const credentialId of credentialIds) {
+      results.push({
+        id: credentialId,
+        outcome: await revokeAdminCredential(coreAdapter, tenantId, credentialId),
+      });
+    }
+    const allRevoked = results.every((result) => endedRevoked(result.outcome));
+
+    await createAuditLog(
+      c,
+      'admin_wallet_credential.revoked_all',
+      id,
+      allRevoked ? 'success' : 'failure',
+      {
+        credential_ids: credentialIds,
+        revoked_count: results.filter((result) => endedRevoked(result.outcome)).length,
+      }
+    );
+
+    c.header('Cache-Control', 'no-store');
+    if (allRevoked) {
+      return c.json({ results, allRevoked }, 200);
+    }
+    if (results.some((result) => result.outcome === 'conflict' || result.outcome === 'error')) {
+      c.header('Retry-After', '1');
+      return c.json({ results, allRevoked }, 503);
+    }
+    return c.json({ results, allRevoked }, 409);
+  } catch {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 });

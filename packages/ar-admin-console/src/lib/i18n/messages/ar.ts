@@ -858,7 +858,7 @@ export const ar = {
 	'keyring.confirm.label': 'رمز تأكيد المفتاح',
 	'keyring.confirm.check': 'تأكد من أن رمز تأكيد المفتاح المعروض في Keyring هو نفسه المعروض هنا.',
 	'keyring.confirm.mismatch':
-		'إذا اختلف الرمزان، أو لم يتلقَّ Keyring بيانات اعتماد، فقد يكون شخص آخر قد استخدم رمز QR. ستتم إضافة إمكانية إلغاء بيانات الاعتماد في إصدار لاحق. وإلى ذلك الحين، تواصل مع مسؤول.',
+		'إذا اختلف الرمزان، أو لم يتلقَّ Keyring بيانات اعتماد، فقد يكون شخص آخر قد استخدم رمز QR. ألغِ بيانات الاعتماد من القائمة أدناه، ثم أنشئ رمزًا جديدًا.',
 	'keyring.ended.failed': 'فشل الإصدار',
 	'keyring.ended.failedBody': 'تعذّر إصدار بيانات الاعتماد. أنشئ رمزًا جديدًا وحاول مرة أخرى.',
 	'keyring.ended.expired': 'انتهت صلاحية الرمز',
@@ -873,5 +873,24 @@ export const ar = {
 	'keyring.error.notEligible': 'لا يمكن لهذا الحساب إضافة بيانات اعتماد إلى Authrim Keyring.',
 	'keyring.error.unavailable': 'إصدار بيانات الاعتماد غير مفعّل في هذه البيئة.',
 	'keyring.error.generic': 'تعذّر إكمال الإجراء. حاول مرة أخرى بعد قليل.',
-	'keyring.error.polling': 'تعذّر التحقق من الحالة. أنشئ رمزًا جديدًا وحاول مرة أخرى.'
+	'keyring.error.polling': 'تعذّر التحقق من الحالة. أنشئ رمزًا جديدًا وحاول مرة أخرى.',
+	'keyring.credentials.title': 'بيانات اعتمادك',
+	'keyring.credentials.desc':
+		'بيانات الاعتماد الصادرة لك من أجل Authrim Keyring. ألغِ أي بيانات اعتماد لم تعد تستخدمها أو لا تعرفها.',
+	'keyring.credentials.empty': 'لم تصدر أي بيانات اعتماد بعد.',
+	'keyring.credentials.loadFailed': 'تعذّر تحميل بيانات الاعتماد.',
+	'keyring.credentials.noCode': 'لا يوجد رمز مفتاح',
+	'keyring.credentials.status.active': 'نشطة',
+	'keyring.credentials.status.suspended': 'موقوفة مؤقتًا',
+	'keyring.credentials.status.revoked': 'ملغاة',
+	'keyring.credentials.issued': 'تاريخ الإصدار',
+	'keyring.credentials.expires': 'تنتهي في',
+	'keyring.credentials.noExpiry': 'غير محدد',
+	'keyring.credentials.revoke': 'إلغاء',
+	'keyring.credentials.revokeTitle': 'هل تريد إلغاء بيانات الاعتماد {code}؟',
+	'keyring.credentials.revokeBody':
+		'ستتوقف بيانات الاعتماد عن العمل فورًا ولا يمكن استعادتها. لاستخدام Keyring مرة أخرى عليك إضافة بيانات اعتماد جديدة.',
+	'keyring.credentials.revoked': 'تم إلغاء بيانات الاعتماد.',
+	'keyring.credentials.error.busy':
+		'يجري تغيير بيانات الاعتماد بواسطة طلب آخر. حاول مرة أخرى بعد قليل.'
 } satisfies Messages;

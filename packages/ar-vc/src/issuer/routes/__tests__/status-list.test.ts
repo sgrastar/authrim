@@ -2,7 +2,7 @@
  * Status List Route Tests
  */
 
-import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterEach } from 'vitest';
 import { Hono } from 'hono';
 import { statusListRoute, statusListJsonRoute } from '../status-list';
 import type { Env } from '../../../types';
@@ -35,6 +35,18 @@ const mockListData = {
   purpose: 'revocation' as const,
   encoded_list: 'H4sIAAAAAAAAA2NgGAUjHQAAAfQB9A',
   updated_at: '2024-01-01T00:00:00.000Z',
+  format: 'w3c_bitstring_v1',
+  bits: 1,
+  version: 0,
+};
+
+const mockTslListData = {
+  ...mockListData,
+  id: 'sl_r_tenant1_tsl',
+  encoded_list: 'eJzTBwAAAQAB',
+  format: 'ietf_tsl_v1',
+  bits: 2,
+  version: 7,
 };
 
 // Will be populated in beforeAll
@@ -254,6 +266,83 @@ describe('Status List Routes', () => {
       );
 
       expect(res.headers.get('Cache-Control')).toBe('public, max-age=300');
+    });
+  });
+
+  describe('Token Status List (ietf_tsl_v1)', () => {
+    const T0 = Date.UTC(2026, 10, 3, 12, 2, 30); // inside the 12:00 window
+    const WINDOW_START = Math.floor(T0 / 1000 / 300) * 300;
+    const request = (env: Env, headers: Record<string, string> = {}) =>
+      app.request(
+        '/vci/status-lists/sl_r_tenant1_tsl',
+        { headers: { host: 'tenant1.issuer.example.com', ...headers } },
+        env
+      );
+
+    beforeEach(() => {
+      vi.useFakeTimers({ now: T0, toFake: ['Date'] });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('publishes a statuslist+jwt with the draft-14 payload', async () => {
+      const res = await request(createMockEnv(mockTslListData));
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Content-Type')).toBe('application/statuslist+jwt');
+      expect(res.headers.get('Cache-Control')).toBe('public, max-age=300');
+      const jwt = await res.text();
+      expect(decodeProtectedHeader(jwt)).toMatchObject({ typ: 'statuslist+jwt', alg: 'ES256' });
+      expect(decodeJwt(jwt)).toEqual({
+        iss: 'https://tenant1.issuer.example.com',
+        sub: 'https://tenant1.issuer.example.com/vci/status-lists/sl_r_tenant1_tsl',
+        iat: WINDOW_START,
+        exp: WINDOW_START + 86400,
+        ttl: 300,
+        status_list: { bits: 2, lst: mockTslListData.encoded_list },
+      });
+    });
+
+    it('answers 304 within a window and a fresh token once the window and ETag change', async () => {
+      const first = await request(createMockEnv(mockTslListData));
+      const etag = first.headers.get('ETag');
+      if (!etag) throw new Error('Expected ETag');
+
+      vi.setSystemTime(T0 + 60_000); // same window
+      const same = await request(createMockEnv(mockTslListData), { 'If-None-Match': etag });
+      expect(same.status).toBe(304);
+      expect(same.headers.get('Cache-Control')).toBe('public, max-age=300');
+
+      vi.setSystemTime(WINDOW_START * 1000 + 300_000 + 1000); // next window
+      const next = await request(createMockEnv(mockTslListData), { 'If-None-Match': etag });
+      expect(next.status).toBe(200);
+      expect(next.headers.get('ETag')).not.toBe(etag);
+      expect(decodeJwt(await next.text()).iat).toBe(WINDOW_START + 300);
+    });
+
+    it('changes the ETag when the list version changes', async () => {
+      const a = await request(createMockEnv(mockTslListData));
+      const b = await request(createMockEnv({ ...mockTslListData, version: 8 }));
+      expect(a.headers.get('ETag')).not.toBe(b.headers.get('ETag'));
+    });
+
+    it('keeps serving legacy lists as Bitstring Status List credentials', async () => {
+      const res = await app.request(
+        '/vci/status-lists/sl_r_tenant1_abc123',
+        { headers: { host: 'tenant1.issuer.example.com' } },
+        createMockEnv(mockListData)
+      );
+      expect(decodeJwt(await res.text())).toHaveProperty('vc');
+    });
+
+    it('exposes format, bits and version on the debug route', async () => {
+      const res = await app.request(
+        '/vci/status-lists/sl_r_tenant1_tsl/json',
+        { headers: { host: 'tenant1.issuer.example.com' } },
+        createMockEnv(mockTslListData)
+      );
+      expect(await res.json()).toMatchObject({ format: 'ietf_tsl_v1', bits: 2, version: 7 });
     });
   });
 

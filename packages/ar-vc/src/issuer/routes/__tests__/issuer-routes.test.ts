@@ -44,9 +44,9 @@ vi.mock('jose', () => ({
 // Shared mock data for IssuedCredentialRepository
 let mockDeferredCredential: unknown = null;
 const routeCoreMocks = vi.hoisted(() => ({
-  createCredential: vi.fn(),
+  reserveCredentialStatusSlot: vi.fn(),
+  transitionCredentialStatus: vi.fn(),
   updateStatusIfCurrent: vi.fn(),
-  allocateIndex: vi.fn(),
   resolveTenantMetadataContext: vi.fn(),
 }));
 
@@ -80,16 +80,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     D1Adapter: class {
       constructor() {}
     },
-    D1StatusListRepository: class {
-      constructor() {}
-    },
-    StatusListManager: class {
-      constructor() {}
-      allocateIndex = routeCoreMocks.allocateIndex;
-    },
+    reserveCredentialStatusSlot: routeCoreMocks.reserveCredentialStatusSlot,
+    transitionCredentialStatus: routeCoreMocks.transitionCredentialStatus,
     IssuedCredentialRepository: class {
       constructor() {}
-      createCredential = routeCoreMocks.createCredential;
       updateStatusIfCurrent = routeCoreMocks.updateStatusIfCurrent;
       findDeferredByIdAndUser = vi.fn().mockImplementation(async () => mockDeferredCredential);
       updateStatus = vi.fn().mockResolvedValue(undefined);
@@ -670,12 +664,13 @@ describe('Credential Route', () => {
         coreDb: env.DB,
       })
     );
-    routeCoreMocks.allocateIndex.mockResolvedValue({
+    routeCoreMocks.reserveCredentialStatusSlot.mockResolvedValue({
+      credentialId: 'credential-1',
+      credentialInternalId: 'credential-internal-1',
       listId: 'status-list-1',
       listInternalId: 'status-list-internal-1',
       index: 42,
     });
-    routeCoreMocks.createCredential.mockResolvedValue({ id: 'credential-1' });
     routeCoreMocks.updateStatusIfCurrent.mockResolvedValue(true);
     tokenValidationMocks.mockDecodeVCIProofNonce.mockReturnValue(PROOF_NONCE);
     // Reset mock to default invalid response (no token provided tests should fail auth)
@@ -954,20 +949,20 @@ describe('Credential Route', () => {
     );
     // nonce reserve + offer read + issuance claim + nonce complete + issuance complete
     expect(nonceStub.fetch).toHaveBeenCalledTimes(5);
-    expect(routeCoreMocks.allocateIndex).toHaveBeenCalledWith('tenant-1', 'revocation');
-    expect(routeCoreMocks.createCredential).toHaveBeenCalledWith(
+    expect(routeCoreMocks.reserveCredentialStatusSlot).toHaveBeenCalledWith(
+      expect.anything(),
       expect.objectContaining({
-        tenant_id: 'tenant-1',
-        user_id: 'user-123',
-        credential_type: 'https://authrim.com/credentials/identity/v1',
+        tenantId: 'tenant-1',
+        userId: 'user-123',
+        credentialType: 'https://authrim.com/credentials/identity/v1',
         format: 'dc+sd-jwt',
-        status: 'pending',
-        status_list_id: 'status-list-1',
-        status_list_internal_id: 'status-list-internal-1',
-        status_list_index: 42,
-        holder_binding: { kty: 'EC', crv: 'P-256', x: 'holder-x', y: 'holder-y' },
+        holderBinding: { kty: 'EC', crv: 'P-256', x: 'holder-x', y: 'holder-y' },
       })
     );
+    const reservation = routeCoreMocks.reserveCredentialStatusSlot.mock.calls[0][1] as {
+      expiresAt: number;
+    };
+    expect(Number.isInteger(reservation.expiresAt)).toBe(true);
     expect(routeCoreMocks.updateStatusIfCurrent).toHaveBeenCalledWith(
       'tenant-1',
       'credential-1',

@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { onDestroy } from 'svelte';
+	import { onDestroy, untrack } from 'svelte';
 	import {
 		walletCredentialErrorKey,
+		type WalletCredentialManager,
 		type WalletCredentialsClient
 	} from '#lib/api/wallet-credentials.js';
 	import { groupTransactionCode } from '#lib/keyring/confirmation-code.js';
@@ -15,15 +16,17 @@
 	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
 	import PageHeader from '#lib/ui/patterns/PageHeader.svelte';
 	import Page from '#lib/ui/templates/Page.svelte';
+	import KeyringCredentials from './KeyringCredentials.svelte';
 
 	/**
 	 * Account → Authrim Keyring: issue the signed-in administrator's credential to the Keyring
 	 * app. Step 1 shows only the QR code; the transaction code appears once the app has fetched
 	 * the offer (so one photo of the screen is not enough); after issuance the admin compares a
-	 * key confirmation code with the one Keyring shows.
+	 * key confirmation code with the one Keyring shows. Below, the admin's credentials are listed
+	 * and can be revoked.
 	 */
 	interface Props {
-		client: WalletCredentialsClient;
+		client: WalletCredentialsClient & WalletCredentialManager;
 		/** Where the sign-in page returns to (this page). */
 		returnPath?: string;
 		/** Clock for the countdown (tests, Storybook). */
@@ -37,6 +40,11 @@
 	const flow = new KeyringFlow({ client, now });
 
 	let qrDataUrl = $state('');
+	// Bumped when a credential has just been issued, so the list below is read again.
+	let credentialsRefresh = $state(0);
+	$effect(() => {
+		if (flow.phase === 'issued') untrack(() => (credentialsRefresh += 1));
+	});
 
 	// The QR library is only needed while a QR is on screen, so it is loaded on demand.
 	$effect(() => {
@@ -208,6 +216,8 @@
 			{/snippet}
 		</Card>
 	{/if}
+
+	<KeyringCredentials {client} {returnPath} refreshKey={credentialsRefresh} />
 </Page>
 
 <style>

@@ -1261,6 +1261,66 @@ describe('KeyManager Durable Object', () => {
     });
   });
 
+  describe('Token Status List signing RPC', () => {
+    const validPayload = () => {
+      const now = Math.floor(Date.now() / 1000);
+      return {
+        iss: 'https://issuer.example.com/t1',
+        sub: 'https://issuer.example.com/t1/vci/status-lists/list-a',
+        iat: now,
+        exp: now + 86400,
+        ttl: 300,
+        status_list: { bits: 2, lst: 'eJzTBwAAAQAB' },
+      };
+    };
+
+    it('signs the draft-14 token shape for an https issuer', async () => {
+      const activeKey = await keyManager.rotateECKeysRpc('ES256');
+      const result = await keyManager.signStatusListCredentialRpc(validPayload());
+      const publicKey = await importJWK(activeKey.publicJWK, 'ES256');
+
+      await expect(jwtVerify(result.token, publicKey)).resolves.toMatchObject({
+        payload: { ttl: 300, status_list: { bits: 2 } },
+      });
+      expect(decodeProtectedHeader(result.token)).toMatchObject({
+        typ: 'statuslist+jwt',
+        kid: activeKey.kid,
+      });
+    });
+
+    it.each([
+      [
+        'a sub on another origin',
+        (p: ReturnType<typeof validPayload>) => ({ ...p, sub: 'https://evil.example.net/x' }),
+      ],
+      [
+        'a non-https issuer',
+        (p: ReturnType<typeof validPayload>) => ({ ...p, iss: 'http://issuer.example.com' }),
+      ],
+      ['a missing ttl', ({ ttl: _ttl, ...p }: ReturnType<typeof validPayload>) => p],
+      ['a zero ttl', (p: ReturnType<typeof validPayload>) => ({ ...p, ttl: 0 })],
+      ['a ttl over a day', (p: ReturnType<typeof validPayload>) => ({ ...p, ttl: 86401 })],
+      [
+        'unsupported bits',
+        (p: ReturnType<typeof validPayload>) => ({ ...p, status_list: { bits: 3, lst: 'x' } }),
+      ],
+      [
+        'a non-string list',
+        (p: ReturnType<typeof validPayload>) => ({ ...p, status_list: { bits: 2, lst: 7 } }),
+      ],
+      [
+        'an expiry beyond 24 hours',
+        (p: ReturnType<typeof validPayload>) => ({ ...p, exp: p.exp + 3600 }),
+      ],
+      ['an extra claim', (p: ReturnType<typeof validPayload>) => ({ ...p, admin: true })],
+      ['an old iat', (p: ReturnType<typeof validPayload>) => ({ ...p, iat: p.iat - 3600 })],
+    ])('rejects %s', async (_label, mutate) => {
+      await expect(keyManager.signStatusListCredentialRpc(mutate(validPayload()))).rejects.toThrow(
+        'invalid_status_list_signing_input'
+      );
+    });
+  });
+
   describe('VC issuer public key retention', () => {
     const DAY = 24 * 60 * 60 * 1000;
     const start = Date.UTC(2026, 9, 4);

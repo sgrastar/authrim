@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   signFails: false,
   credentials: new Map<string, { id: string; status: string; history: string[] }>(),
   sequence: 0,
+  reservations: [] as Array<{ expiresAt: number }>,
 }));
 
 vi.mock('../../services/token-validation', () => ({
@@ -54,27 +55,32 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       tenantId,
       coreDb: {},
     })),
-    D1StatusListRepository: class {},
-    StatusListManager: class {
-      allocateIndex = vi.fn().mockResolvedValue({
+    reserveCredentialStatusSlot: vi.fn(async (_adapter: unknown, input: { expiresAt: number }) => {
+      const id = `credential-${++mocks.sequence}`;
+      mocks.credentials.set(id, { id, status: 'pending', history: ['pending'] });
+      mocks.reservations.push(input);
+      return {
+        credentialId: id,
+        credentialInternalId: `internal-${id}`,
         listId: 'status-list-1',
         listInternalId: 'status-list-internal-1',
         index: 7,
-      });
-    },
+      };
+    }),
+    transitionCredentialStatus: vi.fn(
+      async (_adapter: unknown, input: { credentialId: string; from: string[]; to: string }) => {
+        const row = mocks.credentials.get(input.credentialId);
+        if (!row) return { outcome: 'not_found' };
+        if (row.status === input.to) return { outcome: 'unchanged' };
+        if (!input.from.includes(row.status))
+          return { outcome: 'not_allowed', current: row.status };
+        const previous = row.status;
+        row.status = input.to;
+        row.history.push(input.to);
+        return { outcome: 'changed', previous };
+      }
+    ),
     IssuedCredentialRepository: class {
-      async createCredential(input: { status: string }) {
-        const id = `credential-${++mocks.sequence}`;
-        mocks.credentials.set(id, { id, status: input.status, history: [input.status] });
-        return { id };
-      }
-      async updateStatus(_tenantId: string, id: string, status: string) {
-        const row = mocks.credentials.get(id);
-        if (!row) return false;
-        row.status = status;
-        row.history.push(status);
-        return true;
-      }
       async updateStatusIfCurrent(_tenantId: string, id: string, expected: string, next: string) {
         const row = mocks.credentials.get(id);
         if (!row || row.status !== expected) return false;
@@ -252,6 +258,7 @@ describe('credential issuance state machine', () => {
   beforeEach(() => {
     mocks.sdjwtCalls.length = 0;
     mocks.credentials.clear();
+    mocks.reservations.length = 0;
     mocks.sequence = 0;
     mocks.onSign = undefined;
     mocks.signFails = false;
@@ -277,13 +284,7 @@ describe('credential issuance state machine', () => {
     });
     expect(harness.eligibility).toHaveBeenCalledWith({ tenantId: TENANT, adminUserId: ADMIN });
     const [call] = mocks.sdjwtCalls;
-    expect(Object.keys(call.claims).sort()).toEqual([
-      'credentialStatus',
-      'email',
-      'name',
-      'sub',
-      'tenant_id',
-    ]);
+    expect(Object.keys(call.claims).sort()).toEqual(['email', 'name', 'sub', 'tenant_id']);
     expect(call.claims).toMatchObject({
       sub: ADMIN,
       tenant_id: TENANT,
@@ -291,6 +292,11 @@ describe('credential issuance state machine', () => {
       name: 'Ada',
     });
     expect(call.options.selectiveDisclosureClaims).toEqual(['email', 'name']);
+    // The status reference is the Token Status List claim, and the signed exp is recorded.
+    const status = call.options.status as { status_list: { idx: number; uri: string } };
+    expect(status.status_list.idx).toBe(7);
+    expect(status.status_list.uri).toMatch(/\/vci\/status-lists\/status-list-1$/);
+    expect(call.options.expiresAt).toBe(mocks.reservations[0].expiresAt);
     // End-user custom claims are never resolved for an admin credential.
     expect(mocks.featureConfig).not.toHaveBeenCalled();
     expect([...mocks.credentials.values()][0]?.history).toEqual(['pending', 'active']);
@@ -305,12 +311,7 @@ describe('credential issuance state machine', () => {
       eligibility: { eligible: true, email: 'a@example.com', name: null },
     });
     await requestCredential(harness, await createNonce(harness, '01'));
-    expect(Object.keys(mocks.sdjwtCalls[0].claims).sort()).toEqual([
-      'credentialStatus',
-      'email',
-      'sub',
-      'tenant_id',
-    ]);
+    expect(Object.keys(mocks.sdjwtCalls[0].claims).sort()).toEqual(['email', 'sub', 'tenant_id']);
   });
 
   it.each([

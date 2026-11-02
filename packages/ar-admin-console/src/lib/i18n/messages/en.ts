@@ -872,7 +872,7 @@ export const en = {
 	'keyring.confirm.check':
 		'Check that the key confirmation code shown in Keyring is the same as the code shown here.',
 	'keyring.confirm.mismatch':
-		'If the codes differ, or Keyring did not receive a credential, someone else may have taken the QR code. Revoking a credential will be added in a later version. Until then, contact an administrator.',
+		'If the codes differ, or Keyring did not receive a credential, someone else may have taken the QR code. Revoke the credential in the list below, then create a new code.',
 	'keyring.ended.failed': 'Issuing failed',
 	'keyring.ended.failedBody':
 		'The credential could not be issued. Create a new code and try again.',
@@ -887,5 +887,24 @@ export const en = {
 	'keyring.error.notEligible': 'This account cannot add a credential to Authrim Keyring.',
 	'keyring.error.unavailable': 'Credential issuing is not enabled in this environment.',
 	'keyring.error.generic': 'The action could not be completed. Try again in a moment.',
-	'keyring.error.polling': 'The status could not be checked. Create a new code and try again.'
+	'keyring.error.polling': 'The status could not be checked. Create a new code and try again.',
+	'keyring.credentials.title': 'Your credentials',
+	'keyring.credentials.desc':
+		'Credentials issued to you for Authrim Keyring. Revoke a credential you no longer use, or one you do not recognize.',
+	'keyring.credentials.empty': 'No credentials have been issued yet.',
+	'keyring.credentials.loadFailed': 'The credentials could not be loaded.',
+	'keyring.credentials.noCode': 'No key code',
+	'keyring.credentials.status.active': 'Active',
+	'keyring.credentials.status.suspended': 'Suspended',
+	'keyring.credentials.status.revoked': 'Revoked',
+	'keyring.credentials.issued': 'Issued',
+	'keyring.credentials.expires': 'Expires',
+	'keyring.credentials.noExpiry': 'Not set',
+	'keyring.credentials.revoke': 'Revoke',
+	'keyring.credentials.revokeTitle': 'Revoke the credential {code}?',
+	'keyring.credentials.revokeBody':
+		'The credential stops working at once and cannot be restored. To use Keyring again, you need to add a new credential.',
+	'keyring.credentials.revoked': 'Credential revoked.',
+	'keyring.credentials.error.busy':
+		'The credential is being changed by another request. Try again in a moment.'
 } satisfies Messages;

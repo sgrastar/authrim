@@ -10,8 +10,8 @@ import {
   createSDJWTVCWithSigner,
   type SDJWTVCCreateOptions,
   IssuedCredentialRepository,
-  D1StatusListRepository,
-  StatusListManager,
+  reserveCredentialStatusSlot,
+  transitionCredentialStatus,
   getLogger,
   loadFeatureConfig,
   createCustomClaimSchemaResolver,
@@ -21,6 +21,7 @@ import {
   resolveCustomClaimRuntimeSourcesFromEnv,
   resolveTenantMetadataContext,
   getTenantIdFromContext,
+  type DatabaseAdapter,
   type Env as CoreEnv,
 } from '@authrim/ar-lib-core';
 import { sha256Base64url } from '../../utils/crypto';
@@ -107,9 +108,7 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     | { stub: DurableObjectStub; offerId: string; tenantId: string; accessTokenJti: string }
     | undefined;
   // The `issued_credentials` row recorded before signing; cleared once the credential is delivered.
-  let pendingCredential:
-    | { repo: IssuedCredentialRepository; tenantId: string; id: string }
-    | undefined;
+  let pendingCredential: { adapter: DatabaseAdapter; tenantId: string; id: string } | undefined;
 
   /**
    * Ends a request that will not deliver a credential: releases the proof nonce, fails the
@@ -137,9 +136,13 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     if (pendingCredential) {
       const credential = pendingCredential;
       pendingCredential = undefined;
-      await credential.repo
-        .updateStatus(credential.tenantId, credential.id, 'revoked')
-        .catch(() => undefined);
+      // Through the one status write path, so the list entry is set together with the row.
+      await transitionCredentialStatus(credential.adapter, {
+        tenantId: credential.tenantId,
+        credentialId: credential.id,
+        from: ['pending', 'active'],
+        to: 'revoked',
+      }).catch(() => undefined);
     }
     if (issuance) {
       const claimed = issuance;
@@ -375,30 +378,23 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
       tokenResult.tenantId
     );
     const adapter = ensureDatabaseAdapter(tenantMetadata.coreDb, 'vc-issuer-core');
-    const statusListRepo = new D1StatusListRepository(adapter);
-    const statusListManager = new StatusListManager(statusListRepo);
     const issuedCredentialRepo = new IssuedCredentialRepository(adapter);
     const holderJkt = holderBinding ? await calculateJwkThumbprint(holderBinding) : null;
 
-    // D4 step 3: allocate the status list index and record the credential as `pending` before
-    // anything is signed, so a revocation can always find it.
-    const { listId, listInternalId, index } = await statusListManager.allocateIndex(
-      tokenResult.tenantId,
-      'revocation'
-    );
-    const recorded = await issuedCredentialRepo.createCredential({
-      tenant_id: tokenResult.tenantId,
-      user_id: tokenResult.userId,
-      credential_type: vct,
+    // The signed `exp`, recorded with the credential so a list entry's lifetime is known.
+    const expiresAt = Math.floor(Date.now() / 1000) + configuration.validitySeconds;
+
+    // D4 step 3: reserve an unpredictable status list slot and record the credential as `pending`
+    // before anything is signed, so a revocation can always find it.
+    const reserved = await reserveCredentialStatusSlot(adapter, {
+      tenantId,
+      userId: tokenResult.userId,
+      credentialType: vct,
       format: 'dc+sd-jwt',
-      claims: {}, // Don't store actual claims
-      status: 'pending',
-      status_list_id: listId,
-      status_list_internal_id: listInternalId,
-      status_list_index: index,
-      holder_binding: holderBinding ? holderBinding : null,
+      holderBinding,
+      expiresAt,
     });
-    pendingCredential = { repo: issuedCredentialRepo, tenantId, id: recorded.id };
+    pendingCredential = { adapter, tenantId, id: reserved.credentialId };
 
     // D4 step 4 (admin): the administrator must still be eligible right now. A missing binding
     // counts as ineligible, so admin credentials are never issued without the check.
@@ -425,27 +421,28 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
       };
     }
 
-    // Add credentialStatus claim (W3C VC compatible format)
-    const credentialStatus = {
-      type: 'BitstringStatusListEntry',
-      statusPurpose: 'revocation',
-      statusListIndex: index,
-      statusListCredential: `${requestIssuerUrl}/vci/status-lists/${listId}`,
+    // Token Status List reference (SD-JWT VC `status.status_list`)
+    const status = {
+      status_list: {
+        idx: reserved.index,
+        uri: `${requestIssuerUrl}/vci/status-lists/${reserved.listId}`,
+      },
     };
 
-    // Create SD-JWT VC with credentialStatus
+    // Create SD-JWT VC with the status reference
     const options: SDJWTVCCreateOptions = {
       vct,
       selectiveDisclosureClaims: [
         ...new Set([...configuration.selectivelyDisclosableClaims, ...vcPiiClaimNames]),
       ],
       holderBinding,
-      expiresAt: Math.floor(Date.now() / 1000) + configuration.validitySeconds,
+      expiresAt,
+      status,
     };
 
     // D4 step 5: sign.
     const sdjwtvc = await createSDJWTVCWithSigner(
-      { ...claims, credentialStatus },
+      claims,
       requestIssuerUrl,
       (payload) => signSDJWTIssuer(c.env, tenantId, payload),
       options
@@ -462,7 +459,7 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     // happened while signing leaves no credential behind.
     const activated = await issuedCredentialRepo.updateStatusIfCurrent(
       tenantId,
-      recorded.id,
+      reserved.credentialId,
       'pending',
       'active'
     );

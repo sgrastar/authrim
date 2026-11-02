@@ -3,6 +3,8 @@
  *
  *   POST /api/admin/me/wallet-credentials/offers          create an offer (QR + transaction code)
  *   GET  /api/admin/me/wallet-credentials/offers/:offerId its progress, read-only
+ *   GET  /api/admin/me/wallet-credentials                 the admin's own credentials
+ *   POST /api/admin/me/wallet-credentials/:id/revoke      revoke one (fresh sign-in required)
  *
  * The offer and the transaction code are secrets for a few minutes: this module never logs or
  * stores them; the caller keeps them in memory only.
@@ -49,6 +51,26 @@ export interface WalletOfferStatus {
 	holderKeyThumbprint?: string;
 }
 
+export type WalletCredentialStatus = 'active' | 'suspended' | 'revoked';
+
+/** One of the signed-in admin's own credentials. */
+export interface WalletCredential {
+	id: string;
+	status: WalletCredentialStatus;
+	/** Milliseconds since the epoch. */
+	issuedAt: number;
+	/** Milliseconds since the epoch; null when unknown. */
+	expiresAt: number | null;
+	/** base64url RFC 7638 thumbprint of the holder key; absent for older credentials. */
+	holderKeyThumbprint?: string;
+}
+
+const CREDENTIAL_STATUSES: ReadonlySet<string> = new Set<WalletCredentialStatus>([
+	'active',
+	'suspended',
+	'revoked'
+]);
+
 export const FRESH_AUTH_REQUIRED = 'wallet_credential_fresh_auth_required';
 export const NOT_ELIGIBLE = 'wallet_credential_not_eligible';
 
@@ -68,6 +90,13 @@ export class WalletCredentialError extends Error {
 export interface WalletCredentialsClient {
 	createOffer(): Promise<WalletOffer>;
 	getOfferStatus(offerId: string): Promise<WalletOfferStatus>;
+}
+
+/** Listing and revoking the admin's credentials (the Keyring page's credential list). */
+export interface WalletCredentialManager {
+	listCredentials(): Promise<WalletCredential[]>;
+	/** Revoking twice is fine: the server answers 200 again. */
+	revokeCredential(credentialId: string): Promise<void>;
 }
 
 async function errorFrom(response: Response): Promise<WalletCredentialError> {
@@ -121,7 +150,50 @@ function parseStatus(body: unknown): WalletOfferStatus {
 	};
 }
 
-export const httpWalletCredentials: WalletCredentialsClient = {
+function parseCredentials(body: unknown): WalletCredential[] {
+	if (!isRecord(body) || !Array.isArray(body.items)) {
+		throw new WalletCredentialError('invalid_response', 200);
+	}
+	return body.items.map((item): WalletCredential => {
+		if (
+			!isRecord(item) ||
+			typeof item.id !== 'string' ||
+			typeof item.status !== 'string' ||
+			!CREDENTIAL_STATUSES.has(item.status) ||
+			typeof item.issuedAt !== 'number' ||
+			!(item.expiresAt === null || typeof item.expiresAt === 'number')
+		) {
+			throw new WalletCredentialError('invalid_response', 200);
+		}
+		return {
+			id: item.id,
+			status: item.status as WalletCredentialStatus,
+			issuedAt: item.issuedAt,
+			expiresAt: item.expiresAt,
+			...(typeof item.holderKeyThumbprint === 'string'
+				? { holderKeyThumbprint: item.holderKeyThumbprint }
+				: {})
+		};
+	});
+}
+
+export const httpWalletCredentials: WalletCredentialsClient & WalletCredentialManager = {
+	async listCredentials() {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/me/wallet-credentials`, {
+			credentials: 'include'
+		});
+		if (!response.ok) throw await errorFrom(response);
+		return parseCredentials(await response.json().catch(() => null));
+	},
+
+	async revokeCredential(credentialId) {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/me/wallet-credentials/${encodeURIComponent(credentialId)}/revoke`,
+			{ method: 'POST', credentials: 'include' }
+		);
+		if (!response.ok) throw await errorFrom(response);
+	},
+
 	async createOffer() {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/me/wallet-credentials/offers`, {
 			method: 'POST',
@@ -152,6 +224,15 @@ export function walletCredentialErrorKey(error: unknown): MessageKey {
 			case 'vc_unavailable':
 				return 'keyring.error.unavailable';
 		}
+	}
+	return 'keyring.error.generic';
+}
+
+/** Message key for a failed revocation or credential list. */
+export function revokeErrorKey(error: unknown): MessageKey {
+	if (error instanceof WalletCredentialError) {
+		if (error.code === FRESH_AUTH_REQUIRED) return 'keyring.error.freshAuth';
+		if (error.status === 503) return 'keyring.credentials.error.busy';
 	}
 	return 'keyring.error.generic';
 }

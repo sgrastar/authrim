@@ -10,7 +10,8 @@ import {
   verifySDJWTVC,
   HaipPolicyEvaluator,
   getHaipPolicy,
-  checkCredentialStatus,
+  getCredentialStatusValue,
+  TSL_STATUS_SUSPENDED,
   resolveAuthCorePersistenceAdapterFromEnv,
   TrustedIssuerRepository,
   decodeBase64Url,
@@ -116,53 +117,60 @@ export async function verifyVPToken(
       }
     }
 
-    // 6. Check credential status (supports both W3C credentialStatus and IETF status formats)
+    // 6. Check credential status. The credential's signed claim decides the list format
+    // (`status.status_list` -> Token Status List, W3C `credentialStatus` -> Bitstring Status List);
+    // there is no fallback between them.
     // SECURITY: Status List JWT signature is verified to prevent MITM attacks
     let statusValid = true;
     const statusInfo = extractStatusInfo(payload);
     const statusCheckedAt = Date.now();
 
     if (statusInfo) {
-      try {
-        // Create a key resolver that uses the issuer's JWKS or trusted issuer config
-        // SECURITY: Status List issuer MUST match credential issuer to prevent cache poisoning
-        const statusKeyResolver: StatusListKeyResolver = async (statusIssuer, _kid) => {
-          // CRITICAL: Reject status lists from different issuers
-          // This prevents attackers from hosting their own status list that always returns "valid"
-          if (statusIssuer !== issuerDid) {
-            // SECURITY: Do not expose DID values in error message
-            throw new Error(
-              'Status List issuer mismatch: credential and status list have different issuers'
+      // A credential that carries a status claim is rejected on any failure to obtain or validate
+      // its status, whatever `requireStatusCheck` says: that policy only decides whether a
+      // credential WITHOUT a status claim is acceptable.
+      statusValid = false;
+      if ('error' in statusInfo) {
+        errors.push(`Status check failed: ${statusInfo.error}`);
+      } else {
+        try {
+          // Create a key resolver that uses the issuer's JWKS or trusted issuer config
+          // SECURITY: Status List issuer MUST match credential issuer to prevent cache poisoning
+          const statusKeyResolver: StatusListKeyResolver = async (statusIssuer, _kid) => {
+            // CRITICAL: Reject status lists from different issuers
+            // This prevents attackers from hosting their own status list that always returns "valid"
+            if (statusIssuer !== issuerDid) {
+              // SECURITY: Do not expose DID values in error message
+              throw new Error(
+                'Status List issuer mismatch: credential and status list have different issuers'
+              );
+            }
+            // Use the credential issuer's public key
+            if (issuerPublicKey) {
+              return issuerPublicKey;
+            }
+            // Fallback: fetch from JWKS (same issuer, so this is safe)
+            return getIssuerPublicKey(env, statusIssuer, trustResult.jwksUri);
+          };
+
+          const statusValue = await getCredentialStatusValue(statusInfo.uri, statusInfo.index, {
+            cacheTtlMs: 5 * 60 * 1000, // 5 minute cache (never beyond the token's ttl / exp)
+            verifySignature: true, // SECURITY: Always verify Status List JWT signature
+            keyResolver: statusKeyResolver,
+            format: statusInfo.format,
+            expectedIssuer: issuerDid,
+          });
+          // Only status 0 is valid; 1 (invalid), 2 (suspended) and any other value are refused.
+          statusValid = statusValue === 0;
+          if (!statusValid) {
+            errors.push(
+              statusValue === TSL_STATUS_SUSPENDED || statusInfo.purpose === 'suspension'
+                ? 'Credential has been suspended'
+                : 'Credential has been revoked'
             );
           }
-          // Use the credential issuer's public key
-          if (issuerPublicKey) {
-            return issuerPublicKey;
-          }
-          // Fallback: fetch from JWKS (same issuer, so this is safe)
-          return getIssuerPublicKey(env, statusIssuer, trustResult.jwksUri);
-        };
-
-        statusValid = await checkCredentialStatus(statusInfo.uri, statusInfo.index, {
-          cacheTtlMs: 5 * 60 * 1000, // 5 minute cache
-          verifySignature: true, // SECURITY: Always verify Status List JWT signature
-          keyResolver: statusKeyResolver,
-        });
-        if (!statusValid) {
-          errors.push(
-            `Credential has been ${statusInfo.purpose === 'suspension' ? 'suspended' : 'revoked'}`
-          );
-        }
-      } catch (e) {
-        const errorMessage = `Status check failed: ${e instanceof Error ? e.message : 'Unknown'}`;
-        // HAIP: Status check failure is fatal when requireStatusCheck is true
-        if (policy.requireStatusCheck) {
-          errors.push(errorMessage);
-          statusValid = false;
-        } else {
-          warnings.push(errorMessage);
-          // Non-HAIP: allow continuation on network errors
-          statusValid = true;
+        } catch (e) {
+          errors.push(`Status check failed: ${e instanceof Error ? e.message : 'Unknown'}`);
         }
       }
     } else if (policy.requireStatusCheck) {
@@ -260,6 +268,7 @@ function extractAlgorithmFromVPToken(vpToken: string): string {
  * Status info extracted from credential payload
  */
 interface StatusInfo {
+  format: 'w3c_bitstring_v1' | 'ietf_tsl_v1';
   uri: string;
   index: number;
   purpose: 'revocation' | 'suspension';
@@ -268,51 +277,57 @@ interface StatusInfo {
 /**
  * Extract status information from credential payload
  *
- * Supports multiple status claim formats:
- * 1. W3C VC Data Model 2.0 - credentialStatus (BitstringStatusListEntry)
- * 2. IETF Status List - status.status_list
+ * Two claim formats, each bound to its own list format:
+ * 1. IETF Status List (SD-JWT VC profile) - status.status_list -> Token Status List
+ * 2. W3C VC Data Model 2.0 - credentialStatus (BitstringStatusListEntry) -> Bitstring Status List
+ *
+ * A claim that is present but unusable (or both claims at once) is an error, never "no status".
  */
-function extractStatusInfo(payload: Record<string, unknown>): StatusInfo | null {
-  // Format 1: W3C VC credentialStatus (BitstringStatusListEntry)
-  // Used by our credential issuance
-  const credentialStatus = payload.credentialStatus as
-    | {
-        type?: string;
-        statusPurpose?: string;
-        statusListIndex?: number;
-        statusListCredential?: string;
-      }
-    | undefined;
+function extractStatusInfo(
+  payload: Record<string, unknown>
+): StatusInfo | { error: string } | null {
+  const hasStatus = payload.status !== undefined;
+  const hasCredentialStatus = payload.credentialStatus !== undefined;
+  if (!hasStatus && !hasCredentialStatus) return null;
+  if (hasStatus && hasCredentialStatus) return { error: 'Ambiguous status claim' };
 
+  if (hasStatus) {
+    const statusList = (payload.status as { status_list?: { uri?: unknown; idx?: unknown } } | null)
+      ?.status_list;
+    if (
+      typeof statusList?.uri === 'string' &&
+      statusList.uri.length > 0 &&
+      Number.isInteger(statusList.idx) &&
+      (statusList.idx as number) >= 0
+    ) {
+      return {
+        format: 'ietf_tsl_v1',
+        uri: statusList.uri,
+        index: statusList.idx as number,
+        purpose: 'revocation',
+      };
+    }
+    return { error: 'Malformed status claim' };
+  }
+
+  const credentialStatus = payload.credentialStatus as {
+    type?: string;
+    statusPurpose?: string;
+    statusListIndex?: number;
+    statusListCredential?: string;
+  } | null;
   if (
     credentialStatus?.type === 'BitstringStatusListEntry' &&
+    typeof credentialStatus.statusListCredential === 'string' &&
     credentialStatus.statusListCredential &&
     typeof credentialStatus.statusListIndex === 'number'
   ) {
     return {
+      format: 'w3c_bitstring_v1',
       uri: credentialStatus.statusListCredential,
       index: credentialStatus.statusListIndex,
       purpose: credentialStatus.statusPurpose === 'suspension' ? 'suspension' : 'revocation',
     };
   }
-
-  // Format 2: IETF Status List (SD-JWT VC profile)
-  const status = payload.status as
-    | {
-        status_list?: {
-          uri?: string;
-          idx?: number;
-        };
-      }
-    | undefined;
-
-  if (status?.status_list?.uri && typeof status.status_list.idx === 'number') {
-    return {
-      uri: status.status_list.uri,
-      index: status.status_list.idx,
-      purpose: 'revocation', // IETF format doesn't specify purpose in the same way
-    };
-  }
-
-  return null;
+  return { error: 'Malformed credentialStatus claim' };
 }

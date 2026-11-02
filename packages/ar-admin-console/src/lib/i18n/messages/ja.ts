@@ -871,7 +871,7 @@ export const ja = {
 	'keyring.confirm.check':
 		'Keyring に表示されている鍵の確認コードが、ここに表示されているコードと同じであることを確認してください。',
 	'keyring.confirm.mismatch':
-		'コードが違う場合や、Keyring に資格情報が追加されていない場合は、他の人に QR コードを取られた可能性があります。資格情報を取り消す機能は、今後のバージョンで追加されます。それまでは管理者に連絡してください。',
+		'コードが違う場合や、Keyring に資格情報が追加されていない場合は、他の人に QR コードを取られた可能性があります。下の一覧で資格情報を取り消してから、新しいコードを作成してください。',
 	'keyring.ended.failed': '発行に失敗しました',
 	'keyring.ended.failedBody':
 		'資格情報を発行できませんでした。新しいコードを作成して、もう一度お試しください。',
@@ -888,7 +888,26 @@ export const ja = {
 	'keyring.error.unavailable': 'この環境では資格情報の発行が有効になっていません。',
 	'keyring.error.generic': '操作を完了できませんでした。しばらくしてからもう一度お試しください。',
 	'keyring.error.polling':
-		'状態を確認できませんでした。新しいコードを作成して、もう一度お試しください。'
+		'状態を確認できませんでした。新しいコードを作成して、もう一度お試しください。',
+	'keyring.credentials.title': 'あなたの資格情報',
+	'keyring.credentials.desc':
+		'Authrim Keyring 用に発行された資格情報です。使わなくなったものや、心当たりのないものは取り消してください。',
+	'keyring.credentials.empty': '発行された資格情報はまだありません。',
+	'keyring.credentials.loadFailed': '資格情報を読み込めませんでした。',
+	'keyring.credentials.noCode': '鍵コードなし',
+	'keyring.credentials.status.active': '有効',
+	'keyring.credentials.status.suspended': '一時停止中',
+	'keyring.credentials.status.revoked': '取り消し済み',
+	'keyring.credentials.issued': '発行日時',
+	'keyring.credentials.expires': '有効期限',
+	'keyring.credentials.noExpiry': '設定なし',
+	'keyring.credentials.revoke': '取り消す',
+	'keyring.credentials.revokeTitle': '資格情報 {code} を取り消しますか？',
+	'keyring.credentials.revokeBody':
+		'この資格情報はすぐに使えなくなり、元に戻せません。Keyring をもう一度使うには、新しい資格情報を追加する必要があります。',
+	'keyring.credentials.revoked': '資格情報を取り消しました。',
+	'keyring.credentials.error.busy':
+		'別の操作で資格情報が変更されています。少し待ってからもう一度お試しください。'
 } as const;
 
 export type MessageKey = keyof typeof ja;

@@ -1,13 +1,17 @@
 /**
- * Status List Credential Endpoint
+ * Status List Endpoint
  *
- * Serves Bitstring Status List 2021 credentials for credential revocation/suspension.
+ * Serves status lists for credential revocation/suspension:
+ * - Token Status List (`ietf_tsl_v1`, draft-14) as a `statuslist+jwt` token, the format of all
+ *   new lists;
+ * - the legacy Bitstring Status List JWT for lists created before.
  *
  * Features:
- * - ETag-based caching (Cache-Control: public, max-age=300)
+ * - ETag from the list version and the token's iat window, so a re-signed token never answers 304
+ *   with an expired one (Cache-Control: public, max-age = ttl = 300)
  * - If-None-Match support for 304 responses
- * - JWT-formatted status list credentials
  *
+ * @see https://datatracker.ietf.org/doc/draft-ietf-oauth-status-list/
  * @see https://w3c-ccg.github.io/vc-status-list-2021/
  */
 
@@ -53,6 +57,22 @@ interface StatusListData {
   purpose: 'revocation' | 'suspension';
   encoded_list: string;
   updated_at: string;
+  format: string;
+  bits: number;
+  version: number;
+}
+
+/** Token Status List refresh hint and the window `iat` is aligned to, seconds */
+const TOKEN_TTL_SECONDS = 300;
+const TOKEN_LIFETIME_SECONDS = 86400;
+
+function isTokenStatusList(listData: StatusListData): boolean {
+  return listData.format === 'ietf_tsl_v1';
+}
+
+/** `iat` aligned to a 5-minute window: identical tokens within a window, a fresh one after */
+function alignedIssuedAt(nowSeconds: number): number {
+  return Math.floor(nowSeconds / TOKEN_TTL_SECONDS) * TOKEN_TTL_SECONDS;
 }
 
 /**
@@ -82,7 +102,7 @@ async function getStatusList(
   const tenantMetadata = await resolveTenantMetadataContext(env as unknown as CoreEnv, tenantId);
   const adapter = ensureDatabaseAdapter(tenantMetadata.coreDb, 'vc-status-list');
   return adapter.queryOne<StatusListData>(
-    `SELECT public_id AS id, tenant_id, purpose, encoded_list, updated_at
+    `SELECT public_id AS id, tenant_id, purpose, encoded_list, updated_at, format, bits, version
      FROM status_lists
      WHERE tenant_id = ? AND public_id = ?`,
     [tenantId, listId]
@@ -90,7 +110,34 @@ async function getStatusList(
 }
 
 /**
- * Generate Status List Credential JWT
+ * Generate a Token Status List token (draft-14): `iss` is the credential issuer, `sub` the list URI
+ */
+async function generateTokenStatusListJWT(
+  env: Env,
+  listData: StatusListData,
+  issuerUrl: string,
+  iat: number
+): Promise<string> {
+  const keyManagerId = env.KEY_MANAGER.idFromName(`${listData.tenant_id}-v3`);
+  const keyManager = env.KEY_MANAGER.get(keyManagerId);
+
+  const payload = {
+    iss: issuerUrl,
+    sub: `${issuerUrl}/vci/status-lists/${listData.id}`,
+    iat,
+    exp: iat + TOKEN_LIFETIME_SECONDS,
+    ttl: TOKEN_TTL_SECONDS,
+    status_list: { bits: listData.bits, lst: listData.encoded_list },
+  };
+
+  const signingStub = keyManager as unknown as {
+    signStatusListCredentialRpc(input: JWTPayload): Promise<{ token: string }>;
+  };
+  return (await signingStub.signStatusListCredentialRpc(payload)).token;
+}
+
+/**
+ * Generate Status List Credential JWT (legacy Bitstring Status List)
  */
 async function generateStatusListCredentialJWT(
   env: Env,
@@ -165,8 +212,13 @@ export async function statusListRoute(c: Context<{ Bindings: Env }>): Promise<Re
     );
   }
 
-  // Calculate ETag
-  const etag = await calculateETag(listData.id, listData.encoded_list, listData.updated_at);
+  const tokenList = isTokenStatusList(listData);
+  const iat = alignedIssuedAt(Math.floor(Date.now() / 1000));
+
+  // Calculate ETag: Token Status Lists key it on the version and the iat window
+  const etag = tokenList
+    ? await calculateETag(listData.id, `v${listData.version}`, String(iat))
+    : await calculateETag(listData.id, listData.encoded_list, listData.updated_at);
 
   // Check If-None-Match header
   const ifNoneMatch = c.req.header('If-None-Match');
@@ -181,7 +233,9 @@ export async function statusListRoute(c: Context<{ Bindings: Env }>): Promise<Re
 
   try {
     // Generate JWT credential
-    const jwt = await generateStatusListCredentialJWT(c.env, listData, issuerUrl);
+    const jwt = tokenList
+      ? await generateTokenStatusListJWT(c.env, listData, issuerUrl, iat)
+      : await generateStatusListCredentialJWT(c.env, listData, issuerUrl);
 
     return c.text(jwt, 200, {
       'Content-Type': 'application/statuslist+jwt',
@@ -236,6 +290,9 @@ export async function statusListJsonRoute(c: Context<{ Bindings: Env }>): Promis
     id: listData.id,
     tenant_id: listData.tenant_id,
     purpose: listData.purpose,
+    format: listData.format,
+    bits: listData.bits,
+    version: listData.version,
     encoded_list: listData.encoded_list,
     updated_at: listData.updated_at,
   });
