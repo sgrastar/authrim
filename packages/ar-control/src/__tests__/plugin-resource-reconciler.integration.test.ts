@@ -104,7 +104,7 @@ function clients(
       deleteR2Bucket: unavailable,
     },
     ...overrides,
-  } as PluginResourceReconcilerClients;
+  };
 }
 
 describe('PluginResourceReconciler', () => {

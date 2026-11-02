@@ -122,7 +122,7 @@ async function updateUserProfileFromProvider(
     env,
     tenantId,
     userId,
-    claims: userInfo as unknown as Record<string, unknown>,
+    claims: userInfo,
     providerFields,
     users,
   });

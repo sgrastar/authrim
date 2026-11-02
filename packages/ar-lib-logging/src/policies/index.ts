@@ -338,7 +338,7 @@ function normalizeForJson(value: unknown): unknown {
   }
   if (value && typeof value === 'object') {
     const normalized: Record<string, unknown> = {};
-    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+    for (const key of Object.keys(value).sort()) {
       normalized[key] = normalizeForJson((value as Record<string, unknown>)[key]);
     }
     return normalized;

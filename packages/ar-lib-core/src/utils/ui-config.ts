@@ -182,7 +182,7 @@ export async function validateTenantUIBaseUrlAsync(
   } catch {
     return result;
   }
-  const lookup = getPrimaryTenantVanityDomain(env as Partial<Env>, tenantId, options);
+  const lookup = getPrimaryTenantVanityDomain(env, tenantId, options);
   const primary = options.strict ? await lookup : await lookup.catch(() => null);
   if (!primary || origin !== `https://${primary.hostname}`.toLowerCase()) return result;
   return validateUIBaseUrl(value, env.ISSUER_URL, [

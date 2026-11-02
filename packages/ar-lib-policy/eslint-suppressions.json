@@ -12,12 +12,14 @@
       "count": 3
     }
   },
+  "src/__tests__/evaluation-time.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
+    }
+  },
   "src/__tests__/feature-flags.test.ts": {
     "@typescript-eslint/no-unused-vars": {
       "count": 2
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 8
     }
   },
   "src/engine.ts": {

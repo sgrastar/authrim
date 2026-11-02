@@ -42,48 +42,48 @@ describe('SAML Assertion Builder', () => {
       // Check Response element
       const response = findElement(doc, SAML_NAMESPACES.SAML2P, 'Response');
       expect(response).toBeDefined();
-      expect(getAttribute(response!, 'ID')).toBe('_response123');
-      expect(getAttribute(response!, 'Destination')).toBe('https://sp.example.com/acs');
-      expect(getAttribute(response!, 'InResponseTo')).toBe('_request789');
+      expect(getAttribute(response, 'ID')).toBe('_response123');
+      expect(getAttribute(response, 'Destination')).toBe('https://sp.example.com/acs');
+      expect(getAttribute(response, 'InResponseTo')).toBe('_request789');
 
       // Check Issuer
-      const issuer = findElement(response!, SAML_NAMESPACES.SAML2, 'Issuer');
+      const issuer = findElement(response, SAML_NAMESPACES.SAML2, 'Issuer');
       expect(issuer).toBeDefined();
       expect(getTextContent(issuer)).toBe('https://idp.example.com');
 
       // Check Status
-      const statusCode = findElement(response!, SAML_NAMESPACES.SAML2P, 'StatusCode');
+      const statusCode = findElement(response, SAML_NAMESPACES.SAML2P, 'StatusCode');
       expect(statusCode).toBeDefined();
-      expect(getAttribute(statusCode!, 'Value')).toBe(STATUS_CODES.SUCCESS);
+      expect(getAttribute(statusCode, 'Value')).toBe(STATUS_CODES.SUCCESS);
 
       // Check Assertion
-      const assertion = findElement(response!, SAML_NAMESPACES.SAML2, 'Assertion');
+      const assertion = findElement(response, SAML_NAMESPACES.SAML2, 'Assertion');
       expect(assertion).toBeDefined();
-      expect(getAttribute(assertion!, 'ID')).toBe('_assertion456');
+      expect(getAttribute(assertion, 'ID')).toBe('_assertion456');
 
       // Check Subject/NameID
-      const nameId = findElement(assertion!, SAML_NAMESPACES.SAML2, 'NameID');
+      const nameId = findElement(assertion, SAML_NAMESPACES.SAML2, 'NameID');
       expect(nameId).toBeDefined();
       expect(getTextContent(nameId)).toBe('user@example.com');
-      expect(getAttribute(nameId!, 'Format')).toBe(
+      expect(getAttribute(nameId, 'Format')).toBe(
         'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress'
       );
 
       // Check Conditions
-      const conditions = findElement(assertion!, SAML_NAMESPACES.SAML2, 'Conditions');
+      const conditions = findElement(assertion, SAML_NAMESPACES.SAML2, 'Conditions');
       expect(conditions).toBeDefined();
-      expect(getAttribute(conditions!, 'NotBefore')).toBe('2024-01-15T10:29:00Z');
-      expect(getAttribute(conditions!, 'NotOnOrAfter')).toBe('2024-01-15T10:35:00Z');
+      expect(getAttribute(conditions, 'NotBefore')).toBe('2024-01-15T10:29:00Z');
+      expect(getAttribute(conditions, 'NotOnOrAfter')).toBe('2024-01-15T10:35:00Z');
 
       // Check Audience
-      const audience = findElement(assertion!, SAML_NAMESPACES.SAML2, 'Audience');
+      const audience = findElement(assertion, SAML_NAMESPACES.SAML2, 'Audience');
       expect(audience).toBeDefined();
       expect(getTextContent(audience)).toBe('https://sp.example.com');
 
       // Check AuthnStatement
-      const authnStatement = findElement(assertion!, SAML_NAMESPACES.SAML2, 'AuthnStatement');
+      const authnStatement = findElement(assertion, SAML_NAMESPACES.SAML2, 'AuthnStatement');
       expect(authnStatement).toBeDefined();
-      expect(getAttribute(authnStatement!, 'SessionIndex')).toBe('_session123');
+      expect(getAttribute(authnStatement, 'SessionIndex')).toBe('_session123');
     });
 
     it('should bind assertion subject, conditions, and audience to the SP request', () => {
@@ -92,20 +92,18 @@ describe('SAML Assertion Builder', () => {
 
       const assertion = findElement(doc, SAML_NAMESPACES.SAML2, 'Assertion');
       const subjectConfirmationData = findElement(
-        assertion!,
+        assertion,
         SAML_NAMESPACES.SAML2,
         'SubjectConfirmationData'
       );
-      const conditions = findElement(assertion!, SAML_NAMESPACES.SAML2, 'Conditions');
-      const audience = findElement(assertion!, SAML_NAMESPACES.SAML2, 'Audience');
+      const conditions = findElement(assertion, SAML_NAMESPACES.SAML2, 'Conditions');
+      const audience = findElement(assertion, SAML_NAMESPACES.SAML2, 'Audience');
 
-      expect(getAttribute(subjectConfirmationData!, 'Recipient')).toBe(
-        'https://sp.example.com/acs'
-      );
-      expect(getAttribute(subjectConfirmationData!, 'InResponseTo')).toBe('_request789');
-      expect(getAttribute(subjectConfirmationData!, 'NotOnOrAfter')).toBe('2024-01-15T10:35:00Z');
-      expect(getAttribute(conditions!, 'NotBefore')).toBe('2024-01-15T10:29:00Z');
-      expect(getAttribute(conditions!, 'NotOnOrAfter')).toBe('2024-01-15T10:35:00Z');
+      expect(getAttribute(subjectConfirmationData, 'Recipient')).toBe('https://sp.example.com/acs');
+      expect(getAttribute(subjectConfirmationData, 'InResponseTo')).toBe('_request789');
+      expect(getAttribute(subjectConfirmationData, 'NotOnOrAfter')).toBe('2024-01-15T10:35:00Z');
+      expect(getAttribute(conditions, 'NotBefore')).toBe('2024-01-15T10:29:00Z');
+      expect(getAttribute(conditions, 'NotOnOrAfter')).toBe('2024-01-15T10:35:00Z');
       expect(getTextContent(audience)).toBe('https://sp.example.com');
     });
 
@@ -122,7 +120,7 @@ describe('SAML Assertion Builder', () => {
       const doc = parseXml(xml);
 
       const assertion = findElement(doc, SAML_NAMESPACES.SAML2, 'Assertion');
-      const attrStatement = findElement(assertion!, SAML_NAMESPACES.SAML2, 'AttributeStatement');
+      const attrStatement = findElement(assertion, SAML_NAMESPACES.SAML2, 'AttributeStatement');
       expect(attrStatement).toBeDefined();
 
       // Check attributes are present
@@ -179,10 +177,8 @@ describe('SAML Assertion Builder', () => {
       const doc = parseXml(xml);
       const response = findElement(doc, SAML_NAMESPACES.SAML2P, 'Response');
 
-      expect(getAttribute(response!, 'xmlns:xs')).toBe('http://www.w3.org/2001/XMLSchema');
-      expect(getAttribute(response!, 'xmlns:xsi')).toBe(
-        'http://www.w3.org/2001/XMLSchema-instance'
-      );
+      expect(getAttribute(response, 'xmlns:xs')).toBe('http://www.w3.org/2001/XMLSchema');
+      expect(getAttribute(response, 'xmlns:xsi')).toBe('http://www.w3.org/2001/XMLSchema-instance');
       expect(xml).toContain('xsi:type="xs:string"');
     });
 
@@ -235,7 +231,7 @@ describe('SAML Assertion Builder', () => {
 
       // Check Status
       const statusCode = findElement(doc, SAML_NAMESPACES.SAML2P, 'StatusCode');
-      expect(getAttribute(statusCode!, 'Value')).toBe(STATUS_CODES.RESPONDER);
+      expect(getAttribute(statusCode, 'Value')).toBe(STATUS_CODES.RESPONDER);
 
       // Check StatusMessage
       const statusMessage = findElement(doc, SAML_NAMESPACES.SAML2P, 'StatusMessage');
@@ -262,7 +258,7 @@ describe('SAML Assertion Builder', () => {
 
       const doc = parseXml(xml);
       const statusCode = findElement(doc, SAML_NAMESPACES.SAML2P, 'StatusCode');
-      expect(getAttribute(statusCode!, 'Value')).toBe(STATUS_CODES.REQUEST_DENIED);
+      expect(getAttribute(statusCode, 'Value')).toBe(STATUS_CODES.REQUEST_DENIED);
     });
 
     it('should include second-level status code for protocol-specific failures', () => {

@@ -239,8 +239,8 @@ agentGrantsRouter.get('/eligible-permissions', async (c) => {
     ) {
       return error(c, 400, 'AGENT_PRINCIPAL_INVALID');
     }
-    principalPermissions = principalSnapshot!.permissions;
-    principalTenantScopes = principalSnapshot!.tenantScopes;
+    principalPermissions = principalSnapshot.permissions;
+    principalTenantScopes = principalSnapshot.tenantScopes;
   }
 
   const candidates = [
@@ -780,8 +780,8 @@ agentGrantsRouter.patch('/:id', async (c) => {
     ) {
       return error(c, 400, 'AGENT_PRINCIPAL_INVALID');
     }
-    principalPermissions = principalSnapshot!.permissions;
-    principalTenantScopes = principalSnapshot!.tenantScopes;
+    principalPermissions = principalSnapshot.permissions;
+    principalTenantScopes = principalSnapshot.tenantScopes;
   }
   const validation = validateAgentGrantPermissions({
     tenantBoundary: {
@@ -1053,8 +1053,8 @@ agentGrantsRouter.post('/', async (c) => {
     ) {
       return error(c, 400, 'AGENT_PRINCIPAL_INVALID');
     }
-    principalPermissions = principalSnapshot!.permissions;
-    principalTenantScopes = principalSnapshot!.tenantScopes;
+    principalPermissions = principalSnapshot.permissions;
+    principalTenantScopes = principalSnapshot.tenantScopes;
   }
 
   const validation = validateAgentGrantPermissions({

@@ -42,7 +42,7 @@ export async function prepareAccountTombstone(
   ]);
   return {
     emailBlindIndex,
-    retentionDays: (input.retentionDays as number | undefined) ?? policy!.retentionDays,
+    retentionDays: input.retentionDays ?? policy!.retentionDays,
   };
 }
 

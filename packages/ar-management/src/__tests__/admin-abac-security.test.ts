@@ -134,18 +134,26 @@ describe('admin ABAC security boundaries', () => {
     mocks.getAttribute.mockResolvedValue(attribute({ tenant_id: 'tenant-b' }));
     expect(
       (
-        await app().request('/api/admin/admin-attributes/attr-b', { headers: readHeaders }, {
-          DB_ADMIN: {},
-        } as never)
+        await app().request(
+          '/api/admin/admin-attributes/attr-b',
+          { headers: readHeaders },
+          {
+            DB_ADMIN: {},
+          }
+        )
       ).status
     ).toBe(404);
 
     mocks.getAttribute.mockResolvedValue(attribute({ tenant_id: 'system', is_system: true }));
     expect(
       (
-        await app().request('/api/admin/admin-attributes/system', { headers: readHeaders }, {
-          DB_ADMIN: {},
-        } as never)
+        await app().request(
+          '/api/admin/admin-attributes/system',
+          { headers: readHeaders },
+          {
+            DB_ADMIN: {},
+          }
+        )
       ).status
     ).toBe(200);
   });
@@ -238,9 +246,13 @@ describe('admin ABAC security boundaries', () => {
     mocks.getAttribute.mockResolvedValueOnce(null);
     expect(
       (
-        await app().request('/api/admin/admin-attributes/missing', { headers: readHeaders }, {
-          DB_ADMIN: {},
-        } as never)
+        await app().request(
+          '/api/admin/admin-attributes/missing',
+          { headers: readHeaders },
+          {
+            DB_ADMIN: {},
+          }
+        )
       ).status
     ).toBe(404);
 

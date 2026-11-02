@@ -40,7 +40,7 @@ async function encryptedValues(
   );
   return {
     ciphertext: arrayBufferToBase64(ciphertext),
-    iv: arrayBufferToBase64(iv.buffer as ArrayBuffer),
+    iv: arrayBufferToBase64(iv.buffer),
     keyId,
   };
 }

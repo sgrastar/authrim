@@ -7,41 +7,19 @@
   "src/chunks/__tests__/flush-worker.test.ts": {
     "@typescript-eslint/no-unsafe-return": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 1
-    }
-  },
-  "src/chunks/__tests__/r2-chunk-rewrap.test.ts": {
-    "@typescript-eslint/unbound-method": {
-      "count": 1
     }
   },
   "src/chunks/__tests__/r2-chunk-writer.test.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 28
     },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 12
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 10
     }
   },
   "src/chunks/__tests__/r2-manifest-writer.test.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 1
-    }
-  },
-  "src/chunks/__tests__/record-blocks.test.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 3
     }
   },
   "src/chunks/flush-worker.ts": {
@@ -101,11 +79,6 @@
   },
   "src/messaging/__tests__/store.test.ts": {
     "@typescript-eslint/restrict-template-expressions": {
-      "count": 2
-    }
-  },
-  "src/policies/__tests__/policy-resolver.test.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 2
     }
   }

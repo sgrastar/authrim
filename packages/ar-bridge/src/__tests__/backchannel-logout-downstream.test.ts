@@ -133,7 +133,7 @@ type Keys = { privateKey: CryptoKey; publicJwk: jose.JWK };
 async function rsaKeys(kid: string): Promise<Keys> {
   const { privateKey, publicKey } = await jose.generateKeyPair('RS256', { extractable: true });
   return {
-    privateKey: privateKey as CryptoKey,
+    privateKey: privateKey,
     publicJwk: { ...(await jose.exportJWK(publicKey)), kid, alg: 'RS256', use: 'sig' },
   };
 }
@@ -250,7 +250,7 @@ function captureDownstream(statusFor: (url: string) => number = () => 200) {
       body: typeof init?.body === 'string' ? init.body : '',
     });
     return new Response(null, { status: statusFor(url) });
-  }) as typeof fetch;
+  });
   return sent;
 }
 
@@ -384,7 +384,7 @@ describe('upstream back-channel logout reaches downstream relying parties', () =
       sent.push(urlOf(input));
       await gate;
       return new Response(null, { status: 200 });
-    }) as typeof fetch;
+    });
     const { c, pending } = buildContext(await upstreamLogoutToken());
 
     const response = await handleBackchannelLogout(c as never);
@@ -406,7 +406,7 @@ describe('upstream back-channel logout reaches downstream relying parties', () =
       sent.push(urlOf(input));
       await gate;
       return new Response(null, { status: 200 });
-    }) as typeof fetch;
+    });
     const { c, pending } = buildContext(await upstreamLogoutToken());
 
     await handleBackchannelLogout(c as never);
@@ -668,7 +668,7 @@ describe('upstream back-channel logout reaches downstream relying parties', () =
       sent.push(url);
       if (url === SLOW) await gate;
       return new Response(null, { status: 200 });
-    }) as typeof fetch;
+    });
     const { c, pending } = buildContext(await upstreamLogoutToken({ sid: undefined }));
 
     const response = await handleBackchannelLogout(c as never);
@@ -814,7 +814,7 @@ describe('upstream back-channel logout reaches downstream relying parties', () =
       sent.push(url);
       if (url === RP_D_WEBHOOK) await gate;
       return new Response(null, { status: 200 });
-    }) as typeof fetch;
+    });
     const { c, settings, pending } = buildContext(await upstreamLogoutToken({ sid: undefined }));
     const kvGet = settings.get.getMockImplementation()!;
     // The store fails for the first session's webhook lock only.

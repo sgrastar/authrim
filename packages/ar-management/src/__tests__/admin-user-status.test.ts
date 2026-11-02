@@ -27,7 +27,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     // Suspending and locking also read the sessions they ended: the same transition.
     transitionAccountAuthenticationStateEndingSessions: vi.fn(
       async (env: unknown, input: unknown) => ({
-        state: (await mocks.transition(env, input)) as unknown,
+        state: await mocks.transition(env, input),
         endedSessionIds: [],
       })
     ),
@@ -245,11 +245,11 @@ describe('admin user account status transitions', () => {
     });
     // The account (status, version and cleared restrictions) and its subject, together.
     expect(mocks.adapter.batch).toHaveBeenCalledTimes(1);
-    const [statements] = mocks.adapter.batch.mock.calls[0]! as [
+    const [statements] = mocks.adapter.batch.mock.calls[0] as [
       Array<{ sql: string; params: unknown[] }>,
     ];
     expect(statements).toHaveLength(2);
-    expect(statements[0]!.params).toEqual(
+    expect(statements[0].params).toEqual(
       expect.arrayContaining(['active', null, 'account-1', 'tenant-a'])
     );
     expect(mocks.audit).toHaveBeenCalledWith(

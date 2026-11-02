@@ -191,7 +191,7 @@ function activeRegistryVerificationKeys(env: ControlEnv): RuntimeRegistrySnapsho
     publicJwk.use = 'sig';
     publicJwk.key_ops = ['verify'];
     keys.push({
-      publicJwk: publicJwk as unknown as RuntimeRegistrySnapshotVerificationKey['publicJwk'],
+      publicJwk: publicJwk,
       keyId,
     });
   }

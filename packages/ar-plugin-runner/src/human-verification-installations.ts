@@ -161,7 +161,7 @@ function normalizeConfig(input: ConfigureHumanVerificationInstallationInput) {
     secretKey.length < 1 ||
     secretKey.length > HUMAN_VERIFICATION_LIMITS.secretKeyMaxLength ||
     (expectedHostname !== null && !SAFE_HOST.test(expectedHostname)) ||
-    !provider.allowedWidgetModes.has(widgetMode as never) ||
+    !provider.allowedWidgetModes.has(widgetMode) ||
     typeof scoreThreshold !== 'number' ||
     !Number.isFinite(scoreThreshold) ||
     scoreThreshold < 0 ||

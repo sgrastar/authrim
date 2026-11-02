@@ -366,7 +366,7 @@ export async function contactFixture(
   const pending: Promise<unknown>[] = [];
   const app = new Hono<{ Bindings: Env }>();
   app.use('*', async (c, next) => {
-    c.set('tenantId' as never, TENANT as never);
+    c.set('tenantId' as never, TENANT);
     c.set('adminAuth' as never, { userId: 'admin-1', actorType: 'human' } as never);
     c.set(
       'tenantMetadataContext' as never,

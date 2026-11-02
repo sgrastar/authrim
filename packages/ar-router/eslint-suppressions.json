@@ -9,6 +9,11 @@
       "count": 33
     }
   },
+  "src/__tests__/saml-dr-entrypoint.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 2
+    }
+  },
   "src/index.ts": {
     "@typescript-eslint/no-unsafe-argument": {
       "count": 3

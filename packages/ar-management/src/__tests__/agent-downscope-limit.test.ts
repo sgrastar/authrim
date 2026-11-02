@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { hasAdminPermission, type DatabaseAdapter } from '@authrim/ar-lib-core';
+import { hasAdminPermission } from '@authrim/ar-lib-core';
 
 const adapterHolder = vi.hoisted(() => ({ current: undefined as unknown }));
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -115,7 +115,7 @@ describe('the Mode B permission limit of the Admin API agent bearer', () => {
   it.each([[undefined], ['amk_agent']])(
     "is one stored state of the principal, not R's scope with L's permissions (credential %s)",
     async (credentialId) => {
-      adapterHolder.current = movingPrincipalAdapter() as unknown as DatabaseAdapter;
+      adapterHolder.current = movingPrincipalAdapter();
 
       const limit = await defaultModeBPermissionLimit(
         {} as never,

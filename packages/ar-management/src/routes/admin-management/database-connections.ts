@@ -456,14 +456,14 @@ databaseConnectionsRouter.get('/:id', async (c) => {
   }
 
   try {
-    const setupConnection = getSetupD1Connection(c.env, c.req.param('id')!);
+    const setupConnection = getSetupD1Connection(c.env, c.req.param('id'));
     if (setupConnection) {
       const [connection] = await attachTenantAssignments(c, [setupConnection]);
       return c.json(connection);
     }
 
     const repo = new AdminDatabaseConnectionRepository(getAdminAdapter(c));
-    const connection = await repo.getConnection(c.req.param('id')!);
+    const connection = await repo.getConnection(c.req.param('id'));
     if (!connection) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -496,7 +496,7 @@ databaseConnectionsRouter.patch('/:id', async (c) => {
     }
 
     const repo = new AdminDatabaseConnectionRepository(getAdminAdapter(c));
-    const updated = await repo.updateConnection(c.req.param('id')!, {
+    const updated = await repo.updateConnection(c.req.param('id'), {
       display_name: body.display_name,
       description: body.description,
       config: body.config === undefined ? undefined : parseConfig(body.config),
@@ -526,7 +526,7 @@ databaseConnectionsRouter.put('/:id/credentials', async (c) => {
 
   try {
     const repo = new AdminDatabaseConnectionRepository(getAdminAdapter(c));
-    const existing = await repo.getConnection(c.req.param('id')!);
+    const existing = await repo.getConnection(c.req.param('id'));
     if (!existing) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -585,10 +585,10 @@ databaseConnectionsRouter.post('/:id/test', async (c) => {
 
   try {
     const repo = new AdminDatabaseConnectionRepository(getAdminAdapter(c));
-    const setupConnection = getSetupD1Connection(c.env, c.req.param('id')!);
+    const setupConnection = getSetupD1Connection(c.env, c.req.param('id'));
     const connection = setupConnection
       ? { ...setupConnection, credential_encrypted: null }
-      : await repo.getConnectionWithCredential(c.req.param('id')!);
+      : await repo.getConnectionWithCredential(c.req.param('id'));
     if (!connection) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -622,7 +622,7 @@ databaseConnectionsRouter.get('/:id/usage', async (c) => {
 
   try {
     const repo = new AdminDatabaseConnectionRepository(getAdminAdapter(c));
-    const connection = await repo.getConnection(c.req.param('id')!);
+    const connection = await repo.getConnection(c.req.param('id'));
     if (!connection) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -645,7 +645,7 @@ databaseConnectionsRouter.delete('/:id', async (c) => {
 
   try {
     const repo = new AdminDatabaseConnectionRepository(getAdminAdapter(c));
-    const existing = await repo.getConnection(c.req.param('id')!);
+    const existing = await repo.getConnection(c.req.param('id'));
     if (!existing) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }

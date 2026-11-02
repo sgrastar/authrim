@@ -457,7 +457,7 @@ describe('tenant backup R2 object snapshot port', () => {
       ],
     });
     const input = context();
-    input.databases.tenant[0]!.database.queryOne = vi.fn(async () => null);
+    input.databases.tenant[0].database.queryOne = vi.fn(async () => null);
 
     await ports.artifactObjects.start(input, 'snapshot-released', async () => {}, 100);
     await expect(
@@ -586,29 +586,28 @@ describe('tenant backup R2 object snapshot port', () => {
       key: string,
       expectedStoredSha256: string,
       encryption: Record<string, unknown>
-    ): TenantBackupR2ObjectDescriptor =>
-      ({
-        datasetId: 'logs.archive_object_bodies',
-        objectId,
-        bucketBinding: 'AUDIT_ARCHIVE',
-        objectKey: key,
-        expectedStoredSha256,
-        sourceEncoding: 'log_chunk_v1',
-        context: {
-          tenantId: 'tenant-a',
-          catalogKind: 'log_object',
-          sourceRowId: objectId.split(':')[1],
-          sourceDatabaseId: 'core-a',
-          sourceFamily: 'core',
-          tenantKey: 'tenant-key-a',
-          logType: 'audit',
-          plane: 'archive',
-          chunkId: 'chunk-a',
-          compression: 'none',
-          targetEncryptionScope: 'tenant-log-archive',
-          ...encryption,
-        },
-      }) as TenantBackupR2ObjectDescriptor;
+    ): TenantBackupR2ObjectDescriptor => ({
+      datasetId: 'logs.archive_object_bodies',
+      objectId,
+      bucketBinding: 'AUDIT_ARCHIVE',
+      objectKey: key,
+      expectedStoredSha256,
+      sourceEncoding: 'log_chunk_v1',
+      context: {
+        tenantId: 'tenant-a',
+        catalogKind: 'log_object',
+        sourceRowId: objectId.split(':')[1],
+        sourceDatabaseId: 'core-a',
+        sourceFamily: 'core',
+        tenantKey: 'tenant-key-a',
+        logType: 'audit',
+        plane: 'archive',
+        chunkId: 'chunk-a',
+        compression: 'none',
+        targetEncryptionScope: 'tenant-log-archive',
+        ...encryption,
+      },
+    });
     const ports = createTenantBackupR2ObjectSnapshotPorts({
       env: {
         AUDIT_ARCHIVE: source as unknown as R2Bucket,

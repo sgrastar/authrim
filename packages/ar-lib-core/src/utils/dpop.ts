@@ -388,7 +388,7 @@ export async function validateDPoPProof(
       valid: true,
       jwk: {
         ...jwk,
-        kty: jwk.kty as string, // kty is validated to exist at line 91-96
+        kty: jwk.kty, // kty is validated to exist at line 91-96
       },
       jkt,
     };

@@ -353,7 +353,7 @@ for (const topology of ['single', 'shared_pool', 'tenant_exclusive'] as const) {
         );
       app = new Hono<{ Bindings: Env }>();
       app.use('*', async (c, next) => {
-        c.set('tenantId' as never, TENANT as never);
+        c.set('tenantId' as never, TENANT);
         c.set(
           'tenantMetadataContext' as never,
           {

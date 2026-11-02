@@ -258,7 +258,7 @@ export async function createSDJWTVC(
     claims,
     issuer,
     async (payload) =>
-      new SignJWT(payload as JWTPayload)
+      new SignJWT(payload)
         .setProtectedHeader({
           alg: algorithm,
           typ: 'dc+sd-jwt',
@@ -555,7 +555,7 @@ export async function createKeyBindingJWT(
     sd_hash: sdHash,
   };
 
-  return await new SignJWT(payload as JWTPayload)
+  return await new SignJWT(payload)
     .setProtectedHeader({
       alg: algorithm,
       typ: 'kb+jwt',

@@ -314,13 +314,9 @@ describe('AgentDownscopeEntrypoint', () => {
     'rejects $name before repository access',
     async ({ overrides }) => {
       const deps = dependencies();
-      await expect(
-        exchangeAgentAccessToken(
-          env,
-          { ...input, ...overrides } as AgentDownscopeExchangeRequest,
-          deps
-        )
-      ).rejects.toThrow('invalid_agent_downscope_request');
+      await expect(exchangeAgentAccessToken(env, { ...input, ...overrides }, deps)).rejects.toThrow(
+        'invalid_agent_downscope_request'
+      );
       expect(deps.isFeatureEnabled).not.toHaveBeenCalled();
     }
   );

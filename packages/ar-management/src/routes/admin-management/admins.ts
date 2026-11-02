@@ -326,7 +326,7 @@ adminUsersRouter.get('/:id', async (c) => {
     const userRepo = new AdminUserRepository(adapter);
     const passkeyRepo = new AdminPasskeyRepository(adapter);
 
-    const id = c.req.param('id')!;
+    const id = c.req.param('id');
     const tenantId = getTenantIdFromContext(c);
     const roleAssignmentRepo = new AdminRoleAssignmentRepository(adapter, tenantId);
 
@@ -408,7 +408,7 @@ adminUsersRouter.patch('/:id', async (c) => {
     const adapter = getAdminAdapter(c);
     const userRepo = new AdminUserRepository(adapter);
 
-    const id = c.req.param('id')!;
+    const id = c.req.param('id');
     const tenantId = getTenantIdFromContext(c);
 
     // Check if user exists
@@ -504,7 +504,7 @@ adminUsersRouter.delete('/:id', async (c) => {
     const adapter = getAdminAdapter(c);
     const userRepo = new AdminUserRepository(adapter);
 
-    const id = c.req.param('id')!;
+    const id = c.req.param('id');
     const tenantId = getTenantIdFromContext(c);
 
     // Check if user exists
@@ -578,7 +578,7 @@ adminUsersRouter.post('/:id/suspend', async (c) => {
     const adapter = getAdminAdapter(c);
     const userRepo = new AdminUserRepository(adapter);
 
-    const id = c.req.param('id')!;
+    const id = c.req.param('id');
     const tenantId = getTenantIdFromContext(c);
 
     // Check if user exists
@@ -649,7 +649,7 @@ adminUsersRouter.post('/:id/activate', async (c) => {
     const adapter = getAdminAdapter(c);
     const userRepo = new AdminUserRepository(adapter);
 
-    const id = c.req.param('id')!;
+    const id = c.req.param('id');
     const tenantId = getTenantIdFromContext(c);
 
     // Check if user exists
@@ -696,7 +696,7 @@ adminUsersRouter.post('/:id/unlock', async (c) => {
     const adapter = getAdminAdapter(c);
     const userRepo = new AdminUserRepository(adapter);
 
-    const id = c.req.param('id')!;
+    const id = c.req.param('id');
     const tenantId = getTenantIdFromContext(c);
 
     // Check if user exists
@@ -745,7 +745,7 @@ adminUsersRouter.post('/:id/roles', async (c) => {
     const userRepo = new AdminUserRepository(adapter);
     const roleRepo = new AdminRoleRepository(adapter);
 
-    const id = c.req.param('id')!;
+    const id = c.req.param('id');
     const tenantId = getTenantIdFromContext(c);
     const roleAssignmentRepo = new AdminRoleAssignmentRepository(adapter, tenantId);
 
@@ -863,8 +863,8 @@ adminUsersRouter.delete('/:id/role-assignments/:assignmentId', async (c) => {
     const userRepo = new AdminUserRepository(adapter);
     const roleRepo = new AdminRoleRepository(adapter);
 
-    const id = c.req.param('id')!;
-    const assignmentId = c.req.param('assignmentId')!;
+    const id = c.req.param('id');
+    const assignmentId = c.req.param('assignmentId');
     const tenantId = getTenantIdFromContext(c);
     const roleAssignmentRepo = new AdminRoleAssignmentRepository(adapter, tenantId);
 
@@ -955,8 +955,8 @@ adminUsersRouter.delete('/:id/roles/:roleId', async (c) => {
     const userRepo = new AdminUserRepository(adapter);
     const roleRepo = new AdminRoleRepository(adapter);
 
-    const id = c.req.param('id')!;
-    const roleId = c.req.param('roleId')!;
+    const id = c.req.param('id');
+    const roleId = c.req.param('roleId');
     const tenantId = getTenantIdFromContext(c);
     const roleAssignmentRepo = new AdminRoleAssignmentRepository(adapter, tenantId);
 

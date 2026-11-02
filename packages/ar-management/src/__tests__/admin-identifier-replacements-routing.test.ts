@@ -65,7 +65,7 @@ describe('Admin identifier replacement shard routing', () => {
     expect(response.status).toBe(200);
     expect(mocks.resolveAccount).toHaveBeenCalledWith(expect.anything(), 'account-a');
     expect(mocks.resolveAccount.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.createPii.mock.invocationCallOrder[0]!
+      mocks.createPii.mock.invocationCallOrder[0]
     );
     expect(mocks.routedPii.query).toHaveBeenCalledOnce();
     expect(mocks.defaultPii.query).not.toHaveBeenCalled();

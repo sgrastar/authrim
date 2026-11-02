@@ -268,7 +268,7 @@ adminAuditRouter.get('/:id', async (c) => {
     const metadataAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'admin-audit-metadata');
     const tenantId = getTenantIdFromContext(c);
 
-    const id = c.req.param('id')!;
+    const id = c.req.param('id');
     const logRecord = await auditRepo.getAuditLogWithDetailReference(id);
 
     if (!logRecord) {
@@ -500,7 +500,7 @@ adminAuditRouter.get('/user/:userId', async (c) => {
     const auditRepo = new AdminAuditLogRepository(adapter);
     const tenantId = getTenantIdFromContext(c);
 
-    const userId = c.req.param('userId')!;
+    const userId = c.req.param('userId');
     const page = parseInt(c.req.query('page') || '1', 10);
     const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), 100);
 

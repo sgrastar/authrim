@@ -120,7 +120,7 @@ export async function resolveApprovalTransportChannel(
     transportChannel?: string | null;
   }
 ): Promise<string | null> {
-  const method = (overrides?.method ?? approval.method ?? null) as ApprovalTransportMethod | null;
+  const method = overrides?.method ?? approval.method ?? null;
   const explicitChannel = normalizeChannel(overrides?.transportChannel);
   if (explicitChannel) {
     return explicitChannel;

@@ -184,7 +184,7 @@ async function getKeysFromKeyManager(
     if (keys && keys.length > 0) {
       // Update per-tenant cache
       cachedKeyManagerKeysMap.set(tenantId, {
-        keys: keys as Array<JWK & { kid?: string }>,
+        keys: keys,
         timestamp: now,
         version: currentVersion,
       });
@@ -492,10 +492,7 @@ export async function introspectToken(
   // persistent sub (a token carrying the sealed account reference, which only the authorization
   // server can open) is not that account's id, nor is the sub of an ID token that does not show
   // it is the user's id: either may equal another user's id.
-  if (
-    typeof tokenClaims.sub === 'string' &&
-    tokenSubjectAccountSource(tokenClaims as Record<string, unknown>) !== 'sub'
-  ) {
+  if (typeof tokenClaims.sub === 'string' && tokenSubjectAccountSource(tokenClaims) !== 'sub') {
     log.warn('Token subject is not an account id this resource can act on');
     return {
       valid: false,

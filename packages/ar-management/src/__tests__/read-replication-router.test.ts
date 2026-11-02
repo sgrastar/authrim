@@ -277,7 +277,7 @@ describe('read replication admin router', () => {
         getReadReplicationStatus: vi.fn(async () => ({
           ...status,
           providerToken: 'secret-value',
-        })) as NonNullable<Env['CONTROL']>['getReadReplicationStatus'],
+        })),
       },
     });
     const secretResponse = await secretBearing.app.request(

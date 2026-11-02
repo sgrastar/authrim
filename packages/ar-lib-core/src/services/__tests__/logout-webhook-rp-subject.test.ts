@@ -121,7 +121,7 @@ describe('logout webhook sub per relying party', () => {
         JSON.parse(String(init?.body)) as Record<string, unknown>
       );
       return new Response(null, { status: 200 });
-    }) as typeof fetch;
+    });
   });
 
   async function logout(config: Partial<LogoutWebhookConfig> = {}, clientIds = ['rp-a', 'rp-b']) {

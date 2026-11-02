@@ -581,7 +581,7 @@ export class StatusListManager {
     }
 
     const bitstring = await decodeBitstring(list.encoded_list, list.capacity);
-    return getStatusAtIndex(bitstring, index) as StatusValue;
+    return getStatusAtIndex(bitstring, index);
   }
 
   /**

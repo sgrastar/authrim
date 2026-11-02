@@ -8,17 +8,20 @@
     },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 8
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 2
     }
   },
   "src/__tests__/admin-agent-login-handoff.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 2
+    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 6
     }
   },
   "src/__tests__/admin-agent-oauth.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
+    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 26
     },
@@ -96,7 +99,7 @@
       "count": 3
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 4
+      "count": 7
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 28
@@ -112,9 +115,6 @@
     },
     "@typescript-eslint/no-unused-vars": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 12
     }
   },
   "src/__tests__/consent.test.ts": {
@@ -141,14 +141,11 @@
     },
     "@typescript-eslint/no-unused-vars": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 5
     }
   },
   "src/__tests__/did-auth.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 33
+      "count": 41
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 6
@@ -162,7 +159,7 @@
   },
   "src/__tests__/did-link.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 27
+      "count": 43
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 10
@@ -179,7 +176,7 @@
   },
   "src/__tests__/did-unlink-real-sql.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 2
+      "count": 3
     }
   },
   "src/__tests__/direct-auth-compatibility.test.ts": {
@@ -189,7 +186,7 @@
   },
   "src/__tests__/direct-auth-flows.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 38
+      "count": 37
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 4
@@ -247,16 +244,13 @@
   },
   "src/__tests__/directory-connector-relay.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 7
+      "count": 6
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
     },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 2
     }
   },
   "src/__tests__/directory-password-live-wordwarden.test.ts": {
@@ -285,22 +279,16 @@
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 1
     }
   },
   "src/__tests__/directory-relay-client.test.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 1
     }
   },
   "src/__tests__/email-code-handler.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 2
+      "count": 1
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
@@ -329,17 +317,15 @@
       "count": 2
     }
   },
-  "src/__tests__/flow-registry.test.ts": {
-    "@typescript-eslint/unbound-method": {
-      "count": 7
-    }
-  },
   "src/__tests__/flow-state-store.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 12
     }
   },
   "src/__tests__/guest-login.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
+    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 3
     }
@@ -349,7 +335,7 @@
       "count": 1
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 10
+      "count": 11
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 3
@@ -359,9 +345,6 @@
     },
     "@typescript-eslint/no-unused-vars": {
       "count": 2
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 1
     }
   },
   "src/__tests__/human-verification.test.ts": {
@@ -434,9 +417,6 @@
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 3
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 2
     }
   },
   "src/__tests__/logout-integration.test.ts": {
@@ -448,8 +428,11 @@
     "@typescript-eslint/no-explicit-any": {
       "count": 22
     },
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 10
+    },
     "@typescript-eslint/no-unsafe-argument": {
-      "count": 85
+      "count": 84
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 65
@@ -466,6 +449,9 @@
   },
   "src/__tests__/par.test.ts": {
     "@typescript-eslint/no-explicit-any": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 1
     },
     "@typescript-eslint/no-unsafe-argument": {
@@ -505,17 +491,11 @@
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 4
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 1
     }
   },
   "src/__tests__/registration-field-utils.test.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 4
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 19
     }
   },
   "src/__tests__/request-object.test.ts": {
@@ -537,9 +517,19 @@
   },
   "src/__tests__/routed-account-storage-real-sql.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 5
+      "count": 6
     },
     "@typescript-eslint/no-unsafe-assignment": {
+      "count": 2
+    }
+  },
+  "src/__tests__/routed-directory-and-passkey-real-sql.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 2
+    }
+  },
+  "src/__tests__/session-owner-routing-real-sql.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 2
     }
   },
@@ -558,7 +548,7 @@
   },
   "src/__tests__/sign-in-sequence.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 7
+      "count": 8
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 3
@@ -572,7 +562,7 @@
   },
   "src/__tests__/totp.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 9
+      "count": 8
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 21
@@ -588,6 +578,9 @@
     }
   },
   "src/account-provisioning.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
+    },
     "@typescript-eslint/no-unused-vars": {
       "count": 1
     }
@@ -595,11 +588,6 @@
   "src/admin-agent-login-handoff.ts": {
     "@typescript-eslint/no-base-to-string": {
       "count": 1
-    }
-  },
-  "src/admin-agent-oauth.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 2
     }
   },
   "src/admin-invitation-enrollment.ts": {
@@ -646,7 +634,7 @@
       "count": 1
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 12
+      "count": 2
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 7
@@ -665,9 +653,6 @@
     }
   },
   "src/consent.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 7
-    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 4
     },
@@ -678,7 +663,7 @@
       "count": 4
     },
     "@typescript-eslint/no-unused-vars": {
-      "count": 7
+      "count": 5
     }
   },
   "src/did-auth.ts": {
@@ -720,7 +705,7 @@
       "count": 3
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 3
+      "count": 2
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 3
@@ -754,9 +739,6 @@
   },
   "src/directory-connector-relay.ts": {
     "@typescript-eslint/no-redundant-type-constituents": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 1
     },
     "@typescript-eslint/no-unsafe-argument": {
@@ -801,7 +783,7 @@
   },
   "src/email-code.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 6
+      "count": 1
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 2
@@ -825,6 +807,11 @@
     },
     "no-control-regex": {
       "count": 1
+    }
+  },
+  "src/flow-engine/condition-evaluator.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 2
     }
   },
   "src/flow-engine/condition-evaluator.ts": {
@@ -853,6 +840,9 @@
     "@typescript-eslint/no-explicit-any": {
       "count": 33
     },
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 5
+    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 33
     }
@@ -870,6 +860,9 @@
   "src/flow-engine/flow-executor.test.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 6
+    },
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 4
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 6
@@ -890,9 +883,6 @@
     }
   },
   "src/flow-engine/flow-registry.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
     },
@@ -902,34 +892,34 @@
   },
   "src/flow-engine/flows/locale-routing-flow.ts": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 22
+      "count": 21
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 22
+      "count": 21
     }
   },
   "src/flow-engine/flows/passkey-fallback-flow.ts": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 20
+      "count": 19
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 20
+      "count": 19
     }
   },
   "src/flow-engine/flows/risk-based-flow.ts": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 16
+      "count": 15
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 16
+      "count": 15
     }
   },
   "src/flow-engine/flows/social-login-flow.ts": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 13
+      "count": 12
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 13
+      "count": 12
     }
   },
   "src/flow-engine/types.ts": {
@@ -943,9 +933,6 @@
     }
   },
   "src/flow-engine/ui-contract-generator.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 2
-    },
     "@typescript-eslint/no-unused-vars": {
       "count": 2
     }
@@ -1000,9 +987,6 @@
     }
   },
   "src/logout.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 2
-    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 3
     },
@@ -1036,9 +1020,6 @@
     },
     "@typescript-eslint/ban-ts-comment": {
       "count": 2
-    },
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 8
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
@@ -1112,9 +1093,6 @@
   "src/utils/__tests__/email-code-utils.test.ts": {
     "@typescript-eslint/no-unused-vars": {
       "count": 2
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 3
     }
   }
 }

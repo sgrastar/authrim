@@ -271,7 +271,7 @@ describe('retention inventory', () => {
   });
 
   it('shows sessions as their longest sign-in method lifetime, with each method', async () => {
-    const sessions = byId(await build()).sessions!;
+    const sessions = byId(await build()).sessions;
     // passkey is set to 3 days; the default of the longest method (30 days) still wins.
     expect(sessions.retention).toEqual({ value: 30 * 86400, unit: 'seconds' });
     expect(sessions.varies).toBe('by_sign_in_method');
@@ -298,7 +298,7 @@ describe('retention inventory', () => {
       'session.max_ttl': 2 * 86400000,
       'session.refresh_default': false,
     });
-    const sessions = byId(await build()).sessions!;
+    const sessions = byId(await build()).sessions;
     expect(sessions.retention).toEqual({ value: 2 * 86400, unit: 'seconds' });
     expect(sessions.breakdown).toEqual(
       expect.arrayContaining([{ key: 'session.ttl.passkey_registration', seconds: 2 * 86400 }])
@@ -348,7 +348,7 @@ describe('retention inventory', () => {
       'FROM lookup_retention_policies': { retention_days: 400, policy_generation: 3 },
       'FROM lookup_retention_policy_projection_outbox': { projected: 0 },
     });
-    const lookup = byId(await build(false)).lookup_directory!;
+    const lookup = byId(await build(false)).lookup_directory;
     expect(lookup.retention.value).toBe(400);
     expect(lookup.deletion).toEqual({
       kind: 'not_deleted',
@@ -363,7 +363,7 @@ describe('retention inventory', () => {
 
     // No policy row yet: the default, nothing to project.
     core = adapter({});
-    const defaults = byId(await build(false)).lookup_directory!;
+    const defaults = byId(await build(false)).lookup_directory;
     expect(defaults.retention.value).toBe(180);
     expect(defaults.deletion).toMatchObject({ projection: 'current' });
   });

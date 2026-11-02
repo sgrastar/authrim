@@ -32,7 +32,7 @@ export class ClaimScopeEvaluator {
         return true;
       }
     } else {
-      requiredScopes = schema.required_scopes as unknown as string[];
+      requiredScopes = schema.required_scopes;
     }
 
     if (!Array.isArray(requiredScopes) || requiredScopes.length === 0) {

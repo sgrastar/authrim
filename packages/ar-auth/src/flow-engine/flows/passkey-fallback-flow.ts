@@ -117,7 +117,7 @@ export const passkeyFallbackFlow: GraphDefinition = {
             },
           ],
           defaultBranch: 'branch_default',
-        } as any,
+        },
       },
     },
     // Branch 1: Success → Login Complete

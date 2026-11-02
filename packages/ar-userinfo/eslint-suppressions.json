@@ -11,14 +11,8 @@
     }
   },
   "src/__tests__/index-security.test.ts": {
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 1
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 4
     }
   },
   "src/__tests__/protected-customer-profile-actor-authz.test.ts": {
@@ -55,6 +49,11 @@
       "count": 2
     }
   },
+  "src/__tests__/protected-customer-profile-routed-real-sql.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 3
+    }
+  },
   "src/__tests__/protected-customer-profile-step-up-retry.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 1
@@ -68,7 +67,7 @@
       "count": 2
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 3
+      "count": 4
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
@@ -83,9 +82,17 @@
       "count": 1
     }
   },
+  "src/__tests__/saml-dr-entrypoint.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 2
+    }
+  },
   "src/__tests__/userinfo-admin-database.test.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 2
+    },
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
@@ -133,7 +140,7 @@
       "count": 9
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 23
+      "count": 24
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 9
@@ -148,6 +155,9 @@
   "src/__tests__/userinfo.test.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 9
+    },
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 3
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 56

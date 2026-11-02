@@ -89,7 +89,7 @@ export const riskBasedFlow: GraphDefinition = {
             },
           ],
           defaultCase: 'case_default',
-        } as any,
+        },
       },
     },
     // Case 1: Low Risk → Normal Login

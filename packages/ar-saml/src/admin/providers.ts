@@ -3595,7 +3595,7 @@ async function readSAMLAdminJsonWithLimit<T>(c: AdminSAMLContext, maxBytes: numb
     if (c.req.raw instanceof Request) {
       return await readRequestJsonWithLimit<T>(c.req.raw, maxBytes);
     }
-    return (await c.req.json()) as T;
+    return await c.req.json();
   } catch (error) {
     throw new SAMLMetadataValidationError(
       error instanceof Error && error.message.includes('maximum size')
@@ -4086,7 +4086,7 @@ async function processAggregateBatchCreate(
         const configWithMapping = {
           ...metadataConfig,
           ...(input.identityMapping ? { identityMapping: input.identityMapping } : {}),
-        } as SAMLIdPConfig | SAMLSPConfig;
+        };
         const config =
           providerType === 'saml_sp'
             ? normalizeSAMLSPConfig(configWithMapping as SAMLSPConfig, {
@@ -4126,7 +4126,7 @@ async function processAggregateBatchCreate(
             verification: preview.verification,
             importedAt: now,
           },
-        } as SAMLIdPConfig | SAMLSPConfig);
+        });
         const providerEnabled =
           input.enabled && normalizedConfig.certificateValidation?.allExpired !== true;
         const name = buildProviderNameFromEntity(entityId, providerType);

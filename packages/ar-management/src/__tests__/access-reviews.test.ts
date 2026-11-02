@@ -380,12 +380,12 @@ describe('access reviews', () => {
       await decideAccessReviewItems(
         context({
           params: { id: review.review_id },
-          body: { item_ids: [first!.id], decision: 'revoked', justification: 'Left the team' },
+          body: { item_ids: [first.id], decision: 'revoked', justification: 'Left the team' },
         })
       )
     );
     expect(decided).toMatchObject({ updated: 1, review: { progress: { revoked_items: 1 } } });
-    expect(items(reviews).find((item) => item.id === first!.id)).toMatchObject({
+    expect(items(reviews).find((item) => item.id === first.id)).toMatchObject({
       decision: 'revoked',
       decided_by: 'admin-1',
       justification: 'Left the team',
@@ -395,8 +395,8 @@ describe('access reviews', () => {
     );
     expect(listed.data).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ item_id: first!.id, decision: 'revoked' }),
-        expect.objectContaining({ item_id: second!.id, decision: null }),
+        expect.objectContaining({ item_id: first.id, decision: 'revoked' }),
+        expect.objectContaining({ item_id: second.id, decision: null }),
       ])
     );
     expect(listed.data[0].user.email).toMatch(/@example\.com$/u);
@@ -405,32 +405,32 @@ describe('access reviews', () => {
   it('completes only once every item is decided, applying revocations in their stores', async () => {
     const review = await createRoleReview();
     const [first, second] = items(reviews);
-    await decide(review.review_id, [first!.id], 'revoked');
+    await decide(review.review_id, [first.id], 'revoked');
     const early = await completeAccessReview(context({ params: { id: review.review_id } }));
     expect(early.status).toBe(409);
-    await decide(review.review_id, [second!.id], 'approved');
+    await decide(review.review_id, [second.id], 'approved');
     const done = await json(
       await completeAccessReview(context({ params: { id: review.review_id } }))
     );
     expect(done).toMatchObject({ completed: true, applied: 1, failed: 0, remaining: 0 });
     expect(mocks.removeRoleAssignment).toHaveBeenCalledWith(
       expect.objectContaining({
-        adapter: first!.store_ref === 'DB' ? db : users1,
+        adapter: first.store_ref === 'DB' ? db : users1,
         onCacheFailure: 'throw',
       }),
       expect.objectContaining({
-        userId: first!.user_id,
-        assignmentId: first!.entitlement_ref,
+        userId: first.user_id,
+        assignmentId: first.entitlement_ref,
         // One entry per application of the item: its first attempt names it.
         audit: {
-          id: `access-review.${review.review_id}.${first!.id}.${Date.parse(
-            items(reviews).find((item) => item.id === first!.id)!.apply_first_at
+          id: `access-review.${review.review_id}.${first.id}.${Date.parse(
+            items(reviews).find((item) => item.id === first.id)!.apply_first_at
           )}`,
-          at: Date.parse(items(reviews).find((item) => item.id === first!.id)!.apply_first_at),
+          at: Date.parse(items(reviews).find((item) => item.id === first.id)!.apply_first_at),
         },
       })
     );
-    expect(items(reviews).find((item) => item.id === second!.id)).toMatchObject({
+    expect(items(reviews).find((item) => item.id === second.id)).toMatchObject({
       apply_status: 'skipped',
     });
     expect(reviews.db.prepare('SELECT status, completed_by FROM access_reviews').get()).toEqual({
@@ -587,15 +587,15 @@ describe('access reviews', () => {
       await createAccessReview(context({ body: { name: 'All', scope: 'all_users' } }))
     );
     const [item] = items(reviews);
-    await decide(created.review_id, [item!.id], 'revoked');
+    await decide(created.review_id, [item.id], 'revoked');
     await completeAccessReview(context({ params: { id: created.review_id } }));
     // Its version is the first attempt's: a status change made after that is newer and wins.
-    const firstAttemptAt = items(reviews)[0]!.apply_first_at;
+    const firstAttemptAt = items(reviews)[0].apply_first_at;
     expect(mocks.suspendAccount).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
         userId: 'user-9',
-        operationId: `access-review:${created.review_id}:${item!.id}`,
+        operationId: `access-review:${created.review_id}:${item.id}`,
         versionMs: Date.parse(firstAttemptAt),
         reasonCode: 'access_review',
       })
@@ -609,7 +609,7 @@ describe('access reviews', () => {
       await createAccessReview(context({ body: { name: 'All', scope: 'all_users' } }))
     );
     const [item] = items(reviews);
-    await decide(created.review_id, [item!.id], 'revoked');
+    await decide(created.review_id, [item.id], 'revoked');
     const { AccountLifecycleSupersededError } = await import('../access-revocation');
     mocks.suspendAccount.mockRejectedValueOnce(new AccountLifecycleSupersededError());
     await completeAccessReview(context({ params: { id: created.review_id } }));
@@ -619,7 +619,7 @@ describe('access reviews', () => {
       apply_error: 'lifecycle_superseded',
       apply_first_at: null,
     });
-    expect(await decide(created.review_id, [item!.id], 'approved')).toMatchObject({
+    expect(await decide(created.review_id, [item.id], 'approved')).toMatchObject({
       updated: 1,
     });
   });
@@ -670,7 +670,7 @@ describe('access reviews', () => {
       ([, input]) => input.assignmentId === stuck.entitlement_ref
     );
     expect(calls).toHaveLength(2);
-    expect(calls[1]![1].audit).toEqual(calls[0]![1].audit);
+    expect(calls[1][1].audit).toEqual(calls[0][1].audit);
     expect(first).toBeDefined();
   });
 
@@ -681,7 +681,7 @@ describe('access reviews', () => {
       await createAccessReview(context({ body: { name: 'All', scope: 'all_users' } }))
     );
     const [item] = items(reviews);
-    await decide(created.review_id, [item!.id], 'revoked');
+    await decide(created.review_id, [item.id], 'revoked');
     mocks.suspendAccount.mockRejectedValueOnce(new Error('access_cache_invalidation_failed'));
     await completeAccessReview(context({ params: { id: created.review_id } }));
     await completeAccessReview(context({ params: { id: created.review_id } }));
@@ -741,7 +741,7 @@ describe('access reviews', () => {
       return execute(sql, params);
     };
     await completeAccessReview(context({ params: { id: review.review_id } }));
-    expect(mocks.removeRoleAssignment.mock.calls[0]![1].audit.at).toBe(Date.parse(firstElsewhere));
+    expect(mocks.removeRoleAssignment.mock.calls[0][1].audit.at).toBe(Date.parse(firstElsewhere));
   });
 
   it('applies in the store holding the access now, or as gone when none does', async () => {

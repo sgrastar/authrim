@@ -114,7 +114,7 @@ describe('Device Flow State Machine - RFC 8628', () => {
       expect(metadata.token_issued).toBeUndefined();
 
       // User approves
-      expect(isValidTransition(metadata.status as DeviceStatus, 'approved')).toBe(true);
+      expect(isValidTransition(metadata.status, 'approved')).toBe(true);
       metadata.status = 'approved';
       metadata.user_id = 'user123';
       metadata.sub = 'user@example.com';
@@ -152,7 +152,7 @@ describe('Device Flow State Machine - RFC 8628', () => {
         status: 'denied',
       });
 
-      const canApprove = isValidTransition(metadata.status as DeviceStatus, 'approved');
+      const canApprove = isValidTransition(metadata.status, 'approved');
       expect(canApprove).toBe(false);
     });
 
@@ -162,7 +162,7 @@ describe('Device Flow State Machine - RFC 8628', () => {
         expires_at: Date.now() - 60000,
       });
 
-      const canApprove = isValidTransition(metadata.status as DeviceStatus, 'approved');
+      const canApprove = isValidTransition(metadata.status, 'approved');
       expect(canApprove).toBe(false);
     });
 
@@ -245,7 +245,7 @@ describe('Device Flow State Machine - RFC 8628', () => {
       const metadata = createDeviceCodeMetadata();
 
       expect(metadata.status).toBe('pending');
-      expect(isValidTransition(metadata.status as DeviceStatus, 'denied')).toBe(true);
+      expect(isValidTransition(metadata.status, 'denied')).toBe(true);
 
       metadata.status = 'denied';
       expect(metadata.status).toBe('denied');

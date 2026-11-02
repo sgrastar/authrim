@@ -110,7 +110,7 @@ app.notFound((c) => {
 // Error handler
 app.onError((err, c) => {
   const log = getLogger(c).module('DISCOVERY');
-  log.error('Unhandled error in discovery service', { error: err.message }, err as Error);
+  log.error('Unhandled error in discovery service', { error: err.message }, err);
   return c.json({ error: 'server_error', error_description: 'An unexpected error occurred' }, 500);
 });
 

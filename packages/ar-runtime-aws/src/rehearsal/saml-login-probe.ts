@@ -230,7 +230,7 @@ export async function runSyntheticSamlLoginProbe(input: {
       });
     const json = async <T>(response: Response): Promise<T> => {
       check(response.status === 200);
-      return (await response.json()) as T;
+      return await response.json();
     };
 
     stage = 'metadata_certificate';

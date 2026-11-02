@@ -70,8 +70,8 @@ async function dropAccessCaches(context: RevocationContext, userId: string): Pro
   log.warn('Access cache could not be dropped', {
     tenantId,
     errorType:
-      failed[0]!.status === 'rejected' && failed[0]!.reason instanceof Error
-        ? failed[0]!.reason.name
+      failed[0].status === 'rejected' && failed[0].reason instanceof Error
+        ? failed[0].reason.name
         : 'Unknown',
   });
   if (context.onCacheFailure === 'throw') throw new AccessCacheInvalidationError();

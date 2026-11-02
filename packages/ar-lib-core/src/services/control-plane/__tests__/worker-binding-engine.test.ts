@@ -191,7 +191,7 @@ describe('shared Worker binding provisioning effect', () => {
         deploymentsBefore: [oldDeployment],
         activeBefore: activeWorkerDeployment([oldDeployment]),
         api,
-        state: persistence as unknown as WorkerBindingPatchState<typeof multiTarget, typeof lease>,
+        state: persistence,
         now: () => 200,
       })
     ).resolves.toMatchObject({ state: 'patched' });

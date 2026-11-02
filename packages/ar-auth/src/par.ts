@@ -17,7 +17,7 @@
  */
 
 import type { Context } from 'hono';
-import type { Env, ClientMetadata } from '@authrim/ar-lib-core';
+import type { Env } from '@authrim/ar-lib-core';
 import { RFCError } from '@authrim/ar-lib-core';
 import { HTTP_STATUS } from '@authrim/ar-lib-core';
 import {
@@ -341,14 +341,10 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
 
     // RFC 9126 permits authenticated clients to omit the outer client_id. private_key_jwt
     // identifies the client through the assertion issuer; its signature is verified below.
-    const clientId = resolvePARClientId(
-      formData as Record<string, unknown>,
-      client_assertion,
-      client_assertion_type
-    );
+    const clientId = resolvePARClientId(formData, client_assertion, client_assertion_type);
 
     // Validate request parameters
-    const params = validatePARParams(formData as Record<string, unknown>, clientId);
+    const params = validatePARParams(formData, clientId);
 
     // Validate client_id
     const clientValidation = validateClientId(params.client_id);
@@ -363,7 +359,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     }
 
     // Cast to ClientMetadata for type safety
-    const clientMetadata = clientData as unknown as ClientMetadata;
+    const clientMetadata = clientData;
 
     // =========================================================================
     // Load FAPI 2.0 / OIDC configuration from SETTINGS KV
@@ -702,7 +698,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
             log.warn('Using unsigned request object (alg=none) - dev/testing only', {
               action: 'security_warning',
             });
-            requestObjectClaims = parseToken(jwtRequest) as Record<string, unknown>;
+            requestObjectClaims = parseToken(jwtRequest);
           } else {
             if (!alg || !requestObjectSigningAlgorithms.includes(alg)) {
               return c.json(
@@ -750,7 +746,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
                     400
                   );
                 }
-                cryptoKey = imported as CryptoKey;
+                cryptoKey = imported;
               } else {
                 return c.json(
                   {
@@ -801,7 +797,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
                     400
                   );
                 }
-                cryptoKey = imported as CryptoKey;
+                cryptoKey = imported;
               } catch (error) {
                 log.error(
                   'Failed to fetch client jwks_uri',

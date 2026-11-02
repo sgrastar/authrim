@@ -25,11 +25,7 @@ describe('SAML DR source guard on the installed fetch entrypoint', () => {
     expect(acquire).not.toHaveBeenCalled();
   });
   it('fails closed before any handler when its configured admission binding is unavailable', async () => {
-    const response = await worker.fetch(
-      request(),
-      { ENABLE_SAML_DR_EXPORT: 'true' } as never,
-      context
-    );
+    const response = await worker.fetch(request(), { ENABLE_SAML_DR_EXPORT: 'true' }, context);
     expect(response.status).toBe(503);
     expect(response.headers.get('cache-control')).toBe('no-store');
     expect(response.headers.get('retry-after')).toBe('5');

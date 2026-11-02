@@ -62,7 +62,7 @@ const browserSecret = 'browser-secret';
 function appWith(handler: Handler<{ Bindings: Env }>) {
   const app = new Hono<{ Bindings: Env }>();
   app.use('*', async (c, next) => {
-    c.set('tenantId' as never, mocks.currentTenantId as never);
+    c.set('tenantId' as never, mocks.currentTenantId);
     c.set('requestId' as never, 'request-1' as never);
     await next();
   });

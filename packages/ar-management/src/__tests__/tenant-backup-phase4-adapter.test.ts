@@ -196,7 +196,7 @@ it('blocks activation until external prerequisites and logical references pass',
   await adapter.import.prepareActivation(context, 'ab'.repeat(32));
   expect(ports.loadExternalPrerequisites).toHaveBeenCalledWith(context, 'ab'.repeat(32));
   expect(ports.loadExternalPrerequisites.mock.invocationCallOrder[0]).toBeLessThan(
-    ports.import.prepareActivation.mock.invocationCallOrder[0]!
+    ports.import.prepareActivation.mock.invocationCallOrder[0]
   );
 });
 

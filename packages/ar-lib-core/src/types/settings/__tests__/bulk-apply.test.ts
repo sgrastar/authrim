@@ -80,11 +80,9 @@ describe('the bulk-apply category', () => {
 
   it('is read from KV first, then the environment, then the default', async () => {
     const read = (documents: Record<string, unknown>, env: Record<string, string> = {}) =>
-      resolvePlatformSettingsWithSources(
-        { SETTINGS: kv(documents), ...env } as never,
-        'bulk-apply',
-        { fresh: true }
-      );
+      resolvePlatformSettingsWithSources({ SETTINGS: kv(documents), ...env }, 'bulk-apply', {
+        fresh: true,
+      });
     expect((await read({})).values[BULK_APPLY_MAX_TENANTS_KEY]).toBe(25);
     expect(
       (await read({}, { BULK_APPLY_MAX_TENANTS_PER_REQUEST: '40' })).values[

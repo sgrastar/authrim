@@ -7,7 +7,7 @@
       "count": 2
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 8
+      "count": 9
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 14
@@ -27,20 +27,12 @@
   },
   "src/admin/__tests__/aggregate-provider-api.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 10
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 2
+      "count": 9
     },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 1
     },
     "@typescript-eslint/no-unsafe-return": {
-      "count": 2
-    }
-  },
-  "src/admin/__tests__/dr-bundle-snapshot.test.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 1
     }
   },
@@ -51,7 +43,7 @@
   },
   "src/admin/__tests__/metadata-interoperability.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 5
+      "count": 2
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
@@ -72,6 +64,9 @@
     }
   },
   "src/admin/__tests__/providers-crud.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 2
+    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 2
     },
@@ -147,15 +142,9 @@
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 1
     }
   },
   "src/common/__tests__/xml-encoding.property.test.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 2
-    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 5
     },
@@ -186,9 +175,6 @@
     }
   },
   "src/common/slo-messages.test.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 12
-    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 10
     }
@@ -204,9 +190,6 @@
     }
   },
   "src/common/xml-utils.test.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 2
-    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 4
     }
@@ -228,6 +211,11 @@
       "count": 26
     },
     "@typescript-eslint/no-unsafe-return": {
+      "count": 2
+    }
+  },
+  "src/idp/__tests__/attribute-release-consent.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 2
     }
   },
@@ -253,17 +241,11 @@
     }
   },
   "src/idp/__tests__/encryption.test.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 19
-    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 17
     }
   },
   "src/idp/__tests__/error-response.test.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 2
-    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 2
     },
@@ -274,12 +256,28 @@
       "count": 3
     }
   },
+  "src/idp/__tests__/helpers/evidence-db.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
+    }
+  },
+  "src/idp/__tests__/identity-assurance.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 2
+    }
+  },
   "src/idp/__tests__/idp-initiated.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 3
+    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
     }
   },
   "src/idp/__tests__/institution-metadata.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
+    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
     },
@@ -293,7 +291,15 @@
       "count": 1
     }
   },
+  "src/idp/__tests__/institution-release.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 3
+    }
+  },
   "src/idp/__tests__/institution-sso.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 6
+    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
     },
@@ -314,7 +320,7 @@
   },
   "src/idp/__tests__/metadata.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 4
+      "count": 1
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 2
@@ -329,10 +335,17 @@
       "count": 12
     }
   },
-  "src/idp/__tests__/signing.test.ts": {
+  "src/idp/__tests__/production-shaped-release.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 2
-    },
+      "count": 6
+    }
+  },
+  "src/idp/__tests__/runtime-identity-mapping.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 9
+    }
+  },
+  "src/idp/__tests__/signing.test.ts": {
     "@typescript-eslint/no-unsafe-argument": {
       "count": 2
     },
@@ -340,7 +353,20 @@
       "count": 1
     }
   },
+  "src/idp/__tests__/slo-handler.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 3
+    }
+  },
+  "src/idp/__tests__/sso-authn-assurance.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 3
+    }
+  },
   "src/idp/__tests__/sso-handler.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 8
+    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
     },
@@ -349,9 +375,6 @@
     }
   },
   "src/idp/assertion.test.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 29
-    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 22
     },
@@ -432,6 +455,11 @@
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 1
+    }
+  },
+  "src/sp/__tests__/slo-handler.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 2
     }
   },
   "src/sp/__tests__/subject-confirmation.test.ts": {

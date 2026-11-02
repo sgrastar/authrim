@@ -236,7 +236,7 @@ async function resolveAccountMembership(
     (membership) => membership.tenantId === work.tenantId && membership.accountId === accountId
   );
   if (memberships.length !== 1) throw new Error('tenant_dr_lookup_account_route_missing');
-  return memberships[0]!;
+  return memberships[0];
 }
 
 async function upsertIdentifier(input: {
@@ -490,7 +490,7 @@ async function cleanupPage(
       afterRowId: 0,
     });
   }
-  const shard = shards[index]!;
+  const shard = shards[index];
   const session = primary(binding(env, shard.bindingRef, 'tenant_dr_lookup_binding_unavailable'));
   await session.batch([
     session
@@ -548,7 +548,7 @@ async function sourcePage(
       afterRowId: 0,
     });
   }
-  const source = targets[index]!;
+  const source = targets[index];
   const session = primary(binding(env, source.bindingRef, 'tenant_dr_lookup_source_unavailable'));
   const rows = await session
     .prepare(sourceSql(stage))
@@ -722,7 +722,7 @@ async function verifyPage(
       registryDigest: work.registryDigest,
     });
   }
-  const shard = shards[index]!;
+  const shard = shards[index];
   const session = primary(binding(env, shard.bindingRef, 'tenant_dr_lookup_binding_unavailable'));
   const rows = await session
     .prepare(

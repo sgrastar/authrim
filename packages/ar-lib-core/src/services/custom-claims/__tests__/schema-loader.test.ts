@@ -32,7 +32,7 @@ describe('SchemaLoader', () => {
       const schemas = [{ id: '1', field_key: 'dept', schema_version: 1 }];
       mockDb.query.mockResolvedValue(schemas);
 
-      const loader = new SchemaLoader(mockDb as any, null);
+      const loader = new SchemaLoader(mockDb, null);
       const result = await loader.loadActiveSchemas('default');
 
       expect(result).toEqual(schemas);
@@ -59,7 +59,7 @@ describe('SchemaLoader', () => {
       };
       mockDb.query.mockResolvedValueOnce([postgresSchema]);
 
-      const fromDb = await new SchemaLoader(mockDb as any, null).loadActiveSchemas('default');
+      const fromDb = await new SchemaLoader(mockDb, null).loadActiveSchemas('default');
       expect(fromDb[0]).toMatchObject({
         is_pii: 1,
         is_required: 0,
@@ -71,9 +71,7 @@ describe('SchemaLoader', () => {
       mockKV.get.mockResolvedValueOnce(
         JSON.stringify({ schemas: [postgresSchema], fetched_at: Date.now(), schema_version_max: 1 })
       );
-      const fromCache = await new SchemaLoader(mockDb as any, mockKV as any).loadActiveSchemas(
-        'default'
-      );
+      const fromCache = await new SchemaLoader(mockDb, mockKV as any).loadActiveSchemas('default');
       expect(fromCache[0]).toMatchObject({ is_pii: 1, is_required: 0, is_active: 1 });
     });
 
@@ -83,7 +81,7 @@ describe('SchemaLoader', () => {
         JSON.stringify({ schemas, fetched_at: Date.now(), schema_version_max: 1 })
       );
 
-      const loader = new SchemaLoader(mockDb as any, mockKV as any);
+      const loader = new SchemaLoader(mockDb, mockKV as any);
       const result = await loader.loadActiveSchemas('default');
 
       expect(result).toEqual(schemas);
@@ -95,7 +93,7 @@ describe('SchemaLoader', () => {
       const schemas = [{ id: '1', field_key: 'dept', schema_version: 1 }];
       mockDb.query.mockResolvedValue(schemas);
 
-      const loader = new SchemaLoader(mockDb as any, mockKV as any);
+      const loader = new SchemaLoader(mockDb, mockKV as any);
       const result = await loader.loadActiveSchemas('default');
 
       expect(result).toEqual(schemas);
@@ -106,7 +104,7 @@ describe('SchemaLoader', () => {
       const schemas = [{ id: '1', field_key: 'dept', schema_version: 1 }];
       mockDb.query.mockResolvedValue(schemas);
 
-      const loader = new SchemaLoader(mockDb as any, mockKV as any);
+      const loader = new SchemaLoader(mockDb, mockKV as any);
       const result = await loader.loadActiveSchemas('default');
 
       expect(result).toEqual(schemas);
@@ -116,7 +114,7 @@ describe('SchemaLoader', () => {
       const schemas = [{ id: '1', field_key: 'dept', schema_version: 3 }];
       mockDb.query.mockResolvedValue(schemas);
 
-      const loader = new SchemaLoader(mockDb as any, mockKV as any, 600);
+      const loader = new SchemaLoader(mockDb, mockKV as any, 600);
       await loader.loadActiveSchemas('default');
 
       expect(mockKV.put).toHaveBeenCalledWith('custom_claim_schemas:default', expect.any(String), {
@@ -127,7 +125,7 @@ describe('SchemaLoader', () => {
     it('caches empty results to avoid repeated D1 queries', async () => {
       mockDb.query.mockResolvedValue([]);
 
-      const loader = new SchemaLoader(mockDb as any, mockKV as any);
+      const loader = new SchemaLoader(mockDb, mockKV as any);
       await loader.loadActiveSchemas('default');
 
       expect(mockKV.put).toHaveBeenCalledWith(
@@ -140,14 +138,14 @@ describe('SchemaLoader', () => {
 
   describe('invalidateCache', () => {
     it('deletes the cache key', async () => {
-      const loader = new SchemaLoader(mockDb as any, mockKV as any);
+      const loader = new SchemaLoader(mockDb, mockKV as any);
       await loader.invalidateCache('default');
 
       expect(mockKV.delete).toHaveBeenCalledWith('custom_claim_schemas:default');
     });
 
     it('is no-op when no cache', async () => {
-      const loader = new SchemaLoader(mockDb as any, null);
+      const loader = new SchemaLoader(mockDb, null);
       await loader.invalidateCache('default');
       // Should not throw
     });

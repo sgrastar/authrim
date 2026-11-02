@@ -59,17 +59,17 @@ export async function clientPublicConfigHandler(c: Context<{ Bindings: Env }>): 
 
   // Build response with only public information
   const response: PublicClientConfig = {
-    client_id: client.client_id as string,
+    client_id: client.client_id,
   };
 
   // Add optional public fields if present
-  if (client.client_name) response.client_name = client.client_name as string;
-  if (client.logo_uri) response.logo_uri = client.logo_uri as string;
-  if (client.client_uri) response.client_uri = client.client_uri as string;
-  if (client.policy_uri) response.policy_uri = client.policy_uri as string;
-  if (client.tos_uri) response.tos_uri = client.tos_uri as string;
-  if (client.login_ui_url) response.login_ui_url = client.login_ui_url as string;
-  if (client.initiate_login_uri) response.initiate_login_uri = client.initiate_login_uri as string;
+  if (client.client_name) response.client_name = client.client_name;
+  if (client.logo_uri) response.logo_uri = client.logo_uri;
+  if (client.client_uri) response.client_uri = client.client_uri;
+  if (client.policy_uri) response.policy_uri = client.policy_uri;
+  if (client.tos_uri) response.tos_uri = client.tos_uri;
+  if (client.login_ui_url) response.login_ui_url = client.login_ui_url;
+  if (client.initiate_login_uri) response.initiate_login_uri = client.initiate_login_uri;
 
   return c.json(response, 200, {
     'Cache-Control': 'public, max-age=300', // 5 minutes cache

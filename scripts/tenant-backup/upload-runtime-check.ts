@@ -146,7 +146,7 @@ try {
   assert.deepEqual(
     await cleanupExpiredTenantBackupUpload({
       store,
-      bucket: bucket as unknown as Parameters<typeof cleanupExpiredTenantBackupUpload>[0]['bucket'],
+      bucket,
       workerId: 'local-cleanup-worker',
       now: Date.now,
     }),

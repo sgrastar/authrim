@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AgentConfigurationRepository, AgentToolCatalog } from '../../../core';
+import type { AgentConfigurationRepository } from '../../../core';
 import { CloudflareAgentConfigurationResourceReader } from '../configuration-resources';
 
 const subject = {
@@ -25,7 +25,7 @@ function reader(overrides: Record<string, unknown> = {}) {
     repository,
     reader: new CloudflareAgentConfigurationResourceReader(
       repository as unknown as AgentConfigurationRepository,
-      catalog as AgentToolCatalog
+      catalog
     ),
   };
 }

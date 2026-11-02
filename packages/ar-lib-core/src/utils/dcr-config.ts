@@ -137,7 +137,7 @@ export async function getDCRSetting<K extends DCRFlagKey>(
   const envValue = (env as unknown as Record<string, string | undefined>)[envKey];
 
   if (envValue !== undefined && envValue !== '') {
-    return parseBool(envValue, DCR_DEFAULTS[key]) as DCRFlagSettings[K];
+    return parseBool(envValue, DCR_DEFAULTS[key]);
   }
 
   // Return default

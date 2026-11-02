@@ -148,7 +148,7 @@ function isValidCategory(category: string): category is SettingsCategory {
 }
 
 function resolveTenantId(c: SettingsContext): string {
-  return getTenantIdFromContext(c as unknown as BaseContext);
+  return getTenantIdFromContext(c);
 }
 
 function getHistoryManager(c: SettingsContext): SettingsHistoryManager {

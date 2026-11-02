@@ -385,9 +385,7 @@ agentElevationsRouter.post('/:id/reconcile', async (c) => {
   const canonicalEvidence: JsonObject = {
     summary: evidenceRecord.summary,
     checked_at: evidenceRecord.checkedAt,
-    ...(evidenceRecord.resourceVersion
-      ? { resource_version: evidenceRecord.resourceVersion as string }
-      : {}),
+    ...(evidenceRecord.resourceVersion ? { resource_version: evidenceRecord.resourceVersion } : {}),
   };
   const keyVersion = c.env.AGENT_ELEVATION_KEY_VERSION ?? 'v1';
   const keys = new CloudflareSecretTextKeyProvider({

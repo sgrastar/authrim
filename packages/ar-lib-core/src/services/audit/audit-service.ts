@@ -348,9 +348,7 @@ export class AuditService implements IAuditService {
 
     const detailsJson = params.details
       ? logIcebergCanonicalJson(
-          JSON.parse(
-            JSON.stringify(sanitizeEventDetails(params.details as Record<string, unknown>, config))
-          )
+          JSON.parse(JSON.stringify(sanitizeEventDetails(params.details, config)))
         )
       : null;
 

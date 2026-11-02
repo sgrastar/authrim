@@ -390,7 +390,7 @@ describe('tenant disaster recovery Lookup reprojection', () => {
       payload_json: string;
     };
     const value = JSON.parse(row.payload_json) as { routeProjection: ReturnType<typeof route> };
-    value.routeProjection.targets[0]!.bindingRef = 'USERS_WRONG';
+    value.routeProjection.targets[0].bindingRef = 'USERS_WRONG';
     users.prepare(`UPDATE account_routing_outbox SET payload_json = ?`).run(JSON.stringify(value));
 
     const state = progress();

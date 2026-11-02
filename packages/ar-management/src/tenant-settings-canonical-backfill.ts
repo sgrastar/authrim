@@ -109,7 +109,7 @@ function parseDocument(raw: string): Record<string, unknown> {
     return invalid();
   }
   if (!value || typeof value !== 'object' || Array.isArray(value)) invalid();
-  return sanitizeObject(value as Record<string, unknown>);
+  return sanitizeObject(value);
 }
 
 async function backfillDocument(input: {

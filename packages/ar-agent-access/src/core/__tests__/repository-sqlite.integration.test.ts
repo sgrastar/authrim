@@ -746,8 +746,8 @@ describeWithSqlite('AdminAgentAccessRepository SQLite fences', () => {
       tools: [readTool],
       permissions: ['admin:clients:read'],
     };
-    const taskDigest1 = await sha256Base64Url(canonicalizeJson(taskResolved1 as never));
-    const policyDigest = await sha256Base64Url(canonicalizeJson(policy as never));
+    const taskDigest1 = await sha256Base64Url(canonicalizeJson(taskResolved1));
+    const policyDigest = await sha256Base64Url(canonicalizeJson(policy));
     const accessHash1 = await sha256Base64Url(
       canonicalizeJson({
         purpose: 'authrim-agent-self-service-snapshot-v1',
@@ -896,11 +896,9 @@ describeWithSqlite('AdminAgentAccessRepository SQLite fences', () => {
       tools: [readTool, userTool],
       permissions: ['admin:clients:read', 'admin:users:read'],
     };
-    const taskDigest2 = await sha256Base64Url(canonicalizeJson(taskResolved2 as never));
+    const taskDigest2 = await sha256Base64Url(canonicalizeJson(taskResolved2));
     const replacementPolicy = { ...policy, maxPerCall: 2 };
-    const replacementPolicyDigest = await sha256Base64Url(
-      canonicalizeJson(replacementPolicy as never)
-    );
+    const replacementPolicyDigest = await sha256Base64Url(canonicalizeJson(replacementPolicy));
     const accessHash2 = await sha256Base64Url(
       canonicalizeJson({
         purpose: 'authrim-agent-self-service-snapshot-v1',
@@ -1909,7 +1907,7 @@ describeWithSqlite('AgentBulkRepository SQLite lifecycle', () => {
         controlTenantId: 'platform',
         bulkPlanId: 'bulk-1',
         bulkPlanVersion: 1,
-        executionId: child!.id,
+        executionId: child.id,
         expectedStage: 'validate',
         ownerId: 'worker-1',
         leaseExpiresAt: 64_000,
@@ -1918,14 +1916,14 @@ describeWithSqlite('AgentBulkRepository SQLite lifecycle', () => {
         now: 4_000,
       })
     ).resolves.toBe(true);
-    const claimed = await repository.getTenantExecution('platform', 'bulk-1', 1, child!.id);
+    const claimed = await repository.getTenantExecution('platform', 'bulk-1', 1, child.id);
     expect(claimed).toMatchObject({ status: 'running', executionAttempt: 1, executionFence: 1 });
     await expect(
       repository.advanceTenantStage({
         controlTenantId: 'platform',
         bulkPlanId: 'bulk-1',
         bulkPlanVersion: 1,
-        executionId: child!.id,
+        executionId: child.id,
         executionAttempt: 1,
         executionFence: 1,
         from: 'validate',
@@ -1938,7 +1936,7 @@ describeWithSqlite('AgentBulkRepository SQLite lifecycle', () => {
           ...auditBase,
           id: 'audit-validated',
           action: 'agent.bulk_tenant.validated',
-          resourceId: child!.id,
+          resourceId: child.id,
           createdAt: 5_000,
         },
       })
@@ -1948,7 +1946,7 @@ describeWithSqlite('AgentBulkRepository SQLite lifecycle', () => {
         controlTenantId: 'platform',
         bulkPlanId: 'bulk-1',
         bulkPlanVersion: 1,
-        executionId: child!.id,
+        executionId: child.id,
         expectedStage: 'apply',
         ownerId: 'worker-2',
         leaseExpiresAt: 66_000,
@@ -1957,13 +1955,13 @@ describeWithSqlite('AgentBulkRepository SQLite lifecycle', () => {
         now: 6_000,
       })
     ).resolves.toBe(true);
-    const applying = await repository.getTenantExecution('platform', 'bulk-1', 1, child!.id);
+    const applying = await repository.getTenantExecution('platform', 'bulk-1', 1, child.id);
     await expect(
       repository.completeTenant({
         controlTenantId: 'platform',
         bulkPlanId: 'bulk-1',
         bulkPlanVersion: 1,
-        executionId: child!.id,
+        executionId: child.id,
         executionAttempt: applying!.executionAttempt,
         executionFence: applying!.executionFence,
         status: 'failed',
@@ -1973,7 +1971,7 @@ describeWithSqlite('AgentBulkRepository SQLite lifecycle', () => {
           ...auditBase,
           id: 'audit-failed',
           action: 'agent.bulk_tenant.failed',
-          resourceId: child!.id,
+          resourceId: child.id,
           createdAt: 7_000,
         },
       })
@@ -1984,7 +1982,7 @@ describeWithSqlite('AgentBulkRepository SQLite lifecycle', () => {
     await adapter.execute(
       `UPDATE agent_bulk_tenant_executions SET status = 'running', failure_kind = NULL,
         completed_at = NULL WHERE id = ?`,
-      [child!.id]
+      [child.id]
     );
     await adapter.execute(
       `UPDATE agent_bulk_plans SET failed_count = 0 WHERE id = ? AND version = ?`,
@@ -2015,7 +2013,7 @@ describeWithSqlite('AgentBulkRepository SQLite lifecycle', () => {
       indeterminateCount: 1,
     });
     await expect(
-      repository.getTenantExecution('platform', 'bulk-1', 1, child!.id)
+      repository.getTenantExecution('platform', 'bulk-1', 1, child.id)
     ).resolves.toMatchObject({ status: 'indeterminate', failureKind: 'plan_cancelled' });
     await expect(
       repository.transition({

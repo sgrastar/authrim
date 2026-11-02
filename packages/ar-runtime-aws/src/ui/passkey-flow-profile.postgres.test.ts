@@ -89,7 +89,7 @@ describe('AWS passkey Flow readiness against PostgreSQL', () => {
       );
       const db = new PostgresAdapter({
         connectionString: databaseUrl,
-        clientFactory: () => client as never,
+        clientFactory: () => client,
       });
       await expect(
         assertPasskeyOnlySamlFlowReady(

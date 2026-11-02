@@ -40,7 +40,7 @@ export function createActiveAccessTokenProtectedResourceMiddleware(
       c as unknown as Context<{ Bindings: AuthrimEnv }>,
       { audience: expectedAudience }
     );
-    const claims = result.claims as Record<string, unknown> | undefined;
+    const claims = result.claims;
     const subject = typeof claims?.sub === 'string' ? claims.sub : '';
     const tenantId = typeof claims?.tenant_id === 'string' ? claims.tenant_id : '';
     const audiences = Array.isArray(claims?.aud) ? claims.aud : [claims?.aud];

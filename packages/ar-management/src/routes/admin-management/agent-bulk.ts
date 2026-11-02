@@ -146,7 +146,7 @@ async function activeTargetTenants(c: BulkContext, tenantIds: readonly string[])
   await Promise.all(
     Array.from({ length: Math.min(4, tenantIds.length) }, async () => {
       while (allActive && cursor < tenantIds.length) {
-        const tenantId = tenantIds[cursor++]!;
+        const tenantId = tenantIds[cursor++];
         const store = await resolveTenantDatabaseSourceFromRegistry(c.env, {
           tenantId,
           role: 'tenant_core',
@@ -529,7 +529,7 @@ agentBulkPlansRouter.post('/:id/:version/start', async (c) => {
     definitionDigest: item.definitionDigest,
     targetSnapshotDigest: item.targetSnapshotDigest,
     canaryDigest: item.canaryDigest,
-    approvedBy: current(c).userId!,
+    approvedBy: current(c).userId,
     approvalDigest,
     now: Date.now(),
     audit: audit(c, transitionId, 'agent.bulk_plan.started', item.id, {
@@ -613,7 +613,7 @@ agentBulkPlansRouter.post('/:id/:version/cancel', async (c) => {
     controlTenantId: controlTenant(c),
     id: item.id,
     version: item.version,
-    cancelledBy: current(c).userId!,
+    cancelledBy: current(c).userId,
     reason,
     now: Date.now(),
     audit: audit(c, transitionId, 'agent.bulk_plan.cancelled', item.id, {

@@ -5,7 +5,7 @@
  */
 
 import type { Context } from 'hono';
-import type { Env, DeviceCodeMetadata, ClientMetadata } from '@authrim/ar-lib-core';
+import type { Env, DeviceCodeMetadata } from '@authrim/ar-lib-core';
 import {
   generateDeviceCode,
   generateUserCode,
@@ -100,11 +100,7 @@ async function issueDeviceAuthorization(c: Context<{ Bindings: Env }>): Promise<
 
     // The client must be registered. A client that does not exist and one that fails to
     // authenticate get the same answer.
-    const clientMetadata = (await getClientCached(
-      c,
-      c.env,
-      client_id
-    )) as unknown as ClientMetadata | null;
+    const clientMetadata = await getClientCached(c, c.env, client_id);
     if (!clientMetadata) {
       return invalidClientResponse(c);
     }

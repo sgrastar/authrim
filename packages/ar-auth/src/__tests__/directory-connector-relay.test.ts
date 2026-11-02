@@ -277,7 +277,7 @@ describe('DirectoryConnectorRelay', () => {
     const { ws, sent, raw } = relayWebSocket(relayAttachment);
 
     await relay.webSocketMessage(ws, '{');
-    await relay.webSocketMessage(ws, new Uint8Array([123]).buffer as ArrayBuffer);
+    await relay.webSocketMessage(ws, new Uint8Array([123]).buffer);
 
     expect(sent.map((message) => message.code)).toEqual(['invalid_json', 'invalid_json']);
     expect(raw.close).not.toHaveBeenCalled();

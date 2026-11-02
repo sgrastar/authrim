@@ -91,7 +91,7 @@ describe('built-in Agent Task Sets', () => {
       repository: stored,
       catalog: createAdminToolCatalog(),
       tenantId: 'tenant-1',
-      id: BUILTIN_AGENT_TASK_SET_PRESETS[0]!.id,
+      id: BUILTIN_AGENT_TASK_SET_PRESETS[0].id,
       version: 1,
     });
 
@@ -105,7 +105,7 @@ describe('built-in Agent Task Sets', () => {
         repository: repository(),
         catalog: createAgentToolCatalog('admin-agent-access-v10', []),
         tenantId: 'tenant-1',
-        id: BUILTIN_AGENT_TASK_SET_PRESETS[0]!.id,
+        id: BUILTIN_AGENT_TASK_SET_PRESETS[0].id,
         version: 8,
       })
     ).rejects.toThrow('requires catalog admin-agent-access-v9');

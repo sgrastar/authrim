@@ -172,9 +172,7 @@ async function applyRow(
   }
   const upstreamCommon = {
     ...common,
-    target: source.target as unknown as Parameters<
-      typeof restorePortableUpstreamProviderSecrets
-    >[0]['target'],
+    target: source.target,
   };
   if (purpose === 'restore')
     await restorePortableUpstreamProviderSecrets({

@@ -34,7 +34,7 @@ describe('region numeric settings', () => {
 
     const response = await updateRegionShards(c);
     expect(response).toBeInstanceOf(Response);
-    expect((response as Response).status).toBe(400);
+    expect(response.status).toBe(400);
     expect(kv.put).not.toHaveBeenCalled();
   });
 
@@ -46,7 +46,7 @@ describe('region numeric settings', () => {
 
     const response = await updateRegionShards(c);
     expect(response).toBeInstanceOf(Response);
-    expect((response as Response).status).toBe(400);
+    expect(response.status).toBe(400);
     expect(kv.put).not.toHaveBeenCalled();
   });
 });

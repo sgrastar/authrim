@@ -38,7 +38,6 @@ import {
   readGlobalSystemSettings,
   requireDedicatedAdminDatabaseAdapter,
   sanitizeObject,
-  type CategoryMeta,
   type CategoryName,
   type Env,
   type LegacyImportEnv,
@@ -243,7 +242,7 @@ function managerFor(env: Env, actor: string, dryRun: boolean): SettingsManager {
     },
   });
   for (const meta of Object.values(ALL_CATEGORY_META)) {
-    manager.registerCategory(meta as CategoryMeta);
+    manager.registerCategory(meta);
   }
   return manager;
 }
@@ -285,7 +284,7 @@ async function applyWrites(
   const results: LegacyImportDocumentResult[] = [];
   for (const document of groupByDocument(writes)) {
     const { scope, category } = document;
-    const meta = ALL_CATEGORY_META[category] as CategoryMeta;
+    const meta = ALL_CATEGORY_META[category];
     const current = await manager.getAll(category, scope);
     const result: LegacyImportDocumentResult = {
       scope: scope.type,

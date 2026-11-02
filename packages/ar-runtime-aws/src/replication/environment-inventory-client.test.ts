@@ -39,7 +39,7 @@ describe('authenticated complete source inventory client', () => {
         configuration,
         credential: 'b'.repeat(64),
         nowMs: now,
-        fetch: transport as typeof fetch,
+        fetch: transport,
       })
     ).toEqual(source);
     expect(transport).toHaveBeenCalledWith(
@@ -87,7 +87,7 @@ describe('authenticated complete source inventory client', () => {
         configuration,
         credential: 'b'.repeat(64),
         nowMs: now,
-        fetch: vi.fn(async () => Response.json(value)) as typeof fetch,
+        fetch: vi.fn(async () => Response.json(value)),
       })
     ).rejects.toThrow('environment_replication_inventory_unavailable');
   });
@@ -98,7 +98,7 @@ describe('authenticated complete source inventory client', () => {
         credential: 'b'.repeat(64),
         nowMs: now,
         minimumObservedAtMs: now + 1,
-        fetch: vi.fn(async () => Response.json(await inventory())) as typeof fetch,
+        fetch: vi.fn(async () => Response.json(await inventory())),
       })
     ).rejects.toThrow();
   });
@@ -117,7 +117,7 @@ describe('authenticated complete source inventory client', () => {
         configuration,
         credential: 'b'.repeat(64),
         nowMs: now,
-        fetch: vi.fn(async () => new Response(stream)) as typeof fetch,
+        fetch: vi.fn(async () => new Response(stream)),
       })
     ).rejects.toThrow('environment_replication_inventory_unavailable');
     expect(cancelled).toBe(true);

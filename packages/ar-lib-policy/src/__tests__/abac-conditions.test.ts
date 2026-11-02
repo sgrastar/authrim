@@ -53,7 +53,7 @@ describe('ABAC Condition Evaluation', () => {
       verifiedAttributes: attributes,
     };
     return {
-      subject: subject as PolicyContext['subject'],
+      subject: subject,
       resource: {
         type: options?.resourceType ?? 'document',
         id: 'doc_123',
@@ -595,7 +595,7 @@ describe('ABAC Condition Evaluation', () => {
         verifiedAttributes: [{ name: 'subscription', value: 'basic', source: 'manual' }],
       };
       const context: PolicyContext = {
-        subject: subject as PolicyContext['subject'],
+        subject: subject,
         resource: { type: 'document', id: 'doc_123' },
         action: { name: 'read' },
         timestamp: Date.now(),
@@ -613,7 +613,7 @@ describe('ABAC Condition Evaluation', () => {
         verifiedAttributes: [{ name: 'subscription', value: 'premium', source: 'vc' }],
       };
       const context: PolicyContext = {
-        subject: subject as PolicyContext['subject'],
+        subject: subject,
         resource: { type: 'document', id: 'doc_123' },
         action: { name: 'read' },
         timestamp: Date.now(),
@@ -631,7 +631,7 @@ describe('ABAC Condition Evaluation', () => {
         verifiedAttributes: [{ name: 'subscription', value: 'basic', source: 'manual' }],
       };
       const context: PolicyContext = {
-        subject: subject as PolicyContext['subject'],
+        subject: subject,
         resource: { type: 'document', id: 'doc_123' },
         action: { name: 'read' },
         timestamp: Date.now(),

@@ -5,7 +5,7 @@
  */
 
 import type { Context } from 'hono';
-import type { Env, CIBARequestMetadata, ClientMetadata } from '@authrim/ar-lib-core';
+import type { Env, CIBARequestMetadata } from '@authrim/ar-lib-core';
 import {
   generateAuthReqId,
   generateCIBAUserCode,
@@ -104,7 +104,7 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const clientAuthentication = await authenticateConfidentialOAuthClient(
-      clientMetadata as unknown as ClientMetadata,
+      clientMetadata,
       `${requestIssuer}/bc-authorize`,
       clientAuth.credentials,
       {
@@ -120,7 +120,7 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
       return invalidCIBAClientResponse(c);
     }
 
-    let parameters: Record<string, unknown> = body as Record<string, unknown>;
+    let parameters: Record<string, unknown> = body;
     const registeredRequestAlgorithm =
       clientMetadata.backchannel_authentication_request_signing_alg;
     if (registeredRequestAlgorithm) {
@@ -160,7 +160,7 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
           400
         );
       }
-      parameters = requestValidation.payload as Record<string, unknown>;
+      parameters = requestValidation.payload;
     } else if (body.request !== undefined) {
       return c.json(
         { error: 'invalid_request', error_description: 'Signed CIBA requests are not registered' },
@@ -292,7 +292,7 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
       const hintAccount = await resolvePresentedTokenAccount(
         c.env,
         tenantId,
-        (idTokenValidation.payload ?? {}) as Record<string, unknown>
+        idTokenValidation.payload ?? {}
       );
       if (!hintAccount.ok) {
         if (hintAccount.reason === 'unavailable') {
@@ -360,7 +360,7 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
       delivery_mode: deliveryMode,
       client_notification_token,
       client_notification_endpoint:
-        (clientMetadata.backchannel_client_notification_endpoint as string) || undefined,
+        clientMetadata.backchannel_client_notification_endpoint || undefined,
       created_at: now,
       expires_at: now + expiresIn * 1000,
       poll_count: 0,

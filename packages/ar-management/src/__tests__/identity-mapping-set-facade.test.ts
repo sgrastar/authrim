@@ -180,16 +180,16 @@ function faultyAdapter(inner: DatabaseAdapter, faults: Faults): DatabaseAdapter 
       }
       if (faults.retryAfterApply?.test(statements.map((statement) => statement.sql).join('\n'))) {
         faults.retryAfterApply = null;
-        await inner.batch(statements as never);
-        return inner.batch(statements as never);
+        await inner.batch(statements);
+        return inner.batch(statements);
       }
       if (faults.blindAfterApply?.test(statements.map((statement) => statement.sql).join('\n'))) {
         faults.blindAfterApply = null;
-        await inner.batch(statements as never);
+        await inner.batch(statements);
         faults.blind = true;
         throw new Error('answer lost');
       }
-      const results = await inner.batch(statements as never);
+      const results = await inner.batch(statements);
       statements.forEach((statement) => after(statement.sql));
       return results;
     },
@@ -816,7 +816,7 @@ describe('the headers of an answer', () => {
           },
           ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         },
-        t.envExtras as never
+        t.envExtras
       );
 
     const read = await send('GET');
@@ -2689,7 +2689,7 @@ describe('the headers kept with a stored answer', () => {
           },
           body: JSON.stringify({ display_name: 'x', content: t.content() }),
         },
-        t.envExtras as never
+        t.envExtras
       );
 
     const first = await send();

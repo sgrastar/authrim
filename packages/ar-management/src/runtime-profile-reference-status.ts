@@ -1,4 +1,4 @@
-import type { AuditProfile, AuditTarget, Env, RuntimeProfile } from '@authrim/ar-lib-core';
+import type { AuditTarget, Env, RuntimeProfile } from '@authrim/ar-lib-core';
 import { resolveHyperdriveBindingForAuditTarget, targetToBackendId } from '@authrim/ar-lib-core';
 
 export type RuntimeProfileReferenceResolution =
@@ -96,7 +96,7 @@ function blockUnregisteredDatabaseTargets(
 
   const requiredByPath = new Map<string, { streamId: string | null; keys: string[] }>();
   if (profile.kind === 'audit') {
-    const audit = profile as AuditProfile;
+    const audit = profile;
     const targets = [
       ...(audit.primary ? ([['primary', audit.primary]] as const) : []),
       ...(audit.archive ? ([['archive', audit.archive]] as const) : []),
@@ -409,7 +409,7 @@ export function describeRuntimeProfileReferenceStatus(
   profile: RuntimeProfile
 ): RuntimeProfileReferenceStatusEntry[] {
   if (profile.kind === 'audit') {
-    const auditProfile = profile as AuditProfile;
+    const auditProfile = profile;
     return blockUnregisteredDatabaseTargets(env, profile, [
       ...(auditProfile.primary ? [describeAuditTarget(env, 'primary', auditProfile.primary)] : []),
       ...(auditProfile.archive ? [describeAuditTarget(env, 'archive', auditProfile.archive)] : []),
@@ -518,7 +518,7 @@ export function buildRuntimeProfileReferenceCatalog(
 
   for (const profile of profiles) {
     if (profile.kind === 'audit') {
-      const auditProfile = profile as AuditProfile;
+      const auditProfile = profile;
       const targets: Array<AuditTarget | null | undefined> = [
         auditProfile.primary,
         auditProfile.archive,

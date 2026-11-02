@@ -722,7 +722,7 @@ async function recordSaveAudit(
 ): Promise<void> {
   try {
     await createAuditLogFromContext(
-      c as unknown as Parameters<typeof createAuditLogFromContext>[0],
+      c,
       'identity_mapping.set.saved',
       'field_mapping_set',
       fields.setId ?? 'none',
@@ -952,7 +952,7 @@ export async function adminIdentityMappingSetDeleteHandler(c: AdminContext) {
     });
     try {
       await createAuditLogFromContext(
-        c as unknown as Parameters<typeof createAuditLogFromContext>[0],
+        c,
         'identity_mapping.set.deleted',
         'field_mapping_set',
         setId,

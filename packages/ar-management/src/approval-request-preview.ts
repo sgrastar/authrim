@@ -1,6 +1,5 @@
 import type { Context } from 'hono';
 import type {
-  ApprovalApproverSubjectType,
   ApprovalRedactionLevel,
   ApprovalRequest,
   ApprovalRequestApproval,
@@ -277,20 +276,20 @@ export function buildApprovalPreviewRequest(input: {
         requestedAudience: body.audience,
       }) ?? undefined,
     investigation_id: body.investigation_id ?? generateInvestigationId(),
-    redaction_level: (body.redaction_level ?? 'masked') as ApprovalRedactionLevel,
+    redaction_level: body.redaction_level ?? 'masked',
     attributes: body.attributes as Record<string, ApprovalScopeJson | undefined> | undefined,
   });
 
   return {
     investigation_id: scope.normalized.investigation_id ?? generateInvestigationId(),
     tenant_id: tenantId,
-    requester_subject_type: requesterSubjectType as ApprovalApproverSubjectType,
+    requester_subject_type: requesterSubjectType,
     requester_subject_id: requesterSubjectId,
     target_subject_type: body.target_subject_type,
     target_subject_id: body.target_subject_id,
     request_surface: body.request_surface,
     requested_action: body.requested_action,
-    redaction_level: (body.redaction_level ?? 'masked') as ApprovalRedactionLevel,
+    redaction_level: body.redaction_level ?? 'masked',
     reason_code: body.reason_code,
     reason_note: body.reason_note ?? null,
     reference:
@@ -326,7 +325,7 @@ function buildSyntheticApprovalRequest(
     requested_action: preview.requested_action,
     redaction_level: preview.redaction_level,
     status: 'pending',
-    scope_json: preview.scope_json as ApprovalRequest['scope_json'],
+    scope_json: preview.scope_json,
     scope_canonical: preview.scope_canonical,
     reason_code: preview.reason_code,
     reason_note: preview.reason_note,

@@ -141,7 +141,7 @@ describe('tenant email settings API', () => {
     });
     const c = createMockContext({ settingsKv, configKv });
 
-    const response = (await getTenantEmailSettingsHandler(c)) as Response;
+    const response = await getTenantEmailSettingsHandler(c);
     const body = (await response.json()) as {
       settings: { providerOrder: string[] };
       providers: Array<{ id: string }>;
@@ -199,7 +199,7 @@ describe('tenant email settings API', () => {
       },
     });
 
-    const response = (await updateTenantEmailSettingsHandler(c)) as Response;
+    const response = await updateTenantEmailSettingsHandler(c);
     const body = (await response.json()) as {
       settings: { providerOrder: string[] };
     };
@@ -254,7 +254,7 @@ describe('tenant email settings API', () => {
     const configKv = createMockKV({});
     const c = createMockContext({ settingsKv, configKv });
 
-    const response = (await getTenantEmailSettingsHandler(c)) as Response;
+    const response = await getTenantEmailSettingsHandler(c);
     const body = (await response.json()) as {
       providers: Array<{ id: string; defaultFrom?: string; configSource: string }>;
     };
@@ -287,7 +287,7 @@ describe('tenant email settings API', () => {
     });
     const c = createMockContext({ settingsKv, configKv: createMockKV() });
 
-    const response = (await getTenantEmailSettingsHandler(c)) as Response;
+    const response = await getTenantEmailSettingsHandler(c);
     const body = (await response.json()) as { settings: { providerOrder: string[] } };
     expect(body.settings.providerOrder).toEqual([]);
   });
@@ -314,7 +314,7 @@ describe('tenant email settings API', () => {
       body: { strategy: 'priority_failover', providerOrder: [] },
     });
 
-    const response = (await updateTenantEmailSettingsHandler(c)) as Response;
+    const response = await updateTenantEmailSettingsHandler(c);
     const body = (await response.json()) as { settings: { providerOrder: string[] } };
     expect(body.settings.providerOrder).toEqual([]);
     expect(configKv.put).toHaveBeenCalledWith(
@@ -368,7 +368,7 @@ describe('tenant email settings API', () => {
       const configKv = createMockKV({ 'settings:tenant:tenant-a:plugin': stalePluginDocument });
       const c = createMockContext({ settingsKv, configKv });
 
-      const response = (await getTenantEmailSettingsHandler(c)) as Response;
+      const response = await getTenantEmailSettingsHandler(c);
       const body = (await response.json()) as { providers: Array<{ id: string }> };
 
       expect(body.providers.map((provider) => provider.id).sort()).toEqual([
@@ -387,7 +387,7 @@ describe('tenant email settings API', () => {
         },
       });
 
-      const response = (await updateTenantEmailSettingsHandler(c)) as Response;
+      const response = await updateTenantEmailSettingsHandler(c);
       const body = (await response.json()) as { settings: { providerOrder: string[] } };
 
       expect(response.status).toBe(200);
@@ -406,7 +406,7 @@ describe('tenant email settings API', () => {
         body: { strategy: 'priority_failover', providerOrder: ['notifier-resend'] },
       });
 
-      const response = (await updateTenantEmailSettingsHandler(c)) as Response;
+      const response = await updateTenantEmailSettingsHandler(c);
       const body = (await response.json()) as { settings: { providerOrder: string[] } };
 
       expect(response.status).toBe(200);
@@ -423,7 +423,7 @@ describe('tenant email settings API', () => {
         body: { strategy: 'priority_failover', providerOrder: ['notifier-resend'] },
       });
 
-      const response = (await updateTenantEmailSettingsHandler(c)) as Response;
+      const response = await updateTenantEmailSettingsHandler(c);
 
       expect(response.status).toBe(400);
     });

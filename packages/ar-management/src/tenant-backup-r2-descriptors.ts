@@ -170,7 +170,7 @@ export function buildTenantBackupHeldPayloadDescriptors(
         sourceField: 'payload_object_ref',
         ...(row.payload_sha256 === null ? {} : { expectedPlaintextSha256: row.payload_sha256 }),
       },
-    } as TenantBackupR2ObjectDescriptor;
+    };
   });
 }
 

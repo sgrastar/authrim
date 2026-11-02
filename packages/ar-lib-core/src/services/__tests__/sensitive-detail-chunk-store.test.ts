@@ -69,7 +69,7 @@ describe('loadChunkedSensitiveDetailJson', () => {
 
     const result = await loadChunkedSensitiveDetailJson<{ metadata: { ok: boolean } }>(
       adapter,
-      env as never,
+      env,
       {
         tenantId: 'tenant-a',
         objectCatalogId: 'catalog-1',
@@ -128,7 +128,7 @@ describe('loadChunkedSensitiveDetailJson', () => {
 
     const result = await loadChunkedSensitiveDetailJson<{ metadata: { ranged: boolean } }>(
       adapter,
-      env as never,
+      env,
       {
         tenantId: 'tenant-a',
         objectCatalogId: 'catalog-1',

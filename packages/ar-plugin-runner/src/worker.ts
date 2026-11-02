@@ -806,7 +806,7 @@ export default class PluginRunnerWorker extends WorkerEntrypoint<
       }
       return new D1TenantExternalGateStore(this.env.PLUGIN_RUNNER_DB).listCandidates({
         ...(value.limit === undefined ? {} : { limit: value.limit as number }),
-        after: (value.after as string | null) ?? null,
+        after: value.after ?? null,
       });
     });
   }

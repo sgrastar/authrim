@@ -72,7 +72,7 @@ export async function applyScimInboundIdentityMapping(input: {
   const prepared = prepareRuntimeInput(
     binding.catalog,
     binding.edges,
-    scimSourceValues(input.user as Record<string, unknown>)
+    scimSourceValues(input.user)
   );
   const runtimeResult = executeRuntimeMapping({
     catalog: prepared.catalog,

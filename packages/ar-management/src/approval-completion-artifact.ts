@@ -21,7 +21,7 @@ function toApprovalCompletionArtifact(challenge: Challenge): ApprovalCompletionA
     return null;
   }
 
-  const metadata = challenge.metadata as Record<string, unknown> | undefined;
+  const metadata = challenge.metadata;
   if (!metadata) {
     return null;
   }

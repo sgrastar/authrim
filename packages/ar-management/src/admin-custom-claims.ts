@@ -364,11 +364,7 @@ function validateValidationRules(
         return { valid: false, error: 'min_length must be a non-negative number' };
       if (r.max_length !== undefined && (typeof r.max_length !== 'number' || r.max_length < 1))
         return { valid: false, error: 'max_length must be a positive number' };
-      if (
-        r.min_length !== undefined &&
-        r.max_length !== undefined &&
-        (r.min_length as number) > (r.max_length as number)
-      )
+      if (r.min_length !== undefined && r.max_length !== undefined && r.min_length > r.max_length)
         return { valid: false, error: 'min_length cannot exceed max_length' };
       if (r.pattern !== undefined) {
         if (typeof r.pattern !== 'string')
@@ -392,7 +388,7 @@ function validateValidationRules(
         return { valid: false, error: 'min must be a number' };
       if (r.max !== undefined && typeof r.max !== 'number')
         return { valid: false, error: 'max must be a number' };
-      if (r.min !== undefined && r.max !== undefined && (r.min as number) > (r.max as number))
+      if (r.min !== undefined && r.max !== undefined && r.min > r.max)
         return { valid: false, error: 'min cannot exceed max' };
       return { valid: true };
     }
@@ -2228,7 +2224,7 @@ export async function adminCustomClaimDeleteHandler(c: AdminContext) {
           schemaId: id,
           tenantId,
           operation: 'delete',
-          previousSnapshot: schema as Record<string, unknown>,
+          previousSnapshot: schema,
           newSnapshot: { deleted: true, field_key: fieldKey },
           actorId: adminAuth?.userId,
           actorType: 'admin',
@@ -2471,7 +2467,7 @@ export async function adminCustomClaimRenameHandler(c: AdminContext) {
           schemaId: id,
           tenantId,
           operation: 'rename',
-          previousSnapshot: schema as Record<string, unknown>,
+          previousSnapshot: schema,
           newSnapshot: updated as Record<string, unknown>,
           actorId: adminAuth?.userId,
           actorType: 'admin',
@@ -2736,7 +2732,7 @@ export async function adminCustomClaimRetryHandler(c: AdminContext) {
             schemaId: id,
             tenantId,
             operation: 'rename',
-            previousSnapshot: schema as Record<string, unknown>,
+            previousSnapshot: schema,
             newSnapshot: updated as Record<string, unknown>,
             actorId: adminAuth?.userId,
             actorType: 'admin',

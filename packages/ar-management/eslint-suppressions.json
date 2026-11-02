@@ -4,7 +4,7 @@
       "count": 2
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 23
+      "count": 3
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 45
@@ -53,16 +53,7 @@
     }
   },
   "src/__tests__/account-consents.test.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 3
-    },
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 5
-    },
-    "@typescript-eslint/no-unsafe-return": {
       "count": 1
     }
   },
@@ -102,9 +93,6 @@
   "src/__tests__/account-directory-removal-producer.test.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 3
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 7
     }
   },
   "src/__tests__/account-directory-removal.integration.test.ts": {
@@ -152,9 +140,6 @@
   "src/__tests__/account-identifier-addition.test.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 2
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 4
     }
   },
   "src/__tests__/account-identifier-replacement.test.ts": {
@@ -169,17 +154,8 @@
     }
   },
   "src/__tests__/account-operations.test.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    },
     "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 2
-    },
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 4
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 1
     }
   },
   "src/__tests__/account-page.test.ts": {
@@ -287,6 +263,11 @@
       "count": 1
     }
   },
+  "src/__tests__/admin-abac-security.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 2
+    }
+  },
   "src/__tests__/admin-access-control-stats.test.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
@@ -311,13 +292,12 @@
       "count": 1
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 4
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 28
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 29
+      "count": 1
+    }
+  },
+  "src/__tests__/admin-approvals-decision-integrity.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
     }
   },
   "src/__tests__/admin-approvals-router.test.ts": {
@@ -341,6 +321,11 @@
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 2
+    }
+  },
+  "src/__tests__/admin-approvals-tenant-isolation.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
     }
   },
   "src/__tests__/admin-attributes.test.ts": {
@@ -390,7 +375,7 @@
   },
   "src/__tests__/admin-compatibility.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 2
+      "count": 1
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
@@ -418,7 +403,7 @@
       "count": 2
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 3
+      "count": 2
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 2
@@ -450,9 +435,6 @@
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 10
     }
   },
   "src/__tests__/admin-consent-statements.test.ts": {
@@ -469,14 +451,14 @@
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 3
     }
   },
   "src/__tests__/admin-custom-claims.test.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 2
+    },
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 70
@@ -495,14 +477,6 @@
     },
     "@typescript-eslint/no-unused-vars": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 7
-    }
-  },
-  "src/__tests__/admin-email-deliveries.test.ts": {
-    "@typescript-eslint/unbound-method": {
-      "count": 2
     }
   },
   "src/__tests__/admin-flows.test.ts": {
@@ -515,7 +489,7 @@
       "count": 1
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
+      "count": 2
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
@@ -532,9 +506,6 @@
     }
   },
   "src/__tests__/admin-identifier-replacements-routing.test.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
     }
@@ -552,10 +523,15 @@
   },
   "src/__tests__/admin-infrastructure-resources.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 17
+      "count": 19
     },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 8
+    }
+  },
+  "src/__tests__/admin-investigations.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 4
     }
   },
   "src/__tests__/admin-invitations-router.test.ts": {
@@ -571,7 +547,7 @@
   },
   "src/__tests__/admin-job-executor.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 16
+      "count": 30
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 2
@@ -580,9 +556,14 @@
       "count": 3
     }
   },
+  "src/__tests__/admin-job-rbac.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
+    }
+  },
   "src/__tests__/admin-job-workflows-store.integration.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 6
+      "count": 5
     },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 2
@@ -598,7 +579,7 @@
       "count": 2
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 3
+      "count": 2
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 3
@@ -628,13 +609,13 @@
     },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 2
     }
   },
   "src/__tests__/admin-management-router-boundary.test.ts": {
     "@typescript-eslint/no-explicit-any": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 1
     },
     "@typescript-eslint/no-unsafe-argument": {
@@ -672,9 +653,6 @@
   "src/__tests__/admin-public-assets.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 2
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 2
     }
   },
   "src/__tests__/admin-rbac-crud.test.ts": {
@@ -701,7 +679,12 @@
   },
   "src/__tests__/admin-rbac-routed-storage.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 12
+      "count": 11
+    }
+  },
+  "src/__tests__/admin-rbac-schema-sql.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 2
     }
   },
   "src/__tests__/admin-rbac.test.ts": {
@@ -712,7 +695,7 @@
       "count": 1
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 5
+      "count": 4
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 16
@@ -728,9 +711,16 @@
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 2
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 11
+    }
+  },
+  "src/__tests__/admin-read-routes.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 3
+    }
+  },
+  "src/__tests__/admin-rebac-security.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
     }
   },
   "src/__tests__/admin-rebac.test.ts": {
@@ -794,20 +784,6 @@
       "count": 1
     }
   },
-  "src/__tests__/admin-shared.test.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 4
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 4
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 4
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 1
-    }
-  },
   "src/__tests__/admin-stats.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 2
@@ -827,7 +803,7 @@
   },
   "src/__tests__/admin-tenant-clone.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 10
+      "count": 9
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 6
@@ -874,9 +850,6 @@
     }
   },
   "src/__tests__/admin-tenant-placement-migrations.test.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 3
     },
@@ -885,6 +858,11 @@
     },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 11
+    }
+  },
+  "src/__tests__/admin-tenant-policy.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 2
     }
   },
   "src/__tests__/admin-tenant-vanity-domains.test.ts": {
@@ -925,14 +903,11 @@
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 1
     }
   },
   "src/__tests__/admin-user-activity-log-unified.integration.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 3
+      "count": 4
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 2
@@ -949,10 +924,10 @@
       "count": 9
     },
     "@typescript-eslint/no-unsafe-call": {
-      "count": 20
+      "count": 19
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 20
+      "count": 19
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 2
@@ -977,7 +952,7 @@
   },
   "src/__tests__/admin-user-status.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 6
+      "count": 3
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 4
@@ -1025,41 +1000,35 @@
   },
   "src/__tests__/admin.test.ts": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 78
+      "count": 77
     },
     "@typescript-eslint/no-redundant-type-constituents": {
       "count": 1
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 12
+      "count": 15
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 195
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 383
+      "count": 382
     },
     "@typescript-eslint/no-unsafe-call": {
-      "count": 76
+      "count": 75
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 324
+      "count": 322
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 10
     },
     "@typescript-eslint/no-unused-vars": {
       "count": 5
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 22
     }
   },
   "src/__tests__/agent-baselines-router.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 3
-    },
-    "@typescript-eslint/no-unused-vars": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 1
     }
   },
@@ -1079,7 +1048,15 @@
       "count": 7
     }
   },
+  "src/__tests__/agent-downscope-limit.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
+    }
+  },
   "src/__tests__/agent-elevated-execution.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 3
+    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
     },
@@ -1097,13 +1074,24 @@
     }
   },
   "src/__tests__/agent-elevations-router.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 6
+    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 5
+    }
+  },
+  "src/__tests__/agent-fresh-auth.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
     }
   },
   "src/__tests__/agent-grants-router.test.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 2
+    },
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 8
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
@@ -1120,7 +1108,7 @@
   },
   "src/__tests__/agent-login-handoffs.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
+      "count": 9
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 5
@@ -1133,6 +1121,9 @@
     "@typescript-eslint/no-explicit-any": {
       "count": 1
     },
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 10
+    },
     "@typescript-eslint/no-unsafe-call": {
       "count": 2
     },
@@ -1143,6 +1134,9 @@
   "src/__tests__/agent-settings-router.test.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 1
+    },
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 7
     },
     "@typescript-eslint/no-unsafe-call": {
       "count": 1
@@ -1185,9 +1179,6 @@
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 3
     }
   },
   "src/__tests__/approval-ciba.test.ts": {
@@ -1226,9 +1217,6 @@
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 1
     }
   },
   "src/__tests__/artifact-cleanup.test.ts": {
@@ -1248,6 +1236,9 @@
     "@typescript-eslint/no-explicit-any": {
       "count": 11
     },
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
+    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 7
     },
@@ -1256,9 +1247,6 @@
     },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 4
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 17
     }
   },
   "src/__tests__/audit-pii-config.test.ts": {
@@ -1273,32 +1261,6 @@
     },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 40
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 2
-    }
-  },
-  "src/__tests__/audit-storage.test.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 37
-    },
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 35
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 3
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 127
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 6
     }
   },
   "src/__tests__/auth-account-provisioning-entrypoint.test.ts": {
@@ -1333,9 +1295,6 @@
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 6
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 1
     }
   },
   "src/__tests__/batch-revoke.test.ts": {
@@ -1352,14 +1311,6 @@
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 4
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 8
-    }
-  },
-  "src/__tests__/certification-profiles.test.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
     }
   },
   "src/__tests__/check-api-keys-crud.test.ts": {
@@ -1390,7 +1341,7 @@
       "count": 2
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 2
+      "count": 3
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 2
@@ -1403,9 +1354,11 @@
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 2
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 4
+    }
+  },
+  "src/__tests__/client-cache-mode-tenant.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
     }
   },
   "src/__tests__/client-config.test.ts": {
@@ -1413,7 +1366,7 @@
       "count": 1
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 6
+      "count": 7
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 16
@@ -1426,9 +1379,6 @@
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 2
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 4
     }
   },
   "src/__tests__/code-shards.test.ts": {
@@ -1453,22 +1403,22 @@
       "count": 1
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 8
+      "count": 2
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 3
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 15
+      "count": 8
     },
     "@typescript-eslint/no-unsafe-call": {
-      "count": 47
+      "count": 3
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 52
+      "count": 8
     },
     "@typescript-eslint/no-unsafe-return": {
-      "count": 5
+      "count": 2
     }
   },
   "src/__tests__/connectivity-tests.test.ts": {
@@ -1476,11 +1426,8 @@
       "count": 3
     }
   },
-  "src/__tests__/control-plane-capacity.test.ts": {
+  "src/__tests__/control-plane-drift-notifications.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 3
-    },
-    "@typescript-eslint/unbound-method": {
       "count": 1
     }
   },
@@ -1498,9 +1445,6 @@
       "count": 57
     },
     "@typescript-eslint/no-unsafe-return": {
-      "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
       "count": 1
     }
   },
@@ -1526,7 +1470,7 @@
   },
   "src/__tests__/data-retention-routes.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 8
+      "count": 3
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 2
@@ -1543,34 +1487,17 @@
   },
   "src/__tests__/device-secrets-account-routing.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
+      "count": 6
     }
   },
   "src/__tests__/diagnostic-logging-export.test.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 7
-    },
     "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 5
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 8
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 2
-    }
-  },
-  "src/__tests__/diagnostic-logging-ingest.test.ts": {
-    "@typescript-eslint/unbound-method": {
-      "count": 2
     }
   },
   "src/__tests__/diagnostic-logging-test-connection.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 1
+      "count": 2
     }
   },
   "src/__tests__/directory-auth.test.ts": {
@@ -1605,9 +1532,6 @@
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 1
     }
   },
   "src/__tests__/directory-routing-outbox.integration.test.ts": {
@@ -1619,9 +1543,6 @@
     },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 85
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 1
     }
   },
   "src/__tests__/directory-scheduled.test.ts": {
@@ -1686,7 +1607,7 @@
       "count": 1
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 27
+      "count": 29
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 3
@@ -1696,9 +1617,6 @@
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 3
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 2
     }
   },
   "src/__tests__/domain-hash-keys.test.ts": {
@@ -1720,7 +1638,7 @@
   },
   "src/__tests__/email-settings.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 17
+      "count": 8
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 9
@@ -1730,9 +1648,6 @@
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 2
     }
   },
   "src/__tests__/external-identifier-unlink-scheduled.integration.test.ts": {
@@ -1766,56 +1681,26 @@
   },
   "src/__tests__/external-providers.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 3
+      "count": 9
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
     }
   },
   "src/__tests__/guest-deletion-audit-outbox.test.ts": {
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 2
-    }
-  },
-  "src/__tests__/guest-lifecycle-scheduled.test.ts": {
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 2
-    }
-  },
-  "src/__tests__/guest-users.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 1
     },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 15
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 8
-    },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 21
-    },
-    "@typescript-eslint/no-unsafe-return": {
       "count": 2
     }
   },
   "src/__tests__/helpers/admin-authority-fixture.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 2
-    }
-  },
-  "src/__tests__/helpers/settings-canonical-d1.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 3
     },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 7
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 8
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
     }
   },
   "src/__tests__/human-verification-guards.test.ts": {
@@ -1824,9 +1709,6 @@
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 2
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 1
     }
   },
   "src/__tests__/human-verification-provider-projection.test.ts": {
@@ -1838,16 +1720,7 @@
     }
   },
   "src/__tests__/identifier-readd-after-removal.integration.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 21
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 82
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 83
-    },
-    "@typescript-eslint/no-unsafe-return": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 2
     }
   },
@@ -1856,10 +1729,10 @@
       "count": 4
     },
     "@typescript-eslint/no-unsafe-call": {
-      "count": 81
+      "count": 80
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 79
+      "count": 78
     }
   },
   "src/__tests__/identifier-replacement-operation.integration.test.ts": {
@@ -1886,7 +1759,7 @@
   },
   "src/__tests__/identity-mapping-control-plane.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 2
+      "count": 12
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 16
@@ -1909,6 +1782,9 @@
   "src/__tests__/identity-mapping-explain.test.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 3
+    },
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
@@ -1945,7 +1821,7 @@
       "count": 4
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
+      "count": 5
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 13
@@ -1958,9 +1834,6 @@
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 2
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 1
     }
   },
   "src/__tests__/identity-mapping-preview.test.ts": {
@@ -1976,7 +1849,7 @@
       "count": 4
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 2
+      "count": 6
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 86
@@ -2009,6 +1882,9 @@
     "@typescript-eslint/no-explicit-any": {
       "count": 3
     },
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
+    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 3
     },
@@ -2035,7 +1911,7 @@
       "count": 1
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 3
+      "count": 6
     },
     "@typescript-eslint/restrict-template-expressions": {
       "count": 2
@@ -2064,6 +1940,11 @@
       "count": 1
     }
   },
+  "src/__tests__/ip-allowlist-security.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
+    }
+  },
   "src/__tests__/ip-security-settings.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 2
@@ -2084,36 +1965,10 @@
     }
   },
   "src/__tests__/legacy-settings-import.test.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 2
-    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
     },
     "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 2
-    }
-  },
-  "src/__tests__/log-row-archive.test.ts": {
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 27
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 176
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 192
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 7
-    },
-    "@typescript-eslint/unbound-method": {
       "count": 1
     }
   },
@@ -2126,14 +1981,11 @@
     },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 51
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 5
     }
   },
   "src/__tests__/logging-control-router.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 95
+      "count": 126
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
@@ -2146,9 +1998,6 @@
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 2
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 45
     }
   },
   "src/__tests__/logging-storage-maintenance-jobs.test.ts": {
@@ -2257,20 +2106,6 @@
       "count": 2
     }
   },
-  "src/__tests__/lookup-hmac-reindex-reservations.integration.test.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 5
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 81
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 79
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 2
-    }
-  },
   "src/__tests__/lookup-hmac-reindex.integration.test.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 6
@@ -2323,15 +2158,15 @@
     }
   },
   "src/__tests__/mfa-coverage.test.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 2
-    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 3
     }
   },
   "src/__tests__/my-agent-consents-router.test.ts": {
     "@typescript-eslint/no-explicit-any": {
+      "count": 2
+    },
+    "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 2
     },
     "@typescript-eslint/no-unsafe-argument": {
@@ -2378,9 +2213,6 @@
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 1
     }
   },
   "src/__tests__/object-artifact-materialization.test.ts": {
@@ -2398,26 +2230,8 @@
     }
   },
   "src/__tests__/operational-logs-router.test.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    },
     "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 2
-    },
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 6
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 6
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 1
     }
   },
   "src/__tests__/org-domain-mappings.test.ts": {
@@ -2431,6 +2245,11 @@
       "count": 1
     },
     "@typescript-eslint/no-unsafe-return": {
+      "count": 1
+    }
+  },
+  "src/__tests__/organization-type-vocabulary.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 1
     }
   },
@@ -2464,10 +2283,10 @@
   },
   "src/__tests__/pii-partitions.test.ts": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 3
+      "count": 1
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 4
+      "count": 2
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 4
@@ -2484,13 +2303,13 @@
   },
   "src/__tests__/plugins.test.ts": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 20
+      "count": 9
     },
     "@typescript-eslint/no-misused-promises": {
       "count": 3
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 17
+      "count": 1
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 136
@@ -2502,13 +2321,10 @@
       "count": 5
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 150
+      "count": 139
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 9
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 46
     }
   },
   "src/__tests__/policy.test.ts": {
@@ -2516,7 +2332,7 @@
       "count": 5
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
+      "count": 2
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 45
@@ -2526,9 +2342,6 @@
     },
     "@typescript-eslint/no-unused-vars": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 9
     }
   },
   "src/__tests__/provider-reprojection-jobs.integration.test.ts": {
@@ -2542,12 +2355,9 @@
       "count": 25
     }
   },
-  "src/__tests__/r2-storage-maintenance.test.ts": {
+  "src/__tests__/rate-limit-classes.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 4
+      "count": 2
     }
   },
   "src/__tests__/rate-limit-override.test.ts": {
@@ -2581,23 +2391,17 @@
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 2
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 3
     }
   },
   "src/__tests__/register.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 59
+      "count": 68
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 6
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 8
     }
   },
   "src/__tests__/registration-bulk-filter.test.ts": {
@@ -2614,20 +2418,27 @@
       "count": 1
     }
   },
-  "src/__tests__/retention-inventory.test.ts": {
+  "src/__tests__/replication-backups-router.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 10
+      "count": 2
+    }
+  },
+  "src/__tests__/replication-environments-router.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 2
+    }
+  },
+  "src/__tests__/resource-permission-cache.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
     }
   },
   "src/__tests__/retention-maintenance.test.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 4
-    },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 10
+      "count": 2
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 6
+      "count": 2
     }
   },
   "src/__tests__/revoke.test.ts": {
@@ -2674,22 +2485,19 @@
       "count": 2
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 16
+      "count": 14
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 2
     },
     "@typescript-eslint/no-unsafe-call": {
-      "count": 21
+      "count": 20
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 28
+      "count": 27
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 2
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 1
     }
   },
   "src/__tests__/scim-identifier-replacement.test.ts": {
@@ -2703,6 +2511,9 @@
   "src/__tests__/scim-test-harness.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 30
+    },
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 3
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 39
@@ -2722,7 +2533,7 @@
   },
   "src/__tests__/scim-tokens.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 25
+      "count": 29
     },
     "no-restricted-imports": {
       "count": 1
@@ -2751,6 +2562,9 @@
     "@typescript-eslint/no-explicit-any": {
       "count": 84
     },
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 2
+    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 39
     },
@@ -2775,7 +2589,7 @@
       "count": 1
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 15
+      "count": 16
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 19
@@ -2799,6 +2613,9 @@
     "@typescript-eslint/no-explicit-any": {
       "count": 1
     },
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
+    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
     },
@@ -2819,9 +2636,6 @@
     "@typescript-eslint/no-explicit-any": {
       "count": 26
     },
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 2
     },
@@ -2836,37 +2650,34 @@
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 15
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
     }
   },
   "src/__tests__/settings-canonical-projection.test.ts": {
     "@typescript-eslint/no-misused-promises": {
       "count": 4
     },
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
+    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 2
     },
     "@typescript-eslint/no-unsafe-call": {
-      "count": 11
+      "count": 9
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 11
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 5
+      "count": 9
     }
   },
   "src/__tests__/settings-history.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 4
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 4
     }
   },
   "src/__tests__/settings-institution.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
+    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
     },
@@ -2879,52 +2690,34 @@
   },
   "src/__tests__/settings-v2.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 161
+      "count": 165
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 9
     },
     "@typescript-eslint/no-unsafe-call": {
-      "count": 12
+      "count": 10
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 20
+      "count": 18
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 1
     }
   },
   "src/__tests__/settings-validation-security.test.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 2
-    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
     }
   },
   "src/__tests__/shard-settings-security.test.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
     }
   },
-  "src/__tests__/signing-keys.test.ts": {
+  "src/__tests__/single-tenant-guard.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 8
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 5
+      "count": 3
     }
   },
   "src/__tests__/step-up-router.test.ts": {
@@ -2937,7 +2730,7 @@
       "count": 4
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 3
+      "count": 6
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 6
@@ -2954,7 +2747,7 @@
       "count": 3
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 3
+      "count": 4
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 13
@@ -2962,7 +2755,7 @@
   },
   "src/__tests__/support-ops.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 33
+      "count": 45
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 2
@@ -2982,17 +2775,25 @@
       "count": 40
     }
   },
+  "src/__tests__/tenant-backup-admin-envelope-port.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
+    }
+  },
   "src/__tests__/tenant-backup-deferred-record-snapshot-port.test.ts": {
     "@typescript-eslint/no-unsafe-argument": {
       "count": 2
     }
   },
-  "src/__tests__/tenant-backup-execution.test.ts": {
-    "@typescript-eslint/unbound-method": {
-      "count": 1
+  "src/__tests__/tenant-backup-iceberg-log-restore-port.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 3
     }
   },
   "src/__tests__/tenant-backup-import-discard.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
+    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
     },
@@ -3007,9 +2808,6 @@
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 3
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 2
     }
   },
   "src/__tests__/tenant-backup-import-dispatcher.test.ts": {
@@ -3017,15 +2815,12 @@
       "count": 1
     }
   },
-  "src/__tests__/tenant-backup-phase3-adapter.test.ts": {
+  "src/__tests__/tenant-backup-logical-placement-port.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
+      "count": 3
     }
   },
   "src/__tests__/tenant-backup-phase4-adapter.test.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    },
     "@typescript-eslint/no-unsafe-call": {
       "count": 2
     },
@@ -3046,17 +2841,6 @@
       "count": 1
     }
   },
-  "src/__tests__/tenant-backup-phase5-adapter.test.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 3
-    }
-  },
   "src/__tests__/tenant-backup-phase5-other-stores.test.ts": {
     "@typescript-eslint/no-unsafe-argument": {
       "count": 2
@@ -3072,23 +2856,12 @@
   },
   "src/__tests__/tenant-backup-phase8-empty-environment-roundtrip.test.ts": {
     "@typescript-eslint/no-unsafe-argument": {
-      "count": 4
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 18
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 55
+      "count": 2
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 59
+      "count": 3
     },
     "@typescript-eslint/no-unsafe-return": {
-      "count": 2
-    }
-  },
-  "src/__tests__/tenant-backup-production-export.test.ts": {
-    "@typescript-eslint/unbound-method": {
       "count": 1
     }
   },
@@ -3115,17 +2888,12 @@
     },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 13
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 8
-    }
-  },
-  "src/__tests__/tenant-backup-r2-object-snapshot-port.test.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
     }
   },
   "src/__tests__/tenant-backup-r2-plan-builder.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
+    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 5
     },
@@ -3139,22 +2907,25 @@
       "count": 9
     }
   },
-  "src/__tests__/tenant-backup-r2-reference-selection.test.ts": {
-    "@typescript-eslint/unbound-method": {
-      "count": 2
-    }
-  },
   "src/__tests__/tenant-backup-restore-authority.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 2
+    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 6
     },
     "@typescript-eslint/no-unsafe-call": {
-      "count": 24
+      "count": 23
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 28
+      "count": 27
     },
     "@typescript-eslint/no-unsafe-return": {
+      "count": 1
+    }
+  },
+  "src/__tests__/tenant-backup-validated-input-port.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 1
     }
   },
@@ -3185,9 +2956,6 @@
     }
   },
   "src/__tests__/tenant-disaster-recovery-lookup.integration.test.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 13
     },
@@ -3201,15 +2969,9 @@
   "src/__tests__/tenant-discovery-reindex-jobs.test.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 4
     }
   },
   "src/__tests__/tenant-placement-lookup-cutover.integration.test.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 2
-    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 2
     },
@@ -3218,9 +2980,6 @@
     },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 20
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 2
     }
   },
   "src/__tests__/tenant-placement-migration-dependencies.test.ts": {
@@ -3232,9 +2991,6 @@
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 2
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 1
     }
   },
   "src/__tests__/tenant-placement-migration-job.integration.test.ts": {
@@ -3273,9 +3029,6 @@
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 5
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 1
     }
   },
   "src/__tests__/token-claim-rules.test.ts": {
@@ -3359,24 +3112,27 @@
       "count": 3
     },
     "@typescript-eslint/no-unsafe-call": {
-      "count": 30
+      "count": 29
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 29
+      "count": 28
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 5
     }
   },
   "src/__tests__/user-import-publication.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
+    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 10
     },
     "@typescript-eslint/no-unsafe-call": {
-      "count": 19
+      "count": 18
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 33
+      "count": 32
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 4
@@ -3387,7 +3143,7 @@
       "count": 2
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 4
+      "count": 1
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 85
@@ -3408,9 +3164,14 @@
       "count": 1
     }
   },
-  "src/access-revocation.ts": {
+  "src/__tests__/zod-migration-pins/admin-jobs.pins.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 3
+      "count": 1
+    }
+  },
+  "src/__tests__/zod-migration-pins/admin-tenants.pins.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 2
     }
   },
   "src/account-capabilities.ts": {
@@ -3438,9 +3199,6 @@
     }
   },
   "src/account-guest-upgrade.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 2
     },
@@ -3487,11 +3245,6 @@
       "count": 2
     }
   },
-  "src/account-tombstone-write.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    }
-  },
   "src/account-totp.ts": {
     "@typescript-eslint/no-unused-vars": {
       "count": 1
@@ -3519,9 +3272,6 @@
     "@typescript-eslint/no-base-to-string": {
       "count": 1
     },
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 2
-    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 4
     },
@@ -3538,15 +3288,7 @@
       "count": 1
     }
   },
-  "src/admin-compliance.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    }
-  },
   "src/admin-custom-claims.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 7
-    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 7
     },
@@ -3580,9 +3322,6 @@
   "src/admin-job-executor.ts": {
     "@typescript-eslint/no-base-to-string": {
       "count": 3
-    },
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 2
     }
   },
   "src/admin-jobs.ts": {
@@ -3667,26 +3406,20 @@
     }
   },
   "src/admin-shared.ts": {
-    "@typescript-eslint/no-duplicate-type-constituents": {
-      "count": 1
-    },
     "@typescript-eslint/no-explicit-any": {
-      "count": 21
-    },
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 3
+      "count": 18
     },
     "@typescript-eslint/no-unsafe-argument": {
-      "count": 10
+      "count": 3
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 5
+      "count": 1
     },
     "@typescript-eslint/no-unsafe-call": {
       "count": 2
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 12
+      "count": 2
     }
   },
   "src/admin-stats.ts": {
@@ -3722,9 +3455,6 @@
     }
   },
   "src/admin-tenant-vanity-domains.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    },
     "@typescript-eslint/no-unsafe-return": {
       "count": 1
     },
@@ -3733,11 +3463,13 @@
     }
   },
   "src/admin-user-assurance.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 2
-    },
     "no-control-regex": {
       "count": 1
+    }
+  },
+  "src/admin-user-sessions.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 2
     }
   },
   "src/admin-users.ts": {
@@ -3749,11 +3481,8 @@
     "@typescript-eslint/await-thenable": {
       "count": 1
     },
-    "@typescript-eslint/no-base-to-string": {
-      "count": 1
-    },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 5
+      "count": 1
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 9
@@ -3773,7 +3502,7 @@
   },
   "src/agent-elevated-execution.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 3
+      "count": 2
     }
   },
   "src/agent-token-revocation.ts": {
@@ -3784,9 +3513,6 @@
   "src/approval-approver-contact.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 3
-    },
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 2
@@ -3818,9 +3544,6 @@
     "@typescript-eslint/no-explicit-any": {
       "count": 3
     },
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 4
     },
@@ -3837,9 +3560,6 @@
   "src/approval-completion-receipt.ts": {
     "@typescript-eslint/no-base-to-string": {
       "count": 10
-    },
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 2
@@ -3882,9 +3602,6 @@
     "@typescript-eslint/no-explicit-any": {
       "count": 3
     },
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 2
-    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
     },
@@ -3916,16 +3633,6 @@
       "count": 3
     }
   },
-  "src/audit-archive-query.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    }
-  },
-  "src/audit-maintenance.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 2
-    }
-  },
   "src/auth-account-provisioning-entrypoint.ts": {
     "@typescript-eslint/no-unused-vars": {
       "count": 1
@@ -3933,7 +3640,7 @@
   },
   "src/authentication-methods.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 3
+      "count": 2
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 2
@@ -3944,18 +3651,10 @@
   },
   "src/client-config.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 29
-    }
-  },
-  "src/client-public-config.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 8
+      "count": 1
     }
   },
   "src/compliance/access-reviews.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 4
-    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
     },
@@ -3970,9 +3669,6 @@
     }
   },
   "src/compliance/report-routes.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
     },
@@ -3986,15 +3682,7 @@
       "count": 1
     }
   },
-  "src/compliance/retention-inventory.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    }
-  },
   "src/cross-shard-account-list.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 3
-    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
     }
@@ -4003,15 +3691,7 @@
     "@typescript-eslint/no-base-to-string": {
       "count": 1
     },
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 2
-    },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 3
-    }
-  },
-  "src/discovery.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 3
     }
   },
@@ -4036,9 +3716,6 @@
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 1
     },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    },
     "no-useless-escape": {
       "count": 1
     }
@@ -4053,7 +3730,7 @@
       "count": 1
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 3
+      "count": 1
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 52
@@ -4065,23 +3742,11 @@
       "count": 2
     }
   },
-  "src/introspect.ts": {
+  "src/launchers.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 1
-    }
-  },
-  "src/launchers.ts": {
+    },
     "@typescript-eslint/no-unsafe-argument": {
-      "count": 2
-    }
-  },
-  "src/legacy-settings-import.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 2
-    }
-  },
-  "src/log-row-archive.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
       "count": 2
     }
   },
@@ -4120,9 +3785,9 @@
       "count": 2
     }
   },
-  "src/rbac-account-stores.ts": {
+  "src/provider-reprojection-jobs.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 3
+      "count": 1
     }
   },
   "src/register.ts": {
@@ -4135,14 +3800,9 @@
   },
   "src/release-rollout-mutation-fence.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 3
+      "count": 1
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    }
-  },
-  "src/retention-maintenance.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 1
     }
   },
@@ -4174,25 +3834,11 @@
     "@typescript-eslint/no-explicit-any": {
       "count": 3
     },
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 14
-    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
     },
     "@typescript-eslint/no-unused-vars": {
       "count": 1
-    }
-  },
-  "src/routes/admin-management/admin-audit.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 6
     }
   },
   "src/routes/admin-management/admin-policies.ts": {
@@ -4224,9 +3870,6 @@
     "@typescript-eslint/no-explicit-any": {
       "count": 3
     },
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 10
-    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
     },
@@ -4238,39 +3881,11 @@
     "@typescript-eslint/no-explicit-any": {
       "count": 3
     },
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 11
-    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
     },
     "@typescript-eslint/no-unused-vars": {
       "count": 12
-    }
-  },
-  "src/routes/admin-management/agent-baselines.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 5
-    }
-  },
-  "src/routes/admin-management/agent-bulk.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 3
-    }
-  },
-  "src/routes/admin-management/agent-configuration.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 6
-    }
-  },
-  "src/routes/admin-management/agent-elevations.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    }
-  },
-  "src/routes/admin-management/agent-grants.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 6
     }
   },
   "src/routes/admin-management/agent-login-handoffs.ts": {
@@ -4296,9 +3911,6 @@
   "src/routes/admin-management/database-connections.ts": {
     "@typescript-eslint/no-base-to-string": {
       "count": 4
-    },
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 8
     }
   },
   "src/routes/admin-management/index.ts": {
@@ -4309,9 +3921,6 @@
   "src/routes/admin-management/ip-allowlist.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 3
-    },
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 5
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
@@ -4329,9 +3938,6 @@
     },
     "@typescript-eslint/no-redundant-type-constituents": {
       "count": 1
-    },
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 4
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
@@ -4358,9 +3964,6 @@
     "@typescript-eslint/no-explicit-any": {
       "count": 3
     },
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 2
-    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 2
     },
@@ -4377,23 +3980,9 @@
       "count": 8
     }
   },
-  "src/routes/admin-management/operational-logs.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 3
-    },
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 1
-    }
-  },
   "src/routes/admin-management/storage-destinations.ts": {
     "@typescript-eslint/no-base-to-string": {
       "count": 2
-    },
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 7
     }
   },
   "src/routes/admin-management/tenant-backups.ts": {
@@ -4408,9 +3997,6 @@
     }
   },
   "src/routes/approval-artifacts.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 12
-    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 2
     },
@@ -4419,11 +4005,6 @@
     },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 1
-    }
-  },
-  "src/routes/approval-receipts.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 2
     }
   },
   "src/routes/device-secrets.ts": {
@@ -4441,9 +4022,6 @@
   },
   "src/routes/diagnostic-logging/ingest.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unused-vars": {
       "count": 1
     }
   },
@@ -4463,9 +4041,6 @@
     }
   },
   "src/routes/policy/index.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 4
-    },
     "@typescript-eslint/restrict-template-expressions": {
       "count": 1
     }
@@ -4476,14 +4051,11 @@
     }
   },
   "src/routes/settings-v2/index.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 14
-    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 4
+      "count": 3
     },
     "@typescript-eslint/no-unused-vars": {
       "count": 14
@@ -4492,11 +4064,6 @@
   "src/routes/settings-v2/settings-validators.ts": {
     "@typescript-eslint/no-base-to-string": {
       "count": 1
-    }
-  },
-  "src/routes/settings/audit-storage.ts": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 2
     }
   },
   "src/routes/settings/cache-mode.ts": {
@@ -4545,11 +4112,6 @@
       "count": 1
     }
   },
-  "src/routes/settings/logging-config.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 4
-    }
-  },
   "src/routes/settings/native-sso.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 1
@@ -4559,6 +4121,9 @@
     }
   },
   "src/routes/settings/org-domain-mappings.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 3
+    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 14
     },
@@ -4567,6 +4132,9 @@
     }
   },
   "src/routes/settings/pii-partitions.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
+    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
     },
@@ -4586,9 +4154,6 @@
   "src/routes/settings/plugins.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 2
-    },
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
@@ -4627,17 +4192,14 @@
     }
   },
   "src/routes/settings/resource-permissions.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 9
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 5
+      "count": 1
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 8
+      "count": 4
     }
   },
   "src/routes/settings/revocation-shards.ts": {
@@ -4649,9 +4211,6 @@
     }
   },
   "src/routes/settings/role-assignment-rules.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 2
-    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 10
     },
@@ -4668,9 +4227,6 @@
     }
   },
   "src/routes/settings/token-claim-rules.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 2
-    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 8
     },
@@ -4702,9 +4258,6 @@
     "@typescript-eslint/no-redundant-type-constituents": {
       "count": 1
     },
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 3
     },
@@ -4734,14 +4287,9 @@
       "count": 1
     }
   },
-  "src/runtime-profile-reference-status.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 3
-    }
-  },
   "src/runtime-profiles.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 4
+      "count": 2
     },
     "@typescript-eslint/no-unused-vars": {
       "count": 1
@@ -4762,7 +4310,7 @@
       "count": 2
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 15
+      "count": 2
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 7
@@ -4798,14 +4346,9 @@
       "count": 1
     }
   },
-  "src/support-ops-stores.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 4
-    }
-  },
   "src/support-ops.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 5
+      "count": 2
     }
   },
   "src/tenant-backup-import-discard.ts": {
@@ -4831,11 +4374,6 @@
       "count": 1
     }
   },
-  "src/tenant-backup-phase5-adapter.ts": {
-    "@typescript-eslint/unbound-method": {
-      "count": 1
-    }
-  },
   "src/tenant-backup-phase5-other-stores.ts": {
     "@typescript-eslint/no-unused-vars": {
       "count": 1
@@ -4856,30 +4394,7 @@
       "count": 2
     }
   },
-  "src/tenant-disaster-recovery-lookup.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 4
-    }
-  },
-  "src/tenant-placement-lookup-cutover.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 3
-    }
-  },
-  "src/tenant-placement-migration-dependencies.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 2
-    }
-  },
-  "src/tenant-runtime-registry-snapshot-jobs.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 2
-    }
-  },
   "src/user-consents.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
     }

@@ -1,4 +1,9 @@
 {
+  "src/__tests__/cors.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
+    }
+  },
   "src/__tests__/discovery-profile.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 13
@@ -9,7 +14,7 @@
       "count": 1
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 30
+      "count": 35
     },
     "@typescript-eslint/no-unsafe-call": {
       "count": 1
@@ -20,18 +25,20 @@
   },
   "src/__tests__/index.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
+      "count": 3
     },
     "@typescript-eslint/only-throw-error": {
       "count": 1
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 2
     }
   },
   "src/__tests__/jwks.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 5
+    }
+  },
+  "src/__tests__/saml-dr-entrypoint.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 2
     }
   },
   "src/__tests__/tenant-certification-profile.test.ts": {
@@ -44,7 +51,7 @@
       "count": 3
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 3
+      "count": 6
     },
     "@typescript-eslint/no-unsafe-call": {
       "count": 3

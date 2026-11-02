@@ -1,10 +1,5 @@
 import { canonicalizeJson } from './canonical-json';
-import type {
-  AgentToolDefinition,
-  AgentToolDefinitionSource,
-  JsonObject,
-  JsonValue,
-} from './types';
+import type { AgentToolDefinition, AgentToolDefinitionSource, JsonObject } from './types';
 
 function rightRotate(value: number, amount: number): number {
   return (value >>> amount) | (value << (32 - amount));
@@ -118,13 +113,13 @@ export function agentToolContractManifest(
     task_support: tool.taskSupport ?? null,
     execution_target: tool.executionTarget ?? null,
     protocol_metadata: tool.protocolMetadata ?? null,
-  } as JsonObject;
+  };
 }
 
 export function computeAgentToolContractDigest(
   tool: AgentToolDefinitionSource | AgentToolDefinition
 ): string {
-  return `sha256:${sha256Hex(canonicalizeJson(agentToolContractManifest(tool) as JsonValue))}`;
+  return `sha256:${sha256Hex(canonicalizeJson(agentToolContractManifest(tool)))}`;
 }
 
 function undefinedContractPath(value: unknown, path = '$'): string | undefined {

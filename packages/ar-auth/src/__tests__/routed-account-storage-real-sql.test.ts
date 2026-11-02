@@ -282,7 +282,7 @@ function adapterOver(db: SqliteDatabase): DatabaseAdapter & { raw: SqliteDatabas
     raw: db,
     query: async (sql: string, params?: unknown[]) => db.prepare(sql).all(...bind(params)),
     queryOne: async (sql: string, params?: unknown[]) =>
-      (db.prepare(sql).get(...bind(params)) as unknown) ?? null,
+      db.prepare(sql).get(...bind(params)) ?? null,
     execute: async (sql: string, params?: unknown[]) => executeStatement(sql, params),
     transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(adapter),
     batch: async (statements: Array<{ sql: string; params?: unknown[] }>) => {

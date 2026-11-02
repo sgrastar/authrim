@@ -88,7 +88,7 @@ describe('schema-admin', () => {
   });
 
   it('inserts a schema row from a field map', async () => {
-    await insertCustomClaimSchema(mockAdapter as any, {
+    await insertCustomClaimSchema(mockAdapter, {
       id: 'schema-1',
       tenant_id: 'tenant-1',
       field_key: 'department',
@@ -126,7 +126,7 @@ describe('schema-admin', () => {
       { id: 'schema-1', is_pii: 1, is_required: 0, is_active: 1, is_system: 1 },
     ]);
 
-    await insertCustomClaimSchema(mockAdapter as any, {
+    await insertCustomClaimSchema(mockAdapter, {
       id: 'schema-2',
       tenant_id: 'tenant-1',
       field_key: 'department',

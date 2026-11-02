@@ -15,13 +15,9 @@ async function filterPii(env: Record<string, string | undefined>, stored?: unkno
       ? { 'settings:tenant:t1:diagnostic-logging': JSON.stringify({ [KEY]: stored }) }
       : {};
   const kv = { get: async (key: string) => documents[key] ?? null } as unknown as KVNamespace;
-  const values = await resolveEffectiveSettings(
-    { SETTINGS: kv, ...env } as never,
-    'diagnostic-logging',
-    {
-      tenantId: 't1',
-    }
-  );
+  const values = await resolveEffectiveSettings({ SETTINGS: kv, ...env }, 'diagnostic-logging', {
+    tenantId: 't1',
+  });
   return values[KEY];
 }
 

@@ -369,7 +369,7 @@ export class HyperdriveAuditAdapter implements IAuditStorageAdapter {
     try {
       const client = await this.getClient();
       const params: unknown[] = [];
-      const conditions = this.buildWhereClause(options as AuditQueryOptions, params);
+      const conditions = this.buildWhereClause(options, params);
       const table = options.logType === 'event' ? 'event_log' : 'pii_log';
 
       const result = await client.query<{ count: string }>(

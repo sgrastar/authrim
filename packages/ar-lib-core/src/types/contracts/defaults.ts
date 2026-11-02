@@ -420,5 +420,5 @@ export function mergeTenantPolicies<K extends keyof typeof DEFAULT_TENANT_POLICI
   return {
     ...DEFAULT_TENANT_POLICIES[category],
     ...overrides,
-  } as (typeof DEFAULT_TENANT_POLICIES)[K];
+  };
 }

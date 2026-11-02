@@ -43,7 +43,7 @@ function adapter(database: DatabaseSync): DatabaseAdapter {
       return { success: true, rowsAffected: Number(executed.changes) };
     },
     async transaction<T>(fn: (tx: TransactionContext) => Promise<T>) {
-      return fn(result as unknown as TransactionContext);
+      return fn(result);
     },
     async batch() {
       throw new Error('not implemented');
@@ -54,7 +54,7 @@ function adapter(database: DatabaseSync): DatabaseAdapter {
     getType: () => 'sqlite-test',
     async close() {},
   };
-  return result as unknown as DatabaseAdapter;
+  return result;
 }
 
 function controlView(overrides: Partial<ControlTenantPlacementMigrationView> = {}) {
@@ -181,7 +181,7 @@ describe('Admin tenant placement migration API', () => {
     expect(start).toHaveBeenCalledWith(
       expect.objectContaining({ tenantId: 'tenant-a', targetIsolationPolicy: 'tenant_exclusive' })
     );
-    const requestedById = start.mock.calls[0]![0].requestedById;
+    const requestedById = start.mock.calls[0][0].requestedById;
     expect(requestedById).toMatch(/^admin:[a-f0-9]{64}$/u);
     const stored = await new TenantPlacementMigrationJobRepository(admin).get(
       'tenant-placement:abc',

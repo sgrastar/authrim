@@ -155,9 +155,7 @@ export function projectAgentInspectionResponse(body: JsonValue): JsonValue {
 }
 
 function recordValue(value: JsonValue | undefined): Record<string, JsonValue> | null {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, JsonValue>)
-    : null;
+  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : null;
 }
 
 function safePostureCount(value: JsonValue | undefined): number | null {
@@ -247,17 +245,15 @@ function projectedGrantSummary(value: JsonValue): JsonValue | null {
     permissions: stringArray(grant.permissions),
     scopes: stringArray(grant.scopes),
     task_set_id: typeof grant.task_set_id === 'string' ? grant.task_set_id : null,
-    task_set_version: Number.isSafeInteger(grant.task_set_version)
-      ? (grant.task_set_version as number)
-      : null,
+    task_set_version: Number.isSafeInteger(grant.task_set_version) ? grant.task_set_version : null,
     scope_policy_id: typeof grant.scope_policy_id === 'string' ? grant.scope_policy_id : null,
     scope_policy_version: Number.isSafeInteger(grant.scope_policy_version)
-      ? (grant.scope_policy_version as number)
+      ? grant.scope_policy_version
       : null,
-    expires_at: Number.isSafeInteger(grant.expires_at) ? (grant.expires_at as number) : null,
-    last_used_at: Number.isSafeInteger(grant.last_used_at) ? (grant.last_used_at as number) : null,
-    created_at: Number.isSafeInteger(grant.created_at) ? (grant.created_at as number) : null,
-    updated_at: Number.isSafeInteger(grant.updated_at) ? (grant.updated_at as number) : null,
+    expires_at: Number.isSafeInteger(grant.expires_at) ? grant.expires_at : null,
+    last_used_at: Number.isSafeInteger(grant.last_used_at) ? grant.last_used_at : null,
+    created_at: Number.isSafeInteger(grant.created_at) ? grant.created_at : null,
+    updated_at: Number.isSafeInteger(grant.updated_at) ? grant.updated_at : null,
   };
 }
 

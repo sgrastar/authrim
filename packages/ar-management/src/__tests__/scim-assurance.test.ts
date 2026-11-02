@@ -5,7 +5,6 @@ import { resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Env } from '@authrim/ar-lib-core/types/env';
 import { CanonicalIdentityRepository, type DatabaseAdapter } from '@authrim/ar-lib-core';
 import { describeScimTestHarness } from './scim-test-harness';
 
@@ -129,7 +128,7 @@ const defaultIal = (level: string) => assuranceSettings({ default_ial: level });
 
 describeScimTestHarness('SCIM assurance', (harness) => {
   const fetchScim = (path: string, options?: RequestInit) =>
-    harness.app.fetch(harness.createRequest(path, options), harness.env as Env);
+    harness.app.fetch(harness.createRequest(path, options), harness.env);
 
   // The ceiling on what SCIM may assert is raised for these tests, apart from those about it.
   beforeEach(() => {
@@ -521,7 +520,7 @@ describeScimTestHarness('SCIM assurance', (harness) => {
     let opened: ReturnType<typeof realEvidenceStore> | null = null;
     const open = () => {
       opened = realEvidenceStore(['user-001', 'user-002']);
-      harness.assurance.store = opened.adapter as never;
+      harness.assurance.store = opened.adapter;
       return opened;
     };
     afterEach(() => {
@@ -626,7 +625,7 @@ describeScimTestHarness('SCIM assurance', (harness) => {
           })
         );
         expect(created.status).toBe(201);
-        const initial = harness.accountCreation.written[0]!.initialAssurance as never;
+        const initial = harness.accountCreation.written[0].initialAssurance as never;
         await store.repository.recordInitialAssurance('subject:user-001', initial);
         expect(store.active('user-001')).toMatchObject([{ ial: 'IAL2', verifiedAt: VERIFIED_MS }]);
 
@@ -1036,7 +1035,7 @@ describeScimTestHarness('SCIM assurance', (harness) => {
           ((await inBulk.json()) as { Operations: Array<{ status: string }> }).Operations[0]?.status
         ).toBe('200');
         const keysRead = vi
-          .mocked(harness.env.SETTINGS!.get)
+          .mocked(harness.env.SETTINGS.get)
           .mock.calls.map((call) => String(call[0]));
         expect(keysRead.filter((key) => key.includes(':assurance'))).toEqual([]);
         expect(store.count()).toBe(readsBefore);

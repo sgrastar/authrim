@@ -87,7 +87,7 @@ export async function openMysqlConnection(
 
   return {
     query: async <T = unknown>(sql: string, params?: unknown[]): Promise<MysqlQueryResult<T>> => {
-      const [rows] = await rawConnection.query(sql, params as any);
+      const [rows] = await rawConnection.query(sql, params);
 
       if (Array.isArray(rows)) {
         return { rows: rows as T[] };

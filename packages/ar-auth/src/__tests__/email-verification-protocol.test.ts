@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { base64url, exportJWK, generateKeyPair, SignJWT } from 'jose';
-import type { JWK, JWTHeaderParameters, JWTPayload } from 'jose';
+import type { JWK, JWTHeaderParameters } from 'jose';
 import type { SafeFetchOptions } from '@authrim/ar-lib-core';
 import {
   verifyEmailVerificationProtocol,
@@ -93,7 +93,7 @@ async function createPresentation(options: PresentationOptions = {}): Promise<st
     ...(disclosureDigests.length > 0 ? { _sd_alg: 'sha-256', _sd: disclosureDigests } : {}),
     ...options.issuerPayload,
   };
-  const issuerJwt = await new SignJWT(issuerPayload as JWTPayload)
+  const issuerJwt = await new SignJWT(issuerPayload)
     .setProtectedHeader({
       alg: algorithm,
       typ: 'evt+jwt',
@@ -110,7 +110,7 @@ async function createPresentation(options: PresentationOptions = {}): Promise<st
     sd_hash: await hash(sdJwt),
     ...options.keyBindingPayload,
   };
-  const keyBindingJwt = await new SignJWT(keyBindingPayload as JWTPayload)
+  const keyBindingJwt = await new SignJWT(keyBindingPayload)
     .setProtectedHeader({
       alg: algorithm,
       typ: 'kb+jwt',

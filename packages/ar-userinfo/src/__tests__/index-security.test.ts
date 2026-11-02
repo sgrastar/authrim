@@ -85,9 +85,13 @@ describe('userinfo service middleware boundaries', () => {
 
   it('masks unexpected handler errors at the service boundary', async () => {
     mocks.userinfoHandler.mockRejectedValue(new Error('database password leaked'));
-    const response = await app.request('http://localhost/userinfo', {}, {
-      ENABLE_RATE_LIMIT: 'false',
-    } as Env);
+    const response = await app.request(
+      'http://localhost/userinfo',
+      {},
+      {
+        ENABLE_RATE_LIMIT: 'false',
+      }
+    );
     expect(response.status).toBe(500);
     const text = await response.text();
     expect(JSON.parse(text)).toEqual({

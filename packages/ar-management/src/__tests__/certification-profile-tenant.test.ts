@@ -475,9 +475,9 @@ describe('certification profiles API', () => {
     const response = await apply(withoutKv, 'fapi-2');
 
     expect(response.status).toBe(503);
-    const saved = await (env.DB_ADMIN as D1Database)
-      .prepare('SELECT count(*) AS n FROM tenant_settings_documents')
-      .first<{ n: number }>();
+    const saved = await env.DB_ADMIN.prepare(
+      'SELECT count(*) AS n FROM tenant_settings_documents'
+    ).first<{ n: number }>();
     expect(saved?.n).toBe(0);
   });
 

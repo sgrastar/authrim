@@ -141,11 +141,7 @@ describe('runLegacySettingsImport', () => {
     expect(settings).toEqual(before);
     // Not even a canonical document is created from what was read.
     const count = async (table: string) =>
-      (
-        await (env.DB_ADMIN as D1Database)
-          .prepare(`SELECT count(*) AS n FROM ${table}`)
-          .first<{ n: number }>()
-      )?.n;
+      (await env.DB_ADMIN.prepare(`SELECT count(*) AS n FROM ${table}`).first<{ n: number }>())?.n;
     await expect(count('tenant_settings_documents')).resolves.toBe(0);
     await expect(count('platform_settings_documents')).resolves.toBe(0);
   });
@@ -230,11 +226,9 @@ describe('runLegacySettingsImport', () => {
     expect((await runStep(env)).status).toBe('completed');
 
     // As if completed before the per-profile rate limits were imported.
-    await (env.DB_ADMIN as unknown as D1Database)
-      .prepare(
-        "UPDATE settings_legacy_import_state SET state_json=json_remove(state_json,'$.contract')"
-      )
-      .run();
+    await env.DB_ADMIN.prepare(
+      "UPDATE settings_legacy_import_state SET state_json=json_remove(state_json,'$.contract')"
+    ).run();
     const configKV = env.AUTHRIM_CONFIG as unknown as { put: (k: string, v: string) => unknown };
     await configKV.put('rate_limit_public_read_max_requests', '900');
     // Saved in the Settings API since: kept.
@@ -375,9 +369,9 @@ describe('runLegacySettingsImport', () => {
     const list = vi.mocked(env.SETTINGS!.list);
     const original = list.getMockImplementation()!;
     list.mockImplementationOnce(async (options) => {
-      await (env.DB_ADMIN as D1Database)
-        .prepare('UPDATE settings_legacy_import_state SET revision=revision+1 WHERE id=1')
-        .run();
+      await env.DB_ADMIN.prepare(
+        'UPDATE settings_legacy_import_state SET revision=revision+1 WHERE id=1'
+      ).run();
       return original(options);
     });
 

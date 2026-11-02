@@ -100,7 +100,7 @@ export function getRefreshTokenRotatorStubByJti(
   const id = namespace.idFromName(instanceName);
 
   return {
-    stub: namespace.get(id) as unknown as RefreshTokenRotatorRpcStub,
+    stub: namespace.get(id),
     resolution: {
       instanceName,
       generation: parsedJti.generation,

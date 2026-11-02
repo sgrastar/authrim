@@ -239,7 +239,7 @@ function createCoreDatabase(): DatabaseAdapter {
   const adapter = {
     query: async (sql: string, params?: unknown[]) => db.prepare(sql).all(...bind(params)),
     queryOne: async (sql: string, params?: unknown[]) => {
-      const row = (db.prepare(sql).get(...bind(params)) as unknown) ?? null;
+      const row = db.prepare(sql).get(...bind(params)) ?? null;
       if (world.afterStatement) await world.afterStatement(sql);
       return row;
     },
@@ -669,11 +669,11 @@ async function selectMethod(
   );
   expect(step?.component).toMatch(/method_selector$/);
   return browser.post(`/api/v1/login/interactions/${interaction.id}/submit`, {
-    step_id: step?.id as string,
-    node_id: step?.source_node_id as string,
+    step_id: step?.id,
+    node_id: step?.source_node_id,
     selected_handle: handle,
-    contract_hash: start.json.contract_hash as string,
-    signature: start.json.signature as string,
+    contract_hash: start.json.contract_hash,
+    signature: start.json.signature,
     ...(input ? { input } : {}),
   });
 }
@@ -699,8 +699,8 @@ async function resumeAndComplete(
 async function resume(browser: Browser, start: Response_, interactionId: string) {
   const flow: Response_ = await browser.post('/api/v1/login/interactions/start', {
     resume_interaction_id: interactionId,
-    contract_hash: start.json.contract_hash as string,
-    signature: start.json.signature as string,
+    contract_hash: start.json.contract_hash,
+    signature: start.json.signature,
   });
   expect(flow.status).toBe(200);
   return flow;
@@ -723,8 +723,8 @@ async function completeResumed(
       step_id: step.id,
       node_id: step.source_node_id,
       selected_handle: step.component === 'completion' ? 'completed' : 'submitted',
-      contract_hash: start.json.contract_hash as string,
-      signature: start.json.signature as string,
+      contract_hash: start.json.contract_hash,
+      signature: start.json.signature,
     });
     steps.push(submitted);
     if (submitted.status !== 200 || submitted.json.completed === true) {
@@ -779,14 +779,14 @@ async function signInByEmailCode(
   expect(selection.json.completed).toBe(false);
 
   const verify = await browser.post('/api/v1/auth/direct/email-code/verify', {
-    attempt_id: send.json.attempt_id as string,
-    code: code as string,
+    attempt_id: send.json.attempt_id,
+    code: code,
     code_verifier: verifier,
     channel: 'browser',
   });
   expect(verify.status).toBe(200);
   result.finish = await browser.post('/api/v1/auth/direct/session', {
-    direct_auth_artifact: verify.json.direct_auth_artifact as string,
+    direct_auth_artifact: verify.json.direct_auth_artifact,
     client_id: CLIENT_ID,
     code_verifier: verifier,
     channel: 'browser',
@@ -1567,8 +1567,8 @@ describe('sign-in sequences through the real handlers', () => {
       // consent in its newer version, and nothing held.
       const resumed = await browser.post('/api/v1/login/interactions/start', {
         resume_interaction_id: interaction.id,
-        contract_hash: start.json.contract_hash as string,
-        signature: start.json.signature as string,
+        contract_hash: start.json.contract_hash,
+        signature: start.json.signature,
       });
       expect(resumed.status).toBe(200);
       const current = (resumed.json.interaction as { current_step_id: string }).current_step_id;
@@ -1581,8 +1581,8 @@ describe('sign-in sequences through the real handlers', () => {
         node_id: 'auth',
         selected_handle: 'mail_otp',
         // The resume signed the contract as it is now: that one is submitted.
-        contract_hash: resumed.json.contract_hash as string,
-        signature: resumed.json.signature as string,
+        contract_hash: resumed.json.contract_hash,
+        signature: resumed.json.signature,
         input: given,
       });
       expect(again.status).toBe(200);
@@ -1626,8 +1626,8 @@ describe('sign-in sequences through the real handlers', () => {
         step_id: 'auth:step',
         node_id: 'auth',
         selected_handle: 'mail_otp',
-        contract_hash: stale.json.contract_hash as string,
-        signature: stale.json.signature as string,
+        contract_hash: stale.json.contract_hash,
+        signature: stale.json.signature,
         input: given,
       });
       // What would be accepted is not what was shown.
@@ -1644,8 +1644,8 @@ describe('sign-in sequences through the real handlers', () => {
         step_id: 'auth:step',
         node_id: 'auth',
         selected_handle: 'mail_otp',
-        contract_hash: fresh.json.contract_hash as string,
-        signature: fresh.json.signature as string,
+        contract_hash: fresh.json.contract_hash,
+        signature: fresh.json.signature,
         input: given,
       });
       expect(accepted.status).toBe(200);
@@ -1684,8 +1684,8 @@ describe('sign-in sequences through the real handlers', () => {
           step_id: `${stepId}:step`,
           node_id: stepId,
           selected_handle: handle,
-          contract_hash: contract.json.contract_hash as string,
-          signature: contract.json.signature as string,
+          contract_hash: contract.json.contract_hash,
+          signature: contract.json.signature,
         });
       expect((await submit('a', 'submitted')).status).toBe(200);
 
@@ -1707,8 +1707,8 @@ describe('sign-in sequences through the real handlers', () => {
       // Asked again, the Flow runs on from the selection, A again included: its step is found.
       const resumed = await browser.post('/api/v1/login/interactions/start', {
         resume_interaction_id: interaction.id,
-        contract_hash: start.json.contract_hash as string,
-        signature: start.json.signature as string,
+        contract_hash: start.json.contract_hash,
+        signature: start.json.signature,
       });
       expect((resumed.json.interaction as { current_step_id: string }).current_step_id).toBe(
         'auth:step'
@@ -1718,8 +1718,8 @@ describe('sign-in sequences through the real handlers', () => {
         step_id: 'auth:step',
         node_id: 'auth',
         selected_handle: 'mail_otp',
-        contract_hash: again.json.contract_hash as string,
-        signature: again.json.signature as string,
+        contract_hash: again.json.contract_hash,
+        signature: again.json.signature,
         input: given,
       });
       expect(selected.status).toBe(200);
@@ -2201,8 +2201,8 @@ describe('sign-in sequences through the real handlers', () => {
       // Taking the interaction up again says so, with nobody signed in ...
       const resumed = await browser.post('/api/v1/login/interactions/start', {
         resume_interaction_id: interaction.id,
-        contract_hash: start.json.contract_hash as string,
-        signature: start.json.signature as string,
+        contract_hash: start.json.contract_hash,
+        signature: start.json.signature,
       });
       expect(resumed.status).toBe(400);
       expect(resumed.json.error).toBe('authorization_request_expired');

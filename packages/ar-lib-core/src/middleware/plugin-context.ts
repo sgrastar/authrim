@@ -571,7 +571,7 @@ async function getPluginConfigFromKV<T>(
       ...defaultValue,
       ...globalConfig,
       ...tenantConfig,
-    } as T;
+    };
   } catch {
     return defaultValue;
   }

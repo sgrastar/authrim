@@ -118,7 +118,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ...actual,
     checkEmailRegistration: async (...args: unknown[]) =>
       registrationCheck.override ??
-      (actual as typeof import('@authrim/ar-lib-core')).checkEmailRegistration(
+      actual.checkEmailRegistration(
         ...(args as Parameters<typeof import('@authrim/ar-lib-core').checkEmailRegistration>)
       ),
     getChallengeStoreByChallengeId: mockGetChallengeStoreByChallengeId,

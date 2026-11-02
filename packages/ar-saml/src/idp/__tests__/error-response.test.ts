@@ -26,8 +26,8 @@ describe('SAML IdP error response', () => {
       'StatusCode'
     );
 
-    expect(getAttribute(response!, 'Destination')).toBe('https://sp.example.com/acs');
-    expect(getAttribute(response!, 'InResponseTo')).toBe('_request123');
+    expect(getAttribute(response, 'Destination')).toBe('https://sp.example.com/acs');
+    expect(getAttribute(response, 'InResponseTo')).toBe('_request123');
     expect(getAttribute(statusCodes[0], 'Value')).toBe(STATUS_CODES.RESPONDER);
     expect(getAttribute(statusCodes[1], 'Value')).toBe(STATUS_CODES.INVALID_ATTR_NAME_OR_VALUE);
     expect(xml).toContain(SAML_ATTRIBUTE_RELEASE_FAILURE_STATUS_MESSAGE);

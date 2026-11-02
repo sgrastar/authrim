@@ -42,7 +42,7 @@ const freshManagers = new WeakMap<object, SettingsManager>();
 
 /** The manager for runtime reads (documents cached briefly), or for admin views (`fresh`). */
 function managerFor(env: EffectiveSettingsEnv, fresh = false): SettingsManager {
-  const key = (env.SETTINGS ?? env) as object;
+  const key = env.SETTINGS ?? env;
   const cache = fresh ? freshManagers : managers;
   let manager = cache.get(key);
   if (!manager) {

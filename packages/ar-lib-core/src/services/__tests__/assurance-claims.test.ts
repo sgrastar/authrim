@@ -83,10 +83,10 @@ describe('identity assurance claims', () => {
     ({ db, adapter } = sqliteAdapter());
     const query = adapter.query.bind(adapter);
     let reads = 0;
-    adapter.query = (async (sql: string, params?: unknown[]) => {
+    adapter.query = async (sql: string, params?: unknown[]) => {
       if (sql.includes('assurance_evidence')) reads += 1;
       return query(sql, params);
-    }) as typeof adapter.query;
+    };
     evidenceReads = () => reads;
     db.prepare(
       `INSERT INTO identity_subjects (id, tenant_id, subject_type, created_at, updated_at)
@@ -302,9 +302,9 @@ describe('identity assurance claims', () => {
       addEvidence('ev-1', 'IAL2');
       const requestScope = {};
       const query = adapter.query;
-      adapter.query = (async () => {
+      adapter.query = async () => {
         throw new Error('database is down');
-      }) as typeof adapter.query;
+      };
       expect(await requirement(requestScope)).toMatchObject({ outcome: 'unavailable' });
       adapter.query = query;
       expect((await resolve({ requestScope })).eduperson_assurance).toEqual([IAL1_URI, IAL2_URI]);

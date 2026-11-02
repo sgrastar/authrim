@@ -179,7 +179,7 @@ export async function evaluateSessionAssurance(
         // The session ended meanwhile: nothing it proved may be used.
         return false;
       }
-      const latest = updated.data as Record<string, unknown> | undefined;
+      const latest = updated.data;
       written = Object.entries(updates).every(
         ([field, value]) => JSON.stringify(latest?.[field]) === JSON.stringify(value)
       );
@@ -212,10 +212,7 @@ export async function evaluateSessionAssurance(
         .getSessionRpc(priorSessionId)) as Session | null;
       if (prior && prior.userId === input.sessionUserId && prior.expiresAt > now()) {
         evidence = mergeStepUpEvidence(
-          sessionAssuranceEvidence(
-            prior.data as Record<string, unknown> | undefined,
-            upstreamAcrMappings
-          ),
+          sessionAssuranceEvidence(prior.data, upstreamAcrMappings),
           evidence
         );
         // The combined evidence is as old as its oldest proof (0: unknown, never fresh), so it

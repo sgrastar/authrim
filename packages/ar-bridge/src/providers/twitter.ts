@@ -118,7 +118,7 @@ export const TWITTER_DEFAULT_CONFIG: Partial<UpstreamProvider> = {
     pkceRequired: true,
     userFields: 'id,name,username,profile_image_url',
     includeEmail: false,
-  } as Record<string, unknown>,
+  },
 };
 
 // =============================================================================

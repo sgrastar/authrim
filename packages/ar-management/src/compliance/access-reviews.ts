@@ -333,7 +333,7 @@ export async function takeReviewSnapshot(
           [threshold, tenantId, after, ACCOUNT_PAGE_SIZE]
         );
         if (rows.length === 0) break;
-        after = rows[rows.length - 1]!.legacy_user_id;
+        after = rows[rows.length - 1].legacy_user_id;
         let selected = rows;
         if (scope === 'inactive_users') {
           const unsure = rows.filter((row) => Number(row.recent) !== 1);
@@ -456,7 +456,7 @@ function isDateOrDateTime(value: string): boolean {
   }
   // A date-time: its date must exist too (Date.parse would roll 02-31 over into March).
   const dateTime = /^(\d{4}-\d{2}-\d{2})T/u.exec(value);
-  return Boolean(dateTime && isDateOrDateTime(dateTime[1]!) && !Number.isNaN(Date.parse(value)));
+  return Boolean(dateTime && isDateOrDateTime(dateTime[1]) && !Number.isNaN(Date.parse(value)));
 }
 
 const CreateSchema = z
@@ -755,7 +755,7 @@ export async function listAccessReviewItems(c: Context<{ Bindings: Env }>) {
       })),
       pagination: {
         has_more: hasMore,
-        ...(hasMore && page.length > 0 ? { next_cursor: page[page.length - 1]!.id } : {}),
+        ...(hasMore && page.length > 0 ? { next_cursor: page[page.length - 1].id } : {}),
       },
     });
   } catch (error) {
@@ -964,7 +964,7 @@ async function storeHolding(
             [tenantId, item.user_id],
           ];
   for (const adapter of stores.values()) {
-    if (await adapter.queryOne<{ found: number }>(sql as string, params as unknown[])) {
+    if (await adapter.queryOne<{ found: number }>(sql, params)) {
       return adapter;
     }
   }

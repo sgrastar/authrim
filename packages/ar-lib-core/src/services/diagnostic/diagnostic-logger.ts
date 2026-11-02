@@ -113,9 +113,7 @@ export class DiagnosticLogger {
    */
   private resolveStorageMode(): DiagnosticLogPrivacyMode {
     const rawOverrides = this.settings['diagnostic-logging.storage_mode.by_client'];
-    const defaultMode =
-      (this.settings['diagnostic-logging.storage_mode.default'] as DiagnosticLogPrivacyMode) ||
-      'masked';
+    const defaultMode = this.settings['diagnostic-logging.storage_mode.default'] || 'masked';
 
     if (!this.clientId) return defaultMode;
 

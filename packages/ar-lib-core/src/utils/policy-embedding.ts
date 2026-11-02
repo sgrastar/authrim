@@ -163,7 +163,7 @@ async function getUserPermissionGrantsFromRoles(
     ({ role, assignment }) => ({
       permissions: rolePermissions(role),
       scope_type: assignment.scope_type as ScopeType | null,
-      scope_target: assignment.scope_target as string | null,
+      scope_target: assignment.scope_target,
     })
   );
 

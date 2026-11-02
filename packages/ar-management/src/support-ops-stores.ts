@@ -98,10 +98,7 @@ export function supportOpsStoresFromHono<E extends { Bindings: Env }>(
   return storesOf(
     context.env,
     tenantId,
-    createAuthContextFromHono(
-      context as unknown as Parameters<typeof createAuthContextFromHono>[0],
-      tenantId
-    ).coreAdapter,
+    createAuthContextFromHono(context, tenantId).coreAdapter,
     getTenantMetadataContextFromHono(context)
   );
 }
@@ -131,7 +128,7 @@ export async function mapAccountStores<R>(
     while (next < stores.length) {
       const index = next;
       next += 1;
-      results[index] = await mapper(stores[index]!, index);
+      results[index] = await mapper(stores[index], index);
     }
   };
   await samlDrAll(
@@ -171,7 +168,7 @@ export async function accountsByStore(
 ): Promise<Map<string, string[]>> {
   const unique = [...new Set(userIds)];
   // One database holds every account there is: none is in two.
-  if (stores.length === 1) return new Map([[stores[0]!.key, unique]]);
+  if (stores.length === 1) return new Map([[stores[0].key, unique]]);
   const chunks = accountIdChunks(unique);
   const held = await mapAccountStores(stores, async ({ adapter }) => {
     const ids: string[] = [];
@@ -189,11 +186,11 @@ export async function accountsByStore(
   const holder = new Set<string>();
   const result = new Map<string, string[]>();
   stores.forEach((store, index) => {
-    for (const id of held[index]!) {
+    for (const id of held[index]) {
       if (holder.has(id)) throw new SupportOpsAmbiguousAccountError();
       holder.add(id);
     }
-    result.set(store.key, held[index]!);
+    result.set(store.key, held[index]);
   });
   return result;
 }

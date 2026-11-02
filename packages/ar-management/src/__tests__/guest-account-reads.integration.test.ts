@@ -11,7 +11,7 @@ vi.mock('@authrim/ar-lib-core', async (original) => ({
 import { GUEST_READ_CURSOR_TTL_SECONDS } from '../guest-read-pagination';
 import { getGuestUser, getGuestUserUpgrades, listGuestUsers } from '../routes/guest-users';
 
-const readJson = async <T>(response: Response): Promise<T> => (await response.json()) as T;
+const readJson = async <T>(response: Response): Promise<T> => await response.json();
 
 const databases: SQLiteDatabase[] = [];
 function database() {

@@ -189,7 +189,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const db = createMockDB({ tenantRow: null }); // returns nothing
       const env: TestEnv = { DB: db };
       const app = buildApp(env);
-      const res = await app.request(makeRequest('example.com'), undefined, env as Env);
+      const res = await app.request(makeRequest('example.com'), undefined, env);
       expect(res.status).toBe(200);
       expect(db.prepare).not.toHaveBeenCalled();
     });
@@ -203,7 +203,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const kv = createMockKV({ cachedValue: null }); // no cache hit
       const env: TestEnv = { BASE_DOMAIN, DB: db, AUTHRIM_CONFIG: kv };
       const app = buildApp(env);
-      const res = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env as Env);
+      const res = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env);
       expect(res.status).toBe(200);
       const body = await res.json<{ tenantId: string }>();
       expect(body.tenantId).toBe('sample');
@@ -224,7 +224,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const res = await app.request(
         makeRequest(`sample.${BASE_DOMAIN}`, '/.well-known/oauth-protected-resource/mcp'),
         undefined,
-        env as Env
+        env
       );
 
       expect(res.status).toBe(200);
@@ -245,8 +245,8 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const env: TestEnv = { BASE_DOMAIN, DB: db, AUTHRIM_CONFIG: kv };
       const app = buildApp(env);
 
-      const first = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env as Env);
-      const second = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env as Env);
+      const first = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env);
+      const second = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env);
 
       expect(first.status).toBe(200);
       expect(second.status).toBe(200);
@@ -267,7 +267,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const kv = createMockKV({ cachedValue: null });
       const env: TestEnv = { BASE_DOMAIN, DB: db, AUTHRIM_CONFIG: kv };
       const app = buildApp(env);
-      const res = await app.request(makeRequest(`nosuch.${BASE_DOMAIN}`), undefined, env as Env);
+      const res = await app.request(makeRequest(`nosuch.${BASE_DOMAIN}`), undefined, env);
       expect(res.status).toBe(404);
       const body = await res.json<{ error: string }>();
       expect(body.error).toBe('not_found');
@@ -279,7 +279,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const kv = createMockKV({ cachedValue: null });
       const env: TestEnv = { BASE_DOMAIN, DB: db, AUTHRIM_CONFIG: kv };
       const app = buildApp(env);
-      const res = await app.request(makeRequest(`inactive.${BASE_DOMAIN}`), undefined, env as Env);
+      const res = await app.request(makeRequest(`inactive.${BASE_DOMAIN}`), undefined, env);
       expect(res.status).toBe(404);
     });
 
@@ -292,7 +292,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       });
       const env: TestEnv = { BASE_DOMAIN, DB: db, AUTHRIM_CONFIG: kv };
       const app = buildApp(env);
-      const res = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env as Env);
+      const res = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env);
       expect(res.status).toBe(200);
       expect(db.prepare).not.toHaveBeenCalledWith(
         "SELECT id FROM tenants WHERE id = ? AND lifecycle_state = 'active'"
@@ -309,7 +309,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
         AUTHRIM_CONFIG: kv,
       };
       const app = buildApp(env);
-      const res = await app.request(makeRequest(BASE_DOMAIN), undefined, env as Env);
+      const res = await app.request(makeRequest(BASE_DOMAIN), undefined, env);
       expect(res.status).toBe(200);
       const body = await res.json<{ tenantId: string }>();
       expect(body.tenantId).toBe('default');
@@ -327,7 +327,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
         AUTHRIM_CONFIG: kv,
       };
       const app = buildApp(env);
-      const res = await app.request(makeRequest(BASE_DOMAIN), undefined, env as Env);
+      const res = await app.request(makeRequest(BASE_DOMAIN), undefined, env);
       expect(res.status).toBe(200);
       const body = await res.json<{ tenantId: string }>();
       expect(body.tenantId).toBe('primary');
@@ -343,7 +343,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
         AUTHRIM_CONFIG: kv,
       };
       const app = buildApp(env);
-      const res = await app.request(makeRequest(BASE_DOMAIN), undefined, env as Env);
+      const res = await app.request(makeRequest(BASE_DOMAIN), undefined, env);
       expect(res.status).toBe(404);
       expect(db.prepare).not.toHaveBeenCalled();
     });
@@ -353,7 +353,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const kv = createMockKV({ cachedValue: null });
       const env: TestEnv = { BASE_DOMAIN, DB: db, AUTHRIM_CONFIG: kv };
       const app = buildApp(env);
-      const res = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env as Env);
+      const res = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env);
       expect(res.status).toBe(404);
     });
 
@@ -361,7 +361,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const kv = createMockKV({ cachedValue: null });
       const env: TestEnv = { BASE_DOMAIN, AUTHRIM_CONFIG: kv };
       const app = buildApp(env);
-      const res = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env as Env);
+      const res = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env);
       expect(res.status).toBe(404);
     });
 
@@ -378,7 +378,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const res = await app.request(
         makeRequest('login.example.com', '/api/auth/discovery'),
         undefined,
-        env as Env
+        env
       );
       expect(res.status).toBe(200);
       const body = await res.json<{ tenantId: string }>();
@@ -402,7 +402,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
           body: JSON.stringify({ tenant_id: 'sample' }),
         }),
         undefined,
-        env as Env
+        env
       );
       expect(res.status).toBe(200);
       const body = await res.json<{ tenantId: string }>();
@@ -426,17 +426,17 @@ describe('requestContextMiddleware – tenant existence check', () => {
           headers: { Host: 'admin.pages.dev' },
         }),
         undefined,
-        env as Env
+        env
       );
       const sessionRes = await app.request(
         makeRequest('admin.pages.dev', '/api/admin/sessions/me'),
         undefined,
-        env as Env
+        env
       );
       const newSessionRes = await app.request(
         makeRequest('admin.pages.dev', '/api/admin/me/session'),
         undefined,
-        env as Env
+        env
       );
       const logoutRes = await app.request(
         new Request('https://admin.pages.dev/api/admin/logout', {
@@ -444,7 +444,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
           headers: { Host: 'admin.pages.dev' },
         }),
         undefined,
-        env as Env
+        env
       );
 
       expect(loginRes.status).toBe(200);
@@ -468,12 +468,12 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const sessionRes = await app.request(
         makeRequest(`admin.${BASE_DOMAIN}`, '/api/admin/me/session'),
         undefined,
-        env as Env
+        env
       );
       const tenantsRes = await app.request(
         makeRequest(`admin.${BASE_DOMAIN}`, '/api/admin/tenants'),
         undefined,
-        env as Env
+        env
       );
 
       expect(sessionRes.status).toBe(200);
@@ -498,11 +498,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       };
       const app = buildApp(env);
 
-      const res = await app.request(
-        makeRequest(BASE_DOMAIN, '/admin-init-setup'),
-        undefined,
-        env as Env
-      );
+      const res = await app.request(makeRequest(BASE_DOMAIN, '/admin-init-setup'), undefined, env);
 
       expect(res.status).toBe(200);
       await expect(res.json()).resolves.toEqual({ tenantId: 'first' });
@@ -528,7 +524,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const res = await app.request(
         makeRequest(`first.${BASE_DOMAIN}`, '/api/auth/authentication-methods'),
         undefined,
-        env as Env
+        env
       );
 
       expect(res.status).toBe(200);
@@ -557,7 +553,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const res = await app.request(
         makeRequest(`first.${BASE_DOMAIN}`, '/api/auth/authentication-methods'),
         undefined,
-        env as Env
+        env
       );
 
       expect(res.status).toBe(200);
@@ -588,7 +584,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const res = await app.request(
         makeRequest(BASE_DOMAIN, '/api/admin/tenants/first/info'),
         undefined,
-        env as Env
+        env
       );
 
       expect(res.status).toBe(200);
@@ -619,7 +615,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
           headers: { Host: `admin.${BASE_DOMAIN}`, 'X-Tenant-Id': 'first' },
         }),
         undefined,
-        env as Env
+        env
       );
 
       expect(res.status).toBe(200);
@@ -641,7 +637,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const res = await app.request(
         makeRequest(`login.${BASE_DOMAIN}`, '/api/auth/discovery'),
         undefined,
-        env as Env
+        env
       );
 
       expect(res.status).toBe(200);
@@ -663,7 +659,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const res = await app.request(
         makeRequest('admin.pages.dev', '/api/admin/settings/cache-mode'),
         undefined,
-        env as Env
+        env
       );
 
       expect(res.status).toBe(200);
@@ -682,7 +678,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const env: TestEnv = { BASE_DOMAIN, DB: db, AUTHRIM_CONFIG: kv };
       const app = buildApp(env);
 
-      const res = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env as Env);
+      const res = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env);
 
       expect(res.status).toBe(404);
     });
@@ -700,7 +696,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const env: TestEnv = { BASE_DOMAIN, DB: db, AUTHRIM_CONFIG: kv };
       const app = buildApp(env);
 
-      const res = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env as Env);
+      const res = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env);
 
       expect(res.status).toBe(404);
     });
@@ -718,7 +714,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const env: TestEnv = { BASE_DOMAIN, DB: db, AUTHRIM_CONFIG: kv };
       const app = buildApp(env);
 
-      const res = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env as Env);
+      const res = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env);
 
       expect(res.status).toBe(200);
     });
@@ -740,7 +736,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       };
       const app = buildApp(env);
 
-      const res = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env as Env);
+      const res = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env);
 
       expect(res.status).toBe(409);
       const body = await res.json<{
@@ -773,7 +769,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const env: TestEnv = { BASE_DOMAIN, DB: db, AUTHRIM_CONFIG: kv };
       const app = buildApp(env);
 
-      const res = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env as Env);
+      const res = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env);
 
       expect(res.status).toBe(503);
       expect(res.headers.get('Retry-After')).toBe('1');
@@ -811,7 +807,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const res = await app.request(
         makeRequest(`sample.${BASE_DOMAIN}`, '/device_authorization'),
         undefined,
-        env as Env
+        env
       );
 
       expect(res.status).toBe(409);
@@ -851,7 +847,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
           'X-Tenant-Id': 'sample',
         }),
         undefined,
-        env as Env
+        env
       );
 
       expect(res.status).toBe(409);
@@ -900,7 +896,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const res = await app.request(
         new Request(request.url, { method, headers: request.headers }),
         undefined,
-        env as Env
+        env
       );
 
       expect(res.status).toBe(200);
@@ -923,7 +919,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const res = await app.request(
         makeRequest('admin.pages.dev', '/api/admin/platform/tenant-domain-mappings'),
         undefined,
-        env as Env
+        env
       );
 
       expect(res.status).toBe(200);
@@ -945,7 +941,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const res = await app.request(
         makeRequest(`first.${BASE_DOMAIN}`, '/api/admin/platform/tenant-domain-mappings'),
         undefined,
-        env as Env
+        env
       );
 
       expect(res.status).toBe(200);
@@ -967,7 +963,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const res = await app.request(
         makeRequest('admin.pages.dev', '/api/admin/users'),
         undefined,
-        env as Env
+        env
       );
 
       expect(res.status).toBe(400);
@@ -989,7 +985,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const res = await app.request(
         makeRequest('admin.pages.dev', '/api/admin/users', { 'X-Tenant-Id': 'INVALID_HEADER' }),
         undefined,
-        env as Env
+        env
       );
 
       expect(res.status).toBe(400);
@@ -1011,7 +1007,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
           'X-Tenant-Id': 'beta',
         }),
         undefined,
-        env as Env
+        env
       );
 
       expect(res.status).toBe(400);

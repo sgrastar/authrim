@@ -164,13 +164,12 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
     const doId = this.env.SESSION_STORE.idFromName(
       buildDOInstanceName('session', this.getConfiguredTenantId())
     );
-    return this.env.SESSION_STORE.get(doId) as unknown as SessionStoreRpcStub;
+    return this.env.SESSION_STORE.get(doId);
   }
 
   getExistingSessionStoreStub(sessionId: string): SessionStoreRpcStub {
     if (isRegionShardedSessionId(sessionId)) {
-      return getSessionStoreBySessionId(this.env, sessionId, this.getConfiguredTenantId())
-        .stub as unknown as SessionStoreRpcStub;
+      return getSessionStoreBySessionId(this.env, sessionId, this.getConfiguredTenantId()).stub;
     }
 
     return this.getLegacySessionStoreStub();
@@ -598,7 +597,7 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
     }
     const stmt = this.env.DB_PII.prepare(sql);
     const result = await stmt.bind(...params).run();
-    return result as D1Result;
+    return result;
   }
 
   /** D1 owns atomicity; never emulate a protected batch with sequential execute calls. */

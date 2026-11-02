@@ -76,7 +76,7 @@ export function agentElevatedExecutionMiddleware(
     if (!idempotencyKey) return error(c, 400, 'AGENT_ELEVATION_IDEMPOTENCY_KEY_REQUIRED');
     const match = idempotencyKey.match(ELEVATION_KEY);
     if (!match) return error(c, 400, 'AGENT_ELEVATION_IDEMPOTENCY_KEY_REQUIRED');
-    const challengeId = match[1]!;
+    const challengeId = match[1];
     const executionAttempt = Number(match[2]);
     const executionFence = Number(match[3]);
     if (!Number.isSafeInteger(executionAttempt) || !Number.isSafeInteger(executionFence)) {

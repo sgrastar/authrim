@@ -249,7 +249,7 @@ export class FeatureFlagsManager {
       let value = DEFAULT_FLAGS[name];
 
       // Check if env has explicit value
-      const envKey = name as keyof typeof this.envFlags;
+      const envKey = name;
       if (this.envFlags[envKey] !== DEFAULT_FLAGS[name]) {
         source = 'env';
         value = this.envFlags[envKey];
@@ -271,7 +271,7 @@ export class FeatureFlagsManager {
       result[name] = { value, source };
     }
 
-    return result as Record<FlagName, { value: boolean; source: 'kv' | 'env' | 'default' }>;
+    return result;
   }
 
   /**

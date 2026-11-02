@@ -1006,7 +1006,7 @@ async function anonymizationTarget(
     purpose: 'account_delete_retry',
   });
   if (routes.length === 0) return 'not_active';
-  if (routes.length !== 1 || routes[0]!.legacyUserId !== userId) {
+  if (routes.length !== 1 || routes[0].legacyUserId !== userId) {
     throw new Error('admin_anonymize_account_route_invalid');
   }
   const binding = (bindingRef: string) => {
@@ -1015,8 +1015,8 @@ async function anonymizationTarget(
     return source;
   };
   return {
-    core: ensureDatabaseAdapter(binding(routes[0]!.coreBindingRef), 'admin-anonymize-core'),
-    pii: ensureDatabaseAdapter(binding(routes[0]!.piiBindingRef), 'admin-anonymize-pii'),
+    core: ensureDatabaseAdapter(binding(routes[0].coreBindingRef), 'admin-anonymize-core'),
+    pii: ensureDatabaseAdapter(binding(routes[0].piiBindingRef), 'admin-anonymize-pii'),
     routed: true,
   };
 }
@@ -2373,7 +2373,7 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
         id: `email_code:${otpSessionId}`,
         tenantId: getTenantIdFromContext(c),
         type: 'email_code',
-        userId: userId as string,
+        userId: userId,
         challenge: codeHash,
         ttl: EMAIL_CODE_TTL,
         email: email.toLowerCase(),

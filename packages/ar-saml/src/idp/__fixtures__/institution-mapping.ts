@@ -132,6 +132,6 @@ export function institutionSpConfig(required: readonly string[] = [OID_MAIL]) {
   return productionSpConfig(
     Object.fromEntries(
       names.map((name) => [name, required.includes(name) ? 'required' : 'optional'])
-    ) as Record<string, 'required' | 'optional'>
+    )
   );
 }

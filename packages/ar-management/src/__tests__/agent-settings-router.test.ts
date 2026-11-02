@@ -199,10 +199,14 @@ describe('Agent Access settings routes', () => {
   });
 
   it('reads defaults and applies the environment fallback only when no tenant value exists', async () => {
-    const response = await app().request('/api/admin/settings/agent', { method: 'GET' }, {
-      SETTINGS: kv(),
-      ENABLE_AGENT_MCP: 'true',
-    } as unknown as Env);
+    const response = await app().request(
+      '/api/admin/settings/agent',
+      { method: 'GET' },
+      {
+        SETTINGS: kv(),
+        ENABLE_AGENT_MCP: 'true',
+      }
+    );
     expect(response.status, await response.clone().text()).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ settings: { enabled: true } });
   });

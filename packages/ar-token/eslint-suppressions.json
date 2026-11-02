@@ -18,7 +18,7 @@
   },
   "src/__tests__/client-auth.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 4
+      "count": 5
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 21
@@ -37,9 +37,6 @@
     },
     "@typescript-eslint/no-unused-vars": {
       "count": 2
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 3
     }
   },
   "src/__tests__/client-credentials.test.ts": {
@@ -73,9 +70,6 @@
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 2
-    },
-    "@typescript-eslint/unbound-method": {
-      "count": 4
     }
   },
   "src/__tests__/external-id-jag-verifier.test.ts": {
@@ -84,11 +78,6 @@
     },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 4
-    }
-  },
-  "src/__tests__/helpers/effective-settings.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
     }
   },
   "src/__tests__/helpers/fixtures.ts": {
@@ -109,6 +98,9 @@
     }
   },
   "src/__tests__/helpers/mocks.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
+    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
     },
@@ -144,9 +136,17 @@
       "count": 1
     }
   },
+  "src/__tests__/saml-dr-entrypoint.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 2
+    }
+  },
   "src/__tests__/security-critical.test.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 2
+    },
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 7
     },
     "@typescript-eslint/no-unsafe-argument": {
       "count": 1
@@ -194,6 +194,11 @@
       "count": 1
     }
   },
+  "src/entrypoints/__tests__/machine-permission-limit.test.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
+      "count": 1
+    }
+  },
   "src/index.ts": {
     "@typescript-eslint/no-unsafe-argument": {
       "count": 4
@@ -201,6 +206,11 @@
   },
   "src/issuer.ts": {
     "@typescript-eslint/no-base-to-string": {
+      "count": 1
+    }
+  },
+  "src/native-sso-token-exchange.ts": {
+    "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 1
     }
   },

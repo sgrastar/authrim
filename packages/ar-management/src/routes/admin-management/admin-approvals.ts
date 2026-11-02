@@ -31,7 +31,6 @@ import {
   resolveProductProtectedResourceDetailClasses,
   type ApprovalScopeJson,
   type ApprovalDecisionStatus,
-  type ApprovalRedactionLevel,
   type ApprovalRequest,
   type ApprovalRequestApproval,
   type ApprovalRequestStatus,
@@ -475,7 +474,7 @@ async function notifyPendingApproval(
       approval,
       action,
       {
-        method: (body.method ?? approval.method ?? null) as ApprovalTransportMethod | null,
+        method: body.method ?? approval.method ?? null,
         transportChannel: body.transport_channel ?? approval.transport_channel ?? null,
         reasonCode: body.reason_code ?? approval.reason_code ?? null,
         reasonNote: body.reason_note ?? approval.reason_note ?? null,
@@ -634,7 +633,7 @@ adminApprovalsRouter.post('/', async (c) => {
           requestedAudience: body.audience,
         }) ?? undefined,
       investigation_id: body.investigation_id ?? generateInvestigationId(),
-      redaction_level: body.redaction_level as ApprovalRedactionLevel,
+      redaction_level: body.redaction_level,
       attributes: body.attributes as Record<string, ApprovalScopeJson | undefined> | undefined,
     });
 
@@ -657,7 +656,7 @@ adminApprovalsRouter.post('/', async (c) => {
       target_subject_id: body.target_subject_id,
       request_surface: body.request_surface,
       requested_action: body.requested_action,
-      redaction_level: body.redaction_level as ApprovalRedactionLevel,
+      redaction_level: body.redaction_level,
       scope_json: scope.normalized,
       scope_canonical: scope.canonical,
       reason_code: body.reason_code,
@@ -801,7 +800,7 @@ adminApprovalsRouter.get('/:requestId', async (c) => {
     const requestRepo = new ApprovalRequestRepository(adapter);
     const approvalRepo = new ApprovalRequestApprovalRepository(adapter);
     const grantRepo = new ElevationGrantRepository(adapter);
-    const requestId = c.req.param('requestId')!;
+    const requestId = c.req.param('requestId');
     const request = await requestRepo.getApprovalRequestByPublicId(
       requestId,
       getTenantIdFromContext(c)
@@ -829,7 +828,7 @@ adminApprovalsRouter.post('/:requestId/grants/:grantId/subject-token', async (c)
     const requestRepo = new ApprovalRequestRepository(adapter);
     const grantRepo = new ElevationGrantRepository(adapter);
     const request = await requestRepo.getApprovalRequestByPublicId(
-      c.req.param('requestId')!,
+      c.req.param('requestId'),
       getTenantIdFromContext(c)
     );
     if (!request) {
@@ -837,7 +836,7 @@ adminApprovalsRouter.post('/:requestId/grants/:grantId/subject-token', async (c)
     }
 
     const grants = await grantRepo.listElevationGrantsForRequest(request.id);
-    const grant = grants.find((item) => item.public_grant_id === c.req.param('grantId')!);
+    const grant = grants.find((item) => item.public_grant_id === c.req.param('grantId'));
     if (!grant) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -873,49 +872,43 @@ adminApprovalsRouter.post('/:requestId/grants/:grantId/subject-token', async (c)
       grant,
     });
 
-    await appendApprovalTransportEvent(
-      c as unknown as Context<{ Bindings: Env }>,
-      adapter,
-      requestRepo,
-      request,
-      {
-        kind: 'grant_subject_token_issued',
-        actorSubjectType: 'admin_user',
-        actorSubjectId: c.get('adminAuth')?.userId ?? null,
-        requestStatus: request.status,
-        reasonCode: request.reason_code,
-        reasonNote: request.reason_note,
-        transportSummary: {
-          provider: 'authrim.elevation_subject_token',
-          delivery_status: 'issued',
-          target: body.client_id,
-          correlation_id: request.investigation_id,
-          transport_request_id: subjectToken.jti ?? null,
+    await appendApprovalTransportEvent(c, adapter, requestRepo, request, {
+      kind: 'grant_subject_token_issued',
+      actorSubjectType: 'admin_user',
+      actorSubjectId: c.get('adminAuth')?.userId ?? null,
+      requestStatus: request.status,
+      reasonCode: request.reason_code,
+      reasonNote: request.reason_note,
+      transportSummary: {
+        provider: 'authrim.elevation_subject_token',
+        delivery_status: 'issued',
+        target: body.client_id,
+        correlation_id: request.investigation_id,
+        transport_request_id: subjectToken.jti ?? null,
+      },
+      transportDetail: {
+        request: {
+          client_id: body.client_id,
+          expires_in: ttlSeconds,
         },
-        transportDetail: {
-          request: {
-            client_id: body.client_id,
-            expires_in: ttlSeconds,
-          },
-          response: {
-            issued: true,
-            subject_token_type: subjectToken.subjectTokenType,
-            expires_in: subjectToken.expiresIn,
-            jti: subjectToken.jti,
-          },
-          metadata: buildGrantSubjectTokenEvidenceMetadata({
-            grant,
-            clientId: body.client_id,
-            subjectTokenType: subjectToken.subjectTokenType,
-            expiresIn: subjectToken.expiresIn,
-            jti: subjectToken.jti,
-            integrationHint,
-          }),
+        response: {
+          issued: true,
+          subject_token_type: subjectToken.subjectTokenType,
+          expires_in: subjectToken.expiresIn,
+          jti: subjectToken.jti,
         },
-      }
-    );
+        metadata: buildGrantSubjectTokenEvidenceMetadata({
+          grant,
+          clientId: body.client_id,
+          subjectTokenType: subjectToken.subjectTokenType,
+          expiresIn: subjectToken.expiresIn,
+          jti: subjectToken.jti,
+          integrationHint,
+        }),
+      },
+    });
 
-    await writeAdminAuditLog(c as unknown as Context<{ Bindings: Env }>, {
+    await writeAdminAuditLog(c, {
       action: 'approval_grant_subject_token_issued',
       resourceType: 'elevation_grant',
       resourceId: grant.public_grant_id,
@@ -978,7 +971,7 @@ adminApprovalsRouter.post('/:requestId/grants/:grantId/revoke', async (c) => {
     const approvalRepo = new ApprovalRequestApprovalRepository(adapter);
     const grantRepo = new ElevationGrantRepository(adapter);
     const request = await requestRepo.getApprovalRequestByPublicId(
-      c.req.param('requestId')!,
+      c.req.param('requestId'),
       getTenantIdFromContext(c)
     );
     if (!request) {
@@ -986,7 +979,7 @@ adminApprovalsRouter.post('/:requestId/grants/:grantId/revoke', async (c) => {
     }
 
     const grants = await grantRepo.listElevationGrantsForRequest(request.id);
-    const grant = grants.find((item) => item.public_grant_id === c.req.param('grantId')!);
+    const grant = grants.find((item) => item.public_grant_id === c.req.param('grantId'));
     if (!grant) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -1008,34 +1001,28 @@ adminApprovalsRouter.post('/:requestId/grants/:grantId/revoke', async (c) => {
     });
     const approvals = await approvalRepo.listApprovalsForRequest(request.id);
 
-    await appendApprovalTransportEvent(
-      c as unknown as Context<{ Bindings: Env }>,
-      adapter,
-      requestRepo,
-      request,
-      {
-        kind: 'grant_revoked',
-        actorSubjectType: 'admin_user',
-        actorSubjectId: c.get('adminAuth')?.userId ?? null,
-        requestStatus: request.status,
-        reasonCode: revokeReason,
-        reasonNote: body.reason_note ?? null,
-        transportDetail: {
-          metadata: {
-            elevation_grant: {
-              public_grant_id: grant.public_grant_id,
-              target_audience: grant.target_audience,
-              resource_class: grant.resource_class,
-              redaction_level: grant.redaction_level,
-              revoked_at: revokedAt,
-              revoke_reason: revokeReason,
-            },
+    await appendApprovalTransportEvent(c, adapter, requestRepo, request, {
+      kind: 'grant_revoked',
+      actorSubjectType: 'admin_user',
+      actorSubjectId: c.get('adminAuth')?.userId ?? null,
+      requestStatus: request.status,
+      reasonCode: revokeReason,
+      reasonNote: body.reason_note ?? null,
+      transportDetail: {
+        metadata: {
+          elevation_grant: {
+            public_grant_id: grant.public_grant_id,
+            target_audience: grant.target_audience,
+            resource_class: grant.resource_class,
+            redaction_level: grant.redaction_level,
+            revoked_at: revokedAt,
+            revoke_reason: revokeReason,
           },
         },
-      }
-    );
+      },
+    });
 
-    await writeAdminAuditLog(c as unknown as Context<{ Bindings: Env }>, {
+    await writeAdminAuditLog(c, {
       action: 'approval_grant_revoked',
       resourceType: 'elevation_grant',
       resourceId: grant.public_grant_id,
@@ -1081,7 +1068,7 @@ adminApprovalsRouter.post('/:requestId/steps/:approvalId/artifacts', async (c) =
     const requestRepo = new ApprovalRequestRepository(adapter);
     const approvalRepo = new ApprovalRequestApprovalRepository(adapter);
     const request = await requestRepo.getApprovalRequestByPublicId(
-      c.req.param('requestId')!,
+      c.req.param('requestId'),
       getTenantIdFromContext(c)
     );
     if (!request) {
@@ -1097,7 +1084,7 @@ adminApprovalsRouter.post('/:requestId/steps/:approvalId/artifacts', async (c) =
       );
     }
 
-    const approval = await approvalRepo.getApprovalById(c.req.param('approvalId')!);
+    const approval = await approvalRepo.getApprovalById(c.req.param('approvalId'));
     if (!approval || approval.approval_request_id !== request.id) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -1114,7 +1101,7 @@ adminApprovalsRouter.post('/:requestId/steps/:approvalId/artifacts', async (c) =
     const resolvedTransport = await resolveApprovalNotificationTransport(c as AdminContext, {
       request,
       approval,
-      overrideMethod: (body.method ?? approval.method ?? null) as ApprovalTransportMethod | null,
+      overrideMethod: body.method ?? approval.method ?? null,
       overrideTransportChannel: body.transport_channel ?? approval.transport_channel ?? null,
       strictMethod: !!body.method,
     });
@@ -1211,7 +1198,7 @@ adminApprovalsRouter.get('/:requestId/evidence', async (c) => {
     const adapter = getAdminAdapter(c);
     const requestRepo = new ApprovalRequestRepository(adapter);
     const request = await requestRepo.getApprovalRequestByPublicId(
-      c.req.param('requestId')!,
+      c.req.param('requestId'),
       getTenantIdFromContext(c)
     );
     if (!request) {
@@ -1258,7 +1245,7 @@ adminApprovalsRouter.get('/:requestId/receipts', async (c) => {
     const adapter = getAdminAdapter(c);
     const requestRepo = new ApprovalRequestRepository(adapter);
     const request = await requestRepo.getApprovalRequestByPublicId(
-      c.req.param('requestId')!,
+      c.req.param('requestId'),
       getTenantIdFromContext(c)
     );
     if (!request) {
@@ -1321,14 +1308,14 @@ adminApprovalsRouter.get('/:requestId/steps/:approvalId/guide', async (c) => {
     const requestRepo = new ApprovalRequestRepository(adapter);
     const approvalRepo = new ApprovalRequestApprovalRepository(adapter);
     const request = await requestRepo.getApprovalRequestByPublicId(
-      c.req.param('requestId')!,
+      c.req.param('requestId'),
       getTenantIdFromContext(c)
     );
     if (!request) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    const approval = await approvalRepo.getApprovalById(c.req.param('approvalId')!);
+    const approval = await approvalRepo.getApprovalById(c.req.param('approvalId'));
     if (!approval || approval.approval_request_id !== request.id) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -1386,7 +1373,7 @@ async function updateApprovalDecision(
         nextStatus,
         actorSubjectType: 'admin_user',
         actorSubjectId,
-        method: (body.method ?? null) as ApprovalTransportMethod | null,
+        method: body.method ?? null,
         transportChannel: body.transport_channel ?? null,
         reasonCode: body.reason_code ?? null,
         reasonNote: body.reason_note ?? null,
@@ -1446,7 +1433,7 @@ adminApprovalsRouter.post('/:requestId/cancel', async (c) => {
     const approvalRepo = new ApprovalRequestApprovalRepository(adapter);
     const grantRepo = new ElevationGrantRepository(adapter);
     const request = await requestRepo.getApprovalRequestByPublicId(
-      c.req.param('requestId')!,
+      c.req.param('requestId'),
       getTenantIdFromContext(c)
     );
     if (!request) {

@@ -279,7 +279,7 @@ describe('admin tenant clone', () => {
           ...readFileSync(new URL(`core/d1/${file}`, migrationsUrl), 'utf8').matchAll(
             /ALTER TABLE oauth_clients ADD COLUMN ([a-z_][a-z0-9_]*)/giu
           ),
-        ].map((match) => match[1]!.toLowerCase())
+        ].map((match) => match[1].toLowerCase())
       );
     expect(new Set([...OAUTH_CLIENT_CLONE_COLUMNS, ...OAUTH_CLIENT_NON_CLONE_COLUMNS])).toEqual(
       new Set([...schemaColumns, ...addedColumns])

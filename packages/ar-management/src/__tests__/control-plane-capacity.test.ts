@@ -119,7 +119,7 @@ describe('Control capacity Service Binding preview', () => {
 
     const extraTarget = {
       ...preview(),
-      targets: [{ ...preview().targets[0]!, internalNote: 'do-not-forward' }],
+      targets: [{ ...preview().targets[0], internalNote: 'do-not-forward' }],
     } as unknown as ControlCapacityProvisioningPreview;
     await expect(
       previewControlCapacityProvisioning({ AUTHRIM_ENVIRONMENT_NAME: 'test' } as Env, request, {
@@ -130,7 +130,7 @@ describe('Control capacity Service Binding preview', () => {
     const valid = preview();
     const duplicate: ControlCapacityProvisioningPreview = {
       ...valid,
-      targets: [valid.targets[0]!, { ...valid.targets[0]! }],
+      targets: [valid.targets[0], { ...valid.targets[0] }],
       capacityUnitsAdded: 2,
       d1DatabasesAdded: 2,
     };

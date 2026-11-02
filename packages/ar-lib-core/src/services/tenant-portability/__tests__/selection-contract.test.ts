@@ -97,7 +97,7 @@ describe('tenant portability selection contract', () => {
       (policy) => policy.table === 'user_token_families'
     );
     expect(tokenFamilies).toHaveLength(1);
-    expect(tenantDatasetSelectionRule(tokenFamilies[0]!.kind, selection)).toEqual({
+    expect(tenantDatasetSelectionRule(tokenFamilies[0].kind, selection)).toEqual({
       action: 'excluded',
       reason: 'ephemeral',
     });

@@ -198,7 +198,7 @@ function rowToResolvedOrg(row: OrgDomainMappingRow): ResolvedOrganization {
     org_id: row.org_id,
     auto_join_enabled: row.auto_join_enabled === 1,
     auto_assign_role_id: row.auto_assign_role_id,
-    membership_type: row.membership_type as MembershipType,
+    membership_type: row.membership_type,
     verified: row.verified === 1,
     priority: row.priority,
   };
@@ -641,7 +641,7 @@ function rowToOrgDomainMapping(row: OrgDomainMappingRow): OrgDomainMapping {
     domain_hash_version: row.domain_hash_version,
     org_id: row.org_id,
     auto_join_enabled: row.auto_join_enabled === 1,
-    membership_type: row.membership_type as MembershipType,
+    membership_type: row.membership_type,
     auto_assign_role_id: row.auto_assign_role_id ?? undefined,
     verified: row.verified === 1,
     priority: row.priority,

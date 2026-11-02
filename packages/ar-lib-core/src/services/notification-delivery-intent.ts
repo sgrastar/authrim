@@ -172,7 +172,7 @@ function normalizeJson(
     }
     seen.add(value);
     const normalized: Record<string, unknown> = {};
-    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+    for (const key of Object.keys(value).sort()) {
       Object.defineProperty(normalized, key, {
         value: normalizeJson((value as Record<string, unknown>)[key], depth + 1, seen, budget),
         enumerable: true,

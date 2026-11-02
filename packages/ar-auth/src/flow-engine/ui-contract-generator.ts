@@ -18,7 +18,6 @@ import type {
   FlowContext,
   ActionSet,
   ActionDefinition,
-  Intent,
   ProfileId,
 } from '@authrim/ar-lib-core';
 
@@ -77,7 +76,7 @@ export class UIContractGenerator {
     return {
       version: '0.1',
       state,
-      intent: compiledNode.intent as Intent,
+      intent: compiledNode.intent,
       features,
       capabilities,
       context,
@@ -227,7 +226,7 @@ export class UIContractGenerator {
 
     // Fill email and related fields from runtimeState
     if (runtimeState?.collectedData) {
-      const email = (runtimeState.collectedData as Record<string, unknown>)['identifier_email'];
+      const email = runtimeState.collectedData['identifier_email'];
       if (email && typeof email === 'object' && 'email' in email) {
         if (!context.user) {
           context.user = { id: 'pending' };

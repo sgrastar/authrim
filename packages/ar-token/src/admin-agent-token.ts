@@ -203,9 +203,9 @@ async function authenticateModeBActor(
     if (!header.kid) return null;
     const publicKey = await getPublicKeyByKid(c.env, tenantId, header.kid);
     if (!publicKey) return null;
-    payload = (await verifyToken(actorToken, publicKey, getRequestIssuer(c), {
+    payload = await verifyToken(actorToken, publicKey, getRequestIssuer(c), {
       audience: 'authrim:admin-api',
-    })) as Record<string, unknown>;
+    });
   } catch {
     return null;
   }
@@ -870,9 +870,9 @@ async function handleAdminAgentModeBExchange(
     if (!header.kid) throw new TypeError('Delegation token kid is required');
     const publicKey = await getPublicKeyByKid(c.env, tenantId, header.kid);
     if (!publicKey) throw new TypeError('Delegation verification key is unavailable');
-    delegation = (await verifyToken(form.subject_token, publicKey, issuer, {
+    delegation = await verifyToken(form.subject_token, publicKey, issuer, {
       audience: `${issuer}/token`,
-    })) as Record<string, unknown>;
+    });
   } catch {
     return errorResponse(c, 'invalid_grant', 'Agent delegation token is invalid');
   }
@@ -978,7 +978,7 @@ async function handleAdminAgentModeBExchange(
       act_principal_id: actor.principalId,
       act_credential_id: actor.credentialId,
       cnf: { jkt: actor.dpopJkt },
-    } as Omit<AccessTokenClaims, 'iat' | 'exp' | 'jti'>,
+    },
     key.privateKey,
     key.kid,
     Math.min(settings.maxTokenTtlSeconds, 300),

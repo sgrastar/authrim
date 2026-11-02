@@ -613,12 +613,8 @@ function normalizeSigningKeyPolicies(value: unknown): {
   const source =
     typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
   return {
-    idp:
-      typeof source.idp === 'object' && source.idp
-        ? (source.idp as SAMLSigningKeyPolicy)
-        : undefined,
-    sp:
-      typeof source.sp === 'object' && source.sp ? (source.sp as SAMLSigningKeyPolicy) : undefined,
+    idp: typeof source.idp === 'object' && source.idp ? source.idp : undefined,
+    sp: typeof source.sp === 'object' && source.sp ? source.sp : undefined,
   };
 }
 

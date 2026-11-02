@@ -124,7 +124,7 @@ export const APPLE_DEFAULT_CONFIG: Partial<UpstreamProvider> = {
     privateKeyEncrypted: '', // Required: Must be set by admin
     clientSecretTtl: 2592000, // 30 days
     useFormPost: true,
-  } as Record<string, unknown>,
+  },
 };
 
 // =============================================================================

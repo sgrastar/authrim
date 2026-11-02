@@ -542,7 +542,7 @@ async function handleJsonConsentGet(
     }
 
     // Determine language from ui_locales or Accept-Language
-    const uiLocales = metadata.ui_locales as string | undefined;
+    const uiLocales = metadata.ui_locales;
     const acceptLang = c.req.header('Accept-Language');
     consentLanguage = uiLocales?.split(' ')[0] || acceptLang?.split(',')[0]?.split('-')[0] || 'en';
 
@@ -567,7 +567,7 @@ async function handleJsonConsentGet(
       {
         target_type: 'oidc_client',
         target_id: clientRow.client_id,
-        requested_scopes: splitScopes(metadata.scope as string | undefined),
+        requested_scopes: splitScopes(metadata.scope),
         requested_claims: collectRequestedClaimNames(metadata.claims),
       },
       piiCtx.defaultPiiAdapter
@@ -658,7 +658,7 @@ async function loadConsentScreenItems(
     {
       target_type: 'oidc_client',
       target_id: params.clientId,
-      requested_scopes: splitScopes(params.metadata.scope as string | undefined),
+      requested_scopes: splitScopes(params.metadata.scope),
       requested_claims: collectRequestedClaimNames(params.metadata.claims),
     },
     piiCtx.defaultPiiAdapter
@@ -905,9 +905,9 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
       });
 
       const redirectUri = metadata.redirect_uri as string;
-      const cancelUri = metadata.cancel_uri as string | undefined;
+      const cancelUri = metadata.cancel_uri;
 
-      const responseMode = metadata.response_mode as string | undefined;
+      const responseMode = metadata.response_mode;
       const isJarm =
         responseMode === 'jwt' ||
         (typeof responseMode === 'string' && responseMode.endsWith('.jwt'));
@@ -950,7 +950,7 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
           redirectUri,
           'access_denied',
           'User denied the consent request',
-          metadata.state as string | undefined,
+          metadata.state,
           {
             responseMode,
             responseType: metadata.response_type,
@@ -974,7 +974,7 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
       redirectUrl.searchParams.set('error_description', 'User denied the consent request');
       // state is always included (same rules as redirect_uri)
       if (metadata.state) {
-        redirectUrl.searchParams.set('state', metadata.state as string);
+        redirectUrl.searchParams.set('state', metadata.state);
       }
 
       // The Login UI navigates to the returned URL

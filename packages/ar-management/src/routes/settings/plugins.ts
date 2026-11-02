@@ -765,9 +765,7 @@ async function decryptConfigIfNeeded(
   }
 
   try {
-    const key = await getPluginEncryptionKey(
-      env as { PLUGIN_ENCRYPTION_KEY?: string; PLUGIN_ENCRYPTION_SALT?: string }
-    );
+    const key = await getPluginEncryptionKey(env);
     return await decryptSecretFields(encryptedConfig, key);
   } catch {
     const encryptedFields = new Set(encryptedConfig._encrypted);
@@ -822,8 +820,7 @@ function getMissingRequiredFields(
   }
 
   return required.filter(
-    (field): field is string =>
-      typeof field === 'string' && !hasConfiguredValue(config[field as keyof typeof config])
+    (field): field is string => typeof field === 'string' && !hasConfiguredValue(config[field])
   );
 }
 
@@ -1412,9 +1409,7 @@ export async function updatePluginConfigHandler(c: Context<{ Bindings: Env }>) {
   let configToStore: Record<string, unknown> = newConfig;
   if (secretFields.length > 0) {
     try {
-      const encryptionKey = await getPluginEncryptionKey(
-        c.env as { PLUGIN_ENCRYPTION_KEY?: string; PLUGIN_ENCRYPTION_SALT?: string }
-      );
+      const encryptionKey = await getPluginEncryptionKey(c.env);
       configToStore = await encryptSecretFields(newConfig, secretFields, encryptionKey);
     } catch (error) {
       log.error(

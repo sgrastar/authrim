@@ -230,7 +230,7 @@ describe('admin consent policy APIs', () => {
     ] as const)('rejects invalid policy item relation %#', async (items, results, message) => {
       if (message.includes('YYYYMMDD')) mocks.validateVersion.mockReturnValueOnce(false);
       const response = await replace(
-        Array.from(items) as unknown as Array<Record<string, unknown>>,
+        Array.from(items),
         Array.from(results, (result) => Array.from(result))
       );
       expect(response.status).toBe(400);

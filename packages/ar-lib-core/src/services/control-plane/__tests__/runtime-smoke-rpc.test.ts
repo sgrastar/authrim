@@ -139,7 +139,7 @@ describe('runtime smoke RPC JWS', () => {
   it('rejects an invalid signature and oversized input without leaking parser details', async () => {
     const token = await signed();
     const segments = token.split('.');
-    segments[2] = `${segments[2]!.startsWith('a') ? 'b' : 'a'}${segments[2]!.slice(1)}`;
+    segments[2] = `${segments[2].startsWith('a') ? 'b' : 'a'}${segments[2].slice(1)}`;
     await expect(verifyRuntimeSmokeRequest(segments.join('.'), verification())).rejects.toThrow(
       'runtime_smoke_signature_invalid'
     );

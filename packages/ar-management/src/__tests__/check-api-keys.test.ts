@@ -47,7 +47,7 @@ function createMockAdapter(
   return {
     query: vi.fn().mockResolvedValue([]),
     queryOne: vi.fn(queryOneImpl) as unknown as DatabaseAdapter['queryOne'],
-    execute: vi.fn(executeImpl) as unknown as DatabaseAdapter['execute'],
+    execute: vi.fn(executeImpl),
     transaction: vi.fn().mockImplementation(async (fn) => fn({} as DatabaseAdapter)),
     batch: vi.fn().mockResolvedValue([]),
     isHealthy: vi.fn().mockResolvedValue(true),

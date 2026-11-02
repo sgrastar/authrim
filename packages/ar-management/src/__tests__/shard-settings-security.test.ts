@@ -62,7 +62,7 @@ describe('session shard settings validation', () => {
     const before = new Map(kv);
     const result = await updateSessionShards(invalid);
     expect(result).toBeInstanceOf(Response);
-    expect((result as Response).status).toBe(400);
+    expect(result.status).toBe(400);
     expect(kv).toEqual(before);
   });
 });

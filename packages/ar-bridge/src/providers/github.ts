@@ -103,7 +103,7 @@ export const GITHUB_DEFAULT_CONFIG: Partial<UpstreamProvider> = {
   providerQuirks: {
     fetchPrimaryEmail: true,
     allowUnverifiedEmail: false,
-  } as Record<string, unknown>,
+  },
 };
 
 // =============================================================================

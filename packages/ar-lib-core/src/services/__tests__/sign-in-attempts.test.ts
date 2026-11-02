@@ -119,7 +119,7 @@ describe('investigation keyring and subject hash', () => {
     expect(await computeInvestigationSubjectHash(keys.writeKey, 'tenant-au', 'ser-1')).not.toBe(
       hash
     );
-    const older = await computeInvestigationSubjectHash(keys.readKeys[1]!, 'tenant-a', 'user-1');
+    const older = await computeInvestigationSubjectHash(keys.readKeys[1], 'tenant-a', 'user-1');
     expect(older).toMatch(/^isub:v1:g1:/u);
     expect(await investigationSubjectHashes(keys, 'tenant-a', 'user-1')).toEqual([hash, older]);
   });

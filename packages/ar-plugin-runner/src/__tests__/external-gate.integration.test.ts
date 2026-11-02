@@ -723,7 +723,7 @@ describe('the tenant gate for external plugin code', () => {
       const backend = new DynamicWorkerSyncHookBackend(
         workers,
         installations,
-        { resolve: vi.fn() } as never,
+        { resolve: vi.fn() },
         (() => ({})) as never
       );
       await expect(

@@ -356,7 +356,7 @@ async function loadWebhookDeliveryPayload(
       parsed.requestHeaders &&
       typeof parsed.requestHeaders === 'object' &&
       !Array.isArray(parsed.requestHeaders)
-        ? (parsed.requestHeaders as Record<string, string>)
+        ? parsed.requestHeaders
         : null,
     requestBody: typeof parsed.requestBody === 'string' ? parsed.requestBody : null,
     responseBody: typeof parsed.responseBody === 'string' ? parsed.responseBody : null,

@@ -234,22 +234,21 @@ describe('CSV account publication and grouping input boundary', () => {
   });
 
   describe('identity assurance of an imported account', () => {
-    const withSettings = (store: Record<string, string>, failReads = false) =>
-      ({
-        ...runtime,
-        env: {
-          ...runtime.env,
-          SETTINGS: {
-            get: async (key: string) => {
-              if (failReads) throw new Error('kv down');
-              return store[key] ?? null;
-            },
-            put: async () => {},
-            delete: async () => {},
-            list: async () => ({ keys: [], list_complete: true }),
+    const withSettings = (store: Record<string, string>, failReads = false) => ({
+      ...runtime,
+      env: {
+        ...runtime.env,
+        SETTINGS: {
+          get: async (key: string) => {
+            if (failReads) throw new Error('kv down');
+            return store[key] ?? null;
           },
-        } as unknown as Env,
-      }) as typeof runtime;
+          put: async () => {},
+          delete: async () => {},
+          list: async () => ({ keys: [], list_complete: true }),
+        },
+      } as unknown as Env,
+    });
     const defaultIal = (level: string) => ({
       'settings:tenant:tenant-a:assurance': JSON.stringify({ 'assurance.default_ial': level }),
     });

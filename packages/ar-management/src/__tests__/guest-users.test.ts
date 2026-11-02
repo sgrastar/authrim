@@ -18,7 +18,7 @@ import {
   getGuestUserUpgrades,
   listGuestUsers,
 } from '../routes/guest-users';
-const readJson = async <T>(response: Response): Promise<T> => (await response.json()) as T;
+const readJson = async <T>(response: Response): Promise<T> => await response.json();
 function context(
   options: {
     body?: unknown;

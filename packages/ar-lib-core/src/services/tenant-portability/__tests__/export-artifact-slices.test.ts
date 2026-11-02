@@ -1286,9 +1286,7 @@ it('fails a slice closed when cancellation cleans up its attempt and spills mid-
       for (let page = 0; page < 10; page++) {
         const result = await cleanupCancelledTenantBackupArtifactPage({
           database: adapter,
-          bucket: bucket as unknown as Parameters<
-            typeof cleanupCancelledTenantBackupArtifactPage
-          >[0]['bucket'],
+          bucket: bucket,
           context,
           now: () => 105,
         });

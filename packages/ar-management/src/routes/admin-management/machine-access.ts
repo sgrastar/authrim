@@ -3,8 +3,6 @@ import type { Context } from 'hono';
 import type {
   AdminAuthContext,
   AdminMachineCredentialAlgorithm,
-  AdminMachineCredentialStatus,
-  AdminMachinePrincipalStatus,
   AdminMachinePrincipalType,
   AdminMachineTenantScope,
   AdminMachineWriteGuard,
@@ -495,7 +493,7 @@ machineAccessRouter.get('/principals', async (c) => {
   const statusQuery = c.req.query('status');
   const status =
     statusQuery === 'active' || statusQuery === 'disabled' || statusQuery === 'deleted'
-      ? (statusQuery as AdminMachinePrincipalStatus)
+      ? statusQuery
       : undefined;
   const principalTypeQuery = c.req.query('principal_type');
   const principalType =
@@ -894,7 +892,7 @@ machineAccessRouter.patch('/principals/:id/credentials/:credentialId', async (c)
       {
         displayName,
         description: body?.description === undefined ? undefined : asString(body.description),
-        status: status as AdminMachineCredentialStatus | undefined,
+        status: status,
         notBefore: asOptionalEpochMs(body?.not_before),
         expiresAt: asOptionalEpochMs(body?.expires_at),
         revokedBy: status === 'revoked' ? actor : undefined,

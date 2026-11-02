@@ -1666,7 +1666,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           // New region-sharded format: route via embedded shard info
           const tenantId = getTenantIdFromContext(c);
           const { stub } = getPARRequestStoreByUri(c.env, request_uri!, tenantId);
-          stored = (await stub.getRequestRpc(request_uri!)) as PARRequestData | null;
+          stored = await stub.getRequestRpc(request_uri!);
         } else {
           // Legacy format: route via client_id
           if (!client_id) {
@@ -1680,7 +1680,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           }
           const id = c.env.PAR_REQUEST_STORE.idFromName(client_id);
           const stub = c.env.PAR_REQUEST_STORE.get(id);
-          stored = (await stub.getRequestRpc(request_uri!)) as PARRequestData | null;
+          stored = await stub.getRequestRpc(request_uri!);
         }
 
         const requestTenantId = getTenantIdFromContext(c);
@@ -2021,7 +2021,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             action: 'security_warning',
             algorithm: 'none',
           });
-          requestObjectClaims = parseToken(jwtRequest) as Record<string, unknown>;
+          requestObjectClaims = parseToken(jwtRequest);
           claimsRequestIntegrityProtected = false;
           requestObjectSigned = false;
         } else {
@@ -2069,9 +2069,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             Array.isArray(clientResult.jwks.keys)
           ) {
             // Find a suitable key for signature verification
-            const signingKey = (clientResult.jwks.keys as PublicJWK[]).find((key) =>
-              isSigningJWK(key)
-            );
+            const signingKey = clientResult.jwks.keys.find((key) => isSigningJWK(key));
 
             if (!signingKey) {
               return c.json(
@@ -2142,7 +2140,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           const verified = await verifyToken(jwtRequest, publicKey, client_id, {
             audience: getRequestIssuer(c),
           });
-          requestObjectClaims = verified as Record<string, unknown>;
+          requestObjectClaims = verified;
           claimsRequestIntegrityProtected = true;
           requestObjectSigned = true;
         }
@@ -2354,7 +2352,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
   // VG-006: Validate response_type against client's allowed response_types
   // RFC 7591 Section 2: response_types defaults to ["code"] if not specified
-  const clientResponseTypes = (clientMetadata.response_types as string[] | undefined) || ['code'];
+  const clientResponseTypes = clientMetadata.response_types || ['code'];
 
   // FAPI 2.0 and OIDC settings saved for the tenant or client (see resolveProtocolSettings).
   let fapiConfig: FAPIProtocolSettings = {};
@@ -2776,21 +2774,21 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       errorUri: validatedErrorUri,
     });
 
-  if (configuredResponseTypes && !configuredResponseTypes.includes(response_type!)) {
+  if (configuredResponseTypes && !configuredResponseTypes.includes(response_type)) {
     return sendError(
       'unsupported_response_type',
       `Response type '${response_type}' is not enabled for this tenant`
     );
   }
 
-  if (!profileAllowedResponseTypes.includes(response_type!)) {
+  if (!profileAllowedResponseTypes.includes(response_type)) {
     return sendError(
       'unsupported_response_type',
       `Response type '${response_type}' is not allowed for this tenant profile. Allowed: ${profileAllowedResponseTypes.join(', ')}`
     );
   }
 
-  if (!clientResponseTypes.includes(response_type!)) {
+  if (!clientResponseTypes.includes(response_type)) {
     return sendError(
       'unsupported_response_type',
       `Response type '${response_type}' is not allowed for this client. Allowed: ${clientResponseTypes.join(', ')}`
@@ -2960,7 +2958,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // - id_token token: nonce REQUIRED (id_token returned directly)
   // - code id_token: nonce REQUIRED (id_token returned directly)
   // - code id_token token: nonce REQUIRED (id_token returned directly)
-  const nonceCheckResponseTypes = response_type!.split(/\s+/);
+  const nonceCheckResponseTypes = response_type.split(/\s+/);
   const nonceCheckIncludesIdToken = nonceCheckResponseTypes.includes('id_token');
   const requiresNonce = nonceCheckIncludesIdToken;
   if (requiresNonce && !nonce) {
@@ -3003,7 +3001,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     // OAuth 2.0 Multiple Response Type Encoding Practices: credentials returned
     // directly from the authorization endpoint must not be placed in the query,
     // where they leak through browser history, server logs and Referer headers.
-    const responseTypes = response_type!.split(/\s+/);
+    const responseTypes = response_type.split(/\s+/);
     if (
       baseMode === 'query' &&
       (responseTypes.includes('token') || responseTypes.includes('id_token'))
@@ -3180,7 +3178,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         // Check if session is not expired
         if (session.expiresAt > Date.now()) {
           sessionUserId = session.userId;
-          sessionData = session.data as Record<string, unknown> | undefined;
+          sessionData = session.data;
           sessionDataUserId = session.userId;
           // Check if this is an anonymous session (architecture-decisions.md §17)
           isAnonymousSession = session.data?.is_guest_session === true;
@@ -4545,7 +4543,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       id: `handoff:${handoffToken}`,
       tenantId: getTenantIdFromContext(c),
       type: 'handoff',
-      userId: sessionUserId!,
+      userId: sessionUserId,
       challenge: sessionId!,
       ttl: handoffArtifactTtlSeconds,
       metadata: {
@@ -4592,7 +4590,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   const validScope: string = scope as string;
 
   // Type narrowing: response_type is guaranteed to be defined (validated earlier)
-  const validResponseType: string = response_type!;
+  const validResponseType: string = response_type;
 
   // Parse response_type to determine what to return
   // Per OIDC Core 3.3: Hybrid Flow supports combinations of code, id_token, and token

@@ -76,7 +76,7 @@ function inventory(items: ReturnType<typeof selected>[]) {
 
 it('resolves all selected tables and retains the physical resource first ordinal', async () => {
   const result = await resolveInstalledSqliteDatasets({
-    inventory: inventory([descriptor as never, skipped('users', 1), selected('roles', 2)]),
+    inventory: inventory([descriptor, skipped('users', 1), selected('roles', 2)]),
     lease,
     registrations: [registration('roles')],
   });

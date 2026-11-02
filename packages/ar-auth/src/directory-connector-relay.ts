@@ -519,7 +519,7 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
       transport: 'relay',
       version: sanitizeRelayMetadata(message.version) || 'unknown',
       releaseChannel: sanitizeRelayReleaseChannel(message.release_channel),
-      startedAt: validISODate(message.started_at) ? message.started_at! : new Date().toISOString(),
+      startedAt: validISODate(message.started_at) ? message.started_at : new Date().toISOString(),
       healthStatus: 'healthy',
       healthSummary: { relay: 'authenticated' },
       configFingerprint: sanitizeRelayFingerprint(message.config_fingerprint),

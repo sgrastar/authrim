@@ -246,7 +246,7 @@ describe('tenant placement Lookup cutover', () => {
       lifecycle_state: 'active',
       runtime_route_status: 'active',
     });
-    expect(JSON.parse(String(prepared[0]!.route_projection_json))).toMatchObject({
+    expect(JSON.parse(String(prepared[0].route_projection_json))).toMatchObject({
       accountRouteGeneration: 7,
       targets: [{ shardId: 'target-1' }, { shardId: 'target-2' }],
     });
@@ -275,7 +275,7 @@ describe('tenant placement Lookup cutover', () => {
 
   it('fails closed when an existing route is outside the migration inventory', async () => {
     const broken = projection();
-    broken.targets[0] = { ...broken.targets[0]!, shardId: 'wrong-source' };
+    broken.targets[0] = { ...broken.targets[0], shardId: 'wrong-source' };
     database
       .prepare(
         `UPDATE lookup_identifiers SET route_projection_json = ?

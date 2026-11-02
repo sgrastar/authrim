@@ -60,7 +60,7 @@ describe('SCIM Token Create Handler - Input Validation', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ expiresInDays: 30 }),
         },
-        mockEnv as Env
+        mockEnv
       );
 
       expect(response.status).toBe(201);
@@ -76,7 +76,7 @@ describe('SCIM Token Create Handler - Input Validation', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({}),
         },
-        mockEnv as Env
+        mockEnv
       );
 
       expect(response.status).toBe(201);
@@ -92,7 +92,7 @@ describe('SCIM Token Create Handler - Input Validation', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ expiresInDays: -1 }),
         },
-        mockEnv as Env
+        mockEnv
       );
 
       expect(response.status).toBe(400);
@@ -110,7 +110,7 @@ describe('SCIM Token Create Handler - Input Validation', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ expiresInDays: 0 }),
         },
-        mockEnv as Env
+        mockEnv
       );
 
       expect(response.status).toBe(400);
@@ -128,7 +128,7 @@ describe('SCIM Token Create Handler - Input Validation', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ expiresInDays: 366 }), // > 1 year
         },
-        mockEnv as Env
+        mockEnv
       );
 
       expect(response.status).toBe(400);
@@ -146,7 +146,7 @@ describe('SCIM Token Create Handler - Input Validation', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ expiresInDays: 999999999 }),
         },
-        mockEnv as Env
+        mockEnv
       );
 
       expect(response.status).toBe(400);
@@ -164,7 +164,7 @@ describe('SCIM Token Create Handler - Input Validation', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ expiresInDays: 30.5 }),
         },
-        mockEnv as Env
+        mockEnv
       );
 
       expect(response.status).toBe(400);
@@ -182,7 +182,7 @@ describe('SCIM Token Create Handler - Input Validation', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ expiresInDays: '30' }),
         },
-        mockEnv as Env
+        mockEnv
       );
 
       expect(response.status).toBe(400);
@@ -205,7 +205,7 @@ describe('SCIM Token Create Handler - Input Validation', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ expiresInDays: 1 }),
         },
-        mockEnv as Env
+        mockEnv
       );
 
       expect(response.status).toBe(201);
@@ -221,7 +221,7 @@ describe('SCIM Token Create Handler - Input Validation', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ expiresInDays: 365 }),
         },
-        mockEnv as Env
+        mockEnv
       );
 
       expect(response.status).toBe(201);
@@ -237,7 +237,7 @@ describe('SCIM Token Create Handler - Input Validation', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ expiresInDays: 3650 }),
         },
-        mockEnv as Env
+        mockEnv
       );
 
       expect(response.status).toBe(400);
@@ -339,7 +339,7 @@ describe('SCIM Token Create Handler - Input Validation', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ description: 'Production SCIM token' }),
         },
-        mockEnv as Env
+        mockEnv
       );
 
       expect(response.status).toBe(201);
@@ -355,7 +355,7 @@ describe('SCIM Token Create Handler - Input Validation', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({}),
         },
-        mockEnv as Env
+        mockEnv
       );
 
       expect(response.status).toBe(201);
@@ -371,7 +371,7 @@ describe('SCIM Token Create Handler - Input Validation', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ description: '' }),
         },
-        mockEnv as Env
+        mockEnv
       );
 
       expect(response.status).toBe(201);
@@ -388,7 +388,7 @@ describe('SCIM Token Create Handler - Input Validation', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ description: longDescription }),
         },
-        mockEnv as Env
+        mockEnv
       );
 
       expect(response.status).toBe(400);
@@ -407,7 +407,7 @@ describe('SCIM Token Create Handler - Input Validation', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ description: maxDescription }),
         },
-        mockEnv as Env
+        mockEnv
       );
 
       expect(response.status).toBe(201);
@@ -423,7 +423,7 @@ describe('SCIM Token Create Handler - Input Validation', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ description: 12345 }),
         },
-        mockEnv as Env
+        mockEnv
       );
 
       expect(response.status).toBe(400);
@@ -441,7 +441,7 @@ describe('SCIM Token Create Handler - Input Validation', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ description: '  Production token  ' }),
         },
-        mockEnv as Env
+        mockEnv
       );
 
       expect(response.status).toBe(201);
@@ -457,7 +457,7 @@ describe('SCIM Token Create Handler - Input Validation', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ description: 'Token\x00with\x1Fcontrol\x7Fchars' }),
         },
-        mockEnv as Env
+        mockEnv
       );
 
       expect(response.status).toBe(201);
@@ -473,7 +473,7 @@ describe('SCIM Token Create Handler - Input Validation', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ description: 'トークン 🔑 Token' }),
         },
-        mockEnv as Env
+        mockEnv
       );
 
       expect(response.status).toBe(201);

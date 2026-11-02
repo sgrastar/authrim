@@ -214,7 +214,7 @@ describe('assurance evidence', () => {
                   (id, tenant_id, subject_id, evidence_type, created_at, updated_at)
                 VALUES ('raced', 'tenant-a', 'subject:other', 'scim', 1, 1)`,
         },
-        statements[statements.length - 1]!,
+        statements[statements.length - 1],
       ]);
     await expect(
       repository.replaceAssuranceEvidenceFromSource('subject:user-1', source, at('raced'))

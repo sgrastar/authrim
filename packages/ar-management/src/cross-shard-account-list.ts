@@ -1335,13 +1335,13 @@ export class CrossShardAccountExactSearchService {
             .prepare(exactAccountPiiOwnerSql(purpose))
             .bind(
               input.tenantId,
-              account!.legacy_user_id,
+              account.legacy_user_id,
               ...(purpose === 'account_delete_retry'
-                ? [input.tenantId, account!.legacy_user_id]
+                ? [input.tenantId, account.legacy_user_id]
                 : [])
             )
             .first<{ owner_id: string }>();
-          return row?.owner_id === account!.legacy_user_id;
+          return row?.owner_id === account.legacy_user_id;
         },
       });
       return [

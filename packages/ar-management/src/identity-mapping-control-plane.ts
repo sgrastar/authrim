@@ -3074,7 +3074,7 @@ export class IdentityMappingControlPlaneRepository {
 
     const owner = normalizeProfileOwner(
       tenantId,
-      input.ownerScopeType ?? (existing.owner_scope_type as 'platform' | 'tenant' | 'client'),
+      input.ownerScopeType ?? existing.owner_scope_type,
       input.ownerScopeId === undefined ? existing.owner_scope_id : input.ownerScopeId
     );
     assertDestinationProfileOwner(destinationType, owner);
@@ -10280,7 +10280,7 @@ function parseProvisioningAssignmentCondition(value: string): ProvisioningAssign
     if (!isRecord(parsed)) {
       throw badRequest('provisioning assignment rule condition must be an object');
     }
-    return parsed as unknown as ProvisioningAssignmentCondition;
+    return parsed;
   } catch (error) {
     if (error instanceof IdentityMappingControlPlaneError) {
       throw error;

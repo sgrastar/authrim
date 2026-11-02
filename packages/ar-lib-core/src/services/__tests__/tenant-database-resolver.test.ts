@@ -1664,11 +1664,11 @@ describe('resolving without side effects', () => {
         string,
         unknown
       >;
-      await resolveTenantDatabaseSourceFromRegistry(withBinding as never, options);
+      await resolveTenantDatabaseSourceFromRegistry(withBinding, options);
       delete withBinding.TDB_TENANT_A_SNAPSHOT_CORE;
 
       await expectResolverCode(
-        resolveTenantDatabaseSourceFromRegistry(withBinding as never, { ...options, sideEffects }),
+        resolveTenantDatabaseSourceFromRegistry(withBinding, { ...options, sideEffects }),
         'missing_binding'
       );
       expect(admin.execute.mock.calls.length > 0).toBe(reported);

@@ -1,7 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createAuthRuntimePorts } from '../auth-runtime';
-import type { PostgresAccountAuthStateStore } from '../storage/postgres-account-auth-state';
-import type { PostgresAuthorizationCodeStore } from '../storage/postgres-authorization-code';
 import type { PostgresRateLimitStore } from '../storage/postgres-rate-limit';
 import type {
   PostgresTransientStateStore,
@@ -34,8 +32,8 @@ function stores() {
   };
   const ports = createAuthRuntimePorts({
     state: state as unknown as PostgresTransientStateStore,
-    accountAuthentication: accountAuthentication as unknown as PostgresAccountAuthStateStore,
-    authorizationCodes: authorizationCodes as unknown as PostgresAuthorizationCodeStore,
+    accountAuthentication: accountAuthentication,
+    authorizationCodes: authorizationCodes,
     rateLimit: { check: vi.fn() } as unknown as PostgresRateLimitStore,
   });
   return { state, accountAuthentication, authorizationCodes, ports };

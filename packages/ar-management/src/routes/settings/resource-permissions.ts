@@ -41,7 +41,7 @@ function rowToPermission(row: ResourcePermissionRow): ResourcePermission {
   return {
     id: row.id,
     tenant_id: row.tenant_id,
-    subject_type: row.subject_type as ResourcePermissionSubjectType,
+    subject_type: row.subject_type,
     subject_id: row.subject_id,
     resource_type: row.resource_type,
     resource_id: row.resource_id,

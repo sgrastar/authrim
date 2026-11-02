@@ -89,7 +89,7 @@ export function initialAccessTokenMiddleware(): MiddlewareHandler<{
     // DCR Initial Access Token Requirement Check
     // Priority: dcr.require_initial_access_token (KV/env) > ENABLE_OPEN_REGISTRATION (legacy)
     // ==========================================================================
-    const tenantId = getTenantIdFromContext(c as unknown as Context<{ Bindings: Env }>);
+    const tenantId = getTenantIdFromContext(c);
     const requireIAT = await getDCRSetting('dcr.require_initial_access_token', env, tenantId);
 
     // Legacy support: ENABLE_OPEN_REGISTRATION is inverse of require_initial_access_token

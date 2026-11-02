@@ -160,7 +160,7 @@ export async function markGlobalProviderDesiredRevision(
   pluginId: string,
   now = Math.floor(Date.now() / 1_000)
 ): Promise<string> {
-  if (!SUPPORTED_PROVIDER_IDS.includes(pluginId as never) || !env.SETTINGS) {
+  if (!SUPPORTED_PROVIDER_IDS.includes(pluginId) || !env.SETTINGS) {
     throw new Error('provider_reprojection_provider_unsupported');
   }
   const desired = { revision: crypto.randomUUID(), updatedAt: now };

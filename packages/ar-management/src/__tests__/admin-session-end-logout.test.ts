@@ -342,7 +342,7 @@ function captureDownstream(statusFor: (url: string) => number = () => 200) {
     const body = new URLSearchParams(typeof init?.body === 'string' ? init.body : '');
     sent.push({ url, token: body.get('logout_token') ?? '' });
     return new Response(null, { status: statusFor(url) });
-  }) as typeof fetch;
+  });
   return sent;
 }
 
@@ -396,7 +396,7 @@ describe('admin actions that end sessions notify downstream relying parties', ()
     if (!op) {
       const { privateKey, publicKey } = await jose.generateKeyPair('RS256', { extractable: true });
       op = {
-        privateKey: privateKey as CryptoKey,
+        privateKey: privateKey,
         publicJwk: { ...(await jose.exportJWK(publicKey)), kid: 'op-key', alg: 'RS256' },
       };
       opPrivatePem = await jose.exportPKCS8(op.privateKey);
@@ -645,7 +645,7 @@ describe('admin actions that end sessions notify downstream relying parties', ()
     globalThis.fetch = vi.fn(async () => {
       await gate;
       return new Response(null, { status: 200 });
-    }) as typeof fetch;
+    });
     queueAccount('active');
 
     const { c, pending } = context(env);

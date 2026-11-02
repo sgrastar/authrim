@@ -290,7 +290,7 @@ export async function buildRetentionInventory(
   ) {
     throw new Error('retention_inventory_invalid_diagnostic_retention_days');
   }
-  const diagnosticDays = diagnosticRetentionDays(rawDiagnosticDays as number | null | undefined);
+  const diagnosticDays = diagnosticRetentionDays(rawDiagnosticDays);
 
   const tenantRuns = await readTenantRetentionRuns(env, tenantId);
   const [auditTask, checkAuditTask, tombstoneTask, diagnosticTask, reportTask] = await Promise.all([

@@ -871,7 +871,7 @@ describe('control-plane operations admin router', () => {
         getTenantDisasterRecovery: vi.fn(async () => ({
           ...tenantRecovery,
           lookupReprojection: { ...tenantRecovery.lookupReprojection, projectedRows: -1 },
-        })) as NonNullable<Env['CONTROL']>['getTenantDisasterRecovery'],
+        })),
       },
     });
     const malformedResponse = await malformed.app.request(
@@ -1363,7 +1363,7 @@ describe('control-plane operations admin router', () => {
         getProvisioningOperation: vi.fn(async () => ({
           ...operation,
           environmentId: 'other',
-        })) as NonNullable<Env['CONTROL']>['getProvisioningOperation'],
+        })),
       },
     });
     const malformedResponse = await malformed.app.request(
@@ -1809,7 +1809,7 @@ describe('control-plane operations admin router', () => {
       control: {
         listWorkerInventoryDriftFindings: vi.fn(async () => [
           { ...finding, cloudflareApiToken: 'secret' },
-        ]) as NonNullable<Env['CONTROL']>['listWorkerInventoryDriftFindings'],
+        ]),
       },
     });
     const secretResponse = await secretBearing.app.request(
@@ -2079,7 +2079,7 @@ describe('control-plane operations admin router', () => {
       control: {
         listShardCleanupCandidates: vi.fn(async () => [
           { ...cleanupCandidate, cloudflareApiToken: 'forbidden' },
-        ]) as NonNullable<Env['CONTROL']>['listShardCleanupCandidates'],
+        ]),
       },
     });
     const secretResponse = await secretBearing.app.request(

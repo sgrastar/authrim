@@ -22,7 +22,7 @@ describe('DPoP Utilities', () => {
 
   beforeAll(async () => {
     const pair = await generateKeyPair('ES256');
-    privateKey = pair.privateKey as CryptoKey;
+    privateKey = pair.privateKey;
     publicJwk = await exportJWK(pair.publicKey);
   });
 

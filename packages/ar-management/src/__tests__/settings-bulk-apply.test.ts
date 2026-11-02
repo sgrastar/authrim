@@ -1517,7 +1517,7 @@ describe('an apply', () => {
         const before = t.snapshot();
         const response = await t.bulk(
           t.admin,
-          request({ changes: [{ category, set: { [key as string]: value } }] })
+          request({ changes: [{ category, set: { [key]: value } }] })
         );
         expect(response.status).toBe(200);
         for (const id of ['tenant-a', 'tenant-b']) {

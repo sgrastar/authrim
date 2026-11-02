@@ -237,9 +237,9 @@ describe('SAML identity assurance', () => {
     it('is not taken for IAL1 when the evidence cannot be read', async () => {
       evidence.addEvidence('ev-1', 'IAL2');
       const query = evidence.adapter.query.bind(evidence.adapter);
-      evidence.adapter.query = (async () => {
+      evidence.adapter.query = async () => {
         throw new Error('d1 unavailable');
-      }) as never;
+      };
       const result = await check({ minimumIal: 'IAL2' });
       evidence.adapter.query = query;
       expect(result).toMatchObject({ outcome: 'unavailable', required: 'IAL2' });
@@ -397,9 +397,9 @@ describe('SAML identity assurance', () => {
     it('releases neither, and reports it, when the evidence cannot be read: never as IAL1', async () => {
       evidence.addEvidence('ev-1', 'IAL2');
       const query = evidence.adapter.query.bind(evidence.adapter);
-      evidence.adapter.query = (async () => {
+      evidence.adapter.query = async () => {
         throw new Error('d1 unavailable');
-      }) as never;
+      };
       const onError = vi.fn();
       const subject = await resolve(mapping([EDU_EDGE, IAL_EDGE]), { id: EVIDENCE_USER }, onError);
       evidence.adapter.query = query;

@@ -1248,7 +1248,7 @@ export async function createDirectoryAuthSupportBundleHandler(c: Context<{ Bindi
   if (!parsed.success) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
   }
-  const redactionLevel = parsed.data.redaction_level as DirectoryAuthSupportBundleRedactionLevel;
+  const redactionLevel = parsed.data.redaction_level;
   if (
     redactionLevel === 'detailed' &&
     parsed.data.consent_summary.detailed_warning_acknowledged !== true

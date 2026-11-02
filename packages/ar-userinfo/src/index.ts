@@ -130,7 +130,7 @@ app.onError((err, c) => {
   const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, err);
   if (writeFenceResponse) return writeFenceResponse;
   const log = getLogger(c).module('USERINFO');
-  log.error('Unhandled error in UserInfo service', { error: err.message }, err as Error);
+  log.error('Unhandled error in UserInfo service', { error: err.message }, err);
   return c.json({ error: 'server_error', error_description: 'An unexpected error occurred' }, 500);
 });
 

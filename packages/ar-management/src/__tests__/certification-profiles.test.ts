@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  ALL_CATEGORY_META,
-  createSettingsManager,
-  type CategoryMeta,
-  type Env,
-} from '@authrim/ar-lib-core';
+import { ALL_CATEGORY_META, createSettingsManager, type Env } from '@authrim/ar-lib-core';
 import {
   CERTIFICATION_PROFILE_MANAGED_KEYS,
   certificationProfiles,
@@ -16,7 +11,7 @@ describe('certification profiles', () => {
   it('sets only managed settings, with values a tenant PATCH accepts', () => {
     const manager = createSettingsManager({ env: {}, kv: null, cacheTTL: 0 });
     for (const meta of Object.values(ALL_CATEGORY_META)) {
-      manager.registerCategory(meta as CategoryMeta);
+      manager.registerCategory(meta);
     }
     for (const [id, profile] of Object.entries(certificationProfiles)) {
       for (const [category, values] of Object.entries(profile.settings)) {

@@ -684,7 +684,7 @@ describe('createBackchannelLogoutOrchestrator', () => {
       kv.put = vi.fn(async (key: string, ...rest: unknown[]) => {
         if (key === failureKey) throw new Error('kv unavailable');
         return (put as (...args: unknown[]) => Promise<void>)(key, ...rest);
-      }) as unknown as KVNamespace['put'];
+      });
       const onAlert = vi.fn(async () => {});
       const orchestrator = createBackchannelLogoutOrchestrator(kv, undefined, {
         sleep: async () => {},
@@ -742,9 +742,9 @@ describe('createBackchannelLogoutOrchestrator', () => {
           return response(503);
         });
         const stalled = () => new Promise<never>(() => {});
-        kv.get = vi.fn(stalled) as unknown as KVNamespace['get'];
-        kv.put = vi.fn(stalled) as unknown as KVNamespace['put'];
-        kv.delete = vi.fn(stalled) as unknown as KVNamespace['delete'];
+        kv.get = vi.fn(stalled);
+        kv.put = vi.fn(stalled);
+        kv.delete = vi.fn(stalled);
         const orchestrator = createBackchannelLogoutOrchestrator(kv);
 
         await drive(
@@ -783,9 +783,9 @@ describe('createBackchannelLogoutOrchestrator', () => {
           return response(503);
         });
         const stalled = () => new Promise<never>(() => {});
-        kv.get = vi.fn(stalled) as unknown as KVNamespace['get'];
-        kv.put = vi.fn(stalled) as unknown as KVNamespace['put'];
-        kv.delete = vi.fn(stalled) as unknown as KVNamespace['delete'];
+        kv.get = vi.fn(stalled);
+        kv.put = vi.fn(stalled);
+        kv.delete = vi.fn(stalled);
         const orchestrator = createBackchannelLogoutOrchestrator(kv, undefined, {
           startedAt: now - 20_800,
         });
@@ -813,7 +813,7 @@ describe('createBackchannelLogoutOrchestrator', () => {
         const start = Date.now();
         global.fetch = vi.fn().mockResolvedValue(response(503));
         const stalled = () => new Promise<never>(() => {});
-        kv.put = vi.fn(stalled) as unknown as KVNamespace['put'];
+        kv.put = vi.fn(stalled);
         const orchestrator = createBackchannelLogoutOrchestrator(kv, undefined, {
           retryBudgetMs: 0,
         });
@@ -900,7 +900,7 @@ describe('createBackchannelLogoutOrchestrator', () => {
       kv.put = vi.fn(async (key: string, ...rest: unknown[]) => {
         if (key.includes('pending')) throw new Error('kv unavailable');
         return (put as (...args: unknown[]) => Promise<void>)(key, ...rest);
-      }) as unknown as KVNamespace['put'];
+      });
       const orchestrator = createBackchannelLogoutOrchestrator(kv, undefined, {
         sleep: async () => {},
       });
@@ -920,7 +920,7 @@ describe('createBackchannelLogoutOrchestrator', () => {
         key === failureKey
           ? new Promise<void>(() => {}) // stalls
           : (put as (...args: unknown[]) => Promise<void>)(key, ...rest)
-      ) as unknown as KVNamespace['put'];
+      );
       const onAlert = vi.fn(async () => {});
       const orchestrator = createBackchannelLogoutOrchestrator(kv, undefined, {
         onAlert,
@@ -942,9 +942,9 @@ describe('createBackchannelLogoutOrchestrator', () => {
     it('notifies every client and settles while the store stalls', async () => {
       global.fetch = vi.fn().mockResolvedValue(response(503));
       const stalled = () => new Promise<never>(() => {});
-      kv.get = vi.fn(stalled) as unknown as KVNamespace['get'];
-      kv.put = vi.fn(stalled) as unknown as KVNamespace['put'];
-      kv.delete = vi.fn(stalled) as unknown as KVNamespace['delete'];
+      kv.get = vi.fn(stalled);
+      kv.put = vi.fn(stalled);
+      kv.delete = vi.fn(stalled);
       const orchestrator = createBackchannelLogoutOrchestrator(kv, undefined, {
         sleep: async () => {},
         storeTimeoutMs: 20,

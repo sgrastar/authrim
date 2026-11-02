@@ -234,7 +234,7 @@ describe('a code issued by the previous release (legacy u:XXXX-XXXX mapping)', (
     const { store } = await open(storage);
     vi.setSystemTime(Date.now() + 600_001);
 
-    await (store as unknown as DeviceCodeStore).alarm();
+    await store.alarm();
 
     expect(storage.values.has('d:legacy-1')).toBe(false);
     expect(storage.values.has('u:ABCD-EFGH')).toBe(false);

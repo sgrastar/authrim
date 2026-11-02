@@ -133,7 +133,7 @@ describe('logout token sub per relying party', () => {
       const token = new URLSearchParams(String(init?.body)).get('logout_token')!;
       sent.set(new URL(String(input)).hostname.split('.')[0], decodeJwt(token));
       return new Response(null, { status: 200 });
-    }) as typeof fetch;
+    });
   });
 
   async function logout(

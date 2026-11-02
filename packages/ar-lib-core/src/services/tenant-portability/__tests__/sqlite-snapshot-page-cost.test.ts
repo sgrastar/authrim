@@ -44,7 +44,7 @@ beforeAll(async () => {
       d1Databases: ['SNAPSHOT_PAGE_COST'],
     })
   );
-  db = (await runtime.getD1Database('SNAPSHOT_PAGE_COST')) as unknown as D1Database;
+  db = await runtime.getD1Database('SNAPSHOT_PAGE_COST');
 }, 60_000);
 afterAll(async () => {
   await runtime?.dispose();

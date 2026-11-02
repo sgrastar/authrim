@@ -28,7 +28,7 @@ describe('client CAS and immutable history evidence (real SQLite)', () => {
 
   beforeEach(async () => {
     const store = sqliteAdapter();
-    db = store.db as unknown as typeof db;
+    db = store.db;
     adapter = store.adapter;
     adapter.getType = () => 'sqlite';
     repository = new ClientRepository(adapter, 'default');

@@ -88,7 +88,7 @@ function createMockContext(options: {
 }
 
 async function responseJson<T>(response: Response): Promise<T> {
-  return (await response.json()) as T;
+  return await response.json();
 }
 
 describe('admin consent statement URL validation', () => {

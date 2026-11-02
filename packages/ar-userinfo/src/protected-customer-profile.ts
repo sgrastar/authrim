@@ -826,7 +826,7 @@ async function verifyProtectedCustomerProfileToken(input: {
   const payload = await verifyToken(input.token, publicKey, issuer, {
     audience: input.audience,
   });
-  return payload as Record<string, unknown>;
+  return payload;
 }
 
 async function introspectProtectedCustomerProfileToken(input: {
@@ -1056,7 +1056,7 @@ export function createProtectedCustomerProfileRouter(
         }));
     const introspectTokenImpl =
       options.introspectToken ??
-      (resolveProtectedCustomerProfileIntrospectionClient(env as Env)
+      (resolveProtectedCustomerProfileIntrospectionClient(env)
         ? async ({ token, c: context }: { token: string; c: Context<{ Bindings: Env }> }) =>
             introspectProtectedCustomerProfileToken({ token, c: context })
         : undefined);

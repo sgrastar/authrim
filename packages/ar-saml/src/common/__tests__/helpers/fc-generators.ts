@@ -68,7 +68,7 @@ export const nameIdFormatArb: fc.Arbitrary<NameIDFormat> = fc.constantFrom(
   NAMEID_FORMATS.PERSISTENT,
   NAMEID_FORMATS.TRANSIENT,
   NAMEID_FORMATS.UNSPECIFIED
-) as fc.Arbitrary<NameIDFormat>;
+);
 
 /**
  * Email NameID value

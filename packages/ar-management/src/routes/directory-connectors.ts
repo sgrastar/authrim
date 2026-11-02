@@ -629,7 +629,7 @@ export async function updateDirectoryConnectorsHandler(c: Context<{ Bindings: En
 
   try {
     await createAuditLogFromContext(
-      c as unknown as Parameters<typeof createAuditLogFromContext>[0],
+      c,
       'directory_connector.updated',
       'directory_connector',
       tenantId,
@@ -1124,7 +1124,7 @@ export async function issueDirectoryConnectorSecretHandler(c: Context<{ Bindings
 
   try {
     await createAuditLogFromContext(
-      c as unknown as Parameters<typeof createAuditLogFromContext>[0],
+      c,
       'directory_connector.secret.issued',
       'directory_connector',
       connector.id,
@@ -1205,7 +1205,7 @@ export async function rotateDirectoryConnectorSecretHandler(c: Context<{ Binding
 
   try {
     await createAuditLogFromContext(
-      c as unknown as Parameters<typeof createAuditLogFromContext>[0],
+      c,
       'directory_connector.secret.rotated',
       'directory_connector',
       connector.id,

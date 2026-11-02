@@ -121,8 +121,8 @@ describe('XML Utilities', () => {
 
       const request = findElement(doc, SAML_NAMESPACES.SAML2P, 'AuthnRequest');
       expect(request).toBeDefined();
-      expect(getAttribute(request!, 'ID')).toBe('_abc123');
-      expect(getAttribute(request!, 'Missing')).toBeNull();
+      expect(getAttribute(request, 'ID')).toBe('_abc123');
+      expect(getAttribute(request, 'Missing')).toBeNull();
     });
   });
 

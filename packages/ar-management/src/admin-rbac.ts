@@ -1189,7 +1189,7 @@ export async function adminRoleGetHandler(c: Context<{ Bindings: Env }>) {
     if (role.parent_role_id) {
       parentRole = await coreAdapter.queryOne<Record<string, unknown>>(
         'SELECT id, name, display_name, permissions_json FROM roles WHERE id = ? AND tenant_id = ?',
-        [role.parent_role_id as string, tenantId]
+        [role.parent_role_id, tenantId]
       );
       if (parentRole) {
         const parentPermissions: string[] = JSON.parse(
@@ -1306,7 +1306,7 @@ export async function adminUserRolesListHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function adminUserRoleAssignHandler(c: AdminContext) {
   try {
-    const tenantId = getTenantIdFromContext(c as unknown as Context<{ Bindings: Env }>);
+    const tenantId = getTenantIdFromContext(c);
     const userId = c.req.param('id')!;
     await resolveAccountDataContextFromHono(c as unknown as Context<{ Bindings: Env }>, userId);
     const { coreAdapter, piiAdapter } = createAdaptersFromContext(

@@ -154,10 +154,10 @@ describe('SAML response signing policy', () => {
       'Assertion'
     );
 
-    expect(elementChildNames(assertion!)).toEqual(
+    expect(elementChildNames(assertion)).toEqual(
       expect.arrayContaining(['Issuer', 'Signature', 'Subject'])
     );
-    expect(elementChildNames(assertion!).slice(0, 3)).toEqual(['Issuer', 'Signature', 'Subject']);
+    expect(elementChildNames(assertion).slice(0, 3)).toEqual(['Issuer', 'Signature', 'Subject']);
   });
 
   it('places Response signatures after Issuer to satisfy SAML schema ordering', () => {

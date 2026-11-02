@@ -200,9 +200,7 @@ export function compileGroups(
       const id = `n${intern.size}`;
       intern.set(key, id);
       plan.nodes[id] = {
-        expression: children.length
-          ? { op: expression.op as 'all' | 'any' | 'not' }
-          : (expression as Exclude<Expression, { op: 'all' | 'any' } | { op: 'not' }>),
+        expression: children.length ? { op: expression.op as 'all' | 'any' | 'not' } : expression,
         children,
       };
       return id;

@@ -491,7 +491,7 @@ function validateTenantPolicyUpdate(body: unknown): TenantPolicyUpdateBody | nul
     return null;
   }
 
-  return b as TenantPolicyUpdateBody;
+  return b;
 }
 
 function validateApplyPresetBody(body: unknown): ApplyPresetBody | null {
@@ -502,7 +502,7 @@ function validateApplyPresetBody(body: unknown): ApplyPresetBody | null {
     return null;
   }
 
-  return b as ApplyPresetBody;
+  return b;
 }
 
 function validateClientProfileUpdate(body: unknown): ClientProfileUpdateBody | null {
@@ -517,7 +517,7 @@ function validateClientProfileUpdate(body: unknown): ClientProfileUpdateBody | n
     return null;
   }
 
-  return b as ClientProfileUpdateBody;
+  return b;
 }
 
 // =============================================================================
@@ -640,10 +640,7 @@ policyRouter.put('/tenant-policy', async (c) => {
 
   // Security: Validate policy keys against whitelist to prevent property injection
   if (body.policy) {
-    const unknownKeys = findUnknownKeys(
-      body.policy as Record<string, unknown>,
-      ALLOWED_TENANT_POLICY_KEYS
-    );
+    const unknownKeys = findUnknownKeys(body.policy, ALLOWED_TENANT_POLICY_KEYS);
     if (unknownKeys.length > 0) {
       return errorResponse(
         c,
@@ -957,7 +954,7 @@ policyRouter.get('/clients/:clientId/profile', async (c) => {
     return errorResponse(c, 'service_unavailable', 'Configuration service unavailable', 503);
   }
 
-  const clientId = c.req.param('clientId')!;
+  const clientId = c.req.param('clientId');
   const tenantId = getTenantIdFromContext(c);
   const { coreAdapter } = createAdaptersFromContext(c, tenantId);
 
@@ -1006,7 +1003,7 @@ policyRouter.put('/clients/:clientId/profile', async (c) => {
     return errorResponse(c, 'service_unavailable', 'Configuration service unavailable', 503);
   }
 
-  const clientId = c.req.param('clientId')!;
+  const clientId = c.req.param('clientId');
   const tenantId = getTenantIdFromContext(c);
   const adminAuth = getAdminAuth(c);
   const actor = adminAuth?.userId ?? 'unknown';
@@ -1046,10 +1043,7 @@ policyRouter.put('/clients/:clientId/profile', async (c) => {
 
   // Security: Validate profile keys against whitelist to prevent property injection
   if (body.profile) {
-    const unknownKeys = findUnknownKeys(
-      body.profile as Record<string, unknown>,
-      ALLOWED_CLIENT_PROFILE_KEYS
-    );
+    const unknownKeys = findUnknownKeys(body.profile, ALLOWED_CLIENT_PROFILE_KEYS);
     if (unknownKeys.length > 0) {
       return errorResponse(
         c,
@@ -1268,7 +1262,7 @@ policyRouter.post('/clients/:clientId/apply-preset', async (c) => {
     return errorResponse(c, 'service_unavailable', 'Configuration service unavailable', 503);
   }
 
-  const clientId = c.req.param('clientId')!;
+  const clientId = c.req.param('clientId');
   const tenantId = getTenantIdFromContext(c);
   const adminAuth = getAdminAuth(c);
   const actor = adminAuth?.userId ?? 'unknown';
@@ -1373,7 +1367,7 @@ policyRouter.get('/clients/:clientId/profile/validate', async (c) => {
     return errorResponse(c, 'service_unavailable', 'Configuration service unavailable', 503);
   }
 
-  const clientId = c.req.param('clientId')!;
+  const clientId = c.req.param('clientId');
   const tenantId = getTenantIdFromContext(c);
   const { coreAdapter } = createAdaptersFromContext(c, tenantId);
 

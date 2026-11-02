@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import type { CompiledNode, GraphNodeType } from './types';
-import type { ProfileId } from '@authrim/ar-lib-core';
 import { createUIContractGenerator, UIContractGenerator } from './ui-contract-generator';
 
 function compiledNode(
@@ -28,7 +27,7 @@ describe('UIContractGenerator contract mapping', () => {
     const result = createUIContractGenerator().generate({
       compiledNode: compiledNode('identifier'),
       flowId: 'login',
-      profileId: profileId as ProfileId,
+      profileId: profileId,
     });
 
     expect(result.features.policy.rbac).toBe(rbac);

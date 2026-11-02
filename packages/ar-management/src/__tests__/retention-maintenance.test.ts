@@ -262,7 +262,7 @@ describe('retention maintenance', () => {
     )!;
     expect(update[1]).toEqual(['tenant-a', 'report-1']);
     expect(mockTombstone.mock.invocationCallOrder[0]).toBeLessThan(
-      coreAdapter.execute.mock.invocationCallOrder[coreAdapter.execute.mock.calls.indexOf(update)]!
+      coreAdapter.execute.mock.invocationCallOrder[coreAdapter.execute.mock.calls.indexOf(update)]
     );
     expect(
       (await readTenantRetentionRuns(env(), 'tenant-a')).compliance_report_retention?.outcome

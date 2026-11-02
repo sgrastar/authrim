@@ -162,7 +162,7 @@ async function publishRegistry(
     if (generations.size !== 1) {
       throw new Error('tenant_placement_registry_group_generation_mismatch');
     }
-    const generation = ordered[0]!.routeGeneration;
+    const generation = ordered[0].routeGeneration;
     for (const [shardIndex, target] of ordered.entries()) {
       await repository.upsertRegistryRow({
         tenant_id: job.tenantId,
@@ -248,7 +248,7 @@ async function publishRegistry(
 export function createTenantPlacementMigrationSagaDependencies(
   env: Env,
   platformAdapter = ensureDatabaseAdapter(env.DB, 'tenant-placement-migration-platform'),
-  adminAdapter = ensureDatabaseAdapter(env.DB_ADMIN!, 'tenant-placement-migration')
+  adminAdapter = ensureDatabaseAdapter(env.DB_ADMIN, 'tenant-placement-migration')
 ): TenantPlacementMigrationSagaDependencies {
   return {
     async prepareAlias(job, migration) {

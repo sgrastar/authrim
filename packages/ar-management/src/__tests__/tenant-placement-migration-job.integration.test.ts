@@ -24,7 +24,7 @@ function adapter(database: DatabaseSync): DatabaseAdapter {
     async transaction<T>(fn: (tx: TransactionContext) => Promise<T>) {
       database.exec('BEGIN IMMEDIATE');
       try {
-        const value = await fn(result as unknown as TransactionContext);
+        const value = await fn(result);
         database.exec('COMMIT');
         return value;
       } catch (error) {
@@ -41,7 +41,7 @@ function adapter(database: DatabaseSync): DatabaseAdapter {
     getType: () => 'sqlite-test',
     async close() {},
   };
-  return result as unknown as DatabaseAdapter;
+  return result;
 }
 
 function insertJob(database: DatabaseSync, operationId: string, idempotencyKey: string) {

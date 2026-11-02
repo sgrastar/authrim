@@ -40,7 +40,7 @@ describe('CustomClaimSchemaHistoryManager', () => {
     it('accepts a DatabaseAdapter source and records the next version', async () => {
       mockAdapter.queryOne.mockResolvedValueOnce({ version: 2 });
 
-      const manager = new CustomClaimSchemaHistoryManager(mockAdapter as any);
+      const manager = new CustomClaimSchemaHistoryManager(mockAdapter);
       const entry = await manager.recordChange({
         schemaId: 'schema-1',
         tenantId: 'tenant-1',
@@ -98,7 +98,7 @@ describe('CustomClaimSchemaHistoryManager', () => {
         },
       ]);
 
-      const manager = new CustomClaimSchemaHistoryManager(mockAdapter as any);
+      const manager = new CustomClaimSchemaHistoryManager(mockAdapter);
       const result = await manager.listVersions('tenant-1', 'schema-1', 10, 0);
 
       expect(result.total).toBe(2);
@@ -122,7 +122,7 @@ describe('CustomClaimSchemaHistoryManager', () => {
 
   describe('getVersion', () => {
     it('returns null when the requested version does not exist', async () => {
-      const manager = new CustomClaimSchemaHistoryManager(mockAdapter as any);
+      const manager = new CustomClaimSchemaHistoryManager(mockAdapter);
       await expect(manager.getVersion('tenant-1', 'schema-1', 99)).resolves.toBeNull();
     });
 
@@ -145,7 +145,7 @@ describe('CustomClaimSchemaHistoryManager', () => {
         created_at: 1700000000,
       });
 
-      const manager = new CustomClaimSchemaHistoryManager(mockAdapter as any);
+      const manager = new CustomClaimSchemaHistoryManager(mockAdapter);
       const result = await manager.getVersion('tenant-1', 'schema-1', 4);
 
       expect(result).toEqual({

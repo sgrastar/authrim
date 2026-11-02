@@ -54,10 +54,9 @@ const url = process.env.AUTHRIM_AWS_TEST_DATABASE_URL;
       );
       const query = db.queryOne.bind(db);
       // The local test database has a different name from DSQL's fixed database.
-      vi.spyOn(db, 'queryOne').mockImplementation((async (sql, ...args) =>
-        sql === 'SELECT current_database() AS name'
-          ? { name: 'postgres' }
-          : query(sql, ...args)) as typeof db.queryOne);
+      vi.spyOn(db, 'queryOne').mockImplementation(async (sql, ...args) =>
+        sql === 'SELECT current_database() AS name' ? { name: 'postgres' } : query(sql, ...args)
+      );
       const execute = vi.spyOn(db, 'execute');
       const result = await runDsqlConfigurationProbe(db, { writeProbe: true, spCount });
       expect(result.checks.filter((check) => !check.passed)).toEqual([]);

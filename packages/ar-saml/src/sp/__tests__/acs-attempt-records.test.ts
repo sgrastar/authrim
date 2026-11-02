@@ -270,7 +270,7 @@ describe('SAML ACS records failed sign-ins against the start interaction', () =>
         put: vi.fn().mockResolvedValue(undefined),
       } as unknown as Env['NONCE_STORE'],
     };
-    mockEnv.DB_ADMIN = mockEnv.TDB_TEST_CORE as Env['DB_ADMIN'];
+    mockEnv.DB_ADMIN = mockEnv.TDB_TEST_CORE;
   });
 
   async function callACS(inResponseTo: string | undefined = REQUEST_ID): Promise<Response> {

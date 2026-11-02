@@ -84,8 +84,8 @@ describe('DID parsing and did:key resolution', () => {
 
     function keyBytes(namedCurve: string, size: number) {
       const jwk = generateKeyPairSync('ec', { namedCurve }).publicKey.export({ format: 'jwk' });
-      const x = Buffer.from(jwk.x as string, 'base64url');
-      const y = Buffer.from(jwk.y as string, 'base64url');
+      const x = Buffer.from(jwk.x, 'base64url');
+      const y = Buffer.from(jwk.y, 'base64url');
       const compressed = [(y[size - 1] & 1) === 0 ? 0x02 : 0x03, ...x];
       const uncompressed = [0x04, ...x, ...y];
       return { jwk, compressed, uncompressed };

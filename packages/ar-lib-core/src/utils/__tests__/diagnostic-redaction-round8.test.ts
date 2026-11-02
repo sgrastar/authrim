@@ -106,7 +106,7 @@ describe('code is a secret wherever it is a key', () => {
         e: { code: 404 },
       },
     } as any);
-    const d = (result as any).details;
+    const d = result.details;
     expect(d.a.code).toMatch(/^sha256:/);
     for (const key of ['b', 'c', 'd', 'e']) expect(d[key].code, key).toBe('[SECRET_REDACTED]');
   });

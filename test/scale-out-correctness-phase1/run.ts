@@ -989,10 +989,10 @@ export async function executePhase1Harness(input: {
   });
   const client =
     input.client ??
-    (new CloudflareControlApiClient({
+    new CloudflareControlApiClient({
       accountId,
       tokens: { d1: d1Token, workers: d1Token },
-    }) as Phase1ObservationClient & Phase1VerificationClient);
+    });
 
   const [control, provider] = await Promise.all([
     collectControlSnapshot({ config: input.config, client }),

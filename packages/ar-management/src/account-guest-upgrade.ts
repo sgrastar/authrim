@@ -664,7 +664,7 @@ export async function completeAccountGuestUpgradeHandler(c: C): Promise<Response
           verification = await verifyRegistrationResponse({
             response: body.passkey_response as RegistrationResponseJSON,
             expectedChallenge: operation.challenge_verifier!,
-            expectedOrigin: payload.origin!,
+            expectedOrigin: payload.origin,
             expectedRPID: payload.rpId!,
             requireUserVerification: true,
           });

@@ -89,7 +89,7 @@ export function profileValuesFromClaims(
     fields
       .filter((field) => typeof claims[field] === 'string')
       .map((field) => [field, claims[field] as string])
-  ) as Partial<Record<ProfileUpdateField, string>>;
+  );
 }
 
 function safeParse(value: string): unknown {

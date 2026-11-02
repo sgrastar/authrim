@@ -761,8 +761,7 @@ describe('buildSAMLAttributesFromMapping', () => {
     ['', undefined],
   ] as const)('normalizes mapped SAML value type %s', (configured, expected) => {
     const catalog = identityMappingSamlCatalog({ mailRequired: false });
-    catalog.entries.find((entry) => entry.id === 'field.saml.mail')!.valueType =
-      configured as never;
+    catalog.entries.find((entry) => entry.id === 'field.saml.mail')!.valueType = configured;
     const attributes = buildSAMLAttributesForSP(
       { id: 'user-123', email: 'user@example.test' },
       {

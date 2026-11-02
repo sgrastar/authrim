@@ -34,7 +34,7 @@ describe('OIDC error contracts', () => {
   it.each(Object.entries(ErrorFactory))(
     'factory %s returns stable defaults and accepts a caller-safe description',
     (name, factory) => {
-      const create = factory as (description?: string) => OIDCError;
+      const create = factory;
       const fallback = create();
       const custom = create('Caller-safe description');
       expect(fallback).toBeInstanceOf(OIDCError);

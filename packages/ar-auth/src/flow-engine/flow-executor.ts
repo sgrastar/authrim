@@ -685,7 +685,7 @@ export class FlowExecutor {
     const response = await stub.fetch(new Request(`http://localhost${path}`, requestInit));
 
     // Parse the response
-    return (await response.json()) as T;
+    return await response.json();
   }
 
   /**

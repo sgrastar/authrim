@@ -38,7 +38,7 @@ vi.mock('@authrim/ar-lib-core/services/log-iceberg-emitter', async (importOrigin
     ...actual,
     prepareLogIcebergRowWrite: vi.fn(
       (...args: Parameters<typeof actual.prepareLogIcebergRowWrite>) => {
-        emitter.rows.push({ row: args[2].row as Record<string, unknown> });
+        emitter.rows.push({ row: args[2].row });
         return actual.prepareLogIcebergRowWrite(...args);
       }
     ),

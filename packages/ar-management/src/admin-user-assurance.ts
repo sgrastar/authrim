@@ -308,8 +308,8 @@ export async function adminUserAssuranceEvidenceCreateHandler(c: Context<{ Bindi
         issuer_ref: issuerRef,
         assurance_framework: IAL_FRAMEWORK_PENDING,
         assurance_level: level,
-        evidence_hash: hash as string | null,
-        evidence_storage_ref: storageRef as string | null,
+        evidence_hash: hash,
+        evidence_storage_ref: storageRef,
         verified_at: verifiedAt,
         expires_at: expiresAt,
       });

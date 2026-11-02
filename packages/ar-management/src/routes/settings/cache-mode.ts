@@ -111,7 +111,7 @@ export async function setPlatformCacheModeHandler(
       );
     }
 
-    await setPlatformCacheMode(c.env, body.mode as CacheMode);
+    await setPlatformCacheMode(c.env, body.mode);
 
     const ttlConfig = body.mode === 'maintenance' ? MAINTENANCE_MODE_TTL : FIXED_MODE_TTL;
 
@@ -251,7 +251,7 @@ export async function setClientCacheModeHandler(c: Context<{ Bindings: Env }>): 
     }
 
     const client = { tenantId: resolveSettingsTenantId(c), clientId };
-    await setClientCacheMode(c.env, client, body.mode as CacheMode | null);
+    await setClientCacheMode(c.env, client, body.mode);
 
     const effectiveMode = await getCacheMode(c.env, client);
 
