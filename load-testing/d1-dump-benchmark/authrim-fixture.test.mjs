@@ -52,13 +52,20 @@ function verification(database, start, count) {
 
 test('canonical draft files render with verified checksums and compile to the exact final schema', async () => {
   const loaded = await loadSchema();
-  assert.equal(loaded.profile.productVersion, '0.4.2');
-  assert.equal(loaded.migrations.length, 19);
-  assert.equal(loaded.migrations[0].path, 'migrations/core/d1/001_0_4_0_core_baseline.sql');
-  assert.equal(
-    loaded.migrations.at(-1).path,
-    'migrations/core/d1/019_oauth_client_minimum_ial.sql'
+  // The schema moves with every release: check its shape, not the release it was written against.
+  assert.match(loaded.profile.productVersion, /^\d+\.\d+\.\d+$/);
+  assert.ok(loaded.migrations.length >= 1);
+  const migrationNumbers = loaded.migrations.map((entry) => {
+    const match = /^migrations\/core\/d1\/(\d{3})_[a-z0-9_]+\.sql$/.exec(entry.path);
+    assert.ok(match, `unexpected migration path ${entry.path}`);
+    return Number(match[1]);
+  });
+  assert.equal(migrationNumbers[0], 1);
+  assert.deepEqual(
+    migrationNumbers,
+    [...migrationNumbers].sort((a, b) => a - b)
   );
+  assert.equal(new Set(migrationNumbers).size, migrationNumbers.length);
   assert.ok(loaded.migrations.every((entry) => /^[0-9a-f]{64}$/.test(entry.checksum)));
   const canonical = new DatabaseSync(':memory:');
   try {
@@ -289,7 +296,8 @@ test('application relationship validation detects an existing but cross-tenant s
     assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
     assert.equal(database.prepare(relationshipCheckSql(1, 2)).get().invalid_relationships, 1);
     assert.throws(
-      () => database.exec("UPDATE role_assignments SET role_id = 'missing-role'"),
+      // role_assignments.role_id is no longer a database foreign key (roles live in another D1).
+      () => database.exec("UPDATE subject_account_links SET subject_id = 'missing-subject'"),
       /FOREIGN KEY/
     );
   });
