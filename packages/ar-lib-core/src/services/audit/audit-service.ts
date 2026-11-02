@@ -436,7 +436,8 @@ export class AuditService implements IAuditService {
     const entryId = crypto.randomUUID();
     const createdAt = Date.now();
     const retentionUntil = calculateRetentionUntil(
-      this.resolveRetentionDays(auditProfile, config, 'pii', deliveryPlan.retentionDays)
+      this.resolveRetentionDays(auditProfile, config, 'pii', deliveryPlan.retentionDays),
+      new Date(createdAt)
     );
 
     // New PII records always resolve the live business mapping; only encrypted Queue retries
