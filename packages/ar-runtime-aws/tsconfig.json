@@ -2,6 +2,9 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "./dist",
+    // TypeScript 6 defaults rootDir to this directory, but the type check also reads the workspace
+    // sources this package imports (ar-lib-core, ar-saml).
+    "rootDir": "..",
     "types": ["@cloudflare/workers-types", "node"]
   },
   "include": ["src/**/*"],
