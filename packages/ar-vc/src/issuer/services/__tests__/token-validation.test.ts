@@ -77,13 +77,11 @@ describe('validateVCIAccessToken', () => {
     const publicJwk = await exportJWK(publicKey);
     const issuer = 'https://acme.oidc.example.com';
     const stub = {
-      fetch: vi.fn(async (request: Request) => {
-        const path = new URL(request.url).pathname;
-        if (path === '/ec/jwks') {
-          return Response.json({ keys: [{ ...publicJwk, alg: 'ES256', kid: 'key-1' }] });
-        }
-        return Response.json({ kid: 'key-1', publicKeyJwk: publicJwk, algorithm: 'ES256' });
-      }),
+      // The KeyManager's HTTP endpoints require the internal secret: keys come over RPC only.
+      fetch: vi.fn(async () => new Response('Unauthorized', { status: 401 })),
+      getVcIssuerJwksRpc: vi.fn(async () => ({
+        keys: [{ ...publicJwk, alg: 'ES256', kid: 'key-1' }],
+      })),
       signVCIAccessTokenRpc: vi.fn(
         async (input: {
           tenantId: string;
@@ -146,6 +144,41 @@ describe('validateVCIAccessToken', () => {
       offerId: 'g1:apac:1:co_offer-a',
     });
     expect((await validateVCIAccessToken(env, token, issuer, 'acme')).claims).toBeUndefined();
+  });
+
+  it.each([
+    { name: 'no kid', kid: undefined },
+    { name: 'a kid missing from the issuer keys (revoked or unknown)', kid: 'key-revoked' },
+  ])('rejects an access token signed with $name', async ({ kid }) => {
+    const { publicKey, privateKey } = await generateKeyPair('ES256', { extractable: true });
+    const publicJwk = await exportJWK(publicKey);
+    const issuer = 'https://acme.oidc.example.com';
+    const env = {
+      KEY_MANAGER: {
+        idFromName: vi.fn((name: string) => name),
+        get: vi.fn(() => ({
+          getVcIssuerJwksRpc: vi.fn(async () => ({
+            keys: [{ ...publicJwk, alg: 'ES256', kid: 'key-1' }],
+          })),
+        })),
+      },
+    } as unknown as Env;
+    const now = Math.floor(Date.now() / 1000);
+    // Signed with the published key's private half: only the kid decides the outcome.
+    const token = await new SignJWT({ tenant_id: 'acme', scope: 'credential' })
+      .setProtectedHeader({ alg: 'ES256', typ: 'at+jwt', ...(kid ? { kid } : {}) })
+      .setSubject('user-acme')
+      .setIssuedAt(now)
+      .setJti('token-jti')
+      .setExpirationTime(now + 300)
+      .setIssuer(`${issuer}/vci`)
+      .setAudience(issuer)
+      .sign(privateKey);
+
+    await expect(validateVCIAccessToken(env, token, issuer, 'acme')).resolves.toMatchObject({
+      valid: false,
+      error: 'Invalid signature',
+    });
   });
 
   it.each([

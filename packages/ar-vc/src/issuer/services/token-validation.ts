@@ -200,19 +200,16 @@ async function verifyTokenSignature(
     // local so this helper cannot later turn an untrusted JWT iss claim into a JWKS fetch target.
     const tenantId = requireTenantId(expectedTenantId, 'VCI access token signature');
     const doId = env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
-    const stub = env.KEY_MANAGER.get(doId);
+    // Over RPC: the KeyManager's HTTP `/ec/jwks` requires the internal secret. The VC issuer set
+    // also holds keys retained after rotation and never revoked ones.
+    const stub = env.KEY_MANAGER.get(doId) as unknown as {
+      getVcIssuerJwksRpc(): Promise<{ keys: Array<{ kid?: string; kty: string }> }>;
+    };
+    // KeyManager always signs VCI access tokens with a kid; without one the key is ambiguous.
+    if (typeof header.kid !== 'string' || !header.kid) return false;
+    const jwks = await stub.getVcIssuerJwksRpc();
 
-    const jwksResponse = await stub.fetch(new Request('https://internal/ec/jwks'));
-    if (!jwksResponse.ok) {
-      log.error('Failed to get JWKS from KeyManager', {});
-      return false;
-    }
-
-    const jwks = (await jwksResponse.json()) as { keys: Array<{ kid?: string; kty: string }> };
-
-    const key = header.kid
-      ? jwks.keys.find((k) => k.kid === header.kid)
-      : jwks.keys.find((k) => k.kty === 'EC');
+    const key = jwks.keys.find((k) => k.kid === header.kid);
 
     if (!key) {
       log.error('Signing key not found in JWKS', {});
