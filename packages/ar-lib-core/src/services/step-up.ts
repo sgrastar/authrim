@@ -942,9 +942,11 @@ function isValidCompletionInput(method: string, input: unknown, challenge: strin
     return false;
   }
   const record = input as Record<string, unknown>;
-  if (method === 'portal_confirm' || method === 'reauth') {
+  if (method === 'portal_confirm') {
     return record.confirmed === true;
   }
+  // `reauth` and `passkey` need a verified authentication, which this generic flow does not
+  // perform: a client's word that it re-authenticated is no evidence, so neither completes here.
   if (method === 'email_otp' || method === 'sms_otp') {
     return typeof record.code === 'string' && record.code === challenge;
   }

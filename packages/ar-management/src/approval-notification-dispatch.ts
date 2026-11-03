@@ -8,7 +8,10 @@ import type {
   Env,
 } from '@authrim/ar-lib-core';
 import { produceNotificationDelivery } from '@authrim/ar-lib-core';
-import { issueApprovalCompletionArtifact } from './approval-completion-artifact';
+import {
+  approvalArtifactReference,
+  issueApprovalCompletionArtifact,
+} from './approval-completion-artifact';
 import { issueApprovalOtpChallenge } from './approval-otp';
 import { resolveApprovalNotificationTransport } from './approval-notification-resolution';
 
@@ -209,9 +212,20 @@ async function sendViaNotifier(
     body: notification.body,
     metadata: notification.metadata,
   };
+  // What is kept as approval evidence: never the delivered body or metadata, which carry the
+  // approver's OTP and completion link.
+  const storedRequest = {
+    channel,
+    to: target,
+    from: payload.from,
+    subject: notification.subject,
+  };
 
   try {
-    const intentKey = completionArtifact?.artifact_id ?? crypto.randomUUID();
+    // Never the artifact itself: the intent id is stored and shown as the notification reference.
+    const intentKey = completionArtifact
+      ? await approvalArtifactReference(completionArtifact.artifact_id)
+      : crypto.randomUUID();
     const delivery = await produceNotificationDelivery(c.env, {
       owner: { owner: 'tenant', tenantId: input.request.tenant_id },
       intentId: `approval-notification:${intentKey}`,
@@ -251,7 +265,7 @@ async function sendViaNotifier(
             }
           : null,
       detail: {
-        request: payload,
+        request: storedRequest,
         response: {
           success,
           messageId: delivery.reference.intentId,
@@ -268,14 +282,9 @@ async function sendViaNotifier(
             transportChannel,
             metadataContext
           ),
-          approval_completion_artifact:
-            completionArtifact && completionPath
-              ? {
-                  artifact_id: completionArtifact.artifact_id,
-                  path: completionPath,
-                  expires_at: completionArtifact.expires_at,
-                }
-              : null,
+          approval_completion_artifact: completionArtifact
+            ? { expires_at: completionArtifact.expires_at }
+            : null,
           operator_input: input.operatorTransportDetail ?? null,
         },
       },
@@ -308,7 +317,7 @@ async function sendViaNotifier(
             }
           : null,
       detail: {
-        request: payload,
+        request: storedRequest,
         response: {
           success: false,
           error: message,
@@ -323,14 +332,9 @@ async function sendViaNotifier(
             transportChannel,
             metadataContext
           ),
-          approval_completion_artifact:
-            completionArtifact && completionPath
-              ? {
-                  artifact_id: completionArtifact.artifact_id,
-                  path: completionPath,
-                  expires_at: completionArtifact.expires_at,
-                }
-              : null,
+          approval_completion_artifact: completionArtifact
+            ? { expires_at: completionArtifact.expires_at }
+            : null,
           operator_input: input.operatorTransportDetail ?? null,
         },
       },
@@ -340,7 +344,7 @@ async function sendViaNotifier(
   }
 }
 
-function buildRecordedTransportResult(
+async function buildRecordedTransportResult(
   input: ApprovalNotificationDispatchInput,
   method: ApprovalTransportMethod,
   transportChannel: string | null,
@@ -351,9 +355,11 @@ function buildRecordedTransportResult(
   },
   completionArtifact?: ApprovalCompletionDispatchArtifact | null,
   completionPath?: string | null
-): ApprovalNotificationDispatchResult {
+): Promise<ApprovalNotificationDispatchResult> {
   const target = transportChannel || input.approval.subject_id || null;
-  const transportRequestId = completionArtifact?.artifact_id ?? crypto.randomUUID();
+  const transportRequestId = completionArtifact
+    ? await approvalArtifactReference(completionArtifact.artifact_id)
+    : crypto.randomUUID();
   return {
     success: true,
     method,
@@ -378,7 +384,6 @@ function buildRecordedTransportResult(
         channel: method,
         target,
         portal_path: buildApprovalPortalPath(input.request),
-        completion_path: completionPath ?? null,
         investigation_id: input.request.investigation_id,
       },
       response: {
@@ -394,14 +399,9 @@ function buildRecordedTransportResult(
           transportChannel,
           metadataContext
         ),
-        approval_completion_artifact:
-          completionArtifact && completionPath
-            ? {
-                artifact_id: completionArtifact.artifact_id,
-                path: completionPath,
-                expires_at: completionArtifact.expires_at,
-              }
-            : null,
+        approval_completion_artifact: completionArtifact
+          ? { expires_at: completionArtifact.expires_at }
+          : null,
         operator_input: input.operatorTransportDetail ?? null,
       },
     },
@@ -469,11 +469,7 @@ export async function dispatchApprovalNotification(
               transportChannel,
               metadataContext
             ),
-            approval_completion_artifact: {
-              artifact_id: completionArtifact.artifact_id,
-              path: completionPath,
-              expires_at: completionArtifact.expires_at,
-            },
+            approval_completion_artifact: { expires_at: completionArtifact.expires_at },
             operator_input: input.operatorTransportDetail ?? null,
           },
         },
@@ -571,7 +567,7 @@ export async function dispatchApprovalNotification(
     );
   }
 
-  return buildRecordedTransportResult(
+  return await buildRecordedTransportResult(
     input,
     method,
     transportChannel,

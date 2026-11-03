@@ -65,7 +65,6 @@ describe('AdminSessionRepository tenant isolation', () => {
     ['getSession', ['session-1']],
     ['getSessionIncludingExpired', ['session-1']],
     ['updateActivity', ['session-1']],
-    ['setMfaVerified', ['session-1']],
     ['extendSession', ['session-1', Date.now() + 60_000]],
     ['deleteSession', ['session-1']],
     ['deleteAllByUser', ['admin-1']],

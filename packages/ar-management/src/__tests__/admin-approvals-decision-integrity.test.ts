@@ -693,3 +693,64 @@ describe('who a request is filed by', () => {
     });
   });
 });
+
+describe('who may stand on an approval step', () => {
+  it('refuses the requester, an unknown admin and a non-admin as a named admin approver', async () => {
+    const { db, call } = setup();
+    const requestCount = () =>
+      (db.prepare('SELECT count(*) AS n FROM approval_requests').get() as { n: number }).n;
+    const admin = signIn(db);
+    const named = (step: Record<string, unknown>) =>
+      call(
+        admin.cookie,
+        'POST',
+        '',
+        createBody({ approvals: [{ step_key: 'operator-1', ...step }] })
+      );
+
+    expect(
+      (
+        await named({
+          side: 'admin_operator',
+          subject_type: 'admin_user',
+          subject_id: admin.userId,
+        })
+      ).status
+    ).toBe(409);
+    expect(
+      (await named({ side: 'admin_operator', subject_type: 'admin_user', subject_id: 'nobody' }))
+        .status
+    ).toBe(409);
+    expect(
+      (await named({ side: 'admin_operator', subject_type: 'end_user', subject_id: 'user-9' }))
+        .status
+    ).toBe(409);
+    // A request refused for its approvers is not stored.
+    expect(requestCount()).toBe(0);
+  });
+
+  it('refuses a data-owner approver other than the target user', async () => {
+    const { db, call } = setup();
+    const admin = signIn(db);
+
+    const res = await call(
+      admin.cookie,
+      'POST',
+      '',
+      createBody({
+        target_subject_type: 'user',
+        target_subject_id: 'user-1',
+        approvals: [
+          {
+            step_key: 'owner-1',
+            side: 'customer_data_owner',
+            subject_type: 'end_user',
+            subject_id: 'requester-chosen-user',
+          },
+        ],
+      })
+    );
+
+    expect(res.status).toBe(409);
+  });
+});

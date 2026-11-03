@@ -1,3 +1,4 @@
+import { resolveApprovalCompletionMode } from './approval-completion-guidance';
 import type { Context } from 'hono';
 import type {
   ApprovalRequest,
@@ -93,6 +94,19 @@ export async function switchApprovalArtifactMethod(
     request: input.request,
     approval: input.approval,
   });
+
+  // Whoever holds an artifact may switch its method; never from a verified method to one that
+  // only needs the artifact, which would turn holding it into approving.
+  if (
+    resolveApprovalCompletionMode(input.currentMethod) === 'step_up_required' &&
+    resolveApprovalCompletionMode(input.requestedMethod) !== 'step_up_required'
+  ) {
+    throw new ApprovalArtifactMethodSwitchError({
+      status: 409,
+      code: 'approval_completion_method_not_allowed',
+      message: 'A verified completion method cannot fall back to one that needs no verification.',
+    });
+  }
 
   if (!policy.acceptableMethods.includes(input.requestedMethod)) {
     throw new ApprovalArtifactMethodSwitchError({

@@ -45,7 +45,10 @@ import {
   appendApprovalTransportEvent,
   loadApprovalTransportDetail,
 } from '../../approval-transport-detail';
-import { issueApprovalCompletionArtifact } from '../../approval-completion-artifact';
+import {
+  approvalArtifactReference,
+  issueApprovalCompletionArtifact,
+} from '../../approval-completion-artifact';
 import { buildApprovalCompletionRequirements } from '../../approval-completion-guidance';
 import { buildApprovalGrantIntegrationHint } from '../../approval-grant-integration-hint';
 import { listApprovalDecisionReceiptsForEvidence } from '../../approval-decision-receipt-tracking';
@@ -85,8 +88,6 @@ interface ApprovalNotificationResult {
   method: ApprovalTransportMethod;
   transport_channel: string | null;
   completion_artifact?: {
-    artifact_id: string;
-    path: string;
     expires_at: number;
   } | null;
   success: boolean;
@@ -255,12 +256,9 @@ function formatNotificationResult(
     action,
     method: result.method,
     transport_channel: result.transportChannel,
+    // The artifact is the approver's: it is delivered to them, never returned to the caller.
     completion_artifact: result.completionArtifact
-      ? {
-          artifact_id: result.completionArtifact.artifactId,
-          path: result.completionArtifact.path,
-          expires_at: result.completionArtifact.expiresAt,
-        }
+      ? { expires_at: result.completionArtifact.expiresAt }
       : null,
     success: result.success,
     delivery_status: result.summary.delivery_status,
@@ -647,7 +645,9 @@ adminApprovalsRouter.post('/', async (c) => {
         variables: { field: 'expires_at', reason: 'expires_at must be in the future' },
       });
     }
-    const request = await requestRepo.createApprovalRequest({
+    // Approvers and their transports are decided before anything is stored: a request refused for
+    // its approvers must not remain.
+    const requestFields = {
       tenant_id: tenantId,
       investigation_id: scope.normalized.investigation_id ?? generateInvestigationId(),
       requester_subject_type: requester.type,
@@ -670,14 +670,24 @@ adminApprovalsRouter.post('/', async (c) => {
       reuse_scope: body.reuse_scope,
       partial_access_allowed: body.partial_access_allowed,
       expires_at: expiresAt,
-    });
-
-    const resolvedSteps = await resolveApprovalSteps(c as AdminContext, request, body.approvals);
-
-    const approvals = await Promise.all(
-      resolvedSteps.map(async (step) => {
-        const resolvedTransport = await resolveApprovalNotificationTransport(c as AdminContext, {
-          request,
+    };
+    const draftRequest = {
+      ...requestFields,
+      id: '',
+      public_request_id: '',
+      status: 'pending',
+      created_at: Date.now(),
+      updated_at: Date.now(),
+    } as unknown as ApprovalRequest;
+    const resolvedSteps = await resolveApprovalSteps(
+      c as AdminContext,
+      draftRequest,
+      body.approvals
+    );
+    const stepTransports = await Promise.all(
+      resolvedSteps.map((step) =>
+        resolveApprovalNotificationTransport(c as AdminContext, {
+          request: draftRequest,
           approval: {
             side: step.side,
             subject_type: step.subject_type,
@@ -686,8 +696,15 @@ adminApprovalsRouter.post('/', async (c) => {
             transport_channel: step.transport_channel ?? null,
           },
           strictMethod: !!step.method,
-        });
+        })
+      )
+    );
 
+    const request = await requestRepo.createApprovalRequest(requestFields);
+
+    const approvals = await Promise.all(
+      resolvedSteps.map(async (step, index) => {
+        const resolvedTransport = stepTransports[index];
         return approvalRepo.createApproval({
           approval_request_id: request.id,
           step_key: step.step_key,
@@ -1097,6 +1114,23 @@ adminApprovalsRouter.post('/:requestId/steps/:approvalId/artifacts', async (c) =
         409
       );
     }
+    // The artifact is handed to the approver, so it is issued only to a signed-in admin who did not
+    // file the request: never to a machine credential, which may name any requester.
+    const issuer = c.get('adminAuth');
+    if (
+      !issuer?.userId ||
+      issuer.authMethod !== 'session' ||
+      issuer.userId === request.requester_subject_id
+    ) {
+      return c.json(
+        {
+          error: 'approval_artifact_issuer_not_allowed',
+          error_description:
+            'A completion artifact is issued only to a signed-in admin other than the requester.',
+        },
+        403
+      );
+    }
 
     const resolvedTransport = await resolveApprovalNotificationTransport(c as AdminContext, {
       request,
@@ -1105,6 +1139,19 @@ adminApprovalsRouter.post('/:requestId/steps/:approvalId/artifacts', async (c) =
       overrideTransportChannel: body.transport_channel ?? approval.transport_channel ?? null,
       strictMethod: !!body.method,
     });
+
+    // An OTP artifact is useful only with the code sent for it, which a resend delivers to the
+    // approver; issuing one here would create an artifact no code exists for.
+    if (resolvedTransport.method === 'email_otp' || resolvedTransport.method === 'sms_otp') {
+      return c.json(
+        {
+          error: 'approval_artifact_method_needs_resend',
+          error_description:
+            'OTP completion is delivered with its code: resend the notification to the approver.',
+        },
+        409
+      );
+    }
 
     const artifact = await issueApprovalCompletionArtifact(c as AdminContext, {
       request,
@@ -1132,12 +1179,12 @@ adminApprovalsRouter.post('/:requestId/steps/:approvalId/artifacts', async (c) =
         delivery_status: 'issued',
         target: resolvedTransport.transportChannel ?? approval.subject_id ?? null,
         correlation_id: request.investigation_id,
-        transport_request_id: artifact.artifact_id,
+        transport_request_id: await approvalArtifactReference(artifact.artifact_id),
       },
       transportDetail: {
+        // Kept as evidence: the artifact itself stays with whoever it was issued to.
         request: {
-          artifact_id: artifact.artifact_id,
-          completion_path: `/api/approval-artifacts/${encodeURIComponent(artifact.artifact_id)}`,
+          expires_at: artifact.expires_at,
         },
         response: {
           issued: true,

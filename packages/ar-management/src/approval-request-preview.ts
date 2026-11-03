@@ -139,6 +139,43 @@ const RELATIONSHIP_TO_APPROVAL_RELATION_TYPE: Record<string, UserApprovalRelatio
   delegate: 'care_delegate',
 };
 
+/** The delegates (guardians, parents, carers) the target user has a live relationship with. */
+async function loadTargetDelegates(
+  c: AdminContext,
+  request: ApprovalRequest
+): Promise<Array<{ relationship_type: string; from_id: string }>> {
+  if (request.target_subject_type !== 'user') {
+    throw new ApprovalStepResolutionError(
+      'guardian_delegate approval requires a user target subject'
+    );
+  }
+  const account = await resolveAccountDataContext(c.env, {
+    tenantId: request.tenant_id,
+    accountId: `account:${request.target_subject_id}`,
+  });
+  if (account.legacyUserId !== request.target_subject_id) {
+    throw new ApprovalStepResolutionError('guardian_delegate target route is inconsistent');
+  }
+  const coreAdapter = ensureDatabaseAdapter(account.coreDb, 'admin-approvals-guardian-resolution');
+  return coreAdapter.query<{ relationship_type: string; from_id: string }>(
+    `SELECT relationship_type, from_id
+       FROM relationships
+      WHERE tenant_id = ?
+        AND to_type = 'subject'
+        AND to_id = ?
+        AND from_type = 'subject'
+        AND relationship_type IN ('parent_child', 'guardian', 'delegate')
+        AND (expires_at IS NULL OR expires_at > ?)
+      ORDER BY created_at ASC`,
+    [request.tenant_id, request.target_subject_id, Math.floor(Date.now() / 1000)]
+  );
+}
+
+/**
+ * The approvers of a request, decided server-side: whoever files a request (its requester among
+ * them) names the sides, never who stands on them. A data owner is the target user, a guardian
+ * one of the target's live delegates, and an admin approver another active admin.
+ */
 export async function resolveApprovalSteps(
   c: AdminContext,
   request: ApprovalRequest,
@@ -147,10 +184,18 @@ export async function resolveApprovalSteps(
   const resolved: ApprovalRequestPreviewStepInput[] = [];
 
   for (const step of steps) {
-    if (step.side === 'customer_data_owner' && !step.subject_id) {
+    if (step.side === 'customer_data_owner') {
       if (request.target_subject_type !== 'user') {
         throw new ApprovalStepResolutionError(
-          'customer_data_owner auto resolution requires a user target subject'
+          'customer_data_owner approval requires a user target subject'
+        );
+      }
+      if (
+        (step.subject_id !== undefined && step.subject_id !== request.target_subject_id) ||
+        (step.subject_type !== undefined && step.subject_type !== 'end_user')
+      ) {
+        throw new ApprovalStepResolutionError(
+          'customer_data_owner approver must be the target user'
         );
       }
 
@@ -163,47 +208,29 @@ export async function resolveApprovalSteps(
       continue;
     }
 
-    if (step.side === 'guardian_delegate' && !step.subject_id) {
-      if (request.target_subject_type !== 'user') {
+    if (step.side === 'guardian_delegate') {
+      const delegates = await loadTargetDelegates(c, request);
+      const chosen =
+        step.subject_id === undefined
+          ? delegates
+          : delegates.filter((relationship) => relationship.from_id === step.subject_id);
+      if (step.subject_type !== undefined && step.subject_type !== 'customer_delegate') {
         throw new ApprovalStepResolutionError(
-          'guardian_delegate auto resolution requires a user target subject'
+          'guardian_delegate approver must be a delegate of the target user'
+        );
+      }
+      if (chosen.length === 0) {
+        throw new ApprovalStepResolutionError(
+          step.subject_id === undefined
+            ? 'guardian_delegate auto resolution found no valid delegate relationships'
+            : 'guardian_delegate approver must be a delegate of the target user'
         );
       }
 
-      const account = await resolveAccountDataContext(c.env, {
-        tenantId: request.tenant_id,
-        accountId: `account:${request.target_subject_id}`,
-      });
-      if (account.legacyUserId !== request.target_subject_id) {
-        throw new ApprovalStepResolutionError('guardian_delegate target route is inconsistent');
-      }
-      const coreAdapter = ensureDatabaseAdapter(
-        account.coreDb,
-        'admin-approvals-guardian-resolution'
-      );
-      const relationships = await coreAdapter.query<{ relationship_type: string; from_id: string }>(
-        `SELECT relationship_type, from_id
-           FROM relationships
-          WHERE tenant_id = ?
-            AND to_type = 'subject'
-            AND to_id = ?
-            AND from_type = 'subject'
-            AND relationship_type IN ('parent_child', 'guardian', 'delegate')
-            AND (expires_at IS NULL OR expires_at > ?)
-          ORDER BY created_at ASC`,
-        [request.tenant_id, request.target_subject_id, Math.floor(Date.now() / 1000)]
-      );
-
-      if (relationships.length === 0) {
-        throw new ApprovalStepResolutionError(
-          'guardian_delegate auto resolution found no valid delegate relationships'
-        );
-      }
-
-      relationships.forEach((relationship, index) => {
+      chosen.forEach((relationship, index) => {
         resolved.push({
           ...step,
-          step_key: relationships.length === 1 ? step.step_key : `${step.step_key}:${index + 1}`,
+          step_key: chosen.length === 1 ? step.step_key : `${step.step_key}:${index + 1}`,
           subject_type: 'customer_delegate',
           subject_id: relationship.from_id,
           relation_type:
@@ -216,6 +243,28 @@ export async function resolveApprovalSteps(
       continue;
     }
 
+    // admin_operator: unnamed, any other admin approves it signed in (the decision checks it is not
+    // the requester); named, it must be another active admin of the tenant.
+    if (step.subject_id !== undefined) {
+      if (step.subject_type !== 'admin_user') {
+        throw new ApprovalStepResolutionError('a named admin_operator approver must be an admin');
+      }
+      if (step.subject_id === request.requester_subject_id) {
+        throw new ApprovalStepResolutionError('the requester cannot approve its own request');
+      }
+      const adminDb: unknown = (c.env as { DB_ADMIN?: unknown }).DB_ADMIN;
+      const adminAdapter = ensureDatabaseAdapter(
+        adminDb as Parameters<typeof ensureDatabaseAdapter>[0],
+        'admin-approvals-admin-approver'
+      );
+      const admin = await adminAdapter.queryOne<{ id: string }>(
+        `SELECT id FROM admin_users WHERE tenant_id = ? AND id = ? AND is_active = 1`,
+        [request.tenant_id, step.subject_id]
+      );
+      if (!admin) {
+        throw new ApprovalStepResolutionError('admin_operator approver must be an active admin');
+      }
+    }
     resolved.push(step);
   }
 

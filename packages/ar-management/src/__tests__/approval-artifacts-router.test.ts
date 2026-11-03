@@ -27,17 +27,22 @@ const {
     findByCredentialId: vi.fn(),
     updateCounter: vi.fn(),
   },
-  mockSessionRepo: {
-    setMfaVerified: vi.fn(),
-  },
+  mockSessionRepo: {},
 }));
 
-const { mockGetApprovalCompletionArtifact, mockConsumeApprovalCompletionArtifact } = vi.hoisted(
-  () => ({
-    mockGetApprovalCompletionArtifact: vi.fn(),
-    mockConsumeApprovalCompletionArtifact: vi.fn(),
-  })
-);
+const {
+  mockGetApprovalCompletionArtifact,
+  mockConsumeApprovalCompletionArtifact,
+  mockRecordApprovalCompletionProof,
+  mockFindApprovalCompletionProof,
+  mockDiscardApprovalCompletionProof,
+} = vi.hoisted(() => ({
+  mockGetApprovalCompletionArtifact: vi.fn(),
+  mockConsumeApprovalCompletionArtifact: vi.fn(),
+  mockRecordApprovalCompletionProof: vi.fn(),
+  mockFindApprovalCompletionProof: vi.fn(),
+  mockDiscardApprovalCompletionProof: vi.fn(),
+}));
 
 const { mockIssueApprovalDecisionReceipt } = vi.hoisted(() => ({
   mockIssueApprovalDecisionReceipt: vi.fn(),
@@ -112,6 +117,11 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         roles: ['ar_tenant_admin'],
         hierarchyLevel: 50,
         mfaVerified: c.req.header('X-Admin-Mfa-Verified') !== 'false',
+        authenticationTimeMs: Number(
+          (c as { req: { header(name: string): string | undefined } }).req.header(
+            'X-Admin-Auth-Time-Ms'
+          ) ?? Date.now()
+        ),
         sessionId: c.req.header('X-Admin-Session-Id') ?? 'admin-session-1',
       });
       await next();
@@ -135,9 +145,15 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   };
 });
 
-vi.mock('../approval-completion-artifact', () => ({
+vi.mock('../approval-completion-artifact', async (importOriginal) => ({
+  approvalArtifactReference: (
+    await importOriginal<typeof import('../approval-completion-artifact')>()
+  ).approvalArtifactReference,
   getApprovalCompletionArtifact: mockGetApprovalCompletionArtifact,
   consumeApprovalCompletionArtifact: mockConsumeApprovalCompletionArtifact,
+  recordApprovalCompletionProof: mockRecordApprovalCompletionProof,
+  findApprovalCompletionProof: mockFindApprovalCompletionProof,
+  discardApprovalCompletionProof: mockDiscardApprovalCompletionProof,
 }));
 
 vi.mock('../approval-completion-receipt', () => ({
@@ -433,7 +449,9 @@ describe('approval artifacts router', () => {
       last_used_at: null,
     });
     mockPasskeyRepo.updateCounter.mockResolvedValue(true);
-    mockSessionRepo.setMfaVerified.mockResolvedValue(true);
+    mockRecordApprovalCompletionProof.mockReset().mockResolvedValue(undefined);
+    mockFindApprovalCompletionProof.mockReset().mockResolvedValue(null);
+    mockDiscardApprovalCompletionProof.mockReset().mockResolvedValue(undefined);
     (mockEnv.AUTHRIM_CONFIG!.get as any).mockReset().mockResolvedValue(null);
     (mockEnv.AUTHRIM_CONFIG!.put as any).mockResolvedValue(undefined);
     (mockEnv.AUTHRIM_CONFIG!.delete as any).mockResolvedValue(undefined);
@@ -1082,7 +1100,41 @@ describe('approval artifacts router', () => {
         actor_subject_id: 'admin-2',
       })
     );
-    expect(mockSessionRepo.setMfaVerified).toHaveBeenCalledWith('session-reauth-1');
+    // The verified completion is recorded server-side; the session's auth time is not renewed.
+    const [, recordedArtifact, recordedProof] = mockRecordApprovalCompletionProof.mock.calls[0] as [
+      unknown,
+      { artifact_id: string },
+      { method: string; actor_subject_id: string },
+    ];
+    expect(recordedArtifact.artifact_id).toBe('apc_1');
+    expect(recordedProof).toMatchObject({ method: 'reauth', actor_subject_id: 'admin-2' });
+  });
+
+  it('refuses reauth completion for a session that did not authenticate recently', async () => {
+    mockGetApprovalCompletionArtifact.mockResolvedValueOnce(
+      makeArtifact({ method: 'reauth', transport_channel: 'reauth' })
+    );
+    mockApprovalRepo.getApprovalById.mockResolvedValueOnce(
+      makeApproval({ method: 'reauth', transport_channel: 'reauth' })
+    );
+
+    const res = await createApp().request(
+      '/api/approval-artifacts/apc_1/reauth/assert',
+      {
+        method: 'POST',
+        headers: {
+          'X-Admin-User-Id': 'admin-2',
+          'X-Admin-Auth-Method': 'session',
+          'X-Admin-Session-Id': 'session-reauth-1',
+          'X-Admin-Auth-Time-Ms': String(Date.now() - 6 * 60 * 1000),
+        },
+      },
+      mockEnv
+    );
+
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toMatchObject({ error: 'approval_reauth_required' });
+    expect(mockRecordApprovalCompletionProof).not.toHaveBeenCalled();
   });
 
   it('verifies an approval OTP and returns a completion assertion', async () => {
@@ -1136,7 +1188,66 @@ describe('approval artifacts router', () => {
     );
   });
 
+  it('refuses to approve an admin step by merely holding its artifact', async () => {
+    const res = await createApp().request(
+      '/api/approval-artifacts/apc_1/complete',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision: 'approved' }),
+      },
+      mockEnv
+    );
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({ error: 'step_up_required' });
+    expect(mockConsumeApprovalCompletionArtifact).not.toHaveBeenCalled();
+  });
+
+  it("refuses to approve a data owner's step by holding its link", async () => {
+    mockGetApprovalCompletionArtifact.mockResolvedValueOnce(
+      makeArtifact({
+        approver_side: 'customer_data_owner',
+        approver_subject_type: 'end_user',
+        approver_subject_id: 'owner-1',
+      })
+    );
+    mockApprovalRepo.getApprovalById.mockResolvedValueOnce(
+      makeApproval({ side: 'customer_data_owner', subject_type: 'end_user', subject_id: 'owner-1' })
+    );
+
+    const res = await createApp().request(
+      '/api/approval-artifacts/apc_1/complete',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision: 'approved' }),
+      },
+      mockEnv
+    );
+
+    expect(res.status).toBe(409);
+    expect(mockConsumeApprovalCompletionArtifact).not.toHaveBeenCalled();
+  });
+
   it('consumes an artifact and applies the decision', async () => {
+    // A link-confirmed step: only a non-admin service principal keeps one.
+    const ownerStep = {
+      approver_side: 'customer_data_owner',
+      approver_subject_type: 'service_principal',
+      approver_subject_id: 'svc-1',
+    } as const;
+    mockGetApprovalCompletionArtifact.mockResolvedValueOnce(makeArtifact(ownerStep));
+    mockConsumeApprovalCompletionArtifact.mockResolvedValueOnce(
+      makeArtifact({ ...ownerStep, consumed: true })
+    );
+    mockApprovalRepo.getApprovalById.mockResolvedValueOnce(
+      makeApproval({
+        side: 'customer_data_owner',
+        subject_type: 'service_principal',
+        subject_id: 'svc-1',
+      })
+    );
     const app = createApp();
     const res = await app.request(
       '/api/approval-artifacts/apc_1/complete',
@@ -1372,13 +1483,125 @@ describe('approval artifacts router', () => {
     );
   });
 
-  it('accepts a matching completion assertion for step-up methods', async () => {
+  it('refuses a client-made completion assertion that the server never recorded', async () => {
+    mockGetApprovalCompletionArtifact.mockResolvedValueOnce(
+      makeArtifact({ method: 'passkey', transport_channel: 'passkey' })
+    );
+    mockApprovalRepo.getApprovalById.mockResolvedValueOnce(
+      makeApproval({ method: 'passkey', transport_channel: 'passkey' })
+    );
+
+    const res = await createApp().request(
+      '/api/approval-artifacts/apc_1/complete',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          decision: 'approved',
+          completion_assertion: {
+            method: 'passkey',
+            actor_subject_type: 'admin_user',
+            actor_subject_id: 'admin-2',
+          },
+        }),
+      },
+      mockEnv
+    );
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({ error: 'step_up_required' });
+    expect(mockConsumeApprovalCompletionArtifact).not.toHaveBeenCalled();
+    expect(mockApplyApprovalDecisionForRequest).not.toHaveBeenCalled();
+  });
+
+  it('refuses a recorded proof of another approver', async () => {
+    mockGetApprovalCompletionArtifact.mockResolvedValueOnce(
+      makeArtifact({ method: 'passkey', transport_channel: 'passkey' })
+    );
+    mockApprovalRepo.getApprovalById.mockResolvedValueOnce(
+      makeApproval({ method: 'passkey', transport_channel: 'passkey' })
+    );
+    mockFindApprovalCompletionProof.mockResolvedValueOnce({
+      method: 'passkey',
+      actor_subject_type: 'admin_user',
+      actor_subject_id: 'someone-else',
+      verified_at: Date.now(),
+      metadata: {},
+    });
+
+    const res = await createApp().request(
+      '/api/approval-artifacts/apc_1/complete',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision: 'approved' }),
+      },
+      mockEnv
+    );
+
+    expect(res.status).toBe(403);
+    expect(mockConsumeApprovalCompletionArtifact).not.toHaveBeenCalled();
+  });
+
+  it('approves a CIBA artifact only once the server records the approval', async () => {
+    const cibaArtifact = makeArtifact({ method: 'ciba', transport_channel: 'ciba' });
+    mockGetApprovalCompletionArtifact.mockResolvedValue(cibaArtifact);
+    mockApprovalRepo.getApprovalById.mockResolvedValue(
+      makeApproval({ method: 'ciba', transport_channel: 'ciba' })
+    );
+    const complete = () =>
+      createApp().request(
+        '/api/approval-artifacts/apc_1/complete',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            decision: 'approved',
+            completion_assertion: { method: 'ciba', actor_subject_id: 'admin-2' },
+          }),
+        },
+        mockEnv
+      );
+
+    mockGetApprovalCibaStatus.mockResolvedValueOnce({ authReqId: 'req-1', status: 'pending' });
+    expect((await complete()).status).toBe(409);
+    expect(mockConsumeApprovalCompletionArtifact).not.toHaveBeenCalled();
+
+    mockGetApprovalCibaStatus.mockResolvedValueOnce({
+      authReqId: 'req-1',
+      status: 'approved',
+      decisionAt: 123,
+    });
+    mockConsumeApprovalCompletionArtifact.mockResolvedValueOnce({
+      ...cibaArtifact,
+      consumed: true,
+    });
+    expect((await complete()).status).toBe(200);
+    const [, , decision] = mockApplyApprovalDecisionForRequest.mock.calls[0] as [
+      unknown,
+      unknown,
+      { transportDetail: { metadata: { completion_assertion: unknown } } },
+    ];
+    expect(decision.transportDetail.metadata.completion_assertion).toMatchObject({
+      method: 'ciba',
+      metadata: { auth_req_id: 'req-1' },
+    });
+  });
+
+  it('accepts a step-up approval with the proof the server recorded', async () => {
     mockGetApprovalCompletionArtifact.mockResolvedValueOnce(
       makeArtifact({
         method: 'passkey',
         transport_channel: 'passkey',
       })
     );
+    mockFindApprovalCompletionProof.mockResolvedValueOnce({
+      method: 'passkey',
+      actor_subject_type: 'admin_user',
+      actor_subject_id: 'admin-2',
+      verified_at: Date.now(),
+      metadata: { source: 'admin_passkey' },
+    });
     mockApprovalRepo.getApprovalById.mockResolvedValueOnce(
       makeApproval({
         method: 'passkey',

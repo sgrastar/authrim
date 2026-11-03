@@ -43,6 +43,25 @@ function dedupeMethods(methods: readonly ApprovalTransportMethod[]): ApprovalTra
   return Array.from(new Set(methods));
 }
 
+/** Whether the step's approver is an admin, who always has an admin session and a passkey. */
+export function isAdminApprover(
+  approval: Pick<ApprovalRequestApproval, 'side' | 'subject_type'>
+): boolean {
+  return approval.side === 'admin_operator' || approval.subject_type === 'admin_user';
+}
+
+/**
+ * Whether the step's approver must verify (passkey, OTP, CIBA) rather than confirm a link. Every
+ * person does: a link-confirmed artifact is never delivered to its approver, so it reaches them
+ * only through an admin, who could then approve in their place. Only a non-admin service
+ * principal keeps link confirmation.
+ */
+export function requiresVerifiedApproval(
+  approval: Pick<ApprovalRequestApproval, 'side' | 'subject_type'>
+): boolean {
+  return isAdminApprover(approval) || approval.subject_type !== 'service_principal';
+}
+
 function resolveDefaultMethodOrder(
   request: RequestPolicyContext,
   approval: ApprovalPolicyContext
@@ -51,29 +70,29 @@ function resolveDefaultMethodOrder(
     request.policy_preset === 'security_investigation_default' ||
     request.policy_preset === 'compliance_review_default';
 
-  if (approval.side === 'admin_operator' || approval.subject_type === 'admin_user') {
-    if (isHighAssurancePreset) {
-      return ['passkey', 'reauth', 'portal_confirm'];
-    }
-    return ['portal_confirm', 'passkey', 'reauth'];
+  // An admin approves as an authenticated admin: never by merely holding a link, which the
+  // requester (an admin too) can obtain.
+  if (isAdminApprover(approval)) {
+    return ['passkey', 'reauth'];
   }
 
   if (approval.subject_type === 'service_principal') {
     return ['reauth', 'portal_confirm'];
   }
 
+  // A data owner or guardian verifies with a code sent to their own verified contact.
   if (approval.side === 'guardian_delegate') {
     if (isHighAssurancePreset) {
-      return ['ciba', 'portal_confirm', 'email_otp', 'sms_otp', 'passkey', 'reauth'];
+      return ['ciba', 'email_otp', 'sms_otp', 'passkey', 'reauth'];
     }
-    return ['portal_confirm', 'email_otp', 'sms_otp', 'ciba', 'passkey', 'reauth'];
+    return ['email_otp', 'sms_otp', 'ciba', 'passkey', 'reauth'];
   }
 
   if (isHighAssurancePreset) {
-    return ['ciba', 'portal_confirm', 'email_otp', 'sms_otp', 'passkey', 'reauth'];
+    return ['ciba', 'email_otp', 'sms_otp', 'passkey', 'reauth'];
   }
 
-  return ['portal_confirm', 'email_otp', 'sms_otp', 'ciba', 'passkey', 'reauth'];
+  return ['email_otp', 'sms_otp', 'ciba', 'passkey', 'reauth'];
 }
 
 function resolveDefaultTransportChannel(
@@ -118,6 +137,12 @@ export function resolveApprovalNotificationPolicy(input: {
     source = 'approval_step';
   } else {
     method = acceptableMethods[0] ?? 'portal_confirm';
+  }
+  // Not even explicitly: a step of a person stored or requested with portal_confirm uses a
+  // verified method.
+  if (requiresVerifiedApproval(approval) && !acceptableMethods.includes(method)) {
+    method = acceptableMethods[0];
+    source = 'policy_default';
   }
 
   const resolvedChannel =
