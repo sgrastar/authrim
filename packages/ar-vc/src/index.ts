@@ -17,6 +17,7 @@
  * @see https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html
  */
 
+import { VC_RATE_LIMITS } from './rate-limits';
 import { runSamlDrCoveredFetch } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
@@ -81,25 +82,20 @@ app.use('*', cors());
 async function applyRateLimit(
   c: Parameters<ReturnType<typeof rateLimitMiddleware>>[0],
   next: () => Promise<void>,
-  profileName: 'strict' | 'moderate' | 'lenient',
-  endpoints: string[]
+  limit: (typeof VC_RATE_LIMITS)[number]
 ): Promise<Response | void> {
-  const profile = await getRateLimitProfileAsync(c.env, profileName);
-  return rateLimitMiddleware({ ...profile, endpoints })(c, next);
+  const config = await getRateLimitProfileAsync(c.env, limit.profile);
+  return rateLimitMiddleware({
+    ...config,
+    endpoints: [limit.endpoint],
+    endpointClass: limit.endpointClass,
+  })(c, next);
 }
 
-app.use('/vci/token', (c, next) => applyRateLimit(c as never, next, 'strict', ['/vci/token']));
-app.use('/vci/credential', (c, next) =>
-  applyRateLimit(c as never, next, 'strict', ['/vci/credential'])
-);
-app.use('/vp/response', (c, next) => applyRateLimit(c as never, next, 'strict', ['/vp/response']));
-app.use('/vp/attribute-response', (c, next) =>
-  applyRateLimit(c as never, next, 'strict', ['/vp/attribute-response'])
-);
-app.use('/vp/initiate', (c, next) => applyRateLimit(c as never, next, 'strict', ['/vp/initiate']));
-app.use('/vp/attributes', (c, next) =>
-  applyRateLimit(c as never, next, 'moderate', ['/vp/attributes'])
-);
+for (const limit of VC_RATE_LIMITS) {
+  app.use(limit.path, (c, next) => applyRateLimit(c as never, next, limit));
+}
+
 const attributeProtectedResource = createActiveAccessTokenProtectedResourceMiddleware({
   audience: (c) => c.env.VC_ATTRIBUTE_ELEVATION_AUDIENCE ?? 'svc://op-vc/attribute-elevation',
   requiredScopes: ['vc.attribute'],
@@ -107,29 +103,6 @@ const attributeProtectedResource = createActiveAccessTokenProtectedResourceMiddl
 app.use('/vp/initiate', attributeProtectedResource as never);
 app.use('/vp/attribute-response', attributeProtectedResource as never);
 app.use('/vp/attributes', attributeProtectedResource as never);
-app.use('/vci/nonce', (c, next) => applyRateLimit(c as never, next, 'moderate', ['/vci/nonce']));
-app.use('/vp/authorize', (c, next) =>
-  applyRateLimit(c as never, next, 'moderate', ['/vp/authorize'])
-);
-app.use('/vp/requests/*', (c, next) =>
-  applyRateLimit(c as never, next, 'moderate', ['/vp/requests/'])
-);
-app.use('/vp/request/*', (c, next) =>
-  applyRateLimit(c as never, next, 'lenient', ['/vp/request/'])
-);
-app.use('/vci/deferred', (c, next) =>
-  applyRateLimit(c as never, next, 'moderate', ['/vci/deferred'])
-);
-app.use('/vci/status-lists/*', (c, next) =>
-  applyRateLimit(c as never, next, 'moderate', ['/vci/status-lists/'])
-);
-app.use('/.well-known/*', (c, next) =>
-  applyRateLimit(c as never, next, 'lenient', ['/.well-known/'])
-);
-app.use('/vci/offers/*', (c, next) =>
-  applyRateLimit(c as never, next, 'lenient', ['/vci/offers/'])
-);
-app.use('/did/*', (c, next) => applyRateLimit(c as never, next, 'lenient', ['/did/']));
 
 // =============================================================================
 // Health Check
