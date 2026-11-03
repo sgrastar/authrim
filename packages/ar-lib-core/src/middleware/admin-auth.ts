@@ -457,6 +457,8 @@ export async function authenticateAdminSessionForTenant(
       expires_at: number;
       mfa_verified: number;
       mfa_verified_at: number | null;
+      passkey_verified_at?: number | null;
+      passkey_credential_id?: string | null;
       created_at: number;
       parent_session_id?: string | null;
       derived_target_tenant_id?: string | null;
@@ -639,10 +641,14 @@ export async function authenticateAdminSessionForTenant(
       permissions: Array.from(allPermissions),
       hierarchyLevel: maxHierarchyLevel,
       mfaVerified: Boolean(session.mfa_verified),
+      // The last verified passkey (sign-in or in-session re-authentication). A session created
+      // before passkey evidence was recorded falls back to its sign-in time.
       authenticationTimeMs:
-        session.mfa_verified_at && session.mfa_verified_at > session.created_at
+        session.passkey_verified_at ??
+        (session.mfa_verified_at && session.mfa_verified_at > session.created_at
           ? session.mfa_verified_at
-          : session.created_at,
+          : session.created_at),
+      passkeyCredentialId: session.passkey_credential_id ?? undefined,
       sessionId: session.id,
       sessionExpiresAt: session.expires_at,
       tenantScope: hasGlobalScope ? ['*'] : [session.derived_target_tenant_id ?? session.tenant_id],
@@ -829,6 +835,8 @@ function isPlatformAdminSessionPath(path: string): boolean {
   return (
     path === '/api/admin/me/session' ||
     path === '/api/admin/me/session/' ||
+    // Re-authentication records on the session row, which belongs to the session's own tenant.
+    /^\/api\/admin\/me\/reauth\/passkey\/(?:options|verify)\/?$/u.test(path) ||
     /^\/api\/admin\/agent-login-handoffs\/alh_[A-Za-z0-9_-]{32}\/approve\/?$/u.test(path)
   );
 }

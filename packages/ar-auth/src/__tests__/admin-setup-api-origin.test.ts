@@ -662,7 +662,10 @@ describe('admin setup API rejection matrix', () => {
       expect.any(Number),
       expect.any(Number),
       1,
-      expect.any(Number)
+      expect.any(Number),
+      // The sign-in passkey is the session's first passkey evidence.
+      expect.any(Number),
+      expect.any(String)
     );
   });
 });

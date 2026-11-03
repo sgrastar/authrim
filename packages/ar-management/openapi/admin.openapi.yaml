@@ -31382,6 +31382,98 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  /api/admin/me/reauth/passkey/options:
+    post:
+      tags:
+        - Admin Passkeys
+      operationId: postApiAdminMeReauthPasskeyOptions
+      summary: Create passkey re-authentication options
+      description: >-
+        Generate WebAuthn assertion options for one of the current admin's own passkeys and store a
+        single-use challenge bound to the admin session, its origin and RP ID. Only a human admin
+        session can re-authenticate; bearer and machine credentials are refused.
+        A selected tenant runtime snapshot is not required.
+      x-authrim-route-coverage: inferred-from-source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - rp_id
+              properties:
+                rp_id:
+                  type: string
+                  description: WebAuthn RP ID; must match the browser origin.
+      responses:
+        '200':
+          description: Assertion options and the challenge identifier.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - options
+                  - challenge_id
+                properties:
+                  options:
+                    type: object
+                    additionalProperties: true
+                  challenge_id:
+                    type: string
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/me/reauth/passkey/verify:
+    post:
+      tags:
+        - Admin Passkeys
+      operationId: postApiAdminMeReauthPasskeyVerify
+      summary: Verify passkey re-authentication
+      description: >-
+        Consume the re-authentication challenge, verify a user-verified assertion from one of the
+        current admin's own passkeys, and record it on the admin session. Operations that need a
+        fresh admin authentication accept the session again for their window.
+        A selected tenant runtime snapshot is not required.
+      x-authrim-route-coverage: inferred-from-source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - challenge_id
+                - credential
+              properties:
+                challenge_id:
+                  type: string
+                credential:
+                  type: object
+                  additionalProperties: true
+                  description: WebAuthn AuthenticationResponseJSON.
+      responses:
+        '200':
+          description: The session was re-authenticated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - verified
+                  - authenticated_at
+                properties:
+                  verified:
+                    type: boolean
+                  authenticated_at:
+                    type: integer
+                    description: Verification time in milliseconds since the epoch.
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
   /api/admin/notifications:
     get:
       tags:

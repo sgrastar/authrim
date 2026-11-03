@@ -25,6 +25,8 @@ interface AdminSessionEntity extends BaseEntity {
   last_activity_at: number | null;
   mfa_verified: boolean;
   mfa_verified_at: number | null;
+  passkey_verified_at: number | null;
+  passkey_credential_id: string | null;
 }
 
 /**
@@ -74,6 +76,8 @@ export class AdminSessionRepository extends BaseRepository<AdminSessionEntity> {
       updated_at: now,
       mfa_verified: input.mfa_verified ?? false,
       mfa_verified_at: input.mfa_verified ? now : null,
+      passkey_verified_at: input.passkey_credential_id ? now : null,
+      passkey_credential_id: input.passkey_credential_id ?? null,
     };
 
     if (session.tenant_id !== this.tenantId) {
@@ -83,8 +87,9 @@ export class AdminSessionRepository extends BaseRepository<AdminSessionEntity> {
     const sql = `
       INSERT INTO admin_sessions (
         id, tenant_id, admin_user_id, ip_address, user_agent,
-        created_at, expires_at, last_activity_at, mfa_verified, mfa_verified_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        created_at, expires_at, last_activity_at, mfa_verified, mfa_verified_at,
+        passkey_verified_at, passkey_credential_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     await this.adapter.execute(sql, [
@@ -98,6 +103,8 @@ export class AdminSessionRepository extends BaseRepository<AdminSessionEntity> {
       session.last_activity_at,
       session.mfa_verified ? 1 : 0,
       session.mfa_verified_at,
+      session.passkey_verified_at,
+      session.passkey_credential_id,
     ]);
 
     return this.entityToSession(session);
@@ -130,6 +137,26 @@ export class AdminSessionRepository extends BaseRepository<AdminSessionEntity> {
       [this.tenantId, id]
     );
     return row ? this.rowToSession(row) : null;
+  }
+
+  /**
+   * Record a passkey verification for a live session. Call it only after verifying a passkey
+   * assertion with user verification, bound to this session: the recorded time is what
+   * fresh-auth checks trust.
+   *
+   * @returns True if the session was live and updated
+   */
+  async recordPasskeyVerification(
+    id: string,
+    credentialId: string,
+    verifiedAt: number = getCurrentTimestamp()
+  ): Promise<boolean> {
+    const result = await this.adapter.execute(
+      `UPDATE admin_sessions SET passkey_verified_at = ?, passkey_credential_id = ?
+        WHERE tenant_id = ? AND id = ? AND expires_at > ?`,
+      [verifiedAt, credentialId, this.tenantId, id, verifiedAt]
+    );
+    return result.rowsAffected > 0;
   }
 
   /**
@@ -280,6 +307,8 @@ export class AdminSessionRepository extends BaseRepository<AdminSessionEntity> {
       last_activity_at: row.last_activity_at as number | null,
       mfa_verified: Boolean(row.mfa_verified),
       mfa_verified_at: row.mfa_verified_at as number | null,
+      passkey_verified_at: (row.passkey_verified_at as number | null | undefined) ?? null,
+      passkey_credential_id: (row.passkey_credential_id as string | null | undefined) ?? null,
     };
   }
 
@@ -298,6 +327,8 @@ export class AdminSessionRepository extends BaseRepository<AdminSessionEntity> {
       last_activity_at: entity.last_activity_at,
       mfa_verified: entity.mfa_verified,
       mfa_verified_at: entity.mfa_verified_at,
+      passkey_verified_at: entity.passkey_verified_at,
+      passkey_credential_id: entity.passkey_credential_id,
     };
   }
 }

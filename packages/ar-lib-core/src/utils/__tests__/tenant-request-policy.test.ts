@@ -20,6 +20,8 @@ describe('tenant request path classification', () => {
     '/api/admin/me/passkeys/credential-id',
     '/api/admin/me/agent-consents',
     '/api/admin/me/agent-consents/consent-id',
+    '/api/admin/me/reauth/passkey/options',
+    '/api/admin/me/reauth/passkey/verify',
   ])('keeps Admin identity operations platform-owned: %s', (path) => {
     expect(classifyTenantRequestPath(path)).toBe('platform_admin');
   });
@@ -32,6 +34,7 @@ describe('tenant request path classification', () => {
     '/api/admin/admins',
     '/api/admin/admin-roles',
     '/api/admin/me/passkeys/credential-id/unknown',
+    '/api/admin/me/reauth/passkey/unknown',
   ])('retains tenant isolation for tenant operations and adjacent routes: %s', (path) => {
     expect(classifyTenantRequestPath(path)).toBe('tenant_scoped_admin');
   });

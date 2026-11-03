@@ -311,6 +311,7 @@ export async function adminAgentLoginHandoffConsumeHandler(c: HandoffContext): P
       createdAt: liveAdmin.authenticationTimeMs ?? now,
       expiresAt: liveAdmin.sessionExpiresAt,
       mfaVerifiedAt: liveAdmin.authenticationTimeMs ?? now,
+      passkeyCredentialId: liveAdmin.passkeyCredentialId ?? null,
     },
     audit: {
       id: `audit_${crypto.randomUUID()}`,

@@ -122,6 +122,8 @@ export interface AdminAuthContext {
   mfaVerified?: boolean;
   /** Most recent primary/MFA authentication instant in epoch milliseconds. */
   authenticationTimeMs?: number;
+  /** Credential ID (base64url) of the passkey verified at that instant, when recorded. */
+  passkeyCredentialId?: string;
   /** Admin session ID (for session auth) */
   sessionId?: string;
   /** Absolute expiry of the backing Admin session in epoch milliseconds. */

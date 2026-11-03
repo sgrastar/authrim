@@ -40,7 +40,12 @@
           "logicalRoles": [
             "admin"
           ],
-          "files": []
+          "files": [
+            {
+              "path": "003_admin_session_passkey_evidence.sql",
+              "checksum": "804e60a28fd0ebac4eae109c155d370382115e58c1bb452199fd28cca68f29d6"
+            }
+          ]
         },
         {
           "id": "control-d1",
@@ -147,6 +152,10 @@
         {
           "path": "001_0_5_0_admin_baseline.sql",
           "checksum": "dcfd1ed8511537a5720b59675c234e9ffab37f736c57180ab60b7de55960f3d8"
+        },
+        {
+          "path": "003_admin_session_passkey_evidence.sql",
+          "checksum": "804e60a28fd0ebac4eae109c155d370382115e58c1bb452199fd28cca68f29d6"
         }
       ]
     },
