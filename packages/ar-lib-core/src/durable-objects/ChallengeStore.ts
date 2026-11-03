@@ -68,6 +68,7 @@ export type ChallengeType =
   | 'email_verification_protocol' // Browser/provider email ownership verification nonce
   | 'passkey_reauth' // Account Page passkey re-authentication challenge
   | 'account_email_reauth' // Account Page email code re-authentication challenge
+  | 'admin_passkey_reauth' // Admin console in-session passkey re-authentication challenge
   | 'external_idp_link_intent' // Account Page request to link an external account (one use)
   | 'login_method_removal_lock' // Serialises an account's removals of sign-in methods
   | 'invitation_email_code' // Code sent to the email an invitation names

@@ -1244,6 +1244,7 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           user_agent: userAgent || undefined,
           expires_at: Date.now() + sessionTtl.milliseconds,
           mfa_verified: true, // Passkey is MFA
+          passkey_credential_id: passkey.credential_id,
         });
 
         log.info('Admin session created in admin_sessions table', {

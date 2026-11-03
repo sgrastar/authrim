@@ -217,6 +217,12 @@ const packageSpecs = [
         },
       },
       {
+        file: 'packages/ar-management/src/routes/admin-management/my-reauth.ts',
+        receiverPrefixes: {
+          myReauthRouter: '/api/admin/me/reauth',
+        },
+      },
+      {
         file: 'packages/ar-management/src/routes/admin-management/operational-logs.ts',
         receiverPrefixes: {
           operationalLogsRouter: '/api/admin/operational-logs',

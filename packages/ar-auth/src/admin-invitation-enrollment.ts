@@ -637,8 +637,9 @@ adminInvitationEnrollmentApp.post('/api/admin/invitations/activate', async (c) =
       {
         sql: `INSERT INTO admin_sessions (
                 id, tenant_id, admin_user_id, ip_address, user_agent, created_at,
-                expires_at, last_activity_at, mfa_verified, mfa_verified_at
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+                expires_at, last_activity_at, mfa_verified, mfa_verified_at,
+                passkey_verified_at, passkey_credential_id
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
         params: [
           sessionId,
           invitation.tenant_id,
@@ -649,6 +650,9 @@ adminInvitationEnrollmentApp.post('/api/admin/invitations/activate', async (c) =
           sessionExpiresAt,
           now,
           now,
+          // The enrolment's verified assertion with the new passkey is the session's first one.
+          now,
+          state.authentication.credentialId,
         ],
       },
       {

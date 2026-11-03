@@ -263,6 +263,8 @@ export interface ConsumeAdminAgentLoginHandoffInput {
     createdAt: number;
     expiresAt: number;
     mfaVerifiedAt: number;
+    /** The source session's passkey evidence, inherited so fresh-auth reads the same instant */
+    passkeyCredentialId?: string | null;
   };
   audit: AdminAgentAuditWrite;
 }
@@ -1202,8 +1204,9 @@ export class AdminAgentAccessRepository {
         sql: `INSERT INTO admin_sessions (
           id, tenant_id, admin_user_id, ip_address, user_agent,
           created_at, expires_at, last_activity_at, mfa_verified, mfa_verified_at,
+          passkey_verified_at, passkey_credential_id,
           parent_session_id, derived_target_tenant_id
-        ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?
+        ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?
           FROM admin_agent_login_handoffs
           WHERE id = ? AND target_tenant_id = ? AND last_transition_id = ?
             AND status = 'consumed'`,
@@ -1217,6 +1220,8 @@ export class AdminAgentAccessRepository {
           input.targetSession.expiresAt,
           input.consumedAt,
           input.targetSession.mfaVerifiedAt,
+          input.targetSession.mfaVerifiedAt,
+          input.targetSession.passkeyCredentialId ?? null,
           input.targetSession.parentSessionId,
           input.targetTenantId,
           input.id,

@@ -251,6 +251,10 @@ export interface AdminSession {
   mfa_verified: boolean;
   /** When MFA was verified (Unix milliseconds) */
   mfa_verified_at: number | null;
+  /** When the session last verified a passkey with user verification (Unix milliseconds) */
+  passkey_verified_at: number | null;
+  /** Credential ID (base64url) of that passkey */
+  passkey_credential_id: string | null;
 }
 
 /**
@@ -265,6 +269,8 @@ export interface AdminSessionCreateInput {
   user_agent?: string;
   expires_at: number;
   mfa_verified?: boolean;
+  /** The passkey verified at sign-in, recorded as the session's first passkey verification */
+  passkey_credential_id?: string;
 }
 
 // =============================================================================
