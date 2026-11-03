@@ -301,6 +301,64 @@ describe('CredentialOfferStore issuance state machine', () => {
     ).toMatchObject({ state: 'failed' });
   });
 
+  it('drops nonces that expired unused at expiry and keeps used ones for retention', async () => {
+    const now = Date.now();
+    const issuedAt = now - 600_000;
+    const expiredAt = now - 300_000;
+    for (const id of ['nonce-unused', 'nonce-used', 'nonce-in-flight']) {
+      store.createProofNonceRpc({
+        id,
+        tenantId: TENANT,
+        nonceHash: `hash-${id}`,
+        createdAt: issuedAt,
+        expiresAt: expiredAt,
+      });
+    }
+    store.createProofNonceRpc({
+      id: 'nonce-live',
+      tenantId: TENANT,
+      nonceHash: 'hash-nonce-live',
+      createdAt: now,
+      expiresAt: now + 300_000,
+    });
+    // Reserved with a proof but never completed: it expires while processing.
+    expect(
+      store.reserveProofNonceRpc({
+        id: 'nonce-in-flight',
+        tenantId: TENANT,
+        nonceHash: 'hash-nonce-in-flight',
+        proofFingerprint: 'proof-2',
+        accessTokenJti: 'jti-2',
+        now: issuedAt + 1_000,
+      }).reserved
+    ).toBe(true);
+    const reserved = store.reserveProofNonceRpc({
+      id: 'nonce-used',
+      tenantId: TENANT,
+      nonceHash: 'hash-nonce-used',
+      proofFingerprint: 'proof-1',
+      accessTokenJti: 'jti-1',
+      now: issuedAt + 1_000,
+    });
+    if (!reserved.reserved) throw new Error(`reserve failed: ${reserved.reason}`);
+    expect(
+      store.completeProofNonceRpc({
+        id: 'nonce-used',
+        tenantId: TENANT,
+        reservationId: reserved.reservationId,
+      })
+    ).toBe(true);
+
+    await store.alarm();
+
+    // Gone: only the nonce that expired without a proof. A proof-bearing one stays for retention.
+    expect(db.prepare(`SELECT id, status FROM proof_nonces ORDER BY id`).all()).toEqual([
+      { id: 'nonce-in-flight', status: 'expired' },
+      { id: 'nonce-live', status: 'issued' },
+      { id: 'nonce-used', status: 'consumed' },
+    ]);
+  });
+
   it('records the first fetch only', () => {
     expect(store.markOfferFetchedRpc({ id: 'offer-a', tenantId: TENANT, now: NOW + 10 })).toBe(
       true

@@ -727,6 +727,13 @@ export class CredentialOfferStoreV2 extends DurableObject<Env> {
       `DELETE FROM credential_offers WHERE expires_at < ?`,
       now - RETENTION_MS
     );
+    // A nonce that expired without ever carrying a proof proves nothing later (an expired nonce is
+    // refused either way), and anyone can request one: it leaves at expiry, not after retention.
+    this.ctx.storage.sql.exec(
+      `DELETE FROM proof_nonces
+       WHERE status = 'expired' AND proof_fingerprint IS NULL AND expires_at <= ?`,
+      now
+    );
     this.ctx.storage.sql.exec(`DELETE FROM proof_nonces WHERE expires_at < ?`, now - RETENTION_MS);
     const nextOffer = this.ctx.storage.sql
       .exec<{ next_at: number | null }>(
