@@ -754,3 +754,40 @@ describe('who may stand on an approval step', () => {
     expect(res.status).toBe(409);
   });
 });
+
+describe('who takes an unnamed admin step', () => {
+  const decide = async (authMethod: string) => {
+    const { adapter } = setup();
+    const { request, steps } = await seed(adapter, { requester: 'admin-requester' });
+    return applyApprovalDecisionForRequest(
+      {
+        env: {},
+        get: (key: string) => (key === 'adminAuth' ? { authMethod } : undefined),
+      } as unknown as Parameters<typeof applyApprovalDecisionForRequest>[0],
+      {
+        adapter,
+        requestRepo: new ApprovalRequestRepository(adapter),
+        approvalRepo: new ApprovalRequestApprovalRepository(adapter),
+        grantRepo: new ElevationGrantRepository(adapter),
+      },
+      {
+        request,
+        approval: steps[0],
+        nextStatus: 'approved',
+        // The approvals route records a machine credential as an admin_user too.
+        actorSubjectType: 'admin_user',
+        actorSubjectId: 'principal-other',
+      }
+    );
+  };
+
+  it('refuses a machine credential, which may name any requester', async () => {
+    await expect(decide('machine_access_token')).rejects.toMatchObject({
+      code: 'approver_mismatch',
+    });
+  });
+
+  it('accepts another admin signed in', async () => {
+    await expect(decide('session')).resolves.toBeDefined();
+  });
+});

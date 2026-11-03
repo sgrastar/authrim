@@ -105,28 +105,6 @@ async function assertApprovalDecisionPolicy(
     );
   }
 
-  // Only the step's own approver approves it: a named step by that subject, an unnamed one (an
-  // admin step any other admin may take) by an admin. Without this anyone allowed to decide could
-  // approve a data owner's or a named admin's step in their place.
-  if (input.nextStatus === 'approved') {
-    const namedApprover = input.approval.subject_id?.trim() || null;
-    const actorMatches = namedApprover
-      ? isSameApprovalSubject(
-          input.approval.subject_type,
-          namedApprover,
-          input.actorSubjectType,
-          input.actorSubjectId
-        )
-      : input.approval.side === 'admin_operator' &&
-        (input.actorSubjectType === 'admin_user' || input.actorSubjectType === 'service_principal');
-    if (!actorMatches) {
-      throw new ApprovalWorkflowPolicyError(
-        'approver_mismatch',
-        'Only the approver of this step can approve it.'
-      );
-    }
-  }
-
   // The requester never approves their own request. Only Support Ops lets a tenant allow it
   // (`support_ops.allow_self_approval`, off by default); every other surface, including ones
   // not named here, is two-person.
@@ -147,6 +125,33 @@ async function assertApprovalDecisionPolicy(
       'self_approval_not_allowed',
       'This request must be approved by a different admin operator.'
     );
+  }
+  // Only the step's own approver approves it: a named step by that subject, an unnamed one (an
+  // admin step any other admin may take) by a person signed in as an admin. Never a machine
+  // credential on an unnamed step: it may name any requester, so it could file a request and
+  // approve it itself.
+  if (input.nextStatus === 'approved') {
+    const namedApprover = input.approval.subject_id?.trim() || null;
+    const adminAuth =
+      typeof c.get === 'function'
+        ? (c.get('adminAuth') as { authMethod?: string } | undefined)
+        : undefined;
+    const actorMatches = namedApprover
+      ? isSameApprovalSubject(
+          input.approval.subject_type,
+          namedApprover,
+          input.actorSubjectType,
+          input.actorSubjectId
+        )
+      : input.approval.side === 'admin_operator' &&
+        input.actorSubjectType === 'admin_user' &&
+        adminAuth?.authMethod === 'session';
+    if (!actorMatches) {
+      throw new ApprovalWorkflowPolicyError(
+        'approver_mismatch',
+        'Only the approver of this step can approve it.'
+      );
+    }
   }
 }
 
