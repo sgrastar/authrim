@@ -1374,15 +1374,8 @@ approvalArtifactsRouter.post('/:artifactId/complete', async (c) => {
         },
       });
     }
-    if (error instanceof Error && /already consumed|invalid|expired/i.test(error.message)) {
-      return c.json(
-        {
-          error: 'invalid_approval_artifact',
-          error_description: 'The approval completion artifact is invalid, expired, or consumed.',
-        },
-        410
-      );
-    }
+    // A policy refusal is told apart first: its message may name a resource class that happens
+    // to contain "invalid" or "expired".
     if (error instanceof ApprovalWorkflowPolicyError) {
       return c.json(
         {
@@ -1390,6 +1383,15 @@ approvalArtifactsRouter.post('/:artifactId/complete', async (c) => {
           error_description: error.message,
         },
         error.status as 409
+      );
+    }
+    if (error instanceof Error && /already consumed|invalid|expired/i.test(error.message)) {
+      return c.json(
+        {
+          error: 'invalid_approval_artifact',
+          error_description: 'The approval completion artifact is invalid, expired, or consumed.',
+        },
+        410
       );
     }
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);

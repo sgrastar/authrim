@@ -53,6 +53,12 @@ const { mockCreateElevationGrantSubjectToken } = vi.hoisted(() => ({
   mockCreateElevationGrantSubjectToken: vi.fn(),
 }));
 
+// Whether a grant still matches its approvers is read from the Admin DB; it is covered against
+// the real schema in admin-approvals-resource-binding.test.ts.
+const { mockIsElevationGrantBindingIntact } = vi.hoisted(() => ({
+  mockIsElevationGrantBindingIntact: vi.fn(async () => true),
+}));
+
 const { mockGetRequestAwareIssuerUrl } = vi.hoisted(() => ({
   mockGetRequestAwareIssuerUrl: vi.fn(),
 }));
@@ -77,6 +83,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       ...actual.ADMIN_PERMISSIONS,
       APPROVALS_GRANT_ISSUE: 'admin:approvals:grant:issue',
     },
+    isElevationGrantBindingIntact: mockIsElevationGrantBindingIntact,
     adminAuthMiddleware: vi.fn(
       (options?: { requirePermissions?: string[] }) =>
         async (c: any, next: () => Promise<void>) => {
@@ -216,6 +223,7 @@ function createApp() {
 describe('admin approvals router', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockIsElevationGrantBindingIntact.mockResolvedValue(true);
     // Named admin approvers are active admins of the tenant unless a test says otherwise.
     mockAdapter.queryOne
       .mockReset()
@@ -534,7 +542,7 @@ describe('admin approvals router', () => {
         surface: 'admin_audit',
         action: 'detail_read',
         tenant_id: 'tenant-a',
-        resource_class: 'admin_audit_detail',
+        resource_class: 'customer_profile',
         resource_ids: ['user-42'],
       },
       scope_canonical: '{}',
@@ -588,7 +596,7 @@ describe('admin approvals router', () => {
           target_subject_id: 'user-42',
           request_surface: 'admin_audit',
           requested_action: 'detail_read',
-          resource_class: 'admin_audit_detail',
+          resource_class: 'customer_profile',
           reason_code: 'support_case',
           policy_preset: 'support_case_default',
           approvals: [
@@ -634,7 +642,7 @@ describe('admin approvals router', () => {
         surface: 'admin_audit',
         action: 'detail_read',
         tenant_id: 'tenant-a',
-        resource_class: 'admin_audit_detail',
+        resource_class: 'customer_profile',
         resource_ids: ['user-42'],
       },
       scope_canonical: '{}',
@@ -739,7 +747,7 @@ describe('admin approvals router', () => {
           target_subject_id: 'user-42',
           request_surface: 'admin_audit',
           requested_action: 'detail_read',
-          resource_class: 'admin_audit_detail',
+          resource_class: 'customer_profile',
           reason_code: 'support_case',
           policy_preset: 'support_case_default',
           approvals: [
@@ -797,7 +805,7 @@ describe('admin approvals router', () => {
           target_subject_id: 'user-42',
           request_surface: 'admin_audit',
           requested_action: 'detail_read',
-          resource_class: 'admin_audit_detail',
+          resource_class: 'customer_profile',
           reason_code: 'support_case',
           policy_preset: 'support_case_default',
           approvals: [
@@ -929,7 +937,7 @@ describe('admin approvals router', () => {
         surface: 'admin_audit',
         action: 'detail_read',
         tenant_id: 'tenant-a',
-        resource_class: 'admin_audit_detail',
+        resource_class: 'customer_profile',
         resource_ids: ['child-7'],
       },
       scope_canonical: '{}',
@@ -987,7 +995,7 @@ describe('admin approvals router', () => {
           target_subject_id: 'child-7',
           request_surface: 'admin_audit',
           requested_action: 'detail_read',
-          resource_class: 'admin_audit_detail',
+          resource_class: 'customer_profile',
           reason_code: 'support_case',
           policy_preset: 'guardian_support_default',
           approvals: [
@@ -1047,7 +1055,7 @@ describe('admin approvals router', () => {
           target_subject_id: 'child-7',
           request_surface: 'admin_audit',
           requested_action: 'detail_read',
-          resource_class: 'admin_audit_detail',
+          resource_class: 'customer_profile',
           reason_code: 'support_case',
           policy_preset: 'guardian_support_default',
           approvals: [
@@ -2275,6 +2283,7 @@ describe('admin approvals router', () => {
     };
     mockRequestRepo.getApprovalRequestByPublicId.mockResolvedValue(request);
     mockApprovalRepo.getApprovalById.mockResolvedValue(approval);
+    mockApprovalRepo.listApprovalsForRequest.mockResolvedValue([approval]);
 
     const res = await app.request(
       '/api/admin/approvals/apr_public_1/steps/step-1/approve',

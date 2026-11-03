@@ -14,6 +14,7 @@ import {
   ApprovalRequestRepository,
   ElevationGrantRepository,
 } from '../repositories/admin/admin-approval-request';
+import { isElevationGrantBindingIntact } from './approval-scope-binding';
 import { createAccessToken, importPrivateKeyFromPEM } from '../utils/jwt';
 import { parseToken } from '../utils/jwt';
 
@@ -526,6 +527,9 @@ export async function resolveElevationGrantSubjectToken(input: {
   }
   if (request.expires_at <= Date.now()) {
     throw new Error('Approval request is expired');
+  }
+  if (!(await isElevationGrantBindingIntact(adapter, grant))) {
+    throw new Error('Elevation grant scope is not bound to its approvers');
   }
 
   const subject = asString(tokenPayload.sub);

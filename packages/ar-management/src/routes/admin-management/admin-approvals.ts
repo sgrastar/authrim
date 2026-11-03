@@ -26,6 +26,7 @@ import {
   createElevationGrantSubjectToken,
   ELEVATION_GRANT_SUBJECT_TOKEN_TYPE,
   generateInvestigationId,
+  isElevationGrantBindingIntact,
   normalizeStructuredReference,
   resolveProductProtectedResourceAudience,
   resolveProductProtectedResourceDetailClasses,
@@ -63,7 +64,11 @@ import {
 } from '../../approval-policy-presets';
 import {
   ApprovalRequesterError,
+  ApprovalScopeBindingError,
+  ApprovalScopeRequestError,
   ApprovalStepResolutionError,
+  assertApprovalScopeBinding,
+  resolveRequestedApprovalResourceIds,
   previewApprovalRequestResolution,
   resolveApprovalRequester,
   resolveApprovalSteps,
@@ -586,6 +591,20 @@ adminApprovalsRouter.post('/preview', async (c) => {
         variables: { field: 'requester_subject_id', reason: error.message },
       });
     }
+    if (error instanceof ApprovalScopeRequestError) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: error.field, reason: error.message },
+      });
+    }
+    if (error instanceof ApprovalScopeBindingError) {
+      return c.json(
+        {
+          error: 'approval_scope_binding_violation',
+          error_description: error.message,
+        },
+        409
+      );
+    }
     if (error instanceof ApprovalStepResolutionError) {
       return c.json(
         {
@@ -619,7 +638,7 @@ adminApprovalsRouter.post('/', async (c) => {
       action: body.requested_action,
       tenant_id: tenantId,
       resource_class: body.resource_class,
-      resource_ids: body.resource_ids ?? [body.target_subject_id],
+      resource_ids: resolveRequestedApprovalResourceIds(body),
       detail_classes: resolveProductProtectedResourceDetailClasses({
         resourceClass: body.resource_class,
         requestedDetailClasses: body.detail_classes,
@@ -684,6 +703,7 @@ adminApprovalsRouter.post('/', async (c) => {
       draftRequest,
       body.approvals
     );
+    assertApprovalScopeBinding(draftRequest, resolvedSteps);
     const stepTransports = await Promise.all(
       resolvedSteps.map((step) =>
         resolveApprovalNotificationTransport(c as AdminContext, {
@@ -766,7 +786,7 @@ adminApprovalsRouter.post('/', async (c) => {
     }
 
     const latestApprovals = await approvalRepo.listApprovalsForRequest(request.id);
-    const grants = await syncElevationGrantsForRequest(grantRepo, currentRequest);
+    const grants = await syncElevationGrantsForRequest(grantRepo, currentRequest, latestApprovals);
     return c.json(
       formatApprovalResponse(currentRequest, latestApprovals, grants, { notificationResults }),
       201
@@ -784,6 +804,20 @@ adminApprovalsRouter.post('/', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
         variables: { field: 'requester_subject_id', reason: error.message },
       });
+    }
+    if (error instanceof ApprovalScopeRequestError) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: error.field, reason: error.message },
+      });
+    }
+    if (error instanceof ApprovalScopeBindingError) {
+      return c.json(
+        {
+          error: 'approval_scope_binding_violation',
+          error_description: error.message,
+        },
+        409
+      );
     }
     if (error instanceof ApprovalStepResolutionError) {
       return c.json(
@@ -862,6 +896,15 @@ adminApprovalsRouter.post('/:requestId/grants/:grantId/subject-token', async (c)
         {
           error: 'inactive_elevation_grant',
           error_description: 'The selected elevation grant is inactive or expired.',
+        },
+        409
+      );
+    }
+    if (!(await isElevationGrantBindingIntact(adapter, grant))) {
+      return c.json(
+        {
+          error: 'approval_scope_binding_violation',
+          error_description: 'The grant opens more than its approvers could approve.',
         },
         409
       );
@@ -1517,7 +1560,7 @@ adminApprovalsRouter.post('/:requestId/cancel', async (c) => {
         reasonNote: body.reason_note ?? null,
       }
     );
-    const grants = await syncElevationGrantsForRequest(grantRepo, requestWithDetail);
+    const grants = await syncElevationGrantsForRequest(grantRepo, requestWithDetail, refreshed);
 
     return c.json(formatApprovalResponse(requestWithDetail, refreshed, grants));
   } catch (error) {
