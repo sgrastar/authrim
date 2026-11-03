@@ -94,26 +94,33 @@ export async function checkIssuerTrust(
 }
 
 /**
- * Get issuer's public key for signature verification
+ * Get issuer's public key for signature verification.
+ *
+ * With a `kid` (from the signed JWT's header) the key is the one it names, never another key of
+ * the issuer: after a rotation an issuer publishes several keys. Without one, the issuer's single
+ * suitable key is used as before.
  */
 export async function getIssuerPublicKey(
   env: Env,
   issuerDid: string,
-  jwksUri?: string
+  jwksUri?: string,
+  kid?: string
 ): Promise<CryptoKey> {
   // Try JWKS URI first if provided
   if (jwksUri) {
-    return getKeyFromJwksUri(jwksUri);
+    return getKeyFromJwksUri(jwksUri, kid);
   }
 
   // Fall back to DID document resolution
-  return getKeyFromDid(env, issuerDid);
+  return getKeyFromDid(env, issuerDid, kid);
 }
+
+const EC_SIGNING_ALGORITHMS = ['ES256', 'ES384', 'ES512'];
 
 /**
  * Fetch public key from JWKS URI
  */
-async function getKeyFromJwksUri(jwksUri: string): Promise<CryptoKey> {
+async function getKeyFromJwksUri(jwksUri: string, kid?: string): Promise<CryptoKey> {
   const jwks = await safeFetchJson<{ keys: JWK[] }>(jwksUri, {
     headers: { Accept: 'application/json' },
     requireHttps: true,
@@ -121,17 +128,62 @@ async function getKeyFromJwksUri(jwksUri: string): Promise<CryptoKey> {
     maxResponseSize: 256 * 1024, // 256 KB max for JWKS
   });
 
-  // Find a signing key (ES256, ES384, or ES512)
-  const signingKey = jwks.keys.find(
-    (key) =>
-      key.use === 'sig' && key.kty === 'EC' && ['ES256', 'ES384', 'ES512'].includes(key.alg || '')
-  );
+  const signingKey =
+    kid !== undefined
+      ? jwks.keys.find(
+          (key) =>
+            key.kid === kid &&
+            key.kty === 'EC' &&
+            (key.use === undefined || key.use === 'sig') &&
+            (key.alg === undefined || EC_SIGNING_ALGORITHMS.includes(key.alg))
+        )
+      : // Find a signing key (ES256, ES384, or ES512)
+        jwks.keys.find(
+          (key) =>
+            key.use === 'sig' && key.kty === 'EC' && EC_SIGNING_ALGORITHMS.includes(key.alg || '')
+        );
 
   if (!signingKey) {
     throw new Error('No suitable EC signing key found in JWKS');
   }
 
-  return importECPublicKey(signingKey);
+  return importECPublicKey(withEcAlgorithm(signingKey));
+}
+
+/** A DID URL for a method or key reference: absolute, a `#fragment`, or a bare fragment. */
+function absoluteMethodId(did: string, reference: string): string {
+  if (reference.startsWith('did:')) return reference;
+  return `${did}${reference.startsWith('#') ? '' : '#'}${reference}`;
+}
+
+/**
+ * The one verification method a JWT `kid` names. Method IDs (relative ones resolved against the
+ * DID) decide first; a JWK's own `kid` only when no method ID matches. More than one match is
+ * ambiguous and refused rather than resolved by document order.
+ */
+function methodNamedBy<T extends { id: string; publicKeyJwk?: { kid?: string } }>(
+  did: string,
+  kid: string,
+  methods: readonly T[]
+): T {
+  const target = absoluteMethodId(did, kid);
+  const byId = methods.filter((vm) => absoluteMethodId(did, vm.id) === target);
+  const matches = byId.length ? byId : methods.filter((vm) => vm.publicKeyJwk?.kid === kid);
+  if (matches.length !== 1) {
+    throw new Error(
+      matches.length
+        ? 'Key id names more than one verification method'
+        : 'No verification method matches the key id'
+    );
+  }
+  return matches[0];
+}
+
+/** The ES algorithm of an EC public key, taken from its curve when the JWK omits `alg`. */
+function withEcAlgorithm(jwk: JWK): JWK {
+  if (jwk.alg) return jwk;
+  const alg = { 'P-256': 'ES256', 'P-384': 'ES384', 'P-521': 'ES512' }[jwk.crv ?? ''];
+  return alg ? { ...jwk, alg } : jwk;
 }
 
 /**
@@ -141,7 +193,7 @@ async function getKeyFromJwksUri(jwksUri: string): Promise<CryptoKey> {
  * - did:web (with SSRF protection via safeFetch)
  * - did:key (with multibase/multicodec decoding to JWK)
  */
-async function getKeyFromDid(env: Env, did: string): Promise<CryptoKey> {
+async function getKeyFromDid(env: Env, did: string, kid?: string): Promise<CryptoKey> {
   // Resolve DID document using shared resolver
   const didDocument = await resolveDID(did);
 
@@ -157,23 +209,29 @@ async function getKeyFromDid(env: Env, did: string): Promise<CryptoKey> {
     throw new Error('No verification methods found in DID document');
   }
 
-  // Try to find an EC key first (for HAIP compliance)
-  let verificationMethod = verificationMethods.find(
-    (vm) =>
-      vm.publicKeyJwk?.kty === 'EC' &&
-      ['P-256', 'P-384', 'P-521'].includes(vm.publicKeyJwk?.crv || '')
-  );
-
-  // Fall back to OKP (Ed25519) if no EC key found
-  if (!verificationMethod) {
+  let verificationMethod: (typeof verificationMethods)[number] | undefined;
+  if (kid !== undefined) {
+    // A kid names exactly one method; a missing one is an error, not a reason to try others.
+    verificationMethod = methodNamedBy(did, kid, verificationMethods);
+  } else {
+    // Try to find an EC key first (for HAIP compliance)
     verificationMethod = verificationMethods.find(
-      (vm) => vm.publicKeyJwk?.kty === 'OKP' && vm.publicKeyJwk?.crv === 'Ed25519'
+      (vm) =>
+        vm.publicKeyJwk?.kty === 'EC' &&
+        ['P-256', 'P-384', 'P-521'].includes(vm.publicKeyJwk?.crv || '')
     );
-  }
 
-  // Last resort: any key with publicKeyJwk
-  if (!verificationMethod) {
-    verificationMethod = verificationMethods.find((vm) => vm.publicKeyJwk);
+    // Fall back to OKP (Ed25519) if no EC key found
+    if (!verificationMethod) {
+      verificationMethod = verificationMethods.find(
+        (vm) => vm.publicKeyJwk?.kty === 'OKP' && vm.publicKeyJwk?.crv === 'Ed25519'
+      );
+    }
+
+    // Last resort: any key with publicKeyJwk
+    if (!verificationMethod) {
+      verificationMethod = verificationMethods.find((vm) => vm.publicKeyJwk);
+    }
   }
 
   if (!verificationMethod?.publicKeyJwk) {
@@ -184,7 +242,7 @@ async function getKeyFromDid(env: Env, did: string): Promise<CryptoKey> {
 
   // Import based on key type
   if (jwk.kty === 'EC') {
-    return importECPublicKey(jwk as JWK);
+    return importECPublicKey(withEcAlgorithm(jwk as JWK));
   } else if (jwk.kty === 'OKP') {
     // Use jose's importJWK for OKP keys
     return (await importJWK(jwk as JWK, jwk.alg || 'EdDSA')) as CryptoKey;

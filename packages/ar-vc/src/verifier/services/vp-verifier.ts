@@ -24,6 +24,16 @@ import type { Env, VPVerificationResult } from '../../types';
 import { checkIssuerTrust, getIssuerPublicKey } from './issuer-trust';
 import { createVCConfigManager } from '../../utils/vc-config';
 
+/** The `kid` of a compact JWS header, or undefined when absent or unreadable. */
+function headerKid(jwt: string): string | undefined {
+  try {
+    const header = JSON.parse(decodeBase64Url(jwt.split('.')[0] ?? '')) as { kid?: unknown };
+    return typeof header.kid === 'string' && header.kid ? header.kid : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export interface VPVerifyOptions {
   /** Nonce from the authorization request */
   nonce: string;
@@ -65,6 +75,8 @@ export async function verifyVPToken(
     const { payload, kbJwt } = parsed;
     const issuerDid = payload.iss;
     const vct = payload.vct;
+    // After a rotation the issuer publishes several keys: the header's kid names the signing one.
+    const issuerKid = headerKid(parsed.issuerJwt);
 
     // 2. Get HAIP policy from config (KV > env > default)
     const configManager = createVCConfigManager(env);
@@ -90,7 +102,7 @@ export async function verifyVPToken(
     // 4. Get issuer public key
     let issuerPublicKey: CryptoKey | null = null;
     try {
-      issuerPublicKey = await getIssuerPublicKey(env, issuerDid, trustResult.jwksUri);
+      issuerPublicKey = await getIssuerPublicKey(env, issuerDid, trustResult.jwksUri, issuerKid);
     } catch (e) {
       errors.push(`Failed to get issuer public key: ${e instanceof Error ? e.message : 'Unknown'}`);
     }
@@ -136,7 +148,7 @@ export async function verifyVPToken(
         try {
           // Create a key resolver that uses the issuer's JWKS or trusted issuer config
           // SECURITY: Status List issuer MUST match credential issuer to prevent cache poisoning
-          const statusKeyResolver: StatusListKeyResolver = async (statusIssuer, _kid) => {
+          const statusKeyResolver: StatusListKeyResolver = async (statusIssuer, kid) => {
             // CRITICAL: Reject status lists from different issuers
             // This prevents attackers from hosting their own status list that always returns "valid"
             if (statusIssuer !== issuerDid) {
@@ -145,12 +157,13 @@ export async function verifyVPToken(
                 'Status List issuer mismatch: credential and status list have different issuers'
               );
             }
-            // Use the credential issuer's public key
-            if (issuerPublicKey) {
+            // The credential's key when the list names no other one (an older credential and a list
+            // signed after a rotation have different keys)
+            if (issuerPublicKey && (kid === undefined || kid === issuerKid)) {
               return issuerPublicKey;
             }
-            // Fallback: fetch from JWKS (same issuer, so this is safe)
-            return getIssuerPublicKey(env, statusIssuer, trustResult.jwksUri);
+            // Otherwise the issuer's key the list names (same issuer, so this is safe)
+            return getIssuerPublicKey(env, statusIssuer, trustResult.jwksUri, kid);
           };
 
           const statusValue = await getCredentialStatusValue(statusInfo.uri, statusInfo.index, {

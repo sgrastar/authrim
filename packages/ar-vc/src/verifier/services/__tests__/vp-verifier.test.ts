@@ -478,7 +478,8 @@ describe('verifyVPToken', () => {
 
     async function verifyWithPayload(
       claims: Record<string, unknown>,
-      requireStatusCheck = false
+      requireStatusCheck = false,
+      issuerJwt?: string
     ): Promise<Awaited<ReturnType<typeof verifyVPToken>>> {
       vi.mocked(getHaipPolicy).mockReturnValue({
         requireHolderBinding: true,
@@ -493,6 +494,7 @@ describe('verifyVPToken', () => {
         payload: { iss: ISSUER, vct: 'https://authrim.com/credentials/identity/v1', ...claims },
         disclosures: [],
         kbJwt: 'kb-jwt-token',
+        issuerJwt,
       } as never);
       vi.mocked(verifySDJWTVC).mockResolvedValue({
         verified: true,
@@ -527,6 +529,30 @@ describe('verifyVPToken', () => {
         5,
         expect.objectContaining({ format: 'ietf_tsl_v1', expectedIssuer: ISSUER })
       );
+    });
+
+    it('resolves the credential key and a rotated status list key by their own kid', async () => {
+      const header = btoa(JSON.stringify({ alg: 'ES256', kid: 'key-old' }))
+        .replace(/=+$/, '')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_');
+      const resolved: string[] = [];
+      vi.mocked(getCredentialStatusValue).mockImplementation(async (_uri, _idx, options) => {
+        // The list signed with the credential's key, then one signed after a rotation.
+        await options?.keyResolver?.(ISSUER, 'key-old');
+        await options?.keyResolver?.(ISSUER, 'key-new');
+        resolved.push('done');
+        return 0;
+      });
+
+      const result = await verifyWithPayload(tslClaim, false, `${header}.payload.signature`);
+
+      expect(result.verified).toBe(true);
+      expect(resolved).toEqual(['done']);
+      expect(vi.mocked(getIssuerPublicKey).mock.calls).toEqual([
+        [expect.anything(), ISSUER, undefined, 'key-old'],
+        [expect.anything(), ISSUER, undefined, 'key-new'],
+      ]);
     });
 
     it('rejects status 1 (invalid) and 2 (suspended) with distinct errors', async () => {
