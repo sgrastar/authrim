@@ -64,10 +64,14 @@ export function createSqliteState(
   return { db, state, ready: () => Promise.all(pending), setAlarm };
 }
 
-function cursor(rows: Record<string, unknown>[], rowsWritten: number) {
+function cursor(rows: Record<string, unknown>[], _changes: number) {
   return {
     rowsRead: rows.length,
-    rowsWritten,
+    // Cloudflare counts index writes in `rowsWritten` (one updated indexed row reports 2), which
+    // node:sqlite's `changes` cannot reproduce. Code must count RETURNING rows instead.
+    get rowsWritten(): never {
+      throw new Error('rowsWritten differs on Cloudflare; count RETURNING rows instead');
+    },
     toArray: () => rows,
     one: () => {
       if (rows.length !== 1) throw new Error('Expected one row');

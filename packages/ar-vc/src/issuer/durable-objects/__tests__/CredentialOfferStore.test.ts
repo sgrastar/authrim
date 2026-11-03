@@ -5,11 +5,14 @@ import { CredentialOfferStore, type CreateCredentialOfferInput } from '../Creden
 
 type Row = Record<string, SqlStorageValue>;
 
-function cursor(rows: Row[] = [], rowsWritten = 0): SqlStorageCursor<Row> {
+function cursor(rows: Row[] = [], _changes = 0): SqlStorageCursor<Row> {
   return {
     columnNames: rows.length ? Object.keys(rows[0]) : [],
     rowsRead: rows.length,
-    rowsWritten,
+    // Cloudflare counts index writes in `rowsWritten`; the store must count RETURNING rows.
+    get rowsWritten(): never {
+      throw new Error('rowsWritten differs on Cloudflare; count RETURNING rows instead');
+    },
     toArray: () => rows,
     one: () => {
       if (rows.length !== 1) throw new Error('Expected one row');
@@ -82,7 +85,7 @@ class MemoryVciSql {
         created_at: created,
         expires_at: expires,
       });
-      return cursor([], 1) as never;
+      return cursor([{ id: 'changed' }], 1) as never;
     }
     if (q.startsWith('SELECT * FROM credential_offers')) {
       const row = this.offers.get(String(p[0]));
@@ -107,7 +110,7 @@ class MemoryVciSql {
       if (!row || row.tenant_id !== p[3] || row.status !== 'pending') return cursor() as never;
       row.failed_attempts = p[0];
       row.status = p[1];
-      return cursor([], 1) as never;
+      return cursor([{ id: 'changed' }], 1) as never;
     }
     if (q.includes("SET status = 'processing', reservation_id = ?")) {
       const row = this.offers.get(String(p[2]));
@@ -121,7 +124,7 @@ class MemoryVciSql {
       row.status = 'processing';
       row.reservation_id = p[0];
       row.lease_expires_at = p[1];
-      return cursor([], 1) as never;
+      return cursor([{ id: 'changed' }], 1) as never;
     }
     if (q.includes("credential_offers SET status = 'consumed'")) {
       const row = this.offers.get(String(p[1]));
@@ -136,7 +139,7 @@ class MemoryVciSql {
       row.reservation_id = null;
       row.lease_expires_at = null;
       row.expires_at = p[0];
-      return cursor([], 1) as never;
+      return cursor([{ id: 'changed' }], 1) as never;
     }
     if (q.includes("credential_offers SET status = 'pending'")) {
       const idIndex = q.includes('WHERE id = ?') ? (p.length === 4 ? 0 : 2) : 0;
@@ -145,7 +148,7 @@ class MemoryVciSql {
       row.status = 'pending';
       row.reservation_id = null;
       row.lease_expires_at = null;
-      return cursor([], 1) as never;
+      return cursor([{ id: 'changed' }], 1) as never;
     }
     if (q.includes("credential_offers SET status = 'expired'")) {
       if (q.includes('WHERE id = ?')) {
@@ -161,7 +164,7 @@ class MemoryVciSql {
           }
         }
       }
-      return cursor([], 1) as never;
+      return cursor([{ id: 'changed' }], 1) as never;
     }
     if (q.startsWith('INSERT INTO proof_nonces')) {
       const [id, tenant, nonceHash, created, expires] = p;
@@ -177,7 +180,7 @@ class MemoryVciSql {
         created_at: created,
         expires_at: expires,
       });
-      return cursor([], 1) as never;
+      return cursor([{ id: 'changed' }], 1) as never;
     }
     if (q.startsWith('SELECT * FROM proof_nonces')) {
       const row = this.nonces.get(String(p[0]));
@@ -203,7 +206,7 @@ class MemoryVciSql {
       row.access_token_jti = p[1];
       row.reservation_id = p[2];
       row.lease_expires_at = p[3];
-      return cursor([], 1) as never;
+      return cursor([{ id: 'changed' }], 1) as never;
     }
     if (q.includes("proof_nonces SET status = 'consumed'")) {
       const row = this.nonces.get(String(p[0]));
@@ -217,14 +220,14 @@ class MemoryVciSql {
       row.status = 'consumed';
       row.reservation_id = null;
       row.lease_expires_at = null;
-      return cursor([], 1) as never;
+      return cursor([{ id: 'changed' }], 1) as never;
     }
     if (q.includes("SET claims_json = '{}'")) {
       for (const row of this.offers.values()) {
         if (row.status === 'consumed' && Number(row.expires_at) <= Number(p[0]))
           row.claims_json = '{}';
       }
-      return cursor([], 1) as never;
+      return cursor([{ id: 'changed' }], 1) as never;
     }
     if (q.startsWith('DELETE') || q.startsWith('UPDATE proof_nonces')) return cursor() as never;
     throw new Error(`Unhandled SQL: ${q}`);

@@ -364,16 +364,21 @@ export class CredentialOfferStoreV2 extends DurableObject<Env> {
       input.now + Math.min(Math.max(input.leaseMs ?? DEFAULT_LEASE_MS, 5_000), 120_000),
       row.expires_at
     );
-    const cursor = this.ctx.storage.sql.exec(
-      `UPDATE credential_offers SET status = 'processing', reservation_id = ?, lease_expires_at = ?
-       WHERE id = ? AND tenant_id = ? AND status = 'pending' AND expires_at > ?`,
-      reservationId,
-      leaseExpiresAt,
-      id,
-      tenantId,
-      input.now
-    );
-    if (cursor.rowsWritten !== 1) return { reserved: false, reason: 'unavailable' };
+    // Changed rows come from RETURNING: on Cloudflare `rowsWritten` also counts index writes, so
+    // an update of an indexed column (status, expires_at) reports 2 for one row.
+    const updated = this.ctx.storage.sql
+      .exec(
+        `UPDATE credential_offers SET status = 'processing', reservation_id = ?, lease_expires_at = ?
+       WHERE id = ? AND tenant_id = ? AND status = 'pending' AND expires_at > ?
+       RETURNING id`,
+        reservationId,
+        leaseExpiresAt,
+        id,
+        tenantId,
+        input.now
+      )
+      .toArray().length;
+    if (updated !== 1) return { reserved: false, reason: 'unavailable' };
     return {
       reserved: true,
       reservationId,
@@ -390,31 +395,37 @@ export class CredentialOfferStoreV2 extends DurableObject<Env> {
     if (!Number.isFinite(input.claimsExpiresAt) || input.claimsExpiresAt <= Date.now()) {
       throw new Error('vci_invalid_claims_expiry');
     }
-    const cursor = this.ctx.storage.sql.exec(
-      `UPDATE credential_offers SET status = 'consumed', reservation_id = NULL,
+    const updated = this.ctx.storage.sql
+      .exec(
+        `UPDATE credential_offers SET status = 'consumed', reservation_id = NULL,
        lease_expires_at = NULL, expires_at = ?
        WHERE id = ? AND tenant_id = ? AND status = 'processing'
-       AND reservation_id = ?`,
-      input.claimsExpiresAt,
-      required(input.id, 'offer_id'),
-      required(input.tenantId, 'tenant_id'),
-      required(input.reservationId, 'reservation_id')
-    );
-    if (cursor.rowsWritten === 1) this.scheduleAlarm(input.claimsExpiresAt);
-    return cursor.rowsWritten === 1;
+       AND reservation_id = ?
+       RETURNING id`,
+        input.claimsExpiresAt,
+        required(input.id, 'offer_id'),
+        required(input.tenantId, 'tenant_id'),
+        required(input.reservationId, 'reservation_id')
+      )
+      .toArray().length;
+    if (updated === 1) this.scheduleAlarm(input.claimsExpiresAt);
+    return updated === 1;
   }
 
   releaseOfferRpc(input: { id: string; tenantId: string; reservationId: string }): boolean {
-    const cursor = this.ctx.storage.sql.exec(
-      `UPDATE credential_offers SET status = 'pending', reservation_id = NULL,
+    const updated = this.ctx.storage.sql
+      .exec(
+        `UPDATE credential_offers SET status = 'pending', reservation_id = NULL,
        lease_expires_at = NULL WHERE id = ? AND tenant_id = ? AND status = 'processing'
-       AND reservation_id = ? AND expires_at > ?`,
-      required(input.id, 'offer_id'),
-      required(input.tenantId, 'tenant_id'),
-      required(input.reservationId, 'reservation_id'),
-      Date.now()
-    );
-    return cursor.rowsWritten === 1;
+       AND reservation_id = ? AND expires_at > ?
+       RETURNING id`,
+        required(input.id, 'offer_id'),
+        required(input.tenantId, 'tenant_id'),
+        required(input.reservationId, 'reservation_id'),
+        Date.now()
+      )
+      .toArray().length;
+    return updated === 1;
   }
 
   /** Records the first successful offer fetch only; later fetches keep the original time. */
@@ -632,19 +643,22 @@ export class CredentialOfferStoreV2 extends DurableObject<Env> {
       row.expires_at
     );
     try {
-      const cursor = this.ctx.storage.sql.exec(
-        `UPDATE proof_nonces SET status = 'processing', proof_fingerprint = ?,
+      const updated = this.ctx.storage.sql
+        .exec(
+          `UPDATE proof_nonces SET status = 'processing', proof_fingerprint = ?,
          access_token_jti = ?, reservation_id = ?, lease_expires_at = ?
-         WHERE id = ? AND tenant_id = ? AND status = 'issued' AND expires_at > ?`,
-        input.proofFingerprint,
-        required(input.accessTokenJti, 'access_token_jti'),
-        reservationId,
-        leaseExpiresAt,
-        id,
-        tenantId,
-        input.now
-      );
-      if (cursor.rowsWritten !== 1) return { reserved: false, reason: 'unavailable' };
+         WHERE id = ? AND tenant_id = ? AND status = 'issued' AND expires_at > ?
+       RETURNING id`,
+          input.proofFingerprint,
+          required(input.accessTokenJti, 'access_token_jti'),
+          reservationId,
+          leaseExpiresAt,
+          id,
+          tenantId,
+          input.now
+        )
+        .toArray().length;
+      if (updated !== 1) return { reserved: false, reason: 'unavailable' };
       return { reserved: true, reservationId };
     } catch (error) {
       log.warn('Rejected duplicate VCI proof fingerprint', { nonceId: id }, error as Error);
@@ -653,29 +667,35 @@ export class CredentialOfferStoreV2 extends DurableObject<Env> {
   }
 
   completeProofNonceRpc(input: { id: string; tenantId: string; reservationId: string }): boolean {
-    const cursor = this.ctx.storage.sql.exec(
-      `UPDATE proof_nonces SET status = 'consumed', reservation_id = NULL,
+    const updated = this.ctx.storage.sql
+      .exec(
+        `UPDATE proof_nonces SET status = 'consumed', reservation_id = NULL,
        lease_expires_at = NULL WHERE id = ? AND tenant_id = ? AND status = 'processing'
-       AND reservation_id = ?`,
-      required(input.id, 'nonce_id'),
-      required(input.tenantId, 'tenant_id'),
-      required(input.reservationId, 'reservation_id')
-    );
-    return cursor.rowsWritten === 1;
+       AND reservation_id = ?
+       RETURNING id`,
+        required(input.id, 'nonce_id'),
+        required(input.tenantId, 'tenant_id'),
+        required(input.reservationId, 'reservation_id')
+      )
+      .toArray().length;
+    return updated === 1;
   }
 
   releaseProofNonceRpc(input: { id: string; tenantId: string; reservationId: string }): boolean {
-    const cursor = this.ctx.storage.sql.exec(
-      `UPDATE proof_nonces SET status = 'issued', proof_fingerprint = NULL,
+    const updated = this.ctx.storage.sql
+      .exec(
+        `UPDATE proof_nonces SET status = 'issued', proof_fingerprint = NULL,
        access_token_jti = NULL, reservation_id = NULL, lease_expires_at = NULL
        WHERE id = ? AND tenant_id = ? AND status = 'processing' AND reservation_id = ?
-       AND expires_at > ?`,
-      required(input.id, 'nonce_id'),
-      required(input.tenantId, 'tenant_id'),
-      required(input.reservationId, 'reservation_id'),
-      Date.now()
-    );
-    return cursor.rowsWritten === 1;
+       AND expires_at > ?
+       RETURNING id`,
+        required(input.id, 'nonce_id'),
+        required(input.tenantId, 'tenant_id'),
+        required(input.reservationId, 'reservation_id'),
+        Date.now()
+      )
+      .toArray().length;
+    return updated === 1;
   }
 
   async alarm(): Promise<void> {
