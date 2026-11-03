@@ -1210,6 +1210,27 @@ describe('KeyManager Durable Object', () => {
       });
     });
 
+    it('creates the VC issuer key on first use and shares it across concurrent signers', async () => {
+      expect((await keyManager.getVcIssuerJwksRpc()).keys).toEqual([]);
+      const now = Math.floor(Date.now() / 1000);
+      const payload = {
+        iss: 'https://issuer.example.com',
+        vct: 'https://issuer.example.com/credentials/admin/v1',
+        iat: now,
+        _sd_alg: 'sha-256',
+      };
+      const [first, second] = await Promise.all([
+        keyManager.signSDJWTIssuerRpc(payload),
+        keyManager.signSDJWTIssuerRpc(payload),
+      ]);
+
+      expect(first.kid).toBe(second.kid);
+      const { keys } = await keyManager.getVcIssuerJwksRpc();
+      expect(keys.map((key) => key.kid)).toEqual([first.kid]);
+      const publicKey = await importJWK(keys[0], 'ES256');
+      await expect(jwtVerify(first.token, publicKey)).resolves.toBeDefined();
+    });
+
     it('rejects oversized and structurally invalid VC payloads', async () => {
       await expect(
         keyManager.signSDJWTIssuerRpc({

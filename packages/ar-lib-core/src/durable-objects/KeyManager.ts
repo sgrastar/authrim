@@ -457,6 +457,7 @@ export class KeyManager extends DurableObject<Env> {
   private oidcPS256KeyManagerState: OIDCPS256KeyManagerState | null = null;
   private oidcES256CreationPromise: Promise<StoredECKey> | null = null;
   private oidcPS256CreationPromise: Promise<StoredKey> | null = null;
+  private vcES256CreationPromise: Promise<StoredECKey> | null = null;
   private requestObjectEncKeyManagerState: RequestObjectEncKeyManagerState | null = null;
   private requestObjectEncCreationPromise: Promise<StoredKey> | null = null;
   #requiresAdmittedInitialization = false;
@@ -1043,8 +1044,7 @@ export class KeyManager extends DurableObject<Env> {
       }
       // Bearer issuance tokens stay short-lived (OpenID4VCI §13.10).
       const expiresIn = Math.min(Math.max(input.expiresInSeconds ?? 300, 60), 300);
-      const activeKey = await this.getActiveECKey('ES256');
-      if (!activeKey) throw new Error('vci_access_token_signing_key_unavailable');
+      const activeKey = await this.#ensureActiveVcES256Key();
       const privateKey = await importPKCS8(activeKey.privatePEM, 'ES256');
       const now = Math.floor(Date.now() / 1000);
       const jti = crypto.randomUUID();
@@ -1091,8 +1091,7 @@ export class KeyManager extends DurableObject<Env> {
       ) {
         throw new Error('invalid_sd_jwt_issuer_signing_input');
       }
-      const activeKey = await this.getActiveECKey('ES256');
-      if (!activeKey) throw new Error('sd_jwt_issuer_signing_key_unavailable');
+      const activeKey = await this.#ensureActiveVcES256Key();
       const privateKey = await importPKCS8(activeKey.privatePEM, 'ES256');
       const token = await new SignJWT(payload)
         .setProtectedHeader({ alg: 'ES256', typ: 'dc+sd-jwt', kid: activeKey.kid })
@@ -1120,8 +1119,7 @@ export class KeyManager extends DurableObject<Env> {
       if (!valid) {
         throw new Error('invalid_status_list_signing_input');
       }
-      const activeKey = await this.getActiveECKey('ES256');
-      if (!activeKey) throw new Error('status_list_signing_key_unavailable');
+      const activeKey = await this.#ensureActiveVcES256Key();
       const privateKey = await importPKCS8(activeKey.privatePEM, 'ES256');
       const token = await new SignJWT(payload)
         .setProtectedHeader({ alg: 'ES256', typ: 'statuslist+jwt', kid: activeKey.kid })
@@ -1502,6 +1500,21 @@ export class KeyManager extends DurableObject<Env> {
     return this.#getOIDCPS256State()
       .keys.filter((key) => key.status !== 'revoked')
       .map((key) => key.publicJWK);
+  }
+
+  /**
+   * The VC issuer's ES256 signing key, created on first use like the RS256 OIDC key. Concurrent
+   * first signers share one creation so a new environment never gets two active keys.
+   */
+  async #ensureActiveVcES256Key(): Promise<StoredECKey> {
+    const active = await this.getActiveECKey('ES256');
+    if (active) return active;
+    if (!this.vcES256CreationPromise) {
+      this.vcES256CreationPromise = this.rotateECKeys('ES256').finally(() => {
+        this.vcES256CreationPromise = null;
+      });
+    }
+    return this.vcES256CreationPromise;
   }
 
   async #ensureActiveOIDCES256Key(): Promise<StoredECKey> {
