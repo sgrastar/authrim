@@ -12,7 +12,10 @@ import type {
 import {
   canonicalizeApprovalScope,
   ensureDatabaseAdapter,
+  findApprovalRequestBindingViolation,
   generateInvestigationId,
+  INTERNAL_APPROVAL_RESOURCE_CLASSES,
+  normalizeApprovalResourceIds,
   normalizeStructuredReference,
   resolveAccountDataContext,
   resolveProductProtectedResourceAudience,
@@ -29,6 +32,57 @@ import {
 type AdminContext = Context<any, any, any>;
 
 export class ApprovalStepResolutionError extends Error {}
+
+/** A scope the request names that cannot be asked for at all (400). */
+export class ApprovalScopeRequestError extends Error {
+  constructor(
+    public readonly field: 'resource_class' | 'resource_ids',
+    message: string
+  ) {
+    super(message);
+  }
+}
+
+/** A scope the request's approvers cannot grant (409); see `approval-scope-binding`. */
+export class ApprovalScopeBindingError extends Error {}
+
+/**
+ * The resources a new request asks for: the target when none are named, otherwise the named ones,
+ * which must not come to nothing (an empty list would match every resource of the class).
+ */
+export function resolveRequestedApprovalResourceIds(body: {
+  target_subject_id: string;
+  resource_class: string;
+  resource_ids?: string[];
+}): string[] {
+  if (INTERNAL_APPROVAL_RESOURCE_CLASSES.has(body.resource_class.trim())) {
+    throw new ApprovalScopeRequestError(
+      'resource_class',
+      'requests for this resource class are filed by the server only'
+    );
+  }
+  if (body.resource_ids === undefined) {
+    return [body.target_subject_id];
+  }
+  const resourceIds = normalizeApprovalResourceIds(body.resource_ids);
+  if (resourceIds.length === 0) {
+    throw new ApprovalScopeRequestError(
+      'resource_ids',
+      'resource_ids must name at least one resource'
+    );
+  }
+  return resourceIds;
+}
+
+export function assertApprovalScopeBinding(
+  request: Pick<ApprovalRequest, 'target_subject_type' | 'target_subject_id' | 'scope_json'>,
+  steps: ReadonlyArray<Pick<ApprovalRequestPreviewStepInput, 'side' | 'subject_type'>>
+): void {
+  const violation = findApprovalRequestBindingViolation(request, steps);
+  if (violation) {
+    throw new ApprovalScopeBindingError(violation);
+  }
+}
 
 export interface ApprovalRequestPreviewStepInput {
   step_key: string;
@@ -313,7 +367,7 @@ export function buildApprovalPreviewRequest(input: {
     action: body.requested_action,
     tenant_id: tenantId,
     resource_class: body.resource_class,
-    resource_ids: body.resource_ids?.length ? body.resource_ids : [body.target_subject_id],
+    resource_ids: resolveRequestedApprovalResourceIds(body),
     detail_classes: resolveProductProtectedResourceDetailClasses({
       resourceClass: body.resource_class,
       requestedDetailClasses: body.detail_classes,
@@ -404,6 +458,7 @@ export async function previewApprovalRequestResolution(
   const requestPreview = buildApprovalPreviewRequest(input);
   const syntheticRequest = buildSyntheticApprovalRequest(requestPreview);
   const resolvedSteps = await resolveApprovalSteps(c, syntheticRequest, input.body.approvals);
+  assertApprovalScopeBinding(syntheticRequest, resolvedSteps);
 
   const steps = await Promise.all(
     resolvedSteps.map(async (step) => {

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
+import { ApprovalWorkflowPolicyError } from '../approval-workflow';
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 
 const {
@@ -160,7 +161,9 @@ vi.mock('../approval-completion-receipt', () => ({
   issueApprovalDecisionReceipt: mockIssueApprovalDecisionReceipt,
 }));
 
-vi.mock('../approval-workflow', () => ({
+vi.mock('../approval-workflow', async (importOriginal) => ({
+  ApprovalWorkflowPolicyError: (await importOriginal<typeof import('../approval-workflow')>())
+    .ApprovalWorkflowPolicyError,
   applyApprovalDecisionForRequest: mockApplyApprovalDecisionForRequest,
 }));
 
@@ -1286,6 +1289,44 @@ describe('approval artifacts router', () => {
         kind: 'step_receipt_issued',
       })
     );
+  });
+
+  it('reports a policy refusal as such even when its message says "invalid"', async () => {
+    const ownerStep = {
+      approver_side: 'customer_data_owner',
+      approver_subject_type: 'service_principal',
+      approver_subject_id: 'svc-1',
+    } as const;
+    mockGetApprovalCompletionArtifact.mockResolvedValueOnce(makeArtifact(ownerStep));
+    mockConsumeApprovalCompletionArtifact.mockResolvedValueOnce(
+      makeArtifact({ ...ownerStep, consumed: true })
+    );
+    mockApprovalRepo.getApprovalById.mockResolvedValueOnce(
+      makeApproval({
+        side: 'customer_data_owner',
+        subject_type: 'service_principal',
+        subject_id: 'svc-1',
+      })
+    );
+    mockApplyApprovalDecisionForRequest.mockRejectedValueOnce(
+      new ApprovalWorkflowPolicyError(
+        'approval_scope_binding_violation',
+        'invalid_detail must be approved by an admin operator'
+      )
+    );
+
+    const res = await createApp().request(
+      '/api/approval-artifacts/apc_1/complete',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision: 'approved' }),
+      },
+      mockEnv
+    );
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ error: 'approval_scope_binding_violation' });
   });
 
   it('requires a completion assertion for step-up methods', async () => {
