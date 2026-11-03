@@ -14,6 +14,12 @@ import type { Context } from 'hono';
 import { buildPolicyConstrainedRegionShardConfig } from '@authrim/ar-lib-core';
 import type { Env } from '../../../types';
 
+// Shard configuration lives in KV; these tests use IDs of configured shards.
+vi.mock('../../../utils/configured-shard', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../utils/configured-shard')>()),
+  isConfiguredShard: vi.fn(async () => true),
+}));
+
 const TEST_REGION_CONFIG = buildPolicyConstrainedRegionShardConfig({
   residency: {
     version: 1,

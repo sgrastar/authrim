@@ -1,5 +1,6 @@
 /** Public OpenID4VP authorization request object fetched by wallet request_uri. */
 
+import { isConfiguredShard, ShardConfigUnavailableError } from '../../utils/configured-shard';
 import type { Context } from 'hono';
 import {
   AR_ERROR_CODES,
@@ -20,7 +21,10 @@ export async function vpRequestObjectRoute(c: Context<{ Bindings: Env }>): Promi
       });
     }
     const tenantId = getTenantIdFromContext(c);
-    const { stub } = getVPRequestStoreById(c.env, requestId, tenantId);
+    const { stub, resolution } = getVPRequestStoreById(c.env, requestId, tenantId);
+    if (!(await isConfiguredShard(c.env, tenantId, resolution))) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
     const response = await stub.fetch(
       new Request(
         `https://internal/get?id=${encodeURIComponent(requestId)}&tenant_id=${encodeURIComponent(tenantId)}`
@@ -49,6 +53,9 @@ export async function vpRequestObjectRoute(c: Context<{ Bindings: Env }>): Promi
     });
   } catch (error) {
     log.error('VP request object retrieval failed', {}, error as Error);
+    if (error instanceof ShardConfigUnavailableError) {
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    }
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
   }
 }

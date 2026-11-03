@@ -2,6 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Context } from 'hono';
 import type { Env } from '../../../types';
 import { resolveAccessTokenTtlSeconds, vciTokenRoute } from '../token';
+import { isConfiguredShard, ShardConfigUnavailableError } from '../../../utils/configured-shard';
+
+// Shard configuration lives in KV; these tests use IDs of configured shards.
+vi.mock('../../../utils/configured-shard', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../utils/configured-shard')>()),
+  isConfiguredShard: vi.fn(async () => true),
+}));
 
 const mocks = vi.hoisted(() => ({
   parsePreAuthorizedCode: vi.fn(),
@@ -269,6 +276,28 @@ describe('VCI token route', () => {
 
     expect(response.status).toBe(400);
     expect((await response.json()) as { error: string }).toMatchObject({ error: 'invalid_grant' });
+  });
+
+  it('answers a code naming an unconfigured shard with invalid_grant before calling a store', async () => {
+    vi.mocked(isConfiguredShard).mockResolvedValueOnce(false);
+    const stub = createOfferStub();
+    const response = await vciTokenRoute(createContext({ offerStub: stub }));
+
+    expect(response.status).toBe(400);
+    expect((await response.json()) as { error: string }).toMatchObject({ error: 'invalid_grant' });
+    expect(stub.fetch).not.toHaveBeenCalled();
+  });
+
+  it('answers an unreadable shard configuration as temporarily unavailable, not invalid_grant', async () => {
+    vi.mocked(isConfiguredShard).mockRejectedValueOnce(new ShardConfigUnavailableError('kv down'));
+    const stub = createOfferStub();
+    const response = await vciTokenRoute(createContext({ offerStub: stub }));
+
+    expect(response.status).toBe(503);
+    expect((await response.json()) as { error: string }).toMatchObject({
+      error: 'temporarily_unavailable',
+    });
+    expect(stub.fetch).not.toHaveBeenCalled();
   });
 
   it('does not derive a transaction-code hash for an unprotected offer', async () => {

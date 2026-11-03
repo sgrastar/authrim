@@ -13,6 +13,12 @@ import { getCredentialOfferStoreByProofNonce } from '../../../utils/credential-o
 import { sha256Base64url } from '../../../utils/crypto';
 import { calculateJwkThumbprint } from '../../../utils/jwk-thumbprint';
 
+// Shard configuration lives in KV; these tests use IDs of configured shards.
+vi.mock('../../../utils/configured-shard', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../utils/configured-shard')>()),
+  isConfiguredShard: vi.fn(async () => true),
+}));
+
 const mocks = vi.hoisted(() => ({
   validateToken: vi.fn(),
   validateProof: vi.fn(),

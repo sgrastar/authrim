@@ -308,11 +308,15 @@ const regionShardConfigCache = new Map<
 >();
 
 /**
- * Clear region shard config cache.
+ * Clear region shard config cache, of one tenant or of all.
  * Useful for testing or after configuration changes.
  */
-export function clearRegionShardConfigCache(): void {
-  regionShardConfigCache.clear();
+export function clearRegionShardConfigCache(tenantId?: string): void {
+  if (tenantId === undefined) {
+    regionShardConfigCache.clear();
+    return;
+  }
+  regionShardConfigCache.delete(`region-shard-config:${tenantId.trim()}`);
 }
 
 // =============================================================================
@@ -495,6 +499,34 @@ export function findGenerationConfig(
   }
 
   return config.previousGenerations.find((g) => g.generation === generation) ?? null;
+}
+
+/**
+ * Whether a shard parsed from an untrusted resource ID is one the config places resources in:
+ * a routed generation, an index in range, and the region and jurisdiction that index maps to.
+ * Check it before addressing a Durable Object, so a forged ID cannot create objects outside the
+ * configured shards.
+ */
+export function isConfiguredRegionShard(
+  config: RegionShardConfig | RegionShardConfigV2,
+  resolution: ShardResolution
+): boolean {
+  const generation = findGenerationConfig(config, resolution.generation);
+  if (!generation) return false;
+  const { shardIndex } = resolution;
+  if (!Number.isSafeInteger(shardIndex) || shardIndex < 0 || shardIndex >= generation.totalShards) {
+    return false;
+  }
+  let placement: ReturnType<typeof parseRegionPlacementKey>;
+  try {
+    placement = parseRegionPlacementKey(resolution.regionKey);
+  } catch {
+    return false;
+  }
+  return (
+    placement.regionKey === resolveRegionForShard(shardIndex, generation.regions) &&
+    placement.jurisdiction === ((config as RegionShardConfigV2).residency?.jurisdiction ?? null)
+  );
 }
 
 /**

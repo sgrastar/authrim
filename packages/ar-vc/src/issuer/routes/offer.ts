@@ -9,6 +9,7 @@
  * - Region-aware DO placement with locationHint
  */
 
+import { isConfiguredShard } from '../../utils/configured-shard';
 import type { Context } from 'hono';
 import type { Env } from '../../types';
 import {
@@ -58,7 +59,10 @@ export async function credentialOfferRoute(c: Context<{ Bindings: Env }>): Promi
     }
     const offerId = parsedReference.offerId;
     const tenantId = getTenantIdFromContext(c);
-    const { stub } = getCredentialOfferStoreById(c.env, offerId, tenantId);
+    const { stub, resolution } = getCredentialOfferStoreById(c.env, offerId, tenantId);
+    if (!(await isConfiguredShard(c.env, tenantId, resolution))) {
+      return offerNotFound(c);
+    }
 
     const response = await stub.fetch(
       new Request(

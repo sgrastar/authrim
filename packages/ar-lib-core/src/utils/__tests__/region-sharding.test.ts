@@ -20,6 +20,7 @@ import {
   getRegionAwareDOStub,
   getRegionShardConfig,
   getDefaultRegionShardConfig,
+  isConfiguredRegionShard,
   parseRegionPlacementKey,
   validateRegionShardResidencyStrict,
   type RegionShardConfig,
@@ -968,5 +969,63 @@ describe('Region Sharding Utilities', () => {
       );
       expect(() => parseRegionPlacementKey('unknown_j_eu')).toThrow('region_shard_region_invalid');
     });
+  });
+});
+
+describe('isConfiguredRegionShard', () => {
+  const config = {
+    ...getDefaultRegionShardConfig(),
+    currentGeneration: 2,
+    currentTotalShards: 4,
+    currentRegions: { enam: { startShard: 0, endShard: 3, shardCount: 4 } },
+    previousGenerations: [
+      {
+        generation: 1,
+        totalShards: 2,
+        regions: { apac: { startShard: 0, endShard: 1, shardCount: 2 } },
+      },
+    ],
+  };
+
+  it('accepts shards of the current and of a still routed generation', () => {
+    expect(
+      isConfiguredRegionShard(config, { generation: 2, regionKey: 'enam', shardIndex: 3 })
+    ).toBe(true);
+    expect(
+      isConfiguredRegionShard(config, { generation: 1, regionKey: 'apac', shardIndex: 1 })
+    ).toBe(true);
+  });
+
+  it.each([
+    {
+      name: 'an unknown generation',
+      resolution: { generation: 9, regionKey: 'enam', shardIndex: 0 },
+    },
+    {
+      name: 'an index past the shard count',
+      resolution: { generation: 2, regionKey: 'enam', shardIndex: 999999 },
+    },
+    { name: 'a negative index', resolution: { generation: 2, regionKey: 'enam', shardIndex: -1 } },
+    {
+      name: 'a region the index does not map to',
+      resolution: { generation: 2, regionKey: 'apac', shardIndex: 0 },
+    },
+    { name: 'an invalid region', resolution: { generation: 2, regionKey: 'mars', shardIndex: 0 } },
+    {
+      name: 'a jurisdiction the tenant has not',
+      resolution: { generation: 2, regionKey: 'enam_j_eu', shardIndex: 0 },
+    },
+  ])('rejects $name', ({ resolution }) => {
+    expect(isConfiguredRegionShard(config, resolution)).toBe(false);
+  });
+
+  it('requires the jurisdiction of a residency-bound tenant', () => {
+    const bound = { ...config, residency: { jurisdiction: 'eu' } } as unknown as RegionShardConfig;
+    expect(
+      isConfiguredRegionShard(bound, { generation: 2, regionKey: 'enam_j_eu', shardIndex: 0 })
+    ).toBe(true);
+    expect(
+      isConfiguredRegionShard(bound, { generation: 2, regionKey: 'enam', shardIndex: 0 })
+    ).toBe(false);
   });
 });

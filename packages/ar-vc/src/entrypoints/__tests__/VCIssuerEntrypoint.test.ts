@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ExecutionContext } from '@cloudflare/workers-types';
 import type { CreateCredentialOfferServiceInput } from '@authrim/ar-lib-core';
 import { VCIssuerEntrypoint } from '../VCIssuerEntrypoint';
+import { isConfiguredShard } from '../../utils/configured-shard';
 import type { Env } from '../../types';
 
 type GetStore =
@@ -13,6 +14,11 @@ const mocks = vi.hoisted(() => ({
   getById: vi.fn(),
 }));
 const createOfferRpc = mocks.createOfferRpc;
+
+vi.mock('../../utils/configured-shard', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../utils/configured-shard')>()),
+  isConfiguredShard: vi.fn(async () => true),
+}));
 const getStore = mocks.getStore as ReturnType<typeof vi.fn<GetStore>>;
 
 vi.mock('../../utils/credential-offer-sharding', async (importOriginal) => {
@@ -219,6 +225,7 @@ describe('VCIssuerEntrypoint', () => {
       mocks.getAdminOfferProgressRpc.mockReset();
       mocks.getById.mockReset().mockReturnValue({
         stub: { getAdminOfferProgressRpc: mocks.getAdminOfferProgressRpc },
+        resolution: { generation: 1, regionKey: 'apac', shardIndex: 0 },
       });
     });
 
@@ -241,6 +248,12 @@ describe('VCIssuerEntrypoint', () => {
         userId: 'admin-1',
         now: expect.any(Number) as number,
       });
+    });
+
+    it('returns null for an offer id naming an unconfigured shard without calling a store', async () => {
+      vi.mocked(isConfiguredShard).mockResolvedValueOnce(false);
+      await expect(createEntrypoint().getAdminCredentialOfferStatus(query)).resolves.toBeNull();
+      expect(mocks.getAdminOfferProgressRpc).not.toHaveBeenCalled();
     });
 
     it('returns null for an offer of another admin or tenant, and for a malformed offer id', async () => {

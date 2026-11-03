@@ -18,6 +18,7 @@ import {
   falRequiresSignedPushedRequest,
   type Logger,
 } from '@authrim/ar-lib-core';
+import { isConfiguredShard, ShardConfigUnavailableError } from '../../utils/configured-shard';
 import {
   getCredentialOfferStoreById,
   parsePreAuthorizedCode,
@@ -79,6 +80,9 @@ export async function vciTokenRoute(c: Context<{ Bindings: Env }>): Promise<Resp
     );
   } catch (error) {
     log.error('VCI token request failed', {}, error as Error);
+    if (error instanceof ShardConfigUnavailableError) {
+      return vciError(c, 503, 'temporarily_unavailable');
+    }
     return vciError(c, 500, 'server_error');
   }
 }
@@ -226,7 +230,8 @@ async function reserveOfferByCode(
     const parsedCode = parsePreAuthorizedCode(preAuthorizedCode);
     if (!parsedCode) return null;
     const offerId = parsedCode.offerId;
-    const { stub } = getCredentialOfferStoreById(env, offerId, tenantId);
+    const { stub, resolution } = getCredentialOfferStoreById(env, offerId, tenantId);
+    if (!(await isConfiguredShard(env, tenantId, resolution))) return null;
     const txCodeHash = txCode
       ? await hashTransactionCode(env.VC_TRANSACTION_CODE_HMAC_SECRET, tenantId, offerId, txCode)
       : undefined;
@@ -262,6 +267,8 @@ async function reserveOfferByCode(
     if (!result.reserved || !result.reservationId || !result.offer) return null;
     return { offerId, tenantId, reservationId: result.reservationId, offer: result.offer };
   } catch (error) {
+    // Not knowing the shard configuration says nothing about the code: not invalid_grant.
+    if (error instanceof ShardConfigUnavailableError) throw error;
     log.error('Failed to reserve offer by code', {}, error as Error);
     return null;
   }

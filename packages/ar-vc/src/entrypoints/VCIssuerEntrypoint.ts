@@ -1,3 +1,4 @@
+import { isConfiguredShard } from '../utils/configured-shard';
 import { runSamlDrCoveredOperation } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type {
@@ -323,13 +324,15 @@ export class VCIssuerEntrypoint extends WorkerEntrypoint<Env> {
         throw new Error('invalid_tenant_id');
       }
       const adminUserId = requireIdentifier(input.adminUserId, 'admin_user_id');
-      let stub: CredentialOfferStoreRpcStub;
+      let store: ReturnType<typeof getCredentialOfferStoreById>;
       try {
-        stub = getCredentialOfferStoreById(env, input.offerId, input.tenantId)
-          .stub as unknown as CredentialOfferStoreRpcStub;
+        store = getCredentialOfferStoreById(env, input.offerId, input.tenantId);
       } catch {
         return null;
       }
+      // The offer ID comes from the admin console's URL: never address an unconfigured shard.
+      if (!(await isConfiguredShard(env, input.tenantId, store.resolution))) return null;
+      const stub = store.stub as unknown as CredentialOfferStoreRpcStub;
       const progress = await stub.getAdminOfferProgressRpc({
         id: input.offerId,
         tenantId: input.tenantId,

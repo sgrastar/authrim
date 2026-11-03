@@ -4,6 +4,7 @@
  * Issues credentials to the wallet.
  */
 
+import { isConfiguredShard } from '../../utils/configured-shard';
 import type { Context } from 'hono';
 import type { Env } from '../../types';
 import {
@@ -253,6 +254,9 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     try {
       nonceStore = getCredentialOfferStoreByProofNonce(c.env, expectedNonce, tokenResult.tenantId);
     } catch {
+      return vciError(c, 400, 'invalid_nonce');
+    }
+    if (!(await isConfiguredShard(c.env, tokenResult.tenantId, nonceStore.resolution))) {
       return vciError(c, 400, 'invalid_nonce');
     }
     const reserveResponse = await nonceStore.stub.fetch(
