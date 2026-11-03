@@ -99,21 +99,9 @@ const createMockContext = (
   }> = {}
 ): Context<{ Bindings: Env }> => {
   const mockKeyManagerStub = {
-    fetch: vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          keys: [
-            {
-              kty: 'EC',
-              crv: 'P-256',
-              x: 'base64-x',
-              y: 'base64-y',
-              kid: 'key-1',
-            },
-          ],
-        })
-      )
-    ),
+    getVcIssuerJwksRpc: vi.fn().mockResolvedValue({
+      keys: [{ kty: 'EC', crv: 'P-256', x: 'base64-x', y: 'base64-y', kid: 'key-1' }],
+    }),
   };
 
   const defaultEnv: Env = {
@@ -151,6 +139,7 @@ const createMockContext = (
     },
   });
 
+  const responseHeaders = new Headers({ 'Content-Type': 'application/json' });
   return {
     env: defaultEnv,
     req: {
@@ -160,10 +149,11 @@ const createMockContext = (
       param: vi.fn().mockReturnValue('did:web:example.com'),
       ...overrides.req,
     },
+    header: vi.fn((name: string, value: string) => responseHeaders.set(name, value)),
     json: vi.fn((data: unknown, status?: number) => {
       return new Response(JSON.stringify(data), {
         status: status || 200,
-        headers: { 'Content-Type': 'application/json' },
+        headers: responseHeaders,
       });
     }),
     // Mock get method for getLogger
@@ -675,21 +665,15 @@ describe('DID Document Route', () => {
 
   it('should return DID document with public key', async () => {
     const mockKeyManagerStub = {
-      fetch: vi.fn().mockResolvedValue(
-        new Response(
-          JSON.stringify({
-            keys: [
-              {
-                kty: 'EC',
-                crv: 'P-256',
-                x: 'base64-x-value',
-                y: 'base64-y-value',
-                kid: 'key-1',
-              },
-            ],
-          })
-        )
-      ),
+      // The KeyManager's HTTP endpoints require the internal secret: keys come over RPC only.
+      fetch: vi.fn().mockResolvedValue(new Response('Unauthorized', { status: 401 })),
+      getVcIssuerJwksRpc: vi.fn().mockResolvedValue({
+        keys: [
+          { kty: 'EC', crv: 'P-256', x: 'base64-x-value', y: 'base64-y-value', kid: 'key-1' },
+          { kty: 'EC', crv: 'P-256', x: 'base64-x-next', y: 'base64-y-next', kid: 'key-2' },
+          { kty: 'EC', crv: 'P-256', x: 'base64-x-nokid', y: 'base64-y-nokid' },
+        ],
+      }),
     };
 
     const c = createMockContext({
@@ -720,10 +704,17 @@ describe('DID Document Route', () => {
     expect(data['@context']).toContain('https://www.w3.org/ns/did/v1');
     expect(data.id).toBe('did:web:authrim.com');
     expect(data.verificationMethod).toBeDefined();
-    expect(data.verificationMethod.length).toBe(1);
+    expect(data.verificationMethod.map((method) => method.id)).toEqual([
+      'did:web:authrim.com#key-1',
+      'did:web:authrim.com#key-2',
+    ]);
     expect(data.verificationMethod[0].type).toBe('JsonWebKey2020');
     expect(data.verificationMethod[0].publicKeyJwk).toBeDefined();
-    expect(data.assertionMethod).toContain('did:web:authrim.com#key-1');
+    expect(mockKeyManagerStub.fetch).not.toHaveBeenCalled();
+    expect(data.assertionMethod).toEqual([
+      'did:web:authrim.com#key-1',
+      'did:web:authrim.com#key-2',
+    ]);
     expect(data.authentication).toContain('did:web:authrim.com#key-1');
   });
 
@@ -767,55 +758,42 @@ describe('DID Document Route', () => {
     expect(data.id).toBe('did:web:tenant1.example.com');
   });
 
-  it('should handle KeyManager error gracefully', async () => {
-    const mockKeyManagerStub = {
-      fetch: vi.fn().mockResolvedValue(new Response('Error', { status: 500 })),
-    };
-
+  it('omits verification methods while the issuer has no key yet', async () => {
     const c = createMockContext({
       env: {
         KEY_MANAGER: {
           idFromName: vi.fn().mockReturnValue({ toString: () => 'mock-km-id' }),
-          get: vi.fn().mockReturnValue(mockKeyManagerStub),
+          get: vi
+            .fn()
+            .mockReturnValue({ getVcIssuerJwksRpc: vi.fn().mockResolvedValue({ keys: [] }) }),
         } as unknown as DurableObjectNamespace,
       },
     });
 
     const response = await didDocumentRoute(c);
-    const data = (await response.json()) as {
-      id: string;
-      verificationMethod?: object[];
-    };
+    const data = (await response.json()) as { id: string; verificationMethod?: object[] };
 
-    // Should still return a valid document, just without verification methods
     expect(response.status).toBe(200);
     expect(data.id).toBe('did:web:authrim.com');
     expect(data.verificationMethod).toBeUndefined();
   });
 
-  it('should handle KeyManager exception gracefully', async () => {
-    const mockKeyManagerStub = {
-      fetch: vi.fn().mockRejectedValue(new Error('KeyManager unavailable')),
-    };
-
+  it('fails instead of publishing a document without keys when the KeyManager fails', async () => {
     const c = createMockContext({
       env: {
         KEY_MANAGER: {
           idFromName: vi.fn().mockReturnValue({ toString: () => 'mock-km-id' }),
-          get: vi.fn().mockReturnValue(mockKeyManagerStub),
+          get: vi.fn().mockReturnValue({
+            getVcIssuerJwksRpc: vi.fn().mockRejectedValue(new Error('KeyManager unavailable')),
+          }),
         } as unknown as DurableObjectNamespace,
       },
     });
 
     const response = await didDocumentRoute(c);
-    const data = (await response.json()) as {
-      id: string;
-      verificationMethod?: object[];
-    };
 
-    // Should still return a valid document, just without verification methods
-    expect(response.status).toBe(200);
-    expect(data.id).toBe('did:web:authrim.com');
-    expect(data.verificationMethod).toBeUndefined();
+    expect(response.status).toBe(500);
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+    await expect(response.json()).resolves.toEqual({ error: 'server_error' });
   });
 });
