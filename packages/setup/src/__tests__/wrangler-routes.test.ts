@@ -1,6 +1,7 @@
 import { createArchiveTestConfig, generateArchiveTestWrangler } from './fixtures/log-archive.js';
 import { describe, expect, it } from 'vitest';
 import {
+  bootstrapWranglerOptions,
   buildResourceIdsFromLock,
   generateRoutes,
   parseWranglerToml,
@@ -51,6 +52,14 @@ describe('Worker placement generation', () => {
       { d1: {}, kv: {} }
     );
     expect(disabled.services ?? []).not.toContainEqual(binding);
+    const bootstrap = generateArchiveTestWrangler(
+      'ar-vc',
+      { ...config, components: { ...config.components, vc: true } },
+      { d1: {}, kv: {} },
+      undefined,
+      bootstrapWranglerOptions('ar-vc')
+    );
+    expect(bootstrap.services ?? []).not.toContainEqual(binding);
   });
   it('binds the Admin database to UserInfo for the identity mapping and Destination Profile', () => {
     const config = createArchiveTestConfig('test');

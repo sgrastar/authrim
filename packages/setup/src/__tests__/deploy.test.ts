@@ -3557,7 +3557,7 @@ describe('deployAll', () => {
     expect(started.at(-1)).toBe('ar-router');
   });
 
-  it('bootstraps Auth and Bridge, deploys Management, then restores full bindings', async () => {
+  it('bootstraps Auth, Bridge and VC, deploys Management, then restores full bindings', async () => {
     const rootDir = createTempRoot();
     const selected = [
       'ar-lib-core',
@@ -3585,10 +3585,17 @@ describe('deployAll', () => {
       'name = "test-ar-bridge"\n\n[[services]]\nbinding = "EXTERNAL_IDP_ACCOUNT_PROVISIONER"\nservice = "test-ar-management"\n'
     );
     writeFileSync(bridgeBootstrapPath, 'name = "test-ar-bridge"\n');
+    const vcDirectory = join(rootDir, 'packages', 'ar-vc');
+    const vcBootstrapPath = join(vcDirectory, 'wrangler.bootstrap.toml');
+    writeFileSync(
+      join(vcDirectory, 'wrangler.toml'),
+      'name = "test-ar-vc"\n\n[[services]]\nbinding = "ADMIN_CREDENTIAL_ELIGIBILITY"\nservice = "test-ar-management"\n'
+    );
+    writeFileSync(vcBootstrapPath, 'name = "test-ar-vc"\n');
 
     const mutations: Array<{
       component: string;
-      bootstrap: 'auth' | 'bridge' | false;
+      bootstrap: 'auth' | 'bridge' | 'vc' | false;
       args: string[];
     }> = [];
     vi.mocked(execa).mockImplementation(async (_command, args, options) => {
@@ -3599,7 +3606,9 @@ describe('deployAll', () => {
           ? 'auth'
           : commandArgs.includes(bridgeBootstrapPath)
             ? 'bridge'
-            : false,
+            : commandArgs.includes(vcBootstrapPath)
+              ? 'vc'
+              : false,
         args: commandArgs,
       });
       return successfulCommandResult();
@@ -3654,6 +3663,77 @@ describe('deployAll', () => {
     expect(managementIndex).toBeLessThan(
       mutations.findIndex(({ component, bootstrap }) => component === 'ar-bridge' && !bootstrap)
     );
+    const vcMutations = mutations.filter(({ component }) => component === 'ar-vc');
+    expect(vcMutations.map(({ component, bootstrap }) => ({ component, bootstrap }))).toEqual([
+      { component: 'ar-vc', bootstrap: 'vc' },
+      { component: 'ar-vc', bootstrap: false },
+    ]);
+    expect(managementIndex).toBeGreaterThan(
+      mutations.findIndex(({ component, bootstrap }) => component === 'ar-vc' && bootstrap === 'vc')
+    );
+    expect(managementIndex).toBeLessThan(
+      mutations.findIndex(({ component, bootstrap }) => component === 'ar-vc' && !bootstrap)
+    );
+  });
+
+  it('refuses a VC-only deployment while Management is known to be absent', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-vc', '1.0.0');
+    writeFileSync(
+      join(rootDir, 'packages', 'ar-vc', 'wrangler.toml'),
+      'name = "test-ar-vc"\n\n[[services]]\nbinding = "ADMIN_CREDENTIAL_ELIGIBILITY"\nservice = "test-ar-management"\n'
+    );
+
+    await expect(
+      deployAll(
+        { env: 'test', rootDir, deploymentStrategy: 'direct', existingComponents: ['ar-lib-core'] },
+        ['ar-vc']
+      )
+    ).rejects.toThrow('vc_deploy_requires_management');
+    expect(execa).not.toHaveBeenCalled();
+  });
+
+  it('deploys VC with full bindings when Management already exists', async () => {
+    const rootDir = createTempRoot();
+    const selected = [
+      'ar-lib-core',
+      'ar-control',
+      'ar-plugin-runner',
+      'ar-bridge',
+      'ar-auth',
+      'ar-management',
+      'ar-vc',
+    ] as const;
+    for (const component of selected) {
+      createWorkerPackage(rootDir, component, '1.0.0');
+    }
+    const vcDirectory = join(rootDir, 'packages', 'ar-vc');
+    const vcBootstrapPath = join(vcDirectory, 'wrangler.bootstrap.toml');
+    writeFileSync(
+      join(vcDirectory, 'wrangler.toml'),
+      'name = "test-ar-vc"\n\n[[services]]\nbinding = "ADMIN_CREDENTIAL_ELIGIBILITY"\nservice = "test-ar-management"\n'
+    );
+    writeFileSync(vcBootstrapPath, 'name = "test-ar-vc"\n');
+    const vcArgs: string[][] = [];
+    vi.mocked(execa).mockImplementation(async (_command, args, options) => {
+      if (basename(String(options?.cwd)) === 'ar-vc') vcArgs.push([...(args ?? [])]);
+      return successfulCommandResult();
+    });
+
+    const summary = await deployAll(
+      {
+        env: 'test',
+        rootDir,
+        deploymentStrategy: 'direct',
+        concurrency: 2,
+        existingComponents: [...selected],
+      },
+      [...selected]
+    );
+
+    expect(summary.failedCount).toBe(0);
+    expect(vcArgs).toHaveLength(1);
+    expect(vcArgs[0]).not.toContain(vcBootstrapPath);
   });
 
   it('bootstraps Control on an initial deployment, then restores bindings', async () => {
