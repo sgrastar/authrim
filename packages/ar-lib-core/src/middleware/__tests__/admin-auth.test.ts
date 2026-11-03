@@ -226,6 +226,11 @@ function createTestApp(
     return c.json({ success: true, adminAuth });
   });
 
+  app.post('/api/admin/me/step-up/receipts', (c) => {
+    const adminAuth = (c as unknown as { get(key: string): unknown }).get('adminAuth');
+    return c.json({ success: true, adminAuth });
+  });
+
   app.post(`/api/admin/agent-login-handoffs/alh_${'a'.repeat(32)}/approve`, (c) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const adminAuth = (c as any).get('adminAuth');
@@ -2258,17 +2263,24 @@ describe('adminAuthMiddleware', () => {
           })
         );
 
+      type Body = { adminAuth: { tenantId: string; sessionTenantId?: string } };
       const tenantOperation = await call('GET', '/api/admin/test');
       const reauth = await call('POST', '/api/admin/me/reauth/passkey/verify');
+      const receipt = await call('POST', '/api/admin/me/step-up/receipts');
 
       expect(tenantOperation.status).toBe(200);
-      expect(
-        (await tenantOperation.json<{ adminAuth: { tenantId: string } }>()).adminAuth.tenantId
-      ).toBe('tenant-a');
+      // A tenant route acts on the selected tenant but still knows where the session lives.
+      expect((await tenantOperation.json<Body>()).adminAuth).toMatchObject({
+        tenantId: 'tenant-a',
+        sessionTenantId: 'default',
+      });
       expect(reauth.status).toBe(200);
-      expect((await reauth.json<{ adminAuth: { tenantId: string } }>()).adminAuth.tenantId).toBe(
-        'default'
-      );
+      expect((await reauth.json<Body>()).adminAuth.tenantId).toBe('default');
+      expect(receipt.status).toBe(200);
+      expect((await receipt.json<Body>()).adminAuth).toMatchObject({
+        tenantId: 'default',
+        sessionTenantId: 'default',
+      });
     });
 
     it('treats only a bounded central login-handoff approval path as platform-scoped', async () => {

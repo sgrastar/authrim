@@ -990,6 +990,14 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     ],
     [
       'security',
+      'json',
+      'structured',
+      `
+    security.admin_step_up_overrides
+  `,
+    ],
+    [
+      'security',
       'number',
       'value',
       `

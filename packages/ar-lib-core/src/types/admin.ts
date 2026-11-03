@@ -124,6 +124,11 @@ export interface AdminAuthContext {
   authenticationTimeMs?: number;
   /** Credential ID (base64url) of the passkey verified at that instant, when recorded. */
   passkeyCredentialId?: string;
+  /**
+   * The admin session's own tenant (session auth). `tenantId` becomes the requested tenant on a
+   * tenant route; this stays where the session and its evidence live.
+   */
+  sessionTenantId?: string;
   /** Admin session ID (for session auth) */
   sessionId?: string;
   /** Absolute expiry of the backing Admin session in epoch milliseconds. */

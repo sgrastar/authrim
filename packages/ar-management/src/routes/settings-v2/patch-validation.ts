@@ -5,6 +5,8 @@
 
 import {
   aalMapProblem,
+  adminStepUpOverridesProblem,
+  ADMIN_STEP_UP_OVERRIDES_KEY,
   ialAssuranceValuesProblem,
   ialMapProblem,
   idaProfileProblem,
@@ -182,8 +184,9 @@ export function validateExternalIdpPatch(body: SettingsPatchRequest): string | n
 
 /**
  * Security settings whose value must be one runtime can use: the message signing algorithm lists
- * (one or more known algorithms; the authorization response list may also be empty), and the DPoP nonce choices by resource (resource URI to true or
- * false). Returns the problem, or null.
+ * (one or more known algorithms; the authorization response list may also be empty), the DPoP nonce choices by resource (resource URI to true or
+ * false), and the admin step-up levels (known operations, raised only). Returns the problem, or
+ * null.
  */
 export function validateSecurityPatch(body: SettingsPatchRequest): string | null {
   for (const [key, allowed] of [
@@ -213,6 +216,10 @@ export function validateSecurityPatch(body: SettingsPatchRequest): string | null
       ))
   ) {
     return 'security.dpop_nonce_resource_overrides must be an object of resource URI to true or false';
+  }
+  const stepUpOverrides = body.set?.[ADMIN_STEP_UP_OVERRIDES_KEY];
+  if (stepUpOverrides !== undefined) {
+    return adminStepUpOverridesProblem(stepUpOverrides);
   }
   return null;
 }

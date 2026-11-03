@@ -2774,6 +2774,31 @@ describe('Settings API v2', () => {
         }
       });
 
+      it('accepts admin step-up levels only as raises of known operations, per tenant', async () => {
+        const { app, mockEnv } = createTestApp({ kv: createMockKV() });
+        const url = '/api/admin/tenants/tenant_123/settings/security';
+        for (const value of [
+          [],
+          { 'users.list': 'L2' },
+          { 'sessions.revoke_all': 'L3' },
+          { 'tenant.delete': 'L1' },
+        ]) {
+          const res = await patchAt(app, mockEnv, url, {
+            'security.admin_step_up_overrides': value,
+          });
+          expect(res.status, JSON.stringify(value)).toBe(400);
+          expect(await res.json<ApiResponse>()).toMatchObject({ error: 'validation_failed' });
+        }
+        const res = await patchAt(app, mockEnv, url, {
+          'security.admin_step_up_overrides': {
+            'sessions.revoke_all': 'L2',
+            'tenant.delete': 'L2',
+          },
+        });
+        expect(res.status).toBe(200);
+        expect((await res.json<{ rejected?: object }>()).rejected ?? {}).toEqual({});
+      });
+
       it('accepts the assurance maps only as JSON objects of names to AAL1..AAL3', async () => {
         const { app, mockEnv } = createTestApp({ kv: createMockKV() });
         const url = '/api/admin/tenants/tenant_123/settings/assurance';
