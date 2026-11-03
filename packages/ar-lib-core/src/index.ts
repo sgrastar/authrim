@@ -323,6 +323,7 @@ export * from './services/logging-runtime-emitter';
 export * from './services/pii-compensation-policy';
 export * from './services/pii-write-compensation';
 export * from './services/approval-governance';
+export * from './services/approval-scope-binding';
 export * from './services/step-up';
 export * from './services/downstream-elevation-grant';
 export * from './services/downstream-elevation-grant-client';

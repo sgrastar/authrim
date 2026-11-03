@@ -27,6 +27,9 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    // The grant's request and approvers are read from the Admin DB, which is mocked here; the
+    // check itself is covered in admin-approvals-resource-binding.test.ts.
+    isElevationGrantBindingIntact: vi.fn(async () => true),
     createAuthContextFromHono: vi.fn(() => ({ coreAdapter: mockAdapter })),
     requireDedicatedAdminDatabaseAdapter: vi.fn(() => mockAdapter),
     createAuditLogFromContext: mockAuditLog,

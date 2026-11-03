@@ -60,7 +60,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   };
 });
 
-vi.mock('../approval-completion-artifact', () => ({
+vi.mock('../approval-completion-artifact', async (importOriginal) => ({
+  approvalArtifactReference: (
+    await importOriginal<typeof import('../approval-completion-artifact')>()
+  ).approvalArtifactReference,
   issueApprovalCompletionArtifact: mocks.issueArtifact,
 }));
 

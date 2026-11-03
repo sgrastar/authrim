@@ -20,7 +20,10 @@ vi.mock('../approval-transport-detail', () => ({
   appendApprovalTransportEvent: mockAppendApprovalTransportEvent,
 }));
 
-vi.mock('../approval-completion-artifact', () => ({
+vi.mock('../approval-completion-artifact', async (importOriginal) => ({
+  approvalArtifactReference: (
+    await importOriginal<typeof import('../approval-completion-artifact')>()
+  ).approvalArtifactReference,
   consumeApprovalCompletionArtifact: mockConsumeApprovalCompletionArtifact,
 }));
 
@@ -164,7 +167,27 @@ describe('switchApprovalArtifactMethod', () => {
     );
     expect(mockConsumeApprovalCompletionArtifact).toHaveBeenCalledWith({}, 'apc_1', 'tenant-a');
     expect(result.replacedArtifactId).toBe('apc_1');
-    expect(result.allowedMethods).toEqual(['portal_confirm', 'passkey', 'reauth']);
+    expect(result.allowedMethods).toEqual(['passkey', 'reauth']);
+  });
+
+  it('never falls back from a verified method to one that needs no verification', async () => {
+    await expect(
+      switchApprovalArtifactMethod({ env: {} } as never, {
+        adapter: {} as never,
+        requestRepo: {} as never,
+        approvalRepo: { updateApproval: vi.fn() } as never,
+        request: makeRequest() as never,
+        approval: makeApproval({
+          side: 'customer_data_owner',
+          subject_type: 'customer_delegate',
+          subject_id: 'owner-1',
+        }) as never,
+        currentArtifactId: 'apc_1',
+        currentMethod: 'ciba',
+        requestedMethod: 'portal_confirm',
+      })
+    ).rejects.toMatchObject({ code: 'approval_completion_method_not_allowed' });
+    expect(mockDispatchApprovalNotification).not.toHaveBeenCalled();
   });
 
   it('rejects fallback methods outside the allowed policy', async () => {

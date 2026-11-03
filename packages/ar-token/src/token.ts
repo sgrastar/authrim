@@ -82,6 +82,7 @@ import {
   requireDedicatedAdminDatabaseAdapter,
   resolveElevationGrantSubjectToken,
   ELEVATION_GRANT_SUBJECT_TOKEN_TYPE,
+  ELEVATION_GRANT_SUBJECT_TOKEN_USE,
   getTenantSettingsDocument,
   TENANT_DEFAULTS,
   getDeviceSecretInstallationId,
@@ -7126,6 +7127,20 @@ async function handleTokenExchangeGrant(
         error: 'invalid_grant',
         error_description: 'Subject token has been revoked',
       },
+      400
+    );
+  }
+
+  // An elevation grant subject token is exchanged only as one. Declared as another type it would
+  // skip the grant checks below and be honoured as the target user's own token.
+  if (
+    subjectTokenPayload.token_use === ELEVATION_GRANT_SUBJECT_TOKEN_USE &&
+    !isElevationGrantSubjectTokenRequest
+  ) {
+    return oauthError(
+      c,
+      'invalid_grant',
+      'Elevation grant subject tokens must be exchanged as elevation grant tokens',
       400
     );
   }

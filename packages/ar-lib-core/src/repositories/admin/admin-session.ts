@@ -148,21 +148,6 @@ export class AdminSessionRepository extends BaseRepository<AdminSessionEntity> {
   }
 
   /**
-   * Mark session as MFA verified
-   *
-   * @param id - Session ID
-   * @returns True if updated
-   */
-  async setMfaVerified(id: string): Promise<boolean> {
-    const now = getCurrentTimestamp();
-    const result = await this.adapter.execute(
-      'UPDATE admin_sessions SET mfa_verified = 1, mfa_verified_at = ? WHERE tenant_id = ? AND id = ?',
-      [now, this.tenantId, id]
-    );
-    return result.rowsAffected > 0;
-  }
-
-  /**
    * Extend session expiration
    *
    * @param id - Session ID
