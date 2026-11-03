@@ -116,6 +116,30 @@ export async function getIssuerPublicKey(
 }
 
 const EC_SIGNING_ALGORITHMS = ['ES256', 'ES384', 'ES512'];
+const EC_CURVE_ALGORITHMS: Record<string, string> = {
+  'P-256': 'ES256',
+  'P-384': 'ES384',
+  'P-521': 'ES512',
+};
+
+/**
+ * Whether a JWK may verify an issuer's signature: an EC key whose `alg` (when stated) is its
+ * curve's, or an Ed25519 key, and never one whose stated `use` or `key_ops` rule verifying out.
+ */
+function isIssuerSigningJwk(
+  jwk: { kty?: string; crv?: string; alg?: string; use?: string; key_ops?: string[] } | undefined
+): boolean {
+  if (!jwk) return false;
+  if (jwk.use !== undefined && jwk.use !== 'sig') return false;
+  if (jwk.key_ops !== undefined && !jwk.key_ops.includes('verify')) return false;
+  if (jwk.kty === 'EC') {
+    const alg = EC_CURVE_ALGORITHMS[jwk.crv ?? ''];
+    return alg !== undefined && (jwk.alg === undefined || jwk.alg === alg);
+  }
+  return (
+    jwk.kty === 'OKP' && jwk.crv === 'Ed25519' && (jwk.alg === undefined || jwk.alg === 'EdDSA')
+  );
+}
 
 /**
  * Fetch public key from JWKS URI
@@ -128,20 +152,19 @@ async function getKeyFromJwksUri(jwksUri: string, kid?: string): Promise<CryptoK
     maxResponseSize: 256 * 1024, // 256 KB max for JWKS
   });
 
-  const signingKey =
+  // The same signing-key rules with or without a kid; without one the JWKS must hold exactly one
+  // (ES256, ES384 or ES512 with use "sig") rather than the first in document order.
+  const signingKeys = jwks.keys.filter((key) => key.kty === 'EC' && isIssuerSigningJwk(key));
+  const candidates =
     kid !== undefined
-      ? jwks.keys.find(
-          (key) =>
-            key.kid === kid &&
-            key.kty === 'EC' &&
-            (key.use === undefined || key.use === 'sig') &&
-            (key.alg === undefined || EC_SIGNING_ALGORITHMS.includes(key.alg))
-        )
-      : // Find a signing key (ES256, ES384, or ES512)
-        jwks.keys.find(
-          (key) =>
-            key.use === 'sig' && key.kty === 'EC' && EC_SIGNING_ALGORITHMS.includes(key.alg || '')
+      ? signingKeys.filter((key) => key.kid === kid)
+      : signingKeys.filter(
+          (key) => key.use === 'sig' && EC_SIGNING_ALGORITHMS.includes(key.alg || '')
         );
+  if (candidates.length > 1) {
+    throw new Error('JWKS has several matching signing keys: the signature must name one with kid');
+  }
+  const signingKey = candidates[0];
 
   if (!signingKey) {
     throw new Error('No suitable EC signing key found in JWKS');
@@ -182,8 +205,24 @@ function methodNamedBy<T extends { id: string; publicKeyJwk?: { kid?: string } }
 /** The ES algorithm of an EC public key, taken from its curve when the JWK omits `alg`. */
 function withEcAlgorithm(jwk: JWK): JWK {
   if (jwk.alg) return jwk;
-  const alg = { 'P-256': 'ES256', 'P-384': 'ES384', 'P-521': 'ES512' }[jwk.crv ?? ''];
+  const alg = EC_CURVE_ALGORITHMS[jwk.crv ?? ''];
   return alg ? { ...jwk, alg } : jwk;
+}
+
+type DidDocument = NonNullable<Awaited<ReturnType<typeof resolveDID>>>;
+type DidVerificationMethod = NonNullable<DidDocument['verificationMethod']>[number];
+
+/**
+ * The methods a DID document lets sign assertions (credentials, status lists): its
+ * `assertionMethod` entries, references resolved against `verificationMethod`.
+ */
+function assertionMethodsOf(did: string, document: DidDocument): DidVerificationMethod[] {
+  const methods = document.verificationMethod ?? [];
+  return (document.assertionMethod ?? []).flatMap((entry) => {
+    if (typeof entry !== 'string') return [entry as DidVerificationMethod];
+    const id = absoluteMethodId(did, entry);
+    return methods.filter((vm) => absoluteMethodId(did, vm.id) === id);
+  });
 }
 
 /**
@@ -202,39 +241,37 @@ async function getKeyFromDid(env: Env, did: string, kid?: string): Promise<Crypt
     throw new Error('Failed to resolve DID document');
   }
 
-  // Find verification method with public key
-  const verificationMethods = didDocument.verificationMethod;
+  // Only the issuer's own assertion keys sign credentials and status lists, with or without a kid:
+  // a key for another purpose, of another controller or of another type never does.
+  const isIssuerAssertionKey = (vm: DidVerificationMethod) =>
+    vm.controller === did && isIssuerSigningJwk(vm.publicKeyJwk);
+  const assertionMethods = assertionMethodsOf(did, didDocument);
 
-  if (!verificationMethods || verificationMethods.length === 0) {
-    throw new Error('No verification methods found in DID document');
-  }
-
-  let verificationMethod: (typeof verificationMethods)[number] | undefined;
+  let verificationMethod: DidVerificationMethod;
   if (kid !== undefined) {
-    // A kid names exactly one method; a missing one is an error, not a reason to try others.
-    verificationMethod = methodNamedBy(did, kid, verificationMethods);
+    // A kid names exactly one assertion method; a missing one is an error, not a reason to try
+    // others.
+    verificationMethod = methodNamedBy(did, kid, assertionMethods);
+    if (verificationMethod.controller !== did) {
+      throw new Error('Verification method is controlled by another DID');
+    }
+    if (!isIssuerSigningJwk(verificationMethod.publicKeyJwk)) {
+      throw new Error('Verification method is not a supported signing key');
+    }
   } else {
-    // Try to find an EC key first (for HAIP compliance)
-    verificationMethod = verificationMethods.find(
-      (vm) =>
-        vm.publicKeyJwk?.kty === 'EC' &&
-        ['P-256', 'P-384', 'P-521'].includes(vm.publicKeyJwk?.crv || '')
-    );
-
-    // Fall back to OKP (Ed25519) if no EC key found
-    if (!verificationMethod) {
-      verificationMethod = verificationMethods.find(
-        (vm) => vm.publicKeyJwk?.kty === 'OKP' && vm.publicKeyJwk?.crv === 'Ed25519'
+    // Without a kid the issuer must have exactly one usable assertion key.
+    const candidates = assertionMethods.filter(isIssuerAssertionKey);
+    if (candidates.length !== 1) {
+      throw new Error(
+        candidates.length
+          ? 'DID document has several assertion keys: the signature must name one with kid'
+          : 'No assertion key found in DID document'
       );
     }
-
-    // Last resort: any key with publicKeyJwk
-    if (!verificationMethod) {
-      verificationMethod = verificationMethods.find((vm) => vm.publicKeyJwk);
-    }
+    verificationMethod = candidates[0];
   }
 
-  if (!verificationMethod?.publicKeyJwk) {
+  if (!verificationMethod.publicKeyJwk) {
     throw new Error('No public key found in DID document');
   }
 

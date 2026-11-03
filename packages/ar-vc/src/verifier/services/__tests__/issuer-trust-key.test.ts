@@ -68,6 +68,32 @@ describe('getIssuerPublicKey', () => {
     expect(issuerTrustKeyMocks.resolveDID).not.toHaveBeenCalled();
   });
 
+  it('applies the signing-key rules without a kid and refuses a choice between keys', async () => {
+    issuerTrustKeyMocks.safeFetchJson.mockResolvedValueOnce({
+      keys: [
+        // Stated for signing only: never a verification key, even with use "sig".
+        { kty: 'EC', crv: 'P-256', use: 'sig', alg: 'ES256', key_ops: ['sign'], kid: 'signer' },
+        { kty: 'EC', crv: 'P-384', use: 'sig', alg: 'ES256', kid: 'curve-mismatch' },
+      ],
+    });
+    await expect(
+      getIssuerPublicKey(env, 'did:web:issuer.example.com', 'https://issuer.example.com/jwks')
+    ).rejects.toThrow('No suitable EC signing key found in JWKS');
+
+    issuerTrustKeyMocks.safeFetchJson.mockResolvedValueOnce({
+      keys: [
+        { kty: 'EC', crv: 'P-256', use: 'sig', alg: 'ES256', kid: 'a' },
+        { kty: 'EC', crv: 'P-256', use: 'sig', alg: 'ES256', kid: 'b' },
+      ],
+    });
+    await expect(
+      getIssuerPublicKey(env, 'did:web:issuer.example.com', 'https://issuer.example.com/jwks')
+    ).rejects.toThrow(
+      'JWKS has several matching signing keys: the signature must name one with kid'
+    );
+    expect(issuerTrustKeyMocks.importECPublicKey).not.toHaveBeenCalled();
+  });
+
   it('rejects JWKS documents without a HAIP-compatible EC signing key', async () => {
     issuerTrustKeyMocks.safeFetchJson.mockResolvedValue({
       keys: [
@@ -82,18 +108,30 @@ describe('getIssuerPublicKey', () => {
     expect(issuerTrustKeyMocks.importECPublicKey).not.toHaveBeenCalled();
   });
 
-  it('prefers EC verification methods from a DID document', async () => {
+  const issuer = 'did:web:issuer.example.com';
+
+  it("uses the issuer's single assertion key and ignores keys for other purposes", async () => {
     issuerTrustKeyMocks.resolveDID.mockResolvedValue({
       verificationMethod: [
-        { id: '#ed', publicKeyJwk: { kty: 'OKP', crv: 'Ed25519' } },
-        { id: '#p256', publicKeyJwk: { kty: 'EC', crv: 'P-256', x: 'x', y: 'y' } },
+        {
+          id: '#ed-auth',
+          controller: issuer,
+          publicKeyJwk: { kty: 'OKP', crv: 'Ed25519', x: 'auth' },
+        },
+        {
+          id: '#p256',
+          controller: issuer,
+          publicKeyJwk: { kty: 'EC', crv: 'P-256', x: 'x', y: 'y' },
+        },
       ],
+      authentication: ['#ed-auth'],
+      assertionMethod: ['#p256'],
     });
 
-    const key = await getIssuerPublicKey(env, 'did:web:issuer.example.com');
+    const key = await getIssuerPublicKey(env, issuer);
 
     expect(key).toBe('ec-key');
-    expect(issuerTrustKeyMocks.resolveDID).toHaveBeenCalledWith('did:web:issuer.example.com');
+    expect(issuerTrustKeyMocks.resolveDID).toHaveBeenCalledWith(issuer);
     // The JWK omits alg: it comes from the curve, as the EC key import requires one.
     expect(issuerTrustKeyMocks.importECPublicKey).toHaveBeenCalledWith({
       kty: 'EC',
@@ -105,14 +143,19 @@ describe('getIssuerPublicKey', () => {
     expect(issuerTrustKeyMocks.importJWK).not.toHaveBeenCalled();
   });
 
-  it('falls back to Ed25519 OKP keys when a DID document has no EC method', async () => {
+  it('accepts an Ed25519 assertion key', async () => {
     issuerTrustKeyMocks.resolveDID.mockResolvedValue({
       verificationMethod: [
-        { id: '#ed', publicKeyJwk: { kty: 'OKP', crv: 'Ed25519', x: 'x', alg: 'EdDSA' } },
+        {
+          id: '#ed',
+          controller: issuer,
+          publicKeyJwk: { kty: 'OKP', crv: 'Ed25519', x: 'x', alg: 'EdDSA' },
+        },
       ],
+      assertionMethod: ['#ed'],
     });
 
-    const key = await getIssuerPublicKey(env, 'did:web:issuer.example.com');
+    const key = await getIssuerPublicKey(env, issuer);
 
     expect(key).toBe('okp-key');
     expect(issuerTrustKeyMocks.importJWK).toHaveBeenCalledWith(
@@ -121,26 +164,71 @@ describe('getIssuerPublicKey', () => {
     );
   });
 
-  it('rejects unresolved or keyless DID documents without leaking DID details', async () => {
-    issuerTrustKeyMocks.resolveDID.mockResolvedValueOnce(null);
-    await expect(getIssuerPublicKey(env, 'did:web:issuer.example.com')).rejects.toThrow(
-      'Failed to resolve DID document'
+  it('accepts a document whose only key is embedded in assertionMethod', async () => {
+    issuerTrustKeyMocks.resolveDID.mockResolvedValue({
+      assertionMethod: [
+        {
+          id: '#embedded',
+          controller: issuer,
+          publicKeyJwk: { kty: 'EC', crv: 'P-256', x: 'e', y: 'e' },
+        },
+      ],
+    });
+
+    await expect(getIssuerPublicKey(env, issuer)).resolves.toBe('ec-key');
+  });
+
+  it('refuses, without a kid, no assertion key or a choice between several', async () => {
+    issuerTrustKeyMocks.resolveDID.mockResolvedValueOnce({
+      verificationMethod: [
+        { id: '#p256', controller: issuer, publicKeyJwk: { kty: 'EC', crv: 'P-256', x: 'x' } },
+      ],
+    });
+    await expect(getIssuerPublicKey(env, issuer)).rejects.toThrow(
+      'No assertion key found in DID document'
     );
 
-    issuerTrustKeyMocks.resolveDID.mockResolvedValueOnce({ verificationMethod: [] });
-    await expect(getIssuerPublicKey(env, 'did:web:issuer.example.com')).rejects.toThrow(
-      'No verification methods found in DID document'
+    issuerTrustKeyMocks.resolveDID.mockResolvedValueOnce({
+      verificationMethod: [
+        { id: '#a', controller: issuer, publicKeyJwk: { kty: 'EC', crv: 'P-256', x: 'a' } },
+        { id: '#b', controller: issuer, publicKeyJwk: { kty: 'EC', crv: 'P-256', x: 'b' } },
+      ],
+      assertionMethod: ['#a', '#b'],
+    });
+    await expect(getIssuerPublicKey(env, issuer)).rejects.toThrow(
+      'DID document has several assertion keys: the signature must name one with kid'
     );
+
+    // A method without controller, or with another, is not the issuer's.
+    issuerTrustKeyMocks.resolveDID.mockResolvedValueOnce({
+      verificationMethod: [
+        { id: '#none', publicKeyJwk: { kty: 'EC', crv: 'P-256', x: 'n' } },
+        { id: '#empty', controller: '', publicKeyJwk: { kty: 'EC', crv: 'P-256', x: 'e' } },
+      ],
+      assertionMethod: ['#none', '#empty'],
+    });
+    await expect(getIssuerPublicKey(env, issuer)).rejects.toThrow(
+      'No assertion key found in DID document'
+    );
+    expect(issuerTrustKeyMocks.importECPublicKey).not.toHaveBeenCalled();
+  });
+
+  it('rejects unresolved DID documents without leaking DID details', async () => {
+    issuerTrustKeyMocks.resolveDID.mockResolvedValueOnce(null);
+    await expect(getIssuerPublicKey(env, issuer)).rejects.toThrow('Failed to resolve DID document');
   });
 
   describe('with the kid of the signed JWT (an issuer after a key rotation)', () => {
     const did = 'did:web:issuer.example.com';
-    const rotated = {
-      verificationMethod: [
-        { id: `${did}#old`, publicKeyJwk: { kty: 'EC', crv: 'P-256', x: 'old', y: 'old' } },
-        { id: `${did}#new`, publicKeyJwk: { kty: 'EC', crv: 'P-256', x: 'new', y: 'new' } },
-      ],
+    /** A document whose methods are all assertion keys. */
+    const assertingWith = (methods: Array<{ id: string; [key: string]: unknown }>) => {
+      const verificationMethod = methods.map((vm) => ({ controller: did, ...vm }));
+      return { verificationMethod, assertionMethod: verificationMethod.map((vm) => vm.id) };
     };
+    const rotated = assertingWith([
+      { id: `${did}#old`, publicKeyJwk: { kty: 'EC', crv: 'P-256', x: 'old', y: 'old' } },
+      { id: `${did}#new`, publicKeyJwk: { kty: 'EC', crv: 'P-256', x: 'new', y: 'new' } },
+    ]);
 
     it.each([
       { form: 'a bare key id', kid: 'new' },
@@ -170,12 +258,12 @@ describe('getIssuerPublicKey', () => {
       { form: 'a fragment', kid: '#p256' },
       { form: 'a DID URL', kid: `${did}#p256` },
     ])('resolves relative method IDs against the DID for $form', async ({ kid }) => {
-      issuerTrustKeyMocks.resolveDID.mockResolvedValue({
-        verificationMethod: [
+      issuerTrustKeyMocks.resolveDID.mockResolvedValue(
+        assertingWith([
           { id: '#other', publicKeyJwk: { kty: 'EC', crv: 'P-256', x: 'other', y: 'other' } },
           { id: '#p256', publicKeyJwk: { kty: 'EC', crv: 'P-256', x: 'p256', y: 'p256' } },
-        ],
-      });
+        ])
+      );
 
       await getIssuerPublicKey(env, did, undefined, kid);
 
@@ -185,15 +273,15 @@ describe('getIssuerPublicKey', () => {
     });
 
     it("prefers a method ID over another key's JWK kid", async () => {
-      issuerTrustKeyMocks.resolveDID.mockResolvedValue({
-        verificationMethod: [
+      issuerTrustKeyMocks.resolveDID.mockResolvedValue(
+        assertingWith([
           {
             id: `${did}#old`,
             publicKeyJwk: { kty: 'EC', crv: 'P-256', x: 'old', y: 'old', kid: `${did}#new` },
           },
           { id: `${did}#new`, publicKeyJwk: { kty: 'EC', crv: 'P-256', x: 'new', y: 'new' } },
-        ],
-      });
+        ])
+      );
 
       await getIssuerPublicKey(env, did, undefined, `${did}#new`);
 
@@ -203,12 +291,12 @@ describe('getIssuerPublicKey', () => {
     });
 
     it('refuses a kid that names more than one method', async () => {
-      issuerTrustKeyMocks.resolveDID.mockResolvedValue({
-        verificationMethod: [
+      issuerTrustKeyMocks.resolveDID.mockResolvedValue(
+        assertingWith([
           { id: '#dup', publicKeyJwk: { kty: 'EC', crv: 'P-256', x: 'a', y: 'a' } },
           { id: `${did}#dup`, publicKeyJwk: { kty: 'EC', crv: 'P-256', x: 'b', y: 'b' } },
-        ],
-      });
+        ])
+      );
 
       await expect(getIssuerPublicKey(env, did, undefined, 'dup')).rejects.toThrow(
         'Key id names more than one verification method'
@@ -219,9 +307,11 @@ describe('getIssuerPublicKey', () => {
     it('picks the JWKS key the kid names, and rejects an unknown one', async () => {
       issuerTrustKeyMocks.safeFetchJson.mockResolvedValue({
         keys: [
-          { kty: 'EC', use: 'sig', alg: 'ES256', kid: 'old', x: 'old' },
-          { kty: 'EC', alg: 'ES256', kid: 'new', x: 'new' },
-          { kty: 'EC', use: 'enc', alg: 'ES256', kid: 'enc-only' },
+          { kty: 'EC', crv: 'P-256', use: 'sig', alg: 'ES256', kid: 'old', x: 'old' },
+          { kty: 'EC', crv: 'P-256', alg: 'ES256', kid: 'new', x: 'new' },
+          { kty: 'EC', crv: 'P-256', use: 'enc', alg: 'ES256', kid: 'enc-only' },
+          { kty: 'EC', crv: 'P-256', key_ops: ['deriveBits'], kid: 'agreement' },
+          { kty: 'EC', crv: 'P-384', alg: 'ES256', kid: 'curve-mismatch' },
         ],
       });
 
@@ -230,9 +320,77 @@ describe('getIssuerPublicKey', () => {
         expect.objectContaining({ x: 'new', alg: 'ES256' })
       );
 
-      await expect(
-        getIssuerPublicKey(env, did, 'https://issuer.example.com/jwks', 'enc-only')
-      ).rejects.toThrow('No suitable EC signing key found in JWKS');
+      for (const unusable of ['enc-only', 'agreement', 'curve-mismatch']) {
+        await expect(
+          getIssuerPublicKey(env, did, 'https://issuer.example.com/jwks', unusable)
+        ).rejects.toThrow('No suitable EC signing key found in JWKS');
+      }
+    });
+
+    it('only accepts an assertion key of the issuer', async () => {
+      const authenticationOnly = {
+        id: `${did}#auth`,
+        controller: did,
+        publicKeyJwk: { kty: 'EC', crv: 'P-256', x: 'auth', y: 'auth' },
+      };
+      issuerTrustKeyMocks.resolveDID.mockResolvedValue({
+        ...rotated,
+        verificationMethod: [...rotated.verificationMethod, authenticationOnly],
+        authentication: [authenticationOnly.id],
+      });
+      await expect(getIssuerPublicKey(env, did, undefined, 'auth')).rejects.toThrow(
+        'No verification method matches the key id'
+      );
+
+      issuerTrustKeyMocks.resolveDID.mockResolvedValue(
+        assertingWith([
+          {
+            id: `${did}#foreign`,
+            controller: 'did:web:other.example.com',
+            publicKeyJwk: { kty: 'EC', crv: 'P-256', x: 'f', y: 'f' },
+          },
+          { id: `${did}#agreement`, publicKeyJwk: { kty: 'OKP', crv: 'X25519', x: 'k' } },
+        ])
+      );
+      await expect(getIssuerPublicKey(env, did, undefined, 'foreign')).rejects.toThrow(
+        'Verification method is controlled by another DID'
+      );
+      issuerTrustKeyMocks.resolveDID.mockResolvedValueOnce({
+        verificationMethod: [{ id: '#bare', publicKeyJwk: { kty: 'EC', crv: 'P-256', x: 'b' } }],
+        assertionMethod: ['#bare'],
+      });
+      await expect(getIssuerPublicKey(env, did, undefined, 'bare')).rejects.toThrow(
+        'Verification method is controlled by another DID'
+      );
+      await expect(getIssuerPublicKey(env, did, undefined, 'agreement')).rejects.toThrow(
+        'Verification method is not a supported signing key'
+      );
+      expect(issuerTrustKeyMocks.importECPublicKey).not.toHaveBeenCalled();
+    });
+
+    it('resolves an assertion key embedded in assertionMethod', async () => {
+      issuerTrustKeyMocks.resolveDID.mockResolvedValue({
+        verificationMethod: [
+          {
+            id: '#listed',
+            controller: did,
+            publicKeyJwk: { kty: 'EC', crv: 'P-256', x: 'l', y: 'l' },
+          },
+        ],
+        assertionMethod: [
+          {
+            id: '#embedded',
+            controller: did,
+            publicKeyJwk: { kty: 'EC', crv: 'P-256', x: 'e', y: 'e' },
+          },
+        ],
+      });
+
+      await getIssuerPublicKey(env, did, undefined, 'embedded');
+
+      expect(issuerTrustKeyMocks.importECPublicKey).toHaveBeenCalledWith(
+        expect.objectContaining({ x: 'e' })
+      );
     });
   });
 });
