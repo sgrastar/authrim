@@ -834,6 +834,36 @@ describe('Region Sharding Utilities', () => {
       expect(get).toHaveBeenCalledWith('region_shard_config:tenant-a', { type: 'json' });
     });
 
+    it('never lets a slower earlier read replace the cached result of a later one', async () => {
+      const residency = {
+        version: 1 as const,
+        residencyPolicyId: 'policy-us',
+        residencyPartition: 'default',
+        policyGeneration: 1,
+        allowedRegions: ['enam' as const],
+        jurisdiction: null,
+      };
+      const older = buildPolicyConstrainedRegionShardConfig({ residency, now: 1 });
+      const newer = { ...older, currentGeneration: older.currentGeneration + 1 };
+      let finishEarlier: (value: unknown) => void = () => undefined;
+      const get = vi
+        .fn()
+        .mockImplementationOnce(() => new Promise((resolve) => (finishEarlier = resolve)))
+        .mockResolvedValueOnce(newer);
+      const env = { AUTHRIM_CONFIG: { get } } as never;
+
+      const earlier = getRegionShardConfig(env, 'tenant-a', { bypassCache: true });
+      await expect(getRegionShardConfig(env, 'tenant-a', { bypassCache: true })).resolves.toBe(
+        newer
+      );
+      finishEarlier(older);
+
+      // The earlier read adopts the newer cached result instead of overwriting it.
+      await expect(earlier).resolves.toBe(newer);
+      await expect(getRegionShardConfig(env, 'tenant-a')).resolves.toBe(newer);
+      expect(get).toHaveBeenCalledTimes(2);
+    });
+
     it('builds only regions allowed by the server-owned residency projection', () => {
       const config = buildPolicyConstrainedRegionShardConfig({
         residency: {

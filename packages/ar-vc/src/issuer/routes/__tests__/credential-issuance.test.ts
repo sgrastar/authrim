@@ -12,6 +12,7 @@ import { createSqliteState } from '../../durable-objects/__tests__/sqlite-storag
 import { getCredentialOfferStoreByProofNonce } from '../../../utils/credential-offer-sharding';
 import { sha256Base64url } from '../../../utils/crypto';
 import { calculateJwkThumbprint } from '../../../utils/jwk-thumbprint';
+import { isConfiguredShard } from '../../../utils/configured-shard';
 
 // Shard configuration lives in KV; these tests use IDs of configured shards.
 vi.mock('../../../utils/configured-shard', async (importOriginal) => ({
@@ -310,6 +311,20 @@ describe('credential issuance state machine', () => {
       state: 'issued',
       holderKeyThumbprint: await calculateJwkThumbprint(HOLDER_KEY),
     });
+  });
+
+  it('refuses a token whose offer shard is no longer configured (a jurisdiction change)', async () => {
+    const harness = await createHarness();
+    const nonce = await createNonce(harness, '01');
+    // The fresh nonce is in a configured shard; the token's earlier offer no longer is.
+    vi.mocked(isConfiguredShard).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+
+    const result = await requestCredential(harness, nonce);
+
+    expect(result.status).toBe(401);
+    expect(result.body).toEqual({ error: 'invalid_token' });
+    expect(mocks.sdjwtCalls).toHaveLength(0);
+    expect(progress(harness)).toMatchObject({ state: 'token_issued' });
   });
 
   it('omits email and name the eligibility result does not carry', async () => {

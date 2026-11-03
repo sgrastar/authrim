@@ -304,19 +304,18 @@ export function parseRegionPlacementKey(value: string): {
  */
 const regionShardConfigCache = new Map<
   string,
-  { config: RegionShardConfigV2; expiresAt: number }
+  { config: RegionShardConfigV2; expiresAt: number; readSequence: number }
 >();
 
+/** Orders reads by start: a read never replaces the cached result of one that started later. */
+let regionShardConfigReadSequence = 0;
+
 /**
- * Clear region shard config cache, of one tenant or of all.
+ * Clear region shard config cache.
  * Useful for testing or after configuration changes.
  */
-export function clearRegionShardConfigCache(tenantId?: string): void {
-  if (tenantId === undefined) {
-    regionShardConfigCache.clear();
-    return;
-  }
-  regionShardConfigCache.delete(`region-shard-config:${tenantId.trim()}`);
+export function clearRegionShardConfigCache(): void {
+  regionShardConfigCache.clear();
 }
 
 // =============================================================================
@@ -856,11 +855,14 @@ export function validateRegionShardResidencyStrict(config: RegionShardConfigV2):
  *
  * @param env - Environment with KV binding
  * @param tenantId - Tenant ID
+ * @param options.bypassCache - Read the stored configuration even when a cached one is fresh (the
+ *   cache entry is replaced, never emptied, so other readers keep the cached one meanwhile)
  * @returns Region shard configuration
  */
 export async function getRegionShardConfig(
   env: Env,
-  tenantId: string
+  tenantId: string,
+  options: { bypassCache?: boolean } = {}
 ): Promise<RegionShardConfigV2> {
   const normalizedTenantId = tenantId.trim();
   if (!normalizedTenantId) {
@@ -873,10 +875,11 @@ export async function getRegionShardConfig(
 
   // Check cache
   const cached = regionShardConfigCache.get(cacheKey);
-  if (cached && cached.expiresAt > now) {
+  if (cached && cached.expiresAt > now && !options.bypassCache) {
     return cached.config;
   }
 
+  const readSequence = ++regionShardConfigReadSequence;
   let config: RegionShardConfigV2 | null = null;
 
   // Priority 1: Try KV (dynamic configuration)
@@ -897,10 +900,15 @@ export async function getRegionShardConfig(
 
   validateRegionShardResidencyStrict(config);
 
-  // Update cache
+  // Update cache, unless a read that started later already did (bypassCache reads can overlap)
+  const latest = regionShardConfigCache.get(cacheKey);
+  if (latest && latest.readSequence > readSequence) {
+    return latest.config;
+  }
   regionShardConfigCache.set(cacheKey, {
     config,
     expiresAt: now + REGION_SHARD_CONFIG_CACHE_TTL_MS,
+    readSequence,
   });
 
   return config;

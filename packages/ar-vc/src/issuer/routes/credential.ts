@@ -4,7 +4,7 @@
  * Issues credentials to the wallet.
  */
 
-import { isConfiguredShard } from '../../utils/configured-shard';
+import { isConfiguredShard, ShardConfigUnavailableError } from '../../utils/configured-shard';
 import type { Context } from 'hono';
 import type { Env } from '../../types';
 import {
@@ -296,7 +296,14 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
 
     if (!tokenResult.offerId) throw new Error('vci_access_token_missing_offer_id');
     const offerId = tokenResult.offerId;
-    const offerStore = getCredentialOfferStoreById(c.env, offerId, tenantId).stub;
+    const offerShard = getCredentialOfferStoreById(c.env, offerId, tenantId);
+    // The offer ID is signed, but its shard may no longer be configured (a jurisdiction change
+    // refuses earlier offers): the token is no longer usable.
+    if (!(await isConfiguredShard(c.env, tenantId, offerShard.resolution))) {
+      await abandon();
+      return invalidTokenError(c);
+    }
+    const offerStore = offerShard.stub;
     const offer = await loadOffer(offerStore, {
       offerId,
       tenantId,
@@ -506,6 +513,9 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
   } catch (error) {
     await abandon();
     log.error('Credential issuance failed', {}, error as Error);
+    if (error instanceof ShardConfigUnavailableError) {
+      return vciError(c, 503, 'temporarily_unavailable');
+    }
     return vciError(c, 500, 'server_error');
   }
 }

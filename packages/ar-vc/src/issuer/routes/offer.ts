@@ -9,7 +9,7 @@
  * - Region-aware DO placement with locationHint
  */
 
-import { isConfiguredShard } from '../../utils/configured-shard';
+import { isConfiguredShard, ShardConfigUnavailableError } from '../../utils/configured-shard';
 import type { Context } from 'hono';
 import type { Env } from '../../types';
 import {
@@ -124,6 +124,9 @@ export async function credentialOfferRoute(c: Context<{ Bindings: Env }>): Promi
   } catch (error) {
     log.error('Credential offer retrieval failed', {}, error as Error);
     c.header('Cache-Control', 'no-store');
+    if (error instanceof ShardConfigUnavailableError) {
+      return c.json({ error: 'temporarily_unavailable' }, 503);
+    }
     return c.json({ error: 'server_error' }, 500);
   }
 }

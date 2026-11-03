@@ -1,6 +1,5 @@
 import type { Env } from '../types';
 import {
-  clearRegionShardConfigCache,
   getRegionShardConfig,
   isConfiguredRegionShard,
   type RegionShardConfigV2,
@@ -18,14 +17,19 @@ export class ShardConfigUnavailableError extends Error {
 /** How often an ID of a newer generation may make an isolate re-read a tenant's configuration. */
 const GENERATION_REFRESH_INTERVAL_MS = 5_000;
 const lastGenerationRefreshAt = new Map<string, number>();
-/** A re-read in flight, awaited by concurrent checks instead of reading KV again. */
+/** A re-read in flight, shared by the checks of newer-generation IDs only. */
 const refreshesInFlight = new Map<string, Promise<RegionShardConfigV2>>();
 
-async function loadConfig(env: Env, tenantId: string): Promise<RegionShardConfigV2> {
+async function loadConfig(
+  env: Env,
+  tenantId: string,
+  bypassCache = false
+): Promise<RegionShardConfigV2> {
   try {
     return await getRegionShardConfig(
       { AUTHRIM_CONFIG: env.AUTHRIM_CONFIG } as Parameters<typeof getRegionShardConfig>[0],
-      tenantId
+      tenantId,
+      { bypassCache }
     );
   } catch (error) {
     throw new ShardConfigUnavailableError(error);
@@ -38,15 +42,16 @@ async function loadConfig(env: Env, tenantId: string): Promise<RegionShardConfig
  *
  * An ID of a generation newer than this isolate's cached configuration re-reads it (at most every
  * few seconds per tenant); while it cannot be confirmed the check throws
- * `ShardConfigUnavailableError` rather than refusing an ID another isolate just issued.
+ * `ShardConfigUnavailableError` rather than refusing an ID another isolate just issued. The re-read
+ * replaces the cached configuration without emptying it, and only newer-generation IDs wait for
+ * it, so an unverified ID cannot slow down or fail the checks of other IDs.
  */
 export async function isConfiguredShard(
   env: Env,
   tenantId: string,
   resolution: ShardResolution
 ): Promise<boolean> {
-  const inFlight = refreshesInFlight.get(tenantId);
-  const config = await (inFlight ?? loadConfig(env, tenantId));
+  const config = await loadConfig(env, tenantId);
   if (isConfiguredRegionShard(config, resolution)) return true;
   if (resolution.generation <= config.currentGeneration) return false;
 
@@ -57,8 +62,7 @@ export async function isConfiguredShard(
       throw new ShardConfigUnavailableError('region_shard_generation_unconfirmed');
     }
     lastGenerationRefreshAt.set(tenantId, now);
-    clearRegionShardConfigCache(tenantId);
-    refresh = loadConfig(env, tenantId).finally(() => refreshesInFlight.delete(tenantId));
+    refresh = loadConfig(env, tenantId, true).finally(() => refreshesInFlight.delete(tenantId));
     refreshesInFlight.set(tenantId, refresh);
   }
   const refreshed = await refresh;

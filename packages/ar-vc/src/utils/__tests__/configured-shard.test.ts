@@ -122,3 +122,29 @@ describe('isConfiguredShard under concurrency', () => {
     expect(get).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('isConfiguredShard isolation from unverified IDs', () => {
+  beforeEach(() => {
+    clearRegionShardConfigCache();
+    resetConfiguredShardRefreshes();
+  });
+
+  it('keeps checking other IDs on the cached configuration while a forced re-read hangs or fails', async () => {
+    let failRefresh: (error: Error) => void = () => undefined;
+    const get = vi
+      .fn()
+      .mockResolvedValueOnce(CONFIG)
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => (failRefresh = reject)));
+    const env = { AUTHRIM_CONFIG: { get } } as unknown as Env;
+    const current = { generation: CONFIG.currentGeneration, regionKey: 'enam', shardIndex: 0 };
+
+    await isConfiguredShard(env, 'tenant-a', current);
+    const forged = isConfiguredShard(env, 'tenant-a', { ...current, generation: 99 });
+    // A forged newer-generation ID re-reads; an ordinary ID neither waits nor reads again.
+    await expect(isConfiguredShard(env, 'tenant-a', current)).resolves.toBe(true);
+    failRefresh(new Error('kv down'));
+    await expect(forged).rejects.toBeInstanceOf(ShardConfigUnavailableError);
+    await expect(isConfiguredShard(env, 'tenant-a', current)).resolves.toBe(true);
+    expect(get).toHaveBeenCalledTimes(2);
+  });
+});
