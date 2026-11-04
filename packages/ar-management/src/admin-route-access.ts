@@ -1305,6 +1305,20 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     permissions: [ADMIN_PERMISSIONS.ADMIN_USERS_WRITE],
     description: 'admin second-factor recovery request cancel',
   }),
+  // Notices: each admin reads their own audience's; the handlers check resolving against it.
+  rule({
+    pattern: '/api/admin/notices',
+    methods: READ_METHODS,
+    authenticated: true,
+    description: 'admin console notices read',
+  }),
+  rule({
+    pattern: '/api/admin/notices',
+    methods: WRITE_METHODS,
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_WRITE],
+    description: 'admin console announcement publish',
+  }),
+  authenticated('/api/admin/notices/*', 'admin console notice read, dismiss and resolve'),
   rule({
     pattern: '/api/admin/admin-invitations',
     methods: READ_METHODS,

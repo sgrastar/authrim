@@ -1,4 +1,8 @@
 import type { DatabaseAdapter } from '../../db/adapter';
+import { createLogger } from '../../utils/logger';
+import { AdminNoticeRepository, type AdminNoticeSeverity } from './admin-notice';
+
+const log = createLogger().module('INTERNAL_NOTIFICATION');
 
 export const INTERNAL_NOTIFICATION_EVENT_CATEGORIES = [
   'identity_mapping_signal',
@@ -116,6 +120,74 @@ export function resolveLoggingNotificationRoutingPolicy(input: {
   return normalizeInternalNotificationRoutingPolicy(null);
 }
 
+/** Tenant IDs the event writers use for events that concern the whole platform. */
+const PLATFORM_EVENT_TENANT_IDS = new Set(['global', '__control__']);
+
+const NOTICE_SEVERITY: Record<InternalNotificationEventSeverity, AdminNoticeSeverity> = {
+  critical: 'critical',
+  high: 'high',
+  medium: 'caution',
+  low: 'info',
+  info: 'info',
+};
+
+/** The permission an admin needs to see the console notice of an event of this category. */
+function noticePermission(category: InternalNotificationEventCategory): string {
+  if (category.startsWith('logging_')) return 'admin:logging:overview:read';
+  if (category === 'notification_delivery_failure') return 'admin:logging:delivery_events:read';
+  if (category.startsWith('identity_mapping_')) return 'admin:settings:read';
+  return 'admin:database_routing:read';
+}
+
+/**
+ * Show an event in the admin console's notices. Best effort: the event itself is already stored,
+ * and an adapter without the notices table (or a failed write) must not lose it.
+ */
+async function raiseConsoleNotice(
+  adapter: DatabaseAdapter,
+  row: InternalNotificationEventRow
+): Promise<void> {
+  const platform = PLATFORM_EVENT_TENANT_IDS.has(row.tenant_id);
+  try {
+    await new AdminNoticeRepository(adapter).createForOpenEvent(
+      {
+        scope_type: platform ? 'platform' : 'tenant',
+        tenant_id: platform ? null : row.tenant_id,
+        severity: NOTICE_SEVERITY[row.severity] ?? 'info',
+        source: 'system',
+        category: row.category,
+        message_key: row.category,
+        params: platform ? {} : { tenant_id: row.tenant_id },
+        title: `${row.category.replace(/_/g, ' ')}: ${row.event_type}`,
+        link: '/admin/integrations/notifications',
+        required_permission: noticePermission(row.category),
+        source_ref: row.id,
+        deduplication_key: `ine:${row.id}`,
+      },
+      row.id
+    );
+  } catch (error) {
+    log.warn('Console notice for an internal notification event was not written', {
+      eventId: row.id,
+      category: row.category,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/** Resolve the console notices of events whose cause went away. Best effort, as above. */
+async function resolveConsoleNotices(adapter: DatabaseAdapter, eventIds: string[]): Promise<void> {
+  if (eventIds.length === 0) return;
+  try {
+    await new AdminNoticeRepository(adapter).resolveForSuppressedEvents(eventIds);
+  } catch (error) {
+    log.warn('Console notices of resolved internal notification events were not resolved', {
+      count: eventIds.length,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 export class InternalNotificationEventRepository {
   constructor(private readonly adapter: DatabaseAdapter) {}
 
@@ -160,6 +232,7 @@ export class InternalNotificationEventRepository {
           if (!reopened) {
             throw new Error('internal_notification_event_reopen_failed');
           }
+          if (reopened.status === 'pending') await raiseConsoleNotice(this.adapter, reopened);
           return reopened;
         }
         return existing;
@@ -193,6 +266,7 @@ export class InternalNotificationEventRepository {
     if (!row) {
       throw new Error('internal_notification_event_enqueue_failed');
     }
+    if (row.id === id) await raiseConsoleNotice(this.adapter, row);
     return row;
   }
 
@@ -244,6 +318,12 @@ export class InternalNotificationEventRepository {
     for (let offset = 0; offset < keys.length; offset += batchSize) {
       const batch = keys.slice(offset, offset + batchSize);
       const placeholders = batch.map(() => '?').join(', ');
+      const closing = await this.adapter.query<{ id: string }>(
+        `SELECT id FROM internal_notification_events
+         WHERE deduplication_key IN (${placeholders})
+           AND status IN ('pending', 'failed', 'dead_letter')`,
+        batch
+      );
       const result = await this.adapter.execute(
         `UPDATE internal_notification_events
          SET status = 'suppressed',
@@ -254,6 +334,10 @@ export class InternalNotificationEventRepository {
         [timestamp, ...batch]
       );
       suppressed += result.rowsAffected ?? 0;
+      await resolveConsoleNotices(
+        this.adapter,
+        closing.map((event) => event.id)
+      );
     }
     return suppressed;
   }

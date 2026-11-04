@@ -5,6 +5,7 @@
 	import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import AppShell from '#lib/shell/AppShell.svelte';
+	import { noticeInbox } from '#lib/shell/notice-inbox.js';
 	import { isStandalonePath, resolveNavPath } from '#lib/shell/nav.js';
 	import { timePreference } from '#lib/ui/time/time-preference.svelte.js';
 	import type { ScopeOption } from '#lib/shell/ScopeSwitcher.svelte';
@@ -36,6 +37,17 @@
 		return () => {
 			cancelled = true;
 		};
+	});
+
+	// The header's inbox: read when the console is ready, again for each tenant, then kept fresh.
+	$effect(() => {
+		if (!ready || adminSession.state !== 'authenticated') return;
+		void tenantScope.tenantId;
+		void noticeInbox.refresh({ reset: true });
+	});
+	$effect(() => {
+		if (!ready || adminSession.state !== 'authenticated') return;
+		return noticeInbox.start();
 	});
 
 	const standalone = $derived(isStandalonePath(page.url.pathname));
@@ -90,6 +102,8 @@
 		}}
 		onsignout={() => adminSession.signOut()}
 		{standalone}
+		notifications={noticeInbox.notifications}
+		ondismiss={(id) => noticeInbox.dismiss(id)}
 	>
 		{@render children()}
 	</AppShell>
