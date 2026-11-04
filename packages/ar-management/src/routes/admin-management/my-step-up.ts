@@ -14,11 +14,13 @@ import type { Context } from 'hono';
 import type { AdminAuthContext, Env } from '@authrim/ar-lib-core';
 import {
   AR_ERROR_CODES,
+  AdminSecondFactorRepository,
   AdminStepUpError,
   adminAuthMiddleware,
   createErrorResponse,
   getLogger,
   issueAdminStepUpReceipt,
+  requireDedicatedAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
 import { writeAdminAuditLog } from '../../admin-shared';
 
@@ -61,7 +63,14 @@ myStepUpRouter.post('/receipts', async (c) => {
   }
 
   try {
-    const issued = await issueAdminStepUpReceipt(c.env, { stepUpId: body.step_up_id, auth });
+    const issued = await issueAdminStepUpReceipt(c.env, {
+      stepUpId: body.step_up_id,
+      auth,
+      isSecondFactorActive: (adminUserId, secondFactorId) =>
+        new AdminSecondFactorRepository(
+          requireDedicatedAdminDatabaseAdapter(c.env, 'admin-management')
+        ).isActive(adminUserId, secondFactorId),
+    });
     await writeAdminAuditLog(c, {
       action: 'admin.step_up.receipt_issued',
       resourceType: 'admin_session',

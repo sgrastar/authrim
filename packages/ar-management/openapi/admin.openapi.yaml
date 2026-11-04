@@ -31474,6 +31474,349 @@ paths:
           $ref: '#/components/responses/Error'
       security:
         - adminSessionCookie: []
+  /api/admin/me/reauth/second-factor/options:
+    post:
+      tags:
+        - Admin Passkeys
+      operationId: postApiAdminMeReauthSecondFactorOptions
+      summary: Start second-factor verification
+      description: >-
+        Return WebAuthn assertion options for the current admin's registered step-up second
+        factors (device-bound security keys) and a single-use challenge bound to the admin session,
+        origin and RP ID. User verification is required.
+        A selected tenant runtime snapshot is not required.
+      x-authrim-route-coverage: inferred-from-source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - rp_id
+              properties:
+                rp_id:
+                  type: string
+      responses:
+        '200':
+          description: Assertion options and the challenge ID.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - options
+                  - challenge_id
+                properties:
+                  options:
+                    type: object
+                    additionalProperties: true
+                    description: WebAuthn PublicKeyCredentialRequestOptionsJSON.
+                  challenge_id:
+                    type: string
+        '400':
+          description: Invalid request, or no_second_factor when none is registered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/me/reauth/second-factor/verify:
+    post:
+      tags:
+        - Admin Passkeys
+      operationId: postApiAdminMeReauthSecondFactorVerify
+      summary: Verify a second factor
+      description: >-
+        Consume the challenge, verify a user-verified assertion from one of the current admin's
+        active second factors, and record it on the admin session. A credential that reports
+        backup eligibility or a backup is refused. Step-up receipts for L2 operations need this
+        verification and a passkey verification, both fresh.
+        A selected tenant runtime snapshot is not required.
+      x-authrim-route-coverage: inferred-from-source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - challenge_id
+                - credential
+              properties:
+                challenge_id:
+                  type: string
+                credential:
+                  type: object
+                  additionalProperties: true
+                  description: WebAuthn AuthenticationResponseJSON.
+      responses:
+        '200':
+          description: The second factor was verified and recorded on the session.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - verified
+                  - verified_at
+                properties:
+                  verified:
+                    type: boolean
+                  verified_at:
+                    type: integer
+                    description: Verification time in milliseconds since the epoch.
+        '400':
+          description: The challenge or the assertion was not valid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/me/second-factors:
+    get:
+      tags:
+        - Admin Passkeys
+      operationId: getApiAdminMeSecondFactors
+      summary: List own step-up second factors
+      description: >-
+        List the current admin's second factors (revoked ones included) and how a new one can be
+        registered now: step_up (an L2 receipt is needed), first (a fresh passkey is enough, inside
+        the one-time first-enrollment window), or recovery_required.
+        A selected tenant runtime snapshot is not required.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        '200':
+          description: Second factors and the enrollment state.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - second_factors
+                  - active_count
+                  - minimum
+                  - enrollment
+                properties:
+                  second_factors:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AdminSecondFactor'
+                  active_count:
+                    type: integer
+                  minimum:
+                    type: integer
+                    description: Active second factors that must remain.
+                  enrollment:
+                    type: object
+                    required:
+                      - mode
+                    properties:
+                      mode:
+                        type: string
+                        enum:
+                          - step_up
+                          - first
+                          - recovery_required
+                      first_enrollment_ends_at:
+                        type:
+                          - integer
+                          - 'null'
+                        description: End of the first-enrollment window, in milliseconds since the epoch.
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/me/second-factors/webauthn/options:
+    post:
+      tags:
+        - Admin Passkeys
+      operationId: postApiAdminMeSecondFactorsWebauthnOptions
+      summary: Start registering a security key as a second factor
+      description: >-
+        Return WebAuthn registration options for a device-bound credential. When the admin already
+        has a second factor, this is the admin.second_factor.add operation and needs an L2 receipt
+        in the authrim-step-up-receipt header (403 step_up_required otherwise). The first one needs
+        only a fresh passkey (403 admin_fresh_auth_required otherwise), inside the first-enrollment
+        window; after it, 403 second_factor_recovery_required.
+        A selected tenant runtime snapshot is not required.
+      x-authrim-route-coverage: inferred-from-source
+      parameters:
+        - name: authrim-step-up-receipt
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - rp_id
+              properties:
+                rp_id:
+                  type: string
+                label:
+                  type: string
+                  maxLength: 64
+      responses:
+        '200':
+          description: Registration options and the challenge ID.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - options
+                  - challenge_id
+                  - mode
+                properties:
+                  options:
+                    type: object
+                    additionalProperties: true
+                    description: WebAuthn PublicKeyCredentialCreationOptionsJSON.
+                  challenge_id:
+                    type: string
+                  mode:
+                    type: string
+                    enum:
+                      - first
+                      - step_up
+        '403':
+          description: >-
+            step_up_required, admin_fresh_auth_required or second_factor_recovery_required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/me/second-factors/webauthn/verify:
+    post:
+      tags:
+        - Admin Passkeys
+      operationId: postApiAdminMeSecondFactorsWebauthnVerify
+      summary: Register a security key as a second factor
+      description: >-
+        Consume the registration challenge, verify the registration with user verification and
+        store the credential. A credential that can be synced (backup eligible) is refused, as is a
+        credential already registered as a passkey or second factor. A first registration is
+        refused if another one was registered in the meantime.
+        A selected tenant runtime snapshot is not required.
+      x-authrim-route-coverage: inferred-from-source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - challenge_id
+                - credential
+              properties:
+                challenge_id:
+                  type: string
+                credential:
+                  type: object
+                  additionalProperties: true
+                  description: WebAuthn RegistrationResponseJSON.
+      responses:
+        '201':
+          description: The second factor was registered.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - second_factor
+                properties:
+                  second_factor:
+                    $ref: '#/components/schemas/AdminSecondFactor'
+        '400':
+          description: >-
+            invalid_challenge, verification_failed, or second_factor_not_device_bound for a
+            credential that can be synced.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: credential_in_use or second_factor_already_enrolled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/me/second-factors/{id}:
+    delete:
+      tags:
+        - Admin Passkeys
+      operationId: deleteApiAdminMeSecondFactorsById
+      summary: Revoke a second factor
+      description: >-
+        Revoke one of the current admin's second factors (admin.second_factor.remove, L2 receipt in
+        authrim-step-up-receipt). Never leaves fewer than the minimum active; sessions that verified
+        the factor lose that evidence.
+        A selected tenant runtime snapshot is not required.
+      x-authrim-route-coverage: inferred-from-source
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: authrim-step-up-receipt
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The second factor was revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - revoked
+                properties:
+                  revoked:
+                    type: boolean
+        '403':
+          description: step_up_required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No such active second factor for this admin.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: second_factor_minimum; register another one first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
   /api/admin/me/step-up/receipts:
     post:
       tags:
@@ -75830,6 +76173,46 @@ components:
         - provider
         - created_at
         - last_used_at
+    AdminSecondFactor:
+      type: object
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          enum:
+            - webauthn_credential
+            - keyring_holder_key
+        label:
+          type:
+            - string
+            - 'null'
+        aaguid:
+          type:
+            - string
+            - 'null'
+          description: Display-only WebAuthn authenticator AAGUID. Do not use for trust decisions.
+        created_at:
+          type: integer
+          format: int64
+        last_used_at:
+          type:
+            - integer
+            - 'null'
+          format: int64
+        revoked_at:
+          type:
+            - integer
+            - 'null'
+          format: int64
+      required:
+        - id
+        - kind
+        - label
+        - aaguid
+        - created_at
+        - last_used_at
+        - revoked_at
     PasskeyProvider:
       type: object
       required:

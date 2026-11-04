@@ -160,6 +160,39 @@ export class AdminSessionRepository extends BaseRepository<AdminSessionEntity> {
   }
 
   /**
+   * Record a verified second factor on a live session. Only the second-factor verification path
+   * calls this; the generic update cannot write these columns. The factor must still be the
+   * admin's and active in the same statement, so a revocation that cleared it is not undone.
+   *
+   * @returns False when the session no longer exists or has expired, or the factor was revoked
+   */
+  async recordSecondFactorVerification(
+    id: string,
+    factor: { adminUserId: string; secondFactorId: string },
+    verifiedAt: number = getCurrentTimestamp()
+  ): Promise<boolean> {
+    const result = await this.adapter.execute(
+      `UPDATE admin_sessions SET second_factor_id = ?, second_factor_verified_at = ?
+        WHERE tenant_id = ? AND id = ? AND admin_user_id = ? AND expires_at > ?
+          AND EXISTS (
+            SELECT 1 FROM admin_second_factors
+             WHERE id = ? AND admin_user_id = ? AND revoked_at IS NULL
+          )`,
+      [
+        factor.secondFactorId,
+        verifiedAt,
+        this.tenantId,
+        id,
+        factor.adminUserId,
+        verifiedAt,
+        factor.secondFactorId,
+        factor.adminUserId,
+      ]
+    );
+    return result.rowsAffected > 0;
+  }
+
+  /**
    * Update session activity timestamp
    *
    * @param id - Session ID

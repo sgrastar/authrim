@@ -39,6 +39,20 @@ function refuse(c: GateContext, body: Record<string, unknown>, status: 403 | 503
   return c.json(body, status);
 }
 
+/** The L1 refusal: the console answers it with an in-session passkey re-authentication. */
+export function refuseAdminFreshAuth(c: GateContext): Response {
+  return refuse(
+    c,
+    {
+      error: 'admin_fresh_auth_required',
+      error_description: 'Re-authenticate with a passkey to continue',
+      fresh_auth_required: true,
+      required_level: 'L1',
+    },
+    403
+  );
+}
+
 /**
  * Returns null when the request may go ahead, or the response refusing it. An L2 receipt is
  * spent here, so call this once, after the request has been validated and just before acting.
@@ -83,16 +97,7 @@ export async function requireAdminStepUp(
   if (level === 'L1') {
     const evidence = evaluateAdminStepUpEvidence(auth, 'L1', now);
     if (evidence.missing.length === 0) return null;
-    return refuse(
-      c,
-      {
-        error: 'admin_fresh_auth_required',
-        error_description: 'Re-authenticate with a passkey to continue',
-        fresh_auth_required: true,
-        required_level: 'L1',
-      },
-      403
-    );
+    return refuseAdminFreshAuth(c);
   }
 
   const binding: AdminStepUpBinding = {

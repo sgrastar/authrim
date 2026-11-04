@@ -188,10 +188,50 @@ describe('evaluateAdminStepUpEvidence', () => {
     expect(evaluateAdminStepUpEvidence(human(overrides), 'L1', now).missing).toEqual(['passkey']);
   });
 
-  it('never meets L2 before second factors exist', () => {
+  it('asks for a second factor on L2 when the session has none', () => {
     expect(
       evaluateAdminStepUpEvidence(human({ authenticationTimeMs: now }), 'L2', now).missing
     ).toEqual(['second_factor']);
+  });
+
+  it('meets L2 with both factors fresh, until the older one goes stale', () => {
+    const auth = human({
+      authenticationTimeMs: now - 1000,
+      secondFactorId: 'sf-1',
+      secondFactorVerifiedAtMs: now - 60_000,
+    });
+    expect(evaluateAdminStepUpEvidence(auth, 'L2', now)).toEqual({
+      missing: [],
+      freshUntil: now - 60_000 + ADMIN_STEP_UP_EVIDENCE_WINDOW_MS,
+    });
+  });
+
+  it.each([
+    [
+      'only the passkey is fresh',
+      {
+        authenticationTimeMs: now,
+        secondFactorId: 'sf-1',
+        secondFactorVerifiedAtMs: now - ADMIN_STEP_UP_EVIDENCE_WINDOW_MS,
+      },
+      ['second_factor'],
+    ],
+    [
+      'only the second factor is fresh',
+      {
+        authenticationTimeMs: now - ADMIN_STEP_UP_EVIDENCE_WINDOW_MS,
+        secondFactorId: 'sf-1',
+        secondFactorVerifiedAtMs: now,
+      },
+      ['passkey'],
+    ],
+    [
+      'a second-factor time without its factor',
+      { authenticationTimeMs: now, secondFactorVerifiedAtMs: now },
+      ['second_factor'],
+    ],
+  ])('does not meet L2 when %s', (_label, overrides, missing) => {
+    expect(evaluateAdminStepUpEvidence(human(overrides), 'L2', now).missing).toEqual(missing);
   });
 });
 
@@ -243,7 +283,7 @@ describe('requirements and receipts', () => {
     });
   });
 
-  it('refuses L2 issuance until a second factor exists', async () => {
+  it('refuses L2 issuance without a verified second factor', async () => {
     const { stepUpId } = await createAdminStepUpRequirement(
       env,
       binding({ level: 'L2', operation: 'tenant.delete' })
@@ -251,6 +291,41 @@ describe('requirements and receipts', () => {
 
     const error = await errorOf(issueAdminStepUpReceipt(env, { stepUpId, auth: human() }));
     expect(error.missing).toEqual(['second_factor']);
+  });
+
+  describe('L2 with a verified second factor', () => {
+    const l2 = binding({ level: 'L2', operation: 'tenant.delete' });
+    const withFactor = () =>
+      human({ secondFactorId: 'sf-1', secondFactorVerifiedAtMs: Date.now() - 1000 });
+
+    it('issues the receipt while the factor is still active', async () => {
+      const { stepUpId } = await createAdminStepUpRequirement(env, l2);
+      const isSecondFactorActive = vi.fn(async () => true);
+
+      const issued = await issueAdminStepUpReceipt(env, {
+        stepUpId,
+        auth: withFactor(),
+        isSecondFactorActive,
+      });
+
+      expect(issued.binding).toMatchObject(l2);
+      expect(isSecondFactorActive).toHaveBeenCalledWith('admin-1', 'sf-1');
+    });
+
+    it.each([
+      ['the factor was revoked', async () => false],
+      ['nothing can check the factor', undefined],
+    ])('refuses and keeps the requirement when %s', async (_label, isSecondFactorActive) => {
+      const { stepUpId } = await createAdminStepUpRequirement(env, l2);
+
+      const error = await errorOf(
+        issueAdminStepUpReceipt(env, { stepUpId, auth: withFactor(), isSecondFactorActive })
+      );
+
+      expect(error.code).toBe('step_up_evidence_required');
+      expect(error.missing).toEqual(['second_factor']);
+      expect(challenges.get(stepUpId)?.consumed).toBe(false);
+    });
   });
 
   it.each([

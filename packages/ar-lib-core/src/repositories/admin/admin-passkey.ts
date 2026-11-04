@@ -72,15 +72,18 @@ export class AdminPasskeyRepository extends BaseRepository<AdminPasskeyEntity> {
       last_used_at: null,
     };
 
+    // A credential registered as a step-up second factor never becomes a sign-in passkey.
     const sql = `
       INSERT INTO admin_passkeys (
         id, admin_user_id, credential_id, public_key, counter,
         device_name, transports_json, attestation_type, aaguid,
         created_at, last_used_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      )
+      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      WHERE NOT EXISTS (SELECT 1 FROM admin_second_factors WHERE credential_id = ?)
     `;
 
-    await this.adapter.execute(sql, [
+    const result = await this.adapter.execute(sql, [
       passkey.id,
       passkey.admin_user_id,
       passkey.credential_id,
@@ -92,7 +95,11 @@ export class AdminPasskeyRepository extends BaseRepository<AdminPasskeyEntity> {
       passkey.aaguid,
       passkey.created_at,
       passkey.last_used_at,
+      passkey.credential_id,
     ]);
+    if (result.rowsAffected === 0) {
+      throw new Error('Credential is registered as an admin second factor');
+    }
 
     return this.entityToPasskey(passkey);
   }
@@ -232,15 +239,17 @@ export class AdminPasskeyRepository extends BaseRepository<AdminPasskeyEntity> {
   }
 
   /**
-   * Check if passkey credential ID already exists
+   * Check if a credential ID is already registered, as a sign-in passkey or as a step-up second
+   * factor (which can never also be a passkey)
    *
    * @param credentialId - Credential ID to check
    * @returns True if exists
    */
   async credentialExists(credentialId: string): Promise<boolean> {
     const result = await this.adapter.queryOne<{ id: string }>(
-      'SELECT id FROM admin_passkeys WHERE credential_id = ? LIMIT 1',
-      [credentialId]
+      `SELECT id FROM admin_passkeys WHERE credential_id = ?
+       UNION ALL SELECT id FROM admin_second_factors WHERE credential_id = ? LIMIT 1`,
+      [credentialId, credentialId]
     );
     return result !== null;
   }

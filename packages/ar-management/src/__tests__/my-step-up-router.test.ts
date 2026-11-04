@@ -5,6 +5,7 @@ import type { Env } from '@authrim/ar-lib-core';
 const mocks = vi.hoisted(() => ({
   issueAdminStepUpReceipt: vi.fn(),
   writeAdminAuditLog: vi.fn(),
+  isActive: vi.fn(),
   auth: undefined as Record<string, unknown> | undefined,
 }));
 
@@ -17,8 +18,13 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     [actual.AR_ERROR_CODES.ADMIN_INVALID_REQUEST]: 400,
     [actual.AR_ERROR_CODES.INTERNAL_ERROR]: 500,
   };
+  class MockAdminSecondFactorRepository {
+    isActive = mocks.isActive;
+  }
   return {
     ...actual,
+    AdminSecondFactorRepository: MockAdminSecondFactorRepository,
+    requireDedicatedAdminDatabaseAdapter: vi.fn(() => ({})),
     issueAdminStepUpReceipt: mocks.issueAdminStepUpReceipt,
     adminAuthMiddleware:
       () =>
@@ -81,8 +87,19 @@ describe('myStepUpRouter', () => {
       cache: 'no-store',
       body: { step_up_receipt: 'asp_receipt', expires_at: 1234 },
     });
-    const [, input] = mocks.issueAdminStepUpReceipt.mock.calls[0] as [unknown, unknown];
-    expect(input).toEqual({ stepUpId: 'asr_requirement', auth: AUTH });
+    const [, input] = mocks.issueAdminStepUpReceipt.mock.calls[0] as [
+      unknown,
+      {
+        stepUpId: string;
+        auth: unknown;
+        isSecondFactorActive: (user: string, id: string) => Promise<boolean>;
+      },
+    ];
+    expect(input).toMatchObject({ stepUpId: 'asr_requirement', auth: AUTH });
+    // The issuance checks the session's second factor against the registry.
+    mocks.isActive.mockResolvedValue(false);
+    await expect(input.isSecondFactorActive('admin-1', 'sf-1')).resolves.toBe(false);
+    expect(mocks.isActive).toHaveBeenCalledWith('admin-1', 'sf-1');
     const [, audit] = mocks.writeAdminAuditLog.mock.calls[0] as [unknown, Record<string, unknown>];
     expect(audit).toMatchObject({
       action: 'admin.step_up.receipt_issued',

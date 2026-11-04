@@ -536,6 +536,12 @@ adminInvitationEnrollmentApp.post('/api/admin/invitations/activate', async (c) =
     return c.json({ error: 'passkey_authentication_failed' }, 401);
   }
   if (!verification.verified) return c.json({ error: 'passkey_authentication_failed' }, 401);
+  // A step-up second factor never becomes a sign-in passkey.
+  const secondFactor = await checked.adapter.queryOne<{ id: string }>(
+    'SELECT id FROM admin_second_factors WHERE credential_id = ? LIMIT 1',
+    [state.authentication.credentialId]
+  );
+  if (secondFactor) return c.json({ error: 'passkey_authentication_failed' }, 401);
 
   const invitation = checked.invitation;
   const now = Date.now();
