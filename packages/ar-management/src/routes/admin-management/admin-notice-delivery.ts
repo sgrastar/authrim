@@ -300,9 +300,12 @@ adminNoticeChannelsRouter.put('/:id/webhook-url', async (c) => {
       return invalid(c, 'webhook_url', 'webhook_url must be a Slack Incoming Webhook URL');
     }
     if (sealed === 'unavailable') return encryptionUnavailable(c);
+    // Whoever points the channel somewhere answers for what is posted there: notices behind a
+    // permission go to it only while this admin sees them.
     const updated = await repository.updateChannel(channel.id, {
       webhook_url_encrypted: sealed.encrypted,
       webhook_url_hint: sealed.hint,
+      created_by: auth.userId,
     });
     await writeAdminAuditLog(c, {
       action: 'admin.notice_channel.webhook_replaced',

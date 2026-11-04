@@ -35,6 +35,7 @@ export interface AdminNoticeChannel {
   kind: 'slack';
   name: string;
   webhook_url_hint: string;
+  /** Who set its webhook URL last: notices behind a permission go there only if they see them. */
   min_severity: AdminNoticeSeverity;
   enabled: boolean;
   created_by: string | null;
@@ -212,7 +213,12 @@ export class AdminNoticeDeliveryRepository {
     input: Partial<
       Pick<
         AdminNoticeChannelSecret,
-        'name' | 'min_severity' | 'enabled' | 'webhook_url_encrypted' | 'webhook_url_hint'
+        | 'name'
+        | 'min_severity'
+        | 'enabled'
+        | 'webhook_url_encrypted'
+        | 'webhook_url_hint'
+        | 'created_by'
       >
     >,
     now: number = getCurrentTimestamp()
@@ -224,6 +230,7 @@ export class AdminNoticeDeliveryRepository {
       'min_severity',
       'webhook_url_encrypted',
       'webhook_url_hint',
+      'created_by',
     ] as const) {
       if (input[key] !== undefined) {
         sets.push(`${key} = ?`);

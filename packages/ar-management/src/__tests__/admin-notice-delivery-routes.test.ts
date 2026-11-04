@@ -241,6 +241,8 @@ describe('admin notice delivery routes', () => {
     expect(await updated.json()).toMatchObject({
       channel: { enabled: false, min_severity: 'info' },
     });
+    // Another admin points the channel elsewhere: they now answer for it.
+    mocks.state.auth = admin({ userId: 'admin-2' });
     const replaced = await call(
       adminNoticeChannelsRouter,
       'PUT',
@@ -250,8 +252,9 @@ describe('admin notice delivery routes', () => {
       }
     );
     expect(await replaced.json()).toMatchObject({
-      channel: { webhook_url_hint: 'hooks.slack.com/services/T999/…' },
+      channel: { webhook_url_hint: 'hooks.slack.com/services/T999/…', created_by: 'admin-2' },
     });
+    mocks.state.auth = admin();
     expect((await call(adminNoticeChannelsRouter, 'DELETE', `/${mine.channel.id}`)).status).toBe(
       200
     );
