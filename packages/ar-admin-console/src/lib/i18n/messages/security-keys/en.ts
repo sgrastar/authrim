@@ -38,7 +38,8 @@ export const enSecurityKeys: Record<keyof typeof jaSecurityKeys, string> = {
 	'sk.recovery.waiting.body':
 		'It can be completed after {date}. Until then, you or another administrator can cancel it.',
 	'sk.recovery.ready.title': 'Recovery can be completed',
-	'sk.recovery.ready.body': 'Completing it revokes all your current keys and ends your other sessions.',
+	'sk.recovery.ready.body':
+		'Completing it revokes all your current keys and ends your other sessions.',
 	'sk.recovery.complete': 'Complete recovery',
 	'sk.recovery.completeTitle': 'Complete recovery?',
 	'sk.recovery.completed': 'Recovery was completed.',
@@ -53,7 +54,8 @@ export const enSecurityKeys: Record<keyof typeof jaSecurityKeys, string> = {
 	'sk.error.minimum': 'The last key cannot be removed. Add another key first.',
 	'sk.error.lastResort':
 		'You are the only administrator, so this way of recovery is not available. Use the procedure for the environment’s owner.',
-	'sk.error.noEmail': 'Recovery cannot be requested because email cannot be sent. Set up email delivery.',
+	'sk.error.noEmail':
+		'Recovery cannot be requested because email cannot be sent. Set up email delivery.',
 	'sk.error.pending': 'A recovery request is already open.',
 	'sk.error.waiting': 'It cannot be completed yet. Please try again after {date}.',
 	'sk.error.cancelled': 'The confirmation was cancelled.',

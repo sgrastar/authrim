@@ -37,7 +37,8 @@ export const jaSecurityKeys = {
 	'sk.recoverSubmit': 'キーを登録して申請',
 	'sk.recoveryFiled': '復旧を申請しました。',
 	'sk.recovery.waiting.title': '復旧の申請中です',
-	'sk.recovery.waiting.body': '{date} 以降に完了できます。それまでは、あなたかほかの管理者が取り消せます。',
+	'sk.recovery.waiting.body':
+		'{date} 以降に完了できます。それまでは、あなたかほかの管理者が取り消せます。',
 	'sk.recovery.ready.title': '復旧を完了できます',
 	'sk.recovery.ready.body': '完了すると、今のキーはすべて失効し、ほかのセッションは終了します。',
 	'sk.recovery.complete': '復旧を完了',
@@ -54,7 +55,8 @@ export const jaSecurityKeys = {
 	'sk.error.minimum': '最後のキーは削除できません。先に別のキーを追加してください。',
 	'sk.error.lastResort':
 		'管理者があなた 1 人のため、この方法では復旧できません。環境の管理者向けの手順で復旧してください。',
-	'sk.error.noEmail': 'メールを送れないため、復旧を申請できません。メールの配信を設定してください。',
+	'sk.error.noEmail':
+		'メールを送れないため、復旧を申請できません。メールの配信を設定してください。',
 	'sk.error.pending': 'すでに復旧の申請中です。',
 	'sk.error.waiting': 'まだ完了できません。{date} 以降にお試しください。',
 	'sk.error.cancelled': '確認が取り消されました。',
@@ -66,7 +68,8 @@ export const jaSecurityKeys = {
 	'sk.others.notBefore': '完了できる日時',
 	'sk.others.cancel': '取り消す',
 	'sk.others.cancelTitle': '{email} の申請を取り消しますか？',
-	'sk.others.cancelBody': '申請したキーは登録されません。本人とテナントの管理者にメールが届きます。',
+	'sk.others.cancelBody':
+		'申請したキーは登録されません。本人とテナントの管理者にメールが届きます。',
 	'sk.others.cancelled': '申請を取り消しました。',
 	'sk.others.loadFailed': '復旧の申請を読み込めませんでした。'
 };

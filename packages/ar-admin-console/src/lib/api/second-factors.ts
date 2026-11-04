@@ -50,9 +50,7 @@ export interface TenantRecoveryRequest extends SecondFactorRecovery {
 	admin_email: string | null;
 }
 
-export type RegisterResult =
-	| { second_factor: SecondFactor }
-	| { recovery: SecondFactorRecovery };
+export type RegisterResult = { second_factor: SecondFactor } | { recovery: SecondFactorRecovery };
 
 export interface SecondFactorsClient {
 	list(): Promise<SecondFactorState>;
@@ -128,10 +126,12 @@ export const httpSecondFactors: SecondFactorsClient = {
 	},
 
 	async getRecovery() {
-		return (await request<{ recovery: SecondFactorRecovery | null }>(
-			'GET',
-			`${ME}/second-factor-recovery`
-		)).recovery;
+		return (
+			await request<{ recovery: SecondFactorRecovery | null }>(
+				'GET',
+				`${ME}/second-factor-recovery`
+			)
+		).recovery;
 	},
 
 	async completeRecovery() {

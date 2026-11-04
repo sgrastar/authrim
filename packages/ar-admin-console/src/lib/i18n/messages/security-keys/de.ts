@@ -24,7 +24,8 @@ export const deSecurityKeys: Record<keyof typeof jaSecurityKeys, string> = {
 	'sk.loadFailed': 'Die Sicherheitsschlüssel konnten nicht geladen werden.',
 	'sk.empty': 'Keine Sicherheitsschlüssel',
 	'sk.first.title': 'Registrieren Sie Ihren ersten Schlüssel bis {date}',
-	'sk.first.body': 'Bis dahin genügt die Bestätigung mit Ihrem Passkey, um den ersten Schlüssel zu registrieren.',
+	'sk.first.body':
+		'Bis dahin genügt die Bestätigung mit Ihrem Passkey, um den ersten Schlüssel zu registrieren.',
 	'sk.recoveryNeeded.title': 'Für einen Schlüssel ist ein Wiederherstellungsantrag nötig',
 	'sk.recoveryNeeded.body':
 		'Der Zeitraum für den ersten Schlüssel ist abgelaufen. Beantragen Sie die Wiederherstellung mit einem neuen Schlüssel; sie kann nach 24 Stunden abgeschlossen werden.',
@@ -47,7 +48,8 @@ export const deSecurityKeys: Record<keyof typeof jaSecurityKeys, string> = {
 	'sk.recovery.cancelTitle': 'Wiederherstellungsantrag zurückziehen?',
 	'sk.recovery.cancelBody': 'Der dafür registrierte Schlüssel wird nicht hinzugefügt.',
 	'sk.recovery.cancelled': 'Der Wiederherstellungsantrag wurde zurückgezogen.',
-	'sk.error': 'Der Sicherheitsschlüssel konnte nicht geändert werden. Bitte versuchen Sie es erneut.',
+	'sk.error':
+		'Der Sicherheitsschlüssel konnte nicht geändert werden. Bitte versuchen Sie es erneut.',
 	'sk.error.notDeviceBound':
 		'Synchronisierte Schlüssel (Passkeys) können nicht verwendet werden. Verwenden Sie einen USB- oder NFC-Sicherheitsschlüssel.',
 	'sk.error.inUse': 'Dieser Schlüssel ist bereits registriert.',
