@@ -119,6 +119,8 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
   authenticated('/api/admin/me/step-up/*', 'current admin session step-up receipts'),
   authenticated('/api/admin/me/second-factors', 'current admin step-up second factors'),
   authenticated('/api/admin/me/second-factors/*', 'current admin step-up second factors'),
+  authenticated('/api/admin/me/second-factor-recovery', 'current admin second-factor recovery'),
+  authenticated('/api/admin/me/second-factor-recovery/*', 'current admin second-factor recovery'),
   authenticated('/api/admin/me/agent-consents', 'current admin Agent consent management'),
   authenticated('/api/admin/me/agent-consents/*', 'current admin Agent consent management'),
 
@@ -1291,6 +1293,18 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.ADMIN_USERS_DELETE,
     'admin users'
   ),
+  rule({
+    pattern: '/api/admin/admin-second-factor-recoveries',
+    methods: READ_METHODS,
+    permissions: [ADMIN_PERMISSIONS.ADMIN_USERS_READ],
+    description: 'admin second-factor recovery requests read',
+  }),
+  rule({
+    pattern: '/api/admin/admin-second-factor-recoveries/*',
+    methods: WRITE_METHODS,
+    permissions: [ADMIN_PERMISSIONS.ADMIN_USERS_WRITE],
+    description: 'admin second-factor recovery request cancel',
+  }),
   rule({
     pattern: '/api/admin/admin-invitations',
     methods: READ_METHODS,

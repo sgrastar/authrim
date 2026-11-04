@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
   verifyRegistrationResponse: vi.fn(),
   requireAdminStepUp: vi.fn(),
   writeAdminAuditLog: vi.fn(),
+  refuseRecoveryRequest: vi.fn(),
+  fileRecoveryRequest: vi.fn(),
   auth: {},
 }));
 
@@ -26,6 +28,11 @@ vi.mock('@simplewebauthn/server', () => ({
 }));
 
 vi.mock('../admin-shared', () => ({ writeAdminAuditLog: mocks.writeAdminAuditLog }));
+
+vi.mock('../routes/admin-management/my-second-factor-recovery', () => ({
+  refuseRecoveryRequest: mocks.refuseRecoveryRequest,
+  fileRecoveryRequest: mocks.fileRecoveryRequest,
+}));
 
 vi.mock('../admin-step-up-gate', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../admin-step-up-gate')>();
@@ -294,8 +301,42 @@ describe('mySecondFactorsRouter', () => {
       expect(mocks.requireAdminStepUp).not.toHaveBeenCalled();
     });
 
+    it('checks a recovery request instead of the enrollment rules', async () => {
+      mocks.listActiveByUser.mockResolvedValue([]);
+      mocks.refuseRecoveryRequest.mockResolvedValue(null);
+
+      const { status, body } = await call('POST', '/webauthn/options', {
+        rp_id: 'admin.example.com',
+        purpose: 'recovery',
+      });
+
+      expect(status).toBe(200);
+      expect(body).toMatchObject({ mode: 'recovery' });
+      expect(mocks.refuseRecoveryRequest).toHaveBeenCalledOnce();
+      expect(mocks.requireAdminStepUp).not.toHaveBeenCalled();
+      expect(mocks.storeChallengeRpc.mock.calls[0]?.[0]).toMatchObject({
+        metadata: { mode: 'recovery' },
+      });
+    });
+
+    it('returns the recovery refusal', async () => {
+      mocks.refuseRecoveryRequest.mockResolvedValue(
+        new Response(JSON.stringify({ error: 'recovery_requires_last_resort' }), { status: 403 })
+      );
+
+      const { status, body } = await call('POST', '/webauthn/options', {
+        rp_id: 'admin.example.com',
+        purpose: 'recovery',
+      });
+
+      expect(status).toBe(403);
+      expect(body).toEqual({ error: 'recovery_requires_last_resort' });
+      expect(mocks.storeChallengeRpc).not.toHaveBeenCalled();
+    });
+
     it.each([
       [{}],
+      [{ rp_id: 'admin.example.com', purpose: 'other' }],
       [{ rp_id: '' }],
       [{ rp_id: 'admin.example.com', label: 7 }],
       [{ rp_id: 'admin.example.com', label: 'x'.repeat(65) }],
@@ -383,6 +424,45 @@ describe('mySecondFactorsRouter', () => {
       expect(mocks.writeAdminAuditLog).not.toHaveBeenCalled();
     });
 
+    it('files a recovery request with the new key instead of registering it', async () => {
+      mocks.consumeChallengeRpc.mockResolvedValue(
+        registrationChallenge({
+          metadata: { ...registrationChallenge().metadata, mode: 'recovery' },
+        })
+      );
+      mocks.fileRecoveryRequest.mockResolvedValue(
+        new Response(JSON.stringify({ recovery: { id: 'rec-1' } }), { status: 201 })
+      );
+
+      const { status, body } = await call('POST', '/webauthn/verify', verifyBody);
+
+      expect(status).toBe(201);
+      expect(body).toEqual({ recovery: { id: 'rec-1' } });
+      expect(mocks.insertWebAuthn).not.toHaveBeenCalled();
+      expect(mocks.fileRecoveryRequest.mock.calls[0]?.[2]).toEqual({
+        credential_id: 'cred-new',
+        public_key: btoa(String.fromCharCode(1, 2)),
+        counter: 0,
+        transports: ['usb'],
+        aaguid: 'aaguid-1',
+        label: 'Key',
+      });
+    });
+
+    it('refuses a synced key for a recovery request too', async () => {
+      mocks.consumeChallengeRpc.mockResolvedValue(
+        registrationChallenge({
+          metadata: { ...registrationChallenge().metadata, mode: 'recovery' },
+        })
+      );
+      mocks.verifyRegistrationResponse.mockResolvedValue(
+        registered({ credentialDeviceType: 'multiDevice' })
+      );
+
+      expect((await call('POST', '/webauthn/verify', verifyBody)).status).toBe(400);
+      expect(mocks.fileRecoveryRequest).not.toHaveBeenCalled();
+    });
+
     it('reports a credential already in use', async () => {
       mocks.insertWebAuthn.mockResolvedValue({ inserted: false, reason: 'credential_in_use' });
 
@@ -399,7 +479,7 @@ describe('mySecondFactorsRouter', () => {
         'another origin',
         { metadata: { ...registrationChallenge().metadata, origin: 'https://x' } },
       ],
-      ['an unknown mode', { metadata: { ...registrationChallenge().metadata, mode: 'recovery' } }],
+      ['an unknown mode', { metadata: { ...registrationChallenge().metadata, mode: 'other' } }],
     ])('refuses a challenge for %s', async (_label, overrides) => {
       mocks.consumeChallengeRpc.mockResolvedValue(registrationChallenge(overrides));
 
