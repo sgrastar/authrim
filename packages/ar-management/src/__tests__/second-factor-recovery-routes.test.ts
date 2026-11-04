@@ -375,6 +375,17 @@ describe('second-factor recovery', () => {
       expect(mocks.complete).not.toHaveBeenCalled();
     });
 
+    it('asks for a passkey re-authentication before cancelling one’s own request', async () => {
+      mocks.auth = human({ authenticationTimeMs: NOW - 10 * 60_000 });
+      mocks.findOpenByUser.mockResolvedValue(recovery());
+
+      const { status, body } = await call('POST', '/api/admin/me/second-factor-recovery/cancel');
+
+      expect(status).toBe(403);
+      expect(body).toMatchObject({ error: 'admin_fresh_auth_required' });
+      expect(mocks.cancel).not.toHaveBeenCalled();
+    });
+
     it('says when the wait has not ended', async () => {
       mocks.findOpenByUser.mockResolvedValue(recovery());
       mocks.complete.mockResolvedValue({ completed: false, reason: 'too_early' });

@@ -5,6 +5,7 @@ import { jaServiceFlows } from './service-flows/ja';
 import { jaAccountFlows } from './account-flows/ja';
 import { jaSchemaSetting } from './schema-setting/ja';
 import { jaTenantGeneral } from './tenant-general/ja';
+import { jaSecurityKeys } from './security-keys/ja';
 import { jaNotices } from './notices/ja';
 
 /**
@@ -19,6 +20,7 @@ export const ja = {
 	...jaAccountFlows,
 	...jaSchemaSetting,
 	...jaTenantGeneral,
+	...jaSecurityKeys,
 	...jaNotices,
 	'app.adminLabel': '管理コンソール',
 	'app.env.dev': '開発環境',

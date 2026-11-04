@@ -31819,8 +31819,9 @@ paths:
       operationId: postApiAdminMeSecondFactorRecoveryCancel
       summary: Cancel own second-factor recovery request
       description: >-
-        Cancel the current admin's open recovery request. The tenant's administrators are notified.
-        A selected tenant runtime snapshot is not required.
+        Cancel the current admin's open recovery request. Requires a fresh passkey (403
+        admin_fresh_auth_required otherwise). The tenant's administrators are notified. A selected
+        tenant runtime snapshot is not required.
       x-authrim-route-coverage: inferred-from-source
       responses:
         '200':
