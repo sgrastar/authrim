@@ -41,6 +41,8 @@ import {
   requireDedicatedAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
 import { writeAdminAuditLog } from '../../admin-shared';
+import { requireAdminStepUp } from '../../admin-step-up-gate';
+import { sha256Hex } from '../../admin-step-up-digest';
 import { isSlackWebhookUrl } from '../../admin-notice-delivery';
 
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
@@ -212,6 +214,16 @@ adminNoticeChannelsRouter.post('/', async (c) => {
       return invalid(c, 'webhook_url', 'webhook_url must be a Slack Incoming Webhook URL');
     }
     if (sealed === 'unavailable') return encryptionUnavailable(c);
+    const refused = await requireAdminStepUp(c, {
+      operation: 'webhook.destination.update',
+      targetTenantId: getTenantIdFromContext(c),
+      params: {
+        kind: 'notice_channel.create',
+        scope_type: scope,
+        webhook_url_sha256: await sha256Hex(String(body.webhook_url).trim()),
+      },
+    });
+    if (refused) return refused;
     const channel = await new AdminNoticeDeliveryRepository(adminAdapter(c)).createChannel({
       scope_type: scope,
       tenant_id: scope === 'platform' ? null : getTenantIdFromContext(c),
@@ -300,6 +312,16 @@ adminNoticeChannelsRouter.put('/:id/webhook-url', async (c) => {
       return invalid(c, 'webhook_url', 'webhook_url must be a Slack Incoming Webhook URL');
     }
     if (sealed === 'unavailable') return encryptionUnavailable(c);
+    const refused = await requireAdminStepUp(c, {
+      operation: 'webhook.destination.update',
+      targetTenantId: getTenantIdFromContext(c),
+      targetIds: [channel.id],
+      params: {
+        kind: 'notice_channel.webhook_url',
+        webhook_url_sha256: await sha256Hex(String(body.webhook_url).trim()),
+      },
+    });
+    if (refused) return refused;
     // Whoever points the channel somewhere answers for what is posted there: notices behind a
     // permission go to it only while this admin sees them.
     const updated = await repository.updateChannel(channel.id, {

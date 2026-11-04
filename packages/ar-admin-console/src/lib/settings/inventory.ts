@@ -692,7 +692,11 @@ place('authentication/staying-signed-in', 'Logout channels and webhook', {
 	]
 });
 place('settings/team', 'Admin sign-in', {
-	advanced: ['session.ttl.admin_passkey', 'security.admin_step_up_overrides']
+	advanced: [
+		'session.ttl.admin_passkey',
+		'security.admin_step_up_overrides',
+		'security.admin_step_up_enforced'
+	]
 });
 
 // ---------------------------------------------------------------------------------------------

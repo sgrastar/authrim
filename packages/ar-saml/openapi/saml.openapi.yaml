@@ -206,6 +206,8 @@ paths:
       requestBody:
         $ref: '#/components/requestBodies/SAMLSettingsUpdate'
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/SAMLSettings'
   /api/admin/saml-providers:
@@ -229,6 +231,8 @@ paths:
       requestBody:
         $ref: '#/components/requestBodies/SAMLProviderCreate'
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/SAMLProvider'
         '201':
@@ -258,6 +262,8 @@ paths:
       requestBody:
         $ref: '#/components/requestBodies/SAMLProviderUpdate'
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/SAMLProvider'
     delete:
@@ -270,6 +276,8 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Id'
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/Json'
   /api/admin/saml-attribute-presets:
@@ -377,6 +385,8 @@ paths:
         an aggregate metadata preview. When enabled is false and identityMapping is omitted, mixed IdP and
         SP selections are registered as disabled providers so each provider can be mapped and enabled later.
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '202':
           $ref: '#/components/responses/SAMLBatchStatus'
         '400':
@@ -456,6 +466,8 @@ paths:
       description: Imports single-entity SAML metadata into an existing provider, preserving custom
         settings while updating metadata-derived configuration and refresh status.
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/SAMLMetadataImport'
       parameters:
@@ -481,6 +493,8 @@ paths:
         unchanged. Supplying a different URL or approving an entityID change also requires the
         provider-update permission.
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/SAMLMetadataRefresh'
       parameters:
@@ -504,6 +518,8 @@ paths:
         document and entity summaries, and reconciles already activated providers. This manual
         operation is available whether scheduled polling is automatic or manual.
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/SAMLFederationMetadataRefresh'
         '409':
@@ -531,6 +547,8 @@ paths:
         Promotes the provider signing policy next certificate to active and can retain the
         previous active certificate as backup.
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/SAMLSigningRollover'
       parameters:
@@ -553,6 +571,8 @@ paths:
         Adds a next signing certificate to the provider signing policy for metadata publication
         before activation.
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/SAMLSigningRollover'
       parameters:
@@ -574,6 +594,8 @@ paths:
       description: Removes the backup signing certificate from the provider signing policy after a
         rollover has completed.
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/SAMLSigningRollover'
       parameters:
@@ -596,6 +618,8 @@ paths:
         Creates, publishes, promotes, deletes, or retires tenant-local SAML signing keys for
         the IdP or SP role and returns the updated SAML settings.
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/SAMLSettings'
       requestBody:
@@ -626,6 +650,8 @@ paths:
         Decrypts and imports a local SAML signing disaster recovery bundle into the current
         tenant, then returns the reloaded SAML settings.
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/SAMLSettings'
       requestBody:
@@ -871,6 +897,33 @@ components:
             attribute_set_hash: sha256:abcdef
             decision: approve
   responses:
+    AdminStepUpRequired:
+      description: >-
+        The trust change needs admin step-up L2 (federation.trust.update), unless the platform
+        turned security.admin_step_up_enforced off. step_up_required: verify what `missing` lists,
+        exchange `step_up_id` at POST /api/admin/me/step-up/receipts and repeat the same request
+        once with the receipt in the authrim-step-up-receipt header. step_up_human_required: a
+        machine token without admin:step_up_exempt:federation.trust.update, or an agent.
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - error
+            properties:
+              error:
+                type: string
+                enum: [step_up_required, step_up_human_required]
+              required_level:
+                type: string
+              step_up_id:
+                type: string
+              expires_at:
+                type: integer
+              missing:
+                type: array
+                items:
+                  type: string
     Json:
       description: Successful JSON response.
       content:

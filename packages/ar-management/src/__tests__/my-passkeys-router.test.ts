@@ -13,6 +13,12 @@ const mocks = vi.hoisted(() => ({
   verifyRegistrationResponse: vi.fn(),
   writeAdminAuditLog: vi.fn(),
   generateId: vi.fn(() => 'challenge-id'),
+  requireAdminStepUp: vi.fn(),
+}));
+
+vi.mock('../admin-step-up-gate', () => ({
+  requireAdminStepUp: mocks.requireAdminStepUp,
+  refuseAdminFreshAuth: vi.fn(),
 }));
 
 vi.mock('@simplewebauthn/server', () => ({
@@ -111,6 +117,7 @@ function registrationResponse() {
 describe('myPasskeysRouter', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.requireAdminStepUp.mockReset().mockResolvedValue(null);
     mocks.getPasskeysByUser.mockResolvedValue([]);
     mocks.credentialExists.mockResolvedValue(false);
   });
@@ -178,6 +185,68 @@ describe('myPasskeysRouter', () => {
       expect.stringContaining('https://admin.example.com'),
       { expirationTtl: 300 }
     );
+  });
+
+  describe('step-up (admin.passkey.add)', () => {
+    const optionsRequest = (env: Env, app: Hono<{ Bindings: Env }>) =>
+      app.request(
+        '/api/admin/me/passkeys/options',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Origin: 'https://admin.example.com' },
+          body: JSON.stringify({ rp_id: 'admin.example.com' }),
+        },
+        env
+      );
+
+    it('an admin who already has a passkey needs a fresh one, and no challenge is issued without it', async () => {
+      mocks.getPasskeysByUser.mockResolvedValue([passkey()]);
+      mocks.requireAdminStepUp.mockResolvedValue(
+        new Response(JSON.stringify({ error: 'admin_fresh_auth_required' }), { status: 403 })
+      );
+      const { app, env, kv } = createApp();
+      const response = await optionsRequest(env, app);
+      expect(response.status).toBe(403);
+      expect(mocks.generateRegistrationOptions).not.toHaveBeenCalled();
+      expect(kv?.put).not.toHaveBeenCalled();
+      expect(mocks.requireAdminStepUp.mock.calls[0][1]).toEqual({
+        operation: 'admin.passkey.add',
+        targetTenantId: 'tenant-1',
+        targetIds: ['admin-1'],
+      });
+    });
+
+    it('goes ahead when the gate is satisfied', async () => {
+      mocks.getPasskeysByUser.mockResolvedValue([passkey()]);
+      mocks.generateRegistrationOptions.mockResolvedValue({ challenge: 'c' });
+      const { app, env } = createApp();
+      expect((await optionsRequest(env, app)).status).toBe(200);
+      expect(mocks.requireAdminStepUp).toHaveBeenCalledTimes(1);
+    });
+
+    it('the first passkey of an admin with none is not gated', async () => {
+      mocks.getPasskeysByUser.mockResolvedValue([]);
+      mocks.generateRegistrationOptions.mockResolvedValue({ challenge: 'c' });
+      const { app, env } = createApp();
+      expect((await optionsRequest(env, app)).status).toBe(200);
+      expect(mocks.requireAdminStepUp).not.toHaveBeenCalled();
+    });
+
+    it('a request refused on validation does not reach the gate', async () => {
+      mocks.getPasskeysByUser.mockResolvedValue([passkey()]);
+      const { app, env } = createApp();
+      const response = await app.request(
+        '/api/admin/me/passkeys/options',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Origin: 'https://admin.example.com' },
+          body: JSON.stringify({ rp_id: 'evil.example.com' }),
+        },
+        env
+      );
+      expect(response.status).toBe(400);
+      expect(mocks.requireAdminStepUp).not.toHaveBeenCalled();
+    });
   });
 
   it.each([
@@ -319,10 +388,94 @@ describe('myPasskeysRouter', () => {
         counter: 3,
         transports: ['internal'],
         device_name: 'Request name',
-      })
+      }),
+      // The admin had none: the first passkey is inserted only while there is still none.
+      { onlyIfFirst: true }
     );
+    expect(mocks.requireAdminStepUp).not.toHaveBeenCalled();
     expect(kv?.delete).toHaveBeenCalledWith('admin_passkey:challenge:c');
     expect(mocks.writeAdminAuditLog).toHaveBeenCalled();
+  });
+
+  describe('step-up at completion', () => {
+    const refusal = () =>
+      new Response(JSON.stringify({ error: 'admin_fresh_auth_required' }), { status: 403 });
+    const complete = async (stored: Record<string, unknown> = {}) => {
+      const { app, env, kv } = createApp();
+      kv?.get.mockResolvedValue(
+        JSON.stringify({
+          challenge: 'x',
+          rpID: 'admin.example.com',
+          origin: 'https://admin.example.com',
+          userId: 'admin-1',
+          deviceName: null,
+          ...stored,
+        })
+      );
+      mocks.verifyRegistrationResponse.mockResolvedValue({
+        verified: true,
+        registrationInfo: {
+          credential: { id: 'Y3JlZGVudGlhbA', publicKey: new Uint8Array([1, 2]), counter: 0 },
+        },
+      });
+      mocks.createPasskey.mockResolvedValue(passkey());
+      const response = await app.request(
+        '/api/admin/me/passkeys/complete',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            challenge_id: 'c',
+            passkey_response: registrationResponse(),
+            origin: 'https://admin.example.com',
+          }),
+        },
+        env
+      );
+      return { response, kv };
+    };
+
+    it('an admin who has a passkey by now is checked again before saving, and nothing is saved when refused', async () => {
+      mocks.getPasskeysByUser.mockResolvedValue([passkey()]);
+      mocks.requireAdminStepUp.mockResolvedValueOnce(refusal());
+
+      const { response, kv } = await complete();
+
+      expect(response.status).toBe(403);
+      expect(mocks.requireAdminStepUp).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          operation: 'admin.passkey.add',
+          targetIds: ['admin-1'],
+          // Bound to this registration and the key it saves.
+          params: {
+            phase: 'complete',
+            challenge_id: 'c',
+            credential_sha256: expect.stringMatching(/^[0-9a-f]{64}$/) as unknown,
+          },
+        })
+      );
+      expect(mocks.createPasskey).not.toHaveBeenCalled();
+      // The challenge stays, so the same registration can be repeated after re-authenticating.
+      expect(kv?.delete).not.toHaveBeenCalled();
+    });
+
+    it('a first registration that lost the race to another one needs the step-up after all', async () => {
+      const { AdminPasskeyNotFirstError } = await import('@authrim/ar-lib-core');
+      mocks.createPasskey.mockRejectedValueOnce(new AdminPasskeyNotFirstError());
+      mocks.requireAdminStepUp.mockResolvedValueOnce(refusal());
+
+      const { response } = await complete();
+
+      expect(response.status).toBe(403);
+      expect(mocks.createPasskey).toHaveBeenCalledTimes(1);
+    });
+
+    it('refuses a challenge issued to another session of the same admin', async () => {
+      const { response } = await complete({ sessionId: 'other-session' });
+      expect(response.status).toBe(401);
+      expect(mocks.createPasskey).not.toHaveBeenCalled();
+    });
   });
 
   it.each([

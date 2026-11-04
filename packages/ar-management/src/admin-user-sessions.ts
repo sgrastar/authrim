@@ -22,6 +22,7 @@ import {
 } from '@authrim/ar-lib-core';
 import { getCanonicalTenantBaseUrl } from './request-issuer';
 import { detectImageType, logSanitizedError, scheduleAdminAuditLog } from './admin-shared';
+import { requireAdminStepUp } from './admin-step-up-gate';
 import { adminActorIdFromContext, startAdminSessionEndLogout } from './admin-session-end';
 import { endedSessionsOf } from './session-end-logout';
 import { getCanonicalAccountStatus } from './account-status';
@@ -704,6 +705,12 @@ export async function adminUserRevokeAllSessionsHandler(c: Context<{ Bindings: E
         404
       );
     }
+
+    const refused = await requireAdminStepUp(
+      c as unknown as Parameters<typeof requireAdminStepUp>[0],
+      { operation: 'sessions.revoke_all', targetTenantId: tenantId, targetIds: [userId] }
+    );
+    if (refused) return refused;
 
     const log = getLogger(c).module('ADMIN');
     const revokedAfterMs = Date.now();

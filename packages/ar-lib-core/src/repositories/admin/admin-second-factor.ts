@@ -103,6 +103,15 @@ export class AdminSecondFactorRepository {
     return row ? this.rowToFactor(row) : null;
   }
 
+  /** Whether the admin has ever registered a second factor (revoked ones included). */
+  async hasEverEnrolled(adminUserId: string): Promise<boolean> {
+    const row = await this.adapter.queryOne<{ found: number }>(
+      'SELECT 1 AS found FROM admin_second_factors WHERE admin_user_id = ? LIMIT 1',
+      [adminUserId]
+    );
+    return row !== null;
+  }
+
   async isActive(adminUserId: string, id: string): Promise<boolean> {
     const row = await this.adapter.queryOne<{ id: string }>(
       `SELECT id FROM admin_second_factors
@@ -114,7 +123,9 @@ export class AdminSecondFactorRepository {
 
   /**
    * Register a WebAuthn credential as a second factor. With `firstOnly`, the row is written only
-   * while the admin has no active factor and their first-enrollment window is still open, so two
+   * while the admin has never had a factor (a revoked one counts: once another administrator
+   * revokes the last key, a new one comes through recovery, not as a first enrollment again) and
+   * their first-enrollment window is still open, so two
    * concurrent first enrollments register one and a challenge issued before the window closed
    * cannot be used after it. A credential already registered as a sign-in passkey, or as any
    * second factor (revoked ones included), is refused.
@@ -133,7 +144,9 @@ export class AdminSecondFactorRepository {
        SELECT ?, ?, 'webauthn_credential', ?, ?, ?, ?, ?, ?, ?, ?, ?
        WHERE NOT EXISTS (SELECT 1 FROM admin_passkeys WHERE credential_id = ?)
          AND NOT EXISTS (SELECT 1 FROM admin_second_factors WHERE credential_id = ?)
-         AND (? = 0 OR (${ACTIVE_COUNT_SQL} = 0 AND EXISTS (
+         AND (? = 0 OR (NOT EXISTS (
+           SELECT 1 FROM admin_second_factors WHERE admin_user_id = ?
+         ) AND EXISTS (
            SELECT 1 FROM admin_users
             WHERE id = ? AND COALESCE(second_factor_grace_started_at, created_at) + ? > ?
          )))`,
@@ -239,6 +252,31 @@ export class AdminSecondFactorRepository {
     }
     const active = await this.isActive(adminUserId, id);
     return { revoked: false, reason: active ? 'minimum_reached' : 'not_found' };
+  }
+
+  /**
+   * Revoke one of an admin's factors on another administrator's decision (a lost or compromised
+   * key). Not held to the minimum: an admin left with none recovers through the waiting period.
+   * Sessions that verified the factor lose that evidence in the same batch.
+   *
+   * @returns False when the factor is not the admin's or was revoked already
+   */
+  async revokeByAdmin(adminUserId: string, id: string): Promise<boolean> {
+    const now = getCurrentTimestamp();
+    const [revoke] = await this.adapter.batch([
+      {
+        sql: `UPDATE admin_second_factors SET revoked_at = ?
+          WHERE id = ? AND admin_user_id = ? AND revoked_at IS NULL`,
+        params: [now, id, adminUserId],
+      },
+      {
+        sql: `UPDATE admin_sessions SET second_factor_id = NULL, second_factor_verified_at = NULL
+          WHERE admin_user_id = ? AND second_factor_id = ?
+            AND EXISTS (SELECT 1 FROM admin_second_factors WHERE id = ? AND revoked_at IS NOT NULL)`,
+        params: [adminUserId, id, id],
+      },
+    ]);
+    return (revoke?.rowsAffected ?? 0) > 0;
   }
 
   private rowToFactor(row: Record<string, unknown>): AdminSecondFactor {

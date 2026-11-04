@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   listActiveByUser: vi.fn(),
   listByUser: vi.fn(),
   getEnrollmentGraceEndsAt: vi.fn(),
+  hasEverEnrolled: vi.fn(),
+  isActive: vi.fn(),
   insertWebAuthn: vi.fn(),
   revoke: vi.fn(),
   getPasskeysByUser: vi.fn(),
@@ -45,6 +47,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     listActiveByUser = mocks.listActiveByUser;
     listByUser = mocks.listByUser;
     getEnrollmentGraceEndsAt = mocks.getEnrollmentGraceEndsAt;
+    hasEverEnrolled = mocks.hasEverEnrolled;
+    isActive = mocks.isActive;
     insertWebAuthn = mocks.insertWebAuthn;
     revoke = mocks.revoke;
   }
@@ -93,6 +97,8 @@ function human(overrides: Record<string, unknown> = {}) {
     tenantId: 'default',
     sessionTenantId: 'default',
     sessionId: 'sess-1',
+    secondFactorId: 'sf-1',
+    secondFactorVerifiedAtMs: NOW - 1000,
     mfaVerified: true,
     authenticationTimeMs: NOW - 1000,
     ...overrides,
@@ -145,6 +151,7 @@ function registrationChallenge(overrides: Record<string, unknown> = {}) {
       sessionId: 'sess-1',
       mode: 'step_up',
       label: 'Key',
+      approvingFactorId: 'sf-1',
     },
     ...overrides,
   };
@@ -175,6 +182,8 @@ describe('mySecondFactorsRouter', () => {
     mocks.listActiveByUser.mockResolvedValue([factor()]);
     mocks.listByUser.mockResolvedValue([factor()]);
     mocks.getEnrollmentGraceEndsAt.mockResolvedValue(NOW - 1);
+    mocks.hasEverEnrolled.mockResolvedValue(false);
+    mocks.isActive.mockResolvedValue(true);
     mocks.getPasskeysByUser.mockResolvedValue([{ credential_id: 'cred-login' }]);
     mocks.generateRegistrationOptions.mockResolvedValue({ challenge: 'webauthn-challenge' });
     mocks.requireAdminStepUp.mockResolvedValue(null);
@@ -275,6 +284,20 @@ describe('mySecondFactorsRouter', () => {
       expect(mocks.requireAdminStepUp).not.toHaveBeenCalled();
     });
 
+    it('does not offer a first enrollment again to an admin whose keys were all revoked', async () => {
+      mocks.listActiveByUser.mockResolvedValue([]);
+      mocks.getEnrollmentGraceEndsAt.mockResolvedValue(NOW + 60_000);
+      mocks.hasEverEnrolled.mockResolvedValue(true);
+
+      const { status, body } = await call('POST', '/webauthn/options', {
+        rp_id: 'admin.example.com',
+      });
+
+      expect(status).toBe(403);
+      expect(body).toMatchObject({ error: 'second_factor_recovery_required' });
+      expect(mocks.storeChallengeRpc).not.toHaveBeenCalled();
+    });
+
     it('asks for a passkey re-authentication on a first factor with an old passkey', async () => {
       mocks.listActiveByUser.mockResolvedValue([]);
       mocks.getEnrollmentGraceEndsAt.mockResolvedValue(NOW + 60_000);
@@ -350,6 +373,40 @@ describe('mySecondFactorsRouter', () => {
   });
 
   describe('registration', () => {
+    it('does not save a key once the sign-in it rests on is no longer fresh', async () => {
+      mocks.auth = human({ authenticationTimeMs: NOW - 10 * 60 * 1000 });
+      const stale = await call('POST', '/webauthn/verify', verifyBody);
+      expect(stale.status).toBe(403);
+      expect(stale.body).toMatchObject({ error: 'step_up_expired' });
+      expect(mocks.insertWebAuthn).not.toHaveBeenCalled();
+    });
+
+    it('issues a challenge that lasts no longer than the evidence behind it', async () => {
+      // Signed in (both factors) four minutes ago: one minute of freshness is left.
+      mocks.auth = human({
+        authenticationTimeMs: NOW - 4 * 60 * 1000,
+        secondFactorVerifiedAtMs: NOW - 4 * 60 * 1000,
+      });
+      await call('POST', '/webauthn/options', { rp_id: 'admin.example.com' });
+      const stored = (mocks.storeChallengeRpc.mock.calls[0] as [{ ttl: number }])[0];
+      expect(stored.ttl).toBeLessThanOrEqual(60);
+      expect(stored.ttl).toBeGreaterThan(0);
+    });
+
+    it('does not add a key once the factor that approved it has been revoked', async () => {
+      mocks.isActive.mockResolvedValue(false);
+      const revoked = await call('POST', '/webauthn/verify', verifyBody);
+      expect(revoked.status).toBe(403);
+
+      // Nor when the session no longer carries that factor's evidence.
+      mocks.isActive.mockResolvedValue(true);
+      mocks.auth = human({ secondFactorId: undefined });
+      const cleared = await call('POST', '/webauthn/verify', verifyBody);
+      expect(cleared.status).toBe(403);
+
+      expect(mocks.insertWebAuthn).not.toHaveBeenCalled();
+    });
+
     it('stores a device-bound credential with the challenge mode and audits it', async () => {
       const { status, body } = await call('POST', '/webauthn/verify', verifyBody);
 

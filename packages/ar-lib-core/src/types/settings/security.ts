@@ -23,6 +23,7 @@ export interface SecuritySettings {
   'security.dpop_nonce_resource_overrides': Record<string, boolean>;
 
   // Admin step-up
+  'security.admin_step_up_enforced': boolean;
   'security.admin_step_up_overrides': Record<string, 'L1' | 'L2'>;
 
   // OAuth Security Requirements
@@ -119,6 +120,19 @@ export const SECURITY_SETTINGS_META: Record<keyof SecuritySettings, SettingMeta>
   },
 
   // Admin step-up
+  'security.admin_step_up_enforced': {
+    key: 'security.admin_step_up_enforced',
+    // One switch for the whole deployment: a tenant cannot opt out of the protection.
+    scopes: ['platform'],
+    type: 'boolean',
+    default: true,
+    envKey: 'ADMIN_STEP_UP_ENFORCED',
+    envBoolean: 'unless-exactly-false',
+    label: 'Enforce Admin Step-up',
+    description:
+      'Whether sensitive admin operations require a recent passkey (L1) or a passkey and second factor (L2). Turn off only for a migration; turning it off itself requires L2, and the second-factor operations stay protected',
+    visibility: 'admin',
+  },
   'security.admin_step_up_overrides': {
     key: 'security.admin_step_up_overrides',
     // Per tenant: a platform value would be replaced, not added to, by a tenant's own map.
@@ -343,6 +357,7 @@ export const SECURITY_DEFAULTS: SecuritySettings = {
   'security.dpop_bound_access_tokens': false,
   'security.dpop_nonce_enabled': true,
   'security.dpop_nonce_resource_overrides': {},
+  'security.admin_step_up_enforced': true,
   'security.admin_step_up_overrides': {},
   // New settings
   'security.pkce_required': false,

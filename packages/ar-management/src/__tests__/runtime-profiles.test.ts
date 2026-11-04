@@ -1,4 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const stepUp = vi.hoisted(() => ({ gate: vi.fn(async (): Promise<Response | null> => null) }));
+vi.mock('../admin-step-up-gate', () => ({
+  requireAdminStepUp: stepUp.gate,
+  refuseAdminFreshAuth: vi.fn(),
+}));
 import { Hono } from 'hono';
 import { createSettingsCanonicalD1 } from './helpers/settings-canonical-d1';
 import type { D1Database } from '@cloudflare/workers-types';
@@ -6,6 +12,7 @@ import type { Env } from '@authrim/ar-lib-core';
 import {
   DEFAULT_AUDIT_PROFILE_ID,
   DEFAULT_RESIDENCY_PROFILE_ID,
+  EU_RESIDENCY_PROFILE_ID,
   TENANT_RUNTIME_REGISTRY_EMERGENCY_PURGE_CONFIRMATION,
 } from '@authrim/ar-lib-core';
 
@@ -912,5 +919,144 @@ describe('runtime profile admin handlers', () => {
       registry.get('tenant:acme:runtime-registry:generation:tenant:edge-a')
     ).resolves.toBe('7');
     expect(mockWriteAdminAuditLog).not.toHaveBeenCalled();
+  });
+});
+
+describe('runtime profile jurisdiction changes need step-up', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    stepUp.gate.mockReset();
+    stepUp.gate.mockResolvedValue(null);
+  });
+
+  const refusal = () =>
+    new Response(JSON.stringify({ error: 'step_up_required' }), {
+      status: 403,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  const residency = (jurisdiction: string, label = 'Residency') => ({
+    label,
+    version: 1,
+    locationHint: 'auto',
+    jurisdiction,
+  });
+  const put = (app: ReturnType<typeof createTestApp>, env: Env, path: string, body: unknown) =>
+    app.request(
+      path,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+      env
+    );
+  const stored = async (app: ReturnType<typeof createTestApp>, env: Env) =>
+    (
+      await (
+        await app.request('/api/admin/runtime-profiles/residency/res-1', undefined, env)
+      ).json<{ profile: { jurisdiction: string } }>()
+    ).profile.jurisdiction;
+
+  it('gates a change of jurisdiction on an existing residency profile only', async () => {
+    const app = createTestApp();
+    const env = createEnv();
+    const path = '/api/admin/runtime-profiles/residency/res-1';
+
+    // Creating it is gated (another tenant may already name the id); renaming it is not.
+    expect((await put(app, env, path, residency('none'))).status).toBe(201);
+    expect(stepUp.gate).toHaveBeenCalledTimes(1);
+    stepUp.gate.mockClear();
+
+    expect((await put(app, env, path, residency('none', 'Renamed'))).status).toBe(200);
+    expect(stepUp.gate).not.toHaveBeenCalled();
+
+    expect((await put(app, env, path, residency('eu'))).status).toBe(200);
+    expect(stepUp.gate).toHaveBeenCalledTimes(1);
+    expect(stepUp.gate).toHaveBeenCalledWith(expect.anything(), {
+      operation: 'tenant.jurisdiction.update',
+      targetTenantId: expect.any(String) as unknown,
+      targetIds: ['res-1'],
+      params: {
+        scope: 'residency_profile',
+        profile_id: 'res-1',
+        from_jurisdiction: 'none',
+        to_jurisdiction: 'eu',
+      },
+    });
+    expect(await stored(app, env)).toBe('eu');
+  });
+
+  it('keeps the old jurisdiction when step-up is refused', async () => {
+    const app = createTestApp();
+    const env = createEnv();
+    const path = '/api/admin/runtime-profiles/residency/res-1';
+    await put(app, env, path, residency('none'));
+
+    stepUp.gate.mockResolvedValueOnce(refusal());
+    const response = await put(app, env, path, residency('jp'));
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: 'step_up_required' });
+    expect(await stored(app, env)).toBe('none');
+  });
+
+  it('does not spend a receipt on an invalid profile body', async () => {
+    const app = createTestApp();
+    const env = createEnv();
+    const path = '/api/admin/runtime-profiles/residency/res-1';
+    await put(app, env, path, residency('none'));
+    stepUp.gate.mockClear();
+
+    const response = await put(app, env, path, residency('mars'));
+
+    expect(response.status).toBe(400);
+    expect(stepUp.gate).not.toHaveBeenCalled();
+  });
+
+  it('gates pointing the environment default at another jurisdiction', async () => {
+    const app = createTestApp();
+    const env = createEnv();
+
+    const refused = await (async () => {
+      stepUp.gate.mockResolvedValueOnce(refusal());
+      return put(app, env, '/api/admin/runtime-profiles/defaults', {
+        residencyProfileId: EU_RESIDENCY_PROFILE_ID,
+      });
+    })();
+    expect(refused.status).toBe(403);
+    const unchanged = await (
+      await app.request('/api/admin/runtime-profiles/defaults', undefined, env)
+    ).json<{ defaults: { residencyProfileId: string } }>();
+    expect(unchanged.defaults.residencyProfileId).toBe(DEFAULT_RESIDENCY_PROFILE_ID);
+
+    const allowed = await put(app, env, '/api/admin/runtime-profiles/defaults', {
+      residencyProfileId: EU_RESIDENCY_PROFILE_ID,
+    });
+    expect(allowed.status).toBe(200);
+    expect(stepUp.gate).toHaveBeenLastCalledWith(expect.anything(), {
+      operation: 'tenant.jurisdiction.update',
+      targetTenantId: expect.any(String) as unknown,
+      targetIds: [EU_RESIDENCY_PROFILE_ID],
+      params: {
+        scope: 'environment_default',
+        residency_profile_id: EU_RESIDENCY_PROFILE_ID,
+        from_jurisdiction: 'none',
+        to_jurisdiction: 'eu',
+      },
+    });
+  });
+
+  it('does not gate a default update that keeps the jurisdiction or only changes audit', async () => {
+    const app = createTestApp();
+    const env = createEnv();
+
+    expect(
+      (
+        await put(app, env, '/api/admin/runtime-profiles/defaults', {
+          residencyProfileId: DEFAULT_RESIDENCY_PROFILE_ID,
+        })
+      ).status
+    ).toBe(200);
+    expect(stepUp.gate).not.toHaveBeenCalled();
   });
 });

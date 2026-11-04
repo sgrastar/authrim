@@ -3,6 +3,12 @@
  * Handles communication with the backend API
  */
 
+import {
+	createBrowserSteps,
+	runWithStepUp,
+	STEP_UP_RECEIPT_HEADER
+} from '#lib/api/admin-step-up.js';
+
 // Type definitions
 interface User {
 	id: string;
@@ -95,6 +101,20 @@ interface APIError {
 // The proxy handles forwarding /api/* requests to the actual backend
 export const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
 
+// Step-up (passkey / security key / receipt) is met here too; the request is sent twice at most,
+// so a string/Blob body is reused as is.
+const legacyBrowserSteps = createBrowserSteps(async (path, body) => {
+	const response = await fetch(`${API_BASE_URL}${path}`, {
+		method: 'POST',
+		credentials: 'include',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(body)
+	});
+	const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+	if (!response.ok) throw new Error(`Step-up request failed (${response.status})`);
+	return payload;
+});
+
 /**
  * Generic fetch wrapper with error handling
  * Uses HttpOnly cookie-backed Admin sessions.
@@ -111,11 +131,15 @@ async function apiFetch<T>(
 			...(options.headers as Record<string, string>)
 		};
 
-		const response = await fetch(url, {
-			...options,
-			credentials: options.credentials ?? 'include',
-			headers
-		});
+		const response = await runWithStepUp(
+			(receipt) =>
+				fetch(url, {
+					...options,
+					credentials: options.credentials ?? 'include',
+					headers: receipt ? { ...headers, [STEP_UP_RECEIPT_HEADER]: receipt } : headers
+				}),
+			legacyBrowserSteps
+		);
 
 		const data = await response.json();
 

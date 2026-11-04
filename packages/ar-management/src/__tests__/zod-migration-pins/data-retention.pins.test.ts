@@ -11,6 +11,11 @@ const mocks = vi.hoisted(() => ({
   adapter: { queryOne: vi.fn(), execute: vi.fn(), batch: vi.fn() },
 }));
 
+vi.mock('../../admin-step-up-gate', () => ({
+  requireAdminStepUp: vi.fn(async () => null),
+  refuseAdminFreshAuth: vi.fn(),
+}));
+
 vi.mock('../../admin-tenant-access', () => ({
   getAdminAuth: vi.fn(() => ({ userId: 'admin-a' })),
 }));

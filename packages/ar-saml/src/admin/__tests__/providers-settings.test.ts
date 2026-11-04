@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ADMIN_PERMISSIONS } from '@authrim/ar-lib-core';
 
 const mocks = vi.hoisted(() => ({
+  stepUp: vi.fn(async (..._args: unknown[]): Promise<Response | null> => null),
   settings: null as Record<string, unknown> | null,
   settingsError: false,
   putPublic: vi.fn(async (_env: unknown, _tenant: string, value: unknown) => value),
@@ -24,6 +25,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    requireAdminStepUp: mocks.stepUp,
     createAuditLog: mocks.audit,
     getLogger: () => ({
       module: () => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() }),
@@ -306,12 +308,12 @@ describe('SAML settings administration', () => {
       [unknown, string, { certificateOptions: Record<string, unknown> }]
     >;
     expect(rotateCalls[0]?.[1]).toBe('tenant-a');
-    expect(rotateCalls[0]?.[2].certificateOptions).toMatchObject({
-      validFrom: undefined,
-      validTo: undefined,
-      publicKeyAlgorithm: undefined,
-      publicKeySizeBits: undefined,
-    });
+    const options = rotateCalls[0]?.[2].certificateOptions;
+    expect(options).toMatchObject({ publicKeyAlgorithm: undefined, publicKeySizeBits: undefined });
+    // Invalid bounds fall back to the default period, fixed once before the key is generated.
+    expect(typeof options?.validFrom).toBe('number');
+    expect(typeof options?.validTo).toBe('number');
+    expect(options?.validTo as number).toBeGreaterThan(options?.validFrom as number);
   });
 
   it('fails closed when key rotation or settings persistence fails', async () => {
@@ -417,5 +419,174 @@ describe('SAML signing disaster-recovery bundle administration', () => {
 
     mocks.settingsError = true;
     expect((await handleImportSAMLLocalSigningDRBundle(context())).status).toBe(500);
+  });
+});
+
+describe('SAML trust settings need a step-up', () => {
+  const HEX64 = /^[0-9a-f]{64}$/;
+  const refusal = () =>
+    new Response(JSON.stringify({ error: 'step_up_required' }), {
+      status: 403,
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.settings = defaultSettings();
+    mocks.settingsError = false;
+    mocks.stepUp.mockResolvedValue(null);
+    mocks.importDR.mockResolvedValue({ importedKeys: 2, restoredRoles: ['idp', 'sp'] });
+  });
+
+  describe('PUT settings', () => {
+    it('stores nothing while the gate refuses a trust change', async () => {
+      mocks.stepUp.mockResolvedValueOnce(refusal());
+      const response = await handleUpdateSAMLSettings(context({ entityIdStyle: 'role_path' }));
+      expect(response.status).toBe(403);
+      expect(mocks.putPublic).not.toHaveBeenCalled();
+      expect(mocks.audit).not.toHaveBeenCalled();
+    });
+
+    it('goes ahead when the gate lets it, with the new values as params', async () => {
+      const response = await handleUpdateSAMLSettings(context({ entityIdStyle: 'role_path' }));
+      expect(response.status).toBe(200);
+      expect(mocks.putPublic).toHaveBeenCalledTimes(1);
+      expect(mocks.stepUp).toHaveBeenCalledTimes(1);
+      expect(mocks.stepUp.mock.calls[0]?.[1]).toEqual({
+        operation: 'federation.trust.update',
+        targetTenantId: 'tenant-a',
+        targetIds: ['tenant-a'],
+        params: {
+          action: 'settings.update',
+          entityIdStyle: 'role_path',
+          certificateSubject: defaultSettings().certificateSubject,
+          certificateSubjectAlternativeNames: [],
+        },
+      });
+    });
+
+    it('does not gate a change to the login URL policy only', async () => {
+      const response = await handleUpdateSAMLSettings(
+        context({ interactiveLoginUrlPolicy: 'tenant_host' })
+      );
+      expect(response.status).toBe(200);
+      expect(mocks.putPublic).toHaveBeenCalledTimes(1);
+      expect(mocks.stepUp).not.toHaveBeenCalled();
+    });
+
+    it('does not call the gate for an invalid value', async () => {
+      const response = await handleUpdateSAMLSettings(context({ entityIdStyle: 'bogus' }));
+      expect(response.status).toBe(400);
+      expect(mocks.stepUp).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('POST local-signing', () => {
+    it.each(['recreate_active', 'publish_next', 'promote_next', 'retire_backup', 'delete_next'])(
+      '%s changes nothing while the gate refuses',
+      async (action) => {
+        mocks.stepUp.mockResolvedValueOnce(refusal());
+        const response = await handleUpdateSAMLLocalSigning(context({ role: 'idp', action }));
+        expect(response.status).toBe(403);
+        expect(mocks.rotate).not.toHaveBeenCalled();
+        expect(mocks.putSigning).not.toHaveBeenCalled();
+        expect(mocks.audit).not.toHaveBeenCalled();
+      }
+    );
+
+    it('goes ahead when the gate lets it, naming the tenant and role', async () => {
+      const response = await handleUpdateSAMLLocalSigning(
+        context({
+          role: 'idp',
+          action: 'publish_next',
+          targetKid: 'kid-1',
+          publicKeySizeBits: 3072,
+        })
+      );
+      expect(response.status).toBe(200);
+      expect(mocks.rotate).toHaveBeenCalledTimes(1);
+      expect(mocks.putSigning).toHaveBeenCalledTimes(1);
+      expect(mocks.stepUp).toHaveBeenCalledTimes(1);
+      expect(mocks.stepUp.mock.calls[0]?.[1]).toMatchObject({
+        operation: 'federation.trust.update',
+        targetTenantId: 'tenant-a',
+        targetIds: ['tenant-a:idp'],
+        params: { action: 'local_signing.publish_next', role: 'idp', targetKid: 'kid-1' },
+      });
+    });
+
+    it('does not call the gate for an invalid role, action or validity window', async () => {
+      for (const body of [
+        { role: 'x', action: 'publish_next' },
+        { role: 'idp', action: 'x' },
+        { role: 'idp', action: 'publish_next', validFrom: 2_000, validTo: 1_000 },
+        // validFrom left out: the certificate would start now, after this validTo.
+        { role: 'idp', action: 'recreate_active', validTo: 1_000 },
+        // Past what a certificate's UTCTime can hold.
+        { role: 'idp', action: 'recreate_active', validTo: '2050-01-01T00:00:00Z' },
+      ]) {
+        expect((await handleUpdateSAMLLocalSigning(context(body))).status).toBe(400);
+      }
+      expect(mocks.stepUp).not.toHaveBeenCalled();
+      expect(mocks.rotate).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('POST local-signing/dr-bundle/import', () => {
+    // The real import validates the bundle, then calls the hook, then writes the keys.
+    function importThroughHook(hookRuns: { count: number }) {
+      mocks.importDR.mockImplementation(async (...args: unknown[]) => {
+        const hook = args[4];
+        if (typeof hook === 'function') await (hook as () => Promise<void>)();
+        hookRuns.count += 1;
+        return { importedKeys: 1, restoredRoles: ['idp'] };
+      });
+    }
+
+    it('imports nothing while the gate refuses', async () => {
+      const writes = { count: 0 };
+      importThroughHook(writes);
+      mocks.stepUp.mockResolvedValueOnce(refusal());
+      const response = await handleImportSAMLLocalSigningDRBundle(
+        context({ bundle: { payload: 'x' }, passphrase: 'a-long-passphrase' })
+      );
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({ error: 'step_up_required' });
+      expect(writes.count).toBe(0);
+      expect(mocks.audit).not.toHaveBeenCalled();
+    });
+
+    it('imports when the gate lets it, with the bundle as a digest', async () => {
+      const writes = { count: 0 };
+      importThroughHook(writes);
+      const bundle = { payload: 'PRIVATE-KEY-MATERIAL' };
+      const response = await handleImportSAMLLocalSigningDRBundle(
+        context({ bundle, passphrase: 'a-long-passphrase' })
+      );
+      expect(response.status).toBe(200);
+      expect(writes.count).toBe(1);
+      const descriptor = mocks.stepUp.mock.calls[0]?.[1] as { params: Record<string, unknown> };
+      expect(descriptor).toMatchObject({
+        operation: 'federation.trust.update',
+        targetTenantId: 'tenant-a',
+        targetIds: ['tenant-a'],
+        params: { action: 'local_signing.dr_bundle.import' },
+      });
+      expect(descriptor.params.bundle_sha256).toMatch(HEX64);
+      expect(JSON.stringify(descriptor)).not.toContain('PRIVATE-KEY-MATERIAL');
+      expect(JSON.stringify(descriptor)).not.toContain('a-long-passphrase');
+    });
+
+    it('does not call the gate when the bundle fails validation', async () => {
+      // The import validates before it calls the hook, so a bad bundle never reaches the gate.
+      mocks.importDR.mockRejectedValueOnce(
+        new SAMLDRBundleOperationError('validate_bundle', 'SAML DR bundle is malformed')
+      );
+      const response = await handleImportSAMLLocalSigningDRBundle(
+        context({ bundle: {}, passphrase: 'a-long-passphrase' })
+      );
+      expect(response.status).toBe(400);
+      expect(mocks.stepUp).not.toHaveBeenCalled();
+    });
   });
 });

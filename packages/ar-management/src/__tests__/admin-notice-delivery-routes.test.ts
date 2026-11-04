@@ -21,9 +21,13 @@ const mocks = vi.hoisted(() => {
     auth: {},
     tenantId: 'tenant-a',
   };
-  return { state, writeAdminAuditLog: vi.fn() };
+  return { state, writeAdminAuditLog: vi.fn(), requireAdminStepUp: vi.fn() };
 });
 
+vi.mock('../admin-step-up-gate', () => ({
+  requireAdminStepUp: mocks.requireAdminStepUp,
+  refuseAdminFreshAuth: vi.fn(),
+}));
 vi.mock('../admin-shared', () => ({ writeAdminAuditLog: mocks.writeAdminAuditLog }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -137,6 +141,8 @@ describe('admin notice delivery routes', () => {
     mocks.state.adapter = adapter;
     mocks.state.tenantId = 'tenant-a';
     mocks.state.auth = admin();
+    mocks.requireAdminStepUp.mockReset();
+    mocks.requireAdminStepUp.mockResolvedValue(null);
     db.exec(`INSERT INTO admin_users (id, tenant_id, email, created_at, updated_at) VALUES
       ('admin-1', 'tenant-a', 'a@example.com', 1, 1), ('root', 'default', 'r@example.com', 1, 1)`);
   });
@@ -263,5 +269,90 @@ describe('admin notice delivery routes', () => {
       await call(adminNoticeChannelsRouter, 'GET', '/')
     ).json<{ items: Array<{ name: string }> }>();
     expect(all.items.map((item) => item.name)).toEqual(['P']);
+  });
+
+  describe('step-up (webhook.destination.update)', () => {
+    const refusal = () =>
+      new Response(JSON.stringify({ error: 'step_up_required' }), { status: 403 });
+    const digest: unknown = expect.stringMatching(/^[0-9a-f]{64}$/);
+
+    it('create: refused without step-up and no channel is stored', async () => {
+      mocks.requireAdminStepUp.mockResolvedValue(refusal());
+      const response = await call(adminNoticeChannelsRouter, 'POST', '/', {
+        name: 'Ops',
+        webhook_url: SLACK,
+      });
+      expect(response.status).toBe(403);
+      expect(db.prepare('SELECT COUNT(*) AS n FROM admin_notice_channels').get()).toMatchObject({
+        n: 0,
+      });
+    });
+
+    it('create: gated with a digest of the URL, after validation', async () => {
+      const invalid = await call(adminNoticeChannelsRouter, 'POST', '/', {
+        name: 'Ops',
+        webhook_url: 'https://example.com/hook',
+      });
+      expect(invalid.status).toBe(400);
+      expect(mocks.requireAdminStepUp).not.toHaveBeenCalled();
+
+      const created = await call(adminNoticeChannelsRouter, 'POST', '/', {
+        name: 'Ops',
+        webhook_url: SLACK,
+      });
+      expect(created.status).toBe(201);
+      expect(mocks.requireAdminStepUp).toHaveBeenCalledTimes(1);
+      const descriptor: unknown = (mocks.requireAdminStepUp.mock.calls[0] as [unknown, unknown])[1];
+      expect(descriptor).toEqual({
+        operation: 'webhook.destination.update',
+        targetTenantId: 'tenant-a',
+        params: { kind: 'notice_channel.create', scope_type: 'tenant', webhook_url_sha256: digest },
+      });
+      expect(JSON.stringify(descriptor)).not.toContain('XXXX');
+    });
+
+    it('webhook-url: refused without step-up and the URL is unchanged', async () => {
+      const { channel } = await (
+        await call(adminNoticeChannelsRouter, 'POST', '/', { name: 'Ops', webhook_url: SLACK })
+      ).json<{ channel: { id: string } }>();
+      mocks.requireAdminStepUp.mockReset();
+      mocks.requireAdminStepUp.mockResolvedValue(refusal());
+      const response = await call(adminNoticeChannelsRouter, 'PUT', `/${channel.id}/webhook-url`, {
+        webhook_url: 'https://hooks.slack.com/services/T999/B1/Y',
+      });
+      expect(response.status).toBe(403);
+      expect((mocks.requireAdminStepUp.mock.calls[0] as [unknown, unknown])[1]).toEqual({
+        operation: 'webhook.destination.update',
+        targetTenantId: 'tenant-a',
+        targetIds: [channel.id],
+        params: { kind: 'notice_channel.webhook_url', webhook_url_sha256: digest },
+      });
+      const stored = db
+        .prepare('SELECT webhook_url_hint AS h FROM admin_notice_channels')
+        .get() as { h: string };
+      expect(stored.h).toBe('hooks.slack.com/services/T000/…');
+    });
+
+    it('webhook-url: an invalid URL or unknown channel never reaches the gate', async () => {
+      const { channel } = await (
+        await call(adminNoticeChannelsRouter, 'POST', '/', { name: 'Ops', webhook_url: SLACK })
+      ).json<{ channel: { id: string } }>();
+      mocks.requireAdminStepUp.mockReset();
+      expect(
+        (
+          await call(adminNoticeChannelsRouter, 'PUT', `/${channel.id}/webhook-url`, {
+            webhook_url: 'https://example.com/x',
+          })
+        ).status
+      ).toBe(400);
+      expect(
+        (
+          await call(adminNoticeChannelsRouter, 'PUT', '/missing/webhook-url', {
+            webhook_url: SLACK,
+          })
+        ).status
+      ).toBe(404);
+      expect(mocks.requireAdminStepUp).not.toHaveBeenCalled();
+    });
   });
 });

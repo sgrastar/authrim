@@ -29,6 +29,7 @@ import {
   type Env,
 } from '@authrim/ar-lib-core';
 import { getAdminAuth } from '../../admin-tenant-access';
+import { requireAdminStepUp } from '../../admin-step-up-gate';
 import {
   buildRetentionInventory,
   RETENTION_CATEGORY_IDS,
@@ -342,6 +343,19 @@ export async function updateCategoryRetention(c: Context<{ Bindings: Env }>) {
           409
         );
       }
+    }
+
+    if (retention_days < currentRetentionDays) {
+      const refused = await requireAdminStepUp(
+        c as unknown as Parameters<typeof requireAdminStepUp>[0],
+        {
+          operation: 'audit.retention.shorten',
+          targetTenantId: tenantId,
+          targetIds: [category],
+          params: { kind: 'data_retention.category', retention_days },
+        }
+      );
+      if (refused) return refused;
     }
 
     const nowTs = Math.floor(Date.now() / 1000);

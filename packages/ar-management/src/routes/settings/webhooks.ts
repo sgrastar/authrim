@@ -53,6 +53,8 @@ import {
   auditAdminSensitiveRead,
   requireAdminPermissionOrElevationGrant,
 } from '../../admin-elevation-access';
+import { requireAdminStepUp } from '../../admin-step-up-gate';
+import { sha256Hex } from '../../admin-step-up-digest';
 import { createLoggingTenantKeyResolver } from '../../logging-tenant-key';
 
 /**
@@ -366,6 +368,36 @@ async function loadWebhookDeliveryPayload(
 /**
  * Create WebhookRegistry from context
  */
+/** Delivery headers as stable text (names lower-cased and sorted), for comparing and digests. */
+function canonicalHeaders(headers: Record<string, string> | null | undefined): string {
+  if (!headers) return '{}';
+  const entries = Object.entries(headers)
+    .map(([name, value]) => [name.toLowerCase(), String(value)] as const)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return JSON.stringify(entries);
+}
+
+/** A 400 for an input the registry would refuse, or null when it passes its checks. */
+function invalidWebhookInput(
+  c: Context<{ Bindings: Env }>,
+  registry: ReturnType<typeof createRegistry>,
+  input: Parameters<ReturnType<typeof createRegistry>['validateInput']>[0],
+  scope: Parameters<ReturnType<typeof createRegistry>['validateInput']>[1]
+): Response | null {
+  try {
+    registry.validateInput(input, scope);
+    return null;
+  } catch (error) {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: error instanceof Error ? error.message : 'Invalid webhook',
+      },
+      400
+    );
+  }
+}
+
 function createRegistry(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('WebhookAPI');
   const adapter = getCoreAdapter(c);
@@ -574,6 +606,27 @@ export async function createWebhook(c: Context<{ Bindings: Env }>) {
       };
     }
 
+    // The registry's own checks (SSRF-safe URL, event patterns) run before the step-up, so a
+    // receipt is never spent on a request the registry would refuse.
+    const invalid = invalidWebhookInput(c, registry, input, body.clientId ? 'client' : 'tenant');
+    if (invalid) return invalid;
+
+    const refused = await requireAdminStepUp(
+      c as unknown as Parameters<typeof requireAdminStepUp>[0],
+      {
+        operation: 'webhook.destination.update',
+        targetTenantId: tenantId,
+        params: {
+          kind: 'webhook.create',
+          client_id: body.clientId ?? null,
+          url_sha256: await sha256Hex(body.url),
+          secret_sha256: body.secret ? await sha256Hex(body.secret) : null,
+          headers_sha256: body.headers ? await sha256Hex(canonicalHeaders(body.headers)) : null,
+        },
+      }
+    );
+    if (refused) return refused;
+
     const webhookId = await registry.register(tenantId, input);
 
     // Audit log
@@ -749,6 +802,38 @@ export async function updateWebhook(c: Context<{ Bindings: Env }>) {
         backoffMultiplier: body.retryPolicy.backoffMultiplier,
         maxDelayMs: body.retryPolicy.maxDelayMs,
       };
+    }
+
+    const invalid = invalidWebhookInput(c, registry, input, existing.scope);
+    if (invalid) return invalid;
+
+    // Only a changed destination is gated: the URL, a (new) signing secret, or the delivery
+    // headers (a shared endpoint may route on Authorization or a tenant header).
+    const urlChanged = body.url !== undefined && body.url !== existing.url;
+    const secretChanged = body.secret !== undefined;
+    const headersChanged =
+      body.headers !== undefined &&
+      canonicalHeaders(body.headers) !== canonicalHeaders(existing.headers);
+    // A destination field judged unchanged is not written: written back, it could undo a change
+    // another request made (with its step-up) in between.
+    if (!urlChanged) input.url = undefined;
+    if (!headersChanged) input.headers = undefined;
+    if (urlChanged || secretChanged || headersChanged) {
+      const refused = await requireAdminStepUp(
+        c as unknown as Parameters<typeof requireAdminStepUp>[0],
+        {
+          operation: 'webhook.destination.update',
+          targetTenantId: tenantId,
+          targetIds: [webhookId],
+          params: {
+            kind: 'webhook.update',
+            url_sha256: urlChanged ? await sha256Hex(String(body.url)) : null,
+            secret_sha256: secretChanged ? await sha256Hex(String(body.secret ?? '')) : null,
+            headers_sha256: headersChanged ? await sha256Hex(canonicalHeaders(body.headers)) : null,
+          },
+        }
+      );
+      if (refused) return refused;
     }
 
     await registry.update(tenantId, webhookId, input);

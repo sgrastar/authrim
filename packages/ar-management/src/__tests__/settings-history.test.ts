@@ -27,6 +27,12 @@ vi.mock('@authrim/ar-lib-core/services/settings-history', () => ({
   })),
 }));
 
+const { mockRequireAdminStepUp } = vi.hoisted(() => ({ mockRequireAdminStepUp: vi.fn() }));
+vi.mock('../admin-step-up-gate', () => ({
+  requireAdminStepUp: mockRequireAdminStepUp,
+  refuseAdminFreshAuth: vi.fn(),
+}));
+
 import { createSettingsHistoryManager, publishEvent, SETTINGS_EVENTS } from '@authrim/ar-lib-core';
 import { calculateChanges } from '@authrim/ar-lib-core/services/settings-history';
 import {
@@ -134,6 +140,8 @@ describe('Settings History Handlers', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockRequireAdminStepUp.mockReset();
+    mockRequireAdminStepUp.mockResolvedValue(null);
     vi.mocked(createSettingsHistoryManager).mockReturnValue(mockHistoryManager as never);
   });
 
@@ -216,6 +224,10 @@ describe('Settings History Handlers', () => {
   });
 
   describe('rollbackSettings', () => {
+    beforeEach(() => {
+      mockHistoryManager.getVersion.mockResolvedValue({ version: 2, snapshot: {} });
+    });
+
     it('should reject invalid JSON bodies', async () => {
       const c = createMockContext({
         params: { category: 'oauth' },
@@ -284,6 +296,69 @@ describe('Settings History Handlers', () => {
         release();
         publisher.mockImplementation(original);
       }
+    });
+
+    it.each([['security', 'admin_step_up.policy.relax']])(
+      'a rollback of %s is gated as %s and restores nothing without step-up',
+      async (category, operation) => {
+        mockRequireAdminStepUp.mockResolvedValue(
+          new Response(JSON.stringify({ error: 'step_up_required' }), { status: 403 })
+        );
+        const c = createMockContext({ params: { category }, body: { targetVersion: 2 } });
+        const response = await rollbackSettings(c as never);
+        expect(response.status).toBe(403);
+        expect(mockHistoryManager.rollback).not.toHaveBeenCalled();
+        expect(publishEvent).not.toHaveBeenCalled();
+        expect(mockRequireAdminStepUp.mock.calls[0][1]).toEqual({
+          operation,
+          targetTenantId: 'tenant_123',
+          params: { kind: 'settings.rollback', category, target_version: 2 },
+        });
+      }
+    );
+
+    it.each([
+      ['a non-integer version', { targetVersion: 1.5 }, 400],
+      ['a version that does not exist', { targetVersion: 99 }, 404],
+    ])('%s fails before the gate is asked and restores nothing', async (_name, body, status) => {
+      mockHistoryManager.getVersion.mockResolvedValue(null);
+      const c = createMockContext({ params: { category: 'security' }, body });
+      const response = await rollbackSettings(c as never);
+      expect(response.status).toBe(status);
+      expect(mockRequireAdminStepUp).not.toHaveBeenCalled();
+      expect(mockHistoryManager.rollback).not.toHaveBeenCalled();
+    });
+
+    it('a target that cannot be restored fails before the gate is asked', async () => {
+      mockHistoryManager.getVersion.mockResolvedValue({ version: 2, snapshot: null });
+      const c = createMockContext({ params: { category: 'security' }, body: { targetVersion: 2 } });
+      expect((await rollbackSettings(c as never)).status).toBe(400);
+      expect(mockRequireAdminStepUp).not.toHaveBeenCalled();
+      expect(mockHistoryManager.rollback).not.toHaveBeenCalled();
+    });
+
+    it('asks the gate once the target is validated, then rolls back', async () => {
+      mockHistoryManager.rollback.mockResolvedValue({ previousVersion: 3, currentVersion: 4 });
+      const c = createMockContext({ params: { category: 'security' }, body: { targetVersion: 2 } });
+      expect((await rollbackSettings(c as never)).status).toBe(200);
+      expect(mockRequireAdminStepUp).toHaveBeenCalledTimes(1);
+      expect(mockHistoryManager.getVersion).toHaveBeenCalledWith('security', 2);
+      expect(mockHistoryManager.rollback).toHaveBeenCalledTimes(1);
+    });
+
+    it('a rollback of another category, or with an invalid body, does not reach the gate', async () => {
+      mockHistoryManager.rollback.mockResolvedValue({ previousVersion: 1, currentVersion: 2 });
+      const other = createMockContext({
+        params: { category: 'oauth' },
+        body: { targetVersion: 2 },
+      });
+      expect((await rollbackSettings(other as never)).status).toBe(200);
+      const invalid = createMockContext({
+        params: { category: 'security' },
+        body: { targetVersion: 0 },
+      });
+      expect((await rollbackSettings(invalid as never)).status).toBe(400);
+      expect(mockRequireAdminStepUp).not.toHaveBeenCalled();
     });
 
     it('should restore the target snapshot and publish rollback events', async () => {

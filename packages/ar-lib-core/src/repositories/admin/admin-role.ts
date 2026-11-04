@@ -60,6 +60,14 @@ export interface AdminRoleAssignmentWithUser extends AdminRoleAssignment {
 /**
  * Admin Role Repository
  */
+/** A conditional role update found the role changed since the caller read it. */
+export class AdminRoleChangedError extends Error {
+  constructor() {
+    super('admin_role_changed');
+    this.name = 'AdminRoleChangedError';
+  }
+}
+
 export class AdminRoleRepository extends BaseRepository<AdminRoleEntity> {
   constructor(adapter: DatabaseAdapter) {
     super(adapter, {
@@ -138,10 +146,34 @@ export class AdminRoleRepository extends BaseRepository<AdminRoleEntity> {
    * @param input - Update input
    * @returns Updated role or null if not found or is system role
    */
-  async updateRole(id: string, input: AdminRoleUpdateInput): Promise<AdminRole | null> {
+  async updateRole(
+    id: string,
+    input: AdminRoleUpdateInput,
+    options: {
+      /**
+       * What the caller judged the update against: written only while the role still grants
+       * exactly this (else `AdminRoleChangedError`), so a decision such as "removes permissions
+       * only" cannot be applied on top of a change made meanwhile.
+       */
+      expected?: Pick<AdminRole, 'permissions' | 'hierarchy_level' | 'inherits_from'>;
+    } = {}
+  ): Promise<AdminRole | null> {
     const existing = await this.findById(id);
     if (!existing) {
       return null;
+    }
+    const expected = options.expected;
+    if (expected) {
+      const current = this.entityToRole(existing);
+      const same = (a: readonly string[], b: readonly string[]) =>
+        JSON.stringify([...new Set(a)].sort()) === JSON.stringify([...new Set(b)].sort());
+      if (
+        !same(current.permissions, expected.permissions) ||
+        current.hierarchy_level !== expected.hierarchy_level ||
+        (current.inherits_from ?? null) !== (expected.inherits_from ?? null)
+      ) {
+        throw new AdminRoleChangedError();
+      }
     }
 
     // Prevent updating system roles
@@ -181,8 +213,16 @@ export class AdminRoleRepository extends BaseRepository<AdminRoleEntity> {
     values.push(getCurrentTimestamp());
     values.push(id);
 
-    const sql = `UPDATE admin_roles SET ${updates.join(', ')} WHERE id = ?`;
-    await this.adapter.execute(sql, values);
+    let sql = `UPDATE admin_roles SET ${updates.join(', ')} WHERE id = ?`;
+    if (expected) {
+      // The row read above, unchanged until this write.
+      sql += ' AND permissions_json = ? AND hierarchy_level = ? AND inherits_from IS ?';
+      values.push(existing.permissions_json, existing.hierarchy_level, existing.inherits_from);
+    }
+    const result = await this.adapter.execute(sql, values);
+    if (expected && result.rowsAffected === 0) {
+      throw new AdminRoleChangedError();
+    }
 
     const updated = await this.findById(id);
     return updated ? this.entityToRole(updated) : null;

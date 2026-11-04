@@ -23,6 +23,7 @@ import {
   safeFetch,
   bumpAuthenticationMethodsCacheRevision,
 } from '@authrim/ar-lib-core';
+import { requireAdminStepUp } from './admin-step-up-gate';
 
 /**
  * Base URL path for external IdP admin API in ar-bridge
@@ -185,6 +186,69 @@ async function invalidateAuthenticationMethodsCacheForExternalProviders(
   }
 }
 
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * The step-up gate for a change to an external provider's trust (OIDC federation). The body can
+ * carry client secrets, so it is bound by its SHA-256 digest, never raw; the console repeats the
+ * same body with the receipt. The bridge validates the body, so the gate sits after the checks
+ * this proxy can make and right before the request is forwarded.
+ */
+async function requireExternalProviderStepUp(
+  c: Context<{ Bindings: Env }>,
+  action: 'create' | 'register' | 'update' | 'delete',
+  providerId: string | null,
+  body: string | null
+): Promise<Response | null> {
+  return requireAdminStepUp(c as never, {
+    operation: 'federation.trust.update',
+    targetTenantId: getTenantIdFromContext(c),
+    targetIds: providerId ? [providerId] : [],
+    params: {
+      action,
+      provider_id: providerId,
+      body_sha256: body === null ? null : await sha256Hex(body),
+    },
+  });
+}
+
+/**
+ * What can be checked here before a step-up receipt is spent: the body is a JSON object (the
+ * bridge validates its fields), and for an existing provider, that the bridge has it. Null when
+ * the request may go on to the gate, else the response refusing it.
+ */
+async function precheckExternalProviderWrite(
+  c: Context<{ Bindings: Env }>,
+  providerId: string | null,
+  body: string | null
+): Promise<Response | null> {
+  if (body !== null) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      parsed = undefined;
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST, {
+        extensions: { field: 'body', reason: 'json_object_required' },
+      });
+    }
+  }
+  if (providerId !== null) {
+    const existing = await proxyToExternalIdp(
+      c,
+      `${EXTERNAL_IDP_ADMIN_PATH}/${encodeURIComponent(providerId)}`,
+      'GET'
+    );
+    if (!existing.ok) return existing;
+  }
+  return null;
+}
+
 async function proxyToExternalIdpAndInvalidateAuthenticationMethods(
   c: Context<{ Bindings: Env }>,
   path: string,
@@ -228,6 +292,10 @@ export async function adminExternalProvidersCreateHandler(c: Context<{ Bindings:
   if (!body.ok) {
     return body.response;
   }
+  const invalid = await precheckExternalProviderWrite(c, null, body.body);
+  if (invalid) return invalid;
+  const refused = await requireExternalProviderStepUp(c, 'create', null, body.body);
+  if (refused) return refused;
   return proxyToExternalIdpAndInvalidateAuthenticationMethods(
     c,
     EXTERNAL_IDP_ADMIN_PATH,
@@ -264,6 +332,10 @@ export async function adminExternalProvidersUpdateHandler(c: Context<{ Bindings:
   if (!body.ok) {
     return body.response;
   }
+  const invalid = await precheckExternalProviderWrite(c, id, body.body);
+  if (invalid) return invalid;
+  const refused = await requireExternalProviderStepUp(c, 'update', id, body.body);
+  if (refused) return refused;
   return proxyToExternalIdpAndInvalidateAuthenticationMethods(
     c,
     `${EXTERNAL_IDP_ADMIN_PATH}/${encodeURIComponent(id)}`,
@@ -285,6 +357,10 @@ export async function adminExternalProvidersRegisterHandler(c: Context<{ Binding
   }
   const body = await readExternalIdpAdminBody(c);
   if (!body.ok) return body.response;
+  const invalid = await precheckExternalProviderWrite(c, id, body.body || '{}');
+  if (invalid) return invalid;
+  const refused = await requireExternalProviderStepUp(c, 'register', id, body.body || '{}');
+  if (refused) return refused;
   return proxyToExternalIdpAndInvalidateAuthenticationMethods(
     c,
     `${EXTERNAL_IDP_ADMIN_PATH}/${encodeURIComponent(id)}/register`,
@@ -304,6 +380,10 @@ export async function adminExternalProvidersDeleteHandler(c: Context<{ Bindings:
       variables: { field: 'id' },
     });
   }
+  const invalid = await precheckExternalProviderWrite(c, id, null);
+  if (invalid) return invalid;
+  const refused = await requireExternalProviderStepUp(c, 'delete', id, null);
+  if (refused) return refused;
   return proxyToExternalIdpAndInvalidateAuthenticationMethods(
     c,
     `${EXTERNAL_IDP_ADMIN_PATH}/${encodeURIComponent(id)}`,

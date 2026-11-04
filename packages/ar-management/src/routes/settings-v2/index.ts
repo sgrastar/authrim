@@ -80,6 +80,7 @@ import { identityMappingReferenceProblem } from './identity-mapping-reference';
 import { readPlatformIdentityMappingRelations } from '../../identity-mapping-platform-followers';
 import { parsePlatformSettingsPatch } from './platform-patch-guards';
 import { applyTenantSettingsChange } from './tenant-settings-apply';
+import { gateStepUpSettingsPatch } from './step-up-settings';
 import { bulkApplyHandler, requireBulkApplyAuthority } from './bulk-apply';
 import { bulkApplyIdempotency } from './bulk-apply-idempotency';
 import {
@@ -1180,6 +1181,16 @@ settingsV2.patch('/platform/settings/:category', (c) => {
           }
 
           const actor = adminAuth?.userId ?? 'unknown';
+          const refused = await gateStepUpSettingsPatch({
+            c,
+            manager,
+            category,
+            scope,
+            targetTenantId: getTenantIdFromContext(c),
+            body,
+            actor,
+          });
+          if (refused) return refused;
           const result = await manager.patch(category, scope, body, actor, {
             parents: settingsParentScopes(category, scope),
           });

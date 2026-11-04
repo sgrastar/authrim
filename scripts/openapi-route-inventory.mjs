@@ -254,6 +254,12 @@ const packageSpecs = [
         },
       },
       {
+        file: 'packages/ar-management/src/routes/admin-management/admin-second-factors.ts',
+        receiverPrefixes: {
+          adminSecondFactorsRouter: '/api/admin/admins/:id/second-factors',
+        },
+      },
+      {
         file: 'packages/ar-management/src/routes/admin-management/admin-notices.ts',
         receiverPrefixes: {
           adminNoticesRouter: '/api/admin/notices',

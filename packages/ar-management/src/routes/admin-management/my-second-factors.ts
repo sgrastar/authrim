@@ -89,6 +89,8 @@ interface RegistrationChallenge {
     sessionId?: string;
     mode?: ChallengeMode;
     label?: string | null;
+    /** For an added key: the factor whose L2 receipt authorized it. */
+    approvingFactorId?: string | null;
   };
 }
 
@@ -156,7 +158,7 @@ function repository(c: AdminContext): AdminSecondFactorRepository {
   );
 }
 
-function present(factor: AdminSecondFactor) {
+export function presentSecondFactor(factor: AdminSecondFactor) {
   return {
     id: factor.id,
     kind: factor.kind,
@@ -195,7 +197,9 @@ async function enrollmentState(
   const active = await repo.listActiveByUser(adminUserId);
   const graceEndsAt = await repo.getEnrollmentGraceEndsAt(adminUserId);
   if (active.length > 0) return { mode: 'step_up', active, graceEndsAt };
-  if (graceEndsAt !== null && now < graceEndsAt) return { mode: 'first', active, graceEndsAt };
+  // The first enrollment is once: an admin whose keys were all revoked recovers instead.
+  if (graceEndsAt !== null && now < graceEndsAt && !(await repo.hasEverEnrolled(adminUserId)))
+    return { mode: 'first', active, graceEndsAt };
   return { mode: 'recovery_required', active, graceEndsAt };
 }
 
@@ -211,7 +215,7 @@ mySecondFactorsRouter.get('/', async (c) => {
     const state = await enrollmentState(repo, auth.userId, Date.now());
     const factors = await repo.listByUser(auth.userId);
     return c.json({
-      second_factors: factors.map(present),
+      second_factors: factors.map(presentSecondFactor),
       active_count: state.active.length,
       minimum: ADMIN_SECOND_FACTOR_MINIMUM,
       enrollment: { mode: state.mode, first_enrollment_ends_at: state.graceEndsAt },
@@ -299,6 +303,14 @@ mySecondFactorsRouter.post('/webauthn/options', async (c) => {
       mode = state.mode;
     }
 
+    // A first or added key rests on fresh sign-in evidence: the challenge lasts no longer than it.
+    let ttl = CHALLENGE_TTL_SECONDS;
+    if (mode !== 'recovery') {
+      const evidence = evaluateAdminStepUpEvidence(auth, mode === 'step_up' ? 'L2' : 'L1', now);
+      if (evidence.freshUntil === undefined) return refuseAdminFreshAuth(c);
+      ttl = Math.min(ttl, Math.max(1, Math.floor((evidence.freshUntil - now) / 1000)));
+    }
+
     // Neither a sign-in passkey nor a registered second factor may be registered again.
     const passkeys = await new AdminPasskeyRepository(adapter).getPasskeysByUser(auth.userId);
     const factors = await repo.listByUser(auth.userId);
@@ -331,13 +343,14 @@ mySecondFactorsRouter.post('/webauthn/options', async (c) => {
       type: CHALLENGE_TYPE,
       userId: auth.userId,
       challenge: options.challenge,
-      ttl: CHALLENGE_TTL_SECONDS,
+      ttl,
       metadata: {
         rpID,
         origin: browserOrigin,
         sessionId: auth.sessionId,
         mode,
         label,
+        approvingFactorId: mode === 'step_up' ? (auth.secondFactorId ?? null) : null,
       },
     });
 
@@ -455,6 +468,36 @@ mySecondFactorsRouter.post('/webauthn/verify', async (c) => {
 
   try {
     const repo = repository(c);
+    // The evidence the registration rests on must still be fresh when the key is saved.
+    if (
+      evaluateAdminStepUpEvidence(auth, metadata.mode === 'step_up' ? 'L2' : 'L1', Date.now())
+        .missing.length > 0
+    ) {
+      return c.json(
+        {
+          error: 'step_up_expired',
+          error_description:
+            'The sign-in this registration rests on is no longer fresh: start again',
+        },
+        403
+      );
+    }
+    // An added key was authorized by the factor that issued the receipt: if that factor has been
+    // revoked since (and with it the session's evidence), the authorization is gone too.
+    if (
+      metadata.mode === 'step_up' &&
+      (!metadata.approvingFactorId ||
+        auth.secondFactorId !== metadata.approvingFactorId ||
+        !(await repo.isActive(auth.userId, metadata.approvingFactorId)))
+    ) {
+      return c.json(
+        {
+          error: 'step_up_required',
+          error_description: 'The security key that approved this registration is no longer active',
+        },
+        403
+      );
+    }
     const result = await repo.insertWebAuthn(
       {
         admin_user_id: auth.userId,
@@ -501,7 +544,7 @@ mySecondFactorsRouter.post('/webauthn/verify', async (c) => {
       metadata: { kind: result.factor.kind, mode: metadata.mode },
     });
 
-    return c.json({ second_factor: present(result.factor) }, 201);
+    return c.json({ second_factor: presentSecondFactor(result.factor) }, 201);
   } catch (error) {
     secondFactorLog(c).error('Failed to register a second factor', {
       action: 'admin_second_factor_register',

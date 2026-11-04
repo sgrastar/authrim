@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 
-const { adapter, notifier, repo, audit } = vi.hoisted(() => ({
+const { adapter, notifier, repo, audit, gate } = vi.hoisted(() => ({
+  gate: vi.fn(async (): Promise<Response | null> => null),
   adapter: {
     query: vi.fn(),
     queryOne: vi.fn(),
@@ -74,6 +75,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 });
 
 vi.mock('../admin-shared', () => ({ writeAdminAuditLog: audit }));
+vi.mock('../admin-step-up-gate', () => ({ requireAdminStepUp: gate }));
 
 import { ADMIN_PERMISSIONS } from '@authrim/ar-lib-core';
 import { adminInvitationsRouter } from '../routes/admin-management/admin-invitations';
@@ -109,6 +111,8 @@ function getInvitationInsertParams(): unknown[] | undefined {
 describe('adminInvitationsRouter', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    gate.mockReset();
+    gate.mockResolvedValue(null);
     repo.findByEmail.mockResolvedValue(null);
     repo.getRole.mockResolvedValue({
       id: 'role_ar_tenant_admin',
@@ -521,5 +525,167 @@ describe('adminInvitationsRouter', () => {
       params: ['invitation_1'],
     });
     expect(notifier.send).toHaveBeenCalledOnce();
+  });
+
+  describe('admin step-up (an invitation grants a role once redeemed)', () => {
+    const refusal = () =>
+      new Response(JSON.stringify({ error: 'step_up_required' }), { status: 403 });
+    const create = (body: Record<string, unknown>) => {
+      const { app, env } = createTestApp();
+      return app.request(
+        '/api/admin/admin-invitations',
+        {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-test-permissions': invitationPermissions(),
+          },
+          body: JSON.stringify(body),
+        },
+        env
+      );
+    };
+    const pendingRow = {
+      id: 'invitation_1',
+      tenant_id: 'tenant_123',
+      email: 'admin@example.com',
+      name: null,
+      code_hash: 'previous-code-hash',
+      status: 'pending',
+      admin_role_id: 'role_ar_tenant_admin',
+      role_name: 'ar_tenant_admin',
+      role_display_name: 'Administrator',
+      scope_type: 'tenant',
+      scope_id: 'tenant_123',
+      role_expires_at: 4102444800000,
+      ip_restriction_enabled: 0,
+      allowed_ip_ranges_json: '[]',
+      expires_at: Date.now() + 60_000,
+      last_sent_at: Date.now(),
+      last_delivery_status: 'sent',
+      accepted_at: null,
+      created_by: 'admin_actor',
+      created_at: Date.now(),
+      updated_at: Date.now(),
+    };
+
+    it('creation is gated as admin.role.grant, bound to email, role, scope and expiry', async () => {
+      const response = await create({
+        email: 'NEW@EXAMPLE.COM',
+        role_id: 'role_ar_tenant_admin',
+        role_expires_at: 4102444800000,
+        expires_in_hours: 48,
+      });
+
+      expect(response.status).toBe(201);
+      expect(gate).toHaveBeenCalledTimes(1);
+      expect(gate).toHaveBeenCalledWith(expect.anything(), {
+        operation: 'admin.role.grant',
+        targetTenantId: 'tenant_123',
+        targetIds: ['new@example.com', 'role_ar_tenant_admin'],
+        params: {
+          invitation: 'create',
+          email: 'new@example.com',
+          role: 'role_ar_tenant_admin',
+          scope_type: 'tenant',
+          scope_id: 'tenant_123',
+          role_expires_at: 4102444800000,
+          expires_in_hours: 48,
+          ip_restriction_enabled: false,
+          allowed_ip_ranges: [],
+        },
+      });
+    });
+
+    it('binds the IP restriction, so lifting or changing it needs its own receipt', async () => {
+      await create({
+        email: 'new@example.com',
+        role_id: 'role_ar_tenant_admin',
+        ip_restriction_enabled: true,
+        allowed_ip_ranges: ['203.0.113.0/24'],
+      });
+      expect(gate).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          params: expect.objectContaining({
+            ip_restriction_enabled: true,
+            allowed_ip_ranges: ['203.0.113.0/24'],
+          }) as unknown,
+        })
+      );
+    });
+
+    it('writes and sends nothing when the step-up is refused', async () => {
+      gate.mockResolvedValueOnce(refusal());
+
+      const response = await create({ email: 'new@example.com', role_id: 'role_ar_tenant_admin' });
+
+      expect(response.status).toBe(403);
+      expect(getInvitationInsertParams()).toBeUndefined();
+      // Not even a lapsed pending invitation is marked expired before the step-up.
+      expect(adapter.execute).not.toHaveBeenCalled();
+      expect(notifier.send).not.toHaveBeenCalled();
+    });
+
+    it('does not call the gate when validation or a conflict refuses the request', async () => {
+      expect((await create({ email: 'not-an-email', role_id: 'role_x' })).status).toBe(400);
+      repo.getRole.mockResolvedValueOnce(null);
+      expect((await create({ email: 'a@example.com', role_id: 'missing' })).status).toBe(404);
+      repo.findByEmail.mockResolvedValueOnce({ id: 'existing' });
+      expect(
+        (await create({ email: 'a@example.com', role_id: 'role_ar_tenant_admin' })).status
+      ).toBe(409);
+      expect(gate).not.toHaveBeenCalled();
+    });
+
+    it('resend is gated as admin.role.grant and changes nothing when refused', async () => {
+      adapter.queryOne.mockResolvedValueOnce(pendingRow);
+      gate.mockResolvedValueOnce(refusal());
+      const { app, env } = createTestApp();
+
+      const refused = await app.request(
+        '/api/admin/admin-invitations/invitation_1/resend',
+        { method: 'POST', headers: { 'x-test-permissions': invitationPermissions() } },
+        env
+      );
+
+      expect(refused.status).toBe(403);
+      expect(adapter.batch).not.toHaveBeenCalled();
+      expect(notifier.send).not.toHaveBeenCalled();
+      expect(gate).toHaveBeenCalledWith(expect.anything(), {
+        operation: 'admin.role.grant',
+        targetTenantId: 'tenant_123',
+        targetIds: ['admin@example.com', 'role_ar_tenant_admin'],
+        params: {
+          invitation: 'resend',
+          invitation_id: 'invitation_1',
+          email: 'admin@example.com',
+          role: 'role_ar_tenant_admin',
+          scope_type: 'tenant',
+          scope_id: 'tenant_123',
+          role_expires_at: 4102444800000,
+        },
+      });
+
+      adapter.queryOne.mockResolvedValueOnce(pendingRow);
+      const allowed = await app.request(
+        '/api/admin/admin-invitations/invitation_1/resend',
+        { method: 'POST', headers: { 'x-test-permissions': invitationPermissions() } },
+        env
+      );
+      expect(allowed.status).toBe(200);
+      expect(adapter.batch).toHaveBeenCalledOnce();
+    });
+
+    it('resend of a missing invitation never reaches the gate', async () => {
+      const { app, env } = createTestApp();
+      const response = await app.request(
+        '/api/admin/admin-invitations/nope/resend',
+        { method: 'POST', headers: { 'x-test-permissions': invitationPermissions() } },
+        env
+      );
+      expect(response.status).toBe(404);
+      expect(gate).not.toHaveBeenCalled();
+    });
   });
 });

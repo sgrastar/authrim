@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { AdminRoleRepository } from '../admin/admin-role';
+import { AdminRoleChangedError, AdminRoleRepository } from '../admin/admin-role';
 import { MockDatabaseAdapter } from './mock-adapter';
 import type { AdminRoleCreateInput, AdminRoleUpdateInput } from '../../types/admin-user';
 
@@ -153,6 +153,25 @@ describe('AdminRoleRepository', () => {
       expect(updated!.description).toBe('Updated description');
       expect(updated!.permissions).toEqual(['admin:admin_audit:read', 'admin:security:write']);
       expect(updated!.hierarchy_level).toBe(60);
+    });
+
+    it('refuses a conditional update when the role no longer grants what was expected', async () => {
+      adapter.seed('admin_roles', [customRole]);
+
+      await expect(
+        repo.updateRole(
+          'role-custom-security',
+          { permissions: ['admin:admin_audit:read'] },
+          {
+            // The caller judged against a role that also held admin:security:write.
+            expected: {
+              permissions: ['admin:admin_audit:read', 'admin:security:write'],
+              hierarchy_level: 50,
+              inherits_from: null,
+            },
+          }
+        )
+      ).rejects.toBeInstanceOf(AdminRoleChangedError);
     });
 
     it('should prevent updating system roles', async () => {

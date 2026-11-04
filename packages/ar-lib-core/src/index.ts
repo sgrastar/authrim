@@ -328,6 +328,7 @@ export * from './services/approval-governance';
 export * from './services/approval-scope-binding';
 export * from './services/step-up';
 export * from './services/admin-step-up';
+export * from './services/admin-step-up-gate';
 export * from './services/downstream-elevation-grant';
 export * from './services/downstream-elevation-grant-client';
 export * from './services/downstream-grant-protected-resource';
@@ -622,7 +623,7 @@ export type { ActorStorage, StoragePutOptions, StorageListOptions } from './acto
 export { CloudflareActorContext } from './actor';
 
 // Durable Objects
-export { KeyManager } from './durable-objects/KeyManager';
+export { KeyManager, assertImportableSigningKey } from './durable-objects/KeyManager';
 export { ChallengeStore } from './durable-objects/ChallengeStore';
 export { DeviceSecretRouteStore } from './durable-objects/DeviceSecretRouteStore';
 export type { DeviceSecretRouteHint } from './durable-objects/DeviceSecretRouteStore';
