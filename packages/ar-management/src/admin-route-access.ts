@@ -121,6 +121,7 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
   authenticated('/api/admin/me/second-factors/*', 'current admin step-up second factors'),
   authenticated('/api/admin/me/second-factor-recovery', 'current admin second-factor recovery'),
   authenticated('/api/admin/me/second-factor-recovery/*', 'current admin second-factor recovery'),
+  authenticated('/api/admin/me/notice-preferences', 'current admin notice email preferences'),
   authenticated('/api/admin/me/agent-consents', 'current admin Agent consent management'),
   authenticated('/api/admin/me/agent-consents/*', 'current admin Agent consent management'),
 
@@ -1318,7 +1319,27 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     permissions: [ADMIN_PERMISSIONS.SETTINGS_WRITE],
     description: 'admin console announcement publish',
   }),
+  rule({
+    pattern: '/api/admin/notices/:id/deliveries',
+    methods: READ_METHODS,
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_READ],
+    description: 'admin console notice delivery status',
+  }),
   authenticated('/api/admin/notices/*', 'admin console notice read, dismiss and resolve'),
+  ...byMethod(
+    '/api/admin/notice-channels',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'admin notice Slack channels'
+  ),
+  ...byMethod(
+    '/api/admin/notice-channels/*',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'admin notice Slack channel'
+  ),
   rule({
     pattern: '/api/admin/admin-invitations',
     methods: READ_METHODS,

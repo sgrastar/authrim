@@ -412,10 +412,14 @@ export class AdminNoticeRepository {
     // Each search has its own budget: a backlog of one kind never starves the other.
     for (const handled of searches) {
       for (let round = 0; round < maxBatches; round += 1) {
-        // One batch, so the dismissals never outlive or lose their notice halfway.
-        const [, notices] = await this.adapter.batch([
+        // One batch, so dismissals and deliveries never outlive or lose their notice halfway.
+        const [, , notices] = await this.adapter.batch([
           {
             sql: `DELETE FROM admin_notice_dismissals WHERE notice_id IN (${handled})`,
+            params: [cutoff, batchSize],
+          },
+          {
+            sql: `DELETE FROM admin_notice_deliveries WHERE notice_id IN (${handled})`,
             params: [cutoff, batchSize],
           },
           {

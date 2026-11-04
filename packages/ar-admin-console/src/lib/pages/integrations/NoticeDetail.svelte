@@ -1,8 +1,17 @@
 <script lang="ts">
 	import { isConsolePath, type AdminNotice } from '#lib/api/admin-notices.js';
+	import type {
+		NoticeDelivery,
+		NoticeDeliveryClient,
+		NoticeDeliveryPage
+	} from '#lib/api/notice-delivery.js';
+	import { toast } from '#lib/ui/toast/toast.svelte.js';
 	import { t, hasMessage } from '#lib/i18n/i18n.svelte.js';
 	import { noticeText } from '#lib/api/admin-notices.js';
 	import Callout from '#lib/ui/patterns/Callout.svelte';
+	import DataTable from '#lib/ui/patterns/DataTable.svelte';
+	import EmptyState from '#lib/ui/patterns/EmptyState.svelte';
+	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
 	import Card from '#lib/ui/patterns/Card.svelte';
 	import DetailItem from '#lib/ui/patterns/DetailItem.svelte';
 	import DetailList from '#lib/ui/patterns/DetailList.svelte';
@@ -10,7 +19,14 @@
 	import Button from '#lib/ui/primitives/Button.svelte';
 	import Link from '#lib/ui/primitives/Link.svelte';
 	import DateTime from '#lib/ui/time/DateTime.svelte';
-	import { SEVERITY_LABEL, SEVERITY_TONE, scopeLabel } from './notice-labels';
+	import {
+		DELIVERY_CHANNEL_LABEL,
+		DELIVERY_STATUS_LABEL,
+		DELIVERY_STATUS_TONE,
+		SEVERITY_LABEL,
+		SEVERITY_TONE,
+		scopeLabel
+	} from './notice-labels';
 
 	/**
 	 * One notice in full: what it says, where it comes from, the link to the page that deals with
@@ -22,12 +38,75 @@
 		canResolve: boolean;
 		busy?: boolean;
 		error?: string;
+		/** Where the notice was emailed and posted (admins who may read settings). */
+		delivery?: NoticeDeliveryClient;
 		onresolve: () => void;
 		ondismiss: () => void;
 		onclose: () => void;
 	}
 
-	let { notice, canResolve, busy = false, error, onresolve, ondismiss, onclose }: Props = $props();
+	let {
+		notice,
+		canResolve,
+		busy = false,
+		error,
+		delivery,
+		onresolve,
+		ondismiss,
+		onclose
+	}: Props = $props();
+
+	let deliveries = $state<NoticeDelivery[]>([]);
+	let summary = $state<NoticeDeliveryPage['summary']>([]);
+	let nextCursor = $state<string | null>(null);
+	let loadingMore = $state(false);
+	let deliveryPhase = $state<'loading' | 'ready' | 'failed'>('loading');
+
+	/** Cancels whatever is being read for the notice shown before. */
+	let reading: AbortController | null = null;
+
+	$effect(() => {
+		const id = notice.id;
+		if (!delivery) return;
+		reading?.abort();
+		const controller = new AbortController();
+		reading = controller;
+		loadingMore = false;
+		deliveryPhase = 'loading';
+		delivery
+			.listDeliveries(id, { signal: controller.signal })
+			.then((page) => {
+				deliveries = page.items;
+				summary = page.summary;
+				nextCursor = page.next;
+				deliveryPhase = 'ready';
+			})
+			.catch(() => {
+				if (!controller.signal.aborted) deliveryPhase = 'failed';
+			});
+		return () => controller.abort();
+	});
+
+	/** The next page of a long list (over 200 admins and channels). */
+	async function loadMore() {
+		const controller = reading;
+		if (!delivery || !nextCursor || !controller) return;
+		loadingMore = true;
+		try {
+			const page = await delivery.listDeliveries(notice.id, {
+				after: nextCursor,
+				signal: controller.signal
+			});
+			// Another notice was opened meanwhile: this page is not its.
+			if (controller.signal.aborted) return;
+			deliveries = [...deliveries, ...page.items];
+			nextCursor = page.next;
+		} catch {
+			if (!controller.signal.aborted) toast.error(t('nt.dlv.loadFailed'));
+		} finally {
+			if (!controller.signal.aborted) loadingMore = false;
+		}
+	}
 
 	const message = $derived(noticeText(notice, { t, hasMessage }));
 	const tenantParam = $derived(notice.params.tenant_id);
@@ -96,7 +175,80 @@
 	{/if}
 </Card>
 
+{#if delivery}
+	<Card title={t('nt.dlv.title')} flush>
+		{#if deliveryPhase === 'loading'}
+			<LoadingState label={t('common.loading')} />
+		{:else if deliveryPhase === 'failed'}
+			<EmptyState icon="warningCircle" title={t('nt.dlv.loadFailed')} />
+		{:else}
+			{#if summary.length > 0}
+				<p class="summary">
+					{#each summary as entry (`${entry.channel}:${entry.status}`)}
+						<Badge tone={DELIVERY_STATUS_TONE[entry.status]}
+							>{t(DELIVERY_CHANNEL_LABEL[entry.channel])}・{t(DELIVERY_STATUS_LABEL[entry.status])}
+							{entry.count}</Badge
+						>
+					{/each}
+				</p>
+			{/if}
+			<DataTable
+				caption={t('nt.dlv.title')}
+				columns={[
+					{ key: 'channel', label: t('nt.dlv.col.channel'), width: '14%' },
+					{ key: 'target', label: t('nt.dlv.col.target') },
+					{ key: 'status', label: t('nt.dlv.col.status'), width: '26%' },
+					{ key: 'attempts', label: t('nt.dlv.col.attempts'), width: '12%' },
+					{ key: 'error', label: t('nt.dlv.col.error'), width: '20%' }
+				]}
+				rows={deliveries}
+				rowKey={(row) => row.id}
+			>
+				{#snippet cell(row, column)}
+					{#if column.key === 'channel'}
+						{t(DELIVERY_CHANNEL_LABEL[row.channel])}
+					{:else if column.key === 'target'}
+						<code>{row.target_id}</code>
+					{:else if column.key === 'status'}
+						<Badge tone={DELIVERY_STATUS_TONE[row.status]}
+							>{t(DELIVERY_STATUS_LABEL[row.status])}</Badge
+						>
+					{:else if column.key === 'attempts'}
+						{row.attempts}
+					{:else if row.last_error}
+						<code>{row.last_error}</code>
+					{:else}
+						—
+					{/if}
+				{/snippet}
+				{#snippet empty()}
+					<EmptyState icon="bell" title={t('nt.dlv.empty')} />
+				{/snippet}
+			</DataTable>
+			{#if nextCursor}
+				<div class="more">
+					<Button size="sm" loading={loadingMore} onclick={loadMore}>{t('nt.dlv.more')}</Button>
+				</div>
+			{/if}
+		{/if}
+	</Card>
+{/if}
+
 <style>
+	.summary {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--space-related);
+		padding: var(--box-pad);
+		margin: 0;
+	}
+
+	.more {
+		display: flex;
+		justify-content: center;
+		padding: var(--box-pad);
+	}
+
 	.body {
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;

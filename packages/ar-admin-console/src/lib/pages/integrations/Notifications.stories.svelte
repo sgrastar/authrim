@@ -2,8 +2,35 @@
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, userEvent, waitFor, within } from 'storybook/test';
 	import { createFakeAdminNotices } from '#lib/api/fake/admin-notices-fake.js';
+	import { createFakeNoticeDelivery } from '#lib/api/fake/notice-delivery-fake.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
+	import type { NoticeDeliveryClient } from '#lib/api/notice-delivery.js';
 	import Notifications from './Notifications.svelte';
+
+	/** Deliveries whose next page is slow, to open another notice while it is on its way. */
+	function slowNextPage(): NoticeDeliveryClient {
+		const base = createFakeNoticeDelivery({ delay: 0 });
+		return {
+			...base,
+			async listDeliveries(noticeId, options = {}) {
+				const row = (n: number) => ({
+					id: `${noticeId}-${n}`,
+					channel: 'email' as const,
+					target_id: `${noticeId}-admin-${n}`,
+					status: 'sent' as const,
+					attempts: 1,
+					next_attempt_at: null,
+					last_error: null,
+					updated_at: 1
+				});
+				if (options.after) {
+					await new Promise((resolve) => setTimeout(resolve, 600));
+					return { items: [row(2)], next: null, summary: [] };
+				}
+				return { items: [row(1)], next: `${noticeId}-1`, summary: [] };
+			}
+		};
+	}
 
 	const { Story } = defineMeta({
 		title: 'Pages/Operations/Notifications',
@@ -117,6 +144,42 @@
 </Story>
 
 <Story
+	name="With Slack and delivery"
+	globals={{ admin: 'tenant' }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		// The Slack card is below the open notices; the detail lists where the notice went.
+		await canvas.findByRole('heading', { name: t('nt.slack.title') });
+		await canvas.findByRole('heading', { name: t('nt.dlv.title') });
+		await canvas.findAllByText(t('nt.dlv.status.sent'));
+	}}
+>
+	{#snippet template()}
+		<Notifications
+			client={createFakeAdminNotices()}
+			delivery={createFakeNoticeDelivery()}
+			focusId="ntc_dlq"
+		/>
+	{/snippet}
+</Story>
+
+<Story
+	name="Delivery not loaded"
+	globals={{ admin: 'tenant' }}
+	play={async ({ canvasElement }) => {
+		await within(canvasElement).findByText(t('nt.dlv.loadFailed'));
+	}}
+>
+	{#snippet template()}
+		<Notifications
+			client={createFakeAdminNotices()}
+			delivery={createFakeNoticeDelivery({ failOn: { listDeliveries: 500 } })}
+			focusId="ntc_dlq"
+		/>
+	{/snippet}
+</Story>
+
+<Story
 	name="Publish an announcement"
 	globals={{ admin: 'platform' }}
 	play={async ({ canvasElement }) => {
@@ -205,5 +268,27 @@
 >
 	{#snippet template()}
 		<Notifications client={createFakeAdminNotices()} focusId="ntc_unknown" />
+	{/snippet}
+</Story>
+
+<Story
+	name="Deliveries follow the open notice"
+	globals={{ admin: 'tenant' }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const open = async (name: string) =>
+			userEvent.click(await canvas.findByRole('button', { name: t('nt.row.open', { name }) }));
+		await open(t('notice.msg.second_factor_recovery_requested', { email: 'sam@example.com' }));
+		await userEvent.click(await canvas.findByRole('button', { name: t('nt.dlv.more') }));
+		// Another notice is opened before the first one's next page arrives.
+		await open('Maintenance on Saturday');
+		await canvas.findByText('ntc_announce-admin-1');
+		await new Promise((resolve) => setTimeout(resolve, 900));
+		await expect(canvas.queryByText('ntc_recovery-admin-2')).toBeNull();
+		await expect(canvas.queryByText('ntc_recovery-admin-1')).toBeNull();
+	}}
+>
+	{#snippet template()}
+		<Notifications client={createFakeAdminNotices()} delivery={slowNextPage()} />
 	{/snippet}
 </Story>

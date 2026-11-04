@@ -2,6 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { httpAdminNotices } from '#lib/api/admin-notices.js';
+	import { httpNoticeDelivery } from '#lib/api/notice-delivery.js';
 	import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import Notifications from '#lib/pages/integrations/Notifications.svelte';
@@ -22,6 +23,7 @@
 {#key tenantScope.tenantId}
 	<Notifications
 		client={httpAdminNotices}
+		delivery={httpNoticeDelivery}
 		{focusId}
 		onfocus={follow}
 		onchanged={() => noticeInbox.refresh()}

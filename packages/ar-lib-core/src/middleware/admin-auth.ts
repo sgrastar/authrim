@@ -853,6 +853,8 @@ function isPlatformAdminSessionPath(path: string): boolean {
       path
     ) ||
     /^\/api\/admin\/me\/second-factor-recovery(?:\/(?:complete|cancel))?\/?$/u.test(path) ||
+    // Each admin's notice email choices, under the session's own tenant.
+    /^\/api\/admin\/me\/notice-preferences\/?$/u.test(path) ||
     /^\/api\/admin\/agent-login-handoffs\/alh_[A-Za-z0-9_-]{32}\/approve\/?$/u.test(path)
   );
 }

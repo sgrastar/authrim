@@ -247,6 +247,13 @@ const packageSpecs = [
         },
       },
       {
+        file: 'packages/ar-management/src/routes/admin-management/admin-notice-delivery.ts',
+        receiverPrefixes: {
+          myNoticePreferencesRouter: '/api/admin/me/notice-preferences',
+          adminNoticeChannelsRouter: '/api/admin/notice-channels',
+        },
+      },
+      {
         file: 'packages/ar-management/src/routes/admin-management/admin-notices.ts',
         receiverPrefixes: {
           adminNoticesRouter: '/api/admin/notices',

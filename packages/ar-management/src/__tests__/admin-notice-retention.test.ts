@@ -70,8 +70,9 @@ describe('admin notice retention', () => {
       deleted: 0,
       retentionDays: 30,
     });
-    const [dismissals, notices] = mocks.batches[0];
+    const [dismissals, deliveries, notices] = mocks.batches[0];
     expect(dismissals.sql).toContain('DELETE FROM admin_notice_dismissals');
+    expect(deliveries.sql).toContain('DELETE FROM admin_notice_deliveries');
     expect(notices.sql).toContain('DELETE FROM admin_notices');
     expect(notices.params?.[0]).toBe(70 * DAY);
   });

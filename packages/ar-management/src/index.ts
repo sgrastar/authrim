@@ -77,6 +77,7 @@ import {
 } from '@authrim/ar-lib-core';
 import { runRetentionMaintenance } from './retention-maintenance';
 import { processScheduledAdminNoticeRetention } from './admin-notice-retention';
+import { processScheduledAdminNoticeDelivery } from './admin-notice-delivery';
 import { runObjectArtifactCleanup } from './artifact-cleanup';
 import { processLoggingStorageMaintenanceJobs } from './logging-storage-maintenance-jobs';
 import {
@@ -4491,6 +4492,8 @@ async function handleCoveredScheduled(
     await processScheduledAgentElevationRecovery(env, log);
     await processScheduledAgentTokenRevocations(env, log);
     await processScheduledAgentPayloadRetention(env, log);
+    // Admin console notices to email and Slack (plans new ones, sends what is due).
+    await processScheduledAdminNoticeDelivery(env, log.module('ADMIN-NOTICE-DELIVERY'));
     try {
       // Relying parties of sessions an admin action ended, not yet told (or to retry).
       await processPendingSessionEndLogoutJobs(env, log);
