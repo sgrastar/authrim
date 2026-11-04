@@ -14,6 +14,9 @@
  * - POST   /api/admin/me/second-factors/webauthn/options - Registration options for a security key
  * - POST   /api/admin/me/second-factors/webauthn/verify  - Verify the registration and store it
  * - DELETE /api/admin/me/second-factors/:id              - Revoke a second factor
+ *
+ * The options/verify pair also registers the new credential of a recovery request
+ * (`purpose: 'recovery'`); the request itself is handled in my-second-factor-recovery.ts.
  */
 
 import { Hono } from 'hono';
@@ -47,6 +50,7 @@ import { generateRegistrationOptions, verifyRegistrationResponse } from '@simple
 import type { RegistrationResponseJSON } from '@simplewebauthn/server';
 import { writeAdminAuditLog } from '../../admin-shared';
 import { refuseAdminFreshAuth, requireAdminStepUp } from '../../admin-step-up-gate';
+import { fileRecoveryRequest, refuseRecoveryRequest } from './my-second-factor-recovery';
 
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
 type HumanSession = AdminAuthContext & { sessionId: string; sessionTenantId: string };
@@ -73,6 +77,8 @@ const VALID_TRANSPORTS: readonly string[] = [
 ];
 
 type EnrollmentMode = 'first' | 'step_up';
+/** A challenge also serves a recovery request, which registers the credential only as pending. */
+type ChallengeMode = EnrollmentMode | 'recovery';
 
 interface RegistrationChallenge {
   userId: string;
@@ -81,7 +87,7 @@ interface RegistrationChallenge {
     rpID?: string;
     origin?: string;
     sessionId?: string;
-    mode?: EnrollmentMode;
+    mode?: ChallengeMode;
     label?: string | null;
   };
 }
@@ -221,7 +227,10 @@ mySecondFactorsRouter.get('/', async (c) => {
 
 /**
  * POST /api/admin/me/second-factors/webauthn/options
- * Body: { rp_id: string, label?: string }
+ * Body: { rp_id: string, label?: string, purpose?: 'recovery' }
+ *
+ * With `purpose: 'recovery'` the credential is for a recovery request (see
+ * my-second-factor-recovery.ts) instead of being registered directly.
  */
 mySecondFactorsRouter.post('/webauthn/options', async (c) => {
   setNoStore(c);
@@ -234,10 +243,12 @@ mySecondFactorsRouter.post('/webauthn/options', async (c) => {
     typeof body.rp_id !== 'string' ||
     body.rp_id.length === 0 ||
     (body.label !== undefined &&
-      (typeof body.label !== 'string' || body.label.length > MAX_LABEL_LENGTH))
+      (typeof body.label !== 'string' || body.label.length > MAX_LABEL_LENGTH)) ||
+    (body.purpose !== undefined && body.purpose !== 'recovery')
   ) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
   }
+  const recovery = body.purpose === 'recovery';
   const label = typeof body.label === 'string' && body.label.trim() ? body.label.trim() : null;
 
   const browserOrigin = resolveBrowserOrigin(c);
@@ -251,34 +262,41 @@ mySecondFactorsRouter.post('/webauthn/options', async (c) => {
     const adapter = requireDedicatedAdminDatabaseAdapter(c.env, 'admin-management');
     const repo = new AdminSecondFactorRepository(adapter);
     const now = Date.now();
-    const state = await enrollmentState(repo, auth.userId, now);
-
-    if (state.mode === 'recovery_required') {
-      return c.json(
-        {
-          error: 'second_factor_recovery_required',
-          error_description:
-            'No second factor is registered and the first-enrollment window has closed',
-        },
-        403
-      );
-    }
-    if (state.mode === 'first') {
-      if (evaluateAdminStepUpEvidence(auth, 'L1', now).missing.length > 0) {
-        return refuseAdminFreshAuth(c);
-      }
-    } else {
-      // The receipt is spent here; the challenge below carries the authorization to verify.
-      const refused = await requireAdminStepUp(
-        c,
-        {
-          operation: 'admin.second_factor.add',
-          targetTenantId: auth.sessionTenantId,
-          targetIds: [auth.userId],
-        },
-        now
-      );
+    let mode: ChallengeMode;
+    if (recovery) {
+      const refused = await refuseRecoveryRequest(c, auth, adapter, now);
       if (refused) return refused;
+      mode = 'recovery';
+    } else {
+      const state = await enrollmentState(repo, auth.userId, now);
+      if (state.mode === 'recovery_required') {
+        return c.json(
+          {
+            error: 'second_factor_recovery_required',
+            error_description:
+              'No second factor is registered and the first-enrollment window has closed',
+          },
+          403
+        );
+      }
+      if (state.mode === 'first') {
+        if (evaluateAdminStepUpEvidence(auth, 'L1', now).missing.length > 0) {
+          return refuseAdminFreshAuth(c);
+        }
+      } else {
+        // The receipt is spent here; the challenge below carries the authorization to verify.
+        const refused = await requireAdminStepUp(
+          c,
+          {
+            operation: 'admin.second_factor.add',
+            targetTenantId: auth.sessionTenantId,
+            targetIds: [auth.userId],
+          },
+          now
+        );
+        if (refused) return refused;
+      }
+      mode = state.mode;
     }
 
     // Neither a sign-in passkey nor a registered second factor may be registered again.
@@ -318,12 +336,12 @@ mySecondFactorsRouter.post('/webauthn/options', async (c) => {
         rpID,
         origin: browserOrigin,
         sessionId: auth.sessionId,
-        mode: state.mode,
+        mode,
         label,
       },
     });
 
-    return c.json({ options, challenge_id: challengeId, mode: state.mode });
+    return c.json({ options, challenge_id: challengeId, mode });
   } catch (error) {
     secondFactorLog(c).error('Failed to create second-factor registration options', {
       action: 'admin_second_factor_options',
@@ -378,7 +396,7 @@ mySecondFactorsRouter.post('/webauthn/verify', async (c) => {
     metadata?.sessionId !== auth.sessionId ||
     !metadata.origin ||
     !metadata.rpID ||
-    (metadata.mode !== 'first' && metadata.mode !== 'step_up') ||
+    (metadata.mode !== 'first' && metadata.mode !== 'step_up' && metadata.mode !== 'recovery') ||
     resolveBrowserOrigin(c) !== metadata.origin
   ) {
     return c.json(
@@ -421,11 +439,22 @@ mySecondFactorsRouter.post('/webauthn/verify', async (c) => {
     );
   }
 
+  const transports = (credential.response.transports ?? []).filter((transport) =>
+    VALID_TRANSPORTS.includes(transport)
+  );
+  if (metadata.mode === 'recovery') {
+    return fileRecoveryRequest(c, auth, {
+      credential_id: info.credential.id,
+      public_key: bytesToBase64(info.credential.publicKey),
+      counter: info.credential.counter,
+      transports,
+      aaguid: info.aaguid ?? null,
+      label: metadata.label ?? null,
+    });
+  }
+
   try {
     const repo = repository(c);
-    const transports = (credential.response.transports ?? []).filter((transport) =>
-      VALID_TRANSPORTS.includes(transport)
-    );
     const result = await repo.insertWebAuthn(
       {
         admin_user_id: auth.userId,
