@@ -9,7 +9,17 @@ const SWEEP_BATCH_SIZE = 200;
 const SWEEP_INTERVAL_SECONDS = 5 * 60;
 const SWEEP_TARGET_SECONDS = 5 * 60;
 const SHARD_LEASE_SECONDS = 45;
+/** Shard ids bound per statement: D1 binds at most 100 parameters (a sweep page holds 200). */
+const ID_CHUNK = 90;
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
+
+function idChunks<T>(ids: readonly T[]): T[][] {
+  const chunks: T[][] = [];
+  for (let offset = 0; offset < ids.length; offset += ID_CHUNK) {
+    chunks.push(ids.slice(offset, offset + ID_CHUNK));
+  }
+  return chunks;
+}
 
 interface RegistryStateRow {
   active_generation: number | string;
@@ -253,8 +263,8 @@ export class D1PluginRunnerStateRepository {
           now
         )
     );
-    if (shards.length > 0) {
-      const placeholders = shards.map(() => '?').join(', ');
+    for (const chunk of idChunks(shards)) {
+      const placeholders = chunk.map(() => '?').join(', ');
       statements.push(
         session
           .prepare(
@@ -267,7 +277,7 @@ export class D1PluginRunnerStateRepository {
               WHERE tenant_shard_id IN (${placeholders})
              ON CONFLICT(tenant_shard_id) DO NOTHING`
           )
-          .bind(now, ...shards.map((shard) => shard.shardId))
+          .bind(now, ...chunk.map((shard) => shard.shardId))
       );
     }
     statements.push(
@@ -330,21 +340,33 @@ export class D1PluginRunnerStateRepository {
       if (input.shardIds.length > SWEEP_BATCH_SIZE) {
         throw new Error('plugin_runner_shard_claim_input_invalid');
       }
-      const placeholders = input.shardIds.map(() => '?').join(', ');
-      const result = await session
-        .prepare(
-          `SELECT registry.tenant_shard_id, registry.binding_ref, registry.data_role,
-                  registry.residency_partition, registry.route_generation, cursor.fencing_token
-             FROM plugin_runner_registry_shards registry
-             JOIN plugin_runner_shard_cursors cursor
-               ON cursor.tenant_shard_id = registry.tenant_shard_id
-            WHERE registry.active = 1 AND registry.tenant_shard_id IN (${placeholders})
-              AND (cursor.lease_expires_at IS NULL OR cursor.lease_expires_at <= ?)
-            ORDER BY registry.tenant_shard_id LIMIT ?`
-        )
-        .bind(...input.shardIds, input.now, input.limit)
-        .all<DueShardRow>();
-      candidates = result.results;
+      candidates = [];
+      for (const chunk of idChunks(input.shardIds)) {
+        const placeholders = chunk.map(() => '?').join(', ');
+        const result = await session
+          .prepare(
+            `SELECT registry.tenant_shard_id, registry.binding_ref, registry.data_role,
+                    registry.residency_partition, registry.route_generation, cursor.fencing_token
+               FROM plugin_runner_registry_shards registry
+               JOIN plugin_runner_shard_cursors cursor
+                 ON cursor.tenant_shard_id = registry.tenant_shard_id
+              WHERE registry.active = 1 AND registry.tenant_shard_id IN (${placeholders})
+                AND (cursor.lease_expires_at IS NULL OR cursor.lease_expires_at <= ?)
+              ORDER BY registry.tenant_shard_id LIMIT ?`
+          )
+          .bind(...chunk, input.now, input.limit)
+          .all<DueShardRow>();
+        candidates.push(...result.results);
+      }
+      // The first `limit` by id across the chunks, as one statement would have chosen.
+      candidates.sort((left, right) =>
+        left.tenant_shard_id < right.tenant_shard_id
+          ? -1
+          : left.tenant_shard_id > right.tenant_shard_id
+            ? 1
+            : 0
+      );
+      candidates = candidates.slice(0, input.limit);
     } else {
       const result = await session
         .prepare(
@@ -374,30 +396,36 @@ export class D1PluginRunnerStateRepository {
     }
     if (candidates.length === 0) return [];
     const candidateIds = candidates.map((row) => row.tenant_shard_id);
-    const placeholders = candidateIds.map(() => '?').join(', ');
     const leaseExpiresAt = input.now + SHARD_LEASE_SECONDS;
-    const update = await session
-      .prepare(
-        `UPDATE plugin_runner_shard_cursors
-            SET lease_owner = ?, lease_expires_at = ?, fencing_token = fencing_token + 1,
-                updated_at = ?
-          WHERE tenant_shard_id IN (${placeholders})
-            AND (lease_expires_at IS NULL OR lease_expires_at <= ?)`
+    const updates = await session.batch(
+      idChunks(candidateIds).map((chunk) =>
+        session
+          .prepare(
+            `UPDATE plugin_runner_shard_cursors
+                SET lease_owner = ?, lease_expires_at = ?, fencing_token = fencing_token + 1,
+                    updated_at = ?
+              WHERE tenant_shard_id IN (${chunk.map(() => '?').join(', ')})
+                AND (lease_expires_at IS NULL OR lease_expires_at <= ?)`
+          )
+          .bind(input.ownerId, leaseExpiresAt, input.now, ...chunk, input.now)
       )
-      .bind(input.ownerId, leaseExpiresAt, input.now, ...candidateIds, input.now)
-      .run();
-    if ((update.meta.changes ?? 0) === 0) return [];
-    const reflected = await session
-      .prepare(
-        `SELECT tenant_shard_id, fencing_token
-           FROM plugin_runner_shard_cursors
-          WHERE lease_owner = ? AND lease_expires_at = ?
-            AND tenant_shard_id IN (${placeholders})`
-      )
-      .bind(input.ownerId, leaseExpiresAt, ...candidateIds)
-      .all<ClaimedCursorRow>();
+    );
+    if (updates.every((update) => (update.meta.changes ?? 0) === 0)) return [];
+    const reflectedRows: ClaimedCursorRow[] = [];
+    for (const chunk of idChunks(candidateIds)) {
+      const reflected = await session
+        .prepare(
+          `SELECT tenant_shard_id, fencing_token
+             FROM plugin_runner_shard_cursors
+            WHERE lease_owner = ? AND lease_expires_at = ?
+              AND tenant_shard_id IN (${chunk.map(() => '?').join(', ')})`
+        )
+        .bind(input.ownerId, leaseExpiresAt, ...chunk)
+        .all<ClaimedCursorRow>();
+      reflectedRows.push(...reflected.results);
+    }
     const claimedFencing = new Map(
-      reflected.results.map((row) => [
+      reflectedRows.map((row) => [
         row.tenant_shard_id,
         integer(row.fencing_token, 'plugin_runner_shard_fencing_token_invalid', 1),
       ])

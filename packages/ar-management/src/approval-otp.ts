@@ -1,14 +1,8 @@
 import type { Env, ApprovalTransportMethod } from '@authrim/ar-lib-core';
-import { getChallengeStoreByChallengeId } from '@authrim/ar-lib-core';
+import { buildDOKey, getChallengeStoreByChallengeId } from '@authrim/ar-lib-core';
 
 const APPROVAL_OTP_TTL_SECONDS = 5 * 60;
-const APPROVAL_OTP_INVALID_ATTEMPT_PREFIX = 'approval_otp:attempts:';
 const APPROVAL_OTP_MAX_INVALID_ATTEMPTS = 5;
-
-interface ApprovalOtpAttemptState {
-  count: number;
-  last_attempt_at: number;
-}
 
 function normalizeTarget(target: string): string {
   return target.trim().toLowerCase();
@@ -73,50 +67,27 @@ async function hashTarget(target: string): Promise<string> {
     .join('');
 }
 
-function getApprovalOtpAttemptKey(artifactId: string): string {
-  return `${APPROVAL_OTP_INVALID_ATTEMPT_PREFIX}${artifactId}`;
-}
-
-async function loadApprovalOtpAttemptState(
-  env: Pick<Env, 'AUTHRIM_CONFIG'>,
-  artifactId: string
-): Promise<ApprovalOtpAttemptState | null> {
-  const raw = await env.AUTHRIM_CONFIG?.get(getApprovalOtpAttemptKey(artifactId));
-  if (!raw) {
-    return null;
-  }
-
-  const parsed = JSON.parse(raw) as Partial<ApprovalOtpAttemptState>;
-  if (typeof parsed.count !== 'number' || typeof parsed.last_attempt_at !== 'number') {
-    return null;
-  }
-
-  return {
-    count: parsed.count,
-    last_attempt_at: parsed.last_attempt_at,
-  };
-}
-
-async function saveApprovalOtpAttemptState(
-  env: Pick<Env, 'AUTHRIM_CONFIG'>,
+/**
+ * Counts an attempt at the challenge, atomically (a KV read-modify-write would let parallel
+ * guesses read the same count), before the code is checked: when the counter cannot answer, the
+ * attempt fails and no code is checked. Keyed by the issued challenge, so a new code starts from
+ * zero. Returns the attempts so far.
+ */
+async function countApprovalOtpAttempt(
+  env: Pick<Env, 'RATE_LIMITER'>,
+  tenantId: string,
   artifactId: string,
-  state: ApprovalOtpAttemptState,
+  issuedAt: number,
   expiresAt: number
-): Promise<void> {
-  if (!env.AUTHRIM_CONFIG) {
-    return;
-  }
-  const ttlSeconds = Math.max(1, Math.ceil((expiresAt - Date.now()) / 1000));
-  await env.AUTHRIM_CONFIG.put(getApprovalOtpAttemptKey(artifactId), JSON.stringify(state), {
-    expirationTtl: ttlSeconds,
+): Promise<number> {
+  const counter = env.RATE_LIMITER.get(
+    env.RATE_LIMITER.idFromName(buildDOKey('rate-limit', 'approval-otp', tenantId))
+  );
+  const result = await counter.incrementRpc(`${artifactId}:${issuedAt}`, {
+    windowSeconds: Math.max(1, Math.ceil((expiresAt - Date.now()) / 1000)),
+    maxRequests: APPROVAL_OTP_MAX_INVALID_ATTEMPTS,
   });
-}
-
-async function clearApprovalOtpAttemptState(
-  env: Pick<Env, 'AUTHRIM_CONFIG'>,
-  artifactId: string
-): Promise<void> {
-  await env.AUTHRIM_CONFIG?.delete(getApprovalOtpAttemptKey(artifactId));
+  return result.current;
 }
 
 export async function issueApprovalOtpChallenge(
@@ -163,8 +134,6 @@ export async function issueApprovalOtpChallenge(
       target: normalizedTarget,
     },
   });
-  await clearApprovalOtpAttemptState(env, input.artifactId);
-
   return {
     code,
     expiresAt: issuedAt + APPROVAL_OTP_TTL_SECONDS * 1000,
@@ -200,6 +169,26 @@ export async function verifyApprovalOtpChallenge(
     throw new Error('Invalid approval OTP challenge');
   }
 
+  const consumeChallenge = async (): Promise<void> => {
+    await challengeStore.consumeChallengeRpc({
+      id: `approval_otp:${input.artifactId}`,
+      tenantId: input.tenantId,
+      type: 'email_code',
+      challenge: challenge.challenge,
+    });
+  };
+  const attempts = await countApprovalOtpAttempt(
+    env,
+    input.tenantId,
+    input.artifactId,
+    issuedAt,
+    challenge.expiresAt
+  );
+  if (attempts > APPROVAL_OTP_MAX_INVALID_ATTEMPTS) {
+    await consumeChallenge();
+    throw new Error('Invalid approval OTP code');
+  }
+
   const valid = await verifyApprovalOtpHash(
     input.code,
     normalizeTarget(input.target),
@@ -209,32 +198,14 @@ export async function verifyApprovalOtpChallenge(
     secret
   );
   if (!valid || storedTarget !== normalizeTarget(input.target)) {
-    const currentAttempts = await loadApprovalOtpAttemptState(env, input.artifactId);
-    const nextState: ApprovalOtpAttemptState = {
-      count: (currentAttempts?.count ?? 0) + 1,
-      last_attempt_at: Date.now(),
-    };
-    if (nextState.count >= APPROVAL_OTP_MAX_INVALID_ATTEMPTS) {
-      await challengeStore.consumeChallengeRpc({
-        id: `approval_otp:${input.artifactId}`,
-        tenantId: input.tenantId,
-        type: 'email_code',
-        challenge: challenge.challenge,
-      });
-      await clearApprovalOtpAttemptState(env, input.artifactId);
-    } else {
-      await saveApprovalOtpAttemptState(env, input.artifactId, nextState, challenge.expiresAt);
+    // The last attempt allowed was a wrong code: the challenge ends.
+    if (attempts >= APPROVAL_OTP_MAX_INVALID_ATTEMPTS) {
+      await consumeChallenge();
     }
     throw new Error('Invalid approval OTP code');
   }
 
-  await challengeStore.consumeChallengeRpc({
-    id: `approval_otp:${input.artifactId}`,
-    tenantId: input.tenantId,
-    type: 'email_code',
-    challenge: challenge.challenge,
-  });
-  await clearApprovalOtpAttemptState(env, input.artifactId);
+  await consumeChallenge();
 
   return {
     verifiedAt: Date.now(),

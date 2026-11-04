@@ -379,6 +379,12 @@ export async function hashSupportOpsSelector(input: unknown): Promise<string> {
   return `sha256:${hex}`;
 }
 
+/**
+ * The most values a selector binds: the statements it goes into bind a few of their own, and D1
+ * binds at most 100 parameters to a statement.
+ */
+export const SUPPORT_OPS_SELECTOR_MAX_PARAMETERS = 80;
+
 export async function compileSupportOpsSelector(
   resource: SupportOpsSqlResourceDescriptor,
   selector: SupportOpsSelector | undefined
@@ -391,6 +397,11 @@ export async function compileSupportOpsSelector(
     };
   }
   const compiled = compileSelectorPart(resource, selector);
+  if (compiled.params.length > SUPPORT_OPS_SELECTOR_MAX_PARAMETERS) {
+    throw new Error(
+      `Selector binds ${compiled.params.length} values; at most ${SUPPORT_OPS_SELECTOR_MAX_PARAMETERS} are allowed`
+    );
+  }
   return {
     ...compiled,
     selectorHash: await hashSupportOpsSelector(selector),

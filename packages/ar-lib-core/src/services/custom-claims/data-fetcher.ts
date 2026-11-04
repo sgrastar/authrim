@@ -7,7 +7,12 @@
  */
 
 import type { DatabaseAdapter, DatabaseSource } from '../../db';
-import { ensureDatabaseAdapter, ensureOptionalDatabaseAdapter } from '../../db';
+import {
+  chunkForBoundParameters,
+  ensureDatabaseAdapter,
+  ensureOptionalDatabaseAdapter,
+  sqlPlaceholders,
+} from '../../db';
 import { createLogger } from '../../utils/logger';
 import type { CustomClaimSchema } from './resolver';
 import {
@@ -18,7 +23,7 @@ import {
 
 const log = createLogger().module('CUSTOM-CLAIMS-DATA-FETCHER');
 
-/** Maximum field keys per query (D1 bind parameter limit defense) */
+/** Maximum field keys fetched per kind (each query is chunked within D1's 100 parameters) */
 const MAX_FIELDS_PER_QUERY = 200;
 
 export class UserCustomDataFetcher {
@@ -57,15 +62,19 @@ export class UserCustomDataFetcher {
           : nonPiiKeys;
 
       try {
-        const placeholders = keysToFetch.map(() => '?').join(', ');
-        const rows = await this.coreAdapter.query<{
-          field_name: string;
-          field_value: string | null;
-        }>(
-          `SELECT field_name, field_value FROM user_custom_fields
-           WHERE tenant_id = ? AND user_id = ? AND field_name IN (${placeholders})`,
-          [tenantId, userId, ...keysToFetch]
+        const pages = await Promise.all(
+          chunkForBoundParameters(keysToFetch, 2).map((chunk) =>
+            this.coreAdapter.query<{
+              field_name: string;
+              field_value: string | null;
+            }>(
+              `SELECT field_name, field_value FROM user_custom_fields
+               WHERE tenant_id = ? AND user_id = ? AND field_name IN (${sqlPlaceholders(chunk.length)})`,
+              [tenantId, userId, ...chunk]
+            )
+          )
         );
+        const rows = pages.flat();
         for (const row of rows) {
           if (row.field_value !== null) {
             result.set(row.field_name, row.field_value);
@@ -89,21 +98,26 @@ export class UserCustomDataFetcher {
           : piiKeys;
       try {
         const valueKeys = keysToFetch.map(customAttributeValueKey);
-        const placeholders = valueKeys.map(() => '?').join(', ');
-        const rows = await this.piiAdapter.query<{
-          value_key: string;
-          value_json: unknown;
-        }>(
-          `SELECT value_key, value_json
-             FROM identity_sensitive_values
-            WHERE tenant_id = ?
-              AND owner_type = 'runtime_user'
-              AND owner_id = ?
-              AND value_key IN (${placeholders})
-              AND lifecycle_state = 'active'
-            ORDER BY value_key ASC`,
-          [tenantId, userId, ...valueKeys]
+        const piiAdapter = this.piiAdapter;
+        const pages = await Promise.all(
+          chunkForBoundParameters(valueKeys, 2).map((chunk) =>
+            piiAdapter.query<{
+              value_key: string;
+              value_json: unknown;
+            }>(
+              `SELECT value_key, value_json
+                 FROM identity_sensitive_values
+                WHERE tenant_id = ?
+                  AND owner_type = 'runtime_user'
+                  AND owner_id = ?
+                  AND value_key IN (${sqlPlaceholders(chunk.length)})
+                  AND lifecycle_state = 'active'
+                ORDER BY value_key ASC`,
+              [tenantId, userId, ...chunk]
+            )
+          )
         );
+        const rows = pages.flat();
         for (const row of rows) {
           const fieldKey = customAttributeFieldKey(row.value_key);
           const value = deserializeCustomAttributeValue(row.value_json);

@@ -1325,16 +1325,16 @@ export class D1ControlRepository implements ControlRepository {
     now: number
   ): Promise<void> {
     const names = [...new Set(stillActualOnlyScriptNames)].sort();
-    const placeholders = names.map(() => '?').join(', ');
-    const exclusion = names.length > 0 ? `AND worker_script_name NOT IN (${placeholders})` : '';
+    // The names as one JSON parameter: there can be more than D1's 100 bound parameters.
     await this.db
       .prepare(
         `UPDATE control_worker_inventory_drift_findings
             SET review_state = 'resolved', notification_state = 'resolved', resolved_at = ?
           WHERE environment_id = ? AND finding_kind = 'actual_only'
-            AND review_state <> 'resolved' ${exclusion}`
+            AND review_state <> 'resolved'
+            AND worker_script_name NOT IN (SELECT value FROM json_each(?))`
       )
-      .bind(now, environmentId, ...names)
+      .bind(now, environmentId, JSON.stringify(names))
       .run();
   }
 
