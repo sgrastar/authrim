@@ -6824,26 +6824,31 @@ export async function seedRuntimeProfiles(
   const backend = config.profiles?.registry?.backend ?? 'kv';
 
   try {
+    // D1 (`profile_registry`) is the source of truth for every backend: the Admin API writes it
+    // conditionally and, for the KV backend, projects it to KV (and a scheduled job repairs KV from
+    // it). Seeding only KV would be rolled back by that job. So the seed is written to D1 first,
+    // unconditionally: it replaces whatever the row holds, a tombstone left by an Admin API delete
+    // included (an explicit seed is the operator's intent), and KV is projected from it below.
+    const dbName = options.databaseIdentifier?.trim() || getD1DatabaseName(env, 'core-db');
+    const sql = buildRuntimeProfileSeedSql(config);
+    if (!sql) {
+      return { success: true, seededCount: 0, backend };
+    }
+
+    onProgress?.(`🔧 Seeding ${seeded.length} runtime profile(s) into ${dbName}...`);
+    const { stdout, stderr } = await executeD1Command(dbName, sql, {
+      onProgress,
+      target: options.target,
+    });
+
+    const combined = (stdout + '\n' + stderr).toLowerCase();
+    if (combined.includes('[error]') || combined.includes('✘ [error]')) {
+      const errorDetail = stderr || stdout;
+      onProgress?.(`  ❌ Runtime profile seed failed: ${errorDetail}`);
+      return { success: false, seededCount: 0, backend, error: errorDetail };
+    }
+
     if (backend === 'database') {
-      const dbName = options.databaseIdentifier?.trim() || getD1DatabaseName(env, 'core-db');
-      const sql = buildRuntimeProfileSeedSql(config);
-      if (!sql) {
-        return { success: true, seededCount: 0, backend };
-      }
-
-      onProgress?.(`🔧 Seeding ${seeded.length} runtime profile(s) into ${dbName}...`);
-      const { stdout, stderr } = await executeD1Command(dbName, sql, {
-        onProgress,
-        target: options.target,
-      });
-
-      const combined = (stdout + '\n' + stderr).toLowerCase();
-      if (combined.includes('[error]') || combined.includes('✘ [error]')) {
-        const errorDetail = stderr || stdout;
-        onProgress?.(`  ❌ Runtime profile seed failed: ${errorDetail}`);
-        return { success: false, seededCount: 0, backend, error: errorDetail };
-      }
-
       onProgress?.(`  ✅ Seeded ${seeded.length} runtime profile(s)`);
       return { success: true, seededCount: seeded.length, backend };
     }

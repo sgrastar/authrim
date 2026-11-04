@@ -447,6 +447,8 @@ export * from './services/custom-claims';
 export * from './services/custom-claim-schema-history';
 export * from './services/profile-registry';
 export * from './services/runtime-profile-resolver';
+export * from './services/profile-registry-writer';
+export * from './services/audit-settings-documents';
 export * from './services/session-client-store';
 export * from './services/session-ttl';
 export * from './services/external-provider-session-store';

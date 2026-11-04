@@ -32,7 +32,7 @@ import {
   type AuditStorageRoutingRule,
   type TenantPIIConfig,
 } from '../services/audit';
-import { resolveTenantRuntimeProfilesFromEnv } from '../services/runtime-profile-resolver';
+import { resolveTenantAuditProfileFromEnv } from '../services/runtime-profile-resolver';
 import { getCachedAnonymizedUserId } from '../services/audit/anonymized-user-id-cache';
 import {
   mirrorableResourceId,
@@ -59,8 +59,16 @@ import {
 import type { LoggingDestination } from '@authrim/ar-lib-logging/destinations';
 import type { LogPlane, LogType } from '@authrim/ar-lib-logging/contract';
 
+import { settingsStorageKey } from './settings-manager';
+import { readStoredTenantPIIConfig } from './pii-config';
+import {
+  AUDIT_ROUTING_CATEGORY,
+  AUDIT_ROUTING_RULES_KEY,
+  LEGACY_AUDIT_ROUTING_RULES_KV_KEY,
+} from '../types/settings/audit-routing';
+
 const log = createLogger().module('AUDIT_LOG');
-const KV_KEY_ROUTING_RULES = 'audit_routing_rules';
+const KV_KEY_ROUTING_RULES = LEGACY_AUDIT_ROUTING_RULES_KV_KEY;
 const RUNTIME_LOGGING_POLICY_CACHE_TTL_MS = 60_000;
 const runtimeLoggingPolicySnapshotCache =
   new RuntimeLoggingPolicySnapshotMemoryCache<RuntimeLoggingPolicySnapshotPayload>({
@@ -123,8 +131,7 @@ function getUnifiedAuditService(env: Env): IAuditService {
     env,
     configKv: env.AUTHRIM_CONFIG,
     logger: log.module('AUDIT'),
-    resolveAuditProfile: async (tenantId) =>
-      (await resolveTenantRuntimeProfilesFromEnv(env, tenantId)).auditProfile,
+    resolveAuditProfile: async (tenantId) => await resolveTenantAuditProfileFromEnv(env, tenantId),
     resolveDeliveryPlan: async (input) => resolveAuditDeliveryPlanFromEnv(env, input),
   });
 }
@@ -221,8 +228,7 @@ async function resolveAuditBackpressure(
 ): Promise<NonNullable<AuditProfile['backpressure']>['mode']> {
   try {
     return (
-      (await resolveTenantRuntimeProfilesFromEnv(env, tenantId)).auditProfile.backpressure?.mode ??
-      'event_class'
+      (await resolveTenantAuditProfileFromEnv(env, tenantId)).backpressure?.mode ?? 'event_class'
     );
   } catch {
     return 'event_class';
@@ -831,13 +837,40 @@ function snapshotAuditDeliveryPlan(
   };
 }
 
-async function getCachedAuditRoutingRules(kv: KVNamespace): Promise<AuditStorageRoutingRule[]> {
+/**
+ * The stored routing rules as JSON text: the settings document projected to SETTINGS (the
+ * source once it exists), else the legacy AUTHRIM_CONFIG value (until the document is created
+ * from it). Null when none is stored.
+ */
+async function readStoredAuditRoutingRulesJson(
+  legacyKv: KVNamespace | undefined,
+  settingsKv: KVNamespace | undefined
+): Promise<string | null> {
+  if (settingsKv) {
+    const raw = await settingsKv.get(
+      settingsStorageKey(AUDIT_ROUTING_CATEGORY, { type: 'platform' })
+    );
+    if (raw !== null) {
+      const document = JSON.parse(raw) as Record<string, unknown> | null;
+      const rules = document?.[AUDIT_ROUTING_RULES_KEY];
+      if (rules === undefined) return null;
+      if (!Array.isArray(rules)) throw new Error('audit_routing_rules_invalid');
+      return JSON.stringify(rules);
+    }
+  }
+  return legacyKv ? legacyKv.get(KV_KEY_ROUTING_RULES) : null;
+}
+
+async function getCachedAuditRoutingRules(
+  kv: KVNamespace,
+  settingsKv?: KVNamespace
+): Promise<AuditStorageRoutingRule[]> {
   const now = Date.now();
   const cached = auditRoutingRulesCache.get(kv);
   if (cached && cached.expiresAt > now) {
     return cached.rules;
   }
-  const routingValue = await kv.get(KV_KEY_ROUTING_RULES);
+  const routingValue = await readStoredAuditRoutingRulesJson(kv, settingsKv);
   const rules = parseStoredAuditRoutingRules(routingValue);
   auditRoutingRulesCache.set(kv, {
     rules,
@@ -868,7 +901,7 @@ async function resolveAuditDeliveryPlanFromEnv(
   let routingRules: AuditStorageRoutingRule[] = [];
 
   try {
-    routingRules = await getCachedAuditRoutingRules(env.AUTHRIM_CONFIG);
+    routingRules = await getCachedAuditRoutingRules(env.AUTHRIM_CONFIG, env.SETTINGS);
   } catch {
     return null;
   }
@@ -994,22 +1027,17 @@ export async function resolveTenantAuditRetentionFromEnv(
 ): Promise<TenantAuditRetention> {
   const auditProfile =
     options.auditProfile ??
-    (await resolveTenantRuntimeProfilesFromEnv(env, tenantId, { strict: true })).auditProfile;
+    (await resolveTenantAuditProfileFromEnv(env, tenantId, { strict: true }));
   let defaults: TenantPIIConfig = DEFAULT_PII_CONFIG;
   let routingRules: AuditStorageRoutingRule[] = [];
-  if (env.AUTHRIM_CONFIG) {
+  if (env.AUTHRIM_CONFIG || env.SETTINGS) {
     const [storedConfig, storedRules] = await Promise.all([
-      env.AUTHRIM_CONFIG.get(`pii_config:${tenantId}`),
-      env.AUTHRIM_CONFIG.get(KV_KEY_ROUTING_RULES),
+      readStoredTenantPIIConfig({ settings: env.SETTINGS, legacy: env.AUTHRIM_CONFIG }, tenantId),
+      readStoredAuditRoutingRulesJson(env.AUTHRIM_CONFIG, env.SETTINGS),
     ]);
-    // A write ignores a config it cannot parse; shown to admins, it is unreadable, not absent.
-    if (storedConfig !== null) {
-      const parsed: unknown = JSON.parse(storedConfig);
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        throw new Error('pii_config_invalid');
-      }
-      defaults = parsed as TenantPIIConfig;
-    }
+    // A write ignores a config it cannot parse; shown to admins, it is unreadable, not absent
+    // (the readers throw on a value that does not parse).
+    if (storedConfig !== null) defaults = storedConfig;
     // Only a missing value is no rules; anything stored must parse (an empty string does not).
     if (storedRules !== null) {
       const parsed: unknown = JSON.parse(storedRules);

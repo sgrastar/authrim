@@ -31,7 +31,8 @@ import {
   reconcileRunnerExternalGate,
   setRunnerExternalGate,
 } from '../../external-plugin-gate-sync';
-import { gateStepUpSettingsPatch } from './step-up-settings';
+import { gateStepUpSettingsPatch, verifyProfileSwitch } from './step-up-settings';
+import type { ProfileSwitchGuard } from '../../profile-switch-verify';
 import { identityMappingReferenceProblem } from './identity-mapping-reference';
 import {
   categoryPatchNeedsState,
@@ -484,6 +485,7 @@ export async function applyTenantSettingsChange(
 
       // Weakening the step-up policy or shortening a retention needs a step-up of its own
       // (a dry run only decides, so it spends nothing).
+      const switchGuard: ProfileSwitchGuard = { compared: [] };
       if (!dryRun) {
         const refused = await gateStepUpSettingsPatch({
           c,
@@ -494,6 +496,7 @@ export async function applyTenantSettingsChange(
           body,
           actor,
           refuse: input.refuseStepUp === true,
+          guard: switchGuard,
         });
         if (refused) return refused;
       }
@@ -502,6 +505,29 @@ export async function applyTenantSettingsChange(
         parents: settingsParentScopes(category, scope),
         ...(dryRun ? { dryRun: true } : {}),
       });
+
+      // A profile compared for a profile switch changed after the decision: the save is put back.
+      if (
+        !dryRun &&
+        !(await verifyProfileSwitch({
+          env: c.env,
+          manager,
+          category,
+          scope,
+          guard: switchGuard,
+          result,
+          actor,
+        }))
+      ) {
+        return c.json(
+          {
+            error: 'conflict',
+            message:
+              'A runtime profile changed while this request was being decided; repeat the step-up and retry',
+          },
+          409
+        );
+      }
 
       if (
         !dryRun &&

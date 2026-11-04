@@ -33,7 +33,11 @@ const SURFACES: Partial<Record<SamlDrWriterComponent, readonly string[]>> = {
   ],
   'ar-async': ['guarded:fetch'],
   'ar-policy': ['guarded:fetch'],
-  'ar-bridge': ['guarded:fetch', 'guarded:scheduled'],
+  'ar-bridge': [
+    'guarded:fetch',
+    'guarded:rpc:ExternalIdpAdminEntrypoint.fetch',
+    'guarded:scheduled',
+  ],
   'ar-vc': [
     'excluded-transient:do:CredentialOfferStore',
     'excluded-transient:do:CredentialOfferStoreV2',

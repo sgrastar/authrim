@@ -15,7 +15,6 @@ vi.mock('../../admin-step-up-gate', () => ({
   refuseAdminFreshAuth: vi.fn(),
 }));
 import { Hono } from 'hono';
-import type { D1Database } from '@cloudflare/workers-types';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   DEFAULT_AUDIT_PROFILE_ID,
@@ -23,6 +22,7 @@ import {
   TENANT_RUNTIME_REGISTRY_EMERGENCY_PURGE_CONFIRMATION,
 } from '@authrim/ar-lib-core';
 import { createSettingsCanonicalD1 } from '../helpers/settings-canonical-d1';
+import { openCoreStore } from '../helpers/core-schema-sqlite';
 
 vi.mock('../../admin-shared', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../admin-shared')>();
@@ -81,7 +81,8 @@ function createApp() {
 
 function createEnv(): Env {
   return {
-    DB: {} as D1Database,
+    // Profile writes go to the core database (conditionally), so it is a real one.
+    DB: openCoreStore().adapter,
     DB_ADMIN: createSettingsCanonicalD1(),
     AUTHRIM_CONFIG: createMockKV(),
     SETTINGS: createMockKV(),

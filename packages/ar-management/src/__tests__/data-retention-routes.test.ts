@@ -295,12 +295,14 @@ describe('data retention', () => {
 
   it('writes the lookup policy, its projection and history together, then projects it', async () => {
     const applyLookupRetentionPolicyProjection = vi.fn().mockResolvedValue(undefined);
-    mocks.adapter.queryOne.mockResolvedValueOnce({ retention_days: 180 }).mockResolvedValueOnce({
-      tenant_id: 'tenant-a',
-      policy_generation: 2,
-      retention_days: 365,
-      updated_at: 1700000000,
-    });
+    mocks.adapter.queryOne
+      .mockResolvedValueOnce({ retention_days: 180, policy_generation: 1 })
+      .mockResolvedValueOnce({
+        tenant_id: 'tenant-a',
+        policy_generation: 2,
+        retention_days: 365,
+        updated_at: 1700000000,
+      });
 
     const response = await updateCategoryRetention(
       context({

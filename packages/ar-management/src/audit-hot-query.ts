@@ -1,7 +1,7 @@
 import { createLogReadAdapter } from './log-read-adapter';
 import type { Context } from 'hono';
 import type { Env, DatabaseAdapter, AuditProfile } from '@authrim/ar-lib-core';
-import { resolveTenantRuntimeProfilesFromEnv } from '@authrim/ar-lib-core';
+import { resolveTenantAuditProfileFromEnv } from '@authrim/ar-lib-core';
 
 export type AuditHotQueryStatus = 'supported' | 'not_supported' | 'pending_runtime_support';
 export type AuditHotQueryMode = 'legacy' | 'unified';
@@ -63,8 +63,8 @@ export async function getAuditHotQuerySupport(
     storedCursorTime?: number;
   }
 ): Promise<AuditHotQuerySupport> {
-  const resolved = await resolveTenantRuntimeProfilesFromEnv(env, tenantId);
-  const support = getAuditHotQuerySupportForProfile(env, resolved.auditProfile, tenantId);
+  const auditProfile = await resolveTenantAuditProfileFromEnv(env, tenantId);
+  const support = getAuditHotQuerySupportForProfile(env, auditProfile, tenantId);
   if (support.context) {
     const { storedCursorTime, ...options } = readOptions ?? {};
     const read = createLogReadAdapter({

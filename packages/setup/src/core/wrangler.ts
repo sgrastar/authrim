@@ -1187,6 +1187,18 @@ export function generateWranglerConfig(
       });
     }
     if (component === 'ar-management') {
+      // Bridge admin routes are served only to this named entrypoint, never on the bridge's public
+      // fetch, so the management step-up gate cannot be bypassed by calling the bridge directly.
+      wranglerConfig.services.push({
+        binding: 'EXTERNAL_IDP_ADMIN',
+        service: `${env}-ar-bridge`,
+        entrypoint: 'ExternalIdpAdminEntrypoint',
+        props: {
+          caller: 'ar-management',
+          environmentId: env,
+          audience: 'authrim-external-idp-admin-v1',
+        },
+      });
       wranglerConfig.services.push({
         binding: 'CONTROL',
         service: `${env}-ar-control`,

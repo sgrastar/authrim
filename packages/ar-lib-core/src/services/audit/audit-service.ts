@@ -25,6 +25,7 @@ import type {
   EncryptedValue,
 } from './types';
 import { DEFAULT_PII_CONFIG } from './types';
+import { readStoredTenantPIIConfig } from '../../utils/pii-config';
 import type { AuditProfile, AuditTarget } from '../../types/runtime-profile';
 import { BUILTIN_RUNTIME_PROFILES, DEFAULT_AUDIT_PROFILE_ID } from '../../types/runtime-profile';
 import type { DatabaseSource } from '../../db';
@@ -298,12 +299,14 @@ export class AuditService implements IAuditService {
       return cached.config;
     }
 
-    // Try KV cache
-    if (this.configKv) {
+    // Settings document projected to SETTINGS, else the legacy AUTHRIM_CONFIG value
+    if (this.configKv || this.env.SETTINGS) {
       try {
-        const kvValue = await this.configKv.get(`pii_config:${tenantId}`);
-        if (kvValue) {
-          const config = JSON.parse(kvValue) as TenantPIIConfig;
+        const config = await readStoredTenantPIIConfig(
+          { settings: this.env.SETTINGS, legacy: this.configKv },
+          tenantId
+        );
+        if (config) {
           this.configCache.set(tenantId, {
             config,
             expiresAt: Date.now() + this.CONFIG_CACHE_TTL_MS,

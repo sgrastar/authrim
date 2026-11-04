@@ -80,7 +80,8 @@ import { identityMappingReferenceProblem } from './identity-mapping-reference';
 import { readPlatformIdentityMappingRelations } from '../../identity-mapping-platform-followers';
 import { parsePlatformSettingsPatch } from './platform-patch-guards';
 import { applyTenantSettingsChange } from './tenant-settings-apply';
-import { gateStepUpSettingsPatch } from './step-up-settings';
+import { gateStepUpSettingsPatch, verifyProfileSwitch } from './step-up-settings';
+import type { ProfileSwitchGuard } from '../../profile-switch-verify';
 import { bulkApplyHandler, requireBulkApplyAuthority } from './bulk-apply';
 import { bulkApplyIdempotency } from './bulk-apply-idempotency';
 import {
@@ -1181,6 +1182,7 @@ settingsV2.patch('/platform/settings/:category', (c) => {
           }
 
           const actor = adminAuth?.userId ?? 'unknown';
+          const switchGuard: ProfileSwitchGuard = { compared: [] };
           const refused = await gateStepUpSettingsPatch({
             c,
             manager,
@@ -1189,11 +1191,31 @@ settingsV2.patch('/platform/settings/:category', (c) => {
             targetTenantId: getTenantIdFromContext(c),
             body,
             actor,
+            guard: switchGuard,
           });
           if (refused) return refused;
           const result = await manager.patch(category, scope, body, actor, {
             parents: settingsParentScopes(category, scope),
           });
+          // A profile compared for a profile switch changed after the decision: put back.
+          if (
+            !(await verifyProfileSwitch({
+              env: c.env,
+              manager,
+              category,
+              scope,
+              guard: switchGuard,
+              result,
+              actor,
+            }))
+          ) {
+            return errorResponse(
+              c,
+              'conflict',
+              'A runtime profile changed while this request was being decided; repeat the step-up and retry',
+              409
+            );
+          }
           const hasRejections = Object.keys(result.rejected).length > 0;
           const hasApplied =
             result.applied.length > 0 || result.cleared.length > 0 || result.disabled.length > 0;

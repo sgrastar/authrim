@@ -22,7 +22,7 @@ import {
   getTenantMetadataContextFromHono,
   loadCatalogObjectRepresentation,
   requireAdminDatabaseAdapter,
-  resolveTenantRuntimeProfilesFromEnv,
+  resolveTenantAuditProfileFromEnv,
   type DatabaseAdapter,
   type Env,
 } from '@authrim/ar-lib-core';
@@ -332,7 +332,7 @@ async function generate(
     });
   }
   if (type === 'audit_log') {
-    const { auditProfile } = await resolveTenantRuntimeProfilesFromEnv(c.env, tenantId, {
+    const auditProfile = await resolveTenantAuditProfileFromEnv(c.env, tenantId, {
       strict: true,
     });
     return auditLogReport(c.env, auditProfile, tenantId, {

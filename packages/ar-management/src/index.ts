@@ -3,6 +3,7 @@ import {
   environmentReplicationMachineRouter,
   isEnvironmentReplicationControlRequest,
 } from './routes/replication-environments';
+import { reconcileProfileRegistryProjection } from '@authrim/ar-lib-core';
 import { processTenantBackupMaintenance } from './tenant-backup-services';
 import { processTenantBackupOperations } from './tenant-backup-operation-dispatcher';
 import { createProductionTenantBackupExportAdapter } from './tenant-backup-production-export';
@@ -4292,6 +4293,18 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
     if (backup.keysRemoved > 0) log.info('Expired backup operation keys removed', backup);
   } catch {
     log.warn('Backup operation key maintenance failed', { errorType: 'BackupMaintenanceError' });
+  }
+  try {
+    // The KV copy of the runtime profiles is a projection of D1: a projection that failed when a
+    // profile was written (or deleted) is repaired here, so runtime does not keep the old one.
+    const reconciled = await reconcileProfileRegistryProjection(env);
+    if (reconciled.repaired > 0 || reconciled.failures > 0) {
+      log.info('Runtime profile projection reconciled', reconciled);
+    }
+  } catch {
+    log.warn('Runtime profile projection reconcile failed', {
+      errorType: 'ProfileRegistryReconcileError',
+    });
   }
 
   if (env.TENANT_BACKUP_WRAPPING_KEY && env.EXPORT_ARTIFACTS) {
