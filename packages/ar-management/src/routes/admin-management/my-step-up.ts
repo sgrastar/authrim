@@ -52,7 +52,7 @@ myStepUpRouter.post('/receipts', async (c) => {
   try {
     const parsed: unknown = await c.req.json();
     if (!parsed || typeof parsed !== 'object') throw new Error('Body is not an object');
-    body = parsed as { step_up_id?: unknown };
+    body = parsed;
   } catch {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
   }

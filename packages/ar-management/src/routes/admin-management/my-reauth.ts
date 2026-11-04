@@ -148,7 +148,7 @@ myReauthRouter.post('/passkey/options', async (c) => {
   try {
     const parsed: unknown = await c.req.json();
     if (!parsed || typeof parsed !== 'object') throw new Error('Body is not an object');
-    body = parsed as { rp_id?: unknown };
+    body = parsed;
   } catch {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
   }
@@ -235,7 +235,7 @@ myReauthRouter.post('/passkey/verify', async (c) => {
   try {
     const parsed: unknown = await c.req.json();
     if (!parsed || typeof parsed !== 'object') throw new Error('Body is not an object');
-    body = parsed as { challenge_id?: unknown; credential?: AuthenticationResponseJSON };
+    body = parsed;
   } catch {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
   }
