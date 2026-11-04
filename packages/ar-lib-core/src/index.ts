@@ -328,6 +328,7 @@ export * from './services/approval-governance';
 export * from './services/approval-scope-binding';
 export * from './services/step-up';
 export * from './services/admin-step-up';
+export * from './services/admin-step-up-gate';
 export * from './services/downstream-elevation-grant';
 export * from './services/downstream-elevation-grant-client';
 export * from './services/downstream-grant-protected-resource';

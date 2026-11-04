@@ -1,24 +1,36 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
-import type { AdminAuthContext, Env } from '@authrim/ar-lib-core';
+import type { AdminAuthContext } from '../../types/admin';
+import type { Env } from '../../types/env';
 
 const mocks = vi.hoisted(() => ({
   resolveEffectiveSettings: vi.fn(),
   consumeAdminStepUpReceipt: vi.fn(),
   createAdminStepUpRequirement: vi.fn(),
+  isActive: vi.fn(),
 }));
 
-vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
+vi.mock('../effective-settings', () => ({
+  resolveEffectiveSettings: mocks.resolveEffectiveSettings,
+}));
+vi.mock('../admin-database-adapter', () => ({
+  requireDedicatedAdminDatabaseAdapter: vi.fn(() => ({})),
+}));
+vi.mock('../../repositories/admin/admin-second-factor', () => ({
+  AdminSecondFactorRepository: class {
+    isActive = mocks.isActive;
+  },
+}));
+vi.mock('../admin-step-up', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../admin-step-up')>();
   return {
     ...actual,
-    resolveEffectiveSettings: mocks.resolveEffectiveSettings,
     consumeAdminStepUpReceipt: mocks.consumeAdminStepUpReceipt,
     createAdminStepUpRequirement: mocks.createAdminStepUpRequirement,
   };
 });
 
-import { AdminStepUpError, createAdminStepUpOperationHash } from '@authrim/ar-lib-core';
+import { AdminStepUpError, createAdminStepUpOperationHash } from '../admin-step-up';
 import { requireAdminStepUp } from '../admin-step-up-gate';
 
 const NOW = 50_000_000;
@@ -64,6 +76,7 @@ describe('requireAdminStepUp', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.resolveEffectiveSettings.mockResolvedValue({});
+    mocks.isActive.mockResolvedValue(true);
     mocks.createAdminStepUpRequirement.mockResolvedValue({
       stepUpId: 'asr_requirement',
       expiresAt: NOW + 300_000,
@@ -135,7 +148,9 @@ describe('requireAdminStepUp', () => {
   it('runs an L2 operation once its receipt is accepted', async () => {
     mocks.consumeAdminStepUpReceipt.mockResolvedValue(undefined);
 
-    const result = await run(deleteTenant, human(), { 'authrim-step-up-receipt': 'asp_receipt' });
+    const result = await run(deleteTenant, human({ secondFactorId: 'sf-1' }), {
+      'authrim-step-up-receipt': 'asp_receipt',
+    });
 
     expect(result).toEqual({ status: 200, body: { ran: true } });
     const [, receipt] = mocks.consumeAdminStepUpReceipt.mock.calls[0] as [unknown, string];
@@ -148,12 +163,112 @@ describe('requireAdminStepUp', () => {
       new AdminStepUpError('step_up_required', 'used')
     );
 
-    const { status, body } = await run(deleteTenant, human(), {
+    const { status, body } = await run(deleteTenant, human({ secondFactorId: 'sf-1' }), {
       'authrim-step-up-receipt': 'asp_receipt',
     });
 
     expect(status).toBe(403);
     expect(body).toMatchObject({ error: 'step_up_required', step_up_id: 'asr_requirement' });
+  });
+
+  it('does not spend a receipt once the second factor behind it was revoked', async () => {
+    mocks.isActive.mockResolvedValue(false);
+
+    const { status, body } = await run(deleteTenant, human({ secondFactorId: 'sf-1' }), {
+      'authrim-step-up-receipt': 'asp_receipt',
+    });
+
+    expect(status).toBe(403);
+    expect(body).toMatchObject({ error: 'step_up_required' });
+    expect(mocks.isActive).toHaveBeenCalledWith('admin-1', 'sf-1');
+    expect(mocks.consumeAdminStepUpReceipt).not.toHaveBeenCalled();
+  });
+
+  it('does not take a receipt from a session without a verified second factor', async () => {
+    const { status } = await run(deleteTenant, human(), { 'authrim-step-up-receipt': 'asp_x' });
+
+    expect(status).toBe(403);
+    expect(mocks.consumeAdminStepUpReceipt).not.toHaveBeenCalled();
+  });
+
+  describe('platform enforcement switch', () => {
+    it('lets operations through while the platform turned enforcement off', async () => {
+      mocks.resolveEffectiveSettings.mockResolvedValue({
+        'security.admin_step_up_enforced': false,
+      });
+
+      await expect(run(deleteTenant)).resolves.toEqual({ status: 200, body: { ran: true } });
+      await expect(
+        run(deleteTenant, human({ authMethod: 'machine_access_token', actorType: 'machine' }))
+      ).resolves.toMatchObject({ status: 200 });
+    });
+
+    it.each([
+      'admin_step_up.policy.relax',
+      'admin.second_factor.add',
+      'admin.second_factor.remove',
+    ] as const)('keeps %s protected while enforcement is off', async (operation) => {
+      mocks.resolveEffectiveSettings.mockResolvedValue({
+        'security.admin_step_up_enforced': false,
+      });
+
+      const { status, body } = await run({ operation, targetTenantId: 'tenant-a' });
+
+      expect(status).toBe(403);
+      expect(body).toMatchObject({ error: 'step_up_required' });
+    });
+
+    it.each([undefined, 'false', 0, null])(
+      'enforces for anything but false (%s)',
+      async (value) => {
+        mocks.resolveEffectiveSettings.mockResolvedValue({
+          'security.admin_step_up_enforced': value,
+        });
+
+        expect((await run(deleteTenant)).status).toBe(403);
+      }
+    );
+  });
+
+  describe('machine principals', () => {
+    const machine = (permissions: string[], globalPermissions: string[] = []) =>
+      human({
+        authMethod: 'machine_access_token',
+        actorType: 'machine',
+        sessionId: undefined,
+        permissions,
+        globalPermissions,
+      });
+
+    it('lets a machine through with the operation’s own exemption', async () => {
+      await expect(
+        run(deleteTenant, machine(['admin:step_up_exempt:tenant.delete']))
+      ).resolves.toEqual({ status: 200, body: { ran: true } });
+      await expect(
+        run(deleteTenant, machine([], ['admin:step_up_exempt:tenant.delete']))
+      ).resolves.toMatchObject({ status: 200 });
+    });
+
+    it.each([
+      ['another operation’s exemption', ['admin:step_up_exempt:signing_key.rotate']],
+      ['a wildcard', ['*']],
+      ['admin:*', ['admin:*']],
+      ['a namespace wildcard', ['admin:step_up_exempt:*']],
+    ])('refuses a machine holding only %s', async (_label, permissions) => {
+      const { status, body } = await run(deleteTenant, machine(permissions));
+
+      expect(status).toBe(403);
+      expect(body).toMatchObject({ error: 'step_up_human_required' });
+    });
+
+    it('does not let a human session skip the step-up with an exemption', async () => {
+      const { status } = await run(
+        deleteTenant,
+        human({ permissions: ['admin:step_up_exempt:tenant.delete'] })
+      );
+
+      expect(status).toBe(403);
+    });
   });
 
   it.each([

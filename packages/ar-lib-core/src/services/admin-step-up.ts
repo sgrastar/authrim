@@ -71,7 +71,30 @@ export const ADMIN_STEP_UP_OPERATIONS = {
   'admin.recovery.settings.update': 'L2',
   'admin_credential.revoke': 'L2',
   'machine.permission.grant': 'L2',
+  'admin.email.update': 'L2',
 } as const satisfies Record<string, Exclude<AdminStepUpLevel, 'L0'>>;
+
+/**
+ * Operations the platform's enforcement switch (`security.admin_step_up_enforced`) never turns
+ * off: turning it off is itself one of them, and the second-factor operations were protected
+ * before the switch existed.
+ */
+export const ADMIN_STEP_UP_ALWAYS_ENFORCED: ReadonlySet<AdminStepUpOperation> = new Set([
+  'admin_step_up.policy.relax',
+  'admin.second_factor.add',
+  'admin.second_factor.remove',
+]);
+
+/** The platform setting that turns route enforcement on (default) or, during a migration, off. */
+export const ADMIN_STEP_UP_ENFORCED_KEY = 'security.admin_step_up_enforced';
+
+/**
+ * The permission that lets a machine principal perform one operation without a human step-up.
+ * Held by exact name only: no wildcard (`*`, `admin:*`) carries it.
+ */
+export function adminStepUpExemptPermission(operation: AdminStepUpOperation): string {
+  return `admin:step_up_exempt:${operation}`;
+}
 
 export type AdminStepUpOperation = keyof typeof ADMIN_STEP_UP_OPERATIONS;
 
