@@ -12,7 +12,7 @@ import {
   resolveAccountTombstonePolicy,
   resolveEffectiveSettings,
   resolvePlatformSettingsWithSources,
-  resolveTenantRuntimeProfilesFromEnv,
+  resolveTenantAuditProfileFromEnv,
   type AuditProfile,
   resolveTenantAuditRetentionFromEnv,
   readTenantSessionSettingsStrict,
@@ -256,8 +256,7 @@ export async function buildRetentionInventory(
   const withCounts = input.withCounts !== false;
   // One strict read of the profile for the retention and the counts, so they agree.
   const auditProfile =
-    input.auditProfile ??
-    (await resolveTenantRuntimeProfilesFromEnv(env, tenantId, { strict: true })).auditProfile;
+    input.auditProfile ?? (await resolveTenantAuditProfileFromEnv(env, tenantId, { strict: true }));
 
   const [audit, checkAudit, diagnostic, oauth, sessionSettings, lookup, tenantProfile, tombstones] =
     await Promise.all([

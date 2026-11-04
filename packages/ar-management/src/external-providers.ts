@@ -73,6 +73,22 @@ async function readExternalIdpAdminBody(
   }
 }
 
+function bridgeUnavailable(c: Context<{ Bindings: Env }>): Response {
+  return c.json(
+    {
+      error: 'service_unavailable',
+      message:
+        'External IdP Bridge is not configured. Enable the bridge component in your deployment.',
+    },
+    503
+  );
+}
+
+/** True when neither bridge binding exists, i.e. the bridge component is not deployed at all. */
+function bridgeAbsent(c: Context<{ Bindings: Env }>): boolean {
+  return !c.env.EXTERNAL_IDP && !c.env.EXTERNAL_IDP_ADMIN;
+}
+
 async function proxyToExternalIdp(
   c: Context<{ Bindings: Env }>,
   path: string,
@@ -81,10 +97,11 @@ async function proxyToExternalIdp(
 ): Promise<Response> {
   const log = getLogger(c).module('EXTERNAL-PROVIDERS');
 
-  // Ensure EXTERNAL_IDP service binding is configured
-  if (!c.env.EXTERNAL_IDP) {
-    log.error('EXTERNAL_IDP service binding not configured');
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  // The admin routes are served only by the bridge's named admin entrypoint. Never fall back to
+  // the plain EXTERNAL_IDP binding: the bridge's public fetch refuses /api/admin/*.
+  if (!c.env.EXTERNAL_IDP_ADMIN) {
+    log.error('EXTERNAL_IDP_ADMIN service binding not configured');
+    return bridgeUnavailable(c);
   }
 
   try {
@@ -142,7 +159,7 @@ async function proxyToExternalIdp(
     }
 
     // Call ar-bridge via service binding
-    const response = await c.env.EXTERNAL_IDP.fetch(targetUrl, requestInit);
+    const response = await c.env.EXTERNAL_IDP_ADMIN.fetch(targetUrl, requestInit);
 
     // Return response with appropriate status
     const responseBody = await readResponseTextWithLimit(
@@ -268,7 +285,7 @@ async function proxyToExternalIdpAndInvalidateAuthenticationMethods(
  */
 export async function adminExternalProvidersListHandler(c: Context<{ Bindings: Env }>) {
   // When bridge is not configured, return an empty list instead of 500
-  if (!c.env.EXTERNAL_IDP) {
+  if (bridgeAbsent(c)) {
     return c.json({ providers: [] });
   }
   return proxyToExternalIdp(c, EXTERNAL_IDP_ADMIN_PATH, 'GET');
@@ -278,15 +295,8 @@ export async function adminExternalProvidersListHandler(c: Context<{ Bindings: E
  * POST /api/admin/external-providers - Create a new external IdP provider
  */
 export async function adminExternalProvidersCreateHandler(c: Context<{ Bindings: Env }>) {
-  if (!c.env.EXTERNAL_IDP) {
-    return c.json(
-      {
-        error: 'service_unavailable',
-        message:
-          'External IdP Bridge is not configured. Enable the bridge component in your deployment.',
-      },
-      503
-    );
+  if (!c.env.EXTERNAL_IDP_ADMIN) {
+    return bridgeUnavailable(c);
   }
   const body = await readExternalIdpAdminBody(c);
   if (!body.ok) {
@@ -396,7 +406,7 @@ export async function adminExternalProvidersDeleteHandler(c: Context<{ Bindings:
  * GET /api/admin/external-token-refresh/config - Read bridge token refresh configuration.
  */
 export async function adminExternalTokenRefreshConfigGetHandler(c: Context<{ Bindings: Env }>) {
-  if (!c.env.EXTERNAL_IDP) {
+  if (bridgeAbsent(c)) {
     return c.json({
       config: DEFAULT_TOKEN_REFRESH_CONFIG,
       runtime_status: 'bridge_not_configured',
@@ -409,15 +419,8 @@ export async function adminExternalTokenRefreshConfigGetHandler(c: Context<{ Bin
  * PUT /api/admin/external-token-refresh/config - Update bridge token refresh configuration.
  */
 export async function adminExternalTokenRefreshConfigUpdateHandler(c: Context<{ Bindings: Env }>) {
-  if (!c.env.EXTERNAL_IDP) {
-    return c.json(
-      {
-        error: 'service_unavailable',
-        message:
-          'External IdP Bridge is not configured. Enable the bridge component in your deployment.',
-      },
-      503
-    );
+  if (!c.env.EXTERNAL_IDP_ADMIN) {
+    return bridgeUnavailable(c);
   }
   const body = await readExternalIdpAdminBody(c);
   if (!body.ok) {
@@ -430,7 +433,7 @@ export async function adminExternalTokenRefreshConfigUpdateHandler(c: Context<{ 
  * GET /api/admin/external-token-refresh/runs - List recent bridge token refresh runs.
  */
 export async function adminExternalTokenRefreshRunsListHandler(c: Context<{ Bindings: Env }>) {
-  if (!c.env.EXTERNAL_IDP) {
+  if (bridgeAbsent(c)) {
     return c.json({ runs: [], runtime_status: 'bridge_not_configured' });
   }
   const query = new URL(c.req.url).search;
@@ -441,15 +444,8 @@ export async function adminExternalTokenRefreshRunsListHandler(c: Context<{ Bind
  * POST /api/admin/external-token-refresh/run - Run refresh for the current tenant.
  */
 export async function adminExternalTokenRefreshRunHandler(c: Context<{ Bindings: Env }>) {
-  if (!c.env.EXTERNAL_IDP) {
-    return c.json(
-      {
-        error: 'service_unavailable',
-        message:
-          'External IdP Bridge is not configured. Enable the bridge component in your deployment.',
-      },
-      503
-    );
+  if (!c.env.EXTERNAL_IDP_ADMIN) {
+    return bridgeUnavailable(c);
   }
   return proxyToExternalIdp(c, `${EXTERNAL_TOKEN_REFRESH_ADMIN_PATH}/run`, 'POST');
 }

@@ -21929,6 +21929,12 @@ paths:
         Updates managed audit retention settings after validating retention ranges and archival
         behavior.
       responses:
+        '409':
+          $ref: '#/components/responses/Error'
+          description: >-
+            The setting changed after it was read for this request (another change in between):
+            nothing was written. Read it again and repeat; an admin step-up already spent must be
+            repeated too.
         '200':
           $ref: '#/components/responses/AdminSettingsAuditRetentionUpdate'
         '400':
@@ -21976,6 +21982,12 @@ paths:
         Adds one named audit routing rule after validation. Duplicate rule names are rejected as
         invalid input.
       responses:
+        '409':
+          $ref: '#/components/responses/Error'
+          description: >-
+            The setting changed after it was read for this request (another change in between):
+            nothing was written. Read it again and repeat; an admin step-up already spent must be
+            repeated too.
         '200':
           $ref: '#/components/responses/AdminSettingsAuditRoutingRuleAdd'
         '400':
@@ -22004,6 +22016,12 @@ paths:
         Replaces the full audit routing rule list after validating every rule and sorting by
         priority.
       responses:
+        '409':
+          $ref: '#/components/responses/Error'
+          description: >-
+            The setting changed after it was read for this request (another change in between):
+            nothing was written. Read it again and repeat; an admin step-up already spent must be
+            repeated too.
         '200':
           $ref: '#/components/responses/AdminSettingsAuditRoutingRulesUpdate'
         '400':
@@ -22033,6 +22051,12 @@ paths:
         Deletes one audit routing rule by name from AUTHRIM_CONFIG and returns the removed rule plus
         the remaining count.
       responses:
+        '409':
+          $ref: '#/components/responses/Error'
+          description: >-
+            The setting changed after it was read for this request (another change in between):
+            nothing was written. Read it again and repeat; an admin step-up already spent must be
+            repeated too.
         '200':
           $ref: '#/components/responses/AdminSettingsAuditRoutingRuleDelete'
         '401':
@@ -23972,6 +23996,12 @@ paths:
       summary: Reset tenant audit PII configuration
       description: Deletes the tenant audit PII configuration override and returns the default configuration.
       responses:
+        '409':
+          $ref: '#/components/responses/Error'
+          description: >-
+            The setting changed after it was read for this request (another change in between):
+            nothing was written. Read it again and repeat; an admin step-up already spent must be
+            repeated too.
         '200':
           $ref: '#/components/responses/TenantAuditPiiConfigReset'
         '400':
@@ -24025,6 +24055,12 @@ paths:
       summary: Update tenant audit PII configuration
       description: Merges and validates tenant audit PII configuration fields before saving to AUTHRIM_CONFIG.
       responses:
+        '409':
+          $ref: '#/components/responses/Error'
+          description: >-
+            The setting changed after it was read for this request (another change in between):
+            nothing was written. Read it again and repeat; an admin step-up already spent must be
+            repeated too.
         '200':
           $ref: '#/components/responses/TenantAuditPiiConfigUpdate'
         '400':
@@ -24057,6 +24093,12 @@ paths:
         Applies the GDPR-oriented audit PII preset, treating IP addresses, user agents, and
         fingerprints as PII.
       responses:
+        '409':
+          $ref: '#/components/responses/Error'
+          description: >-
+            The setting changed after it was read for this request (another change in between):
+            nothing was written. Read it again and repeat; an admin step-up already spent must be
+            repeated too.
         '200':
           $ref: '#/components/responses/TenantAuditPiiConfigPreset'
         '400':
@@ -24085,6 +24127,12 @@ paths:
       summary: Apply minimal audit PII preset
       description: Applies a minimal audit PII preset for non-GDPR contexts.
       responses:
+        '409':
+          $ref: '#/components/responses/Error'
+          description: >-
+            The setting changed after it was read for this request (another change in between):
+            nothing was written. Read it again and repeat; an admin step-up already spent must be
+            repeated too.
         '200':
           $ref: '#/components/responses/TenantAuditPiiConfigPreset'
         '400':
@@ -27399,6 +27447,8 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+          description: >-
+            Not allowed, or admin step-up needed: audit.retention.shorten (see AdminStepUpRequired).
         '404':
           $ref: '#/components/responses/Error'
         '500':
@@ -27514,6 +27564,8 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+          description: >-
+            Not allowed, or admin step-up needed: webhook.destination.update when the policy changes (see AdminStepUpRequired).
         '404':
           $ref: '#/components/responses/Error'
         '500':
@@ -27768,6 +27820,8 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+          description: >-
+            Not allowed, or admin step-up needed: webhook.destination.update (see AdminStepUpRequired).
         '404':
           $ref: '#/components/responses/Error'
         '500':
@@ -29211,6 +29265,8 @@ paths:
         Creates a platform-managed logging destination. Provider config must contain non-secret
         fields only; credentials are configured through the credential rotation endpoints.
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '201':
           $ref: '#/components/responses/AdminDestinationMutation'
         default:
@@ -29280,6 +29336,8 @@ paths:
         Updates destination configuration and increments the version. expected_version or If-Match
         can be used for optimistic concurrency.
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/AdminDestinationMutation'
         '409':
@@ -29308,6 +29366,8 @@ paths:
         Promotes the prepared destination credential to active after confirmation and retains the
         previous credential for the overlap window.
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/AdminDestinationMutation'
         default:
@@ -29334,6 +29394,8 @@ paths:
         Stores the next credential secret in the configured secret backend and marks rotation as
         prepared.
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/AdminDestinationMutation'
         default:
@@ -29460,6 +29522,8 @@ paths:
       summary: Enable logging destination
       description: Re-enables a disabled logging destination and increments its version.
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/AdminDestinationMutation'
         default:
@@ -29719,6 +29783,8 @@ paths:
         Update Logging Policy in the Logging - Policies area. The request body is JSON unless the
         detailed schema for this operation states otherwise.
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/AdminLoggingMutation'
         default:
@@ -29744,6 +29810,8 @@ paths:
         Creates a logging destination override assignment and records policy history and admin audit
         evidence.
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '201':
           $ref: '#/components/responses/AdminLoggingMutation'
         default:
@@ -29944,6 +30012,8 @@ paths:
         Marks an open DLQ item deleted without deleting its payload object and records audit
         evidence.
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/AdminLoggingAction'
         default:
@@ -29999,6 +30069,8 @@ paths:
       summary: Purge DLQ item
       description: Deletes the DLQ payload object and marks the item purged after exact confirmation.
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/AdminLoggingAction'
         default:
@@ -30123,6 +30195,8 @@ paths:
         Publishes a draft logging policy snapshot after confirmation and optional expected version
         check.
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/AdminLoggingSnapshotPublish'
         default:
@@ -30148,6 +30222,8 @@ paths:
         Creates an asynchronous logging export job, writes its message payload to R2, and returns
         polling URLs.
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '202':
           $ref: '#/components/responses/AdminLoggingExportQueued'
         default:
@@ -30209,6 +30285,8 @@ paths:
         Creates a logging fallback policy for platform or tenant scope and records admin audit
         evidence.
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '201':
           $ref: '#/components/responses/AdminLoggingMutation'
         default:
@@ -30226,6 +30304,8 @@ paths:
       summary: Update logging fallback policy
       description: Updates a logging fallback policy with optional expected version conflict detection.
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/AdminLoggingMutation'
         default:
@@ -30613,6 +30693,8 @@ paths:
         schema for this operation states otherwise.
       x-authrim-route-coverage: inferred-from-source
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/AdminLoggingMutation'
         default:
@@ -30811,6 +30893,8 @@ paths:
         schema for this operation states otherwise.
       x-authrim-route-coverage: inferred-from-source
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/AdminLoggingMutation'
         default:
@@ -30837,6 +30921,8 @@ paths:
         schema for this operation states otherwise.
       x-authrim-route-coverage: inferred-from-source
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/AdminLoggingMutation'
         default:
@@ -31079,6 +31165,8 @@ paths:
         the published snapshot metadata.
       x-authrim-route-coverage: inferred-from-source
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/AdminLoggingSnapshotPublish'
         default:
@@ -33130,6 +33218,8 @@ paths:
         destination.
       x-authrim-route-coverage: inferred-from-source
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '201':
           $ref: '#/components/responses/AdminLoggingMutation'
         default:

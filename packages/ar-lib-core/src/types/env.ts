@@ -506,7 +506,12 @@ export interface Env extends LogIcebergSettingsEnv {
 
   // Service Bindings (Worker-to-Worker communication)
   KEY_MANAGER_PUBLIC?: KeyManagerPublicServiceBinding; // Public-key-only KeyManager RPC facade
-  EXTERNAL_IDP?: Fetcher; // External IdP worker (ar-bridge) for social login and enterprise IdP
+  EXTERNAL_IDP?: Fetcher; // External IdP worker (ar-bridge) for social login and enterprise IdP (public routes only)
+  /**
+   * ar-bridge's admin API, reached only through the named ExternalIdpAdminEntrypoint (props-authenticated).
+   * ar-bridge's public fetch refuses /api/admin/*, so the management step-up gate cannot be bypassed.
+   */
+  EXTERNAL_IDP_ADMIN?: Fetcher;
   CONTROL?: ControlServiceBinding; // Narrow Control Worker RPC facade for ar-management
   ACCOUNT_DIRECTORY?: AccountDirectoryServiceBinding; // Named ar-management directory coordinator RPC
   GUEST_UPGRADE_READINESS?: {

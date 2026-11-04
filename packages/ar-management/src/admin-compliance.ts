@@ -26,7 +26,7 @@ import {
   ensureDatabaseAdapter,
   resolveTenantAssignedDatabaseSourcesFromRegistry,
   getTenantMetadataContextFromHono,
-  resolveTenantRuntimeProfilesFromEnv,
+  resolveTenantAuditProfileFromEnv,
   type AuditProfile,
 } from '@authrim/ar-lib-core';
 import {
@@ -178,9 +178,7 @@ export async function readComplianceStatus(c: Context<{ Bindings: Env }>) {
   const adapter = createAdapter(c, tenantId);
   const adminAdapter = requireAdminDatabaseAdapter(c.env, 'admin-compliance-mfa');
   // One strict read of the audit profile for the retention and the counts.
-  const auditProfile = (
-    await resolveTenantRuntimeProfilesFromEnv(c.env, tenantId, { strict: true })
-  ).auditProfile;
+  const auditProfile = await resolveTenantAuditProfileFromEnv(c.env, tenantId, { strict: true });
   const piiStores = await resolveTenantAssignedDatabaseSourcesFromRegistry(c.env, {
     tenantId,
     role: 'tenant_pii',

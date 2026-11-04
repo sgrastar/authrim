@@ -81,30 +81,31 @@ describe('DatabaseProfileRegistryBackend', () => {
     adapter = createMockAdapter();
   });
 
-  it('updates first and falls back to insert for new rows', async () => {
-    vi.mocked(adapter.execute)
-      .mockResolvedValueOnce({ success: true, rowsAffected: 0 })
-      .mockResolvedValueOnce({ success: true, rowsAffected: 1 });
+  it('writes a profile with one upsert statement', async () => {
+    vi.mocked(adapter.execute).mockResolvedValueOnce({ success: true, rowsAffected: 1 });
 
     const backend = new DatabaseProfileRegistryBackend(adapter);
     await backend.put(CUSTOM_AUDIT_PROFILE);
 
-    expect(adapter.execute).toHaveBeenNthCalledWith(
-      1,
-      'UPDATE profile_registry SET payload_json = ?, updated_at = ? WHERE kind = ? AND id = ?',
-      [JSON.stringify(CUSTOM_AUDIT_PROFILE), expect.any(String), 'audit', 'tenant-a-audit']
+    expect(adapter.execute).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(adapter.execute).mock.calls[0][0]).toContain(
+      'ON CONFLICT (kind, id) DO UPDATE'
     );
-    expect(adapter.execute).toHaveBeenNthCalledWith(
-      2,
-      'INSERT INTO profile_registry (id, kind, payload_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
-      [
-        'tenant-a-audit',
-        'audit',
-        JSON.stringify(CUSTOM_AUDIT_PROFILE),
-        expect.any(String),
-        expect.any(String),
-      ]
-    );
+  });
+
+  it('writes conditionally on the payload that was compared', async () => {
+    const backend = new DatabaseProfileRegistryBackend(adapter);
+    vi.mocked(adapter.execute).mockResolvedValue({ success: true, rowsAffected: 0 });
+
+    expect(await backend.putIfUnchanged(CUSTOM_AUDIT_PROFILE, null)).toBe(false);
+    expect(await backend.putIfUnchanged(CUSTOM_AUDIT_PROFILE, '{"old":1}')).toBe(false);
+    expect(await backend.deleteIfUnchanged('audit', 'tenant-a-audit', '{"old":1}')).toBe(false);
+
+    const calls = vi.mocked(adapter.execute).mock.calls;
+    expect(calls[0][0]).toContain('ON CONFLICT (kind, id) DO NOTHING');
+    expect(calls[1][0]).toContain('AND payload_json = ?');
+    expect(calls[1][1]).toContain('{"old":1}');
+    expect(calls[2][0]).toContain('AND payload_json = ?');
   });
 
   it('reads stored profiles from payload_json rows', async () => {

@@ -505,7 +505,11 @@ export async function adminUserSuspendHandler(c: Context<{ Bindings: Env }>) {
         const requestId = c.req.header('X-Request-ID');
 
         // Get retention days from tenant config (default: 90)
-        const retentionDays = await getOperationalLogRetentionDays(c.env.AUTHRIM_CONFIG, tenantId);
+        const retentionDays = await getOperationalLogRetentionDays(
+          c.env.AUTHRIM_CONFIG,
+          tenantId,
+          c.env.SETTINGS
+        );
 
         await storeOperationalLog(c.env, {
           tenantId,
@@ -694,7 +698,11 @@ export async function adminUserLockHandler(c: Context<{ Bindings: Env }>) {
         const requestId = c.req.header('X-Request-ID');
 
         // Get retention days from tenant config (default: 90)
-        const retentionDays = await getOperationalLogRetentionDays(c.env.AUTHRIM_CONFIG, tenantId);
+        const retentionDays = await getOperationalLogRetentionDays(
+          c.env.AUTHRIM_CONFIG,
+          tenantId,
+          c.env.SETTINGS
+        );
 
         await storeOperationalLog(c.env, {
           tenantId,
@@ -902,7 +910,11 @@ export async function adminUserActivateHandler(c: Context<{ Bindings: Env }>) {
         const requestId = c.req.header('X-Request-ID');
 
         // Get retention days from tenant config (default: 90)
-        const retentionDays = await getOperationalLogRetentionDays(c.env.AUTHRIM_CONFIG, tenantId);
+        const retentionDays = await getOperationalLogRetentionDays(
+          c.env.AUTHRIM_CONFIG,
+          tenantId,
+          c.env.SETTINGS
+        );
 
         await storeOperationalLog(c.env, {
           tenantId,

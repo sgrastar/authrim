@@ -1288,6 +1288,11 @@
             "required": true
           },
           {
+            "kind": "service",
+            "name": "EXTERNAL_IDP_ADMIN",
+            "required": true
+          },
+          {
             "capability": "control_plane.provisioning",
             "kind": "service",
             "name": "CONTROL",

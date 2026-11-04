@@ -4,61 +4,64 @@ import type { Env } from '@authrim/ar-lib-core';
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
-  return {
-    ...actual,
-    resolveTenantRuntimeProfilesFromEnv: vi.fn(async (env: Partial<Env>) => {
-      const auditProfileId = (env as Record<string, unknown>).DEFAULT_AUDIT_PROFILE_ID;
-      if (auditProfileId === 'builtin:audit:archive-only-logpush') {
-        return {
-          auditProfile: {
-            id: 'builtin:audit:archive-only-logpush',
-            kind: 'audit',
-            label: 'Archive Only + Logpush',
-            builtin: true,
-            primary: null,
-            archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
-            sinks: [],
-          },
-        };
-      }
-      if (auditProfileId === 'custom:audit:postgres-primary') {
-        return {
-          auditProfile: {
-            id: 'custom:audit:postgres-primary',
-            kind: 'audit',
-            label: 'Postgres Primary',
-            builtin: false,
-            primary: { type: 'postgres', connectionRef: 'audit-primary', dataset: 'event_log' },
-            archive: null,
-            sinks: [],
-          },
-        };
-      }
-      if (auditProfileId === 'custom:audit:mysql-primary') {
-        return {
-          auditProfile: {
-            id: 'custom:audit:mysql-primary',
-            kind: 'audit',
-            label: 'MySQL Primary',
-            builtin: false,
-            primary: { type: 'mysql', connectionRef: 'audit-primary-mysql', dataset: 'event_log' },
-            archive: null,
-            sinks: [],
-          },
-        };
-      }
+  const resolveProfileSet = vi.fn(async (env: Partial<Env>) => {
+    const auditProfileId = (env as Record<string, unknown>).DEFAULT_AUDIT_PROFILE_ID;
+    if (auditProfileId === 'builtin:audit:archive-only-logpush') {
       return {
         auditProfile: {
-          id: 'builtin:audit:standard',
+          id: 'builtin:audit:archive-only-logpush',
           kind: 'audit',
-          label: 'Standard Audit',
+          label: 'Archive Only + Logpush',
           builtin: true,
-          primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
+          primary: null,
+          archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
+          sinks: [],
+        },
+      };
+    }
+    if (auditProfileId === 'custom:audit:postgres-primary') {
+      return {
+        auditProfile: {
+          id: 'custom:audit:postgres-primary',
+          kind: 'audit',
+          label: 'Postgres Primary',
+          builtin: false,
+          primary: { type: 'postgres', connectionRef: 'audit-primary', dataset: 'event_log' },
           archive: null,
           sinks: [],
         },
       };
-    }),
+    }
+    if (auditProfileId === 'custom:audit:mysql-primary') {
+      return {
+        auditProfile: {
+          id: 'custom:audit:mysql-primary',
+          kind: 'audit',
+          label: 'MySQL Primary',
+          builtin: false,
+          primary: { type: 'mysql', connectionRef: 'audit-primary-mysql', dataset: 'event_log' },
+          archive: null,
+          sinks: [],
+        },
+      };
+    }
+    return {
+      auditProfile: {
+        id: 'builtin:audit:standard',
+        kind: 'audit',
+        label: 'Standard Audit',
+        builtin: true,
+        primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
+        archive: null,
+        sinks: [],
+      },
+    };
+  });
+  return {
+    ...actual,
+    resolveTenantRuntimeProfilesFromEnv: resolveProfileSet,
+    resolveTenantAuditProfileFromEnv: async (env: Partial<Env>) =>
+      (await resolveProfileSet(env)).auditProfile,
   };
 });
 

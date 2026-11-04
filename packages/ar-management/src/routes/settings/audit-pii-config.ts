@@ -5,8 +5,9 @@
  * for audit logging. Determines which fields are considered PII, encryption
  * settings, and retention periods.
  *
- * KV Keys:
- * - pii_config:{tenantId}: JSON-encoded TenantPIIConfig
+ * Stored as the tenant's `audit-pii` settings document (D1 is the source, written only against
+ * the version that was judged; SETTINGS KV is the projection runtime reads). The older
+ * `pii_config:{tenantId}` value in AUTHRIM_CONFIG is adopted into the document on first read.
  *
  * @packageDocumentation
  */
@@ -14,11 +15,21 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import type { TenantPIIConfig } from '@authrim/ar-lib-core';
-import { DEFAULT_PII_CONFIG } from '@authrim/ar-lib-core';
+import {
+  AR_ERROR_CODES,
+  AUDIT_PII_CATEGORY,
+  AUDIT_PII_CONFIG_KEY,
+  ConflictError,
+  DEFAULT_PII_CONFIG,
+  auditPIIProjectionKey,
+  createErrorResponse,
+  isValidAuditSettingsTenantId,
+  listTenantPIIConfigs,
+  loadPIIConfigState,
+  syncLegacyPIIConfig,
+  type PIIConfigState,
+} from '@authrim/ar-lib-core';
 import { requireAdminStepUp } from '../../admin-step-up-gate';
-
-// KV key prefix
-const KV_KEY_PII_CONFIG_PREFIX = 'pii_config:';
 
 // Validation constraints
 const MIN_RETENTION_DAYS = 1;
@@ -32,17 +43,85 @@ const RETENTION_FIELDS = [
   'operationalLogRetentionDays',
 ] as const;
 
-/** The tenant's stored config; null when it cannot be read (then a change counts as shortening). */
-async function readStoredPIIConfig(
+/** One strict canonical read of the tenant's document, or the response that refuses the request. */
+async function loadState(
   c: Context<{ Bindings: Env }>,
   tenantId: string
-): Promise<TenantPIIConfig | null> {
-  if (!c.env.AUTHRIM_CONFIG) return null;
+): Promise<PIIConfigState | Response> {
+  if (!isValidAuditSettingsTenantId(tenantId)) {
+    return c.json({ error: 'invalid_request', error_description: 'tenantId is invalid' }, 400);
+  }
   try {
-    const kvValue = await c.env.AUTHRIM_CONFIG.get(`${KV_KEY_PII_CONFIG_PREFIX}${tenantId}`);
-    return kvValue ? (JSON.parse(kvValue) as TenantPIIConfig) : { ...DEFAULT_PII_CONFIG };
+    return await loadPIIConfigState(c.env, tenantId);
   } catch {
+    return c.json(
+      {
+        error: 'temporarily_unavailable',
+        error_description: 'The PII configuration could not be read.',
+      },
+      503
+    );
+  }
+}
+/**
+ * Save (or, with `after` null, clear) the tenant's configuration against the version it was read
+ * at: dry run, the step-up gate (spent only after nothing else can refuse the request), then the
+ * save, which fails with a conflict if the document changed since. Null on success.
+ */
+async function savePIIConfig(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  state: PIIConfigState,
+  kind: string,
+  after: TenantPIIConfig | null
+): Promise<Response | null> {
+  const scope = { type: 'tenant', id: tenantId } as const;
+  const request =
+    after === null
+      ? { ifMatch: state.version, clear: [AUDIT_PII_CONFIG_KEY] }
+      : { ifMatch: state.version, set: { [AUDIT_PII_CONFIG_KEY]: after } };
+  try {
+    // Validate without saving anything; the version judged is the one read in `state`.
+    if (after !== null) {
+      const validation = state.manager.validate(AUDIT_PII_CATEGORY, {
+        [AUDIT_PII_CONFIG_KEY]: after,
+      });
+      if (!validation.valid) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: validation.errors.map((e) => e.reason).join('; '),
+          },
+          400
+        );
+      }
+    }
+    const refused = await gatePIIRetention(
+      c,
+      tenantId,
+      kind,
+      state.stored ?? { ...DEFAULT_PII_CONFIG },
+      after ?? { ...DEFAULT_PII_CONFIG }
+    );
+    if (refused) return refused;
+    // First use after an upgrade: the document is created from what was in effect only now,
+    // after the gate (the save then fails its version check if it was created otherwise).
+    await state.adopt?.();
+    await state.manager.patch(AUDIT_PII_CATEGORY, scope, request, 'audit-pii-config');
+    // Runtime falls back to the legacy key while the projection is missing: keep it current.
+    await syncLegacyPIIConfig(c.env, tenantId);
     return null;
+  } catch (error) {
+    if (error instanceof ConflictError) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT, {
+        variables: {
+          resource: 'audit_pii_config',
+          reason:
+            'The PII configuration changed while this request was being decided; repeat the step-up and retry',
+        },
+      });
+    }
+    throw error;
   }
 }
 
@@ -55,18 +134,16 @@ async function gatePIIRetention(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
   kind: string,
-  before: TenantPIIConfig | null,
+  before: TenantPIIConfig,
   after: TenantPIIConfig
 ): Promise<Response | null> {
   const value = (config: TenantPIIConfig, field: (typeof RETENTION_FIELDS)[number]) =>
     config[field] ?? DEFAULT_PII_CONFIG[field];
-  const shortens =
-    before === null ||
-    RETENTION_FIELDS.some((field) => {
-      const was = value(before, field);
-      const now = value(after, field);
-      return typeof was === 'number' && (typeof now !== 'number' || now < was);
-    });
+  const shortens = RETENTION_FIELDS.some((field) => {
+    const was = value(before, field);
+    const now = value(after, field);
+    return typeof was === 'number' && (typeof now !== 'number' || now < was);
+  });
   if (!shortens) return null;
   return requireAdminStepUp(c as unknown as Parameters<typeof requireAdminStepUp>[0], {
     operation: 'audit.retention.shorten',
@@ -100,15 +177,15 @@ export async function getTenantPIIConfig(c: Context<{ Bindings: Env }>) {
   let config: TenantPIIConfig = { ...DEFAULT_PII_CONFIG };
   let source: 'kv' | 'default' = 'default';
 
-  if (c.env.AUTHRIM_CONFIG) {
+  if (isValidAuditSettingsTenantId(tenantId)) {
     try {
-      const kvValue = await c.env.AUTHRIM_CONFIG.get(`${KV_KEY_PII_CONFIG_PREFIX}${tenantId}`);
-      if (kvValue) {
-        config = JSON.parse(kvValue) as TenantPIIConfig;
+      const state = await loadPIIConfigState(c.env, tenantId);
+      if (state.stored) {
+        config = state.stored;
         source = 'kv';
       }
     } catch {
-      // KV read error or parse error - use default
+      // read error - use default
     }
   }
 
@@ -117,7 +194,7 @@ export async function getTenantPIIConfig(c: Context<{ Bindings: Env }>) {
     config,
     source,
     defaults: DEFAULT_PII_CONFIG,
-    kv_key: `${KV_KEY_PII_CONFIG_PREFIX}${tenantId}`,
+    kv_key: isValidAuditSettingsTenantId(tenantId) ? auditPIIProjectionKey(tenantId) : null,
     field_descriptions: {
       piiFields: {
         email: 'Email addresses',
@@ -164,17 +241,6 @@ export async function getTenantPIIConfig(c: Context<{ Bindings: Env }>) {
  * Update PII configuration for a tenant
  */
 export async function updateTenantPIIConfig(c: Context<{ Bindings: Env }>) {
-  if (!c.env.AUTHRIM_CONFIG) {
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'AUTHRIM_CONFIG KV namespace is not configured',
-        error_code: 'AR100001',
-      },
-      500
-    );
-  }
-
   const tenantId = c.req.param('tenantId')!;
 
   if (!tenantId) {
@@ -190,9 +256,10 @@ export async function updateTenantPIIConfig(c: Context<{ Bindings: Env }>) {
   const body = await c.req.json<Partial<TenantPIIConfig>>();
   const errors: string[] = [];
 
-  // Get existing config or default
-  const storedConfig = await readStoredPIIConfig(c, tenantId);
-  const existingConfig: TenantPIIConfig = { ...(storedConfig ?? DEFAULT_PII_CONFIG) };
+  // Get existing config or default (one strict read; the save is made against its version)
+  const state = await loadState(c, tenantId);
+  if (state instanceof Response) return state;
+  const existingConfig: TenantPIIConfig = { ...(state.stored ?? DEFAULT_PII_CONFIG) };
 
   // Merge and validate piiFields
   if (body.piiFields) {
@@ -288,24 +355,14 @@ export async function updateTenantPIIConfig(c: Context<{ Bindings: Env }>) {
     );
   }
 
-  const refused = await gatePIIRetention(
-    c,
-    tenantId,
-    'pii_config.update',
-    storedConfig,
-    existingConfig
-  );
+  const refused = await savePIIConfig(c, tenantId, state, 'pii_config.update', existingConfig);
   if (refused) return refused;
-
-  // Save updated config
-  const kvKey = `${KV_KEY_PII_CONFIG_PREFIX}${tenantId}`;
-  await c.env.AUTHRIM_CONFIG.put(kvKey, JSON.stringify(existingConfig));
 
   return c.json({
     success: true,
     tenant_id: tenantId,
     config: existingConfig,
-    kv_key: kvKey,
+    kv_key: auditPIIProjectionKey(tenantId),
     note: 'PII configuration updated. Changes will take effect within 3 minutes (config cache TTL).',
   });
 }
@@ -315,17 +372,6 @@ export async function updateTenantPIIConfig(c: Context<{ Bindings: Env }>) {
  * Reset PII configuration to defaults for a tenant
  */
 export async function resetTenantPIIConfig(c: Context<{ Bindings: Env }>) {
-  if (!c.env.AUTHRIM_CONFIG) {
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'AUTHRIM_CONFIG KV namespace is not configured',
-        error_code: 'AR100001',
-      },
-      500
-    );
-  }
-
   const tenantId = c.req.param('tenantId')!;
 
   if (!tenantId) {
@@ -338,17 +384,10 @@ export async function resetTenantPIIConfig(c: Context<{ Bindings: Env }>) {
     );
   }
 
-  const refused = await gatePIIRetention(
-    c,
-    tenantId,
-    'pii_config.reset',
-    await readStoredPIIConfig(c, tenantId),
-    { ...DEFAULT_PII_CONFIG }
-  );
+  const state = await loadState(c, tenantId);
+  if (state instanceof Response) return state;
+  const refused = await savePIIConfig(c, tenantId, state, 'pii_config.reset', null);
   if (refused) return refused;
-
-  const kvKey = `${KV_KEY_PII_CONFIG_PREFIX}${tenantId}`;
-  await c.env.AUTHRIM_CONFIG.delete(kvKey);
 
   return c.json({
     success: true,
@@ -367,17 +406,6 @@ export async function resetTenantPIIConfig(c: Context<{ Bindings: Env }>) {
  * Apply GDPR-compliant PII preset
  */
 export async function applyGDPRPreset(c: Context<{ Bindings: Env }>) {
-  if (!c.env.AUTHRIM_CONFIG) {
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'AUTHRIM_CONFIG KV namespace is not configured',
-        error_code: 'AR100001',
-      },
-      500
-    );
-  }
-
   const tenantId = c.req.param('tenantId')!;
 
   if (!tenantId) {
@@ -408,24 +436,17 @@ export async function applyGDPRPreset(c: Context<{ Bindings: Env }>) {
     piiLogRetentionDays: 365, // 1 year default, can be extended if needed
   };
 
-  const refused = await gatePIIRetention(
-    c,
-    tenantId,
-    'pii_config.preset.gdpr',
-    await readStoredPIIConfig(c, tenantId),
-    gdprConfig
-  );
+  const state = await loadState(c, tenantId);
+  if (state instanceof Response) return state;
+  const refused = await savePIIConfig(c, tenantId, state, 'pii_config.preset.gdpr', gdprConfig);
   if (refused) return refused;
-
-  const kvKey = `${KV_KEY_PII_CONFIG_PREFIX}${tenantId}`;
-  await c.env.AUTHRIM_CONFIG.put(kvKey, JSON.stringify(gdprConfig));
 
   return c.json({
     success: true,
     tenant_id: tenantId,
     preset: 'gdpr',
     config: gdprConfig,
-    kv_key: kvKey,
+    kv_key: auditPIIProjectionKey(tenantId),
     gdpr_notes: [
       'IP addresses are now treated as PII (GDPR Article 4)',
       'User agents are treated as PII to prevent fingerprinting',
@@ -441,17 +462,6 @@ export async function applyGDPRPreset(c: Context<{ Bindings: Env }>) {
  * Apply minimal PII preset (for non-EU contexts)
  */
 export async function applyMinimalPreset(c: Context<{ Bindings: Env }>) {
-  if (!c.env.AUTHRIM_CONFIG) {
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'AUTHRIM_CONFIG KV namespace is not configured',
-        error_code: 'AR100001',
-      },
-      500
-    );
-  }
-
   const tenantId = c.req.param('tenantId')!;
 
   if (!tenantId) {
@@ -482,24 +492,23 @@ export async function applyMinimalPreset(c: Context<{ Bindings: Env }>) {
     piiLogRetentionDays: 730, // 2 years
   };
 
-  const refused = await gatePIIRetention(
+  const state = await loadState(c, tenantId);
+  if (state instanceof Response) return state;
+  const refused = await savePIIConfig(
     c,
     tenantId,
+    state,
     'pii_config.preset.minimal',
-    await readStoredPIIConfig(c, tenantId),
     minimalConfig
   );
   if (refused) return refused;
-
-  const kvKey = `${KV_KEY_PII_CONFIG_PREFIX}${tenantId}`;
-  await c.env.AUTHRIM_CONFIG.put(kvKey, JSON.stringify(minimalConfig));
 
   return c.json({
     success: true,
     tenant_id: tenantId,
     preset: 'minimal',
     config: minimalConfig,
-    kv_key: kvKey,
+    kv_key: auditPIIProjectionKey(tenantId),
     note: 'Minimal PII preset applied. This is NOT GDPR compliant.',
   });
 }
@@ -513,38 +522,13 @@ export async function applyMinimalPreset(c: Context<{ Bindings: Env }>) {
  * List all tenant PII configurations
  */
 export async function listAllTenantPIIConfigs(c: Context<{ Bindings: Env }>) {
-  if (!c.env.AUTHRIM_CONFIG) {
-    return c.json({
-      tenants: [],
-      note: 'AUTHRIM_CONFIG KV namespace is not configured',
-    });
-  }
-
   try {
-    const list = await c.env.AUTHRIM_CONFIG.list({ prefix: KV_KEY_PII_CONFIG_PREFIX });
-
-    const configs = await Promise.all(
-      list.keys.map(async (key) => {
-        const tenantId = key.name.replace(KV_KEY_PII_CONFIG_PREFIX, '');
-        const value = await c.env.AUTHRIM_CONFIG!.get(key.name);
-        let config: TenantPIIConfig | null = null;
-
-        if (value) {
-          try {
-            config = JSON.parse(value) as TenantPIIConfig;
-          } catch {
-            // Parse error
-          }
-        }
-
-        return {
-          tenant_id: tenantId,
-          config: config ?? DEFAULT_PII_CONFIG,
-          has_custom_config: config !== null,
-        };
-      })
-    );
-
+    const listed = await listTenantPIIConfigs(c.env);
+    const configs = listed.map(({ tenantId, config }) => ({
+      tenant_id: tenantId,
+      config,
+      has_custom_config: true,
+    }));
     return c.json({
       tenants: configs,
       count: configs.length,

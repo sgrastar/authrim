@@ -39,6 +39,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getLogger: vi.fn(() => ({ module: vi.fn(() => mocks.logger) })),
     resolveTenantAssignedDatabaseSourcesFromRegistry: mocks.resolveStores,
     resolveTenantRuntimeProfilesFromEnv: vi.fn(async () => ({ auditProfile: { id: 'p' } })),
+    resolveTenantAuditProfileFromEnv: vi.fn(async () => ({ id: 'p' })),
     ensureDatabaseAdapter: vi.fn(() => mocks.core),
   };
 });

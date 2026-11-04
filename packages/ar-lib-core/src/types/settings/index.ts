@@ -32,6 +32,8 @@ export * from './assurance-levels';
 export * from './check-api-audit';
 export * from './log-storage';
 export * from './admin-notices';
+export * from './audit-routing';
+export * from './audit-pii';
 export * from './dcr';
 export * from './login-ui';
 export * from './authentication-methods';

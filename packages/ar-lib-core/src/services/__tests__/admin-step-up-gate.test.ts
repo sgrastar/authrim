@@ -279,6 +279,29 @@ describe('requireAdminStepUp', () => {
       expect(body).toMatchObject({ error: 'step_up_human_required' });
     });
 
+    it('a request that also performs another operation needs the exemption for each', async () => {
+      const compound = {
+        operation: 'webhook.destination.update' as const,
+        targetTenantId: 'tenant-a',
+        alsoCovers: ['audit.retention.shorten' as const],
+      };
+      const onlyOne = await run(
+        compound,
+        machine(['admin:step_up_exempt:webhook.destination.update'])
+      );
+      expect(onlyOne.status).toBe(403);
+      expect(onlyOne.body).toMatchObject({ error: 'step_up_human_required' });
+      await expect(
+        run(
+          compound,
+          machine([
+            'admin:step_up_exempt:webhook.destination.update',
+            'admin:step_up_exempt:audit.retention.shorten',
+          ])
+        )
+      ).resolves.toMatchObject({ status: 200 });
+    });
+
     it('does not exempt an agent, nor anyone from an always-enforced operation', async () => {
       const agent = human({
         authMethod: 'bearer',
