@@ -29,6 +29,9 @@ describe('tenant request path classification', () => {
     '/api/admin/me/second-factors/webauthn/options',
     '/api/admin/me/second-factors/webauthn/verify',
     '/api/admin/me/second-factors/factor-id',
+    '/api/admin/me/second-factor-recovery',
+    '/api/admin/me/second-factor-recovery/complete',
+    '/api/admin/me/second-factor-recovery/cancel',
   ])('keeps Admin identity operations platform-owned: %s', (path) => {
     expect(classifyTenantRequestPath(path)).toBe('platform_admin');
   });
@@ -46,6 +49,8 @@ describe('tenant request path classification', () => {
     '/api/admin/me/reauth/second-factor/unknown',
     '/api/admin/me/second-factors/factor-id/unknown',
     '/api/admin/me/second-factors/webauthn/unknown/extra',
+    '/api/admin/me/second-factor-recovery/other',
+    '/api/admin/admin-second-factor-recoveries',
   ])('retains tenant isolation for tenant operations and adjacent routes: %s', (path) => {
     expect(classifyTenantRequestPath(path)).toBe('tenant_scoped_admin');
   });

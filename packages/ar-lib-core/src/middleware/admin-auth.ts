@@ -852,6 +852,7 @@ function isPlatformAdminSessionPath(path: string): boolean {
     /^\/api\/admin\/me\/second-factors(?:\/webauthn\/(?:options|verify)|\/[^/]+)?\/?$/u.test(
       path
     ) ||
+    /^\/api\/admin\/me\/second-factor-recovery(?:\/(?:complete|cancel))?\/?$/u.test(path) ||
     /^\/api\/admin\/agent-login-handoffs\/alh_[A-Za-z0-9_-]{32}\/approve\/?$/u.test(path)
   );
 }

@@ -17,7 +17,7 @@ const INITIAL_ADMIN_SETUP_PATH =
 const ADMIN_INVITATION_ENROLLMENT_PATH =
   /^\/api\/admin\/invitations\/(?:redeem|passkey\/options|passkey\/register|activate)\/?$/;
 const ADMIN_SELF_SERVICE_PATH =
-  /^\/api\/admin\/me\/(?:(?:passkeys|agent-consents)(?:\/[^/]+)?|reauth\/(?:passkey|second-factor)\/(?:options|verify)|step-up\/receipts|second-factors(?:\/webauthn\/(?:options|verify)|\/[^/]+)?)\/?$/;
+  /^\/api\/admin\/me\/(?:(?:passkeys|agent-consents)(?:\/[^/]+)?|reauth\/(?:passkey|second-factor)\/(?:options|verify)|step-up\/receipts|second-factors(?:\/webauthn\/(?:options|verify)|\/[^/]+)?|second-factor-recovery(?:\/(?:complete|cancel))?)\/?$/;
 const ADMIN_AGENT_LOGIN_HANDOFF_APPROVAL_PATH =
   /^\/api\/admin\/agent-login-handoffs\/alh_[A-Za-z0-9_-]{32}\/approve\/?$/;
 const TENANT_ID_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;

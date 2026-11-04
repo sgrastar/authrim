@@ -3750,6 +3750,90 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  /api/admin/admin-second-factor-recoveries:
+    get:
+      tags:
+        - Admin Passkeys
+      operationId: getApiAdminAdminSecondFactorRecoveries
+      summary: List open second-factor recovery requests
+      description: >-
+        Open recovery requests of the selected tenant's admins (pending and inside their window),
+        newest first, with the requester's email. Requires admin users read permission.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        '200':
+          description: Open requests.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - items
+                properties:
+                  items:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: '#/components/schemas/AdminSecondFactorRecovery'
+                        - type: object
+                          properties:
+                            admin_user_id:
+                              type: string
+                            admin_email:
+                              type:
+                                - string
+                                - 'null'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/admin-second-factor-recoveries/{id}/cancel:
+    post:
+      tags:
+        - Admin Passkeys
+      operationId: postApiAdminAdminSecondFactorRecoveriesByIdCancel
+      summary: Cancel another admin's second-factor recovery request
+      description: >-
+        Cancel an open recovery request of one of the selected tenant's admins during its waiting
+        period. Requires admin users write permission and a fresh passkey (403
+        admin_fresh_auth_required otherwise); no step-up receipt, so an administrator without a
+        second factor can still stop an unexpected request. The requester and the tenant's
+        administrators are notified.
+      x-authrim-route-coverage: inferred-from-source
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The request was cancelled.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - cancelled
+                properties:
+                  cancelled:
+                    type: boolean
+        '403':
+          description: admin_fresh_auth_required, or not a human admin session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No open request with this ID in the tenant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
   /api/admin/admin-invitations:
     get:
       tags:
@@ -31579,6 +31663,119 @@ paths:
           $ref: '#/components/responses/Error'
       security:
         - adminSessionCookie: []
+  /api/admin/me/second-factor-recovery:
+    get:
+      tags:
+        - Admin Passkeys
+      operationId: getApiAdminMeSecondFactorRecovery
+      summary: Read own second-factor recovery request
+      description: >-
+        The current admin's open recovery request, or null. A request is filed by registering a
+        new security key with purpose recovery (POST /api/admin/me/second-factors/webauthn/options
+        and verify).
+        A selected tenant runtime snapshot is not required.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        '200':
+          description: The open request, if any.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - recovery
+                properties:
+                  recovery:
+                    oneOf:
+                      - $ref: '#/components/schemas/AdminSecondFactorRecovery'
+                      - type: 'null'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/me/second-factor-recovery/complete:
+    post:
+      tags:
+        - Admin Passkeys
+      operationId: postApiAdminMeSecondFactorRecoveryComplete
+      summary: Complete own second-factor recovery
+      description: >-
+        After the waiting period, with a fresh passkey: revoke every active second factor of the
+        current admin, make the request's security key their second factor, end their other
+        sessions and clear second-factor evidence from this one, in one batch. The requester and
+        the tenant's administrators are notified.
+        A selected tenant runtime snapshot is not required.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        '200':
+          description: The recovery was completed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - completed
+                  - second_factor_id
+                properties:
+                  completed:
+                    type: boolean
+                  second_factor_id:
+                    type: string
+        '403':
+          description: admin_fresh_auth_required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No open recovery request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: >-
+            recovery_waiting (with not_before) before the waiting period ends, or credential_in_use.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/me/second-factor-recovery/cancel:
+    post:
+      tags:
+        - Admin Passkeys
+      operationId: postApiAdminMeSecondFactorRecoveryCancel
+      summary: Cancel own second-factor recovery request
+      description: >-
+        Cancel the current admin's open recovery request. The tenant's administrators are notified.
+        A selected tenant runtime snapshot is not required.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        '200':
+          description: The request was cancelled.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - cancelled
+                properties:
+                  cancelled:
+                    type: boolean
+        '404':
+          description: No open recovery request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
   /api/admin/me/second-factors:
     get:
       tags:
@@ -31667,6 +31864,15 @@ paths:
                 label:
                   type: string
                   maxLength: 64
+                purpose:
+                  type: string
+                  enum:
+                    - recovery
+                  description: >-
+                    recovery files a second-factor recovery request with this key instead of
+                    registering it. It needs a fresh passkey, another administrator in the system,
+                    no open request, and email delivery (403 recovery_requires_last_resort,
+                    409 recovery_pending, 503 recovery_notification_unavailable).
       responses:
         '200':
           description: Registration options and the challenge ID.
@@ -31690,6 +31896,7 @@ paths:
                     enum:
                       - first
                       - step_up
+                      - recovery
         '403':
           description: >-
             step_up_required, admin_fresh_auth_required or second_factor_recovery_required.
@@ -31732,16 +31939,26 @@ paths:
                   description: WebAuthn RegistrationResponseJSON.
       responses:
         '201':
-          description: The second factor was registered.
+          description: >-
+            The second factor was registered, or (for a recovery challenge) the recovery request
+            was filed and the administrators were notified (503 recovery_notification_failed and
+            the request withdrawn when they could not be).
           content:
             application/json:
               schema:
-                type: object
-                required:
-                  - second_factor
-                properties:
-                  second_factor:
-                    $ref: '#/components/schemas/AdminSecondFactor'
+                oneOf:
+                  - type: object
+                    required:
+                      - second_factor
+                    properties:
+                      second_factor:
+                        $ref: '#/components/schemas/AdminSecondFactor'
+                  - type: object
+                    required:
+                      - recovery
+                    properties:
+                      recovery:
+                        $ref: '#/components/schemas/AdminSecondFactorRecovery'
         '400':
           description: >-
             invalid_challenge, verification_failed, or second_factor_not_device_bound for a
@@ -76213,6 +76430,45 @@ components:
         - created_at
         - last_used_at
         - revoked_at
+    AdminSecondFactorRecovery:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum:
+            - pending
+            - completed
+            - cancelled
+            - expired
+        label:
+          type:
+            - string
+            - 'null'
+        aaguid:
+          type:
+            - string
+            - 'null'
+        requested_at:
+          type: integer
+          format: int64
+        not_before:
+          type: integer
+          format: int64
+          description: Earliest completion time, in milliseconds since the epoch.
+        expires_at:
+          type: integer
+          format: int64
+          description: After this the request can no longer be completed.
+      required:
+        - id
+        - status
+        - label
+        - aaguid
+        - requested_at
+        - not_before
+        - expires_at
     PasskeyProvider:
       type: object
       required:
