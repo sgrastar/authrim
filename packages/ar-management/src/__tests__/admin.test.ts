@@ -258,6 +258,46 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       piiCacheMode: 'encrypted_short_ttl',
     });
   };
+  const resolveProfileSet = vi.fn(async (env: Partial<Env>) => {
+    const auditProfileId = (env as Record<string, unknown>).DEFAULT_AUDIT_PROFILE_ID;
+    if (auditProfileId === 'builtin:audit:archive-only-logpush') {
+      return {
+        auditProfile: {
+          id: 'builtin:audit:archive-only-logpush',
+          kind: 'audit',
+          label: 'Archive Only + Logpush',
+          builtin: true,
+          primary: null,
+          archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
+          sinks: [],
+        },
+      };
+    }
+    if (auditProfileId === 'custom:audit:postgres-primary') {
+      return {
+        auditProfile: {
+          id: 'custom:audit:postgres-primary',
+          kind: 'audit',
+          label: 'Postgres Primary',
+          builtin: false,
+          primary: { type: 'postgres', connectionRef: 'audit-primary', dataset: 'event_log' },
+          archive: null,
+          sinks: [],
+        },
+      };
+    }
+    return {
+      auditProfile: {
+        id: 'builtin:audit:standard',
+        kind: 'audit',
+        label: 'Standard Audit',
+        builtin: true,
+        primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
+        archive: null,
+        sinks: [],
+      },
+    };
+  });
   return {
     ...actual,
     checkEmailRegistration: async (...args: Parameters<typeof actual.checkEmailRegistration>) =>
@@ -309,46 +349,9 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         };
       }
     ),
-    resolveTenantRuntimeProfilesFromEnv: vi.fn(async (env: Partial<Env>) => {
-      const auditProfileId = (env as Record<string, unknown>).DEFAULT_AUDIT_PROFILE_ID;
-      if (auditProfileId === 'builtin:audit:archive-only-logpush') {
-        return {
-          auditProfile: {
-            id: 'builtin:audit:archive-only-logpush',
-            kind: 'audit',
-            label: 'Archive Only + Logpush',
-            builtin: true,
-            primary: null,
-            archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
-            sinks: [],
-          },
-        };
-      }
-      if (auditProfileId === 'custom:audit:postgres-primary') {
-        return {
-          auditProfile: {
-            id: 'custom:audit:postgres-primary',
-            kind: 'audit',
-            label: 'Postgres Primary',
-            builtin: false,
-            primary: { type: 'postgres', connectionRef: 'audit-primary', dataset: 'event_log' },
-            archive: null,
-            sinks: [],
-          },
-        };
-      }
-      return {
-        auditProfile: {
-          id: 'builtin:audit:standard',
-          kind: 'audit',
-          label: 'Standard Audit',
-          builtin: true,
-          primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
-          archive: null,
-          sinks: [],
-        },
-      };
-    }),
+    resolveTenantRuntimeProfilesFromEnv: resolveProfileSet,
+    resolveTenantAuditProfileFromEnv: async (env: Partial<Env>) =>
+      (await resolveProfileSet(env)).auditProfile,
     resolveAccountDataContextByIdentifierFromHono: resolveAccountDataContextByIdentifier,
     resolveOtpAccountCoreDataContextByIdentifierFromHono:
       resolveOtpAccountCoreDataContextByIdentifier,

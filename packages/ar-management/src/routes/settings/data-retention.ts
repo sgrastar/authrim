@@ -323,12 +323,19 @@ export async function updateCategoryRetention(c: Context<{ Bindings: Env }>) {
 
   try {
     const adapter = coreAdapterFor(c, tenantId);
-    const current = await adapter.queryOne<{ retention_days: number | string }>(
-      'SELECT retention_days FROM lookup_retention_policies WHERE tenant_id = ?',
+    const current = await adapter.queryOne<{
+      retention_days: number | string;
+      policy_generation: number | string;
+    }>(
+      'SELECT retention_days, policy_generation FROM lookup_retention_policies WHERE tenant_id = ?',
       [tenantId],
       { consistencyClass: 'primary_required' }
     );
     const currentRetentionDays = current ? Number(current.retention_days) : 180;
+    // The policy is written only if it is still the generation this decision was made on (null:
+    // there was no row, so an existing one never matches).
+    const expectedGeneration = current ? Number(current.policy_generation) : null;
+    const newGeneration = (expectedGeneration ?? 0) + 1;
     if (retention_days < currentRetentionDays) {
       if (confirm_shortening !== true || expected_current_retention_days !== currentRetentionDays) {
         return c.json(
@@ -369,29 +376,51 @@ export async function updateCategoryRetention(c: Context<{ Bindings: Env }>) {
                 retention_days = excluded.retention_days,
                 policy_generation = lookup_retention_policies.policy_generation + 1,
                 updated_by = excluded.updated_by,
-                updated_at = excluded.updated_at`,
-        params: [tenantId, retention_days, updatedBy, nowTs, nowTs],
+                updated_at = excluded.updated_at
+              WHERE lookup_retention_policies.policy_generation IS ?`,
+        params: [tenantId, retention_days, updatedBy, nowTs, nowTs, expectedGeneration],
       },
       {
+        // Only the row this request wrote. A request that lost the write above can still match
+        // the winner's identical row (same generation, admin, value and second); the winner's
+        // outbox row for that generation exists, so this insert does nothing for the loser, and
+        // the history insert (which requires this request's outbox row) does nothing either.
         sql: `INSERT INTO lookup_retention_policy_projection_outbox (
                 operation_id, tenant_id, policy_generation, retention_days,
                 next_attempt_at, created_at, updated_at
               )
               SELECT ?, tenant_id, policy_generation, retention_days, ?, ?, ?
-                FROM lookup_retention_policies WHERE tenant_id = ?`,
-        params: [projectionOperationId, nowTs, nowTs, nowTs, tenantId],
+                FROM lookup_retention_policies
+               WHERE tenant_id = ? AND policy_generation = ? AND retention_days = ?
+                 AND updated_by = ? AND updated_at = ?
+              ON CONFLICT DO NOTHING`,
+        params: [
+          projectionOperationId,
+          nowTs,
+          nowTs,
+          nowTs,
+          tenantId,
+          newGeneration,
+          retention_days,
+          updatedBy,
+          nowTs,
+        ],
       },
       {
+        // Only after the outbox row of this request was written.
         sql: `INSERT INTO settings_history (
                 id, tenant_id, category, version, snapshot, changes,
                 actor_id, actor_type, change_reason, change_source, created_at
               )
-              SELECT ?, ?, 'data_retention', COALESCE(MAX(version), 0) + 1, ?, ?,
-                     ?, 'admin', 'retention_policy_update', 'admin_api', ?
-                FROM settings_history
-               WHERE tenant_id = ? AND category = 'data_retention'`,
+              SELECT ?, ?, 'data_retention',
+                     COALESCE((SELECT MAX(version) FROM settings_history
+                                WHERE tenant_id = ? AND category = 'data_retention'), 0) + 1,
+                     ?, ?, ?, 'admin', 'retention_policy_update', 'admin_api', ?
+               WHERE EXISTS (SELECT 1 FROM lookup_retention_policy_projection_outbox
+                              WHERE operation_id = ?)`,
         params: [
           `data-retention-history:${crypto.randomUUID()}`,
+          tenantId,
           tenantId,
           JSON.stringify({ lookup_directory: { retention_days } }),
           JSON.stringify({
@@ -407,10 +436,20 @@ export async function updateCategoryRetention(c: Context<{ Bindings: Env }>) {
           }),
           updatedBy,
           nowTs,
-          tenantId,
+          projectionOperationId,
         ],
       },
     ]);
+    if (results.length === 3 && results.every((result) => result.rowsAffected === 0)) {
+      // The policy changed after it was read: nothing was written. The step-up (if any) is spent.
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT, {
+        variables: {
+          resource: 'data_retention',
+          reason:
+            'The retention policy changed while this request was being decided; repeat the step-up and retry',
+        },
+      });
+    }
     if (results.length !== 3 || results.some((result) => result.rowsAffected !== 1)) {
       throw new Error('lookup_retention_policy_projection_write_failed');
     }

@@ -4,6 +4,7 @@ import {
   createRuntimeProfileRegistryFromEnv,
   loadEnvironmentProfileDefaultsFromEnv,
   loadTenantProfileOverridesFromEnv,
+  resolveTenantAuditProfileFromEnv,
   resolveTenantRuntimeProfilesFromEnv,
 } from '../runtime-profile-resolver';
 import {
@@ -123,5 +124,54 @@ describe('runtime-profile-resolver', () => {
     expect(resolved.refs.auditProfileId).toBe(DEFAULT_AUDIT_PROFILE_ID);
     expect(resolved.auditProfile.id).toBe(DEFAULT_AUDIT_PROFILE_ID);
     expect(resolved.residencyProfile.id).toBe('builtin:residency:eu');
+  });
+
+  it('resolves the audit profile on its own: a missing residency profile does not change it', async () => {
+    const audit = {
+      id: 'tenant-audit',
+      kind: 'audit',
+      label: 'Tenant audit',
+      builtin: false,
+      primary: null,
+      archive: null,
+      sinks: [{ type: 'http', url: 'https://logs.example.com/in' }],
+      retention: { eventLogRetentionDays: 400, piiLogRetentionDays: 400 },
+    };
+    const env = {
+      DB: createMockAdapter(),
+      AUTHRIM_CONFIG: createMockKV({
+        'profile-registry:audit:tenant-audit': JSON.stringify(audit),
+        'settings:tenant:tenant-a:tenant': JSON.stringify({
+          'tenant.audit_profile_id': 'tenant-audit',
+          // An id nobody registered (or a profile deleted while in use).
+          'tenant.residency_profile_id': 'residency-gone',
+        }),
+      }),
+    };
+
+    // The set cannot be resolved (this is what made the audit service use the built-in profile).
+    await expect(resolveTenantRuntimeProfilesFromEnv(env, 'tenant-a')).rejects.toThrow(
+      'residency_profile_not_found:residency-gone'
+    );
+    // The audit profile is still the tenant's own.
+    expect(await resolveTenantAuditProfileFromEnv(env, 'tenant-a')).toMatchObject({
+      id: 'tenant-audit',
+      sinks: audit.sinks,
+      retention: audit.retention,
+    });
+    // A missing audit profile still throws (the audit service then falls back, as before).
+    await expect(
+      resolveTenantAuditProfileFromEnv(
+        {
+          ...env,
+          AUTHRIM_CONFIG: createMockKV({
+            'settings:tenant:tenant-a:tenant': JSON.stringify({
+              'tenant.audit_profile_id': 'audit-gone',
+            }),
+          }),
+        },
+        'tenant-a'
+      )
+    ).rejects.toThrow('audit_profile_not_found:audit-gone');
   });
 });

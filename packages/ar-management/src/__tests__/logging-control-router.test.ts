@@ -11,6 +11,12 @@ vi.mock('../admin-shared', async (original) => ({
   writeAdminAuditLog: auditWrite,
 }));
 
+// The step-up gate has its own coverage (logging-control-step-up.test.ts); here it always allows.
+vi.mock('../admin-step-up-gate', () => ({
+  requireAdminStepUp: vi.fn(async () => null),
+  refuseAdminFreshAuth: vi.fn(async () => null),
+}));
+
 const mockAdapter = vi.hoisted(() => {
   const adapter = {
     query: vi.fn(),
@@ -578,7 +584,7 @@ describe('logging control routers', () => {
         'archive',
         'Archive',
         'active',
-        'configured',
+        'unknown',
         JSON.stringify({ bindingRef: 'AUDIT_ARCHIVE', prefix: 'audit' }),
         JSON.stringify(['audit', 'admin_audit']),
         JSON.stringify(['archive', 'sensitive_detail']),
@@ -728,6 +734,9 @@ describe('logging control routers', () => {
   });
 
   it('updates storage destinations with optimistic concurrency and audit', async () => {
+    mockAdapter.batch.mockImplementation(async (statements: unknown[]) =>
+      statements.map(() => ({ rowsAffected: 1, success: true }))
+    );
     mockAdapter.queryOne.mockResolvedValueOnce({
       id: 'dest_1',
       scope_type: 'platform',
@@ -775,8 +784,11 @@ describe('logging control routers', () => {
 
     expect(response.status).toBe(200);
     expect(body.item.version).toBe(3);
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('UPDATE admin_destinations'),
+    const [statements] = mockAdapter.batch.mock.calls[0] as [
+      Array<{ sql: string; params: unknown[] }>,
+    ];
+    expect(statements[0].sql).toContain('UPDATE admin_destinations');
+    expect(statements[0].params).toEqual(
       expect.arrayContaining([
         'Archive Logs',
         JSON.stringify({ bindingRef: 'AUDIT_ARCHIVE', prefix: 'audit' }),

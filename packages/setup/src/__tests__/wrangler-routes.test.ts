@@ -589,6 +589,16 @@ describe('generateRoutes', () => {
     ).toEqual([
       { binding: 'EXTERNAL_IDP', service: 'emailtest-ar-bridge' },
       {
+        binding: 'EXTERNAL_IDP_ADMIN',
+        service: 'emailtest-ar-bridge',
+        entrypoint: 'ExternalIdpAdminEntrypoint',
+        props: {
+          caller: 'ar-management',
+          environmentId: 'emailtest',
+          audience: 'authrim-external-idp-admin-v1',
+        },
+      },
+      {
         binding: 'CONTROL',
         service: 'emailtest-ar-control',
         props: {

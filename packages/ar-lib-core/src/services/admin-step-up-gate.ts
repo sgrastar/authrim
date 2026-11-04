@@ -67,6 +67,8 @@ export function refuseAdminFreshAuth(c: GateContext): Response {
 }
 
 /** Whether the principal holds this exact permission (wildcards do not count). */
+const LEVEL_ORDER: Record<string, number> = { L0: 0, L1: 1, L2: 2 };
+
 function holdsExactly(auth: AdminAuthContext, permission: string): boolean {
   return (
     (auth.permissions ?? []).includes(permission) ||
@@ -110,19 +112,27 @@ export async function requireAdminStepUp(
       503
     );
   }
-  const level = resolveAdminStepUpLevel(descriptor.operation, overrides);
+  // Every operation the request performs: the highest level among them applies, and each must be
+  // exempt (or switched off) for the request to go ahead without a step-up.
+  const operations = [...new Set([descriptor.operation, ...(descriptor.alsoCovers ?? [])])];
+  const level = operations
+    .map((operation) => resolveAdminStepUpLevel(operation, overrides))
+    .reduce((highest, next) => (LEVEL_ORDER[next] > LEVEL_ORDER[highest] ? next : highest));
+  const anyAlwaysEnforced = operations.some((operation) =>
+    ADMIN_STEP_UP_ALWAYS_ENFORCED.has(operation)
+  );
 
   // Off only when the platform said so in so many words; anything else enforces.
-  if (enforced === false && !ADMIN_STEP_UP_ALWAYS_ENFORCED.has(descriptor.operation)) {
+  if (enforced === false && !anyAlwaysEnforced) {
     return null;
   }
 
-  // Only a machine token can be exempted, and never from the operations that guard the policy
-  // and the admins' own second factors.
+  // Only a machine token can be exempted, never from the operations that guard the policy and
+  // the admins' own second factors, and only with the exemption for every operation performed.
   if (
     auth?.authMethod === 'machine_access_token' &&
-    !ADMIN_STEP_UP_ALWAYS_ENFORCED.has(descriptor.operation) &&
-    holdsExactly(auth, adminStepUpExemptPermission(descriptor.operation))
+    !anyAlwaysEnforced &&
+    operations.every((operation) => holdsExactly(auth, adminStepUpExemptPermission(operation)))
   ) {
     return null;
   }

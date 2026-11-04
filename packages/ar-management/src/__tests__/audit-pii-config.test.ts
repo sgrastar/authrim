@@ -10,6 +10,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
+import { createSettingsCanonicalD1 } from './helpers/settings-canonical-d1';
 import type { Env } from '@authrim/ar-lib-core';
 import { DEFAULT_PII_CONFIG } from '@authrim/ar-lib-core';
 import {
@@ -45,6 +46,13 @@ function createMockKV(data: Record<string, string> = {}): KVNamespace {
   } as unknown as KVNamespace;
 }
 
+async function documentCount(env: Env): Promise<number> {
+  const row = await env.DB_ADMIN.prepare(
+    'SELECT COUNT(*) AS n FROM tenant_settings_documents'
+  ).first<{ n: number }>();
+  return row?.n ?? -1;
+}
+
 // Create test app
 function createTestApp(options: { kv?: KVNamespace } = {}) {
   const mockKV = options.kv ?? createMockKV();
@@ -68,11 +76,24 @@ function createTestApp(options: { kv?: KVNamespace } = {}) {
   app.post('/api/admin/tenants/:tenantId/audit/pii-config/preset/minimal', applyMinimalPreset);
   app.get('/api/admin/audit/pii-configs', listAllTenantPIIConfigs);
 
+  const mockSettings = createMockKV();
   const mockEnv = {
     AUTHRIM_CONFIG: mockKV,
+    SETTINGS: mockSettings,
+    DB_ADMIN: createSettingsCanonicalD1(),
   } as unknown as Env;
 
-  return { app, mockEnv, mockKV };
+  /** What runtime reads: the tenant's `audit-pii` document as projected to the settings KV. */
+  const projected = async (tenantId: string) => {
+    const text = await mockSettings.get(`settings:tenant:${tenantId}:audit-pii`);
+    return text
+      ? ((JSON.parse(text) as Record<string, unknown>)['audit-pii.config'] as
+          | Record<string, unknown>
+          | undefined)
+      : undefined;
+  };
+
+  return { app, mockEnv, mockKV, mockSettings, projected };
 }
 
 describe('Audit PII Configuration API', () => {
@@ -99,7 +120,7 @@ describe('Audit PII Configuration API', () => {
 
     it('shortening a retention on PUT is refused without step-up and nothing is written', async () => {
       stepUp.gate.mockResolvedValueOnce(refusal());
-      const { app, mockEnv, mockKV } = appWithStored();
+      const { app, mockEnv, projected } = appWithStored();
       const res = await app.request(
         url,
         {
@@ -110,7 +131,9 @@ describe('Audit PII Configuration API', () => {
         mockEnv
       );
       expect(res.status).toBe(403);
-      expect(mockKV.put).not.toHaveBeenCalled();
+      // Refused on first use after an upgrade: nothing is written, not even the adopted document.
+      expect(await projected('tenant_1')).toBeUndefined();
+      expect(await documentCount(mockEnv)).toBe(0);
       expect(stepUp.gate).toHaveBeenCalledWith(expect.anything(), {
         operation: 'audit.retention.shorten',
         targetTenantId: 'tenant_1',
@@ -148,11 +171,11 @@ describe('Audit PII Configuration API', () => {
       ] as const) {
         stepUp.gate.mockReset();
         stepUp.gate.mockResolvedValue(refusal());
-        const { app, mockEnv, mockKV } = appWithStored();
+        const { app, mockEnv, projected } = appWithStored();
         const res = await app.request(path, { method }, mockEnv);
         expect(res.status).toBe(403);
-        expect(mockKV.put).not.toHaveBeenCalled();
-        expect(mockKV.delete).not.toHaveBeenCalled();
+        expect(await projected('tenant_1')).toBeUndefined();
+        expect(await documentCount(mockEnv)).toBe(0);
         expect(stepUp.gate).toHaveBeenCalledWith(
           expect.anything(),
           expect.objectContaining({
@@ -256,7 +279,7 @@ describe('Audit PII Configuration API', () => {
   describe('PUT /api/admin/tenants/:tenantId/audit/pii-config', () => {
     it('should update piiFields', async () => {
       const mockKV = createMockKV();
-      const { app, mockEnv } = createTestApp({ kv: mockKV });
+      const { app, mockEnv, projected } = createTestApp({ kv: mockKV });
 
       const res = await app.request(
         '/api/admin/tenants/tenant-1/audit/pii-config',
@@ -279,7 +302,10 @@ describe('Audit PII Configuration API', () => {
       expect(body.success).toBe(true);
       expect(body.config.piiFields.ipAddress).toBe(true);
       expect(body.config.piiFields.userAgent).toBe(true);
-      expect(mockKV.put).toHaveBeenCalled();
+      expect((await projected('tenant-1'))?.piiFields).toMatchObject({
+        ipAddress: true,
+        userAgent: true,
+      });
     });
 
     it('should update eventLogDetailLevel', async () => {
@@ -455,7 +481,7 @@ describe('Audit PII Configuration API', () => {
       expect(body.error_description).toContain('cannot exceed');
     });
 
-    it('should return 500 when KV is not configured', async () => {
+    it('should return 503 when the settings store is not configured', async () => {
       const app = new Hono<{ Bindings: Env }>();
       app.put('/api/admin/tenants/:tenantId/audit/pii-config', updateTenantPIIConfig);
 
@@ -471,7 +497,7 @@ describe('Audit PII Configuration API', () => {
         mockEnv
       );
 
-      expect(res.status).toBe(500);
+      expect(res.status).toBe(503);
     });
   });
 
@@ -487,7 +513,7 @@ describe('Audit PII Configuration API', () => {
           eventLogRetentionDays: 180,
         }),
       });
-      const { app, mockEnv } = createTestApp({ kv: mockKV });
+      const { app, mockEnv, projected } = createTestApp({ kv: mockKV });
 
       const res = await app.request(
         '/api/admin/tenants/tenant-1/audit/pii-config',
@@ -500,7 +526,7 @@ describe('Audit PII Configuration API', () => {
 
       expect(body.success).toBe(true);
       expect(body.reset_to_defaults).toEqual(DEFAULT_PII_CONFIG);
-      expect(mockKV.delete).toHaveBeenCalledWith('pii_config:tenant-1');
+      expect(await projected('tenant-1')).toBeUndefined();
     });
   });
 
@@ -555,6 +581,85 @@ describe('Audit PII Configuration API', () => {
       // Note: 'minimal' preset means minimal PII, not minimal detail level
       // It actually allows 'detailed' logging since less data is considered PII
       expect(body.config.eventLogDetailLevel).toBe('detailed');
+    });
+  });
+
+  describe('saving against the version that was judged', () => {
+    const url = '/api/admin/tenants/tenant_1/audit/pii-config';
+    const put = (app: ReturnType<typeof createTestApp>['app'], env: Env, body: unknown) =>
+      app.request(
+        url,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        },
+        env
+      );
+
+    it('refuses a write when the configuration changed while the step-up was decided', async () => {
+      const f = createTestApp({
+        kv: createMockKV({
+          'pii_config:tenant_1': JSON.stringify({
+            ...DEFAULT_PII_CONFIG,
+            eventLogRetentionDays: 365,
+          }),
+        }),
+      });
+      // While this request is in its step-up, another one lengthens the retention.
+      stepUp.gate.mockImplementationOnce(async () => {
+        expect((await put(f.app, f.mockEnv, { piiLogRetentionDays: 2000 })).status).toBe(200);
+        return null;
+      });
+      const res = await put(f.app, f.mockEnv, { eventLogRetentionDays: 30 });
+      expect(res.status).toBe(409);
+      const config = await f.projected('tenant_1');
+      expect(config?.eventLogRetentionDays).toBe(365);
+      expect(config?.piiLogRetentionDays).toBe(2000);
+    });
+
+    it('adopts the configuration kept before the settings document, once', async () => {
+      const f = createTestApp({
+        kv: createMockKV({
+          'pii_config:tenant_1': JSON.stringify({
+            ...DEFAULT_PII_CONFIG,
+            eventLogRetentionDays: 200,
+          }),
+        }),
+      });
+      expect((await put(f.app, f.mockEnv, { eventLogDetailLevel: 'minimal' })).status).toBe(200);
+      // The legacy value is no longer the source: changing it does not change the document.
+      await f.mockKV.put(
+        'pii_config:tenant_1',
+        JSON.stringify({ ...DEFAULT_PII_CONFIG, eventLogRetentionDays: 1 })
+      );
+      const res = await f.app.request(url, { method: 'GET' }, f.mockEnv);
+      const body = await res.json<{ config: { eventLogRetentionDays: number } }>();
+      expect(body.config.eventLogRetentionDays).toBe(200);
+    });
+
+    it('lists adopted and not yet adopted configurations', async () => {
+      const f = createTestApp({
+        kv: createMockKV({
+          'pii_config:tenant_1': JSON.stringify({
+            ...DEFAULT_PII_CONFIG,
+            eventLogRetentionDays: 200,
+          }),
+          'pii_config:tenant_2': JSON.stringify({
+            ...DEFAULT_PII_CONFIG,
+            eventLogRetentionDays: 150,
+          }),
+        }),
+      });
+      await put(f.app, f.mockEnv, { eventLogRetentionDays: 300 });
+      const res = await f.app.request('/api/admin/audit/pii-configs', { method: 'GET' }, f.mockEnv);
+      const body = await res.json<{
+        tenants: Array<{ tenant_id: string; config: { eventLogRetentionDays: number } }>;
+      }>();
+      const days = Object.fromEntries(
+        body.tenants.map((t) => [t.tenant_id, t.config.eventLogRetentionDays])
+      );
+      expect(days).toEqual({ tenant_1: 300, tenant_2: 150 });
     });
   });
 

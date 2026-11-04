@@ -7,6 +7,7 @@ vi.mock('../admin-step-up-gate', () => ({
 }));
 import { Hono } from 'hono';
 import { createSettingsCanonicalD1 } from './helpers/settings-canonical-d1';
+import { openCoreStore } from './helpers/core-schema-sqlite';
 import type { D1Database } from '@cloudflare/workers-types';
 import type { Env } from '@authrim/ar-lib-core';
 import {
@@ -114,7 +115,7 @@ function createTestApp(adminAuth: Record<string, unknown> = PLATFORM_ADMIN_AUTH)
 
 function createEnv(kvData: Record<string, string> = {}): Env {
   return {
-    DB: {} as D1Database,
+    DB: openCoreStore().adapter,
     DB_ADMIN: createSettingsCanonicalD1(),
     AUTHRIM_CONFIG: createMockKV(kvData),
     SETTINGS: createMockKV(),

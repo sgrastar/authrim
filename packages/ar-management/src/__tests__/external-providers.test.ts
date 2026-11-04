@@ -14,6 +14,10 @@ import {
   adminExternalProvidersCreateHandler,
   adminExternalProvidersUpdateHandler,
   adminExternalProvidersDeleteHandler,
+  adminExternalTokenRefreshConfigGetHandler,
+  adminExternalTokenRefreshConfigUpdateHandler,
+  adminExternalTokenRefreshRunHandler,
+  adminExternalTokenRefreshRunsListHandler,
 } from '../external-providers';
 
 function createApp() {
@@ -33,6 +37,10 @@ function createProxyApp() {
   app.post('/providers', adminExternalProvidersCreateHandler);
   app.put('/providers/:id', adminExternalProvidersUpdateHandler);
   app.delete('/providers/:id', adminExternalProvidersDeleteHandler);
+  app.get('/refresh/config', adminExternalTokenRefreshConfigGetHandler);
+  app.put('/refresh/config', adminExternalTokenRefreshConfigUpdateHandler);
+  app.get('/refresh/runs', adminExternalTokenRefreshRunsListHandler);
+  app.post('/refresh/run', adminExternalTokenRefreshRunHandler);
   return app;
 }
 
@@ -207,7 +215,7 @@ describe('external provider service-binding proxy', () => {
     const response = await createProxyApp().request(
       'https://tenant-1.conformance.authrim.com/providers',
       { headers: { Authorization: 'Bearer machine-access-token' } },
-      { EXTERNAL_IDP: { fetch } } as unknown as Env
+      { EXTERNAL_IDP_ADMIN: { fetch } } as unknown as Env
     );
 
     expect(response.status).toBe(200);
@@ -241,7 +249,7 @@ describe('external provider service-binding proxy', () => {
         },
         body: '{}',
       },
-      { EXTERNAL_IDP: { fetch } } as unknown as Env
+      { EXTERNAL_IDP_ADMIN: { fetch } } as unknown as Env
     );
 
     expect(response.status).toBe(200);
@@ -251,6 +259,53 @@ describe('external provider service-binding proxy', () => {
     );
     const headers = fetch.mock.calls[0]?.[1]?.headers as Headers;
     expect(headers.get('X-Diagnostic-Session-Id')).toBe('oidf-module-1');
+  });
+});
+
+describe('external IdP admin binding', () => {
+  const req = (method: string, path: string, env: unknown) =>
+    createProxyApp().request(
+      `https://tenant-1.example.com${path}`,
+      {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: method === 'PUT' ? '{}' : undefined,
+      },
+      env as Env
+    );
+
+  it('never uses the plain EXTERNAL_IDP binding for admin calls (503 when only it is bound)', async () => {
+    const fetch = vi.fn();
+    for (const [method, path] of [
+      ['GET', '/providers'],
+      ['GET', '/refresh/config'],
+      ['GET', '/refresh/runs'],
+      ['PUT', '/refresh/config'],
+      ['POST', '/refresh/run'],
+    ]) {
+      const response = await req(method, path, { EXTERNAL_IDP: { fetch } });
+      expect(response.status).toBe(503);
+    }
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('keeps the empty list / default config only when both bindings are absent', async () => {
+    expect(await (await req('GET', '/providers', {})).json()).toEqual({ providers: [] });
+    expect((await req('GET', '/refresh/runs', {})).status).toBe(200);
+    expect((await req('GET', '/refresh/config', {})).status).toBe(200);
+    expect((await req('POST', '/refresh/run', {})).status).toBe(503);
+  });
+
+  it('routes token-refresh config and run through the admin binding', async () => {
+    const fetch = vi.fn(async () => Response.json({ ok: true }));
+    expect((await req('PUT', '/refresh/config', { EXTERNAL_IDP_ADMIN: { fetch } })).status).toBe(
+      200
+    );
+    expect((await req('POST', '/refresh/run', { EXTERNAL_IDP_ADMIN: { fetch } })).status).toBe(200);
+    expect((fetch.mock.calls as unknown[][]).map(([url]) => url)).toEqual([
+      'https://external-idp/api/admin/external-token-refresh/config',
+      'https://external-idp/api/admin/external-token-refresh/run',
+    ]);
   });
 });
 
@@ -283,7 +338,7 @@ describe('external provider trust changes need step-up', () => {
     createProxyApp().request(
       `https://tenant-1.example.com${path}`,
       { method, headers: { 'Content-Type': 'application/json' }, body },
-      { EXTERNAL_IDP: { fetch } }
+      { EXTERNAL_IDP_ADMIN: { fetch } }
     );
   const okFetch = () => vi.fn(async () => Response.json({ ok: true }, { status: 200 }));
   const forwardedMethods = (fetch: ReturnType<typeof vi.fn>) =>

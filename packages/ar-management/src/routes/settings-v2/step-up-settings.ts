@@ -17,8 +17,9 @@
  */
 import type { Context } from 'hono';
 import {
-  createRuntimeProfileRegistryFromEnv,
+  ProfileProjectionDisagreementError,
   loadEnvironmentProfileDefaultsFromEnv,
+  readEnvironmentProfileDefaults,
   ADMIN_NOTICES_DEFAULTS,
   ADMIN_STEP_UP_ENFORCED_KEY,
   ADMIN_STEP_UP_OVERRIDES_KEY,
@@ -36,6 +37,13 @@ import {
 import type { AdminStepUpOperationDescriptor } from '@authrim/ar-lib-core';
 import { requireAdminStepUp } from '../../admin-step-up-gate';
 import { auditRetentionWeakened } from '../../audit-retention-compare';
+import { createInfrastructureSettingsManager } from '../../runtime-profiles';
+import { auditDeliveryChanged, auditDeliveryDigests } from '../../audit-profile-delivery';
+import {
+  readComparedProfile,
+  verifySwitchAfterCommit,
+  type ProfileSwitchGuard,
+} from '../../profile-switch-verify';
 import type { getSettingsManager } from './settings-support';
 
 export const RETENTION_SETTING_KEYS = [
@@ -145,8 +153,11 @@ type StepUpNeed = {
   operation:
     | 'admin_step_up.policy.relax'
     | 'tenant.jurisdiction.update'
+    | 'webhook.destination.update'
     | 'audit.retention.shorten';
   params: Record<string, unknown>;
+  /** Further operations this one request needs (delivery changed and retention shortened). */
+  alsoCovers?: Array<'audit.retention.shorten'>;
 };
 
 function profileId(value: unknown): string {
@@ -162,29 +173,59 @@ async function decideProfileSwitch(input: {
   before: Doc;
   after: Doc;
   inherited: Doc;
+  /** Receives the profiles compared, to verify the save after it commits. */
+  guard?: ProfileSwitchGuard;
 }): Promise<StepUpNeed[]> {
-  const { env, before, after, inherited } = input;
+  const { env, before, after, inherited, guard } = input;
   const result: StepUpNeed[] = [];
-  const touched = TENANT_PROFILE_KEYS.some(
-    (key) =>
-      profileId(effective(before, inherited, key)) !== profileId(effective(after, inherited, key))
-  );
+  // A key counts when the profile in effect changes or the tenant's own value does: setting the
+  // id the tenant already inherits from the default leaves the effective id as it was, but the
+  // tenant then stops following the default, so the default document is part of the decision.
+  const keyTouched = (key: (typeof TENANT_PROFILE_KEYS)[number]) =>
+    profileId(effective(before, inherited, key)) !== profileId(effective(after, inherited, key)) ||
+    profileId(before[key]) !== profileId(after[key]);
+  const touched = TENANT_PROFILE_KEYS.some(keyTouched);
   if (!touched) return result;
 
-  // Read strictly: a default that cannot be read is not replaced by the built-in one, which could
-  // make a jurisdiction or retention change look like no change (the save then fails instead).
-  const defaults = await loadEnvironmentProfileDefaultsFromEnv(env, { strict: true });
-  const registry = createRuntimeProfileRegistryFromEnv(env);
+  // The environment default is read from the canonical document (with its version), strictly: a
+  // default that cannot be read is not replaced by the built-in one, which could make a
+  // jurisdiction or retention change look like no change (the save then fails instead). What
+  // runtime reads (the KV projection) must agree with it, or the comparison could be made
+  // against values other than the ones in effect.
+  const infrastructure = await createInfrastructureSettingsManager(env, {
+    strict: true,
+  }).getAll('infrastructure', { type: 'platform' });
+  const defaults = readEnvironmentProfileDefaults(infrastructure.values);
+  const projected = await loadEnvironmentProfileDefaultsFromEnv(env, { strict: true });
+  if (
+    projected.auditProfileId !== defaults.auditProfileId ||
+    projected.residencyProfileId !== defaults.residencyProfileId
+  ) {
+    throw new ProfileProjectionDisagreementError();
+  }
+  // When a side of the switch is the environment default (the tenant sets no id of its own), the
+  // default document is part of what the decision rests on. The tenant document's save cannot
+  // also be conditional on it (the settings manager takes no second precondition), so it is
+  // verified after the commit and the switch is put back if the default moved
+  // (profile-switch-verify).
   const idOf = (doc: Doc, key: (typeof TENANT_PROFILE_KEYS)[number], fallback: string) =>
     profileId(effective(doc, inherited, key)) || fallback;
+  const noteDefaultUsed = (key: (typeof TENANT_PROFILE_KEYS)[number]) => {
+    const fromDefault =
+      !profileId(effective(before, inherited, key)) || !profileId(effective(after, inherited, key));
+    if (guard && fromDefault) guard.infrastructureVersion = infrastructure.version;
+  };
 
+  for (const key of TENANT_PROFILE_KEYS) {
+    if (keyTouched(key)) noteDefaultUsed(key);
+  }
   const residencyBefore = idOf(before, 'tenant.residency_profile_id', defaults.residencyProfileId);
   const residencyAfter = idOf(after, 'tenant.residency_profile_id', defaults.residencyProfileId);
   if (residencyBefore !== residencyAfter) {
-    const [was, now] = await Promise.all([
-      registry.get<ResidencyProfile>('residency', residencyBefore),
-      registry.get<ResidencyProfile>('residency', residencyAfter),
-    ]);
+    const [was, now] = (await Promise.all([
+      readComparedProfile(env, 'residency', residencyBefore, guard),
+      readComparedProfile(env, 'residency', residencyAfter, guard),
+    ])) as [ResidencyProfile | null, ResidencyProfile | null];
     const from = was?.kind === 'residency' ? was.jurisdiction : null;
     const to = now?.kind === 'residency' ? now.jurisdiction : null;
     // An unknown profile on either side cannot be compared: treat it as a change.
@@ -203,14 +244,33 @@ async function decideProfileSwitch(input: {
   const auditBefore = idOf(before, 'tenant.audit_profile_id', defaults.auditProfileId);
   const auditAfter = idOf(after, 'tenant.audit_profile_id', defaults.auditProfileId);
   if (auditBefore !== auditAfter) {
-    const [was, now] = await Promise.all([
-      registry.get<AuditProfile>('audit', auditBefore),
-      registry.get<AuditProfile>('audit', auditAfter),
-    ]);
-    if (was?.kind !== 'audit' || now?.kind !== 'audit' || auditRetentionWeakened(was, now)) {
+    const [was, now] = (await Promise.all([
+      readComparedProfile(env, 'audit', auditBefore, guard),
+      readComparedProfile(env, 'audit', auditAfter, guard),
+    ])) as [AuditProfile | null, AuditProfile | null];
+    // Switching to a profile that sends logs elsewhere is a destination change even when it keeps
+    // logs as long; one receipt covers one operation, so that is gated as a destination update
+    // with the resulting retention bound in the params.
+    // An id that is not registered is what runtime uses for it, the built-in profile, on either
+    // side (dangling references are allowed, so they are compared, not refused).
+    const deliveryDiffers = auditDeliveryChanged(
+      was?.kind === 'audit' ? was : null,
+      now?.kind === 'audit' ? now : null
+    );
+    const retentionGated =
+      was?.kind !== 'audit' || now?.kind !== 'audit' || auditRetentionWeakened(was, now);
+    if (retentionGated || deliveryDiffers) {
       result.push({
-        operation: 'audit.retention.shorten',
-        params: { audit_profile_id: auditAfter, retention: now?.retention ?? null },
+        operation: deliveryDiffers ? 'webhook.destination.update' : 'audit.retention.shorten',
+        // Both at once: one receipt, carrying the retention operation too.
+        ...(deliveryDiffers && retentionGated
+          ? { alsoCovers: ['audit.retention.shorten' as const] }
+          : {}),
+        params: {
+          audit_profile_id: auditAfter,
+          retention: now?.retention ?? null,
+          ...(await auditDeliveryDigests(now?.kind === 'audit' ? now : null)),
+        },
       });
     }
   }
@@ -234,6 +294,11 @@ export async function gateStepUpSettingsPatch(input: {
   actor: string;
   /** Refuse (400) instead of asking for a step-up: the change must be made on its own. */
   refuse?: boolean;
+  /**
+   * Filled when the PATCH switches a profile: pass it to `verifyProfileSwitch` after the save, so
+   * a profile that changed after this decision puts the switch back (see profile-switch-verify).
+   */
+  guard?: ProfileSwitchGuard;
 }): Promise<Response | null> {
   const { c, manager, category, scope, body } = input;
   if (!patchTouchesStepUpSettings(body)) return null;
@@ -243,6 +308,7 @@ export async function gateStepUpSettingsPatch(input: {
     dryRun: true,
   });
   if (!decision.candidate) return null;
+  if (input.guard) input.guard.before = decision.candidate.before;
   const state = await manager.getAll(category, scope, { parents });
   const settingsOutcome = decideStepUpSettings({
     scopeType: scope.type,
@@ -250,15 +316,30 @@ export async function gateStepUpSettingsPatch(input: {
     after: decision.candidate.after,
     inherited: state.inherited.values,
   });
-  const switches =
-    category === 'tenant'
-      ? await decideProfileSwitch({
-          env: c.env,
-          before: decision.candidate.before,
-          after: decision.candidate.after,
-          inherited: state.inherited.values,
-        })
-      : [];
+  let switches: StepUpNeed[] = [];
+  if (category === 'tenant') {
+    try {
+      switches = await decideProfileSwitch({
+        env: c.env,
+        before: decision.candidate.before,
+        after: decision.candidate.after,
+        inherited: state.inherited.values,
+        guard: input.guard,
+      });
+    } catch (error) {
+      // KV and D1 disagree about a profile (a projection pending): it was repaired; retry.
+      if (error instanceof ProfileProjectionDisagreementError) {
+        return c.json(
+          {
+            error: 'conflict',
+            message: 'A runtime profile was still being updated; retry the request',
+          },
+          409
+        );
+      }
+      throw error;
+    }
+  }
   const needed: StepUpNeed[] = [
     ...(settingsOutcome.kind === 'gate'
       ? [{ operation: settingsOutcome.operation, params: settingsOutcome.params }]
@@ -296,6 +377,41 @@ export async function gateStepUpSettingsPatch(input: {
     operation: outcome.operation,
     targetTenantId: input.targetTenantId,
     params: { category, ...params },
+    // A switch that changes delivery and shortens retention at once (see decideProfileSwitch). A
+    // request needing two different operations (jurisdiction and audit) is still refused above
+    // with step_up_separate_operations: one receipt per operation keeps those requests simple.
+    ...(outcome.alsoCovers && outcome.alsoCovers.length > 0
+      ? { alsoCovers: outcome.alsoCovers }
+      : {}),
   };
   return requireAdminStepUp(c, descriptor);
+}
+
+/**
+ * Call after a PATCH was saved. True when nothing needs to happen; false when a profile compared
+ * for a profile switch changed after the decision and the save was therefore put back: answer 409.
+ */
+export async function verifyProfileSwitch(input: {
+  env: Env;
+  manager: ReturnType<typeof getSettingsManager>;
+  category: CategoryName;
+  scope: SettingScope;
+  guard: ProfileSwitchGuard;
+  result: { version: string; applied: string[]; cleared: string[]; disabled: string[] };
+  actor: string;
+}): Promise<boolean> {
+  return verifySwitchAfterCommit({
+    env: input.env,
+    manager: input.manager,
+    category: input.category,
+    scope: input.scope,
+    guard: input.guard,
+    committedVersion: input.result.version,
+    changedKeys: [
+      ...input.result.applied,
+      ...input.result.cleared,
+      ...input.result.disabled,
+    ].filter((key) => (TENANT_PROFILE_KEYS as readonly string[]).includes(key)),
+    actor: input.actor,
+  });
 }

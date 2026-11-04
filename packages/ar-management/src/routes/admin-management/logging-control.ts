@@ -40,6 +40,7 @@ import { createLoggingId, deriveTenantKeyFromTenantId } from '@authrim/ar-lib-lo
 import {
   DESTINATION_PROVIDER_SCHEMAS,
   getDefaultDestinationCapabilities,
+  SELECTABLE_DESTINATION_HEALTH_STATUSES,
   validateDestinationProviderConfig,
   type DestinationCapability,
   type DestinationHealthStatus,
@@ -115,9 +116,19 @@ import {
 } from './response-helpers';
 import { createLoggingTenantKeyResolverFromSource } from '../../logging-tenant-key';
 import { writeEncryptedLoggingMessagePayload } from '../../logging-message-payload-storage';
+import { requireAdminStepUp } from '../../admin-step-up-gate';
+import { sha256Hex } from '../../admin-step-up-digest';
 
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
 
+/** KV rejects an expirationTtl under 60 s, so a snapshot expiring sooner cannot be published. */
+const LOGGING_POLICY_SNAPSHOT_MIN_TTL_MS = 60 * 1000;
+/**
+ * A destination that has not been health-checked yet. The admin_destinations CHECK allows only
+ * unknown, healthy, degraded, failing and unreachable ('configured' is not storable), and it is
+ * also the column default, so create writes this value explicitly.
+ */
+const INITIAL_DESTINATION_HEALTH_STATUS: DestinationHealthStatus = 'unknown';
 const DELIVERY_EVENTS_CURSOR_TTL_MS = 15 * 60 * 1000;
 const LOGGING_EXPORT_CREATE_PERMISSION = 'admin:logging:exports:create';
 const LOGGING_SENSITIVE_DETAIL_EXPORT_PERMISSION = 'admin:logging:sensitive_detail:export';
@@ -168,6 +179,132 @@ const NOTIFICATION_SEVERITY_RANK: Record<NotificationDeliveryMinSeverity, number
   low: 3,
   info: 4,
 };
+
+type LoggingStepUpOperation =
+  | 'webhook.destination.update'
+  | 'audit.retention.shorten'
+  | 'logging.policy.publish'
+  | 'log.sensitive.export';
+
+/**
+ * Step-up gate for the logging control routes. Callers run it once, after every check that can
+ * refuse the request and immediately before the first write: an L2 receipt is spent here.
+ */
+async function requireLoggingStepUp(
+  c: AdminContext,
+  operation: LoggingStepUpOperation,
+  targetTenantId: string,
+  params: Record<string, unknown>,
+  targetIds?: string[],
+  alsoCovers?: LoggingStepUpOperation[]
+): Promise<Response | null> {
+  return requireAdminStepUp(c, {
+    operation,
+    targetTenantId,
+    ...(targetIds && targetIds.length > 0 ? { targetIds } : {}),
+    ...(alsoCovers && alsoCovers.length > 0 ? { alsoCovers } : {}),
+    params,
+  });
+}
+
+function canonicalJson(value: unknown): string {
+  const canonicalize = (input: unknown): unknown => {
+    if (Array.isArray(input)) return input.map(canonicalize);
+    if (input && typeof input === 'object') {
+      const sorted: Record<string, unknown> = {};
+      for (const key of Object.keys(input).sort()) {
+        const entry = (input as Record<string, unknown>)[key];
+        if (entry !== undefined) sorted[key] = canonicalize(entry);
+      }
+      return sorted;
+    }
+    return input;
+  };
+  return JSON.stringify(canonicalize(value)) ?? 'null';
+}
+
+/** SHA-256 hex of the canonical JSON form of a value (keys sorted, undefined dropped). */
+function digestOf(value: unknown): Promise<string> {
+  return sha256Hex(canonicalJson(value));
+}
+
+/** An array as an order-independent list for step-up parameters (null stays null). */
+function sortedOrNull(value: readonly string[] | null | undefined): string[] | null {
+  return value ? [...new Set(value)].sort() : null;
+}
+
+/** The tenant a destination row belongs to for step-up policy: its scope tenant, else the context's. */
+function destinationStepUpTenant(
+  c: AdminContext,
+  scopeType: string | null | undefined,
+  scopeId: string | null | undefined
+): string {
+  return scopeType === 'tenant' && scopeId ? scopeId : getTenantIdFromContext(c);
+}
+
+/** The resulting delivery-relevant state of a destination, for step-up parameters. */
+async function destinationStepUpState(value: {
+  scopeType: string;
+  scopeId: string;
+  provider: string;
+  providerConfig: Record<string, unknown>;
+  allowedTenantIds: string[] | null;
+  allowedLogTypes: string[] | null;
+  allowedPlanes: string[] | null;
+  criticalAllowed: boolean;
+  retentionDays: number | null;
+  encryptionMode: string;
+  capabilities?: readonly string[];
+  region?: string | null;
+  defaultFallbackEligible?: boolean;
+}): Promise<Record<string, unknown>> {
+  return {
+    scope_type: value.scopeType,
+    scope_id: value.scopeId,
+    provider: value.provider,
+    provider_config_sha256: await digestOf(value.providerConfig),
+    allowed_tenant_ids: sortedOrNull(value.allowedTenantIds),
+    allowed_log_types: sortedOrNull(value.allowedLogTypes),
+    allowed_planes: sortedOrNull(value.allowedPlanes),
+    capabilities: value.capabilities ? sortedOrNull(value.capabilities) : null,
+    critical_allowed: value.criticalAllowed,
+    retention_days: value.retentionDays,
+    encryption_mode: value.encryptionMode,
+    region: value.region ?? null,
+    default_fallback_eligible: value.defaultFallbackEligible ?? false,
+  };
+}
+
+/** 409 for a compare-then-write that lost to a concurrent change (the row's version moved). */
+function concurrentModificationResponse(c: AdminContext): Promise<Response> {
+  return createAdminErrorResponseWithDetails(c, AR_ERROR_CODES.ADMIN_CONFLICT, {
+    conflict: { reason: 'concurrent_modification' },
+  });
+}
+
+/**
+ * The UNIQUE index on logging_fallback_policies(scope_type, scope_id, log_type, plane): a request
+ * whose key is already taken by another row is a conflict, found before the gate so a receipt is
+ * not spent on an INSERT or UPDATE that the constraint would then fail.
+ */
+async function fallbackKeyConflict(
+  c: AdminContext,
+  adapter: ReturnType<typeof getAdminAdapter>,
+  key: { scopeType: string; scopeId: string; logType: string; plane: string },
+  exceptId?: string
+): Promise<Response | null> {
+  const existing = await adapter.queryOne<{ id: string }>(
+    `SELECT id FROM logging_fallback_policies
+     WHERE scope_type = ? AND scope_id = ? AND log_type = ? AND plane = ?`,
+    [key.scopeType, key.scopeId, key.logType, key.plane]
+  );
+  if (existing?.id && existing.id !== exceptId) {
+    return createAdminErrorResponseWithDetails(c, AR_ERROR_CODES.ADMIN_CONFLICT, {
+      conflict: { reason: 'fallback_policy_exists' },
+    });
+  }
+  return null;
+}
 
 function getAdminAdapter(c: AdminContext) {
   return requireDedicatedAdminDatabaseAdapter(c.env, 'admin-logging-control');
@@ -976,6 +1113,38 @@ async function writeCatalogRepairJobPreviewArtifact(
 
 function isLoggingExportObjectRefAllowed(item: LoggingExportJobRow, objectRef: string): boolean {
   return objectRef.startsWith(`logging-exports/v1/${item.id}/`);
+}
+
+/**
+ * An export is sensitive when it carries sensitive detail or payloads: the sensitive_detail
+ * plane, payload inclusion, or full detail scope. Create and download share this one rule.
+ */
+function isSensitiveLoggingExport(input: {
+  plane: string | null | undefined;
+  includePayload: boolean;
+  detailScope: string | null | undefined;
+}): boolean {
+  return input.plane === 'sensitive_detail' || input.includePayload || input.detailScope === 'full';
+}
+
+function isSensitiveLoggingExportJob(
+  item: Pick<LoggingExportJobRow, 'plane' | 'filter_json'>
+): boolean {
+  let filters: Record<string, unknown> = {};
+  try {
+    const parsed = item.filter_json ? (JSON.parse(item.filter_json) as unknown) : null;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      filters = parsed as Record<string, unknown>;
+    }
+  } catch {
+    // An unreadable filter cannot show the export is plain; treat it as sensitive.
+    return true;
+  }
+  return isSensitiveLoggingExport({
+    plane: item.plane,
+    includePayload: filters.include_payload === true,
+    detailScope: typeof filters.detail_scope === 'string' ? filters.detail_scope : null,
+  });
 }
 
 function requiresSensitiveDetailExportRead(item: Pick<LoggingExportJobRow, 'plane'>): boolean {
@@ -1972,6 +2141,15 @@ function withDestinationRuntimeSupport<T extends Record<string, unknown>>(item: 
   };
 }
 
+function parseStoredJsonArray(value: string | null): unknown {
+  if (!value) return null;
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return null;
+  }
+}
+
 function parseDestinationStringArray(value: unknown): string[] | null {
   if (value === undefined || value === null || value === '') {
     return null;
@@ -2208,22 +2386,123 @@ function parseDestinationCapabilities(
   return parsed.length > 0 ? [...new Set(parsed)] : defaultCapabilities;
 }
 
+/**
+ * A guard for child statements that run in the same batch as a compare-and-set on the parent
+ * destination row: it holds only when this request's own UPDATE took effect, i.e. the row now
+ * carries the next version, this request's timestamp and actor, and the allowlists the children
+ * are derived from. (The row has no per-request token column, so a request that lost the CAS to
+ * another one with the same actor, the same millisecond and identical allowlists would also
+ * pass; the children it would then write differ from the winner's only in capabilities.)
+ */
+interface DestinationUpdateGuard {
+  destinationId: string;
+  version: number;
+  updatedAt: number;
+  actorId: string | null;
+  allowedTenantIds: string | null;
+  allowedLogTypes: string | null;
+  allowedPlanes: string | null;
+}
+
+function destinationUpdateGuardSql(guard: DestinationUpdateGuard | undefined): {
+  clause: string;
+  params: unknown[];
+} {
+  if (!guard) return { clause: '1 = 1', params: [] };
+  return {
+    clause: `EXISTS (SELECT 1 FROM admin_destinations
+      WHERE id = ? AND version = ? AND updated_at = ? AND COALESCE(updated_by, '') = ?
+        AND COALESCE(allowed_tenant_ids, '') = ? AND COALESCE(allowed_log_types, '') = ?
+        AND COALESCE(allowed_planes, '') = ?)`,
+    params: [
+      guard.destinationId,
+      guard.version,
+      guard.updatedAt,
+      guard.actorId ?? '',
+      guard.allowedTenantIds ?? '',
+      guard.allowedLogTypes ?? '',
+      guard.allowedPlanes ?? '',
+    ],
+  };
+}
+
+function destinationCapabilityStatements(
+  destinationId: string,
+  capabilities: DestinationCapability[],
+  now: number,
+  guard?: DestinationUpdateGuard
+): Array<{ sql: string; params: unknown[] }> {
+  const g = destinationUpdateGuardSql(guard);
+  return [
+    {
+      sql: `DELETE FROM admin_destination_capabilities WHERE destination_id = ? AND ${g.clause}`,
+      params: [destinationId, ...g.params],
+    },
+    ...capabilities.map((capability) => ({
+      sql: `INSERT INTO admin_destination_capabilities (
+        destination_id, capability, source, enabled, created_at, updated_at
+      ) SELECT ?, ?, ?, ?, ?, ? WHERE ${g.clause}`,
+      params: [destinationId, capability, 'platform_override', 1, now, now, ...g.params],
+    })),
+  ];
+}
+
+function storageAssignmentStatements(
+  input: {
+    destinationId: string;
+    tenantIds: string[] | null;
+    logTypes: string[] | null;
+    planes: string[] | null;
+    actorId: string | null;
+    now: number;
+  },
+  guard?: DestinationUpdateGuard
+): Array<{ sql: string; params: unknown[] }> {
+  const g = destinationUpdateGuardSql(guard);
+  const statements: Array<{ sql: string; params: unknown[] }> = [
+    {
+      sql: `DELETE FROM storage_destination_assignments WHERE destination_id = ? AND ${g.clause}`,
+      params: [input.destinationId, ...g.params],
+    },
+  ];
+  const tenantIds = input.tenantIds && input.tenantIds.length > 0 ? input.tenantIds : [null];
+  const logTypes = input.logTypes && input.logTypes.length > 0 ? input.logTypes : [null];
+  const planes = input.planes && input.planes.length > 0 ? input.planes : [null];
+  for (const tenantId of tenantIds) {
+    for (const logType of logTypes) {
+      for (const plane of planes) {
+        statements.push({
+          sql: `INSERT INTO storage_destination_assignments (
+            id, destination_id, tenant_id, log_type, plane, enabled,
+            created_by, updated_by, created_at, updated_at, version
+          ) SELECT ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, 1 WHERE ${g.clause}`,
+          params: [
+            createLoggingId('sda', input.now),
+            input.destinationId,
+            tenantId,
+            logType,
+            plane,
+            input.actorId,
+            input.actorId,
+            input.now,
+            input.now,
+            ...g.params,
+          ],
+        });
+      }
+    }
+  }
+  return statements;
+}
+
 async function replaceDestinationCapabilities(
   adapter: ReturnType<typeof getAdminAdapter>,
   destinationId: string,
   capabilities: DestinationCapability[],
   now: number
 ): Promise<void> {
-  await adapter.execute('DELETE FROM admin_destination_capabilities WHERE destination_id = ?', [
-    destinationId,
-  ]);
-  for (const capability of capabilities) {
-    await adapter.execute(
-      `INSERT INTO admin_destination_capabilities (
-        destination_id, capability, source, enabled, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?)`,
-      [destinationId, capability, 'platform_override', 1, now, now]
-    );
+  for (const statement of destinationCapabilityStatements(destinationId, capabilities, now)) {
+    await adapter.execute(statement.sql, statement.params);
   }
 }
 
@@ -2238,34 +2517,8 @@ async function replaceStorageDestinationAssignments(
     now: number;
   }
 ): Promise<void> {
-  await adapter.execute('DELETE FROM storage_destination_assignments WHERE destination_id = ?', [
-    input.destinationId,
-  ]);
-  const tenantIds = input.tenantIds && input.tenantIds.length > 0 ? input.tenantIds : [null];
-  const logTypes = input.logTypes && input.logTypes.length > 0 ? input.logTypes : [null];
-  const planes = input.planes && input.planes.length > 0 ? input.planes : [null];
-  for (const tenantId of tenantIds) {
-    for (const logType of logTypes) {
-      for (const plane of planes) {
-        await adapter.execute(
-          `INSERT INTO storage_destination_assignments (
-            id, destination_id, tenant_id, log_type, plane, enabled,
-            created_by, updated_by, created_at, updated_at, version
-          ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, 1)`,
-          [
-            createLoggingId('sda', input.now),
-            input.destinationId,
-            tenantId,
-            logType,
-            plane,
-            input.actorId,
-            input.actorId,
-            input.now,
-            input.now,
-          ]
-        );
-      }
-    }
+  for (const statement of storageAssignmentStatements(input)) {
+    await adapter.execute(statement.sql, statement.params);
   }
 }
 
@@ -3232,7 +3485,7 @@ function destinationAllowsAssignment(input: {
   if (destination.lifecycle_status !== 'active') {
     return fieldError(fieldName, 'destination_inactive', 'Destination is not active.');
   }
-  if (!['configured', 'healthy'].includes(destination.health_status)) {
+  if (!SELECTABLE_DESTINATION_HEALTH_STATUSES.includes(destination.health_status)) {
     return fieldError(fieldName, 'destination_unhealthy', 'Destination is not selectable.');
   }
   if (critical && destination.critical_allowed !== 1) {
@@ -4671,6 +4924,13 @@ async function readPolicySnapshotDraftBody(
   }
   if (body.expires_at !== undefined && typeof body.expires_at !== 'number') {
     fields.push(fieldError('expires_at', 'invalid_type', 'Expires at must be a timestamp number.'));
+  } else if (
+    typeof body.expires_at === 'number' &&
+    !(body.expires_at >= Date.now() + LOGGING_POLICY_SNAPSHOT_MIN_TTL_MS)
+  ) {
+    fields.push(
+      fieldError('expires_at', 'too_soon', 'Expires at must be at least 60 seconds from now.')
+    );
   }
   if (fields.length > 0) {
     return { ok: false, response: await createAdminFieldErrorResponse(c, fields) };
@@ -4708,6 +4968,26 @@ async function readPolicySnapshotDraftBody(
       expiresAt: typeof body.expires_at === 'number' ? body.expires_at : null,
     },
   };
+}
+
+/**
+ * A snapshot's KV TTL runs from its own timestamp and KV rejects one under 60 s, so a snapshot
+ * that expires sooner (from its creation or from now) cannot be published.
+ */
+async function snapshotExpiryRefusal(
+  c: AdminContext,
+  snapshot: { expiresAt?: number | null; synchronizedAt: number }
+): Promise<Response | null> {
+  if (
+    typeof snapshot.expiresAt === 'number' &&
+    (snapshot.expiresAt - snapshot.synchronizedAt < LOGGING_POLICY_SNAPSHOT_MIN_TTL_MS ||
+      snapshot.expiresAt < Date.now() + LOGGING_POLICY_SNAPSHOT_MIN_TTL_MS)
+  ) {
+    return createAdminFieldErrorResponse(c, [
+      fieldError('expires_at', 'too_soon', 'Snapshot expiry is less than 60 seconds away.'),
+    ]);
+  }
+  return null;
 }
 
 async function buildPolicySnapshotCandidate(
@@ -4907,6 +5187,13 @@ destinationsRouter.post('/', async (c) => {
     const now = Date.now();
     const id = createLoggingId('dest', now);
     const value = parsed.value;
+    const refused = await requireLoggingStepUp(
+      c,
+      'webhook.destination.update',
+      destinationStepUpTenant(c, value.scopeType, value.scopeId),
+      { kind: 'destination.create', ...(await destinationStepUpState(value)) }
+    );
+    if (refused) return refused;
     await adapter.execute(
       `INSERT INTO admin_destinations (
         id, scope_type, scope_id, destination_kind, provider, name, display_name, description,
@@ -4924,7 +5211,7 @@ destinationsRouter.post('/', async (c) => {
         value.displayName,
         value.description,
         'active',
-        'configured',
+        INITIAL_DESTINATION_HEALTH_STATUS,
         JSON.stringify(value.providerConfig),
         jsonArrayOrNull(value.allowedTenantIds),
         jsonArrayOrNull(value.allowedLogTypes),
@@ -4981,7 +5268,7 @@ destinationsRouter.post('/', async (c) => {
           name: value.name,
           display_name: value.displayName,
           lifecycle_status: 'active',
-          health_status: 'configured',
+          health_status: INITIAL_DESTINATION_HEALTH_STATUS,
           version: 1,
         },
         { auditId }
@@ -5251,45 +5538,123 @@ destinationsRouter.patch('/:id', async (c) => {
 
     const now = Date.now();
     const value = parsed.value;
-    await adapter.execute(
-      `UPDATE admin_destinations
+
+    // The update replaces the whole destination, so what matters is whether it changes where logs
+    // go (or how they are kept there) against the stored row, not which keys the body carries.
+    const currentCapabilities = (
+      await adapter.query<{ capability: string }>(
+        'SELECT capability FROM admin_destination_capabilities WHERE destination_id = ?',
+        [id]
+      )
+    ).map((row) => row.capability);
+    const nextState = await destinationStepUpState(value);
+    const currentState = await destinationStepUpState({
+      scopeType: current.scope_type,
+      scopeId: current.scope_id,
+      provider: current.provider,
+      providerConfig: parseDestinationProviderConfig(current.provider_config),
+      allowedTenantIds: parseDestinationStringArray(
+        parseStoredJsonArray(current.allowed_tenant_ids)
+      ),
+      allowedLogTypes: parseDestinationStringArray(parseStoredJsonArray(current.allowed_log_types)),
+      allowedPlanes: parseDestinationStringArray(parseStoredJsonArray(current.allowed_planes)),
+      criticalAllowed: current.critical_allowed === 1,
+      retentionDays: current.retention_days,
+      encryptionMode: current.encryption_mode,
+      capabilities: currentCapabilities,
+      region: current.region,
+      defaultFallbackEligible: current.default_fallback_eligible === 1,
+    });
+    const deliveryChanged =
+      canonicalJson({ ...nextState, retention_days: null }) !==
+      canonicalJson({ ...currentState, retention_days: null });
+    // A null retention keeps logs without a limit, so a finite value replacing it shortens.
+    const retentionShortened =
+      value.retentionDays !== null &&
+      (current.retention_days === null || value.retentionDays < current.retention_days);
+    if (deliveryChanged || retentionShortened) {
+      // A change to the destination itself is gated as webhook.destination.update with the
+      // resulting retention bound in the params (and audit.retention.shorten also covered when
+      // retention shortens too); a request that only shortens retention is gated as
+      // audit.retention.shorten.
+      const refused = await requireLoggingStepUp(
+        c,
+        deliveryChanged ? 'webhook.destination.update' : 'audit.retention.shorten',
+        destinationStepUpTenant(c, value.scopeType, value.scopeId),
+        {
+          kind: deliveryChanged ? 'destination.update' : 'destination.retention',
+          ...nextState,
+        },
+        [id],
+        // One receipt covers one operation, but a request that changes the destination and also
+        // shortens retention performs both: the gate then needs the highest level of the two, and
+        // a machine needs the exemption for each.
+        deliveryChanged && retentionShortened ? ['audit.retention.shorten'] : undefined
+      );
+      if (refused) return refused;
+    }
+    // The parent compare-and-set and the child replacements go in ONE batch (one transaction).
+    // The write is conditional on the version the comparison above read, and every child
+    // statement is guarded on this request's own UPDATE having taken effect, so a lost race
+    // changes nothing and a stalled winner cannot re-create children after a later change.
+    const nextVersion = current.version + 1;
+    const guard: DestinationUpdateGuard = {
+      destinationId: id,
+      version: nextVersion,
+      updatedAt: now,
+      actorId: authContext.userId ?? null,
+      allowedTenantIds: jsonArrayOrNull(value.allowedTenantIds),
+      allowedLogTypes: jsonArrayOrNull(value.allowedLogTypes),
+      allowedPlanes: jsonArrayOrNull(value.allowedPlanes),
+    };
+    const results = await adapter.batch([
+      {
+        sql: `UPDATE admin_destinations
        SET scope_type = ?, scope_id = ?, destination_kind = ?, provider = ?, name = ?,
            display_name = ?, description = ?, provider_config = ?, allowed_tenant_ids = ?,
            allowed_log_types = ?, allowed_planes = ?, region = ?, critical_allowed = ?,
            default_fallback_eligible = ?, retention_days = ?, encryption_mode = ?,
            updated_by = ?, updated_at = ?, version = version + 1
-       WHERE id = ? AND deleted_at IS NULL`,
-      [
-        value.scopeType,
-        value.scopeId,
-        value.destinationKind,
-        value.provider,
-        value.name,
-        value.displayName,
-        value.description,
-        JSON.stringify(value.providerConfig),
-        jsonArrayOrNull(value.allowedTenantIds),
-        jsonArrayOrNull(value.allowedLogTypes),
-        jsonArrayOrNull(value.allowedPlanes),
-        value.region,
-        value.criticalAllowed ? 1 : 0,
-        value.defaultFallbackEligible ? 1 : 0,
-        value.retentionDays,
-        value.encryptionMode,
-        authContext.userId,
-        now,
-        id,
-      ]
-    );
-    await replaceDestinationCapabilities(adapter, id, value.capabilities, now);
-    await replaceStorageDestinationAssignments(adapter, {
-      destinationId: id,
-      tenantIds: value.allowedTenantIds,
-      logTypes: value.allowedLogTypes,
-      planes: value.allowedPlanes,
-      actorId: authContext.userId,
-      now,
-    });
+       WHERE id = ? AND deleted_at IS NULL AND version = ?`,
+        params: [
+          value.scopeType,
+          value.scopeId,
+          value.destinationKind,
+          value.provider,
+          value.name,
+          value.displayName,
+          value.description,
+          JSON.stringify(value.providerConfig),
+          jsonArrayOrNull(value.allowedTenantIds),
+          jsonArrayOrNull(value.allowedLogTypes),
+          jsonArrayOrNull(value.allowedPlanes),
+          value.region,
+          value.criticalAllowed ? 1 : 0,
+          value.defaultFallbackEligible ? 1 : 0,
+          value.retentionDays,
+          value.encryptionMode,
+          authContext.userId,
+          now,
+          id,
+          current.version,
+        ],
+      },
+      ...destinationCapabilityStatements(id, value.capabilities, now, guard),
+      ...storageAssignmentStatements(
+        {
+          destinationId: id,
+          tenantIds: value.allowedTenantIds,
+          logTypes: value.allowedLogTypes,
+          planes: value.allowedPlanes,
+          actorId: authContext.userId ?? null,
+          now,
+        },
+        guard
+      ),
+    ]);
+    if ((results?.[0]?.rowsAffected ?? 0) !== 1) {
+      return concurrentModificationResponse(c);
+    }
     const auditId = await writeAdminAuditLog(c, {
       action: 'storage_destination.update',
       resourceType: 'admin_destination',
@@ -5518,14 +5883,33 @@ destinationsRouter.post('/:id/enable', async (c) => {
     if (!destination) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
+    const refused = await requireLoggingStepUp(
+      c,
+      'webhook.destination.update',
+      destinationStepUpTenant(c, destination.scope_type, destination.scope_id),
+      {
+        kind: 'destination.enable',
+        provider: destination.provider,
+        provider_config_sha256: await digestOf(
+          parseDestinationProviderConfig(destination.provider_config)
+        ),
+        lifecycle_status: 'active',
+      },
+      [destination.id]
+    );
+    if (refused) return refused;
     const now = Date.now();
-    await adapter.execute(
+    // Conditional on the version the gate's digest was computed from.
+    const enabled = await adapter.execute(
       `UPDATE admin_destinations
        SET lifecycle_status = 'active', updated_by = ?, updated_at = ?,
            version = version + 1
-       WHERE id = ? AND deleted_at IS NULL`,
-      [authContext.userId, now, destination.id]
+       WHERE id = ? AND deleted_at IS NULL AND version = ?`,
+      [authContext.userId, now, destination.id, destination.version]
     );
+    if ((enabled?.rowsAffected ?? 0) !== 1) {
+      return concurrentModificationResponse(c);
+    }
     const auditId = await writeAdminAuditLog(c, {
       action: 'storage_destination.enable',
       resourceType: 'admin_destination',
@@ -5593,9 +5977,46 @@ destinationsRouter.post('/:id/credentials/prepare', async (c) => {
       ]);
     }
 
+    // The secret is bound by its digest only; the gate runs before the secret backend is written.
+    const refused = await requireLoggingStepUp(
+      c,
+      'webhook.destination.update',
+      destinationStepUpTenant(c, destination.scope_type, destination.scope_id),
+      {
+        kind: 'destination.credential.prepare',
+        provider: destination.provider,
+        secret_sha256: await sha256Hex(parsed.value.plaintext),
+        backend: backendSelection.backendKind,
+        content_type: parsed.value.contentType,
+        credential_version: destination.credential_version ?? 0,
+        next_credential_version: destination.next_credential_version ?? 0,
+      },
+      [destination.id]
+    );
+    if (refused) return refused;
+
     const now = Date.now();
     const nextVersion =
       Math.max(destination.credential_version ?? 0, destination.next_credential_version ?? 0) + 1;
+    // The secret object key derives from destination and version, so the version is reserved on
+    // the row (compare-and-set) before the secret is written: a second prepare that read the same
+    // state loses here and never reaches the secret backend, and later prepares see the reserved
+    // version and take the next one. The pending ref is cleared while the reservation stands.
+    // Numbers only ever go up (nothing else lowers or clears a reserved number except a switch,
+    // which moves it into credential_version), and the backend derives the object key from
+    // destination and version alone, so a number is the unique key: a stale prepare can only ever
+    // write its own, never-reused object. ar-lib-logging's backend takes no key or conditional
+    // put, so number uniqueness is the mechanism here.
+    const reserved = await adapter.execute(
+      `UPDATE admin_destinations
+       SET next_credential_ref = NULL, next_credential_version = ?,
+           updated_by = ?, updated_at = ?, version = version + 1
+       WHERE id = ? AND deleted_at IS NULL AND version = ?`,
+      [nextVersion, authContext.userId, now, destination.id, destination.version]
+    );
+    if ((reserved?.rowsAffected ?? 0) !== 1) {
+      return concurrentModificationResponse(c);
+    }
     const nextCredentialRef = await backendSelection.backend.rotateSecret({
       destinationId: destination.id,
       nextVersion,
@@ -5626,12 +6047,13 @@ destinationsRouter.post('/:id/credentials/prepare', async (c) => {
       }
     );
 
-    await adapter.execute(
+    const prepared = await adapter.execute(
       `UPDATE admin_destinations
        SET next_credential_ref = ?, next_credential_version = ?,
            rotation_status = ?, updated_by = ?, updated_at = ?,
            version = version + 1
-       WHERE id = ? AND deleted_at IS NULL`,
+       WHERE id = ? AND deleted_at IS NULL
+         AND next_credential_version = ? AND next_credential_ref IS NULL`,
       [
         nextState.nextCredentialRef,
         nextState.nextCredentialVersion,
@@ -5639,8 +6061,14 @@ destinationsRouter.post('/:id/credentials/prepare', async (c) => {
         authContext.userId,
         now,
         destination.id,
+        nextVersion,
       ]
     );
+    if ((prepared?.rowsAffected ?? 0) !== 1) {
+      // The reservation no longer stands; the secret object written at the reserved version is
+      // unreferenced and no later prepare reuses that version.
+      return concurrentModificationResponse(c);
+    }
     const auditId = await writeAdminAuditLog(c, {
       action: 'storage_destination.credentials.prepare',
       resourceType: 'admin_destination',
@@ -5664,7 +6092,7 @@ destinationsRouter.post('/:id/credentials/prepare', async (c) => {
           rotation_status: nextState.rotationStatus,
           next_credential_ref: nextCredentialRef,
           next_credential_version: nextVersion,
-          version: destination.version + 1,
+          version: destination.version + 2,
           updated_at: now,
         },
         { auditId }
@@ -5785,24 +6213,53 @@ destinationsRouter.post('/:id/credentials/activate', async (c) => {
       },
       { now, overlapMs }
     );
-    await adapter.execute(
+    // Without a prepared credential the rotation only records `failed` and nothing switches, so
+    // that path is not gated; a real switch changes what the destination authenticates with.
+    if (result.state.rotationStatus !== 'failed') {
+      const refused = await requireLoggingStepUp(
+        c,
+        'webhook.destination.update',
+        destinationStepUpTenant(c, destination.scope_type, destination.scope_id),
+        {
+          kind: 'destination.credential.activate',
+          provider: destination.provider,
+          credential_ref: result.state.credentialRef,
+          credential_version: result.state.credentialVersion,
+          previous_credential_ref: result.state.previousCredentialRef,
+          overlap_ms: overlapMs,
+        },
+        [destination.id]
+      );
+      if (refused) return refused;
+    }
+    const activated = await adapter.execute(
       `UPDATE admin_destinations
-       SET credential_ref = ?, credential_version = ?, next_credential_ref = NULL,
-           next_credential_version = NULL, previous_credential_ref = ?,
+       SET credential_ref = ?, credential_version = ?, next_credential_ref = ?,
+           next_credential_version = ?, previous_credential_ref = ?,
            previous_credential_retire_after = ?, rotation_status = ?,
            updated_by = ?, updated_at = ?, version = version + 1
-       WHERE id = ? AND deleted_at IS NULL`,
+       WHERE id = ? AND deleted_at IS NULL AND version = ?`,
       [
         result.state.credentialRef,
         result.state.credentialVersion,
+        // A real switch clears the pending credential (its number is now credential_version, so
+        // numbers still never go back). The failed path keeps the pending ref and, above all, a
+        // reserved `next_credential_version`: releasing it would let a later prepare take the
+        // same number, and so the same secret object key, as a stalled earlier prepare.
+        result.state.nextCredentialRef,
+        result.state.nextCredentialVersion,
         result.state.previousCredentialRef,
         result.state.previousCredentialRetireAfter,
         result.state.rotationStatus,
         authContext.userId,
         now,
         destination.id,
+        destination.version,
       ]
     );
+    if ((activated?.rowsAffected ?? 0) !== 1) {
+      return concurrentModificationResponse(c);
+    }
     const auditId = await writeAdminAuditLog(c, {
       action: 'storage_destination.credentials.activate',
       resourceType: 'admin_destination',
@@ -6168,6 +6625,21 @@ loggingPoliciesRouter.post('/assignments', async (c) => {
       changeProtection: parsed.value.changeProtection,
       approvalPolicyId: parsed.value.approvalPolicyId,
     });
+    const refused = await requireLoggingStepUp(
+      c,
+      'webhook.destination.update',
+      parsed.value.tenantId ?? getTenantIdFromContext(c),
+      {
+        kind: 'logging.assignment.create',
+        tenant_id: parsed.value.tenantId,
+        log_type: parsed.value.logType,
+        plane: parsed.value.plane,
+        destination_id: parsed.value.destinationId,
+        fallback_policy_id: parsed.value.fallbackPolicyId,
+        enabled: parsed.value.enabled,
+      }
+    );
+    if (refused) return refused;
     await adapter.execute(
       `INSERT INTO logging_destination_overrides (
 	        id, tenant_id, log_type, plane, destination_id, fallback_policy_id,
@@ -6303,8 +6775,30 @@ loggingPoliciesRouter.post('/fallbacks', async (c) => {
     }
 
     const adapter = getAdminAdapter(c);
+    const duplicate = await fallbackKeyConflict(c, adapter, {
+      scopeType: parsed.value.scopeType,
+      scopeId: parsed.value.scopeId,
+      logType: parsed.value.logType,
+      plane: parsed.value.plane,
+    });
+    if (duplicate) return duplicate;
     const now = Date.now();
     const id = createLoggingId('pol', now);
+    const refused = await requireLoggingStepUp(
+      c,
+      'webhook.destination.update',
+      tenantId ?? getTenantIdFromContext(c),
+      {
+        kind: 'logging.fallback.create',
+        scope_type: parsed.value.scopeType,
+        scope_id: parsed.value.scopeId,
+        log_type: parsed.value.logType,
+        plane: parsed.value.plane,
+        fallback_destination_id: parsed.value.fallbackDestinationId,
+        failure_mode: parsed.value.failureMode,
+      }
+    );
+    if (refused) return refused;
     await adapter.execute(
       `INSERT INTO logging_fallback_policies (
         id, scope_type, scope_id, log_type, plane, fallback_destination_id,
@@ -6432,13 +6926,50 @@ loggingPoliciesRouter.patch('/fallbacks/:fallback_id', async (c) => {
       }
     }
 
+    const fallbackChanged =
+      current.scope_type !== parsed.value.scopeType ||
+      current.scope_id !== parsed.value.scopeId ||
+      current.log_type !== parsed.value.logType ||
+      current.plane !== parsed.value.plane ||
+      current.fallback_destination_id !== parsed.value.fallbackDestinationId ||
+      current.failure_mode !== parsed.value.failureMode;
+    if (fallbackChanged) {
+      const duplicate = await fallbackKeyConflict(
+        c,
+        adapter,
+        {
+          scopeType: parsed.value.scopeType,
+          scopeId: parsed.value.scopeId,
+          logType: parsed.value.logType,
+          plane: parsed.value.plane,
+        },
+        fallbackId
+      );
+      if (duplicate) return duplicate;
+      const refused = await requireLoggingStepUp(
+        c,
+        'webhook.destination.update',
+        tenantId ?? getTenantIdFromContext(c),
+        {
+          kind: 'logging.fallback.update',
+          scope_type: parsed.value.scopeType,
+          scope_id: parsed.value.scopeId,
+          log_type: parsed.value.logType,
+          plane: parsed.value.plane,
+          fallback_destination_id: parsed.value.fallbackDestinationId,
+          failure_mode: parsed.value.failureMode,
+        },
+        [fallbackId]
+      );
+      if (refused) return refused;
+    }
     const now = Date.now();
-    await adapter.execute(
+    const fallbackUpdated = await adapter.execute(
       `UPDATE logging_fallback_policies
        SET scope_type = ?, scope_id = ?, log_type = ?, plane = ?,
            fallback_destination_id = ?, failure_mode = ?, updated_at = ?,
            version = version + 1
-       WHERE id = ?`,
+       WHERE id = ? AND version = ?`,
       [
         parsed.value.scopeType,
         parsed.value.scopeId,
@@ -6448,8 +6979,12 @@ loggingPoliciesRouter.patch('/fallbacks/:fallback_id', async (c) => {
         parsed.value.failureMode,
         now,
         fallbackId,
+        current.version,
       ]
     );
+    if ((fallbackUpdated?.rowsAffected ?? 0) !== 1) {
+      return concurrentModificationResponse(c);
+    }
     const auditId = await writeAdminAuditLog(c, {
       action: 'logging_fallback_policy.update',
       resourceType: 'logging_fallback_policy',
@@ -6572,12 +7107,39 @@ async function handleLoggingDestinationOverridePatch(
       changeProtection: nextChangeProtection,
       approvalPolicyId: value.approvalPolicyId,
     });
-    await adapter.execute(
+    // Only a change to what decides delivery (where, for which logs, on or off) is gated; a
+    // change to protection or approval metadata alone is not.
+    const deliveryChanged =
+      current.tenant_id !== value.tenantId ||
+      current.log_type !== value.logType ||
+      current.plane !== value.plane ||
+      current.destination_id !== value.destinationId ||
+      current.fallback_policy_id !== value.fallbackPolicyId ||
+      (current.enabled === 1) !== value.enabled;
+    if (deliveryChanged) {
+      const refused = await requireLoggingStepUp(
+        c,
+        'webhook.destination.update',
+        value.tenantId ?? getTenantIdFromContext(c),
+        {
+          kind: 'logging.assignment.update',
+          tenant_id: value.tenantId,
+          log_type: value.logType,
+          plane: value.plane,
+          destination_id: value.destinationId,
+          fallback_policy_id: value.fallbackPolicyId,
+          enabled: value.enabled,
+        },
+        [policyId]
+      );
+      if (refused) return refused;
+    }
+    const overrideUpdated = await adapter.execute(
       `UPDATE logging_destination_overrides
 	       SET tenant_id = ?, log_type = ?, plane = ?, destination_id = ?, fallback_policy_id = ?,
 	           enabled = ?, managed_by = ?, change_protection = ?, approval_policy_id = ?,
 	           policy_hash = ?, updated_by = ?, updated_at = ?, version = version + 1
-	       WHERE id = ?`,
+	       WHERE id = ? AND version = ?`,
       [
         value.tenantId,
         value.logType,
@@ -6592,8 +7154,12 @@ async function handleLoggingDestinationOverridePatch(
         authContext.userId,
         now,
         policyId,
+        current.version,
       ]
     );
+    if ((overrideUpdated?.rowsAffected ?? 0) !== 1) {
+      return concurrentModificationResponse(c);
+    }
     await insertLoggingDestinationOverrideHistory(adapter, {
       overrideId: policyId,
       previous: current,
@@ -6746,12 +7312,35 @@ async function handleLoggingDestinationOverrideRollback(
       approvalPolicyId: previous.previous_approval_policy_id,
     });
 
-    await adapter.execute(
+    if (
+      current.destination_id !== previous.previous_destination_id ||
+      current.fallback_policy_id !== previous.previous_fallback_policy_id ||
+      current.enabled !== previous.previous_enabled
+    ) {
+      const refused = await requireLoggingStepUp(
+        c,
+        'webhook.destination.update',
+        current.tenant_id ?? getTenantIdFromContext(c),
+        {
+          kind: 'logging.assignment.rollback',
+          tenant_id: current.tenant_id,
+          log_type: current.log_type,
+          plane: current.plane,
+          destination_id: previous.previous_destination_id,
+          fallback_policy_id: previous.previous_fallback_policy_id,
+          enabled: previous.previous_enabled === 1,
+        },
+        [policyId]
+      );
+      if (refused) return refused;
+    }
+
+    const rolledBack = await adapter.execute(
       `UPDATE logging_destination_overrides
        SET destination_id = ?, fallback_policy_id = ?, enabled = ?,
            change_protection = ?, approval_policy_id = ?, policy_hash = ?,
            updated_by = ?, updated_at = ?, version = version + 1
-       WHERE id = ?`,
+       WHERE id = ? AND version = ?`,
       [
         previous.previous_destination_id,
         previous.previous_fallback_policy_id,
@@ -6762,8 +7351,12 @@ async function handleLoggingDestinationOverrideRollback(
         authContext.userId,
         now,
         policyId,
+        current.version,
       ]
     );
+    if ((rolledBack?.rowsAffected ?? 0) !== 1) {
+      return concurrentModificationResponse(c);
+    }
     const next = {
       tenant_id: current.tenant_id,
       log_type: current.log_type,
@@ -8719,6 +9312,37 @@ notificationsRouter.post('/delivery-routes', async (c) => {
     const now = Date.now();
     const id = createLoggingId('indr', now);
     const value = parsed.value;
+    // Delivery goes to the route's destination whatever the provider label says (an email route
+    // has no address of its own), so every provider is gated: the route decides where internal
+    // notifications are sent.
+    const routeDestination = value.destinationId
+      ? await adapter.queryOne<{ provider_config: string }>(
+          'SELECT provider_config FROM admin_destinations WHERE id = ? AND deleted_at IS NULL',
+          [value.destinationId]
+        )
+      : null;
+    const routeDestinationUrl = routeDestination
+      ? parseOptionalString(parseDestinationProviderConfig(routeDestination.provider_config).url)
+      : null;
+    const refused = await requireLoggingStepUp(
+      c,
+      'webhook.destination.update',
+      value.scopeType === 'tenant' ? value.scopeId : getTenantIdFromContext(c),
+      {
+        kind: 'notification.delivery_route.create',
+        scope_type: value.scopeType,
+        scope_id: value.scopeId,
+        provider: value.provider,
+        destination_id: value.destinationId,
+        destination_url_sha256: routeDestinationUrl ? await sha256Hex(routeDestinationUrl) : null,
+        categories: sortedOrNull(value.categories),
+        severities: sortedOrNull(value.severities),
+        min_severity: value.minSeverity,
+        enabled: value.enabled,
+        failure_policy: value.failurePolicy,
+      }
+    );
+    if (refused) return refused;
     await adapter.execute(
       `INSERT INTO internal_notification_delivery_routes (
         id, name, scope_type, scope_id, provider, destination_id, categories_json,
@@ -8998,6 +9622,27 @@ loggingPoliciesRouter.post('/exports', async (c) => {
           'No R2 bucket is configured for logging message payloads.'
         ),
       ]);
+    }
+    // An export that carries sensitive detail or payloads is the step-up operation; plain catalog
+    // exports are not. The gate runs before the first write (the payload object in R2).
+    if (!c.env.OBJECT_ENCRYPTION_ROOT_KEY) {
+      // The payload write below cannot succeed without the key, so refuse before any receipt.
+      return createAdminFieldErrorResponse(c, [
+        fieldError(
+          'OBJECT_ENCRYPTION_ROOT_KEY',
+          'binding_unavailable',
+          'The logging payload encryption key is not configured.'
+        ),
+      ]);
+    }
+    if (isSensitiveLoggingExport({ plane, includePayload, detailScope })) {
+      const refused = await requireLoggingStepUp(
+        c,
+        'log.sensitive.export',
+        requestedTenantId ?? getTenantIdFromContext(c),
+        { kind: 'logging.export.create', format, ...filters }
+      );
+      if (refused) return refused;
     }
     const payloadWrite = await writeEncryptedLoggingMessagePayload(c.env, {
       bucket: payloadBucket,
@@ -9877,6 +10522,48 @@ loggingPoliciesRouter.get('/exports/:id/artifact', async (c) => {
         ),
       ]);
     }
+    // Downloading a sensitive export discloses its data, so it is the step-up operation too. Every
+    // check that can refuse the request (refs, manifest shape, part limits) runs first; the gate
+    // sits right before the first read of export data.
+    const requireDownloadStepUp = async (): Promise<Response | null> =>
+      isSensitiveLoggingExportJob(item)
+        ? requireLoggingStepUp(
+            c,
+            'log.sensitive.export',
+            getTenantIdFromContext(c),
+            {
+              kind: 'logging.export.download',
+              export_id: item.id,
+              tenant_key: item.tenant_key,
+              checksum_sha256: item.checksum_sha256,
+              artifact_object_ref: item.artifact_object_ref,
+              manifest_object_ref: item.manifest_object_ref,
+              format: item.format,
+            },
+            [item.id]
+          )
+        : null;
+    // A missing or oversized object is found with `head` before the gate, so it does not spend a
+    // receipt and then fail the read.
+    const precheckObjects = async (refs: string[], maxBytes: number): Promise<Response | null> => {
+      if (typeof bucket.head !== 'function') return null;
+      let total = 0;
+      for (const ref of refs) {
+        const head = await bucket.head(ref);
+        if (!head) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+        total += Number(head.size) || 0;
+      }
+      if (total > maxBytes) {
+        return createAdminFieldErrorResponse(c, [
+          fieldError(
+            'artifact',
+            'artifact_too_large_for_inline_download',
+            'Export artifact is too large for inline API download.'
+          ),
+        ]);
+      }
+      return null;
+    };
     if (item.artifact_object_ref) {
       if (!isLoggingExportObjectRefAllowed(item, item.artifact_object_ref)) {
         return createAdminFieldErrorResponse(c, [
@@ -9887,6 +10574,13 @@ loggingPoliciesRouter.get('/exports/:id/artifact', async (c) => {
           ),
         ]);
       }
+      const artifactMissing = await precheckObjects(
+        [item.artifact_object_ref],
+        LOGGING_EXPORT_ARTIFACT_INLINE_DOWNLOAD_MAX_BYTES
+      );
+      if (artifactMissing) return artifactMissing;
+      const artifactRefused = await requireDownloadStepUp();
+      if (artifactRefused) return artifactRefused;
       const object = await bucket.get(item.artifact_object_ref);
       if (!object) {
         return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
@@ -10009,6 +10703,13 @@ loggingPoliciesRouter.get('/exports/:id/artifact', async (c) => {
         ),
       ]);
     }
+    const partsMissing = await precheckObjects(
+      partRefs,
+      LOGGING_EXPORT_ARTIFACT_INLINE_DOWNLOAD_MAX_BYTES - manifestRead.bytes
+    );
+    if (partsMissing) return partsMissing;
+    const partsRefused = await requireDownloadStepUp();
+    if (partsRefused) return partsRefused;
     const partTexts: string[] = [];
     let totalBytes = manifestRead.bytes;
     for (const [index, partRef] of partRefs.entries()) {
@@ -10789,6 +11490,15 @@ loggingPoliciesRouter.post('/dlq-items/:id/delete', async (c) => {
       return accessError;
     }
 
+    const refused = await requireLoggingStepUp(
+      c,
+      'audit.retention.shorten',
+      getTenantIdFromContext(c),
+      { kind: 'logging.dlq.delete', tenant_key: item.tenant_key, next_status: 'deleted' },
+      [id]
+    );
+    if (refused) return refused;
+
     const now = Date.now();
     await adapter.execute(
       `UPDATE logging_dlq_items
@@ -10870,6 +11580,20 @@ loggingPoliciesRouter.post('/dlq-items/:id/purge', async (c) => {
         ),
       ]);
     }
+
+    const refused = await requireLoggingStepUp(
+      c,
+      'audit.retention.shorten',
+      getTenantIdFromContext(c),
+      {
+        kind: 'logging.dlq.purge',
+        tenant_key: item.tenant_key,
+        payload_object_ref: item.payload_object_ref,
+        next_status: 'purged',
+      },
+      [id]
+    );
+    if (refused) return refused;
 
     await bucket.delete(item.payload_object_ref);
     const now = Date.now();
@@ -11059,6 +11783,26 @@ loggingPoliciesRouter.post('/drafts/:id/publish', async (c) => {
     >;
     const now = snapshot.synchronizedAt;
     if (!c.env.LOG_ARCHIVE) throw new Error('logging_policy_store_unavailable');
+    const expiryRefused = await snapshotExpiryRefusal(c, snapshot);
+    if (expiryRefused) return expiryRefused;
+    // Bound by the snapshot's semantic content (policy hash and policies), not its generated id
+    // or timestamp, so an identical repeat of the request carries the same parameters.
+    const refused = await requireLoggingStepUp(
+      c,
+      'logging.policy.publish',
+      draft.scope_type === 'tenant' ? draft.scope_id : getTenantIdFromContext(c),
+      {
+        kind: 'logging.policy.publish_draft',
+        scope_type: snapshot.scopeType,
+        scope_id: snapshot.scopeId,
+        version: snapshot.version,
+        policy_hash: snapshot.policyHash,
+        policies_sha256: await digestOf(snapshot.policies),
+        expires_at: snapshot.expiresAt,
+      },
+      [draft.id]
+    );
+    if (refused) return refused;
     const publication = await publishRuntimeLoggingPolicySnapshot({
       snapshot,
       kv: c.env.AUTHRIM_CONFIG,
@@ -11134,6 +11878,27 @@ loggingPoliciesRouter.post('/snapshots', async (c) => {
     );
     const now = snapshot.synchronizedAt;
     if (!c.env.LOG_ARCHIVE) throw new Error('logging_policy_store_unavailable');
+    // The body was validated before the database reads; re-check against the built snapshot, whose
+    // TTL runs from its own timestamp, so the receipt is not spent on a KV write that must fail.
+    const expiryRefused = await snapshotExpiryRefusal(c, snapshot);
+    if (expiryRefused) return expiryRefused;
+    // This route publishes at once, so the gate sits right before the KV/R2 writes and binds the
+    // snapshot's semantic content (not its generated id or timestamp).
+    const refused = await requireLoggingStepUp(
+      c,
+      'logging.policy.publish',
+      snapshot.scopeType === 'tenant' ? snapshot.scopeId : getTenantIdFromContext(c),
+      {
+        kind: 'logging.policy.publish_snapshot',
+        scope_type: snapshot.scopeType,
+        scope_id: snapshot.scopeId,
+        version: snapshot.version,
+        policy_hash: snapshot.policyHash,
+        policies_sha256: await digestOf(snapshot.policies),
+        expires_at: snapshot.expiresAt,
+      }
+    );
+    if (refused) return refused;
     const publication = await publishRuntimeLoggingPolicySnapshot({
       snapshot,
       kv: c.env.AUTHRIM_CONFIG,
@@ -12264,6 +13029,23 @@ adminLoggingRouter.post('/catalog-repairs/dangerous/apply', async (c) => {
         ),
       ]);
     }
+    // Every dangerous repair action removes or invalidates committed log data (object
+    // generations, record indexes, manifest lineage), so the whole route is one retention gate.
+    const refused = await requireLoggingStepUp(
+      c,
+      'audit.retention.shorten',
+      getTenantIdFromContext(c),
+      {
+        kind: 'logging.catalog_repair.dangerous_apply',
+        action: parsed.action,
+        object_catalog_id: parsed.object?.id ?? null,
+        manifest_id: parsed.manifest?.id ?? null,
+        tenant_key:
+          parsed.object?.tenant_key ?? parsed.manifest?.tenant_key ?? parsed.plan.tenantKey,
+      },
+      [parsed.object?.id ?? parsed.manifest?.id ?? parsed.plan.tenantKey ?? 'catalog-repair']
+    );
+    if (refused) return refused;
     if (parsed.action === 'delete_object' && parsed.object) {
       await retireDeletedLogObjectGeneration(adapter, {
         retirementId: `log-delete:${parsed.object.id}`,
@@ -12405,6 +13187,21 @@ adminLoggingRouter.patch('/critical-policy', async (c) => {
       typeof body.default_fallback_eligible === 'boolean'
         ? body.default_fallback_eligible
         : current.default_fallback_eligible === 1;
+    // Always gated: the repository writes the requested values unconditionally, so skipping the
+    // gate for a request that looks like a no-op would let it undo a concurrent gated change.
+    const refused = await requireLoggingStepUp(
+      c,
+      'webhook.destination.update',
+      destinationStepUpTenant(c, current.scope_type, current.scope_id),
+      {
+        kind: 'logging.critical_policy.update',
+        provider: current.provider,
+        critical_allowed: criticalAllowed,
+        default_fallback_eligible: fallbackEligible,
+      },
+      [current.id]
+    );
+    if (refused) return refused;
     const mutation = await getAdminLoggingControlRepository(c).updateCriticalPolicy({
       destinationId: current.id,
       criticalAllowed,
@@ -12620,6 +13417,20 @@ adminLoggingRouter.patch('/sensitive-detail-policy', async (c) => {
 
     const now = Date.now();
     const enabled = body.enabled === undefined ? true : body.enabled !== false;
+    const refused = await requireLoggingStepUp(
+      c,
+      'webhook.destination.update',
+      getTenantIdFromContext(c),
+      {
+        kind: 'logging.sensitive_detail_policy.update',
+        log_type: logType,
+        plane: 'sensitive_detail',
+        destination_id: destinationId,
+        enabled,
+      },
+      [destinationId]
+    );
+    if (refused) return refused;
     const mutation = await getAdminLoggingControlRepository(c).updateSensitiveDetailPolicy({
       logType,
       destinationId,

@@ -37,7 +37,13 @@ describe('admin step-up catalog coverage', () => {
   it.each(Object.keys(ADMIN_STEP_UP_OPERATIONS).filter((op) => !NO_ROUTE_YET.has(op)))(
     'has a route that asks for %s',
     (operation) => {
-      expect(text).toContain(`operation: '${operation}'`);
+      // Asked for directly, or through logging-control's `requireLoggingStepUp(c, '<op>', ...)`.
+      const asked =
+        text.includes(`operation: '${operation}'`) ||
+        new RegExp(`requireLoggingStepUp\\(\\s*c,\\s*'${operation.replace(/\./g, '\\.')}'`).test(
+          text
+        );
+      expect(asked).toBe(true);
     }
   );
 
