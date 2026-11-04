@@ -208,7 +208,7 @@
 					{#if column.key === 'channel'}
 						{t(DELIVERY_CHANNEL_LABEL[row.channel])}
 					{:else if column.key === 'target'}
-						<code>{row.target_id}</code>
+						{#if row.target_id}<code>{row.target_id}</code>{:else}{t('nt.dlv.otherTenant')}{/if}
 					{:else if column.key === 'status'}
 						<Badge tone={DELIVERY_STATUS_TONE[row.status]}
 							>{t(DELIVERY_STATUS_LABEL[row.status])}</Badge

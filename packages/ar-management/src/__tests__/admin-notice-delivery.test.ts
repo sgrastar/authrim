@@ -247,7 +247,8 @@ describe('admin notice delivery', () => {
     expect(await planNoticeDeliveries(adapter, NOW + 1)).toMatchObject({ planned: 5 });
     // A platform admin can open any tenant, so hears about it too.
     expect(targets(tenant.id)).toEqual(['email:lead', 'email:root', 'slack:ch-tenant-a']);
-    expect(targets(writers.id)).toEqual(['email:lead', 'email:root', 'slack:ch-tenant-a']);
+    // Behind a permission: the channel has no registering admin who sees it, so no post.
+    expect(targets(writers.id)).toEqual(['email:lead', 'email:root']);
     expect(targets(platform.id)).toEqual(['email:root', 'slack:ch-platform']);
     // Personal notices are not posted to a shared channel; the watcher opted out of email.
     expect(targets(personal.id)).toEqual([]);
@@ -621,5 +622,128 @@ describe('admin notice delivery', () => {
     expect(targets(tenant.id)).toContain('email:star');
     // Global `*` is platform authority whichever sign-in role opened the console.
     expect(targets(platform.id)).toEqual(['email:mixed', 'email:root', 'email:star']);
+  });
+
+  it('posts a notice behind a permission only to channels whose registering admin sees it', async () => {
+    const sealed = await encryptValue(SLACK, KEY, 'AES-256-GCM', 1);
+    const channel = db.prepare(
+      `INSERT INTO admin_notice_channels (id, scope_type, tenant_id, kind, name,
+         webhook_url_encrypted, webhook_url_hint, min_severity, enabled, created_by, created_at,
+         updated_at) VALUES (?, 'tenant', 'tenant-a', 'slack', ?, ?, 'hint', 'info', 1, ?, 1, 1)`
+    );
+    channel.run('ch-lead', 'Lead', sealed.encrypted, 'lead');
+    channel.run('ch-watcher', 'Watcher', sealed.encrypted, 'watcher');
+    const gated = await notices.create(
+      {
+        scope_type: 'tenant',
+        tenant_id: 'tenant-a',
+        severity: 'high',
+        source: 'system',
+        category: 'c',
+        title: 'g',
+        required_permission: 'admin:settings:write',
+      },
+      NOW
+    );
+    const open = await notices.create(
+      {
+        scope_type: 'tenant',
+        tenant_id: 'tenant-a',
+        severity: 'high',
+        source: 'announcement',
+        category: 'announcement',
+        title: 'o',
+      },
+      NOW
+    );
+    await planNoticeDeliveries(adapter, NOW);
+    expect(targets(gated.id).filter((t) => t.startsWith('slack:'))).toEqual(['slack:ch-lead']);
+    expect(targets(open.id).filter((t) => t.startsWith('slack:'))).toEqual([
+      'slack:ch-lead',
+      'slack:ch-watcher',
+    ]);
+  });
+
+  it('keeps only an error code on a delivery, never a free-form message', async () => {
+    await notices.create(
+      {
+        scope_type: 'admin_user',
+        tenant_id: 'tenant-a',
+        admin_user_id: 'lead',
+        severity: 'high',
+        source: 'announcement',
+        category: 'announcement',
+        title: 'x',
+      },
+      NOW
+    );
+    await planNoticeDeliveries(adapter, NOW);
+    const { produceNotificationDelivery } = await import('@authrim/ar-lib-core');
+    vi.mocked(produceNotificationDelivery).mockRejectedValueOnce(
+      new Error('D1_ERROR: no such table: secret_things at offset 12')
+    );
+    await sendDueNoticeDeliveries(env, adapter, NOW + 1, vi.fn());
+    expect(db.prepare('SELECT last_error FROM admin_notice_deliveries').get()).toEqual({
+      last_error: 'send_failed',
+    });
+  });
+
+  it('stops posting a gated notice once the channel’s registering admin loses it', async () => {
+    const sealed = await encryptValue(SLACK, KEY, 'AES-256-GCM', 1);
+    db.prepare(
+      `INSERT INTO admin_notice_channels (id, scope_type, tenant_id, kind, name,
+         webhook_url_encrypted, webhook_url_hint, min_severity, enabled, created_by, created_at,
+         updated_at) VALUES ('ch-lead', 'tenant', 'tenant-a', 'slack', 'Lead', ?, 'hint', 'info',
+         1, 'lead', 1, 1)`
+    ).run(sealed.encrypted);
+    db.prepare(
+      `INSERT INTO admin_notice_preferences (admin_user_id, email_enabled, email_min_severity,
+         updated_at) VALUES ('lead', 0, 'info', 1), ('root', 0, 'info', 1)`
+    ).run();
+    await notices.create(
+      {
+        scope_type: 'tenant',
+        tenant_id: 'tenant-a',
+        severity: 'high',
+        source: 'system',
+        category: 'c',
+        title: 'g',
+        required_permission: 'admin:settings:write',
+      },
+      NOW
+    );
+    await planNoticeDeliveries(adapter, NOW);
+    db.prepare(`DELETE FROM admin_role_assignments WHERE admin_user_id = 'lead'`).run();
+    const fetcher = vi.fn();
+    expect(await sendDueNoticeDeliveries(env, adapter, NOW + 1, fetcher)).toEqual({ skipped: 1 });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('keeps a network error of a Slack post as a code', async () => {
+    await slackChannel('tenant-a', 'info');
+    db.prepare(
+      `INSERT INTO admin_notice_preferences (admin_user_id, email_enabled, email_min_severity,
+         updated_at) VALUES ('lead', 0, 'info', 1), ('watcher', 0, 'info', 1), ('root', 0, 'info', 1)`
+    ).run();
+    await notices.create(
+      {
+        scope_type: 'tenant',
+        tenant_id: 'tenant-a',
+        severity: 'high',
+        source: 'announcement',
+        category: 'announcement',
+        title: 'x',
+      },
+      NOW
+    );
+    await planNoticeDeliveries(adapter, NOW);
+    const fetcher = vi.fn(async () => {
+      throw new TypeError('fetch failed: ECONNREFUSED 10.0.0.1');
+    });
+    await sendDueNoticeDeliveries(env, adapter, NOW + 1, fetcher);
+    expect(db.prepare('SELECT status, last_error FROM admin_notice_deliveries').get()).toEqual({
+      status: 'failed',
+      last_error: 'send_failed',
+    });
   });
 });

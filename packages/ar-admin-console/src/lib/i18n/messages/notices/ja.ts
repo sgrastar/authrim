@@ -158,6 +158,7 @@ export const jaNotices = {
 	'nt.dlv.empty': 'このお知らせは、メールにも Slack にも配信されていません。',
 	'nt.dlv.loadFailed': '配信の状況を読み込めませんでした。',
 	'nt.dlv.more': 'さらに表示',
+	'nt.dlv.otherTenant': 'ほかのテナントの管理者',
 	'nt.dlv.col.channel': '方法',
 	'nt.dlv.col.target': '宛先',
 	'nt.dlv.col.status': '状態',

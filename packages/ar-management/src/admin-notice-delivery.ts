@@ -41,6 +41,8 @@ export const MAX_ATTEMPTS = 8;
 /** At most this many admins of one tenant (and as many platform admins) are considered. */
 export const MAX_EMAIL_CANDIDATES = 1000;
 const SLACK_TIMEOUT_MS = 10_000;
+/** The form of an error kept on a delivery and shown back. */
+const ERROR_CODE = /^[a-z0-9_]{1,80}$/;
 
 interface DeliveryLog {
   info(message: string, meta?: Record<string, unknown>): void;
@@ -356,7 +358,23 @@ export async function planNoticeDeliveries(
               : { scope: 'tenant', tenantId: notice.tenant_id ?? '' },
             notice.severity
           );
+          // A notice behind a permission (or about a client) goes only to channels whose
+          // registering admin sees it: a channel is not a way around what the notice needs.
+          const gated = notice.scope_type === 'client' || notice.required_permission !== null;
+          const owners = gated
+            ? await adminViews(
+                adapter,
+                channels.flatMap((channel) => (channel.created_by ? [channel.created_by] : [])),
+                now
+              )
+            : null;
           for (const channel of channels) {
+            if (
+              owners &&
+              !(channel.created_by && viewSees(owners.get(channel.created_by), notice))
+            ) {
+              continue;
+            }
             targets.push({ channel: 'slack', target_id: channel.id });
           }
         }
@@ -492,13 +510,21 @@ async function sendSlack(
   adapter: DatabaseAdapter,
   notice: AdminNotice,
   delivery: AdminNoticeDelivery,
-  fetcher: typeof fetch
+  fetcher: typeof fetch,
+  now: number
 ): Promise<SendResult> {
   const channel = await new AdminNoticeDeliveryRepository(adapter).findChannel(delivery.target_id);
   if (!channel || !channel.enabled) return { status: 'skipped', error: 'channel_unavailable' };
   // Its minimum may have been raised since the notice was planned.
   if (!severityReaches(notice.severity, channel.min_severity)) {
     return { status: 'skipped', error: 'below_channel_minimum' };
+  }
+  // Behind a permission: the registering admin must still see it (planned before, or since lost).
+  if (notice.scope_type === 'client' || notice.required_permission !== null) {
+    const owner = channel.created_by
+      ? (await adminViews(adapter, [channel.created_by], now)).get(channel.created_by)
+      : undefined;
+    if (!viewSees(owner, notice)) return { status: 'skipped', error: 'channel_owner_not_eligible' };
   }
   if (!env.PII_ENCRYPTION_KEY) return { status: 'failed', error: 'encryption_key_unavailable' };
   const decrypted = await decryptValue(channel.webhook_url_encrypted, env.PII_ENCRYPTION_KEY);
@@ -536,7 +562,8 @@ export async function sendDueNoticeDeliveries(
   adapter: DatabaseAdapter,
   now: number = Date.now(),
   fetcher: typeof fetch = fetch,
-  clock: () => number = () => now
+  clock: () => number = () => now,
+  log?: DeliveryLog
 ): Promise<Record<string, number>> {
   const repository = new AdminNoticeDeliveryRepository(adapter);
   const notices = new AdminNoticeRepository(adapter);
@@ -565,18 +592,26 @@ export async function sendDueNoticeDeliveries(
           result =
             delivery.channel === 'email'
               ? await sendEmail(env, adapter, notice, delivery, at)
-              : await sendSlack(env, adapter, notice, delivery, fetcher);
+              : await sendSlack(env, adapter, notice, delivery, fetcher, at);
         } catch (error) {
           const message = error instanceof Error ? error.message : 'send_failed';
           // An intent with this key exists but does not match: it is not sent again from here,
           // and the row says so instead of claiming it was sent.
           result = message.includes('notification_intent_idempotency_conflict')
             ? { status: 'skipped', error: 'outbox_intent_conflict' }
-            : { status: 'failed', error: message.slice(0, 200) };
+            : { status: 'failed', error: message };
         }
       }
       if (result.status === 'failed' && delivery.attempts >= MAX_ATTEMPTS) {
         result = { status: 'dead_letter', error: result.error };
+      }
+      // Only a code is kept and shown back, whichever path the error came by.
+      if (result.error !== undefined && !ERROR_CODE.test(result.error)) {
+        log?.warn('Admin notice delivery error kept as send_failed', {
+          deliveryId: delivery.id,
+          error: result.error,
+        });
+        result = { ...result, error: 'send_failed' };
       }
       await repository.finish(
         delivery.id,
@@ -609,7 +644,7 @@ export async function processScheduledAdminNoticeDelivery(
         error: error instanceof Error ? error.message : String(error),
       });
     }
-    const sent = await sendDueNoticeDeliveries(env, adapter, now, fetch, () => Date.now());
+    const sent = await sendDueNoticeDeliveries(env, adapter, now, fetch, () => Date.now(), log);
     if ((plan.planned ?? 0) > 0 || Object.keys(sent).length > 0) {
       log.info('Admin notice deliveries', { ...plan, ...sent });
     }

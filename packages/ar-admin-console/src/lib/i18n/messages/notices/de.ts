@@ -165,6 +165,7 @@ export const deNotices: Record<keyof typeof jaNotices, string> = {
 	'nt.dlv.empty': 'Dieser Hinweis wurde weder per E-Mail noch an Slack gesendet.',
 	'nt.dlv.loadFailed': 'Der Zustellstatus konnte nicht geladen werden.',
 	'nt.dlv.more': 'Mehr anzeigen',
+	'nt.dlv.otherTenant': 'Ein Admin eines anderen Mandanten',
 	'nt.dlv.col.channel': 'Weg',
 	'nt.dlv.col.target': 'An',
 	'nt.dlv.col.status': 'Status',

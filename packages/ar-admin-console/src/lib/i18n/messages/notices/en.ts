@@ -157,6 +157,7 @@ export const enNotices: Record<keyof typeof jaNotices, string> = {
 	'nt.dlv.empty': 'This notice was not sent by email or to Slack.',
 	'nt.dlv.loadFailed': 'The delivery status could not be loaded.',
 	'nt.dlv.more': 'Show more',
+	'nt.dlv.otherTenant': 'An admin of another tenant',
 	'nt.dlv.col.channel': 'Method',
 	'nt.dlv.col.target': 'To',
 	'nt.dlv.col.status': 'Status',

@@ -32646,7 +32646,10 @@ paths:
                           type: string
                           enum: [email, slack]
                         target_id:
-                          type: string
+                          type: [string, 'null']
+                          description: >-
+                            The admin or channel; null for an admin of another tenant unless the
+                            reader is a platform admin.
                         status:
                           type: string
                           enum: [queued, sent, failed, dead_letter, skipped]

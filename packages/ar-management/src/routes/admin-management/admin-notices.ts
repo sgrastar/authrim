@@ -216,13 +216,34 @@ adminNoticesRouter.get('/:id/deliveries', async (c) => {
       limit: Number.isFinite(limit) ? limit : undefined,
     });
     const deliveries = page.items;
+    // An admin of another tenant (a platform admin, say) is not named to this tenant's admins.
+    const hidden = new Set<string>();
+    if (!isPlatformAdmin(auth)) {
+      const tenantId = getTenantIdFromContext(c);
+      const emailed = [
+        ...new Set(deliveries.filter((d) => d.channel === 'email').map((d) => d.target_id)),
+      ];
+      const members = new Set<string>();
+      for (let offset = 0; offset < emailed.length; offset += 50) {
+        const ids = emailed.slice(offset, offset + 50);
+        const rows = await adapter.query<{ id: string }>(
+          `SELECT id FROM admin_users WHERE tenant_id = ? AND id IN (${ids.map(() => '?').join(', ')})`,
+          [tenantId, ...ids]
+        );
+        for (const row of rows) members.add(row.id);
+      }
+      for (const id of emailed) if (!members.has(id)) hidden.add(id);
+    }
     return c.json({
       summary: await repository.summaryForNotice(notice.id),
       next_cursor: page.next,
       items: deliveries.map((delivery) => ({
         id: delivery.id,
         channel: delivery.channel,
-        target_id: delivery.target_id,
+        target_id:
+          delivery.channel === 'email' && hidden.has(delivery.target_id)
+            ? null
+            : delivery.target_id,
         status: delivery.status,
         attempts: delivery.attempts,
         next_attempt_at: delivery.status === 'failed' ? delivery.next_attempt_at : null,
