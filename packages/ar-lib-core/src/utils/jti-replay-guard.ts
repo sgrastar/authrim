@@ -13,8 +13,12 @@
  *
  * Each caller namespaces its jtis (for example `native-sso-id-token:<jti>`), so tokens of
  * different kinds never collide in the shared store.
+ *
+ * Outside Cloudflare (the AWS runtime) there is no Durable Object: the runtime's `replayGuard`
+ * port records the jti with one conditional write in its own store instead.
  */
 
+import type { AuthRuntimePorts } from '../types/auth-runtime-ports';
 import type { Env } from '../types/env';
 import { getRegionShardConfig } from './region-sharding';
 import { buildDOInstanceName } from './tenant-context';
@@ -24,6 +28,44 @@ import { buildDOInstanceName } from './tenant-context';
  * in other instances.
  */
 const REPLAY_GUARD_SHARDS = 32;
+
+/**
+ * The runtime's replay store when this is not Cloudflare (undefined on Cloudflare). A runtime
+ * that has ports but no replay store throws, so replay protection never silently falls away.
+ */
+export function runtimeReplayGuard(
+  env: Pick<Env, 'AUTH_RUNTIME_PORTS'>
+): NonNullable<AuthRuntimePorts['replayGuard']> | undefined {
+  const ports = env.AUTH_RUNTIME_PORTS;
+  if (!ports) return undefined;
+  if (!ports.replayGuard) throw new Error('auth_runtime_replay_guard_unavailable');
+  return ports.replayGuard;
+}
+
+/** Fixed-length key for the runtime store, so any accepted token's jti fits its limits. */
+async function runtimeReplayKey(key: string): Promise<string> {
+  const digest = new Uint8Array(
+    await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key))
+  );
+  return `sha256:${Array.from(digest, (b) => b.toString(16).padStart(2, '0')).join('')}`;
+}
+
+/**
+ * Records a namespaced key through the runtime's store: undefined on Cloudflare, where the
+ * caller uses its Durable Object. Rejects (never resolves 'recorded') when the store fails.
+ */
+export async function recordRuntimeReplay(
+  env: Pick<Env, 'AUTH_RUNTIME_PORTS'>,
+  input: { tenantId: string; key: string; ttlSeconds: number }
+): Promise<'recorded' | 'replayed' | undefined> {
+  const runtime = runtimeReplayGuard(env);
+  if (!runtime) return undefined;
+  return runtime.record({
+    tenantId: input.tenantId,
+    key: await runtimeReplayKey(input.key),
+    ttlSeconds: Math.max(1, Math.ceil(input.ttlSeconds)),
+  });
+}
 
 async function replayGuardStore(env: Env, tenantId: string, shardKey: string) {
   const digest = new Uint8Array(
@@ -52,6 +94,10 @@ export interface ReplayJtiInput {
 
 /** Whether the jti was recorded already. Throws when the store cannot answer. */
 export async function isReplayJtiRecorded(env: Env, input: ReplayJtiInput): Promise<boolean> {
+  const runtime = runtimeReplayGuard(env);
+  if (runtime) {
+    return runtime.isRecorded({ tenantId: input.tenantId, key: await runtimeReplayKey(input.jti) });
+  }
   const stub = await replayGuardStore(env, input.tenantId, input.shardKey);
   const response = await stub.fetch('https://jti-store/check', {
     method: 'POST',
@@ -72,6 +118,13 @@ export async function recordReplayJti(
   env: Env,
   input: ReplayJtiInput & { issuedAt: number; ttlSeconds: number }
 ): Promise<'recorded' | 'replayed'> {
+  const ttlSeconds = Math.max(1, Math.ceil(input.ttlSeconds));
+  const outcome = await recordRuntimeReplay(env, {
+    tenantId: input.tenantId,
+    key: input.jti,
+    ttlSeconds,
+  });
+  if (outcome) return outcome;
   const stub = await replayGuardStore(env, input.tenantId, input.shardKey);
   const response = await stub.fetch('https://jti-store/check-and-store', {
     method: 'POST',
@@ -80,7 +133,7 @@ export async function recordReplayJti(
       jti: input.jti,
       client_id: input.shardKey,
       iat: input.issuedAt,
-      ttl: Math.max(1, Math.ceil(input.ttlSeconds)),
+      ttl: ttlSeconds,
     }),
   });
   if (response.ok) return 'recorded';
