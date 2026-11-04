@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { resolveApprovalNotificationPolicy } from '../approval-notification-policy';
 
 describe('approval notification policy', () => {
-  it('defaults admin operator approvals to portal confirm', () => {
+  it("defaults admin operator approvals to the approver's passkey, never a link", () => {
     const resolution = resolveApprovalNotificationPolicy({
       request: {
         policy_preset: 'support_case_default',
@@ -21,19 +21,37 @@ describe('approval notification policy', () => {
 
     expect(resolution).toEqual(
       expect.objectContaining({
-        method: 'portal_confirm',
-        transportChannel: 'portal_confirm',
+        method: 'passkey',
+        transportChannel: 'passkey',
         source: 'policy_default',
       })
     );
-    expect(resolution.acceptableMethods.slice(0, 3)).toEqual([
-      'portal_confirm',
-      'passkey',
-      'reauth',
-    ]);
+    expect(resolution.acceptableMethods).toEqual(['passkey', 'reauth']);
   });
 
-  it('defaults standard customer-side approvals to portal confirm with contact fallbacks', () => {
+  it('replaces a portal confirm stored or requested for an admin approver', () => {
+    const resolution = resolveApprovalNotificationPolicy({
+      request: {
+        policy_preset: 'support_case_default',
+        target_subject_type: 'artifact',
+        request_surface: 'admin_audit',
+        requested_action: 'detail_read',
+      },
+      approval: {
+        side: 'admin_operator',
+        subject_type: 'admin_user',
+        subject_id: 'admin-2',
+        method: 'portal_confirm',
+        transport_channel: 'portal_confirm',
+      },
+      overrideMethod: 'portal_confirm',
+    });
+
+    expect(resolution.method).toBe('passkey');
+    expect(resolution.acceptableMethods).not.toContain('portal_confirm');
+  });
+
+  it('defaults standard customer-side approvals to a code to their contact', () => {
     const resolution = resolveApprovalNotificationPolicy({
       request: {
         policy_preset: 'technical_debug_default',
@@ -50,22 +68,18 @@ describe('approval notification policy', () => {
       },
     });
 
+    // A data owner verifies with a code to their own contact, never by confirming a link.
     expect(resolution).toEqual(
       expect.objectContaining({
-        method: 'portal_confirm',
-        transportChannel: 'portal_confirm',
+        method: 'email_otp',
         source: 'policy_default',
       })
     );
-    expect(resolution.acceptableMethods.slice(0, 4)).toEqual([
-      'portal_confirm',
-      'email_otp',
-      'sms_otp',
-      'ciba',
-    ]);
+    expect(resolution.acceptableMethods.slice(0, 3)).toEqual(['email_otp', 'sms_otp', 'ciba']);
+    expect(resolution.acceptableMethods).not.toContain('portal_confirm');
   });
 
-  it('defaults guardian-side approvals to portal confirm for lower-risk presets', () => {
+  it('defaults guardian-side approvals to a code for lower-risk presets', () => {
     const resolution = resolveApprovalNotificationPolicy({
       request: {
         policy_preset: 'guardian_support_default',
@@ -82,13 +96,9 @@ describe('approval notification policy', () => {
       },
     });
 
-    expect(resolution.method).toBe('portal_confirm');
-    expect(resolution.acceptableMethods.slice(0, 4)).toEqual([
-      'portal_confirm',
-      'email_otp',
-      'sms_otp',
-      'ciba',
-    ]);
+    expect(resolution.method).toBe('email_otp');
+    expect(resolution.acceptableMethods.slice(0, 3)).toEqual(['email_otp', 'sms_otp', 'ciba']);
+    expect(resolution.acceptableMethods).not.toContain('portal_confirm');
   });
 
   it('prefers ciba first for high-assurance customer-side presets', () => {
@@ -109,12 +119,7 @@ describe('approval notification policy', () => {
     });
 
     expect(resolution.method).toBe('ciba');
-    expect(resolution.acceptableMethods.slice(0, 4)).toEqual([
-      'ciba',
-      'portal_confirm',
-      'email_otp',
-      'sms_otp',
-    ]);
+    expect(resolution.acceptableMethods.slice(0, 3)).toEqual(['ciba', 'email_otp', 'sms_otp']);
   });
 
   it('uses contact subject ids only for contact-based transport methods', () => {

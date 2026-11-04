@@ -15,6 +15,27 @@ export {
 export { ADMIN_GUARD_NOW_MS, allOfGuards, guardClause, type AdminWriteGuard } from './write-guard';
 export { AdminSessionRepository } from './admin-session';
 export { AdminPasskeyRepository } from './admin-passkey';
+export {
+  AdminSecondFactorRepository,
+  ADMIN_SECOND_FACTOR_ENROLLMENT_GRACE_MS,
+  ADMIN_SECOND_FACTOR_MINIMUM,
+  type AdminSecondFactor,
+  type AdminSecondFactorKind,
+  type AdminSecondFactorInsertResult,
+  type AdminSecondFactorRevokeResult,
+  type AdminWebAuthnSecondFactorInput,
+} from './admin-second-factor';
+export {
+  AdminSecondFactorRecoveryRepository,
+  ADMIN_SECOND_FACTOR_RECOVERY_COMPLETION_WINDOW_MS,
+  ADMIN_SECOND_FACTOR_RECOVERY_WAIT_MS,
+  type AdminSecondFactorRecovery,
+  type AdminSecondFactorRecoveryCancelReason,
+  type AdminSecondFactorRecoveryCompleteResult,
+  type AdminSecondFactorRecoveryCreateResult,
+  type AdminSecondFactorRecoveryInput,
+  type AdminSecondFactorRecoveryStatus,
+} from './admin-second-factor-recovery';
 export { AdminAuditLogRepository, type AdminAuditLogFilterOptions } from './admin-audit-log';
 export { AdminIpAllowlistRepository } from './admin-ip-allowlist';
 export {

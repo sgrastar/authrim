@@ -13,7 +13,11 @@ import type {
   ElevationGrantRepository,
   Env,
 } from '@authrim/ar-lib-core';
-import { ApprovalRequestApprovalRepository, getTenantSettingsDocument } from '@authrim/ar-lib-core';
+import {
+  ApprovalRequestApprovalRepository,
+  findApprovalRequestBindingViolation,
+  getTenantSettingsDocument,
+} from '@authrim/ar-lib-core';
 import { appendApprovalTransportEvent } from './approval-transport-detail';
 
 type AppContext = Context<any, any, any>;
@@ -64,6 +68,7 @@ async function assertApprovalDecisionPolicy(
   input: {
     request: ApprovalRequest;
     approval: ApprovalRequestApproval;
+    approvals: ApprovalRequestApproval[];
     nextStatus: ApprovalDecisionStatus;
     actorSubjectType: ApprovalApproverSubjectType | null;
     actorSubjectId: string | null;
@@ -105,6 +110,15 @@ async function assertApprovalDecisionPolicy(
     );
   }
 
+  // A request filed before its scope had to match its approvers (a user approving another
+  // user's data, or an admin resource) is not approved now either.
+  if (input.nextStatus === 'approved') {
+    const violation = findApprovalRequestBindingViolation(input.request, input.approvals);
+    if (violation) {
+      throw new ApprovalWorkflowPolicyError('approval_scope_binding_violation', violation);
+    }
+  }
+
   // The requester never approves their own request. Only Support Ops lets a tenant allow it
   // (`support_ops.allow_self_approval`, off by default); every other surface, including ones
   // not named here, is two-person.
@@ -125,6 +139,33 @@ async function assertApprovalDecisionPolicy(
       'self_approval_not_allowed',
       'This request must be approved by a different admin operator.'
     );
+  }
+  // Only the step's own approver approves it: a named step by that subject, an unnamed one (an
+  // admin step any other admin may take) by a person signed in as an admin. Never a machine
+  // credential on an unnamed step: it may name any requester, so it could file a request and
+  // approve it itself.
+  if (input.nextStatus === 'approved') {
+    const namedApprover = input.approval.subject_id?.trim() || null;
+    const adminAuth =
+      typeof c.get === 'function'
+        ? (c.get('adminAuth') as { authMethod?: string } | undefined)
+        : undefined;
+    const actorMatches = namedApprover
+      ? isSameApprovalSubject(
+          input.approval.subject_type,
+          namedApprover,
+          input.actorSubjectType,
+          input.actorSubjectId
+        )
+      : input.approval.side === 'admin_operator' &&
+        input.actorSubjectType === 'admin_user' &&
+        adminAuth?.authMethod === 'session';
+    if (!actorMatches) {
+      throw new ApprovalWorkflowPolicyError(
+        'approver_mismatch',
+        'Only the approver of this step can approve it.'
+      );
+    }
   }
 }
 
@@ -168,7 +209,8 @@ export function syncApprovalRequestStatus(
 
 export async function syncElevationGrantsForRequest(
   grantRepo: ElevationGrantRepository,
-  request: ApprovalRequest
+  request: ApprovalRequest,
+  approvals: ReadonlyArray<Pick<ApprovalRequestApproval, 'side' | 'subject_type'>>
 ): Promise<ElevationGrant[]> {
   const existingGrants = await grantRepo.listElevationGrantsForRequest(request.id);
   const activeGrants = existingGrants.filter(
@@ -177,7 +219,9 @@ export async function syncElevationGrantsForRequest(
   );
 
   if (request.status === 'approved') {
-    if (activeGrants.length === 0) {
+    // Decisions already refuse such a request; this keeps a grant from being issued however the
+    // request came to be approved.
+    if (activeGrants.length === 0 && !findApprovalRequestBindingViolation(request, approvals)) {
       // The insert itself refuses a second active grant, so two approvers who complete the
       // request together still end up with one.
       await grantRepo.createElevationGrant(
@@ -256,6 +300,7 @@ export async function applyApprovalDecisionForRequest(
   await assertApprovalDecisionPolicy(c, {
     request: input.request,
     approval: input.approval,
+    approvals: await deps.approvalRepo.listApprovalsForRequest(input.request.id),
     nextStatus: input.nextStatus,
     actorSubjectType: input.actorSubjectType,
     actorSubjectId: input.actorSubjectId,
@@ -315,7 +360,7 @@ export async function applyApprovalDecisionForRequest(
       occurredAt: input.occurredAt,
     }
   );
-  const grants = await syncElevationGrantsForRequest(deps.grantRepo, requestWithDetail);
+  const grants = await syncElevationGrantsForRequest(deps.grantRepo, requestWithDetail, approvals);
 
   return {
     request: requestWithDetail,

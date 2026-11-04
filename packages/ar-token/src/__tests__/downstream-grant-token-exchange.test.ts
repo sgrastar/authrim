@@ -2020,6 +2020,50 @@ describe('downstream elevation grant token exchange', () => {
     });
   });
 
+  it('refuses an elevation grant subject token declared as an access token', async () => {
+    // Exchanged as an access token it would skip the grant checks and stand for the target user.
+    const actual =
+      await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
+    const keySet = await actual.generateKeySet('subject-kid-1');
+    mocks.mockParseTokenHeader.mockReturnValue({ alg: 'RS256', kid: 'subject-kid-1' });
+
+    const ctx = createMockContext({
+      method: 'POST',
+      body: {
+        grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
+        subject_token: 'subject-token',
+        subject_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+        client_id: 'service-client-1',
+        client_secret: 'top-secret',
+        audience: 'https://service.example.com',
+      },
+      env: {
+        KEY_MANAGER: createMockDurableObjectNamespace({
+          rpcMethods: {
+            getActiveKeyWithPrivateRpc: vi.fn().mockResolvedValue({
+              kid: 'subject-kid-1',
+              privatePEM: keySet.privatePEM,
+            }),
+            getAllPublicKeysRpc: vi.fn().mockResolvedValue([keySet.publicJWK]),
+          },
+        }),
+        ENABLE_TOKEN_EXCHANGE: 'true',
+        ENABLE_TOKEN_EXCHANGE_DELEGATION: 'true',
+        ENABLE_TOKEN_EXCHANGE_IMPERSONATION: 'true',
+        PUBLIC_JWK_JSON: JSON.stringify(keySet.publicJWK),
+      },
+    });
+
+    const response = await tokenHandler(ctx);
+    const body = await parseJsonResponse<{ error: string; error_description: string }>(response);
+
+    expect(response.status).toBe(400);
+    expect(body.error).toBe('invalid_grant');
+    expect(body.error_description).toMatch(/exchanged as elevation grant tokens/);
+    expect(mocks.mockResolveElevationGrantSubjectToken).not.toHaveBeenCalled();
+    expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+  });
+
   it('mints downstream access tokens with approval authorization details', async () => {
     const actual =
       await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');

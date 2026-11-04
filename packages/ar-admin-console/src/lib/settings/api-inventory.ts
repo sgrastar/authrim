@@ -676,6 +676,13 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		page: 'settings/team',
 		paths: [`${A}/admin-invitations`]
 	},
+	{
+		id: 'admin-second-factor-recoveries',
+		name: 'Admin security key recoveries',
+		kind: 'records',
+		page: 'settings/team',
+		paths: [`${A}/admin-second-factor-recoveries`]
+	},
 
 	// -------------------------------------------------------------------------------------------
 	// Settings API itself

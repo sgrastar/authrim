@@ -162,6 +162,140 @@ export async function getApprovalCompletionArtifact(
   return challenge ? toApprovalCompletionArtifact(challenge) : null;
 }
 
+/**
+ * A reference for an artifact that is safe to show and store (notification ids, evidence): a
+ * one-way hash, so anyone reading it cannot recover the artifact, which approves or verifies.
+ */
+export async function approvalArtifactReference(artifactId: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(artifactId));
+  const hex = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0'));
+  return `apref_${hex.join('').slice(0, 32)}`;
+}
+
+const APPROVAL_COMPLETION_PROOF_TYPE = 'approval_completion_proof';
+
+/** What a completion endpoint verified for an artifact (passkey, OTP or reauth). */
+export interface ApprovalCompletionProof {
+  method: ApprovalCompletionArtifact['method'];
+  actor_subject_type: ApprovalCompletionArtifact['approver_subject_type'];
+  actor_subject_id: string | null;
+  verified_at: number;
+  metadata: Record<string, unknown>;
+}
+
+/** The ChallengeStore calls a completion proof needs, typed for this module. */
+interface ApprovalCompletionProofStore {
+  storeChallengeRpc(request: {
+    id: string;
+    tenantId: string;
+    type: string;
+    userId: string;
+    challenge: string;
+    ttl: number;
+    metadata: Record<string, unknown>;
+  }): Promise<unknown>;
+  getChallengeRpc(id: string): Promise<{
+    type: string;
+    tenantId: string;
+    challenge: string;
+    consumed?: boolean;
+    expiresAt: number;
+    metadata?: Record<string, unknown>;
+  } | null>;
+  deleteChallengeRpc(id: string): Promise<unknown>;
+}
+
+async function getApprovalCompletionProofStore(
+  env: Env,
+  proofId: string,
+  tenantId: string
+): Promise<ApprovalCompletionProofStore> {
+  const store: unknown = await getChallengeStoreByChallengeId(env, proofId, tenantId);
+  return store as ApprovalCompletionProofStore;
+}
+
+function approvalCompletionProofId(artifactId: string): string {
+  return `${artifactId}.proof`;
+}
+
+/**
+ * Record, server-side, that the artifact's completion method was verified. `/complete` accepts a
+ * step-up decision only by consuming this record: a completion assertion sent by the client is
+ * never evidence on its own.
+ */
+export async function recordApprovalCompletionProof(
+  env: Env,
+  artifact: ApprovalCompletionArtifact,
+  proof: ApprovalCompletionProof
+): Promise<void> {
+  const proofId = approvalCompletionProofId(artifact.artifact_id);
+  const challengeStore = await getApprovalCompletionProofStore(env, proofId, artifact.tenant_id);
+  await challengeStore.storeChallengeRpc({
+    id: proofId,
+    tenantId: artifact.tenant_id,
+    type: APPROVAL_COMPLETION_PROOF_TYPE,
+    userId: proof.actor_subject_id ?? artifact.approver_subject_id ?? '',
+    challenge: artifact.artifact_id,
+    ttl: Math.max(1, Math.floor((artifact.expires_at - Date.now()) / 1000)),
+    metadata: { ...proof },
+  });
+}
+
+/**
+ * The recorded proof of an artifact, without consuming it: the artifact's own consumption is the
+ * single-use step, so a failure before it leaves the proof for a retry. Null when none is live.
+ */
+export async function findApprovalCompletionProof(
+  env: Env,
+  artifactId: string,
+  tenantId: string
+): Promise<ApprovalCompletionProof | null> {
+  const proofId = approvalCompletionProofId(artifactId);
+  const challengeStore = await getApprovalCompletionProofStore(env, proofId, tenantId);
+  const stored = await challengeStore.getChallengeRpc(proofId);
+  if (
+    !stored ||
+    stored.type !== APPROVAL_COMPLETION_PROOF_TYPE ||
+    stored.tenantId !== tenantId ||
+    stored.challenge !== artifactId ||
+    stored.consumed ||
+    stored.expiresAt <= Date.now()
+  ) {
+    return null;
+  }
+  const metadata = stored.metadata;
+  if (
+    !metadata ||
+    typeof metadata.method !== 'string' ||
+    typeof metadata.verified_at !== 'number'
+  ) {
+    return null;
+  }
+  return {
+    method: metadata.method as ApprovalCompletionProof['method'],
+    actor_subject_type:
+      metadata.actor_subject_type as ApprovalCompletionProof['actor_subject_type'],
+    actor_subject_id:
+      typeof metadata.actor_subject_id === 'string' ? metadata.actor_subject_id : null,
+    verified_at: metadata.verified_at,
+    metadata:
+      typeof metadata.metadata === 'object' && metadata.metadata !== null
+        ? (metadata.metadata as Record<string, unknown>)
+        : {},
+  };
+}
+
+/** Drop an artifact's proof once the artifact was consumed (it can no longer be used anyway). */
+export async function discardApprovalCompletionProof(
+  env: Env,
+  artifactId: string,
+  tenantId: string
+): Promise<void> {
+  const proofId = approvalCompletionProofId(artifactId);
+  const challengeStore = await getApprovalCompletionProofStore(env, proofId, tenantId);
+  await challengeStore.deleteChallengeRpc(proofId);
+}
+
 export async function consumeApprovalCompletionArtifact(
   env: Env,
   artifactId: string,

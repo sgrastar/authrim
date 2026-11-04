@@ -3750,6 +3750,90 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  /api/admin/admin-second-factor-recoveries:
+    get:
+      tags:
+        - Admin Passkeys
+      operationId: getApiAdminAdminSecondFactorRecoveries
+      summary: List open second-factor recovery requests
+      description: >-
+        Open recovery requests of the selected tenant's admins (pending and inside their window),
+        newest first, with the requester's email. Requires admin users read permission.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        '200':
+          description: Open requests.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - items
+                properties:
+                  items:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: '#/components/schemas/AdminSecondFactorRecovery'
+                        - type: object
+                          properties:
+                            admin_user_id:
+                              type: string
+                            admin_email:
+                              type:
+                                - string
+                                - 'null'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/admin-second-factor-recoveries/{id}/cancel:
+    post:
+      tags:
+        - Admin Passkeys
+      operationId: postApiAdminAdminSecondFactorRecoveriesByIdCancel
+      summary: Cancel another admin's second-factor recovery request
+      description: >-
+        Cancel an open recovery request of one of the selected tenant's admins during its waiting
+        period. Requires admin users write permission and a fresh passkey (403
+        admin_fresh_auth_required otherwise); no step-up receipt, so an administrator without a
+        second factor can still stop an unexpected request. The requester and the tenant's
+        administrators are notified.
+      x-authrim-route-coverage: inferred-from-source
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The request was cancelled.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - cancelled
+                properties:
+                  cancelled:
+                    type: boolean
+        '403':
+          description: admin_fresh_auth_required, or not a human admin session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No open request with this ID in the tenant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
   /api/admin/admin-invitations:
     get:
       tags:
@@ -31381,6 +31465,647 @@ paths:
         $ref: '#/components/requestBodies/AdminPasskeyOptions'
       security:
         - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/me/reauth/passkey/options:
+    post:
+      tags:
+        - Admin Passkeys
+      operationId: postApiAdminMeReauthPasskeyOptions
+      summary: Create passkey re-authentication options
+      description: >-
+        Generate WebAuthn assertion options for one of the current admin's own passkeys and store a
+        single-use challenge bound to the admin session, its origin and RP ID. Only a human admin
+        session can re-authenticate; bearer and machine credentials are refused.
+        A selected tenant runtime snapshot is not required.
+      x-authrim-route-coverage: inferred-from-source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - rp_id
+              properties:
+                rp_id:
+                  type: string
+                  description: WebAuthn RP ID; must match the browser origin.
+      responses:
+        '200':
+          description: Assertion options and the challenge identifier.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - options
+                  - challenge_id
+                properties:
+                  options:
+                    type: object
+                    additionalProperties: true
+                  challenge_id:
+                    type: string
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/me/reauth/passkey/verify:
+    post:
+      tags:
+        - Admin Passkeys
+      operationId: postApiAdminMeReauthPasskeyVerify
+      summary: Verify passkey re-authentication
+      description: >-
+        Consume the re-authentication challenge, verify a user-verified assertion from one of the
+        current admin's own passkeys, and record it on the admin session. Operations that need a
+        fresh admin authentication accept the session again for their window.
+        A selected tenant runtime snapshot is not required.
+      x-authrim-route-coverage: inferred-from-source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - challenge_id
+                - credential
+              properties:
+                challenge_id:
+                  type: string
+                credential:
+                  type: object
+                  additionalProperties: true
+                  description: WebAuthn AuthenticationResponseJSON.
+      responses:
+        '200':
+          description: The session was re-authenticated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - verified
+                  - authenticated_at
+                properties:
+                  verified:
+                    type: boolean
+                  authenticated_at:
+                    type: integer
+                    description: Verification time in milliseconds since the epoch.
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/me/reauth/second-factor/options:
+    post:
+      tags:
+        - Admin Passkeys
+      operationId: postApiAdminMeReauthSecondFactorOptions
+      summary: Start second-factor verification
+      description: >-
+        Return WebAuthn assertion options for the current admin's registered step-up second
+        factors (device-bound security keys) and a single-use challenge bound to the admin session,
+        origin and RP ID. User verification is required.
+        A selected tenant runtime snapshot is not required.
+      x-authrim-route-coverage: inferred-from-source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - rp_id
+              properties:
+                rp_id:
+                  type: string
+      responses:
+        '200':
+          description: Assertion options and the challenge ID.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - options
+                  - challenge_id
+                properties:
+                  options:
+                    type: object
+                    additionalProperties: true
+                    description: WebAuthn PublicKeyCredentialRequestOptionsJSON.
+                  challenge_id:
+                    type: string
+        '400':
+          description: Invalid request, or no_second_factor when none is registered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/me/reauth/second-factor/verify:
+    post:
+      tags:
+        - Admin Passkeys
+      operationId: postApiAdminMeReauthSecondFactorVerify
+      summary: Verify a second factor
+      description: >-
+        Consume the challenge, verify a user-verified assertion from one of the current admin's
+        active second factors, and record it on the admin session. A credential that reports
+        backup eligibility or a backup is refused. Step-up receipts for L2 operations need this
+        verification and a passkey verification, both fresh.
+        A selected tenant runtime snapshot is not required.
+      x-authrim-route-coverage: inferred-from-source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - challenge_id
+                - credential
+              properties:
+                challenge_id:
+                  type: string
+                credential:
+                  type: object
+                  additionalProperties: true
+                  description: WebAuthn AuthenticationResponseJSON.
+      responses:
+        '200':
+          description: The second factor was verified and recorded on the session.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - verified
+                  - verified_at
+                properties:
+                  verified:
+                    type: boolean
+                  verified_at:
+                    type: integer
+                    description: Verification time in milliseconds since the epoch.
+        '400':
+          description: The challenge or the assertion was not valid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/me/second-factor-recovery:
+    get:
+      tags:
+        - Admin Passkeys
+      operationId: getApiAdminMeSecondFactorRecovery
+      summary: Read own second-factor recovery request
+      description: >-
+        The current admin's open recovery request, or null. A request is filed by registering a
+        new security key with purpose recovery (POST /api/admin/me/second-factors/webauthn/options
+        and verify).
+        A selected tenant runtime snapshot is not required.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        '200':
+          description: The open request, if any.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - recovery
+                properties:
+                  recovery:
+                    oneOf:
+                      - $ref: '#/components/schemas/AdminSecondFactorRecovery'
+                      - type: 'null'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/me/second-factor-recovery/complete:
+    post:
+      tags:
+        - Admin Passkeys
+      operationId: postApiAdminMeSecondFactorRecoveryComplete
+      summary: Complete own second-factor recovery
+      description: >-
+        After the waiting period, with a fresh passkey: revoke every active second factor of the
+        current admin, make the request's security key their second factor, end their other
+        sessions and clear second-factor evidence from this one, in one batch. The requester and
+        the tenant's administrators are notified.
+        A selected tenant runtime snapshot is not required.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        '200':
+          description: The recovery was completed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - completed
+                  - second_factor_id
+                properties:
+                  completed:
+                    type: boolean
+                  second_factor_id:
+                    type: string
+        '403':
+          description: admin_fresh_auth_required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No open recovery request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: >-
+            recovery_waiting (with not_before) before the waiting period ends, or credential_in_use.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/me/second-factor-recovery/cancel:
+    post:
+      tags:
+        - Admin Passkeys
+      operationId: postApiAdminMeSecondFactorRecoveryCancel
+      summary: Cancel own second-factor recovery request
+      description: >-
+        Cancel the current admin's open recovery request. The tenant's administrators are notified.
+        A selected tenant runtime snapshot is not required.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        '200':
+          description: The request was cancelled.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - cancelled
+                properties:
+                  cancelled:
+                    type: boolean
+        '404':
+          description: No open recovery request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/me/second-factors:
+    get:
+      tags:
+        - Admin Passkeys
+      operationId: getApiAdminMeSecondFactors
+      summary: List own step-up second factors
+      description: >-
+        List the current admin's second factors (revoked ones included) and how a new one can be
+        registered now: step_up (an L2 receipt is needed), first (a fresh passkey is enough, inside
+        the one-time first-enrollment window), or recovery_required.
+        A selected tenant runtime snapshot is not required.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        '200':
+          description: Second factors and the enrollment state.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - second_factors
+                  - active_count
+                  - minimum
+                  - enrollment
+                properties:
+                  second_factors:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AdminSecondFactor'
+                  active_count:
+                    type: integer
+                  minimum:
+                    type: integer
+                    description: Active second factors that must remain.
+                  enrollment:
+                    type: object
+                    required:
+                      - mode
+                    properties:
+                      mode:
+                        type: string
+                        enum:
+                          - step_up
+                          - first
+                          - recovery_required
+                      first_enrollment_ends_at:
+                        type:
+                          - integer
+                          - 'null'
+                        description: End of the first-enrollment window, in milliseconds since the epoch.
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/me/second-factors/webauthn/options:
+    post:
+      tags:
+        - Admin Passkeys
+      operationId: postApiAdminMeSecondFactorsWebauthnOptions
+      summary: Start registering a security key as a second factor
+      description: >-
+        Return WebAuthn registration options for a device-bound credential. When the admin already
+        has a second factor, this is the admin.second_factor.add operation and needs an L2 receipt
+        in the authrim-step-up-receipt header (403 step_up_required otherwise). The first one needs
+        only a fresh passkey (403 admin_fresh_auth_required otherwise), inside the first-enrollment
+        window; after it, 403 second_factor_recovery_required.
+        A selected tenant runtime snapshot is not required.
+      x-authrim-route-coverage: inferred-from-source
+      parameters:
+        - name: authrim-step-up-receipt
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - rp_id
+              properties:
+                rp_id:
+                  type: string
+                label:
+                  type: string
+                  maxLength: 64
+                purpose:
+                  type: string
+                  enum:
+                    - recovery
+                  description: >-
+                    recovery files a second-factor recovery request with this key instead of
+                    registering it. It needs a fresh passkey, another administrator in the system,
+                    no open request, and email delivery (403 recovery_requires_last_resort,
+                    409 recovery_pending, 503 recovery_notification_unavailable).
+      responses:
+        '200':
+          description: Registration options and the challenge ID.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - options
+                  - challenge_id
+                  - mode
+                properties:
+                  options:
+                    type: object
+                    additionalProperties: true
+                    description: WebAuthn PublicKeyCredentialCreationOptionsJSON.
+                  challenge_id:
+                    type: string
+                  mode:
+                    type: string
+                    enum:
+                      - first
+                      - step_up
+                      - recovery
+        '403':
+          description: >-
+            step_up_required, admin_fresh_auth_required or second_factor_recovery_required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/me/second-factors/webauthn/verify:
+    post:
+      tags:
+        - Admin Passkeys
+      operationId: postApiAdminMeSecondFactorsWebauthnVerify
+      summary: Register a security key as a second factor
+      description: >-
+        Consume the registration challenge, verify the registration with user verification and
+        store the credential. A credential that can be synced (backup eligible) is refused, as is a
+        credential already registered as a passkey or second factor. A first registration is
+        refused if another one was registered in the meantime.
+        A selected tenant runtime snapshot is not required.
+      x-authrim-route-coverage: inferred-from-source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - challenge_id
+                - credential
+              properties:
+                challenge_id:
+                  type: string
+                credential:
+                  type: object
+                  additionalProperties: true
+                  description: WebAuthn RegistrationResponseJSON.
+      responses:
+        '201':
+          description: >-
+            The second factor was registered, or (for a recovery challenge) the recovery request
+            was filed and the administrators were notified (503 recovery_notification_failed and
+            the request withdrawn when they could not be).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required:
+                      - second_factor
+                    properties:
+                      second_factor:
+                        $ref: '#/components/schemas/AdminSecondFactor'
+                  - type: object
+                    required:
+                      - recovery
+                    properties:
+                      recovery:
+                        $ref: '#/components/schemas/AdminSecondFactorRecovery'
+        '400':
+          description: >-
+            invalid_challenge, verification_failed, or second_factor_not_device_bound for a
+            credential that can be synced.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: credential_in_use or second_factor_already_enrolled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/me/second-factors/{id}:
+    delete:
+      tags:
+        - Admin Passkeys
+      operationId: deleteApiAdminMeSecondFactorsById
+      summary: Revoke a second factor
+      description: >-
+        Revoke one of the current admin's second factors (admin.second_factor.remove, L2 receipt in
+        authrim-step-up-receipt). Never leaves fewer than the minimum active; sessions that verified
+        the factor lose that evidence.
+        A selected tenant runtime snapshot is not required.
+      x-authrim-route-coverage: inferred-from-source
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: authrim-step-up-receipt
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The second factor was revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - revoked
+                properties:
+                  revoked:
+                    type: boolean
+        '403':
+          description: step_up_required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No such active second factor for this admin.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: second_factor_minimum; register another one first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/me/step-up/receipts:
+    post:
+      tags:
+        - Admin Passkeys
+      operationId: postApiAdminMeStepUpReceipts
+      summary: Issue a step-up receipt
+      description: >-
+        Exchange the step_up_id from a 403 step_up_required response for a single-use receipt, once
+        the session's evidence is fresh enough for the operation's level. The step-up request is
+        consumed by the one issuance that succeeds; while evidence is missing it stays usable.
+        Repeat the operation with the receipt in the authrim-step-up-receipt header.
+        A selected tenant runtime snapshot is not required.
+      x-authrim-route-coverage: inferred-from-source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - step_up_id
+              properties:
+                step_up_id:
+                  type: string
+      responses:
+        '200':
+          description: The receipt was issued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - step_up_receipt
+                  - expires_at
+                properties:
+                  step_up_receipt:
+                    type: string
+                  expires_at:
+                    type: integer
+                    description: Expiry in milliseconds since the epoch.
+        '400':
+          description: The step-up request was not found, has expired, was already used, or belongs to another session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: The session's evidence is not fresh enough; missing lists the factors to verify.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - error
+                  - missing
+                properties:
+                  error:
+                    type: string
+                    enum:
+                      - step_up_evidence_required
+                  error_description:
+                    type: string
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                      enum:
+                        - passkey
+                        - second_factor
+        default:
+          $ref: '#/components/responses/Error'
+      security:
         - adminSessionCookie: []
   /api/admin/notifications:
     get:
@@ -75665,6 +76390,85 @@ components:
         - provider
         - created_at
         - last_used_at
+    AdminSecondFactor:
+      type: object
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          enum:
+            - webauthn_credential
+            - keyring_holder_key
+        label:
+          type:
+            - string
+            - 'null'
+        aaguid:
+          type:
+            - string
+            - 'null'
+          description: Display-only WebAuthn authenticator AAGUID. Do not use for trust decisions.
+        created_at:
+          type: integer
+          format: int64
+        last_used_at:
+          type:
+            - integer
+            - 'null'
+          format: int64
+        revoked_at:
+          type:
+            - integer
+            - 'null'
+          format: int64
+      required:
+        - id
+        - kind
+        - label
+        - aaguid
+        - created_at
+        - last_used_at
+        - revoked_at
+    AdminSecondFactorRecovery:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum:
+            - pending
+            - completed
+            - cancelled
+            - expired
+        label:
+          type:
+            - string
+            - 'null'
+        aaguid:
+          type:
+            - string
+            - 'null'
+        requested_at:
+          type: integer
+          format: int64
+        not_before:
+          type: integer
+          format: int64
+          description: Earliest completion time, in milliseconds since the epoch.
+        expires_at:
+          type: integer
+          format: int64
+          description: After this the request can no longer be completed.
+      required:
+        - id
+        - status
+        - label
+        - aaguid
+        - requested_at
+        - not_before
+        - expires_at
     PasskeyProvider:
       type: object
       required:

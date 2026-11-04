@@ -53,6 +53,12 @@ const { mockCreateElevationGrantSubjectToken } = vi.hoisted(() => ({
   mockCreateElevationGrantSubjectToken: vi.fn(),
 }));
 
+// Whether a grant still matches its approvers is read from the Admin DB; it is covered against
+// the real schema in admin-approvals-resource-binding.test.ts.
+const { mockIsElevationGrantBindingIntact } = vi.hoisted(() => ({
+  mockIsElevationGrantBindingIntact: vi.fn(async () => true),
+}));
+
 const { mockGetRequestAwareIssuerUrl } = vi.hoisted(() => ({
   mockGetRequestAwareIssuerUrl: vi.fn(),
 }));
@@ -77,6 +83,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       ...actual.ADMIN_PERMISSIONS,
       APPROVALS_GRANT_ISSUE: 'admin:approvals:grant:issue',
     },
+    isElevationGrantBindingIntact: mockIsElevationGrantBindingIntact,
     adminAuthMiddleware: vi.fn(
       (options?: { requirePermissions?: string[] }) =>
         async (c: any, next: () => Promise<void>) => {
@@ -84,9 +91,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
             .split(',')
             .map((value: string) => value.trim())
             .filter(Boolean);
+          const authMethodHeader = (
+            c as { req: { header(name: string): string | undefined } }
+          ).req.header('X-Admin-Auth-Method');
           c.set('adminAuth', {
             userId: 'admin-1',
-            authMethod: 'session',
+            authMethod: authMethodHeader ?? 'session',
             tenantId: 'tenant-a',
             permissions,
             roles: ['ar_tenant_admin'],
@@ -166,7 +176,10 @@ vi.mock('../approval-notification-dispatch', () => ({
   dispatchApprovalNotification: mockDispatchApprovalNotification,
 }));
 
-vi.mock('../approval-completion-artifact', () => ({
+vi.mock('../approval-completion-artifact', async (importOriginal) => ({
+  approvalArtifactReference: (
+    await importOriginal<typeof import('../approval-completion-artifact')>()
+  ).approvalArtifactReference,
   issueApprovalCompletionArtifact: mockIssueApprovalCompletionArtifact,
 }));
 
@@ -210,6 +223,13 @@ function createApp() {
 describe('admin approvals router', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockIsElevationGrantBindingIntact.mockResolvedValue(true);
+    // Named admin approvers are active admins of the tenant unless a test says otherwise.
+    mockAdapter.queryOne
+      .mockReset()
+      .mockImplementation((sql: string) =>
+        Promise.resolve(sql.includes('FROM admin_users') ? { id: 'admin-active' } : null)
+      );
     mockRequestRepo.listApprovalRequests.mockResolvedValue([]);
     mockRequestRepo.getApprovalRequestByPublicId.mockResolvedValue(null);
     mockRequestRepo.updateApprovalRequestStatus.mockResolvedValue(null);
@@ -464,10 +484,11 @@ describe('admin approvals router', () => {
         policy_preset: 'support_case_default',
       })
     );
+    // An admin approver is asked for a passkey, never a link confirmation.
     expect(mockApprovalRepo.createApproval).toHaveBeenCalledWith(
       expect.objectContaining({
-        method: 'portal_confirm',
-        transport_channel: 'portal_confirm',
+        method: 'passkey',
+        transport_channel: 'passkey',
       })
     );
     expect(mockDispatchApprovalNotification).toHaveBeenCalledWith(
@@ -521,7 +542,7 @@ describe('admin approvals router', () => {
         surface: 'admin_audit',
         action: 'detail_read',
         tenant_id: 'tenant-a',
-        resource_class: 'admin_audit_detail',
+        resource_class: 'customer_profile',
         resource_ids: ['user-42'],
       },
       scope_canonical: '{}',
@@ -575,7 +596,7 @@ describe('admin approvals router', () => {
           target_subject_id: 'user-42',
           request_surface: 'admin_audit',
           requested_action: 'detail_read',
-          resource_class: 'admin_audit_detail',
+          resource_class: 'customer_profile',
           reason_code: 'support_case',
           policy_preset: 'support_case_default',
           approvals: [
@@ -621,7 +642,7 @@ describe('admin approvals router', () => {
         surface: 'admin_audit',
         action: 'detail_read',
         tenant_id: 'tenant-a',
-        resource_class: 'admin_audit_detail',
+        resource_class: 'customer_profile',
         resource_ids: ['user-42'],
       },
       scope_canonical: '{}',
@@ -726,7 +747,7 @@ describe('admin approvals router', () => {
           target_subject_id: 'user-42',
           request_surface: 'admin_audit',
           requested_action: 'detail_read',
-          resource_class: 'admin_audit_detail',
+          resource_class: 'customer_profile',
           reason_code: 'support_case',
           policy_preset: 'support_case_default',
           approvals: [
@@ -784,7 +805,7 @@ describe('admin approvals router', () => {
           target_subject_id: 'user-42',
           request_surface: 'admin_audit',
           requested_action: 'detail_read',
-          resource_class: 'admin_audit_detail',
+          resource_class: 'customer_profile',
           reason_code: 'support_case',
           policy_preset: 'support_case_default',
           approvals: [
@@ -916,7 +937,7 @@ describe('admin approvals router', () => {
         surface: 'admin_audit',
         action: 'detail_read',
         tenant_id: 'tenant-a',
-        resource_class: 'admin_audit_detail',
+        resource_class: 'customer_profile',
         resource_ids: ['child-7'],
       },
       scope_canonical: '{}',
@@ -974,7 +995,7 @@ describe('admin approvals router', () => {
           target_subject_id: 'child-7',
           request_surface: 'admin_audit',
           requested_action: 'detail_read',
-          resource_class: 'admin_audit_detail',
+          resource_class: 'customer_profile',
           reason_code: 'support_case',
           policy_preset: 'guardian_support_default',
           approvals: [
@@ -1034,7 +1055,7 @@ describe('admin approvals router', () => {
           target_subject_id: 'child-7',
           request_surface: 'admin_audit',
           requested_action: 'detail_read',
-          resource_class: 'admin_audit_detail',
+          resource_class: 'customer_profile',
           reason_code: 'support_case',
           policy_preset: 'guardian_support_default',
           approvals: [
@@ -1075,6 +1096,102 @@ describe('admin approvals router', () => {
   });
 
   it('issues an approval completion artifact for a pending step', async () => {
+    const app = createApp();
+    mockRequestRepo.getApprovalRequestByPublicId.mockResolvedValue({
+      id: 'req-1',
+      public_request_id: 'apr_public_1',
+      tenant_id: 'tenant-a',
+      investigation_id: 'inv_test_1',
+      requester_subject_type: 'admin_user',
+      // Another admin asked; admin-1 (the caller) operates the step.
+      requester_subject_id: 'admin-9',
+      target_subject_type: 'user',
+      target_subject_id: 'user-1',
+      request_surface: 'admin_audit',
+      requested_action: 'detail_read',
+      redaction_level: 'masked',
+      status: 'pending',
+      scope_json: {
+        version: 1,
+        surface: 'admin_audit',
+        action: 'detail_read',
+        tenant_id: 'tenant-a',
+        resource_class: 'admin_audit_detail',
+        resource_ids: ['user-1'],
+      },
+      scope_canonical: '{}',
+      reason_code: 'support_case',
+      reason_note: null,
+      reference: null,
+      ticket_reference: null,
+      policy_preset: 'support_case_default',
+      reuse_scope: 'request',
+      partial_access_allowed: false,
+      expires_at: Date.now() + 60_000,
+      decided_at: null,
+      created_at: Date.now(),
+      updated_at: Date.now(),
+    });
+    mockApprovalRepo.getApprovalById.mockResolvedValue({
+      id: 'step-1',
+      approval_request_id: 'req-1',
+      step_key: 'operator-1',
+      side: 'admin_operator',
+      subject_type: 'admin_user',
+      subject_id: 'admin-2',
+      relation_type: null,
+      relation_source: null,
+      status: 'pending',
+      method: 'portal_confirm',
+      transport_channel: 'portal_confirm',
+      reason_code: null,
+      reason_note: null,
+      last_notification_action: 'initial',
+      last_notified_at: Date.now(),
+      notification_count: 1,
+      requested_at: Date.now(),
+      decided_at: null,
+      expires_at: Date.now() + 60_000,
+      created_at: Date.now(),
+      updated_at: Date.now(),
+    });
+    mockApprovalRepo.listApprovalsForRequest.mockResolvedValue([]);
+
+    const res = await app.request(
+      '/api/admin/approvals/apr_public_1/steps/step-1/artifacts',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin-Permissions': 'admin:approvals:write',
+        },
+        body: JSON.stringify({ method: 'portal_confirm' }),
+      },
+      mockEnv
+    );
+
+    expect(res.status).toBe(200);
+    const payload = (await res.json()) as any;
+    expect(payload.artifact.artifact_id).toBe('apc_1');
+    // Requested as portal_confirm, the admin step is issued for the approver's passkey.
+    expect(payload.completion_requirements).toMatchObject({
+      method: 'passkey',
+      acceptable_methods: ['passkey', 'reauth'],
+      transport_channel: 'Registered passkey on this device',
+      guidance_title: 'Approve With Passkey',
+      portal_path: '/api/approval-artifacts/apc_1/portal',
+    });
+    expect(mockIssueApprovalCompletionArtifact).toHaveBeenCalled();
+    expect(mockAppendApprovalTransportEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      mockAdapter,
+      mockRequestRepo,
+      expect.objectContaining({ public_request_id: 'apr_public_1' }),
+      expect.objectContaining({ kind: 'step_artifact_issued' })
+    );
+  });
+
+  it("refuses to issue an artifact to the request's own requester", async () => {
     const app = createApp();
     mockRequestRepo.getApprovalRequestByPublicId.mockResolvedValue({
       id: 'req-1',
@@ -1148,24 +1265,174 @@ describe('admin approvals router', () => {
       mockEnv
     );
 
-    expect(res.status).toBe(200);
-    const payload = (await res.json()) as any;
-    expect(payload.artifact.artifact_id).toBe('apc_1');
-    expect(payload.completion_requirements).toMatchObject({
-      method: 'portal_confirm',
-      acceptable_methods: ['portal_confirm', 'passkey', 'reauth'],
-      transport_channel: 'Authrim approval portal',
-      guidance_title: 'Review And Confirm In Portal',
-      portal_path: '/api/approval-artifacts/apc_1/portal',
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toMatchObject({
+      error: 'approval_artifact_issuer_not_allowed',
     });
-    expect(mockIssueApprovalCompletionArtifact).toHaveBeenCalled();
-    expect(mockAppendApprovalTransportEvent).toHaveBeenCalledWith(
-      expect.anything(),
-      mockAdapter,
-      mockRequestRepo,
-      expect.objectContaining({ public_request_id: 'apr_public_1' }),
-      expect.objectContaining({ kind: 'step_artifact_issued' })
+    expect(mockIssueApprovalCompletionArtifact).not.toHaveBeenCalled();
+  });
+
+  it('refuses to issue an artifact to a machine credential', async () => {
+    const app = createApp();
+    mockRequestRepo.getApprovalRequestByPublicId.mockResolvedValue({
+      id: 'req-1',
+      public_request_id: 'apr_public_1',
+      tenant_id: 'tenant-a',
+      investigation_id: 'inv_test_1',
+      requester_subject_type: 'admin_user',
+      requester_subject_id: 'admin-9',
+      target_subject_type: 'user',
+      target_subject_id: 'user-1',
+      request_surface: 'admin_audit',
+      requested_action: 'detail_read',
+      redaction_level: 'masked',
+      status: 'pending',
+      scope_json: {
+        version: 1,
+        surface: 'admin_audit',
+        action: 'detail_read',
+        tenant_id: 'tenant-a',
+        resource_class: 'admin_audit_detail',
+        resource_ids: ['user-1'],
+      },
+      scope_canonical: '{}',
+      reason_code: 'support_case',
+      reason_note: null,
+      reference: null,
+      ticket_reference: null,
+      policy_preset: 'support_case_default',
+      reuse_scope: 'request',
+      partial_access_allowed: false,
+      expires_at: Date.now() + 60_000,
+      decided_at: null,
+      created_at: Date.now(),
+      updated_at: Date.now(),
+    });
+    mockApprovalRepo.getApprovalById.mockResolvedValue({
+      id: 'step-1',
+      approval_request_id: 'req-1',
+      step_key: 'operator-1',
+      side: 'admin_operator',
+      subject_type: 'admin_user',
+      subject_id: 'admin-2',
+      relation_type: null,
+      relation_source: null,
+      status: 'pending',
+      method: 'portal_confirm',
+      transport_channel: 'portal_confirm',
+      reason_code: null,
+      reason_note: null,
+      last_notification_action: 'initial',
+      last_notified_at: Date.now(),
+      notification_count: 1,
+      requested_at: Date.now(),
+      decided_at: null,
+      expires_at: Date.now() + 60_000,
+      created_at: Date.now(),
+      updated_at: Date.now(),
+    });
+    mockApprovalRepo.listApprovalsForRequest.mockResolvedValue([]);
+
+    const res = await app.request(
+      '/api/admin/approvals/apr_public_1/steps/step-1/artifacts',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin-Permissions': 'admin:approvals:write',
+          'X-Admin-Auth-Method': 'machine_access_token',
+        },
+        body: JSON.stringify({ method: 'portal_confirm' }),
+      },
+      mockEnv
     );
+
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toMatchObject({
+      error: 'approval_artifact_issuer_not_allowed',
+    });
+    expect(mockIssueApprovalCompletionArtifact).not.toHaveBeenCalled();
+  });
+
+  it('refuses to issue an OTP artifact without its code', async () => {
+    const app = createApp();
+    mockRequestRepo.getApprovalRequestByPublicId.mockResolvedValue({
+      id: 'req-1',
+      public_request_id: 'apr_public_1',
+      tenant_id: 'tenant-a',
+      investigation_id: 'inv_test_1',
+      requester_subject_type: 'admin_user',
+      requester_subject_id: 'admin-9',
+      target_subject_type: 'user',
+      target_subject_id: 'user-1',
+      request_surface: 'admin_audit',
+      requested_action: 'detail_read',
+      redaction_level: 'masked',
+      status: 'pending',
+      scope_json: {
+        version: 1,
+        surface: 'admin_audit',
+        action: 'detail_read',
+        tenant_id: 'tenant-a',
+        resource_class: 'admin_audit_detail',
+        resource_ids: ['user-1'],
+      },
+      scope_canonical: '{}',
+      reason_code: 'support_case',
+      reason_note: null,
+      reference: null,
+      ticket_reference: null,
+      policy_preset: 'support_case_default',
+      reuse_scope: 'request',
+      partial_access_allowed: false,
+      expires_at: Date.now() + 60_000,
+      decided_at: null,
+      created_at: Date.now(),
+      updated_at: Date.now(),
+    });
+    mockApprovalRepo.getApprovalById.mockResolvedValue({
+      id: 'step-1',
+      approval_request_id: 'req-1',
+      step_key: 'operator-1',
+      side: 'customer_data_owner',
+      subject_type: 'end_user',
+      subject_id: 'user-1',
+      relation_type: null,
+      relation_source: null,
+      status: 'pending',
+      method: 'portal_confirm',
+      transport_channel: 'portal_confirm',
+      reason_code: null,
+      reason_note: null,
+      last_notification_action: 'initial',
+      last_notified_at: Date.now(),
+      notification_count: 1,
+      requested_at: Date.now(),
+      decided_at: null,
+      expires_at: Date.now() + 60_000,
+      created_at: Date.now(),
+      updated_at: Date.now(),
+    });
+    mockApprovalRepo.listApprovalsForRequest.mockResolvedValue([]);
+
+    const res = await app.request(
+      '/api/admin/approvals/apr_public_1/steps/step-1/artifacts',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin-Permissions': 'admin:approvals:write',
+        },
+        body: JSON.stringify({ method: 'email_otp' }),
+      },
+      mockEnv
+    );
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({
+      error: 'approval_artifact_method_needs_resend',
+    });
+    expect(mockIssueApprovalCompletionArtifact).not.toHaveBeenCalled();
   });
 
   it('dispatches initial notifications for approval steps with a configured method', async () => {
@@ -1723,7 +1990,8 @@ describe('admin approvals router', () => {
       step_key: 'operator-1',
       side: 'admin_operator',
       subject_type: 'admin_user',
-      subject_id: 'admin-2',
+      // admin-1, the signed-in caller, is this step's approver.
+      subject_id: 'admin-1',
       relation_type: null,
       relation_source: null,
       status: 'pending',
@@ -1830,6 +2098,131 @@ describe('admin approvals router', () => {
     );
   });
 
+  it('refuses to approve a step named for another approver', async () => {
+    const app = createApp();
+    const request = {
+      id: 'req-1',
+      public_request_id: 'apr_public_1',
+      tenant_id: 'tenant-a',
+      investigation_id: 'inv_test_1',
+      requester_subject_type: 'admin_user',
+      requester_subject_id: 'admin-9',
+      target_subject_type: 'user',
+      target_subject_id: 'user-1',
+      request_surface: 'admin_audit',
+      requested_action: 'detail_read',
+      redaction_level: 'masked',
+      scope_json: {
+        version: 1,
+        surface: 'admin_audit',
+        action: 'detail_read',
+        tenant_id: 'tenant-a',
+        resource_class: 'admin_audit_detail',
+        resource_ids: ['user-1'],
+      },
+      scope_canonical:
+        '{"version":1,"surface":"admin_audit","action":"detail_read","tenant_id":"tenant-a","resource_class":"admin_audit_detail","resource_ids":["user-1"]}',
+      reason_code: 'support_case',
+      reason_note: null,
+      reference: null,
+      ticket_reference: null,
+      policy_preset: 'support_case_default',
+      reuse_scope: 'request',
+      partial_access_allowed: false,
+      status: 'pending',
+      expires_at: Date.now() + 60_000,
+      decided_at: null,
+      created_at: Date.now(),
+      updated_at: Date.now(),
+    };
+    const approval = {
+      id: 'step-1',
+      approval_request_id: 'req-1',
+      step_key: 'operator-1',
+      side: 'admin_operator',
+      subject_type: 'admin_user',
+      subject_id: 'admin-2',
+      relation_type: null,
+      relation_source: null,
+      status: 'pending',
+      method: null,
+      transport_channel: null,
+      reason_code: null,
+      reason_note: null,
+      last_notification_action: 'initial',
+      last_notified_at: Date.now() - 60_000,
+      notification_count: 1,
+      decided_at: null,
+      expires_at: Date.now() + 60_000,
+      created_at: Date.now(),
+      updated_at: Date.now(),
+    };
+    mockRequestRepo.getApprovalRequestByPublicId.mockResolvedValue(request);
+    mockApprovalRepo.getApprovalById.mockResolvedValue(approval);
+    mockApprovalRepo.listApprovalsForRequest.mockResolvedValue([
+      {
+        ...approval,
+        status: 'approved',
+      },
+    ]);
+    mockGrantRepo.listElevationGrantsForRequest.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      {
+        id: 'grant-1',
+        public_grant_id: 'egr_public_1',
+        approval_request_id: 'req-1',
+        tenant_id: 'tenant-a',
+        status: 'active',
+        target_audience: 'admin_api',
+        resource_class: 'admin_audit_detail',
+        redaction_level: 'masked',
+        scope_canonical: '{"version":1}',
+        scope_json: {
+          version: 1,
+          surface: 'admin_audit',
+          action: 'detail_read',
+          tenant_id: 'tenant-a',
+          resource_class: 'admin_audit_detail',
+          resource_ids: ['user-1'],
+        },
+        authorization_details_json: {
+          type: 'authrim_break_glass',
+        },
+        requester_subject_type: 'admin_user',
+        requester_subject_id: 'admin-1',
+        actor_subject_type: 'admin_user',
+        actor_subject_id: 'admin-1',
+        issued_at: Date.now(),
+        expires_at: Date.now() + 60_000,
+        revoked_at: null,
+        revoke_reason: null,
+        created_at: Date.now(),
+        updated_at: Date.now(),
+      },
+    ]);
+    mockRequestRepo.recomputeApprovalRequestStatus.mockResolvedValue({
+      ...request,
+      status: 'approved',
+    });
+
+    const res = await app.request(
+      '/api/admin/approvals/apr_public_1/steps/step-1/approve',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin-Permissions': 'admin:approvals:approve',
+        },
+        body: JSON.stringify({
+          method: 'portal_confirm',
+        }),
+      },
+      mockEnv
+    );
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({ error: 'approver_mismatch' });
+  });
+
   it('rejects support operation self-approval unless tenant policy allows it', async () => {
     const app = createApp();
     const request = {
@@ -1890,6 +2283,7 @@ describe('admin approvals router', () => {
     };
     mockRequestRepo.getApprovalRequestByPublicId.mockResolvedValue(request);
     mockApprovalRepo.getApprovalById.mockResolvedValue(approval);
+    mockApprovalRepo.listApprovalsForRequest.mockResolvedValue([approval]);
 
     const res = await app.request(
       '/api/admin/approvals/apr_public_1/steps/step-1/approve',

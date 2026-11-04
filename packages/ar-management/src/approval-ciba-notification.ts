@@ -142,14 +142,8 @@ async function resolveCibaTarget(
   request: ApprovalRequest,
   approval: ApprovalRequestApproval
 ): Promise<{ channel: 'email' | 'sms'; target: string }> {
-  const explicitTarget = approval.transport_channel?.trim() ?? '';
-  if (looksLikeEmail(explicitTarget)) {
-    return { channel: 'email', target: explicitTarget };
-  }
-  if (looksLikePhone(explicitTarget)) {
-    return { channel: 'sms', target: explicitTarget };
-  }
-
+  // The code goes to the approver's own verified contact, never to a channel stored on the step
+  // (whoever filed the request could have put their own address there).
   try {
     const emailTarget = await resolveApprovalTransportChannel(c, request, approval, {
       method: 'email_otp',

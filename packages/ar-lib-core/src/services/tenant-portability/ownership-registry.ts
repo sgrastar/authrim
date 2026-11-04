@@ -121,6 +121,8 @@ export const TENANT_BACKUP_OWNERSHIP_RULES: ReadonlyArray<{
   // Parent joins verified against the owning repositories and migration foreign keys.
   ...[
     ['admin_passkeys', 'admin_users', 'admin_user_id'],
+    ['admin_second_factors', 'admin_users', 'admin_user_id'],
+    ['admin_second_factor_recoveries', 'admin_users', 'admin_user_id'],
     ['agent_baseline_exceptions', 'agent_baseline_assignments', 'assignment_id'],
     ['agent_task_set_versions', 'agent_task_sets', 'task_set_id'],
     ['agent_scope_policy_versions', 'agent_scope_policies', 'scope_policy_id'],

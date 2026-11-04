@@ -20,14 +20,6 @@ function normalizeChannel(value: string | null | undefined): string | null {
   return trimmed ? trimmed : null;
 }
 
-function looksLikeEmail(value: string): boolean {
-  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value);
-}
-
-function looksLikePhone(value: string): boolean {
-  return /^\+?[0-9().\-\s]{6,}$/.test(value);
-}
-
 async function resolveUserContact(
   c: AdminContext,
   request: ApprovalRequest,
@@ -109,6 +101,34 @@ async function resolveAdminContact(
   return adminUser.email;
 }
 
+/**
+ * The approver's own verified contact for an OTP, resolved server-side from the approver's record.
+ * Never a channel the caller names: whoever creates or resends a request (its requester among
+ * them) must not be able to send the approver's code somewhere else.
+ */
+async function resolveApproverOtpContact(
+  c: AdminContext,
+  request: ApprovalRequest,
+  approval: Pick<ApprovalRequestApproval, 'subject_type' | 'subject_id'>,
+  method: 'email_otp' | 'sms_otp'
+): Promise<string> {
+  const subjectId = approval.subject_id?.trim() || '';
+  if (!subjectId) {
+    throw new ApprovalTransportChannelResolutionError(
+      'OTP approval requires an approver subject whose verified contact can be resolved.'
+    );
+  }
+  if (approval.subject_type === 'admin_user') {
+    return resolveAdminContact(c, request, subjectId, method);
+  }
+  if (approval.subject_type === 'end_user' || approval.subject_type === 'customer_delegate') {
+    return resolveUserContact(c, request, subjectId, method);
+  }
+  throw new ApprovalTransportChannelResolutionError(
+    'OTP approval is not supported for this approver type.'
+  );
+}
+
 export async function resolveApprovalTransportChannel(
   c: AdminContext,
   request: ApprovalRequest,
@@ -122,51 +142,17 @@ export async function resolveApprovalTransportChannel(
 ): Promise<string | null> {
   const method = overrides?.method ?? approval.method ?? null;
   const explicitChannel = normalizeChannel(overrides?.transportChannel);
-  if (explicitChannel) {
-    return explicitChannel;
+
+  if (method === 'email_otp' || method === 'sms_otp') {
+    const contact = await resolveApproverOtpContact(c, request, approval, method);
+    if (explicitChannel && explicitChannel !== contact) {
+      throw new ApprovalTransportChannelResolutionError(
+        "An approval OTP goes only to the approver's own verified contact."
+      );
+    }
+    return contact;
   }
 
-  const existingChannel = normalizeChannel(approval.transport_channel);
-  const subjectId = approval.subject_id?.trim() || '';
-  const subjectIdIsResolvedContact =
-    (method === 'email_otp' && looksLikeEmail(subjectId)) ||
-    (method === 'sms_otp' && looksLikePhone(subjectId));
-  const channelMatchesUnresolvedSubjectId =
-    !!existingChannel &&
-    !!subjectId &&
-    existingChannel === subjectId &&
-    !subjectIdIsResolvedContact;
-
-  if (existingChannel && !channelMatchesUnresolvedSubjectId) {
-    return existingChannel;
-  }
-
-  if (method !== 'email_otp' && method !== 'sms_otp') {
-    return null;
-  }
-
-  if (!subjectId) {
-    throw new ApprovalTransportChannelResolutionError(
-      'Approval transport resolution requires an approver subject ID or explicit transport channel.'
-    );
-  }
-
-  if (method === 'email_otp' && looksLikeEmail(subjectId)) {
-    return subjectId;
-  }
-  if (method === 'sms_otp' && looksLikePhone(subjectId)) {
-    return subjectId;
-  }
-
-  if (approval.subject_type === 'admin_user') {
-    return resolveAdminContact(c, request, subjectId, method);
-  }
-
-  if (approval.subject_type === 'end_user' || approval.subject_type === 'customer_delegate') {
-    return resolveUserContact(c, request, subjectId, method);
-  }
-
-  throw new ApprovalTransportChannelResolutionError(
-    'Approval transport resolution requires an explicit transport channel for this approver type.'
-  );
+  // Other methods carry no secret to a channel: the channel is a label.
+  return explicitChannel ?? normalizeChannel(approval.transport_channel);
 }
