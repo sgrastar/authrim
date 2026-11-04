@@ -139,7 +139,8 @@ export const httpSecondFactors: SecondFactorsClient = {
 	},
 
 	async cancelRecovery() {
-		await request('POST', `${ME}/second-factor-recovery/cancel`, { body: {} });
+		// Needs a fresh passkey (L1): asked for again when it is stale.
+		await withStepUp(() => request('POST', `${ME}/second-factor-recovery/cancel`, { body: {} }));
 	},
 
 	async listTenantRecoveries() {

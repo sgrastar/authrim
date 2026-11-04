@@ -58,6 +58,7 @@ export const arSecurityKeys: Record<keyof typeof jaSecurityKeys, string> = {
 	'sk.error.pending': 'يوجد طلب استرداد مفتوح بالفعل.',
 	'sk.error.waiting': 'لا يمكن إكماله بعد. يُرجى المحاولة مرة أخرى بعد {date}.',
 	'sk.error.cancelled': 'تم إلغاء التأكيد.',
+	'sk.error.windowClosed': 'انتهت مهلة تسجيل المفتاح الأول. قدّم طلب استرداد بدلاً من ذلك.',
 	'sk.others.title': 'طلبات استرداد المسؤولين الآخرين',
 	'sk.others.info':
 		'طلب مسؤولون في هذا المستأجر استبدال مفاتيح الأمان الخاصة بهم. ألغِ أي طلب لا تتوقعه.',
@@ -69,5 +70,6 @@ export const arSecurityKeys: Record<keyof typeof jaSecurityKeys, string> = {
 	'sk.others.cancelBody':
 		'لن تتم إضافة المفتاح المسجّل له. يصل بريد إلكتروني إلى المسؤول ومسؤولي المستأجر.',
 	'sk.others.cancelled': 'تم إلغاء الطلب.',
+	'sk.others.noPermission': 'ليس لديك إذن للقيام بذلك.',
 	'sk.others.loadFailed': 'تعذّر تحميل طلبات الاسترداد.'
 };

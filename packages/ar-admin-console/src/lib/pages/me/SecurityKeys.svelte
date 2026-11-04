@@ -36,9 +36,20 @@
 		client: SecondFactorsClient;
 		/** Fixed clock for stories and tests. */
 		now?: () => number;
+		/** How often the waiting period is looked at again. */
+		tickMs?: number;
 	}
 
-	let { client, now = Date.now }: Props = $props();
+	let { client, now = Date.now, tickMs = 30_000 }: Props = $props();
+
+	// The clock the waiting period is read against: a request becomes completable, or lapses,
+	// while the page stays open.
+	let clock = $state(Date.now());
+	$effect(() => {
+		clock = now();
+		const timer = setInterval(() => (clock = now()), tickMs);
+		return () => clearInterval(timer);
+	});
 
 	let keyState = $state<SecondFactorState | null>(null);
 	let recovery = $state<SecondFactorRecovery | null>(null);
@@ -53,7 +64,18 @@
 
 	const activeKeys = $derived((keyState?.second_factors ?? []).filter((key) => !key.revoked_at));
 	const onlyOne = $derived(activeKeys.length === 1);
-	const recoveryReady = $derived(recovery !== null && now() >= recovery.not_before);
+	const recoveryReady = $derived(recovery !== null && clock >= recovery.not_before);
+	// A lapsed request can no longer be completed: read the state again (it is gone from it).
+	// At most once a minute: with this device's clock ahead of the server's, the server may still
+	// list it for a while.
+	const LAPSE_RECHECK_MS = 60_000;
+	let lapseCheckedAt = -Infinity;
+	$effect(() => {
+		if (!recovery || clock < recovery.expires_at || loadState === 'loading') return;
+		if (clock - lapseCheckedAt < LAPSE_RECHECK_MS) return;
+		lapseCheckedAt = clock;
+		void load();
+	});
 
 	function when(value: number): string {
 		const formatted = formatTime(value, { locale: i18n.locale, zone: timePreference.zone });
@@ -117,6 +139,13 @@
 			toast.success(t('recovery' in result ? 'sk.recoveryFiled' : 'sk.added'));
 			await load();
 		} catch (error) {
+			// The first-enrollment window closed while the page was open: offer recovery instead.
+			if (error instanceof ApiError && error.code === 'second_factor_recovery_required') {
+				adding = null;
+				toast.error(t('sk.error.windowClosed'));
+				await load();
+				return;
+			}
 			addError = errorText(error);
 		} finally {
 			busy = false;
@@ -150,6 +179,8 @@
 			await load();
 		} catch (error) {
 			toast.error(errorText(error));
+			// The request is gone (lapsed, or cancelled elsewhere): show what is true now.
+			if (error instanceof ApiError && error.status === 404) void load();
 		} finally {
 			busy = false;
 			confirming = null;

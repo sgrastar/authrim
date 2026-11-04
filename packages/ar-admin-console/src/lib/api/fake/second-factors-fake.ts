@@ -30,6 +30,15 @@ export interface FakeSecondFactorsOptions {
 	tenantRequests?: Array<{ email: string; waitingHours?: number }>;
 	/** Recovery cannot be filed (the only admin, or email not available). */
 	recoveryRefused?: 'recovery_requires_last_resort' | 'recovery_notification_unavailable';
+	/** When the admin's own request lapses, from `now` (7 days by default). */
+	recoveryExpiresInMs?: number;
+	/**
+	 * The server's clock, when it should differ from the page's: an own request past its expiry
+	 * on this clock is no longer listed.
+	 */
+	serverClock?: () => number;
+	/** The first-enrollment window closes while the page is open: registering is refused. */
+	windowClosesOnRegister?: boolean;
 	now?: number;
 }
 
@@ -37,8 +46,9 @@ let sequence = 0;
 const nextId = (prefix: string) => `${prefix}-${++sequence}`;
 
 export function createFakeSecondFactors(
-	options: FakeSecondFactorsOptions = {}
+	initial: FakeSecondFactorsOptions = {}
 ): SecondFactorsClient {
+	let options = initial;
 	const now = options.now ?? Date.now();
 	let keys: SecondFactor[] = (options.keys ?? []).map((key, index) => ({
 		id: key.id ?? `sf-${index + 1}`,
@@ -57,7 +67,7 @@ export function createFakeSecondFactors(
 				aaguid: null,
 				requested_at: now - (options.recovery === 'ready' ? 30 : 3) * HOUR,
 				not_before: now + (options.recovery === 'ready' ? -6 : 21) * HOUR,
-				expires_at: now + 7 * DAY
+				expires_at: now + (options.recoveryExpiresInMs ?? 7 * DAY)
 			}
 		: null;
 	let tenantRequests: TenantRecoveryRequest[] = (options.tenantRequests ?? []).map(
@@ -123,6 +133,9 @@ export function createFakeSecondFactors(
 					};
 					return { recovery };
 				}
+				if (active().length === 0 && options.windowClosesOnRegister) {
+					options = { ...options, firstEnrollmentOpen: false };
+				}
 				if (active().length === 0 && !options.firstEnrollmentOpen) {
 					throw new ApiError(403, 'second_factor_recovery_required', 'Recovery required');
 				}
@@ -146,7 +159,13 @@ export function createFakeSecondFactors(
 				keys = keys.map((key) => (key.id === id ? { ...key, revoked_at: Date.now() } : key));
 			}),
 
-		getRecovery: () => call(() => recovery),
+		getRecovery: () =>
+			call(() => {
+				if (recovery && options.serverClock && options.serverClock() >= recovery.expires_at) {
+					recovery = null;
+				}
+				return recovery;
+			}),
 
 		completeRecovery: () =>
 			call(() => {

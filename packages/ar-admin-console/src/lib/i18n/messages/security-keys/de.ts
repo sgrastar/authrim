@@ -62,6 +62,8 @@ export const deSecurityKeys: Record<keyof typeof jaSecurityKeys, string> = {
 	'sk.error.pending': 'Es gibt bereits einen offenen Wiederherstellungsantrag.',
 	'sk.error.waiting': 'Noch nicht möglich. Bitte versuchen Sie es nach {date} erneut.',
 	'sk.error.cancelled': 'Die Bestätigung wurde abgebrochen.',
+	'sk.error.windowClosed':
+		'Die Frist für den ersten Schlüssel ist abgelaufen. Stellen Sie stattdessen einen Wiederherstellungsantrag.',
 	'sk.others.title': 'Wiederherstellungsanträge anderer Administratoren',
 	'sk.others.info':
 		'Administratoren dieses Mandanten möchten ihre Sicherheitsschlüssel ersetzen. Ziehen Sie unerwartete Anträge zurück.',
@@ -73,5 +75,6 @@ export const deSecurityKeys: Record<keyof typeof jaSecurityKeys, string> = {
 	'sk.others.cancelBody':
 		'Der dafür registrierte Schlüssel wird nicht hinzugefügt. Der Administrator und die Administratoren des Mandanten erhalten eine E-Mail.',
 	'sk.others.cancelled': 'Der Antrag wurde zurückgezogen.',
+	'sk.others.noPermission': 'Dazu sind Sie nicht berechtigt.',
 	'sk.others.loadFailed': 'Die Wiederherstellungsanträge konnten nicht geladen werden.'
 };

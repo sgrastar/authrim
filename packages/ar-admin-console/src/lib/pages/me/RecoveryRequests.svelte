@@ -19,9 +19,11 @@
 		client: SecondFactorsClient;
 		/** The signed-in admin, whose own request is shown in Security keys instead. */
 		selfId?: string;
+		/** Whether this admin may cancel them (admin users write). */
+		canCancel?: boolean;
 	}
 
-	let { client, selfId }: Props = $props();
+	let { client, selfId, canCancel = false }: Props = $props();
 
 	let requests = $state<TenantRecoveryRequest[]>([]);
 	let loadState = $state<'loading' | 'ready' | 'failed' | 'hidden'>('loading');
@@ -51,20 +53,24 @@
 			await client.cancelTenantRecovery(target.id);
 			toast.success(t('sk.others.cancelled'));
 			await load();
-		} catch {
-			toast.error(t('sk.error'));
+		} catch (error) {
+			toast.error(
+				t(error instanceof ApiError && error.forbidden ? 'sk.others.noPermission' : 'sk.error')
+			);
 		} finally {
 			busy = false;
 			cancelling = null;
 		}
 	}
 
-	const columns = [
+	const columns = $derived([
 		{ key: 'admin', label: t('sk.others.admin') },
 		{ key: 'requested', label: t('sk.others.requested') },
 		{ key: 'notBefore', label: t('sk.others.notBefore') },
-		{ key: 'actions', label: t('sk.others.cancel'), align: 'end' as const, hideLabel: true }
-	];
+		...(canCancel
+			? [{ key: 'actions', label: t('sk.others.cancel'), align: 'end' as const, hideLabel: true }]
+			: [])
+	]);
 </script>
 
 {#if loadState === 'failed'}

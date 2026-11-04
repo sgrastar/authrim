@@ -60,6 +60,7 @@ export const jaSecurityKeys = {
 	'sk.error.pending': 'すでに復旧の申請中です。',
 	'sk.error.waiting': 'まだ完了できません。{date} 以降にお試しください。',
 	'sk.error.cancelled': '確認が取り消されました。',
+	'sk.error.windowClosed': '初回登録の期限が過ぎました。復旧を申請してください。',
 	'sk.others.title': 'ほかの管理者の復旧の申請',
 	'sk.others.info':
 		'このテナントの管理者が、セキュリティキーの入れ替えを申請しています。心当たりがなければ取り消してください。',
@@ -71,5 +72,6 @@ export const jaSecurityKeys = {
 	'sk.others.cancelBody':
 		'申請したキーは登録されません。本人とテナントの管理者にメールが届きます。',
 	'sk.others.cancelled': '申請を取り消しました。',
+	'sk.others.noPermission': 'この操作を行う権限がありません。',
 	'sk.others.loadFailed': '復旧の申請を読み込めませんでした。'
 };

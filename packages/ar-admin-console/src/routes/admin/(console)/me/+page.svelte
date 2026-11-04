@@ -6,6 +6,8 @@
 	import { httpSecondFactors } from '#lib/api/second-factors.js';
 	import RecoveryRequests from '#lib/pages/me/RecoveryRequests.svelte';
 	import SecurityKeys from '#lib/pages/me/SecurityKeys.svelte';
+	import { hasPermission } from '#lib/access/access.js';
+	import { adminAccess } from '#lib/access/admin-access.svelte.js';
 	import { adminSession } from '#lib/auth/session.svelte.js';
 	import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
 	import { i18n, t } from '#lib/i18n/i18n.svelte.js';
@@ -307,7 +309,11 @@
 
 	<SecurityKeys client={httpSecondFactors} />
 
-	<RecoveryRequests client={httpSecondFactors} selfId={session?.user_id} />
+	<RecoveryRequests
+		client={httpSecondFactors}
+		selfId={session?.user_id}
+		canCancel={hasPermission(adminAccess.current, 'admin:admin_users:write')}
+	/>
 
 	<Card title={t('me.session')} flush>
 		<SettingRow title={t('account.signOut')} description={t('me.signOutDesc')}>

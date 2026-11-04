@@ -1,6 +1,8 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
+	import { expect, within } from 'storybook/test';
 	import { createFakeSecondFactors } from '#lib/api/fake/second-factors-fake.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import RecoveryRequests from './RecoveryRequests.svelte';
 
 	const { Story } = defineMeta({
@@ -18,9 +20,17 @@
 	});
 </script>
 
-<Story name="Open requests">
+<Story
+	name="Open requests"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByText('hanako.sato@example.com');
+		await expect(canvas.getAllByRole('button', { name: t('sk.others.cancel') })).toHaveLength(2);
+	}}
+>
 	{#snippet template()}
 		<RecoveryRequests
+			canCancel
 			client={createFakeSecondFactors({
 				tenantRequests: [
 					{ email: 'hanako.sato@example.com', waitingHours: 3 },
@@ -34,5 +44,23 @@
 <Story name="Load failed">
 	{#snippet template()}
 		<RecoveryRequests client={createFakeSecondFactors({ fail: 500 })} />
+	{/snippet}
+</Story>
+
+<Story
+	name="View only"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByText('hanako.sato@example.com');
+		// Reading the tenant's admins is not cancelling their requests.
+		await expect(canvas.queryByRole('button', { name: t('sk.others.cancel') })).toBeNull();
+	}}
+>
+	{#snippet template()}
+		<RecoveryRequests
+			client={createFakeSecondFactors({
+				tenantRequests: [{ email: 'hanako.sato@example.com', waitingHours: 3 }]
+			})}
+		/>
 	{/snippet}
 </Story>
