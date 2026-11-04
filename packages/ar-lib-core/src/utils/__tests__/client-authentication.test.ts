@@ -11,6 +11,7 @@
  * - Key retrieval security
  */
 
+import { createHash } from 'node:crypto';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   authenticateConfidentialOAuthClient,
@@ -20,6 +21,7 @@ import {
 import type { ClientMetadata } from '../../types/oidc';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import { createMockEnv } from '../../test/fixtures';
+import type { Env } from '../../types/env';
 import { buildPolicyConstrainedRegionShardConfig } from '../region-sharding';
 
 // Mock fetch for JWKS URI tests
@@ -42,6 +44,8 @@ function expectJwksFetch(url: string): void {
     })
   );
 }
+
+const runtimeKey = (key: string) => `sha256:${createHash('sha256').update(key).digest('hex')}`;
 
 describe('Client Authentication', () => {
   let rsaKeyPair: Awaited<ReturnType<typeof generateKeyPair>>;
@@ -220,6 +224,71 @@ describe('Client Authentication', () => {
         valid: false,
         error: 'invalid_client',
         error_description: 'Client assertion replay detected',
+      });
+    });
+
+    it('records client assertions in the runtime store outside Cloudflare', async () => {
+      const client = createClientWithJWKS(clientId);
+      const assertion = await createClientAssertion(clientId, tokenEndpoint, {
+        jti: 'runtime-client-assertion',
+      });
+      const keys = new Set<string>();
+      const replayGuard = {
+        record: vi.fn(async ({ key }: { key: string }) => {
+          if (keys.has(key)) return 'replayed' as const;
+          keys.add(key);
+          return 'recorded' as const;
+        }),
+        isRecorded: vi.fn(),
+      };
+      const env = { AUTH_RUNTIME_PORTS: { replayGuard } } as unknown as Env;
+      const options = { replayProtection: { env, tenantId: 'tenant-a' } };
+
+      expect(await validateClientAssertion(assertion, tokenEndpoint, client, options)).toEqual({
+        valid: true,
+        client_id: clientId,
+      });
+      expect(
+        await validateClientAssertion(assertion, tokenEndpoint, client, options)
+      ).toMatchObject({
+        valid: false,
+        error: 'invalid_client',
+        error_description: 'Client assertion replay detected',
+      });
+      expect(replayGuard.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: 'tenant-a',
+          key: runtimeKey(
+            `client-assertion:${JSON.stringify([clientId, 'runtime-client-assertion'])}`
+          ),
+        })
+      );
+
+      const fractional = await createClientAssertion(clientId, tokenEndpoint, {
+        jti: 'fractional-exp',
+        exp: Math.floor(Date.now() / 1000) + 60.5,
+      });
+      expect(await validateClientAssertion(fractional, tokenEndpoint, client, options)).toEqual({
+        valid: true,
+        client_id: clientId,
+      });
+      expect(Number.isInteger(replayGuard.record.mock.calls.at(-1)?.[0].ttlSeconds)).toBe(true);
+
+      replayGuard.record.mockRejectedValueOnce(new Error('store down'));
+      const fresh = await createClientAssertion(clientId, tokenEndpoint, { jti: 'another' });
+      expect(await validateClientAssertion(fresh, tokenEndpoint, client, options)).toMatchObject({
+        valid: false,
+        error: 'server_error',
+      });
+      const missing = {
+        replayProtection: {
+          env: { AUTH_RUNTIME_PORTS: {} } as unknown as Env,
+          tenantId: 'tenant-a',
+        },
+      };
+      expect(await validateClientAssertion(fresh, tokenEndpoint, client, missing)).toMatchObject({
+        valid: false,
+        error: 'server_error',
       });
     });
 

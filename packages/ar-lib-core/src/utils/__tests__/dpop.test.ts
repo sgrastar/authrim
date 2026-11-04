@@ -3,6 +3,7 @@
  * RFC 9449
  */
 
+import { createHash } from 'node:crypto';
 import { beforeAll, describe, it, expect, vi } from 'vitest';
 import { exportJWK, generateKeyPair, SignJWT, base64url, type JWK } from 'jose';
 import {
@@ -15,6 +16,8 @@ import {
   validateDPoPProof,
 } from '../dpop';
 import { ALLOWED_DPOP_ALGS } from '../../constants';
+
+const runtimeKey = (key: string) => `sha256:${createHash('sha256').update(key).digest('hex')}`;
 
 describe('DPoP Utilities', () => {
   let privateKey: CryptoKey;
@@ -504,6 +507,72 @@ describe('DPoP Utilities', () => {
       ['disabled', '/userinfo', true, true],
     ])('resolves DPoP mode %s for %s', (mode, path, legacy, expected) => {
       expect(isDPoPRequiredForRequest(mode as never, path, legacy)).toBe(expected);
+    });
+  });
+  describe('replay protection outside Cloudflare (runtime port)', () => {
+    function runtimeEnv(record?: (input: { key: string }) => Promise<'recorded' | 'replayed'>) {
+      const keys = new Set<string>();
+      const port = {
+        record: vi.fn(
+          record ??
+            (async ({ key }: { key: string }) => {
+              if (keys.has(key)) return 'replayed' as const;
+              keys.add(key);
+              return 'recorded' as const;
+            })
+        ),
+        isRecorded: vi.fn(),
+      };
+      return { env: { AUTH_RUNTIME_PORTS: { replayGuard: port } }, port };
+    }
+    const validate = async (env: unknown, clientId = 'client-1', jti = 'runtime-jti') =>
+      validateDPoPProof(
+        await proof({ jti }),
+        'POST',
+        'https://api.example/token',
+        undefined,
+        env as never,
+        clientId,
+        'tenant-a'
+      );
+
+    it('records the jti in the runtime store once, per client, with no Durable Object', async () => {
+      const { env, port } = runtimeEnv();
+
+      const first = await validate(env);
+      expect(first.valid).toBe(true);
+      expect(typeof first.jkt).toBe('string');
+      await expect(validate(env)).resolves.toMatchObject({
+        valid: false,
+        error: 'use_dpop_nonce',
+      });
+      await expect(validate(env, 'client:2')).resolves.toMatchObject({ valid: true });
+      expect(port.record).toHaveBeenCalledWith({
+        tenantId: 'tenant-a',
+        key: runtimeKey('dpop:["client-1","runtime-jti"]'),
+        ttlSeconds: 3600,
+      });
+    });
+
+    it('accepts a long jti, storing a fixed-length key', async () => {
+      const { env, port } = runtimeEnv();
+      const first = await validate(env, 'client-1', 'j'.repeat(5000));
+      expect(first.valid).toBe(true);
+      expect(port.record.mock.calls[0][0].key).toMatch(/^sha256:[0-9a-f]{64}$/u);
+    });
+
+    it('refuses the proof when the runtime store fails or is missing', async () => {
+      const failing = runtimeEnv(async () => {
+        throw new Error('store down');
+      });
+      await expect(validate(failing.env)).resolves.toMatchObject({
+        valid: false,
+        error: 'server_error',
+      });
+      await expect(validate({ AUTH_RUNTIME_PORTS: {} })).resolves.toMatchObject({
+        valid: false,
+        error: 'server_error',
+      });
     });
   });
 });

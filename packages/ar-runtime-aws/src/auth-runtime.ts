@@ -13,6 +13,7 @@ import type {
   AccountAuthStateStore,
   AuthorizationCodeStore,
   RateLimitStore,
+  ReplayGuardStore,
   TransientStateStore,
   StoreChallengeInput,
   TransientChallenge,
@@ -29,6 +30,8 @@ export interface CreateAuthRuntimePortsInput {
   /** Normal SAML passkey sign-in emits a Direct Auth code before session redemption. */
   authorizationCodes: AuthorizationCodeStore;
   rateLimit: RateLimitStore;
+  /** One-time token jtis (DPoP, client assertions, Native SSO, logout tokens). */
+  replayGuard: ReplayGuardStore;
   /** Stored only in the opaque session ID; The state store does not shard by this label. */
   sessionRegion?: RegionKey;
 }
@@ -130,6 +133,16 @@ export function createAuthRuntimePorts(input: CreateAuthRuntimePortsInput): Auth
 
   return {
     rateLimit: { check: (request) => input.rateLimit.check(request) },
+    replayGuard: {
+      record(request) {
+        assertTenantId(request.tenantId);
+        return input.replayGuard.record(request);
+      },
+      isRecorded(request) {
+        assertTenantId(request.tenantId);
+        return input.replayGuard.isRecorded(request);
+      },
+    },
     authorizationCodes: { store: (request) => input.authorizationCodes.store(request) },
     challenges: {
       forIdentity(identity) {

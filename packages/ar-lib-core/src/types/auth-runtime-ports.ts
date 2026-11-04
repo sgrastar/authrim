@@ -36,6 +36,20 @@ export interface AuthRuntimePorts {
       maxRequests: number;
     }): Promise<{ allowed: boolean; remaining: number; resetAt: number }>;
   };
+  /**
+   * Records a namespaced token jti once per tenant until it expires (replay protection for
+   * DPoP proofs, client assertions, Native SSO ID tokens and logout tokens). `record` must be a
+   * single atomic insert-if-absent-or-expired in the store itself: concurrent Lambda instances
+   * share no memory, so a read followed by a write would let two presentations both pass.
+   */
+  replayGuard?: {
+    record(input: {
+      tenantId: string;
+      key: string;
+      ttlSeconds: number;
+    }): Promise<'recorded' | 'replayed'>;
+    isRecorded(input: { tenantId: string; key: string }): Promise<boolean>;
+  };
   /** Required only if this runtime enables an OIDC Direct Auth code flow. */
   authorizationCodes?: {
     store(request: StoreCodeRequest): Promise<{ success: boolean; expiresAt: number }>;
