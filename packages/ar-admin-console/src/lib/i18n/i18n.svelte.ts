@@ -58,6 +58,15 @@ export function t(key: MessageKey, params?: Record<string, string | number>): st
 	});
 }
 
+/**
+ * Translate a key into a given locale, whatever language the console itself is in: for text the
+ * console shows as another audience will read it (a preview of the sign-in screens in the
+ * language being edited). Not reactive to the console's language, by design.
+ */
+export function tIn(locale: Locale, key: MessageKey): string {
+	return CATALOG[locale][key] ?? ja[key] ?? key;
+}
+
 /** True when `key` names a message. Used where keys are composed at runtime (e.g. retire notes). */
 export function hasMessage(key: string): key is MessageKey {
 	return key in ja;

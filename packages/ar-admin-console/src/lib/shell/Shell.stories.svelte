@@ -90,9 +90,24 @@
 	});
 </script>
 
-<Story name="Tenant scope" args={{ path: '/admin/users/all' }} />
+<!-- The header always has its notification area, in every scope. -->
+<Story
+	name="Tenant scope"
+	args={{ path: '/admin/users/all' }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await expect(canvas.getByRole('button', { name: /Notifications|通知/ })).toBeInTheDocument();
+	}}
+/>
 
-<Story name="Platform scope" args={{ path: '/admin/platform/users/all' }} />
+<Story
+	name="Platform scope"
+	args={{ path: '/admin/platform/users/all' }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await expect(canvas.getByRole('button', { name: /Notifications|通知/ })).toBeInTheDocument();
+	}}
+/>
 
 <Story
 	name="Category turn"

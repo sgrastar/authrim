@@ -8,6 +8,7 @@ import { enSchemaSetting } from './schema-setting/en';
 import { enTenantGeneral } from './tenant-general/en';
 import { enSecurityKeys } from './security-keys/en';
 import { enNotices } from './notices/en';
+import { enCustomization } from './customization/en';
 
 export const en = {
 	...enSettings,
@@ -19,6 +20,7 @@ export const en = {
 	...enTenantGeneral,
 	...enSecurityKeys,
 	...enNotices,
+	...enCustomization,
 	'app.adminLabel': 'Admin',
 	'app.env.dev': 'Development',
 	'app.env.prod': 'Production',

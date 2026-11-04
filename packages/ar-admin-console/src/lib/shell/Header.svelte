@@ -16,10 +16,10 @@
 		onsignout: () => void;
 		onmenu: () => void;
 		/**
-		 * The notification area left of the display menu. Left out (undefined), the header has
-		 * no such area.
+		 * The notification area left of the display menu. The header always has it (an empty list
+		 * shows four zero counts), so every frame, in Storybook too, shows where notices appear.
 		 */
-		notifications?: readonly ShellNotification[];
+		notifications: readonly ShellNotification[];
 		/** Called when a piece of information is dismissed from the notification list. */
 		ondismiss?: (id: string) => void;
 	}
@@ -48,7 +48,7 @@
 	<span class="topbar__divider" aria-hidden="true"></span>
 	<ScopeSwitcher options={scopes} currentId={currentScopeId} onselect={onscope} />
 	<span class="topbar__spacer"></span>
-	{#if notifications}<NotificationArea items={notifications} {ondismiss} />{/if}
+	<NotificationArea items={notifications} {ondismiss} />
 	<DisplayMenu />
 	<AccountMenu {...account} {onsignout} />
 </header>

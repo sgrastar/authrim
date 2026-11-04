@@ -8,6 +8,7 @@ import { deSchemaSetting } from './schema-setting/de';
 import { deTenantGeneral } from './tenant-general/de';
 import { deSecurityKeys } from './security-keys/de';
 import { deNotices } from './notices/de';
+import { deCustomization } from './customization/de';
 
 export const de = {
 	...deSettings,
@@ -19,6 +20,7 @@ export const de = {
 	...deTenantGeneral,
 	...deSecurityKeys,
 	...deNotices,
+	...deCustomization,
 	'app.adminLabel': 'Verwaltungskonsole',
 	'app.env.dev': 'Entwicklung',
 	'app.env.prod': 'Produktion',

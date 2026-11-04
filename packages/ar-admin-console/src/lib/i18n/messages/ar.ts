@@ -8,6 +8,7 @@ import { arSchemaSetting } from './schema-setting/ar';
 import { arTenantGeneral } from './tenant-general/ar';
 import { arSecurityKeys } from './security-keys/ar';
 import { arNotices } from './notices/ar';
+import { arCustomization } from './customization/ar';
 
 export const ar = {
 	...arSettings,
@@ -19,6 +20,7 @@ export const ar = {
 	...arTenantGeneral,
 	...arSecurityKeys,
 	...arNotices,
+	...arCustomization,
 	'app.adminLabel': 'وحدة التحكم الإدارية',
 	'app.env.dev': 'التطوير',
 	'app.env.prod': 'الإنتاج',
