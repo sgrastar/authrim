@@ -148,9 +148,14 @@ export async function raiseInternalEventConsoleNotice(
   row: Pick<
     InternalNotificationEventRow,
     'id' | 'tenant_id' | 'category' | 'event_type' | 'severity'
-  >
+  >,
+  /**
+   * `tenant` for events raised for a request's tenant: its ID is never read as the platform's,
+   * whatever it is named. Left out, the platform IDs the event writers use mean the platform.
+   */
+  audience?: 'tenant'
 ): Promise<void> {
-  const platform = PLATFORM_EVENT_TENANT_IDS.has(row.tenant_id);
+  const platform = audience !== 'tenant' && PLATFORM_EVENT_TENANT_IDS.has(row.tenant_id);
   try {
     await new AdminNoticeRepository(adapter).createForOpenEvent(
       {

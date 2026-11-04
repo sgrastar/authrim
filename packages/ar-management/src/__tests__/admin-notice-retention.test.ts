@@ -42,6 +42,12 @@ describe('admin notice retention', () => {
     expect(await adminNoticeRetentionDays(env)).toBe(14);
     mocks.values = {};
     expect(await adminNoticeRetentionDays(env)).toBe(90);
+    mocks.values = { 'admin-notices.retention_days': '30' };
+    expect(await adminNoticeRetentionDays(env)).toBeNull();
+    mocks.values = { 'admin-notices.retention_days': 0 };
+    expect(await adminNoticeRetentionDays(env)).toBeNull();
+    mocks.values = { 'admin-notices.retention_days': null };
+    expect(await adminNoticeRetentionDays(env)).toBeNull();
     mocks.fail = true;
     expect(await adminNoticeRetentionDays(env)).toBeNull();
     mocks.fail = false;

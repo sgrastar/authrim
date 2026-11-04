@@ -5672,13 +5672,17 @@ export class IdentityMappingControlPlaneRepository {
         // An event raised before notices existed (or whose notice was not written) gets one now,
         // from what was stored; a resolved one stays closed.
         if (existing.state !== 'resolved') {
-          await raiseInternalEventConsoleNotice(this.adapter, {
-            id: existing.notification_event_id,
-            tenant_id: tenantId,
-            category: existing.category as InternalNotificationEventCategory,
-            event_type: existing.event_type,
-            severity: existing.severity as InternalNotificationEventSeverity,
-          });
+          await raiseInternalEventConsoleNotice(
+            this.adapter,
+            {
+              id: existing.notification_event_id,
+              tenant_id: tenantId,
+              category: existing.category as InternalNotificationEventCategory,
+              event_type: existing.event_type,
+              severity: existing.severity as InternalNotificationEventSeverity,
+            },
+            'tenant'
+          );
         }
         return {
           id: existing.id,
@@ -5732,13 +5736,17 @@ export class IdentityMappingControlPlaneRepository {
         now,
       ]
     );
-    await raiseInternalEventConsoleNotice(this.adapter, {
-      id: notificationEventId,
-      tenant_id: tenantId,
-      category: input.category as InternalNotificationEventCategory,
-      event_type: input.eventType,
-      severity: input.severity as InternalNotificationEventSeverity,
-    });
+    await raiseInternalEventConsoleNotice(
+      this.adapter,
+      {
+        id: notificationEventId,
+        tenant_id: tenantId,
+        category: input.category as InternalNotificationEventCategory,
+        event_type: input.eventType,
+        severity: input.severity as InternalNotificationEventSeverity,
+      },
+      'tenant'
+    );
     return {
       id: stateId,
       tenantId,
@@ -5773,9 +5781,11 @@ export class IdentityMappingControlPlaneRepository {
     const now = this.now();
     // A resolved state takes its console notice with it, in the same batch.
     const closeNotice = {
+      // Only this tenant's notice of the event, whatever the event row says.
       sql: `UPDATE admin_notices SET resolved_at = ?, resolved_by = 'system'
-             WHERE source_ref = ? AND resolved_at IS NULL`,
-      params: [now, existing.notification_event_id],
+             WHERE source_ref = ? AND resolved_at IS NULL
+               AND scope_type = 'tenant' AND tenant_id = ?`,
+      params: [now, existing.notification_event_id, tenantId],
     };
     if (existing.state === input.state) {
       // A retry of a resolve also closes a notice that was left open.

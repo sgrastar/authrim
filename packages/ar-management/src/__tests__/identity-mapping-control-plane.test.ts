@@ -3615,7 +3615,7 @@ describe('IdentityMappingControlPlaneRepository review and notification operatio
       ],
       [expect.stringContaining('UPDATE admin_notices')],
     ]);
-    expect(adapter.batches[1][0].params).toEqual([1000, 'notification-event-1']);
+    expect(adapter.batches[1][0].params).toEqual([1000, 'notification-event-1', 'tenant_a']);
   });
 
   it('does not acknowledge a state that was resolved meanwhile', async () => {

@@ -31,9 +31,11 @@ export async function adminNoticeRetentionDays(env: Env): Promise<number | null>
       fresh: true,
     });
     const days = values[RETENTION_KEY];
-    return typeof days === 'number' && Number.isInteger(days) && days >= 1
+    if (days === undefined) return ADMIN_NOTICES_DEFAULTS[RETENTION_KEY];
+    // A value that is there but not a whole number of days in range is not guessed at.
+    return typeof days === 'number' && Number.isInteger(days) && days >= 1 && days <= 3650
       ? days
-      : ADMIN_NOTICES_DEFAULTS[RETENTION_KEY];
+      : null;
   } catch {
     return null;
   }
