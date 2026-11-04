@@ -23,6 +23,7 @@ import type { AdminAuthContext } from '../types/admin';
 import { AdminSecondFactorRepository } from '../repositories/admin/admin-second-factor';
 import { requireDedicatedAdminDatabaseAdapter } from './admin-database-adapter';
 import { resolveEffectiveSettings } from './effective-settings';
+import { markIdempotentResponseRetryable } from '../middleware/idempotency';
 import {
   ADMIN_STEP_UP_ALWAYS_ENFORCED,
   ADMIN_STEP_UP_ENFORCED_KEY,
@@ -45,6 +46,9 @@ type GateContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthCo
 
 function refuse(c: GateContext, body: Record<string, unknown>, status: 403 | 503): Response {
   c.header('Cache-Control', 'no-store');
+  // Nothing was done: a repeat with the same Idempotency-Key (and a receipt or a fresh sign-in)
+  // must reach the handler again, not get this refusal back from the idempotency store.
+  markIdempotentResponseRetryable(c);
   return c.json(body, status);
 }
 
@@ -113,8 +117,14 @@ export async function requireAdminStepUp(
     return null;
   }
 
-  if (auth && !isAdminStepUpHumanSession(auth)) {
-    if (holdsExactly(auth, adminStepUpExemptPermission(descriptor.operation))) return null;
+  // Only a machine token can be exempted, and never from the operations that guard the policy
+  // and the admins' own second factors.
+  if (
+    auth?.authMethod === 'machine_access_token' &&
+    !ADMIN_STEP_UP_ALWAYS_ENFORCED.has(descriptor.operation) &&
+    holdsExactly(auth, adminStepUpExemptPermission(descriptor.operation))
+  ) {
+    return null;
   }
 
   if (!auth || !isAdminStepUpHumanSession(auth) || !auth.sessionTenantId) {

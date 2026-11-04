@@ -7,8 +7,16 @@ import {
   createSettingsManager,
   INFRASTRUCTURE_CATEGORY_META,
   loadEnvironmentProfileDefaultsFromEnv,
+  getTenantIdFromContext,
   requireDedicatedAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
+import { requireAdminStepUp } from '../../admin-step-up-gate';
+import {
+  DEFAULT_RETENTION_CONFIG,
+  auditRetentionWeakened,
+  retentionConfigFromProfile,
+  type RetentionConfig,
+} from '../../audit-retention-compare';
 import {
   resolveLogIcebergConfig,
   assertLogIcebergActivated,
@@ -16,24 +24,8 @@ import {
 
 const KV_KEY_ROUTING_RULES = 'audit_routing_rules';
 const MANAGED_AUDIT_PROFILE_ID = 'managed:audit:settings-default';
-const DEFAULT_RETENTION_CONFIG = { eventLogRetentionDays: 90, piiLogRetentionDays: 365 };
-type RetentionConfig = typeof DEFAULT_RETENTION_CONFIG;
 const RETENTION_LIMITS = { eventLogRetentionDays: 730, piiLogRetentionDays: 2555 } as const;
 
-function retentionConfigFromProfile(profile: AuditProfile): RetentionConfig {
-  return {
-    eventLogRetentionDays:
-      profile.retention?.eventLogRetentionDays ??
-      profile.retention?.primaryDays ??
-      profile.retention?.archiveDays ??
-      DEFAULT_RETENTION_CONFIG.eventLogRetentionDays,
-    piiLogRetentionDays:
-      profile.retention?.piiLogRetentionDays ??
-      profile.retention?.primaryDays ??
-      profile.retention?.archiveDays ??
-      DEFAULT_RETENTION_CONFIG.piiLogRetentionDays,
-  };
-}
 function object(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
@@ -176,31 +168,22 @@ async function setEnvironmentDefaultAuditProfileId(env: Env, profileId: string):
   );
 }
 
-async function getResolvedAuditProfile(env: Env): Promise<{
+async function getResolvedAuditProfile(
+  env: Env,
+  options: { strict?: boolean } = {}
+): Promise<{
   registry: ReturnType<typeof createRuntimeProfileRegistryFromEnv>;
   defaults: Awaited<ReturnType<typeof loadEnvironmentProfileDefaultsFromEnv>>;
   profile: AuditProfile;
 }> {
   const registry = createRuntimeProfileRegistryFromEnv(env);
-  const defaults = await loadEnvironmentProfileDefaultsFromEnv(env);
+  const defaults = await loadEnvironmentProfileDefaultsFromEnv(env, options);
   const profile = await registry.get<AuditProfile>('audit', defaults.auditProfileId);
   if (!profile) {
     throw new Error(`audit_profile_not_found:${defaults.auditProfileId}`);
   }
 
   return { registry, defaults, profile };
-}
-
-async function ensureManagedAuditProfile(env: Env): Promise<AuditProfile> {
-  const { registry, defaults, profile } = await getResolvedAuditProfile(env);
-  if (defaults.auditProfileId === MANAGED_AUDIT_PROFILE_ID && !profile.builtin) {
-    return profile;
-  }
-
-  const managedProfile = createManagedAuditProfile(profile);
-  await registry.put(managedProfile);
-  await setEnvironmentDefaultAuditProfileId(env, MANAGED_AUDIT_PROFILE_ID);
-  return managedProfile;
 }
 
 export async function getAuditStorageConfig(c: Context<{ Bindings: Env }>) {
@@ -253,12 +236,53 @@ export async function updateRetentionConfig(c: Context<{ Bindings: Env }>) {
       { error: 'server_error', error_description: 'SETTINGS KV namespace is not configured' },
       500
     );
-  const profile = await ensureManagedAuditProfile(c.env);
-  const next = {
-    ...profile,
-    retention: { ...profile.retention, ...(body as Partial<RetentionConfig>) },
-  };
-  await createRuntimeProfileRegistryFromEnv(c.env).put(next);
+  // Shorter retention deletes logs sooner, so it needs a step-up; a longer one does not.
+  // Judged the way a write resolves retention (see auditRetentionWeakened), against the profile
+  // in effect now and against the managed profile the write lands in, which tenants may name
+  // directly even when it is not the default. Read only: nothing is written before the step-up.
+  // Strict: a default that cannot be read must not be mistaken for the built-in one.
+  const {
+    registry,
+    defaults,
+    profile: current,
+  } = await getResolvedAuditProfile(c.env, {
+    strict: true,
+  });
+  const requested = body as Partial<RetentionConfig>;
+  const base =
+    defaults.auditProfileId === MANAGED_AUDIT_PROFILE_ID && !current.builtin
+      ? current
+      : createManagedAuditProfile(current);
+  const candidate = { ...base, retention: { ...base.retention, ...requested } };
+  const overwritten = await registry.get<AuditProfile>('audit', MANAGED_AUDIT_PROFILE_ID);
+  const shortened =
+    auditRetentionWeakened(current, candidate) ||
+    (overwritten?.kind === 'audit' && auditRetentionWeakened(overwritten, candidate));
+  if (shortened) {
+    const refused = await requireAdminStepUp(
+      c as unknown as Parameters<typeof requireAdminStepUp>[0],
+      {
+        operation: 'audit.retention.shorten',
+        targetTenantId: getTenantIdFromContext(c),
+        params: {
+          kind: 'audit_storage.retention',
+          retention_days: Object.fromEntries(
+            (Object.keys(RETENTION_LIMITS) as Array<keyof RetentionConfig>)
+              .filter((name) => requested[name] !== undefined)
+              .map((name) => [name, requested[name]])
+          ),
+        },
+      }
+    );
+    if (refused) return refused;
+  }
+  // One write of the profile that was judged above (no intermediate copy of the default is saved
+  // first), then the default is pointed at it if it was not already.
+  const next = candidate;
+  await registry.put(next);
+  if (defaults.auditProfileId !== MANAGED_AUDIT_PROFILE_ID) {
+    await setEnvironmentDefaultAuditProfileId(c.env, MANAGED_AUDIT_PROFILE_ID);
+  }
   return c.json({
     success: true,
     config: retentionConfigFromProfile(next),
@@ -290,6 +314,20 @@ function invalidRule(c: Context<{ Bindings: Env }>, error: unknown) {
     400
   );
 }
+/**
+ * Routing rules override how long matching logs are kept. Comparing the effective retention of two
+ * rule sets is not cheap (conditions overlap), so any change to the rules is gated as a shortening.
+ */
+async function gateRoutingRulesChange(
+  c: Context<{ Bindings: Env }>,
+  params: Record<string, unknown>
+): Promise<Response | null> {
+  return requireAdminStepUp(c as unknown as Parameters<typeof requireAdminStepUp>[0], {
+    operation: 'audit.retention.shorten',
+    targetTenantId: getTenantIdFromContext(c),
+    params: { kind: 'audit_storage.routing_rules', ...params },
+  });
+}
 export async function updateRoutingRules(c: Context<{ Bindings: Env }>) {
   if (!c.env.AUTHRIM_CONFIG)
     return c.json(
@@ -306,6 +344,16 @@ export async function updateRoutingRules(c: Context<{ Bindings: Env }>) {
       throw new Error('rule names must be unique');
   } catch (error) {
     return invalidRule(c, error);
+  }
+  let current: AuditStorageRoutingRule[];
+  try {
+    current = await loadRoutingRules(c.env);
+  } catch {
+    return unavailable(c);
+  }
+  if (JSON.stringify(current) !== JSON.stringify(rules)) {
+    const refused = await gateRoutingRulesChange(c, { action: 'replace', rules });
+    if (refused) return refused;
   }
   await c.env.AUTHRIM_CONFIG.put(KV_KEY_ROUTING_RULES, JSON.stringify(rules));
   return c.json({ success: true, rules, count: rules.length, kv_key: KV_KEY_ROUTING_RULES });
@@ -336,6 +384,8 @@ export async function addRoutingRule(c: Context<{ Bindings: Env }>) {
       },
       400
     );
+  const refused = await gateRoutingRulesChange(c, { action: 'add', rule });
+  if (refused) return refused;
   rules.push(rule);
   rules.sort((a, b) => a.priority - b.priority);
   await c.env.AUTHRIM_CONFIG.put(KV_KEY_ROUTING_RULES, JSON.stringify(rules));
@@ -360,6 +410,8 @@ export async function deleteRoutingRule(c: Context<{ Bindings: Env }>) {
       { error: 'not_found', error_description: `Rule with name "${name}" not found` },
       404
     );
+  const refused = await gateRoutingRulesChange(c, { action: 'delete', name });
+  if (refused) return refused;
   await c.env.AUTHRIM_CONFIG.put(KV_KEY_ROUTING_RULES, JSON.stringify(remaining));
   return c.json({ success: true, deleted_rule: name, remaining_rules: remaining.length });
 }

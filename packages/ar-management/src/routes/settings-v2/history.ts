@@ -21,6 +21,7 @@ import { runTenantBackupCoveredMutation } from '../../tenant-backup-writer';
 
 import type { Context } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
+import { requireAdminStepUp } from '../../admin-step-up-gate';
 import { hasPlatformAuthorityForTenantEdit } from './settings-authorization';
 import {
   createAuthContextFromHono,
@@ -406,6 +407,11 @@ export async function getSettingsVersion(c: SettingsContext) {
  *   "reason": "Optional reason for rollback"
  * }
  */
+/** Rollbackable categories that hold a step-up policy (`security`); the retention ones are not rollbackable. */
+const ROLLBACK_STEP_UP_OPERATIONS: Record<string, 'admin_step_up.policy.relax' | undefined> = {
+  security: 'admin_step_up.policy.relax',
+};
+
 export async function rollbackSettings(c: SettingsContext) {
   const log = getLogger(c as unknown as BaseContext).module('SettingsHistoryAPI');
   const category = c.req.param('category')!;
@@ -455,7 +461,11 @@ export async function rollbackSettings(c: SettingsContext) {
     );
   }
 
-  if (typeof body.targetVersion !== 'number' || body.targetVersion < 1) {
+  if (
+    typeof body.targetVersion !== 'number' ||
+    !Number.isSafeInteger(body.targetVersion) ||
+    body.targetVersion < 1
+  ) {
     return c.json(
       {
         error: 'invalid_request',
@@ -474,6 +484,48 @@ export async function rollbackSettings(c: SettingsContext) {
 
       try {
         const historyManager = getHistoryManager(c);
+
+        // Validate the target before anything can be spent: it must exist and hold a snapshot
+        // that can be restored.
+        const target = await historyManager.getVersion(category, body.targetVersion);
+        if (!target) {
+          return c.json(
+            {
+              error: 'not_found',
+              error_description: `Version ${body.targetVersion} not found for category ${category}`,
+            },
+            404
+          );
+        }
+        if (
+          !target.snapshot ||
+          typeof target.snapshot !== 'object' ||
+          Array.isArray(target.snapshot)
+        ) {
+          return c.json(
+            {
+              error: 'invalid_request',
+              error_description: `Version ${body.targetVersion} cannot be restored`,
+            },
+            400
+          );
+        }
+
+        // A rollback restores a whole earlier document, which may carry a weaker step-up policy:
+        // for the category that holds it, it is gated as relaxing the policy.
+        const guardedOperation = ROLLBACK_STEP_UP_OPERATIONS[category];
+        if (guardedOperation) {
+          const refused = await requireAdminStepUp(c, {
+            operation: guardedOperation,
+            targetTenantId: tenantId,
+            params: {
+              kind: 'settings.rollback',
+              category,
+              target_version: body.targetVersion,
+            },
+          });
+          if (refused) return refused;
+        }
 
         // Publish rollback started event
         await publishEvent(c as unknown as BaseContext, {

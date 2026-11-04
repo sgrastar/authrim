@@ -113,6 +113,7 @@ import {
   SAMLDRBundleOperationError,
   type SAMLDRBundleFailureStage,
 } from './local-signing-dr-bundle';
+import { requireSAMLTrustStepUp, sha256Digest } from './step-up';
 import { previewTrustCertificate } from './certificate-preview';
 import {
   buildSAMLSigningCertificateSubjectAlternativeNames,
@@ -127,7 +128,9 @@ import {
 import { buildSAMLSigningKeyRef } from '../common/saml-signing-keys';
 import {
   DEFAULT_SAML_SIGNING_CERTIFICATE_SUBJECT,
+  resolveSAMLCertificateValidity,
   rotateSigningKeyWithCertificate,
+  samlCertificateValidityProblem,
   type SAMLSigningCertificateSubject,
 } from '../common/key-utils';
 import {
@@ -138,6 +141,13 @@ import {
 import { resolveSAMLMetadataSigningMode, shouldSignSAMLMetadata } from '../common/metadata-signing';
 
 type AdminSAMLContext = Context<{ Bindings: Env }>;
+
+/** Carries the step-up gate's refusal out of a callback that runs inside a larger operation. */
+class StepUpRefusal extends Error {
+  constructor(readonly response: Response) {
+    super('step_up_refused');
+  }
+}
 const SINGLE_METADATA_REQUEST_LIMIT_BYTES = 2 * 1024 * 1024;
 const AGGREGATE_METADATA_REQUEST_LIMIT_BYTES = 12 * 1024 * 1024;
 type AdminSAMLAuthContext = Context<{
@@ -913,6 +923,27 @@ export async function handleUpdateSAMLSettings(c: AdminSAMLContext): Promise<Res
         ? before.certificateSubjectAlternativeNames
         : normalizeCertificateSubjectAlternativeNames(body.certificateSubjectAlternativeNames);
 
+    // The login URL policy is not about trust; the entity ID style and the subject of the
+    // certificates the tenant issues are.
+    const trustChanged =
+      entityIdStyle !== before.entityIdStyle ||
+      JSON.stringify(certificateSubject) !== JSON.stringify(before.certificateSubject) ||
+      JSON.stringify(certificateSubjectAlternativeNames) !==
+        JSON.stringify(before.certificateSubjectAlternativeNames);
+    if (trustChanged) {
+      const refused = await requireSAMLTrustStepUp(c, {
+        tenantId,
+        targetIds: [tenantId],
+        params: {
+          action: 'settings.update',
+          entityIdStyle,
+          certificateSubject,
+          certificateSubjectAlternativeNames,
+        },
+      });
+      if (refused) return refused;
+    }
+
     await putSAMLPublicSettings(c.env, tenantId, {
       entityIdStyle,
       interactiveLoginUrlPolicy,
@@ -1026,11 +1057,18 @@ export async function handleUpdateSAMLLocalSigning(c: AdminSAMLContext): Promise
     const validTo = normalizeOptionalTimestamp(body.validTo);
     const publicKeyAlgorithm = body.publicKeyAlgorithm === 'RSA' ? 'RSA' : undefined;
     const publicKeySizeBits = normalizeSAMLPublicKeySizeBits(body.publicKeySizeBits);
-    if (validFrom !== undefined && validTo !== undefined && validTo <= validFrom) {
+    // The period the certificate would get, omitted bounds included, is checked here: a key is
+    // generated (and a step-up receipt spent) before the certificate is.
+    if (samlCertificateValidityProblem({ validFrom, validTo }) !== null) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
         variables: { field: 'validTo' },
       });
     }
+    // Fixed once, here: the certificate gets exactly the period just checked (an omitted
+    // validFrom is not worked out again later, from a later clock). The receipt binds the input.
+    const certificateValidity = resolveSAMLCertificateValidity({ validFrom, validTo });
+    const certificateValidFrom = certificateValidity.notBefore.getTime();
+    const certificateValidTo = certificateValidity.notAfter.getTime();
     const signingKeyPolicies = { ...settings.signingKeyPolicies };
     const currentPolicy = signingKeyPolicies[role] ?? {};
     const baseContext = { tenantId, role };
@@ -1042,8 +1080,30 @@ export async function handleUpdateSAMLLocalSigning(c: AdminSAMLContext): Promise
     );
     let nextPolicy = currentPolicy;
     let generated: { keyRef?: string; kid?: string; certificate?: string } = {};
+    // Called once, before the first change: generating a key is one.
+    const stepUp = () =>
+      requireSAMLTrustStepUp(c, {
+        tenantId,
+        targetIds: [`${tenantId}:${role}`],
+        params: {
+          action: `local_signing.${action}`,
+          role,
+          certificateSubject,
+          certificateSubjectAlternativeNames,
+          targetKid,
+          targetKeyRef,
+          validFrom,
+          validTo,
+          publicKeyAlgorithm,
+          publicKeySizeBits,
+          keepPreviousAsBackup:
+            action === 'promote_next' ? body.keepPreviousAsBackup !== false : undefined,
+        },
+      });
 
     if (action === 'recreate_active') {
+      const refused = await stepUp();
+      if (refused) return refused;
       const keyRef =
         currentPolicy.active?.keyRef ??
         buildSAMLSigningKeyRef({
@@ -1055,8 +1115,8 @@ export async function handleUpdateSAMLLocalSigning(c: AdminSAMLContext): Promise
         keyRef,
         certificateSubject,
         certificateOptions: {
-          validFrom,
-          validTo,
+          validFrom: certificateValidFrom,
+          validTo: certificateValidTo,
           publicKeyAlgorithm,
           publicKeySizeBits,
           subjectAlternativeNames,
@@ -1084,6 +1144,8 @@ export async function handleUpdateSAMLLocalSigning(c: AdminSAMLContext): Promise
           : 'active_only',
       };
     } else if (action === 'publish_next') {
+      const refused = await stepUp();
+      if (refused) return refused;
       const keyRef = `${buildSAMLSigningKeyRef({
         tenantId,
         role,
@@ -1093,8 +1155,8 @@ export async function handleUpdateSAMLLocalSigning(c: AdminSAMLContext): Promise
         keyRef,
         certificateSubject,
         certificateOptions: {
-          validFrom,
-          validTo,
+          validFrom: certificateValidFrom,
+          validTo: certificateValidTo,
           publicKeyAlgorithm,
           publicKeySizeBits,
           subjectAlternativeNames,
@@ -1124,6 +1186,12 @@ export async function handleUpdateSAMLLocalSigning(c: AdminSAMLContext): Promise
       nextPolicy = retireSAMLBackupSigningCertificate(currentPolicy);
     } else {
       nextPolicy = deleteSAMLNextSigningCertificate(currentPolicy, { targetKid, targetKeyRef });
+    }
+    // The branches above that do not generate a key only compute the next policy (and refuse an
+    // invalid one); the ones that do were gated before generating.
+    if (action !== 'recreate_active' && action !== 'publish_next') {
+      const refused = await stepUp();
+      if (refused) return refused;
     }
 
     signingKeyPolicies[role] = nextPolicy;
@@ -1251,7 +1319,19 @@ export async function handleImportSAMLLocalSigningDRBundle(c: AdminSAMLContext):
       c.env,
       tenantId,
       body.bundle,
-      body.passphrase
+      body.passphrase,
+      // Runs once the bundle has decrypted and validated, just before any key is written.
+      async () => {
+        const refused = await requireSAMLTrustStepUp(c, {
+          tenantId,
+          targetIds: [tenantId],
+          params: {
+            action: 'local_signing.dr_bundle.import',
+            bundle_sha256: await sha256Digest(body.bundle),
+          },
+        });
+        if (refused) throw new StepUpRefusal(refused);
+      }
     );
 
     failureStage = 'audit';
@@ -1292,6 +1372,7 @@ export async function handleImportSAMLLocalSigningDRBundle(c: AdminSAMLContext):
       imported: result,
     });
   } catch (error) {
+    if (error instanceof StepUpRefusal) return error.response;
     if (isSAMLDRBundleValidationError(error)) {
       return createSAMLDRBundleAdminErrorResponse(c, {
         operation: 'import',
@@ -1839,6 +1920,18 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
     ) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
+    const refused = await requireSAMLTrustStepUp(c, {
+      tenantId,
+      params: {
+        action: 'provider.create',
+        providerType: body.providerType,
+        name: body.name,
+        enabled: requestedEnabled,
+        // Certificates, metadata and the rest of the request, as a digest.
+        request_sha256: await sha256Digest(body),
+      },
+    });
+    if (refused) return refused;
     await coreAdapter.execute(
       `INSERT INTO identity_providers (id, tenant_id, name, provider_type, config_json, enabled, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -2106,6 +2199,23 @@ export async function handleUpdateProvider(c: AdminSAMLContext): Promise<Respons
       (existingConfig as SAMLSPConfig).authnContextClassRefMode !==
         (newConfig as SAMLSPConfig).authnContextClassRefMode;
 
+    // A rename or a disable on its own does not widen what the tenant trusts (disabling is the
+    // containment path and stays available); a config change or an enable does.
+    if (body.config !== undefined || (nextEnabled && existing.enabled !== 1)) {
+      const refused = await requireSAMLTrustStepUp(c, {
+        tenantId,
+        targetIds: [existing.id],
+        params: {
+          action: 'provider.update',
+          name: body.name,
+          enabled: body.enabled,
+          expectedUpdatedAt: body.expectedUpdatedAt,
+          config_sha256: body.config === undefined ? undefined : await sha256Digest(body.config),
+        },
+      });
+      if (refused) return refused;
+    }
+
     const update = await coreAdapter.execute(
       `UPDATE identity_providers
        SET name = ?, config_json = ?, enabled = ?, updated_at = ?
@@ -2199,6 +2309,20 @@ export async function handleDeleteProvider(c: AdminSAMLContext): Promise<Respons
 
     const tenantId = resolveSAMLTenantIdFromContext(c);
     const coreAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
+    const existing = await coreAdapter.queryOne<{ id: string }>(
+      `SELECT id FROM identity_providers
+       WHERE id = ? AND tenant_id = ? AND provider_type IN ('saml_idp', 'saml_sp')`,
+      [id, tenantId]
+    );
+    if (!existing) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+    const refused = await requireSAMLTrustStepUp(c, {
+      tenantId,
+      targetIds: [existing.id],
+      params: { action: 'provider.delete' },
+    });
+    if (refused) return refused;
     const result = await coreAdapter.execute(
       `DELETE FROM identity_providers
        WHERE id = ? AND tenant_id = ? AND provider_type IN ('saml_idp', 'saml_sp')`,
@@ -2336,6 +2460,24 @@ export async function handleImportMetadata(c: AdminSAMLContext): Promise<Respons
 
     const now = Date.now();
 
+    const refused = await requireSAMLTrustStepUp(c, {
+      tenantId,
+      targetIds: [existing.id],
+      params: {
+        action: 'provider.import_metadata',
+        // What the request supplied: the XML itself, or the URL to fetch it from. A fetched
+        // document is not bound (it can change between the refused request and its repeat, as
+        // signed and time-stamped metadata does); the URL the admin approved is.
+        ...(typeof body.metadataXml === 'string' && body.metadataXml
+          ? { metadata_sha256: await sha256Digest(body.metadataXml) }
+          : {}),
+        metadataUrl: metadataUrl ?? undefined,
+        samlProfile: body.samlProfile,
+        attributePresetId: body.attributePresetId,
+      },
+    });
+    if (refused) return refused;
+
     await coreAdapter.execute(
       'UPDATE identity_providers SET config_json = ?, enabled = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
       [JSON.stringify(mergedConfig), nextEnabled ? 1 : 0, now, id, tenantId]
@@ -2466,13 +2608,18 @@ export async function handleRefreshMetadata(c: AdminSAMLContext): Promise<Respon
     }
 
     persistRefreshFailure = async (code, state = 'error') => {
+      // A failed refresh from another URL changes nothing: that URL was never adopted, and
+      // recording it would rebuild the refresh policy (turning a manual one automatic) without
+      // the step-up that adopting it needs.
+      if (metadataUrl !== existingConfig.metadataUrl) {
+        refreshFailurePersisted = true;
+        return;
+      }
       const now = Math.max(Date.now(), existing.updated_at + 1);
       const failedConfig = {
         ...existingConfig,
         metadataRefreshPolicy: markSAMLMetadataRefreshFailure(
-          metadataUrl === existingConfig.metadataUrl
-            ? existingConfig.metadataRefreshPolicy
-            : undefined,
+          existingConfig.metadataRefreshPolicy,
           metadataUrl,
           code,
           state,
@@ -2584,6 +2731,15 @@ export async function handleRefreshMetadata(c: AdminSAMLContext): Promise<Respon
     }
 
     if (refreshStatus.diff.expired) {
+      // Expired metadata from another URL changes nothing (as a failed fetch from one does): that
+      // URL was never adopted, and recording it would rebuild the refresh policy without the
+      // step-up that adopting it needs.
+      if (metadataUrl !== existingConfig.metadataUrl) {
+        refreshFailurePersisted = true;
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+          variables: { field: 'metadataUrl', reason: 'The metadata at this URL has expired' },
+        });
+      }
       const suspendedByMetadataSync =
         existing.enabled === 1 ||
         existingConfig.metadataRefreshPolicy?.suspendedByMetadataSync === true;
@@ -2592,9 +2748,7 @@ export async function handleRefreshMetadata(c: AdminSAMLContext): Promise<Respon
         metadataRefreshStatus: refreshStatus,
         metadataRefreshPolicy: {
           ...markSAMLMetadataRefreshFailure(
-            metadataUrl === existingConfig.metadataUrl
-              ? existingConfig.metadataRefreshPolicy
-              : undefined,
+            existingConfig.metadataRefreshPolicy,
             metadataUrl,
             'metadata_expired',
             'expired',
@@ -2680,6 +2834,19 @@ export async function handleRefreshMetadata(c: AdminSAMLContext): Promise<Respon
     const nextEnabled =
       (existing.enabled === 1 || restoreMetadataSuspension) &&
       mergedConfig.certificateValidation?.allExpired !== true;
+
+    // The fetched metadata can replace the provider's certificates and endpoints. The request's
+    // own inputs are the params: what the URL serves is not known to the console.
+    const refreshRefused = await requireSAMLTrustStepUp(c, {
+      tenantId,
+      targetIds: [existing.id],
+      params: {
+        action: 'provider.refresh_metadata',
+        metadataUrl,
+        allowEntityIdChange: body.allowEntityIdChange === true,
+      },
+    });
+    if (refreshRefused) return refreshRefused;
 
     const update = await coreAdapter.execute(
       `UPDATE identity_providers
@@ -2773,7 +2940,23 @@ export async function handleRefreshFederationMetadataSource(
 
     const tenantId = resolveSAMLTenantIdFromContext(c);
     const { refreshFederationMetadataSource } = await import('./metadata-polling');
-    const result = await refreshFederationMetadataSource(c.env, sourceId, tenantId, 'manual');
+    // The refresh replaces the metadata and certificates of the providers linked to the source.
+    // The gate runs once the source exists and has a URL, before anything is fetched or written.
+    const result = await refreshFederationMetadataSource(
+      c.env,
+      sourceId,
+      tenantId,
+      'manual',
+      undefined,
+      async () => {
+        const refused = await requireSAMLTrustStepUp(c, {
+          tenantId,
+          targetIds: [sourceId],
+          params: { action: 'federation_source.refresh_metadata' },
+        });
+        if (refused) throw new StepUpRefusal(refused);
+      }
+    );
     await createSAMLAdminAudit(c, {
       tenantId,
       action: 'saml.federation.metadata_refresh_requested',
@@ -2790,6 +2973,7 @@ export async function handleRefreshFederationMetadataSource(
     });
     return c.json({ success: true, ...result });
   } catch (error) {
+    if (error instanceof StepUpRefusal) return error.response;
     const code = error instanceof Error ? error.message : 'metadata_refresh_failed';
     await recordSAMLAdminFailure(c, {
       action: 'saml.federation.metadata_refresh_requested',
@@ -2939,6 +3123,21 @@ export async function handleStartAggregateBatchCreate(c: AdminSAMLContext): Prom
       });
     }
 
+    const refused = await requireSAMLTrustStepUp(c, {
+      tenantId,
+      targetIds: [previewId],
+      params: {
+        action: 'provider.batch_create',
+        entityIds: [...entityIds].sort(),
+        providerType: body.providerType,
+        samlProfile: body.samlProfile,
+        attributePresetId: body.attributePresetId,
+        identityMapping: body.identityMapping,
+        enabled: body.enabled !== false,
+      },
+    });
+    if (refused) return refused;
+
     const batchId = crypto.randomUUID();
     const status = await startAggregateBatch(c.env, batchId, tenantId, entityIds.length);
     c.executionCtx.waitUntil(
@@ -3072,6 +3271,7 @@ export async function handlePublishSigningNext(c: AdminSAMLContext): Promise<Res
       }),
     {
       permission: ADMIN_PERMISSIONS.SAML_PROVIDERS_SIGNING_PUBLISH_NEXT,
+      step: 'publish_next',
       requireCertificate: true,
     }
   );
@@ -3088,7 +3288,7 @@ export async function handlePromoteSigningNext(c: AdminSAMLContext): Promise<Res
         promotedAt: input.body.promotedAt,
         keepPreviousAsBackup: input.body.keepPreviousAsBackup,
       }),
-    { permission: ADMIN_PERMISSIONS.SAML_PROVIDERS_SIGNING_PROMOTE }
+    { permission: ADMIN_PERMISSIONS.SAML_PROVIDERS_SIGNING_PROMOTE, step: 'promote_next' }
   );
 }
 
@@ -3096,7 +3296,7 @@ export async function handleRetireSigningBackup(c: AdminSAMLContext): Promise<Re
   return updateProviderSigningPolicy(
     c,
     (input) => retireSAMLBackupSigningCertificate(input.policy),
-    { permission: ADMIN_PERMISSIONS.SAML_PROVIDERS_SIGNING_RETIRE_BACKUP }
+    { permission: ADMIN_PERMISSIONS.SAML_PROVIDERS_SIGNING_RETIRE_BACKUP, step: 'retire_backup' }
   );
 }
 
@@ -3120,7 +3320,11 @@ async function updateProviderSigningPolicy(
     policy: NonNullable<(SAMLIdPConfig | SAMLSPConfig)['signingKeyPolicy']>;
     body: SigningRolloverRequestBody;
   }) => NonNullable<(SAMLIdPConfig | SAMLSPConfig)['signingKeyPolicy']>,
-  options: { permission: string; requireCertificate?: boolean }
+  options: {
+    permission: string;
+    step: 'publish_next' | 'promote_next' | 'retire_backup';
+    requireCertificate?: boolean;
+  }
 ): Promise<Response> {
   const id = c.req.param('id');
   const log = getLogger(c).module('SAML');
@@ -3172,6 +3376,17 @@ async function updateProviderSigningPolicy(
       signingKeyPolicy,
     };
     const now = Date.now();
+
+    const refused = await requireSAMLTrustStepUp(c, {
+      tenantId,
+      targetIds: [existing.id],
+      params: {
+        action: `provider.signing_rollover.${options.step}`,
+        // The certificate and key references of the request, as a digest.
+        request_sha256: await sha256Digest(body),
+      },
+    });
+    if (refused) return refused;
 
     await coreAdapter.execute(
       'UPDATE identity_providers SET config_json = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',

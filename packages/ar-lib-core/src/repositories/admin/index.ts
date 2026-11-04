@@ -8,13 +8,14 @@
 // Core Admin Management
 export { AdminUserRepository, type AdminUserFilterOptions } from './admin-user';
 export {
+  AdminRoleChangedError,
   AdminRoleRepository,
   AdminRoleAssignmentRepository,
   type AdminRoleAssignmentWithUser,
 } from './admin-role';
 export { ADMIN_GUARD_NOW_MS, allOfGuards, guardClause, type AdminWriteGuard } from './write-guard';
 export { AdminSessionRepository } from './admin-session';
-export { AdminPasskeyRepository } from './admin-passkey';
+export { AdminPasskeyNotFirstError, AdminPasskeyRepository } from './admin-passkey';
 export {
   AdminSecondFactorRepository,
   ADMIN_SECOND_FACTOR_ENROLLMENT_GRACE_MS,

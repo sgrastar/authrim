@@ -19,6 +19,12 @@ import {
   resolveAuditRoutingTargets,
   DEFAULT_AUDIT_STORAGE_CONFIG,
 } from '@authrim/ar-lib-core';
+const { mockRequireAdminStepUp } = vi.hoisted(() => ({ mockRequireAdminStepUp: vi.fn() }));
+vi.mock('../admin-step-up-gate', () => ({
+  requireAdminStepUp: mockRequireAdminStepUp,
+  refuseAdminFreshAuth: vi.fn(),
+}));
+
 import {
   getAuditStorageConfig,
   updateAuditStorageConfig,
@@ -292,6 +298,98 @@ describe('Setup-owned audit storage and editable retention', () => {
       config: { eventLogRetentionDays: 180, piiLogRetentionDays: 730 },
     });
     expect(await f.mockKV.get('audit_storage_config')).toBeNull();
+  });
+  describe('step-up (audit.retention.shorten)', () => {
+    beforeEach(() => {
+      mockRequireAdminStepUp.mockReset();
+      mockRequireAdminStepUp.mockResolvedValue(null);
+    });
+    it('lengthening a retention is not gated', async () => {
+      const f = createTestApp();
+      const res = await request(f, '/retention', 'PUT', { eventLogRetentionDays: 91 });
+      expect(res.status).toBe(200);
+      expect(mockRequireAdminStepUp).not.toHaveBeenCalled();
+    });
+    it('shortening is refused without step-up and nothing is written', async () => {
+      mockRequireAdminStepUp.mockResolvedValue(
+        new Response(JSON.stringify({ error: 'step_up_required' }), { status: 403 })
+      );
+      const f = createTestApp();
+      const res = await request(f, '/retention', 'PUT', { piiLogRetentionDays: 30 });
+      expect(res.status).toBe(403);
+      expect(f.kvPut).not.toHaveBeenCalled();
+      expect(f.settingsPut).not.toHaveBeenCalled();
+      const after = await request(f, '/retention');
+      expect(await after.json()).toMatchObject({ config: { piiLogRetentionDays: 365 } });
+    });
+    it('shortening goes ahead with the gate satisfied, bound to the requested days', async () => {
+      const f = createTestApp();
+      const res = await request(f, '/retention', 'PUT', {
+        eventLogRetentionDays: 30,
+        piiLogRetentionDays: 400,
+      });
+      expect(res.status).toBe(200);
+      expect(mockRequireAdminStepUp).toHaveBeenCalledTimes(1);
+      expect(mockRequireAdminStepUp.mock.calls[0][1]).toMatchObject({
+        operation: 'audit.retention.shorten',
+        params: {
+          kind: 'audit_storage.retention',
+          retention_days: { eventLogRetentionDays: 30, piiLogRetentionDays: 400 },
+        },
+      });
+      expect(await (await request(f, '/retention')).json()).toMatchObject({
+        config: { eventLogRetentionDays: 30, piiLogRetentionDays: 400 },
+      });
+    });
+    it('an invalid body never reaches the gate', async () => {
+      const f = createTestApp();
+      expect((await request(f, '/retention', 'PUT', { eventLogRetentionDays: 0 })).status).toBe(
+        400
+      );
+      expect(mockRequireAdminStepUp).not.toHaveBeenCalled();
+    });
+    it('is judged against the managed profile it overwrites, not only the default in effect', async () => {
+      // The default is the built-in profile (90 days), but a managed profile tenants may name
+      // keeps 365 days: writing 180 lengthens the first and shortens the second.
+      const kv = createMockKV();
+      await kv.put(
+        'profile-registry:audit:managed:audit:settings-default',
+        JSON.stringify({
+          id: 'managed:audit:settings-default',
+          kind: 'audit',
+          builtin: false,
+          label: 'Managed',
+          version: 1,
+          primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
+          archive: null,
+          sinks: [],
+          retention: { eventLogRetentionDays: 365, piiLogRetentionDays: 730 },
+        })
+      );
+      const f = createTestApp({ kv });
+      await request(f, '/retention', 'PUT', { eventLogRetentionDays: 180 });
+      expect(mockRequireAdminStepUp).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ operation: 'audit.retention.shorten' })
+      );
+
+      // Lengthening both: not gated, and the managed profile is written once, with the final
+      // value (never first overwritten with a copy of the shorter default).
+      mockRequireAdminStepUp.mockClear();
+      const putSpy = kv.put as unknown as ReturnType<typeof vi.fn>;
+      putSpy.mockClear();
+      expect((await request(f, '/retention', 'PUT', { eventLogRetentionDays: 400 })).status).toBe(
+        200
+      );
+      expect(mockRequireAdminStepUp).not.toHaveBeenCalled();
+      const managedWrites = putSpy.mock.calls.filter(
+        ([key]) => key === 'profile-registry:audit:managed:audit:settings-default'
+      );
+      expect(managedWrites).toHaveLength(1);
+      expect(JSON.parse(managedWrites[0]?.[1] as string)).toMatchObject({
+        retention: { eventLogRetentionDays: 400 },
+      });
+    });
   });
   it.each([
     { archiveBeforeDelete: true },

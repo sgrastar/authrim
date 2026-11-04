@@ -623,7 +623,7 @@ export type { ActorStorage, StoragePutOptions, StorageListOptions } from './acto
 export { CloudflareActorContext } from './actor';
 
 // Durable Objects
-export { KeyManager } from './durable-objects/KeyManager';
+export { KeyManager, assertImportableSigningKey } from './durable-objects/KeyManager';
 export { ChallengeStore } from './durable-objects/ChallengeStore';
 export { DeviceSecretRouteStore } from './durable-objects/DeviceSecretRouteStore';
 export type { DeviceSecretRouteHint } from './durable-objects/DeviceSecretRouteStore';

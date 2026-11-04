@@ -83,6 +83,24 @@ describe('requireAdminStepUp', () => {
     });
   });
 
+  it('marks a refusal retryable, so a repeat with the same Idempotency-Key reaches the handler', async () => {
+    mocks.resolveEffectiveSettings.mockResolvedValue({});
+    const app = new Hono<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>();
+    let marked: unknown;
+    app.post('/op', async (c) => {
+      c.set('adminAuth', human());
+      // L2 without a receipt: refused with step_up_required.
+      const refused = await requireAdminStepUp(c, deleteTenant, NOW);
+      marked = (c as unknown as { get: (key: string) => unknown }).get(
+        'idempotencyResponseRetryable'
+      );
+      return refused ?? c.json({ ran: true });
+    });
+    const response = await app.request('/op', { method: 'POST' }, {});
+    expect(response.status).toBe(403);
+    expect(marked).toBe(true);
+  });
+
   it('lets an L1 operation through with a fresh passkey', async () => {
     await expect(run(revokeAll)).resolves.toEqual({ status: 200, body: { ran: true } });
     expect(mocks.resolveEffectiveSettings).toHaveBeenCalledWith({}, 'security', {
@@ -259,6 +277,22 @@ describe('requireAdminStepUp', () => {
 
       expect(status).toBe(403);
       expect(body).toMatchObject({ error: 'step_up_human_required' });
+    });
+
+    it('does not exempt an agent, nor anyone from an always-enforced operation', async () => {
+      const agent = human({
+        authMethod: 'bearer',
+        actorType: 'agent',
+        permissions: ['admin:step_up_exempt:tenant.delete'],
+      });
+      expect((await run(deleteTenant, agent)).status).toBe(403);
+      const relax = {
+        operation: 'admin_step_up.policy.relax' as const,
+        targetTenantId: 'tenant-a',
+      };
+      expect(
+        (await run(relax, machine(['admin:step_up_exempt:admin_step_up.policy.relax']))).status
+      ).toBe(403);
     });
 
     it('does not let a human session skip the step-up with an exemption', async () => {

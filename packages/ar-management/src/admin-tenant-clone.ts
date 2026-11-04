@@ -21,6 +21,7 @@ import {
   type DatabaseAdapter,
 } from '@authrim/ar-lib-core';
 import { requirePlatformTenantManagementAuthority } from './admin-tenant-access';
+import { requireAdminStepUp } from './admin-step-up-gate';
 import {
   createSingleTenantMutationError,
   ensureSupportedTenantId,
@@ -592,11 +593,43 @@ async function estimateSelectedDatabaseQueries(
       [tenantId, tenantId, tenantId, Date.now(), tenantId, Date.now()]
     );
     total += Number(adminCounts?.roles ?? 0) * 2 + Number(adminCounts?.assignments ?? 0);
+    // What the copied assignments grant, not only how many there are: an assignment whose expiry
+    // or scope changed (which leaves created_at alone) changes this, and so the clone's step-up
+    // receipt and the provisioning's source check.
+    const assignmentRows = await admin.query<Record<string, unknown>>(
+      `SELECT id, admin_user_id, admin_role_id, scope_type, scope_id, expires_at
+         FROM admin_role_assignments
+        WHERE tenant_id = ? AND (expires_at IS NULL OR expires_at > ?)
+        ORDER BY id`,
+      [tenantId, Date.now()]
+    );
+    const assignmentsDigest = Array.from(
+      new Uint8Array(
+        await crypto.subtle.digest(
+          'SHA-256',
+          new TextEncoder().encode(
+            JSON.stringify(
+              assignmentRows.map((row) => [
+                row.id,
+                row.admin_user_id,
+                row.admin_role_id,
+                row.scope_type,
+                row.scope_id ?? null,
+                row.expires_at ?? null,
+              ])
+            )
+          )
+        )
+      ),
+      (byte) => byte.toString(16).padStart(2, '0')
+    ).join('');
+    total += 1;
     Object.assign(sourceState, {
       admin_roles: Number(adminCounts?.roles ?? 0),
       admin_roles_updated: adminCounts?.roles_updated ?? null,
       admin_assignments: Number(adminCounts?.assignments ?? 0),
       admin_assignments_updated: adminCounts?.assignments_updated ?? null,
+      admin_assignments_digest: assignmentsDigest,
     });
   }
   // Provisioning, source reads, activation, and the two-phase audit trail consume a fixed budget.
@@ -1609,6 +1642,40 @@ async function executeTenantCloneHandler(
         database_version: await sha256Hex(sourceDatabaseSnapshot.sourceVersion),
         kv_version: sourceKvVersion,
       };
+      // Copying admin access grants admin roles in the new tenant, and copying webhooks sets up
+      // destinations (with their secrets, if asked): the same step-ups as doing either directly.
+      // One receipt covers one operation, so a clone that needs both is refused. Bound to what is
+      // copied and to the source as it is now (the provisioning checks the source is unchanged).
+      const stepUpOperations = [
+        ...(options.admin_access ? (['admin.role.grant'] as const) : []),
+        ...(options.webhooks ? (['webhook.destination.update'] as const) : []),
+      ];
+      if (stepUpOperations.length > 1) {
+        return c.json(
+          {
+            error: 'step_up_separate_operations',
+            error_description:
+              'Copying admin access and webhooks needs two different step-ups: clone with one of them, and set up the other in the new tenant',
+            operations: stepUpOperations,
+          },
+          400
+        );
+      }
+      if (stepUpOperations[0]) {
+        const refused = await requireAdminStepUp(c as never, {
+          operation: stepUpOperations[0],
+          targetTenantId: sourceTenantId,
+          targetIds: [targetTenantId],
+          params: {
+            kind: 'tenant.clone',
+            source_tenant_id: sourceTenantId,
+            target_tenant_id: targetTenantId,
+            copy: options,
+            source_snapshot: sourceSnapshot,
+          },
+        });
+        if (refused) return refused;
+      }
       const started = await beginTenantProvisioning(c, {
         id: targetTenantId,
         tenantCode: parsed.data.tenant_code ?? targetTenantId,

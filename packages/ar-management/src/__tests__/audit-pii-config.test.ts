@@ -21,6 +21,9 @@ import {
   listAllTenantPIIConfigs,
 } from '../routes/settings/audit-pii-config';
 
+const stepUp = vi.hoisted(() => ({ gate: vi.fn(async (): Promise<Response | null> => null) }));
+vi.mock('../admin-step-up-gate', () => ({ requireAdminStepUp: stepUp.gate }));
+
 // Mock KV namespace
 function createMockKV(data: Record<string, string> = {}): KVNamespace {
   const store = new Map<string, string>(Object.entries(data));
@@ -75,6 +78,105 @@ function createTestApp(options: { kv?: KVNamespace } = {}) {
 describe('Audit PII Configuration API', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    stepUp.gate.mockReset();
+    stepUp.gate.mockResolvedValue(null);
+  });
+
+  describe('admin step-up (audit.retention.shorten)', () => {
+    const refusal = () =>
+      new Response(JSON.stringify({ error: 'step_up_required' }), { status: 403 });
+    const stored = {
+      ...DEFAULT_PII_CONFIG,
+      eventLogRetentionDays: 365,
+      piiLogRetentionDays: 2555,
+      operationalLogRetentionDays: 365,
+    };
+    const appWithStored = () =>
+      createTestApp({
+        kv: createMockKV({ 'pii_config:tenant_1': JSON.stringify(stored) }),
+      });
+    const url = '/api/admin/tenants/tenant_1/audit/pii-config';
+
+    it('shortening a retention on PUT is refused without step-up and nothing is written', async () => {
+      stepUp.gate.mockResolvedValueOnce(refusal());
+      const { app, mockEnv, mockKV } = appWithStored();
+      const res = await app.request(
+        url,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ operationalLogRetentionDays: 1 }),
+        },
+        mockEnv
+      );
+      expect(res.status).toBe(403);
+      expect(mockKV.put).not.toHaveBeenCalled();
+      expect(stepUp.gate).toHaveBeenCalledWith(expect.anything(), {
+        operation: 'audit.retention.shorten',
+        targetTenantId: 'tenant_1',
+        params: {
+          kind: 'pii_config.update',
+          retention_days: {
+            eventLogRetentionDays: 365,
+            piiLogRetentionDays: 2555,
+            operationalLogRetentionDays: 1,
+          },
+        },
+      });
+    });
+
+    it('lengthening or leaving retention as is stays ungated', async () => {
+      const { app, mockEnv } = appWithStored();
+      const res = await app.request(
+        url,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ eventLogDetailLevel: 'minimal' }),
+        },
+        mockEnv
+      );
+      expect(res.status).toBe(200);
+      expect(stepUp.gate).not.toHaveBeenCalled();
+    });
+
+    it('reset and presets that shorten retention are gated and write nothing when refused', async () => {
+      for (const [method, path, kind] of [
+        ['DELETE', url, 'pii_config.reset'],
+        ['POST', `${url}/preset/gdpr`, 'pii_config.preset.gdpr'],
+        ['POST', `${url}/preset/minimal`, 'pii_config.preset.minimal'],
+      ] as const) {
+        stepUp.gate.mockReset();
+        stepUp.gate.mockResolvedValue(refusal());
+        const { app, mockEnv, mockKV } = appWithStored();
+        const res = await app.request(path, { method }, mockEnv);
+        expect(res.status).toBe(403);
+        expect(mockKV.put).not.toHaveBeenCalled();
+        expect(mockKV.delete).not.toHaveBeenCalled();
+        expect(stepUp.gate).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            operation: 'audit.retention.shorten',
+            params: expect.objectContaining({ kind }) as unknown,
+          })
+        );
+      }
+    });
+
+    it('validation failures never reach the gate', async () => {
+      const { app, mockEnv } = appWithStored();
+      const res = await app.request(
+        url,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ eventLogRetentionDays: 0 }),
+        },
+        mockEnv
+      );
+      expect(res.status).toBe(400);
+      expect(stepUp.gate).not.toHaveBeenCalled();
+    });
   });
 
   // ==========================================================================

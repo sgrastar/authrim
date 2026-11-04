@@ -79,6 +79,22 @@ describe('operation-level Admin permissions', () => {
   });
 });
 
+describe('step-up exemption permissions', () => {
+  const exempt = 'admin:step_up_exempt:tenant.delete';
+
+  it.each([['*'], ['admin:*'], ['admin:step_up_exempt:*']])(
+    'is not granted by the wildcard %s',
+    (wildcard) => {
+      expect(hasAdminPermission([wildcard], exempt)).toBe(false);
+    }
+  );
+
+  it('is granted by its exact name only', () => {
+    expect(hasAdminPermission([exempt], exempt)).toBe(true);
+    expect(hasAdminPermission([exempt], 'admin:step_up_exempt:dr.restore')).toBe(false);
+  });
+});
+
 describe('break-glass permissions', () => {
   const request = ADMIN_PERMISSIONS.SUPPORT_OPS_BREAK_GLASS_REQUEST;
   const reveal = ADMIN_PERMISSIONS.SUPPORT_OPS_BREAK_GLASS_REVEAL;

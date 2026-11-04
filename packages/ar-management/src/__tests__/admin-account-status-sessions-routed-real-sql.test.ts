@@ -15,6 +15,11 @@ vi.mock('../../../ar-lib-core/dist/repositories/pii/audit-log', async (original)
     piiLogRows.push(...structuredClone(rows));
   },
 }));
+vi.mock('../admin-step-up-gate', () => ({
+  requireAdminStepUp: vi.fn(async () => null),
+  refuseAdminFreshAuth: vi.fn(),
+}));
+
 import { readFileSync } from 'node:fs';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

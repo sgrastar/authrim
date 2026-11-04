@@ -1549,6 +1549,8 @@ paths:
         - $ref: '#/components/parameters/TenantIdHeader'
         - $ref: '#/components/parameters/Id'
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/AdminUserSessionsRevoked'
         '404':
@@ -1849,6 +1851,8 @@ paths:
       requestBody:
         $ref: '#/components/requestBodies/AdminClientRegenerateSecret'
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/AdminClientRegeneratedSecret'
         '400':
@@ -1948,6 +1952,8 @@ paths:
       requestBody:
         $ref: '#/components/requestBodies/WebhookCreate'
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '201':
           description: Webhook created.
           content:
@@ -2000,6 +2006,8 @@ paths:
       requestBody:
         $ref: '#/components/requestBodies/WebhookUpdate'
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           description: Webhook updated.
           content:
@@ -2274,10 +2282,17 @@ paths:
       requestBody:
         $ref: '#/components/requestBodies/SettingsV2Patch'
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/SettingsV2Patch'
         '400':
           $ref: '#/components/responses/Error'
+          description: >-
+            Invalid patch. Also `step_up_separate_operations` when one patch both changes the data
+            jurisdiction (tenant.residency_profile_id) and shortens audit retention
+            (tenant.audit_profile_id): make the two changes in separate requests, each with its
+            own step-up.
         '409':
           description: >-
             The settings changed since ifMatch (conflict, with currentVersion).
@@ -2626,6 +2641,8 @@ paths:
                 - $ref: '#/components/schemas/SettingsV2PatchRequest'
                 - $ref: '#/components/schemas/PlatformIdentityMappingSettingsPatchRequest'
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/SettingsV2Patch'
         '400':
@@ -2942,6 +2959,8 @@ paths:
       requestBody:
         $ref: '#/components/requestBodies/RuntimeProfileDefaultsUpdate'
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/RuntimeProfileDefaultsUpdate'
         '400':
@@ -2993,6 +3012,8 @@ paths:
       requestBody:
         $ref: '#/components/requestBodies/RuntimeProfileUpsert'
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/RuntimeProfileMutation'
         '201':
@@ -3003,7 +3024,10 @@ paths:
           $ref: '#/components/responses/Error'
       description: >-
         Create or replace an audit or residency profile in the configured registry backend.
-        Built-in profiles are read-only.
+        Built-in profiles are read-only. Admin step-up: changing a residency profile's jurisdiction
+        (tenant.jurisdiction.update) or making an audit profile keep logs for less time
+        (audit.retention.shorten); creating a profile is gated the same way, since a tenant may
+        already name its id.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -3020,6 +3044,8 @@ paths:
             $ref: '#/components/schemas/RuntimeProfileKind'
         - $ref: '#/components/parameters/Id'
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/RuntimeProfileDelete'
         '400':
@@ -3028,7 +3054,10 @@ paths:
           $ref: '#/components/responses/Error'
         '409':
           $ref: '#/components/responses/Error'
-      description: Delete a non-built-in audit or residency profile from the configured registry backend.
+      description: >-
+        Delete a non-built-in audit or residency profile from the configured registry backend.
+        Tenants may still name it, so deleting an existing profile needs admin step-up
+        (tenant.jurisdiction.update for residency, audit.retention.shorten for audit).
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -3113,6 +3142,8 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Id'
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '202':
           $ref: '#/components/responses/TenantDeleteAccepted'
       description: >-
@@ -3432,6 +3463,9 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+          description: >-
+            Not allowed, or admin step-up needed (see AdminStepUpRequired). A step-up refusal is
+            not stored for the Idempotency-Key: repeat with the same key once it is met.
         '404':
           $ref: '#/components/responses/Error'
         '409':
@@ -3465,6 +3499,10 @@ paths:
         destination remains non-routable and in provisioning state until all selected resources,
         clone-preparation audit evidence, and a fresh signing-key rotation succeed. A success audit
         event is written after activation. The required Idempotency-Key is retained for 15 minutes.
+        Copying admin access (copy.admin_access) needs admin step-up as a role grant
+        (admin.role.grant), and copying webhooks (copy.webhooks) as a webhook destination change
+        (webhook.destination.update); the receipt is bound to the copy options and the source as
+        it is now. A clone that needs both is refused with 400 step_up_separate_operations.
         Synchronous work is
         limited to an estimated 40 database queries and 10 KV records, with a 256 KiB limit per
         selected KV value; callers can reduce selected categories when a limit is exceeded. Machine
@@ -4001,11 +4039,17 @@ paths:
       requestBody:
         $ref: '#/components/requestBodies/AdminManagementUserUpdate'
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/AdminManagementUser'
         '404':
           $ref: '#/components/responses/Error'
-      description: 'Update mutable Admin Console user fields such as name, email, status, and MFA flag.'
+      description: >-
+        Update mutable Admin Console user fields such as name, email, status, and MFA flag. A new
+        email address must be valid and free in the tenant (409 email_in_use), needs L2
+        (admin.email.update; 403 AdminStepUpRequired), and both the old and the new address are
+        told after the change.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -4029,6 +4073,99 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  '/api/admin/admins/{id}/second-factors':
+    get:
+      tags:
+        - Admin Passkeys
+      operationId: getApiAdminAdminsByIdSecondFactors
+      summary: List another admin's step-up security keys
+      description: >-
+        The security keys (second factors) of an admin of the selected tenant, revoked ones
+        included. Requires admin users read permission.
+      x-authrim-route-coverage: inferred-from-source
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The admin's keys.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - second_factors
+                properties:
+                  second_factors:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '404':
+          description: No such admin in the tenant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  '/api/admin/admins/{id}/second-factors/{factorId}':
+    delete:
+      tags:
+        - Admin Passkeys
+      operationId: deleteApiAdminAdminsByIdSecondFactorsByFactorId
+      summary: Revoke another admin's security key
+      description: >-
+        Revoke a lost or compromised security key of another admin of the tenant, even the last
+        one (the admin then registers again through a recovery request). Requires admin users
+        write permission, authority over the account, and L2 (admin_credential.revoke). Sessions
+        that verified the key lose that evidence; the admin is told by email. Your own keys are
+        removed from DELETE /api/admin/me/second-factors/{id} instead (400 use_own_route).
+      x-authrim-route-coverage: inferred-from-source
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: factorId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  revoked:
+                    type: boolean
+        '400':
+          description: use_own_route.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
+        '404':
+          description: No such admin in the tenant, or no such active key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
   '/api/admin/admins/{id}/roles':
     post:
       tags:
@@ -4040,6 +4177,8 @@ paths:
       requestBody:
         $ref: '#/components/requestBodies/AdminManagementRoleAssignmentCreate'
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '201':
           $ref: '#/components/responses/AdminManagementRoleAssignment'
         '409':
@@ -11473,6 +11612,9 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+          description: >-
+            Not allowed, or admin step-up needed (federation.trust.update, see AdminStepUpRequired):
+            a trust source write changes which federation partners are trusted.
         '404':
           $ref: '#/components/responses/Error'
         '409':
@@ -11503,6 +11645,9 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+          description: >-
+            Not allowed, or admin step-up needed (federation.trust.update, see AdminStepUpRequired):
+            a trust source write changes which federation partners are trusted.
         '404':
           $ref: '#/components/responses/Error'
         '409':
@@ -11539,6 +11684,9 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+          description: >-
+            Not allowed, or admin step-up needed (federation.trust.update, see AdminStepUpRequired):
+            a trust source write changes which federation partners are trusted.
         '404':
           $ref: '#/components/responses/Error'
         '409':
@@ -21628,7 +21776,9 @@ paths:
       summary: Rollback settings category
       description: >-
         Restores a settings category to a target history version and records the rollback as a new
-        current version.
+        current version. targetVersion must be a whole number of an existing version holding a
+        restorable snapshot. Rolling back `security` needs admin step-up
+        (admin_step_up.policy.relax), since the earlier version may carry a weaker policy.
       responses:
         '200':
           $ref: '#/components/responses/AdminSettingsRollback'
@@ -21638,6 +21788,12 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+          description: >-
+            Not allowed to change this category, or (for `security`) admin step-up needed (see
+            AdminStepUpRequired).
+        '404':
+          $ref: '#/components/responses/Error'
+          description: The target version does not exist for this category.
         '500':
           $ref: '#/components/responses/Error'
         '503':
@@ -21827,6 +21983,9 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+          description: >-
+            Not allowed, or admin step-up needed: any change to the routing rules can shorten
+            retention, so it is gated as audit.retention.shorten (see AdminStepUpRequired).
         '500':
           $ref: '#/components/responses/Error'
       requestBody:
@@ -21851,7 +22010,10 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/AdminStepUpRequired'
+          description: >-
+            Not allowed, or admin step-up needed: any change to the routing rules can shorten
+            retention, so it is gated as audit.retention.shorten (see AdminStepUpRequired).
         '500':
           $ref: '#/components/responses/Error'
       requestBody:
@@ -21875,7 +22037,10 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/AdminStepUpRequired'
+          description: >-
+            Not allowed, or admin step-up needed: any change to the routing rules can shorten
+            retention, so it is gated as audit.retention.shorten (see AdminStepUpRequired).
         '404':
           $ref: '#/components/responses/Error'
         '500':
@@ -23814,6 +23979,9 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+          description: >-
+            Not allowed, or admin step-up needed (audit.retention.shorten, see AdminStepUpRequired):
+            the change keeps event, PII or operational logs for less time.
       parameters:
         - name: tenantId
           in: path
@@ -23864,6 +24032,9 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+          description: >-
+            Not allowed, or admin step-up needed (audit.retention.shorten, see AdminStepUpRequired):
+            the change keeps event, PII or operational logs for less time.
       parameters:
         - name: tenantId
           in: path
@@ -23893,6 +24064,9 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+          description: >-
+            Not allowed, or admin step-up needed (audit.retention.shorten, see AdminStepUpRequired):
+            the change keeps event, PII or operational logs for less time.
       parameters:
         - name: tenantId
           in: path
@@ -23918,6 +24092,9 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+          description: >-
+            Not allowed, or admin step-up needed (audit.retention.shorten, see AdminStepUpRequired):
+            the change keeps event, PII or operational logs for less time.
       parameters:
         - name: tenantId
           in: path
@@ -31083,6 +31260,8 @@ paths:
       description: 'Create a machine principal with explicit permissions, tenant scopes, and token TTL.'
       x-authrim-route-coverage: inferred-from-source
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '201':
           $ref: '#/components/responses/AdminMachinePrincipal'
         default:
@@ -31145,6 +31324,8 @@ paths:
       description: 'Update display metadata, token TTL, permissions, or tenant scopes for a machine principal.'
       x-authrim-route-coverage: inferred-from-source
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/AdminMachinePrincipal'
         default:
@@ -31171,6 +31352,8 @@ paths:
         tenant scopes.
       x-authrim-route-coverage: inferred-from-source
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '201':
           $ref: '#/components/responses/AdminMachineCredential'
         default:
@@ -31341,9 +31524,12 @@ paths:
       summary: Enable Principal.
       description: >-
         Enable Principal in the Machine Access area. The request body is JSON unless the detailed
-        schema for this operation states otherwise.
+        schema for this operation states otherwise. Bringing a disabled principal back puts its
+        credentials to work again, so it needs admin step-up (machine.permission.grant).
       x-authrim-route-coverage: inferred-from-source
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/AdminMachinePrincipal'
         default:
@@ -31434,9 +31620,13 @@ paths:
       summary: Complete Passkey.
       description: >-
         Complete Passkey registration for the authenticated Admin. A selected tenant runtime
-        snapshot is not required. The registration challenge and browser origin are verified.
+        snapshot is not required. The registration challenge (bound to the session that asked
+        for it) and browser origin are verified. Unless this is the admin's first passkey, a fresh
+        passkey sign-in (admin.passkey.add, L1) is checked again here, right before saving.
       x-authrim-route-coverage: inferred-from-source
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '201':
           $ref: '#/components/responses/AdminPasskeyMutation'
         default:
@@ -31458,6 +31648,8 @@ paths:
         A selected tenant runtime snapshot is not required.
       x-authrim-route-coverage: inferred-from-source
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/AdminPasskeyOptions'
         default:
@@ -32082,7 +32274,7 @@ paths:
                   revoked:
                     type: boolean
         '403':
-          description: step_up_required.
+          description: step_up_required. Also step_up_required / admin_fresh_auth_required (admin step-up; see AdminStepUpRequired).
           content:
             application/json:
               schema:
@@ -32242,6 +32434,8 @@ paths:
                   type: boolean
                   default: true
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '201':
           description: The channel.
           content:
@@ -32379,6 +32573,8 @@ paths:
                 webhook_url:
                   type: string
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           description: The channel.
           content:
@@ -41156,6 +41352,40 @@ components:
             priority: 20
             is_active: true
   responses:
+    AdminStepUpRequired:
+      description: >-
+        The operation needs admin step-up (unless the platform turned
+        security.admin_step_up_enforced off). admin_fresh_auth_required (L1): re-authenticate with
+        a passkey and repeat. step_up_required (L2): verify what `missing` lists, exchange
+        `step_up_id` at POST /api/admin/me/step-up/receipts and repeat the same request once with
+        the receipt in the authrim-step-up-receipt header. step_up_human_required: a machine token
+        without the operation's admin:step_up_exempt:<operation> permission, or an agent.
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - error
+            properties:
+              error:
+                type: string
+                enum: [admin_fresh_auth_required, step_up_required, step_up_human_required]
+              error_description:
+                type: string
+              required_level:
+                type: string
+                enum: [L1, L2]
+              step_up_id:
+                type: string
+              expires_at:
+                type: integer
+              missing:
+                type: array
+                items:
+                  type: string
+                  enum: [passkey, second_factor]
+              fresh_auth_required:
+                type: boolean
     SettingsLegacyImportReport:
       headers:
         X-Authrim-Log-Consistency:

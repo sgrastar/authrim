@@ -4362,6 +4362,79 @@ describe('IdentityMappingControlPlaneRepository federation trust and key lifecyc
     expect(adapter.executes[0]?.sql).toContain('refresh_operation_expires_at');
   });
 
+  it('runs the step-up hook after validation and writes nothing when it refuses', async () => {
+    const refusing = vi.fn(async () => {
+      throw new Error('refused');
+    });
+
+    // Update: validated and checked against the stored revision, then the hook, then the write.
+    const updateAdapter = createAdapter({
+      queryOneRows: [{ updated_at: 999, snapshot_hash: 'old-snapshot' }],
+    });
+    await expect(
+      new IdentityMappingControlPlaneRepository(
+        updateAdapter,
+        () => 1000
+      ).updateFederationTrustSource(
+        'tenant_a',
+        'trust-source-1',
+        {
+          expectedUpdatedAt: 999,
+          sourceType: 'saml_aggregate',
+          sourceKey: 'research-federation',
+          displayName: 'Research Federation',
+          lifecycleState: 'active',
+          anchors: [],
+          scopeBindings: [],
+        },
+        refusing
+      )
+    ).rejects.toThrow('refused');
+    expect(updateAdapter.executes).toHaveLength(0);
+
+    // Delete: the source must exist before the hook runs.
+    const deleteAdapter = createAdapter({ queryOneRows: [{ id: 'trust-source-1' }] });
+    await expect(
+      new IdentityMappingControlPlaneRepository(
+        deleteAdapter,
+        () => 1000
+      ).deleteFederationTrustSource('tenant_a', 'trust-source-1', refusing)
+    ).rejects.toThrow('refused');
+    expect(deleteAdapter.executes).toHaveLength(0);
+
+    // An invalid request never reaches the hook.
+    refusing.mockClear();
+    await expect(
+      new IdentityMappingControlPlaneRepository(
+        createAdapter({}),
+        () => 1000
+      ).createFederationTrustSource(
+        'tenant_a',
+        { sourceType: 'unsupported', sourceKey: 'x', displayName: 'X' } as never,
+        refusing
+      )
+    ).rejects.toMatchObject({ status: 400 });
+    // Nor does one whose anchors or scope bindings are incomplete.
+    for (const extra of [{ anchors: [{}] }, { scopeBindings: [{}] }]) {
+      await expect(
+        new IdentityMappingControlPlaneRepository(
+          createAdapter({}),
+          () => 1000
+        ).createFederationTrustSource(
+          'tenant_a',
+          {
+            sourceType: 'saml_aggregate',
+            sourceKey: 'research-federation',
+            displayName: 'Research Federation',
+            ...extra,
+          } as never,
+          refusing
+        )
+      ).rejects.toMatchObject({ status: 400 });
+    }
+    expect(refusing).not.toHaveBeenCalled();
+  });
+
   it('invalidates aggregate runtime entities when the trust context changes', async () => {
     const adapter = createAdapter({
       queryOneRows: [{ updated_at: 999, snapshot_hash: 'old-snapshot' }],

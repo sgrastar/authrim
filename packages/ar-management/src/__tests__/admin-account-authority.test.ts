@@ -1,4 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+// These tests are about other behaviour: the step-up gate (tested on its own) lets the request through.
+vi.mock('../admin-step-up-gate', () => ({
+  requireAdminStepUp: vi.fn(async () => null),
+  refuseAdminFreshAuth: vi.fn(),
+}));
 import type { AdminAuthContext } from '@authrim/ar-lib-core';
 import { adminInvitationsRouter } from '../routes/admin-management/admin-invitations';
 import { adminRolesRouter } from '../routes/admin-management/admin-roles';

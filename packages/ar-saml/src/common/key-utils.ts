@@ -455,11 +455,7 @@ function buildSelfSignedCertificateTbs(
   subject: Required<SAMLSigningCertificateSubject>,
   options: SAMLSigningCertificateCreationOptions = {}
 ): Uint8Array {
-  const now = new Date();
-  const notBefore = normalizeCertificateTime(options.validFrom, now.getTime() - 5 * 60 * 1000);
-  const defaultNotAfter = new Date(now);
-  defaultNotAfter.setUTCFullYear(defaultNotAfter.getUTCFullYear() + 10);
-  const notAfter = normalizeCertificateTime(options.validTo, defaultNotAfter.getTime());
+  const { notBefore, notAfter } = resolveSAMLCertificateValidity(options);
   if (notAfter.getTime() <= notBefore.getTime()) {
     throw new Error('SAML signing certificate validTo must be later than validFrom');
   }
@@ -474,6 +470,38 @@ function buildSelfSignedCertificateTbs(
     subjectPublicKeyInfo,
     derExplicit(3, buildCertificateExtensions(options))
   );
+}
+
+/**
+ * The validity a new signing certificate gets: the requested bounds, else from five minutes ago
+ * to ten years ahead. Lets a caller check the period (validTo after validFrom) before it changes
+ * anything.
+ */
+export function resolveSAMLCertificateValidity(
+  options: Pick<SAMLSigningCertificateCreationOptions, 'validFrom' | 'validTo'>,
+  now: Date = new Date()
+): { notBefore: Date; notAfter: Date } {
+  const notBefore = normalizeCertificateTime(options.validFrom, now.getTime() - 5 * 60 * 1000);
+  const defaultNotAfter = new Date(now);
+  defaultNotAfter.setUTCFullYear(defaultNotAfter.getUTCFullYear() + 10);
+  const notAfter = normalizeCertificateTime(options.validTo, defaultNotAfter.getTime());
+  return { notBefore, notAfter };
+}
+
+/**
+ * Why a certificate with this validity cannot be made, or null when it can: both bounds must be
+ * real dates in the years an X.509 UTCTime can hold (1950 to 2049), and validTo after validFrom.
+ */
+export function samlCertificateValidityProblem(
+  options: Pick<SAMLSigningCertificateCreationOptions, 'validFrom' | 'validTo'>,
+  now: Date = new Date()
+): 'invalid_date' | 'unsupported_year' | 'not_after_before_not_before' | null {
+  const { notBefore, notAfter } = resolveSAMLCertificateValidity(options, now);
+  if (Number.isNaN(notBefore.getTime()) || Number.isNaN(notAfter.getTime())) return 'invalid_date';
+  const inRange = (date: Date) => date.getUTCFullYear() >= 1950 && date.getUTCFullYear() <= 2049;
+  if (!inRange(notBefore) || !inRange(notAfter)) return 'unsupported_year';
+  if (notAfter.getTime() <= notBefore.getTime()) return 'not_after_before_not_before';
+  return null;
 }
 
 function normalizeCertificateTime(value: number | undefined, fallback: number): Date {
