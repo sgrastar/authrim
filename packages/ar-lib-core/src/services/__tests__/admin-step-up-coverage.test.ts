@@ -29,6 +29,10 @@ function sources(directory: string): string[] {
   return files;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 describe('admin step-up catalog coverage', () => {
   const text = SOURCES.flatMap(sources)
     .map((path) => readFileSync(path, 'utf8'))
@@ -40,9 +44,7 @@ describe('admin step-up catalog coverage', () => {
       // Asked for directly, or through logging-control's `requireLoggingStepUp(c, '<op>', ...)`.
       const asked =
         text.includes(`operation: '${operation}'`) ||
-        new RegExp(`requireLoggingStepUp\\(\\s*c,\\s*'${operation.replace(/\./g, '\\.')}'`).test(
-          text
-        );
+        new RegExp(`requireLoggingStepUp\\(\\s*c,\\s*'${escapeRegExp(operation)}'`).test(text);
       expect(asked).toBe(true);
     }
   );
