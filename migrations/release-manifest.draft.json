@@ -56,6 +56,10 @@
             {
               "path": "006_admin_notices.sql",
               "checksum": "c1aa29d96fc7a0e0ed7ac454d1adfa869174e1fa470dd46adcbae581e7ee3a0a"
+            },
+            {
+              "path": "007_admin_notice_indexes.sql",
+              "checksum": "88f99487b8e0becc6a2e713723a96097de821da17886524ac2583457f161ef42"
             }
           ]
         },
@@ -180,6 +184,10 @@
         {
           "path": "006_admin_notices.sql",
           "checksum": "c1aa29d96fc7a0e0ed7ac454d1adfa869174e1fa470dd46adcbae581e7ee3a0a"
+        },
+        {
+          "path": "007_admin_notice_indexes.sql",
+          "checksum": "88f99487b8e0becc6a2e713723a96097de821da17886524ac2583457f161ef42"
         }
       ]
     },

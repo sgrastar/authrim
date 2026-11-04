@@ -616,6 +616,9 @@ place('monitoring/log-settings', 'Permission check logs', {
 place('monitoring/log-settings', 'Log storage', {
 	primary: ['log-storage.d1_retention_days']
 });
+place('monitoring/log-settings', 'Console notices', {
+	advanced: ['admin-notices.retention_days']
+});
 place(
 	'monitoring/destinations',
 	'Backups',

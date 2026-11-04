@@ -21,6 +21,7 @@ function adminSchema(): { db: DatabaseSync; adapter: DatabaseAdapter } {
     '004_admin_second_factors.sql',
     '005_admin_second_factor_recoveries.sql',
     '006_admin_notices.sql',
+    '007_admin_notice_indexes.sql',
   ]) {
     fixture.db.exec(
       renderPortableMigrationSql(readMigrationSource(ADMIN_MIGRATIONS, file), 'sqlite')
@@ -169,6 +170,72 @@ describe('AdminNoticeRepository in the real admin schema', () => {
     expect(await titles(viewer({ adminUserId: 'admin-2' }))).toEqual([]);
   });
 
+  it('deletes handled notices past the cutoff with their dismissals, and nothing open', async () => {
+    const old = await notices.create(notice({ severity: 'high', title: 'old' }), T0);
+    await notices.resolve(old.id, 'admin-1', T0 + 10);
+    const oldInfo = await notices.create(notice({ title: 'old info' }), T0);
+    await notices.dismiss(oldInfo.id, 'admin-1', T0);
+    await notices.resolve(oldInfo.id, 'system', T0 + 10);
+    await notices.create(notice({ title: 'expired', expires_at: T0 + 20 }), T0);
+    const recent = await notices.create(notice({ severity: 'high', title: 'recent' }), T0);
+    await notices.resolve(recent.id, 'admin-1', T0 + 500);
+    await notices.create(notice({ title: 'open' }), T0);
+    await notices.create(notice({ title: 'expires later', expires_at: T0 + 900 }), T0);
+
+    expect(await notices.purgeHandledBefore(T0 + 100)).toBe(3);
+    const left = db.prepare('SELECT title FROM admin_notices ORDER BY title').all() as {
+      title: string;
+    }[];
+    expect(left.map((row) => row.title)).toEqual(['expires later', 'open', 'recent']);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM admin_notice_dismissals').get()).toEqual({
+      n: 0,
+    });
+  });
+
+  it('finds handled notices through the retention indexes, not by scanning', async () => {
+    for (const sql of [
+      `SELECT id FROM admin_notices WHERE resolved_at IS NOT NULL AND resolved_at < 1
+        ORDER BY resolved_at, id LIMIT 10`,
+      `SELECT id FROM admin_notices
+        WHERE resolved_at IS NULL AND expires_at IS NOT NULL AND expires_at < 1
+        ORDER BY expires_at, id LIMIT 10`,
+    ]) {
+      const plan = (db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all() as { detail: string }[])
+        .map((row) => row.detail)
+        .join(' | ');
+      expect(plan).toMatch(/idx_admin_notices_(resolved_handled|expired_open)/);
+      expect(plan).not.toMatch(/TEMP B-TREE/);
+    }
+  });
+
+  it('deletes expired notices even when no resolved one is left to delete', async () => {
+    await notices.create(notice({ title: 'expired', expires_at: T0 + 5 }), T0);
+    expect(await notices.purgeHandledBefore(T0 + 100, { batchSize: 2, maxBatches: 1 })).toBe(1);
+  });
+
+  it('looks up the identity mapping state of an event by index', async () => {
+    const plan = (
+      db
+        .prepare(
+          `EXPLAIN QUERY PLAN SELECT 1 FROM operational_notification_states
+            WHERE notification_event_id = 'e' AND state = 'resolved'`
+        )
+        .all() as { detail: string }[]
+    )
+      .map((row) => row.detail)
+      .join(' | ');
+    expect(plan).toContain('idx_operational_notification_states_event');
+  });
+
+  it('purges in batches and stops at the run limit', async () => {
+    for (let index = 0; index < 7; index += 1) {
+      const item = await notices.create(notice({ severity: 'high', title: `n${index}` }), T0);
+      await notices.resolve(item.id, 'admin-1', T0 + 1);
+    }
+    expect(await notices.purgeHandledBefore(T0 + 100, { batchSize: 2, maxBatches: 2 })).toBe(4);
+    expect(await notices.purgeHandledBefore(T0 + 100, { batchSize: 2, maxBatches: 5 })).toBe(3);
+  });
+
   it('refuses a notice whose audience does not match its scope', async () => {
     await expect(
       adapter.execute(
@@ -292,6 +359,25 @@ describe('AdminNoticeRepository in the real admin schema', () => {
       });
       expect(status()).toEqual({ status: 'pending' });
       expect(await notices.listOpenFor(viewer(), Date.now() + 1)).toHaveLength(1);
+    });
+
+    it('raises no notice for an event whose identity mapping state is resolved', async () => {
+      db.prepare(
+        `INSERT INTO internal_notification_events (id, tenant_id, category, event_type, severity,
+           status, payload_json) VALUES ('evt-m', 'tenant-a', 'identity_mapping_signal', 's',
+           'high', 'pending', '{}')`
+      ).run();
+      db.prepare(
+        `INSERT INTO operational_notification_states (id, tenant_id, notification_event_id,
+           subject_type, subject_id, state, created_at, updated_at)
+         VALUES ('st-m', 'tenant-a', 'evt-m', 'review_task', 'r1', 'resolved', 1, 1)`
+      ).run();
+      expect(
+        await notices.createForOpenEvent(
+          notice({ severity: 'high', source: 'system', source_ref: 'evt-m' }),
+          'evt-m'
+        )
+      ).toBeNull();
     });
 
     it('keeps the event when the notice cannot be written', async () => {

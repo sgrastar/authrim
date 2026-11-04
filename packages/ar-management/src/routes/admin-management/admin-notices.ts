@@ -36,7 +36,9 @@ import {
   AR_ERROR_CODES,
   AdminNoticeRepository,
   adminAuthMiddleware,
+  createAuthContextFromHono,
   createErrorResponse,
+  getClient,
   getLogger,
   getTenantIdFromContext,
   hasAdminPermission,
@@ -396,6 +398,16 @@ adminNoticesRouter.post('/', async (c) => {
     const adapter = adminAdapter(c);
     const requestTenantId = getTenantIdFromContext(c);
     let tenantId: string | null = input.scope_type === 'platform' ? null : requestTenantId;
+    if (input.scope_type === 'client') {
+      // Only an app the tenant has: a notice about anything else would reach nobody it concerns.
+      const { coreAdapter } = createAuthContextFromHono(
+        c as unknown as Context<{ Bindings: Env }>,
+        requestTenantId
+      );
+      if (!(await getClient(c.env, requestTenantId, input.client_id ?? '', coreAdapter))) {
+        return invalid(c, 'client_id', 'No such client in this tenant');
+      }
+    }
     if (input.scope_type === 'admin_user') {
       // The addressee's home tenant; outside the selected tenant only for a platform admin.
       const addressee = await adapter.queryOne<{ tenant_id: string }>(
