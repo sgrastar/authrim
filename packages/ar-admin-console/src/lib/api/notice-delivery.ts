@@ -4,6 +4,7 @@
  * `/api/admin/me/notice-preferences` is a /me route, so it is sent without the tenant header.
  */
 import { API_BASE_URL, adminFetch } from './admin-request';
+import { stepUpHeaders, withStepUp } from './admin-step-up';
 import { ApiError, errorFromResponse } from './api-error';
 import type { NotificationSeverity } from '#lib/shell/notifications.js';
 
@@ -195,6 +196,11 @@ const json = (
 	body: JSON.stringify(body)
 });
 
+const withReceipt = <T extends RequestInit>(init: T, receipt?: string): T => ({
+	...init,
+	headers: stepUpHeaders(receipt)
+});
+
 const channelUrl = (id: string) => `${CHANNELS}/${encodeURIComponent(id)}`;
 
 export const httpNoticeDelivery: NoticeDeliveryClient = {
@@ -213,7 +219,9 @@ export const httpNoticeDelivery: NoticeDeliveryClient = {
 		return (Array.isArray(body.items) ? body.items : []).map(channelFromRow);
 	},
 	async createChannel(input) {
-		const body = await readJson(await adminFetch(CHANNELS, json('POST', input)));
+		const body = await withStepUp(async (receipt) =>
+			readJson(await adminFetch(CHANNELS, withReceipt(json('POST', input), receipt)))
+		);
 		return channelFromRow(body.channel);
 	},
 	async updateChannel(id, input) {
@@ -221,8 +229,13 @@ export const httpNoticeDelivery: NoticeDeliveryClient = {
 		return channelFromRow(body.channel);
 	},
 	async replaceWebhookUrl(id, webhookUrl) {
-		const body = await readJson(
-			await adminFetch(`${channelUrl(id)}/webhook-url`, json('PUT', { webhook_url: webhookUrl }))
+		const body = await withStepUp(async (receipt) =>
+			readJson(
+				await adminFetch(
+					`${channelUrl(id)}/webhook-url`,
+					withReceipt(json('PUT', { webhook_url: webhookUrl }), receipt)
+				)
+			)
 		);
 		return channelFromRow(body.channel);
 	},

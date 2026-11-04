@@ -259,6 +259,35 @@ export class WebhookRegistryImpl implements IWebhookRegistry {
   // ===========================================================================
 
   /**
+   * The checks `register` and `update` make on an input, without touching storage: the URL (SSRF
+   * protection), the event patterns, the account payload fields and registration states. Throws
+   * the error they would throw. Lets a caller refuse a bad request before it does anything else
+   * (such as spending a step-up receipt).
+   *
+   * @param scope - The webhook's scope (for an update, the stored one)
+   */
+  validateInput(input: UpdateWebhookInput & { url?: string }, scope: WebhookScope): void {
+    if (input.url !== undefined) {
+      const urlValidation = validateWebhookUrl(input.url, this.allowLocalhostHttp);
+      if (!urlValidation.valid) {
+        throw new Error(`Invalid webhook URL: ${urlValidation.error}`);
+      }
+    }
+    if (input.events !== undefined) {
+      this.validateEventPatterns(input.events);
+    }
+    if (input.payloadFields !== undefined && !validateAccountWebhookFields(input.payloadFields))
+      throw new Error('Invalid payloadFields');
+    if (scope !== 'tenant' && input.payloadFields?.length)
+      throw new Error('Account payload fields require tenant scope');
+    if (
+      input.registrationStates !== undefined &&
+      !validateAccountRegistrationStates(input.registrationStates)
+    )
+      throw new Error('Invalid registrationStates');
+  }
+
+  /**
    * Register a new webhook.
    *
    * @param tenantId - Tenant ID
@@ -269,29 +298,12 @@ export class WebhookRegistryImpl implements IWebhookRegistry {
   async register(tenantId: string, input: CreateWebhookInput): Promise<string>;
   async register(tenantId: string, input: CreateWebhookWithScopeInput): Promise<string>;
   async register(tenantId: string, input: CreateWebhookWithScopeInput): Promise<string> {
-    // Validate URL (SSRF protection)
-    const urlValidation = validateWebhookUrl(input.url, this.allowLocalhostHttp);
-    if (!urlValidation.valid) {
-      throw new Error(`Invalid webhook URL: ${urlValidation.error}`);
-    }
-
-    // Validate event patterns
-    this.validateEventPatterns(input.events);
+    this.validateInput(input, input.clientId ? 'client' : 'tenant');
 
     // Generate ID
     const id = `wh_${crypto.randomUUID().replace(/-/g, '')}`;
     const now = new Date().toISOString();
 
-    if (input.payloadFields !== undefined && !validateAccountWebhookFields(input.payloadFields))
-      throw new Error('Invalid payloadFields');
-    if (input.clientId && input.payloadFields?.length)
-      throw new Error('Account payload fields require tenant scope');
-
-    if (
-      input.registrationStates !== undefined &&
-      !validateAccountRegistrationStates(input.registrationStates)
-    )
-      throw new Error('Invalid registrationStates');
     // Determine scope
     const scope: WebhookScope = input.clientId ? 'client' : 'tenant';
 
@@ -352,29 +364,7 @@ export class WebhookRegistryImpl implements IWebhookRegistry {
       throw new Error('Webhook not found');
     }
 
-    // Validate URL if provided
-    if (input.url) {
-      const urlValidation = validateWebhookUrl(input.url, this.allowLocalhostHttp);
-      if (!urlValidation.valid) {
-        throw new Error(`Invalid webhook URL: ${urlValidation.error}`);
-      }
-    }
-
-    // Validate event patterns if provided
-    if (input.events) {
-      this.validateEventPatterns(input.events);
-    }
-
-    if (input.payloadFields !== undefined && !validateAccountWebhookFields(input.payloadFields))
-      throw new Error('Invalid payloadFields');
-    if (existing.scope !== 'tenant' && input.payloadFields?.length)
-      throw new Error('Account payload fields require tenant scope');
-
-    if (
-      input.registrationStates !== undefined &&
-      !validateAccountRegistrationStates(input.registrationStates)
-    )
-      throw new Error('Invalid registrationStates');
+    this.validateInput(input, existing.scope);
     // Build update fields
     const updates: string[] = [];
     const params: unknown[] = [];

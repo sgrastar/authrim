@@ -220,6 +220,37 @@ describe('AdminSecondFactorRepository in the real admin schema', () => {
     ]);
   });
 
+  it('lets an administrator revoke even the last factor, clearing it from sessions', async () => {
+    const only = await repo.insertWebAuthn(key('cred-only'), { firstOnly: false });
+    if (!only.inserted) throw new Error('setup failed');
+    db.prepare(
+      `INSERT INTO admin_sessions (
+         id, tenant_id, admin_user_id, created_at, expires_at, second_factor_id,
+         second_factor_verified_at
+       ) VALUES ('sess-a', 'default', 'admin-1', 1, 9999999999999, ?, 5)`
+    ).run(only.factor.id);
+
+    expect(await repo.revokeByAdmin('admin-1', only.factor.id)).toBe(true);
+    expect(await repo.listActiveByUser('admin-1')).toEqual([]);
+    expect(
+      db.prepare("SELECT second_factor_id FROM admin_sessions WHERE id = 'sess-a'").get()
+    ).toEqual({ second_factor_id: null });
+    // Once only, and never another admin's factor.
+    expect(await repo.revokeByAdmin('admin-1', only.factor.id)).toBe(false);
+    const other = await repo.insertWebAuthn(key('cred-other', 'admin-2'), { firstOnly: false });
+    if (!other.inserted) throw new Error('setup failed');
+    expect(await repo.revokeByAdmin('admin-1', other.factor.id)).toBe(false);
+    expect(await repo.isActive('admin-2', other.factor.id)).toBe(true);
+
+    // The first enrollment is once: with its only key revoked, admin-1 (still inside the window)
+    // cannot enroll a new one as a first factor.
+    expect(await repo.hasEverEnrolled('admin-1')).toBe(true);
+    expect(await repo.insertWebAuthn(key('cred-again'), { firstOnly: true })).toMatchObject({
+      inserted: false,
+    });
+    expect(await repo.listActiveByUser('admin-1')).toEqual([]);
+  });
+
   it('records a use only from the counter it was verified against, on an active factor', async () => {
     const a = await repo.insertWebAuthn(key('cred-a'), { firstOnly: false });
     const b = await repo.insertWebAuthn(key('cred-b'), { firstOnly: false });

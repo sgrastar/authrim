@@ -18,6 +18,7 @@ import {
   ADMIN_ROLES,
 } from '@authrim/ar-lib-core';
 import { writeAdminAuditLog } from '../../admin-shared';
+import { requireAdminStepUp } from '../../admin-step-up-gate';
 import { callerOutranksGlobally } from './admin-role-authority';
 
 const DEFAULT_INVITATION_TTL_MS = 24 * 60 * 60 * 1000;
@@ -349,15 +350,11 @@ adminInvitationsRouter.post('/', async (c) => {
     return c.json({ error: 'invalid_expiry' }, 400);
   }
 
-  await adapter.execute(
-    `UPDATE admin_invitations
-        SET status = 'expired', pending_email_key = NULL, updated_at = ?
-      WHERE tenant_id = ? AND email = ? AND status = 'pending' AND expires_at <= ?`,
-    [now, tenantId, email, now]
-  );
+  // A pending invitation that has run out does not count; it is marked expired only after the
+  // step-up, so a refused request changes nothing.
   const pending = await adapter.queryOne<{ id: string }>(
-    "SELECT id FROM admin_invitations WHERE tenant_id = ? AND email = ? AND status = 'pending' LIMIT 1",
-    [tenantId, email]
+    "SELECT id FROM admin_invitations WHERE tenant_id = ? AND email = ? AND status = 'pending' AND expires_at > ? LIMIT 1",
+    [tenantId, email, now]
   );
   if (pending) {
     return c.json(
@@ -365,6 +362,34 @@ adminInvitationsRouter.post('/', async (c) => {
       409
     );
   }
+
+  // Redeeming the invitation creates a role assignment, so creating it is a role grant. All checks
+  // above have passed; the receipt is spent here, right before the invitation is written. Only
+  // request inputs are bound (the TTL, not the absolute expiry), so the console's repeat matches.
+  const stepUpRefused = await requireAdminStepUp(c as never, {
+    operation: 'admin.role.grant',
+    targetTenantId: tenantId,
+    targetIds: [email, role.id],
+    params: {
+      invitation: 'create',
+      email,
+      role: role.id,
+      scope_type: scopeType,
+      scope_id: scopeId,
+      role_expires_at: roleExpiresAt ?? null,
+      expires_in_hours: expiresInHours ?? null,
+      ip_restriction_enabled: restrictionEnabled,
+      allowed_ip_ranges: [...allowedIpRanges].sort(),
+    },
+  });
+  if (stepUpRefused) return stepUpRefused;
+
+  await adapter.execute(
+    `UPDATE admin_invitations
+        SET status = 'expired', pending_email_key = NULL, updated_at = ?
+      WHERE tenant_id = ? AND email = ? AND status = 'pending' AND expires_at <= ?`,
+    [now, tenantId, email, now]
+  );
 
   const code = generateAdminInvitationCode();
   const codeHash = await hashAdminInvitationCode(code);
@@ -485,6 +510,24 @@ adminInvitationsRouter.post('/:id/resend', async (c) => {
   ) {
     return c.json({ error: 'insufficient_permissions' }, 403);
   }
+
+  // A resend issues a new code and a new validity window, bringing an expired invitation back, so
+  // it is a role grant again. Spent right before the update.
+  const stepUpRefused = await requireAdminStepUp(c as never, {
+    operation: 'admin.role.grant',
+    targetTenantId: tenantId,
+    targetIds: [invitation.email, invitation.admin_role_id],
+    params: {
+      invitation: 'resend',
+      invitation_id: invitation.id,
+      email: invitation.email,
+      role: invitation.admin_role_id,
+      scope_type: invitation.scope_type,
+      scope_id: invitation.scope_id,
+      role_expires_at: invitation.role_expires_at,
+    },
+  });
+  if (stepUpRefused) return stepUpRefused;
 
   const code = generateAdminInvitationCode();
   const now = Date.now();

@@ -1,5 +1,11 @@
 import { Hono } from 'hono';
 import { beforeEach, expect, it, vi } from 'vitest';
+
+const stepUp = vi.hoisted(() => ({ gate: vi.fn(async (): Promise<Response | null> => null) }));
+vi.mock('../admin-step-up-gate', () => ({
+  requireAdminStepUp: stepUp.gate,
+  refuseAdminFreshAuth: vi.fn(),
+}));
 import { ADMIN_PERMISSIONS, type AdminAuthContext } from '@authrim/ar-lib-core';
 import { tenantBackupsRouter } from '../routes/admin-management/tenant-backups';
 const state = vi.hoisted(() => ({
@@ -15,6 +21,7 @@ const state = vi.hoisted(() => ({
   load: vi.fn(),
   start: vi.fn(),
   startImport: vi.fn(),
+  importStartable: vi.fn(),
   uploadCreate: vi.fn(),
   uploadGet: vi.fn(),
   uploadPrepare: vi.fn(),
@@ -70,6 +77,7 @@ vi.mock('@authrim/ar-lib-core/services/tenant-portability/operation-request', ()
     load = state.load;
     start = state.start;
     startImport = state.startImport;
+    importStartable = state.importStartable;
   },
 }));
 vi.mock('@authrim/ar-lib-core/services/tenant-portability/published-artifact-reader', () => ({
@@ -173,6 +181,7 @@ beforeEach(() => {
     selection: { logs: { sensitive: false } },
     source: { tenantId: 'tenant-a', issuer: 'https://canonical.example', productVersion: '0.5.1' },
   });
+  state.importStartable.mockResolvedValue(true);
   state.startImport.mockResolvedValue({
     id: 'operation',
     state: 'queued',
@@ -1132,4 +1141,188 @@ it('redacts receipt failures and never audits unavailable metadata as successful
   expect(response.status).toBe(409);
   expect(await response.json()).toEqual({ error: 'backup_export_receipt_unavailable' });
   expect(state.audit).not.toHaveBeenCalled();
+});
+
+const stepUpRefusal = () =>
+  new Response(JSON.stringify({ error: 'step_up_required' }), {
+    status: 403,
+    headers: { 'Content-Type': 'application/json' },
+  });
+const importPreview = (adminMapping = false) => ({
+  operation: {
+    id: 'operation',
+    kind: 'import',
+    state: 'waiting',
+    phase: 'await_restore_approval',
+    revision: 3,
+    request_digest: 'ab'.repeat(32),
+  },
+  intent: { kind: 'import', selection: adminMapping ? { ...selection, admin: true } : selection },
+  view: {
+    ...(adminMapping
+      ? {
+          adminMapping: {
+            revision: 1,
+            state: 'open',
+            sourceCount: 1,
+            mappedCount: 1,
+            complete: true,
+            digest: null,
+          },
+        }
+      : {}),
+    preview: { planDigest: 'cd'.repeat(32), canApprove: true },
+  },
+});
+
+it('needs step-up to approve a restore, bound to the plan digest and revision', async () => {
+  state.getView.mockResolvedValue(importPreview());
+  const body = JSON.stringify({ revision: 3, planDigest: 'cd'.repeat(32) });
+  expect((await request('operation/approve', 'POST', body)).status).toBe(202);
+  expect(stepUp.gate).toHaveBeenCalledTimes(1);
+  expect(stepUp.gate).toHaveBeenCalledWith(expect.anything(), {
+    operation: 'dr.restore',
+    targetTenantId: 'tenant-a',
+    targetIds: ['operation'],
+    params: {
+      step: 'approve',
+      plan_digest: 'cd'.repeat(32),
+      revision: 3,
+      admin_mapping_revision: null,
+    },
+  });
+});
+
+it('binds the Admin mapping revision into the restore approval', async () => {
+  state.getView.mockResolvedValue(importPreview(true));
+  const body = JSON.stringify({
+    revision: 3,
+    planDigest: 'cd'.repeat(32),
+    adminMappingRevision: 1,
+  });
+  expect((await request('operation/approve', 'POST', body)).status).toBe(202);
+  expect(stepUp.gate).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.objectContaining({
+      params: expect.objectContaining({ admin_mapping_revision: 1 }) as unknown,
+    })
+  );
+});
+
+it('does not approve a restore, audit it or resume it when step-up is refused', async () => {
+  state.getView.mockResolvedValue(importPreview());
+  stepUp.gate.mockResolvedValueOnce(stepUpRefusal());
+  const response = await request(
+    'operation/approve',
+    'POST',
+    JSON.stringify({ revision: 3, planDigest: 'cd'.repeat(32) })
+  );
+  expect(response.status).toBe(403);
+  expect(await response.json()).toEqual({ error: 'step_up_required' });
+  expect(state.audit).not.toHaveBeenCalled();
+  expect(state.resume).not.toHaveBeenCalled();
+});
+
+it('does not spend a receipt on a stale or invalid restore approval', async () => {
+  state.getView.mockResolvedValue(importPreview());
+  const stale = await request(
+    'operation/approve',
+    'POST',
+    JSON.stringify({ revision: 2, planDigest: 'cd'.repeat(32) })
+  );
+  expect(stale.status).toBe(409);
+  const invalid = await request('operation/approve', 'POST', JSON.stringify({ revision: 3 }));
+  expect(invalid.status).toBe(400);
+  expect(stepUp.gate).not.toHaveBeenCalled();
+});
+
+it('needs step-up to start a restore, and not to start an export', async () => {
+  const source = {
+    tenantId: 'tenant-a',
+    issuer: 'https://canonical.example',
+    productVersion: '0.5.1',
+  };
+  const env = { TENANT_BACKUP_WRAPPING_KEY: 'ab'.repeat(32), IMPORT_ARTIFACTS: {} };
+  state.load.mockResolvedValue({ kind: 'import', selection, source });
+  const body = JSON.stringify({
+    challenges: [{ inputId: 'upload-original', challengeId: 'challenge' }],
+    revision: 0,
+  });
+
+  stepUp.gate.mockResolvedValueOnce(stepUpRefusal());
+  expect((await request('operation/start', 'POST', body, env)).status).toBe(403);
+  expect(state.startImport).not.toHaveBeenCalled();
+  expect(state.audit).not.toHaveBeenCalled();
+
+  expect((await request('operation/start', 'POST', body, env)).status).toBe(202);
+  expect(stepUp.gate).toHaveBeenLastCalledWith(expect.anything(), {
+    operation: 'dr.restore',
+    targetTenantId: 'tenant-a',
+    targetIds: ['operation'],
+    params: {
+      step: 'start',
+      revision: 0,
+      challenges: [{ inputId: 'upload-original', challengeId: 'challenge' }],
+    },
+  });
+
+  // Duplicated challenges, or an operation not waiting at this revision, never reach the gate.
+  stepUp.gate.mockClear();
+  const duplicated = JSON.stringify({
+    challenges: [
+      { inputId: 'upload-original', challengeId: 'challenge' },
+      { inputId: 'upload-original', challengeId: 'challenge-2' },
+    ],
+    revision: 0,
+  });
+  expect((await request('operation/start', 'POST', duplicated, env)).status).toBe(400);
+  state.importStartable.mockResolvedValueOnce(false);
+  expect((await request('operation/start', 'POST', body, env)).status).toBe(409);
+  expect(stepUp.gate).not.toHaveBeenCalled();
+
+  stepUp.gate.mockClear();
+  state.start.mockResolvedValue({
+    id: 'operation',
+    state: 'queued',
+    phase: 'prepare',
+    revision: 1,
+  });
+  state.load.mockResolvedValue({ kind: 'export', selection, source });
+  const exportBody = JSON.stringify({ challengeId: 'challenge', revision: 0 });
+  expect(
+    (await request('operation/start', 'POST', exportBody, { ...env, EXPORT_ARTIFACTS: {} })).status
+  ).toBe(202);
+  expect(stepUp.gate).not.toHaveBeenCalled();
+});
+
+it('does not spend a receipt when a restore start is invalid or its target is not provisioning', async () => {
+  const source = {
+    tenantId: 'tenant-a',
+    issuer: 'https://canonical.example',
+    productVersion: '0.5.1',
+  };
+  const env = { TENANT_BACKUP_WRAPPING_KEY: 'ab'.repeat(32), IMPORT_ARTIFACTS: {} };
+  state.load.mockResolvedValue({ kind: 'import', selection, source });
+  const bad = JSON.stringify({ challenges: [], revision: 0 });
+  expect((await request('operation/start', 'POST', bad, env)).status).toBe(400);
+  expect(stepUp.gate).not.toHaveBeenCalled();
+
+  state.platformQueryOne.mockResolvedValue({ lifecycle_state: 'active' });
+  const body = JSON.stringify({
+    challenges: [{ inputId: 'upload-original', challengeId: 'challenge' }],
+    revision: 0,
+  });
+  expect((await request('operation/start', 'POST', body, env)).status).toBe(409);
+  expect(stepUp.gate).not.toHaveBeenCalled();
+});
+
+it('leaves request, mapping and key steps to the approval and start gates', async () => {
+  state.getView.mockResolvedValue(importPreview(true));
+  const updated = await request(
+    'operation/admin-mappings',
+    'PUT',
+    JSON.stringify({ sourceAdminId: 'source-admin', targetAdminId: 'target-admin' })
+  );
+  expect(updated.status).toBe(200);
+  expect(stepUp.gate).not.toHaveBeenCalled();
 });

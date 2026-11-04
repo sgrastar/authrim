@@ -41,6 +41,11 @@ const mocks = vi.hoisted(() => ({
   sessionStore: { getSessionRpc: vi.fn(), invalidateSessionRpc: vi.fn() },
 }));
 
+vi.mock('../admin-step-up-gate', () => ({
+  requireAdminStepUp: vi.fn(async () => null),
+  refuseAdminFreshAuth: vi.fn(),
+}));
+
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {

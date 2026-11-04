@@ -15,9 +15,12 @@ import {
   createRuntimeProfileRegistryFromEnv,
   createSettingsManager,
   getLogger,
+  getPrimaryTenantId,
   hasSystemAdminAuthority,
   INFRASTRUCTURE_CATEGORY_META,
+  ConflictError,
   loadEnvironmentProfileDefaultsFromEnv,
+  readEnvironmentProfileDefaults,
   loadTenantProfileOverridesFromEnv,
   purgeTenantRuntimeRegistrySnapshot,
   requireDedicatedAdminDatabaseAdapter,
@@ -33,6 +36,8 @@ import {
 import { ensureSupportedTenantId } from './single-tenant-guard';
 import { getAdminAuth, requireTenantResourceAccess } from './admin-tenant-access';
 import { writeAdminAuditLog } from './admin-shared';
+import { requireAdminStepUp } from './admin-step-up-gate';
+import { auditRetentionWeakened } from './audit-retention-compare';
 
 type AdminRuntimeProfileKind = Extract<RuntimeProfileKind, 'audit' | 'residency'>;
 
@@ -225,8 +230,9 @@ function getRegistryBackend(env: Env): string {
   return env.PROFILE_REGISTRY_BACKEND ?? 'kv';
 }
 
-function createInfrastructureSettingsManager(env: Env) {
+function createInfrastructureSettingsManager(env: Env, options: { strict?: boolean } = {}) {
   const manager = createSettingsManager({
+    strictReads: options.strict === true,
     env: {
       DEFAULT_AUDIT_PROFILE_ID: env.DEFAULT_AUDIT_PROFILE_ID,
       DEFAULT_RESIDENCY_PROFILE_ID: env.DEFAULT_RESIDENCY_PROFILE_ID,
@@ -422,6 +428,13 @@ export async function adminRuntimeProfileUpsertHandler(c: Context<{ Bindings: En
     });
   }
 
+  // Refused before anything else, so no step-up receipt is spent on a write that cannot happen.
+  if (id.startsWith('builtin:')) {
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT, {
+      variables: { resource: 'runtime_profile', reason: 'builtin profiles are read-only' },
+    });
+  }
+
   const rawBody = await c.req.json<unknown>().catch(() => null);
   const parsed = parseRuntimeProfileBody(kind, rawBody);
   if (!parsed) {
@@ -440,6 +453,47 @@ export async function adminRuntimeProfileUpsertHandler(c: Context<{ Bindings: En
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
           variables: { field: 'body', reason: auditErrors.join(' ') },
         });
+      }
+    }
+    // Changing the jurisdiction of a residency profile moves where the tenants using it keep their
+    // data; shortening an audit profile's retention deletes their logs sooner. Creating a profile
+    // is gated too: any tenant may already name the id (it was deleted and is being recreated),
+    // and which tenants do cannot be listed here. Everything above has passed; the receipt is spent
+    // here.
+    if (kind === 'residency') {
+      const next = profile as ResidencyProfile;
+      const before = existing?.kind === 'residency' ? existing : null;
+      if (!before || before.jurisdiction !== next.jurisdiction) {
+        const stepUpRefused = await requireAdminStepUp(c as never, {
+          operation: 'tenant.jurisdiction.update',
+          targetTenantId: getPrimaryTenantId(c.env),
+          targetIds: [id],
+          params: {
+            scope: 'residency_profile',
+            profile_id: id,
+            from_jurisdiction: before?.jurisdiction ?? null,
+            to_jurisdiction: next.jurisdiction,
+          },
+        });
+        if (stepUpRefused) return stepUpRefused;
+      }
+    }
+    if (kind === 'audit') {
+      const before = existing?.kind === 'audit' ? existing : null;
+      if (!before || auditRetentionWeakened(before, profile as AuditProfile)) {
+        const stepUpRefused = await requireAdminStepUp(c as never, {
+          operation: 'audit.retention.shorten',
+          targetTenantId: getPrimaryTenantId(c.env),
+          targetIds: [id],
+          params: {
+            scope: 'audit_profile',
+            profile_id: id,
+            retention: (profile as AuditProfile).retention ?? null,
+            // Which of the days apply depends on whether the profile has a primary store.
+            has_primary: Boolean((profile as AuditProfile).primary),
+          },
+        });
+        if (stepUpRefused) return stepUpRefused;
       }
     }
     await registry.put(profile);
@@ -490,6 +544,19 @@ export async function adminRuntimeProfileDeleteHandler(c: Context<{ Bindings: En
 
   try {
     const registry = createRuntimeProfileRegistryFromEnv(c.env);
+    // Deleting a profile and creating it again under the same id would swap its jurisdiction or
+    // retention without the update gate. Which tenants use a profile cannot be listed cheaply, so
+    // deleting is gated like changing it; the receipt is spent only once the profile is known to
+    // exist.
+    if (await registry.get(kind, id)) {
+      const stepUpRefused = await requireAdminStepUp(c as never, {
+        operation: kind === 'residency' ? 'tenant.jurisdiction.update' : 'audit.retention.shorten',
+        targetTenantId: getPrimaryTenantId(c.env),
+        targetIds: [id],
+        params: { scope: `${kind}_profile_delete`, profile_id: id },
+      });
+      if (stepUpRefused) return stepUpRefused;
+    }
     const deleted = await registry.delete(kind, id);
     if (!deleted) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
@@ -598,13 +665,104 @@ export async function adminRuntimeProfileDefaultsUpdateHandler(c: Context<{ Bind
       updates['infra.default_residency_profile_id'] = profile.id;
     }
 
-    const manager = createInfrastructureSettingsManager(c.env);
-    const current = await manager.getAll('infrastructure', { type: 'platform' });
+    // Pointing the environment default at a residency profile with another jurisdiction changes
+    // where tenants without their own profile keep their data; pointing it at an audit profile that
+    // keeps logs for less time deletes them sooner. One request needing both is refused: the two
+    // receipts are separate.
+    // The document's version is read first and the save is made against it: if the defaults change
+    // after this point (another request), the save is refused rather than applied over a
+    // comparison made against older values.
+    // One read gives both the values compared and the version saved against. Strict: a fallback
+    // could hide a change.
+    const manager = createInfrastructureSettingsManager(c.env, { strict: true });
+    const judged = await manager.getAll('infrastructure', { type: 'platform' });
+    const judgedVersion = judged.version;
+    const currentDefaults = readEnvironmentProfileDefaults(judged.values);
+    // What runtime reads (the KV projection) must agree with the document compared: while they
+    // differ (a projection still pending), the step-up could be judged against the wrong values.
+    const runtimeDefaults = await loadEnvironmentProfileDefaultsFromEnv(c.env, { strict: true });
+    if (
+      runtimeDefaults.auditProfileId !== currentDefaults.auditProfileId ||
+      runtimeDefaults.residencyProfileId !== currentDefaults.residencyProfileId
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
+    }
+    let residencyGate: Parameters<typeof requireAdminStepUp>[1] | null = null;
+    let auditGate: Parameters<typeof requireAdminStepUp>[1] | null = null;
+    if (parsedBody.data.residencyProfileId !== undefined) {
+      const [currentResidency, nextResidency] = await Promise.all([
+        registry.get('residency', currentDefaults.residencyProfileId),
+        registry.get('residency', parsedBody.data.residencyProfileId),
+      ]);
+      const fromJurisdiction =
+        currentResidency?.kind === 'residency' ? currentResidency.jurisdiction : null;
+      const toJurisdiction =
+        nextResidency?.kind === 'residency' ? nextResidency.jurisdiction : null;
+      // A profile that cannot be found on either side cannot be compared: a switch counts.
+      const switches = currentDefaults.residencyProfileId !== parsedBody.data.residencyProfileId;
+      if (
+        fromJurisdiction !== toJurisdiction ||
+        (switches && (fromJurisdiction === null || toJurisdiction === null))
+      ) {
+        residencyGate = {
+          operation: 'tenant.jurisdiction.update',
+          targetTenantId: getPrimaryTenantId(c.env),
+          targetIds: [parsedBody.data.residencyProfileId],
+          params: {
+            scope: 'environment_default',
+            residency_profile_id: parsedBody.data.residencyProfileId,
+            from_jurisdiction: fromJurisdiction,
+            to_jurisdiction: toJurisdiction,
+          },
+        };
+      }
+    }
+    if (parsedBody.data.auditProfileId !== undefined) {
+      const [currentAudit, nextAudit] = await Promise.all([
+        registry.get('audit', currentDefaults.auditProfileId),
+        registry.get('audit', parsedBody.data.auditProfileId),
+      ]);
+      // A profile that cannot be found on either side cannot be compared: a switch counts as
+      // shortening (the audit service falls back to the built-in profile meanwhile).
+      const switches = currentDefaults.auditProfileId !== parsedBody.data.auditProfileId;
+      if (
+        switches &&
+        (currentAudit?.kind !== 'audit' ||
+          nextAudit?.kind !== 'audit' ||
+          auditRetentionWeakened(currentAudit, nextAudit))
+      ) {
+        auditGate = {
+          operation: 'audit.retention.shorten',
+          targetTenantId: getPrimaryTenantId(c.env),
+          targetIds: [parsedBody.data.auditProfileId],
+          params: {
+            scope: 'environment_default',
+            audit_profile_id: parsedBody.data.auditProfileId,
+            retention: nextAudit?.kind === 'audit' ? (nextAudit.retention ?? null) : null,
+          },
+        };
+      }
+    }
+    if (residencyGate && auditGate) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: {
+          field: 'body',
+          reason:
+            'Changing the residency profile and moving to a shorter-retention audit profile need separate step-ups: change them in separate requests',
+        },
+      });
+    }
+    const defaultsGate = residencyGate ?? auditGate;
+    if (defaultsGate) {
+      const stepUpRefused = await requireAdminStepUp(c as never, defaultsGate);
+      if (stepUpRefused) return stepUpRefused;
+    }
+
     await manager.patch(
       'infrastructure',
       { type: 'platform' },
       {
-        ifMatch: current.version,
+        ifMatch: judgedVersion,
         set: updates,
       },
       'runtime-profile-defaults'
@@ -639,6 +797,10 @@ export async function adminRuntimeProfileDefaultsUpdateHandler(c: Context<{ Bind
       reference_management: RUNTIME_PROFILE_REFERENCE_MANAGEMENT_POLICY,
     });
   } catch (error) {
+    // The defaults changed after the step-up decision was made: retry against the current ones.
+    if (error instanceof ConflictError) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
+    }
     log.error('Failed to update runtime profile defaults', { error: String(error) });
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }

@@ -15,6 +15,7 @@ import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import type { TenantPIIConfig } from '@authrim/ar-lib-core';
 import { DEFAULT_PII_CONFIG } from '@authrim/ar-lib-core';
+import { requireAdminStepUp } from '../../admin-step-up-gate';
 
 // KV key prefix
 const KV_KEY_PII_CONFIG_PREFIX = 'pii_config:';
@@ -24,6 +25,60 @@ const MIN_RETENTION_DAYS = 1;
 const MAX_EVENT_LOG_RETENTION_DAYS = 730; // 2 years
 const MAX_PII_LOG_RETENTION_DAYS = 2555; // 7 years (legal requirements)
 const MAX_OPERATIONAL_LOG_RETENTION_DAYS = 365; // 1 year max for operational logs
+
+const RETENTION_FIELDS = [
+  'eventLogRetentionDays',
+  'piiLogRetentionDays',
+  'operationalLogRetentionDays',
+] as const;
+
+/** The tenant's stored config; null when it cannot be read (then a change counts as shortening). */
+async function readStoredPIIConfig(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string
+): Promise<TenantPIIConfig | null> {
+  if (!c.env.AUTHRIM_CONFIG) return null;
+  try {
+    const kvValue = await c.env.AUTHRIM_CONFIG.get(`${KV_KEY_PII_CONFIG_PREFIX}${tenantId}`);
+    return kvValue ? (JSON.parse(kvValue) as TenantPIIConfig) : { ...DEFAULT_PII_CONFIG };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The step-up for a write that shortens a retention this config holds (the event and PII days a
+ * write falls back to, and how long reason details are kept); null when it may go ahead. Spent
+ * just before the write.
+ */
+async function gatePIIRetention(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  kind: string,
+  before: TenantPIIConfig | null,
+  after: TenantPIIConfig
+): Promise<Response | null> {
+  const value = (config: TenantPIIConfig, field: (typeof RETENTION_FIELDS)[number]) =>
+    config[field] ?? DEFAULT_PII_CONFIG[field];
+  const shortens =
+    before === null ||
+    RETENTION_FIELDS.some((field) => {
+      const was = value(before, field);
+      const now = value(after, field);
+      return typeof was === 'number' && (typeof now !== 'number' || now < was);
+    });
+  if (!shortens) return null;
+  return requireAdminStepUp(c as unknown as Parameters<typeof requireAdminStepUp>[0], {
+    operation: 'audit.retention.shorten',
+    targetTenantId: tenantId,
+    params: {
+      kind,
+      retention_days: Object.fromEntries(
+        RETENTION_FIELDS.map((field) => [field, value(after, field) ?? null])
+      ),
+    },
+  });
+}
 
 /**
  * GET /api/admin/tenants/:tenantId/audit/pii-config
@@ -136,15 +191,8 @@ export async function updateTenantPIIConfig(c: Context<{ Bindings: Env }>) {
   const errors: string[] = [];
 
   // Get existing config or default
-  let existingConfig: TenantPIIConfig = { ...DEFAULT_PII_CONFIG };
-  try {
-    const kvValue = await c.env.AUTHRIM_CONFIG.get(`${KV_KEY_PII_CONFIG_PREFIX}${tenantId}`);
-    if (kvValue) {
-      existingConfig = JSON.parse(kvValue) as TenantPIIConfig;
-    }
-  } catch {
-    // Use default
-  }
+  const storedConfig = await readStoredPIIConfig(c, tenantId);
+  const existingConfig: TenantPIIConfig = { ...(storedConfig ?? DEFAULT_PII_CONFIG) };
 
   // Merge and validate piiFields
   if (body.piiFields) {
@@ -240,6 +288,15 @@ export async function updateTenantPIIConfig(c: Context<{ Bindings: Env }>) {
     );
   }
 
+  const refused = await gatePIIRetention(
+    c,
+    tenantId,
+    'pii_config.update',
+    storedConfig,
+    existingConfig
+  );
+  if (refused) return refused;
+
   // Save updated config
   const kvKey = `${KV_KEY_PII_CONFIG_PREFIX}${tenantId}`;
   await c.env.AUTHRIM_CONFIG.put(kvKey, JSON.stringify(existingConfig));
@@ -280,6 +337,15 @@ export async function resetTenantPIIConfig(c: Context<{ Bindings: Env }>) {
       400
     );
   }
+
+  const refused = await gatePIIRetention(
+    c,
+    tenantId,
+    'pii_config.reset',
+    await readStoredPIIConfig(c, tenantId),
+    { ...DEFAULT_PII_CONFIG }
+  );
+  if (refused) return refused;
 
   const kvKey = `${KV_KEY_PII_CONFIG_PREFIX}${tenantId}`;
   await c.env.AUTHRIM_CONFIG.delete(kvKey);
@@ -341,6 +407,15 @@ export async function applyGDPRPreset(c: Context<{ Bindings: Env }>) {
     eventLogRetentionDays: 90, // Minimum reasonable for security
     piiLogRetentionDays: 365, // 1 year default, can be extended if needed
   };
+
+  const refused = await gatePIIRetention(
+    c,
+    tenantId,
+    'pii_config.preset.gdpr',
+    await readStoredPIIConfig(c, tenantId),
+    gdprConfig
+  );
+  if (refused) return refused;
 
   const kvKey = `${KV_KEY_PII_CONFIG_PREFIX}${tenantId}`;
   await c.env.AUTHRIM_CONFIG.put(kvKey, JSON.stringify(gdprConfig));
@@ -406,6 +481,15 @@ export async function applyMinimalPreset(c: Context<{ Bindings: Env }>) {
     eventLogRetentionDays: 180, // 6 months
     piiLogRetentionDays: 730, // 2 years
   };
+
+  const refused = await gatePIIRetention(
+    c,
+    tenantId,
+    'pii_config.preset.minimal',
+    await readStoredPIIConfig(c, tenantId),
+    minimalConfig
+  );
+  if (refused) return refused;
 
   const kvKey = `${KV_KEY_PII_CONFIG_PREFIX}${tenantId}`;
   await c.env.AUTHRIM_CONFIG.put(kvKey, JSON.stringify(minimalConfig));

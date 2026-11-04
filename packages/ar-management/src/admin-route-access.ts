@@ -1287,6 +1287,20 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.ADMIN_USERS_DELETE,
     'admin users'
   ),
+  // Another admin's security keys: read with admin users read, revoke with admin users write
+  // (and L2 in the handler); ahead of the generic rule, whose DELETE means deleting the admin.
+  rule({
+    pattern: '/api/admin/admins/:id/second-factors',
+    methods: READ_METHODS,
+    permissions: [ADMIN_PERMISSIONS.ADMIN_USERS_READ],
+    description: "another admin's second factors read",
+  }),
+  rule({
+    pattern: '/api/admin/admins/:id/second-factors/:factorId',
+    methods: DELETE_METHODS,
+    permissions: [ADMIN_PERMISSIONS.ADMIN_USERS_WRITE],
+    description: "another admin's second factor revoke",
+  }),
   ...byMethod(
     '/api/admin/admins/*',
     ADMIN_PERMISSIONS.ADMIN_USERS_READ,

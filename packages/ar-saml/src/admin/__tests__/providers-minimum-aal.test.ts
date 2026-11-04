@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ADMIN_PERMISSIONS } from '@authrim/ar-lib-core';
 
 const mocks = vi.hoisted(() => ({
+  stepUp: vi.fn(async (..._args: unknown[]): Promise<Response | null> => null),
   adapter: null as ReturnType<typeof createAdapter> | null,
   audit: vi.fn(async (_env: unknown, _entry: { action: string; metadata?: string }) => undefined),
 }));
@@ -16,6 +17,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    requireAdminStepUp: mocks.stepUp,
     createAuthContextFromHono: vi.fn(() => ({ coreAdapter: mocks.adapter })),
     requireAdminDatabaseAdapter: vi.fn(() => mocks.adapter),
     requireDedicatedAdminDatabaseAdapter: vi.fn(() => mocks.adapter),

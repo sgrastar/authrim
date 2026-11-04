@@ -32,6 +32,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   };
 });
 
+const { mockRequireAdminStepUp } = vi.hoisted(() => ({ mockRequireAdminStepUp: vi.fn() }));
+vi.mock('../admin-step-up-gate', () => ({
+  requireAdminStepUp: mockRequireAdminStepUp,
+  refuseAdminFreshAuth: vi.fn(),
+}));
+
 import { createAuditLogFromContext } from '@authrim/ar-lib-core';
 import { sweepExternalPluginGates } from '../external-plugin-gate-sweep';
 import settingsV2 from '../routes/settings-v2';
@@ -295,6 +301,8 @@ const AUTHENTICATION_METHODS_KEY = 'settings:tenant:tenant_123:authentication-me
 describe('Settings API v2', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockRequireAdminStepUp.mockReset();
+    mockRequireAdminStepUp.mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -5065,6 +5073,182 @@ describe('Settings API v2', () => {
         mockEnv
       );
       expect(assurance.status).toBe(403);
+    });
+  });
+
+  describe('admin step-up on settings that weaken a protection', () => {
+    const TENANT_SECURITY = '/api/admin/tenants/tenant_123/settings/security';
+    const PLATFORM_SECURITY = '/api/admin/platform/settings/security';
+    const PLATFORM_CHECK_AUDIT = '/api/admin/platform/settings/check-api-audit';
+    const PLATFORM_NOTICES = '/api/admin/platform/settings/admin-notices';
+    const refusal = () =>
+      new Response(JSON.stringify({ error: 'step_up_required' }), { status: 403 });
+
+    type Fixture = ReturnType<typeof createTestApp>;
+    const read = async (f: Fixture, url: string) =>
+      await (await f.app.request(url, { method: 'GET' }, f.mockEnv)).json<SettingsGetResult>();
+    const patch = async (
+      f: Fixture,
+      url: string,
+      change: { set?: Record<string, unknown>; clear?: string[] }
+    ) => {
+      const current = await read(f, url);
+      return f.app.request(
+        url,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ifMatch: current.version, ...change }),
+        },
+        f.mockEnv
+      );
+    };
+
+    it('raising a step-up level, or an unrelated setting, is not gated', async () => {
+      const f = createTestApp({ kv: createMockKV() });
+      const raise = await patch(f, TENANT_SECURITY, {
+        set: { 'security.admin_step_up_overrides': { 'sessions.revoke_all': 'L2' } },
+      });
+      expect(raise.status).toBe(200);
+      const other = await patch(f, TENANT_SECURITY, {
+        set: { 'security.dpop_nonce_required': true },
+      });
+      expect(other.status).toBeLessThan(500);
+      expect(mockRequireAdminStepUp).not.toHaveBeenCalled();
+    });
+
+    it('lowering or clearing a level is gated as admin_step_up.policy.relax', async () => {
+      const f = createTestApp({ kv: createMockKV() });
+      await patch(f, TENANT_SECURITY, {
+        set: {
+          'security.admin_step_up_overrides': {
+            'sessions.revoke_all': 'L2',
+            'tenant.delete': 'L2',
+          },
+        },
+      });
+      expect(mockRequireAdminStepUp).not.toHaveBeenCalled();
+
+      const lowered = await patch(f, TENANT_SECURITY, {
+        set: {
+          'security.admin_step_up_overrides': {
+            'sessions.revoke_all': 'L1',
+            'tenant.delete': 'L2',
+          },
+        },
+      });
+      expect(lowered.status).toBe(200);
+      expect(mockRequireAdminStepUp).toHaveBeenCalledTimes(1);
+      expect(mockRequireAdminStepUp.mock.calls[0][1]).toMatchObject({
+        operation: 'admin_step_up.policy.relax',
+        targetTenantId: 'tenant_123',
+        params: {
+          category: 'security',
+          scope: 'tenant',
+          admin_step_up_overrides: { 'sessions.revoke_all': 'L1', 'tenant.delete': 'L2' },
+        },
+      });
+
+      mockRequireAdminStepUp.mockClear();
+      const cleared = await patch(f, TENANT_SECURITY, {
+        clear: ['security.admin_step_up_overrides'],
+      });
+      expect(cleared.status).toBe(200);
+      expect(mockRequireAdminStepUp).toHaveBeenCalledTimes(1);
+    });
+
+    it('a refused relaxation saves nothing', async () => {
+      const f = createTestApp({ kv: createMockKV() });
+      await patch(f, TENANT_SECURITY, {
+        set: { 'security.admin_step_up_overrides': { 'sessions.revoke_all': 'L2' } },
+      });
+      mockRequireAdminStepUp.mockResolvedValue(refusal());
+      const res = await patch(f, TENANT_SECURITY, {
+        clear: ['security.admin_step_up_overrides'],
+      });
+      expect(res.status).toBe(403);
+      const after = await read(f, TENANT_SECURITY);
+      expect(after.values['security.admin_step_up_overrides']).toEqual({
+        'sessions.revoke_all': 'L2',
+      });
+    });
+
+    it('turning the platform enforcement switch off is gated, turning it on is not', async () => {
+      const f = createTestApp({ kv: createMockKV() });
+      const off = await patch(f, PLATFORM_SECURITY, {
+        set: { 'security.admin_step_up_enforced': false },
+      });
+      expect(off.status).toBe(200);
+      expect(mockRequireAdminStepUp).toHaveBeenCalledTimes(1);
+      expect(mockRequireAdminStepUp.mock.calls[0][1]).toMatchObject({
+        operation: 'admin_step_up.policy.relax',
+        params: { category: 'security', scope: 'platform', admin_step_up_enforced: false },
+      });
+      mockRequireAdminStepUp.mockClear();
+      const on = await patch(f, PLATFORM_SECURITY, {
+        set: { 'security.admin_step_up_enforced': true },
+      });
+      expect(on.status).toBe(200);
+      expect(mockRequireAdminStepUp).not.toHaveBeenCalled();
+    });
+
+    it('turning the switch off is refused without step-up and stays on', async () => {
+      const f = createTestApp({ kv: createMockKV() });
+      mockRequireAdminStepUp.mockResolvedValue(refusal());
+      const off = await patch(f, PLATFORM_SECURITY, {
+        set: { 'security.admin_step_up_enforced': false },
+      });
+      expect(off.status).toBe(403);
+      expect((await read(f, PLATFORM_SECURITY)).values['security.admin_step_up_enforced']).toBe(
+        true
+      );
+    });
+
+    it.each([
+      [PLATFORM_CHECK_AUDIT, 'audit.check_api_retention_days', 30, 120],
+      [PLATFORM_NOTICES, 'admin-notices.retention_days', 30, 120],
+    ])('%s: a shorter retention is gated, a longer one is not', async (url, key, short, long) => {
+      const f = createTestApp({ kv: createMockKV() });
+      const longer = await patch(f, url, { set: { [key]: long } });
+      expect(longer.status).toBe(200);
+      expect(mockRequireAdminStepUp).not.toHaveBeenCalled();
+
+      const shorter = await patch(f, url, { set: { [key]: short } });
+      expect(shorter.status).toBe(200);
+      expect(mockRequireAdminStepUp).toHaveBeenCalledTimes(1);
+      expect(mockRequireAdminStepUp.mock.calls[0][1]).toMatchObject({
+        operation: 'audit.retention.shorten',
+        params: { scope: 'platform', retention_days: { [key]: short } },
+      });
+
+      mockRequireAdminStepUp.mockResolvedValue(refusal());
+      const refused = await patch(f, url, { set: { [key]: 7 } });
+      expect(refused.status).toBe(403);
+      expect((await read(f, url)).values[key]).toBe(short);
+    });
+
+    it.each([
+      [PLATFORM_CHECK_AUDIT, 'audit.check_api_retention_days'],
+      [PLATFORM_NOTICES, 'admin-notices.retention_days'],
+    ])('%s: setting a value below the default for the first time is gated', async (url, key) => {
+      // Nothing set yet: the feature runs with its 90-day default, so 30 shortens it.
+      const f = createTestApp({ kv: createMockKV() });
+      mockRequireAdminStepUp.mockResolvedValue(refusal());
+      const res = await patch(f, url, { set: { [key]: 30 } });
+      expect(res.status).toBe(403);
+      expect(mockRequireAdminStepUp).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ operation: 'audit.retention.shorten' })
+      );
+    });
+
+    it('an invalid PATCH is refused before the gate', async () => {
+      const f = createTestApp({ kv: createMockKV() });
+      const res = await patch(f, TENANT_SECURITY, {
+        set: { 'security.admin_step_up_overrides': { 'tenant.delete': 'L1' } },
+      });
+      expect(res.status).toBe(400);
+      expect(mockRequireAdminStepUp).not.toHaveBeenCalled();
     });
   });
 });

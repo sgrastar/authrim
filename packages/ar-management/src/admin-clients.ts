@@ -68,6 +68,7 @@ import {
   readIdentityMappingClientHistoryReceipt,
 } from '@authrim/ar-lib-core/services/identity-mapping-client-history-receipt';
 import { runTenantBackupCoveredMutation } from './tenant-backup-writer';
+import { requireAdminStepUp } from './admin-step-up-gate';
 
 type AdminClientApplicationType = 'web' | 'native' | 'spa' | 'service';
 type AdminBrowserPublicClientMode = 'strict' | 'cookie_fallback';
@@ -3331,6 +3332,17 @@ export async function adminClientRegenerateSecretHandler(c: Context<{ Bindings: 
     if (!client || client.tenant_id !== tenantId) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
+
+    const refused = await requireAdminStepUp(
+      c as unknown as Parameters<typeof requireAdminStepUp>[0],
+      {
+        operation: 'client.secret.rotate',
+        targetTenantId: tenantId,
+        targetIds: [clientId],
+        params: { revoke_existing_tokens: body.revoke_existing_tokens === true },
+      }
+    );
+    if (refused) return refused;
 
     const randomBytes = new Uint8Array(32);
     crypto.getRandomValues(randomBytes);

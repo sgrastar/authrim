@@ -6,6 +6,7 @@
  * in-memory one (`fake/compliance-fake.ts`).
  */
 import { adminFetch, API_BASE_URL } from './admin-request';
+import { stepUpHeaders, withStepUp } from './admin-step-up';
 import { ApiError, errorFromResponse } from './api-error';
 
 export interface CursorPage<T> {
@@ -271,14 +272,17 @@ function query(params: Record<string, string | undefined>): string {
 async function request<T>(
 	tenantId: string,
 	path: string,
-	init: RequestInit & { json?: unknown } = {}
+	init: RequestInit & { json?: unknown; receipt?: string } = {}
 ): Promise<T> {
-	const { json, ...rest } = init;
+	const { json, receipt, ...rest } = init;
 	const response = await adminFetch(`${API_BASE_URL}${path}`, {
 		...rest,
 		tenantId,
 		...(json !== undefined
-			? { body: JSON.stringify(json), headers: { 'Content-Type': 'application/json' } }
+			? {
+					body: JSON.stringify(json),
+					headers: { 'Content-Type': 'application/json', ...stepUpHeaders(receipt) }
+				}
 			: {})
 	});
 	if (!response.ok) throw await errorFromResponse(response);
@@ -322,9 +326,12 @@ export const httpCompliance: ComplianceClient = {
 	retention: (tenantId, signal) =>
 		request(tenantId, '/api/admin/data-retention/status', { signal }),
 	async setLookupRetention(tenantId, change) {
-		await request(tenantId, '/api/admin/data-retention/categories/lookup_directory', {
-			method: 'PUT',
-			json: change
-		});
+		await withStepUp((receipt) =>
+			request(tenantId, '/api/admin/data-retention/categories/lookup_directory', {
+				method: 'PUT',
+				json: change,
+				receipt
+			})
+		);
 	}
 };

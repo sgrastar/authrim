@@ -18,6 +18,7 @@ import type {
 } from '@authrim/ar-lib-core/utils/settings-manager';
 import { adminFetch, API_BASE_URL } from './admin-request';
 import { errorFromResponse } from './api-error';
+import { stepUpHeaders, withStepUp } from './admin-step-up';
 
 export type { CategoryName, SettingSource, SettingsPatchRequest, SettingsPatchResult };
 
@@ -90,13 +91,17 @@ export const httpSettings: SettingsClient = {
 		return (await response.json()) as SettingsGetResult;
 	},
 	async patch(target, category, request) {
-		const response = await adminFetch(`${API_BASE_URL}${settingsPath(target, category)}`, {
-			method: 'PATCH',
-			body: JSON.stringify(request),
-			includeJsonContentType: true,
-			tenantId: tenantOf(target)
+		// Some settings (retention, step-up policy) are protected by L1/L2 step-up.
+		return withStepUp(async (receipt) => {
+			const response = await adminFetch(`${API_BASE_URL}${settingsPath(target, category)}`, {
+				method: 'PATCH',
+				body: JSON.stringify(request),
+				headers: stepUpHeaders(receipt),
+				includeJsonContentType: true,
+				tenantId: tenantOf(target)
+			});
+			if (!response.ok) throw await errorFromResponse(response);
+			return (await response.json()) as SettingsPatchResult;
 		});
-		if (!response.ok) throw await errorFromResponse(response);
-		return (await response.json()) as SettingsPatchResult;
 	}
 };
