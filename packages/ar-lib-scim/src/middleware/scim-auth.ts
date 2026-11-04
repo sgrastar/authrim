@@ -129,8 +129,10 @@ async function checkAuthRateLimit(
     return { allowed: true, remaining: config.maxFailedAttempts, retryAfter: 0 };
   }
 
-  // Counted only in the RATE_LIMITER Durable Object: a KV counter lets parallel failures read
-  // the same count, so without the limiter (or when it fails) authentication is refused.
+  // Failures are counted only in the RATE_LIMITER Durable Object; without the limiter (or when
+  // it fails) authentication is refused. The status is read before the token is checked and a
+  // failure recorded after, so attempts already in flight when the limit is reached still
+  // complete; SCIM tokens are long random values, which keeps that window harmless.
   const unavailable = { allowed: false, remaining: 0, retryAfter: SCIM_LIMITER_RETRY_SECONDS };
   if (!env.RATE_LIMITER) {
     log.error('RATE_LIMITER binding is not configured; refusing SCIM authentication', {});
