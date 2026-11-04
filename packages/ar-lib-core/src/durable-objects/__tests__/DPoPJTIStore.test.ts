@@ -17,7 +17,8 @@ import type { Env } from '../../types/env';
 
 // Mock DurableObjectState
 class MockDurableObjectState implements Partial<DurableObjectState> {
-  private _storage = new Map<string, unknown>();
+  _storage = new Map<string, unknown>();
+  alarmAt: number | null = null;
   id!: DurableObjectId;
   storage: DurableObjectStorage;
 
@@ -51,19 +52,32 @@ class MockDurableObjectState implements Partial<DurableObjectState> {
         this._storage.clear();
         return Promise.resolve();
       },
-      list: <T>(): Promise<Map<string, T>> => {
-        return Promise.resolve(new Map(this._storage as Map<string, T>));
+      list: <T>(
+        options: { prefix?: string; start?: string; end?: string; limit?: number } = {}
+      ): Promise<Map<string, T>> => {
+        const keys = [...this._storage.keys()]
+          .filter(
+            (key) =>
+              (!options.prefix || key.startsWith(options.prefix)) &&
+              (options.start === undefined || key >= options.start) &&
+              (options.end === undefined || key < options.end)
+          )
+          .sort()
+          .slice(0, options.limit ?? Infinity);
+        return Promise.resolve(new Map(keys.map((key) => [key, this._storage.get(key) as T])));
       },
       transaction: <T>(closure: (txn: DurableObjectStorage) => Promise<T>): Promise<T> => {
         return closure(this.storage);
       },
       getAlarm: (): Promise<number | null> => {
-        return Promise.resolve(null);
+        return Promise.resolve(this.alarmAt);
       },
-      setAlarm: (): Promise<void> => {
+      setAlarm: (at: number): Promise<void> => {
+        this.alarmAt = at;
         return Promise.resolve();
       },
       deleteAlarm: (): Promise<void> => {
+        this.alarmAt = null;
         return Promise.resolve();
       },
       sync: (): Promise<void> => {
@@ -983,6 +997,126 @@ describe('DPoPJTIStore', () => {
       );
 
       expect(response.status).toBe(500);
+    });
+  });
+
+  describe('Storage layout', () => {
+    const store1 = (jti: string, ttl = 3600) =>
+      store.fetch(
+        new Request('http://localhost/check-and-store', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jti, iat: Math.floor(Date.now() / 1000), ttl }),
+        })
+      );
+    const exists = async (target: DPoPJTIStore, jti: string) => {
+      const response = await target.fetch(
+        new Request('http://localhost/check', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jti }),
+        })
+      );
+      return (await response.json<{ exists: boolean }>()).exists;
+    };
+
+    it('stores each JTI under its own short key, never one growing value', async () => {
+      await store1('x'.repeat(10000));
+      await store1('second');
+
+      const keys = [...mockState._storage.keys()];
+      expect(keys).not.toContain('state');
+      expect(keys.filter((key) => key.startsWith('jti:'))).toHaveLength(2);
+      expect(keys.filter((key) => key.startsWith('exp:'))).toHaveLength(2);
+      expect(Math.max(...keys.map((key) => key.length))).toBeLessThan(2048);
+      expect(mockState.alarmAt).not.toBeNull();
+    });
+
+    it('moves a legacy single-value state to per-JTI keys and keeps refusing its replays', async () => {
+      const now = Date.now();
+      mockState._storage.set('state', {
+        jtis: {
+          live: { jti: 'live', iat: 1, createdAt: now, expiresAt: now + 60_000 },
+          gone: { jti: 'gone', iat: 1, createdAt: now - 7_200_000, expiresAt: now - 1 },
+        },
+        lastCleanup: now,
+      });
+
+      expect((await store1('live')).status).toBe(400);
+      expect(await exists(store, 'gone')).toBe(false);
+      expect(mockState._storage.has('state')).toBe(false);
+      expect([...mockState._storage.keys()].filter((key) => key.startsWith('jti:'))).toHaveLength(
+        1
+      );
+      expect(mockState.alarmAt).not.toBeNull();
+    });
+
+    it('retries the legacy move after a failed read', async () => {
+      mockState._storage.set('state', {
+        jtis: { live: { jti: 'live', iat: 1, createdAt: 0, expiresAt: Date.now() + 60_000 } },
+        lastCleanup: 0,
+      });
+      vi.spyOn(mockState.storage, 'get').mockRejectedValueOnce(new Error('read unavailable'));
+
+      expect((await store1('live')).status).toBe(500);
+      expect((await store1('live')).status).toBe(400);
+    });
+
+    it('deletes only expired JTIs on the alarm and schedules the next run', async () => {
+      await store1('short', 60);
+      await store1('long', 3600);
+      vi.advanceTimersByTime(61 * 1000);
+
+      await store.alarm();
+
+      const keys = [...mockState._storage.keys()];
+      expect(keys.filter((key) => key.startsWith('jti:'))).toHaveLength(1);
+      expect(keys.filter((key) => key.startsWith('exp:'))).toHaveLength(1);
+      expect(await exists(store, 'long')).toBe(true);
+      expect(mockState.alarmAt).toBeGreaterThan(Date.now());
+    });
+
+    it('reschedules within one interval, so short-lived JTIs added later are cleaned in time', async () => {
+      await store1('long', 3600);
+      vi.advanceTimersByTime(5 * 60 * 1000);
+      await store.alarm();
+      expect(mockState.alarmAt).toBeLessThanOrEqual(Date.now() + 5 * 60 * 1000);
+
+      await store1('short', 60);
+      vi.setSystemTime(mockState.alarmAt ?? 0);
+      await store.alarm();
+
+      expect([...mockState._storage.keys()].filter((key) => key.startsWith('jti:'))).toHaveLength(
+        1
+      );
+    });
+
+    it('restores a missing cleanup alarm when an instance starts with stored JTIs', async () => {
+      await store1('kept', 3600);
+      mockState.alarmAt = null;
+
+      const restarted = new DPoPJTIStore(mockState as unknown as DurableObjectState, mockEnv);
+      expect(await exists(restarted, 'kept')).toBe(true);
+
+      expect(mockState.alarmAt).not.toBeNull();
+    });
+
+    it('accepts exactly one of concurrent stores of the same JTI', async () => {
+      const results = await Promise.all(Array.from({ length: 5 }, () => store1('raced')));
+
+      expect(results.filter((response) => response.status === 201)).toHaveLength(1);
+      expect(results.filter((response) => response.status === 400)).toHaveLength(4);
+    });
+
+    it('does not schedule another alarm when nothing is left', async () => {
+      await store1('short', 60);
+      vi.advanceTimersByTime(61 * 1000);
+      mockState.alarmAt = null;
+
+      await store.alarm();
+
+      expect(mockState._storage.size).toBe(0);
+      expect(mockState.alarmAt).toBeNull();
     });
   });
 });

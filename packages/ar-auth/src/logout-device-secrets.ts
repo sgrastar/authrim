@@ -1,5 +1,6 @@
 import type { Context } from 'hono';
 import {
+  chunkForBoundParameters,
   createAuthContextFromHono,
   deriveOidcSid,
   ensureDatabaseAdapter,
@@ -188,7 +189,11 @@ export async function revokeSessionDeviceSecrets(
     sessionIdsByClient.set(target.clientId, ids);
   }
   for (const [clientId, ids] of sessionIdsByClient) {
-    await revoke({ scope: 'local', clientId, sessionIds: [...ids] });
+    // An app can collect the sessions of many issuing apps: the identifiers go in parts, each
+    // within D1's bound-parameter limit (the update binds 5 more).
+    for (const sessionIds of chunkForBoundParameters([...ids], 5)) {
+      await revoke({ scope: 'local', clientId, sessionIds });
+    }
   }
   if (logoutScope === 'group') {
     // Each app's group: its trust group, or (an app in none) the app itself. Named explicitly, so

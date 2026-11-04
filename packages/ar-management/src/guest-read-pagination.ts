@@ -1,6 +1,6 @@
 /** Guest inspection cursors retain selection state only; authorization runs on every request. */
 import type { Context } from 'hono';
-import { getTenantIdFromContext, type Env } from '@authrim/ar-lib-core';
+import { getTenantIdFromContext, kvTtlSeconds, type Env } from '@authrim/ar-lib-core';
 import { guestMapStores, type GuestCoreStore } from './guest-account-storage';
 import { compareGuestCleanupKey, guestCleanupInventoryDigest } from './guest-cleanup-cursor';
 
@@ -144,7 +144,8 @@ export async function readGuestPage<T>(
     for (const row of selected) after[row.source] = { at: row.at, id: row.id };
     nextCursor = crypto.randomUUID();
     await config.put(prefix + nextCursor, JSON.stringify({ ...position, after }), {
-      expirationTtl: Math.max(1, position.expiresAt - now),
+      // The cursor carries its own expiry (checked on read); KV needs at least 60 s.
+      expirationTtl: kvTtlSeconds(position.expiresAt - now),
     });
   }
   return { items: selected.map((row) => row.value), nextCursor };

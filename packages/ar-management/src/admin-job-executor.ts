@@ -33,6 +33,8 @@ import {
   createAuditLog,
   createLogger,
   ADMIN_ROLES,
+  chunkForBoundParameters,
+  sqlPlaceholders,
 } from '@authrim/ar-lib-core';
 import {
   initializeFromAccount,
@@ -1890,8 +1892,15 @@ async function processBulkUserUpdateJob(
   const operationOf = `json_extract(metadata_json, '$.lifecycle_operation_id')`;
   /** The accounts (and their subjects) take it while no newer transition did, or it is this one. */
   const accounts = async (userIds: string[]) => {
-    if (userIds.length === 0) return;
-    const idPlaceholders = userIds.map(() => '?').join(', ');
+    // The account UPDATE binds the most besides the ids: chunked by it, both statements fit D1's
+    // bound-parameter limit.
+    const fixedParameters = 9 + Object.keys(target.metadataPatch).length;
+    for (const chunk of chunkForBoundParameters(userIds, fixedParameters)) {
+      await accountsChunk(chunk);
+    }
+  };
+  const accountsChunk = async (userIds: string[]) => {
+    const idPlaceholders = sqlPlaceholders(userIds.length);
     await adapter.batch([
       {
         sql: `UPDATE identity_accounts
@@ -1941,13 +1950,18 @@ async function processBulkUserUpdateJob(
   };
   /** The accounts holding this job's transition, with the version each took it under. */
   const accountsTaken = async (userIds: string[]) => {
-    if (userIds.length === 0) return [];
-    return adapter.query<{ id: string; version: number }>(
-      `SELECT legacy_user_id AS id, ${versionOf} AS version FROM identity_accounts
-        WHERE tenant_id = ? AND legacy_user_id IN (${userIds.map(() => '?').join(', ')})
-          AND ${operationOf} = ? || legacy_user_id`,
-      [job.tenant_id, ...userIds, operationPrefix]
-    );
+    const rows: { id: string; version: number }[] = [];
+    for (const chunk of chunkForBoundParameters(userIds, 2)) {
+      rows.push(
+        ...(await adapter.query<{ id: string; version: number }>(
+          `SELECT legacy_user_id AS id, ${versionOf} AS version FROM identity_accounts
+            WHERE tenant_id = ? AND legacy_user_id IN (${sqlPlaceholders(chunk.length)})
+              AND ${operationOf} = ? || legacy_user_id`,
+          [job.tenant_id, ...chunk, operationPrefix]
+        ))
+      );
+    }
+    return rows;
   };
   const settle = async (
     userIds: string[],

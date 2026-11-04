@@ -1,5 +1,6 @@
 import {
   AdminLoggingControlRepository,
+  chunkForBoundParameters,
   completeRetiredTenantBackupR2Generation,
   hasCapturingTenantBackupSnapshot,
   InternalNotificationEventRepository,
@@ -8,6 +9,7 @@ import {
   listRetiredTenantBackupR2Generations,
   readR2ObjectTextWithLimit,
   requireDedicatedAdminDatabaseAdapter,
+  sqlPlaceholders,
   validateUrlForSSRF,
   type DatabaseAdapter,
   type Env,
@@ -4010,12 +4012,14 @@ async function deleteRowsById(
   if (ids.length === 0) {
     return 0;
   }
-  const placeholders = ids.map(() => '?').join(', ');
-  const result = await adapter.execute(
-    `DELETE FROM ${tableName} WHERE id IN (${placeholders})`,
-    ids
+  // One batch (one round trip), each statement within D1's bound-parameter limit.
+  const results = await adapter.batch(
+    chunkForBoundParameters(ids).map((chunk) => ({
+      sql: `DELETE FROM ${tableName} WHERE id IN (${sqlPlaceholders(chunk.length)})`,
+      params: chunk,
+    }))
   );
-  return result.rowsAffected ?? ids.length;
+  return results.reduce((total, result) => total + (result.rowsAffected ?? 0), 0);
 }
 
 async function runScheduledDeliveryEventRetention(

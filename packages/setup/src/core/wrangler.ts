@@ -480,7 +480,8 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
     'USER_CODE_RATE_LIMITER',
     'RATE_LIMITER',
   ],
-  'ar-policy': ['PERMISSION_CHANGE_HUB'],
+  // RATE_LIMITER: the Check API counts each client's requests atomically (fails closed if absent).
+  'ar-policy': ['PERMISSION_CHANGE_HUB', 'RATE_LIMITER'],
   'ar-saml': [
     'KEY_MANAGER',
     'SAML_REQUEST_STORE',
@@ -493,6 +494,7 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
   // STATE_STORE KV the Bridge Worker does not have, and every request would answer 503.
   // SESSION_CLIENT_STORE: an upstream back-channel logout tells the relying parties signed in
   // through the sessions it ends; their logout targets are read from this store.
+  // DPOP_JTI_STORE: an upstream logout token's jti is recorded once, so a replay is refused.
   'ar-bridge': [
     'KEY_MANAGER',
     'SESSION_STORE',
@@ -500,6 +502,7 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
     'SESSION_CLIENT_STORE',
     'CHALLENGE_STORE',
     'RATE_LIMITER',
+    'DPOP_JTI_STORE',
   ],
   'ar-vc': ['KEY_MANAGER', 'RATE_LIMITER', 'TOKEN_REVOCATION_STORE'],
 };

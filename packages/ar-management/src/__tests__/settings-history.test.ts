@@ -322,10 +322,14 @@ describe('Settings History Handlers', () => {
       const kv = c.env.KV as unknown as ReturnType<typeof createMockKV>;
 
       expect(response.status).toBe(200);
-      expect(kv.delete).toHaveBeenCalledWith('settings:oauth:mode');
-      expect(kv.delete).toHaveBeenCalledWith('settings:oauth:max_age');
+      // The snapshot's keys are written over, and only the keys it lacks are deleted, after.
       expect(kv.put).toHaveBeenCalledWith('settings:oauth:mode', 'strict');
       expect(kv.put).toHaveBeenCalledWith('settings:oauth:enabled', 'true');
+      expect(kv.delete).toHaveBeenCalledWith('settings:oauth:max_age');
+      expect(kv.delete).not.toHaveBeenCalledWith('settings:oauth:mode');
+      expect(Math.min(...vi.mocked(kv.delete).mock.invocationCallOrder)).toBeGreaterThan(
+        Math.max(...vi.mocked(kv.put).mock.invocationCallOrder)
+      );
       expect(vi.mocked(publishEvent)).toHaveBeenCalledWith(
         c,
         expect.objectContaining({ type: SETTINGS_EVENTS.ROLLBACK_STARTED })
