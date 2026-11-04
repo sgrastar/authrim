@@ -100,6 +100,9 @@ function getScimAuthRateLimitConfig(env: Env): typeof DEFAULT_SCIM_AUTH_RATE_LIM
   };
 }
 
+/** Retry-After while the atomic limiter is unavailable. */
+const SCIM_LIMITER_RETRY_SECONDS = 60;
+
 /**
  * Get client IP address from request (Cloudflare-aware)
  */
@@ -126,78 +129,39 @@ async function checkAuthRateLimit(
     return { allowed: true, remaining: config.maxFailedAttempts, retryAfter: 0 };
   }
 
+  // Counted only in the RATE_LIMITER Durable Object: a KV counter lets parallel failures read
+  // the same count, so without the limiter (or when it fails) authentication is refused.
+  const unavailable = { allowed: false, remaining: 0, retryAfter: SCIM_LIMITER_RETRY_SECONDS };
+  if (!env.RATE_LIMITER) {
+    log.error('RATE_LIMITER binding is not configured; refusing SCIM authentication', {});
+    return unavailable;
+  }
   try {
-    // Use RATE_LIMITER DO for atomic rate limiting (RPC)
-    if (env.RATE_LIMITER) {
-      const id = env.RATE_LIMITER.idFromName(`scim-auth:${clientIP}`);
-      const stub = env.RATE_LIMITER.get(id);
-      const now = Math.floor(Date.now() / 1000);
+    const id = env.RATE_LIMITER.idFromName(`scim-auth:${clientIP}`);
+    const stub = env.RATE_LIMITER.get(id);
+    const now = Math.floor(Date.now() / 1000);
 
-      const lockout = await stub.getStatusRpc(`${clientIP}:lockout`);
-      if (lockout && now < lockout.resetAt) {
-        return {
-          allowed: false,
-          remaining: 0,
-          retryAfter: Math.max(0, lockout.resetAt - now),
-        };
-      }
-
-      const record = await stub.getStatusRpc(clientIP);
-      const count = record && now < record.resetAt ? record.count : 0;
-      const retryAfter = count >= config.maxFailedAttempts ? record!.resetAt - now : 0;
-
+    const lockout = await stub.getStatusRpc(`${clientIP}:lockout`);
+    if (lockout && now < lockout.resetAt) {
       return {
-        allowed: count < config.maxFailedAttempts,
-        remaining: Math.max(0, config.maxFailedAttempts - count),
-        retryAfter: Math.max(0, retryAfter),
+        allowed: false,
+        remaining: 0,
+        retryAfter: Math.max(0, lockout.resetAt - now),
       };
     }
 
-    // Fallback to KV-based rate limiting
-    return await checkAuthRateLimitKV(env, clientIP, config, log);
+    const record = await stub.getStatusRpc(clientIP);
+    const count = record && now < record.resetAt ? record.count : 0;
+    const retryAfter = count >= config.maxFailedAttempts ? record!.resetAt - now : 0;
+
+    return {
+      allowed: count < config.maxFailedAttempts,
+      remaining: Math.max(0, config.maxFailedAttempts - count),
+      retryAfter: Math.max(0, retryAfter),
+    };
   } catch (error) {
     log.error('Rate limit check error', {}, error as Error);
-    // Fail open - allow request on rate limit error
-    return { allowed: true, remaining: config.maxFailedAttempts, retryAfter: 0 };
-  }
-}
-
-/**
- * KV-based fallback for auth rate limiting
- */
-async function checkAuthRateLimitKV(
-  env: Env,
-  clientIP: string,
-  config: ReturnType<typeof getScimAuthRateLimitConfig>,
-  log: Logger
-): Promise<{ allowed: boolean; remaining: number; retryAfter: number }> {
-  const now = Math.floor(Date.now() / 1000);
-  const key = `scim-auth-fail:${clientIP}`;
-
-  try {
-    const recordJson = await env.STATE_STORE?.get(key);
-
-    if (recordJson) {
-      const record = JSON.parse(recordJson) as { count: number; resetAt: number };
-
-      if (now < record.resetAt) {
-        // Window still active
-        const remaining = Math.max(0, config.maxFailedAttempts - record.count);
-        const retryAfter = record.count >= config.maxFailedAttempts ? record.resetAt - now : 0;
-
-        return {
-          allowed: record.count < config.maxFailedAttempts,
-          remaining,
-          retryAfter,
-        };
-      }
-    }
-
-    // No record or window expired - allowed
-    return { allowed: true, remaining: config.maxFailedAttempts, retryAfter: 0 };
-  } catch (error) {
-    log.error('KV rate limit check error', {}, error as Error);
-    return { allowed: true, remaining: config.maxFailedAttempts, retryAfter: 0 };
+    return unavailable;
   }
 }
 
@@ -215,48 +179,22 @@ async function recordFailedAttempt(
     return;
   }
 
-  const now = Math.floor(Date.now() / 1000);
-  const key = `scim-auth-fail:${clientIP}`;
-
   try {
-    if (env.RATE_LIMITER) {
-      const id = env.RATE_LIMITER.idFromName(`scim-auth:${clientIP}`);
-      const stub = env.RATE_LIMITER.get(id);
-      const result = await stub.incrementRpc(clientIP, {
-        windowSeconds: config.windowSeconds,
-        maxRequests: config.maxFailedAttempts,
-      });
-      if (result.current >= config.maxFailedAttempts) {
-        await stub.incrementRpc(`${clientIP}:lockout`, {
-          windowSeconds: config.lockoutSeconds,
-          maxRequests: 0,
-        });
-      }
+    if (!env.RATE_LIMITER) {
       return;
     }
-
-    const recordJson = await env.STATE_STORE?.get(key);
-    let record: { count: number; resetAt: number };
-
-    if (recordJson) {
-      record = JSON.parse(recordJson);
-      if (now >= record.resetAt) {
-        // Window expired, reset
-        record = { count: 1, resetAt: now + config.windowSeconds };
-      } else {
-        record.count++;
-      }
-    } else {
-      record = { count: 1, resetAt: now + config.windowSeconds };
-    }
-
-    if (record.count >= config.maxFailedAttempts) {
-      record.resetAt = now + config.lockoutSeconds;
-    }
-
-    await env.STATE_STORE?.put(key, JSON.stringify(record), {
-      expirationTtl: Math.max(config.windowSeconds, config.lockoutSeconds) + 60,
+    const id = env.RATE_LIMITER.idFromName(`scim-auth:${clientIP}`);
+    const stub = env.RATE_LIMITER.get(id);
+    const result = await stub.incrementRpc(clientIP, {
+      windowSeconds: config.windowSeconds,
+      maxRequests: config.maxFailedAttempts,
     });
+    if (result.current >= config.maxFailedAttempts) {
+      await stub.incrementRpc(`${clientIP}:lockout`, {
+        windowSeconds: config.lockoutSeconds,
+        maxRequests: 0,
+      });
+    }
   } catch (error) {
     log.error('Failed to record failed attempt', {}, error as Error);
   }
@@ -264,13 +202,12 @@ async function recordFailedAttempt(
 
 async function clearFailedAttempts(env: Env, clientIP: string, log: Logger): Promise<void> {
   try {
-    if (env.RATE_LIMITER) {
-      const id = env.RATE_LIMITER.idFromName(`scim-auth:${clientIP}`);
-      const stub = env.RATE_LIMITER.get(id);
-      await Promise.all([stub.resetRpc(clientIP), stub.resetRpc(`${clientIP}:lockout`)]);
+    if (!env.RATE_LIMITER) {
       return;
     }
-    await env.STATE_STORE?.delete(`scim-auth-fail:${clientIP}`);
+    const id = env.RATE_LIMITER.idFromName(`scim-auth:${clientIP}`);
+    const stub = env.RATE_LIMITER.get(id);
+    await Promise.all([stub.resetRpc(clientIP), stub.resetRpc(`${clientIP}:lockout`)]);
   } catch (error) {
     log.error('Failed to clear SCIM authentication attempts', {}, error as Error);
   }

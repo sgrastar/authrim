@@ -5,7 +5,7 @@ import type {
   ApprovalRequestApproval,
   Env,
 } from '@authrim/ar-lib-core';
-import { produceNotificationDelivery } from '@authrim/ar-lib-core';
+import { kvTtlSeconds, produceNotificationDelivery } from '@authrim/ar-lib-core';
 import { getApprovalNotificationCooldownMs } from './approval-policy-presets';
 import {
   ApprovalTransportChannelResolutionError,
@@ -126,12 +126,12 @@ export async function recordApprovalCibaNotificationDispatch(input: {
     notification_count: (input.previousState?.notification_count ?? 0) + 1,
     last_notified_at: now,
   };
-  const ttlSeconds = Math.max(1, Math.ceil((input.expiresAt - now) / 1000));
+  // Kept at least KV's 60-second minimum; the state only paces resends.
   await input.env.AUTHRIM_CONFIG.put(
     getDeliveryStateKey(input.artifactId),
     JSON.stringify(nextState),
     {
-      expirationTtl: ttlSeconds,
+      expirationTtl: kvTtlSeconds((input.expiresAt - now) / 1000),
     }
   );
   return nextState;

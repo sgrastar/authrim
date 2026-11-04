@@ -3991,11 +3991,16 @@ interface NotificationDeliveryEventRow {
   attempts: number | string;
 }
 
+/** The distinct values of a CSV query parameter (a repeated value is bound once). */
 function parseCsvQueryValues(value: string | undefined): string[] {
-  return (value ?? '')
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean);
+  return [
+    ...new Set(
+      (value ?? '')
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean)
+    ),
+  ];
 }
 
 function sqlPlaceholders(values: unknown[]): string {

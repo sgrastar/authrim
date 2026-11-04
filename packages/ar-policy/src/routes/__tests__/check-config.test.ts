@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createRateLimiterStub } from '../../__tests__/rate-limiter-stub';
 import { Hono } from 'hono';
 import type { CheckAuditServiceConfig } from '@authrim/ar-lib-core/services/check-audit-service';
 
@@ -44,6 +45,7 @@ function env(overrides: Record<string, unknown> = {}) {
     POLICY_API_SECRET: 'policy-secret',
     ENABLE_CHECK_API: 'true',
     TDB_POLICY_TEST_CORE: createDb(),
+    RATE_LIMITER: createRateLimiterStub(),
     ...overrides,
   };
 }

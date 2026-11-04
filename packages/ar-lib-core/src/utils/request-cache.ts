@@ -23,6 +23,7 @@ import { getClient } from './kv';
 import { loadTenantContract, loadClientContract } from './contract-loader';
 import { getTenantProfile } from '../types/contracts/tenant-profile';
 import { buildClientCacheModeKey, buildVersionedKey, getCacheTTL } from './cache-config';
+import { kvTtlSeconds } from './kv-ttl';
 import { buildKVKey } from './tenant-context';
 import { getTenantSettingsDocument } from './tenant-settings';
 import {
@@ -472,14 +473,16 @@ async function loadTenantProfileWithKVCache(
   }
 
   const cacheKey = buildVersionedKey('tenant-profile', tenantId);
-  const ttl = await getCacheTTL(env, 'tenant');
+  const ttl = kvTtlSeconds(await getCacheTTL(env, 'tenant'));
 
   try {
-    // Try to get from KV cache with edge memory cache
-    const cached = await kv.get(cacheKey, {
-      type: 'json',
-      cacheTtl: ttl, // Edge memory cache
-    });
+    // Try to get from KV cache with edge memory cache; an unreadable cache is a miss.
+    const cached = await kv
+      .get(cacheKey, {
+        type: 'json',
+        cacheTtl: ttl, // Edge memory cache
+      })
+      .catch(() => null);
 
     if (cached) {
       return cached as TenantProfile;

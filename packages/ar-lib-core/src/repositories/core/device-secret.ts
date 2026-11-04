@@ -432,14 +432,26 @@ export class DeviceSecretRepository extends BaseRepository<DeviceSecret> {
       return { ok: false, reason: 'limit_exceeded' };
     }
 
-    // Update usage tracking
+    // Update usage tracking. The limit is checked again in the UPDATE itself, so concurrent
+    // uses cannot both pass the read above and take the secret past its limit.
     const updateSql = `
       UPDATE device_secrets
       SET last_used_at = ?, use_count = use_count + 1, updated_at = ?
       WHERE id = ? AND tenant_id = ?
+        AND use_count < ? AND revoked_at IS NULL AND is_active = 1 AND expires_at > ?
     `;
 
-    await this.adapter.execute(updateSql, [now, now, entity.id, tenantId]);
+    const updated = await this.adapter.execute(updateSql, [
+      now,
+      now,
+      entity.id,
+      tenantId,
+      maxUseCount,
+      now,
+    ]);
+    if (updated.rowsAffected !== 1) {
+      return { ok: false, reason: 'limit_exceeded' };
+    }
 
     // Return updated entity
     return {

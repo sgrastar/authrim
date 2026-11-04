@@ -225,6 +225,8 @@ app.use('/token', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/token'],
+    // Fail closed rather than count in eventually consistent KV.
+    requireAtomic: true,
   })(c, next);
 });
 app.use('/token', tokenRequestDiagnosticCheckpoint('token_rate_limit'));
@@ -233,6 +235,8 @@ app.use('/oauth/admin-agent/token', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/oauth/admin-agent/token'],
+    // Fail closed rather than count in eventually consistent KV.
+    requireAtomic: true,
   })(c, next);
 });
 app.use('/oauth/admin-agent/delegation', async (c, next) => {
@@ -240,6 +244,8 @@ app.use('/oauth/admin-agent/delegation', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/oauth/admin-agent/delegation'],
+    // Fail closed rather than count in eventually consistent KV.
+    requireAtomic: true,
   })(c, next);
 });
 

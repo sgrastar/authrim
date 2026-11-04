@@ -39,6 +39,11 @@ export type { DatabaseSource } from './adapter-source';
 // Utilities
 export { escapeLikePattern } from './adapter';
 export {
+  D1_MAX_BOUND_PARAMETERS,
+  chunkForBoundParameters,
+  sqlPlaceholders,
+} from './bound-parameters';
+export {
   ensureDatabaseAdapter,
   ensureOptionalDatabaseAdapter,
   isDatabaseAdapter,

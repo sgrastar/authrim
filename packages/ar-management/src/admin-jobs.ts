@@ -35,6 +35,8 @@ import {
   type ObjectRepresentation,
   readR2ObjectTextWithLimit,
   ADMIN_ROLE_GROUPS,
+  chunkForBoundParameters,
+  sqlPlaceholders,
 } from '@authrim/ar-lib-core';
 import {
   loadCatalogObjectArtifact,
@@ -2141,16 +2143,18 @@ export async function adminJobsOrgBulkMembersHandler(c: Context<{ Bindings: Env 
     // in its own store: the job checks each member there and reports one it cannot find.
     const invalidUserIds: string[] = [];
     if (!usesRoutedAccountStorage(getTenantMetadataContextFromHono(c))) {
-      const userPlaceholders = options.user_ids.map(() => '?').join(',');
-      const existingUsers = await adapter.query<{ id: string }>(
-        `SELECT legacy_user_id as id
-           FROM identity_accounts
-          WHERE legacy_user_id IN (${userPlaceholders})
-            AND tenant_id = ?
-            AND ${options.action === 'add' ? "lifecycle_state = 'active'" : "lifecycle_state <> 'deleted'"}`,
-        [...options.user_ids, tenantId]
-      );
-      const existingUserIds = new Set(existingUsers.map((u) => u.id));
+      const existingUserIds = new Set<string>();
+      for (const chunk of chunkForBoundParameters(options.user_ids, 1)) {
+        const existingUsers = await adapter.query<{ id: string }>(
+          `SELECT legacy_user_id as id
+             FROM identity_accounts
+            WHERE legacy_user_id IN (${sqlPlaceholders(chunk.length)})
+              AND tenant_id = ?
+              AND ${options.action === 'add' ? "lifecycle_state = 'active'" : "lifecycle_state <> 'deleted'"}`,
+          [...chunk, tenantId]
+        );
+        for (const user of existingUsers) existingUserIds.add(user.id);
+      }
       invalidUserIds.push(...options.user_ids.filter((id) => !existingUserIds.has(id)));
     }
 
