@@ -26,6 +26,7 @@ import {
   isValidAuditSettingsTenantId,
   listTenantPIIConfigs,
   loadPIIConfigState,
+  syncLegacyPIIConfig,
   type PIIConfigState,
 } from '@authrim/ar-lib-core';
 import { requireAdminStepUp } from '../../admin-step-up-gate';
@@ -107,6 +108,8 @@ async function savePIIConfig(
     // after the gate (the save then fails its version check if it was created otherwise).
     await state.adopt?.();
     await state.manager.patch(AUDIT_PII_CATEGORY, scope, request, 'audit-pii-config');
+    // Runtime falls back to the legacy key while the projection is missing: keep it current.
+    await syncLegacyPIIConfig(c.env, tenantId);
     return null;
   } catch (error) {
     if (error instanceof ConflictError) {

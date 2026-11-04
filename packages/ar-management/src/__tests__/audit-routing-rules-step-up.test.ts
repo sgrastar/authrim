@@ -182,12 +182,16 @@ describe('audit retention routing rules need step-up', () => {
     });
   });
 
-  it('adopts the rules kept before the settings document, and leaves them alone', async () => {
+  it('adopts the rules kept before the settings document, and keeps the legacy key current', async () => {
     const { call, projected, legacy } = setup([rule()]);
-    // First read creates the document from the legacy value; nothing is lost.
+    // First save creates the document from the legacy value; nothing is lost.
     expect((await call('/rules', 'POST', rule({ name: 'second', priority: 20 }))).status).toBe(200);
     expect(projected()).toEqual([rule(), rule({ name: 'second', priority: 20 })]);
-    expect(JSON.parse(legacy.get(LEGACY_KEY) ?? '[]')).toEqual([rule()]);
+    // Runtime falls back to the legacy key while the projection is missing: it never lags behind.
+    expect(JSON.parse(legacy.get(LEGACY_KEY) ?? '[]')).toEqual([
+      rule(),
+      rule({ name: 'second', priority: 20 }),
+    ]);
   });
 
   it('refuses a change made after another one was saved, and writes nothing', async () => {

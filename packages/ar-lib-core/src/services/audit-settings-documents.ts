@@ -76,6 +76,61 @@ interface CanonicalRead {
 }
 
 /**
+ * Keep the legacy AUTHRIM_CONFIG key equal to the canonical document. Runtime readers fall back
+ * to it while the settings projection is missing (a projection still pending), so it must not
+ * hold an older value than the canonical document. The value written is always the canonical
+ * document's latest one (read from D1, not the caller's), and the document is read again after
+ * the write: if it moved meanwhile (a concurrent save), the latest value is written again, so the
+ * last write is the latest document. Best effort: if KV cannot be written, the projection the
+ * scheduled settings-projection retry repairs is what runtime reads first, so a stale legacy copy
+ * is read only until that projection exists.
+ */
+async function syncLegacyValue(
+  env: AuditSettingsEnv,
+  category: string,
+  scope: SettingScope,
+  documentKey: string,
+  legacyKey: string
+): Promise<void> {
+  if (!env.AUTHRIM_CONFIG) return;
+  const { store } = createAuditSettingsManager(env);
+  try {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const before = await store.load(category, scope);
+      const value = before ? before.data[documentKey] : undefined;
+      if (value === undefined || value === null) await env.AUTHRIM_CONFIG.delete(legacyKey);
+      else await env.AUTHRIM_CONFIG.put(legacyKey, JSON.stringify(value));
+      const after = await store.load(category, scope);
+      if ((after?.version ?? null) === (before?.version ?? null)) return;
+    }
+  } catch {
+    // See above: the repaired projection takes over from a stale legacy copy.
+  }
+}
+
+/** After saving the routing rules: keep the legacy key in step (see `syncLegacyValue`). */
+export function syncLegacyAuditRoutingRules(env: AuditSettingsEnv): Promise<void> {
+  return syncLegacyValue(
+    env,
+    AUDIT_ROUTING_CATEGORY,
+    PLATFORM,
+    AUDIT_ROUTING_RULES_KEY,
+    LEGACY_AUDIT_ROUTING_RULES_KV_KEY
+  );
+}
+
+/** After saving (or resetting) a tenant's PII configuration: keep the legacy key in step. */
+export function syncLegacyPIIConfig(env: AuditSettingsEnv, tenantId: string): Promise<void> {
+  return syncLegacyValue(
+    env,
+    AUDIT_PII_CATEGORY,
+    { type: 'tenant', id: tenantId },
+    AUDIT_PII_CONFIG_KEY,
+    `${LEGACY_PII_CONFIG_KV_PREFIX}${tenantId}`
+  );
+}
+
+/**
  * The document as it stands: the canonical one, else what is in effect without it (the settings
  * KV projection, else the legacy AUTHRIM_CONFIG value). Nothing is written. A legacy value that
  * cannot be parsed throws (it is unreadable, not absent).

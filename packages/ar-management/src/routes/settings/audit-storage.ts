@@ -11,6 +11,7 @@ import {
   createRuntimeProfileRegistryFromEnv,
   createRuntimeProfileWriterFromEnv,
   loadAuditRoutingState,
+  syncLegacyAuditRoutingRules,
   loadEnvironmentProfileDefaultsFromEnv,
   getTenantIdFromContext,
   ProfileProjectionDisagreementError,
@@ -505,6 +506,8 @@ async function saveRoutingRules(
       request,
       'audit-storage'
     );
+    // Runtime falls back to the legacy key while the projection is missing: keep it current.
+    await syncLegacyAuditRoutingRules(c.env);
     return null;
   } catch (error) {
     if (error instanceof ConflictError)

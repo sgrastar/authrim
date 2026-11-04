@@ -246,6 +246,7 @@ function destinationStepUpTenant(
 async function destinationStepUpState(value: {
   scopeType: string;
   scopeId: string;
+  destinationKind: string;
   provider: string;
   providerConfig: Record<string, unknown>;
   allowedTenantIds: string[] | null;
@@ -261,6 +262,7 @@ async function destinationStepUpState(value: {
   return {
     scope_type: value.scopeType,
     scope_id: value.scopeId,
+    destination_kind: value.destinationKind,
     provider: value.provider,
     provider_config_sha256: await digestOf(value.providerConfig),
     allowed_tenant_ids: sortedOrNull(value.allowedTenantIds),
@@ -5551,6 +5553,7 @@ destinationsRouter.patch('/:id', async (c) => {
     const currentState = await destinationStepUpState({
       scopeType: current.scope_type,
       scopeId: current.scope_id,
+      destinationKind: current.destination_kind,
       provider: current.provider,
       providerConfig: parseDestinationProviderConfig(current.provider_config),
       allowedTenantIds: parseDestinationStringArray(
@@ -5580,7 +5583,9 @@ destinationsRouter.patch('/:id', async (c) => {
       const refused = await requireLoggingStepUp(
         c,
         deliveryChanged ? 'webhook.destination.update' : 'audit.retention.shorten',
-        destinationStepUpTenant(c, value.scopeType, value.scopeId),
+        // The policy of the tenant the destination belongs to now (the stored row), not of a
+        // scope the request names; a move to another scope is bound in the params.
+        destinationStepUpTenant(c, current.scope_type, current.scope_id),
         {
           kind: deliveryChanged ? 'destination.update' : 'destination.retention',
           ...nextState,
@@ -6949,7 +6954,8 @@ loggingPoliciesRouter.patch('/fallbacks/:fallback_id', async (c) => {
       const refused = await requireLoggingStepUp(
         c,
         'webhook.destination.update',
-        tenantId ?? getTenantIdFromContext(c),
+        // The stored fallback's tenant (a move to another scope is bound in the params).
+        destinationStepUpTenant(c, current.scope_type, current.scope_id),
         {
           kind: 'logging.fallback.update',
           scope_type: parsed.value.scopeType,
@@ -7120,7 +7126,8 @@ async function handleLoggingDestinationOverridePatch(
       const refused = await requireLoggingStepUp(
         c,
         'webhook.destination.update',
-        value.tenantId ?? getTenantIdFromContext(c),
+        // The stored row's tenant (a move to another tenant is bound in the params).
+        current.tenant_id ?? getTenantIdFromContext(c),
         {
           kind: 'logging.assignment.update',
           tenant_id: value.tenantId,

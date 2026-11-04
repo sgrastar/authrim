@@ -638,6 +638,26 @@ describe('Audit PII Configuration API', () => {
       expect(body.config.eventLogRetentionDays).toBe(200);
     });
 
+    it('keeps the legacy key equal to the saved configuration, and removes it on reset', async () => {
+      const f = createTestApp({
+        kv: createMockKV({
+          'pii_config:tenant_1': JSON.stringify({
+            ...DEFAULT_PII_CONFIG,
+            eventLogRetentionDays: 200,
+          }),
+        }),
+      });
+      expect((await put(f.app, f.mockEnv, { eventLogRetentionDays: 300 })).status).toBe(200);
+      // Runtime falls back to this key while the projection is missing: it must not lag behind.
+      const legacy = JSON.parse((await f.mockKV.get('pii_config:tenant_1')) ?? '{}') as {
+        eventLogRetentionDays?: number;
+      };
+      expect(legacy.eventLogRetentionDays).toBe(300);
+
+      expect((await f.app.request(url, { method: 'DELETE' }, f.mockEnv)).status).toBe(200);
+      expect(await f.mockKV.get('pii_config:tenant_1')).toBeNull();
+    });
+
     it('lists adopted and not yet adopted configurations', async () => {
       const f = createTestApp({
         kv: createMockKV({
