@@ -35,6 +35,7 @@ function stores() {
     accountAuthentication: accountAuthentication,
     authorizationCodes: authorizationCodes,
     rateLimit: { check: vi.fn() } as unknown as PostgresRateLimitStore,
+    replayGuard: { record: vi.fn(), isRecorded: vi.fn() },
   });
   return { state, accountAuthentication, authorizationCodes, ports };
 }

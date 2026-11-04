@@ -14,6 +14,7 @@ import { createLogger } from './logger';
 import { parseBasicAuth } from './basic-auth';
 import { parseToken } from './jwt';
 import { getDPoPJTIStoreForNewJTI } from './dpop-jti-sharding';
+import { recordRuntimeReplay } from './jti-replay-guard';
 
 const log = createLogger().module('CLIENT_AUTH');
 const MAX_CLIENT_ASSERTION_SIZE_BYTES = 16 * 1024;
@@ -725,6 +726,29 @@ export async function validateClientAssertion(
 
     if (options.replayProtection) {
       const { env, tenantId } = options.replayProtection;
+      const ttlSeconds = Math.max(1, claims.exp - now + Math.max(0, clockSkewSeconds));
+      if (env.AUTH_RUNTIME_PORTS) {
+        // Keyed by client too: the Durable Object path below gets that from its per-client shard.
+        const outcome = await recordRuntimeReplay(env, {
+          tenantId,
+          key: `client-assertion:${JSON.stringify([client.client_id, claims.jti])}`,
+          ttlSeconds,
+        }).catch((error: unknown) => {
+          log.error('Client assertion replay store unavailable', {}, error as Error);
+          return 'unavailable' as const;
+        });
+        if (outcome !== 'recorded') {
+          return {
+            valid: false,
+            error: outcome === 'replayed' ? 'invalid_client' : 'server_error',
+            error_description:
+              outcome === 'replayed'
+                ? 'Client assertion replay detected'
+                : 'Client assertion replay protection unavailable',
+          };
+        }
+        return { valid: true, client_id: client.client_id };
+      }
       const { stub } = await getDPoPJTIStoreForNewJTI(
         env,
         tenantId,
@@ -738,7 +762,7 @@ export async function validateClientAssertion(
           jti: `client-assertion:${claims.jti}`,
           client_id: client.client_id,
           iat: claims.iat ?? now,
-          ttl: Math.max(1, claims.exp - now + Math.max(0, clockSkewSeconds)),
+          ttl: ttlSeconds,
         }),
       });
       if (!replayResponse.ok) {

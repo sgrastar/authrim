@@ -258,6 +258,7 @@ export function createAwsSamlTenant(input: CreateAwsSamlTenantInput): AwsTenantR
     accountAuthentication: stores.accountAuthentication,
     authorizationCodes: stores.authorizationCodes,
     rateLimit: stores.rateLimit,
+    replayGuard: stores.replayGuard,
   });
   const saml = createSAMLRuntimePorts({
     state,
