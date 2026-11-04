@@ -204,8 +204,8 @@ function freshUntil(verifiedAt: number | undefined, now: number): number | null 
 }
 
 /**
- * Which factors a human session still needs for a level. L2's second factor has no evidence yet
- * (its enrollment comes later), so L2 is never met until then.
+ * Which factors a human session still needs for a level. L1 needs a fresh passkey; L2 also needs
+ * a fresh registered second factor. The evidence holds until the older of the two goes stale.
  */
 export function evaluateAdminStepUpEvidence(
   auth: AdminAuthContext,
@@ -216,10 +216,15 @@ export function evaluateAdminStepUpEvidence(
     auth.mfaVerified === true ? freshUntil(auth.authenticationTimeMs, now) : null;
   const missing: AdminStepUpFactor[] = [];
   if (passkeyUntil === null) missing.push('passkey');
-  if (level === 'L2') missing.push('second_factor');
-  return missing.length === 0 && passkeyUntil !== null
-    ? { missing, freshUntil: passkeyUntil }
-    : { missing };
+  let until = passkeyUntil;
+  if (level === 'L2') {
+    const secondFactorUntil = auth.secondFactorId
+      ? freshUntil(auth.secondFactorVerifiedAtMs, now)
+      : null;
+    if (secondFactorUntil === null) missing.push('second_factor');
+    else if (until !== null) until = Math.min(until, secondFactorUntil);
+  }
+  return missing.length === 0 && until !== null ? { missing, freshUntil: until } : { missing };
 }
 
 // =============================================================================
@@ -339,6 +344,11 @@ export async function createAdminStepUpRequirement(
 export interface IssueAdminStepUpReceiptInput {
   stepUpId: string;
   auth: AdminAuthContext;
+  /**
+   * Whether the session's second factor is still registered and not revoked, checked at issuance
+   * for L2 (the session row was read before this request's work began).
+   */
+  isSecondFactorActive?: (adminUserId: string, secondFactorId: string) => Promise<boolean>;
   now?: number;
 }
 
@@ -386,6 +396,19 @@ export async function issueAdminStepUpReceipt(
       'Fresh evidence is required for this step-up',
       evidence.missing
     );
+  }
+  if (binding.level === 'L2') {
+    const factorId = auth.secondFactorId;
+    if (!factorId || !input.isSecondFactorActive) {
+      throw new AdminStepUpError('step_up_evidence_required', 'Second factor is required', [
+        'second_factor',
+      ]);
+    }
+    if (!(await input.isSecondFactorActive(auth.userId, factorId))) {
+      throw new AdminStepUpError('step_up_evidence_required', 'Second factor was revoked', [
+        'second_factor',
+      ]);
+    }
   }
 
   try {

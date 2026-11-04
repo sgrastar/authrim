@@ -69,6 +69,8 @@ export type ChallengeType =
   | 'passkey_reauth' // Account Page passkey re-authentication challenge
   | 'account_email_reauth' // Account Page email code re-authentication challenge
   | 'admin_passkey_reauth' // Admin console in-session passkey re-authentication challenge
+  | 'admin_second_factor_registration' // Admin step-up second factor (WebAuthn) registration
+  | 'admin_second_factor_reauth' // Admin step-up second factor (WebAuthn) verification
   | 'admin_step_up_requirement' // An admin operation refused for want of an L2 receipt
   | 'admin_step_up_receipt' // Single-use L2 receipt for one admin operation
   | 'external_idp_link_intent' // Account Page request to link an external account (one use)

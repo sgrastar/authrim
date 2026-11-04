@@ -124,6 +124,10 @@ export interface AdminAuthContext {
   authenticationTimeMs?: number;
   /** Credential ID (base64url) of the passkey verified at that instant, when recorded. */
   passkeyCredentialId?: string;
+  /** Registered second factor (admin_second_factors.id) the session last verified. */
+  secondFactorId?: string;
+  /** When that second factor was verified, in epoch milliseconds. */
+  secondFactorVerifiedAtMs?: number;
   /**
    * The admin session's own tenant (session auth). `tenantId` becomes the requested tenant on a
    * tenant route; this stays where the session and its evidence live.

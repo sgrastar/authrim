@@ -229,6 +229,12 @@ const packageSpecs = [
         },
       },
       {
+        file: 'packages/ar-management/src/routes/admin-management/my-second-factors.ts',
+        receiverPrefixes: {
+          mySecondFactorsRouter: '/api/admin/me/second-factors',
+        },
+      },
+      {
         file: 'packages/ar-management/src/routes/admin-management/operational-logs.ts',
         receiverPrefixes: {
           operationalLogsRouter: '/api/admin/operational-logs',

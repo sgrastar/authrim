@@ -231,6 +231,16 @@ function createTestApp(
     return c.json({ success: true, adminAuth });
   });
 
+  app.post('/api/admin/me/reauth/second-factor/verify', (c) => {
+    const adminAuth = (c as unknown as { get(key: string): unknown }).get('adminAuth');
+    return c.json({ success: true, adminAuth });
+  });
+
+  app.post('/api/admin/me/second-factors/webauthn/options', (c) => {
+    const adminAuth = (c as unknown as { get(key: string): unknown }).get('adminAuth');
+    return c.json({ success: true, adminAuth });
+  });
+
   app.post(`/api/admin/agent-login-handoffs/alh_${'a'.repeat(32)}/approve`, (c) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const adminAuth = (c as any).get('adminAuth');
@@ -1684,6 +1694,39 @@ describe('adminAuthMiddleware', () => {
       }
     );
 
+    it.each([
+      [
+        'a verified second factor',
+        { second_factor_id: 'sf-1', second_factor_verified_at: 7_000 },
+        { secondFactorId: 'sf-1', secondFactorVerifiedAtMs: 7_000 },
+      ],
+      ['no second factor', {}, {}],
+      ['a factor without a verification time', { second_factor_id: 'sf-1' }, {}],
+    ])('reports %s from the session', async (_label, columns, expected) => {
+      const userId = 'admin-user-second-factor';
+      const db = createMockDB({
+        session: { ...createValidSession(userId), mfa_verified: 1, ...columns },
+        adminUser: createValidAdminUser(userId),
+        roles: createAdminRoles(['ar_tenant_admin']),
+      });
+      const app = createTestApp(createMockEnv({ DB: db }));
+
+      const response = await app.fetch(
+        new Request('http://localhost/api/admin/test', {
+          headers: { Cookie: `authrim_admin_session=${VALID_SESSION_ID}` },
+        })
+      );
+
+      expect(response.status).toBe(200);
+      const { adminAuth } = await response.json<{
+        adminAuth: { secondFactorId?: string; secondFactorVerifiedAtMs?: number };
+      }>();
+      expect({
+        secondFactorId: adminAuth.secondFactorId,
+        secondFactorVerifiedAtMs: adminAuth.secondFactorVerifiedAtMs,
+      }).toEqual({ secondFactorId: undefined, secondFactorVerifiedAtMs: undefined, ...expected });
+    });
+
     it('should include inherited admin role permissions in the session auth context', async () => {
       const userId = 'admin-user-inherited';
       const roles = [
@@ -2267,6 +2310,8 @@ describe('adminAuthMiddleware', () => {
       const tenantOperation = await call('GET', '/api/admin/test');
       const reauth = await call('POST', '/api/admin/me/reauth/passkey/verify');
       const receipt = await call('POST', '/api/admin/me/step-up/receipts');
+      const secondFactor = await call('POST', '/api/admin/me/reauth/second-factor/verify');
+      const enrollment = await call('POST', '/api/admin/me/second-factors/webauthn/options');
 
       expect(tenantOperation.status).toBe(200);
       // A tenant route acts on the selected tenant but still knows where the session lives.
@@ -2281,6 +2326,10 @@ describe('adminAuthMiddleware', () => {
         tenantId: 'default',
         sessionTenantId: 'default',
       });
+      expect(secondFactor.status).toBe(200);
+      expect((await secondFactor.json<Body>()).adminAuth.tenantId).toBe('default');
+      expect(enrollment.status).toBe(200);
+      expect((await enrollment.json<Body>()).adminAuth.tenantId).toBe('default');
     });
 
     it('treats only a bounded central login-handoff approval path as platform-scoped', async () => {
