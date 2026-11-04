@@ -8,6 +8,8 @@ import {
   type ControlR2BucketMetricView,
   type ControlR2BucketBinding,
   CONTROL_R2_BUCKET_BINDINGS,
+  chunkForBoundParameters,
+  sqlPlaceholders,
 } from '@authrim/ar-lib-core';
 import { cleanupOrphanedUserImportUploads } from './user-import-jobs';
 
@@ -639,15 +641,17 @@ export async function cleanupOrphanedAuditTransientPayloads(
       .filter((object) => object.uploaded instanceof Date && object.uploaded.getTime() <= cutoff)
       .map((object) => object.key);
     if (prefixes[cursor.prefixIndex] === 'message-jobs/' && expiredKeys.length > 0) {
-      const placeholders = expiredKeys.map(() => '?').join(', ');
-      const activeRows = await admin.query<{ payload_object_ref: string }>(
-        `SELECT payload_object_ref
-         FROM logging_message_jobs
-         WHERE payload_object_ref IN (${placeholders})
-           AND status IN ('queued', 'claimed', 'running', 'retrying', 'blocked')`,
-        expiredKeys
-      );
-      const activeRefs = new Set(activeRows.map((row) => row.payload_object_ref));
+      const activeRefs = new Set<string>();
+      for (const chunk of chunkForBoundParameters(expiredKeys)) {
+        const activeRows = await admin.query<{ payload_object_ref: string }>(
+          `SELECT payload_object_ref
+           FROM logging_message_jobs
+           WHERE payload_object_ref IN (${sqlPlaceholders(chunk.length)})
+             AND status IN ('queued', 'claimed', 'running', 'retrying', 'blocked')`,
+          chunk
+        );
+        for (const row of activeRows) activeRefs.add(row.payload_object_ref);
+      }
       retainedActive += activeRefs.size;
       expiredKeys = expiredKeys.filter((key) => !activeRefs.has(key));
     }

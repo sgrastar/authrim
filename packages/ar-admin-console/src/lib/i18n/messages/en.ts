@@ -7,6 +7,7 @@ import { enAccountFlows } from './account-flows/en';
 import { enSchemaSetting } from './schema-setting/en';
 import { enTenantGeneral } from './tenant-general/en';
 import { enSecurityKeys } from './security-keys/en';
+import { enNotices } from './notices/en';
 
 export const en = {
 	...enSettings,
@@ -17,6 +18,7 @@ export const en = {
 	...enSchemaSetting,
 	...enTenantGeneral,
 	...enSecurityKeys,
+	...enNotices,
 	'app.adminLabel': 'Admin',
 	'app.env.dev': 'Development',
 	'app.env.prod': 'Production',

@@ -441,6 +441,8 @@ app.use('/authorize', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/authorize'],
+    // Fail closed rather than count in eventually consistent KV.
+    requireAtomic: true,
   })(c, next);
 });
 app.use('/authorize', authRequestDiagnosticCheckpoint('auth_rate_limit'));
@@ -450,6 +452,8 @@ app.use('/par', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/par'],
+    // Fail closed rather than count in eventually consistent KV.
+    requireAtomic: true,
   })(c, next);
 });
 
@@ -458,6 +462,8 @@ app.use('/oauth/admin-agent/par', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/oauth/admin-agent/par'],
+    // Fail closed rather than count in eventually consistent KV.
+    requireAtomic: true,
   })(c, next);
 });
 
@@ -466,6 +472,8 @@ app.use('/oauth/admin-agent/authorize', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/oauth/admin-agent/authorize'],
+    // Fail closed rather than count in eventually consistent KV.
+    requireAtomic: true,
   })(c, next);
 });
 
@@ -474,6 +482,8 @@ app.use('/oauth/admin-agent/login-handoff/*', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/oauth/admin-agent/login-handoff/consume'],
+    // Fail closed rather than count in eventually consistent KV.
+    requireAtomic: true,
   })(c, next);
 });
 

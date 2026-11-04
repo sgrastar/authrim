@@ -4,6 +4,7 @@ import { PostgresTransientStateStore, type PostgresQueryClient } from './postgre
 import { PostgresAccountAuthStateStore } from './postgres-account-auth-state';
 import { PostgresAuthorizationCodeStore } from './postgres-authorization-code';
 import { PostgresRateLimitStore } from './postgres-rate-limit';
+import { PostgresReplayGuardStore } from './postgres-replay-guard';
 import { PostgresPersistentNameIDRegistry } from './postgres-persistent-nameid';
 import {
   DynamoStateTable,
@@ -11,6 +12,7 @@ import {
   DynamoAccountAuthStateStore,
   DynamoAuthorizationCodeStore,
   DynamoRateLimitStore,
+  DynamoReplayGuardStore,
   DynamoPersistentNameIDRegistry,
   type DynamoStateOptions,
 } from './dynamodb-state';
@@ -26,6 +28,7 @@ export function createAwsStateStores(
       accountAuthentication: new PostgresAccountAuthStateStore(input.db),
       authorizationCodes: new PostgresAuthorizationCodeStore(input.db),
       rateLimit: new PostgresRateLimitStore(input.db),
+      replayGuard: new PostgresReplayGuardStore(input.db),
       persistentNameIDs: new PostgresPersistentNameIDRegistry(input.db),
     };
   }
@@ -36,6 +39,7 @@ export function createAwsStateStores(
     accountAuthentication: new DynamoAccountAuthStateStore(table),
     authorizationCodes: new DynamoAuthorizationCodeStore(table),
     rateLimit: new DynamoRateLimitStore(table),
+    replayGuard: new DynamoReplayGuardStore(table),
     persistentNameIDs: new DynamoPersistentNameIDRegistry(table),
   };
 }

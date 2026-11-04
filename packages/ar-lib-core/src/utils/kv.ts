@@ -18,6 +18,7 @@ import { readClientMinimumIAL } from '../services/identity-assurance';
 import { getRevocationStoreByJti } from './token-revocation-sharding';
 import type { DatabaseAdapter, PIIStatus } from '../db/adapter';
 import { createLogger } from './logger';
+import { KV_MIN_TTL_SECONDS } from './kv-ttl';
 import { createCompatibilityError } from './errors';
 import { readResponseTextWithLimit } from './url-security';
 import { CanonicalRuntimeUserStore } from '../repositories/identity';
@@ -27,7 +28,10 @@ const DEFAULT_USER_CACHE_TTL_SECONDS = 3600;
 /** Consent cache lifetime unless CONSENT_CACHE_TTL sets one (consent changes rarely). */
 const DEFAULT_CONSENT_CACHE_TTL_SECONDS = 86400;
 
-/** A cache lifetime from its environment variable (whole positive seconds), else the default. */
+/**
+ * A cache lifetime from its environment variable (whole positive seconds), else the default.
+ * One under KV's 60-second minimum turns the cache off rather than lengthening it.
+ */
 function cacheTtlSeconds(value: string | undefined, fallback: number): number {
   const parsed = value ? parseInt(value, 10) : NaN;
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
@@ -346,8 +350,14 @@ export async function getCachedUser(
     return await getUserFromD1(tenantId, userId, sources);
   }
 
+  // The cache lifetime (TTL from USER_CACHE_TTL, else the default; shorter for PII). One under
+  // KV's 60-second minimum turns the cache off for reads too, so no entry outlives it.
+  const userCacheTTL = cacheTtlSeconds(env.USER_CACHE_TTL, DEFAULT_USER_CACHE_TTL_SECONDS);
+  const effectiveCacheTTL =
+    piiCacheMode === 'encrypted_short_ttl' ? getPiiCacheTtl(env, userCacheTTL) : userCacheTTL;
+
   // If USER_CACHE is not configured, fall back to D1 directly
-  if (!env.USER_CACHE) {
+  if (!env.USER_CACHE || effectiveCacheTTL < KV_MIN_TTL_SECONDS) {
     return await getUserFromD1(tenantId, userId, sources);
   }
 
@@ -378,9 +388,8 @@ export async function getCachedUser(
     return null;
   }
 
-  // Step 3: Populate USER_CACHE (TTL from USER_CACHE_TTL, else the default)
+  // Step 3: Populate USER_CACHE
   try {
-    const userCacheTTL = cacheTtlSeconds(env.USER_CACHE_TTL, DEFAULT_USER_CACHE_TTL_SECONDS);
     if (piiCacheMode === 'encrypted_short_ttl') {
       const encrypted = await encryptCachedUser(
         env,
@@ -392,12 +401,12 @@ export async function getCachedUser(
       );
       if (encrypted) {
         await env.USER_CACHE.put(cacheKey, JSON.stringify(encrypted), {
-          expirationTtl: getPiiCacheTtl(env, userCacheTTL),
+          expirationTtl: effectiveCacheTTL,
         });
       }
     } else {
       await env.USER_CACHE.put(cacheKey, JSON.stringify(user), {
-        expirationTtl: userCacheTTL,
+        expirationTtl: effectiveCacheTTL,
       });
     }
   } catch {
@@ -600,8 +609,12 @@ export async function getCachedConsent(
    */
   options: { refresh?: boolean } = {}
 ): Promise<CachedConsent | null> {
+  // TTL from CONSENT_CACHE_TTL, else the default. One under KV's 60-second minimum turns the
+  // cache off for reads too, so no entry outlives it.
+  const consentCacheTTL = cacheTtlSeconds(env.CONSENT_CACHE_TTL, DEFAULT_CONSENT_CACHE_TTL_SECONDS);
+
   // If CONSENT_CACHE is not configured, fall back to D1 directly
-  if (!env.CONSENT_CACHE) {
+  if (!env.CONSENT_CACHE || consentCacheTTL < KV_MIN_TTL_SECONDS) {
     return await getConsentFromDatabase(userId, clientId, tenantId, coreDbSource);
   }
 
@@ -636,12 +649,8 @@ export async function getCachedConsent(
     return null;
   }
 
-  // Step 3: Populate CONSENT_CACHE (TTL from CONSENT_CACHE_TTL, else the default)
+  // Step 3: Populate CONSENT_CACHE
   try {
-    const consentCacheTTL = cacheTtlSeconds(
-      env.CONSENT_CACHE_TTL,
-      DEFAULT_CONSENT_CACHE_TTL_SECONDS
-    );
     await env.CONSENT_CACHE.put(cacheKey, JSON.stringify(consent), {
       expirationTtl: consentCacheTTL,
     });

@@ -9,8 +9,17 @@ const mockAdapter = vi.hoisted(() => {
     queryOne: vi.fn(),
     execute: vi.fn(),
     transaction: vi.fn(),
+    batch: vi.fn(),
   };
   adapter.transaction.mockImplementation(async (callback) => callback(adapter));
+  // A batch runs its statements as execute would (each answered by the execute mock).
+  adapter.batch.mockImplementation(async (statements: { sql: string; params?: unknown[] }[]) => {
+    const results: unknown[] = [];
+    for (const statement of statements) {
+      results.push(await adapter.execute(statement.sql, statement.params));
+    }
+    return results;
+  });
   return adapter;
 });
 

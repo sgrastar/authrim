@@ -11,7 +11,8 @@
 	import type { ScopeOption } from '#lib/shell/ScopeSwitcher.svelte';
 	import EmptyState from '#lib/ui/patterns/EmptyState.svelte';
 	import Page from '#lib/ui/templates/Page.svelte';
-	import { mockAccount, mockNotifications, mockScopes } from './fixtures/shell';
+	import { mockNoticeInbox } from './fixtures/notices';
+	import { mockAccount, mockScopes } from './fixtures/shell';
 	import { consoleToMockHref, DEFAULT_PERSONA, mockToConsolePath, withPersona } from './paths';
 	import { mockPageFor } from './registry';
 
@@ -42,8 +43,13 @@
 	const loader = $derived(known ? mockPageFor(consolePath) : undefined);
 
 	let tenant = $state('acme');
-	let dismissed = $state<string[]>([]);
-	const notifications = $derived(mockNotifications.filter((item) => !dismissed.includes(item.id)));
+	// The header reads the same in-memory notices as the Notifications page.
+	// Read again for another persona: platform notices are only a platform admin's.
+	$effect(() => {
+		void personaId;
+		void mockNoticeInbox.refresh({ reset: true });
+	});
+	$effect(() => mockNoticeInbox.start());
 	const currentScopeId = $derived(location.kind === 'platform' ? 'platform' : tenant);
 
 	async function selectScope(option: ScopeOption) {
@@ -110,8 +116,8 @@
 		account={mockAccount}
 		onsignout={() => {}}
 		{standalone}
-		{notifications}
-		ondismiss={(id) => (dismissed = [...dismissed, id])}
+		notifications={mockNoticeInbox.notifications}
+		ondismiss={(id) => mockNoticeInbox.dismiss(id)}
 		{banner}
 	>
 		{#key consolePath}

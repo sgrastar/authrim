@@ -44,6 +44,8 @@ import {
   resolveTenantAssignedDatabaseSourcesFromRegistry,
   CanonicalRuntimeUserStore,
   BUILTIN_PROFILE_CLAIM_KEYS,
+  chunkForBoundParameters,
+  sqlPlaceholders,
 } from '@authrim/ar-lib-core';
 import { CUSTOM_CLAIM_PRESETS, type CustomClaimPresetField } from './custom-claim-presets';
 import { ASSURANCE_IMPORT_COLUMNS } from './admin-shared';
@@ -578,19 +580,18 @@ function parseUsageMetadata(value: string | null | undefined): Record<string, un
   return null;
 }
 
+/** SQLite's default (BINARY) text order. */
+function compareSqlText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 async function listStoredFieldUsageBindings(
   adapter: DatabaseAdapter,
   tenantId: string,
   fieldKeys?: string[]
 ): Promise<FieldUsageBindingView[]> {
   try {
-    const params: unknown[] = [tenantId];
-    let fieldFilter = '';
-    if (fieldKeys && fieldKeys.length > 0) {
-      fieldFilter = ` AND field_key IN (${fieldKeys.map(() => '?').join(', ')})`;
-      params.push(...fieldKeys);
-    }
-    const rows = await adapter.query<{
+    type UsageRow = {
       id: string;
       field_key: string;
       binding_type: string;
@@ -602,14 +603,31 @@ async function listStoredFieldUsageBindings(
       is_active: number;
       created_at: number;
       updated_at: number;
-    }>(
-      `SELECT id, field_key, binding_type, binding_id, protection, reason, source,
-              metadata_json, is_active, created_at, updated_at
-         FROM field_usage_bindings
-        WHERE tenant_id = ? AND is_active = TRUE${fieldFilter}
-        ORDER BY binding_type ASC, binding_id ASC`,
-      params
-    );
+    };
+    // The keys go in chunks (D1 binds at most 100 parameters), merged in one order.
+    const keyChunks: (string[] | null)[] =
+      fieldKeys && fieldKeys.length > 0 ? chunkForBoundParameters(fieldKeys, 1) : [null];
+    const rows: UsageRow[] = [];
+    for (const keys of keyChunks) {
+      const fieldFilter = keys ? ` AND field_key IN (${sqlPlaceholders(keys.length)})` : '';
+      rows.push(
+        ...(await adapter.query<UsageRow>(
+          `SELECT id, field_key, binding_type, binding_id, protection, reason, source,
+                  metadata_json, is_active, created_at, updated_at
+             FROM field_usage_bindings
+            WHERE tenant_id = ? AND is_active = TRUE${fieldFilter}
+            ORDER BY binding_type ASC, binding_id ASC`,
+          [tenantId, ...(keys ?? [])]
+        ))
+      );
+    }
+    if (keyChunks.length > 1) {
+      rows.sort(
+        (left, right) =>
+          compareSqlText(left.binding_type, right.binding_type) ||
+          compareSqlText(left.binding_id, right.binding_id)
+      );
+    }
     return rows.map((row) => ({
       id: row.id,
       field_key: row.field_key,

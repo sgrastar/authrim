@@ -10,6 +10,7 @@ import type { AdminAuthContext, Env } from '@authrim/ar-lib-core';
 import {
   ADMIN_PERMISSIONS,
   AdminLoggingControlRepository,
+  AdminNoticeRepository,
   AR_ERROR_CODES,
   InternalNotificationEventRepository,
   OBJECT_CLASSES,
@@ -3926,6 +3927,15 @@ export const notificationsRouter = new Hono<{
   Variables: { adminAuth?: AdminAuthContext };
 }>();
 
+/** The console notice of a resolved event leaves the header too. Best effort. */
+async function resolveEventNotices(adapter: DatabaseAdapter, eventId: string): Promise<void> {
+  try {
+    await new AdminNoticeRepository(adapter).resolveForSuppressedEvents([eventId]);
+  } catch {
+    // The event is resolved either way; a stale notice can still be resolved from the console.
+  }
+}
+
 const NOTIFICATION_CENTER_CATEGORIES = [
   'storage_registry_security',
   'storage_registry_health',
@@ -3991,11 +4001,16 @@ interface NotificationDeliveryEventRow {
   attempts: number | string;
 }
 
+/** The distinct values of a CSV query parameter (a repeated value is bound once). */
 function parseCsvQueryValues(value: string | undefined): string[] {
-  return (value ?? '')
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean);
+  return [
+    ...new Set(
+      (value ?? '')
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean)
+    ),
+  ];
 }
 
 function sqlPlaceholders(values: unknown[]): string {
@@ -8420,6 +8435,7 @@ loggingPoliciesRouter.post('/notifications/:id/resolve', async (c) => {
        WHERE id = ?`,
       [nowIso, row.id]
     );
+    await resolveEventNotices(adapter, row.id);
     const auditId = await writeAdminAuditLog(c, {
       action: 'logging_notification.resolve',
       resourceType: 'internal_notification_event',
@@ -8627,6 +8643,7 @@ notificationsRouter.post('/:id/resolve', async (c) => {
        WHERE id = ?`,
       [nowIso, row.id]
     );
+    await resolveEventNotices(adapter, row.id);
     const auditId = await writeAdminAuditLog(c, {
       action: 'internal_notification.resolve',
       resourceType: 'internal_notification_event',

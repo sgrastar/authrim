@@ -3,6 +3,7 @@ import type { Challenge } from '../durable-objects/ChallengeStore';
 import { arrayBufferToBase64Url, generateSecureRandomString } from '../utils/crypto';
 import { getChallengeStoreByChallengeId } from '../utils/challenge-sharding';
 import { getTenantSettingsDocument } from '../utils/tenant-settings';
+import { kvTtlSeconds } from '../utils/kv-ttl';
 import type {
   StepUpInputState,
   StepUpPreferredMethod,
@@ -704,7 +705,8 @@ async function setPendingActionId(
   ttlSeconds: number
 ): Promise<void> {
   await env.AUTHRIM_CONFIG?.put(pendingActionKey(binding), actionId, {
-    expirationTtl: Math.max(1, ttlSeconds),
+    // The action itself carries the expiry the reader checks; KV only needs a TTL it accepts.
+    expirationTtl: kvTtlSeconds(ttlSeconds),
   }).catch(() => {});
 }
 

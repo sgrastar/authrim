@@ -31,6 +31,7 @@ import {
   // KV caching utilities (Phase 2)
   buildVersionedKey,
   getCacheTTL,
+  kvTtlSeconds,
   PREDEFINED_TRANSFORMED_CLAIMS,
   resolveProtocolSettings,
   type FAPIProtocolSettings,
@@ -240,6 +241,8 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   ).join('');
   const cacheKey = `${tenantId}:${settingsDigest}`;
   const discoveryTTL = await getCacheTTL(c.env, 'discovery');
+  // KV refuses TTLs under 60 s (maintenance mode uses 30 s).
+  const discoveryKvTTL = kvTtlSeconds(discoveryTTL);
   const kvCacheKey = buildVersionedKey('discovery', cacheKey);
 
   const cachedMetadata = metadataCache.get(cacheKey);
@@ -257,7 +260,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     try {
       const cached = await c.env.AUTHRIM_CONFIG.get(kvCacheKey, {
         type: 'json',
-        cacheTtl: discoveryTTL,
+        cacheTtl: discoveryKvTTL,
       });
       if (cached) {
         c.header('Cache-Control', `public, max-age=${discoveryTTL}`);
@@ -547,7 +550,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   // =========================================================================
   if (c.env.AUTHRIM_CONFIG) {
     c.env.AUTHRIM_CONFIG.put(kvCacheKey, JSON.stringify(metadata), {
-      expirationTtl: discoveryTTL,
+      expirationTtl: discoveryKvTTL,
     }).catch((error) => {
       // Log but don't fail the request
       log.warn('Failed to write discovery cache to KV', { tenantId }, error as Error);

@@ -64,7 +64,10 @@ const world = vi.hoisted(() => ({
   sessionStore: undefined as unknown,
   mail: [] as Array<{ to: string; text: string }>,
   rateLimiter: { incrementRpc: async () => ({ allowed: true }) },
-  /** The next transaction of the core database fails (a database that is not there just then). */
+  /**
+   * The next transaction or batch of the core database fails (a database that is not there just
+   * then).
+   */
   failNextTransaction: false,
   /** Writing an audit event fails. */
   failAudit: false,
@@ -258,11 +261,25 @@ function createCoreDatabase(): DatabaseAdapter {
       }
       return fn(adapter);
     },
-    batch: async (statements: Array<{ sql: string; params?: unknown[] }>) =>
-      statements.map((s) => ({
-        success: true,
-        rowsAffected: Number(db.prepare(s.sql).run(...bind(s.params)).changes),
-      })),
+    // All the statements or none, as a D1 batch.
+    batch: async (statements: Array<{ sql: string; params?: unknown[] }>) => {
+      if (world.failNextTransaction) {
+        world.failNextTransaction = false;
+        throw new Error('database unavailable');
+      }
+      db.exec('BEGIN');
+      try {
+        const results = statements.map((s) => ({
+          success: true,
+          rowsAffected: Number(db.prepare(s.sql).run(...bind(s.params)).changes),
+        }));
+        db.exec('COMMIT');
+        return results;
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
+    },
     isHealthy: async () => true,
     getType: () => 'sqlite',
     close: async () => undefined,

@@ -6,6 +6,7 @@ import { jaAccountFlows } from './account-flows/ja';
 import { jaSchemaSetting } from './schema-setting/ja';
 import { jaTenantGeneral } from './tenant-general/ja';
 import { jaSecurityKeys } from './security-keys/ja';
+import { jaNotices } from './notices/ja';
 
 /**
  * Japanese is the source locale: every other locale must provide exactly these keys.
@@ -20,6 +21,7 @@ export const ja = {
 	...jaSchemaSetting,
 	...jaTenantGeneral,
 	...jaSecurityKeys,
+	...jaNotices,
 	'app.adminLabel': '管理コンソール',
 	'app.env.dev': '開発環境',
 	'app.env.prod': '本番環境',

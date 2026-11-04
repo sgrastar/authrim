@@ -36,6 +36,31 @@ export {
   type AdminSecondFactorRecoveryInput,
   type AdminSecondFactorRecoveryStatus,
 } from './admin-second-factor-recovery';
+export {
+  ADMIN_NOTICE_EMAIL_DEFAULTS,
+  AdminNoticeDeliveryRepository,
+  severityReaches,
+  type AdminNoticeChannel,
+  type AdminNoticeChannelInput,
+  type AdminNoticeChannelSecret,
+  type AdminNoticeDelivery,
+  type AdminNoticeDeliveryChannel,
+  type AdminNoticeDeliveryStatus,
+  type AdminNoticePreferences,
+} from './admin-notice-delivery';
+export {
+  AdminNoticeRepository,
+  ADMIN_NOTICE_LIST_LIMIT,
+  ADMIN_NOTICE_SCOPES,
+  ADMIN_NOTICE_SEVERITIES,
+  type AdminNotice,
+  type AdminNoticeInput,
+  type AdminNoticeResolveResult,
+  type AdminNoticeScope,
+  type AdminNoticeSeverity,
+  type AdminNoticeSource,
+  type AdminNoticeViewer,
+} from './admin-notice';
 export { AdminAuditLogRepository, type AdminAuditLogFilterOptions } from './admin-audit-log';
 export { AdminIpAllowlistRepository } from './admin-ip-allowlist';
 export {
@@ -52,6 +77,7 @@ export {
   type InternalNotificationEventRow,
   type InternalNotificationEventSeverity,
   type InternalNotificationEventStatus,
+  raiseInternalEventConsoleNotice,
 } from './internal-notification-event';
 export {
   TenantDiscoveryIndexRepository,

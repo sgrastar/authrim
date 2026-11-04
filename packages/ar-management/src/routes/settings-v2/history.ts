@@ -175,13 +175,13 @@ async function getCurrentSnapshot(
   }
 
   // List all keys for this category
-  const keys = await kv.list({ prefix: kvPrefix });
+  const keyNames = await listCategoryKeyNames(kv, kvPrefix);
   const snapshot: Record<string, unknown> = {};
 
-  for (const key of keys.keys) {
-    const value = await kv.get(key.name);
+  for (const keyName of keyNames) {
+    const value = await kv.get(keyName);
     if (value !== null) {
-      const shortKey = key.name.replace(kvPrefix, '');
+      const shortKey = keyName.replace(kvPrefix, '');
       try {
         snapshot[shortKey] = JSON.parse(value);
       } catch {
@@ -208,18 +208,33 @@ async function applySnapshot(
     throw new Error('KV namespace not available');
   }
 
-  // First, delete all existing keys for this category
-  const existingKeys = await kv.list({ prefix: kvPrefix });
-  for (const key of existingKeys.keys) {
-    await kv.delete(key.name);
-  }
-
-  // Then, write all keys from snapshot
+  // Write the snapshot's keys first, then delete only the keys it does not have: a failure part
+  // way leaves the category with its old or new values, never emptied.
+  const existingKeyNames = await listCategoryKeyNames(kv, kvPrefix);
+  const snapshotKeyNames = new Set<string>();
   for (const [key, value] of Object.entries(snapshot)) {
     const kvKey = `${kvPrefix}${key}`;
+    snapshotKeyNames.add(kvKey);
     const kvValue = typeof value === 'string' ? value : JSON.stringify(value);
     await kv.put(kvKey, kvValue);
   }
+  for (const keyName of existingKeyNames) {
+    if (!snapshotKeyNames.has(keyName)) {
+      await kv.delete(keyName);
+    }
+  }
+}
+
+/** Every key under the prefix, following the list cursor (one list returns at most 1000). */
+async function listCategoryKeyNames(kv: KVNamespace, prefix: string): Promise<string[]> {
+  const names: string[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await kv.list({ prefix, cursor });
+    names.push(...page.keys.map((key) => key.name));
+    cursor = page.list_complete ? undefined : page.cursor;
+  } while (cursor);
+  return names;
 }
 
 // =============================================================================

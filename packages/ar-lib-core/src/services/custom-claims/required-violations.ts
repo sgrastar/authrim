@@ -137,21 +137,27 @@ export async function getRequiredCustomClaimViolationStatuses(
     if (piiKeys.length > 0 && piiAdapter) {
       const userPlaceholders = userIdBatch.map(() => '?').join(', ');
       const valueKeys = piiKeys.map(customAttributeValueKey);
-      const keyPlaceholders = valueKeys.map(() => '?').join(', ');
-      const rows = await piiAdapter.query<{
-        owner_id: string;
-        value_key: string;
-        value_json: unknown;
-      }>(
-        `SELECT owner_id, value_key, value_json
-           FROM identity_sensitive_values
-          WHERE tenant_id = ?
-            AND owner_type = 'runtime_user'
-            AND owner_id IN (${userPlaceholders})
-            AND value_key IN (${keyPlaceholders})
-            AND lifecycle_state = 'active'`,
-        [tenantId, ...userIdBatch, ...valueKeys]
-      );
+      const rows: { owner_id: string; value_key: string; value_json: unknown }[] = [];
+      // As for the non-PII fields: the keys in batches, within D1's bound-parameter limit.
+      for (const valueKeyBatch of chunk(valueKeys, NON_PII_FIELD_BATCH_SIZE)) {
+        const keyPlaceholders = valueKeyBatch.map(() => '?').join(', ');
+        rows.push(
+          ...(await piiAdapter.query<{
+            owner_id: string;
+            value_key: string;
+            value_json: unknown;
+          }>(
+            `SELECT owner_id, value_key, value_json
+               FROM identity_sensitive_values
+              WHERE tenant_id = ?
+                AND owner_type = 'runtime_user'
+                AND owner_id IN (${userPlaceholders})
+                AND value_key IN (${keyPlaceholders})
+                AND lifecycle_state = 'active'`,
+            [tenantId, ...userIdBatch, ...valueKeyBatch]
+          ))
+        );
+      }
 
       for (const row of rows) {
         const fieldKey = customAttributeFieldKey(row.value_key);

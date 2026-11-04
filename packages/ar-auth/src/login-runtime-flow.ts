@@ -48,6 +48,7 @@ import {
   resolveSubjectOrganizations,
   resolveSubjectRoles,
   type DatabaseAdapter,
+  type PreparedStatement,
   type Env,
   type TenantRBACDatabases,
   type Challenge,
@@ -361,6 +362,22 @@ export function clearLoginRuntimeFlowVersionCacheForTests(): void {
   flowVersionCache.clear();
   preparedRuntimeContractCache.clear();
   loginRuntimeFeatureFlagCache.clear();
+}
+
+/**
+ * Runs the statements the callback writes as one batch: all of them or none (a D1 batch is
+ * atomic, where a callback transaction runs and commits each statement on its own), in one round
+ * trip.
+ */
+async function writeAtomically(
+  db: DatabaseAdapter,
+  build: (write: (sql: string, params: unknown[]) => void) => void
+): Promise<void> {
+  const statements: PreparedStatement[] = [];
+  build((sql, params) => {
+    statements.push({ sql, params });
+  });
+  await db.batch(statements);
 }
 
 function nowSeconds(): number {
@@ -3818,7 +3835,7 @@ async function persistInitialAutoAdvancedSteps(input: {
 }): Promise<void> {
   if (input.autoAdvancedSteps.length === 0) return;
 
-  await input.db.transaction(async (tx) => {
+  await writeAtomically(input.db, (write) => {
     for (let index = 0; index < input.autoAdvancedSteps.length; index += 1) {
       const advanced = input.autoAdvancedSteps[index];
       const stateJson = JSON.stringify({
@@ -3829,14 +3846,14 @@ async function persistInitialAutoAdvancedSteps(input: {
       });
 
       if (index === 0) {
-        await tx.execute(
+        write(
           `UPDATE flow_interaction_steps
              SET state = 'completed', selected_handle = ?, state_json = ?, updated_at = ?
            WHERE tenant_id = ? AND id = ? AND state IN ('pending', 'waiting_input', 'processing')`,
           [advanced.selectedHandle, stateJson, input.now, input.tenantId, input.initialStepRowId]
         );
       } else {
-        await tx.execute(
+        write(
           `INSERT INTO flow_interaction_steps (
             id, tenant_id, interaction_id, node_id, step_id, state, selected_handle, state_json,
             created_at, updated_at
@@ -3856,7 +3873,7 @@ async function persistInitialAutoAdvancedSteps(input: {
       }
     }
 
-    await tx.execute(
+    write(
       `INSERT INTO flow_interaction_steps (
         id, tenant_id, interaction_id, node_id, step_id, state, selected_handle, state_json,
         created_at, updated_at
@@ -3873,7 +3890,7 @@ async function persistInitialAutoAdvancedSteps(input: {
       ]
     );
 
-    await tx.execute(
+    write(
       `UPDATE flow_interactions
          SET user_id = COALESCE(user_id, ?), current_node_id = ?, current_step_id = ?,
              updated_at = ?, completed_at = NULL
@@ -4608,14 +4625,14 @@ async function recordHeldRuntimeConsent(input: {
     ) {
       // The consent is asked for again: the interaction goes back to the step that took it (the
       // signed-in browser resumes there), with nothing held.
-      await input.db.transaction(async (tx) => {
-        await tx.execute(
+      await writeAtomically(input.db, (write) => {
+        write(
           `UPDATE flow_interaction_steps
               SET state = 'waiting_input', selected_handle = NULL, state_json = NULL, updated_at = ?
             WHERE tenant_id = ? AND id = ?`,
           [nowSeconds(), input.tenantId, row.id]
         );
-        await tx.execute(
+        write(
           `UPDATE flow_interactions
               SET state = 'active', current_node_id = ?, current_step_id = ?, updated_at = ?,
                   completed_at = NULL
@@ -5034,8 +5051,8 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
   );
 
   await timeRuntimeStartSpan(timing, 'initial_tx', () =>
-    db.transaction(async (tx) => {
-      await tx.execute(
+    writeAtomically(db, (write) => {
+      write(
         `INSERT INTO flow_interactions (
         id, tenant_id, flow_id, flow_version_id, user_id, client_id, saml_sp_id, state,
         current_node_id, current_step_id, context_json, contract_hash, signature, expires_at, created_at,
@@ -5058,7 +5075,7 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
           now,
         ]
       );
-      await tx.execute(
+      write(
         `INSERT INTO flow_interaction_steps (
         id, tenant_id, interaction_id, node_id, step_id, state, selected_handle, state_json,
         created_at, updated_at
@@ -6105,8 +6122,8 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
     }
   }
 
-  await db.transaction(async (tx) => {
-    await tx.execute(
+  await writeAtomically(db, (write) => {
+    write(
       `UPDATE flow_interaction_steps
        SET state = 'completed', selected_handle = ?, state_json = ?, updated_at = ?
        WHERE tenant_id = ? AND id = ? AND state IN ('pending', 'waiting_input', 'processing')`,
@@ -6126,7 +6143,7 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
 
     if (nextStep) {
       const nextStepRowId = generateId();
-      await tx.execute(
+      write(
         `INSERT INTO flow_interaction_steps (
           id, tenant_id, interaction_id, node_id, step_id, state, selected_handle, state_json,
           created_at, updated_at
@@ -6142,14 +6159,14 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
           now,
         ]
       );
-      await tx.execute(
+      write(
         `UPDATE flow_interactions
          SET state = ?, current_node_id = ?, current_step_id = ?, updated_at = ?, completed_at = NULL
          WHERE tenant_id = ? AND id = ?`,
         [nextState, nextStep.source_node_id, nextStep.id, now, tenantId, interactionId]
       );
     } else {
-      await tx.execute(
+      write(
         `UPDATE flow_interactions
          SET state = ?, current_node_id = NULL, current_step_id = NULL, updated_at = ?, completed_at = ?
          WHERE tenant_id = ? AND id = ?`,

@@ -7,6 +7,7 @@ import { deAccountFlows } from './account-flows/de';
 import { deSchemaSetting } from './schema-setting/de';
 import { deTenantGeneral } from './tenant-general/de';
 import { deSecurityKeys } from './security-keys/de';
+import { deNotices } from './notices/de';
 
 export const de = {
 	...deSettings,
@@ -17,6 +18,7 @@ export const de = {
 	...deSchemaSetting,
 	...deTenantGeneral,
 	...deSecurityKeys,
+	...deNotices,
 	'app.adminLabel': 'Verwaltungskonsole',
 	'app.env.dev': 'Entwicklung',
 	'app.env.prod': 'Produktion',

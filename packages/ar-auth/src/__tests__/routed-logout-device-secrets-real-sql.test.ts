@@ -548,6 +548,53 @@ describe.each(scopes)('Native SSO device secrets at logout, %s tenant (real SQL)
     expect(await exchangeOutcome(deviceSecretDb, secrets.otherDevice)).toBe('accepted');
   });
 
+  it('logs out of a receiving app that many issuing apps signed in, within the parameter limit', async () => {
+    // client-b holds a Native SSO installation from each of 120 issuing apps, each carrying the
+    // session's sid for that app: a logout of client-b names all those sids.
+    const repository = new DeviceSecretRepository(deviceSecretDb, TENANT);
+    const installations = new DeviceInstallationRepository(deviceSecretDb, TENANT);
+    const issuedSecrets: string[] = [];
+    for (let index = 0; index < 120; index += 1) {
+      const clientId = `client-src-${index}`;
+      const issued = await repository.createSecret(
+        {
+          user_id: USER,
+          session_id: await deriveOidcSid(SESSION, clientId, ISSUER),
+          client_id: clientId,
+          trust_group_id: 'tg-9',
+        },
+        { maxSecretsPerUser: 1000 }
+      );
+      if (!('secret' in issued)) throw new Error('device secret not issued');
+      issuedSecrets.push(issued.secret);
+      await installations.ensureForNativeSSOTokenExchange({
+        sourceDeviceSecret: issued.entity,
+        targetClientId: 'client-b',
+        targetTrustGroupId: 'tg-9',
+        sourceClientId: clientId,
+        sameClient: false,
+        lastSeenAt: Date.now(),
+      });
+    }
+
+    const response = await app(scope, databases).request(
+      '/api/v1/auth/direct/logout',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: `authrim_session=${SESSION}` },
+        body: JSON.stringify({ client_id: 'client-b', logout_scope: 'group' }),
+      },
+      env(),
+      executionCtx
+    );
+
+    expect(response.status).toBe(200);
+    for (const secret of [issuedSecrets[0], issuedSecrets[119]]) {
+      expect(await exchangeOutcome(deviceSecretDb, secret)).toBe('revoked');
+    }
+    expect(await exchangeOutcome(deviceSecretDb, secrets.otherUser)).toBe('accepted');
+  });
+
   it('logs out a session that holds many historical apps without exceeding the parameter limit', async () => {
     const repository = new DeviceSecretRepository(deviceSecretDb, TENANT);
     for (let index = 0; index < 120; index += 1) {

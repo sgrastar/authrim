@@ -93,7 +93,12 @@ const {
   };
 });
 
+const { mockRecordReplayJti } = vi.hoisted(() => ({
+  mockRecordReplayJti: vi.fn<() => Promise<'recorded' | 'replayed'>>(async () => 'recorded'),
+}));
+
 vi.mock('@authrim/ar-lib-core', () => ({
+  recordReplayJti: mockRecordReplayJti,
   D1Adapter: MockD1Adapter,
   resolveAuthCorePersistenceAdapterFromEnv: vi
     .fn()
@@ -411,6 +416,46 @@ describe('backchannel logout', () => {
     });
     expect(mockFindByProviderSub).not.toHaveBeenCalled();
     expect(mockSessionInvalidate).toHaveBeenCalledOnce();
+  });
+
+  it('records the logout token jti once and refuses a replay before ending sessions', async () => {
+    const iat = Math.floor(Date.now() / 1000);
+    mockJwtVerify.mockResolvedValueOnce({
+      payload: {
+        iss: 'https://accounts.google.com',
+        aud: 'client-123',
+        iat,
+        jti: 'logout-token-replayed',
+        sid: 'provider-session-123',
+        events: { 'http://schemas.openid.net/event/backchannel-logout': {} },
+      },
+    });
+    mockRecordReplayJti.mockResolvedValueOnce('replayed');
+    const contextStore = new Map<string, unknown>([['tenantId', 'tenant-a']]);
+    const c = {
+      req: {
+        param: vi.fn(() => 'google'),
+        header: vi.fn((name: string) =>
+          name === 'Content-Type' ? 'application/x-www-form-urlencoded' : undefined
+        ),
+        parseBody: vi.fn().mockResolvedValue({ logout_token: 'signed.logout.token' }),
+      },
+      env: { SETTINGS: { get: vi.fn(), put: vi.fn() } },
+      get: vi.fn((key: string) => contextStore.get(key)),
+      header: vi.fn(),
+    };
+
+    const response = await handleBackchannelLogout(c as never);
+
+    expect(response.status).toBe(400);
+    expect(mockRecordReplayJti).toHaveBeenCalledWith(c.env, {
+      tenantId: 'tenant-a',
+      shardKey: 'provider-google',
+      jti: 'backchannel-logout:provider-google:logout-token-replayed',
+      issuedAt: iat,
+      ttlSeconds: 360,
+    });
+    expect(mockSessionInvalidate).not.toHaveBeenCalled();
   });
 
   it('records a sanitized rejection reason for an invalid logout token', async () => {

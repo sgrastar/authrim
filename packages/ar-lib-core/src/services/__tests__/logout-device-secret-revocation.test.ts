@@ -90,8 +90,9 @@ describe('logout device_secret revocation scope', () => {
     const execute = vi
       .fn()
       .mockResolvedValueOnce({ success: true, rowsAffected: 2 })
-      .mockResolvedValueOnce({ success: true, rowsAffected: 2 })
       .mockResolvedValueOnce({ success: true, rowsAffected: 0 });
+    // The device secrets by id go in one batch.
+    const batch = vi.fn().mockResolvedValue([{ success: true, rowsAffected: 2 }]);
     const query = vi.fn(async (sql: string) => {
       if (sql.includes('FROM device_installations') && sql.includes('session_id IN')) {
         return [
@@ -130,7 +131,7 @@ describe('logout device_secret revocation scope', () => {
       }
       return [];
     });
-    const adapter = createAdapter({ query, execute });
+    const adapter = createAdapter({ query, execute, batch });
 
     const result = await revokeDeviceSecretsForLogoutScope({
       adapter,
@@ -150,8 +151,10 @@ describe('logout device_secret revocation scope', () => {
       revokedInstallations: 2,
       matchedInstallations: 2,
     });
-    expect(execute).toHaveBeenCalledWith(
-      expect.stringContaining('UPDATE device_secrets'),
+    const [statements] = batch.mock.calls[0] as [Array<{ sql: string; params: unknown[] }>];
+    expect(statements).toHaveLength(1);
+    expect(statements[0].sql).toContain('UPDATE device_secrets');
+    expect(statements[0].params).toEqual(
       expect.arrayContaining(['logout', 'ds-current', 'ds-sibling'])
     );
     expect(execute).toHaveBeenCalledWith(

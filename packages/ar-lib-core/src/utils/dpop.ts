@@ -9,6 +9,7 @@ import type { DPoPClaims, DPoPValidationResult } from '../types/oidc';
 import type { DurableObjectNamespace } from '@cloudflare/workers-types';
 import type { Env } from '../types/env';
 import { getDPoPJTIStoreForNewJTI } from './dpop-jti-sharding';
+import { recordRuntimeReplay } from './jti-replay-guard';
 import { ALLOWED_DPOP_ALGS } from '../constants';
 import { timingSafeEqual } from './crypto';
 import { createLogger } from './logger';
@@ -22,6 +23,9 @@ interface DPoPHeader {
   alg: string;
   jwk: JWK;
 }
+
+/** How long a DPoP proof's jti is remembered: well beyond its 60 s freshness window. */
+const DPOP_JTI_TTL_SECONDS = 3600;
 
 /**
  * Validates a DPoP proof JWT
@@ -319,6 +323,38 @@ export async function validateDPoPProof(
       };
     }
 
+    // Outside Cloudflare (no DPOP_JTI_STORE) the runtime's store records the jti with one
+    // conditional write, keyed by client as the Durable Object path is by its shard.
+    if ('AUTH_RUNTIME_PORTS' in envOrJTIStore && envOrJTIStore.AUTH_RUNTIME_PORTS) {
+      const outcome = await recordRuntimeReplay(envOrJTIStore, {
+        tenantId: resolvedTenantId,
+        key: `dpop:${JSON.stringify([clientId ?? null, claims.jti])}`,
+        ttlSeconds: DPOP_JTI_TTL_SECONDS,
+      }).catch((error: unknown) => {
+        log.error('DPoP JTI replay store unavailable', {}, error as Error);
+        return 'unavailable' as const;
+      });
+      if (outcome === 'replayed') {
+        return {
+          valid: false,
+          error: 'use_dpop_nonce',
+          error_description: 'DPoP proof jti has already been used (replay attack detected)',
+        };
+      }
+      if (outcome !== 'recorded') {
+        return {
+          valid: false,
+          error: 'server_error',
+          error_description: 'DPoP JTI validation failed',
+        };
+      }
+      return {
+        valid: true,
+        jwk: { ...jwk, kty: jwk.kty },
+        jkt: await calculateJwkThumbprint(jwk, 'sha256'),
+      };
+    }
+
     // Determine if we have Env (new sharded approach) or DurableObjectNamespace (legacy)
     let stub: { fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> };
 
@@ -354,7 +390,7 @@ export async function validateDPoPProof(
         jti: claims.jti,
         client_id: clientId,
         iat: claims.iat,
-        ttl: 3600, // 1 hour TTL (longer than 60s freshness window for safety)
+        ttl: DPOP_JTI_TTL_SECONDS,
       }),
     });
 
