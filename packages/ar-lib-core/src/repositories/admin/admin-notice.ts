@@ -155,8 +155,9 @@ export class AdminNoticeRepository {
   }
 
   /**
-   * Raise the notice of an operational event, only while the event is not suppressed. Checked in
-   * the same statement: an event suppressed meanwhile gets no notice that nothing would close.
+   * Raise the notice of an operational event, only while the event is not suppressed (nor, for
+   * identity mapping, its state resolved). Checked in the same statement: an event closed
+   * meanwhile gets no notice that nothing would close.
    *
    * @returns The notice, or null when the event is already suppressed (or gone)
    */
@@ -175,8 +176,12 @@ export class AdminNoticeRepository {
            SELECT 1 FROM internal_notification_events
             WHERE id = ? AND status <> 'suppressed'
          )
+           AND NOT EXISTS (
+             SELECT 1 FROM operational_notification_states
+              WHERE notification_event_id = ? AND state = 'resolved'
+           )
         ON CONFLICT DO NOTHING`,
-      [...insertParams(id, input, now), eventId]
+      [...insertParams(id, input, now), eventId, eventId]
     );
     return this.findCreated(id, input);
   }
@@ -306,13 +311,21 @@ export class AdminNoticeRepository {
     resolvedBy: string,
     now: number = getCurrentTimestamp()
   ): Promise<AdminNoticeResolveResult> {
-    const [, result] = await this.adapter.batch([
+    const [, , result] = await this.adapter.batch([
       {
         sql: `UPDATE internal_notification_events
                  SET status = 'suppressed', updated_at = ?, last_error = NULL, next_attempt_at = NULL
                WHERE id = ? AND status IN ('pending', 'failed', 'dead_letter')
                  AND EXISTS (SELECT 1 FROM admin_notices WHERE id = ? AND resolved_at IS NULL)`,
         params: [new Date(now).toISOString(), eventId, id],
+      },
+      {
+        // Identity mapping keeps its own state for the event; it is resolved with the notice.
+        sql: `UPDATE operational_notification_states
+                 SET state = 'resolved', resolved_at = ?, updated_at = ?
+               WHERE notification_event_id = ? AND state <> 'resolved'
+                 AND EXISTS (SELECT 1 FROM admin_notices WHERE id = ? AND resolved_at IS NULL)`,
+        params: [now, now, eventId, id],
       },
       {
         sql: `UPDATE admin_notices SET resolved_at = ?, resolved_by = ?
@@ -371,6 +384,51 @@ export class AdminNoticeRepository {
       resolved += result.rowsAffected ?? 0;
     }
     return resolved;
+  }
+
+  /**
+   * Delete notices handled before `cutoff` (resolved then, or expired then while still open),
+   * with their dismissals, a batch at a time. Open, unexpired notices are never touched.
+   *
+   * @returns How many notices were deleted (each of the two kinds at most `batchSize * maxBatches`)
+   */
+  async purgeHandledBefore(
+    cutoff: number,
+    options: { batchSize?: number; maxBatches?: number } = {}
+  ): Promise<number> {
+    const batchSize = options.batchSize ?? 500;
+    const maxBatches = options.maxBatches ?? 10;
+    // Each search walks its own partial index (migration 007) in a fixed order, so the two
+    // statements of a batch select the same rows and open notices are never read.
+    const searches = [
+      `SELECT id FROM admin_notices
+        WHERE resolved_at IS NOT NULL AND resolved_at < ?
+        ORDER BY resolved_at, id LIMIT ?`,
+      `SELECT id FROM admin_notices
+        WHERE resolved_at IS NULL AND expires_at IS NOT NULL AND expires_at < ?
+        ORDER BY expires_at, id LIMIT ?`,
+    ];
+    let deleted = 0;
+    // Each search has its own budget: a backlog of one kind never starves the other.
+    for (const handled of searches) {
+      for (let round = 0; round < maxBatches; round += 1) {
+        // One batch, so the dismissals never outlive or lose their notice halfway.
+        const [, notices] = await this.adapter.batch([
+          {
+            sql: `DELETE FROM admin_notice_dismissals WHERE notice_id IN (${handled})`,
+            params: [cutoff, batchSize],
+          },
+          {
+            sql: `DELETE FROM admin_notices WHERE id IN (${handled})`,
+            params: [cutoff, batchSize],
+          },
+        ]);
+        const count = notices?.rowsAffected ?? 0;
+        deleted += count;
+        if (count < batchSize) break;
+      }
+    }
+    return deleted;
   }
 
   /** Resolve the open notice of a deduplication key, if any. */

@@ -22,8 +22,8 @@ export interface FakeAdminNoticesOptions {
 	fail?: 403 | 404 | 500;
 	/** Fail only these calls (the list loads, an action fails); 409 answers the way a lost race does. */
 	failOn?: Partial<Record<'get' | 'dismiss' | 'resolve' | 'publish', 403 | 409 | 500>>;
-	/** The signed-in admin holds platform authority. */
-	platform?: boolean;
+	/** The signed-in admin holds platform authority (read on each call when a function). */
+	platform?: boolean | (() => boolean);
 	/** The signed-in admin may resolve and publish (`admin:settings:write`). */
 	canWrite?: boolean;
 }
@@ -103,6 +103,8 @@ export function sampleNotices(): AdminNotice[] {
 
 export function createFakeAdminNotices(options: FakeAdminNoticesOptions = {}): AdminNoticesClient {
 	const canWrite = options.canWrite ?? true;
+	const platform = () =>
+		typeof options.platform === 'function' ? options.platform() : (options.platform ?? false);
 	const store = (options.notices ?? sampleNotices()).map((notice) => ({ ...notice }));
 	const dismissed = new Set<string>();
 	let sequence = 0;
@@ -143,7 +145,7 @@ export function createFakeAdminNotices(options: FakeAdminNoticesOptions = {}): A
 					(notice) =>
 						!notice.resolved_at &&
 						!dismissed.has(notice.id) &&
-						(notice.scope_type !== 'platform' || (options.platform ?? false))
+						(notice.scope_type !== 'platform' || platform())
 				)
 				.map((notice) => ({ ...notice }))
 				.sort((a, b) => b.created_at - a.created_at);
@@ -172,7 +174,7 @@ export function createFakeAdminNotices(options: FakeAdminNoticesOptions = {}): A
 		},
 		async publish(input: PublishNoticeInput) {
 			await step('publish');
-			if (!canWrite || (input.scope_type === 'platform' && !options.platform)) {
+			if (!canWrite || (input.scope_type === 'platform' && !platform())) {
 				throw new ApiError(403, 'forbidden', 'Forbidden');
 			}
 			const title = input.title.trim();

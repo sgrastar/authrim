@@ -65,6 +65,7 @@ export {
   type InternalNotificationEventRow,
   type InternalNotificationEventSeverity,
   type InternalNotificationEventStatus,
+  raiseInternalEventConsoleNotice,
 } from './internal-notification-event';
 export {
   TenantDiscoveryIndexRepository,

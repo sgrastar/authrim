@@ -143,9 +143,12 @@ function noticePermission(category: InternalNotificationEventCategory): string {
  * Show an event in the admin console's notices. Best effort: the event itself is already stored,
  * and an adapter without the notices table (or a failed write) must not lose it.
  */
-async function raiseConsoleNotice(
+export async function raiseInternalEventConsoleNotice(
   adapter: DatabaseAdapter,
-  row: InternalNotificationEventRow
+  row: Pick<
+    InternalNotificationEventRow,
+    'id' | 'tenant_id' | 'category' | 'event_type' | 'severity'
+  >
 ): Promise<void> {
   const platform = PLATFORM_EVENT_TENANT_IDS.has(row.tenant_id);
   try {
@@ -232,7 +235,8 @@ export class InternalNotificationEventRepository {
           if (!reopened) {
             throw new Error('internal_notification_event_reopen_failed');
           }
-          if (reopened.status === 'pending') await raiseConsoleNotice(this.adapter, reopened);
+          if (reopened.status === 'pending')
+            await raiseInternalEventConsoleNotice(this.adapter, reopened);
           return reopened;
         }
         return existing;
@@ -266,7 +270,7 @@ export class InternalNotificationEventRepository {
     if (!row) {
       throw new Error('internal_notification_event_enqueue_failed');
     }
-    if (row.id === id) await raiseConsoleNotice(this.adapter, row);
+    if (row.id === id) await raiseInternalEventConsoleNotice(this.adapter, row);
     return row;
   }
 

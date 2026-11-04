@@ -40,6 +40,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   return {
     ...actual,
     requireDedicatedAdminDatabaseAdapter: vi.fn(() => mocks.state.adapter),
+    createAuthContextFromHono: vi.fn(() => ({ coreAdapter: {} })),
+    getClient: vi.fn(async (_env: unknown, tenantId: string, clientId: string) =>
+      tenantId === 'tenant-a' && clientId === 'app-1' ? { client_id: clientId } : null
+    ),
     getTenantIdFromContext: vi.fn(() => mocks.tenantId),
     adminAuthMiddleware:
       () =>
@@ -69,6 +73,10 @@ function database(): { db: DatabaseSync; adapter: DatabaseAdapter } {
     CREATE TABLE internal_notification_events (
       id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, status TEXT NOT NULL,
       last_error TEXT, next_attempt_at TEXT, updated_at TEXT
+    );
+    CREATE TABLE operational_notification_states (
+      id TEXT PRIMARY KEY, notification_event_id TEXT NOT NULL, state TEXT NOT NULL,
+      resolved_at INTEGER, updated_at INTEGER
     );
   `);
   db.exec(readRenderedMigrationSql(ADMIN_MIGRATIONS, '006_admin_notices.sql'));
@@ -194,6 +202,11 @@ describe('admin notices routes', () => {
     expect(created).toMatchObject({ status: 201, json: { notice: { tenant_id: 'tenant-b' } } });
   });
 
+  it('addresses a client notice only to an app of the tenant', async () => {
+    const created = await publish({ scope_type: 'client', client_id: 'app-1' });
+    expect(created).toMatchObject({ status: 201, json: { notice: { tenant_id: 'tenant-a' } } });
+  });
+
   it('validates an announcement', async () => {
     const now = Date.now();
     for (const [body, field] of [
@@ -204,6 +217,7 @@ describe('admin notices routes', () => {
       [{ scope_type: 'tenant', link: 'https://example.com' }, 'link'],
       [{ scope_type: 'tenant', link: '//example.com/admin/' }, 'link'],
       [{ scope_type: 'client' }, 'client_id'],
+      [{ scope_type: 'client', client_id: 'app-unknown' }, 'client_id'],
       [{ scope_type: 'tenant', expires_at: now - 1 }, 'expires_at'],
       [{ scope_type: 'tenant', expires_at: now + 400 * 24 * 3600 * 1000 }, 'expires_at'],
     ] as const) {
@@ -277,6 +291,8 @@ describe('admin notices routes', () => {
   it('closes the operational event behind a resolved notice', async () => {
     db.exec(`INSERT INTO internal_notification_events (id, tenant_id, status)
              VALUES ('evt-1', 'tenant-a', 'failed')`);
+    db.exec(`INSERT INTO operational_notification_states (id, notification_event_id, state)
+             VALUES ('st-1', 'evt-1', 'acknowledged')`);
     db.exec(`INSERT INTO admin_notices (id, scope_type, tenant_id, severity, source, category,
                title, source_ref, deduplication_key, created_at)
              VALUES ('n-1', 'tenant', 'tenant-a', 'high', 'system', 'logging_delivery_failure',
@@ -284,6 +300,10 @@ describe('admin notices routes', () => {
     expect((await call('POST', '/n-1/resolve')).status).toBe(200);
     expect(db.prepare(`SELECT status FROM internal_notification_events`).get()).toEqual({
       status: 'suppressed',
+    });
+    // Identity mapping's own state for the event is resolved with it.
+    expect(db.prepare(`SELECT state FROM operational_notification_states`).get()).toEqual({
+      state: 'resolved',
     });
   });
 

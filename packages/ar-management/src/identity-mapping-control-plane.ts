@@ -13,10 +13,13 @@ import type { Context } from 'hono';
 import type {
   Env,
   DatabaseAdapter,
+  InternalNotificationEventCategory,
+  InternalNotificationEventSeverity,
   PlatformStoredMapping,
   PreparedStatement,
 } from '@authrim/ar-lib-core';
 import {
+  raiseInternalEventConsoleNotice,
   ensureDatabaseAdapter,
   getTenantMetadataContextFromHono,
   findConflictingSourceIds,
@@ -5654,8 +5657,11 @@ export class IdentityMappingControlPlaneRepository {
         id: string;
         notification_event_id: string;
         state: string;
+        category: string;
+        event_type: string;
+        severity: string;
       }>(
-        `SELECT s.id, s.notification_event_id, s.state
+        `SELECT s.id, s.notification_event_id, s.state, e.category, e.event_type, e.severity
            FROM operational_notification_states s
            JOIN internal_notification_events e ON e.id = s.notification_event_id
           WHERE e.tenant_id = ? AND e.deduplication_key = ?
@@ -5663,6 +5669,17 @@ export class IdentityMappingControlPlaneRepository {
         [tenantId, deduplicationKey]
       );
       if (existing) {
+        // An event raised before notices existed (or whose notice was not written) gets one now,
+        // from what was stored; a resolved one stays closed.
+        if (existing.state !== 'resolved') {
+          await raiseInternalEventConsoleNotice(this.adapter, {
+            id: existing.notification_event_id,
+            tenant_id: tenantId,
+            category: existing.category as InternalNotificationEventCategory,
+            event_type: existing.event_type,
+            severity: existing.severity as InternalNotificationEventSeverity,
+          });
+        }
         return {
           id: existing.id,
           tenantId,
@@ -5715,6 +5732,13 @@ export class IdentityMappingControlPlaneRepository {
         now,
       ]
     );
+    await raiseInternalEventConsoleNotice(this.adapter, {
+      id: notificationEventId,
+      tenant_id: tenantId,
+      category: input.category as InternalNotificationEventCategory,
+      event_type: input.eventType,
+      severity: input.severity as InternalNotificationEventSeverity,
+    });
     return {
       id: stateId,
       tenantId,
@@ -5737,14 +5761,25 @@ export class IdentityMappingControlPlaneRepository {
     const existing = await this.adapter.queryOne<{
       id: string;
       state: string;
-    }>('SELECT id, state FROM operational_notification_states WHERE tenant_id = ? AND id = ?', [
-      tenantId,
-      stateId,
-    ]);
+      notification_event_id: string;
+    }>(
+      `SELECT id, state, notification_event_id FROM operational_notification_states
+        WHERE tenant_id = ? AND id = ?`,
+      [tenantId, stateId]
+    );
     if (!existing) {
       throw notFound('notification state not found');
     }
+    const now = this.now();
+    // A resolved state takes its console notice with it, in the same batch.
+    const closeNotice = {
+      sql: `UPDATE admin_notices SET resolved_at = ?, resolved_by = 'system'
+             WHERE source_ref = ? AND resolved_at IS NULL`,
+      params: [now, existing.notification_event_id],
+    };
     if (existing.state === input.state) {
+      // A retry of a resolve also closes a notice that was left open.
+      if (input.state === 'resolved') await this.adapter.batch([closeNotice]);
       return {
         id: stateId,
         state: input.state,
@@ -5752,16 +5787,15 @@ export class IdentityMappingControlPlaneRepository {
       };
     }
 
-    const now = this.now();
-    await this.adapter.execute(
-      `UPDATE operational_notification_states
+    const update = {
+      sql: `UPDATE operational_notification_states
           SET state = ?,
               assigned_to = ?,
               acknowledged_at = CASE WHEN ? = 'acknowledged' THEN ? ELSE acknowledged_at END,
               resolved_at = CASE WHEN ? = 'resolved' THEN ? ELSE resolved_at END,
               updated_at = ?
-        WHERE tenant_id = ? AND id = ?`,
-      [
+        WHERE tenant_id = ? AND id = ? AND state <> 'resolved'`,
+      params: [
         input.state,
         input.assignedTo ?? null,
         input.state,
@@ -5771,8 +5805,17 @@ export class IdentityMappingControlPlaneRepository {
         now,
         tenantId,
         stateId,
-      ]
-    );
+      ],
+    };
+    // Resolved is final: an acknowledgement that read the state before it was resolved changes
+    // nothing (the console's resolve, or another request, got there first).
+    const updated =
+      input.state === 'resolved'
+        ? (await this.adapter.batch([update, closeNotice]))[0]
+        : await this.adapter.execute(update.sql, update.params);
+    if ((updated?.rowsAffected ?? 0) === 0) {
+      return { id: stateId, state: 'resolved', idempotent: true };
+    }
     return {
       id: stateId,
       previousState: existing.state,

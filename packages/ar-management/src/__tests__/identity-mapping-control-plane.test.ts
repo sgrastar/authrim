@@ -89,6 +89,8 @@ function createAdapter(options: {
   queryRows?: Record<string, unknown>[];
   queryRowSets?: Record<string, unknown>[][];
   queryOneRows?: Array<Record<string, unknown> | null>;
+  /** Rows each write reports (1 unless said otherwise). */
+  rowsAffected?: number;
 }): DatabaseAdapter & {
   executes: RecordedExecute[];
   queries: RecordedQuery[];
@@ -100,7 +102,7 @@ function createAdapter(options: {
   const queryRows = [...(options.queryRows ?? [])];
   const queryRowSets = [...(options.queryRowSets ?? [])];
   const queryOneRows = [...(options.queryOneRows ?? [])];
-  const executeResult: ExecuteResult = { rowsAffected: 1, success: true };
+  const executeResult: ExecuteResult = { rowsAffected: options.rowsAffected ?? 1, success: true };
   return {
     executes,
     queries,
@@ -3491,8 +3493,13 @@ describe('IdentityMappingControlPlaneRepository review and notification operatio
     expect(adapter.executes.map((item) => item.sql)).toEqual([
       expect.stringContaining('INSERT INTO internal_notification_events'),
       expect.stringContaining('INSERT INTO operational_notification_states'),
+      // Its notice in the admin console, written only while the event is open.
+      expect.stringContaining('INSERT INTO admin_notices'),
     ]);
     expect(adapter.executes[0].params[6]).toBe('tenant_a:review-task-1:manual-review');
+    expect(adapter.executes[2].params).toEqual(
+      expect.arrayContaining(['tenant', 'tenant_a', 'high', 'identity_mapping_manual_review'])
+    );
   });
 
   it('returns an existing operational notification state for duplicate deduplication keys', async () => {
@@ -3502,6 +3509,9 @@ describe('IdentityMappingControlPlaneRepository review and notification operatio
           id: 'notification-state-1',
           notification_event_id: 'notification-event-1',
           state: 'open',
+          category: 'identity_mapping_signal',
+          event_type: 'identity_mapping.signal',
+          severity: 'medium',
         },
       ],
     });
@@ -3525,6 +3535,38 @@ describe('IdentityMappingControlPlaneRepository review and notification operatio
       notificationEventId: 'notification-event-1',
       idempotent: true,
     });
+    // Only its console notice, made from the stored event (a no-op if it already has one).
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('INSERT INTO admin_notices'),
+    ]);
+    expect(adapter.executes[0].params).toEqual(
+      expect.arrayContaining(['caution', 'identity_mapping_signal', 'notification-event-1'])
+    );
+  });
+
+  it('raises no notice again for a duplicate of a resolved operational notification', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'notification-state-1',
+          notification_event_id: 'notification-event-1',
+          state: 'resolved',
+          category: 'identity_mapping_signal',
+          event_type: 'identity_mapping.signal',
+          severity: 'medium',
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+    await repository.enqueueOperationalNotification('tenant_a', {
+      category: 'identity_mapping_signal',
+      eventType: 'identity_mapping.signal',
+      severity: 'medium',
+      subjectType: 'review_task',
+      subjectId: 'review-task-1',
+      deduplicationKey: 'review-task-1:signal',
+      payload: {},
+    });
     expect(adapter.executes).toHaveLength(0);
   });
 
@@ -3534,10 +3576,12 @@ describe('IdentityMappingControlPlaneRepository review and notification operatio
         {
           id: 'notification-state-1',
           state: 'open',
+          notification_event_id: 'notification-event-1',
         },
         {
           id: 'notification-state-1',
           state: 'resolved',
+          notification_event_id: 'notification-event-1',
         },
       ],
     });
@@ -3561,8 +3605,37 @@ describe('IdentityMappingControlPlaneRepository review and notification operatio
       state: 'resolved',
       idempotent: true,
     });
-    expect(adapter.executes).toHaveLength(1);
-    expect(adapter.executes[0].sql).toContain('UPDATE operational_notification_states');
+    // The state and its console notice together, then the retry closes a notice left open.
+    expect(
+      adapter.batches.map((batch) => batch.map((item) => item.sql.trim().slice(0, 40)))
+    ).toEqual([
+      [
+        expect.stringContaining('UPDATE operational_notification_states'),
+        expect.stringContaining('UPDATE admin_notices'),
+      ],
+      [expect.stringContaining('UPDATE admin_notices')],
+    ]);
+    expect(adapter.batches[1][0].params).toEqual([1000, 'notification-event-1']);
+  });
+
+  it('does not acknowledge a state that was resolved meanwhile', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'notification-state-1',
+          state: 'open',
+          notification_event_id: 'notification-event-1',
+        },
+      ],
+      rowsAffected: 0,
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+    await expect(
+      repository.transitionOperationalNotificationState('tenant_a', 'notification-state-1', {
+        state: 'acknowledged',
+      })
+    ).resolves.toEqual({ id: 'notification-state-1', state: 'resolved', idempotent: true });
+    expect(adapter.executes[0].sql).toContain("state <> 'resolved'");
   });
 
   it('rejects raw values in review and notification payloads', async () => {
