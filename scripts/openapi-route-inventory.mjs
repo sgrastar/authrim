@@ -223,6 +223,12 @@ const packageSpecs = [
         },
       },
       {
+        file: 'packages/ar-management/src/routes/admin-management/my-step-up.ts',
+        receiverPrefixes: {
+          myStepUpRouter: '/api/admin/me/step-up',
+        },
+      },
+      {
         file: 'packages/ar-management/src/routes/admin-management/operational-logs.ts',
         receiverPrefixes: {
           operationalLogsRouter: '/api/admin/operational-logs',

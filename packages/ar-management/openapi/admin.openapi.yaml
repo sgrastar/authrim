@@ -31474,6 +31474,79 @@ paths:
           $ref: '#/components/responses/Error'
       security:
         - adminSessionCookie: []
+  /api/admin/me/step-up/receipts:
+    post:
+      tags:
+        - Admin Passkeys
+      operationId: postApiAdminMeStepUpReceipts
+      summary: Issue a step-up receipt
+      description: >-
+        Exchange the step_up_id from a 403 step_up_required response for a single-use receipt, once
+        the session's evidence is fresh enough for the operation's level. The step-up request is
+        consumed by the one issuance that succeeds; while evidence is missing it stays usable.
+        Repeat the operation with the receipt in the authrim-step-up-receipt header.
+        A selected tenant runtime snapshot is not required.
+      x-authrim-route-coverage: inferred-from-source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - step_up_id
+              properties:
+                step_up_id:
+                  type: string
+      responses:
+        '200':
+          description: The receipt was issued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - step_up_receipt
+                  - expires_at
+                properties:
+                  step_up_receipt:
+                    type: string
+                  expires_at:
+                    type: integer
+                    description: Expiry in milliseconds since the epoch.
+        '400':
+          description: The step-up request was not found, has expired, was already used, or belongs to another session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: The session's evidence is not fresh enough; missing lists the factors to verify.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - error
+                  - missing
+                properties:
+                  error:
+                    type: string
+                    enum:
+                      - step_up_evidence_required
+                  error_description:
+                    type: string
+                  missing:
+                    type: array
+                    items:
+                      type: string
+                      enum:
+                        - passkey
+                        - second_factor
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
   /api/admin/notifications:
     get:
       tags:

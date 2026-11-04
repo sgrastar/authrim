@@ -541,6 +541,7 @@ const ROWS: readonly (readonly [ApiMethod, string, string, ApiOperation['spec']]
 	["DELETE","/api/admin/me/passkeys/{id}","Delete Passkey.","admin"],
 	["POST","/api/admin/me/reauth/passkey/options","Create passkey re-authentication options","admin"],
 	["POST","/api/admin/me/reauth/passkey/verify","Verify passkey re-authentication","admin"],
+	["POST","/api/admin/me/step-up/receipts","Issue a step-up receipt","admin"],
 	["GET","/api/admin/me/session","Return the current Admin UI session and role status.","admin"],
 	["GET","/api/admin/notifications","List notification center events","admin"],
 	["GET","/api/admin/notifications/delivery-routes","List notification delivery routes","admin"],

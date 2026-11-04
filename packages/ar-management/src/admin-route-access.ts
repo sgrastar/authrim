@@ -116,6 +116,7 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
   authenticated('/api/admin/me/passkeys', 'current admin passkey management'),
   authenticated('/api/admin/me/passkeys/*', 'current admin passkey management'),
   authenticated('/api/admin/me/reauth/*', 'current admin session re-authentication'),
+  authenticated('/api/admin/me/step-up/*', 'current admin session step-up receipts'),
   authenticated('/api/admin/me/agent-consents', 'current admin Agent consent management'),
   authenticated('/api/admin/me/agent-consents/*', 'current admin Agent consent management'),
 

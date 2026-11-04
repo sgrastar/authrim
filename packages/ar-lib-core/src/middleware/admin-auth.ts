@@ -637,6 +637,7 @@ export async function authenticateAdminSessionForTenant(
       globalPermissions: Array.from(globalPermissions),
       globalHierarchyLevel,
       tenantId: session.tenant_id,
+      sessionTenantId: session.tenant_id,
       email: adminUser.email,
       permissions: Array.from(allPermissions),
       hierarchyLevel: maxHierarchyLevel,
@@ -835,8 +836,10 @@ function isPlatformAdminSessionPath(path: string): boolean {
   return (
     path === '/api/admin/me/session' ||
     path === '/api/admin/me/session/' ||
-    // Re-authentication records on the session row, which belongs to the session's own tenant.
+    // Re-authentication records on the session row, and step-up requirements and receipts are
+    // kept, under the session's own tenant.
     /^\/api\/admin\/me\/reauth\/passkey\/(?:options|verify)\/?$/u.test(path) ||
+    /^\/api\/admin\/me\/step-up\/receipts\/?$/u.test(path) ||
     /^\/api\/admin\/agent-login-handoffs\/alh_[A-Za-z0-9_-]{32}\/approve\/?$/u.test(path)
   );
 }

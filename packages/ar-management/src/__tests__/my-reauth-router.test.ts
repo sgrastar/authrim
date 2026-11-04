@@ -187,6 +187,7 @@ describe('myReauthRouter', () => {
     it.each([
       ['a missing RP ID', {}],
       ['an RP ID that does not match the origin', { rp_id: 'evil.example.com' }],
+      ['a null body', null],
     ])('rejects %s', async (_label, body) => {
       const response = await post('options', body);
 
@@ -336,8 +337,11 @@ describe('myReauthRouter', () => {
       expect(mocks.writeAdminAuditLog).not.toHaveBeenCalled();
     });
 
-    it('rejects a body without a credential', async () => {
-      const response = await post('verify', { challenge_id: 'challenge-id' });
+    it.each([
+      ['a body without a credential', { challenge_id: 'challenge-id' }],
+      ['a null body', null],
+    ])('rejects %s', async (_label, body) => {
+      const response = await post('verify', body);
 
       expect(response.status).toBe(400);
       expect(mocks.consumeChallengeRpc).not.toHaveBeenCalled();
