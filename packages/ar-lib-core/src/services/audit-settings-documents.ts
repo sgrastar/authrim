@@ -93,8 +93,11 @@ async function syncLegacyValue(
   legacyKey: string
 ): Promise<void> {
   if (!env.AUTHRIM_CONFIG) return;
-  const { store } = createAuditSettingsManager(env);
   try {
+    const { store } = createAuditSettingsManager(env);
+    // Only a key that exists is kept in step: one is never created for a document that had no
+    // legacy value (it would outlive the tenant outside the canonical store's lifecycle).
+    if ((await env.AUTHRIM_CONFIG.get(legacyKey)) === null) return;
     for (let attempt = 0; attempt < 3; attempt++) {
       const before = await store.load(category, scope);
       const value = before ? before.data[documentKey] : undefined;

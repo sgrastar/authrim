@@ -658,6 +658,12 @@ describe('Audit PII Configuration API', () => {
       expect(await f.mockKV.get('pii_config:tenant_1')).toBeNull();
     });
 
+    it('does not create a legacy key for a tenant that never had one', async () => {
+      const f = createTestApp({ kv: createMockKV() });
+      expect((await put(f.app, f.mockEnv, { eventLogRetentionDays: 300 })).status).toBe(200);
+      expect(await f.mockKV.get('pii_config:tenant_1')).toBeNull();
+    });
+
     it('lists adopted and not yet adopted configurations', async () => {
       const f = createTestApp({
         kv: createMockKV({
