@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../../types/env';
 import { isReplayJtiRecorded, recordReplayJti } from '../jti-replay-guard';
@@ -41,6 +42,7 @@ const env = {
     jurisdiction: (name: string) => namespace(`${name}/`),
   },
 } as unknown as Env;
+const runtimeKey = (key: string) => `sha256:${createHash('sha256').update(key).digest('hex')}`;
 const input = { tenantId: 'default', shardKey: 'client-a', jti: 'native-sso-id-token:abc' };
 
 describe('jti replay guard', () => {
@@ -111,5 +113,38 @@ describe('jti replay guard', () => {
     await recordReplayJti(env, { ...input, issuedAt: 1, ttlSeconds: 120 });
 
     expect(instances[0]).toMatch(/^eu\/tenant:default:jti-replay:\d+$/);
+  });
+  it('uses the runtime store outside Cloudflare, never a Durable Object', async () => {
+    const replayGuard = {
+      record: vi.fn(async () => 'replayed' as const),
+      isRecorded: vi.fn(async () => true),
+    };
+    const runtimeEnv = { AUTH_RUNTIME_PORTS: { replayGuard } } as unknown as Env;
+
+    expect(await isReplayJtiRecorded(runtimeEnv, input)).toBe(true);
+    expect(await recordReplayJti(runtimeEnv, { ...input, issuedAt: 1, ttlSeconds: 359.2 })).toBe(
+      'replayed'
+    );
+    expect(replayGuard.isRecorded).toHaveBeenCalledWith({
+      tenantId: 'default',
+      key: runtimeKey(input.jti),
+    });
+    expect(replayGuard.record).toHaveBeenCalledWith({
+      tenantId: 'default',
+      key: runtimeKey(input.jti),
+      ttlSeconds: 360,
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('throws when a runtime has ports but no replay store', async () => {
+    const runtimeEnv = { AUTH_RUNTIME_PORTS: {} } as unknown as Env;
+
+    await expect(isReplayJtiRecorded(runtimeEnv, input)).rejects.toThrow(
+      'auth_runtime_replay_guard_unavailable'
+    );
+    await expect(
+      recordReplayJti(runtimeEnv, { ...input, issuedAt: 1, ttlSeconds: 60 })
+    ).rejects.toThrow('auth_runtime_replay_guard_unavailable');
   });
 });
