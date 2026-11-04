@@ -2,7 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import Notifications from '#lib/pages/integrations/Notifications.svelte';
-	import { mockNoticeInbox, mockNoticesClient } from '../../fixtures/notices';
+	import { mockNoticeDelivery, mockNoticeInbox, mockNoticesClient } from '../../fixtures/notices';
 
 	// As on the real page: the address says which notice is open (the header links with `?id=`).
 	const focusId = $derived(page.url.searchParams.get('id'));
@@ -17,6 +17,7 @@
 
 <Notifications
 	client={mockNoticesClient}
+	delivery={mockNoticeDelivery}
 	{focusId}
 	onfocus={follow}
 	onchanged={() => mockNoticeInbox.refresh()}

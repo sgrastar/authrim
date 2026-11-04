@@ -37,6 +37,18 @@ export {
   type AdminSecondFactorRecoveryStatus,
 } from './admin-second-factor-recovery';
 export {
+  ADMIN_NOTICE_EMAIL_DEFAULTS,
+  AdminNoticeDeliveryRepository,
+  severityReaches,
+  type AdminNoticeChannel,
+  type AdminNoticeChannelInput,
+  type AdminNoticeChannelSecret,
+  type AdminNoticeDelivery,
+  type AdminNoticeDeliveryChannel,
+  type AdminNoticeDeliveryStatus,
+  type AdminNoticePreferences,
+} from './admin-notice-delivery';
+export {
   AdminNoticeRepository,
   ADMIN_NOTICE_LIST_LIMIT,
   ADMIN_NOTICE_SCOPES,

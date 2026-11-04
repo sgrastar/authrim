@@ -246,6 +246,11 @@ function createTestApp(
     return c.json({ success: true, adminAuth });
   });
 
+  app.get('/api/admin/me/notice-preferences', (c) => {
+    const adminAuth = (c as unknown as { get(key: string): unknown }).get('adminAuth');
+    return c.json({ success: true, adminAuth });
+  });
+
   app.post(`/api/admin/agent-login-handoffs/alh_${'a'.repeat(32)}/approve`, (c) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const adminAuth = (c as any).get('adminAuth');
@@ -2318,6 +2323,7 @@ describe('adminAuthMiddleware', () => {
       const secondFactor = await call('POST', '/api/admin/me/reauth/second-factor/verify');
       const enrollment = await call('POST', '/api/admin/me/second-factors/webauthn/options');
       const recovery = await call('POST', '/api/admin/me/second-factor-recovery/complete');
+      const preferences = await call('GET', '/api/admin/me/notice-preferences');
 
       expect(tenantOperation.status).toBe(200);
       // A tenant route acts on the selected tenant but still knows where the session lives.
@@ -2338,6 +2344,9 @@ describe('adminAuthMiddleware', () => {
       expect((await enrollment.json<Body>()).adminAuth.tenantId).toBe('default');
       expect(recovery.status).toBe(200);
       expect((await recovery.json<Body>()).adminAuth.tenantId).toBe('default');
+      // Notice email choices belong to the admin, kept under the session's own tenant.
+      expect(preferences.status).toBe(200);
+      expect((await preferences.json<Body>()).adminAuth.tenantId).toBe('default');
     });
 
     it('treats only a bounded central login-handoff approval path as platform-scoped', async () => {

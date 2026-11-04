@@ -22,6 +22,7 @@ function adminSchema(): { db: DatabaseSync; adapter: DatabaseAdapter } {
     '005_admin_second_factor_recoveries.sql',
     '006_admin_notices.sql',
     '007_admin_notice_indexes.sql',
+    '008_admin_notice_delivery.sql',
   ]) {
     fixture.db.exec(
       renderPortableMigrationSql(readMigrationSource(ADMIN_MIGRATIONS, file), 'sqlite')

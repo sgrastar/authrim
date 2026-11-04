@@ -74,6 +74,12 @@ function database(): { db: DatabaseSync; adapter: DatabaseAdapter } {
       id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, status TEXT NOT NULL,
       last_error TEXT, next_attempt_at TEXT, updated_at TEXT
     );
+    CREATE TABLE admin_notice_deliveries (
+      id TEXT PRIMARY KEY, notice_id TEXT NOT NULL, channel TEXT NOT NULL,
+      target_id TEXT NOT NULL, status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at INTEGER NOT NULL DEFAULT 0, last_error TEXT,
+      created_at INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL DEFAULT 0
+    );
     CREATE TABLE operational_notification_states (
       id TEXT PRIMARY KEY, notification_event_id TEXT NOT NULL, state TEXT NOT NULL,
       resolved_at INTEGER, updated_at INTEGER
@@ -322,5 +328,27 @@ describe('admin notices routes', () => {
     expect(
       db.prepare(`SELECT status FROM internal_notification_events WHERE id = 'evt-2'`).get()
     ).toEqual({ status: 'suppressed' });
+  });
+
+  it('does not name an admin of another tenant in a notice’s deliveries', async () => {
+    const high = (await publish({ scope_type: 'tenant', severity: 'high', title: 'h' })).json
+      .notice;
+    db.exec(`INSERT INTO admin_notice_deliveries (id, notice_id, channel, target_id, status)
+             VALUES ('d1', '${high.id}', 'email', 'admin-2', 'sent'),
+                    ('d2', '${high.id}', 'email', 'admin-3', 'sent')`);
+    mocks.auth = admin({ permissions: ['admin:settings:read'] });
+    const read = await call('GET', `/${high.id}/deliveries`);
+    const body = await read.json<{ items: Array<{ id: string; target_id: string | null }> }>();
+    expect(body.items).toEqual([
+      expect.objectContaining({ id: 'd1', target_id: 'admin-2' }),
+      expect.objectContaining({ id: 'd2', target_id: null }),
+    ]);
+    mocks.auth = PLATFORM;
+    const all = await (
+      await call('GET', `/${high.id}/deliveries`)
+    ).json<{
+      items: Array<{ target_id: string | null }>;
+    }>();
+    expect(all.items.map((item) => item.target_id)).toEqual(['admin-2', 'admin-3']);
   });
 });

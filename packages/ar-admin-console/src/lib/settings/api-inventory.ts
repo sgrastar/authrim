@@ -602,6 +602,14 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		note: 'What the header’s notification area reads: open notices for the signed-in admin, dismissed (information) or resolved (the rest), and announcements admins publish.'
 	},
 	{
+		id: 'notice-channels',
+		name: 'Slack channels for notices',
+		kind: 'records',
+		page: 'integrations/notifications',
+		paths: [`${A}/notice-channels`],
+		note: 'Incoming Webhook channels that receive notices; the webhook URL is write-only and never returned.'
+	},
+	{
 		id: 'notifications',
 		name: 'Notification center and delivery routes',
 		kind: 'records',

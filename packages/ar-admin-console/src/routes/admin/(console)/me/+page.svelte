@@ -1,12 +1,14 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { startRegistration } from '@simplewebauthn/browser';
+	import { httpNoticeDelivery } from '#lib/api/notice-delivery.js';
 	import { myPasskeysAPI, passkeyErrorKey, type AdminPasskey } from '#lib/api/my-passkeys.js';
 	import { adminSession } from '#lib/auth/session.svelte.js';
 	import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
 	import { i18n, t } from '#lib/i18n/i18n.svelte.js';
 	import { LOCALE_LABELS, SUPPORTED_LOCALES, type Locale } from '#lib/i18n/locales.js';
 	import { changeLanguage } from '#lib/shell/language.js';
+	import NoticeEmail from '#lib/pages/me/NoticeEmail.svelte';
 	import Card from '#lib/ui/patterns/Card.svelte';
 	import ConfirmDialog from '#lib/ui/patterns/ConfirmDialog.svelte';
 	import DetailItem from '#lib/ui/patterns/DetailItem.svelte';
@@ -240,6 +242,8 @@
 		</SettingRow>
 		{#snippet footer()}{t('me.storedLocally')}{/snippet}
 	</Card>
+
+	<NoticeEmail client={httpNoticeDelivery} />
 
 	<Card title={t('me.passkeys')} description={t('me.passkeysDesc')}>
 		{#snippet actions()}

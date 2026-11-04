@@ -7,6 +7,7 @@
 		type PublishNoticeInput
 	} from '#lib/api/admin-notices.js';
 	import { ApiError } from '#lib/api/api-error.js';
+	import type { NoticeDeliveryClient } from '#lib/api/notice-delivery.js';
 	import { hasPermission } from '#lib/access/access.js';
 	import { adminAccess } from '#lib/access/admin-access.svelte.js';
 	import { adminSession } from '#lib/auth/session.svelte.js';
@@ -23,6 +24,7 @@
 	import { toast } from '#lib/ui/toast/toast.svelte.js';
 	import NoticeDetail from './NoticeDetail.svelte';
 	import PublishNoticeDialog from './PublishNoticeDialog.svelte';
+	import SlackChannels from './SlackChannels.svelte';
 	import { SEVERITY_LABEL, SEVERITY_TONE, actionErrorKey, scopeLabel } from './notice-labels';
 
 	/**
@@ -32,6 +34,11 @@
 	 */
 	interface Props {
 		client: AdminNoticesClient;
+		/**
+		 * Where notices were delivered and the Slack channels they go to. Offered to admins who may
+		 * read settings; without it the page shows neither.
+		 */
+		delivery?: NoticeDeliveryClient;
 		/** The notice to show in full (`?id=`). */
 		focusId?: string | null;
 		/** Called when the admin opens or closes a notice, so the address can follow. */
@@ -40,7 +47,7 @@
 		onchanged?: () => void;
 	}
 
-	let { client, focusId = null, onfocus, onchanged }: Props = $props();
+	let { client, delivery, focusId = null, onfocus, onchanged }: Props = $props();
 
 	let items = $state<AdminNotice[]>([]);
 	let phase = $state<'loading' | 'ready' | 'forbidden' | 'failed'>('loading');
@@ -55,6 +62,8 @@
 
 	const access = $derived(adminAccess.current);
 	const canWrite = $derived(hasPermission(access, 'admin:settings:write'));
+	const canReadSettings = $derived(hasPermission(access, 'admin:settings:read') || canWrite);
+	const deliveryClient = $derived(canReadSettings ? delivery : undefined);
 	const selected = $derived(
 		selectedId ? (items.find((item) => item.id === selectedId) ?? fetched) : null
 	);
@@ -199,6 +208,7 @@
 			<NoticeDetail
 				notice={selected}
 				canResolve={canResolve(selected)}
+				delivery={deliveryClient}
 				{busy}
 				error={actionError}
 				onresolve={() => resolve(selected)}
@@ -243,6 +253,10 @@
 				{/snippet}
 			</DataTable>
 		</Card>
+
+		{#if deliveryClient}
+			<SlackChannels client={deliveryClient} {canWrite} platform={access.platform} />
+		{/if}
 	{/if}
 </Page>
 

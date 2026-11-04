@@ -14,6 +14,7 @@
  * - GET  /api/admin/notices             - The signed-in admin's open notices
  * - POST /api/admin/notices             - Write an announcement
  * - GET  /api/admin/notices/:id         - One notice
+ * - GET  /api/admin/notices/:id/deliveries - Where it was emailed and posted (settings read)
  * - POST /api/admin/notices/:id/dismiss - Put information away (for the signed-in admin)
  * - POST /api/admin/notices/:id/resolve - Resolve a notice for everyone
  */
@@ -34,6 +35,7 @@ import {
   ADMIN_NOTICE_SEVERITIES,
   ADMIN_PERMISSIONS,
   AR_ERROR_CODES,
+  AdminNoticeDeliveryRepository,
   AdminNoticeRepository,
   adminAuthMiddleware,
   createAuthContextFromHono,
@@ -186,6 +188,72 @@ adminNoticesRouter.get('/:id', async (c) => {
   } catch (error) {
     noticesLog(c).error('Failed to read an admin notice', {
       action: 'admin_notice_get',
+      errorType: error instanceof Error ? error.name : 'Unknown',
+    });
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+});
+
+/**
+ * GET /api/admin/notices/:id/deliveries
+ */
+adminNoticesRouter.get('/:id/deliveries', async (c) => {
+  c.header('Cache-Control', 'no-store');
+  const auth = c.get('adminAuth');
+  if (!auth) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+  // Who was emailed is for the admins who run the audience, not for every reader.
+  if (!holds(auth, ADMIN_PERMISSIONS.SETTINGS_READ)) {
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+  }
+  try {
+    const adapter = adminAdapter(c);
+    const notice = await visibleNotice(c, auth, new AdminNoticeRepository(adapter));
+    if (!notice) return notFound(c);
+    const repository = new AdminNoticeDeliveryRepository(adapter);
+    const limit = Number.parseInt(c.req.query('limit') ?? '', 10);
+    const page = await repository.listForNotice(notice.id, {
+      after: c.req.query('after') || null,
+      limit: Number.isFinite(limit) ? limit : undefined,
+    });
+    const deliveries = page.items;
+    // An admin of another tenant (a platform admin, say) is not named to this tenant's admins.
+    const hidden = new Set<string>();
+    if (!isPlatformAdmin(auth)) {
+      const tenantId = getTenantIdFromContext(c);
+      const emailed = [
+        ...new Set(deliveries.filter((d) => d.channel === 'email').map((d) => d.target_id)),
+      ];
+      const members = new Set<string>();
+      for (let offset = 0; offset < emailed.length; offset += 50) {
+        const ids = emailed.slice(offset, offset + 50);
+        const rows = await adapter.query<{ id: string }>(
+          `SELECT id FROM admin_users WHERE tenant_id = ? AND id IN (${ids.map(() => '?').join(', ')})`,
+          [tenantId, ...ids]
+        );
+        for (const row of rows) members.add(row.id);
+      }
+      for (const id of emailed) if (!members.has(id)) hidden.add(id);
+    }
+    return c.json({
+      summary: await repository.summaryForNotice(notice.id),
+      next_cursor: page.next,
+      items: deliveries.map((delivery) => ({
+        id: delivery.id,
+        channel: delivery.channel,
+        target_id:
+          delivery.channel === 'email' && hidden.has(delivery.target_id)
+            ? null
+            : delivery.target_id,
+        status: delivery.status,
+        attempts: delivery.attempts,
+        next_attempt_at: delivery.status === 'failed' ? delivery.next_attempt_at : null,
+        last_error: delivery.last_error,
+        updated_at: delivery.updated_at,
+      })),
+    });
+  } catch (error) {
+    noticesLog(c).error('Failed to list admin notice deliveries', {
+      action: 'admin_notice_deliveries',
       errorType: error instanceof Error ? error.name : 'Unknown',
     });
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);

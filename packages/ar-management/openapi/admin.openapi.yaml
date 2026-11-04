@@ -31664,6 +31664,73 @@ paths:
           $ref: '#/components/responses/Error'
       security:
         - adminSessionCookie: []
+  /api/admin/me/notice-preferences:
+    get:
+      tags:
+        - Admin Notices
+      operationId: getApiAdminMeNoticePreferences
+      summary: The signed-in admin's notice email choices
+      description: Defaults until changed - email on, high and above. Human sessions only.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        '200':
+          description: Preferences.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - preferences
+                properties:
+                  preferences:
+                    $ref: '#/components/schemas/AdminNoticePreferences'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+    put:
+      tags:
+        - Admin Notices
+      operationId: putApiAdminMeNoticePreferences
+      summary: Change the signed-in admin's notice email choices
+      x-authrim-route-coverage: inferred-from-source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email_enabled
+                - email_min_severity
+              properties:
+                email_enabled:
+                  type: boolean
+                email_min_severity:
+                  type: string
+                  enum: [critical, high, caution, info]
+      responses:
+        '200':
+          description: Preferences.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - preferences
+                properties:
+                  preferences:
+                    $ref: '#/components/schemas/AdminNoticePreferences'
+        '400':
+          description: invalid_request with the offending field.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
   /api/admin/me/second-factor-recovery:
     get:
       tags:
@@ -32108,6 +32175,274 @@ paths:
           $ref: '#/components/responses/Error'
       security:
         - adminSessionCookie: []
+  /api/admin/notice-channels:
+    get:
+      tags:
+        - Admin Notices
+      operationId: getApiAdminNoticeChannels
+      summary: List Slack channels for notices
+      description: >-
+        The selected tenant's Slack channels, and the platform's for a platform admin. The webhook
+        URL is never returned, only a hint. Requires settings read permission.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        '200':
+          description: Channels.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - items
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AdminNoticeChannel'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+    post:
+      tags:
+        - Admin Notices
+      operationId: postApiAdminNoticeChannels
+      summary: Register a Slack channel for notices
+      description: >-
+        Notices of the tenant (or, for scope_type platform and a platform admin, of the platform)
+        at or above min_severity are posted to this Slack Incoming Webhook. The URL is encrypted
+        at rest. Requires settings write permission; 503 when encryption is not configured.
+      x-authrim-route-coverage: inferred-from-source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+                - webhook_url
+              properties:
+                scope_type:
+                  type: string
+                  enum: [platform, tenant]
+                  default: tenant
+                name:
+                  type: string
+                  maxLength: 80
+                webhook_url:
+                  type: string
+                  description: https://hooks.slack.com/services/... only.
+                min_severity:
+                  type: string
+                  enum: [critical, high, caution, info]
+                  default: high
+                enabled:
+                  type: boolean
+                  default: true
+      responses:
+        '201':
+          description: The channel.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - channel
+                properties:
+                  channel:
+                    $ref: '#/components/schemas/AdminNoticeChannel'
+        '400':
+          description: invalid_request with the offending field.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/notice-channels/{id}:
+    patch:
+      tags:
+        - Admin Notices
+      operationId: patchApiAdminNoticeChannelsById
+      summary: Change a Slack channel
+      description: Rename it, change its minimum severity, or turn it on or off. Settings write.
+      x-authrim-route-coverage: inferred-from-source
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  maxLength: 80
+                min_severity:
+                  type: string
+                  enum: [critical, high, caution, info]
+                enabled:
+                  type: boolean
+      responses:
+        '200':
+          description: The channel.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - channel
+                properties:
+                  channel:
+                    $ref: '#/components/schemas/AdminNoticeChannel'
+        '400':
+          description: invalid_request with the offending field.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found in the admin's tenant (or not a platform admin's).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+    delete:
+      tags:
+        - Admin Notices
+      operationId: deleteApiAdminNoticeChannelsById
+      summary: Remove a Slack channel
+      description: Removes it with the posts still waiting for it. Settings write.
+      x-authrim-route-coverage: inferred-from-source
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Removed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+        '404':
+          description: Not found in the admin's tenant (or not a platform admin's).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/notice-channels/{id}/webhook-url:
+    put:
+      tags:
+        - Admin Notices
+      operationId: putApiAdminNoticeChannelsByIdWebhookUrl
+      summary: Replace a Slack channel's webhook URL
+      description: The URL is write-only. Settings write.
+      x-authrim-route-coverage: inferred-from-source
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - webhook_url
+              properties:
+                webhook_url:
+                  type: string
+      responses:
+        '200':
+          description: The channel.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - channel
+                properties:
+                  channel:
+                    $ref: '#/components/schemas/AdminNoticeChannel'
+        '400':
+          description: invalid_request with the offending field.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found in the admin's tenant (or not a platform admin's).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/notice-channels/{id}/test:
+    post:
+      tags:
+        - Admin Notices
+      operationId: postApiAdminNoticeChannelsByIdTest
+      summary: Post a test message to a Slack channel
+      description: Settings write.
+      x-authrim-route-coverage: inferred-from-source
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Whether Slack accepted it.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - delivered
+                properties:
+                  delivered:
+                    type: boolean
+                  error:
+                    type: string
+        '404':
+          description: Not found in the admin's tenant (or not a platform admin's).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
   /api/admin/notices:
     get:
       tags:
@@ -32235,6 +32570,99 @@ paths:
                     $ref: '#/components/schemas/AdminNotice'
         '404':
           description: No such notice in the admin's audiences.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/notices/{id}/deliveries:
+    get:
+      tags:
+        - Admin Notices
+      operationId: getApiAdminNoticesByIdDeliveries
+      summary: Where a notice was emailed and posted
+      description: >-
+        One row per admin emailed and per Slack channel, with its status (queued, sent, failed,
+        dead_letter, skipped), a page at a time in id order, with counts by channel and status.
+        Requires settings read permission and a notice in the admin's audiences.
+      x-authrim-route-coverage: inferred-from-source
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: after
+          in: query
+          required: false
+          description: next_cursor of the previous page.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 200
+      responses:
+        '200':
+          description: Deliveries.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - items
+                  - summary
+                properties:
+                  next_cursor:
+                    type: [string, 'null']
+                  summary:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        channel:
+                          type: string
+                          enum: [email, slack]
+                        status:
+                          type: string
+                          enum: [queued, sent, failed, dead_letter, skipped]
+                        count:
+                          type: integer
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        channel:
+                          type: string
+                          enum: [email, slack]
+                        target_id:
+                          type: [string, 'null']
+                          description: >-
+                            The admin or channel; null for an admin of another tenant unless the
+                            reader is a platform admin.
+                        status:
+                          type: string
+                          enum: [queued, sent, failed, dead_letter, skipped]
+                        attempts:
+                          type: integer
+                        next_attempt_at:
+                          type: [integer, 'null']
+                        last_error:
+                          type: [string, 'null']
+                        updated_at:
+                          type: integer
+        '404':
+          description: Not found in the admin's tenant (or not a platform admin's).
           content:
             application/json:
               schema:
@@ -76665,6 +77093,45 @@ components:
         - created_at
         - last_used_at
         - revoked_at
+    AdminNoticeChannel:
+      type: object
+      properties:
+        id:
+          type: string
+        scope_type:
+          type: string
+          enum: [platform, tenant]
+        tenant_id:
+          type: [string, 'null']
+        kind:
+          type: string
+          enum: [slack]
+        name:
+          type: string
+        webhook_url_hint:
+          type: string
+          description: The non-secret part of the webhook URL.
+        min_severity:
+          type: string
+          enum: [critical, high, caution, info]
+        enabled:
+          type: boolean
+        created_by:
+          type: [string, 'null']
+        created_at:
+          type: integer
+        updated_at:
+          type: integer
+    AdminNoticePreferences:
+      type: object
+      properties:
+        email_enabled:
+          type: boolean
+        email_min_severity:
+          type: string
+          enum: [critical, high, caution, info]
+        updated_at:
+          type: [integer, 'null']
     AdminNotice:
       type: object
       required:
