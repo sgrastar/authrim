@@ -43,6 +43,7 @@ import {
   recoveryNoticeAvailable,
   sendRecoveryNotice,
   sendRecoveryNoticeAfterCommit,
+  showRecoveryInConsole,
 } from './second-factor-recovery-notice';
 
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
@@ -224,6 +225,7 @@ export async function fileRecoveryRequest(
       );
     }
 
+    await showRecoveryInConsole(adapter, 'requested', result.recovery, requesterEmail);
     await writeAdminAuditLog(c, {
       action: 'admin.second_factor.recovery_requested',
       resourceType: 'admin_second_factor_recovery',

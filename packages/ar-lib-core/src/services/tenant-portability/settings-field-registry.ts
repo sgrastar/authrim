@@ -511,6 +511,14 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
   `,
     ],
     [
+      'admin-notices',
+      'number',
+      'value',
+      `
+    admin-notices.retention_days
+  `,
+    ],
+    [
       'dcr',
       'boolean',
       'value',

@@ -31,6 +31,7 @@ import { PLUGIN_CATEGORY_META } from './plugin';
 import { ASSURANCE_LEVELS_CATEGORY_META } from './assurance-levels';
 import { CHECK_API_AUDIT_CATEGORY_META } from './check-api-audit';
 import { LOG_STORAGE_CATEGORY_META } from './log-storage';
+import { ADMIN_NOTICES_CATEGORY_META } from './admin-notices';
 import { DCR_CATEGORY_META } from './dcr';
 import { LOGIN_UI_CATEGORY_META } from './login-ui';
 import { ACCOUNT_LIFECYCLE_CATEGORY_META } from './account-lifecycle';
@@ -86,6 +87,8 @@ export const ALL_CATEGORY_META = {
   'check-api-audit': CHECK_API_AUDIT_CATEGORY_META,
   // Log storage (D1 retention before R2)
   'log-storage': LOG_STORAGE_CATEGORY_META,
+  // Admin console notices (how long handled ones are kept)
+  'admin-notices': ADMIN_NOTICES_CATEGORY_META,
   // Dynamic Client Registration (RFC 7591)
   dcr: DCR_CATEGORY_META,
   // Login UI Customization
@@ -169,6 +172,10 @@ export const CATEGORY_SCOPE_CONFIG: Record<
   },
   'log-storage': {
     // One archiver moves the rows of every tenant in the environment.
+    allowedScopes: ['platform'],
+  },
+  'admin-notices': {
+    // One cleanup job removes the handled notices of every tenant.
     allowedScopes: ['platform'],
   },
 

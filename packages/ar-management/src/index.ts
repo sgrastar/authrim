@@ -76,6 +76,7 @@ import {
   ADMIN_ROLE_GROUPS,
 } from '@authrim/ar-lib-core';
 import { runRetentionMaintenance } from './retention-maintenance';
+import { processScheduledAdminNoticeRetention } from './admin-notice-retention';
 import { runObjectArtifactCleanup } from './artifact-cleanup';
 import { processLoggingStorageMaintenanceJobs } from './logging-storage-maintenance-jobs';
 import {
@@ -4667,6 +4668,8 @@ async function handleCoveredScheduled(
     // Audit logs, Check API decisions and deleted users' tombstones past their retention;
     // each task records its own run and, per tenant, when it last ran.
     await runRetentionMaintenance(env, maintenanceTargets, log.module('RETENTION-MAINTENANCE'));
+    // Handled admin console notices past the platform's retention (every tenant at once).
+    await processScheduledAdminNoticeRetention(env, log.module('ADMIN-NOTICE-RETENTION'));
 
     log.info('Scheduled maintenance cleanup completed', {
       passwordTokensDeleted,
