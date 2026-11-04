@@ -38,6 +38,7 @@
 import type { KVNamespace } from '@cloudflare/workers-types';
 import type { DatabaseSource } from '../db';
 import { ensureDatabaseAdapter } from '../db';
+import { KV_MIN_TTL_SECONDS } from './kv-ttl';
 import { createLogger } from './logger';
 import type {
   RBACTokenClaims,
@@ -353,6 +354,8 @@ export async function getCompositeRBACCache(
     const storeCacheAsync = async () => {
       try {
         const ttl = env ? await getRBACCacheTTL(env) : DEFAULT_RBAC_CACHE_TTL;
+        // Under KV's 60-second minimum the put would fail: such a TTL leaves the claims uncached.
+        if (ttl < KV_MIN_TTL_SECONDS) return;
         await cache.put(cacheKey, JSON.stringify(compositeCache), { expirationTtl: ttl });
       } catch {
         // PII Protection: Don't log full error object
@@ -747,6 +750,8 @@ export async function getIDTokenRBACClaims(
     const storeCacheAsync = async () => {
       try {
         const ttl = options.env ? await getRBACCacheTTL(options.env) : DEFAULT_RBAC_CACHE_TTL;
+        // Under KV's 60-second minimum the put would fail: such a TTL leaves the claims uncached.
+        if (ttl < KV_MIN_TTL_SECONDS) return;
         await cache.put(cacheKey, JSON.stringify(claims), { expirationTtl: ttl });
       } catch {
         // PII Protection: Don't log full error object
@@ -814,6 +819,8 @@ export async function getAccessTokenRBACClaims(
     const storeCacheAsync = async () => {
       try {
         const ttl = options.env ? await getRBACCacheTTL(options.env) : DEFAULT_RBAC_CACHE_TTL;
+        // Under KV's 60-second minimum the put would fail: such a TTL leaves the claims uncached.
+        if (ttl < KV_MIN_TTL_SECONDS) return;
         await cache.put(cacheKey, JSON.stringify(claims), { expirationTtl: ttl });
       } catch {
         // PII Protection: Don't log full error object

@@ -11,6 +11,7 @@
 
 import type { Env } from '../types/env';
 import type { DatabaseAdapter } from '../db/adapter';
+import { chunkForBoundParameters, sqlPlaceholders } from '../db/bound-parameters';
 import type {
   ConsumeChallengeRequest,
   StoreChallengeRequest,
@@ -409,12 +410,16 @@ async function candidates(env: Env, input: RemainingLoginMethodInput): Promise<C
         'account-login-methods:providers',
         { tenantId }
       );
-      const rows = await providers.query<{ id: string }>(
-        `SELECT id FROM upstream_providers
-          WHERE tenant_id = ? AND enabled = 1 AND id IN (${providerIds.map(() => '?').join(', ')})`,
-        [tenantId, ...providerIds]
-      );
-      return new Set(rows.map((row) => row.id));
+      const enabled = new Set<string>();
+      for (const chunk of chunkForBoundParameters(providerIds, 1)) {
+        const rows = await providers.query<{ id: string }>(
+          `SELECT id FROM upstream_providers
+            WHERE tenant_id = ? AND enabled = 1 AND id IN (${sqlPlaceholders(chunk.length)})`,
+          [tenantId, ...chunk]
+        );
+        for (const row of rows) enabled.add(row.id);
+      }
+      return enabled;
     })());
   for (const row of linked) {
     list.push({

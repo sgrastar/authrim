@@ -4,6 +4,7 @@ import type { DatabaseAdapter } from '../db/adapter';
 import { buildKVKey } from './tenant-context';
 import { validateAllowedOrigins } from './custom-redirect';
 import { getCacheTTL } from './cache-config';
+import { kvTtlSeconds } from './kv-ttl';
 import { createLogger } from './logger';
 
 const log = createLogger().module('WEB_ORIGIN_REGISTRY');
@@ -203,7 +204,7 @@ export async function getWebOriginRegistry(
     try {
       // Reuse the policy TTL tier: origin registry changes are security-sensitive and
       // should converge faster than general client display metadata.
-      const ttl = await getCacheTTL(env, 'policy', { tenantId, clientId });
+      const ttl = kvTtlSeconds(await getCacheTTL(env, 'policy', { tenantId, clientId }));
       await env.CLIENTS_CACHE.put(key, JSON.stringify(document), { expirationTtl: ttl });
     } catch {
       log.warn('Failed to cache web origin registry');

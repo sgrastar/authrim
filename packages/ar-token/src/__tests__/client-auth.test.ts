@@ -54,6 +54,10 @@ const mocks = vi.hoisted(() => {
   };
 
   return {
+    // The jtis the replay guard (DPoPJTIStore check-and-store) has recorded.
+    replayJtis: new Set<string>(),
+    // The RATE_LIMITER Durable Object: fixed-window records per key.
+    rateLimitRecords: new Map<string, { count: number; resetAt: number; firstRequestAt: number }>(),
     // The sub an app's identity mapping gives its ID tokens (unset: the mapping as configured).
     mappedIdTokenSub: { value: undefined as string | undefined },
     // Logging
@@ -204,6 +208,13 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    isReplayJtiRecorded: async (_env: unknown, input: { jti: string }) =>
+      mocks.replayJtis.has(input.jti),
+    recordReplayJti: async (_env: unknown, input: { jti: string }) => {
+      if (mocks.replayJtis.has(input.jti)) return 'replayed';
+      mocks.replayJtis.add(input.jti);
+      return 'recorded';
+    },
     loadClientContractCached: (...args: Parameters<typeof actual.loadClientContractCached>) => {
       const override = mocks.mockGuestContract();
       return override === undefined
@@ -728,6 +739,32 @@ describe('Client Authentication Tests', () => {
   beforeEach(() => {
     resetAllMocks();
     mockEnv = createMockEnv();
+    mocks.replayJtis.clear();
+    mocks.rateLimitRecords.clear();
+    const rateLimiterStub = {
+      getStatusRpc: async (key: string) => mocks.rateLimitRecords.get(key) ?? null,
+      incrementRpc: async (key: string, config: { windowSeconds: number; maxRequests: number }) => {
+        const now = Math.floor(Date.now() / 1000);
+        const existing = mocks.rateLimitRecords.get(key);
+        const record =
+          existing && now < existing.resetAt
+            ? { ...existing, count: existing.count + 1 }
+            : { count: 1, resetAt: now + config.windowSeconds, firstRequestAt: now };
+        mocks.rateLimitRecords.set(key, record);
+        const allowed = record.count <= config.maxRequests;
+        return {
+          allowed,
+          current: record.count,
+          limit: config.maxRequests,
+          resetAt: record.resetAt,
+          retryAfter: allowed ? 0 : record.resetAt - now,
+        };
+      },
+    };
+    (mockEnv as unknown as { RATE_LIMITER: unknown }).RATE_LIMITER = {
+      idFromName: (name: string) => name,
+      get: () => rateLimiterStub,
+    };
 
     // Setup default tenant profile
     mocks.mockLoadTenantProfileCached.mockResolvedValue({
@@ -3784,7 +3821,7 @@ describe('Client Authentication Tests', () => {
         expect(first.status).toBe(503);
         expect(mocks.mockDeviceSecretRepository.validateAndUse).not.toHaveBeenCalled();
         // The ID token was not marked used by the failed attempt.
-        expect(await mockEnv.AUTHRIM_CONFIG.get('native-sso:jti:id-token-jti-1')).toBeNull();
+        expect(mocks.replayJtis.has('native-sso-id-token:id-token-jti-1')).toBe(false);
 
         useRootKey(ROOT_KEY);
         const retry = await tokenHandler(createNativeSSOTokenExchangeContext(client.client_id));
@@ -4193,11 +4230,12 @@ describe('Client Authentication Tests', () => {
 
     it('should return native_sso_rate_limited with retry metadata when blocked', async () => {
       const client = setupNativeSSOValidationTest();
-      mockEnv.AUTHRIM_CONFIG.get = vi.fn().mockImplementation(async (key: string) => {
-        if (key.startsWith('native-sso:ratelimit:')) {
-          return JSON.stringify({ count: 10, blockedUntil: Date.now() + 20_000 });
-        }
-        return null;
+      // The client is blocked for another 20 seconds.
+      const now = Math.floor(Date.now() / 1000);
+      mocks.rateLimitRecords.set(`native-sso:default:${client.client_id}:unknown:blocked`, {
+        count: 1,
+        resetAt: now + 20,
+        firstRequestAt: now,
       });
 
       const response = await tokenHandler(createNativeSSOTokenExchangeContext(client.client_id));
@@ -4806,14 +4844,24 @@ describe('Client Authentication Tests', () => {
       expectNativeSSOInstallationMetadata(body, client.client_id);
     });
 
+    it('records the subject ID Token jti once, so presenting it again is a replay', async () => {
+      const client = setupNativeSSOValidationTest({ jti: 'once-jti-001' });
+
+      const first = await tokenHandler(createNativeSSOTokenExchangeContext(client.client_id));
+      expect(first.status).toBe(200);
+      expect(mocks.replayJtis.has('native-sso-id-token:once-jti-001')).toBe(true);
+
+      const second = await tokenHandler(createNativeSSOTokenExchangeContext(client.client_id));
+      const body = await parseJsonResponse<{ error: string; error_details?: { code?: string } }>(
+        second
+      );
+      expect(second.status).toBe(400);
+      expect(body.error_details?.code).toBe('id_token_replayed');
+    });
+
     it('should return id_token_replayed when a subject ID Token jti was already used', async () => {
       const client = setupNativeSSOValidationTest({ jti: 'replayed-jti-001' });
-      mockEnv.AUTHRIM_CONFIG.get = vi.fn().mockImplementation(async (key: string) => {
-        if (key.startsWith('native-sso:jti:')) {
-          return '1';
-        }
-        return null;
-      });
+      mocks.replayJtis.add('native-sso-id-token:replayed-jti-001');
 
       const response = await tokenHandler(createNativeSSOTokenExchangeContext(client.client_id));
       const body = await parseJsonResponse<{ error: string; error_details?: { code?: string } }>(

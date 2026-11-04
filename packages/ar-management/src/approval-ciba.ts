@@ -11,6 +11,7 @@ import {
   generateCIBAUserCode,
   getCIBARequestStoreById,
   getCIBARequestStoreForNewRequest,
+  kvTtlSeconds,
   timingSafeEqual,
 } from '@authrim/ar-lib-core';
 
@@ -71,6 +72,10 @@ async function loadStoredState(
   if (!parsed.auth_req_id || !parsed.expires_at || !parsed.created_at) {
     return null;
   }
+  // KV keeps the entry up to a minute past its expiry (its TTL floor); it has lapsed already.
+  if (parsed.expires_at <= Date.now()) {
+    return null;
+  }
   return parsed;
 }
 
@@ -83,9 +88,8 @@ async function saveStoredState(
     throw new Error('AUTHRIM_CONFIG is required for approval CIBA state');
   }
 
-  const ttlSeconds = Math.max(1, Math.ceil((state.expires_at - Date.now()) / 1000));
   await env.AUTHRIM_CONFIG.put(getStateKey(artifactId), JSON.stringify(state), {
-    expirationTtl: ttlSeconds,
+    expirationTtl: kvTtlSeconds((state.expires_at - Date.now()) / 1000),
   });
 }
 

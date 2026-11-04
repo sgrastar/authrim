@@ -354,8 +354,8 @@ describe('Control Plane tenant management', () => {
   it('limits tenant inventory list to the authenticated tenant scope for non-platform admins', async () => {
     adapters.defaultAdapter = createAdapter((sql, params) => {
       if (sql.includes('FROM tenants')) {
-        expect(sql).toContain('WHERE id IN (?)');
-        expect(params).toEqual(['first']);
+        expect(sql).toContain('WHERE id IN (SELECT value FROM json_each(?))');
+        expect(params).toEqual([JSON.stringify(['first'])]);
         return [createTenantRow('first', { name: 'First' })];
       }
       return null;

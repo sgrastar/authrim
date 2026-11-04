@@ -29,6 +29,8 @@ import {
   hasAdminPermission,
   requireDedicatedAdminDatabaseAdapter,
   type AdminAuthContext,
+  chunkForBoundParameters,
+  sqlPlaceholders,
 } from '@authrim/ar-lib-core';
 import { isAgentMcpEnabled, type AgentManagementEnv } from '../../agent-downscope-auth';
 import { isFreshAdminHuman } from '../../agent-fresh-auth';
@@ -139,11 +141,14 @@ function audit(
 async function activeTenants(c: BaselineContext, tenantIds: readonly string[]): Promise<boolean> {
   if (tenantIds.length === 0 || tenantIds.length > 1000) return false;
   const database = requireDedicatedAdminDatabaseAdapter(c.env, 'agent-template-targets');
-  const rows = await database.query<{ id: string }>(
-    `SELECT id FROM tenants WHERE lifecycle_state = 'active' AND id IN (${tenantIds.map(() => '?').join(', ')})`,
-    [...tenantIds]
-  );
-  const active = new Set(rows.map((row) => row.id));
+  const active = new Set<string>();
+  for (const chunk of chunkForBoundParameters(tenantIds)) {
+    const rows = await database.query<{ id: string }>(
+      `SELECT id FROM tenants WHERE lifecycle_state = 'active' AND id IN (${sqlPlaceholders(chunk.length)})`,
+      chunk
+    );
+    for (const row of rows) active.add(row.id);
+  }
   return tenantIds.every((tenantId) => active.has(tenantId));
 }
 

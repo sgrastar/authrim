@@ -2,10 +2,7 @@
   "schemaVersion": 1,
   "packageName": "@authrim/ar-policy",
   "worker": "ar-policy",
-  "requiredDataRoles": [
-    "tenant_core/default",
-    "tenant_core/users"
-  ],
+  "requiredDataRoles": ["tenant_core/default", "tenant_core/users"],
   "bindings": [
     {
       "name": "SETTINGS",
@@ -30,6 +27,11 @@
       "kind": "kv_namespace",
       "required": true,
       "capability": "runtime_registry.read"
+    },
+    {
+      "name": "RATE_LIMITER",
+      "kind": "durable_object_namespace",
+      "required": true
     },
     {
       "name": "PERMISSION_CHANGE_HUB",
