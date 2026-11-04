@@ -90,6 +90,8 @@ export class DPoPJTIStore {
   private env: Env;
   private initialization: Promise<void> | null = null;
   private alarmScheduled = false;
+  /** Tail of the check-and-store queue (see checkAndStoreJTI). */
+  private storeQueue: Promise<unknown> = Promise.resolve();
   private readonly log: Logger = createLogger().module('DPoPJTIStore');
 
   // Configuration
@@ -203,8 +205,11 @@ export class DPoPJTIStore {
    */
   async checkJTI(jti: string): Promise<DPoPJTIRecord | null> {
     await this.initializeState();
+    return this.liveRecord(await jtiHash(jti));
+  }
 
-    const hash = await jtiHash(jti);
+  /** The unexpired record for a hashed JTI, deleting it if it has expired. */
+  private async liveRecord(hash: string): Promise<DPoPJTIRecord | null> {
     const record = await this.state.storage.get<DPoPJTIRecord>(RECORD_PREFIX + hash);
     if (!record) {
       return null;
@@ -228,15 +233,21 @@ export class DPoPJTIStore {
    * - If not exists: stores JTI
    *
    * This is the solution to issue #12: DPoP JTI race condition.
-   * Parallel requests with the same JTI will be serialized,
-   * ensuring only the first one succeeds.
+   * Calls run one at a time through `storeQueue`, so the check and the store of one call never
+   * interleave with another's, whatever the runtime does between awaits.
    */
-  async checkAndStoreJTI(request: CheckAndStoreJTIRequest): Promise<void> {
+  checkAndStoreJTI(request: CheckAndStoreJTIRequest): Promise<void> {
+    const run = this.storeQueue.then(() => this.checkAndStoreJTIExclusive(request));
+    this.storeQueue = run.catch(() => undefined);
+    return run;
+  }
+
+  private async checkAndStoreJTIExclusive(request: CheckAndStoreJTIRequest): Promise<void> {
     await this.initializeState();
+    const hash = await jtiHash(request.jti);
 
     // Check if JTI already exists (ATOMIC CHECK)
-    const existing = await this.checkJTI(request.jti);
-    if (existing) {
+    if (await this.liveRecord(hash)) {
       throw new DPoPJTIReplayError('DPoP replay detected: JTI already used');
     }
 
@@ -250,7 +261,6 @@ export class DPoPJTIStore {
       expiresAt: now + request.ttl * 1000,
     };
 
-    const hash = await jtiHash(request.jti);
     await this.state.storage.put({
       [RECORD_PREFIX + hash]: record,
       [expiryKey(record.expiresAt, hash)]: hash,

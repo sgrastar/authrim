@@ -1101,6 +1101,13 @@ describe('DPoPJTIStore', () => {
       expect(mockState.alarmAt).not.toBeNull();
     });
 
+    it('accepts exactly one of concurrent stores of the same JTI', async () => {
+      const results = await Promise.all(Array.from({ length: 5 }, () => store1('raced')));
+
+      expect(results.filter((response) => response.status === 201)).toHaveLength(1);
+      expect(results.filter((response) => response.status === 400)).toHaveLength(4);
+    });
+
     it('does not schedule another alarm when nothing is left', async () => {
       await store1('short', 60);
       vi.advanceTimersByTime(61 * 1000);
