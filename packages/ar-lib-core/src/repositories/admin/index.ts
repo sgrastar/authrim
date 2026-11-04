@@ -36,6 +36,19 @@ export {
   type AdminSecondFactorRecoveryInput,
   type AdminSecondFactorRecoveryStatus,
 } from './admin-second-factor-recovery';
+export {
+  AdminNoticeRepository,
+  ADMIN_NOTICE_LIST_LIMIT,
+  ADMIN_NOTICE_SCOPES,
+  ADMIN_NOTICE_SEVERITIES,
+  type AdminNotice,
+  type AdminNoticeInput,
+  type AdminNoticeResolveResult,
+  type AdminNoticeScope,
+  type AdminNoticeSeverity,
+  type AdminNoticeSource,
+  type AdminNoticeViewer,
+} from './admin-notice';
 export { AdminAuditLogRepository, type AdminAuditLogFilterOptions } from './admin-audit-log';
 export { AdminIpAllowlistRepository } from './admin-ip-allowlist';
 export {
