@@ -4081,7 +4081,8 @@ paths:
       summary: List another admin's step-up security keys
       description: >-
         The security keys (second factors) of an admin of the selected tenant, revoked ones
-        included. Requires admin users read permission.
+        included. Requires admin users read permission and authority over the account (403 for
+        an account above the caller).
       x-authrim-route-coverage: inferred-from-source
       parameters:
         - name: id

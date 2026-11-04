@@ -5227,6 +5227,21 @@ describe('Settings API v2', () => {
       expect((await read(f, url)).values[key]).toBe(short);
     });
 
+    it.each([
+      [PLATFORM_CHECK_AUDIT, 'audit.check_api_retention_days'],
+      [PLATFORM_NOTICES, 'admin-notices.retention_days'],
+    ])('%s: setting a value below the default for the first time is gated', async (url, key) => {
+      // Nothing set yet: the feature runs with its 90-day default, so 30 shortens it.
+      const f = createTestApp({ kv: createMockKV() });
+      mockRequireAdminStepUp.mockResolvedValue(refusal());
+      const res = await patch(f, url, { set: { [key]: 30 } });
+      expect(res.status).toBe(403);
+      expect(mockRequireAdminStepUp).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ operation: 'audit.retention.shorten' })
+      );
+    });
+
     it('an invalid PATCH is refused before the gate', async () => {
       const f = createTestApp({ kv: createMockKV() });
       const res = await patch(f, TENANT_SECURITY, {

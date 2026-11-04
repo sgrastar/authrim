@@ -19,8 +19,10 @@ import type { Context } from 'hono';
 import {
   createRuntimeProfileRegistryFromEnv,
   loadEnvironmentProfileDefaultsFromEnv,
+  ADMIN_NOTICES_DEFAULTS,
   ADMIN_STEP_UP_ENFORCED_KEY,
   ADMIN_STEP_UP_OVERRIDES_KEY,
+  CHECK_API_AUDIT_DEFAULTS,
   DISABLED_MARKER,
   settingsParentScopes,
   type AdminAuthContext,
@@ -40,6 +42,10 @@ export const RETENTION_SETTING_KEYS = [
   'audit.check_api_retention_days',
   'admin-notices.retention_days',
 ] as const;
+const RETENTION_DEFAULTS: Record<(typeof RETENTION_SETTING_KEYS)[number], number> = {
+  'audit.check_api_retention_days': CHECK_API_AUDIT_DEFAULTS['audit.check_api_retention_days'],
+  'admin-notices.retention_days': ADMIN_NOTICES_DEFAULTS['admin-notices.retention_days'],
+};
 export const TENANT_PROFILE_KEYS = [
   'tenant.residency_profile_id',
   'tenant.audit_profile_id',
@@ -112,12 +118,20 @@ export function decideStepUpSettings(input: {
     params.admin_step_up_enforced = false;
   }
 
+  // An unset value is the default the feature runs with, so a value set below it shortens too.
+  // Anything that is not a number afterwards (off, cleared to an unknown) counts as shorter.
   const retention: Record<string, unknown> = {};
   for (const key of RETENTION_SETTING_KEYS) {
-    const was = effective(before, inherited, key);
-    const now = effective(after, inherited, key);
-    if (typeof was !== 'number') continue;
-    if (typeof now !== 'number' || now < was) retention[key] = now === undefined ? null : now;
+    const wasRaw = effective(before, inherited, key);
+    const nowRaw = effective(after, inherited, key);
+    const was = wasRaw === undefined ? RETENTION_DEFAULTS[key] : wasRaw;
+    const now = nowRaw === undefined ? RETENTION_DEFAULTS[key] : nowRaw;
+    if (typeof was !== 'number') {
+      // Off before (kept forever): turning it on with any period shortens it.
+      if (was === false && typeof now === 'number') retention[key] = now;
+      continue;
+    }
+    if (typeof now !== 'number' || now < was) retention[key] = now ?? null;
   }
   const shorten = Object.keys(retention).length > 0;
   if (shorten) params.retention_days = retention;

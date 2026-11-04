@@ -212,5 +212,7 @@ describe("another admin's second factors", () => {
 
     expect((await call('DELETE', '/member/second-factors/sf-1')).status).toBe(403);
     expect(mocks.requireAdminStepUp).not.toHaveBeenCalled();
+    // Nor does it see which keys that account holds.
+    expect((await call('GET', '/member/second-factors')).status).toBe(403);
   });
 });

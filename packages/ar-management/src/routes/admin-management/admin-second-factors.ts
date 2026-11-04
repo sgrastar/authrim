@@ -96,10 +96,21 @@ async function noticeRevocation(
  */
 adminSecondFactorsRouter.get('/', async (c) => {
   c.header('Cache-Control', 'no-store');
+  const auth = c.get('adminAuth');
+  if (!auth) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
   try {
     const adapter = adminAdapter(c);
+    const tenantId = getTenantIdFromContext(c);
     const adminUserId = c.req.param('id') ?? '';
-    if (!(await tenantAdmin(adapter, getTenantIdFromContext(c), adminUserId))) return notFound(c);
+    if (!(await tenantAdmin(adapter, tenantId, adminUserId))) return notFound(c);
+    // Which keys an admin holds (and when they were last used) is read only with authority over
+    // the account, as acting on it is: not for an account above the caller.
+    if (adminUserId !== auth.userId) {
+      const standing = await loadAdminStanding(adapter, tenantId, adminUserId);
+      if (!mayActOnAdminAccount(auth, standing, 'admin:admin_users:read')) {
+        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+      }
+    }
     const factors = await new AdminSecondFactorRepository(adapter).listByUser(adminUserId);
     return c.json({ second_factors: factors.map(presentSecondFactor) });
   } catch (error) {
