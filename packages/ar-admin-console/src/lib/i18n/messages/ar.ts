@@ -6,6 +6,7 @@ import { arServiceFlows } from './service-flows/ar';
 import { arAccountFlows } from './account-flows/ar';
 import { arSchemaSetting } from './schema-setting/ar';
 import { arTenantGeneral } from './tenant-general/ar';
+import { arSecurityKeys } from './security-keys/ar';
 
 export const ar = {
 	...arSettings,
@@ -15,6 +16,7 @@ export const ar = {
 	...arAccountFlows,
 	...arSchemaSetting,
 	...arTenantGeneral,
+	...arSecurityKeys,
 	'app.adminLabel': 'وحدة التحكم الإدارية',
 	'app.env.dev': 'التطوير',
 	'app.env.prod': 'الإنتاج',

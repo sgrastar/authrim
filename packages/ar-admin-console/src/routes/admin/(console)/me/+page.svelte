@@ -2,6 +2,9 @@
 	import { goto } from '$app/navigation';
 	import { startRegistration } from '@simplewebauthn/browser';
 	import { myPasskeysAPI, passkeyErrorKey, type AdminPasskey } from '#lib/api/my-passkeys.js';
+	import { httpSecondFactors } from '#lib/api/second-factors.js';
+	import RecoveryRequests from '#lib/pages/me/RecoveryRequests.svelte';
+	import SecurityKeys from '#lib/pages/me/SecurityKeys.svelte';
 	import { adminSession } from '#lib/auth/session.svelte.js';
 	import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
 	import { i18n, t } from '#lib/i18n/i18n.svelte.js';
@@ -297,6 +300,10 @@
 			</ItemGrid>
 		{/if}
 	</Card>
+
+	<SecurityKeys client={httpSecondFactors} />
+
+	<RecoveryRequests client={httpSecondFactors} selfId={session?.user_id} />
 
 	<Card title={t('me.session')} flush>
 		<SettingRow title={t('account.signOut')} description={t('me.signOutDesc')}>
