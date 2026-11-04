@@ -8,7 +8,7 @@
 	/** Images: the logo, the favicon, the background and (Split) the brand panel's own picture. */
 	let { draft = $bindable() }: { draft: ThemeDraft } = $props();
 
-	// The brand panel exists only in the Split template; its picture waits until Split is chosen.
+	// The brand panel exists only in the Split template, so its picture is offered only with Split.
 	const split = $derived(draft.template === 'split');
 </script>
 
@@ -38,26 +38,25 @@
 		maxBytes={2 * 1024 * 1024}
 		bind:value={draft.backgroundImage}
 	/>
-	<Slider
-		label={t('th.i.bgOpacity')}
-		format="percent"
-		disabled={!draft.backgroundImage}
-		bind:value={draft.backgroundOpacity}
-	/>
+	{#if draft.backgroundImage}
+		<Slider label={t('th.i.bgOpacity')} format="percent" bind:value={draft.backgroundOpacity} />
+	{/if}
 </ThemeGroup>
 
-<ThemeGroup title={t('th.g.panelImage')} description={t('th.g.panelImage.d')}>
-	<ImageUpload
-		label={t('th.i.panelImage')}
-		shape="wide"
-		maxBytes={2 * 1024 * 1024}
-		disabled={!split}
-		bind:value={draft.panelImage}
-	/>
-	<Slider
-		label={t('th.i.panelOpacity')}
-		format="percent"
-		disabled={!split || !draft.panelImage}
-		bind:value={draft.panelImageOpacity}
-	/>
-</ThemeGroup>
+{#if split}
+	<ThemeGroup title={t('th.g.panelImage')} description={t('th.g.panelImage.d')}>
+		<ImageUpload
+			label={t('th.i.panelImage')}
+			shape="wide"
+			maxBytes={2 * 1024 * 1024}
+			bind:value={draft.panelImage}
+		/>
+		{#if draft.panelImage}
+			<Slider
+				label={t('th.i.panelOpacity')}
+				format="percent"
+				bind:value={draft.panelImageOpacity}
+			/>
+		{/if}
+	</ThemeGroup>
+{/if}

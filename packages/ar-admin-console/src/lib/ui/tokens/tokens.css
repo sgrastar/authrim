@@ -72,6 +72,17 @@
 	--lh-body: 1.5; /* running text */
 	--lh-relaxed: 1.7; /* paragraphs meant to be read: dialog bodies, notes */
 
+	/* The sign-in screen preview (Customization > Themes) draws the end user's screen, which sets
+	   its type on a 16px page and not on the console's 13px one. */
+	--preview-fs-hero: 48px; /* the brand panel's title */
+	--preview-fs-heading: 22px; /* the form's heading */
+	--preview-fs-name: 20px; /* the brand name in the header */
+	--preview-fs-body: 16px;
+	--preview-fs-label: 14px; /* tagline, button */
+	--preview-fs-eyebrow: 13px; /* the brand name over the brand panel's title */
+	--preview-fs-small: 12px; /* footer */
+	--preview-lh-hero: 1.05;
+
 	/* --- Stacking (Design rules › Layers) ---
 	   Page layers, lowest first. Dialogs, the drawer and popovers (tips, select menus) use the
 	   browser's top layer and sit above all of these without a z-index. Inside a component,
@@ -115,6 +126,8 @@
 	--box-head-pad-y: 12px; /* box header, setting and danger rows */
 	--box-foot-pad-y: 12px; /* box footer */
 	--tile-pad: 12px; /* item card: a smaller box among many */
+	--choice-pad-y: 14px; /* choice card (ChoiceCards): a few cards that each need a sentence */
+	--choice-pad-x: 16px;
 	--dialog-pad-x: 24px; /* dialogs: a box on its own, a little roomier */
 	--dialog-pad-y: 24px;
 	--note-pad-y: 8px; /* callout: a note inside a box */

@@ -16,9 +16,9 @@
 	/**
 	 * Customization → Themes: how the tenant's sign-in screens look.
 	 *
-	 * The editing column (one tab per section) and the preview column sit side by side and the
-	 * preview stays in view while the left column is edited; on a narrow screen they stack,
-	 * editing first. What is edited is held in the page (`draft`) and drawn by the preview; it is
+	 * The preview column (first) and the editing column (one tab per section, the inspector) sit
+	 * side by side and the preview stays in view while the inspector is edited; on a narrow screen
+	 * they stack, editing first. The inspector is dense: its controls and spacing are a size down. What is edited is held in the page (`draft`) and drawn by the preview; it is
 	 * not read from or saved to the Admin API yet.
 	 */
 	let draft = $state(newThemeDraft());
@@ -65,21 +65,37 @@
 </Page>
 
 <style>
-	/* Editing on the start side, the preview on the end side; the preview follows the scroll. */
+	/* The preview on the start side, the inspector on the end side; the preview follows the scroll. */
 	.workspace {
 		display: grid;
-		grid-template-columns: minmax(370px, 1fr) minmax(0, 2fr);
+		grid-template-columns: minmax(0, 2fr) minmax(370px, 1fr);
 		gap: var(--space-columns);
 		align-items: start;
 	}
 
+	/*
+	 * The inspector is narrow and holds many controls, so it is set a size down: fields at the
+	 * dense height, boxes and the gaps between them tighter. (Tokens are scoped to this column.)
+	 */
 	.workspace__edit {
+		--control-h: var(--control-h-dense);
+		--space-section: 12px;
+		--space-field: 12px;
+		--space-grid: 8px;
+		--box-pad: 12px;
+		--box-head-pad-y: 8px;
+		--choice-pad-y: 8px;
+		--choice-pad-x: 12px;
+		grid-column: 2;
+		grid-row: 1;
 		display: grid;
 		gap: var(--space-section);
 		min-width: 0;
 	}
 
 	.workspace__preview {
+		grid-column: 1;
+		grid-row: 1;
 		position: sticky;
 		/* Below the sticky header and top navigation, as the sub navigation sits. */
 		top: calc(var(--header-h) + var(--subheader-h) + var(--shell-inset) + var(--space-section));
@@ -94,6 +110,12 @@
 	@media (max-width: 900px) {
 		.workspace {
 			grid-template-columns: minmax(0, 1fr);
+		}
+
+		.workspace__edit,
+		.workspace__preview {
+			grid-column: auto;
+			grid-row: auto;
 		}
 
 		.workspace__preview {

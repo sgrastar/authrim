@@ -9,6 +9,16 @@ export type ThemeFont = 'system' | 'serif' | 'rounded' | 'mono';
 export type ThemeScale = 's' | 'm' | 'l';
 export type LogoDisplay = 'both' | 'logo' | 'name';
 
+/** The Split template: how it is framed and laid out (the legacy login-ui.split_* settings). */
+export type SplitFrame = 'full' | 'card';
+export type SplitSide = 'left' | 'right';
+export type SplitWidth = 'narrow' | 'wide';
+/** Where the background image goes: both sides, the brand side only, or the form side has its own. */
+export type SplitBackground = 'shared' | 'brand' | 'panel';
+export type BrandContent = 'logo_copy' | 'logo' | 'none';
+export type BrandPosition = 'top' | 'center' | 'bottom';
+export type BrandAlign = 'left' | 'center' | 'right';
+
 /** The languages the sign-in screens are offered in; each has its own texts. */
 export const TEXT_LANGUAGES = [
 	{ value: 'en', label: 'English' },
@@ -31,6 +41,8 @@ export interface ThemeDraft {
 	accent: string;
 	titleColor: string;
 	textColor: string;
+	/** The muted copy: tagline, brand panel text, footer. */
+	copyColor: string;
 	font: ThemeFont;
 	scale: ThemeScale;
 	header: boolean;
@@ -41,6 +53,19 @@ export interface ThemeDraft {
 	logoDisplay: LogoDisplay;
 	panelTitle: string;
 	panelText: string;
+	splitFrame: SplitFrame;
+	splitSide: SplitSide;
+	splitWidth: SplitWidth;
+	splitBackground: SplitBackground;
+	brandContent: BrandContent;
+	brandPosition: BrandPosition;
+	brandAlign: BrandAlign;
+	/** The form side's fill when the background is "brand only"; two colours make a gradient. */
+	panelColor: string;
+	panelGradient: string;
+	/** The form side's own picture when the background is "panel image". */
+	formImage: string | File | null;
+	formImageOpacity: number;
 	language: TextLanguage;
 	texts: Record<TextLanguage, ThemeTexts>;
 	/** A stored image's URL, a newly chosen file, or none. */
@@ -54,6 +79,20 @@ export interface ThemeDraft {
 	panelImageOpacity: number;
 	customCss: string;
 }
+
+/**
+ * The choices of the Split panel, by group: each value has the message `th.<group>.<value>`.
+ * One list for the screen and for the check that every label exists.
+ */
+export const SPLIT_CHOICES = {
+	splitFrame: ['full', 'card'],
+	splitSide: ['left', 'right'],
+	splitWidth: ['narrow', 'wide'],
+	splitBg: ['shared', 'brand', 'panel'],
+	brandContent: ['logo_copy', 'logo', 'none'],
+	brandPosition: ['top', 'center', 'bottom'],
+	brandAlign: ['left', 'center', 'right']
+} as const;
 
 /** Font stacks of the typefaces on offer; system fonts only, so nothing is downloaded. */
 export const FONT_STACKS: Record<ThemeFont, string> = {
@@ -77,6 +116,7 @@ export function newThemeDraft(): ThemeDraft {
 		accent: '',
 		titleColor: '',
 		textColor: '',
+		copyColor: '',
 		font: 'system',
 		scale: 'm',
 		header: true,
@@ -87,6 +127,17 @@ export function newThemeDraft(): ThemeDraft {
 		logoDisplay: 'both',
 		panelTitle: '',
 		panelText: '',
+		splitFrame: 'full',
+		splitSide: 'left',
+		splitWidth: 'narrow',
+		splitBackground: 'shared',
+		brandContent: 'logo_copy',
+		brandPosition: 'center',
+		brandAlign: 'left',
+		panelColor: '',
+		panelGradient: '',
+		formImage: null,
+		formImageOpacity: 70,
 		language: 'en',
 		texts: { en: emptyTexts(), ja: emptyTexts(), de: emptyTexts(), ar: emptyTexts() },
 		logo: null,
