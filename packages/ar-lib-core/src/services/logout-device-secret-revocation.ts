@@ -1,4 +1,5 @@
 import type { DatabaseAdapter } from '../db/adapter';
+import { chunkForBoundParameters } from '../db/bound-parameters';
 
 export type DeviceSecretLogoutScope = 'local' | 'group' | 'global';
 
@@ -328,18 +329,21 @@ async function revokeDeviceSecretsByIds(input: {
   }
 
   const now = Date.now();
-  const result = await input.adapter.execute(
-    `
-      UPDATE device_secrets
-      SET revoked_at = ?, revoke_reason = ?, updated_at = ?
-      WHERE id IN (${placeholders(ids)})
-        AND tenant_id = ?
-        AND is_active = 1
-        AND revoked_at IS NULL
-    `,
-    [now, input.reason, now, ...ids, input.tenantId]
+  // One batch (all or none), each statement within D1's bound-parameter limit.
+  const results = await input.adapter.batch(
+    chunkForBoundParameters(ids, 4).map((chunk) => ({
+      sql: `
+        UPDATE device_secrets
+        SET revoked_at = ?, revoke_reason = ?, updated_at = ?
+        WHERE id IN (${placeholders(chunk)})
+          AND tenant_id = ?
+          AND is_active = 1
+          AND revoked_at IS NULL
+      `,
+      params: [now, input.reason, now, ...chunk, input.tenantId],
+    }))
   );
-  return result.rowsAffected;
+  return results.reduce((total, result) => total + result.rowsAffected, 0);
 }
 
 async function revokeDeviceSecretsByPredicate(input: {

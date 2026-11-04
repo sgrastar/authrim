@@ -22,6 +22,7 @@ import {
   getLogger,
   getTenantIdFromContext,
   listExternalProviderSessions,
+  recordReplayJti,
   safeFetchJson,
   createDiagnosticLoggerFromContext,
   getDiagnosticSessionId,
@@ -156,7 +157,7 @@ export async function handleBackchannelLogout(c: Context<{ Bindings: Env }>): Pr
     }
 
     // 3. Validate logout token
-    const claims = await validateLogoutToken(c.env, provider, logoutToken);
+    const claims = await validateLogoutToken(c.env, tenantId, provider, logoutToken);
     logoutTokenValidated = true;
     if (diagnosticLogger) {
       await recordDiagnostic(log, 'logout token validation success', () =>
@@ -623,6 +624,7 @@ export function classifyBackchannelLogoutError(error: unknown): string {
  */
 async function validateLogoutToken(
   env: Env,
+  tenantId: string,
   provider: UpstreamProvider,
   logoutToken: string
 ): Promise<LogoutTokenClaims> {
@@ -684,20 +686,18 @@ async function validateLogoutToken(
     throw new Error('Logout token is too old');
   }
 
-  // 6. Check jti against KV cache to prevent replay attacks
-  // Key format: bcl_jti:{providerId}:{jti}
-  const jtiCacheKey = `bcl_jti:${provider.id}:${claims.jti}`;
-  if (env.SETTINGS) {
-    const existingJti = await env.SETTINGS.get(jtiCacheKey);
-    if (existingJti) {
-      throw new Error('Logout token replay detected');
-    }
-
-    // Store jti in KV with TTL matching the iat window (5 minutes + buffer)
-    // This prevents the same logout token from being processed twice
-    await env.SETTINGS.put(jtiCacheKey, '1', {
-      expirationTtl: maxAge + 60, // 6 minutes (5 min window + 1 min buffer)
-    });
+  // 6. Record the jti once, atomically, to prevent replay attacks (a KV get and put would let
+  // two concurrent deliveries of one token both pass). Kept for the iat window plus a buffer,
+  // so the same logout token is never processed twice.
+  const outcome = await recordReplayJti(env, {
+    tenantId,
+    shardKey: provider.id,
+    jti: `backchannel-logout:${provider.id}:${claims.jti}`,
+    issuedAt: claims.iat,
+    ttlSeconds: maxAge + 60, // 6 minutes (5 min window + 1 min buffer)
+  });
+  if (outcome === 'replayed') {
+    throw new Error('Logout token replay detected');
   }
 
   return claims;

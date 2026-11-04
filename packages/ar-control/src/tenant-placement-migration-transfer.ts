@@ -5,6 +5,8 @@ import type {
 } from './tenant-placement-migration-inventory';
 
 const MAX_OUTBOX_BATCH = 100;
+/** Sequences acknowledged per statement (4 other parameters; D1 binds at most 100). */
+const OUTBOX_ACK_CHUNK = 90;
 const MAX_OUTBOX_JSON_BYTES = 1024 * 1024;
 
 export interface TenantMigrationTransferExecutor {
@@ -547,17 +549,22 @@ export async function applyTenantMigrationOutboxBatch(input: {
   }
 
   const sequences = input.records.map((record) => record.sourceSequence);
-  const acknowledgements = await input.executor.queryD1(
-    input.sourceDatabaseId,
-    `UPDATE tenant_placement_migration_outbox
-        SET delivery_state = 'applied', applied_at = ?
-      WHERE operation_id = ? AND tenant_id = ? AND capture_fencing_token = ?
-        AND delivery_state = 'pending'
-        AND source_sequence IN (${sequences.map(() => '?').join(', ')})`,
-    [input.now, input.operationId, input.tenantId, input.fencingToken, ...sequences]
-  );
-  if (acknowledgements.length !== 1 || acknowledgements[0]?.success !== true) {
-    throw new Error('tenant_migration_outbox_source_ack_failed');
+  // In chunks, as D1 binds at most 100 parameters to a statement (a full batch is 100 sequences).
+  // A retry after a partial acknowledgement applies the rest again, which applying allows.
+  for (let offset = 0; offset < sequences.length; offset += OUTBOX_ACK_CHUNK) {
+    const chunk = sequences.slice(offset, offset + OUTBOX_ACK_CHUNK);
+    const acknowledgements = await input.executor.queryD1(
+      input.sourceDatabaseId,
+      `UPDATE tenant_placement_migration_outbox
+          SET delivery_state = 'applied', applied_at = ?
+        WHERE operation_id = ? AND tenant_id = ? AND capture_fencing_token = ?
+          AND delivery_state = 'pending'
+          AND source_sequence IN (${chunk.map(() => '?').join(', ')})`,
+      [input.now, input.operationId, input.tenantId, input.fencingToken, ...chunk]
+    );
+    if (acknowledgements.length !== 1 || acknowledgements[0]?.success !== true) {
+      throw new Error('tenant_migration_outbox_source_ack_failed');
+    }
   }
   return { appliedCount: input.records.length, lastAppliedSequence: previousSequence };
 }

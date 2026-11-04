@@ -35,7 +35,9 @@ import {
   resolveAccountDataContextFromHono,
 } from '@authrim/ar-lib-core';
 import {
+  chunkForBoundParameters,
   type DatabaseAdapter,
+  type PreparedStatement,
   type CanonicalRuntimeUserWriteInput,
   CanonicalIdentityRepository,
   CanonicalRuntimeUserProjectionRepository,
@@ -1021,6 +1023,22 @@ function resolveScimGroupMemberIds(
   });
 }
 
+/** Multi-row INSERTs adding the members, each within D1's bound-parameter limit. */
+function groupMemberInsertStatements(
+  tenantId: string,
+  roleId: string,
+  memberIds: string[],
+  createdAt: string
+): PreparedStatement[] {
+  return chunkForBoundParameters([...new Set(memberIds)], 0, 4).map((chunk) => ({
+    sql: `INSERT INTO user_roles (user_id, role_id, tenant_id, created_at) VALUES ${chunk
+      .map(() => '(?, ?, ?, ?)')
+      .join(', ')}`,
+    params: chunk.flatMap((memberId) => [memberId, roleId, tenantId, createdAt]),
+  }));
+}
+
+/** Adds the members in one batch: all of them or (on failure) none. */
 async function insertTenantGroupMembers(
   coreAdapter: DatabaseAdapter,
   tenantId: string,
@@ -1028,12 +1046,27 @@ async function insertTenantGroupMembers(
   memberIds: string[],
   createdAt: string
 ): Promise<void> {
-  for (const memberId of memberIds) {
-    await coreAdapter.execute(
-      `INSERT INTO user_roles (user_id, role_id, tenant_id, created_at) VALUES (?, ?, ?, ?)`,
-      [memberId, roleId, tenantId, createdAt]
-    );
-  }
+  if (memberIds.length === 0) return;
+  await coreAdapter.batch(groupMemberInsertStatements(tenantId, roleId, memberIds, createdAt));
+}
+
+/**
+ * Replaces the members in one batch, so a failure part way never leaves the group empty or
+ * partial (which would take the role from users who keep it).
+ */
+async function replaceTenantGroupMembers(
+  coreAdapter: DatabaseAdapter,
+  tenantId: string,
+  roleId: string,
+  memberIds: string[]
+): Promise<void> {
+  await coreAdapter.batch([
+    {
+      sql: 'DELETE FROM user_roles WHERE tenant_id = ? AND role_id = ?',
+      params: [tenantId, roleId],
+    },
+    ...groupMemberInsertStatements(tenantId, roleId, memberIds, new Date().toISOString()),
+  ]);
 }
 
 function invalidGroupMemberBulkResponse(
@@ -3446,15 +3479,7 @@ app.put('/Groups/:id', async (c) => {
     );
 
     // Update members only after every routed account has been validated.
-    await coreAdapter.execute('DELETE FROM user_roles WHERE tenant_id = ? AND role_id = ?', [
-      tenantId,
-      groupId,
-    ]);
-
-    if (memberIds.length > 0) {
-      const now = new Date().toISOString();
-      await insertTenantGroupMembers(coreAdapter, tenantId, groupId, memberIds, now);
-    }
+    await replaceTenantGroupMembers(coreAdapter, tenantId, groupId, memberIds);
 
     // Fetch updated group
     const updatedGroup = await coreAdapter.queryOne<InternalGroup>(
@@ -3567,15 +3592,7 @@ app.patch('/Groups/:id', async (c) => {
 
     // Update members if changed
     if (memberIds) {
-      await coreAdapter.execute('DELETE FROM user_roles WHERE tenant_id = ? AND role_id = ?', [
-        tenantId,
-        groupId,
-      ]);
-
-      if (memberIds.length > 0) {
-        const now = new Date().toISOString();
-        await insertTenantGroupMembers(coreAdapter, tenantId, groupId, memberIds, now);
-      }
+      await replaceTenantGroupMembers(coreAdapter, tenantId, groupId, memberIds);
     }
 
     // Fetch updated group
@@ -3643,13 +3660,12 @@ app.delete('/Groups/:id', async (c) => {
     }
 
     // Delete group (cascade will handle user_roles)
-    await coreAdapter.execute('DELETE FROM user_roles WHERE tenant_id = ? AND role_id = ?', [
-      tenantId,
-      groupId,
-    ]);
-    await coreAdapter.execute('DELETE FROM roles WHERE id = ? AND tenant_id = ?', [
-      groupId,
-      tenantId,
+    await coreAdapter.batch([
+      {
+        sql: 'DELETE FROM user_roles WHERE tenant_id = ? AND role_id = ?',
+        params: [tenantId, groupId],
+      },
+      { sql: 'DELETE FROM roles WHERE id = ? AND tenant_id = ?', params: [groupId, tenantId] },
     ]);
 
     // Audit log (non-blocking) - severity: warning for deletion
@@ -4960,15 +4976,7 @@ async function processGroupOperation(
       );
 
       // Update members only after every routed account has been validated.
-      await coreAdapter.execute('DELETE FROM user_roles WHERE tenant_id = ? AND role_id = ?', [
-        tenantId,
-        resourceId,
-      ]);
-
-      if (memberIds.length > 0) {
-        const now = new Date().toISOString();
-        await insertTenantGroupMembers(coreAdapter, tenantId, resourceId!, memberIds, now);
-      }
+      await replaceTenantGroupMembers(coreAdapter, tenantId, resourceId!, memberIds);
 
       const updatedGroup = await coreAdapter.queryOne<InternalGroup>(
         'SELECT * FROM roles WHERE id = ? AND tenant_id = ?',
@@ -5086,14 +5094,7 @@ async function processGroupOperation(
 
       // Update members if changed
       if (memberIds) {
-        await coreAdapter.execute('DELETE FROM user_roles WHERE tenant_id = ? AND role_id = ?', [
-          tenantId,
-          resourceId,
-        ]);
-        if (memberIds.length > 0) {
-          const now = new Date().toISOString();
-          await insertTenantGroupMembers(coreAdapter, tenantId, resourceId!, memberIds, now);
-        }
+        await replaceTenantGroupMembers(coreAdapter, tenantId, resourceId!, memberIds);
       }
 
       const updatedGroup = await coreAdapter.queryOne<InternalGroup>(
@@ -5148,13 +5149,12 @@ async function processGroupOperation(
         }
       }
 
-      await coreAdapter.execute('DELETE FROM user_roles WHERE tenant_id = ? AND role_id = ?', [
-        tenantId,
-        resourceId,
-      ]);
-      await coreAdapter.execute('DELETE FROM roles WHERE id = ? AND tenant_id = ?', [
-        resourceId,
-        tenantId,
+      await coreAdapter.batch([
+        {
+          sql: 'DELETE FROM user_roles WHERE tenant_id = ? AND role_id = ?',
+          params: [tenantId, resourceId],
+        },
+        { sql: 'DELETE FROM roles WHERE id = ? AND tenant_id = ?', params: [resourceId, tenantId] },
       ]);
 
       return {

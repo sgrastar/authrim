@@ -63,6 +63,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const noopLog = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
   return {
     ...actual,
+    recordReplayJti: vi.fn(async () => 'recorded'),
     getLogger: vi.fn(() => ({ module: vi.fn(() => noopLog) })),
     getTenantIdFromContext: vi.fn((c: { get: (key: string) => unknown }) => c.get('tenantId')),
     createErrorResponse: vi.fn(

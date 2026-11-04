@@ -13,7 +13,8 @@
  * - Atomic check-and-store operation
  * - Prevents parallel replay attacks
  * - TTL enforcement (e.g., 1 hour)
- * - Automatic cleanup of expired JTIs
+ * - Automatic cleanup of expired JTIs (alarm over an expiry index)
+ * - One storage key per JTI, so a store does not rewrite the whole window
  *
  * Benefits over KV-based JTI tracking:
  * - ✅ No race conditions on concurrent requests with same JTI
@@ -47,14 +48,37 @@ export interface CheckAndStoreJTIRequest {
 }
 
 /**
- * Persistent state stored in Durable Storage
+ * Legacy layout: every JTI in one `state` value, rewritten on each store. It is moved to
+ * per-JTI keys on first use, since one value grows with the window and has a size limit.
  */
-interface DPoPJTIStoreState {
+interface LegacyDPoPJTIStoreState {
   jtis: Record<string, DPoPJTIRecord>;
   lastCleanup: number;
 }
 
+const LEGACY_STATE_KEY = 'state';
+/** `jti:<sha256(jti)>` → record. Hashed so any JTI fits the 2 KiB key limit. */
+const RECORD_PREFIX = 'jti:';
+/** `exp:<expiresAt, zero-padded>:<hash>` → hash, so cleanup reads only what has expired. */
+const EXPIRY_PREFIX = 'exp:';
+/** Storage put/delete accept at most 128 keys per call; each JTI has two. */
+const JTIS_PER_WRITE = 64;
+
 class DPoPJTIReplayError extends Error {}
+
+async function jtiHash(jti: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(jti));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** Rounded up, so cleanup never removes a JTI before its own expiry. */
+function expiryKey(expiresAt: number, hash: string): string {
+  return `${EXPIRY_PREFIX}${String(Math.max(0, Math.ceil(expiresAt))).padStart(16, '0')}:${hash}`;
+}
+
+function expiryOf(key: string): number {
+  return Number(key.slice(EXPIRY_PREFIX.length, EXPIRY_PREFIX.length + 16));
+}
 
 /**
  * DPoPJTIStore Durable Object
@@ -64,14 +88,16 @@ class DPoPJTIReplayError extends Error {}
 export class DPoPJTIStore {
   private state: DurableObjectState;
   private env: Env;
-  private jtis: Map<string, DPoPJTIRecord> = new Map();
-  private cleanupInterval: number | null = null;
-  private initialized: boolean = false;
+  private initialization: Promise<void> | null = null;
+  private alarmScheduled = false;
+  /** Tail of the check-and-store queue (see checkAndStoreJTI). */
+  private storeQueue: Promise<unknown> = Promise.resolve();
   private readonly log: Logger = createLogger().module('DPoPJTIStore');
 
   // Configuration
   private readonly CLEANUP_INTERVAL = 5 * 60 * 1000; // 5 minutes
-  private readonly MAX_ENTRIES = 50000; // Cleanup trigger threshold
+  private readonly CLEANUP_BATCH = 1000; // Expired JTIs read per list call
+  private readonly CLEANUP_MAX_BATCHES = 10; // Per alarm; the rest is picked up right after
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -79,74 +105,98 @@ export class DPoPJTIStore {
   }
 
   /**
-   * Initialize state from Durable Storage
+   * Move a legacy `state` value to per-JTI keys (once) and make sure stored JTIs have a cleanup
+   * alarm, even if scheduling failed before. A failure is retried on the next call.
    */
-  private async initializeState(): Promise<void> {
-    if (this.initialized) {
-      return;
-    }
-
-    try {
-      const stored = await this.state.storage.get<DPoPJTIStoreState>('state');
-
-      if (stored) {
-        this.jtis = new Map(Object.entries(stored.jtis));
-        this.log.info('Restored JTIs from Durable Storage', { count: this.jtis.size });
-      }
-    } catch (error) {
+  private initializeState(): Promise<void> {
+    this.initialization ??= this.initialize().catch((error: unknown) => {
+      this.initialization = null;
       this.log.error('Failed to initialize from Durable Storage', {}, error as Error);
       throw error;
-    }
-
-    this.initialized = true;
-    this.startCleanup();
+    });
+    return this.initialization;
   }
 
-  /**
-   * Save current state to Durable Storage
-   */
-  private async saveState(): Promise<void> {
-    try {
-      const stateToSave: DPoPJTIStoreState = {
-        jtis: Object.fromEntries(this.jtis),
-        lastCleanup: Date.now(),
-      };
-
-      await this.state.storage.put('state', stateToSave);
-    } catch (error) {
-      this.log.error('Failed to save to Durable Storage', {}, error as Error);
-      throw error;
-    }
+  private async initialize(): Promise<void> {
+    await this.migrateLegacyState();
+    const stored = await this.state.storage.list({ prefix: EXPIRY_PREFIX, limit: 1 });
+    if (stored.size > 0) await this.ensureCleanupAlarm();
   }
 
-  /**
-   * Start periodic cleanup of expired JTIs
-   */
-  private startCleanup(): void {
-    if (this.cleanupInterval === null) {
-      this.cleanupInterval = setInterval(() => {
-        void this.cleanupExpiredJTIs();
-      }, this.CLEANUP_INTERVAL) as unknown as number;
-    }
-  }
+  private async migrateLegacyState(): Promise<void> {
+    const legacy = await this.state.storage.get<LegacyDPoPJTIStoreState>(LEGACY_STATE_KEY);
+    if (!legacy) return;
 
-  /**
-   * Cleanup expired JTIs
-   */
-  private async cleanupExpiredJTIs(): Promise<void> {
     const now = Date.now();
-    let cleaned = 0;
-
-    for (const [jti, record] of this.jtis.entries()) {
-      if (record.expiresAt <= now) {
-        this.jtis.delete(jti);
-        cleaned++;
+    const live = Object.values(legacy.jtis ?? {}).filter((record) => record.expiresAt > now);
+    for (let i = 0; i < live.length; i += JTIS_PER_WRITE) {
+      const entries: Record<string, unknown> = {};
+      for (const record of live.slice(i, i + JTIS_PER_WRITE)) {
+        const hash = await jtiHash(record.jti);
+        entries[RECORD_PREFIX + hash] = record;
+        entries[expiryKey(record.expiresAt, hash)] = hash;
       }
+      await this.state.storage.put(entries);
     }
+    await this.state.storage.delete(LEGACY_STATE_KEY);
+    this.log.info('Moved JTIs to per-JTI storage', { count: live.length });
+  }
 
-    if (cleaned > 0) {
-      this.log.info('Cleaned up expired JTIs', { count: cleaned });
-      await this.saveState();
+  private async ensureCleanupAlarm(): Promise<void> {
+    if (this.alarmScheduled) return;
+    if ((await this.state.storage.getAlarm()) === null) {
+      await this.state.storage.setAlarm(Date.now() + this.CLEANUP_INTERVAL);
+    }
+    this.alarmScheduled = true;
+  }
+
+  private async deleteRecord(hash: string, record: DPoPJTIRecord): Promise<void> {
+    await this.state.storage.delete([RECORD_PREFIX + hash, expiryKey(record.expiresAt, hash)]);
+  }
+
+  /**
+   * Delete expired JTIs, reading only the expiry index up to now, and schedule the next run.
+   */
+  async alarm(): Promise<void> {
+    this.alarmScheduled = false;
+    await this.initializeState();
+
+    const now = Date.now();
+    const end = expiryKey(now + 1, '');
+    let cleaned = 0;
+    let more = false;
+    for (let batch = 0; batch < this.CLEANUP_MAX_BATCHES; batch++) {
+      const expired = await this.state.storage.list<string>({
+        prefix: EXPIRY_PREFIX,
+        end,
+        limit: this.CLEANUP_BATCH,
+      });
+      if (expired.size === 0) break;
+      const keys = [...expired.entries()].flatMap(([key, hash]) => [key, RECORD_PREFIX + hash]);
+      for (let i = 0; i < keys.length; i += JTIS_PER_WRITE * 2) {
+        await this.state.storage.delete(keys.slice(i, i + JTIS_PER_WRITE * 2));
+      }
+      cleaned += expired.size;
+      more = expired.size === this.CLEANUP_BATCH;
+      if (!more) break;
+    }
+    if (cleaned > 0) this.log.info('Cleaned up expired JTIs', { count: cleaned });
+
+    const next = await this.state.storage.list<string>({ prefix: EXPIRY_PREFIX, limit: 1 });
+    const [firstKey] = next.keys();
+    if (more) {
+      await this.state.storage.setAlarm(Date.now() + 1000);
+      this.alarmScheduled = true;
+    } else if (firstKey !== undefined) {
+      // At most one interval away, so a shorter-lived JTI stored later is not left waiting
+      // behind a long-lived one.
+      await this.state.storage.setAlarm(
+        Math.min(
+          Math.max(expiryOf(firstKey) + 1, Date.now() + 1000),
+          Date.now() + this.CLEANUP_INTERVAL
+        )
+      );
+      this.alarmScheduled = true;
     }
   }
 
@@ -155,16 +205,19 @@ export class DPoPJTIStore {
    */
   async checkJTI(jti: string): Promise<DPoPJTIRecord | null> {
     await this.initializeState();
+    return this.liveRecord(await jtiHash(jti));
+  }
 
-    const record = this.jtis.get(jti);
+  /** The unexpired record for a hashed JTI, deleting it if it has expired. */
+  private async liveRecord(hash: string): Promise<DPoPJTIRecord | null> {
+    const record = await this.state.storage.get<DPoPJTIRecord>(RECORD_PREFIX + hash);
     if (!record) {
       return null;
     }
 
     // Check if expired
     if (record.expiresAt <= Date.now()) {
-      this.jtis.delete(jti);
-      await this.saveState();
+      await this.deleteRecord(hash, record);
       return null;
     }
 
@@ -180,15 +233,21 @@ export class DPoPJTIStore {
    * - If not exists: stores JTI
    *
    * This is the solution to issue #12: DPoP JTI race condition.
-   * Parallel requests with the same JTI will be serialized,
-   * ensuring only the first one succeeds.
+   * Calls run one at a time through `storeQueue`, so the check and the store of one call never
+   * interleave with another's, whatever the runtime does between awaits.
    */
-  async checkAndStoreJTI(request: CheckAndStoreJTIRequest): Promise<void> {
+  checkAndStoreJTI(request: CheckAndStoreJTIRequest): Promise<void> {
+    const run = this.storeQueue.then(() => this.checkAndStoreJTIExclusive(request));
+    this.storeQueue = run.catch(() => undefined);
+    return run;
+  }
+
+  private async checkAndStoreJTIExclusive(request: CheckAndStoreJTIRequest): Promise<void> {
     await this.initializeState();
+    const hash = await jtiHash(request.jti);
 
     // Check if JTI already exists (ATOMIC CHECK)
-    const existing = await this.checkJTI(request.jti);
-    if (existing) {
+    if (await this.liveRecord(hash)) {
       throw new DPoPJTIReplayError('DPoP replay detected: JTI already used');
     }
 
@@ -202,13 +261,11 @@ export class DPoPJTIStore {
       expiresAt: now + request.ttl * 1000,
     };
 
-    this.jtis.set(request.jti, record);
-    await this.saveState();
-
-    // Trigger cleanup if too many entries
-    if (this.jtis.size > this.MAX_ENTRIES) {
-      void this.cleanupExpiredJTIs();
-    }
+    await this.state.storage.put({
+      [RECORD_PREFIX + hash]: record,
+      [expiryKey(record.expiresAt, hash)]: hash,
+    });
+    await this.ensureCleanupAlarm();
   }
 
   /**
@@ -217,14 +274,11 @@ export class DPoPJTIStore {
   async deleteJTI(jti: string): Promise<boolean> {
     await this.initializeState();
 
-    const had = this.jtis.has(jti);
-    this.jtis.delete(jti);
-
-    if (had) {
-      await this.saveState();
-    }
-
-    return had;
+    const hash = await jtiHash(jti);
+    const record = await this.state.storage.get<DPoPJTIRecord>(RECORD_PREFIX + hash);
+    if (!record) return false;
+    await this.deleteRecord(hash, record);
+    return true;
   }
 
   /**
@@ -336,22 +390,24 @@ export class DPoPJTIStore {
 
       // GET /health - Health check
       if (path === '/health' && request.method === 'GET') {
+        await this.initializeState();
         const now = Date.now();
+        // Diagnostic only: reads the whole expiry index.
+        const index = await this.state.storage.list<string>({ prefix: EXPIRY_PREFIX });
+        let total = 0;
         let activeCount = 0;
-
-        for (const record of this.jtis.values()) {
-          if (record.expiresAt > now) {
-            activeCount++;
-          }
+        for (const key of index.keys()) {
+          total++;
+          if (expiryOf(key) > now) activeCount++;
         }
 
         return new Response(
           JSON.stringify({
             status: 'ok',
             jtis: {
-              total: this.jtis.size,
+              total,
               active: activeCount,
-              expired: this.jtis.size - activeCount,
+              expired: total - activeCount,
             },
             timestamp: now,
           }),

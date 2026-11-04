@@ -7,6 +7,7 @@
  */
 
 import type { DatabaseAdapter } from '../../db/adapter';
+import { chunkForBoundParameters, sqlPlaceholders } from '../../db/bound-parameters';
 import type { SessionClientWithWebhook } from '../../types/logout';
 import { requireTenantId } from '../tenant';
 
@@ -101,23 +102,28 @@ export class SessionClientRepository {
       };
     }
 
-    const placeholders = clientIds.map(() => '?').join(', ');
-    const rows = await this.adapter.query<SessionClientLogoutDetailsRow>(
-      `
-        SELECT
-          client_id,
-          client_name,
-          backchannel_logout_uri,
-          backchannel_logout_session_required,
-          frontchannel_logout_uri,
-          frontchannel_logout_session_required,
-          logout_webhook_uri,
-          logout_webhook_secret_encrypted
-        FROM oauth_clients
-        WHERE tenant_id = ? AND client_id IN (${placeholders})
-      `,
-      [this.tenantId, ...clientIds]
-    );
+    const rows = (
+      await Promise.all(
+        chunkForBoundParameters(clientIds, 1).map((chunk) =>
+          this.adapter.query<SessionClientLogoutDetailsRow>(
+            `
+              SELECT
+                client_id,
+                client_name,
+                backchannel_logout_uri,
+                backchannel_logout_session_required,
+                frontchannel_logout_uri,
+                frontchannel_logout_session_required,
+                logout_webhook_uri,
+                logout_webhook_secret_encrypted
+              FROM oauth_clients
+              WHERE tenant_id = ? AND client_id IN (${sqlPlaceholders(chunk.length)})
+            `,
+            [this.tenantId, ...chunk]
+          )
+        )
+      )
+    ).flat();
     const detailsByClientId = new Map(rows.map((row) => [row.client_id, row]));
     const withDetails = tenantScopedClients.flatMap((client): SessionClientWithDetails[] => {
       const details = detailsByClientId.get(client.client_id);
