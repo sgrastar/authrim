@@ -912,13 +912,19 @@ describe('Login UI proxy hooks', () => {
 			background: '#eef1f6',
 			colorScheme: 'light'
 		});
-		// No usable hint: light, and the system's colour scheme takes over.
+		// No usable hint: light, and the system's colour scheme takes over. The dark first-frame
+		// colour is given for the script that settles the mode before the first paint.
 		for (const hint of [undefined, { theme: null }, { theme: 'sepia' }]) {
 			expect(resolveInitialLoginUIAppearance(auto, hint)).toEqual({
 				background: '#eef1f6',
-				colorScheme: 'light dark'
+				colorScheme: 'light dark',
+				darkBackground: '#0b0e16'
 			});
 		}
+		// A hint (or any tenant that names a mode) needs no script.
+		expect(resolveInitialLoginUIAppearance(auto, { theme: 'dark' })).not.toHaveProperty(
+			'darkBackground'
+		);
 		// `auto` cannot be fixed: a stored themeFixed changes nothing, the hint is still used.
 		expect(
 			resolveInitialLoginUIAppearance(
@@ -926,6 +932,48 @@ describe('Login UI proxy hooks', () => {
 				{ theme: 'dark' }
 			)
 		).toEqual({ background: '#0b0e16', colorScheme: 'dark' });
+	});
+
+	it('adds the first-paint script only for an auto tenant without a hint', async () => {
+		const { localeHandle } = await import('../hooks.server');
+		const render = async (theme: string, hint?: string) => {
+			const url = new URL('https://login.example.com/login');
+			const event = {
+				request: new Request(url),
+				url,
+				locals: { authenticationMethods: { ui: { theme, pageTemplate: { palette: 'meridian' } } } },
+				cookies: {
+					get: (name: string) => (name === 'authrim_theme_hint' ? hint : undefined),
+					set: vi.fn()
+				}
+			};
+			let html = '';
+			await localeHandle({
+				event: event as never,
+				resolve: async (_event, options) => {
+					html =
+						(await options?.transformPageChunk?.({
+							html: '<body>__AUTHRIM_THEME_FIRST_PAINT__</body>',
+							done: true
+						})) ?? '';
+					return new Response(html, { headers: { 'Content-Type': 'text/html' } });
+				}
+			});
+			return html;
+		};
+
+		const first = await render('auto');
+		expect(first).toContain('<script>');
+		expect(first).toContain('"#0b0e16"');
+		expect(first).not.toContain('__AUTHRIM_');
+		for (const html of [
+			await render('auto', 'dark'),
+			await render('auto', 'light'),
+			await render('light'),
+			await render('dark')
+		]) {
+			expect(html).toBe('<body></body>');
+		}
 	});
 
 	it('paints the first frame with the palette, and falls back as the page does', async () => {
