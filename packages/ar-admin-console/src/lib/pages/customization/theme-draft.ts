@@ -1,5 +1,3 @@
-import { PREVIEW_SCREENS, type PreviewScreen } from './theme-sections';
-
 /**
  * What the Themes page is editing, held in the page until it is wired to the Admin API. Empty
  * means "not set here": the template's own value applies.
@@ -13,9 +11,8 @@ export type LogoDisplay = 'both' | 'logo' | 'name';
 export type SplitFrame = 'full' | 'card';
 export type SplitSide = 'left' | 'right';
 export type SplitWidth = 'narrow' | 'wide';
-/** Where the background image goes: both sides, the brand side only, or the form side has its own. */
-export type SplitBackground = 'shared' | 'brand' | 'panel';
-export type BrandContent = 'logo_copy' | 'logo' | 'none';
+/** What the Split template's brand panel shows of the brand; "none" shows nothing of it. */
+export type BrandPanelDisplay = LogoDisplay | 'none';
 export type BrandPosition = 'top' | 'center' | 'bottom';
 export type BrandAlign = 'left' | 'center' | 'right';
 
@@ -30,7 +27,6 @@ export const TEXT_LANGUAGES = [
 export type TextLanguage = (typeof TEXT_LANGUAGES)[number]['value'];
 
 export interface ThemeTexts {
-	titles: Record<PreviewScreen, string>;
 	tagline: string;
 	footer: string;
 }
@@ -49,23 +45,21 @@ export interface ThemeDraft {
 	footer: boolean;
 	themeToggle: boolean;
 	languageSelect: boolean;
+	/** The brand's name, in small capitals over the brand panel's title (Split only). */
 	brandName: string;
+	/** The name the header shows. */
+	headerName: string;
+	/** What the header shows of the brand: the logo, the name or both. */
 	logoDisplay: LogoDisplay;
+	/** The same choice for the Split template's brand panel, apart from the header's. */
+	brandLogoDisplay: BrandPanelDisplay;
 	panelTitle: string;
 	panelText: string;
 	splitFrame: SplitFrame;
 	splitSide: SplitSide;
 	splitWidth: SplitWidth;
-	splitBackground: SplitBackground;
-	brandContent: BrandContent;
 	brandPosition: BrandPosition;
 	brandAlign: BrandAlign;
-	/** The form side's fill when the background is "brand only"; two colours make a gradient. */
-	panelColor: string;
-	panelGradient: string;
-	/** The form side's own picture when the background is "panel image". */
-	formImage: string | File | null;
-	formImageOpacity: number;
 	language: TextLanguage;
 	texts: Record<TextLanguage, ThemeTexts>;
 	/** A stored image's URL, a newly chosen file, or none. */
@@ -77,6 +71,9 @@ export interface ThemeDraft {
 	/** The picture on the Split template's brand panel, apart from the page background. */
 	panelImage: string | File | null;
 	panelImageOpacity: number;
+	/** The picture inside the login area (the box with the form), for Standard and Split. */
+	cardImage: string | File | null;
+	cardImageOpacity: number;
 	customCss: string;
 }
 
@@ -88,8 +85,6 @@ export const SPLIT_CHOICES = {
 	splitFrame: ['full', 'card'],
 	splitSide: ['left', 'right'],
 	splitWidth: ['narrow', 'wide'],
-	splitBg: ['shared', 'brand', 'panel'],
-	brandContent: ['logo_copy', 'logo', 'none'],
 	brandPosition: ['top', 'center', 'bottom'],
 	brandAlign: ['left', 'center', 'right']
 } as const;
@@ -104,9 +99,11 @@ export const FONT_STACKS: Record<ThemeFont, string> = {
 
 export const FONT_SCALES: Record<ThemeScale, number> = { s: 0.9, m: 1, l: 1.15 };
 
+/** The footer text every language starts with: a link to Authrim, which opens in a new window. */
+export const DEFAULT_FOOTER = 'Powered by <a href="https://authrim.com/">Authrim</a>';
+
 function emptyTexts(): ThemeTexts {
-	const titles = Object.fromEntries(PREVIEW_SCREENS.map((screen) => [screen.value, '']));
-	return { titles: titles as Record<PreviewScreen, string>, tagline: '', footer: '' };
+	return { tagline: '', footer: DEFAULT_FOOTER };
 }
 
 export function newThemeDraft(): ThemeDraft {
@@ -123,21 +120,17 @@ export function newThemeDraft(): ThemeDraft {
 		footer: true,
 		themeToggle: true,
 		languageSelect: true,
-		brandName: 'Example Inc.',
+		brandName: 'Authrim',
+		headerName: 'Authrim',
 		logoDisplay: 'both',
-		panelTitle: '',
+		brandLogoDisplay: 'both',
+		panelTitle: 'Welcome to your account.',
 		panelText: '',
 		splitFrame: 'full',
 		splitSide: 'left',
 		splitWidth: 'narrow',
-		splitBackground: 'shared',
-		brandContent: 'logo_copy',
 		brandPosition: 'center',
 		brandAlign: 'left',
-		panelColor: '',
-		panelGradient: '',
-		formImage: null,
-		formImageOpacity: 70,
 		language: 'en',
 		texts: { en: emptyTexts(), ja: emptyTexts(), de: emptyTexts(), ar: emptyTexts() },
 		logo: null,
@@ -146,6 +139,8 @@ export function newThemeDraft(): ThemeDraft {
 		backgroundOpacity: 100,
 		panelImage: null,
 		panelImageOpacity: 100,
+		cardImage: null,
+		cardImageOpacity: 100,
 		customCss: ''
 	};
 }

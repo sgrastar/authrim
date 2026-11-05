@@ -2,7 +2,8 @@
 	import { i18n, t } from '#lib/i18n/i18n.svelte.js';
 	import Icon from '../icons/Icon.svelte';
 	import { formatBytes } from '../format';
-	import Button from '../primitives/Button.svelte';
+	import IconButton from '../primitives/IconButton.svelte';
+	import InfoTip from '../primitives/InfoTip.svelte';
 	import { useChangeMark } from '../save/save-scope';
 	import { describeAccept, partitionFiles, type FileRejection } from './files';
 
@@ -18,7 +19,7 @@
 		value?: string | File | null;
 		accept?: string;
 		maxBytes?: number;
-		/** Thumbnail shape: square for logos and favicons, wide for backgrounds. */
+		/** Thumbnail shape: square, or wide (16:9) for a picture whose proportions matter. */
 		shape?: 'square' | 'wide';
 		disabled?: boolean;
 		onremove?: () => void;
@@ -83,9 +84,13 @@
 </script>
 
 <div class="image-up" class:is-disabled={disabled} class:is-changed={isChanged}>
-	<p class="image-up__label" id="{uid}-label">
-		{label}{#if isChanged}<span class="sr-only"> ({t('common.changed')})</span>{/if}
-	</p>
+	<div class="image-up__head">
+		<p class="image-up__label" id="{uid}-label">
+			{label}{#if isChanged}<span class="sr-only"> ({t('common.changed')})</span>{/if}
+		</p>
+		<!-- The accepted types and the size limit: a "?" keeps the narrow column to one line each. -->
+		{#if limits}<InfoTip label="{t('common.moreInfo')}: {label}" text={limits} />{/if}
+	</div>
 	<div class="image-up__body" role="group" aria-labelledby="{uid}-label">
 		<div class="image-up__thumb image-up__thumb--{shape}">
 			{#if shown}
@@ -107,8 +112,6 @@
 				<p class="image-up__meta">
 					{formatBytes(file.size, i18n.locale)}{dimensions ? ` · ${dimensions}` : ''}
 				</p>
-			{:else if limits}
-				<p class="image-up__meta">{limits}</p>
 			{/if}
 			<div class="image-up__actions">
 				<label class="image-up__pick" class:is-disabled={disabled}>
@@ -124,9 +127,7 @@
 					/>
 				</label>
 				{#if shown}
-					<Button variant="ghost" size="sm" icon="trash" {disabled} onclick={remove}>
-						{t('image.remove')}
-					</Button>
+					<IconButton icon="trash" label={t('image.remove')} {disabled} onclick={remove} />
 				{/if}
 			</div>
 			{#if rejected}
@@ -153,6 +154,17 @@
 		opacity: 0.55;
 	}
 
+	.image-up__head {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	/* The "?" is taller than the label: it must not make the row taller. */
+	.image-up__head > :global(.info-tip) {
+		margin-block: -2px;
+	}
+
 	.image-up__label {
 		margin: 0;
 		font-size: var(--fs-label);
@@ -160,11 +172,11 @@
 		color: var(--text-secondary);
 	}
 
+	/* The thumbnail on the start side, its name and the buttons beside it. */
 	.image-up__body {
 		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 16px;
+		align-items: flex-start;
+		gap: 12px;
 	}
 
 	.image-up__thumb {
@@ -179,7 +191,7 @@
 			repeating-conic-gradient(var(--bg-hover) 0 25%, transparent 0 50%) 0 0 / 14px 14px,
 			var(--bg-card);
 		color: var(--text-muted);
-		--icon-size: var(--icon-xl);
+		--icon-size: var(--icon-lg);
 	}
 
 	/* Changed, not saved yet: the thumbnail gets the change colour. */
@@ -189,13 +201,13 @@
 	}
 
 	.image-up__thumb--square {
-		width: 88px;
-		height: 88px;
+		width: 44px;
+		height: 44px;
 	}
 
 	.image-up__thumb--wide {
-		width: 176px;
-		height: 99px;
+		width: 88px;
+		height: 50px;
 	}
 
 	.image-up__thumb img {
@@ -207,7 +219,7 @@
 	.image-up__side {
 		display: grid;
 		min-width: 0;
-		flex: 1 1 220px;
+		flex: 1 1 0;
 		gap: 4px;
 	}
 
@@ -229,8 +241,9 @@
 	.image-up__actions {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 8px;
-		margin-top: 6px;
+		align-items: center;
+		gap: 4px;
+		margin-top: 2px;
 	}
 
 	.image-up__pick {

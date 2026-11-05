@@ -10,9 +10,11 @@
 
 	// The brand panel exists only in the Split template, so its picture is offered only with Split.
 	const split = $derived(draft.template === 'split');
+	// The login area is a box on the page in Standard and Split; Minimal draws no box.
+	const hasCard = $derived(draft.template !== 'minimal');
 </script>
 
-<ThemeGroup title={t('th.g.logo')} description={t('th.g.logo.d')}>
+<ThemeGroup title={t('th.g.logo')} info={t('th.g.logo.d')}>
 	<ImageUpload
 		label={t('th.i.logo')}
 		shape="square"
@@ -21,7 +23,7 @@
 	/>
 </ThemeGroup>
 
-<ThemeGroup title={t('th.g.favicon')} description={t('th.g.favicon.d')}>
+<ThemeGroup title={t('th.g.favicon')} info={t('th.g.favicon.d')}>
 	<ImageUpload
 		label={t('th.i.favicon')}
 		shape="square"
@@ -31,10 +33,10 @@
 	/>
 </ThemeGroup>
 
-<ThemeGroup title={t('th.g.bgImage')} description={t('th.g.bgImage.d')}>
+<ThemeGroup title={t('th.g.bgImage')} info={t('th.g.bgImage.d')}>
 	<ImageUpload
 		label={t('th.i.bgImage')}
-		shape="wide"
+		shape="square"
 		maxBytes={2 * 1024 * 1024}
 		bind:value={draft.backgroundImage}
 	/>
@@ -44,10 +46,10 @@
 </ThemeGroup>
 
 {#if split}
-	<ThemeGroup title={t('th.g.panelImage')} description={t('th.g.panelImage.d')}>
+	<ThemeGroup title={t('th.g.panelImage')} info={t('th.g.panelImage.d')}>
 		<ImageUpload
 			label={t('th.i.panelImage')}
-			shape="wide"
+			shape="square"
 			maxBytes={2 * 1024 * 1024}
 			bind:value={draft.panelImage}
 		/>
@@ -57,6 +59,20 @@
 				format="percent"
 				bind:value={draft.panelImageOpacity}
 			/>
+		{/if}
+	</ThemeGroup>
+{/if}
+
+{#if hasCard}
+	<ThemeGroup title={t('th.g.cardImage')} info={t('th.g.cardImage.d')}>
+		<ImageUpload
+			label={t('th.i.cardImage')}
+			shape="square"
+			maxBytes={2 * 1024 * 1024}
+			bind:value={draft.cardImage}
+		/>
+		{#if draft.cardImage}
+			<Slider label={t('th.i.cardOpacity')} format="percent" bind:value={draft.cardImageOpacity} />
 		{/if}
 	</ThemeGroup>
 {/if}

@@ -14,7 +14,7 @@
 			docs: {
 				description: {
 					component:
-						'Customization → Themes: how the tenant’s sign-in screens look (legacy `/admin/themes`, `login-ui.*` settings).\n\nThe preview on the start side (screen, colour mode, phone or desktop width), the inspector on the end side (one tab per section: Design, Brand, Text, Images, Advanced), set a size down because it is narrow and holds many controls. What is edited is drawn in the preview as it is typed, chosen or uploaded. It is held in the page: nothing is read from or saved to the Admin API yet, and custom CSS is not applied in the preview yet. The preview shows an outline of a sign-in screen, not the real screens.\n\nThe parts it uses are the console’s own; the ones it still lacks are listed in the pull request.'
+						'Customization → Themes: how the tenant’s sign-in screens look (legacy `/admin/themes`, `login-ui.*` settings).\n\nThe preview on the start side (screen, colour mode, phone or desktop width), the inspector on the end side (one tab per section: Design, Content, Images), and custom CSS under both, set a size down because it is narrow and holds many controls. What is edited is drawn in the preview as it is typed, chosen or uploaded. It is held in the page: nothing is read from or saved to the Admin API yet, and custom CSS is not applied in the preview yet. The preview shows an outline of a sign-in screen, not the real screens.\n\nThe parts it uses are the console’s own; the ones it still lacks are listed in the pull request.'
 				}
 			}
 		}
@@ -72,15 +72,53 @@
 </Story>
 
 <Story
-	name="Brand name shows in the preview"
+	name="The header name is its own, apart from the brand name"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.brand') }));
-		const name = await canvas.findByRole('textbox', { name: t('th.f.brandName') });
-		await userEvent.clear(name);
-		await userEvent.type(name, 'Acme Corp');
-		// The name is in the preview's header and again in its footer.
-		await expect((await canvas.findAllByText('Acme Corp')).length).toBeGreaterThan(0);
+		const headerName = () =>
+			canvasElement.querySelector('.outline__header .brand__name')?.textContent;
+		// The defaults: the header carries the header name, the footer the link to Authrim.
+		await waitFor(() => expect(headerName()).toBe('Authrim'));
+		await expect(canvasElement.querySelector('.outline__footer')?.textContent).toContain('Authrim');
+		await userEvent.click(
+			await canvas.findByRole('radio', { name: new RegExp(t('th.tpl.split')) })
+		);
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.content') }));
+		// The brand name does not flow into the header.
+		const brand = await canvas.findByRole('textbox', { name: t('th.f.brandName') });
+		await userEvent.clear(brand);
+		await userEvent.type(brand, 'Beta Ltd');
+		await waitFor(() =>
+			expect(canvasElement.querySelector('.outline__eyebrow')?.textContent?.trim()).toBe('Beta Ltd')
+		);
+		await expect(headerName()).toBe('Authrim');
+		// The header name is changed on its own.
+		const header = await canvas.findByRole('textbox', { name: t('th.f.headerName') });
+		await userEvent.clear(header);
+		await userEvent.type(header, 'Acme');
+		await waitFor(() => expect(headerName()).toBe('Acme'));
+	}}
+>
+	{#snippet template()}
+		<Themes />
+	{/snippet}
+</Story>
+
+<Story
+	name="Brand panel settings are offered with Split only"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.content') }));
+		await expect(canvas.queryByRole('textbox', { name: t('th.f.panelTitle') })).toBeNull();
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.look') }));
+		await userEvent.click(
+			await canvas.findByRole('radio', { name: new RegExp(t('th.tpl.split')) })
+		);
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.content') }));
+		// The title starts with the default wording of the real screen.
+		await expect(await canvas.findByRole('textbox', { name: t('th.f.panelTitle') })).toHaveValue(
+			'Welcome to your account.'
+		);
 	}}
 >
 	{#snippet template()}
@@ -92,7 +130,7 @@
 	name="Custom CSS"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.advanced') }));
+		// Custom CSS is not a tab: it sits under the preview and the inspector.
 		const css = await canvas.findByRole('textbox', { name: t('th.f.css') });
 		// "{{" types one "{" (user-event reads a single "{" as the start of a key such as {Enter}).
 		await userEvent.type(css, '.card {{ border-radius: 0; }');
@@ -127,6 +165,7 @@
 	name="Without the header"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.content') }));
 		await userEvent.click(await canvas.findByLabelText(t('th.t.header')));
 		const screen = canvasElement.querySelector('.outline') as HTMLElement;
 		const card = canvasElement.querySelector('.outline__card') as HTMLElement;
@@ -136,6 +175,95 @@
 			middle(card.getBoundingClientRect()) - middle(screen.getBoundingClientRect())
 		);
 		await expect(offset).toBeLessThan(screen.getBoundingClientRect().height * 0.1);
+	}}
+>
+	{#snippet template()}
+		<Themes />
+	{/snippet}
+</Story>
+
+<Story
+	name="Colour and language choices follow the layout switches"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const tools = () => canvasElement.querySelectorAll('.tools__item');
+		await waitFor(() => expect(tools()).toHaveLength(2));
+		await userEvent.click(await canvas.findByLabelText(t('th.t.themeToggle')));
+		await waitFor(() => expect(tools()).toHaveLength(1));
+		await userEvent.click(await canvas.findByLabelText(t('th.t.language')));
+		await waitFor(() => expect(tools()).toHaveLength(0));
+		// With no header they float at the top end of the screen, not along a band.
+		await userEvent.click(await canvas.findByLabelText(t('th.t.themeToggle')));
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.content') }));
+		await userEvent.click(await canvas.findByLabelText(t('th.t.header')));
+		await waitFor(() => expect(canvasElement.querySelector('.outline__tools')).not.toBeNull());
+	}}
+>
+	{#snippet template()}
+		<Themes />
+	{/snippet}
+</Story>
+
+<Story
+	name="Footer starts with a working link to Authrim"
+	play={async ({ canvasElement }) => {
+		const footer = () => canvasElement.querySelector<HTMLElement>('.outline__footer');
+		await waitFor(() => expect(footer()).not.toBeNull());
+		await expect(footer()?.textContent?.replace(/\s+/g, ' ').trim()).toBe('Powered by Authrim');
+		const link = footer()?.querySelector('a');
+		await expect(link?.getAttribute('href')).toBe('https://authrim.com/');
+		// It opens in a window of its own, and the rest of the preview stays a picture.
+		await expect(link?.getAttribute('target')).toBe('_blank');
+		await expect(link?.getAttribute('rel')).toContain('noopener');
+		await expect(link?.closest('[inert]')).toBeNull();
+		await expect(canvasElement.querySelector('.outline__stage')?.hasAttribute('inert')).toBe(true);
+	}}
+>
+	{#snippet template()}
+		<Themes />
+	{/snippet}
+</Story>
+
+<Story
+	name="Tagline sits under the brand name"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.content') }));
+		await userEvent.type(await canvas.findByRole('textbox', { name: t('th.f.tagline') }), 'Hello');
+		await waitFor(() =>
+			expect(canvasElement.querySelector('.outline__header .brand__tagline')?.textContent).toBe(
+				'Hello'
+			)
+		);
+	}}
+>
+	{#snippet template()}
+		<Themes />
+	{/snippet}
+</Story>
+
+<Story
+	name="The header and the brand panel choose their logo separately"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(
+			await canvas.findByRole('radio', { name: new RegExp(t('th.tpl.split')) })
+		);
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.content') }));
+		const header = await canvas.findByRole('combobox', { name: t('th.f.logoDisplay') });
+		const panel = await canvas.findByRole('combobox', { name: t('th.f.brandLogoDisplay') });
+		const inHeader = () => canvasElement.querySelector('.outline__header .brand__logo');
+		const eyebrow = () => canvasElement.querySelector('.outline__eyebrow');
+		await waitFor(() => expect(inHeader()).not.toBeNull());
+		await waitFor(() => expect(eyebrow()).not.toBeNull());
+		// The header shows the name only: its logo goes, the brand panel's name stays.
+		await userEvent.selectOptions(header, 'name');
+		await waitFor(() => expect(inHeader()).toBeNull());
+		await expect(eyebrow()).not.toBeNull();
+		// The brand panel shows the logo only: its name goes, the header is as it was.
+		await userEvent.selectOptions(panel, 'logo');
+		await waitFor(() => expect(eyebrow()).toBeNull());
+		await expect(canvasElement.querySelector('.outline__header .brand__name')).not.toBeNull();
 	}}
 >
 	{#snippet template()}
@@ -192,6 +320,7 @@
 		);
 		// The brand panel has no header of its own; the toggle takes the whole header away.
 		await expect(panel.querySelector('.outline__header')).toBeNull();
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.content') }));
 		await userEvent.click(await canvas.findByLabelText(t('th.t.header')));
 		await expect(canvasElement.querySelector('.outline__header')).toBeNull();
 	}}
@@ -255,43 +384,10 @@
 		await expect(box('.outline__stage').left).toBeCloseTo(box('.outline').left, 0);
 		await choose(t('th.f.splitFrame'), 'card');
 		await expect(box('.outline__stage').left).toBeGreaterThan(box('.outline').left);
-		// Content: nothing on the brand side but its picture.
-		await choose(t('th.f.brandContent'), 'none');
+		// Brand panel "None" (Content tab): nothing on the brand side but its picture.
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.content') }));
+		await choose(t('th.f.brandLogoDisplay'), 'none');
 		await expect(canvasElement.querySelector('.outline__panel-content')).toBeNull();
-	}}
->
-	{#snippet template()}
-		<Themes />
-	{/snippet}
-</Story>
-
-<Story
-	name="Split background: brand only and panel image"
-	play={async ({ canvasElement }) => {
-		const canvas = within(canvasElement);
-		const png = (name: string) => new File(['x'], name, { type: 'image/png' });
-		await userEvent.click(
-			await canvas.findByRole('radio', { name: new RegExp(t('th.tpl.split')) })
-		);
-		// The background image first (Images tab), then the choice in Design.
-		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.images') }));
-		const files = canvasElement.querySelectorAll<HTMLInputElement>('input[type="file"]');
-		await userEvent.upload(files[2], png('background.png'));
-		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.look') }));
-		const background = await canvas.findByRole('combobox', { name: t('th.f.splitBg') });
-		// Shared: the picture is behind the whole screen.
-		await expect(canvasElement.querySelectorAll('.outline > .outline__image')).toHaveLength(1);
-		// Brand only: it moves to the brand side, and the form side has a fill (colours) instead.
-		await userEvent.selectOptions(background, 'brand');
-		await expect(canvasElement.querySelectorAll('.outline > .outline__image')).toHaveLength(0);
-		await expect(canvasElement.querySelectorAll('.outline__panel .outline__image')).toHaveLength(1);
-		await expect(await canvas.findByLabelText(t('th.c.panel'))).toBeInTheDocument();
-		// Panel image: the form side has a picture of its own, with its own opacity (70% to begin with).
-		await userEvent.selectOptions(background, 'panel');
-		const form = canvasElement.querySelectorAll<HTMLInputElement>('input[type="file"]');
-		await userEvent.upload(form[form.length - 1], png('form.png'));
-		const layer = canvasElement.querySelector('.outline__main .outline__image') as HTMLElement;
-		await expect(layer.style.opacity).toBe('0.7');
 	}}
 >
 	{#snippet template()}
@@ -304,14 +400,43 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.images') }));
-		// Logo, favicon, background: the brand panel's picture is not offered without Split.
-		await expect(canvasElement.querySelectorAll('input[type="file"]')).toHaveLength(3);
+		// Logo, favicon, background, login area: the brand panel's picture is not offered without Split.
+		await expect(canvasElement.querySelectorAll('input[type="file"]')).toHaveLength(4);
 		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.look') }));
 		await userEvent.click(
 			await canvas.findByRole('radio', { name: new RegExp(t('th.tpl.split')) })
 		);
 		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.images') }));
-		await expect(canvasElement.querySelectorAll('input[type="file"]')).toHaveLength(4);
+		await expect(canvasElement.querySelectorAll('input[type="file"]')).toHaveLength(5);
+	}}
+>
+	{#snippet template()}
+		<Themes />
+	{/snippet}
+</Story>
+
+<Story
+	name="Login area has its own image and opacity"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const png = new File(['x'], 'card.png', { type: 'image/png' });
+		const files = () => canvasElement.querySelectorAll<HTMLInputElement>('input[type="file"]');
+		const layer = () => canvasElement.querySelector<HTMLElement>('.outline__card .outline__image');
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.images') }));
+		// Standard: logo, favicon, background, login area (the last).
+		await userEvent.upload(files()[3], png);
+		await waitFor(() => expect(layer()).not.toBeNull());
+		const [opacity] = canvasElement.querySelectorAll<HTMLInputElement>('input[type="range"]');
+		fireEvent.input(opacity, { target: { value: '30' } });
+		await waitFor(() => expect(layer()?.style.opacity).toBe('0.3'));
+		// Minimal draws no box, so it neither offers the picture nor draws it.
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.look') }));
+		await userEvent.click(
+			await canvas.findByRole('radio', { name: new RegExp(t('th.tpl.minimal')) })
+		);
+		await waitFor(() => expect(layer()).toBeNull());
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.images') }));
+		await expect(files()).toHaveLength(3);
 	}}
 >
 	{#snippet template()}
@@ -323,7 +448,7 @@
 	name="Default wording follows the language"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.text') }));
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.content') }));
 		const language = await canvas.findByRole('combobox', { name: t('th.f.language') });
 		await userEvent.selectOptions(language, 'ja');
 		// The console stays as it is; what an empty title falls back to is read in Japanese.
@@ -340,7 +465,7 @@
 	name="Right-to-left language"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.text') }));
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.content') }));
 		await userEvent.selectOptions(
 			await canvas.findByRole('combobox', { name: t('th.f.language') }),
 			'ar'

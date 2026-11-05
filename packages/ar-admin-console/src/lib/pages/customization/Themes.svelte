@@ -5,11 +5,10 @@
 	import Badge from '#lib/ui/primitives/Badge.svelte';
 	import Page from '#lib/ui/templates/Page.svelte';
 	import ThemeAdvanced from './ThemeAdvanced.svelte';
-	import ThemeBrand from './ThemeBrand.svelte';
+	import ThemeContent from './ThemeContent.svelte';
 	import ThemeDesign from './ThemeDesign.svelte';
 	import ThemeImages from './ThemeImages.svelte';
 	import ThemePreview from './ThemePreview.svelte';
-	import ThemeText from './ThemeText.svelte';
 	import { newThemeDraft } from './theme-draft';
 	import { THEME_SECTIONS, type PreviewScreen } from './theme-sections';
 
@@ -18,7 +17,7 @@
 	 *
 	 * The preview column (first) and the editing column (one tab per section, the inspector) sit
 	 * side by side and the preview stays in view while the inspector is edited; on a narrow screen
-	 * they stack, editing first. The inspector is dense: its controls and spacing are a size down. What is edited is held in the page (`draft`) and drawn by the preview; it is
+	 * they stack, editing first. Custom CSS sits under both, full width. The inspector is dense: its controls and spacing are a size down. What is edited is held in the page (`draft`) and drawn by the preview; it is
 	 * not read from or saved to the Admin API yet.
 	 */
 	let draft = $state(newThemeDraft());
@@ -44,14 +43,10 @@
 					<div class="sections">
 						{#if id === 'look'}
 							<ThemeDesign bind:draft />
-						{:else if id === 'brand'}
-							<ThemeBrand bind:draft />
-						{:else if id === 'text'}
-							<ThemeText bind:draft />
-						{:else if id === 'images'}
-							<ThemeImages bind:draft />
+						{:else if id === 'content'}
+							<ThemeContent bind:draft />
 						{:else}
-							<ThemeAdvanced bind:draft />
+							<ThemeImages bind:draft />
 						{/if}
 					</div>
 				{/snippet}
@@ -62,13 +57,18 @@
 			<ThemePreview {draft} bind:screen bind:mode />
 		</aside>
 	</div>
+
+	<!-- Custom CSS needs room to read, and it is rarely touched: under both columns, not a tab. -->
+	<div class="advanced">
+		<ThemeAdvanced bind:draft />
+	</div>
 </Page>
 
 <style>
 	/* The preview on the start side, the inspector on the end side; the preview follows the scroll. */
 	.workspace {
 		display: grid;
-		grid-template-columns: minmax(0, 2fr) minmax(370px, 1fr);
+		grid-template-columns: minmax(0, 1fr) clamp(280px, 22%, 300px);
 		gap: var(--space-columns);
 		align-items: start;
 	}
@@ -86,6 +86,9 @@
 		--box-head-pad-y: 8px;
 		--choice-pad-y: 8px;
 		--choice-pad-x: 12px;
+		--tab-pad-x: 8px;
+		/* A switch needs little room: the name gets most of the row. */
+		--row-name-col: 62%;
 		grid-column: 2;
 		grid-row: 1;
 		display: grid;
@@ -100,6 +103,10 @@
 		/* Below the sticky header and top navigation, as the sub navigation sits. */
 		top: calc(var(--header-h) + var(--subheader-h) + var(--shell-inset) + var(--space-section));
 		min-width: 0;
+	}
+
+	.advanced {
+		margin-top: var(--space-section);
 	}
 
 	.sections {

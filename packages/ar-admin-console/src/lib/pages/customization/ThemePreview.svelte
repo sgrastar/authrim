@@ -1,9 +1,11 @@
 <script lang="ts">
 	import { t, tIn } from '#lib/i18n/i18n.svelte.js';
 	import { localeDir } from '#lib/i18n/locales.js';
+	import Icon from '#lib/ui/icons/Icon.svelte';
 	import Select from '#lib/ui/primitives/Select.svelte';
 	import SegmentedControl from '#lib/ui/primitives/SegmentedControl.svelte';
 	import { FONT_SCALES, FONT_STACKS, type ThemeDraft } from './theme-draft';
+	import { parseFooter } from './footer-links';
 	import { PREVIEW_SCREENS, type PreviewScreen } from './theme-sections';
 
 	/**
@@ -14,7 +16,7 @@
 	 *
 	 * One outline only: the frame is the screen itself, at the full width of the column on
 	 * desktop and narrowed to a phone's width (centred) on mobile, so the preview gets all the room.
-	 * The content is a picture, not the page: it cannot be focused or clicked (inert). Custom CSS is
+	 * The content is a picture, not the page: it cannot be focused or clicked (inert), except the footer's links. Custom CSS is
 	 * not applied here yet.
 	 */
 	interface Props {
@@ -43,16 +45,27 @@
 	const screenLabel = $derived(t(screenOption.label));
 	const texts = $derived(draft.texts[draft.language]);
 	// What an empty item falls back to is read in the language being edited, not the console's.
-	const title = $derived(texts.titles[screen] || tIn(draft.language, screenOption.label));
+	// The heading is the screen's default wording, read in the language being edited.
+	const title = $derived(tIn(draft.language, screenOption.label));
 	const split = $derived(draft.template === 'split' && width === 'desktop');
+	// The header and the brand panel each choose what they show of the brand.
 	const showName = $derived(draft.logoDisplay !== 'logo');
 	const showLogo = $derived(draft.logoDisplay !== 'name');
+	const panelShowName = $derived(
+		draft.brandLogoDisplay === 'both' || draft.brandLogoDisplay === 'name'
+	);
+	const panelShowLogo = $derived(
+		draft.brandLogoDisplay === 'both' || draft.brandLogoDisplay === 'logo'
+	);
+	const headerName = $derived(draft.headerName);
+	const footerParts = $derived(parseFooter(texts.footer));
+	const showTools = $derived(draft.themeToggle || draft.languageSelect);
 
 	/** A chosen file is shown through an object URL, released when it is replaced or removed. */
 	let logoUrl = $state<string | null>(null);
 	let backgroundUrl = $state<string | null>(null);
 	let panelUrl = $state<string | null>(null);
-	let formUrl = $state<string | null>(null);
+	let cardUrl = $state<string | null>(null);
 
 	function imageUrl(value: string | File | null, set: (url: string | null) => void) {
 		if (value instanceof File) {
@@ -66,24 +79,11 @@
 	$effect(() => imageUrl(draft.logo, (url) => (logoUrl = url)));
 	$effect(() => imageUrl(draft.backgroundImage, (url) => (backgroundUrl = url)));
 	$effect(() => imageUrl(draft.panelImage, (url) => (panelUrl = url)));
-	$effect(() => imageUrl(draft.formImage, (url) => (formUrl = url)));
+	$effect(() => imageUrl(draft.cardImage, (url) => (cardUrl = url)));
 
-	// "Brand only": the background image sits behind the brand side alone, the form side is a fill.
-	const brandOnly = $derived(split && draft.splitBackground === 'brand');
-	// The brand side's picture: its own, or (brand only) the background image.
+	// The brand side's picture is its own; the background image runs behind the whole screen.
 	const brandLayer = $derived(
-		panelUrl
-			? { url: panelUrl, opacity: draft.panelImageOpacity }
-			: brandOnly && backgroundUrl
-				? { url: backgroundUrl, opacity: draft.backgroundOpacity }
-				: null
-	);
-	const formFill = $derived(
-		!brandOnly || !draft.panelColor
-			? undefined
-			: draft.panelGradient
-				? `linear-gradient(135deg, ${draft.panelColor}, ${draft.panelGradient})`
-				: draft.panelColor
+		panelUrl ? { url: panelUrl, opacity: draft.panelImageOpacity } : null
 	);
 </script>
 
@@ -98,7 +98,26 @@
 {#snippet brand()}
 	<div class="brand">
 		{#if showLogo}{@render mark()}{/if}
-		{#if showName && draft.brandName}<span class="brand__name">{draft.brandName}</span>{/if}
+		<div class="brand__text">
+			{#if showName && headerName}<span class="brand__name">{headerName}</span>{/if}
+			{#if texts.tagline}<span class="brand__tagline">{texts.tagline}</span>{/if}
+		</div>
+	</div>
+{/snippet}
+
+<!-- The colour mode and language choices, as the end user's screen offers them. -->
+{#snippet tools()}
+	<div class="tools">
+		{#if draft.themeToggle}
+			<span class="tools__item tools__item--icon"
+				><Icon name={mode === 'dark' ? 'moon' : 'sun'} /></span
+			>
+		{/if}
+		{#if draft.languageSelect}
+			<span class="tools__item"
+				><Icon name="globe" />{draft.language.toUpperCase()}<Icon name="caret" /></span
+			>
+		{/if}
 	</div>
 {/snippet}
 
@@ -143,7 +162,7 @@
 
 	<div
 		class="screen screen--{width}"
-		role="img"
+		role="group"
 		aria-label={screenLabel}
 		style:--vw="{virtual.w}px"
 		style:--vh="{virtual.h}px"
@@ -157,7 +176,6 @@
 				data-admin-theme="standard"
 				data-scheme={mode}
 				data-template={draft.template}
-				inert
 				lang={draft.language}
 				dir={localeDir(draft.language)}
 				style:--ol-bg={draft.background || undefined}
@@ -168,7 +186,7 @@
 				style:--ol-scale={FONT_SCALES[draft.scale]}
 				style:font-family={FONT_STACKS[draft.font]}
 			>
-				{#if backgroundUrl && !brandOnly}
+				{#if backgroundUrl}
 					<span
 						class="outline__image"
 						style:background-image={`url("${backgroundUrl}")`}
@@ -178,10 +196,16 @@
 				<!-- The header runs along the top of the whole screen, over the brand panel too, as the footer
 				     runs along the bottom. The brand panel has no header of its own. -->
 				{#if draft.header}
-					<header class="outline__header">{@render brand()}</header>
+					<header class="outline__header" inert>
+						{@render brand()}
+						{#if showTools}{@render tools()}{/if}
+					</header>
+				{:else if showTools}
+					<div class="outline__tools" inert>{@render tools()}</div>
 				{/if}
 				<div
 					class="outline__stage"
+					inert
 					class:outline__stage--split={split}
 					class:outline__stage--right={split && draft.splitSide === 'right'}
 					class:outline__stage--wide={split && draft.splitWidth === 'wide'}
@@ -200,39 +224,32 @@
 									style:opacity={brandLayer.opacity / 100}
 								></span>
 							{/if}
-							{#if draft.brandContent !== 'none'}
+							{#if draft.brandLogoDisplay !== 'none'}
 								<div class="outline__panel-content">
-									<!-- Logo, then (with copy) the brand name over the title and text. Without a logo,
-								     "logo only" shows the brand name as the heading. -->
-									{#if logoUrl && showLogo}{@render mark()}{/if}
-									{#if draft.brandContent === 'logo_copy'}
-										{#if draft.brandName}<p class="outline__eyebrow">{draft.brandName}</p>{/if}
-										{#if draft.panelTitle}<h3>{draft.panelTitle}</h3>{/if}
-										{#if draft.panelText}<p>{draft.panelText}</p>{/if}
-									{:else if !(logoUrl && showLogo)}
-										<h3>{draft.brandName}</h3>
-									{/if}
+									<!-- The logo, then the brand name over the title and text (each only when it has something). -->
+									{#if logoUrl && panelShowLogo}{@render mark()}{/if}
+									{#if panelShowName && draft.brandName}<p class="outline__eyebrow">
+											{draft.brandName}
+										</p>{/if}
+									{#if draft.panelTitle}<h3>{draft.panelTitle}</h3>{/if}
+									{#if draft.panelText}<p>{draft.panelText}</p>{/if}
 								</div>
 							{/if}
 						</aside>
 					{/if}
-					<div
-						class="outline__main"
-						class:outline__main--solid={brandOnly}
-						style:background={formFill}
-					>
-						{#if split && draft.splitBackground === 'panel' && formUrl}
-							<span
-								class="outline__image"
-								style:background-image={`url("${formUrl}")`}
-								style:opacity={draft.formImageOpacity / 100}
-							></span>
-						{/if}
+					<div class="outline__main">
 						<div class="outline__body">
 							<div class="outline__card">
+								<!-- The login area's own picture, under what the box holds (not drawn in Minimal). -->
+								{#if cardUrl && draft.template !== 'minimal'}
+									<span
+										class="outline__image"
+										style:background-image={`url("${cardUrl}")`}
+										style:opacity={draft.cardImageOpacity / 100}
+									></span>
+								{/if}
 								{#if !draft.header && !split}{@render brand()}{/if}
 								<h3>{title}</h3>
-								{#if texts.tagline}<p>{texts.tagline}</p>{/if}
 								<span class="outline__field"></span>
 								<span class="outline__field"></span>
 								<span class="outline__button">{tIn(draft.language, 'th.preview.continue')}</span>
@@ -242,8 +259,15 @@
 				</div>
 				<!-- The footer runs along the bottom of the whole screen, under the brand panel too. -->
 				{#if draft.footer}
+					<!-- The one part that is not inert: its links work and open in a new window. -->
 					<footer class="outline__footer">
-						{texts.footer || `© ${draft.brandName}`}
+						{#each footerParts as part, index (index)}
+							{#if 'href' in part}
+								<a href={part.href} target="_blank" rel="noopener noreferrer">{part.text}</a>
+							{:else}
+								{part.text}
+							{/if}
+						{/each}
 					</footer>
 				{/if}
 			</div>
@@ -487,11 +511,6 @@
 		backdrop-filter: blur(16px);
 	}
 
-	.outline__stage--split .outline__main--solid {
-		background: var(--bg-card);
-		backdrop-filter: none;
-	}
-
 	/* The line between the two sides, on the side the brand panel is not. */
 	.outline__stage--split .outline__main {
 		border-inline-start: 1px solid var(--border);
@@ -512,7 +531,45 @@
 	.outline__header {
 		position: relative;
 		grid-row: 1;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 16px;
 		padding: 20px 40px;
+	}
+
+	/* With no header, the choices float at the top end of the screen, as the real one has them. */
+	.outline__tools {
+		position: absolute;
+		z-index: 2;
+		inset-block-start: 20px;
+		inset-inline-end: 40px;
+	}
+
+	.tools {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		color: var(--ol-text, var(--text-secondary));
+		font-size: calc(var(--preview-fs-small) * var(--ol-scale, 1));
+		--icon-size: var(--icon-md);
+	}
+
+	.tools__item {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		height: 34px;
+		padding: 0 12px;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-round);
+		background: var(--bg-card);
+	}
+
+	.tools__item--icon {
+		width: 34px;
+		justify-content: center;
+		padding: 0;
 	}
 
 	.outline__footer {
@@ -524,6 +581,15 @@
 		font-size: calc(var(--preview-fs-small) * var(--ol-scale, 1));
 	}
 
+	.outline__footer a {
+		color: inherit;
+		text-decoration: underline;
+	}
+
+	.outline__footer {
+		white-space: pre-line;
+	}
+
 	.outline__body {
 		position: relative;
 		grid-row: 1;
@@ -533,6 +599,8 @@
 	}
 
 	.outline__card {
+		position: relative;
+		overflow: hidden;
 		display: grid;
 		gap: 16px;
 		width: min(100%, 420px);
@@ -540,6 +608,11 @@
 		border: 1px solid var(--border);
 		border-radius: var(--radius-lg);
 		background: var(--bg-card);
+	}
+
+	/* What the box holds sits over its picture. */
+	.outline__card > :global(*:not(.outline__image)) {
+		position: relative;
 	}
 
 	.outline[data-template='minimal'] .outline__card {
@@ -574,6 +647,16 @@
 
 	.brand__logo--empty {
 		background: var(--border);
+	}
+
+	.brand__text {
+		display: grid;
+		gap: 2px;
+	}
+
+	.brand__tagline {
+		color: var(--ol-copy, var(--ol-text, var(--text-secondary)));
+		font-size: calc(var(--preview-fs-small) * var(--ol-scale, 1));
 	}
 
 	.brand__name {

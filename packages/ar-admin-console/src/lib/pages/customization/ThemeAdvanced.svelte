@@ -8,7 +8,7 @@
 	let { draft = $bindable() }: { draft: ThemeDraft } = $props();
 </script>
 
-<ThemeGroup title={t('th.g.css')} description={t('th.g.css.d')}>
+<ThemeGroup title={t('th.g.css')} info={t('th.g.css.d')}>
 	<CodeField
 		label={t('th.f.css')}
 		language="css"

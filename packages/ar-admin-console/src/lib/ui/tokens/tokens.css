@@ -128,6 +128,7 @@
 	--tile-pad: 12px; /* item card: a smaller box among many */
 	--choice-pad-y: 14px; /* choice card (ChoiceCards): a few cards that each need a sentence */
 	--choice-pad-x: 16px;
+	--tab-pad-x: 14px; /* tab (Tabs): side space of each tab; a narrow inspector tightens it */
 	--dialog-pad-x: 24px; /* dialogs: a box on its own, a little roomier */
 	--dialog-pad-y: 24px;
 	--note-pad-y: 8px; /* callout: a note inside a box */

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { en } from '../../i18n/messages/en.js';
 import { ja } from '../../i18n/messages/ja.js';
-import { newThemeDraft, SPLIT_CHOICES, TEXT_LANGUAGES } from './theme-draft';
+import { DEFAULT_FOOTER, newThemeDraft, SPLIT_CHOICES, TEXT_LANGUAGES } from './theme-draft';
 import { PREVIEW_SCREENS, THEME_SECTIONS } from './theme-sections';
 
 describe('Themes page', () => {
@@ -31,12 +31,10 @@ describe('Themes page', () => {
 		}
 	});
 
-	it('starts with texts for every language and every screen, all empty (the default wording)', () => {
+	it('starts every language with an empty tagline and the default footer', () => {
 		const draft = newThemeDraft();
 		for (const language of TEXT_LANGUAGES) {
-			const texts = draft.texts[language.value];
-			expect(Object.keys(texts.titles).sort()).toEqual(PREVIEW_SCREENS.map((s) => s.value).sort());
-			expect(Object.values(texts.titles).every((title) => title === '')).toBe(true);
+			expect(draft.texts[language.value]).toEqual({ tagline: '', footer: DEFAULT_FOOTER });
 		}
 	});
 });
