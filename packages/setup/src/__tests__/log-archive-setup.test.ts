@@ -679,6 +679,63 @@ describe('log archive setup contract', () => {
       expect(error.message).not.toContain(base64ish);
     });
 
+    it('drops the message when a credential is split by whitespace, and keeps one that is whole', async () => {
+      const f = fixture('pipeline');
+      const secret = 'abc123XYZ789';
+      const api = new LogArchiveApi(accountId, secret, f.fetcher);
+      const refuse = async (message: string) => {
+        f.overrides.set('basin-catalog/bucket', { status: 403, errors: [{ code: 5, message }] });
+        return (await api.request('basin-catalog/bucket').catch((e: unknown) => e)) as Error;
+      };
+      for (const message of [
+        `bad ${secret.slice(0, 6)}\n${secret.slice(6)}`,
+        `bad ${secret.slice(0, 6)}  ${secret.slice(6)}`,
+      ]) {
+        const error = await refuse(message);
+        expect(error.message).toContain('code 5');
+        expect(error.message).not.toContain('bad');
+        expect(error.message).not.toContain('abc123');
+        expect(error.message).not.toContain('XYZ789');
+      }
+      const whole = await refuse(`bad ${secret} here`);
+      expect(whole.message).toContain('bad [redacted] here');
+    });
+
+    it('finds a split credential even when a shorter credential sits inside it', async () => {
+      const f = fixture('pipeline');
+      const api = new LogArchiveApi(accountId, 'abc123', f.fetcher);
+      f.overrides.set('tokens/verify', {
+        status: 403,
+        errors: [{ code: 5, message: 'bad abc123\nXYZ789 here' }],
+      });
+      const error = (await api
+        .request('tokens/verify', 'GET', undefined, 'abc123XYZ789')
+        .catch((e: unknown) => e)) as Error;
+      expect(error.message).toContain('code 5');
+      expect(error.message).not.toContain('XYZ789');
+      expect(error.message).not.toContain('bad');
+      // The same with a one-character credential inside the longer one.
+      const tiny = new LogArchiveApi(accountId, 'a', f.fetcher);
+      const other = (await tiny
+        .request('tokens/verify', 'GET', undefined, 'abc123XYZ789')
+        .catch((e: unknown) => e)) as Error;
+      expect(other.message).not.toContain('XYZ789');
+    });
+
+    it('shows Cloudflare’s text only for steps that are listed as safe', async () => {
+      // A step that is not recognised shows codes only, as does the sink.
+      const unknown = await refusal('some/new/endpoint', {
+        errors: [{ code: 9, message: 'detail' }],
+      });
+      expect(unknown.message).toContain('step cloudflare_api');
+      expect(unknown.message).toContain('code 9');
+      expect(unknown.message).not.toContain('detail');
+      const listed = await refusal('basin-catalog/bucket', {
+        errors: [{ code: 9, message: 'detail' }],
+      });
+      expect(listed.message).toContain('code 9: detail');
+    });
+
     it('removes bearer values and JWT-shaped values, however short their segments', async () => {
       const error = await refusal('tokens/verify', {
         errors: [{ code: 1, message: 'bad Authorization: Bearer s3cret and eyJh.eyJz.sig' }],

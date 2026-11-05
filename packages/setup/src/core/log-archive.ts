@@ -157,8 +157,22 @@ export function logArchiveStepLabel(path: string): string {
 /** Longest Cloudflare message that is read at all; a longer one is dropped, the code is kept. */
 const MAX_CLOUDFLARE_TEXT_TO_SCAN = 1000;
 
-/** Steps whose request carries a credential: Cloudflare's text there is never shown. */
-const STEPS_WITHOUT_CLOUDFLARE_TEXT = new Set(['pipeline_sink']);
+/**
+ * The steps whose Cloudflare text may be shown. Anything not listed here (the Pipeline sink, which
+ * carries a credential, and any step added later or not recognised) shows codes only: showing
+ * text is opted into, never the default.
+ */
+const STEPS_WITH_CLOUDFLARE_TEXT = new Set([
+  'token_verify',
+  'token_permission_groups',
+  'token_policy_read',
+  'catalog_read',
+  'catalog_enable',
+  'catalog_disable',
+  'table_maintenance',
+  'pipeline_stream',
+  'pipeline_pipeline',
+]);
 
 /**
  * The credential values a request carries: its tokens and any secret-looking field of its body.
@@ -188,15 +202,25 @@ function redactCloudflareText(value: unknown, credentials: readonly string[]): s
   // A text this long is not a diagnosis. It is left out whole rather than cut first (a cut could
   // leave part of a credential) or scanned (the patterns below are quadratic on long runs).
   if (value.length > MAX_CLOUDFLARE_TEXT_TO_SCAN) return undefined;
-  let text = value;
+  // Whitespace is collapsed first, so every later step reads the text as it will be printed. A
+  // credential split by whitespace or line breaks would slip past an exact match, so each one is
+  // checked on its own, before anything is replaced (a short credential replaced inside a longer
+  // one would hide the longer one): present with the whitespace removed but not whole in the
+  // printed text means it was split, and the message is dropped whole.
+  const oneLine = value.replace(/\s+/gu, ' ').trim();
+  const compact = oneLine.replace(/ /gu, '');
+  for (const credential of credentials) {
+    const bare = credential.replace(/\s+/gu, '');
+    if (bare && compact.includes(bare) && !oneLine.includes(credential)) return undefined;
+  }
+  let text = oneLine;
   for (const credential of credentials) text = text.split(credential).join('[redacted]');
   text = text
     .replace(/\bBearer\s+\S+/giu, 'Bearer [redacted]')
     .replace(/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/gu, '[redacted]')
     .replace(/[A-Za-z0-9+/=_-]{24,}/gu, '[redacted]')
-    .replace(/\s+/gu, ' ')
-    .trim()
-    .slice(0, 200);
+    .slice(0, 200)
+    .trim();
   return text || undefined;
 }
 
@@ -206,7 +230,7 @@ function cloudflareErrorsFrom(
   credentials: readonly string[]
 ): LogArchiveFailureDetail['cloudflare'] {
   if (!Array.isArray(errors)) return [];
-  const showText = !STEPS_WITHOUT_CLOUDFLARE_TEXT.has(step);
+  const showText = STEPS_WITH_CLOUDFLARE_TEXT.has(step);
   return errors.slice(0, 3).flatMap((entry) => {
     if (typeof entry !== 'object' || entry === null) return [];
     const { code, message } = entry as { code?: unknown; message?: unknown };
