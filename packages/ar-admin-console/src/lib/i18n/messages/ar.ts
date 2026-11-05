@@ -6,6 +6,9 @@ import { arServiceFlows } from './service-flows/ar';
 import { arAccountFlows } from './account-flows/ar';
 import { arSchemaSetting } from './schema-setting/ar';
 import { arTenantGeneral } from './tenant-general/ar';
+import { arSecurityKeys } from './security-keys/ar';
+import { arNotices } from './notices/ar';
+import { arCustomization } from './customization/ar';
 
 export const ar = {
 	...arSettings,
@@ -15,6 +18,9 @@ export const ar = {
 	...arAccountFlows,
 	...arSchemaSetting,
 	...arTenantGeneral,
+	...arSecurityKeys,
+	...arNotices,
+	...arCustomization,
 	'app.adminLabel': 'وحدة التحكم الإدارية',
 	'app.env.dev': 'التطوير',
 	'app.env.prod': 'الإنتاج',
@@ -537,6 +543,7 @@ export const ar = {
 	'cond.problem.notNumber': 'أدخل رقمًا.',
 	'cond.problem.badPattern': 'ليس تعبيرًا نمطيًا صالحًا.',
 	'color.pick': 'اختيار {name}',
+	'color.opacity': 'عتامة {name}',
 	'color.invalid': 'أدخل اللون بصيغة #RRGGBB.',
 	'color.contrast': 'التباين مع {against}: {ratio}:1',
 	'color.pass': 'يستوفي مستوى الوضوح AA',

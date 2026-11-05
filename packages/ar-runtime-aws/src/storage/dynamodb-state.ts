@@ -27,6 +27,8 @@ import type {
   PersistentNameIDStore,
   PutTransientKeyInput,
   RateLimitStore,
+  RecordReplayInput,
+  ReplayGuardStore,
   StoreChallengeInput,
   StoreSamlRequestInput,
   StoreSessionInput,
@@ -819,6 +821,41 @@ export class DynamoRateLimitStore implements RateLimitStore {
       }
     }
     throw new Error('aws_state_contention');
+  }
+}
+
+/**
+ * One conditional PutItem per presentation, with no read before it: concurrent Lambda isolates
+ * race on the same key and DynamoDB accepts only the first (or one replacing an expired item).
+ * DynamoDB TTL deletion lags, so expiry is judged from expiresAtMs, never from the item's absence.
+ */
+export class DynamoReplayGuardStore implements ReplayGuardStore {
+  constructor(private readonly table: DynamoStateTable) {}
+  async record(input: RecordReplayInput): Promise<'recorded' | 'replayed'> {
+    identifier(input.key, 'replay guard key', 4096);
+    integer(input.ttlSeconds, 'replay guard TTL', 1, 30 * 24 * 60 * 60);
+    const key = this.table.key(input.tenantId, 'JTI', input.key);
+    const now = this.table.now();
+    const expiresAtMs = now + input.ttlSeconds * 1000;
+    try {
+      await this.table.client.send(
+        new PutItemCommand({
+          TableName: this.table.tableName,
+          Item: { ...key, expiresAtMs: N(expiresAtMs), ttl: N(Math.ceil(expiresAtMs / 1000)) },
+          ConditionExpression: 'attribute_not_exists(pk) OR expiresAtMs <= :now',
+          ExpressionAttributeValues: { ':now': N(now) },
+        })
+      );
+      return 'recorded';
+    } catch (error) {
+      if (conditional(error)) return 'replayed';
+      throw error;
+    }
+  }
+  async isRecorded(input: { tenantId: string; key: string }): Promise<boolean> {
+    identifier(input.key, 'replay guard key', 4096);
+    const item = await this.table.get(this.table.key(input.tenantId, 'JTI', input.key));
+    return !!item && number(item, 'expiresAtMs') > this.table.now();
   }
 }
 

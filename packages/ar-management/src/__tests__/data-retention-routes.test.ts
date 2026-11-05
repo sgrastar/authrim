@@ -7,6 +7,11 @@ const mocks = vi.hoisted(() => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   buildRetentionInventory: vi.fn(),
   resolveStores: vi.fn(),
+  requireAdminStepUp: vi.fn(),
+}));
+vi.mock('../admin-step-up-gate', () => ({
+  requireAdminStepUp: mocks.requireAdminStepUp,
+  refuseAdminFreshAuth: vi.fn(),
 }));
 vi.mock('../admin-tenant-access', () => ({
   getAdminAuth: vi.fn(() => ({ userId: 'admin-a' })),
@@ -104,6 +109,8 @@ describe('data retention', () => {
       statements.map(() => ({ success: true, rowsAffected: 1 }))
     );
     mocks.audit.mockResolvedValue(undefined);
+    mocks.requireAdminStepUp.mockReset();
+    mocks.requireAdminStepUp.mockResolvedValue(null);
     mocks.resolveStores.mockResolvedValue([{ source: {}, bindingRef: 'DB_PII' }]);
     mocks.buildRetentionInventory.mockResolvedValue([
       category('audit_events', {
@@ -288,12 +295,14 @@ describe('data retention', () => {
 
   it('writes the lookup policy, its projection and history together, then projects it', async () => {
     const applyLookupRetentionPolicyProjection = vi.fn().mockResolvedValue(undefined);
-    mocks.adapter.queryOne.mockResolvedValueOnce({ retention_days: 180 }).mockResolvedValueOnce({
-      tenant_id: 'tenant-a',
-      policy_generation: 2,
-      retention_days: 365,
-      updated_at: 1700000000,
-    });
+    mocks.adapter.queryOne
+      .mockResolvedValueOnce({ retention_days: 180, policy_generation: 1 })
+      .mockResolvedValueOnce({
+        tenant_id: 'tenant-a',
+        policy_generation: 2,
+        retention_days: 365,
+        updated_at: 1700000000,
+      });
 
     const response = await updateCategoryRetention(
       context({
@@ -357,6 +366,61 @@ describe('data retention', () => {
       })
     );
     expect(confirmed.status).toBe(200);
+  });
+
+  describe('step-up (audit.retention.shorten)', () => {
+    const shorten = {
+      retention_days: 90,
+      confirm_shortening: true,
+      expected_current_retention_days: 365,
+    };
+
+    it('shortening is refused without step-up and nothing is written', async () => {
+      mocks.adapter.queryOne.mockResolvedValue({ retention_days: 365 });
+      mocks.requireAdminStepUp.mockResolvedValue(
+        new Response(JSON.stringify({ error: 'step_up_required' }), { status: 403 })
+      );
+      const response = await updateCategoryRetention(
+        context({ param: 'lookup_directory', body: shorten })
+      );
+      expect(response.status).toBe(403);
+      expect(mocks.adapter.batch).not.toHaveBeenCalled();
+      expect(mocks.audit).not.toHaveBeenCalled();
+    });
+
+    it('is gated with the category and days, after the confirmation check', async () => {
+      mocks.adapter.queryOne.mockResolvedValue({ retention_days: 365 });
+      const unconfirmed = await updateCategoryRetention(
+        context({ param: 'lookup_directory', body: { retention_days: 90 } })
+      );
+      expect(unconfirmed.status).toBe(409);
+      expect(mocks.requireAdminStepUp).not.toHaveBeenCalled();
+
+      const response = await updateCategoryRetention(
+        context({ param: 'lookup_directory', body: shorten })
+      );
+      expect(response.status).toBe(200);
+      expect(mocks.requireAdminStepUp).toHaveBeenCalledTimes(1);
+      expect(mocks.requireAdminStepUp.mock.calls[0][1]).toEqual({
+        operation: 'audit.retention.shorten',
+        targetTenantId: 'tenant-a',
+        targetIds: ['lookup_directory'],
+        params: { kind: 'data_retention.category', retention_days: 90 },
+      });
+    });
+
+    it('lengthening, or an invalid value, is not gated', async () => {
+      mocks.adapter.queryOne.mockResolvedValue({ retention_days: 180 });
+      const longer = await updateCategoryRetention(
+        context({ param: 'lookup_directory', body: { retention_days: 365 } })
+      );
+      expect(longer.status).toBe(200);
+      const invalid = await updateCategoryRetention(
+        context({ param: 'lookup_directory', body: { retention_days: 1 } })
+      );
+      expect(invalid.status).toBe(400);
+      expect(mocks.requireAdminStepUp).not.toHaveBeenCalled();
+    });
   });
 
   it('keeps the lookup retention within 30 days to 10 years', async () => {

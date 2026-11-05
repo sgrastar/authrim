@@ -137,6 +137,19 @@ export interface RateLimitStore {
   ): Promise<{ allowed: boolean; remaining: number; resetAt: number }>;
 }
 
+export interface RecordReplayInput {
+  tenantId: string;
+  /** A namespaced token jti; stored only as a hash. */
+  key: string;
+  ttlSeconds: number;
+}
+
+/** One-time token jti records; `record` is a single conditional write in the store. */
+export interface ReplayGuardStore {
+  record(input: RecordReplayInput): Promise<'recorded' | 'replayed'>;
+  isRecorded(input: { tenantId: string; key: string }): Promise<boolean>;
+}
+
 export interface AuthorizationCodeStore {
   store(request: StoreCodeRequest): Promise<{ success: boolean; expiresAt: number }>;
 }
@@ -151,5 +164,6 @@ export interface AwsStateStores {
   accountAuthentication: AccountAuthStateStore;
   authorizationCodes: AuthorizationCodeStore;
   rateLimit: RateLimitStore;
+  replayGuard: ReplayGuardStore;
   persistentNameIDs: PersistentNameIDStore;
 }

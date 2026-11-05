@@ -10,6 +10,7 @@ import {
 } from '../providers';
 
 const mocks = vi.hoisted(() => ({
+  stepUp: vi.fn(async (..._args: unknown[]): Promise<Response | null> => null),
   safeFetchText: vi.fn(),
   createAuthContextFromHono: vi.fn(),
   resolveAuthCorePersistenceAdapterFromEnv: vi.fn(),
@@ -25,6 +26,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    requireAdminStepUp: mocks.stepUp,
     safeFetchText: mocks.safeFetchText,
     createAuthContextFromHono: mocks.createAuthContextFromHono,
     resolveAuthCorePersistenceAdapterFromEnv: mocks.resolveAuthCorePersistenceAdapterFromEnv,
@@ -1036,6 +1038,86 @@ describe('SAML aggregate provider API', () => {
     expect(response.status).toBe(400);
     expect(waitUntil).toHaveLength(0);
     expect(mocks.resolveAuthCorePersistenceAdapterFromEnv).not.toHaveBeenCalled();
+  });
+
+  describe('batch create step-up', () => {
+    const previewId = 'preview-step-up';
+    const batchContext = (body: unknown, waitUntil: Array<Promise<unknown>>) =>
+      createContext({
+        params: { previewId },
+        body,
+        env: {
+          DEFAULT_TENANT_ID: 'tenant-a',
+          SAML_AGGREGATE_METADATA_STORE: createAggregateStoreNamespace({
+            previewId,
+            preview: {
+              tenantId: 'tenant-a',
+              metadataXml: mixedAggregateXml,
+              entities: [
+                { entityId: 'https://sp.example.test/sp', role: 'saml_sp' },
+                { entityId: 'https://idp.example.test/idp', role: 'saml_idp' },
+              ],
+              verification: { status: 'skipped', policy: 'disabled' },
+            },
+          }) as never,
+        },
+        waitUntil,
+      });
+
+    it('starts nothing while the gate refuses', async () => {
+      mocks.stepUp.mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: 'step_up_required' }), { status: 403 })
+      );
+      const waitUntil: Array<Promise<unknown>> = [];
+      const response = await handleStartAggregateBatchCreate(
+        batchContext({ entityIds: ['https://sp.example.test/sp'], enabled: false }, waitUntil)
+      );
+      expect(response.status).toBe(403);
+      expect(waitUntil).toHaveLength(0);
+    });
+
+    it('goes ahead when the gate lets it, with the selection as params', async () => {
+      mocks.resolveAuthCorePersistenceAdapterFromEnv.mockResolvedValue(createMockAdapter());
+      const waitUntil: Array<Promise<unknown>> = [];
+      const response = await handleStartAggregateBatchCreate(
+        batchContext(
+          {
+            entityIds: ['https://sp.example.test/sp', ' https://idp.example.test/idp '],
+            enabled: false,
+          },
+          waitUntil
+        )
+      );
+      expect(response.status).toBe(202);
+      expect(waitUntil).toHaveLength(1);
+      await Promise.all(waitUntil);
+      expect(mocks.stepUp).toHaveBeenCalledTimes(1);
+      expect(mocks.stepUp.mock.calls[0]?.[1]).toEqual({
+        operation: 'federation.trust.update',
+        targetTenantId: 'tenant-a',
+        targetIds: [previewId],
+        params: {
+          action: 'provider.batch_create',
+          entityIds: ['https://idp.example.test/idp', 'https://sp.example.test/sp'],
+          enabled: false,
+        },
+      });
+    });
+
+    it('does not call the gate for an invalid selection or a missing preview', async () => {
+      const waitUntil: Array<Promise<unknown>> = [];
+      expect(
+        (await handleStartAggregateBatchCreate(batchContext({ entityIds: [] }, waitUntil))).status
+      ).toBe(400);
+      expect(
+        (
+          await handleStartAggregateBatchCreate(
+            batchContext({ entityIds: ['https://unknown.example.test'] }, waitUntil)
+          )
+        ).status
+      ).toBe(400);
+      expect(mocks.stepUp).not.toHaveBeenCalled();
+    });
   });
 
   it('registers mixed IdP and SP aggregate entities disabled for per-provider mapping setup', async () => {

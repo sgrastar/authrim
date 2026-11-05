@@ -31,6 +31,8 @@ import {
   reconcileRunnerExternalGate,
   setRunnerExternalGate,
 } from '../../external-plugin-gate-sync';
+import { gateStepUpSettingsPatch, verifyProfileSwitch } from './step-up-settings';
+import type { ProfileSwitchGuard } from '../../profile-switch-verify';
 import { identityMappingReferenceProblem } from './identity-mapping-reference';
 import {
   categoryPatchNeedsState,
@@ -114,6 +116,11 @@ export interface ApplyTenantSettingsChangeInput {
   dryRun?: boolean;
   /** Keep the values of the change out of the audit records and the log (the bulk apply). */
   auditOmitValues?: boolean;
+  /**
+   * A change that would need a step-up is refused instead (bulk apply: one request cannot carry
+   * a receipt for each of its items, and stopping halfway would leave some applied).
+   */
+  refuseStepUp?: boolean;
   /** Provenance only; the actor and the atomic write stay in the normal settings writer. */
   identityMappingHistory?: {
     via: IdentityMappingLevelHistoryVia;
@@ -476,10 +483,51 @@ export async function applyTenantSettingsChange(
         }
       }
 
+      // Weakening the step-up policy or shortening a retention needs a step-up of its own
+      // (a dry run only decides, so it spends nothing).
+      const switchGuard: ProfileSwitchGuard = { compared: [] };
+      if (!dryRun) {
+        const refused = await gateStepUpSettingsPatch({
+          c,
+          manager,
+          category,
+          scope,
+          targetTenantId: tenantId,
+          body,
+          actor,
+          refuse: input.refuseStepUp === true,
+          guard: switchGuard,
+        });
+        if (refused) return refused;
+      }
+
       const result = await manager.patch(category, scope, body, actor, {
         parents: settingsParentScopes(category, scope),
         ...(dryRun ? { dryRun: true } : {}),
       });
+
+      // A profile compared for a profile switch changed after the decision: the save is put back.
+      if (
+        !dryRun &&
+        !(await verifyProfileSwitch({
+          env: c.env,
+          manager,
+          category,
+          scope,
+          guard: switchGuard,
+          result,
+          actor,
+        }))
+      ) {
+        return c.json(
+          {
+            error: 'conflict',
+            message:
+              'A runtime profile changed while this request was being decided; repeat the step-up and retry',
+          },
+          409
+        );
+      }
 
       if (
         !dryRun &&

@@ -265,6 +265,62 @@ export class TenantBackupRequestStore {
   }
 
   /** Atomically bind all accepted input keys and queue import preparation. */
+  /**
+   * Whether `startImport` could start this import now, judged by a read with the same conditions
+   * as its write: the operation is a waiting import at the unlock phase, at this revision, created
+   * by this actor, and the challenges name every input once, each with an accepted, unexpired key
+   * handoff. Lets a caller refuse before anything else (such as spending a step-up receipt);
+   * `startImport` still checks again and settles a race.
+   */
+  async importStartable(input: {
+    tenantId: string;
+    operationId: string;
+    actorId: string;
+    challenges: { inputId: string; challengeId: string }[];
+    revision: number;
+    now: number;
+  }): Promise<boolean> {
+    const challenges = input.challenges.map((item) => ({
+      inputId: identifier(item.inputId),
+      challengeId: identifier(item.challengeId),
+    }));
+    if (
+      new Set(challenges.map((item) => item.inputId)).size !== challenges.length ||
+      new Set(challenges.map((item) => item.challengeId)).size !== challenges.length
+    )
+      return false;
+    const json = JSON.stringify(challenges);
+    const row = await this.db.queryOne<{ id: string }>(
+      `SELECT id FROM tenant_backup_operations
+       WHERE id=? AND tenant_id=? AND created_by=? AND revision=? AND kind='import'
+         AND state='waiting' AND phase='unlock' AND request_json IS NOT NULL AND updated_at<=?
+         AND (SELECT count(*) FROM tenant_backup_operation_inputs i
+           WHERE i.operation_id=tenant_backup_operations.id AND i.tenant_id=tenant_backup_operations.tenant_id)=?
+         AND NOT EXISTS (
+           SELECT 1 FROM tenant_backup_operation_inputs i
+           LEFT JOIN json_each(?) j ON CAST(j.key AS INTEGER)=i.ordinal
+           LEFT JOIN tenant_backup_key_handoffs k ON k.id=json_extract(j.value,'$.challengeId')
+             AND k.operation_id=i.operation_id AND k.tenant_id=i.tenant_id
+             AND k.input_upload_id=i.upload_id AND k.request_digest=tenant_backup_operations.request_digest
+             AND k.state='accepted' AND k.created_at<=? AND k.key_expires_at>?
+           WHERE i.operation_id=tenant_backup_operations.id AND i.tenant_id=tenant_backup_operations.tenant_id
+             AND (json_extract(j.value,'$.inputId') IS NOT i.upload_id OR k.id IS NULL)
+         )`,
+      [
+        identifier(input.operationId),
+        identifier(input.tenantId),
+        identifier(input.actorId),
+        input.revision,
+        input.now,
+        challenges.length,
+        json,
+        input.now,
+        input.now,
+      ]
+    );
+    return row !== null;
+  }
+
   async startImport(input: {
     tenantId: string;
     operationId: string;

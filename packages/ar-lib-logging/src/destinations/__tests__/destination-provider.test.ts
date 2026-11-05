@@ -65,4 +65,33 @@ describe('destination provider registry', () => {
       })
     ).toBe(false);
   });
+
+  it('uses a destination not checked yet, and not one a check found unhealthy', () => {
+    const base = {
+      id: 'dest_new',
+      scopeType: 'platform',
+      scopeId: 'global',
+      kind: 'audit',
+      provider: 'r2',
+      lifecycleStatus: 'active',
+      capabilityPolicy: {
+        allowedTenantIds: null,
+        allowedLogTypes: null,
+        allowedPlanes: null,
+        criticalAllowed: true,
+      },
+    } as unknown as LoggingDestination;
+    const selectable = (healthStatus: string) =>
+      isDestinationSelectableForTenant({
+        destination: { ...base, healthStatus } as LoggingDestination,
+        tenantId: 'tenant-a',
+        logType: 'audit',
+        plane: 'archive',
+      });
+    // Created destinations start as 'unknown': they are used before the first health check.
+    expect(selectable('unknown')).toBe(true);
+    expect(selectable('healthy')).toBe(true);
+    expect(selectable('degraded')).toBe(false);
+    expect(selectable('unreachable')).toBe(false);
+  });
 });

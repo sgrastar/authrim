@@ -111,6 +111,43 @@ describe('DynamoDB state boundary', () => {
     ).rejects.toThrow();
     expect(f.send).not.toHaveBeenCalled();
   });
+  it('records a replay jti with one conditional write and no read before it', async () => {
+    const f = fixture();
+    const input = { tenantId: 'tenant-a', key: 'dpop:["client","jti"]', ttlSeconds: 60 };
+    expect(await f.replayGuard.record(input)).toBe('recorded');
+    expect(f.send).toHaveBeenCalledTimes(1);
+    const command = f.send.mock.calls[0][0] as PutItemCommand;
+    expect(command).toBeInstanceOf(PutItemCommand);
+    expect(command.input.ConditionExpression).toBe(
+      'attribute_not_exists(pk) OR expiresAtMs <= :now'
+    );
+    expect(command.input.ExpressionAttributeValues).toEqual({ ':now': { N: '1000' } });
+    expect(command.input.Item?.expiresAtMs).toEqual({ N: '61000' });
+    expect(command.input.Item?.ttl).toEqual({ N: '61' });
+    expect(JSON.stringify(command.input.Item)).not.toContain('client');
+
+    const replayed = fixture(async () => {
+      throw failure('ConditionalCheckFailedException');
+    });
+    expect(await replayed.replayGuard.record(input)).toBe('replayed');
+    const down = fixture(async () => {
+      throw failure('InternalServerError');
+    });
+    await expect(down.replayGuard.record(input)).rejects.toThrow('opaque service error');
+    await expect(f.replayGuard.record({ ...input, ttlSeconds: 0 })).rejects.toThrow();
+    await expect(f.replayGuard.record({ ...input, tenantId: 'Tenant A' })).rejects.toThrow();
+  });
+  it('reports a replay jti as recorded only until it expires, even before TTL deletion', async () => {
+    const at = (expiresAtMs: number) =>
+      fixture(async () => ({ Item: { expiresAtMs: { N: String(expiresAtMs) } } }));
+    const key = { tenantId: 'tenant-a', key: 'dpop:["client","jti"]' };
+    expect(await at(1001).replayGuard.isRecorded(key)).toBe(true);
+    expect(await at(1000).replayGuard.isRecorded(key)).toBe(false);
+    const live = at(1001);
+    await live.replayGuard.isRecorded(key);
+    expect((live.send.mock.calls[0][0] as GetItemCommand).input.ConsistentRead).toBe(true);
+    expect(await fixture(async () => ({})).replayGuard.isRecorded(key)).toBe(false);
+  });
   it('uses explicit milliseconds for expiry and integer seconds only for cleanup', async () => {
     const f = fixture();
     expect(await f.state.storeChallenge(challenge)).toBe(true);

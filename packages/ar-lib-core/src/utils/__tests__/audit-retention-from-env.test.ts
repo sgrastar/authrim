@@ -1,10 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../../types/env';
 
-const mockResolveTenantRuntimeProfilesFromEnv = vi.hoisted(() => vi.fn());
+const mockResolveTenantRuntimeProfilesFromEnv = vi.hoisted(() =>
+  vi.fn<(...args: unknown[]) => Promise<{ auditProfile: unknown }>>()
+);
 
 vi.mock('../../services/runtime-profile-resolver', () => ({
-  resolveTenantRuntimeProfilesFromEnv: mockResolveTenantRuntimeProfilesFromEnv,
+  // The audit profile is resolved on its own (independent of residency); the mock still returns
+  // the set the tests describe and this unwraps its audit profile.
+  resolveTenantAuditProfileFromEnv: async (...args: unknown[]) =>
+    (await mockResolveTenantRuntimeProfilesFromEnv(...args)).auditProfile,
 }));
 
 import {
@@ -44,6 +49,61 @@ describe('resolveTenantAuditRetentionFromEnv', () => {
       event: { days: 30, source: 'pii_config', variesByRoute: false, archived: true },
       pii: { days: 700, source: 'pii_config', variesByRoute: false, archived: true },
     });
+  });
+
+  it('reads the settings documents projected to SETTINGS before the legacy AUTHRIM_CONFIG values', async () => {
+    const settings = {
+      'settings:tenant:tenant-a:audit-pii': JSON.stringify({
+        'audit-pii.config': { eventLogRetentionDays: 11, piiLogRetentionDays: 22 },
+      }),
+      'settings:platform:audit-routing': JSON.stringify({
+        'audit-routing.rules': [
+          {
+            name: 'r',
+            priority: 1,
+            enabled: true,
+            conditions: { tenantId: 'tenant-a' },
+            retention: { eventLogRetentionDays: 5 },
+          },
+        ],
+      }),
+    } as Record<string, string>;
+    const retention = await resolveTenantAuditRetentionFromEnv(
+      {
+        // The legacy values say otherwise and must lose once the documents exist.
+        AUTHRIM_CONFIG: {
+          get: vi.fn(async (key: string) =>
+            key === 'pii_config:tenant-a'
+              ? JSON.stringify({ eventLogRetentionDays: 99, piiLogRetentionDays: 99 })
+              : key === 'audit_routing_rules'
+                ? '[]'
+                : null
+          ),
+        },
+        SETTINGS: { get: vi.fn(async (key: string) => settings[key] ?? null) },
+      } as unknown as Env,
+      'tenant-a'
+    );
+    expect(retention.event).toMatchObject({ days: 5, source: 'delivery_plan' });
+    expect(retention.pii.days).toBe(22);
+  });
+
+  it('falls back to the legacy values until the settings documents exist', async () => {
+    const retention = await resolveTenantAuditRetentionFromEnv(
+      {
+        AUTHRIM_CONFIG: {
+          get: vi.fn(async (key: string) =>
+            key === 'pii_config:tenant-a'
+              ? JSON.stringify({ eventLogRetentionDays: 33, piiLogRetentionDays: 44 })
+              : null
+          ),
+        },
+        SETTINGS: { get: vi.fn(async () => null) },
+      } as unknown as Env,
+      'tenant-a'
+    );
+    expect(retention.event.days).toBe(33);
+    expect(retention.pii.days).toBe(44);
   });
 
   it('uses the built-in defaults when the tenant has no PII config', async () => {

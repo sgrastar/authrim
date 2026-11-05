@@ -24,6 +24,7 @@ import { getCanonicalTenantBaseUrlAsync } from '../../request-issuer';
 import { version as productVersion } from '../../../package.json';
 import { isFreshAdminHuman } from '../../agent-fresh-auth';
 import { writeAdminAuditLog } from '../../admin-shared';
+import { requireAdminStepUp } from '../../admin-step-up-gate';
 import {
   TenantBackupUploadStore,
   TENANT_BACKUP_UPLOAD_PART_BYTES,
@@ -596,6 +597,20 @@ tenantBackupsRouter.post('/:operationId/approve', async (c) => {
     return c.json({ error: 'backup_restore_preview_stale' }, 409);
   if (!result.intent.selection.admin && 'adminMappingRevision' in input)
     return c.json({ error: 'invalid_backup_approval' }, 400);
+  // Approval is what lets the restore run: validated against the preview above, the receipt is
+  // spent here, before the approval is recorded.
+  const approvalRefused = await requireAdminStepUp(c as never, {
+    operation: 'dr.restore',
+    targetTenantId: auth.tenantId,
+    targetIds: [result.operation.id],
+    params: {
+      step: 'approve',
+      plan_digest: input.planDigest,
+      revision: input.revision,
+      admin_mapping_revision: result.intent.selection.admin ? input.adminMappingRevision : null,
+    },
+  });
+  if (approvalRefused) return approvalRefused;
   if (
     !(await writeAdminAuditLog(c, {
       action: 'tenant_backup.restore_approved',
@@ -1052,6 +1067,36 @@ tenantBackupsRouter.post('/:operationId/start', async (c) => {
   }
   const keys = await keyStore(c.env);
   if (!keys) return c.json({ error: 'backup_key_service_unavailable' }, 503);
+  // Starting an import is the restore itself (an export start is not a restore). What can be
+  // checked by reading is checked first, so no receipt is spent on a start that cannot happen:
+  // each input and key challenge named once, the operation waiting at this revision, and every
+  // input with an accepted, unexpired key handoff.
+  if (intent.kind === 'import') {
+    if (
+      !challenges ||
+      new Set(challenges.map((item) => item.inputId)).size !== challenges.length ||
+      new Set(challenges.map((item) => item.challengeId)).size !== challenges.length
+    )
+      return c.json({ error: 'invalid_backup_request' }, 400);
+    if (
+      !(await requests.importStartable({
+        tenantId: auth.tenantId,
+        operationId: id,
+        actorId: auth.actorId ?? auth.userId,
+        challenges,
+        revision: input.revision,
+        now: Date.now(),
+      }))
+    )
+      return c.json({ error: 'backup_operation_conflict' }, 409);
+    const startRefused = await requireAdminStepUp(c as never, {
+      operation: 'dr.restore',
+      targetTenantId: auth.tenantId,
+      targetIds: [id],
+      params: { step: 'start', revision: input.revision, challenges: challenges ?? [] },
+    });
+    if (startRefused) return startRefused;
+  }
   const audit = await writeAdminAuditLog(c, {
     action: 'tenant_backup.start_requested',
     resourceType: 'tenant_backup',

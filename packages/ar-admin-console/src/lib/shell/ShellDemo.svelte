@@ -11,17 +11,17 @@
 	 */
 	interface Props {
 		path?: string;
-		/** Leave out for a header without a notification area. */
+		/** What the header's notification area holds; the area is always there, empty by default. */
 		notifications?: readonly ShellNotification[];
 		/** An administrator of one tenant only: the header shows a plain scope, not a switcher. */
 		singleScope?: boolean;
 	}
 
-	let { path = '/admin/users/all', notifications, singleScope = false }: Props = $props();
+	let { path = '/admin/users/all', notifications = [], singleScope = false }: Props = $props();
 
 	// Information is dismissed in place; the demo keeps what is left.
 	let dismissed = $state<string[]>([]);
-	const shown = $derived(notifications?.filter((item) => !dismissed.includes(item.id)));
+	const shown = $derived(notifications.filter((item) => !dismissed.includes(item.id)));
 
 	let current = $state('');
 	const location = $derived(

@@ -3,6 +3,8 @@ import remarkGfm from 'remark-gfm';
 
 const config: StorybookConfig = {
 	stories: ['../src/**/*.mdx', '../src/**/*.stories.@(js|ts|svelte)'],
+	// The icon of Storybook's tab (manager and preview); not part of the console's own build.
+	staticDirs: ['./public'],
 	addons: [
 		'@storybook/addon-svelte-csf',
 		{

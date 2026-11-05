@@ -10,13 +10,17 @@ import {
   type CoreLogPublicationSource,
 } from '@authrim/ar-lib-core/services/log-iceberg-core-publication';
 import type { Context } from 'hono';
+import { requireAdminStepUp } from './admin-step-up-gate';
 import type {
   Env,
   DatabaseAdapter,
+  InternalNotificationEventCategory,
+  InternalNotificationEventSeverity,
   PlatformStoredMapping,
   PreparedStatement,
 } from '@authrim/ar-lib-core';
 import {
+  raiseInternalEventConsoleNotice,
   ensureDatabaseAdapter,
   getTenantMetadataContextFromHono,
   findConflictingSourceIds,
@@ -5654,8 +5658,11 @@ export class IdentityMappingControlPlaneRepository {
         id: string;
         notification_event_id: string;
         state: string;
+        category: string;
+        event_type: string;
+        severity: string;
       }>(
-        `SELECT s.id, s.notification_event_id, s.state
+        `SELECT s.id, s.notification_event_id, s.state, e.category, e.event_type, e.severity
            FROM operational_notification_states s
            JOIN internal_notification_events e ON e.id = s.notification_event_id
           WHERE e.tenant_id = ? AND e.deduplication_key = ?
@@ -5663,6 +5670,21 @@ export class IdentityMappingControlPlaneRepository {
         [tenantId, deduplicationKey]
       );
       if (existing) {
+        // An event raised before notices existed (or whose notice was not written) gets one now,
+        // from what was stored; a resolved one stays closed.
+        if (existing.state !== 'resolved') {
+          await raiseInternalEventConsoleNotice(
+            this.adapter,
+            {
+              id: existing.notification_event_id,
+              tenant_id: tenantId,
+              category: existing.category as InternalNotificationEventCategory,
+              event_type: existing.event_type,
+              severity: existing.severity as InternalNotificationEventSeverity,
+            },
+            'tenant'
+          );
+        }
         return {
           id: existing.id,
           tenantId,
@@ -5715,6 +5737,17 @@ export class IdentityMappingControlPlaneRepository {
         now,
       ]
     );
+    await raiseInternalEventConsoleNotice(
+      this.adapter,
+      {
+        id: notificationEventId,
+        tenant_id: tenantId,
+        category: input.category as InternalNotificationEventCategory,
+        event_type: input.eventType,
+        severity: input.severity as InternalNotificationEventSeverity,
+      },
+      'tenant'
+    );
     return {
       id: stateId,
       tenantId,
@@ -5737,14 +5770,27 @@ export class IdentityMappingControlPlaneRepository {
     const existing = await this.adapter.queryOne<{
       id: string;
       state: string;
-    }>('SELECT id, state FROM operational_notification_states WHERE tenant_id = ? AND id = ?', [
-      tenantId,
-      stateId,
-    ]);
+      notification_event_id: string;
+    }>(
+      `SELECT id, state, notification_event_id FROM operational_notification_states
+        WHERE tenant_id = ? AND id = ?`,
+      [tenantId, stateId]
+    );
     if (!existing) {
       throw notFound('notification state not found');
     }
+    const now = this.now();
+    // A resolved state takes its console notice with it, in the same batch.
+    const closeNotice = {
+      // Only this tenant's notice of the event, whatever the event row says.
+      sql: `UPDATE admin_notices SET resolved_at = ?, resolved_by = 'system'
+             WHERE source_ref = ? AND resolved_at IS NULL
+               AND scope_type = 'tenant' AND tenant_id = ?`,
+      params: [now, existing.notification_event_id, tenantId],
+    };
     if (existing.state === input.state) {
+      // A retry of a resolve also closes a notice that was left open.
+      if (input.state === 'resolved') await this.adapter.batch([closeNotice]);
       return {
         id: stateId,
         state: input.state,
@@ -5752,16 +5798,15 @@ export class IdentityMappingControlPlaneRepository {
       };
     }
 
-    const now = this.now();
-    await this.adapter.execute(
-      `UPDATE operational_notification_states
+    const update = {
+      sql: `UPDATE operational_notification_states
           SET state = ?,
               assigned_to = ?,
               acknowledged_at = CASE WHEN ? = 'acknowledged' THEN ? ELSE acknowledged_at END,
               resolved_at = CASE WHEN ? = 'resolved' THEN ? ELSE resolved_at END,
               updated_at = ?
-        WHERE tenant_id = ? AND id = ?`,
-      [
+        WHERE tenant_id = ? AND id = ? AND state <> 'resolved'`,
+      params: [
         input.state,
         input.assignedTo ?? null,
         input.state,
@@ -5771,8 +5816,17 @@ export class IdentityMappingControlPlaneRepository {
         now,
         tenantId,
         stateId,
-      ]
-    );
+      ],
+    };
+    // Resolved is final: an acknowledgement that read the state before it was resolved changes
+    // nothing (the console's resolve, or another request, got there first).
+    const updated =
+      input.state === 'resolved'
+        ? (await this.adapter.batch([update, closeNotice]))[0]
+        : await this.adapter.execute(update.sql, update.params);
+    if ((updated?.rowsAffected ?? 0) === 0) {
+      return { id: stateId, state: 'resolved', idempotent: true };
+    }
     return {
       id: stateId,
       previousState: existing.state,
@@ -6629,7 +6683,11 @@ export class IdentityMappingControlPlaneRepository {
     return { keyRegistryId, recorded: true };
   }
 
-  async createFederationTrustSource(tenantId: string, input: CreateFederationTrustSourceRequest) {
+  async createFederationTrustSource(
+    tenantId: string,
+    input: CreateFederationTrustSourceRequest,
+    beforeWrite?: () => Promise<void>
+  ) {
     validateRequiredString(input.sourceType, 'sourceType');
     validateRequiredString(input.sourceKey, 'sourceKey');
     validateRequiredString(input.displayName, 'displayName');
@@ -6653,10 +6711,18 @@ export class IdentityMappingControlPlaneRepository {
     if (input.scopeBindings !== undefined && !Array.isArray(input.scopeBindings)) {
       throw badRequest('scopeBindings must be an array');
     }
+    for (const anchor of input.anchors ?? []) {
+      validateRequiredString(anchor.anchorType, 'anchor.anchorType');
+      validateRequiredString(anchor.anchorHash, 'anchor.anchorHash');
+    }
+    for (const binding of input.scopeBindings ?? []) {
+      validateRequiredString(binding.scopeType, 'scopeBinding.scopeType');
+    }
     const now = this.now();
     const sourceId = createId('federation_trust_source');
     const trustContext = buildSAMLFederationTrustContext(input, protocolPayload);
     const snapshotHash = await hashStableJson(trustContext);
+    await beforeWrite?.();
     await this.adapter.transaction(async (tx) => {
       await tx.execute(
         `INSERT INTO federation_trust_sources (
@@ -6748,7 +6814,8 @@ export class IdentityMappingControlPlaneRepository {
   async updateFederationTrustSource(
     tenantId: string,
     trustSourceId: string,
-    input: UpdateFederationTrustSourceRequest
+    input: UpdateFederationTrustSourceRequest,
+    beforeWrite?: () => Promise<void>
   ) {
     validateRequiredString(trustSourceId, 'trustSourceId');
     validateRequiredString(input.sourceType, 'sourceType');
@@ -6811,6 +6878,7 @@ export class IdentityMappingControlPlaneRepository {
     }
     const trustContextChanged = current.snapshot_hash !== snapshotHash;
     const writeTime = Math.max(now, input.expectedUpdatedAt + 1);
+    await beforeWrite?.();
     await this.adapter.transaction(async (tx) => {
       const sourceUpdate = await tx.execute(
         `UPDATE federation_trust_sources
@@ -6933,9 +7001,14 @@ export class IdentityMappingControlPlaneRepository {
     };
   }
 
-  async deleteFederationTrustSource(tenantId: string, trustSourceId: string) {
+  async deleteFederationTrustSource(
+    tenantId: string,
+    trustSourceId: string,
+    beforeWrite?: () => Promise<void>
+  ) {
     validateRequiredString(trustSourceId, 'trustSourceId');
     await this.ensureFederationTrustSource(tenantId, trustSourceId);
+    await beforeWrite?.();
     const now = this.now();
     await this.adapter.transaction(async (tx) => {
       const retirement = await tx.execute(
@@ -8949,9 +9022,47 @@ export async function adminIdentityMappingKeyAccessRecordHandler(c: AdminContext
   );
 }
 
+/** A step-up refusal raised inside a repository write, answered with its own response. */
+class AdminStepUpRefusal extends Error {
+  constructor(readonly response: Response) {
+    super('admin_step_up_refused');
+  }
+}
+
+/**
+ * The step-up for a federation trust source write (`federation.trust.update`): the repository
+ * calls it after validating the request, just before its first write. The request is bound as a
+ * digest of its stable JSON (it carries certificates and trust policy).
+ */
+function federationTrustStepUp(
+  c: AdminContext,
+  tenantId: string,
+  action: 'create' | 'update' | 'delete',
+  trustSourceId: string | null,
+  body: unknown
+): () => Promise<void> {
+  return async () => {
+    const refused = await requireAdminStepUp(c as never, {
+      operation: 'federation.trust.update',
+      targetTenantId: tenantId,
+      targetIds: trustSourceId ? [trustSourceId] : [],
+      params: {
+        kind: `federation_trust_source.${action}`,
+        trust_source_id: trustSourceId,
+        body_sha256: action === 'delete' ? null : await hashStableJson(body),
+      },
+    });
+    if (refused) throw new AdminStepUpRefusal(refused);
+  };
+}
+
 export async function adminIdentityMappingFederationTrustSourceCreateHandler(c: AdminContext) {
   return handleMutation(c, 'federation-trust-source.create', async (repository, tenantId, body) =>
-    repository.createFederationTrustSource(tenantId, body as CreateFederationTrustSourceRequest)
+    repository.createFederationTrustSource(
+      tenantId,
+      body as CreateFederationTrustSourceRequest,
+      federationTrustStepUp(c, tenantId, 'create', null, body)
+    )
   );
 }
 
@@ -8966,14 +9077,19 @@ export async function adminIdentityMappingFederationTrustSourceUpdateHandler(c: 
     repository.updateFederationTrustSource(
       tenantId,
       requiredParam(c, 'trustSourceId'),
-      body as UpdateFederationTrustSourceRequest
+      body as UpdateFederationTrustSourceRequest,
+      federationTrustStepUp(c, tenantId, 'update', requiredParam(c, 'trustSourceId'), body)
     )
   );
 }
 
 export async function adminIdentityMappingFederationTrustSourceDeleteHandler(c: AdminContext) {
   return handleMutation(c, 'federation-trust-source.delete', async (repository, tenantId) =>
-    repository.deleteFederationTrustSource(tenantId, requiredParam(c, 'trustSourceId'))
+    repository.deleteFederationTrustSource(
+      tenantId,
+      requiredParam(c, 'trustSourceId'),
+      federationTrustStepUp(c, tenantId, 'delete', requiredParam(c, 'trustSourceId'), null)
+    )
   );
 }
 
@@ -9034,6 +9150,7 @@ async function handleMutation<T>(
     );
     return c.json({ result });
   } catch (error) {
+    if (error instanceof AdminStepUpRefusal) return error.response;
     return controlPlaneErrorResponse(c, error);
   }
 }

@@ -616,6 +616,9 @@ place('monitoring/log-settings', 'Permission check logs', {
 place('monitoring/log-settings', 'Log storage', {
 	primary: ['log-storage.d1_retention_days']
 });
+place('monitoring/log-settings', 'Console notices', {
+	advanced: ['admin-notices.retention_days']
+});
 place(
 	'monitoring/destinations',
 	'Backups',
@@ -689,7 +692,11 @@ place('authentication/staying-signed-in', 'Logout channels and webhook', {
 	]
 });
 place('settings/team', 'Admin sign-in', {
-	advanced: ['session.ttl.admin_passkey', 'security.admin_step_up_overrides']
+	advanced: [
+		'session.ttl.admin_passkey',
+		'security.admin_step_up_overrides',
+		'security.admin_step_up_enforced'
+	]
 });
 
 // ---------------------------------------------------------------------------------------------

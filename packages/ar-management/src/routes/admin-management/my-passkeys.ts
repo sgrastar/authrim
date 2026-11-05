@@ -16,6 +16,7 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 import {
+  AdminPasskeyNotFirstError,
   AdminPasskeyRepository,
   createErrorResponse,
   AR_ERROR_CODES,
@@ -33,6 +34,7 @@ import {
 import { resolveAaguidAuthenticator } from '@authrim/ar-lib-core/webauthn/aaguid-metadata';
 import { generateRegistrationOptions, verifyRegistrationResponse } from '@simplewebauthn/server';
 import { writeAdminAuditLog } from '../../admin-shared';
+import { requireAdminStepUp } from '../../admin-step-up-gate';
 import type { RegistrationResponseJSON, AuthenticatorTransport } from '@simplewebauthn/server';
 
 // Context type with adminAuth variable
@@ -152,6 +154,11 @@ myPasskeysRouter.get('/', async (c) => {
   }
 });
 
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 /**
  * POST /api/admin/me/passkeys/options
  * Get registration options (WebAuthn challenge)
@@ -194,6 +201,17 @@ myPasskeysRouter.post('/options', async (c) => {
       transports: pk.transports as AuthenticatorTransport[] | undefined,
     }));
 
+    // Adding a passkey needs a fresh passkey sign-in, unless the admin has none yet: the first
+    // registration (invitation, setup) has no passkey to prove, and the session is all there is.
+    if (existingPasskeys.length > 0) {
+      const refused = await requireAdminStepUp(c, {
+        operation: 'admin.passkey.add',
+        targetTenantId: authContext.sessionTenantId ?? getTenantIdFromContext(c),
+        targetIds: [authContext.userId],
+      });
+      if (refused) return refused;
+    }
+
     // Generate passkey registration options
     const encoder = new TextEncoder();
     const userName = authContext.email || authContext.userId;
@@ -222,6 +240,7 @@ myPasskeysRouter.post('/options', async (c) => {
         rpID,
         origin: browserOrigin,
         userId: authContext.userId,
+        sessionId: authContext.sessionId ?? null,
         deviceName: body.device_name || null,
       }),
       { expirationTtl: 300 } // 5 minutes
@@ -272,11 +291,16 @@ myPasskeysRouter.post('/complete', async (c) => {
       rpID: string;
       origin?: string;
       userId: string;
+      sessionId?: string | null;
       deviceName: string | null;
     };
 
-    // Verify user ID matches
-    if (storedChallenge.userId !== authContext.userId) {
+    // Verify user ID and session match: the challenge was issued to this session (whose step-up
+    // was checked), not to another session of the same admin.
+    if (
+      storedChallenge.userId !== authContext.userId ||
+      (storedChallenge.sessionId ?? null) !== (authContext.sessionId ?? null)
+    ) {
       await c.env.AUTHRIM_CONFIG?.delete(`admin_passkey:challenge:${body.challenge_id}`);
       return c.json({ error: 'invalid_challenge', error_description: 'User mismatch' }, 401);
     }
@@ -357,8 +381,10 @@ myPasskeysRouter.post('/complete', async (c) => {
     // Use device name from completion request, fallback to options request, or generate default
     const deviceName = body.device_name || storedChallenge.deviceName || `Passkey ${Date.now()}`;
 
-    // Create passkey
-    const passkey = await passkeyRepo.createPasskey({
+    // The step-up is checked again here, right before the passkey is saved: the options call
+    // may be minutes old, and other challenges may have been issued while the admin had none.
+    // The first passkey needs no step-up, so it is inserted only while there is still none.
+    const passkeyInput = {
       admin_user_id: authContext.userId,
       credential_id: credentialIdB64,
       public_key: publicKeyB64,
@@ -367,7 +393,37 @@ myPasskeysRouter.post('/complete', async (c) => {
       device_name: deviceName,
       attestation_type: verification.registrationInfo.attestationObject ? 'direct' : 'none',
       aaguid: registrationInfoAny.aaguid || null,
-    });
+    };
+    // Bound to the key being saved (if a tenant raises this to L2, a receipt for one
+    // registration does not save another).
+    const credentialDigest = await sha256Hex(`${credentialIdB64}\u0000${publicKeyB64}`);
+    const requireAddStepUp = () =>
+      requireAdminStepUp(c, {
+        operation: 'admin.passkey.add',
+        targetTenantId: authContext.sessionTenantId ?? getTenantIdFromContext(c),
+        targetIds: [authContext.userId],
+        params: {
+          phase: 'complete',
+          challenge_id: body.challenge_id,
+          credential_sha256: credentialDigest,
+        },
+      });
+    let passkey;
+    if ((await passkeyRepo.getPasskeysByUser(authContext.userId)).length > 0) {
+      const refused = await requireAddStepUp();
+      if (refused) return refused;
+      passkey = await passkeyRepo.createPasskey(passkeyInput);
+    } else {
+      try {
+        passkey = await passkeyRepo.createPasskey(passkeyInput, { onlyIfFirst: true });
+      } catch (error) {
+        if (!(error instanceof AdminPasskeyNotFirstError)) throw error;
+        // Another registration got in first: this one is an added passkey after all.
+        const refused = await requireAddStepUp();
+        if (refused) return refused;
+        passkey = await passkeyRepo.createPasskey(passkeyInput);
+      }
+    }
 
     // Clean up challenge
     await c.env.AUTHRIM_CONFIG?.delete(`admin_passkey:challenge:${body.challenge_id}`);

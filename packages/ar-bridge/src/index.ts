@@ -20,6 +20,7 @@
  * - DELETE /api/admin/external-providers/:id - Delete provider
  */
 
+import { WorkerEntrypoint } from 'cloudflare:workers';
 import {
   runSamlDrCoveredFetch,
   runSamlDrCoveredOperation,
@@ -344,9 +345,82 @@ async function scheduled(
 }
 
 // Export for Cloudflare Workers
-export const SAML_DR_WRITER_SURFACES = ['fetch', 'scheduled'] as const;
+export const SAML_DR_WRITER_SURFACES = [
+  'fetch',
+  'scheduled',
+  'rpc:ExternalIdpAdminEntrypoint.fetch',
+] as const;
+
+/**
+ * The admin routes are reachable only through the named ExternalIdpAdminEntrypoint, which only
+ * ar-management binds (with step-up enforced there). The public fetch must never serve them, or
+ * a request to the Worker's public URL would skip that gate.
+ */
+const ADMIN_API_PREFIX = '/api/admin/';
+const EXTERNAL_IDP_ADMIN_ALLOWED_PATHS = [
+  '/api/admin/external-providers',
+  '/api/admin/external-token-refresh',
+] as const;
+export const EXTERNAL_IDP_ADMIN_AUDIENCE = 'authrim-external-idp-admin-v1';
+
+/**
+ * Whether a path would reach an admin route. Judged on the path as a router may see it: percent
+ * escapes decoded, repeated slashes collapsed and case folded, so `/api/%61dmin/...` or
+ * `//api/admin/...` is refused too. A path that cannot be decoded is treated as admin (refused).
+ */
+function isAdminApiPath(pathname: string): boolean {
+  let normalized: string;
+  try {
+    normalized = decodeURIComponent(pathname);
+  } catch {
+    return true;
+  }
+  normalized = normalized.replace(/\/{2,}/g, '/').toLowerCase();
+  return normalized === ADMIN_API_PREFIX.slice(0, -1) || normalized.startsWith(ADMIN_API_PREFIX);
+}
+
+function isAllowedExternalIdpAdminPath(pathname: string): boolean {
+  return EXTERNAL_IDP_ADMIN_ALLOWED_PATHS.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
+  );
+}
+
+function notFound(): Response {
+  return Response.json({ error: 'not_found' }, { status: 404 });
+}
+
+export interface ExternalIdpAdminProps {
+  caller: string;
+  audience: string;
+  environmentId: string;
+}
+
+/** Private admin fetch entrypoint bound only by ar-management (authenticated by binding props). */
+export class ExternalIdpAdminEntrypoint extends WorkerEntrypoint<Env, ExternalIdpAdminProps> {
+  fetch(request: Request): Promise<Response> {
+    const props = this.ctx.props;
+    if (
+      props?.caller !== 'ar-management' ||
+      props.audience !== EXTERNAL_IDP_ADMIN_AUDIENCE ||
+      !this.env.AUTHRIM_ENVIRONMENT_NAME ||
+      props.environmentId !== this.env.AUTHRIM_ENVIRONMENT_NAME
+    ) {
+      return Promise.resolve(Response.json({ error: 'access_denied' }, { status: 403 }));
+    }
+    if (!isAllowedExternalIdpAdminPath(new URL(request.url).pathname)) {
+      return Promise.resolve(notFound());
+    }
+    return runSamlDrCoveredFetch(this.env, this.ctx, (coveredEnv, coveredContext) =>
+      Promise.resolve(app.fetch(request, coveredEnv, coveredContext))
+    );
+  }
+}
+
 export default {
   fetch(request: Request, env: Env, context: ExecutionContext) {
+    if (isAdminApiPath(new URL(request.url).pathname)) {
+      return Promise.resolve(notFound());
+    }
     return runSamlDrCoveredFetch(env, context, (coveredEnv, coveredContext) =>
       Promise.resolve(app.fetch(request, coveredEnv, coveredContext))
     );

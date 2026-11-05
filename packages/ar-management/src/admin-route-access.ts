@@ -121,6 +121,7 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
   authenticated('/api/admin/me/second-factors/*', 'current admin step-up second factors'),
   authenticated('/api/admin/me/second-factor-recovery', 'current admin second-factor recovery'),
   authenticated('/api/admin/me/second-factor-recovery/*', 'current admin second-factor recovery'),
+  authenticated('/api/admin/me/notice-preferences', 'current admin notice email preferences'),
   authenticated('/api/admin/me/agent-consents', 'current admin Agent consent management'),
   authenticated('/api/admin/me/agent-consents/*', 'current admin Agent consent management'),
 
@@ -1286,6 +1287,20 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.ADMIN_USERS_DELETE,
     'admin users'
   ),
+  // Another admin's security keys: read with admin users read, revoke with admin users write
+  // (and L2 in the handler); ahead of the generic rule, whose DELETE means deleting the admin.
+  rule({
+    pattern: '/api/admin/admins/:id/second-factors',
+    methods: READ_METHODS,
+    permissions: [ADMIN_PERMISSIONS.ADMIN_USERS_READ],
+    description: "another admin's second factors read",
+  }),
+  rule({
+    pattern: '/api/admin/admins/:id/second-factors/:factorId',
+    methods: DELETE_METHODS,
+    permissions: [ADMIN_PERMISSIONS.ADMIN_USERS_WRITE],
+    description: "another admin's second factor revoke",
+  }),
   ...byMethod(
     '/api/admin/admins/*',
     ADMIN_PERMISSIONS.ADMIN_USERS_READ,
@@ -1305,6 +1320,40 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     permissions: [ADMIN_PERMISSIONS.ADMIN_USERS_WRITE],
     description: 'admin second-factor recovery request cancel',
   }),
+  // Notices: each admin reads their own audience's; the handlers check resolving against it.
+  rule({
+    pattern: '/api/admin/notices',
+    methods: READ_METHODS,
+    authenticated: true,
+    description: 'admin console notices read',
+  }),
+  rule({
+    pattern: '/api/admin/notices',
+    methods: WRITE_METHODS,
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_WRITE],
+    description: 'admin console announcement publish',
+  }),
+  rule({
+    pattern: '/api/admin/notices/:id/deliveries',
+    methods: READ_METHODS,
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_READ],
+    description: 'admin console notice delivery status',
+  }),
+  authenticated('/api/admin/notices/*', 'admin console notice read, dismiss and resolve'),
+  ...byMethod(
+    '/api/admin/notice-channels',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'admin notice Slack channels'
+  ),
+  ...byMethod(
+    '/api/admin/notice-channels/*',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'admin notice Slack channel'
+  ),
   rule({
     pattern: '/api/admin/admin-invitations',
     methods: READ_METHODS,

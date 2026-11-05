@@ -71,7 +71,35 @@ export const ADMIN_STEP_UP_OPERATIONS = {
   'admin.recovery.settings.update': 'L2',
   'admin_credential.revoke': 'L2',
   'machine.permission.grant': 'L2',
+  'admin.email.update': 'L2',
+  // Publishing a logging policy settles where logs go and, by replacing the routing rules for the
+  // scopes it covers, which retention applies.
+  'logging.policy.publish': 'L2',
+  // Exporting logs with their sensitive detail or payload.
+  'log.sensitive.export': 'L2',
 } as const satisfies Record<string, Exclude<AdminStepUpLevel, 'L0'>>;
+
+/**
+ * Operations the platform's enforcement switch (`security.admin_step_up_enforced`) never turns
+ * off: turning it off is itself one of them, and the second-factor operations were protected
+ * before the switch existed.
+ */
+export const ADMIN_STEP_UP_ALWAYS_ENFORCED: ReadonlySet<AdminStepUpOperation> = new Set([
+  'admin_step_up.policy.relax',
+  'admin.second_factor.add',
+  'admin.second_factor.remove',
+]);
+
+/** The platform setting that turns route enforcement on (default) or, during a migration, off. */
+export const ADMIN_STEP_UP_ENFORCED_KEY = 'security.admin_step_up_enforced';
+
+/**
+ * The permission that lets a machine principal perform one operation without a human step-up.
+ * Held by exact name only: no wildcard (`*`, `admin:*`) carries it.
+ */
+export function adminStepUpExemptPermission(operation: AdminStepUpOperation): string {
+  return `admin:step_up_exempt:${operation}`;
+}
 
 export type AdminStepUpOperation = keyof typeof ADMIN_STEP_UP_OPERATIONS;
 
@@ -135,6 +163,12 @@ export interface AdminStepUpOperationDescriptor {
   params?: Record<string, unknown>;
   /** The version of the resource it was built against, when the resource has one. */
   resourceVersion?: string | number;
+  /**
+   * Other catalog operations this same request also performs (e.g. a destination change that
+   * also shortens retention). The request needs the highest level among all of them, and a
+   * machine principal needs the exemption for each, so one exempt operation cannot carry another.
+   */
+  alsoCovers?: AdminStepUpOperation[];
 }
 
 function canonicalize(value: unknown): unknown {
@@ -166,6 +200,10 @@ export async function createAdminStepUpOperationHash(
       target_ids: [...new Set(descriptor.targetIds ?? [])].sort(),
       params: descriptor.params ?? {},
       resource_version: descriptor.resourceVersion ?? null,
+      // Present only when used, so descriptors without it hash as before.
+      ...(descriptor.alsoCovers && descriptor.alsoCovers.length > 0
+        ? { also_covers: [...new Set(descriptor.alsoCovers)].sort() }
+        : {}),
     })
   );
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical));

@@ -5,7 +5,8 @@
 	import { formatNumber } from '../format';
 	import Icon from '../icons/Icon.svelte';
 	import { useChangeMark, useInvalidReport } from '../save/save-scope';
-	import { contrastRatio, normalizeHex } from './color';
+	import { contrastRatio, joinAlpha, normalizeHex, splitAlpha } from './color';
+	import Slider from './Slider.svelte';
 
 	/**
 	 * A colour for branding (the sign-in button, links, the header). The swatch opens the
@@ -18,9 +19,19 @@
 	 */
 	interface Props {
 		label: string;
-		/** "#rrggbb"; empty when not set. */
+		/** "#rrggbb" ("#rrggbbaa" with `alpha` when not opaque); empty when not set. */
 		value?: string;
 		hint?: string;
+		/**
+		 * Offer an opacity slider beside the box. The colour is then stored as "#rrggbbaa" while it
+		 * is not fully opaque; the box and the contrast check read the colour alone.
+		 */
+		alpha?: boolean;
+		/**
+		 * The colour in effect while the field is empty (the theme's own): the swatch and the box
+		 * show it, so an empty field is not a blank. Setting a value replaces it.
+		 */
+		fallback?: string;
 		/** The colour it is read against: the text on a button, the page behind a link. */
 		contrastWith?: string;
 		/** What that colour is, for the sentence ("white text"). */
@@ -39,6 +50,8 @@
 		label,
 		value = $bindable(''),
 		hint,
+		alpha = false,
+		fallback = '',
 		contrastWith,
 		contrastLabel,
 		minContrast = 4.5,
@@ -58,7 +71,9 @@
 	const off = $derived(disabled || busy());
 
 	// Start from the prop; later changes from the page arrive through the effect below.
-	let text = $state(untrack(() => value));
+	// The box holds the colour alone; the opacity is the slider's.
+	const rgbOf = (hex: string) => (alpha ? splitAlpha(hex).rgb : hex);
+	let text = $state(untrack(() => rgbOf(value)));
 	let touched = $state(false);
 	let written = value;
 
@@ -66,16 +81,32 @@
 		const outside = value;
 		if (outside === written) return;
 		written = outside;
-		text = outside;
+		text = rgbOf(outside);
 		invalid = false;
 		touched = false;
 	});
 	$effect(() => report(invalid));
 
-	function set(next: string) {
+	/** The opacity in effect, 0–100: an empty field is the theme's own colour, fully opaque. */
+	const opacity = $derived(alpha ? splitAlpha(value).alpha : 100);
+
+	function store(rgb: string, percent: number) {
+		const next = alpha ? joinAlpha(rgb, percent) : rgb;
 		written = next;
 		value = next;
+	}
+
+	function set(next: string) {
+		store(next, opacity);
 		text = next;
+		invalid = false;
+	}
+
+	/** The slider: with no colour yet, it applies to the colour in effect. */
+	function setOpacity(percent: number) {
+		const base = rgbOf(value) || normalizeHex(fallback) || '#000000';
+		store(base, percent);
+		text = base;
 		invalid = false;
 	}
 
@@ -88,14 +119,15 @@
 			return;
 		}
 		invalid = hex === null;
-		if (hex) {
-			written = hex;
-			value = hex;
-		}
+		if (hex) store(hex, opacity);
 	}
 
 	const againstHex = $derived(contrastWith ? normalizeHex(contrastWith) : null);
-	const ratio = $derived(value && againstHex ? contrastRatio(value, againstHex) : null);
+	// A see-through colour has no contrast of its own (it depends on what is behind it): none is shown.
+	const seeThrough = $derived(alpha && /^#[0-9a-f]{8}$/i.test(value) && !/ff$/i.test(value));
+	const ratio = $derived(
+		value && againstHex && !seeThrough ? contrastRatio(rgbOf(value), againstHex) : null
+	);
 	const passes = $derived(ratio !== null && ratio >= minContrast);
 	const shown = $derived(touched && invalid ? t('color.invalid') : undefined);
 	const describedBy = $derived(
@@ -115,10 +147,10 @@
 		{#if required}<span class="color__req" aria-hidden="true">*</span>{/if}
 	</label>
 	<div class="color__row">
-		<span class="color__swatch" style:--swatch={value || 'transparent'}>
+		<span class="color__swatch" style:--swatch={value || fallback || 'transparent'}>
 			<input
 				type="color"
-				value={value || '#000000'}
+				value={rgbOf(value) || fallback || '#000000'}
 				aria-label={t('color.pick', { name: label })}
 				disabled={off}
 				oninput={(event) => set(event.currentTarget.value)}
@@ -130,7 +162,7 @@
 			dir="ltr"
 			type="text"
 			bind:value={text}
-			placeholder="#RRGGBB"
+			placeholder={fallback || '#RRGGBB'}
 			maxlength={7}
 			spellcheck="false"
 			autocomplete="off"
@@ -145,6 +177,18 @@
 				if (hex) text = hex;
 			}}
 		/>
+		{#if alpha}
+			<span class="color__alpha">
+				<Slider
+					compact
+					label={t('color.opacity', { name: label })}
+					format="percent"
+					value={opacity}
+					disabled={off}
+					onchange={setOpacity}
+				/>
+			</span>
+		{/if}
 		{#if presets.length}
 			<span class="color__presets" role="group" aria-label={t('color.presets')}>
 				{#each presets as preset (preset)}
@@ -181,7 +225,8 @@
 <style>
 	.color {
 		display: grid;
-		gap: 5px;
+		/* A page with many colours in a narrow column can set these three (--color-*). */
+		gap: var(--color-gap, 5px);
 	}
 
 	.color__label {
@@ -205,12 +250,16 @@
 	/* The swatch shows the colour and opens the system picker. */
 	.color__swatch {
 		position: relative;
-		width: var(--control-h);
-		height: var(--control-h);
+		width: var(--color-swatch, var(--control-h));
+		height: var(--color-swatch, var(--control-h));
 		overflow: hidden;
 		border: 1px solid var(--border-strong);
 		border-radius: var(--radius-control);
-		background: var(--swatch);
+		/* A checkerboard under the colour, so a see-through colour reads as one. */
+		background:
+			linear-gradient(var(--swatch), var(--swatch)),
+			repeating-conic-gradient(var(--bg-hover) 0 25%, transparent 0 50%) 0 0 / 8px 8px,
+			var(--bg-card);
 	}
 
 	.color__swatch input {
@@ -230,8 +279,8 @@
 	}
 
 	.color__hex {
-		width: 8.5rem;
-		height: var(--control-h);
+		width: var(--color-hex-w, 8.5rem);
+		height: var(--color-box-h, var(--control-h));
 		padding: 0 10px;
 		border: 1px solid var(--border-strong);
 		border-radius: var(--radius-control);
@@ -261,6 +310,12 @@
 
 	.has-error .color__hex {
 		border-color: var(--danger);
+	}
+
+	/* The opacity slider takes what the row has left. */
+	.color__alpha {
+		flex: 1 1 88px;
+		min-width: 88px;
 	}
 
 	.color__presets {

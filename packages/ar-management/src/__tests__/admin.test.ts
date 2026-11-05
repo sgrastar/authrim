@@ -109,6 +109,11 @@ const {
   getSessionStoreForNewSession: vi.fn(),
 }));
 
+const mockRequireAdminStepUp = vi.hoisted(() => vi.fn());
+vi.mock('../admin-step-up-gate', () => ({
+  requireAdminStepUp: mockRequireAdminStepUp,
+  refuseAdminFreshAuth: vi.fn(),
+}));
 vi.mock('../account-authoritative-write', () => ({ writeCanonicalAccountAuthoritative }));
 
 vi.mock('../account-directory-producer', () => ({
@@ -253,6 +258,46 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       piiCacheMode: 'encrypted_short_ttl',
     });
   };
+  const resolveProfileSet = vi.fn(async (env: Partial<Env>) => {
+    const auditProfileId = (env as Record<string, unknown>).DEFAULT_AUDIT_PROFILE_ID;
+    if (auditProfileId === 'builtin:audit:archive-only-logpush') {
+      return {
+        auditProfile: {
+          id: 'builtin:audit:archive-only-logpush',
+          kind: 'audit',
+          label: 'Archive Only + Logpush',
+          builtin: true,
+          primary: null,
+          archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
+          sinks: [],
+        },
+      };
+    }
+    if (auditProfileId === 'custom:audit:postgres-primary') {
+      return {
+        auditProfile: {
+          id: 'custom:audit:postgres-primary',
+          kind: 'audit',
+          label: 'Postgres Primary',
+          builtin: false,
+          primary: { type: 'postgres', connectionRef: 'audit-primary', dataset: 'event_log' },
+          archive: null,
+          sinks: [],
+        },
+      };
+    }
+    return {
+      auditProfile: {
+        id: 'builtin:audit:standard',
+        kind: 'audit',
+        label: 'Standard Audit',
+        builtin: true,
+        primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
+        archive: null,
+        sinks: [],
+      },
+    };
+  });
   return {
     ...actual,
     checkEmailRegistration: async (...args: Parameters<typeof actual.checkEmailRegistration>) =>
@@ -304,46 +349,9 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         };
       }
     ),
-    resolveTenantRuntimeProfilesFromEnv: vi.fn(async (env: Partial<Env>) => {
-      const auditProfileId = (env as Record<string, unknown>).DEFAULT_AUDIT_PROFILE_ID;
-      if (auditProfileId === 'builtin:audit:archive-only-logpush') {
-        return {
-          auditProfile: {
-            id: 'builtin:audit:archive-only-logpush',
-            kind: 'audit',
-            label: 'Archive Only + Logpush',
-            builtin: true,
-            primary: null,
-            archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
-            sinks: [],
-          },
-        };
-      }
-      if (auditProfileId === 'custom:audit:postgres-primary') {
-        return {
-          auditProfile: {
-            id: 'custom:audit:postgres-primary',
-            kind: 'audit',
-            label: 'Postgres Primary',
-            builtin: false,
-            primary: { type: 'postgres', connectionRef: 'audit-primary', dataset: 'event_log' },
-            archive: null,
-            sinks: [],
-          },
-        };
-      }
-      return {
-        auditProfile: {
-          id: 'builtin:audit:standard',
-          kind: 'audit',
-          label: 'Standard Audit',
-          builtin: true,
-          primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
-          archive: null,
-          sinks: [],
-        },
-      };
-    }),
+    resolveTenantRuntimeProfilesFromEnv: resolveProfileSet,
+    resolveTenantAuditProfileFromEnv: async (env: Partial<Env>) =>
+      (await resolveProfileSet(env)).auditProfile,
     resolveAccountDataContextByIdentifierFromHono: resolveAccountDataContextByIdentifier,
     resolveOtpAccountCoreDataContextByIdentifierFromHono:
       resolveOtpAccountCoreDataContextByIdentifier,
@@ -7961,6 +7969,53 @@ describe('Admin API Handlers', () => {
   });
 
   describe('adminClientRegenerateSecretHandler', () => {
+    beforeEach(() => {
+      mockRequireAdminStepUp.mockReset();
+      mockRequireAdminStepUp.mockResolvedValue(null);
+    });
+
+    it('is gated as client.secret.rotate (L1) after the client is found, and refused without a fresh passkey', async () => {
+      const missing = createMockContext({
+        method: 'POST',
+        params: { id: 'client-gone' },
+        db: createMockDB({ firstResult: null }),
+      }) as unknown as Parameters<typeof adminClientRegenerateSecretHandler>[0];
+      expect((await adminClientRegenerateSecretHandler(missing)).status).toBe(404);
+      const invalid = createMockContext({
+        method: 'POST',
+        params: { id: 'client-x' },
+        body: { grace_period_hours: 0 },
+      }) as unknown as Parameters<typeof adminClientRegenerateSecretHandler>[0];
+      expect((await adminClientRegenerateSecretHandler(invalid)).status).toBe(400);
+      expect(mockRequireAdminStepUp).not.toHaveBeenCalled();
+
+      mockRequireAdminStepUp.mockResolvedValue(
+        new Response(JSON.stringify({ error: 'admin_fresh_auth_required' }), { status: 403 })
+      );
+      const mockDB = createMockDB({ firstResult: createOAuthClientRow('client-gated') });
+      const mockClientCache = createMockKVNamespace({});
+      const c = createMockContext({
+        method: 'POST',
+        params: { id: 'client-gated' },
+        body: { revoke_existing_tokens: true },
+        db: mockDB,
+        envOverrides: { CLIENTS_CACHE: mockClientCache as unknown as Env['CLIENTS_CACHE'] },
+      }) as unknown as Parameters<typeof adminClientRegenerateSecretHandler>[0];
+      const response = await adminClientRegenerateSecretHandler(c);
+      expect(response.status).toBe(403);
+      expect(mockRequireAdminStepUp).toHaveBeenCalledTimes(1);
+      expect((mockRequireAdminStepUp.mock.calls[0] as [unknown, unknown])[1]).toMatchObject({
+        operation: 'client.secret.rotate',
+        targetIds: ['client-gated'],
+        params: { revoke_existing_tokens: true },
+      });
+      expect(mockClientCache.delete).not.toHaveBeenCalled();
+      const updates = (mockDB.prepare as unknown as { mock: { calls: string[][] } }).mock.calls
+        .map(([sql]) => sql)
+        .filter((sql) => /UPDATE (oauth_clients|refresh_tokens)/.test(sql));
+      expect(updates).toEqual([]);
+    });
+
     it('should reject grace periods outside the supported range', async () => {
       const c = createMockContext({
         method: 'POST',

@@ -52,6 +52,7 @@ import {
   runTenantBackupCoveredEffect,
 } from '@authrim/ar-lib-core';
 import { DatabaseSettingsCanonicalStore } from '@authrim/ar-lib-core/services/settings-canonical-store';
+import { requireAdminStepUp } from './admin-step-up-gate';
 import { createOpaqueTenantKey } from './logging-tenant-key';
 import { materializeDisabledTenantEmailProviderOrder } from './notification-provider-projection';
 import {
@@ -1405,8 +1406,9 @@ export async function adminTenantsListHandler(c: Context<{ Bindings: Env }>) {
       tenantFilters.push('id = ?');
       tenantParams.push(getSingleTenantId(c.env));
     } else if (!hasPlatformAuthority) {
-      tenantFilters.push(`id IN (${scopedTenantIds.map(() => '?').join(', ')})`);
-      tenantParams.push(...scopedTenantIds);
+      // One JSON parameter, however many tenants the token is scoped to (D1 binds at most 100).
+      tenantFilters.push('id IN (SELECT value FROM json_each(?))');
+      tenantParams.push(JSON.stringify(scopedTenantIds));
     }
 
     const query = [
@@ -2317,6 +2319,14 @@ export async function adminTenantDeleteHandler(c: Context<{ Bindings: Env }>) {
         },
       });
     }
+
+    // Every check has passed; the receipt is spent here, right before the tenant is deactivated.
+    const stepUpRefused = await requireAdminStepUp(c as never, {
+      operation: 'tenant.delete',
+      targetTenantId: id,
+      targetIds: [id],
+    });
+    if (stepUpRefused) return stepUpRefused;
 
     // Get admin identity for job attribution
     // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access

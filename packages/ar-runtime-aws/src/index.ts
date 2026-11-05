@@ -7,6 +7,7 @@ export { PostgresAccountAuthStateStore } from './storage/postgres-account-auth-s
 export { createAwsRuntimeDataPorts } from './data-runtime';
 export type { AwsDataTenantInventory } from './data-runtime';
 export { PostgresRateLimitStore } from './storage/postgres-rate-limit';
+export { PostgresReplayGuardStore } from './storage/postgres-replay-guard';
 export { createPostgresAuditRuntimePorts } from './storage/postgres-audit';
 export { createAwsSamlTenant } from './bootstrap';
 export type { CreateAwsSamlTenantInput } from './bootstrap';

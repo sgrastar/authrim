@@ -1,4 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const stepUp = vi.hoisted(() => ({ gate: vi.fn(async (): Promise<Response | null> => null) }));
+vi.mock('../admin-step-up-gate', () => ({
+  requireAdminStepUp: stepUp.gate,
+  refuseAdminFreshAuth: vi.fn(),
+}));
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 import {
   adminTenantCreateHandler,
@@ -319,6 +325,11 @@ function createContext(
   } as any;
 }
 
+const deleteCtx = () =>
+  createContext({}, {}, { id: 'second' }) as unknown as Parameters<
+    typeof adminTenantDeleteHandler
+  >[0];
+
 describe('Control Plane tenant management', () => {
   beforeEach(() => {
     adapters.defaultAdapter = null;
@@ -354,8 +365,8 @@ describe('Control Plane tenant management', () => {
   it('limits tenant inventory list to the authenticated tenant scope for non-platform admins', async () => {
     adapters.defaultAdapter = createAdapter((sql, params) => {
       if (sql.includes('FROM tenants')) {
-        expect(sql).toContain('WHERE id IN (?)');
-        expect(params).toEqual(['first']);
+        expect(sql).toContain('WHERE id IN (SELECT value FROM json_each(?))');
+        expect(params).toEqual([JSON.stringify(['first'])]);
         return [createTenantRow('first', { name: 'First' })];
       }
       return null;
@@ -1283,5 +1294,58 @@ describe('Control Plane tenant management', () => {
 
     expect(response.status).toBe(500);
     expect(kv.delete).not.toHaveBeenCalled();
+  });
+  it('needs step-up to delete a tenant, and acts only after it passes', async () => {
+    const tenantRow = { id: 'second', is_default: 0, lifecycle_state: 'active' };
+    adapters.defaultAdapter = createAdapter((sql, _params, op) => {
+      if (
+        op === 'queryOne' &&
+        sql === 'SELECT id, is_default, lifecycle_state FROM tenants WHERE id = ?'
+      ) {
+        return tenantRow;
+      }
+      if (op === 'execute') return { rowsAffected: 1 };
+      throw new Error(`unexpected default adapter SQL: ${sql}`);
+    });
+    stepUp.gate.mockReset();
+    stepUp.gate.mockResolvedValue(null);
+    stepUp.gate.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: 'step_up_required' }), { status: 403 })
+    );
+
+    const refused = await adminTenantDeleteHandler(deleteCtx());
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({ error: 'step_up_required' });
+    expect(adapters.defaultAdapter.transaction).not.toHaveBeenCalled();
+
+    const allowed = await adminTenantDeleteHandler(deleteCtx());
+    expect(allowed.status).toBe(202);
+    expect(stepUp.gate).toHaveBeenLastCalledWith(expect.anything(), {
+      operation: 'tenant.delete',
+      targetTenantId: 'second',
+      targetIds: ['second'],
+    });
+  });
+
+  it('does not spend a receipt on a tenant deletion that is refused anyway', async () => {
+    stepUp.gate.mockReset();
+    stepUp.gate.mockResolvedValue(null);
+    adapters.defaultAdapter = createAdapter((sql, _params, op) => {
+      if (
+        op === 'queryOne' &&
+        sql === 'SELECT id, is_default, lifecycle_state FROM tenants WHERE id = ?'
+      ) {
+        return { id: 'second', is_default: 1, lifecycle_state: 'active' };
+      }
+      throw new Error(`unexpected default adapter SQL: ${sql}`);
+    });
+
+    expect((await adminTenantDeleteHandler(deleteCtx())).status).toBe(400);
+    adapters.defaultAdapter = createAdapter((sql, _params, op) => {
+      if (op === 'queryOne') return null;
+      throw new Error(`unexpected default adapter SQL: ${sql}`);
+    });
+    expect((await adminTenantDeleteHandler(deleteCtx())).status).toBe(404);
+    expect(stepUp.gate).not.toHaveBeenCalled();
   });
 });

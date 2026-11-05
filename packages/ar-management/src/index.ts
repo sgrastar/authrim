@@ -3,6 +3,7 @@ import {
   environmentReplicationMachineRouter,
   isEnvironmentReplicationControlRequest,
 } from './routes/replication-environments';
+import { reconcileProfileRegistryProjection } from '@authrim/ar-lib-core';
 import { processTenantBackupMaintenance } from './tenant-backup-services';
 import { processTenantBackupOperations } from './tenant-backup-operation-dispatcher';
 import { createProductionTenantBackupExportAdapter } from './tenant-backup-production-export';
@@ -76,6 +77,8 @@ import {
   ADMIN_ROLE_GROUPS,
 } from '@authrim/ar-lib-core';
 import { runRetentionMaintenance } from './retention-maintenance';
+import { processScheduledAdminNoticeRetention } from './admin-notice-retention';
+import { processScheduledAdminNoticeDelivery } from './admin-notice-delivery';
 import { runObjectArtifactCleanup } from './artifact-cleanup';
 import { processLoggingStorageMaintenanceJobs } from './logging-storage-maintenance-jobs';
 import {
@@ -4291,6 +4294,18 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
   } catch {
     log.warn('Backup operation key maintenance failed', { errorType: 'BackupMaintenanceError' });
   }
+  try {
+    // The KV copy of the runtime profiles is a projection of D1: a projection that failed when a
+    // profile was written (or deleted) is repaired here, so runtime does not keep the old one.
+    const reconciled = await reconcileProfileRegistryProjection(env);
+    if (reconciled.repaired > 0 || reconciled.failures > 0) {
+      log.info('Runtime profile projection reconciled', reconciled);
+    }
+  } catch {
+    log.warn('Runtime profile projection reconcile failed', {
+      errorType: 'ProfileRegistryReconcileError',
+    });
+  }
 
   if (env.TENANT_BACKUP_WRAPPING_KEY && env.EXPORT_ARTIFACTS) {
     try {
@@ -4490,6 +4505,8 @@ async function handleCoveredScheduled(
     await processScheduledAgentElevationRecovery(env, log);
     await processScheduledAgentTokenRevocations(env, log);
     await processScheduledAgentPayloadRetention(env, log);
+    // Admin console notices to email and Slack (plans new ones, sends what is due).
+    await processScheduledAdminNoticeDelivery(env, log.module('ADMIN-NOTICE-DELIVERY'));
     try {
       // Relying parties of sessions an admin action ended, not yet told (or to retry).
       await processPendingSessionEndLogoutJobs(env, log);
@@ -4667,6 +4684,8 @@ async function handleCoveredScheduled(
     // Audit logs, Check API decisions and deleted users' tombstones past their retention;
     // each task records its own run and, per tenant, when it last ran.
     await runRetentionMaintenance(env, maintenanceTargets, log.module('RETENTION-MAINTENANCE'));
+    // Handled admin console notices past the platform's retention (every tenant at once).
+    await processScheduledAdminNoticeRetention(env, log.module('ADMIN-NOTICE-RETENTION'));
 
     log.info('Scheduled maintenance cleanup completed', {
       passwordTokensDeleted,

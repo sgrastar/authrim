@@ -12,7 +12,7 @@ import {
   createAuditPrimaryStorageAdapter,
   createLogger,
   ensureDatabaseAdapter,
-  resolveTenantRuntimeProfilesFromEnv,
+  resolveTenantAuditProfileFromEnv,
   SqlLogChunkCatalogStore,
 } from '@authrim/ar-lib-core';
 import {
@@ -271,8 +271,7 @@ export async function cleanupResolvedAuditPrimaries(
   const resolveAuditProfile =
     options.resolveAuditProfile ??
     (async (tenantId: string) => {
-      const resolved = await resolveTenantRuntimeProfilesFromEnv(env, tenantId);
-      return resolved.auditProfile;
+      return resolveTenantAuditProfileFromEnv(env, tenantId);
     });
 
   const createPrimaryAdapter =

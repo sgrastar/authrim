@@ -6,8 +6,8 @@
  * Tests:
  * - Sliding window rate limiting
  * - Tier-based rate limits (strict, moderate, lenient)
- * - KV configuration overrides
- * - Graceful degradation when KV unavailable
+ * - Atomic counting in the RATE_LIMITER Durable Object
+ * - Fail closed when the limiter is unavailable
  */
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
@@ -16,31 +16,11 @@ import {
   addRateLimitHeaders,
   getRateLimitConfig,
   DEFAULT_RATE_LIMIT_CONFIG,
+  RateLimiterUnavailableError,
   type RateLimitResult,
 } from '../rate-limit';
+import { createRateLimiterStub } from '../../__tests__/rate-limiter-stub';
 import type { CheckAuthResult } from '../check-auth';
-
-// =============================================================================
-// Mock KV Namespace
-// =============================================================================
-
-function createMockKV() {
-  const store = new Map<string, { value: string; expirationTtl?: number }>();
-
-  return {
-    get: vi.fn(async (key: string) => {
-      const item = store.get(key);
-      return item?.value ?? null;
-    }),
-    put: vi.fn(async (key: string, value: string, options?: { expirationTtl?: number }) => {
-      store.set(key, { value, expirationTtl: options?.expirationTtl });
-    }),
-    delete: vi.fn(async (key: string) => {
-      store.delete(key);
-    }),
-    _store: store,
-  };
-}
 
 // =============================================================================
 // Test Helpers
@@ -71,18 +51,20 @@ describe('Rate Limiting Middleware', () => {
   });
 
   describe('checkRateLimit', () => {
-    let mockCache: ReturnType<typeof createMockKV>;
+    let limiter: ReturnType<typeof createRateLimiterStub>;
+    const ctx = () => ({
+      limiter: limiter as unknown as Parameters<typeof checkRateLimit>[1]['limiter'],
+    });
 
     beforeEach(() => {
-      mockCache = createMockKV();
+      limiter = createRateLimiterStub();
       vi.useFakeTimers();
-      vi.setSystemTime(new Date('2024-01-01T00:00:30.000Z')); // 30 seconds into window
+      vi.setSystemTime(new Date('2024-01-01T00:00:30.000Z'));
     });
 
     test('allows first request', async () => {
       const auth = createAuthResult({ rateLimitTier: 'moderate' });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result = await checkRateLimit(auth, { cache: mockCache as any });
+      const result = await checkRateLimit(auth, ctx());
 
       expect(result.allowed).toBe(true);
       expect(result.current).toBe(1);
@@ -92,43 +74,64 @@ describe('Rate Limiting Middleware', () => {
 
     test('tracks request count across calls', async () => {
       const auth = createAuthResult({ rateLimitTier: 'strict' }); // 100/min
-      const ctx = { cache: mockCache as unknown as Parameters<typeof checkRateLimit>[1]['cache'] };
-
-      // Simulate 50 requests
       for (let i = 0; i < 50; i++) {
-        await checkRateLimit(auth, ctx);
+        await checkRateLimit(auth, ctx());
       }
 
-      const result = await checkRateLimit(auth, ctx);
+      const result = await checkRateLimit(auth, ctx());
       expect(result.current).toBe(51);
       expect(result.remaining).toBe(49);
       expect(result.allowed).toBe(true);
     });
 
-    test('blocks requests when limit exceeded', async () => {
+    test('counts concurrent requests atomically', async () => {
       const auth = createAuthResult({ rateLimitTier: 'strict' }); // 100/min
-
-      // Pre-set counter to limit
-      mockCache._store.set(expect.any(String), { value: '100' });
-      mockCache.get.mockResolvedValue('100');
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result = await checkRateLimit(auth, { cache: mockCache as any });
-
-      expect(result.allowed).toBe(false);
-      expect(result.current).toBe(100);
-      expect(result.remaining).toBe(0);
-      expect(result.retryAfter).toBeGreaterThan(0);
+      const results = await Promise.all(
+        Array.from({ length: 101 }, () => checkRateLimit(auth, ctx()))
+      );
+      expect(results.filter((result) => result.allowed)).toHaveLength(100);
     });
 
-    test('allows requests when KV unavailable (graceful degradation)', async () => {
+    test('blocks requests when limit exceeded', async () => {
+      const auth = createAuthResult({ rateLimitTier: 'strict' }); // 100/min
+      for (let i = 0; i < 100; i++) {
+        await checkRateLimit(auth, ctx());
+      }
+
+      const result = await checkRateLimit(auth, ctx());
+      expect(result.allowed).toBe(false);
+      expect(result.current).toBe(101);
+      expect(result.remaining).toBe(0);
+      expect(result.retryAfter).toBe(60);
+      expect(result.resetAt).toBe(Date.parse('2024-01-01T00:01:30.000Z'));
+    });
+
+    test('refuses requests when the limiter is not bound (fail closed)', async () => {
       const auth = createAuthResult({ rateLimitTier: 'strict' });
-      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-      const result = await checkRateLimit(auth, { cache: undefined });
+      await expect(checkRateLimit(auth, { limiter: undefined })).rejects.toBeInstanceOf(
+        RateLimiterUnavailableError
+      );
 
-      expect(result.allowed).toBe(true);
-      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('rate limiting disabled'));
+      consoleSpy.mockRestore();
+    });
+
+    test('refuses requests when the limiter fails (fail closed)', async () => {
+      const auth = createAuthResult();
+      const failing = {
+        idFromName: (name: string) => name,
+        get: () => ({
+          incrementRpc: () => Promise.reject(new Error('DO error')),
+        }),
+      };
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      await expect(
+        checkRateLimit(auth, {
+          limiter: failing as unknown as Parameters<typeof checkRateLimit>[1]['limiter'],
+        })
+      ).rejects.toBeInstanceOf(RateLimiterUnavailableError);
 
       consoleSpy.mockRestore();
     });
@@ -137,16 +140,11 @@ describe('Rate Limiting Middleware', () => {
       const auth1 = createAuthResult({ tenantId: 'tenant-a', apiKeyId: 'key-1' });
       const auth2 = createAuthResult({ tenantId: 'tenant-b', apiKeyId: 'key-1' });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const ctx = { cache: mockCache as any };
+      await checkRateLimit(auth1, ctx());
+      await checkRateLimit(auth1, ctx());
+      const result1 = await checkRateLimit(auth1, ctx());
+      const result2 = await checkRateLimit(auth2, ctx());
 
-      await checkRateLimit(auth1, ctx);
-      await checkRateLimit(auth1, ctx);
-      const result1 = await checkRateLimit(auth1, ctx);
-
-      const result2 = await checkRateLimit(auth2, ctx);
-
-      // Different tenants should have independent counters
       expect(result1.current).toBe(3);
       expect(result2.current).toBe(1);
     });
@@ -155,15 +153,10 @@ describe('Rate Limiting Middleware', () => {
       const auth1 = createAuthResult({ apiKeyId: 'key-a' });
       const auth2 = createAuthResult({ apiKeyId: 'key-b' });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const ctx = { cache: mockCache as any };
+      await checkRateLimit(auth1, ctx());
+      await checkRateLimit(auth1, ctx());
+      const result2 = await checkRateLimit(auth2, ctx());
 
-      await checkRateLimit(auth1, ctx);
-      await checkRateLimit(auth1, ctx);
-
-      const result2 = await checkRateLimit(auth2, ctx);
-
-      // Different API keys should have independent counters
       expect(result2.current).toBe(1);
     });
 
@@ -175,16 +168,13 @@ describe('Rate Limiting Middleware', () => {
         subjectId: 'user-123',
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result = await checkRateLimit(auth, { cache: mockCache as any });
+      const result = await checkRateLimit(auth, ctx());
 
       expect(result.allowed).toBe(true);
       // Key should include client and subject
-      expect(mockCache.put).toHaveBeenCalledWith(
-        expect.stringContaining('c:client-abc'),
-        expect.any(String),
-        expect.any(Object)
-      );
+      expect([...limiter.records.keys()]).toEqual([
+        expect.stringContaining('c:client-abc:s:user-123'),
+      ]);
     });
 
     test('handles policy_secret auth', async () => {
@@ -195,39 +185,10 @@ describe('Rate Limiting Middleware', () => {
         rateLimitTier: 'lenient', // 2000/min
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result = await checkRateLimit(auth, { cache: mockCache as any });
+      const result = await checkRateLimit(auth, ctx());
 
       expect(result.allowed).toBe(true);
       expect(result.limit).toBe(2000);
-    });
-
-    test('recovers gracefully on KV error', async () => {
-      const auth = createAuthResult();
-      mockCache.get.mockRejectedValue(new Error('KV error'));
-      // Suppress structured logger error output during test
-      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result = await checkRateLimit(auth, { cache: mockCache as any });
-
-      expect(result.allowed).toBe(true);
-      // Logger was called (structured logger outputs JSON)
-      expect(consoleSpy).toHaveBeenCalled();
-
-      consoleSpy.mockRestore();
-    });
-
-    test('uses correct TTL for counter expiration', async () => {
-      const auth = createAuthResult({ rateLimitTier: 'strict' }); // 60000ms window
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await checkRateLimit(auth, { cache: mockCache as any });
-
-      // TTL should be window duration (60s) + padding (5s) = 65 seconds
-      expect(mockCache.put).toHaveBeenCalledWith(expect.any(String), expect.any(String), {
-        expirationTtl: 65,
-      });
     });
   });
 

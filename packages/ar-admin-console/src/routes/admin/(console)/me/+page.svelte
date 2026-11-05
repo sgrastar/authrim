@@ -1,12 +1,19 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { startRegistration } from '@simplewebauthn/browser';
+	import { httpNoticeDelivery } from '#lib/api/notice-delivery.js';
 	import { myPasskeysAPI, passkeyErrorKey, type AdminPasskey } from '#lib/api/my-passkeys.js';
+	import { httpSecondFactors } from '#lib/api/second-factors.js';
+	import RecoveryRequests from '#lib/pages/me/RecoveryRequests.svelte';
+	import SecurityKeys from '#lib/pages/me/SecurityKeys.svelte';
+	import { hasPermission } from '#lib/access/access.js';
+	import { adminAccess } from '#lib/access/admin-access.svelte.js';
 	import { adminSession } from '#lib/auth/session.svelte.js';
 	import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
 	import { i18n, t } from '#lib/i18n/i18n.svelte.js';
 	import { LOCALE_LABELS, SUPPORTED_LOCALES, type Locale } from '#lib/i18n/locales.js';
 	import { changeLanguage } from '#lib/shell/language.js';
+	import NoticeEmail from '#lib/pages/me/NoticeEmail.svelte';
 	import Card from '#lib/ui/patterns/Card.svelte';
 	import ConfirmDialog from '#lib/ui/patterns/ConfirmDialog.svelte';
 	import DetailItem from '#lib/ui/patterns/DetailItem.svelte';
@@ -241,6 +248,8 @@
 		{#snippet footer()}{t('me.storedLocally')}{/snippet}
 	</Card>
 
+	<NoticeEmail client={httpNoticeDelivery} />
+
 	<Card title={t('me.passkeys')} description={t('me.passkeysDesc')}>
 		{#snippet actions()}
 			<Button icon="plus" size="sm" disabled={loadState !== 'ready'} onclick={openAdd}>
@@ -297,6 +306,14 @@
 			</ItemGrid>
 		{/if}
 	</Card>
+
+	<SecurityKeys client={httpSecondFactors} />
+
+	<RecoveryRequests
+		client={httpSecondFactors}
+		selfId={session?.user_id}
+		canCancel={hasPermission(adminAccess.current, 'admin:admin_users:write')}
+	/>
 
 	<Card title={t('me.session')} flush>
 		<SettingRow title={t('account.signOut')} description={t('me.signOutDesc')}>

@@ -12,13 +12,23 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
 import { createSettingsCanonicalD1 } from './helpers/settings-canonical-d1';
+import { createInfrastructureSettingsManager } from '../runtime-profiles';
+import { d1OverSqlite } from './helpers/d1-over-sqlite';
+import { openCoreStore } from './helpers/core-schema-sqlite';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   DEFAULT_AUDIT_PROFILE_ID,
+  PROFILE_REGISTRY_TOMBSTONE,
   resolveTenantAuditRetentionFromEnv,
   resolveAuditRoutingTargets,
   DEFAULT_AUDIT_STORAGE_CONFIG,
 } from '@authrim/ar-lib-core';
+const { mockRequireAdminStepUp } = vi.hoisted(() => ({ mockRequireAdminStepUp: vi.fn() }));
+vi.mock('../admin-step-up-gate', () => ({
+  requireAdminStepUp: mockRequireAdminStepUp,
+  refuseAdminFreshAuth: vi.fn(),
+}));
+
 import {
   getAuditStorageConfig,
   updateAuditStorageConfig,
@@ -54,21 +64,6 @@ function createMockKV(data: Record<string, string> = {}): KVNamespace {
   } as unknown as KVNamespace;
 }
 
-// Mock D1Database
-function createMockD1(): D1Database {
-  return {
-    prepare: vi.fn().mockReturnValue({
-      bind: vi.fn().mockReturnThis(),
-      first: vi.fn().mockResolvedValue({ count: 1000 }),
-      run: vi.fn().mockResolvedValue({ success: true, meta: { changes: 50 } }),
-      all: vi.fn().mockResolvedValue({ results: [] }),
-    }),
-    batch: vi.fn().mockResolvedValue([]),
-    exec: vi.fn().mockResolvedValue({ count: 0, duration: 0 }),
-    dump: vi.fn(),
-  } as unknown as D1Database;
-}
-
 // Create test app
 function createTestApp(
   options: {
@@ -81,7 +76,8 @@ function createTestApp(
 ) {
   const mockKV = options.kv ?? createMockKV();
   const mockSettingsKV = options.settingsKv ?? createMockKV();
-  const mockDB = options.db ?? createMockD1();
+  // A real core database: runtime profiles are written to D1 (profile_registry), conditionally.
+  const mockDB = options.db ?? d1OverSqlite(openCoreStore().db);
 
   const app = new Hono<{
     Bindings: Env;
@@ -293,6 +289,364 @@ describe('Setup-owned audit storage and editable retention', () => {
     });
     expect(await f.mockKV.get('audit_storage_config')).toBeNull();
   });
+  describe('step-up (audit.retention.shorten)', () => {
+    beforeEach(() => {
+      mockRequireAdminStepUp.mockReset();
+      mockRequireAdminStepUp.mockResolvedValue(null);
+    });
+    it('lengthening a retention is not gated', async () => {
+      const f = createTestApp();
+      const res = await request(f, '/retention', 'PUT', { eventLogRetentionDays: 91 });
+      expect(res.status).toBe(200);
+      expect(mockRequireAdminStepUp).not.toHaveBeenCalled();
+    });
+    it('shortening is refused without step-up and nothing is written', async () => {
+      mockRequireAdminStepUp.mockResolvedValue(
+        new Response(JSON.stringify({ error: 'step_up_required' }), { status: 403 })
+      );
+      const f = createTestApp();
+      const res = await request(f, '/retention', 'PUT', { piiLogRetentionDays: 30 });
+      expect(res.status).toBe(403);
+      expect(f.kvPut).not.toHaveBeenCalled();
+      expect(f.settingsPut).not.toHaveBeenCalled();
+      const after = await request(f, '/retention');
+      expect(await after.json()).toMatchObject({ config: { piiLogRetentionDays: 365 } });
+    });
+    it('shortening goes ahead with the gate satisfied, bound to the requested days', async () => {
+      const f = createTestApp();
+      const res = await request(f, '/retention', 'PUT', {
+        eventLogRetentionDays: 30,
+        piiLogRetentionDays: 400,
+      });
+      expect(res.status).toBe(200);
+      expect(mockRequireAdminStepUp).toHaveBeenCalledTimes(1);
+      expect(mockRequireAdminStepUp.mock.calls[0][1]).toMatchObject({
+        operation: 'audit.retention.shorten',
+        params: {
+          kind: 'audit_storage.retention',
+          retention_days: { eventLogRetentionDays: 30, piiLogRetentionDays: 400 },
+        },
+      });
+      expect(await (await request(f, '/retention')).json()).toMatchObject({
+        config: { eventLogRetentionDays: 30, piiLogRetentionDays: 400 },
+      });
+    });
+    it('refuses the write when the managed profile changed during the step-up, writing nothing', async () => {
+      const core = openCoreStore();
+      const f = createTestApp({ db: d1OverSqlite(core.db) });
+      const intruder = JSON.stringify({
+        id: 'managed:audit:settings-default',
+        kind: 'audit',
+        builtin: false,
+        label: 'Other',
+        primary: null,
+        archive: null,
+        sinks: [],
+        retention: { eventLogRetentionDays: 500, piiLogRetentionDays: 500 },
+      });
+      mockRequireAdminStepUp.mockImplementationOnce(async () => {
+        core.db
+          .prepare(
+            `INSERT INTO profile_registry (id, kind, payload_json) VALUES ('managed:audit:settings-default', 'audit', ?)`
+          )
+          .run(intruder);
+        return null;
+      });
+      const res = await request(f, '/retention', 'PUT', { eventLogRetentionDays: 30 });
+      expect(res.status).toBe(409);
+      const row = core.db
+        .prepare(
+          `SELECT payload_json FROM profile_registry WHERE id = 'managed:audit:settings-default'`
+        )
+        .get() as { payload_json: string };
+      expect(row.payload_json).toBe(intruder);
+      // The default was not pointed at the managed profile either.
+      expect(await (await request(f, '/retention')).json()).toMatchObject({ source: 'builtin' });
+    });
+    it('gates overwriting a managed profile that delivers elsewhere as a destination update', async () => {
+      const kv = createMockKV();
+      await kv.put(
+        'profile-registry:audit:managed:audit:settings-default',
+        JSON.stringify({
+          id: 'managed:audit:settings-default',
+          kind: 'audit',
+          builtin: false,
+          label: 'Managed',
+          primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
+          archive: null,
+          sinks: [],
+          retention: { eventLogRetentionDays: 365, piiLogRetentionDays: 730 },
+        })
+      );
+      const f = createTestApp({ kv });
+      expect((await request(f, '/retention', 'PUT', { eventLogRetentionDays: 400 })).status).toBe(
+        200
+      );
+      expect(mockRequireAdminStepUp).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          operation: 'webhook.destination.update',
+          // Lengthening only: no retention operation to carry along.
+          params: expect.objectContaining({
+            candidate_retention: expect.objectContaining({ eventLogRetentionDays: 400 }) as unknown,
+            candidate_retention_sha256: expect.any(String) as unknown,
+            delivery_sha256: expect.any(String) as unknown,
+          }) as unknown,
+        })
+      );
+    });
+    it('a write that changes delivery and shortens retention carries both operations', async () => {
+      const kv = createMockKV();
+      await kv.put(
+        'profile-registry:audit:managed:audit:settings-default',
+        JSON.stringify({
+          id: 'managed:audit:settings-default',
+          kind: 'audit',
+          builtin: false,
+          label: 'Managed',
+          primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
+          archive: null,
+          sinks: [],
+          retention: { eventLogRetentionDays: 365, piiLogRetentionDays: 730 },
+        })
+      );
+      const f = createTestApp({ kv });
+      await request(f, '/retention', 'PUT', { eventLogRetentionDays: 30 });
+      expect(mockRequireAdminStepUp).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          operation: 'webhook.destination.update',
+          alsoCovers: ['audit.retention.shorten'],
+        })
+      );
+    });
+    it('gates creating the managed profile when it would start an external sink the fallback does not have', async () => {
+      const kv = createMockKV();
+      await kv.put(
+        'profile-registry:audit:src',
+        JSON.stringify({
+          id: 'src',
+          kind: 'audit',
+          builtin: false,
+          label: 'Source',
+          primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
+          archive: null,
+          sinks: [
+            { type: 'http', url: 'https://logs.example.com/a', method: 'POST', format: 'json' },
+          ],
+          retention: { eventLogRetentionDays: 400, piiLogRetentionDays: 400 },
+        })
+      );
+      const f = createTestApp({ kv, defaultAuditProfileId: 'src' });
+      // Lengthening only, but tenants naming the (missing) managed id would now deliver to the sink.
+      expect((await request(f, '/retention', 'PUT', { eventLogRetentionDays: 500 })).status).toBe(
+        200
+      );
+      expect(mockRequireAdminStepUp).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ operation: 'webhook.destination.update' })
+      );
+    });
+    it('refuses the write when the profile compared against changed during the step-up', async () => {
+      const core = openCoreStore();
+      const kv = createMockKV();
+      await kv.put(
+        'profile-registry:audit:src',
+        JSON.stringify({
+          id: 'src',
+          kind: 'audit',
+          builtin: false,
+          label: 'Source',
+          primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
+          archive: null,
+          sinks: [],
+          retention: { eventLogRetentionDays: 100, piiLogRetentionDays: 100 },
+        })
+      );
+      const f = createTestApp({
+        kv,
+        db: d1OverSqlite(core.db),
+        defaultAuditProfileId: 'src',
+      });
+      // The source is lengthened by someone else after this request compared against it.
+      mockRequireAdminStepUp.mockImplementationOnce(async () => {
+        core.db
+          .prepare('INSERT INTO profile_registry (id, kind, payload_json) VALUES (?, ?, ?)')
+          .run(
+            'src',
+            'audit',
+            JSON.stringify({
+              id: 'src',
+              kind: 'audit',
+              builtin: false,
+              label: 'Source',
+              primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
+              archive: null,
+              sinks: [],
+              retention: { eventLogRetentionDays: 900, piiLogRetentionDays: 900 },
+            })
+          );
+        return null;
+      });
+      const res = await request(f, '/retention', 'PUT', { eventLogRetentionDays: 30 });
+      expect(res.status).toBe(409);
+      const managed = core.db
+        .prepare(
+          `SELECT payload_json FROM profile_registry WHERE id = 'managed:audit:settings-default'`
+        )
+        .get();
+      expect(managed).toBeUndefined();
+    });
+    it('puts the default back when the compared profile changed after the managed profile was written', async () => {
+      const core = openCoreStore();
+      const adapter = core.adapter;
+      const execute = adapter.execute.bind(adapter);
+      let hooked = false;
+      // Right after the managed profile is written (before the default is saved), the profile the
+      // default points at is changed by another request.
+      adapter.execute = async (sql: string, params?: unknown[]) => {
+        const result = await execute(sql, params);
+        if (
+          !hooked &&
+          sql.includes('INSERT INTO profile_registry') &&
+          params?.[0] === 'managed:audit:settings-default'
+        ) {
+          hooked = true;
+          core.db
+            .prepare('INSERT INTO profile_registry (id, kind, payload_json) VALUES (?, ?, ?)')
+            .run(
+              'src',
+              'audit',
+              JSON.stringify({
+                id: 'src',
+                kind: 'audit',
+                builtin: false,
+                label: 'Source',
+                primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
+                archive: null,
+                sinks: [],
+                retention: { eventLogRetentionDays: 900, piiLogRetentionDays: 900 },
+              })
+            );
+        }
+        return result;
+      };
+      const kv = createMockKV();
+      await kv.put(
+        'profile-registry:audit:src',
+        JSON.stringify({
+          id: 'src',
+          kind: 'audit',
+          builtin: false,
+          label: 'Source',
+          primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
+          archive: null,
+          sinks: [],
+          retention: { eventLogRetentionDays: 100, piiLogRetentionDays: 100 },
+        })
+      );
+      const f = createTestApp({
+        kv,
+        db: adapter as unknown as D1Database,
+        defaultAuditProfileId: 'src',
+      });
+      const res = await request(f, '/retention', 'PUT', { eventLogRetentionDays: 30 });
+      expect(res.status).toBe(409);
+      expect(hooked).toBe(true);
+      const doc = await createInfrastructureSettingsManager(f.mockEnv).getAll('infrastructure', {
+        type: 'platform',
+      });
+      expect(doc.values['infra.default_audit_profile_id']).toBe('src');
+      expect(doc.sources['infra.default_audit_profile_id']).not.toBe('kv');
+      const managed = core.db
+        .prepare(
+          `SELECT payload_json FROM profile_registry WHERE id = 'managed:audit:settings-default'`
+        )
+        .get() as { payload_json: string } | undefined;
+      expect(managed?.payload_json ?? PROFILE_REGISTRY_TOMBSTONE).toBe(PROFILE_REGISTRY_TOMBSTONE);
+    });
+    it('leaves nothing applied when the default cannot be saved after the profile was written', async () => {
+      const core = openCoreStore();
+      const kv = createMockKV();
+      const f = createTestApp({ kv, db: d1OverSqlite(core.db) });
+      // While the step-up is decided, the platform defaults are changed by another request.
+      mockRequireAdminStepUp.mockImplementationOnce(async () => {
+        const manager = createInfrastructureSettingsManager(f.mockEnv);
+        const current = await manager.getAll('infrastructure', { type: 'platform' });
+        await manager.patch(
+          'infrastructure',
+          { type: 'platform' },
+          { ifMatch: current.version, set: { 'infra.default_residency_profile_id': 'other' } },
+          'test'
+        );
+        return null;
+      });
+      const res = await request(f, '/retention', 'PUT', { eventLogRetentionDays: 30 });
+      expect(res.status).toBe(409);
+      // The managed profile was written and taken back: it reads as absent, in D1 and in KV.
+      const row = core.db
+        .prepare(
+          `SELECT payload_json FROM profile_registry WHERE id = 'managed:audit:settings-default'`
+        )
+        .get() as { payload_json: string } | undefined;
+      expect(row?.payload_json ?? PROFILE_REGISTRY_TOMBSTONE).toBe(PROFILE_REGISTRY_TOMBSTONE);
+      expect(await kv.get('profile-registry:audit:managed:audit:settings-default')).toBeNull();
+      expect(await (await request(f, '/retention')).json()).toMatchObject({ source: 'builtin' });
+    });
+    it('an invalid body never reaches the gate', async () => {
+      const f = createTestApp();
+      expect((await request(f, '/retention', 'PUT', { eventLogRetentionDays: 0 })).status).toBe(
+        400
+      );
+      expect(mockRequireAdminStepUp).not.toHaveBeenCalled();
+    });
+    it('is judged against the managed profile it overwrites, not only the default in effect', async () => {
+      // The default is the built-in profile (90 days), but a managed profile tenants may name
+      // keeps 365 days: writing 180 lengthens the first and shortens the second.
+      const kv = createMockKV();
+      await kv.put(
+        'profile-registry:audit:managed:audit:settings-default',
+        JSON.stringify({
+          id: 'managed:audit:settings-default',
+          kind: 'audit',
+          builtin: false,
+          label: 'Managed',
+          version: 1,
+          primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
+          // Delivers where the built-in default does, so only the retention differs.
+          archive: { type: 'r2', bucketRef: 'AUDIT_ARCHIVE', prefix: 'logs/v1' },
+          archiveFailureMode: 'gate_cleanup',
+          sinkFailureMode: 'best_effort',
+          backpressure: { mode: 'event_class', allowTenantOverride: true },
+          sinks: [],
+          retention: { eventLogRetentionDays: 365, piiLogRetentionDays: 730 },
+        })
+      );
+      const f = createTestApp({ kv });
+      await request(f, '/retention', 'PUT', { eventLogRetentionDays: 180 });
+      expect(mockRequireAdminStepUp).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ operation: 'audit.retention.shorten' })
+      );
+
+      // Lengthening both: not gated, and the managed profile is written once, with the final
+      // value (never first overwritten with a copy of the shorter default).
+      mockRequireAdminStepUp.mockClear();
+      const putSpy = kv.put as unknown as ReturnType<typeof vi.fn>;
+      putSpy.mockClear();
+      expect((await request(f, '/retention', 'PUT', { eventLogRetentionDays: 400 })).status).toBe(
+        200
+      );
+      expect(mockRequireAdminStepUp).not.toHaveBeenCalled();
+      const managedWrites = putSpy.mock.calls.filter(
+        ([key]) => key === 'profile-registry:audit:managed:audit:settings-default'
+      );
+      expect(managedWrites).toHaveLength(1);
+      expect(JSON.parse(managedWrites[0]?.[1] as string)).toMatchObject({
+        retention: { eventLogRetentionDays: 400 },
+      });
+    });
+  });
   it.each([
     { archiveBeforeDelete: true },
     { archiveBeforeDelete: false },
@@ -308,6 +662,13 @@ describe('Setup-owned audit storage and editable retention', () => {
     expect(f.kvPut).not.toHaveBeenCalled();
     expect(f.settingsPut).not.toHaveBeenCalled();
   });
+  // The rules as runtime reads them: the settings document projected to the settings KV.
+  async function storedRules(f: ReturnType<typeof createTestApp>) {
+    const text = await (f.mockEnv.SETTINGS as KVNamespace).get('settings:platform:audit-routing');
+    return (JSON.parse(text as string) as Record<string, unknown[]>)[
+      'audit-routing.rules'
+    ] as Array<Record<string, unknown>>;
+  }
   it('stores only conditions and days, preserving priority and applying tenant-scoped retention', async () => {
     const f = createTestApp();
     const rules = [
@@ -320,9 +681,7 @@ describe('Setup-owned audit storage and editable retention', () => {
       rule(),
     ];
     expect((await request(f, '/routing-rules', 'PUT', { rules })).status).toBe(200);
-    const stored = JSON.parse(
-      (await f.mockKV.get('audit_routing_rules')) as string
-    ) as typeof rules;
+    const stored = (await storedRules(f)) as unknown as typeof rules;
     expect(stored).toEqual(rules);
     expect(stored.every((r) => !('targets' in r) && !('backend' in r))).toBe(true);
     const profile = {
@@ -357,7 +716,7 @@ describe('Setup-owned audit storage and editable retention', () => {
       rules: [rule()],
     });
     expect((await request(f, '/routing-rules/tenant-retention', 'DELETE')).status).toBe(200);
-    expect(await f.mockKV.get('audit_routing_rules')).toBe('[]');
+    expect(await storedRules(f)).toEqual([]);
     expect((await request(f, '/routing-rules/tenant-retention', 'DELETE')).status).toBe(404);
   });
   it.each([

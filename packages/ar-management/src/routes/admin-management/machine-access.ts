@@ -23,6 +23,8 @@ import {
   resolveMachineTenantScope,
 } from '@authrim/ar-lib-core';
 import { writeAdminAuditLog } from '../../admin-shared';
+import { requireAdminStepUp } from '../../admin-step-up-gate';
+import { sha256Hex } from '../../admin-step-up-digest';
 
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
 
@@ -79,6 +81,121 @@ machineAccessRouter.use(
     requirePermissions: [ADMIN_PERMISSIONS.ADMIN_MACHINE_ACCESS_READ],
   })
 );
+
+const STEP_UP_EXEMPT_PREFIX = 'admin:step_up_exempt:';
+
+const scopeKey = (scope: AdminMachineTenantScope): string =>
+  scope.scopeMode === 'allow' ? `allow:${scope.tenantId}` : scope.scopeMode;
+
+/** The grant as step-up parameters: sorted, so the same request always hashes the same. */
+function grantParams(grant: {
+  permissions?: readonly string[];
+  tenantScopes?: AdminMachineTenantScope[];
+}): Record<string, unknown> {
+  return {
+    ...(grant.permissions ? { permissions: [...grant.permissions].sort() } : {}),
+    ...(grant.tenantScopes ? { tenant_scopes: grant.tenantScopes.map(scopeKey).sort() } : {}),
+  };
+}
+
+/** JSON with object keys sorted at every level, so equal keys give equal text. */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+/** The SHA-256 hex digest of a public JWK's canonical JSON: it binds the key into a receipt. */
+function jwkDigest(publicJwkJson: string): Promise<string> {
+  return sha256Hex(canonicalJson(JSON.parse(publicJwkJson)));
+}
+
+/**
+ * Whether a new validity window reaches further than the current one: `not_before` earlier (or
+ * removed), `expires_at` later (or removed). A field the request leaves out (undefined) is kept.
+ */
+function widensValidity(
+  current: { notBefore: number | null; expiresAt: number | null },
+  next: { notBefore: number | null | undefined; expiresAt: number | null | undefined }
+): boolean {
+  const earlier =
+    next.notBefore !== undefined &&
+    current.notBefore !== null &&
+    (next.notBefore === null || next.notBefore < current.notBefore);
+  const later =
+    next.expiresAt !== undefined &&
+    current.expiresAt !== null &&
+    (next.expiresAt === null || next.expiresAt > current.expiresAt);
+  return earlier || later;
+}
+
+/** A validity bound after an update: the requested one, or the current one when it is left out. */
+function resultingBound(
+  requested: number | null | undefined,
+  current: number | null
+): number | null {
+  return requested === undefined ? current : requested;
+}
+
+/**
+ * Whether `next` gives more than `current`. A credential with no list of its own takes whatever
+ * its principal has, so an empty list is the widest.
+ */
+function widens(current: readonly string[], next: readonly string[]): boolean {
+  if (next.length === 0) return current.length > 0;
+  if (current.length === 0) return false;
+  const held = new Set(current);
+  return next.some((entry) => !held.has(entry));
+}
+
+/** Whether `next` has an entry that `current` does not. */
+function adds(current: readonly string[], next: readonly string[]): boolean {
+  const held = new Set(current);
+  return next.some((entry) => !held.has(entry));
+}
+
+/** Whether `next` holds a step-up exemption that `current` does not. */
+function addsStepUpExemption(current: readonly string[], next: readonly string[]): boolean {
+  const held = new Set(current);
+  return next.some((entry) => entry.startsWith(STEP_UP_EXEMPT_PREFIX) && !held.has(entry));
+}
+
+/**
+ * The step-up for handing out machine access (`machine.permission.grant`), spent just before the
+ * write; null when the request may go ahead.
+ */
+function requireMachineGrantStepUp(
+  c: AdminContext,
+  kind: string,
+  targetIds: string[],
+  extra: Record<string, unknown>
+): Promise<Response | null> {
+  return requireAdminStepUp(c, {
+    operation: 'machine.permission.grant',
+    targetTenantId: getTenantIdFromContext(c),
+    targetIds,
+    params: { kind, ...extra },
+  });
+}
+
+/**
+ * Whether the principal already has a credential with this kid. Checked before the step-up so a
+ * receipt is not spent on a write the unique (principal, kid) index would refuse; the index still
+ * decides a race.
+ */
+async function kidInUse(
+  repo: AdminMachineAccessRepository,
+  principalId: string,
+  kid: string
+): Promise<boolean> {
+  return (await repo.listCredentials(principalId)).some((credential) => credential.kid === kid);
+}
 
 function getRepo(c: AdminContext): AdminMachineAccessRepository {
   return new AdminMachineAccessRepository(
@@ -566,6 +683,18 @@ machineAccessRouter.post('/principals', async (c) => {
   ) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
   }
+  // A client id in use is refused before the step-up (the unique index still decides a race).
+  if (await getRepo(c).findPrincipalByClientId(clientId)) {
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
+  }
+  if (permissions.length > 0) {
+    const refused = await requireMachineGrantStepUp(c, 'principal.create', [], {
+      client_id: clientId,
+      principal_type: principalType,
+      ...grantParams({ permissions, tenantScopes }),
+    });
+    if (refused) return refused;
+  }
   // One atomic write: a principal never exists with only part of what it was meant to have.
   const principal = await repo.createPrincipalWithGrant(
     {
@@ -661,6 +790,29 @@ machineAccessRouter.patch('/principals/:id', async (c) => {
       )
     ) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+    }
+  }
+
+  if (newPermissions !== undefined || newTenantScopes !== undefined) {
+    const [currentPermissions, currentTenantScopes] = await Promise.all([
+      repo.getPrincipalPermissions(principalId),
+      repo.getPrincipalTenantScopes(principalId),
+    ]);
+    const permissionsChanged =
+      newPermissions !== undefined &&
+      (adds(currentPermissions, newPermissions) || adds(newPermissions, currentPermissions));
+    const scopesChanged =
+      newTenantScopes !== undefined &&
+      (adds(currentTenantScopes.map(scopeKey), newTenantScopes.map(scopeKey)) ||
+        adds(newTenantScopes.map(scopeKey), currentTenantScopes.map(scopeKey)));
+    if (permissionsChanged || scopesChanged) {
+      const refused = await requireMachineGrantStepUp(c, 'principal.update', [principalId], {
+        ...grantParams({
+          permissions: permissionsChanged ? newPermissions : undefined,
+          tenantScopes: scopesChanged ? newTenantScopes : undefined,
+        }),
+      });
+      if (refused) return refused;
     }
   }
 
@@ -780,6 +932,23 @@ machineAccessRouter.post('/principals/:id/credentials', async (c) => {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
   }
 
+  if (await kidInUse(repo, principalId, kid)) {
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
+  }
+
+  // A new key acts with its principal's permissions (narrowed only by a list of its own).
+  {
+    const refused = await requireMachineGrantStepUp(c, 'credential.create', [principalId], {
+      kid,
+      alg,
+      public_jwk_sha256: await jwkDigest(publicJwkJson),
+      not_before: asOptionalEpochMs(body?.not_before) ?? null,
+      expires_at: asOptionalEpochMs(body?.expires_at) ?? null,
+      ...grantParams({ permissions, tenantScopes }),
+    });
+    if (refused) return refused;
+  }
+
   const actor = actorRef(c);
   // The key and its own permissions and tenant scopes are written together: without them the
   // credential would take everything the principal has.
@@ -882,6 +1051,47 @@ machineAccessRouter.patch('/principals/:id/credentials/:credentialId', async (c)
       }))
     ) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+    }
+  }
+
+  {
+    const [currentPermissions, currentTenantScopes] = await Promise.all([
+      repo.getCredentialPermissions(credentialId),
+      repo.getCredentialTenantScopes(credentialId),
+    ]);
+    const widensPermissions =
+      newPermissions !== undefined &&
+      (widens(currentPermissions, newPermissions) ||
+        addsStepUpExemption(currentPermissions, newPermissions));
+    const widensScopes =
+      newTenantScopes !== undefined &&
+      widens(currentTenantScopes.map(scopeKey), newTenantScopes.map(scopeKey));
+    const revives =
+      (status === 'active' || status === 'rotating') &&
+      (credential.status === 'revoked' || credential.status === 'expired');
+    // Moving the window outward (earlier start, later or no end) revives a key by time.
+    const widensWindow =
+      status !== 'revoked' &&
+      status !== 'expired' &&
+      widensValidity(credential, {
+        notBefore: asOptionalEpochMs(body?.not_before),
+        expiresAt: asOptionalEpochMs(body?.expires_at),
+      });
+    if (widensPermissions || widensScopes || revives || widensWindow) {
+      // Bound to what the key ends up as, whatever made the change need a step-up: its status,
+      // window (an omitted bound keeps its current value, so leaving a bound out and lifting it
+      // do not share a receipt), permissions and tenants.
+      const refused = await requireMachineGrantStepUp(c, 'credential.update', [credentialId], {
+        principal_id: credential.principalId,
+        status: status ?? credential.status,
+        not_before: resultingBound(asOptionalEpochMs(body?.not_before), credential.notBefore),
+        expires_at: resultingBound(asOptionalEpochMs(body?.expires_at), credential.expiresAt),
+        ...grantParams({
+          permissions: newPermissions ?? currentPermissions,
+          tenantScopes: newTenantScopes ?? currentTenantScopes,
+        }),
+      });
+      if (refused) return refused;
     }
   }
 
@@ -995,6 +1205,30 @@ machineAccessRouter.post('/principals/:id/credentials/:credentialId/rotate', asy
     }))
   ) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+  }
+
+  if (await kidInUse(repo, principalId, kid)) {
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
+  }
+
+  // Rotation always registers a new public key, which can act with the principal's permissions, so
+  // it is always gated; the new key's digest and window are bound into the receipt.
+  {
+    const refused = await requireMachineGrantStepUp(c, 'credential.rotate', [oldCredentialId], {
+      principal_id: principalId,
+      kid,
+      alg,
+      public_jwk_sha256: await jwkDigest(publicJwkJson),
+      not_before: asOptionalEpochMs(body?.not_before) ?? null,
+      expires_at: asOptionalEpochMs(body?.expires_at) ?? null,
+      // How long the old key keeps working; the seconds asked for, not the absolute end.
+      overlap_seconds: overlapSeconds,
+      ...grantParams({
+        permissions: newCredentialPermissions,
+        tenantScopes: newCredentialTenantScopes,
+      }),
+    });
+    if (refused) return refused;
   }
 
   const actor = actorRef(c);
@@ -1135,6 +1369,15 @@ machineAccessRouter.post('/principals/:id/enable', async (c) => {
     )
   ) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+  }
+  // Bringing a disabled principal back puts its credentials to work again with everything it
+  // holds: handing out machine access, as when it was made. An active one is left as it is.
+  if (principal.status !== 'active') {
+    const refused = await requireMachineGrantStepUp(c, 'principal.enable', [principalId], {
+      permissions: [...new Set(heldPermissions)].sort(),
+      tenant_scopes: heldTenantScopes.map((scope) => JSON.stringify(scope)).sort(),
+    });
+    if (refused) return refused;
   }
   const updated = await guardedWrite(c, () =>
     repo.updatePrincipal(principalId, { status: 'active' }, guard)

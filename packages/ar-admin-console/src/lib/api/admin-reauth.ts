@@ -27,7 +27,8 @@ export interface ReauthResult {
 	authenticated_at: number;
 }
 
-async function postJson<T>(path: string, body: unknown): Promise<T> {
+/** POST JSON to the Admin API; a refusal becomes an ApiError with the body's code. */
+export async function postJson<T>(path: string, body: unknown): Promise<T> {
 	const response = await adminFetch(`${API_BASE_URL}${path}`, {
 		method: 'POST',
 		includeJsonContentType: true,
@@ -46,7 +47,7 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
 }
 
 /** The ceremony would otherwise wait on the browser prompt for as long as the user leaves it. */
-async function withCeremonyTimeout<T>(ceremony: Promise<T>): Promise<T> {
+export async function withCeremonyTimeout<T>(ceremony: Promise<T>): Promise<T> {
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	try {
 		return await Promise.race([

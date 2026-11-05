@@ -1,6 +1,7 @@
 import { ensureDatabaseAdapter, type DatabaseSource } from '../db/adapter-source';
 import { createSettingsManager } from '../utils/settings-manager';
 import { getTenantSettingsDocument } from '../utils/tenant-settings';
+import type { AuditProfile } from '../types/runtime-profile';
 import { INFRASTRUCTURE_CATEGORY_META } from '../types/settings/infrastructure';
 import {
   DatabaseProfileRegistryBackend,
@@ -121,4 +122,28 @@ export async function resolveTenantRuntimeProfilesFromEnv(
   const refs = await resolveEffectiveProfileRefsFromEnv(env, tenantId, options);
   const registry = createRuntimeProfileRegistryFromEnv(env);
   return resolveRuntimeProfiles(registry, refs);
+}
+
+/**
+ * The audit profile that applies to a tenant, resolved on its own. Audit delivery and retention
+ * must not depend on residency: a missing residency profile (an id nobody registered, a profile
+ * deleted while in use) makes `resolveTenantRuntimeProfilesFromEnv` throw for the whole set, and
+ * the audit service then falls back to the built-in audit profile. Callers that need only the
+ * audit profile use this, so a change to residency cannot change where logs go or how long
+ * they are kept.
+ */
+export async function resolveTenantAuditProfileFromEnv(
+  env: RuntimeProfileResolverEnv,
+  tenantId: string,
+  options: RuntimeProfileReadOptions = {}
+): Promise<AuditProfile> {
+  const refs = await resolveEffectiveProfileRefsFromEnv(env, tenantId, options);
+  const profile = await createRuntimeProfileRegistryFromEnv(env).get<AuditProfile>(
+    'audit',
+    refs.auditProfileId
+  );
+  if (!profile) {
+    throw new Error(`audit_profile_not_found:${refs.auditProfileId}`);
+  }
+  return profile;
 }

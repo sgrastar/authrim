@@ -38,6 +38,9 @@ import { myStepUpRouter } from './my-step-up';
 import { mySecondFactorsRouter } from './my-second-factors';
 import { mySecondFactorRecoveryRouter } from './my-second-factor-recovery';
 import { adminSecondFactorRecoveriesRouter } from './admin-second-factor-recoveries';
+import { adminSecondFactorsRouter } from './admin-second-factors';
+import { adminNoticesRouter } from './admin-notices';
+import { adminNoticeChannelsRouter, myNoticePreferencesRouter } from './admin-notice-delivery';
 import { myAgentConsentsRouter } from './my-agent-consents';
 import { adminAccessControlRouter } from './admin-access-control';
 import { adminApprovalsRouter } from './admin-approvals';
@@ -83,6 +86,7 @@ adminManagementRouter.use('*', async (c, next) => {
 
 // Mount sub-routers - Core Admin Management
 adminManagementRouter.route('/admin-access-control', adminAccessControlRouter);
+adminManagementRouter.route('/admins/:id/second-factors', adminSecondFactorsRouter);
 adminManagementRouter.route('/admins', adminUsersRouter);
 adminManagementRouter.route('/admin-invitations', adminInvitationsRouter);
 adminManagementRouter.route('/admin-roles', adminRolesRouter);
@@ -94,6 +98,9 @@ adminManagementRouter.route('/me/step-up', myStepUpRouter);
 adminManagementRouter.route('/me/second-factors', mySecondFactorsRouter);
 adminManagementRouter.route('/me/second-factor-recovery', mySecondFactorRecoveryRouter);
 adminManagementRouter.route('/admin-second-factor-recoveries', adminSecondFactorRecoveriesRouter);
+adminManagementRouter.route('/notices', adminNoticesRouter);
+adminManagementRouter.route('/notice-channels', adminNoticeChannelsRouter);
+adminManagementRouter.route('/me/notice-preferences', myNoticePreferencesRouter);
 adminManagementRouter.route('/me/agent-consents', myAgentConsentsRouter);
 adminManagementRouter.route('/approvals', adminApprovalsRouter);
 adminManagementRouter.route('/operational-logs', operationalLogsRouter);
@@ -143,6 +150,9 @@ export { myStepUpRouter } from './my-step-up';
 export { mySecondFactorsRouter } from './my-second-factors';
 export { mySecondFactorRecoveryRouter } from './my-second-factor-recovery';
 export { adminSecondFactorRecoveriesRouter } from './admin-second-factor-recoveries';
+export { adminSecondFactorsRouter } from './admin-second-factors';
+export { adminNoticesRouter } from './admin-notices';
+export { adminNoticeChannelsRouter, myNoticePreferencesRouter } from './admin-notice-delivery';
 export { myAgentConsentsRouter } from './my-agent-consents';
 export { adminApprovalsRouter } from './admin-approvals';
 export { operationalLogsRouter } from './operational-logs';

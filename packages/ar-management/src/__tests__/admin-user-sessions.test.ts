@@ -34,6 +34,7 @@ const {
   mockDetectImageType,
   mockLogSanitizedError,
   mockRecordRevocationEndingSessions,
+  mockRequireAdminStepUp,
 } = vi.hoisted(() => {
   const logger = {
     module: vi.fn().mockReturnThis(),
@@ -69,6 +70,7 @@ const {
     mockDetectImageType: vi.fn(),
     mockLogSanitizedError: vi.fn(),
     mockRecordRevocationEndingSessions: vi.fn(),
+    mockRequireAdminStepUp: vi.fn(),
   };
 });
 
@@ -146,6 +148,11 @@ vi.mock('../admin-session-end', async (original) => ({
   startAdminSessionEndLogout: vi.fn(async () => undefined),
 }));
 
+vi.mock('../admin-step-up-gate', () => ({
+  requireAdminStepUp: mockRequireAdminStepUp,
+  refuseAdminFreshAuth: vi.fn(),
+}));
+
 vi.mock('../request-issuer', () => ({
   getCanonicalTenantBaseUrl: vi.fn(() => 'https://tenant.example.com'),
 }));
@@ -205,6 +212,7 @@ describe('admin user session revocation', () => {
     piiLogRows.length = 0;
 
     vi.clearAllMocks();
+    mockRequireAdminStepUp.mockReset().mockResolvedValue(null);
     mockCoreAdapter.queryOne.mockReset().mockResolvedValue(null);
     mockCoreAdapter.query
       .mockReset()
@@ -790,6 +798,32 @@ describe('admin user session revocation', () => {
         revokedCount: 0,
         storeRevokedCount: 0,
       });
+    });
+
+    it('is gated as sessions.revoke_all (L1) for the user, after the user is found', async () => {
+      mockRuntimeUsers.findById.mockResolvedValueOnce(null);
+      expect((await adminUserRevokeAllSessionsHandler(createContext())).status).toBe(404);
+      expect(mockRequireAdminStepUp).not.toHaveBeenCalled();
+
+      expect((await adminUserRevokeAllSessionsHandler(createContext())).status).toBe(200);
+      expect(mockRequireAdminStepUp).toHaveBeenCalledTimes(1);
+      expect(mockRequireAdminStepUp.mock.calls[0][1]).toEqual({
+        operation: 'sessions.revoke_all',
+        targetTenantId: 'tenant-1',
+        targetIds: ['user-1'],
+      });
+    });
+
+    it('without a fresh passkey nothing is revoked', async () => {
+      mockRequireAdminStepUp.mockResolvedValue(
+        new Response(JSON.stringify({ error: 'admin_fresh_auth_required' }), { status: 403 })
+      );
+      const response = await adminUserRevokeAllSessionsHandler(createContext());
+      expect(response.status).toBe(403);
+      expect(mockRecordRevocationEndingSessions).not.toHaveBeenCalled();
+      expect(mockSessionStore.invalidateSessionRpc).not.toHaveBeenCalled();
+      expect(mockCoreAdapter.execute).not.toHaveBeenCalled();
+      expect(startAdminSessionEndLogout).not.toHaveBeenCalled();
     });
 
     it('returns server_error for bulk revocation failure', async () => {

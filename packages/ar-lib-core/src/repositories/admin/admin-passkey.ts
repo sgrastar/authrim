@@ -27,6 +27,14 @@ interface AdminPasskeyEntity extends BaseEntity {
 /**
  * Admin Passkey Repository
  */
+/** A first-passkey insert found that the admin registered a passkey meanwhile. */
+export class AdminPasskeyNotFirstError extends Error {
+  constructor() {
+    super('admin_passkey_not_first');
+    this.name = 'AdminPasskeyNotFirstError';
+  }
+}
+
 export class AdminPasskeyRepository extends BaseRepository<AdminPasskeyEntity> {
   constructor(adapter: DatabaseAdapter) {
     super(adapter, {
@@ -53,7 +61,16 @@ export class AdminPasskeyRepository extends BaseRepository<AdminPasskeyEntity> {
    * @param input - Passkey creation input
    * @returns Created passkey
    */
-  async createPasskey(input: AdminPasskeyCreateInput): Promise<AdminPasskey> {
+  async createPasskey(
+    input: AdminPasskeyCreateInput,
+    options: {
+      /**
+       * Insert only while the admin has no passkey (the first registration, which needs no
+       * step-up). Throws `AdminPasskeyNotFirstError` when one appeared meanwhile.
+       */
+      onlyIfFirst?: boolean;
+    } = {}
+  ): Promise<AdminPasskey> {
     const id = generateId();
     const now = getCurrentTimestamp();
 
@@ -81,6 +98,7 @@ export class AdminPasskeyRepository extends BaseRepository<AdminPasskeyEntity> {
       )
       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
       WHERE NOT EXISTS (SELECT 1 FROM admin_second_factors WHERE credential_id = ?)
+      ${options.onlyIfFirst ? 'AND NOT EXISTS (SELECT 1 FROM admin_passkeys WHERE admin_user_id = ?)' : ''}
     `;
 
     const result = await this.adapter.execute(sql, [
@@ -96,8 +114,12 @@ export class AdminPasskeyRepository extends BaseRepository<AdminPasskeyEntity> {
       passkey.created_at,
       passkey.last_used_at,
       passkey.credential_id,
+      ...(options.onlyIfFirst ? [passkey.admin_user_id] : []),
     ]);
     if (result.rowsAffected === 0) {
+      if (options.onlyIfFirst && (await this.getPasskeysByUser(input.admin_user_id)).length > 0) {
+        throw new AdminPasskeyNotFirstError();
+      }
       throw new Error('Credential is registered as an admin second factor');
     }
 

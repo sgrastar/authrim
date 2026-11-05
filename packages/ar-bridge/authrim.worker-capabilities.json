@@ -3,12 +3,7 @@
   "packageName": "@authrim/ar-bridge",
   "worker": "ar-bridge",
   "lookupBlindIndex": true,
-  "requiredDataRoles": [
-    "tenant_core/default",
-    "tenant_core/users",
-    "tenant_pii",
-    "lookup"
-  ],
+  "requiredDataRoles": ["tenant_core/default", "tenant_core/users", "tenant_pii", "lookup"],
   "bindings": [
     {
       "name": "DB",
@@ -83,6 +78,11 @@
     },
     {
       "name": "CHALLENGE_STORE",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "DPOP_JTI_STORE",
       "kind": "durable_object_namespace",
       "required": true
     },

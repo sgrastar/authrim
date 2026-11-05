@@ -86,6 +86,7 @@ for (const backend of ['postgresql', 'dynamodb'] as const) {
           'account-auth-schema.sql',
           'schema.sql',
           'rate-limit-schema.sql',
+          'replay-guard-schema.sql',
           'authorization-code-schema.sql',
           'persistent-nameid-schema.sql',
         ]) {
@@ -403,6 +404,23 @@ for (const backend of ['postgresql', 'dynamodb'] as const) {
       await expect(stores.persistentNameIDs.get({ tenantId: 'other', key })).rejects.toThrow(
         'aws_persistent_nameid_invalid'
       );
+    });
+    it('lets exactly one of concurrent presentations record a replay jti', async () => {
+      const input = { tenantId: tenant, key: `dpop:["client","${randomUUID()}"]`, ttlSeconds: 2 };
+      const results = await Promise.allSettled(
+        Array.from({ length: 12 }, () => stores.replayGuard.record(input))
+      );
+      expect(results.every((r) => r.status === 'fulfilled')).toBe(true);
+      expect(
+        results.filter((r) => r.status === 'fulfilled' && r.value === 'recorded')
+      ).toHaveLength(1);
+      expect(await stores.replayGuard.isRecorded(input)).toBe(true);
+      expect(await stores.replayGuard.record({ ...input, tenantId: 'other-tenant' })).toBe(
+        'recorded'
+      );
+      await delay(2100);
+      expect(await stores.replayGuard.isRecorded(input)).toBe(false);
+      expect(await stores.replayGuard.record(input)).toBe('recorded');
     });
   });
 }

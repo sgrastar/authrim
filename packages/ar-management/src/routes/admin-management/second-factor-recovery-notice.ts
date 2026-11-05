@@ -8,7 +8,11 @@
  */
 
 import type { AdminSecondFactorRecovery, DatabaseAdapter, Env } from '@authrim/ar-lib-core';
-import { isNotificationDeliveryAvailable, produceNotificationDelivery } from '@authrim/ar-lib-core';
+import {
+  AdminNoticeRepository,
+  isNotificationDeliveryAvailable,
+  produceNotificationDelivery,
+} from '@authrim/ar-lib-core';
 
 export type RecoveryNoticeEvent = 'requested' | 'completed' | 'cancelled';
 
@@ -93,10 +97,47 @@ export async function sendRecoveryNoticeAfterCommit(
   adapter: DatabaseAdapter,
   input: Parameters<typeof sendRecoveryNotice>[2]
 ): Promise<boolean> {
+  await showRecoveryInConsole(adapter, input.event, input.recovery, input.requester.email);
   try {
     return await sendRecoveryNotice(env, adapter, input);
   } catch {
     return false;
+  }
+}
+
+/**
+ * The console side of the notices: an open request is a notice to the tenant's administrators
+ * until it is completed or cancelled. Best effort; email is what the request depends on.
+ */
+export async function showRecoveryInConsole(
+  adapter: DatabaseAdapter,
+  event: RecoveryNoticeEvent,
+  recovery: AdminSecondFactorRecovery,
+  requesterEmail: string
+): Promise<void> {
+  try {
+    const notices = new AdminNoticeRepository(adapter);
+    if (event !== 'requested') {
+      await notices.resolveBySourceRefs([recovery.id]);
+      return;
+    }
+    await notices.create({
+      scope_type: 'tenant',
+      tenant_id: recovery.tenant_id,
+      severity: 'high',
+      source: 'system',
+      category: 'second_factor_recovery',
+      message_key: 'second_factor_recovery_requested',
+      params: { email: requesterEmail, not_before: recovery.not_before },
+      title: `${requesterEmail} asked to replace their step-up security keys`,
+      link: '/admin/me',
+      required_permission: 'admin:admin_users:read',
+      source_ref: recovery.id,
+      deduplication_key: `sfr:${recovery.id}`,
+      expires_at: recovery.expires_at,
+    });
+  } catch {
+    // The request and its emails stand on their own.
   }
 }
 

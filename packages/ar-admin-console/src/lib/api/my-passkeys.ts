@@ -8,6 +8,8 @@ import type {
 	RegistrationResponseJSON
 } from '@simplewebauthn/browser';
 import { adminFetch } from '#lib/api/admin-request.js';
+import { ApiError, errorFromResponse } from '#lib/api/api-error.js';
+import { stepUpHeaders, withStepUp } from '#lib/api/admin-step-up.js';
 import type { MessageKey } from '#lib/i18n/i18n.svelte.js';
 
 /** Authenticator vendor resolved from the AAGUID (from the Admin API). */
@@ -72,6 +74,29 @@ export interface PasskeyCompleteResponse {
 }
 
 /**
+ * Send a request that may need step-up and read its JSON. A refusal becomes a PasskeyError once
+ * step-up has been tried.
+ */
+async function stepUpped<T>(
+	fallbackCode: string,
+	fallbackMessage: string,
+	send: (receipt?: string) => Promise<Response>
+): Promise<T> {
+	try {
+		return await withStepUp(async (receipt) => {
+			const response = await send(receipt);
+			if (!response.ok) throw await errorFromResponse(response);
+			return (await response.json()) as T;
+		});
+	} catch (error) {
+		if (error instanceof ApiError) {
+			throw new PasskeyError(error.code || fallbackCode, error.message || fallbackMessage);
+		}
+		throw error;
+	}
+}
+
+/**
  * My PassKey API
  */
 export const myPasskeysAPI = {
@@ -100,25 +125,19 @@ export const myPasskeysAPI = {
 	 * POST /api/admin/me/passkeys/options
 	 */
 	async getRegistrationOptions(rpId: string, deviceName?: string): Promise<PasskeyOptionsResponse> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/me/passkeys/options`, {
-			method: 'POST',
-			includeJsonContentType: true,
-			credentials: 'include',
-			body: JSON.stringify({
-				rp_id: rpId,
-				device_name: deviceName
+		// Adding a passkey is protected by step-up; the receipt is spent on the options.
+		return stepUpped('options_failed', 'Failed to get registration options', (receipt) =>
+			adminFetch(`${API_BASE_URL}/api/admin/me/passkeys/options`, {
+				method: 'POST',
+				includeJsonContentType: true,
+				credentials: 'include',
+				headers: stepUpHeaders(receipt),
+				body: JSON.stringify({
+					rp_id: rpId,
+					device_name: deviceName
+				})
 			})
-		});
-
-		if (!response.ok) {
-			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
-			throw new PasskeyError(
-				error.error || 'options_failed',
-				error.error_description || 'Failed to get registration options'
-			);
-		}
-
-		return response.json();
+		);
 	},
 
 	/**
@@ -131,27 +150,22 @@ export const myPasskeysAPI = {
 		origin: string,
 		deviceName?: string
 	): Promise<PasskeyCompleteResponse> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/me/passkeys/complete`, {
-			method: 'POST',
-			includeJsonContentType: true,
-			credentials: 'include',
-			body: JSON.stringify({
-				challenge_id: challengeId,
-				passkey_response: passkeyResponse,
-				origin,
-				device_name: deviceName
+		// The server checks the step-up again right before it saves the passkey (the options may
+		// be minutes old), so a fresh sign-in may be asked for here too.
+		return stepUpped('registration_failed', 'Failed to complete passkey registration', (receipt) =>
+			adminFetch(`${API_BASE_URL}/api/admin/me/passkeys/complete`, {
+				method: 'POST',
+				includeJsonContentType: true,
+				credentials: 'include',
+				headers: stepUpHeaders(receipt),
+				body: JSON.stringify({
+					challenge_id: challengeId,
+					passkey_response: passkeyResponse,
+					origin,
+					device_name: deviceName
+				})
 			})
-		});
-
-		if (!response.ok) {
-			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
-			throw new PasskeyError(
-				error.error || 'registration_failed',
-				error.error_description || 'Failed to complete passkey registration'
-			);
-		}
-
-		return response.json();
+		);
 	},
 
 	/**
@@ -188,23 +202,13 @@ export const myPasskeysAPI = {
 	 * DELETE /api/admin/me/passkeys/:id
 	 */
 	async delete(id: string): Promise<{ success: boolean; message: string }> {
-		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/me/passkeys/${encodeURIComponent(id)}`,
-			{
+		return stepUpped('delete_failed', 'Failed to delete passkey', (receipt) =>
+			adminFetch(`${API_BASE_URL}/api/admin/me/passkeys/${encodeURIComponent(id)}`, {
 				method: 'DELETE',
-				credentials: 'include'
-			}
+				credentials: 'include',
+				headers: stepUpHeaders(receipt)
+			})
 		);
-
-		if (!response.ok) {
-			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
-			throw new PasskeyError(
-				error.error || 'delete_failed',
-				error.error_description || 'Failed to delete passkey'
-			);
-		}
-
-		return response.json();
 	}
 };
 

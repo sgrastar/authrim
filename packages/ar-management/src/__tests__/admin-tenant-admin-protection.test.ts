@@ -1,4 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
+
+// These tests are about other behaviour: the step-up gate (tested on its own) lets the request through.
+vi.mock('../admin-step-up-gate', () => ({
+  requireAdminStepUp: vi.fn(async () => null),
+  refuseAdminFreshAuth: vi.fn(),
+}));
 import { adminRolesRouter } from '../routes/admin-management/admin-roles';
 import { adminUsersRouter } from '../routes/admin-management/admins';
 import { isScopeAllowedForRole } from '../routes/admin-management/admin-role-authority';

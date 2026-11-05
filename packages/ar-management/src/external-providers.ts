@@ -23,6 +23,7 @@ import {
   safeFetch,
   bumpAuthenticationMethodsCacheRevision,
 } from '@authrim/ar-lib-core';
+import { requireAdminStepUp } from './admin-step-up-gate';
 
 /**
  * Base URL path for external IdP admin API in ar-bridge
@@ -72,6 +73,22 @@ async function readExternalIdpAdminBody(
   }
 }
 
+function bridgeUnavailable(c: Context<{ Bindings: Env }>): Response {
+  return c.json(
+    {
+      error: 'service_unavailable',
+      message:
+        'External IdP Bridge is not configured. Enable the bridge component in your deployment.',
+    },
+    503
+  );
+}
+
+/** True when neither bridge binding exists, i.e. the bridge component is not deployed at all. */
+function bridgeAbsent(c: Context<{ Bindings: Env }>): boolean {
+  return !c.env.EXTERNAL_IDP && !c.env.EXTERNAL_IDP_ADMIN;
+}
+
 async function proxyToExternalIdp(
   c: Context<{ Bindings: Env }>,
   path: string,
@@ -80,10 +97,11 @@ async function proxyToExternalIdp(
 ): Promise<Response> {
   const log = getLogger(c).module('EXTERNAL-PROVIDERS');
 
-  // Ensure EXTERNAL_IDP service binding is configured
-  if (!c.env.EXTERNAL_IDP) {
-    log.error('EXTERNAL_IDP service binding not configured');
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  // The admin routes are served only by the bridge's named admin entrypoint. Never fall back to
+  // the plain EXTERNAL_IDP binding: the bridge's public fetch refuses /api/admin/*.
+  if (!c.env.EXTERNAL_IDP_ADMIN) {
+    log.error('EXTERNAL_IDP_ADMIN service binding not configured');
+    return bridgeUnavailable(c);
   }
 
   try {
@@ -141,7 +159,7 @@ async function proxyToExternalIdp(
     }
 
     // Call ar-bridge via service binding
-    const response = await c.env.EXTERNAL_IDP.fetch(targetUrl, requestInit);
+    const response = await c.env.EXTERNAL_IDP_ADMIN.fetch(targetUrl, requestInit);
 
     // Return response with appropriate status
     const responseBody = await readResponseTextWithLimit(
@@ -185,6 +203,69 @@ async function invalidateAuthenticationMethodsCacheForExternalProviders(
   }
 }
 
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * The step-up gate for a change to an external provider's trust (OIDC federation). The body can
+ * carry client secrets, so it is bound by its SHA-256 digest, never raw; the console repeats the
+ * same body with the receipt. The bridge validates the body, so the gate sits after the checks
+ * this proxy can make and right before the request is forwarded.
+ */
+async function requireExternalProviderStepUp(
+  c: Context<{ Bindings: Env }>,
+  action: 'create' | 'register' | 'update' | 'delete',
+  providerId: string | null,
+  body: string | null
+): Promise<Response | null> {
+  return requireAdminStepUp(c as never, {
+    operation: 'federation.trust.update',
+    targetTenantId: getTenantIdFromContext(c),
+    targetIds: providerId ? [providerId] : [],
+    params: {
+      action,
+      provider_id: providerId,
+      body_sha256: body === null ? null : await sha256Hex(body),
+    },
+  });
+}
+
+/**
+ * What can be checked here before a step-up receipt is spent: the body is a JSON object (the
+ * bridge validates its fields), and for an existing provider, that the bridge has it. Null when
+ * the request may go on to the gate, else the response refusing it.
+ */
+async function precheckExternalProviderWrite(
+  c: Context<{ Bindings: Env }>,
+  providerId: string | null,
+  body: string | null
+): Promise<Response | null> {
+  if (body !== null) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      parsed = undefined;
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST, {
+        extensions: { field: 'body', reason: 'json_object_required' },
+      });
+    }
+  }
+  if (providerId !== null) {
+    const existing = await proxyToExternalIdp(
+      c,
+      `${EXTERNAL_IDP_ADMIN_PATH}/${encodeURIComponent(providerId)}`,
+      'GET'
+    );
+    if (!existing.ok) return existing;
+  }
+  return null;
+}
+
 async function proxyToExternalIdpAndInvalidateAuthenticationMethods(
   c: Context<{ Bindings: Env }>,
   path: string,
@@ -204,7 +285,7 @@ async function proxyToExternalIdpAndInvalidateAuthenticationMethods(
  */
 export async function adminExternalProvidersListHandler(c: Context<{ Bindings: Env }>) {
   // When bridge is not configured, return an empty list instead of 500
-  if (!c.env.EXTERNAL_IDP) {
+  if (bridgeAbsent(c)) {
     return c.json({ providers: [] });
   }
   return proxyToExternalIdp(c, EXTERNAL_IDP_ADMIN_PATH, 'GET');
@@ -214,20 +295,17 @@ export async function adminExternalProvidersListHandler(c: Context<{ Bindings: E
  * POST /api/admin/external-providers - Create a new external IdP provider
  */
 export async function adminExternalProvidersCreateHandler(c: Context<{ Bindings: Env }>) {
-  if (!c.env.EXTERNAL_IDP) {
-    return c.json(
-      {
-        error: 'service_unavailable',
-        message:
-          'External IdP Bridge is not configured. Enable the bridge component in your deployment.',
-      },
-      503
-    );
+  if (!c.env.EXTERNAL_IDP_ADMIN) {
+    return bridgeUnavailable(c);
   }
   const body = await readExternalIdpAdminBody(c);
   if (!body.ok) {
     return body.response;
   }
+  const invalid = await precheckExternalProviderWrite(c, null, body.body);
+  if (invalid) return invalid;
+  const refused = await requireExternalProviderStepUp(c, 'create', null, body.body);
+  if (refused) return refused;
   return proxyToExternalIdpAndInvalidateAuthenticationMethods(
     c,
     EXTERNAL_IDP_ADMIN_PATH,
@@ -264,6 +342,10 @@ export async function adminExternalProvidersUpdateHandler(c: Context<{ Bindings:
   if (!body.ok) {
     return body.response;
   }
+  const invalid = await precheckExternalProviderWrite(c, id, body.body);
+  if (invalid) return invalid;
+  const refused = await requireExternalProviderStepUp(c, 'update', id, body.body);
+  if (refused) return refused;
   return proxyToExternalIdpAndInvalidateAuthenticationMethods(
     c,
     `${EXTERNAL_IDP_ADMIN_PATH}/${encodeURIComponent(id)}`,
@@ -285,6 +367,10 @@ export async function adminExternalProvidersRegisterHandler(c: Context<{ Binding
   }
   const body = await readExternalIdpAdminBody(c);
   if (!body.ok) return body.response;
+  const invalid = await precheckExternalProviderWrite(c, id, body.body || '{}');
+  if (invalid) return invalid;
+  const refused = await requireExternalProviderStepUp(c, 'register', id, body.body || '{}');
+  if (refused) return refused;
   return proxyToExternalIdpAndInvalidateAuthenticationMethods(
     c,
     `${EXTERNAL_IDP_ADMIN_PATH}/${encodeURIComponent(id)}/register`,
@@ -304,6 +390,10 @@ export async function adminExternalProvidersDeleteHandler(c: Context<{ Bindings:
       variables: { field: 'id' },
     });
   }
+  const invalid = await precheckExternalProviderWrite(c, id, null);
+  if (invalid) return invalid;
+  const refused = await requireExternalProviderStepUp(c, 'delete', id, null);
+  if (refused) return refused;
   return proxyToExternalIdpAndInvalidateAuthenticationMethods(
     c,
     `${EXTERNAL_IDP_ADMIN_PATH}/${encodeURIComponent(id)}`,
@@ -316,7 +406,7 @@ export async function adminExternalProvidersDeleteHandler(c: Context<{ Bindings:
  * GET /api/admin/external-token-refresh/config - Read bridge token refresh configuration.
  */
 export async function adminExternalTokenRefreshConfigGetHandler(c: Context<{ Bindings: Env }>) {
-  if (!c.env.EXTERNAL_IDP) {
+  if (bridgeAbsent(c)) {
     return c.json({
       config: DEFAULT_TOKEN_REFRESH_CONFIG,
       runtime_status: 'bridge_not_configured',
@@ -329,15 +419,8 @@ export async function adminExternalTokenRefreshConfigGetHandler(c: Context<{ Bin
  * PUT /api/admin/external-token-refresh/config - Update bridge token refresh configuration.
  */
 export async function adminExternalTokenRefreshConfigUpdateHandler(c: Context<{ Bindings: Env }>) {
-  if (!c.env.EXTERNAL_IDP) {
-    return c.json(
-      {
-        error: 'service_unavailable',
-        message:
-          'External IdP Bridge is not configured. Enable the bridge component in your deployment.',
-      },
-      503
-    );
+  if (!c.env.EXTERNAL_IDP_ADMIN) {
+    return bridgeUnavailable(c);
   }
   const body = await readExternalIdpAdminBody(c);
   if (!body.ok) {
@@ -350,7 +433,7 @@ export async function adminExternalTokenRefreshConfigUpdateHandler(c: Context<{ 
  * GET /api/admin/external-token-refresh/runs - List recent bridge token refresh runs.
  */
 export async function adminExternalTokenRefreshRunsListHandler(c: Context<{ Bindings: Env }>) {
-  if (!c.env.EXTERNAL_IDP) {
+  if (bridgeAbsent(c)) {
     return c.json({ runs: [], runtime_status: 'bridge_not_configured' });
   }
   const query = new URL(c.req.url).search;
@@ -361,15 +444,8 @@ export async function adminExternalTokenRefreshRunsListHandler(c: Context<{ Bind
  * POST /api/admin/external-token-refresh/run - Run refresh for the current tenant.
  */
 export async function adminExternalTokenRefreshRunHandler(c: Context<{ Bindings: Env }>) {
-  if (!c.env.EXTERNAL_IDP) {
-    return c.json(
-      {
-        error: 'service_unavailable',
-        message:
-          'External IdP Bridge is not configured. Enable the bridge component in your deployment.',
-      },
-      503
-    );
+  if (!c.env.EXTERNAL_IDP_ADMIN) {
+    return bridgeUnavailable(c);
   }
   return proxyToExternalIdp(c, `${EXTERNAL_TOKEN_REFRESH_ADMIN_PATH}/run`, 'POST');
 }

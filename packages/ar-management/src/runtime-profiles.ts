@@ -13,11 +13,16 @@ import {
   AR_ERROR_CODES,
   createErrorResponse,
   createRuntimeProfileRegistryFromEnv,
+  createRuntimeProfileWriterFromEnv,
+  ProfileProjectionDisagreementError,
   createSettingsManager,
   getLogger,
+  getPrimaryTenantId,
   hasSystemAdminAuthority,
   INFRASTRUCTURE_CATEGORY_META,
+  ConflictError,
   loadEnvironmentProfileDefaultsFromEnv,
+  readEnvironmentProfileDefaults,
   loadTenantProfileOverridesFromEnv,
   purgeTenantRuntimeRegistrySnapshot,
   requireDedicatedAdminDatabaseAdapter,
@@ -33,6 +38,14 @@ import {
 import { ensureSupportedTenantId } from './single-tenant-guard';
 import { getAdminAuth, requireTenantResourceAccess } from './admin-tenant-access';
 import { writeAdminAuditLog } from './admin-shared';
+import { requireAdminStepUp } from './admin-step-up-gate';
+import { auditRetentionWeakened } from './audit-retention-compare';
+import { auditDeliveryChanged, auditDeliveryDigests } from './audit-profile-delivery';
+import {
+  readComparedProfile,
+  verifySwitchAfterCommit,
+  type ProfileSwitchGuard,
+} from './profile-switch-verify';
 
 type AdminRuntimeProfileKind = Extract<RuntimeProfileKind, 'audit' | 'residency'>;
 
@@ -225,8 +238,9 @@ function getRegistryBackend(env: Env): string {
   return env.PROFILE_REGISTRY_BACKEND ?? 'kv';
 }
 
-function createInfrastructureSettingsManager(env: Env) {
+export function createInfrastructureSettingsManager(env: Env, options: { strict?: boolean } = {}) {
   const manager = createSettingsManager({
+    strictReads: options.strict === true,
     env: {
       DEFAULT_AUDIT_PROFILE_ID: env.DEFAULT_AUDIT_PROFILE_ID,
       DEFAULT_RESIDENCY_PROFILE_ID: env.DEFAULT_RESIDENCY_PROFILE_ID,
@@ -422,6 +436,13 @@ export async function adminRuntimeProfileUpsertHandler(c: Context<{ Bindings: En
     });
   }
 
+  // Refused before anything else, so no step-up receipt is spent on a write that cannot happen.
+  if (id.startsWith('builtin:')) {
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT, {
+      variables: { resource: 'runtime_profile', reason: 'builtin profiles are read-only' },
+    });
+  }
+
   const rawBody = await c.req.json<unknown>().catch(() => null);
   const parsed = parseRuntimeProfileBody(kind, rawBody);
   if (!parsed) {
@@ -431,8 +452,10 @@ export async function adminRuntimeProfileUpsertHandler(c: Context<{ Bindings: En
   }
 
   try {
-    const registry = createRuntimeProfileRegistryFromEnv(c.env);
-    const existing = await registry.get(kind, id);
+    // D1 is the source of truth for writes: the profile is read once as stored, compared, gated,
+    // and written only if it is still that stored profile (see RuntimeProfileWriter).
+    const writer = createRuntimeProfileWriterFromEnv(c.env);
+    const { profile: existing, expected } = await writer.readForWrite(kind, id);
     const profile = buildPersistedProfile(kind, id, parsed);
     if (kind === 'audit') {
       const auditErrors = validateAuditProfileForEnvironment(profile as AuditProfile, c.env);
@@ -442,12 +465,69 @@ export async function adminRuntimeProfileUpsertHandler(c: Context<{ Bindings: En
         });
       }
     }
-    await registry.put(profile);
+    // Changing the jurisdiction of a residency profile moves where the tenants using it keep their
+    // data; shortening an audit profile's retention deletes their logs sooner. Creating a profile
+    // is gated too: any tenant may already name the id (it was deleted and is being recreated),
+    // and which tenants do cannot be listed here. Everything above has passed; the receipt is spent
+    // here.
+    if (kind === 'residency') {
+      const next = profile as ResidencyProfile;
+      const before = existing?.kind === 'residency' ? existing : null;
+      if (!before || before.jurisdiction !== next.jurisdiction) {
+        const stepUpRefused = await requireAdminStepUp(c as never, {
+          operation: 'tenant.jurisdiction.update',
+          targetTenantId: getPrimaryTenantId(c.env),
+          targetIds: [id],
+          params: {
+            scope: 'residency_profile',
+            profile_id: id,
+            from_jurisdiction: before?.jurisdiction ?? null,
+            to_jurisdiction: next.jurisdiction,
+          },
+        });
+        if (stepUpRefused) return stepUpRefused;
+      }
+    }
+    if (kind === 'audit') {
+      const before = existing?.kind === 'audit' ? existing : null;
+      const next = profile as AuditProfile;
+      const deliveryChanged = auditDeliveryChanged(before, next);
+      const retentionGated = !before || auditRetentionWeakened(before, next);
+      if (retentionGated || deliveryChanged) {
+        // One receipt covers one operation. A profile whose delivery changes sends logs somewhere
+        // new (sinks, archive, primary store), which is gated as a destination update; when the
+        // same request also shortens retention that one receipt covers both (the resulting
+        // retention is bound in the params). Retention alone is gated as a shortening.
+        const stepUpRefused = await requireAdminStepUp(c as never, {
+          operation: deliveryChanged ? 'webhook.destination.update' : 'audit.retention.shorten',
+          // Both at once: the receipt carries the other operation too, so a machine holding only
+          // the destination exemption cannot also shorten retention.
+          ...(deliveryChanged && retentionGated
+            ? { alsoCovers: ['audit.retention.shorten' as const] }
+            : {}),
+          targetTenantId: getPrimaryTenantId(c.env),
+          targetIds: [id],
+          params: {
+            scope: 'audit_profile',
+            profile_id: id,
+            retention: next.retention ?? null,
+            // Which of the days apply depends on whether the profile has a primary store.
+            has_primary: Boolean(next.primary),
+            // Where the resulting profile sends logs (digests only; the values are secrets).
+            ...(await auditDeliveryDigests(next)),
+          },
+        });
+        if (stepUpRefused) return stepUpRefused;
+      }
+    }
+    const written = await writer.putIfUnchanged(profile, expected);
+    if (!written.committed) return profileChangedResponse(c);
 
     return c.json(
       {
         registry_backend: getRegistryBackend(c.env),
         created: !existing,
+        ...(written.projection ? { projection: written.projection } : {}),
         profile,
         reference_status: describeRuntimeProfileReferenceStatus(c.env, profile),
         activation_status: describeRuntimeProfileActivationStatus(c.env, profile),
@@ -462,8 +542,20 @@ export async function adminRuntimeProfileUpsertHandler(c: Context<{ Bindings: En
         variables: { resource: 'runtime_profile', reason: 'builtin profiles are read-only' },
       });
     }
+    if (error instanceof ProfileProjectionDisagreementError) return profileChangedResponse(c);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
+}
+
+/** The stored profile is no longer the one that was compared (or runtime's copy lagged). */
+function profileChangedResponse(c: Context<{ Bindings: Env }>) {
+  return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT, {
+    variables: {
+      resource: 'runtime_profile',
+      reason:
+        'The profile changed while this request was being decided; repeat the step-up and retry',
+    },
+  });
 }
 
 export async function adminRuntimeProfileDeleteHandler(c: Context<{ Bindings: Env }>) {
@@ -489,19 +581,45 @@ export async function adminRuntimeProfileDeleteHandler(c: Context<{ Bindings: En
   }
 
   try {
-    const registry = createRuntimeProfileRegistryFromEnv(c.env);
-    const deleted = await registry.delete(kind, id);
-    if (!deleted) {
+    const writer = createRuntimeProfileWriterFromEnv(c.env);
+    // Deleting a profile and creating it again under the same id would swap its jurisdiction or
+    // retention without the update gate. Which tenants use a profile cannot be listed cheaply, so
+    // deleting is gated like changing it; the receipt is spent only once the profile is known to
+    // exist. The delete is made only if the profile is still the one that was read.
+    const { profile: existing, expected } = await writer.readForWrite(kind, id);
+    if (!existing) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
         variables: { resource: 'runtime_profile' },
       });
     }
+    // Deleting an audit profile also changes where logs go for whoever names it (they fall back
+    // to the built-in profile: an external sink stops, an archive may start). The retention
+    // operation stays the main one (it always applied to a delete); when the delivery differs
+    // from the fallback the receipt also covers the destination operation, and the deleted
+    // profile's delivery is bound by digest.
+    const deliveryLost = existing.kind === 'audit' && auditDeliveryChanged(existing, null);
+    const stepUpRefused = await requireAdminStepUp(c as never, {
+      operation: kind === 'residency' ? 'tenant.jurisdiction.update' : 'audit.retention.shorten',
+      ...(deliveryLost ? { alsoCovers: ['webhook.destination.update' as const] } : {}),
+      targetTenantId: getPrimaryTenantId(c.env),
+      targetIds: [id],
+      params: {
+        scope: `${kind}_profile_delete`,
+        profile_id: id,
+        ...(existing.kind === 'audit' ? await auditDeliveryDigests(existing) : {}),
+      },
+    });
+    if (stepUpRefused) return stepUpRefused;
+    const deleted = await writer.deleteIfUnchanged(kind, id, expected);
+    if (!deleted.committed) return profileChangedResponse(c);
 
     return c.json({
       registry_backend: getRegistryBackend(c.env),
       deleted: true,
+      ...(deleted.projection ? { projection: deleted.projection } : {}),
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof ProfileProjectionDisagreementError) return profileChangedResponse(c);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -598,17 +716,145 @@ export async function adminRuntimeProfileDefaultsUpdateHandler(c: Context<{ Bind
       updates['infra.default_residency_profile_id'] = profile.id;
     }
 
-    const manager = createInfrastructureSettingsManager(c.env);
-    const current = await manager.getAll('infrastructure', { type: 'platform' });
-    await manager.patch(
+    // Pointing the environment default at a residency profile with another jurisdiction changes
+    // where tenants without their own profile keep their data; pointing it at an audit profile that
+    // keeps logs for less time deletes them sooner. One request needing both is refused: the two
+    // receipts are separate.
+    // The document's version is read first and the save is made against it: if the defaults change
+    // after this point (another request), the save is refused rather than applied over a
+    // comparison made against older values.
+    // One read gives both the values compared and the version saved against. Strict: a fallback
+    // could hide a change.
+    const manager = createInfrastructureSettingsManager(c.env, { strict: true });
+    const judged = await manager.getAll('infrastructure', { type: 'platform' });
+    const judgedVersion = judged.version;
+    const currentDefaults = readEnvironmentProfileDefaults(judged.values);
+    // What runtime reads (the KV projection) must agree with the document compared: while they
+    // differ (a projection still pending), the step-up could be judged against the wrong values.
+    const runtimeDefaults = await loadEnvironmentProfileDefaultsFromEnv(c.env, { strict: true });
+    if (
+      runtimeDefaults.auditProfileId !== currentDefaults.auditProfileId ||
+      runtimeDefaults.residencyProfileId !== currentDefaults.residencyProfileId
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
+    }
+    // The profiles compared are verified again after the save commits (profile-switch-verify).
+    const switchGuard: ProfileSwitchGuard = { compared: [] };
+    let residencyGate: Parameters<typeof requireAdminStepUp>[1] | null = null;
+    let auditGate: Parameters<typeof requireAdminStepUp>[1] | null = null;
+    if (parsedBody.data.residencyProfileId !== undefined) {
+      const [currentResidency, nextResidency] = await Promise.all([
+        readComparedProfile(c.env, 'residency', currentDefaults.residencyProfileId, switchGuard),
+        readComparedProfile(c.env, 'residency', parsedBody.data.residencyProfileId, switchGuard),
+      ]);
+      const fromJurisdiction =
+        currentResidency?.kind === 'residency' ? currentResidency.jurisdiction : null;
+      const toJurisdiction =
+        nextResidency?.kind === 'residency' ? nextResidency.jurisdiction : null;
+      // A profile that cannot be found on either side cannot be compared: a switch counts.
+      const switches = currentDefaults.residencyProfileId !== parsedBody.data.residencyProfileId;
+      if (
+        fromJurisdiction !== toJurisdiction ||
+        (switches && (fromJurisdiction === null || toJurisdiction === null))
+      ) {
+        residencyGate = {
+          operation: 'tenant.jurisdiction.update',
+          targetTenantId: getPrimaryTenantId(c.env),
+          targetIds: [parsedBody.data.residencyProfileId],
+          params: {
+            scope: 'environment_default',
+            residency_profile_id: parsedBody.data.residencyProfileId,
+            from_jurisdiction: fromJurisdiction,
+            to_jurisdiction: toJurisdiction,
+          },
+        };
+      }
+    }
+    if (parsedBody.data.auditProfileId !== undefined) {
+      const [currentAudit, nextAudit] = await Promise.all([
+        readComparedProfile(c.env, 'audit', currentDefaults.auditProfileId, switchGuard),
+        readComparedProfile(c.env, 'audit', parsedBody.data.auditProfileId, switchGuard),
+      ]);
+      // A profile that cannot be found on either side cannot be compared: a switch counts as
+      // shortening (the audit service falls back to the built-in profile meanwhile).
+      const switches = currentDefaults.auditProfileId !== parsedBody.data.auditProfileId;
+      // Switching to a profile that sends logs elsewhere (other sinks, archive or store) is a
+      // destination change even when it keeps logs as long.
+      // An unregistered id is what runtime uses for it: the built-in profile.
+      const deliveryDiffers = auditDeliveryChanged(
+        currentAudit?.kind === 'audit' ? currentAudit : null,
+        nextAudit?.kind === 'audit' ? nextAudit : null
+      );
+      const retentionGated =
+        currentAudit?.kind !== 'audit' ||
+        nextAudit?.kind !== 'audit' ||
+        auditRetentionWeakened(currentAudit, nextAudit);
+      if (switches && (retentionGated || deliveryDiffers)) {
+        // One receipt covers one operation: a delivery change is gated as a destination update
+        // (the resulting retention is bound too); retention alone as a shortening.
+        auditGate = {
+          operation: deliveryDiffers ? 'webhook.destination.update' : 'audit.retention.shorten',
+          ...(deliveryDiffers && retentionGated
+            ? { alsoCovers: ['audit.retention.shorten' as const] }
+            : {}),
+          targetTenantId: getPrimaryTenantId(c.env),
+          targetIds: [parsedBody.data.auditProfileId],
+          params: {
+            scope: 'environment_default',
+            audit_profile_id: parsedBody.data.auditProfileId,
+            retention: nextAudit?.kind === 'audit' ? (nextAudit.retention ?? null) : null,
+            ...(await auditDeliveryDigests(nextAudit?.kind === 'audit' ? nextAudit : null)),
+          },
+        };
+      }
+    }
+    if (residencyGate && auditGate) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: {
+          field: 'body',
+          reason:
+            'Changing the residency profile and moving to a shorter-retention audit profile need separate step-ups: change them in separate requests',
+        },
+      });
+    }
+    const defaultsGate = residencyGate ?? auditGate;
+    if (defaultsGate) {
+      const stepUpRefused = await requireAdminStepUp(c as never, defaultsGate);
+      if (stepUpRefused) return stepUpRefused;
+    }
+
+    // What the document holds of these keys now, to put back if a compared profile changed.
+    const dryRun = await manager.patch(
+      'infrastructure',
+      { type: 'platform' },
+      { ifMatch: judgedVersion, set: updates },
+      'runtime-profile-defaults',
+      { dryRun: true }
+    );
+    switchGuard.before = dryRun.candidate?.before ?? {};
+    const committed = await manager.patch(
       'infrastructure',
       { type: 'platform' },
       {
-        ifMatch: current.version,
+        ifMatch: judgedVersion,
         set: updates,
       },
       'runtime-profile-defaults'
     );
+    if (
+      !(await verifySwitchAfterCommit({
+        env: c.env,
+        manager,
+        category: 'infrastructure',
+        scope: { type: 'platform' },
+        guard: switchGuard,
+        committedVersion: committed.version,
+        changedKeys: Object.keys(updates),
+        actor: 'runtime-profile-defaults',
+      }))
+    ) {
+      return profileChangedResponse(c);
+    }
 
     const defaults = await loadEnvironmentProfileDefaultsFromEnv(c.env);
     const [audit, residency] = await Promise.all([
@@ -639,6 +885,10 @@ export async function adminRuntimeProfileDefaultsUpdateHandler(c: Context<{ Bind
       reference_management: RUNTIME_PROFILE_REFERENCE_MANAGEMENT_POLICY,
     });
   } catch (error) {
+    // The defaults changed after the step-up decision was made: retry against the current ones.
+    if (error instanceof ConflictError || error instanceof ProfileProjectionDisagreementError) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
+    }
     log.error('Failed to update runtime profile defaults', { error: String(error) });
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }

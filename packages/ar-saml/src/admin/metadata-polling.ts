@@ -1172,7 +1172,9 @@ export async function refreshFederationMetadataSource(
   sourceId: string,
   tenantId: string,
   trigger: 'automatic' | 'manual' = 'manual',
-  now = Date.now()
+  now = Date.now(),
+  /** Runs once the source is known and usable, before anything is fetched or written. */
+  beforeApply?: () => Promise<void>
 ): Promise<FederationMetadataRefreshResult> {
   const admin = requireDedicatedAdminDatabaseAdapter(env, 'saml-federation-metadata-polling');
   const source = await admin.queryOne<FederationSourceRow>(
@@ -1199,6 +1201,7 @@ export async function refreshFederationMetadataSource(
   const payload = parseFederationSourcePayload(source.protocol_payload_json);
   const metadataUrl = resolveFederationSourceMetadataUrl(payload);
   if (!metadataUrl) throw new Error('federation_source_metadata_url_required');
+  await beforeApply?.();
   let polling = normalizeSAMLMetadataRefreshPolicy(payload.polling, metadataUrl, now);
   const providerCursor =
     trigger === 'automatic' ? await loadFederationProviderCursor(admin, source) : undefined;

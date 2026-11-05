@@ -43,6 +43,7 @@ import {
   recoveryNoticeAvailable,
   sendRecoveryNotice,
   sendRecoveryNoticeAfterCommit,
+  showRecoveryInConsole,
 } from './second-factor-recovery-notice';
 
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
@@ -224,6 +225,7 @@ export async function fileRecoveryRequest(
       );
     }
 
+    await showRecoveryInConsole(adapter, 'requested', result.recovery, requesterEmail);
     await writeAdminAuditLog(c, {
       action: 'admin.second_factor.recovery_requested',
       resourceType: 'admin_second_factor_recovery',
@@ -340,10 +342,15 @@ mySecondFactorRecoveryRouter.post('/cancel', async (c) => {
   setNoStore(c);
   const auth = humanSession(c.get('adminAuth'));
   if (!auth) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+  const now = Date.now();
+  // As for another admin's cancellation and for completion: a fresh passkey, so a session left
+  // open cannot quietly withdraw the request.
+  if (evaluateAdminStepUpEvidence(auth, 'L1', now).missing.length > 0) {
+    return refuseAdminFreshAuth(c);
+  }
   try {
     const adapter = adminAdapter(c);
     const repo = new AdminSecondFactorRecoveryRepository(adapter);
-    const now = Date.now();
     const open = await repo.findOpenByUser(auth.userId, now);
     if (
       !open ||

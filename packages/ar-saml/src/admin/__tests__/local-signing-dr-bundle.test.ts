@@ -1,5 +1,6 @@
 import type { Env } from '@authrim/ar-lib-core';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { exportJWK, exportPKCS8, generateKeyPair } from 'jose';
 import {
   buildEncryptedSAMLLocalSigningSecretDRBundle,
   buildSAMLLocalSigningSecretDRBundle,
@@ -105,6 +106,82 @@ describe('SAML local signing secret DR bundle', () => {
     await expect(
       restoreSAMLLocalSigningSecretDRBundle(createEnv(), 'test', bundle)
     ).rejects.toThrow('SAML DR bundle signing key policy references a missing key');
+  });
+
+  it('calls the before-apply hook after validation and writes nothing when it refuses', async () => {
+    const bundle = await buildSAMLLocalSigningSecretDRBundle(createEnv(), 'test');
+
+    // A bundle that fails validation never reaches the hook.
+    const invalid = structuredClone(bundle);
+    invalid.settings.signingKeyPolicies.idp = {
+      active: {
+        slot: 'active',
+        keyRef: 'tenant:test:saml:idp:missing:signing',
+        kid: 'missing',
+        state: 'active',
+      },
+    };
+    const hook = vi.fn(async () => undefined);
+    await expect(
+      restoreSAMLLocalSigningSecretDRBundle(createEnv(), 'test', invalid, hook)
+    ).rejects.toThrow('missing key');
+    expect(hook).not.toHaveBeenCalled();
+
+    // Every key is checked before the hook, including keys no policy names: one bound to another
+    // tenant, or whose halves are not a pair.
+    const foreign = structuredClone(bundle);
+    foreign.keys.push({
+      ...structuredClone(bundle.keys[0]),
+      keyRef: 'tenant:other:saml:idp:extra:signing',
+      kid: 'extra',
+    });
+    await expect(
+      restoreSAMLLocalSigningSecretDRBundle(createEnv(), 'test', foreign, hook)
+    ).rejects.toThrow();
+    const mismatched = structuredClone(bundle);
+    mismatched.keys[0].publicJWK = { ...mismatched.keys[0].publicJWK, n: 'AQAB' };
+    await expect(
+      restoreSAMLLocalSigningSecretDRBundle(createEnv(), 'test', mismatched, hook)
+    ).rejects.toThrow('does not match');
+    expect(hook).not.toHaveBeenCalled();
+
+    // Two different keys under one key reference and kid are refused before the hook as well.
+    const otherPair = await generateKeyPair('RS256', { modulusLength: 2048, extractable: true });
+    const conflicting = structuredClone(bundle);
+    conflicting.keys.push({
+      ...structuredClone(bundle.keys[0]),
+      publicJWK: { ...(await exportJWK(otherPair.publicKey)), kid: bundle.keys[0].kid },
+      privateKeyPem: await exportPKCS8(otherPair.privateKey),
+    });
+    await expect(
+      restoreSAMLLocalSigningSecretDRBundle(createEnv(), 'test', conflicting, hook)
+    ).rejects.toThrow('two different keys');
+    expect(hook).not.toHaveBeenCalled();
+
+    // A hook that refuses stops the restore before any key is written.
+    const targetEnv = createEnv();
+    const keyManagerGet = vi.spyOn(
+      targetEnv.KEY_MANAGER as unknown as MockKeyManagerNamespace,
+      'get'
+    );
+    const settingsPut = vi.spyOn(targetEnv.SETTINGS as unknown as { put: () => unknown }, 'put');
+    const refusing = vi.fn(async () => {
+      throw new Error('refused');
+    });
+    await expect(
+      restoreSAMLLocalSigningSecretDRBundle(targetEnv, 'test', bundle, refusing)
+    ).rejects.toThrow('refused');
+    expect(refusing).toHaveBeenCalledTimes(1);
+    expect(keyManagerGet).not.toHaveBeenCalled();
+    expect(settingsPut).not.toHaveBeenCalled();
+
+    // A hook that lets it through is followed by the restore.
+    const allowing = vi.fn(async () => undefined);
+    await restoreSAMLLocalSigningSecretDRBundle(targetEnv, 'test', bundle, allowing);
+    expect(allowing).toHaveBeenCalledTimes(1);
+    await expect(verifySAMLLocalSigningSecretDRBundle(targetEnv, 'test', bundle)).resolves.toBe(
+      true
+    );
   });
 
   it('validates without mutation and semantically verifies a restored raw bundle', async () => {
@@ -214,6 +291,24 @@ interface MockStoredKey {
   certificateSha256Thumbprint: string;
 }
 
+let cachedKeyPair: Promise<{ publicJWK: Record<string, unknown>; privatePEM: string }> | null =
+  null;
+
+/** One RSA pair shared by the mock key managers (generating one per key would be slow). */
+function realKeyPair(): Promise<{ publicJWK: Record<string, unknown>; privatePEM: string }> {
+  cachedKeyPair ??= (async () => {
+    const { publicKey, privateKey } = await generateKeyPair('RS256', {
+      modulusLength: 2048,
+      extractable: true,
+    });
+    return {
+      publicJWK: await exportJWK(publicKey),
+      privatePEM: await exportPKCS8(privateKey),
+    };
+  })();
+  return cachedKeyPair;
+}
+
 class MockKeyManagerNamespace {
   private readonly stubs = new Map<string, MockKeyManagerStub>();
 
@@ -242,14 +337,12 @@ class MockKeyManagerStub {
 
   async rotateKeys(): Promise<MockStoredKey> {
     const kid = `kid-${this.keyRef.replace(/[^a-zA-Z0-9]/g, '-')}`;
+    // A real pair: a restore checks that each key's halves belong together before it imports.
+    const pair = await realKeyPair();
     this.key = {
       kid,
-      publicJWK: { kty: 'RSA', kid, n: `modulus-${kid}`, e: 'AQAB' },
-      privatePEM: [
-        '-----BEGIN PRIVATE KEY-----',
-        `private-${kid}`,
-        '-----END PRIVATE KEY-----',
-      ].join('\n'),
+      publicJWK: { ...pair.publicJWK, kid },
+      privatePEM: pair.privatePEM,
       createdAt: 1770000000000,
       status: 'active',
       certificatePEM: ['-----BEGIN CERTIFICATE-----', 'QUJD', '-----END CERTIFICATE-----'].join(
