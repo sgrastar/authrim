@@ -493,6 +493,32 @@ describe('discovery API', () => {
     expect(body.ui.title_text).toBe('Find your workspace');
   });
 
+  it('serves a tenant discovery theme of auto over a platform theme', async () => {
+    const kv = createMockKV({
+      'settings:platform:tenant-discovery-ui': JSON.stringify({
+        'tenant-discovery-ui.theme': 'dark',
+      }),
+      'settings:tenant:acme:tenant-discovery-ui': JSON.stringify({
+        'tenant-discovery-ui.override_enabled': true,
+        'tenant-discovery-ui.theme': 'auto',
+      }),
+    });
+    const { app, env } = createDiscoveryApp({ SETTINGS: kv });
+
+    const response = await app.request(
+      'https://acme.auth.example.com/api/auth/discovery',
+      {
+        method: 'GET',
+        headers: { 'X-Forwarded-Host': 'acme.auth.example.com' },
+      },
+      env
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json<{ ui: { theme: string } }>();
+    expect(body.ui.theme).toBe('auto');
+  });
+
   it('resolves tenant codes through Lookup and revalidates the runtime route', async () => {
     const tenantAdapter = createMockAdapter({
       queryOne: (sql, params) =>

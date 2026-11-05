@@ -46,6 +46,41 @@ describe('validateLoginUICustomCss', () => {
     expect(result.sanitizedCss).toContain("[data-split-background-mode='panel']");
   });
 
+  it('allows the template, palette, form frame and form-row topbar selectors', () => {
+    const result = validateLoginUICustomCss(`
+      [data-login-template='split'] .auth-container {
+        gap: 24px;
+      }
+      [data-login-palette='glass'] .auth-page {
+        backdrop-filter: blur(8px);
+      }
+      [data-form-frame='full'] .auth-container {
+        border-radius: 0;
+      }
+      [data-topbar-position='form_bottom_center'] .auth-topbar {
+        justify-content: center;
+      }
+    `);
+
+    expect(result.valid).toBe(true);
+    expect(result.errors).toEqual([]);
+    expect(result.sanitizedCss).toContain("[data-login-template='split']");
+    expect(result.sanitizedCss).toContain("[data-login-palette='glass']");
+    expect(result.sanitizedCss).toContain("[data-form-frame='full']");
+    expect(result.sanitizedCss).toContain("[data-topbar-position='form_bottom_center']");
+  });
+
+  it('rejects template, palette and form frame values that are not built in', () => {
+    for (const selector of [
+      "[data-login-template='fullbleed'] .auth-page",
+      "[data-login-palette='neon'] .auth-page",
+      "[data-form-frame='floating'] .auth-container",
+    ]) {
+      const result = validateLoginUICustomCss(`${selector} { color: red; }`);
+      expect(result.valid, selector).toBe(false);
+    }
+  });
+
   it('rejects selectors outside the Login UI allowlist', () => {
     const result = validateLoginUICustomCss('body { background: #fff; }');
 

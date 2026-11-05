@@ -174,6 +174,12 @@ export interface SettingMeta {
    * - 'in_development': setting is defined but not yet consumed by frontend
    */
   status?: 'active' | 'in_development';
+  /**
+   * True when a newer setting replaces this one. A deprecated setting is still accepted on write
+   * (older clients keep working) but runtime no longer reads it, or reads it only as a fallback
+   * for the setting that replaced it.
+   */
+  deprecated?: boolean;
 }
 
 /**

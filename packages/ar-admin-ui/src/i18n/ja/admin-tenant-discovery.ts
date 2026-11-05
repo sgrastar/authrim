@@ -118,6 +118,7 @@ const adminTenantDiscovery = {
 	admin_tenant_discovery_inherit_default: 'Inherit / default',
 	admin_tenant_discovery_light: 'light',
 	admin_tenant_discovery_dark: 'dark',
+	admin_tenant_discovery_auto: 'auto',
 	admin_tenant_discovery_brand_name: 'Brand Name',
 	admin_tenant_discovery_logo_url: 'Logo URL',
 	admin_tenant_discovery_page_title: 'Page Title',

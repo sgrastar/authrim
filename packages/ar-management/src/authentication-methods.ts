@@ -51,6 +51,12 @@ import {
   VALIDATION_LIMITS,
   validateAccountPagePath,
   validateLoginUICustomCss,
+  DEFAULT_LOGIN_UI_PALETTE,
+  DEFAULT_LOGIN_UI_TEMPLATE,
+  LOGIN_UI_PALETTE_IDS,
+  LOGIN_UI_TEMPLATE_IDS,
+  type LoginUIPaletteId,
+  type LoginUITemplateId,
 } from '@authrim/ar-lib-core';
 import {
   LOGIN_UI_LOCALES,
@@ -182,16 +188,55 @@ interface AuthenticationMethods {
   external: ExternalAuthenticationMethod;
 }
 
+type LoginUITopbarPosition =
+  | 'below_card'
+  | 'in_card'
+  | 'top_right'
+  | 'bottom_left'
+  | 'bottom_center'
+  | 'bottom_right'
+  | 'form_bottom_left'
+  | 'form_bottom_center'
+  | 'form_bottom_right'
+  | 'hidden';
+
+const LOGIN_UI_TOPBAR_POSITIONS: readonly LoginUITopbarPosition[] = [
+  'below_card',
+  'in_card',
+  'top_right',
+  'bottom_left',
+  'bottom_center',
+  'bottom_right',
+  'form_bottom_left',
+  'form_bottom_center',
+  'form_bottom_right',
+  'hidden',
+];
+
 interface UIConfig {
-  theme: string;
+  /** Tenant default mode: `auto` follows the visitor's device. */
+  theme: 'auto' | 'light' | 'dark';
+  /** With `theme` light/dark: that mode always applies and the Login UI hides its toggle. */
+  themeFixed: boolean;
+  /**
+   * @deprecated Derived from `pageTemplate.palette` / `pageTemplate.template` for older Login UI
+   * builds still in browser caches. New code reads `pageTemplate.palette` and `.template`.
+   */
   themeTemplate: 'classic' | 'meridian' | 'split-brand-panel' | 'fullbleed-glass';
   branding: {
     logoUrl: string | null;
     faviconUrl: string | null;
     brandName: string;
+    /** Name shown in the header; empty means the brand name. */
+    headerName: string;
   };
   pageTemplate: {
-    layout: 'centered_card' | 'split_panel' | 'fullbleed_card';
+    /** Layout / placement. */
+    template: LoginUITemplateId;
+    /** Built-in colour and shape palette id (see LOGIN_UI_PALETTE_IDS in ar-lib-core). */
+    palette: LoginUIPaletteId;
+    /** @deprecated Derived from `template` (split is split_panel, anything else centered_card). */
+    layout: 'centered_card' | 'split_panel';
     fontFamily: 'system' | 'rounded' | 'serif' | 'mono';
     fontScale: 'compact' | 'comfortable' | 'spacious';
     backgroundColor: string;
@@ -199,27 +244,23 @@ interface UIConfig {
     titleColor: string;
     textColor: string;
     copyColor: string;
+    formAreaColor: string;
     logoDisplay: 'auto' | 'image' | 'text' | 'hidden';
+    brandPanelLogoDisplay: 'inherit' | 'auto' | 'image' | 'text' | 'hidden';
     logoLayout: 'stack' | 'row';
     headerEnabled: boolean;
     subtitleEnabled: boolean;
     footerEnabled: boolean;
     poweredByEnabled: boolean;
     authSwitchLinkEnabled: boolean;
-    topbarPosition:
-      | 'below_card'
-      | 'in_card'
-      | 'top_right'
-      | 'bottom_left'
-      | 'bottom_center'
-      | 'bottom_right'
-      | 'hidden';
+    topbarPosition: LoginUITopbarPosition;
     themeToggleEnabled: boolean;
     languageSelectEnabled: boolean;
     languageSwitcherPosition: 'below_card' | 'top_right' | 'hidden';
     headerStyle: 'center' | 'bar';
     footerStyle: 'simple' | 'bar';
     splitFrame: 'full' | 'card';
+    formFrame: 'full' | 'card';
     splitPanelSide: 'left' | 'right';
     splitPanelWidth: 'narrow' | 'wide';
     splitBackgroundMode: 'shared' | 'brand' | 'panel';
@@ -234,7 +275,10 @@ interface UIConfig {
   };
   appearance: {
     backgroundImageUrl: string | null;
+    backgroundImageOpacity: number;
     loginPanelBackgroundImageUrl: string | null;
+    brandPanelImageUrl: string | null;
+    brandPanelImageOpacity: number;
     thumbnailUrl: string | null;
     customCss: string | null;
     headerText: string | null;
@@ -372,14 +416,18 @@ const LOGIN_PROVIDER_ICON_NAMES = new Set([
 ]);
 
 const DEFAULT_UI_CONFIG: UIConfig = {
-  theme: 'light',
+  theme: 'auto',
+  themeFixed: false,
   themeTemplate: 'meridian',
   branding: {
     logoUrl: null,
     faviconUrl: null,
     brandName: 'Authrim',
+    headerName: '',
   },
   pageTemplate: {
+    template: DEFAULT_LOGIN_UI_TEMPLATE,
+    palette: DEFAULT_LOGIN_UI_PALETTE,
     layout: 'centered_card',
     fontFamily: 'system',
     fontScale: 'comfortable',
@@ -388,7 +436,9 @@ const DEFAULT_UI_CONFIG: UIConfig = {
     titleColor: '',
     textColor: '',
     copyColor: '',
+    formAreaColor: '',
     logoDisplay: 'auto',
+    brandPanelLogoDisplay: 'inherit',
     logoLayout: 'stack',
     headerEnabled: true,
     subtitleEnabled: true,
@@ -402,6 +452,7 @@ const DEFAULT_UI_CONFIG: UIConfig = {
     headerStyle: 'center',
     footerStyle: 'simple',
     splitFrame: 'full',
+    formFrame: 'full',
     splitPanelSide: 'left',
     splitPanelWidth: 'narrow',
     splitBackgroundMode: 'shared',
@@ -416,7 +467,10 @@ const DEFAULT_UI_CONFIG: UIConfig = {
   },
   appearance: {
     backgroundImageUrl: null,
+    backgroundImageOpacity: 100,
     loginPanelBackgroundImageUrl: null,
+    brandPanelImageUrl: null,
+    brandPanelImageOpacity: 100,
     thumbnailUrl: null,
     customCss: null,
     headerText: null,
@@ -466,7 +520,12 @@ const DEFAULT_UI_CONFIG: UIConfig = {
  */
 interface LoginUIKVSettings {
   'login-ui.theme'?: string;
+  'login-ui.theme_fixed'?: boolean | string;
+  'login-ui.template'?: string;
+  'login-ui.palette'?: string;
+  /** Deprecated: read only to derive `palette` when `login-ui.palette` was never set. */
   'login-ui.theme_template'?: string;
+  /** Deprecated: read only to derive `template` when `login-ui.template` was never set. */
   'login-ui.page_layout'?: string;
   'login-ui.font_family'?: string;
   'login-ui.font_scale'?: string;
@@ -475,12 +534,15 @@ interface LoginUIKVSettings {
   'login-ui.title_color'?: string;
   'login-ui.text_color'?: string;
   'login-ui.copy_color'?: string;
+  'login-ui.form_area_color'?: string;
   'login-ui.brand_name'?: string;
+  'login-ui.header_name'?: string;
   'login-ui.logo_url'?: string;
   'login-ui.favicon_url'?: string;
   'login-ui.thumbnail_url'?: string;
   'login-ui.logo_display'?: string;
   'login-ui.logo_layout'?: string;
+  'login-ui.brand_panel_logo_display'?: string;
   'login-ui.brand_panel_title'?: string;
   'login-ui.brand_panel_text'?: string;
   'login-ui.supported_locales'?: string;
@@ -488,7 +550,10 @@ interface LoginUIKVSettings {
   'login-ui.primary_locales'?: unknown;
   'login-ui.show_english_language_names'?: boolean | string;
   'login-ui.background_image_url'?: string;
+  'login-ui.background_image_opacity'?: number | string;
   'login-ui.login_panel_background_image_url'?: string;
+  'login-ui.brand_panel_image_url'?: string;
+  'login-ui.brand_panel_image_opacity'?: number | string;
   'login-ui.custom_css'?: string;
   'login-ui.header_enabled'?: boolean | string;
   'login-ui.subtitle_enabled'?: boolean | string;
@@ -502,6 +567,7 @@ interface LoginUIKVSettings {
   'login-ui.header_style'?: string;
   'login-ui.footer_style'?: string;
   'login-ui.split_frame'?: string;
+  'login-ui.form_frame'?: string;
   'login-ui.split_panel_side'?: string;
   'login-ui.split_panel_width'?: string;
   'login-ui.split_background_mode'?: string;
@@ -582,9 +648,10 @@ interface ExternalLoginProviderUsageConfig {
 
 /** The Login UI settings the sign-in page uses. */
 interface LoginUIResolved {
-  theme: string;
-  themeTemplate: UIConfig['themeTemplate'];
-  pageLayout: UIConfig['pageTemplate']['layout'];
+  theme: UIConfig['theme'];
+  themeFixed: boolean;
+  template: LoginUITemplateId;
+  palette: LoginUIPaletteId;
   fontFamily: UIConfig['pageTemplate']['fontFamily'];
   fontScale: UIConfig['pageTemplate']['fontScale'];
   backgroundColor: string;
@@ -592,11 +659,14 @@ interface LoginUIResolved {
   titleColor: string;
   textColor: string;
   copyColor: string;
+  formAreaColor: string;
   brandName: string;
+  headerName: string;
   logoUrl: string | null;
   faviconUrl: string | null;
   thumbnailUrl: string | null;
   logoDisplay: UIConfig['pageTemplate']['logoDisplay'];
+  brandPanelLogoDisplay: UIConfig['pageTemplate']['brandPanelLogoDisplay'];
   logoLayout: UIConfig['pageTemplate']['logoLayout'];
   brandPanelTitle: string | null;
   brandPanelText: string | null;
@@ -605,7 +675,10 @@ interface LoginUIResolved {
   primaryLocales: LoginUILocale[] | null;
   showEnglishLanguageNames: boolean;
   backgroundImageUrl: string | null;
+  backgroundImageOpacity: number;
   loginPanelBackgroundImageUrl: string | null;
+  brandPanelImageUrl: string | null;
+  brandPanelImageOpacity: number;
   customCss: string | null;
   headerEnabled: boolean;
   subtitleEnabled: boolean;
@@ -619,6 +692,7 @@ interface LoginUIResolved {
   headerStyle: UIConfig['pageTemplate']['headerStyle'];
   footerStyle: UIConfig['pageTemplate']['footerStyle'];
   splitFrame: UIConfig['pageTemplate']['splitFrame'];
+  formFrame: UIConfig['pageTemplate']['formFrame'];
   splitPanelSide: UIConfig['pageTemplate']['splitPanelSide'];
   splitPanelWidth: UIConfig['pageTemplate']['splitPanelWidth'];
   splitBackgroundMode: UIConfig['pageTemplate']['splitBackgroundMode'];
@@ -994,10 +1068,17 @@ function readNonEmptyString(value: unknown, fallback: string | null = null): str
   return trimmed ? trimmed.slice(0, MAX_STRING_LENGTH) : fallback;
 }
 
+/** `#rgb`, `#rrggbb` or `#rrggbbaa` (the last one carries an alpha channel), rgb()/rgba() or a name. */
+function readHeaderName(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback;
+  return value.trim().slice(0, MAX_STRING_LENGTH);
+}
+
+/** `#rgb`, `#rrggbb` or `#rrggbbaa` (the last carries alpha), rgb()/rgba() or a colour name. */
 function readSafeColor(value: unknown, fallback: string): string {
   if (typeof value !== 'string') return fallback;
   const trimmed = value.trim();
-  if (/^#[0-9a-f]{3}(?:[0-9a-f]{3})?$/iu.test(trimmed)) return trimmed;
+  if (/^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/iu.test(trimmed)) return trimmed;
   if (/^rgb[a]?\(\s*[0-9.,%\s]+\)$/iu.test(trimmed)) return trimmed;
   if (/^[a-z]{3,20}$/iu.test(trimmed)) return trimmed;
   return fallback;
@@ -1020,8 +1101,13 @@ function readAccentColor(value: unknown, fallback: string): string {
 }
 
 function readBoundedNumber(value: unknown, fallback: number, min: number, max: number): number {
+  // Number('') and Number('  ') are 0, which would read an empty stored value as the minimum.
   const parsed =
-    typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim() !== ''
+        ? Number(value)
+        : NaN;
   if (!Number.isFinite(parsed)) return fallback;
   return Math.min(max, Math.max(min, parsed));
 }
@@ -1029,6 +1115,57 @@ function readBoundedNumber(value: unknown, fallback: number, min: number, max: n
 function readCustomCss(value: unknown, fallback: string | null): string | null {
   const validation = validateLoginUICustomCss(value);
   return validation.valid ? validation.sanitizedCss : fallback;
+}
+
+/** The palette a deprecated `login-ui.theme_template` value stands for. */
+const LEGACY_THEME_TEMPLATE_PALETTE: Record<string, LoginUIPaletteId> = {
+  classic: 'classic',
+  meridian: 'meridian',
+  'split-brand-panel': 'meridian',
+  'fullbleed-glass': 'glass',
+};
+
+/**
+ * The template: `login-ui.template` when set, else derived from the deprecated
+ * `login-ui.page_layout` (split_panel is split, anything else standard), else the inherited value.
+ */
+function readTemplate(
+  kvSettings: LoginUIKVSettings,
+  fallback: LoginUITemplateId
+): LoginUITemplateId {
+  const configured = readEnum<LoginUITemplateId | ''>(
+    kvSettings['login-ui.template'],
+    LOGIN_UI_TEMPLATE_IDS,
+    ''
+  );
+  if (configured) return configured;
+  const legacyLayout = kvSettings['login-ui.page_layout'];
+  if (typeof legacyLayout === 'string' && legacyLayout) {
+    return legacyLayout === 'split_panel' ? 'split' : 'standard';
+  }
+  return fallback;
+}
+
+/**
+ * The palette: `login-ui.palette` when it names a built-in, else derived from the deprecated
+ * `login-ui.theme_template`, else the inherited value (the default `meridian` at the root).
+ */
+function readPalette(kvSettings: LoginUIKVSettings, fallback: LoginUIPaletteId): LoginUIPaletteId {
+  const configured = kvSettings['login-ui.palette'];
+  if (
+    typeof configured === 'string' &&
+    (LOGIN_UI_PALETTE_IDS as readonly string[]).includes(configured)
+  ) {
+    return configured as LoginUIPaletteId;
+  }
+  const legacyTemplate = kvSettings['login-ui.theme_template'];
+  if (
+    typeof legacyTemplate === 'string' &&
+    Object.hasOwn(LEGACY_THEME_TEMPLATE_PALETTE, legacyTemplate)
+  ) {
+    return LEGACY_THEME_TEMPLATE_PALETTE[legacyTemplate];
+  }
+  return fallback;
 }
 
 function resolveLoginUIFromKVSettings(
@@ -1056,17 +1193,10 @@ function resolveLoginUIFromKVSettings(
     : defaults.primaryLocales;
 
   return {
-    theme: kvSettings['login-ui.theme'] || defaults.theme,
-    themeTemplate: readEnum(
-      kvSettings['login-ui.theme_template'],
-      ['classic', 'meridian', 'split-brand-panel', 'fullbleed-glass'],
-      defaults.themeTemplate
-    ),
-    pageLayout: readEnum(
-      kvSettings['login-ui.page_layout'],
-      ['centered_card', 'split_panel', 'fullbleed_card'],
-      defaults.pageLayout
-    ),
+    theme: readEnum(kvSettings['login-ui.theme'], ['auto', 'light', 'dark'], defaults.theme),
+    themeFixed: readBoolean(kvSettings['login-ui.theme_fixed'], defaults.themeFixed),
+    template: readTemplate(kvSettings, defaults.template),
+    palette: readPalette(kvSettings, defaults.palette),
     fontFamily: readEnum(
       kvSettings['login-ui.font_family'],
       ['system', 'rounded', 'serif', 'mono'],
@@ -1085,7 +1215,9 @@ function resolveLoginUIFromKVSettings(
     titleColor: readSafeColor(kvSettings['login-ui.title_color'], defaults.titleColor),
     textColor: readSafeColor(kvSettings['login-ui.text_color'], defaults.textColor),
     copyColor: readSafeColor(kvSettings['login-ui.copy_color'], defaults.copyColor),
+    formAreaColor: readSafeColor(kvSettings['login-ui.form_area_color'], defaults.formAreaColor),
     brandName: kvSettings['login-ui.brand_name'] || defaults.brandName,
+    headerName: readHeaderName(kvSettings['login-ui.header_name'], defaults.headerName),
     logoUrl: isValidLoginUIImageUrl(kvSettings['login-ui.logo_url'])
       ? kvSettings['login-ui.logo_url']!
       : defaults.logoUrl,
@@ -1099,6 +1231,11 @@ function resolveLoginUIFromKVSettings(
       kvSettings['login-ui.logo_display'],
       ['auto', 'image', 'text', 'hidden'],
       defaults.logoDisplay
+    ),
+    brandPanelLogoDisplay: readEnum(
+      kvSettings['login-ui.brand_panel_logo_display'],
+      ['inherit', 'auto', 'image', 'text', 'hidden'],
+      defaults.brandPanelLogoDisplay
     ),
     logoLayout: readEnum(kvSettings['login-ui.logo_layout'], ['stack', 'row'], defaults.logoLayout),
     brandPanelTitle: readNonEmptyString(
@@ -1125,11 +1262,26 @@ function resolveLoginUIFromKVSettings(
     backgroundImageUrl: isValidLoginUIImageUrl(kvSettings['login-ui.background_image_url'])
       ? kvSettings['login-ui.background_image_url']!
       : defaults.backgroundImageUrl,
+    backgroundImageOpacity: readBoundedNumber(
+      kvSettings['login-ui.background_image_opacity'],
+      defaults.backgroundImageOpacity,
+      0,
+      100
+    ),
     loginPanelBackgroundImageUrl: isValidLoginUIImageUrl(
       kvSettings['login-ui.login_panel_background_image_url']
     )
       ? kvSettings['login-ui.login_panel_background_image_url']!
       : defaults.loginPanelBackgroundImageUrl,
+    brandPanelImageUrl: isValidLoginUIImageUrl(kvSettings['login-ui.brand_panel_image_url'])
+      ? kvSettings['login-ui.brand_panel_image_url']!
+      : defaults.brandPanelImageUrl,
+    brandPanelImageOpacity: readBoundedNumber(
+      kvSettings['login-ui.brand_panel_image_opacity'],
+      defaults.brandPanelImageOpacity,
+      0,
+      100
+    ),
     customCss: readCustomCss(kvSettings['login-ui.custom_css'], defaults.customCss),
     headerEnabled: readBoolean(kvSettings['login-ui.header_enabled'], defaults.headerEnabled),
     subtitleEnabled: readBoolean(kvSettings['login-ui.subtitle_enabled'], defaults.subtitleEnabled),
@@ -1144,15 +1296,7 @@ function resolveLoginUIFromKVSettings(
     ),
     topbarPosition: readEnum(
       kvSettings['login-ui.topbar_position'],
-      [
-        'below_card',
-        'in_card',
-        'top_right',
-        'bottom_left',
-        'bottom_center',
-        'bottom_right',
-        'hidden',
-      ],
+      LOGIN_UI_TOPBAR_POSITIONS,
       readEnum(
         kvSettings['login-ui.language_switcher_position'],
         ['below_card', 'top_right', 'hidden'],
@@ -1183,6 +1327,7 @@ function resolveLoginUIFromKVSettings(
       defaults.footerStyle
     ),
     splitFrame: readEnum(kvSettings['login-ui.split_frame'], ['full', 'card'], defaults.splitFrame),
+    formFrame: readEnum(kvSettings['login-ui.form_frame'], ['full', 'card'], defaults.formFrame),
     splitPanelSide: readEnum(
       kvSettings['login-ui.split_panel_side'],
       ['left', 'right'],
@@ -1285,8 +1430,9 @@ async function getLoginUISettings(
 ): Promise<LoginUIResolved> {
   const defaults: LoginUIResolved = {
     theme: DEFAULT_UI_CONFIG.theme,
-    themeTemplate: DEFAULT_UI_CONFIG.themeTemplate,
-    pageLayout: DEFAULT_UI_CONFIG.pageTemplate.layout,
+    themeFixed: DEFAULT_UI_CONFIG.themeFixed,
+    template: DEFAULT_UI_CONFIG.pageTemplate.template,
+    palette: DEFAULT_UI_CONFIG.pageTemplate.palette,
     fontFamily: DEFAULT_UI_CONFIG.pageTemplate.fontFamily,
     fontScale: DEFAULT_UI_CONFIG.pageTemplate.fontScale,
     backgroundColor: DEFAULT_UI_CONFIG.pageTemplate.backgroundColor,
@@ -1294,11 +1440,14 @@ async function getLoginUISettings(
     titleColor: DEFAULT_UI_CONFIG.pageTemplate.titleColor,
     textColor: DEFAULT_UI_CONFIG.pageTemplate.textColor,
     copyColor: DEFAULT_UI_CONFIG.pageTemplate.copyColor,
+    formAreaColor: DEFAULT_UI_CONFIG.pageTemplate.formAreaColor,
     brandName: DEFAULT_UI_CONFIG.branding.brandName,
+    headerName: DEFAULT_UI_CONFIG.branding.headerName,
     logoUrl: DEFAULT_UI_CONFIG.branding.logoUrl,
     faviconUrl: DEFAULT_UI_CONFIG.branding.faviconUrl,
     thumbnailUrl: DEFAULT_UI_CONFIG.appearance.thumbnailUrl,
     logoDisplay: DEFAULT_UI_CONFIG.pageTemplate.logoDisplay,
+    brandPanelLogoDisplay: DEFAULT_UI_CONFIG.pageTemplate.brandPanelLogoDisplay,
     logoLayout: DEFAULT_UI_CONFIG.pageTemplate.logoLayout,
     brandPanelTitle: DEFAULT_UI_CONFIG.pageTemplate.brandPanelTitle,
     brandPanelText: DEFAULT_UI_CONFIG.pageTemplate.brandPanelText,
@@ -1307,7 +1456,10 @@ async function getLoginUISettings(
     primaryLocales: null,
     showEnglishLanguageNames: DEFAULT_UI_CONFIG.showEnglishLanguageNames,
     backgroundImageUrl: DEFAULT_UI_CONFIG.appearance.backgroundImageUrl,
+    backgroundImageOpacity: DEFAULT_UI_CONFIG.appearance.backgroundImageOpacity,
     loginPanelBackgroundImageUrl: DEFAULT_UI_CONFIG.appearance.loginPanelBackgroundImageUrl,
+    brandPanelImageUrl: DEFAULT_UI_CONFIG.appearance.brandPanelImageUrl,
+    brandPanelImageOpacity: DEFAULT_UI_CONFIG.appearance.brandPanelImageOpacity,
     customCss: DEFAULT_UI_CONFIG.appearance.customCss,
     headerEnabled: DEFAULT_UI_CONFIG.pageTemplate.headerEnabled,
     subtitleEnabled: DEFAULT_UI_CONFIG.pageTemplate.subtitleEnabled,
@@ -1321,6 +1473,7 @@ async function getLoginUISettings(
     headerStyle: DEFAULT_UI_CONFIG.pageTemplate.headerStyle,
     footerStyle: DEFAULT_UI_CONFIG.pageTemplate.footerStyle,
     splitFrame: DEFAULT_UI_CONFIG.pageTemplate.splitFrame,
+    formFrame: DEFAULT_UI_CONFIG.pageTemplate.formFrame,
     splitPanelSide: DEFAULT_UI_CONFIG.pageTemplate.splitPanelSide,
     splitPanelWidth: DEFAULT_UI_CONFIG.pageTemplate.splitPanelWidth,
     splitBackgroundMode: DEFAULT_UI_CONFIG.pageTemplate.splitBackgroundMode,
@@ -2201,20 +2354,35 @@ function applyExternalProviderUsage(
     .filter((provider) => provider.enabled);
 }
 
+/** The pre-palette `themeTemplate` value for a palette and template, kept for older Login UI builds. */
+function deriveLegacyThemeTemplate(
+  palette: LoginUIPaletteId,
+  template: LoginUITemplateId
+): UIConfig['themeTemplate'] {
+  if (palette === 'classic') return 'classic';
+  if (palette === 'glass') return 'fullbleed-glass';
+  return template === 'split' ? 'split-brand-panel' : 'meridian';
+}
+
 /**
  * Build UI config from resolved Login UI settings
  */
 function buildUIConfig(loginUI: LoginUIResolved): UIConfig {
   return {
     theme: loginUI.theme,
-    themeTemplate: loginUI.themeTemplate,
+    // A fixed mode needs a mode to fix: with `auto` the visitor's device decides (see the catalog).
+    themeFixed: loginUI.themeFixed && loginUI.theme !== 'auto',
+    themeTemplate: deriveLegacyThemeTemplate(loginUI.palette, loginUI.template),
     branding: {
       logoUrl: loginUI.logoUrl,
       faviconUrl: loginUI.faviconUrl,
       brandName: loginUI.brandName,
+      headerName: loginUI.headerName,
     },
     pageTemplate: {
-      layout: loginUI.pageLayout,
+      template: loginUI.template,
+      palette: loginUI.palette,
+      layout: loginUI.template === 'split' ? 'split_panel' : 'centered_card',
       fontFamily: loginUI.fontFamily,
       fontScale: loginUI.fontScale,
       backgroundColor: loginUI.backgroundColor,
@@ -2222,7 +2390,9 @@ function buildUIConfig(loginUI: LoginUIResolved): UIConfig {
       titleColor: loginUI.titleColor,
       textColor: loginUI.textColor,
       copyColor: loginUI.copyColor,
+      formAreaColor: loginUI.formAreaColor,
       logoDisplay: loginUI.logoDisplay,
+      brandPanelLogoDisplay: loginUI.brandPanelLogoDisplay,
       logoLayout: loginUI.logoLayout,
       headerEnabled: loginUI.headerEnabled,
       subtitleEnabled: loginUI.subtitleEnabled,
@@ -2236,6 +2406,7 @@ function buildUIConfig(loginUI: LoginUIResolved): UIConfig {
       headerStyle: loginUI.headerStyle,
       footerStyle: loginUI.footerStyle,
       splitFrame: loginUI.splitFrame,
+      formFrame: loginUI.formFrame,
       splitPanelSide: loginUI.splitPanelSide,
       splitPanelWidth: loginUI.splitPanelWidth,
       splitBackgroundMode: loginUI.splitBackgroundMode,
@@ -2250,7 +2421,10 @@ function buildUIConfig(loginUI: LoginUIResolved): UIConfig {
     },
     appearance: {
       backgroundImageUrl: loginUI.backgroundImageUrl,
+      backgroundImageOpacity: loginUI.backgroundImageOpacity,
       loginPanelBackgroundImageUrl: loginUI.loginPanelBackgroundImageUrl,
+      brandPanelImageUrl: loginUI.brandPanelImageUrl,
+      brandPanelImageOpacity: loginUI.brandPanelImageOpacity,
       thumbnailUrl: loginUI.thumbnailUrl,
       customCss: loginUI.customCss,
       headerText: loginUI.headerText,
