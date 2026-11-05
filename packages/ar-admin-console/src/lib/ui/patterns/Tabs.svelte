@@ -277,7 +277,7 @@
 		align-items: center;
 		gap: 7px;
 		height: 42px;
-		padding: 0 14px;
+		padding: 0 var(--tab-pad-x);
 		border: 0;
 		background: none;
 		color: var(--text-secondary);

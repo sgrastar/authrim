@@ -7,6 +7,7 @@ import { jaSchemaSetting } from './schema-setting/ja';
 import { jaTenantGeneral } from './tenant-general/ja';
 import { jaSecurityKeys } from './security-keys/ja';
 import { jaNotices } from './notices/ja';
+import { jaCustomization } from './customization/ja';
 
 /**
  * Japanese is the source locale: every other locale must provide exactly these keys.
@@ -22,6 +23,7 @@ export const ja = {
 	...jaTenantGeneral,
 	...jaSecurityKeys,
 	...jaNotices,
+	...jaCustomization,
 	'app.adminLabel': '管理コンソール',
 	'app.env.dev': '開発環境',
 	'app.env.prod': '本番環境',
@@ -548,6 +550,7 @@ export const ja = {
 	'cond.problem.notNumber': '数字で入力してください。',
 	'cond.problem.badPattern': '正規表現として読み取れません。',
 	'color.pick': '{name} を選ぶ',
+	'color.opacity': '{name} の不透明度',
 	'color.invalid': '#RRGGBB の形式で入力してください。',
 	'color.contrast': '{against}とのコントラスト {ratio}:1',
 	'color.pass': '読みやすさの基準（AA）を満たしています',

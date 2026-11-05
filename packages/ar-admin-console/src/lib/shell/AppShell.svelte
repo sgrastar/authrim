@@ -27,8 +27,8 @@
 		 * the page takes the full width.
 		 */
 		standalone?: boolean;
-		/** Shown in the header's notification area; leave out for a header without one. */
-		notifications?: readonly ShellNotification[];
+		/** Shown in the header's notification area, which the header always has (empty: all zeros). */
+		notifications: readonly ShellNotification[];
 		ondismiss?: (id: string) => void;
 		/**
 		 * A full-width strip attached under the header categories, above the left nav and the page
