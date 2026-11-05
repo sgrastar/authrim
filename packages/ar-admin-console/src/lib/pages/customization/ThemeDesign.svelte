@@ -6,13 +6,13 @@
 	import ThemeGroup from './ThemeGroup.svelte';
 	import {
 		FONT_STACKS,
-		LOGIN_DEFAULTS,
 		TOPBAR_POSITIONS,
 		type ColourMode,
 		type FontScale,
 		type ThemeDraft,
 		type ThemeFont
 	} from './theme-draft';
+	import { paletteColours } from './theme-palettes';
 
 	/**
 	 * Design: colours, type, and how the screens are set: the colour mode, the form's spacing and
@@ -24,7 +24,7 @@
 	const fonts: readonly ThemeFont[] = ['system', 'serif', 'rounded', 'mono'];
 	const modes: readonly ColourMode[] = ['auto', 'light', 'dark'];
 	const fontScales: readonly FontScale[] = ['compact', 'comfortable', 'spacious'];
-	const defaults = $derived(LOGIN_DEFAULTS[scheme]);
+	const defaults = $derived(paletteColours(draft.palette, scheme));
 	// "Form bottom" places the choices on Split's form side, so only Split offers it (a value it
 	// already has stays listed, so the field never shows blank).
 	const topbars = $derived(
@@ -49,12 +49,8 @@
 			fallback={defaults.card}
 			bind:value={draft.cardColor}
 		/>
-		<ColorField
-			label={t('th.c.accent')}
-			alpha
-			fallback={defaults.accent}
-			bind:value={draft.accent}
-		/>
+		<!-- No opacity: the buttons it fills need a solid colour to pick their label colour against. -->
+		<ColorField label={t('th.c.accent')} fallback={defaults.accent} bind:value={draft.accent} />
 		<ColorField
 			label={t('th.c.title')}
 			alpha

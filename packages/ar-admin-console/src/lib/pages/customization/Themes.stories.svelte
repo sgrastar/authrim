@@ -229,20 +229,24 @@
 </Story>
 
 <Story
-	name="Colours can be see-through"
+	name="Colours can be see-through, the accent cannot"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.look') }));
-		const accent = await canvas.findByRole('textbox', { name: t('th.c.accent') });
-		await userEvent.type(accent, '#b4235a');
+		const title = await canvas.findByRole('textbox', { name: t('th.c.title') });
+		await userEvent.type(title, '#b4235a');
 		const outline = canvasElement.querySelector('.outline') as HTMLElement;
-		await waitFor(() => expect(outline.style.getPropertyValue('--ol-accent')).toBe('#b4235a'));
+		await waitFor(() => expect(outline.style.getPropertyValue('--ol-title')).toBe('#b4235a'));
 		// The opacity slider beside it: half see-through, in the preview too.
 		const slider = await canvas.findByRole('slider', {
-			name: t('color.opacity', { name: t('th.c.accent') })
+			name: t('color.opacity', { name: t('th.c.title') })
 		});
 		fireEvent.input(slider, { target: { value: '50' } });
-		await waitFor(() => expect(outline.style.getPropertyValue('--ol-accent')).toBe('#b4235a80'));
+		await waitFor(() => expect(outline.style.getPropertyValue('--ol-title')).toBe('#b4235a80'));
+		// The accent fills the buttons, whose label colour is picked against it: it stays solid.
+		await expect(
+			canvas.queryByRole('slider', { name: t('color.opacity', { name: t('th.c.accent') }) })
+		).toBeNull();
 	}}
 >
 	{#snippet template()}
@@ -443,22 +447,22 @@
 		);
 		const box = (selector: string) =>
 			(canvasElement.querySelector(selector) as HTMLElement).getBoundingClientRect();
-		// Floating card (the default): the brand panel runs under the form side, which has no fill.
-		await expect(box('.outline__panel').right).toBeGreaterThan(box('.outline__card').right);
+		// Full (the default): the panel is its own side.
+		await expect(box('.outline__panel').right).toBeLessThanOrEqual(box('.outline__main').left + 1);
+		// Floating card: the brand panel runs under the form side, which has no fill.
+		await userEvent.selectOptions(
+			await canvas.findByRole('combobox', { name: t('th.f.formFrame') }),
+			'card'
+		);
+		await waitFor(() =>
+			expect(box('.outline__panel').right).toBeGreaterThan(box('.outline__card').right)
+		);
 		await expect(
 			getComputedStyle(canvasElement.querySelector('.outline__main') as HTMLElement).backgroundColor
 		).toBe('rgba(0, 0, 0, 0)');
 		// The panel's wording stays on its own side.
 		await expect(box('.outline__panel-content').right).toBeLessThanOrEqual(
 			box('.outline__main').left + 1
-		);
-		// Full: the panel is its own side again.
-		await userEvent.selectOptions(
-			await canvas.findByRole('combobox', { name: t('th.f.formFrame') }),
-			'full'
-		);
-		await waitFor(() =>
-			expect(box('.outline__panel').right).toBeLessThanOrEqual(box('.outline__main').left + 1)
 		);
 	}}
 >
@@ -477,26 +481,26 @@
 		const frame = await canvas.findByRole('combobox', { name: t('th.f.formFrame') });
 		const height = (selector: string) =>
 			(canvasElement.querySelector(selector) as HTMLElement).getBoundingClientRect().height;
-		// A floating card (to begin with): a box inside its side, with room around it.
-		await expect(frame).toHaveValue('card');
-		await expect(height('.outline__card')).toBeLessThan(height('.outline__main') - 40);
-		await expect(
-			parseFloat(
-				getComputedStyle(canvasElement.querySelector('.outline__card') as HTMLElement)
-					.borderTopLeftRadius
-			)
-		).toBeGreaterThan(0);
-		// Full: the form area fills its side, with no card around it.
-		await userEvent.selectOptions(frame, 'full');
-		await waitFor(() =>
-			expect(height('.outline__card')).toBeGreaterThan(height('.outline__main') - 60)
-		);
+		// Full (to begin with): the form area fills its side, with no card around it.
+		await expect(frame).toHaveValue('full');
+		await expect(height('.outline__card')).toBeGreaterThan(height('.outline__main') - 60);
 		await expect(
 			parseFloat(
 				getComputedStyle(canvasElement.querySelector('.outline__card') as HTMLElement)
 					.borderTopLeftRadius
 			)
 		).toBe(0);
+		// A floating card: a box inside its side, with room around it.
+		await userEvent.selectOptions(frame, 'card');
+		await waitFor(() =>
+			expect(height('.outline__card')).toBeLessThan(height('.outline__main') - 40)
+		);
+		await expect(
+			parseFloat(
+				getComputedStyle(canvasElement.querySelector('.outline__card') as HTMLElement)
+					.borderTopLeftRadius
+			)
+		).toBeGreaterThan(0);
 	}}
 >
 	{#snippet template()}
@@ -806,6 +810,64 @@
 		const screen = canvasElement.querySelector('.outline') as HTMLElement;
 		await expect(screen).toHaveAttribute('dir', 'rtl');
 		await expect(screen).toHaveAttribute('lang', 'ar');
+	}}
+>
+	{#snippet template()}
+		<Themes />
+	{/snippet}
+</Story>
+
+<Story
+	name="A palette sets the colours and the shape, whatever the template"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const outline = canvasElement.querySelector('.outline') as HTMLElement;
+		// Meridian to begin with: its blue accent, rounded form area.
+		await expect(outline.style.getPropertyValue('--ol-accent')).toBe('#2f52c4');
+		await expect(outline.style.getPropertyValue('--ol-card-radius')).toBe('20px');
+		await userEvent.click(
+			await canvas.findByRole('radio', { name: new RegExp(t('th.palette.glass')) })
+		);
+		await waitFor(() => expect(outline.style.getPropertyValue('--ol-accent')).toBe('#b0301b'));
+		// Glass is sharp-cornered and frosted.
+		await expect(outline.style.getPropertyValue('--ol-card-radius')).toBe('0px');
+		await expect(outline).toHaveAttribute('data-frost', 'true');
+		// It combines with another template; the colour fields show the palette's colours.
+		await userEvent.click(
+			await canvas.findByRole('radio', { name: new RegExp(t('th.tpl.split')) })
+		);
+		await expect(outline).toHaveAttribute('data-template', 'split');
+		await expect(outline.style.getPropertyValue('--ol-card-radius')).toBe('0px');
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.look') }));
+		await expect(await canvas.findByRole('textbox', { name: t('th.c.accent') })).toHaveAttribute(
+			'placeholder',
+			'#b0301b'
+		);
+		// A colour of one's own still replaces the palette's.
+		await userEvent.type(await canvas.findByRole('textbox', { name: t('th.c.accent') }), '#112233');
+		await waitFor(() => expect(outline.style.getPropertyValue('--ol-accent')).toBe('#112233'));
+	}}
+>
+	{#snippet template()}
+		<Themes />
+	{/snippet}
+</Story>
+
+<Story
+	name="Minimal has no card, whatever the palette"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(
+			await canvas.findByRole('radio', { name: new RegExp(t('th.palette.glass')) })
+		);
+		await userEvent.click(
+			await canvas.findByRole('radio', { name: new RegExp(t('th.tpl.minimal')) })
+		);
+		const card = canvasElement.querySelector('.outline__card') as HTMLElement;
+		const style = getComputedStyle(card);
+		await expect(style.boxShadow).toBe('none');
+		await expect(style.backdropFilter === 'none' || style.backdropFilter === '').toBe(true);
+		await expect(style.backgroundColor).toBe('rgba(0, 0, 0, 0)');
 	}}
 >
 	{#snippet template()}

@@ -4,7 +4,8 @@
 	import Icon from '#lib/ui/icons/Icon.svelte';
 	import Select from '#lib/ui/primitives/Select.svelte';
 	import SegmentedControl from '#lib/ui/primitives/SegmentedControl.svelte';
-	import { DENSITIES, FONT_STACKS, LOGIN_DEFAULTS, type ThemeDraft } from './theme-draft';
+	import { DENSITIES, FONT_STACKS, type ThemeDraft } from './theme-draft';
+	import { paletteColours, paletteOf } from './theme-palettes';
 	import { parseFooter } from './footer-links';
 	import { PREVIEW_SCREENS, type PreviewScreen } from './theme-sections';
 
@@ -30,7 +31,8 @@
 	let { draft, scheme, screen = $bindable('signIn'), mode = $bindable('light') }: Props = $props();
 
 	// What is not set here is the real screens' own colour, in the mode shown.
-	const defaults = $derived(LOGIN_DEFAULTS[scheme]);
+	const defaults = $derived(paletteColours(draft.palette, scheme));
+	const shape = $derived(paletteOf(draft.palette).shape);
 
 	let width = $state<'mobile' | 'desktop'>('desktop');
 
@@ -200,6 +202,10 @@
 				style:--ol-title-own={draft.titleColor || undefined}
 				style:--ol-copy-own={draft.copyColor || undefined}
 				style:--ol-density={DENSITIES[draft.fontScale]}
+				style:--ol-card-radius={`${shape.cardRadius}px`}
+				style:--ol-control-radius={`${shape.controlRadius}px`}
+				data-shadow={shape.shadow}
+				data-frost={shape.frost ? 'true' : 'false'}
 				style:font-family={FONT_STACKS[draft.font]}
 			>
 				{#if backgroundUrl}
@@ -725,8 +731,24 @@
 		width: 100%;
 		padding: calc(32px * var(--ol-density, 1));
 		border: 1px solid var(--border);
-		border-radius: var(--radius-lg);
+		border-radius: var(--ol-card-radius, var(--radius-lg));
 		background: var(--ol-card);
+	}
+
+	/* The palette's shape: its shadow, and frosted glass over the page. */
+	.outline[data-shadow='soft'] .outline__card {
+		box-shadow:
+			0 1px 2px color-mix(in srgb, var(--ol-text) 6%, transparent),
+			0 10px 28px color-mix(in srgb, var(--ol-text) 10%, transparent);
+	}
+
+	.outline[data-shadow='deep'] .outline__card {
+		box-shadow: 0 24px 60px color-mix(in srgb, var(--ol-text) 35%, transparent);
+	}
+
+	.outline[data-frost='true'] .outline__card {
+		background: color-mix(in srgb, var(--ol-card) 55%, transparent);
+		backdrop-filter: blur(14px);
 	}
 
 	/* Split, form frame "Full": the form area fills its side, no card around it. */
@@ -765,9 +787,12 @@
 		position: relative;
 	}
 
+	/* Minimal has no card box: the form sits on the page, whatever the palette's shape. */
 	.outline[data-template='minimal'] .outline__card {
 		border-color: transparent;
 		background: transparent;
+		backdrop-filter: none;
+		box-shadow: none;
 	}
 
 	.outline__card h3 {
@@ -842,7 +867,7 @@
 		display: block;
 		height: 44px;
 		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
+		border-radius: var(--ol-control-radius, var(--radius-sm));
 		background: var(--bg-input);
 	}
 
@@ -853,7 +878,7 @@
 		gap: 8px;
 		height: 44px;
 		font-size: var(--preview-fs-label);
-		border-radius: var(--radius-sm);
+		border-radius: var(--ol-control-radius, var(--radius-sm));
 		background: var(--ol-accent);
 		color: var(--text-inverse);
 		font-weight: var(--fw-semibold);

@@ -4,6 +4,7 @@
 	import SegmentedControl from '#lib/ui/primitives/SegmentedControl.svelte';
 	import Select from '#lib/ui/primitives/Select.svelte';
 	import ThemeGroup from './ThemeGroup.svelte';
+	import { PALETTE_IDS } from './theme-palettes';
 	import {
 		SPLIT_CHOICES,
 		type BrandAlign,
@@ -15,7 +16,7 @@
 		type ThemeDraft
 	} from './theme-draft';
 
-	/** Layout: the template, and (Split) how the template is laid out. */
+	/** Layout: the template, the palette, and (Split) how the template is laid out. */
 	let { draft = $bindable() }: { draft: ThemeDraft } = $props();
 
 	/** The values of a choice, with their labels (`th.<group>.<value>`). */
@@ -35,6 +36,20 @@
 			{ value: 'minimal', label: t('th.tpl.minimal'), description: t('th.tpl.minimal.d') }
 		]}
 		bind:value={draft.template}
+	/>
+</ThemeGroup>
+
+<ThemeGroup title={t('th.g.palette')} info={t('th.g.palette.d')}>
+	<ChoiceCards
+		label={t('th.g.palette')}
+		hideLabel
+		columns={1}
+		options={PALETTE_IDS.map((id) => ({
+			value: id,
+			label: t(`th.palette.${id}` as MessageKey),
+			description: t(`th.palette.${id}.d` as MessageKey)
+		}))}
+		bind:value={draft.palette}
 	/>
 </ThemeGroup>
 
