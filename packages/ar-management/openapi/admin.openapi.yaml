@@ -32384,6 +32384,112 @@ paths:
           $ref: '#/components/responses/Error'
       security:
         - adminSessionCookie: []
+  /api/admin/me/step-up/requirements:
+    get:
+      tags:
+        - Admin Passkeys
+      operationId: getApiAdminMeStepUpRequirements
+      summary: List the step-up levels of admin operations
+      description: >-
+        Every catalog operation's step-up level in the selected tenant (the catalog floor, raised by
+        the tenant's security.admin_step_up_overrides, or L0 when the platform switched enforcement
+        off and the operation is not always enforced), with how long the session's passkey and
+        second factor stay fresh. Lets the console tell an admin before an operation that it will ask
+        for a passkey (L1) or a passkey and a security key (L2). A hint only: each operation's own
+        gate decides, and an operation that acts on another tenant (the admin's own second factors
+        act on the home tenant) is judged against that tenant's settings. Signed-in admins only.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        '200':
+          description: The levels and the session's evidence.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - tenant_id
+                  - enforced
+                  - evidence_window_seconds
+                  - evidence
+                  - second_factor_registered
+                  - operations
+                properties:
+                  tenant_id:
+                    type: string
+                    description: The tenant the levels apply to.
+                  enforced:
+                    type: boolean
+                    description: False only when the platform switched step-up enforcement off.
+                  evidence_window_seconds:
+                    type: integer
+                    description: How long a verified passkey or second factor counts as fresh.
+                  evidence:
+                    type: object
+                    required:
+                      - passkey_fresh_until
+                      - second_factor_fresh_until
+                    properties:
+                      passkey_fresh_until:
+                        type:
+                          - integer
+                          - 'null'
+                        description: Until when (ms since the epoch) the session's passkey is fresh; null when it is not.
+                      second_factor_fresh_until:
+                        type:
+                          - integer
+                          - 'null'
+                        description: Until when (ms since the epoch) the session's second factor is fresh; null when it is not.
+                  second_factor_registered:
+                    type: boolean
+                    description: Whether the admin has an active second factor (security key), which L2 needs.
+                  operations:
+                    type: object
+                    description: Keyed by operation name.
+                    additionalProperties:
+                      type: object
+                      required:
+                        - level
+                        - catalog_level
+                        - always_enforced
+                      properties:
+                        level:
+                          type: string
+                          enum:
+                            - L0
+                            - L1
+                            - L2
+                          description: The level asked of a signed-in admin in this tenant.
+                        catalog_level:
+                          type: string
+                          enum:
+                            - L1
+                            - L2
+                          description: The catalog floor, which a tenant may raise but not lower.
+                        always_enforced:
+                          type: boolean
+                          description: Whether the platform's enforcement switch leaves the operation enforced.
+        '401':
+          description: No admin session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: >-
+            step_up_human_required: the caller is a machine or agent principal, which cannot meet a
+            step-up and is not shown the tenant's policy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: The step-up policy could not be read.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
   /api/admin/me/step-up/receipts:
     post:
       tags:

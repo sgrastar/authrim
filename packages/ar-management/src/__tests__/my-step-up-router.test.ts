@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 
@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({
   issueAdminStepUpReceipt: vi.fn(),
   writeAdminAuditLog: vi.fn(),
   isActive: vi.fn(),
+  listActiveByUser: vi.fn(),
+  readAdminStepUpPolicy: vi.fn(),
   auth: undefined as Record<string, unknown> | undefined,
 }));
 
@@ -20,12 +22,14 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   };
   class MockAdminSecondFactorRepository {
     isActive = mocks.isActive;
+    listActiveByUser = mocks.listActiveByUser;
   }
   return {
     ...actual,
     AdminSecondFactorRepository: MockAdminSecondFactorRepository,
     requireDedicatedAdminDatabaseAdapter: vi.fn(() => ({})),
     issueAdminStepUpReceipt: mocks.issueAdminStepUpReceipt,
+    readAdminStepUpPolicy: mocks.readAdminStepUpPolicy,
     adminAuthMiddleware:
       () =>
       async (c: { set: (key: string, value: unknown) => void }, next: () => Promise<void>) => {
@@ -39,7 +43,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   };
 });
 
-import { AdminStepUpError } from '@authrim/ar-lib-core';
+import { ADMIN_STEP_UP_OPERATIONS, AdminStepUpError } from '@authrim/ar-lib-core';
 import { myStepUpRouter } from '../routes/admin-management/my-step-up';
 
 const AUTH = { userId: 'admin-1', authMethod: 'session', sessionId: 'sess-1' };
@@ -144,5 +148,143 @@ describe('myStepUpRouter', () => {
     mocks.issueAdminStepUpReceipt.mockRejectedValue(new Error('DO unavailable'));
 
     expect((await post({ step_up_id: 'asr_requirement' })).status).toBe(500);
+  });
+});
+
+interface RequirementsBody {
+  operations: Record<string, { level: string; catalog_level: string; always_enforced: boolean }>;
+  evidence: { passkey_fresh_until: number | null; second_factor_fresh_until: number | null };
+  enforced: boolean;
+  second_factor_registered: boolean;
+  [key: string]: unknown;
+}
+
+describe('GET /api/admin/me/step-up/requirements', () => {
+  const NOW = 1_800_000_000_000;
+
+  async function get() {
+    const app = new Hono<{ Bindings: Env }>();
+    app.route('/api/admin/me/step-up', myStepUpRouter);
+    const response = await app.request('/api/admin/me/step-up/requirements', {}, {});
+    return {
+      status: response.status,
+      cache: response.headers.get('Cache-Control'),
+      body: await response.json<RequirementsBody>(),
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    mocks.auth = {
+      ...AUTH,
+      tenantId: 'tenant-a',
+      sessionTenantId: 'default',
+      mfaVerified: true,
+      authenticationTimeMs: NOW - 60_000,
+      secondFactorId: 'factor-1',
+      secondFactorVerifiedAtMs: NOW - 10 * 60_000,
+    };
+    mocks.readAdminStepUpPolicy.mockResolvedValue({ overrides: undefined, enforced: undefined });
+    mocks.listActiveByUser.mockResolvedValue([{ id: 'factor-1' }]);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('lists every catalog operation at its level in the selected tenant', async () => {
+    const { status, cache, body } = await get();
+
+    expect(status).toBe(200);
+    expect(cache).toBe('no-store');
+    expect(mocks.readAdminStepUpPolicy).toHaveBeenCalledWith(expect.anything(), 'tenant-a');
+    expect(Object.keys(body.operations).sort()).toEqual(
+      Object.keys(ADMIN_STEP_UP_OPERATIONS).sort()
+    );
+    expect(body.operations['client.secret.rotate']).toEqual({
+      level: 'L1',
+      catalog_level: 'L1',
+      always_enforced: false,
+    });
+    expect(body.operations['admin.second_factor.add']).toEqual({
+      level: 'L2',
+      catalog_level: 'L2',
+      always_enforced: true,
+    });
+    expect(body).toMatchObject({
+      tenant_id: 'tenant-a',
+      enforced: true,
+      evidence_window_seconds: 300,
+      second_factor_registered: true,
+    });
+  });
+
+  it('reports how long each factor stays fresh', async () => {
+    const { body } = await get();
+
+    // The passkey was verified a minute ago; the security key ten minutes ago (stale).
+    expect(body.evidence).toEqual({
+      passkey_fresh_until: NOW - 60_000 + 5 * 60_000,
+      second_factor_fresh_until: null,
+    });
+  });
+
+  it("applies the tenant's raised levels", async () => {
+    mocks.readAdminStepUpPolicy.mockResolvedValue({
+      overrides: { 'client.secret.rotate': 'L2' },
+      enforced: true,
+    });
+
+    const { body } = await get();
+
+    expect(body.operations['client.secret.rotate']).toMatchObject({
+      level: 'L2',
+      catalog_level: 'L1',
+    });
+  });
+
+  it('shows L0 when enforcement is off, except for the always-enforced operations', async () => {
+    mocks.readAdminStepUpPolicy.mockResolvedValue({ overrides: undefined, enforced: false });
+
+    const { body } = await get();
+
+    expect(body.enforced).toBe(false);
+    expect(body.operations['tenant.delete'].level).toBe('L0');
+    expect(body.operations['admin_step_up.policy.relax'].level).toBe('L2');
+  });
+
+  it('says when the admin has no security key yet', async () => {
+    mocks.listActiveByUser.mockResolvedValue([]);
+
+    expect((await get()).body.second_factor_registered).toBe(false);
+  });
+
+  it('refuses a machine caller without reading the policy', async () => {
+    mocks.auth = { userId: 'machine-1', authMethod: 'machine_access_token', tenantId: 'tenant-a' };
+
+    const { status, body } = await get();
+
+    expect(status).toBe(403);
+    expect(body).toMatchObject({ error: 'step_up_human_required' });
+    expect(mocks.readAdminStepUpPolicy).not.toHaveBeenCalled();
+    expect(mocks.listActiveByUser).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the policy cannot be read', async () => {
+    mocks.readAdminStepUpPolicy.mockRejectedValue(new Error('KV down'));
+
+    const { status, body } = await get();
+
+    expect(status).toBe(503);
+    expect(body).toMatchObject({ error: 'step_up_unavailable' });
+  });
+
+  it('requires a signed-in admin', async () => {
+    mocks.auth = undefined;
+
+    expect((await get()).status).toBe(401);
+    expect(mocks.readAdminStepUpPolicy).not.toHaveBeenCalled();
   });
 });

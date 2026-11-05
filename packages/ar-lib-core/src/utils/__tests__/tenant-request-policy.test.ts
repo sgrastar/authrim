@@ -46,6 +46,8 @@ describe('tenant request path classification', () => {
     '/api/admin/me/passkeys/credential-id/unknown',
     '/api/admin/me/reauth/passkey/unknown',
     '/api/admin/me/step-up/receipts/asp_receipt',
+    // Step-up requirements depend on the selected tenant's settings.
+    '/api/admin/me/step-up/requirements',
     '/api/admin/me/reauth/second-factor/unknown',
     '/api/admin/me/second-factors/factor-id/unknown',
     '/api/admin/me/second-factors/webauthn/unknown/extra',
