@@ -124,8 +124,9 @@
 
 	const againstHex = $derived(contrastWith ? normalizeHex(contrastWith) : null);
 	// A see-through colour has no contrast of its own (it depends on what is behind it): none is shown.
+	const seeThrough = $derived(alpha && /^#[0-9a-f]{8}$/i.test(value) && !/ff$/i.test(value));
 	const ratio = $derived(
-		value && againstHex && opacity >= 100 ? contrastRatio(rgbOf(value), againstHex) : null
+		value && againstHex && !seeThrough ? contrastRatio(rgbOf(value), againstHex) : null
 	);
 	const passes = $derived(ratio !== null && ratio >= minContrast);
 	const shown = $derived(touched && invalid ? t('color.invalid') : undefined);
