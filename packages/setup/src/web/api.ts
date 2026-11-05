@@ -19,6 +19,7 @@ import {
   hasCompleteLogArchiveState,
   LogArchiveApi,
   LogArchiveApiError,
+  formatLogArchiveFailure,
 } from '../core/log-archive.js';
 import {
   publishLogArchiveSecrets,
@@ -2447,6 +2448,10 @@ export function createApiRoutes(): Hono {
       {
         success: false,
         error: code,
+        // Which step Cloudflare refused and what it said (redacted), so the cause is visible.
+        ...(error instanceof LogArchiveApiError && error.detail
+          ? { detail: formatLogArchiveFailure(error.status, error.detail) }
+          : {}),
         ...(error instanceof LogArchiveTokenIssuanceError
           ? {
               cleanupRequired: error.cleanupRequired,

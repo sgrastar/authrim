@@ -163,6 +163,24 @@ describe('Catalog setup API', () => {
     expect(response.status).toBe(error instanceof LogArchiveApiError ? 403 : 400);
     expect(await response.json()).toMatchObject({ error: error.message });
   });
+  it('returns the stable code, and the refused step and Cloudflare’s answer as detail', async () => {
+    vi.mocked(LogArchiveApi.prototype.verifyCatalogCredentials).mockRejectedValue(
+      new LogArchiveApiError(403, 'log_archive_permission_or_subscription_required', {
+        step: 'token_verify',
+        cloudflare: [{ code: 10000, message: 'Authentication error' }],
+      })
+    );
+    const response = await createApiRoutes().request(
+      '/log-archive/configure',
+      post({ environment: 'demo', mode: 'scheduled', readToken: 'read', writeToken: 'write' })
+    );
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      success: false,
+      error: 'log_archive_permission_or_subscription_required',
+      detail: 'step token_verify, HTTP 403, Cloudflare: code 10000: Authentication error',
+    });
+  });
   it('rejects pipeline configuration without a staged sink', async () => {
     await stageLogArchiveSecrets(root, 'demo', { readToken: 'read', writeToken: 'write' });
     const response = await createApiRoutes().request(

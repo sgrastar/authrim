@@ -1,5 +1,6 @@
 import * as input from '../web/log-archive-input.js';
 import { resolveLogArchiveTokenInput } from '../core/log-archive-token-issuance.js';
+import { LogArchiveApiError } from '../core/log-archive.js';
 import { describe, expect, it } from 'vitest';
 import {
   logArchiveInputError,
@@ -121,6 +122,25 @@ describe('log archive input UX', () => {
       expect((unknown as Error).message).toBe(
         logArchiveErrorMessage('log_archive_token_issuance_failed', locale)
       );
+    }
+  );
+  it.each(['ja', 'en'])(
+    'adds the refused step and Cloudflare’s answer to a CLI refusal, and nothing else (%s)',
+    async (locale) => {
+      const error = await input
+        .withLogArchiveCliErrors(locale, async () => {
+          throw new LogArchiveApiError(403, 'log_archive_permission_or_subscription_required', {
+            step: 'pipeline_stream',
+            cloudflare: [{ code: 1234, message: 'Workers Paid plan is required' }],
+          });
+        })
+        .catch((reason: unknown) => reason as Error);
+      expect(error.message).toBe(
+        logArchiveErrorMessage('log_archive_permission_or_subscription_required', locale) +
+          ' [step pipeline_stream, HTTP 403, Cloudflare: code 1234: Workers Paid plan is required]'
+      );
+      // The hint names the plan a Pipeline needs, so the cause can be read without a lookup.
+      expect(error.message).toContain('Workers Paid');
     }
   );
 });
