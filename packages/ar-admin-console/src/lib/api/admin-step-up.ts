@@ -125,7 +125,6 @@ export interface StepUpOperationRequirement {
 export interface StepUpRequirements {
 	tenant_id: string;
 	enforced: boolean;
-	human_session: boolean;
 	evidence_window_seconds: number;
 	evidence: {
 		/** Until when (ms) the session's passkey is fresh, or null. */

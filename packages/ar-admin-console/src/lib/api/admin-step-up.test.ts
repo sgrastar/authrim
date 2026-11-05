@@ -147,7 +147,6 @@ describe('stepUpFactorsNeeded', () => {
 	): StepUpRequirements => ({
 		tenant_id: 'tenant-a',
 		enforced: true,
-		human_session: true,
 		evidence_window_seconds: 300,
 		evidence: {
 			passkey_fresh_until: passkeyUntil,

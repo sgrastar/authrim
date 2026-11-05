@@ -216,7 +216,6 @@ describe('GET /api/admin/me/step-up/requirements', () => {
     expect(body).toMatchObject({
       tenant_id: 'tenant-a',
       enforced: true,
-      human_session: true,
       evidence_window_seconds: 300,
       second_factor_registered: true,
     });
@@ -262,17 +261,14 @@ describe('GET /api/admin/me/step-up/requirements', () => {
     expect((await get()).body.second_factor_registered).toBe(false);
   });
 
-  it('reports nothing fresh for a machine caller', async () => {
+  it('refuses a machine caller without reading the policy', async () => {
     mocks.auth = { userId: 'machine-1', authMethod: 'machine_access_token', tenantId: 'tenant-a' };
 
     const { status, body } = await get();
 
-    expect(status).toBe(200);
-    expect(body).toMatchObject({
-      human_session: false,
-      second_factor_registered: false,
-      evidence: { passkey_fresh_until: null, second_factor_fresh_until: null },
-    });
+    expect(status).toBe(403);
+    expect(body).toMatchObject({ error: 'step_up_human_required' });
+    expect(mocks.readAdminStepUpPolicy).not.toHaveBeenCalled();
     expect(mocks.listActiveByUser).not.toHaveBeenCalled();
   });
 

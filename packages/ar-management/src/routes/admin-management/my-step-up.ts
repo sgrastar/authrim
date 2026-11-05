@@ -65,6 +65,17 @@ myStepUpRouter.get('/requirements', async (c) => {
   if (!auth?.tenantId) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_AUTH_REQUIRED);
   }
+  // A hint for a signed-in admin's console. Machine and agent callers cannot meet a step-up and
+  // have no console to show it in, so they are not shown the tenant's policy either.
+  if (!isAdminStepUpHumanSession(auth)) {
+    return c.json(
+      {
+        error: 'step_up_human_required',
+        error_description: 'Step-up requirements are for a signed-in admin',
+      },
+      403
+    );
+  }
 
   let policy: AdminStepUpPolicy;
   try {
@@ -92,31 +103,24 @@ myStepUpRouter.get('/requirements', async (c) => {
     };
   }
 
-  // Only a human session can meet a step-up: for anything else there is nothing to be fresh.
-  const human = isAdminStepUpHumanSession(auth);
-  const freshness = human
-    ? describeAdminStepUpFreshness(auth, Date.now())
-    : { passkeyFreshUntil: null, secondFactorFreshUntil: null };
-  let secondFactorRegistered = false;
-  if (human) {
-    try {
-      const factors = await new AdminSecondFactorRepository(
-        requireDedicatedAdminDatabaseAdapter(c.env, 'admin-management')
-      ).listActiveByUser(auth.userId);
-      secondFactorRegistered = factors.length > 0;
-    } catch (error) {
-      stepUpLog(c).error('Failed to read second factors for step-up requirements', {
-        action: 'admin_step_up_requirements',
-        errorType: error instanceof Error ? error.name : 'Unknown',
-      });
-      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-    }
+  const freshness = describeAdminStepUpFreshness(auth, Date.now());
+  let secondFactorRegistered: boolean;
+  try {
+    const factors = await new AdminSecondFactorRepository(
+      requireDedicatedAdminDatabaseAdapter(c.env, 'admin-management')
+    ).listActiveByUser(auth.userId);
+    secondFactorRegistered = factors.length > 0;
+  } catch (error) {
+    stepUpLog(c).error('Failed to read second factors for step-up requirements', {
+      action: 'admin_step_up_requirements',
+      errorType: error instanceof Error ? error.name : 'Unknown',
+    });
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 
   return c.json({
     tenant_id: auth.tenantId,
     enforced: policy.enforced !== false,
-    human_session: human,
     evidence_window_seconds: ADMIN_STEP_UP_EVIDENCE_WINDOW_MS / 1000,
     evidence: {
       passkey_fresh_until: freshness.passkeyFreshUntil,
