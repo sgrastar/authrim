@@ -114,6 +114,9 @@
 			if (key) return t(key);
 		}
 		if (error instanceof Error && error.name === 'NotAllowedError') return t('sk.error.cancelled');
+		// The authenticator already holds a credential from excludeCredentials (a sign-in passkey
+		// or a key registered here): the browser refuses before the server sees anything.
+		if (error instanceof Error && error.name === 'InvalidStateError') return t('sk.error.inUse');
 		return t('sk.error');
 	}
 

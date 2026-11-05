@@ -272,6 +272,78 @@ describe('admin passkey login origin resolution', () => {
       })
     );
   });
+
+  it('stores the AAGUID of the initial Admin passkey', async () => {
+    mocks.verifyRegistrationResponse.mockResolvedValueOnce({
+      verified: true,
+      registrationInfo: {
+        credentialID: new Uint8Array([1, 2, 3]),
+        credentialPublicKey: new Uint8Array([4, 5, 6]),
+        counter: 0,
+        aaguid: 'fbfc3007-154e-4ecc-8c0b-6e020557d7bd',
+      },
+    });
+    const config = {
+      get: vi.fn().mockResolvedValue(
+        JSON.stringify({
+          challenge: 'admin-registration-challenge',
+          rpID: 'admin.authrim.example',
+          origin: 'https://admin.authrim.example',
+          userId: 'admin-1',
+          token: 'setup-token',
+        })
+      ),
+      delete: vi.fn(),
+    };
+    const db = createMockAdminDb([
+      {
+        id: 'setup-token',
+        admin_user_id: 'admin-1',
+        status: 'pending',
+        expires_at: Date.now() + 60_000,
+      },
+      adminUserRow(),
+    ]);
+
+    const response = await adminSetupApiApp.request(
+      '/api/admin/setup-token/passkey/complete',
+      {
+        method: 'POST',
+        headers: {
+          Origin: 'https://admin.authrim.example',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          token: 'setup-token',
+          challenge_id: 'challenge-1',
+          origin: 'https://admin.authrim.example',
+          passkey_response: {
+            id: 'credential-1',
+            rawId: 'credential-1',
+            type: 'public-key',
+            response: { transports: ['internal'] },
+          },
+        }),
+      },
+      {
+        DB_ADMIN: db,
+        AUTHRIM_CONFIG: config,
+        ISSUER_URL: 'https://authrim.example',
+        ADMIN_UI_URL: 'https://admin.authrim.example',
+      }
+    );
+
+    expect(response.status).toBe(200);
+    const sqls = db.prepare.mock.calls as unknown as [string][];
+    const insertIndex = sqls.findIndex(([sql]) => sql.includes('INSERT INTO admin_passkeys'));
+    expect(insertIndex).toBeGreaterThanOrEqual(0);
+    const statement = db.prepare.mock.results[insertIndex]?.value as {
+      bind: ReturnType<typeof vi.fn>;
+    };
+    // Column order: id, admin_user_id, credential_id, public_key, counter, device_name,
+    // transports_json, attestation_type, aaguid, ...
+    expect(statement.bind.mock.calls[0]?.[8]).toBe('fbfc3007-154e-4ecc-8c0b-6e020557d7bd');
+  });
 });
 
 describe('admin setup API rejection matrix', () => {
