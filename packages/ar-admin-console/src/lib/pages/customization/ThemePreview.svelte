@@ -254,7 +254,6 @@
 						<div class="outline__body">
 							<div class="outline__col">
 								<div class="outline__card">
-									{#if showTools && topbar === 'in_card'}{@render tools()}{/if}
 									<!-- The login area's own picture, under what the box holds (not drawn in Minimal). -->
 									{#if cardUrl && draft.template !== 'minimal'}
 										<span
@@ -263,6 +262,7 @@
 											style:opacity={draft.cardImageOpacity / 100}
 										></span>
 									{/if}
+									{#if showTools && topbar === 'in_card'}{@render tools()}{/if}
 									{#if !draft.header && !split}{@render brand()}{/if}
 									<h3>{title}</h3>
 									{#if screen === 'signIn'}

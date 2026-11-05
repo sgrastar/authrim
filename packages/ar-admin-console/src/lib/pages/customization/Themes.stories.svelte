@@ -271,6 +271,31 @@
 </Story>
 
 <Story
+	name="The topbar inside the card stays above the card's picture"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const png = new File(['x'], 'card.png', { type: 'image/png' });
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.images') }));
+		const files = canvasElement.querySelectorAll<HTMLInputElement>('input[type="file"]');
+		await userEvent.upload(files[files.length - 1], png);
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.look') }));
+		await userEvent.selectOptions(
+			await canvas.findByRole('combobox', { name: t('th.f.topbar') }),
+			'in_card'
+		);
+		const card = canvasElement.querySelector('.outline__card') as HTMLElement;
+		await waitFor(() => expect(card.querySelector(':scope > .tools')).not.toBeNull());
+		// The picture comes first, so what the card holds paints over it.
+		const children = [...card.children];
+		await expect(children.indexOf(card.querySelector('.outline__image') as Element)).toBe(0);
+	}}
+>
+	{#snippet template()}
+		<Themes />
+	{/snippet}
+</Story>
+
+<Story
 	name="Mode is auto, or fixed whatever the device uses"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);

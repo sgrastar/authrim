@@ -87,17 +87,10 @@
 	});
 	$effect(() => report(invalid));
 
-	// The opacity chosen last, kept while the box is cleared to type another colour.
-	let kept = $state(untrack(() => (alpha ? splitAlpha(value).alpha : 100)));
-	$effect(() => {
-		if (alpha && value) kept = splitAlpha(value).alpha;
-	});
-
-	/** The opacity now, 0–100 (always 100 without `alpha`). */
-	const opacity = $derived(alpha ? (value ? splitAlpha(value).alpha : kept) : 100);
+	/** The opacity in effect, 0–100: an empty field is the theme's own colour, fully opaque. */
+	const opacity = $derived(alpha ? splitAlpha(value).alpha : 100);
 
 	function store(rgb: string, percent: number) {
-		kept = percent;
 		const next = alpha ? joinAlpha(rgb, percent) : rgb;
 		written = next;
 		value = next;
@@ -130,7 +123,10 @@
 	}
 
 	const againstHex = $derived(contrastWith ? normalizeHex(contrastWith) : null);
-	const ratio = $derived(value && againstHex ? contrastRatio(rgbOf(value), againstHex) : null);
+	// A see-through colour has no contrast of its own (it depends on what is behind it): none is shown.
+	const ratio = $derived(
+		value && againstHex && opacity >= 100 ? contrastRatio(rgbOf(value), againstHex) : null
+	);
 	const passes = $derived(ratio !== null && ratio >= minContrast);
 	const shown = $derived(touched && invalid ? t('color.invalid') : undefined);
 	const describedBy = $derived(

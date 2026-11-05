@@ -55,15 +55,39 @@
 		await waitFor(() => expect(swatch.style.getPropertyValue('--swatch')).toBe('#3f4fc480'));
 		await expect(canvas.getByRole('textbox')).toHaveValue('#3f4fc4');
 		await expect(canvas.getByText('50%')).toBeInTheDocument();
-		// A new colour keeps the opacity.
+		// Typing over the colour keeps the opacity.
 		const hex = canvas.getByRole('textbox');
-		await userEvent.clear(hex);
-		await userEvent.type(hex, '#112233');
+		await userEvent.tripleClick(hex);
+		await userEvent.keyboard('#112233');
 		await waitFor(() => expect(swatch.style.getPropertyValue('--swatch')).toBe('#11223380'));
+		// Clearing the box is "not set": the theme's own colour, fully opaque, in the slider too.
+		await userEvent.clear(hex);
+		await waitFor(() => expect(canvas.getByText('100%')).toBeInTheDocument());
 	}}
 >
 	{#snippet template()}
 		<ColorField label={button()} value="#3f4fc4" alpha />
+	{/snippet}
+</Story>
+
+<Story
+	name="A see-through colour shows no contrast"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const sentence = () => canvasElement.querySelector('.color__contrast');
+		await expect(sentence()).not.toBeNull();
+		fireEvent.input(canvas.getByRole('slider'), { target: { value: '50' } });
+		await waitFor(() => expect(sentence()).toBeNull());
+	}}
+>
+	{#snippet template()}
+		<ColorField
+			label={button()}
+			value="#3f4fc4"
+			alpha
+			contrastWith="#ffffff"
+			contrastLabel={white()}
+		/>
 	{/snippet}
 </Story>
 
