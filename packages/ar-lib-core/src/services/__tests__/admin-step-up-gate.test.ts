@@ -31,7 +31,11 @@ vi.mock('../admin-step-up', async (importOriginal) => {
 });
 
 import { AdminStepUpError, createAdminStepUpOperationHash } from '../admin-step-up';
-import { requireAdminStepUp } from '../admin-step-up-gate';
+import {
+  effectiveAdminStepUpLevel,
+  readAdminStepUpPolicy,
+  requireAdminStepUp,
+} from '../admin-step-up-gate';
 
 const NOW = 50_000_000;
 
@@ -348,5 +352,55 @@ describe('requireAdminStepUp', () => {
 
     expect(status).toBe(503);
     expect(body).toMatchObject({ error: 'step_up_unavailable' });
+  });
+});
+
+describe('readAdminStepUpPolicy / effectiveAdminStepUpLevel', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("reads the tenant's overrides and the platform switch", async () => {
+    mocks.resolveEffectiveSettings.mockResolvedValue({
+      'security.admin_step_up_overrides': { 'client.secret.rotate': 'L2' },
+      'security.admin_step_up_enforced': false,
+      'security.other': 1,
+    });
+
+    await expect(readAdminStepUpPolicy({} as Env, 'tenant-a')).resolves.toEqual({
+      overrides: { 'client.secret.rotate': 'L2' },
+      enforced: false,
+    });
+    expect(mocks.resolveEffectiveSettings).toHaveBeenCalledWith({}, 'security', {
+      tenantId: 'tenant-a',
+    });
+  });
+
+  it('throws when the settings cannot be read', async () => {
+    mocks.resolveEffectiveSettings.mockRejectedValue(new Error('KV down'));
+
+    await expect(readAdminStepUpPolicy({} as Env, 'tenant-a')).rejects.toThrow('KV down');
+  });
+
+  it('gives the catalog level, raised by the tenant, while enforcement is on', () => {
+    const policy = { overrides: { 'client.secret.rotate': 'L2' }, enforced: undefined };
+
+    expect(effectiveAdminStepUpLevel('client.secret.rotate', policy)).toBe('L2');
+    expect(effectiveAdminStepUpLevel('sessions.revoke_all', policy)).toBe('L1');
+  });
+
+  it('gives L0 only when enforcement is off in so many words, never for always-enforced ones', () => {
+    expect(
+      effectiveAdminStepUpLevel('tenant.delete', { overrides: undefined, enforced: false })
+    ).toBe('L0');
+    expect(
+      effectiveAdminStepUpLevel('tenant.delete', { overrides: undefined, enforced: 'false' })
+    ).toBe('L2');
+    expect(
+      effectiveAdminStepUpLevel('admin.second_factor.remove', {
+        overrides: undefined,
+        enforced: false,
+      })
+    ).toBe('L2');
   });
 });

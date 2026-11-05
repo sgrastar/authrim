@@ -6,6 +6,7 @@
  * single-use receipt, then repeats the operation with the receipt in `authrim-step-up-receipt`.
  *
  * Endpoints:
+ * - GET  /api/admin/me/step-up/requirements - Which operations need L1 or L2 in the selected tenant
  * - POST /api/admin/me/step-up/receipts - Issue the receipt for a step-up request
  */
 
@@ -13,14 +14,24 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { AdminAuthContext, Env } from '@authrim/ar-lib-core';
 import {
+  ADMIN_STEP_UP_ALWAYS_ENFORCED,
+  ADMIN_STEP_UP_EVIDENCE_WINDOW_MS,
+  ADMIN_STEP_UP_OPERATIONS,
   AR_ERROR_CODES,
   AdminSecondFactorRepository,
   AdminStepUpError,
   adminAuthMiddleware,
   createErrorResponse,
+  describeAdminStepUpFreshness,
+  effectiveAdminStepUpLevel,
   getLogger,
+  isAdminStepUpHumanSession,
   issueAdminStepUpReceipt,
+  readAdminStepUpPolicy,
   requireDedicatedAdminDatabaseAdapter,
+  type AdminStepUpLevel,
+  type AdminStepUpOperation,
+  type AdminStepUpPolicy,
 } from '@authrim/ar-lib-core';
 import { writeAdminAuditLog } from '../../admin-shared';
 
@@ -37,6 +48,88 @@ myStepUpRouter.use('*', adminAuthMiddleware({}));
 function stepUpLog(c: AdminContext) {
   return getLogger(c as unknown as Context<{ Bindings: Env }>).module('ADMIN-STEP-UP');
 }
+
+/**
+ * GET /api/admin/me/step-up/requirements
+ *
+ * What the console needs to tell an admin, before they act, that an operation will ask for a
+ * passkey (L1) or a passkey and a security key (L2): every catalog operation's level in the
+ * selected tenant, and how fresh the session's own factors are. A hint only: each operation's
+ * gate decides on its own, and an operation that acts on another tenant (its own second factors
+ * act on the admin's home tenant) is judged against that tenant's settings.
+ */
+myStepUpRouter.get('/requirements', async (c) => {
+  c.header('Cache-Control', 'no-store');
+  c.header('Pragma', 'no-cache');
+  const auth = c.get('adminAuth');
+  if (!auth?.tenantId) {
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_AUTH_REQUIRED);
+  }
+  // A hint for a signed-in admin's console. Machine and agent callers cannot meet a step-up and
+  // have no console to show it in, so they are not shown the tenant's policy either.
+  if (!isAdminStepUpHumanSession(auth)) {
+    return c.json(
+      {
+        error: 'step_up_human_required',
+        error_description: 'Step-up requirements are for a signed-in admin',
+      },
+      403
+    );
+  }
+
+  let policy: AdminStepUpPolicy;
+  try {
+    policy = await readAdminStepUpPolicy(c.env, auth.tenantId);
+  } catch {
+    // Same answer as the gate: a level the tenant may have raised is never guessed.
+    return c.json(
+      {
+        error: 'step_up_unavailable',
+        error_description: 'The step-up policy could not be read',
+      },
+      503
+    );
+  }
+
+  const operations: Record<
+    string,
+    { level: AdminStepUpLevel; catalog_level: 'L1' | 'L2'; always_enforced: boolean }
+  > = {};
+  for (const operation of Object.keys(ADMIN_STEP_UP_OPERATIONS) as AdminStepUpOperation[]) {
+    operations[operation] = {
+      level: effectiveAdminStepUpLevel(operation, policy),
+      catalog_level: ADMIN_STEP_UP_OPERATIONS[operation],
+      always_enforced: ADMIN_STEP_UP_ALWAYS_ENFORCED.has(operation),
+    };
+  }
+
+  const freshness = describeAdminStepUpFreshness(auth, Date.now());
+  let secondFactorRegistered: boolean;
+  try {
+    const factors = await new AdminSecondFactorRepository(
+      requireDedicatedAdminDatabaseAdapter(c.env, 'admin-management')
+    ).listActiveByUser(auth.userId);
+    secondFactorRegistered = factors.length > 0;
+  } catch (error) {
+    stepUpLog(c).error('Failed to read second factors for step-up requirements', {
+      action: 'admin_step_up_requirements',
+      errorType: error instanceof Error ? error.name : 'Unknown',
+    });
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+
+  return c.json({
+    tenant_id: auth.tenantId,
+    enforced: policy.enforced !== false,
+    evidence_window_seconds: ADMIN_STEP_UP_EVIDENCE_WINDOW_MS / 1000,
+    evidence: {
+      passkey_fresh_until: freshness.passkeyFreshUntil,
+      second_factor_fresh_until: freshness.secondFactorFreshUntil,
+    },
+    second_factor_registered: secondFactorRegistered,
+    operations,
+  });
+});
 
 /**
  * POST /api/admin/me/step-up/receipts
