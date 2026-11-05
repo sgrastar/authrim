@@ -679,6 +679,33 @@ describe('control worker desired inventory registration', () => {
     expect(consoleRest).toEqual(legacyRest);
   });
 
+  it('accepts the admin console record in the Admin UI slot and nowhere else', () => {
+    const record = (workerScriptName: string) => ({
+      environmentId: 'env-test',
+      environmentName: 'test',
+      workerScriptName,
+      packageName: '@authrim/ar-admin-console',
+      deploymentTarget: 'ui',
+      capabilityManifestDigest: HASH_A,
+      sourceManifestPath: 'packages/ar-admin-console/authrim.worker-capabilities.json',
+      sourceManifestHash: HASH_A,
+      generatedArtifactHash: HASH_A,
+      sourceKind: 'core_manifest' as const,
+      sourceReference: `authrim.worker-capabilities.json#sha256:${HASH_A}`,
+      registrationMode: 'auto' as const,
+      status: 'active' as const,
+      reviewState: 'auto_registered' as const,
+      requiredDataRoles: [],
+      bindings: [],
+    });
+    expect(() =>
+      buildControlWorkerInventoryRegistrationPlan({ records: [record('test-ar-admin-ui')] })
+    ).not.toThrow();
+    expect(() =>
+      buildControlWorkerInventoryRegistrationPlan({ records: [record('test-ar-admin-console')] })
+    ).toThrow('worker_inventory_script_name_mismatch:test-ar-admin-console');
+  });
+
   it('rejects an inventory record whose script name is outside the declared environment', () => {
     expect(() =>
       buildControlWorkerInventoryRegistrationPlan({
