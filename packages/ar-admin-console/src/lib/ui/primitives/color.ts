@@ -19,3 +19,21 @@ export function contrastRatio(a: string, b: string): number {
 	const [light, dark] = [luminance(a), luminance(b)].sort((x, y) => y - x);
 	return (light + 0.05) / (dark + 0.05);
 }
+
+/** "#rrggbb" or "#rrggbbaa" → the colour and its opacity (0–100); "" → no colour, fully opaque. */
+export function splitAlpha(hex: string): { rgb: string; alpha: number } {
+	if (/^#[0-9a-f]{8}$/i.test(hex)) {
+		return {
+			rgb: hex.slice(0, 7).toLowerCase(),
+			alpha: Math.round((parseInt(hex.slice(7, 9), 16) / 255) * 100)
+		};
+	}
+	return { rgb: hex, alpha: 100 };
+}
+
+/** A colour and an opacity (0–100) → "#rrggbb" when opaque, "#rrggbbaa" otherwise. */
+export function joinAlpha(rgb: string, alpha: number): string {
+	if (alpha >= 100) return rgb;
+	const channel = Math.round((Math.max(0, alpha) / 100) * 255);
+	return `${rgb}${channel.toString(16).padStart(2, '0')}`;
+}

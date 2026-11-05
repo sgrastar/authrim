@@ -545,6 +545,7 @@ export const en = {
 	'cond.problem.notNumber': 'Enter a number.',
 	'cond.problem.badPattern': 'This is not a valid regular expression.',
 	'color.pick': 'Pick {name}',
+	'color.opacity': 'Opacity of {name}',
 	'color.invalid': 'Enter a colour as #RRGGBB.',
 	'color.contrast': 'Contrast with {against}: {ratio}:1',
 	'color.pass': 'Meets the AA readability level',

@@ -14,7 +14,7 @@
 			docs: {
 				description: {
 					component:
-						'Customization → Themes: how the tenant’s sign-in screens look (legacy `/admin/themes`, `login-ui.*` settings).\n\nThe preview on the start side (screen, colour mode, phone or desktop width), the inspector on the end side (one tab per section: Design, Content, Images), and custom CSS under both, set a size down because it is narrow and holds many controls. What is edited is drawn in the preview as it is typed, chosen or uploaded. It is held in the page: nothing is read from or saved to the Admin API yet, and custom CSS is not applied in the preview yet. The preview shows an outline of a sign-in screen, not the real screens.\n\nThe parts it uses are the console’s own; the ones it still lacks are listed in the pull request.'
+						'Customization → Themes: how the tenant’s sign-in screens look (legacy `/admin/themes`, `login-ui.*` settings).\n\nThe preview on the start side (screen, colour mode, phone or desktop width), the inspector on the end side (one tab per section: Layout, Design, Content, Images), and custom CSS under both, set a size down because it is narrow and holds many controls. What is edited is drawn in the preview as it is typed, chosen or uploaded. It is held in the page: nothing is read from or saved to the Admin API yet, and custom CSS is not applied in the preview yet. The preview shows an outline of a sign-in screen, not the real screens.\n\nThe parts it uses are the console’s own; the ones it still lacks are listed in the pull request.'
 				}
 			}
 		}
@@ -110,7 +110,7 @@
 		const canvas = within(canvasElement);
 		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.content') }));
 		await expect(canvas.queryByRole('textbox', { name: t('th.f.panelTitle') })).toBeNull();
-		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.look') }));
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.layout') }));
 		await userEvent.click(
 			await canvas.findByRole('radio', { name: new RegExp(t('th.tpl.split')) })
 		);
@@ -146,6 +146,7 @@
 	name="Typeface shows in the preview"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.look') }));
 		const font = await canvas.findByRole('combobox', { name: t('th.f.font') });
 		await userEvent.selectOptions(font, 'serif');
 		await expect(getComputedStyle(canvas.getByText(t('th.font.sample'))).fontFamily).toContain(
@@ -186,17 +187,321 @@
 	name="Colour and language choices follow the layout switches"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.look') }));
 		const tools = () => canvasElement.querySelectorAll('.tools__item');
 		await waitFor(() => expect(tools()).toHaveLength(2));
 		await userEvent.click(await canvas.findByLabelText(t('th.t.themeToggle')));
 		await waitFor(() => expect(tools()).toHaveLength(1));
 		await userEvent.click(await canvas.findByLabelText(t('th.t.language')));
 		await waitFor(() => expect(tools()).toHaveLength(0));
-		// With no header they float at the top end of the screen, not along a band.
 		await userEvent.click(await canvas.findByLabelText(t('th.t.themeToggle')));
-		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.content') }));
-		await userEvent.click(await canvas.findByLabelText(t('th.t.header')));
-		await waitFor(() => expect(canvasElement.querySelector('.outline__tools')).not.toBeNull());
+		await waitFor(() => expect(tools()).toHaveLength(1));
+	}}
+>
+	{#snippet template()}
+		<Themes />
+	{/snippet}
+</Story>
+
+<Story
+	name="Colour fields show the colours in effect"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.look') }));
+		const background = await canvas.findByRole('textbox', { name: t('th.c.background') });
+		const accent = await canvas.findByRole('textbox', { name: t('th.c.accent') });
+		// Empty, but each shows the real screens' colour for the mode shown (light to begin with).
+		await expect(background).toHaveValue('');
+		await expect(background).toHaveAttribute('placeholder', '#eef1f6');
+		await expect(accent).toHaveAttribute('placeholder', '#2f52c4');
+		await userEvent.click(await canvas.findByRole('radio', { name: t('th.mode.dark') }));
+		await waitFor(() => expect(background).toHaveAttribute('placeholder', '#0b0e16'));
+		await expect(accent).toHaveAttribute('placeholder', '#93aef2');
+		// A colour of one's own replaces it, in the preview too.
+		await userEvent.type(accent, '#b4235a');
+		const outline = canvasElement.querySelector('.outline') as HTMLElement;
+		await waitFor(() => expect(outline.style.getPropertyValue('--ol-accent')).toBe('#b4235a'));
+	}}
+>
+	{#snippet template()}
+		<Themes />
+	{/snippet}
+</Story>
+
+<Story
+	name="Colours can be see-through"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.look') }));
+		const accent = await canvas.findByRole('textbox', { name: t('th.c.accent') });
+		await userEvent.type(accent, '#b4235a');
+		const outline = canvasElement.querySelector('.outline') as HTMLElement;
+		await waitFor(() => expect(outline.style.getPropertyValue('--ol-accent')).toBe('#b4235a'));
+		// The opacity slider beside it: half see-through, in the preview too.
+		const slider = await canvas.findByRole('slider', {
+			name: t('color.opacity', { name: t('th.c.accent') })
+		});
+		fireEvent.input(slider, { target: { value: '50' } });
+		await waitFor(() => expect(outline.style.getPropertyValue('--ol-accent')).toBe('#b4235a80'));
+	}}
+>
+	{#snippet template()}
+		<Themes />
+	{/snippet}
+</Story>
+
+<Story
+	name="Colour and language choices take the form area's colours"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.look') }));
+		await userEvent.type(await canvas.findByRole('textbox', { name: t('th.c.card') }), '#123456');
+		await userEvent.type(await canvas.findByRole('textbox', { name: t('th.c.text') }), '#fafafa');
+		const item = canvasElement.querySelector('.tools__item') as HTMLElement;
+		// Their background is the form area's and their text the body text: a pair set to be read.
+		await waitFor(() => expect(getComputedStyle(item).backgroundColor).toBe('rgb(18, 52, 86)'));
+		await expect(getComputedStyle(item.parentElement as HTMLElement).color).toBe(
+			'rgb(250, 250, 250)'
+		);
+	}}
+>
+	{#snippet template()}
+		<Themes />
+	{/snippet}
+</Story>
+
+<Story
+	name="Mode is auto, or fixed whatever the device uses"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.look') }));
+		const outline = () => canvasElement.querySelector('.outline') as HTMLElement;
+		const mode = await canvas.findByRole('combobox', { name: t('th.f.mode') });
+		// Auto (the default) follows the device the preview simulates.
+		await expect(mode).toHaveValue('auto');
+		await expect(outline().dataset.scheme).toBe('light');
+		await userEvent.click(await canvas.findByRole('radio', { name: t('th.mode.dark') }));
+		await waitFor(() => expect(outline().dataset.scheme).toBe('dark'));
+		// Light fixes the design, although the simulated device is dark; the simulator is then off.
+		await userEvent.selectOptions(mode, 'light');
+		await waitFor(() => expect(outline().dataset.scheme).toBe('light'));
+		await expect(await canvas.findByRole('radio', { name: t('th.mode.dark') })).toBeDisabled();
+		await userEvent.selectOptions(mode, 'dark');
+		await waitFor(() => expect(outline().dataset.scheme).toBe('dark'));
+	}}
+>
+	{#snippet template()}
+		<Themes />
+	{/snippet}
+</Story>
+
+<Story
+	name="Topbar position places the colour and language choices"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.look') }));
+		const topbar = () => canvas.findByRole('combobox', { name: t('th.f.topbar') });
+		const place = async (value: string) => userEvent.selectOptions(await topbar(), value);
+		const at = (selector: string) => canvasElement.querySelector(selector);
+		// Below the card (the default), then inside it.
+		await waitFor(() => expect(at('.outline__col > .tools')).not.toBeNull());
+		await place('in_card');
+		await waitFor(() => expect(at('.outline__card > .tools')).not.toBeNull());
+		await expect(at('.outline__col > .tools')).toBeNull();
+		// In the main area (between the header and the footer): its corner, then its bottom edge.
+		await place('top_right');
+		await waitFor(() => expect(at('.outline__stage > .outline__tools')).not.toBeNull());
+		await place('bottom_center');
+		await waitFor(() =>
+			expect(at('.outline__stage > .outline__tools--bottom[data-at="center"]')).not.toBeNull()
+		);
+		await place('bottom_left');
+		await waitFor(() =>
+			expect(at('.outline__stage > .outline__tools--bottom[data-at="left"]')).not.toBeNull()
+		);
+		// "Form bottom" is Split's: not offered with Standard.
+		await expect(
+			within(await topbar()).queryByRole('option', { name: t('th.topbar.form_bottom_left') })
+		).toBeNull();
+		// Hidden: nowhere.
+		await place('hidden');
+		await waitFor(() => expect(canvasElement.querySelectorAll('.tools')).toHaveLength(0));
+	}}
+>
+	{#snippet template()}
+		<Themes />
+	{/snippet}
+</Story>
+
+<Story
+	name="Split can keep the topbar to the bottom of the form side"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(
+			await canvas.findByRole('radio', { name: new RegExp(t('th.tpl.split')) })
+		);
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.look') }));
+		const topbar = await canvas.findByRole('combobox', { name: t('th.f.topbar') });
+		const box = (selector: string) =>
+			(canvasElement.querySelector(selector) as HTMLElement).getBoundingClientRect();
+		// Bottom right of the main area: under the brand panel's end too, at the stage's edge.
+		await userEvent.selectOptions(topbar, 'bottom_right');
+		await waitFor(() =>
+			expect(
+				canvasElement.querySelector('.outline__stage > .outline__tools--bottom')
+			).not.toBeNull()
+		);
+		const wholeLeft = box('.outline__stage > .outline__tools--bottom').left;
+		// Form bottom left: at the bottom of the form side alone, so right of the brand panel's edge.
+		await userEvent.selectOptions(topbar, 'form_bottom_left');
+		await waitFor(() =>
+			expect(canvasElement.querySelector('.outline__main > .outline__tools--bottom')).not.toBeNull()
+		);
+		await expect(box('.outline__main > .outline__tools--bottom').left).toBeGreaterThanOrEqual(
+			box('.outline__main').left - 1
+		);
+		await expect(box('.outline__main > .outline__tools--bottom').left).toBeLessThan(wholeLeft);
+	}}
+>
+	{#snippet template()}
+		<Themes />
+	{/snippet}
+</Story>
+
+<Story
+	name="Font scale sets how roomy the form is"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.look') }));
+		const scale = await canvas.findByRole('combobox', { name: t('th.f.fontScale') });
+		const padding = () =>
+			parseFloat(
+				getComputedStyle(canvasElement.querySelector('.outline__card') as HTMLElement).paddingTop
+			);
+		await expect(scale).toHaveValue('comfortable');
+		const comfortable = padding();
+		await userEvent.selectOptions(scale, 'compact');
+		await waitFor(() => expect(padding()).toBeLessThan(comfortable));
+		await userEvent.selectOptions(scale, 'spacious');
+		await waitFor(() => expect(padding()).toBeGreaterThan(comfortable));
+	}}
+>
+	{#snippet template()}
+		<Themes />
+	{/snippet}
+</Story>
+
+<Story
+	name="Form area has a colour of its own"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.look') }));
+		const colour = await canvas.findByRole('textbox', { name: t('th.c.card') });
+		// Empty: the real screens' own (white in light), shown in the field.
+		await expect(colour).toHaveAttribute('placeholder', '#ffffff');
+		await userEvent.type(colour, '#ffeecc');
+		const card = canvasElement.querySelector('.outline__card') as HTMLElement;
+		await waitFor(() => expect(getComputedStyle(card).backgroundColor).toBe('rgb(255, 238, 204)'));
+	}}
+>
+	{#snippet template()}
+		<Themes />
+	{/snippet}
+</Story>
+
+<Story
+	name="Floating form area has the brand panel's picture behind it"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(
+			await canvas.findByRole('radio', { name: new RegExp(t('th.tpl.split')) })
+		);
+		const box = (selector: string) =>
+			(canvasElement.querySelector(selector) as HTMLElement).getBoundingClientRect();
+		// Floating card (the default): the brand panel runs under the form side, which has no fill.
+		await expect(box('.outline__panel').right).toBeGreaterThan(box('.outline__card').right);
+		await expect(
+			getComputedStyle(canvasElement.querySelector('.outline__main') as HTMLElement).backgroundColor
+		).toBe('rgba(0, 0, 0, 0)');
+		// The panel's wording stays on its own side.
+		await expect(box('.outline__panel-content').right).toBeLessThanOrEqual(
+			box('.outline__main').left + 1
+		);
+		// Full: the panel is its own side again.
+		await userEvent.selectOptions(
+			await canvas.findByRole('combobox', { name: t('th.f.formFrame') }),
+			'full'
+		);
+		await waitFor(() =>
+			expect(box('.outline__panel').right).toBeLessThanOrEqual(box('.outline__main').left + 1)
+		);
+	}}
+>
+	{#snippet template()}
+		<Themes />
+	{/snippet}
+</Story>
+
+<Story
+	name="Form frame is full or a floating card"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(
+			await canvas.findByRole('radio', { name: new RegExp(t('th.tpl.split')) })
+		);
+		const frame = await canvas.findByRole('combobox', { name: t('th.f.formFrame') });
+		const height = (selector: string) =>
+			(canvasElement.querySelector(selector) as HTMLElement).getBoundingClientRect().height;
+		// A floating card (to begin with): a box inside its side, with room around it.
+		await expect(frame).toHaveValue('card');
+		await expect(height('.outline__card')).toBeLessThan(height('.outline__main') - 40);
+		await expect(
+			parseFloat(
+				getComputedStyle(canvasElement.querySelector('.outline__card') as HTMLElement)
+					.borderTopLeftRadius
+			)
+		).toBeGreaterThan(0);
+		// Full: the form area fills its side, with no card around it.
+		await userEvent.selectOptions(frame, 'full');
+		await waitFor(() =>
+			expect(height('.outline__card')).toBeGreaterThan(height('.outline__main') - 60)
+		);
+		await expect(
+			parseFloat(
+				getComputedStyle(canvasElement.querySelector('.outline__card') as HTMLElement)
+					.borderTopLeftRadius
+			)
+		).toBe(0);
+	}}
+>
+	{#snippet template()}
+		<Themes />
+	{/snippet}
+</Story>
+
+<Story
+	name="The form carries wording of its own"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const texts = (selector: string) =>
+			[...canvasElement.querySelectorAll(`.outline__card ${selector}`)].map((node) =>
+				node.textContent?.trim()
+			);
+		// Sign in: this tenant has no password, so passkey, then email, then an external IdP.
+		await waitFor(() => expect(texts('h3')).toEqual(['Welcome back']));
+		await expect(texts('.outline__label')).toEqual(['Email address']);
+		await expect(texts('.outline__button')).toEqual([
+			'Sign in with Passkey',
+			'Continue',
+			'Continue with External IdP'
+		]);
+		await expect(canvasElement.querySelector('.outline__card')?.textContent).not.toContain(
+			'Password'
+		);
+		// Each screen has its own: the code screen asks for the code.
+		const screen = await canvas.findByRole('combobox', { name: t('th.preview.screen') });
+		await userEvent.selectOptions(screen, 'code');
+		await waitFor(() => expect(texts('.outline__label')).toEqual(['Verification code']));
 	}}
 >
 	{#snippet template()}
@@ -370,6 +675,8 @@
 		);
 		const choose = async (label: string, value: string) =>
 			userEvent.selectOptions(await canvas.findByRole('combobox', { name: label }), value);
+		// A full form frame keeps the two sides apart (a floating one lets the panel run under it).
+		await choose(t('th.f.formFrame'), 'full');
 		const box = (selector: string) =>
 			(canvasElement.querySelector(selector) as HTMLElement).getBoundingClientRect();
 		// Narrow form (2/5): the brand side is the wider one; "wide form" turns that around.
@@ -400,9 +707,9 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.images') }));
-		// Logo, favicon, background, login area: the brand panel's picture is not offered without Split.
+		// Logo, favicon, background, form area: the brand panel's picture is not offered without Split.
 		await expect(canvasElement.querySelectorAll('input[type="file"]')).toHaveLength(4);
-		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.look') }));
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.layout') }));
 		await userEvent.click(
 			await canvas.findByRole('radio', { name: new RegExp(t('th.tpl.split')) })
 		);
@@ -416,21 +723,21 @@
 </Story>
 
 <Story
-	name="Login area has its own image and opacity"
+	name="Form area has its own image and opacity"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		const png = new File(['x'], 'card.png', { type: 'image/png' });
 		const files = () => canvasElement.querySelectorAll<HTMLInputElement>('input[type="file"]');
 		const layer = () => canvasElement.querySelector<HTMLElement>('.outline__card .outline__image');
 		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.images') }));
-		// Standard: logo, favicon, background, login area (the last).
+		// Standard: logo, favicon, background, form area (the last).
 		await userEvent.upload(files()[3], png);
 		await waitFor(() => expect(layer()).not.toBeNull());
 		const [opacity] = canvasElement.querySelectorAll<HTMLInputElement>('input[type="range"]');
 		fireEvent.input(opacity, { target: { value: '30' } });
 		await waitFor(() => expect(layer()?.style.opacity).toBe('0.3'));
 		// Minimal draws no box, so it neither offers the picture nor draws it.
-		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.look') }));
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.layout') }));
 		await userEvent.click(
 			await canvas.findByRole('radio', { name: new RegExp(t('th.tpl.minimal')) })
 		);
@@ -453,7 +760,7 @@
 		await userEvent.selectOptions(language, 'ja');
 		// The console stays as it is; what an empty title falls back to is read in Japanese.
 		const title = canvasElement.querySelector('.outline__card h3') as HTMLElement;
-		await expect(title.textContent).toBe(tIn('ja', 'th.screen.signIn'));
+		await waitFor(() => expect(title.textContent).toBe(tIn('ja', 'th.preview.welcome')));
 	}}
 >
 	{#snippet template()}

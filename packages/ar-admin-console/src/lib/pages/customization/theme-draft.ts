@@ -4,12 +4,33 @@
  */
 export type ThemeTemplate = 'standard' | 'split' | 'minimal';
 export type ThemeFont = 'system' | 'serif' | 'rounded' | 'mono';
-export type ThemeScale = 's' | 'm' | 'l';
+/** How the screens are spaced: the form's padding and gaps (the real screens' `font_scale`). */
+export type FontScale = 'compact' | 'comfortable' | 'spacious';
+/** The colour mode: follow each visitor's device, or fix light or dark. */
+export type ColourMode = 'auto' | 'light' | 'dark';
+/**
+ * Where the colour-mode and language choices sit (the real screens' `topbar_position`): in the
+ * main area between the header and the footer, or (`form_bottom_*`, Split only) at the bottom of
+ * the form side alone.
+ */
+export type TopbarPosition =
+	| 'below_card'
+	| 'in_card'
+	| 'top_right'
+	| 'bottom_left'
+	| 'bottom_center'
+	| 'bottom_right'
+	| 'form_bottom_left'
+	| 'form_bottom_center'
+	| 'form_bottom_right'
+	| 'hidden';
 export type LogoDisplay = 'both' | 'logo' | 'name';
 
 /** The Split template: how it is framed and laid out (the legacy login-ui.split_* settings). */
 export type SplitFrame = 'full' | 'card';
 export type SplitSide = 'left' | 'right';
+/** The form area in Split: filling its side, or a floating card on it. */
+export type FormFrame = 'full' | 'card';
 export type SplitWidth = 'narrow' | 'wide';
 /** What the Split template's brand panel shows of the brand; "none" shows nothing of it. */
 export type BrandPanelDisplay = LogoDisplay | 'none';
@@ -34,13 +55,17 @@ export interface ThemeTexts {
 export interface ThemeDraft {
 	template: ThemeTemplate;
 	background: string;
+	/** The form area: the box that holds the sign-in form. */
+	cardColor: string;
 	accent: string;
 	titleColor: string;
 	textColor: string;
 	/** The muted copy: tagline, brand panel text, footer. */
 	copyColor: string;
 	font: ThemeFont;
-	scale: ThemeScale;
+	fontScale: FontScale;
+	mode: ColourMode;
+	topbarPosition: TopbarPosition;
 	header: boolean;
 	footer: boolean;
 	themeToggle: boolean;
@@ -57,6 +82,7 @@ export interface ThemeDraft {
 	panelText: string;
 	splitFrame: SplitFrame;
 	splitSide: SplitSide;
+	formFrame: FormFrame;
 	splitWidth: SplitWidth;
 	brandPosition: BrandPosition;
 	brandAlign: BrandAlign;
@@ -71,7 +97,7 @@ export interface ThemeDraft {
 	/** The picture on the Split template's brand panel, apart from the page background. */
 	panelImage: string | File | null;
 	panelImageOpacity: number;
-	/** The picture inside the login area (the box with the form), for Standard and Split. */
+	/** The picture inside the form area (the box with the form), for Standard and Split. */
 	cardImage: string | File | null;
 	cardImageOpacity: number;
 	customCss: string;
@@ -84,6 +110,7 @@ export interface ThemeDraft {
 export const SPLIT_CHOICES = {
 	splitFrame: ['full', 'card'],
 	splitSide: ['left', 'right'],
+	formFrame: ['full', 'card'],
 	splitWidth: ['narrow', 'wide'],
 	brandPosition: ['top', 'center', 'bottom'],
 	brandAlign: ['left', 'center', 'right']
@@ -97,7 +124,47 @@ export const FONT_STACKS: Record<ThemeFont, string> = {
 	mono: "ui-monospace, 'SF Mono', Menlo, monospace"
 };
 
-export const FONT_SCALES: Record<ThemeScale, number> = { s: 0.9, m: 1, l: 1.15 };
+/**
+ * The form's padding and gaps against the comfortable ones, in the ratios the real screens use
+ * (card padding 18 / 20 / 24 px).
+ */
+export const DENSITIES: Record<FontScale, number> = { compact: 0.9, comfortable: 1, spacious: 1.2 };
+
+export const TOPBAR_POSITIONS: readonly TopbarPosition[] = [
+	'below_card',
+	'in_card',
+	'top_right',
+	'bottom_left',
+	'bottom_center',
+	'bottom_right',
+	'form_bottom_left',
+	'form_bottom_center',
+	'form_bottom_right',
+	'hidden'
+];
+
+/**
+ * The colours the real sign-in screens use when nothing is set (their default look, in light and
+ * dark). An empty colour field means "these"; the preview and the fields' swatches show them.
+ */
+export const LOGIN_DEFAULTS = {
+	light: {
+		background: '#eef1f6',
+		card: '#ffffff',
+		accent: '#2f52c4',
+		title: '#182238',
+		text: '#182238',
+		copy: '#55617c'
+	},
+	dark: {
+		background: '#0b0e16',
+		card: '#131a2a',
+		accent: '#93aef2',
+		title: '#eef2fa',
+		text: '#eef2fa',
+		copy: '#aeb9d0'
+	}
+} as const;
 
 /** The footer text every language starts with: a link to Authrim, which opens in a new window. */
 export const DEFAULT_FOOTER = 'Powered by <a href="https://authrim.com/">Authrim</a>';
@@ -110,12 +177,15 @@ export function newThemeDraft(): ThemeDraft {
 	return {
 		template: 'standard',
 		background: '',
+		cardColor: '',
 		accent: '',
 		titleColor: '',
 		textColor: '',
 		copyColor: '',
 		font: 'system',
-		scale: 'm',
+		fontScale: 'comfortable',
+		mode: 'auto',
+		topbarPosition: 'below_card',
 		header: true,
 		footer: true,
 		themeToggle: true,
@@ -128,6 +198,7 @@ export function newThemeDraft(): ThemeDraft {
 		panelText: '',
 		splitFrame: 'full',
 		splitSide: 'left',
+		formFrame: 'card',
 		splitWidth: 'narrow',
 		brandPosition: 'center',
 		brandAlign: 'left',

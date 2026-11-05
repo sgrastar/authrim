@@ -6,6 +6,7 @@
 	import Page from '#lib/ui/templates/Page.svelte';
 	import ThemeAdvanced from './ThemeAdvanced.svelte';
 	import ThemeContent from './ThemeContent.svelte';
+	import ThemeLayout from './ThemeLayout.svelte';
 	import ThemeDesign from './ThemeDesign.svelte';
 	import ThemeImages from './ThemeImages.svelte';
 	import ThemePreview from './ThemePreview.svelte';
@@ -25,6 +26,9 @@
 	let screen = $state<PreviewScreen>('signIn');
 	let mode = $state<'light' | 'dark'>('light');
 
+	// The mode the screens are shown in: the one fixed, or (auto) the one the preview simulates.
+	const scheme = $derived(draft.mode === 'auto' ? mode : draft.mode);
+
 	// Derived: the language can change while the page is open.
 	const tabs = $derived(THEME_SECTIONS.map((item) => ({ id: item.id, label: t(item.tab) })));
 </script>
@@ -41,8 +45,10 @@
 			<Tabs label={t('th.edit.label')} items={tabs} bind:value={section}>
 				{#snippet panel(id)}
 					<div class="sections">
-						{#if id === 'look'}
-							<ThemeDesign bind:draft />
+						{#if id === 'layout'}
+							<ThemeLayout bind:draft />
+						{:else if id === 'look'}
+							<ThemeDesign bind:draft {scheme} />
 						{:else if id === 'content'}
 							<ThemeContent bind:draft />
 						{:else}
@@ -54,7 +60,7 @@
 		</div>
 
 		<aside class="workspace__preview">
-			<ThemePreview {draft} bind:screen bind:mode />
+			<ThemePreview {draft} {scheme} bind:screen bind:mode />
 		</aside>
 	</div>
 

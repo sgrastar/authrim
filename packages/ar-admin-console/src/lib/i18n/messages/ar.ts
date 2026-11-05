@@ -543,6 +543,7 @@ export const ar = {
 	'cond.problem.notNumber': 'أدخل رقمًا.',
 	'cond.problem.badPattern': 'ليس تعبيرًا نمطيًا صالحًا.',
 	'color.pick': 'اختيار {name}',
+	'color.opacity': 'عتامة {name}',
 	'color.invalid': 'أدخل اللون بصيغة #RRGGBB.',
 	'color.contrast': 'التباين مع {against}: {ratio}:1',
 	'color.pass': 'يستوفي مستوى الوضوح AA',

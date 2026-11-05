@@ -5,11 +5,12 @@ import type { MessageKey } from '#lib/i18n/i18n.svelte.js';
  * Admin UI theme page's (`login-ui.*`).
  */
 export interface ThemeSection {
-	id: 'look' | 'content' | 'images';
+	id: 'layout' | 'look' | 'content' | 'images';
 	tab: MessageKey;
 }
 
 export const THEME_SECTIONS: readonly ThemeSection[] = [
+	{ id: 'layout', tab: 'th.tab.layout' },
 	{ id: 'look', tab: 'th.tab.look' },
 	{ id: 'content', tab: 'th.tab.content' },
 	{ id: 'images', tab: 'th.tab.images' }

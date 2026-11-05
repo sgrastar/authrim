@@ -4,7 +4,7 @@
 	import Icon from '#lib/ui/icons/Icon.svelte';
 	import Select from '#lib/ui/primitives/Select.svelte';
 	import SegmentedControl from '#lib/ui/primitives/SegmentedControl.svelte';
-	import { FONT_SCALES, FONT_STACKS, type ThemeDraft } from './theme-draft';
+	import { DENSITIES, FONT_STACKS, LOGIN_DEFAULTS, type ThemeDraft } from './theme-draft';
 	import { parseFooter } from './footer-links';
 	import { PREVIEW_SCREENS, type PreviewScreen } from './theme-sections';
 
@@ -21,11 +21,16 @@
 	 */
 	interface Props {
 		draft: ThemeDraft;
+		/** The mode the screens are shown in: the one fixed, or (auto) the one being simulated. */
+		scheme: 'light' | 'dark';
 		screen?: PreviewScreen;
 		mode?: 'light' | 'dark';
 	}
 
-	let { draft, screen = $bindable('signIn'), mode = $bindable('light') }: Props = $props();
+	let { draft, scheme, screen = $bindable('signIn'), mode = $bindable('light') }: Props = $props();
+
+	// What is not set here is the real screens' own colour, in the mode shown.
+	const defaults = $derived(LOGIN_DEFAULTS[scheme]);
 
 	let width = $state<'mobile' | 'desktop'>('desktop');
 
@@ -46,7 +51,9 @@
 	const texts = $derived(draft.texts[draft.language]);
 	// What an empty item falls back to is read in the language being edited, not the console's.
 	// The heading is the screen's default wording, read in the language being edited.
-	const title = $derived(tIn(draft.language, screenOption.label));
+	const title = $derived(
+		tIn(draft.language, screen === 'signIn' ? 'th.preview.welcome' : screenOption.label)
+	);
 	const split = $derived(draft.template === 'split' && width === 'desktop');
 	// The header and the brand panel each choose what they show of the brand.
 	const showName = $derived(draft.logoDisplay !== 'logo');
@@ -59,7 +66,11 @@
 	);
 	const headerName = $derived(draft.headerName);
 	const footerParts = $derived(parseFooter(texts.footer));
-	const showTools = $derived(draft.themeToggle || draft.languageSelect);
+	// "Form bottom" belongs to Split's form side; without a side of its own it is the bottom.
+	const topbar = $derived(
+		split ? draft.topbarPosition : draft.topbarPosition.replace(/^form_/, '')
+	);
+	const showTools = $derived((draft.themeToggle || draft.languageSelect) && topbar !== 'hidden');
 
 	/** A chosen file is shown through an object URL, released when it is replaced or removed. */
 	let logoUrl = $state<string | null>(null);
@@ -110,7 +121,7 @@
 	<div class="tools">
 		{#if draft.themeToggle}
 			<span class="tools__item tools__item--icon"
-				><Icon name={mode === 'dark' ? 'moon' : 'sun'} /></span
+				><Icon name={scheme === 'dark' ? 'moon' : 'sun'} /></span
 			>
 		{/if}
 		{#if draft.languageSelect}
@@ -143,7 +154,8 @@
 					{ value: 'light', label: t('th.mode.light') },
 					{ value: 'dark', label: t('th.mode.dark') }
 				]}
-				value={mode}
+				value={scheme}
+				disabled={draft.mode !== 'auto'}
 				onchange={(value) => (mode = value === 'dark' ? 'dark' : 'light')}
 			/>
 			<SegmentedControl
@@ -174,16 +186,20 @@
 			<div
 				class="outline"
 				data-admin-theme="standard"
-				data-scheme={mode}
+				data-scheme={scheme}
 				data-template={draft.template}
 				lang={draft.language}
 				dir={localeDir(draft.language)}
-				style:--ol-bg={draft.background || undefined}
-				style:--ol-accent={draft.accent || undefined}
-				style:--ol-title={draft.titleColor || undefined}
-				style:--ol-text={draft.textColor || undefined}
-				style:--ol-copy={draft.copyColor || undefined}
-				style:--ol-scale={FONT_SCALES[draft.scale]}
+				style:--ol-bg={draft.background || defaults.background}
+				style:--ol-card={draft.cardColor || defaults.card}
+				style:--ol-panel={defaults.card}
+				style:--ol-accent={draft.accent || defaults.accent}
+				style:--ol-title={draft.titleColor || defaults.title}
+				style:--ol-text={draft.textColor || defaults.text}
+				style:--ol-copy={draft.copyColor || defaults.copy}
+				style:--ol-title-own={draft.titleColor || undefined}
+				style:--ol-copy-own={draft.copyColor || undefined}
+				style:--ol-density={DENSITIES[draft.fontScale]}
 				style:font-family={FONT_STACKS[draft.font]}
 			>
 				{#if backgroundUrl}
@@ -196,18 +212,15 @@
 				<!-- The header runs along the top of the whole screen, over the brand panel too, as the footer
 				     runs along the bottom. The brand panel has no header of its own. -->
 				{#if draft.header}
-					<header class="outline__header" inert>
-						{@render brand()}
-						{#if showTools}{@render tools()}{/if}
-					</header>
-				{:else if showTools}
-					<div class="outline__tools" inert>{@render tools()}</div>
+					<header class="outline__header" inert>{@render brand()}</header>
 				{/if}
 				<div
 					class="outline__stage"
 					inert
 					class:outline__stage--split={split}
 					class:outline__stage--right={split && draft.splitSide === 'right'}
+					class:outline__stage--formfull={split && draft.formFrame === 'full'}
+					class:outline__stage--formcard={split && draft.formFrame === 'card'}
 					class:outline__stage--wide={split && draft.splitWidth === 'wide'}
 					class:outline__stage--card={split && draft.splitFrame === 'card'}
 				>
@@ -239,23 +252,76 @@
 					{/if}
 					<div class="outline__main">
 						<div class="outline__body">
-							<div class="outline__card">
-								<!-- The login area's own picture, under what the box holds (not drawn in Minimal). -->
-								{#if cardUrl && draft.template !== 'minimal'}
-									<span
-										class="outline__image"
-										style:background-image={`url("${cardUrl}")`}
-										style:opacity={draft.cardImageOpacity / 100}
-									></span>
-								{/if}
-								{#if !draft.header && !split}{@render brand()}{/if}
-								<h3>{title}</h3>
-								<span class="outline__field"></span>
-								<span class="outline__field"></span>
-								<span class="outline__button">{tIn(draft.language, 'th.preview.continue')}</span>
+							<div class="outline__col">
+								<div class="outline__card">
+									{#if showTools && topbar === 'in_card'}{@render tools()}{/if}
+									<!-- The login area's own picture, under what the box holds (not drawn in Minimal). -->
+									{#if cardUrl && draft.template !== 'minimal'}
+										<span
+											class="outline__image"
+											style:background-image={`url("${cardUrl}")`}
+											style:opacity={draft.cardImageOpacity / 100}
+										></span>
+									{/if}
+									{#if !draft.header && !split}{@render brand()}{/if}
+									<h3>{title}</h3>
+									{#if screen === 'signIn'}
+										<!-- This tenant has no password: passkey and email, and an external IdP (mock). -->
+										<p class="outline__lead">{tIn(draft.language, 'th.preview.leadSignIn')}</p>
+										<span class="outline__button">
+											<Icon name="fingerprint" />{tIn(draft.language, 'th.preview.passkey')}
+										</span>
+										<span class="outline__divider">{tIn(draft.language, 'th.preview.or')}</span>
+										<div class="outline__group">
+											<span class="outline__label">{tIn(draft.language, 'th.preview.email')}</span>
+											<span class="outline__field"></span>
+										</div>
+										<span class="outline__button outline__button--plain"
+											>{tIn(draft.language, 'th.preview.continue')}</span
+										>
+										<span class="outline__button outline__button--plain"
+											>{tIn(draft.language, 'th.preview.idp')}</span
+										>
+									{:else}
+										{#if screen === 'signUp'}
+											<div class="outline__group">
+												<span class="outline__label">{tIn(draft.language, 'th.preview.email')}</span
+												>
+												<span class="outline__field"></span>
+											</div>
+										{:else if screen === 'code'}
+											<p class="outline__lead">{tIn(draft.language, 'th.preview.leadCode')}</p>
+											<div class="outline__group">
+												<span class="outline__label">{tIn(draft.language, 'th.screen.code')}</span>
+												<span class="outline__field"></span>
+											</div>
+										{:else if screen === 'consent'}
+											<p class="outline__lead">{tIn(draft.language, 'th.preview.leadConsent')}</p>
+										{:else}
+											<p class="outline__lead">{tIn(draft.language, 'th.preview.leadError')}</p>
+										{/if}
+										<span class="outline__button">{tIn(draft.language, 'th.preview.continue')}</span
+										>
+									{/if}
+								</div>
+								{#if showTools && topbar === 'below_card'}{@render tools()}{/if}
 							</div>
 						</div>
+						<!-- Split: along the bottom of the form side alone. -->
+						{#if showTools && topbar.startsWith('form_bottom_')}
+							<div class="outline__tools outline__tools--bottom" data-at={topbar.slice(12)}>
+								{@render tools()}
+							</div>
+						{/if}
 					</div>
+					<!-- The main area, between the header and the footer: its corner or its bottom edge. -->
+					{#if showTools && topbar === 'top_right'}
+						<div class="outline__tools">{@render tools()}</div>
+					{:else if showTools && topbar.startsWith('bottom_')}
+						<div class="outline__tools outline__tools--bottom" data-at={topbar.slice(7)}>
+							{@render tools()}
+						</div>
+					{/if}
 				</div>
 				<!-- The footer runs along the bottom of the whole screen, under the brand panel too. -->
 				{#if draft.footer}
@@ -365,9 +431,9 @@
 		/* The stage takes what the header and footer leave: they sit on the top and bottom edges. */
 		grid-template-rows: auto minmax(0, 1fr) auto;
 		height: 100%;
-		background-color: var(--ol-bg, var(--bg-subtle));
-		color: var(--ol-text, var(--text-secondary));
-		font-size: calc(var(--preview-fs-body) * var(--ol-scale, 1));
+		background-color: var(--ol-bg);
+		color: var(--ol-text);
+		font-size: var(--preview-fs-body);
 	}
 
 	/* The console sets its own display face on headings; the preview's follow the chosen one. */
@@ -396,12 +462,14 @@
 	.outline__stage--split {
 		--brand-track: 3fr;
 		--form-track: 2fr;
+		--form-share: 40%;
 		grid-template-columns: minmax(0, var(--brand-track)) minmax(0, var(--form-track));
 	}
 
 	.outline__stage--wide {
 		--brand-track: 2fr;
 		--form-track: 3fr;
+		--form-share: 60%;
 	}
 
 	.outline__stage--right {
@@ -418,7 +486,7 @@
 		overflow: hidden;
 		border: 1px solid var(--border);
 		border-radius: var(--radius-panel);
-		background: var(--bg-card);
+		background: var(--ol-panel);
 		box-shadow: var(--shadow-lg);
 	}
 
@@ -435,8 +503,8 @@
 		 */
 		background: linear-gradient(
 			150deg,
-			color-mix(in srgb, var(--ol-accent, var(--text-primary)) 78%, var(--bg-card)),
-			var(--ol-accent, var(--text-primary))
+			color-mix(in srgb, var(--ol-accent) 78%, var(--ol-panel)),
+			var(--ol-accent)
 		);
 		color: var(--text-inverse);
 	}
@@ -474,15 +542,15 @@
 
 	.outline__panel h3 {
 		margin: 0;
-		font-size: calc(var(--preview-fs-hero) * var(--ol-scale, 1));
+		font-size: var(--preview-fs-hero);
 		line-height: var(--preview-lh-hero);
-		color: var(--ol-title, var(--text-inverse));
+		color: var(--ol-title-own, var(--text-inverse));
 	}
 
 	.outline__panel p {
 		margin: 0;
 		line-height: var(--lh-relaxed);
-		color: var(--ol-copy, color-mix(in srgb, var(--text-inverse) 80%, transparent));
+		color: var(--ol-copy-own, color-mix(in srgb, var(--text-inverse) 80%, transparent));
 	}
 
 	/* The brand panel's logo is the big one (the real screen allows up to 260 x 92). */
@@ -495,11 +563,11 @@
 
 	/* The brand name over the title: small, in capitals (the accent is the fill here). */
 	.outline__panel .outline__eyebrow {
-		font-size: calc(var(--preview-fs-eyebrow) * var(--ol-scale, 1));
+		font-size: var(--preview-fs-eyebrow);
 		font-weight: var(--fw-semibold);
 		letter-spacing: 0.04em;
 		text-transform: uppercase;
-		color: var(--ol-copy, color-mix(in srgb, var(--text-inverse) 80%, transparent));
+		color: var(--ol-copy-own, color-mix(in srgb, var(--text-inverse) 80%, transparent));
 	}
 
 	/*
@@ -507,7 +575,7 @@
 	 * no picture behind it, so it is a plain card (or the fill chosen for it).
 	 */
 	.outline__stage--split .outline__main {
-		background: color-mix(in srgb, var(--bg-card) 72%, transparent);
+		background: color-mix(in srgb, var(--ol-panel) 72%, transparent);
 		backdrop-filter: blur(16px);
 	}
 
@@ -519,6 +587,34 @@
 	.outline__stage--right .outline__main {
 		border-inline-start: 0;
 		border-inline-end: 1px solid var(--border);
+	}
+
+	/*
+	 * Split, form frame "Floating card": the brand panel (its fill and its picture) runs behind the
+	 * whole stage and the form area floats over it, with no frosted side of its own. The panel's
+	 * content keeps to its own side by leaving the form side's share free.
+	 */
+	.outline__stage--formcard .outline__panel {
+		grid-column: 1 / -1;
+		grid-row: 1;
+		padding-inline-end: calc(var(--form-share) + 48px);
+	}
+
+	.outline__stage--formcard.outline__stage--right .outline__panel {
+		padding-inline: calc(var(--form-share) + 48px) 48px;
+	}
+
+	.outline__stage--formcard .outline__main {
+		grid-column: 2;
+		grid-row: 1;
+		z-index: 1;
+		border: 0;
+		background: none;
+		backdrop-filter: none;
+	}
+
+	.outline__stage--formcard.outline__stage--right .outline__main {
+		grid-column: 1;
 	}
 
 	.outline__main {
@@ -538,20 +634,39 @@
 		padding: 20px 40px;
 	}
 
-	/* With no header, the choices float at the top end of the screen, as the real one has them. */
+	/* Floating over the stage or over the form side: its top end corner. */
 	.outline__tools {
 		position: absolute;
 		z-index: 2;
-		inset-block-start: 20px;
-		inset-inline-end: 40px;
+		inset-block-start: 16px;
+		inset-inline-end: 24px;
+	}
+
+	/* Along the bottom edge (of the stage, or of the form side): left, centre or right. */
+	.outline__tools--bottom {
+		inset-block: auto 16px;
+		inset-inline: auto;
+	}
+
+	.outline__tools--bottom[data-at='left'] {
+		inset-inline-start: 24px;
+	}
+
+	.outline__tools--bottom[data-at='center'] {
+		inset-inline-start: 50%;
+		transform: translateX(-50%);
+	}
+
+	.outline__tools--bottom[data-at='right'] {
+		inset-inline-end: 24px;
 	}
 
 	.tools {
 		display: flex;
 		align-items: center;
 		gap: 8px;
-		color: var(--ol-text, var(--text-secondary));
-		font-size: calc(var(--preview-fs-small) * var(--ol-scale, 1));
+		color: var(--ol-text);
+		font-size: var(--preview-fs-small);
 		--icon-size: var(--icon-md);
 	}
 
@@ -563,7 +678,8 @@
 		padding: 0 12px;
 		border: 1px solid var(--border);
 		border-radius: var(--radius-round);
-		background: var(--bg-card);
+		/* As the form area: its colour, under the body text colour set to be read on it. */
+		background: var(--ol-card);
 	}
 
 	.tools__item--icon {
@@ -578,7 +694,7 @@
 		padding: 16px 40px;
 		text-align: center;
 		color: var(--ol-copy, var(--ol-text, var(--text-secondary)));
-		font-size: calc(var(--preview-fs-small) * var(--ol-scale, 1));
+		font-size: var(--preview-fs-small);
 	}
 
 	.outline__footer a {
@@ -602,12 +718,44 @@
 		position: relative;
 		overflow: hidden;
 		display: grid;
-		gap: 16px;
-		width: min(100%, 420px);
-		padding: 32px;
+		/* The font scale sets how roomy the form is (the real screens' compact / comfortable / spacious). */
+		gap: calc(16px * var(--ol-density, 1));
+		width: 100%;
+		padding: calc(32px * var(--ol-density, 1));
 		border: 1px solid var(--border);
 		border-radius: var(--radius-lg);
-		background: var(--bg-card);
+		background: var(--ol-card);
+	}
+
+	/* Split, form frame "Full": the form area fills its side, no card around it. */
+	.outline__stage--formfull .outline__body {
+		padding: 0;
+		place-items: stretch;
+	}
+
+	.outline__stage--formfull .outline__col {
+		grid-template-rows: minmax(0, 1fr) auto;
+		width: 100%;
+		height: 100%;
+	}
+
+	.outline__stage--formfull .outline__card {
+		align-content: center;
+		height: 100%;
+		border: 0;
+		border-radius: 0;
+	}
+
+	/* The card, with the topbar below it when it sits there. */
+	.outline__col {
+		display: grid;
+		justify-items: center;
+		gap: 16px;
+		width: min(100%, 420px);
+	}
+
+	.outline__card > :global(.tools) {
+		justify-self: end;
 	}
 
 	/* What the box holds sits over its picture. */
@@ -622,13 +770,13 @@
 
 	.outline__card h3 {
 		margin: 0;
-		font-size: calc(var(--preview-fs-heading) * var(--ol-scale, 1));
+		font-size: var(--preview-fs-heading);
 		color: var(--ol-title, var(--text-primary));
 	}
 
 	.outline__card p {
 		margin: 0;
-		font-size: calc(var(--preview-fs-label) * var(--ol-scale, 1));
+		font-size: var(--preview-fs-label);
 		color: var(--ol-copy, var(--ol-text, var(--text-secondary)));
 	}
 
@@ -656,13 +804,36 @@
 
 	.brand__tagline {
 		color: var(--ol-copy, var(--ol-text, var(--text-secondary)));
-		font-size: calc(var(--preview-fs-small) * var(--ol-scale, 1));
+		font-size: var(--preview-fs-small);
 	}
 
 	.brand__name {
-		font-size: calc(var(--preview-fs-name) * var(--ol-scale, 1));
+		font-size: var(--preview-fs-name);
 		font-weight: var(--fw-bold);
 		color: var(--ol-title, var(--text-primary));
+	}
+
+	.outline__group {
+		display: grid;
+		gap: 6px;
+	}
+
+	.outline__label {
+		color: var(--ol-text);
+		font-size: var(--preview-fs-label);
+		font-weight: var(--fw-medium);
+	}
+
+	.outline__lead {
+		margin: 0;
+		color: var(--ol-text);
+		font-size: var(--preview-fs-label);
+		line-height: var(--lh-relaxed);
+	}
+
+	.outline__link {
+		color: var(--ol-accent);
+		font-size: var(--preview-fs-label);
 	}
 
 	.outline__field {
@@ -674,13 +845,40 @@
 	}
 
 	.outline__button {
-		display: grid;
-		place-items: center;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 8px;
 		height: 44px;
-		font-size: calc(var(--preview-fs-label) * var(--ol-scale, 1));
+		font-size: var(--preview-fs-label);
 		border-radius: var(--radius-sm);
-		background: var(--ol-accent, var(--text-primary));
+		background: var(--ol-accent);
 		color: var(--text-inverse);
 		font-weight: var(--fw-semibold);
+		--icon-size: var(--icon-md);
+	}
+
+	/* The other methods: a plain button, the accent kept for the main one. */
+	.outline__button--plain {
+		border: 1px solid var(--border);
+		background: color-mix(in srgb, var(--ol-text) 4%, var(--ol-card));
+		color: var(--ol-text);
+	}
+
+	/* "or" between the methods, on a line. */
+	.outline__divider {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+		align-items: center;
+		gap: 12px;
+		color: var(--ol-copy);
+		font-size: var(--preview-fs-small);
+	}
+
+	.outline__divider::before,
+	.outline__divider::after {
+		content: '';
+		height: 1px;
+		background: var(--border);
 	}
 </style>

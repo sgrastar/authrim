@@ -557,6 +557,7 @@ export const de = {
 	'cond.problem.notNumber': 'Geben Sie eine Zahl ein.',
 	'cond.problem.badPattern': 'Kein gültiger regulärer Ausdruck.',
 	'color.pick': '{name} auswählen',
+	'color.opacity': 'Deckkraft von {name}',
 	'color.invalid': 'Geben Sie eine Farbe als #RRGGBB ein.',
 	'color.contrast': 'Kontrast zu {against}: {ratio}:1',
 	'color.pass': 'Erfüllt die Lesbarkeitsstufe AA',

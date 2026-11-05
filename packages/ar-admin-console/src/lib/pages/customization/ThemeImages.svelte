@@ -10,7 +10,7 @@
 
 	// The brand panel exists only in the Split template, so its picture is offered only with Split.
 	const split = $derived(draft.template === 'split');
-	// The login area is a box on the page in Standard and Split; Minimal draws no box.
+	// The form area is a box on the page in Standard and Split; Minimal draws no box.
 	const hasCard = $derived(draft.template !== 'minimal');
 </script>
 

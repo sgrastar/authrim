@@ -1,89 +1,79 @@
 <script lang="ts">
 	import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
-	import ChoiceCards from '#lib/ui/patterns/ChoiceCards.svelte';
 	import ToggleRow from '#lib/ui/patterns/ToggleRow.svelte';
 	import ColorField from '#lib/ui/primitives/ColorField.svelte';
-	import SegmentedControl from '#lib/ui/primitives/SegmentedControl.svelte';
 	import Select from '#lib/ui/primitives/Select.svelte';
 	import ThemeGroup from './ThemeGroup.svelte';
 	import {
 		FONT_STACKS,
-		SPLIT_CHOICES,
-		type BrandAlign,
-		type BrandPosition,
-		type SplitFrame,
-		type SplitSide,
-		type SplitWidth,
+		LOGIN_DEFAULTS,
+		TOPBAR_POSITIONS,
+		type ColourMode,
+		type FontScale,
 		type ThemeDraft,
-		type ThemeFont,
-		type ThemeScale
+		type ThemeFont
 	} from './theme-draft';
 
-	/** Design: template (and the Split template's layout), colours, type and which parts the screens show. */
-	let { draft = $bindable() }: { draft: ThemeDraft } = $props();
+	/**
+	 * Design: colours, type, and how the screens are set: the colour mode, the form's spacing and
+	 * the topbar (the colour-mode and language choices). `scheme` is the mode the screens are
+	 * shown in now, so the colour fields show the colours that apply in it.
+	 */
+	let { draft = $bindable(), scheme }: { draft: ThemeDraft; scheme: 'light' | 'dark' } = $props();
 
 	const fonts: readonly ThemeFont[] = ['system', 'serif', 'rounded', 'mono'];
-
-	/** The values of a choice, with their labels (`th.<group>.<value>`). */
-	function choices<T extends string>(group: string, values: readonly T[]) {
-		return values.map((value) => ({ value, label: t(`th.${group}.${value}` as MessageKey) }));
-	}
+	const modes: readonly ColourMode[] = ['auto', 'light', 'dark'];
+	const fontScales: readonly FontScale[] = ['compact', 'comfortable', 'spacious'];
+	const defaults = $derived(LOGIN_DEFAULTS[scheme]);
+	// "Form bottom" places the choices on Split's form side, so only Split offers it (a value it
+	// already has stays listed, so the field never shows blank).
+	const topbars = $derived(
+		TOPBAR_POSITIONS.filter(
+			(value) =>
+				draft.template === 'split' || !value.startsWith('form_') || value === draft.topbarPosition
+		)
+	);
 </script>
 
-<ThemeGroup title={t('th.g.template')} info={t('th.g.template.d')}>
-	<ChoiceCards
-		label={t('th.g.template')}
-		hideLabel
-		columns={1}
-		options={[
-			{ value: 'standard', label: t('th.tpl.standard'), description: t('th.tpl.standard.d') },
-			{ value: 'split', label: t('th.tpl.split'), description: t('th.tpl.split.d') },
-			{ value: 'minimal', label: t('th.tpl.minimal'), description: t('th.tpl.minimal.d') }
-		]}
-		bind:value={draft.template}
-	/>
-</ThemeGroup>
-
-{#if draft.template === 'split'}
-	<ThemeGroup title={t('th.g.split')} info={t('th.g.split.d')}>
-		<div class="pair">
-			<Select
-				label={t('th.f.splitFrame')}
-				options={choices<SplitFrame>('splitFrame', SPLIT_CHOICES.splitFrame)}
-				bind:value={draft.splitFrame}
-			/>
-			<Select
-				label={t('th.f.splitSide')}
-				options={choices<SplitSide>('splitSide', SPLIT_CHOICES.splitSide)}
-				bind:value={draft.splitSide}
-			/>
-			<Select
-				label={t('th.f.splitWidth')}
-				options={choices<SplitWidth>('splitWidth', SPLIT_CHOICES.splitWidth)}
-				bind:value={draft.splitWidth}
-			/>
-			<Select
-				label={t('th.f.brandPosition')}
-				options={choices<BrandPosition>('brandPosition', SPLIT_CHOICES.brandPosition)}
-				bind:value={draft.brandPosition}
-			/>
-		</div>
-		<SegmentedControl
-			label={t('th.f.brandAlign')}
-			block
-			options={choices<BrandAlign>('brandAlign', SPLIT_CHOICES.brandAlign)}
-			value={draft.brandAlign}
-			onchange={(value) => (draft.brandAlign = value as BrandAlign)}
-		/>
-	</ThemeGroup>
-{/if}
-
 <ThemeGroup title={t('th.g.colours')} info={t('th.g.colours.d')}>
-	<ColorField label={t('th.c.background')} bind:value={draft.background} />
-	<ColorField label={t('th.c.accent')} bind:value={draft.accent} />
-	<ColorField label={t('th.c.title')} bind:value={draft.titleColor} />
-	<ColorField label={t('th.c.text')} bind:value={draft.textColor} />
-	<ColorField label={t('th.c.copy')} bind:value={draft.copyColor} />
+	<div class="colours">
+		<ColorField
+			label={t('th.c.background')}
+			alpha
+			fallback={defaults.background}
+			bind:value={draft.background}
+		/>
+		<ColorField
+			label={t('th.c.card')}
+			alpha
+			fallback={defaults.card}
+			bind:value={draft.cardColor}
+		/>
+		<ColorField
+			label={t('th.c.accent')}
+			alpha
+			fallback={defaults.accent}
+			bind:value={draft.accent}
+		/>
+		<ColorField
+			label={t('th.c.title')}
+			alpha
+			fallback={defaults.title}
+			bind:value={draft.titleColor}
+		/>
+		<ColorField
+			label={t('th.c.text')}
+			alpha
+			fallback={defaults.text}
+			bind:value={draft.textColor}
+		/>
+		<ColorField
+			label={t('th.c.copy')}
+			alpha
+			fallback={defaults.copy}
+			bind:value={draft.copyColor}
+		/>
+	</div>
 </ThemeGroup>
 
 <ThemeGroup title={t('th.g.type')} info={t('th.g.type.d')}>
@@ -93,20 +83,27 @@
 		bind:value={draft.font}
 	/>
 	<p class="specimen" style:font-family={FONT_STACKS[draft.font]}>{t('th.font.sample')}</p>
-	<SegmentedControl
-		label={t('th.f.scale')}
-		block
-		options={[
-			{ value: 's', label: t('th.scale.s') },
-			{ value: 'm', label: t('th.scale.m') },
-			{ value: 'l', label: t('th.scale.l') }
-		]}
-		value={draft.scale}
-		onchange={(value) => (draft.scale = value as ThemeScale)}
-	/>
 </ThemeGroup>
 
 <ThemeGroup title={t('th.g.layout')} info={t('th.g.layout.d')}>
+	<Select
+		label={t('th.f.mode')}
+		info={t('th.f.mode.d')}
+		options={modes.map((value) => ({ value, label: t(`th.mode.${value}`) }))}
+		bind:value={draft.mode}
+	/>
+	<Select
+		label={t('th.f.fontScale')}
+		info={t('th.f.fontScale.d')}
+		options={fontScales.map((value) => ({ value, label: t(`th.fontScale.${value}`) }))}
+		bind:value={draft.fontScale}
+	/>
+	<Select
+		label={t('th.f.topbar')}
+		info={t('th.f.topbar.d')}
+		options={topbars.map((value) => ({ value, label: t(`th.topbar.${value}` as MessageKey) }))}
+		bind:value={draft.topbarPosition}
+	/>
 	<ToggleRow
 		label={t('th.t.themeToggle')}
 		info={t('th.t.themeToggle.d')}
@@ -120,11 +117,14 @@
 </ThemeGroup>
 
 <style>
-	/* Short choices side by side, as many as the inspector's width allows. */
-	.pair {
+	/* Many colours in a narrow column: a small swatch and tight rows. */
+	.colours {
 		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: var(--space-field) var(--space-related);
+		gap: 8px;
+		--color-swatch: var(--control-h-xs);
+		--color-box-h: var(--control-h-sm);
+		--color-gap: 3px;
+		--color-hex-w: 84px;
 	}
 
 	/* The specimen is set in the chosen typeface so the choice can be judged before it is made. */
