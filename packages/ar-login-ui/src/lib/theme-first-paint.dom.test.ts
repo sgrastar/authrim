@@ -4,7 +4,10 @@ import { buildFirstPaintThemeScript } from './theme-bootstrap';
 /** Run the script as the browser does: the source between the tags, against the live document. */
 function runScript(darkBackground: string) {
 	const html = buildFirstPaintThemeScript(darkBackground);
-	const source = html.replace(/^<script>/, '').replace(/<\/script>$/, '');
+	const open = '<script>';
+	const close = '</script>';
+	expect(html.startsWith(open) && html.endsWith(close)).toBe(true);
+	const source = html.slice(open.length, html.length - close.length);
 	new Function(source)();
 }
 
@@ -151,7 +154,7 @@ describe('first-paint theme script (auto tenant, no hint cookie)', () => {
 	it('cannot be ended early or escaped by the colour it embeds', () => {
 		const html = buildFirstPaintThemeScript('</script><script>alert(1)</script>"');
 		// One script element: the only `</script>` is the closing tag.
-		expect(html.match(/<\/script>/g)).toHaveLength(1);
-		expect(html.match(/<script>/g)).toHaveLength(1);
+		expect(html.match(/<\/script/gi)).toHaveLength(1);
+		expect(html.match(/<script/gi)).toHaveLength(1);
 	});
 });
