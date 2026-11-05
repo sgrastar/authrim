@@ -22,7 +22,8 @@
 import { browser } from '$app/env';
 import {
 	LOGIN_UI_THEME_HINT_COOKIE,
-	LOGIN_UI_THEME_HINT_MAX_AGE_SECONDS
+	LOGIN_UI_THEME_HINT_MAX_AGE_SECONDS,
+	LOGIN_UI_THEME_STORAGE_KEY
 } from '#lib/theme-bootstrap.js';
 import { syncLoginUIDocumentSurface } from '#lib/document-surface.js';
 
@@ -30,7 +31,7 @@ import { syncLoginUIDocumentSurface } from '#lib/document-surface.js';
 export type ThemeMode = 'light' | 'dark';
 
 // Storage keys
-const STORAGE_KEY_THEME = 'authrim-theme';
+const STORAGE_KEY_THEME = LOGIN_UI_THEME_STORAGE_KEY;
 const PERSISTED_THEME_HINT_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
 
 function getSavedTheme(): ThemeMode | null {
