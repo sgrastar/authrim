@@ -144,7 +144,7 @@ function validateInventory(records: readonly DesiredWorkerInventoryRecord[]): {
     const packageMatch = SAFE_PACKAGE_NAME.exec(record.packageName);
     if (!packageMatch) throw new Error('invalid_worker_inventory_package_name');
     const component = packageMatch[1];
-    const expectedScriptName = `${environmentName}-${component}`;
+    const expectedScriptName = `${environmentName}-${SLOT_OF_SOURCE_PACKAGE[component] ?? component}`;
     if (record.workerScriptName !== expectedScriptName) {
       throw new Error(`worker_inventory_script_name_mismatch:${record.workerScriptName}`);
     }
