@@ -53,6 +53,7 @@ import {
   consumeAdminStepUpReceipt,
   createAdminStepUpOperationHash,
   createAdminStepUpRequirement,
+  describeAdminStepUpFreshness,
   evaluateAdminStepUpEvidence,
   issueAdminStepUpReceipt,
   resolveAdminStepUpLevel,
@@ -232,6 +233,41 @@ describe('evaluateAdminStepUpEvidence', () => {
     ],
   ])('does not meet L2 when %s', (_label, overrides, missing) => {
     expect(evaluateAdminStepUpEvidence(human(overrides), 'L2', now).missing).toEqual(missing);
+  });
+});
+
+describe('describeAdminStepUpFreshness', () => {
+  const now = 10_000_000;
+
+  it('reports until when each verified factor stays fresh', () => {
+    expect(
+      describeAdminStepUpFreshness(
+        human({
+          authenticationTimeMs: now - 1000,
+          secondFactorId: 'factor-1',
+          secondFactorVerifiedAtMs: now - 2000,
+        }),
+        now
+      )
+    ).toEqual({
+      passkeyFreshUntil: now - 1000 + ADMIN_STEP_UP_EVIDENCE_WINDOW_MS,
+      secondFactorFreshUntil: now - 2000 + ADMIN_STEP_UP_EVIDENCE_WINDOW_MS,
+    });
+  });
+
+  it('reports null for a stale passkey, a session without MFA and a missing second factor', () => {
+    expect(
+      describeAdminStepUpFreshness(
+        human({ authenticationTimeMs: now - ADMIN_STEP_UP_EVIDENCE_WINDOW_MS }),
+        now
+      )
+    ).toEqual({ passkeyFreshUntil: null, secondFactorFreshUntil: null });
+    expect(
+      describeAdminStepUpFreshness(
+        human({ mfaVerified: false, secondFactorVerifiedAtMs: now - 1000 }),
+        now
+      )
+    ).toEqual({ passkeyFreshUntil: null, secondFactorFreshUntil: null });
   });
 });
 
