@@ -426,6 +426,7 @@ adminSetupApiApp.post('/api/admin/setup-token/passkey/complete', async (c) => {
       public_key: publicKeyB64,
       counter,
       transports,
+      aaguid: verification.registrationInfo.aaguid || undefined,
       device_name: 'Admin UI Setup Passkey',
     });
 
