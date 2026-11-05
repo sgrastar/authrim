@@ -154,6 +154,25 @@ export function logArchiveStepLabel(path: string): string {
   return 'cloudflare_api';
 }
 
+/**
+ * Everything but letters and digits is removed on both sides of the comparison, so a credential
+ * that something (a space, a dash, a dot) was put inside of is still found.
+ */
+const TEXT_SEPARATORS = /[^A-Za-z0-9]/gu;
+const TEXT_WHITESPACE = /\s+/gu;
+
+/**
+ * Whether a copy of the credential is in the text split by separators: more copies once the
+ * separators are ignored than copies that are whole. A credential with no letters or digits
+ * (symbols, another script) is compared with only its whitespace ignored.
+ */
+function hasSplitCopy(text: string, credential: string): boolean {
+  const strip = credential.replace(TEXT_SEPARATORS, '') ? TEXT_SEPARATORS : TEXT_WHITESPACE;
+  const bare = credential.replace(strip, '');
+  if (!bare) return false;
+  return text.replace(strip, '').split(bare).length > text.split(credential).length;
+}
+
 /** Longest Cloudflare message that is read at all; a longer one is dropped, the code is kept. */
 const MAX_CLOUDFLARE_TEXT_TO_SCAN = 1000;
 
@@ -203,24 +222,26 @@ function redactCloudflareText(value: unknown, credentials: readonly string[]): s
   // leave part of a credential) or scanned (the patterns below are quadratic on long runs).
   if (value.length > MAX_CLOUDFLARE_TEXT_TO_SCAN) return undefined;
   // Whitespace is collapsed first, so every later step reads the text as it will be printed. A
-  // credential split by whitespace or line breaks would slip past an exact match, so each one is
-  // checked on its own, before anything is replaced (a short credential replaced inside a longer
-  // one would hide the longer one): present with the whitespace removed but not whole in the
-  // printed text means it was split, and the message is dropped whole.
+  // message with control or format characters (zero-width ones included) is never a diagnosis.
   const oneLine = value.replace(/\s+/gu, ' ').trim();
-  const compact = oneLine.replace(/ /gu, '');
-  for (const credential of credentials) {
-    const bare = credential.replace(/\s+/gu, '');
-    if (bare && compact.includes(bare) && !oneLine.includes(credential)) return undefined;
-  }
+  if (/[\p{Cc}\p{Cf}]/u.test(oneLine)) return undefined;
+  // A credential split by whitespace or any other separator would slip past an exact match. Each
+  // credential is checked on its own, before anything is replaced (a short credential replaced
+  // inside a longer one would hide the longer one); a split copy drops the message whole, even
+  // when another copy is whole.
+  if (credentials.some((credential) => hasSplitCopy(oneLine, credential))) return undefined;
   let text = oneLine;
   for (const credential of credentials) text = text.split(credential).join('[redacted]');
   text = text
     .replace(/\bBearer\s+\S+/giu, 'Bearer [redacted]')
     .replace(/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/gu, '[redacted]')
-    .replace(/[A-Za-z0-9+/=_-]{24,}/gu, '[redacted]')
-    .slice(0, 200)
-    .trim();
+    .replace(/[A-Za-z0-9+/=_-]{24,}/gu, '[redacted]');
+  // What is printed is checked once more: a replacement puts `[redacted]` between its neighbours,
+  // which can join them into a credential that was not in the text (`prefix` + `abc` + `suffix`
+  // around a short credential). Nothing that is left may contain one, whole or split.
+  if (credentials.some((credential) => text.includes(credential) || hasSplitCopy(text, credential)))
+    return undefined;
+  text = text.slice(0, 200).trim();
   return text || undefined;
 }
 

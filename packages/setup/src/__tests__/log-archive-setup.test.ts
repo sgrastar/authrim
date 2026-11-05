@@ -722,6 +722,83 @@ describe('log archive setup contract', () => {
       expect(other.message).not.toContain('XYZ789');
     });
 
+    it('drops the message when any copy of a credential is split, even if another is whole', async () => {
+      const secret = 'abc123XYZ789';
+      const f = fixture('pipeline');
+      const api = new LogArchiveApi(accountId, secret, f.fetcher);
+      const refuse = async (message: string) => {
+        f.overrides.set('basin-catalog/bucket', { status: 403, errors: [{ code: 5, message }] });
+        return (await api.request('basin-catalog/bucket').catch((e: unknown) => e)) as Error;
+      };
+      const mixed = await refuse(`first ${secret} then abc123\nXYZ789 again`);
+      expect(mixed.message).toContain('code 5');
+      expect(mixed.message).not.toContain('first');
+      expect(mixed.message).not.toContain('XYZ789');
+      // Separators other than whitespace, and zero-width or control characters.
+      for (const message of [
+        'bad abc123-.-XYZ789',
+        'bad abc123, XYZ789',
+        'bad abc123\u200bXYZ789',
+        'bad abc123\u0000XYZ789',
+        'bad abc\u200b123XYZ789',
+      ]) {
+        const error = await refuse(message);
+        expect(error.message).toContain('code 5');
+        expect(error.message).not.toContain('bad');
+        expect(error.message).not.toContain('XYZ789');
+      }
+      // A whole copy alone is redacted, and the rest of the message is kept.
+      expect((await refuse(`ok ${secret} and ${secret}`)).message).toContain(
+        'ok [redacted] and [redacted]'
+      );
+    });
+
+    it('drops a message that carries control or zero-width characters even with no credential', async () => {
+      const error = await refusal('basin-catalog/bucket', {
+        errors: [{ code: 6, message: 'looks\u200bfine' }],
+      });
+      expect(error.message).toContain('code 6');
+      expect(error.message).not.toContain('looks');
+    });
+
+    it('finds split credentials that have no letters or digits', async () => {
+      const f = fixture('pipeline');
+      const refuse = async (credential: string, message: string) => {
+        const api = new LogArchiveApi(accountId, credential, f.fetcher);
+        f.overrides.set('basin-catalog/bucket', { status: 403, errors: [{ code: 5, message }] });
+        return (await api.request('basin-catalog/bucket').catch((e: unknown) => e)) as Error;
+      };
+      for (const [credential, message] of [
+        ['+/=+/=', 'bad +/ =+ /='],
+        ['秘密鍵', 'bad 秘 密 鍵'],
+        ['秘密鍵', 'bad 秘\n密鍵'],
+      ]) {
+        const error = await refuse(credential, message);
+        expect(error.message).toContain('code 5');
+        expect(error.message).not.toContain('bad');
+      }
+      // Whole, they are replaced and the rest of the message is kept.
+      expect((await refuse('秘密鍵', 'bad 秘密鍵 here')).message).toContain('bad [redacted] here');
+      expect((await refuse('+/=+/=', 'bad +/=+/= here')).message).toContain('bad [redacted] here');
+    });
+
+    it('drops the message when a replacement would join its neighbours into a credential', async () => {
+      const f = fixture('pipeline');
+      const api = new LogArchiveApi(accountId, 'abc123', f.fetcher);
+      f.overrides.set('tokens/verify', {
+        status: 403,
+        errors: [{ code: 5, message: 'bad prefixabc123suffix here' }],
+      });
+      // `prefix[redacted]suffix` is not a credential, but with the sink-style token below it would
+      // be: the second credential is what the joined text spells once the first is replaced.
+      const error = (await api
+        .request('tokens/verify', 'GET', undefined, 'prefix[redacted]suffix')
+        .catch((e: unknown) => e)) as Error;
+      expect(error.message).toContain('code 5');
+      expect(error.message).not.toContain('prefix');
+      expect(error.message).not.toContain('bad');
+    });
+
     it('shows Cloudflare’s text only for steps that are listed as safe', async () => {
       // A step that is not recognised shows codes only, as does the sink.
       const unknown = await refusal('some/new/endpoint', {
