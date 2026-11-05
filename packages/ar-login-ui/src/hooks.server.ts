@@ -51,6 +51,7 @@ import {
 import { sanitizeColor } from '#lib/utils/url-validation.js';
 import { getPlatformEnv } from '#lib/server/platform-env.js';
 import {
+	buildFirstPaintThemeScript,
 	LOGIN_UI_THEME_HINT_COOKIE,
 	LOGIN_UI_THEME_HINT_MAX_AGE_SECONDS,
 	normalizeLoginUIThemeMode,
@@ -599,7 +600,12 @@ export function shouldBootstrapLoginUIThemeForRequest(
 export function resolveInitialLoginUIAppearance(
 	authenticationMethods: AuthenticationMethodsResponse | null | undefined,
 	themeHint?: { theme?: string | null }
-): { background: string; colorScheme: 'light' | 'dark' | 'light dark' } {
+): {
+	background: string;
+	colorScheme: 'light' | 'dark' | 'light dark';
+	/** Set when the mode is not known yet (`auto`, no hint): the dark first-frame colour for the script. */
+	darkBackground?: string;
+} {
 	const ui = authenticationMethods?.ui;
 	const configuredBackground = sanitizeColor(ui?.pageTemplate?.backgroundColor);
 	// The page background of the theme template in the mode the page opens in.
@@ -624,7 +630,8 @@ export function resolveInitialLoginUIAppearance(
 				}
 			: {
 					background: resolveLoginUIThemeBackground('light', template, configuredBackground),
-					colorScheme: 'light dark'
+					colorScheme: 'light dark',
+					darkBackground: resolveLoginUIThemeBackground('dark', template, configuredBackground)
 				};
 	}
 	if (theme === 'light') {
@@ -1277,6 +1284,12 @@ export const localeHandle: Handle = async ({ event, resolve }) => {
 					.replace('__AUTHRIM_DOCUMENT_DIRECTION__', toDocumentDirection(locale))
 					.replaceAll('__AUTHRIM_INITIAL_BACKGROUND__', initialAppearance.background)
 					.replaceAll('__AUTHRIM_INITIAL_COLOR_SCHEME__', initialAppearance.colorScheme)
+					.replace(
+						'__AUTHRIM_THEME_FIRST_PAINT__',
+						initialAppearance.darkBackground !== undefined
+							? buildFirstPaintThemeScript(initialAppearance.darkBackground)
+							: ''
+					)
 		});
 	};
 
