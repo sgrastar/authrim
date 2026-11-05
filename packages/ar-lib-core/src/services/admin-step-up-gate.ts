@@ -38,6 +38,8 @@ import {
   isAdminStepUpHumanSession,
   resolveAdminStepUpLevel,
   type AdminStepUpBinding,
+  type AdminStepUpLevel,
+  type AdminStepUpOperation,
   type AdminStepUpOperationDescriptor,
 } from './admin-step-up';
 
@@ -83,6 +85,37 @@ async function sessionFactorActive(env: Env, auth: AdminAuthContext): Promise<bo
   return new AdminSecondFactorRepository(adapter).isActive(auth.userId, auth.secondFactorId);
 }
 
+/** The step-up settings that apply to a tenant: its raised levels and the platform's switch. */
+export interface AdminStepUpPolicy {
+  overrides: unknown;
+  enforced: unknown;
+}
+
+/** Reads the step-up policy for a tenant. Throws when the settings cannot be read. */
+export async function readAdminStepUpPolicy(
+  env: Env,
+  tenantId: string
+): Promise<AdminStepUpPolicy> {
+  const settings = await resolveEffectiveSettings(env, 'security', { tenantId });
+  return {
+    overrides: settings[ADMIN_STEP_UP_OVERRIDES_KEY],
+    enforced: settings[ADMIN_STEP_UP_ENFORCED_KEY],
+  };
+}
+
+/**
+ * The level the gate asks of a human session for one operation under a policy: L0 when the
+ * platform switched enforcement off (except for the operations that are always enforced).
+ */
+export function effectiveAdminStepUpLevel(
+  operation: AdminStepUpOperation,
+  policy: AdminStepUpPolicy
+): AdminStepUpLevel {
+  // Off only when the platform said so in so many words; anything else enforces.
+  if (policy.enforced === false && !ADMIN_STEP_UP_ALWAYS_ENFORCED.has(operation)) return 'L0';
+  return resolveAdminStepUpLevel(operation, policy.overrides);
+}
+
 /**
  * Returns null when the request may go ahead, or the response refusing it. An L2 receipt is
  * spent here, so call this once, after the request has been validated and just before acting.
@@ -97,11 +130,7 @@ export async function requireAdminStepUp(
   let overrides: unknown;
   let enforced: unknown;
   try {
-    const settings = await resolveEffectiveSettings(c.env, 'security', {
-      tenantId: descriptor.targetTenantId,
-    });
-    overrides = settings[ADMIN_STEP_UP_OVERRIDES_KEY];
-    enforced = settings[ADMIN_STEP_UP_ENFORCED_KEY];
+    ({ overrides, enforced } = await readAdminStepUpPolicy(c.env, descriptor.targetTenantId));
   } catch {
     return refuse(
       c,

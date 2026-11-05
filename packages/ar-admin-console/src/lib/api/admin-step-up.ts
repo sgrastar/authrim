@@ -20,6 +20,7 @@ import {
 	reauthenticateWithPasskey,
 	withCeremonyTimeout
 } from '#lib/api/admin-reauth.js';
+import { adminFetch, API_BASE_URL } from '#lib/api/admin-request.js';
 import { ApiError } from '#lib/api/api-error.js';
 
 /** The request header that carries a receipt. */
@@ -108,4 +109,71 @@ export async function withStepUp<T>(
 /** Headers carrying a receipt, or none. */
 export function stepUpHeaders(receipt?: string): Record<string, string> {
 	return receipt ? { [STEP_UP_RECEIPT_HEADER]: receipt } : {};
+}
+
+export type StepUpLevel = 'L0' | 'L1' | 'L2';
+
+export interface StepUpOperationRequirement {
+	/** The level asked of a signed-in admin in the selected tenant. */
+	level: StepUpLevel;
+	/** The catalog floor, which a tenant may raise but not lower. */
+	catalog_level: 'L1' | 'L2';
+	always_enforced: boolean;
+}
+
+/** GET /api/admin/me/step-up/requirements. */
+export interface StepUpRequirements {
+	tenant_id: string;
+	enforced: boolean;
+	human_session: boolean;
+	evidence_window_seconds: number;
+	evidence: {
+		/** Until when (ms) the session's passkey is fresh, or null. */
+		passkey_fresh_until: number | null;
+		/** Until when (ms) the session's security key is fresh, or null. */
+		second_factor_fresh_until: number | null;
+	};
+	second_factor_registered: boolean;
+	/** Keyed by operation name, e.g. `webhook.destination.update`. */
+	operations: Record<string, StepUpOperationRequirement>;
+}
+
+/**
+ * Which operations need L1 or L2 in the selected tenant, and how fresh the session's factors are.
+ * A hint for telling the admin beforehand: the operation's own refusal still decides.
+ */
+export async function fetchStepUpRequirements(): Promise<StepUpRequirements> {
+	const response = await adminFetch(`${API_BASE_URL}/api/admin/me/step-up/requirements`, {
+		method: 'GET'
+	});
+	const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+	if (!response.ok) {
+		const code = typeof payload.error === 'string' ? payload.error : '';
+		const message =
+			typeof payload.error_description === 'string'
+				? payload.error_description
+				: `Step-up requirements could not be loaded (${response.status})`;
+		throw new ApiError(response.status, code, message, payload);
+	}
+	return payload as unknown as StepUpRequirements;
+}
+
+/**
+ * What an operation would ask the admin for if run at `now`: nothing, the passkey, the security
+ * key, or both. An operation the response does not list needs nothing beyond the session.
+ */
+export function stepUpFactorsNeeded(
+	requirements: StepUpRequirements,
+	operation: string,
+	now: number = Date.now()
+): StepUpFactor[] {
+	const level = requirements.operations[operation]?.level ?? 'L0';
+	if (level === 'L0') return [];
+	const fresh = (until: number | null) => until !== null && until > now;
+	const needed: StepUpFactor[] = [];
+	if (!fresh(requirements.evidence.passkey_fresh_until)) needed.push('passkey');
+	if (level === 'L2' && !fresh(requirements.evidence.second_factor_fresh_until)) {
+		needed.push('second_factor');
+	}
+	return needed;
 }

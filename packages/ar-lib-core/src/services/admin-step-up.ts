@@ -241,6 +241,26 @@ function freshUntil(verifiedAt: number | undefined, now: number): number | null 
   return until > now ? until : null;
 }
 
+/** Until when (ms) each factor the session verified stays fresh, or null when it is not fresh. */
+export interface AdminStepUpFreshness {
+  passkeyFreshUntil: number | null;
+  secondFactorFreshUntil: number | null;
+}
+
+/** How fresh the session's passkey and second factor are now. */
+export function describeAdminStepUpFreshness(
+  auth: AdminAuthContext,
+  now: number
+): AdminStepUpFreshness {
+  return {
+    passkeyFreshUntil:
+      auth.mfaVerified === true ? freshUntil(auth.authenticationTimeMs, now) : null,
+    secondFactorFreshUntil: auth.secondFactorId
+      ? freshUntil(auth.secondFactorVerifiedAtMs, now)
+      : null,
+  };
+}
+
 /**
  * Which factors a human session still needs for a level. L1 needs a fresh passkey; L2 also needs
  * a fresh registered second factor. The evidence holds until the older of the two goes stale.
@@ -250,15 +270,12 @@ export function evaluateAdminStepUpEvidence(
   level: Exclude<AdminStepUpLevel, 'L0'>,
   now: number
 ): AdminStepUpEvidence {
-  const passkeyUntil =
-    auth.mfaVerified === true ? freshUntil(auth.authenticationTimeMs, now) : null;
+  const { passkeyFreshUntil: passkeyUntil, secondFactorFreshUntil: secondFactorUntil } =
+    describeAdminStepUpFreshness(auth, now);
   const missing: AdminStepUpFactor[] = [];
   if (passkeyUntil === null) missing.push('passkey');
   let until = passkeyUntil;
   if (level === 'L2') {
-    const secondFactorUntil = auth.secondFactorId
-      ? freshUntil(auth.secondFactorVerifiedAtMs, now)
-      : null;
     if (secondFactorUntil === null) missing.push('second_factor');
     else if (until !== null) until = Math.min(until, secondFactorUntil);
   }

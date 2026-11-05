@@ -8,9 +8,12 @@ vi.mock('@simplewebauthn/browser', () => ({
 import { ApiError } from './api-error';
 import {
 	STEP_UP_RECEIPT_HEADER,
+	fetchStepUpRequirements,
+	stepUpFactorsNeeded,
 	stepUpHeaders,
 	stepUpRequired,
 	withStepUp,
+	type StepUpRequirements,
 	type StepUpSteps
 } from './admin-step-up';
 
@@ -133,5 +136,74 @@ describe('stepUpHeaders', () => {
 	it('carries a receipt only when there is one', () => {
 		expect(stepUpHeaders('asp_1')).toEqual({ [STEP_UP_RECEIPT_HEADER]: 'asp_1' });
 		expect(stepUpHeaders()).toEqual({});
+	});
+});
+
+describe('stepUpFactorsNeeded', () => {
+	const now = 1_000_000;
+	const requirements = (
+		passkeyUntil: number | null,
+		secondFactorUntil: number | null
+	): StepUpRequirements => ({
+		tenant_id: 'tenant-a',
+		enforced: true,
+		human_session: true,
+		evidence_window_seconds: 300,
+		evidence: {
+			passkey_fresh_until: passkeyUntil,
+			second_factor_fresh_until: secondFactorUntil
+		},
+		second_factor_registered: true,
+		operations: {
+			'sessions.revoke_all': { level: 'L1', catalog_level: 'L1', always_enforced: false },
+			'tenant.delete': { level: 'L2', catalog_level: 'L2', always_enforced: false },
+			'dr.restore': { level: 'L0', catalog_level: 'L2', always_enforced: false }
+		}
+	});
+
+	it('asks for nothing for an L0 or unlisted operation', () => {
+		expect(stepUpFactorsNeeded(requirements(null, null), 'dr.restore', now)).toEqual([]);
+		expect(stepUpFactorsNeeded(requirements(null, null), 'users.list', now)).toEqual([]);
+	});
+
+	it('asks only for what is not fresh', () => {
+		expect(stepUpFactorsNeeded(requirements(null, null), 'sessions.revoke_all', now)).toEqual([
+			'passkey'
+		]);
+		expect(stepUpFactorsNeeded(requirements(now + 1, null), 'sessions.revoke_all', now)).toEqual(
+			[]
+		);
+		expect(stepUpFactorsNeeded(requirements(null, null), 'tenant.delete', now)).toEqual([
+			'passkey',
+			'second_factor'
+		]);
+		expect(stepUpFactorsNeeded(requirements(now + 1, now + 1), 'tenant.delete', now)).toEqual([]);
+		// Freshness that has run out by `now` counts as missing.
+		expect(stepUpFactorsNeeded(requirements(now, now + 1), 'tenant.delete', now)).toEqual([
+			'passkey'
+		]);
+	});
+});
+
+describe('fetchStepUpRequirements', () => {
+	it('reads the requirements and turns a refusal into an ApiError', async () => {
+		const body = { tenant_id: 'tenant-a', operations: {} };
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(new Response(JSON.stringify(body), { status: 200 }))
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ error: 'step_up_unavailable' }), { status: 503 })
+			);
+		vi.stubGlobal('fetch', fetchMock);
+		try {
+			await expect(fetchStepUpRequirements()).resolves.toEqual(body);
+			expect(String(fetchMock.mock.calls[0][0])).toContain('/api/admin/me/step-up/requirements');
+			await expect(fetchStepUpRequirements()).rejects.toMatchObject({
+				status: 503,
+				code: 'step_up_unavailable'
+			});
+		} finally {
+			vi.unstubAllGlobals();
+		}
 	});
 });
