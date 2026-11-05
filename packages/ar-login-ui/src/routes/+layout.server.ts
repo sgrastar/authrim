@@ -1,6 +1,7 @@
 import type { LayoutServerLoad } from './$types';
 import { fetchDiscoveryConfig, getDiscoveryRequestHeaders } from '../lib/discovery-entry';
 import { getLoginUILanguageConfig, resolveEnabledLoginUILocale } from '#lib/i18n/config.js';
+import { LOGIN_UI_THEME_HINT_COOKIE, normalizeLoginUIThemeMode } from '#lib/theme-bootstrap.js';
 
 const RESOLVED_TENANT_AUTH_ROUTES = new Set([
 	'/callback',
@@ -48,9 +49,12 @@ export const load: LayoutServerLoad = async (event) => {
 		});
 	}
 	const emailVerificationProtocolEnabled = event.locals.emailVerificationProtocolEnabled === true;
+	// The mode the visitor's last page resolved to: where a tenant that sets none (`auto`) opens.
+	const themeHint = normalizeLoginUIThemeMode(event.cookies.get(LOGIN_UI_THEME_HINT_COOKIE));
 	if (_shouldUseResolvedTenantBranding(event.route.id)) {
 		return {
 			preferredLanguage,
+			themeHint,
 			shouldLoadTenantBranding: true,
 			emailVerificationProtocolEnabled,
 			authenticationMethods: event.locals.authenticationMethods ?? null
@@ -67,6 +71,7 @@ export const load: LayoutServerLoad = async (event) => {
 
 	return {
 		preferredLanguage,
+		themeHint,
 		shouldLoadTenantBranding,
 		emailVerificationProtocolEnabled,
 		authenticationMethods: shouldLoadTenantBranding

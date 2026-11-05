@@ -741,7 +741,23 @@ tr.expired {
 	min-height: 100vh;
 	min-height: 100dvh;
 	background-color: var(--login-page-background-color, var(--bg-page));
-	background-image: var(--login-page-background-layer, none);
+	/* The veil is the page colour at the strength the image is turned down by (login-ui.
+	   background_image_opacity); at full opacity it is transparent. */
+	--login-page-image-veil: linear-gradient(
+		color-mix(
+			in srgb,
+			var(--login-page-background-color, var(--bg-page))
+				calc((1 - var(--login-page-background-opacity, 1)) * 100%),
+			transparent
+		),
+		color-mix(
+			in srgb,
+			var(--login-page-background-color, var(--bg-page))
+				calc((1 - var(--login-page-background-opacity, 1)) * 100%),
+			transparent
+		)
+	);
+	background-image: var(--login-page-image-veil), var(--login-page-background-layer, none);
 	background-position: center;
 	background-size: cover;
 	display: flex;
@@ -1376,7 +1392,7 @@ tr.expired {
 
 [data-page-layout='split_panel'][data-has-page-background-image='true'][data-split-background-mode='brand']
 	.auth-brand-panel {
-	background-image: var(--login-page-background-layer);
+	background-image: var(--login-page-image-veil), var(--login-page-background-layer);
 }
 
 [data-page-layout='split_panel'] .auth-brand-panel::before {
@@ -1553,7 +1569,7 @@ tr.expired {
 			color-mix(in srgb, var(--bg-glass) 70%, transparent),
 			color-mix(in srgb, var(--bg-glass) 70%, transparent)
 		),
-		var(--login-page-background-layer, none);
+		var(--login-page-image-veil), var(--login-page-background-layer, none);
 	box-shadow: var(--shadow-xl);
 	overflow: hidden;
 }
@@ -1626,7 +1642,8 @@ tr.expired {
    light block), so a page always follows its own boundary's scheme. */
 [data-login-theme='fullbleed-glass'] .auth-page {
 	--login-page-overlay: var(--fullbleed-overlay);
-	background-image: var(--login-page-background-layer, var(--fullbleed-default-image));
+	background-image:
+		var(--login-page-image-veil), var(--login-page-background-layer, var(--fullbleed-default-image));
 }
 
 /* Vermilion bold typography and on-image readability (mock parity) */
@@ -2855,4 +2872,226 @@ tr.expired {
 
 [data-branding-loaded] .home-header__brand {
 	opacity: 1;
+}
+
+/* === Palettes and templates (login-ui.palette, login-ui.template) ===
+   The pre-palette themes above paint meridian, classic and glass. `flat` is the palette with
+   rules of its own: no shadow, small corners, a hairline border in place of a card surface. */
+:is(:root, .login-ui-theme-boundary)[data-login-theme='flat'] {
+	--login-page-background-color: #ffffff;
+	--login-page-overlay: transparent;
+	--primary: var(--login-accent-color, #2f52c4);
+	--primary-hover: color-mix(in srgb, var(--primary) 82%, black);
+	--primary-light: color-mix(in srgb, var(--primary) 8%, transparent);
+	--gradient-primary: var(--primary);
+	--bg-page: #ffffff;
+	--bg-card: #ffffff;
+	--bg-glass: #ffffff;
+	--bg-input: #ffffff;
+	--bg-subtle: rgba(17, 24, 39, 0.04);
+	--border: rgba(17, 24, 39, 0.16);
+	--border-glass: rgba(17, 24, 39, 0.12);
+	--text-primary: #111827;
+	--text-secondary: #374151;
+	--text-muted: #6b7280;
+	--radius-sm: 6px;
+	--radius-md: 8px;
+	--radius-lg: 8px;
+	--radius-xl: 8px;
+	--card-radius: 8px;
+	--card-padding: 24px;
+	--button-radius: 8px;
+	--input-radius: 8px;
+	--input-border: rgba(17, 24, 39, 0.24);
+	--button-primary-bg: var(--primary);
+	--button-primary-text: var(--login-accent-text, #ffffff);
+	--button-secondary-bg: #ffffff;
+	--button-secondary-border: rgba(17, 24, 39, 0.24);
+	--button-secondary-text: #111827;
+	--card-bg-muted: #f9fafb;
+	--surface-muted: #f9fafb;
+	--accent-color: var(--primary);
+	--border-color: rgba(17, 24, 39, 0.16);
+	--shadow-sm: none;
+	--panel-glass-bg: rgba(255, 255, 255, 0.6);
+	--login-page-max-width: 420px;
+}
+
+:is(:root, .login-ui-theme-boundary)[data-theme='dark'][data-login-theme='flat'] {
+	--login-page-background-color: #0a0a0b;
+	--primary: var(--login-accent-color, #93aef2);
+	--primary-hover: color-mix(in srgb, var(--primary) 82%, white);
+	--bg-page: #0a0a0b;
+	--bg-card: #0a0a0b;
+	--bg-glass: #111113;
+	--bg-input: #111113;
+	--bg-subtle: rgba(244, 244, 245, 0.06);
+	--border: rgba(244, 244, 245, 0.2);
+	--border-glass: rgba(244, 244, 245, 0.16);
+	--text-primary: #f4f4f5;
+	--text-secondary: #d4d4d8;
+	--text-muted: #a1a1aa;
+	--input-border: rgba(244, 244, 245, 0.28);
+	--button-primary-text: var(--login-accent-text, #0c1327);
+	--button-secondary-bg: #111113;
+	--button-secondary-border: rgba(244, 244, 245, 0.28);
+	--button-secondary-text: #f4f4f5;
+	--card-bg-muted: #111113;
+	--surface-muted: #111113;
+	--border-color: rgba(244, 244, 245, 0.2);
+	--shadow-sm: none;
+	--panel-glass-bg: rgba(10, 10, 11, 0.6);
+}
+
+/* Minimal has no card box: the form sits on the page, whatever the palette's shape. */
+:is(:root, .login-ui-theme-boundary)[data-login-template='minimal'] .card {
+	background: transparent;
+	border-color: transparent;
+	box-shadow: none;
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
+}
+
+/* The form area colour (login-ui.form_area_color) paints the split template's form side as the
+   Card paints the centred layouts' form. */
+[data-page-layout='split_panel'][data-has-form-area-color='true'] .auth-container {
+	background: var(--login-form-area-color);
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
+}
+
+/* In the split template the legacy login panel colour wins over the form area colour when it is
+   set (as the setting says). It only ever applied to the "brand only" background mode. */
+[data-page-layout='split_panel'][data-has-form-area-color='true'][data-split-background-mode='brand']
+	.auth-container {
+	background: var(--login-panel-background-fill, var(--login-form-area-color));
+}
+
+/* The brand panel's own picture (login-ui.brand_panel_image_url), turned down by its opacity. It
+   lies under the panel's scrim and content, over the panel's own colour. */
+[data-has-brand-panel-image='true'] .auth-brand-panel {
+	position: relative;
+	isolation: isolate;
+}
+
+[data-has-brand-panel-image='true'] .auth-brand-panel::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	z-index: -1;
+	pointer-events: none;
+	background-image: var(--login-brand-panel-image-layer);
+	background-position: center;
+	background-size: cover;
+	opacity: var(--login-brand-panel-image-opacity, 1);
+}
+
+/* The language and mode switches in the split template's form row: at the foot of the form side,
+   at the left, centre or right (elsewhere "form bottom" is the page bottom, resolved before it
+   reaches the stylesheet). */
+[data-page-layout='split_panel'][data-topbar-position^='form_bottom_']
+	.auth-container
+	> .auth-topbar {
+	margin: auto 0 0;
+	padding-top: 24px;
+	justify-content: center;
+}
+
+[data-page-layout='split_panel'][data-topbar-position='form_bottom_left']
+	.auth-container
+	> .auth-topbar {
+	justify-content: flex-start;
+}
+
+[data-page-layout='split_panel'][data-topbar-position='form_bottom_right']
+	.auth-container
+	> .auth-topbar {
+	justify-content: flex-end;
+}
+
+/* Split, form frame "card" (login-ui.form_frame): the brand panel, with its colour and picture,
+   runs behind the whole stage and the form area floats over it as a card, with no frosted side of
+   its own. The area is the whole form column (the header, the form and the switches), so
+   nothing of it sits bare on the picture. The panel's content keeps to its own side by leaving
+   the form side's share free. The default frame, "full", is the form side as a full-height panel
+   (the rules above). Narrow screens hide the panel, so they keep the rules above too. */
+@media (min-width: 641px) {
+	[data-page-layout='split_panel'][data-form-frame='card'] {
+		--split-form-share: max(360px, 40%);
+		--split-card-width: 440px;
+	}
+
+	[data-page-layout='split_panel'][data-form-frame='card'][data-split-panel-width='wide'] {
+		--split-form-share: max(360px, 60%);
+		--split-card-width: 640px;
+	}
+
+	[data-page-layout='split_panel'][data-form-frame='card'] .auth-brand-panel {
+		grid-column: 1 / -1;
+		padding-inline: 48px calc(var(--split-form-share) + 48px);
+	}
+
+	[data-page-layout='split_panel'][data-form-frame='card'][data-split-panel-side='right']
+		.auth-brand-panel {
+		padding-inline: calc(var(--split-form-share) + 48px) 48px;
+	}
+
+	[data-page-layout='split_panel'][data-form-frame='card'] .auth-container {
+		z-index: 1;
+		justify-self: center;
+		align-self: center;
+		width: min(calc(100% - 64px), var(--split-card-width));
+		max-width: none;
+		height: auto;
+		max-height: calc(100% - 64px);
+		padding: 32px;
+		border: 1px solid var(--border-glass);
+		border-radius: var(--card-radius, var(--radius-xl));
+		background: var(--login-form-area-color, var(--bg-card));
+		box-shadow: var(--shadow-sm);
+		backdrop-filter: var(--blur-sm);
+		-webkit-backdrop-filter: var(--blur-sm);
+	}
+
+	[data-page-layout='split_panel'][data-form-frame='card'] .auth-container.auth-container--wide {
+		--split-card-width: 760px;
+	}
+
+	[data-page-layout='split_panel'][data-form-frame='card'][data-split-background-mode='brand']
+		.auth-container {
+		background: var(--login-panel-background-fill, var(--login-form-area-color, var(--bg-card)));
+	}
+
+	/* The login panel's own picture (split_background_mode panel) has no place in the card: the
+	   attributes only outweigh the rule that shows it. */
+	[data-page-layout='split_panel'][data-form-frame='card'][data-split-background-mode][data-has-login-panel-background-image]
+		.auth-container::before {
+		display: none;
+	}
+
+	/* Below the card, the switches take the stage's foot: the card leaves that room. */
+	[data-page-layout='split_panel'][data-form-frame='card'][data-topbar-position='below_card']
+		.auth-main
+		> .auth-topbar
+		~ .auth-container {
+		max-height: calc(100% - 128px);
+		margin-block: 32px 96px;
+	}
+}
+
+/* The veil over the page background image takes only the page colour's channels, so a translucent
+   page colour does not let the image show through when the image is turned all the way down. */
+@supports (color: rgb(from red r g b)) {
+	.auth-page {
+		--login-page-image-veil: linear-gradient(
+			rgb(
+				from var(--login-page-background-color, var(--bg-page)) r g b /
+					calc(1 - var(--login-page-background-opacity, 1))
+			),
+			rgb(
+				from var(--login-page-background-color, var(--bg-page)) r g b /
+					calc(1 - var(--login-page-background-opacity, 1))
+			)
+		);
+	}
 }

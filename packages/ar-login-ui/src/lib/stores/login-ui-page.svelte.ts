@@ -6,9 +6,26 @@ import type {
 	LoginUITextLocalizations
 } from '#lib/api/authentication-methods.js';
 import { syncLoginUIDocumentSurface } from '#lib/document-surface.js';
-import { isValidImageUrl, isValidLinkUrl, sanitizeColor } from '#lib/utils/url-validation.js';
+import {
+	cssUrl,
+	isValidImageUrl,
+	isValidLinkUrl,
+	sanitizeColor
+} from '#lib/utils/url-validation.js';
+import {
+	DEFAULT_PALETTE,
+	DEFAULT_TEMPLATE,
+	layoutFor,
+	legacyThemeFor,
+	readPalette,
+	readTemplate,
+	type LegacyThemeName,
+	type PaletteId,
+	type TemplateId
+} from '#lib/palettes.js';
 
-type ThemeTemplate = 'classic' | 'meridian' | 'split-brand-panel' | 'fullbleed-glass';
+/** The value of `data-login-theme`: the pre-palette theme names, plus `flat`. */
+type ThemeTemplate = LegacyThemeName;
 type PageLayout = 'centered_card' | 'split_panel' | 'fullbleed_card';
 type FontFamily = 'system' | 'rounded' | 'serif' | 'mono';
 type FontScale = 'compact' | 'comfortable' | 'spacious';
@@ -21,7 +38,12 @@ type TopbarPosition =
 	| 'bottom_left'
 	| 'bottom_center'
 	| 'bottom_right'
+	| 'form_bottom_left'
+	| 'form_bottom_center'
+	| 'form_bottom_right'
 	| 'hidden';
+type FormFrame = 'card' | 'full';
+type BrandPanelLogoDisplay = 'inherit' | LogoDisplay;
 type HeaderStyle = 'center' | 'bar';
 type FooterStyle = 'simple' | 'bar';
 type LogoLayout = 'stack' | 'row';
@@ -45,9 +67,36 @@ function readThemeTemplate(value: unknown): ThemeTemplate {
 	return value === 'classic' ||
 		value === 'split-brand-panel' ||
 		value === 'fullbleed-glass' ||
+		value === 'flat' ||
 		value === 'meridian'
 		? value
 		: DEFAULT_THEME_TEMPLATE;
+}
+
+/** The palette a pre-palette `themeTemplate` stands for (a server that sends no `palette`). */
+function paletteOfThemeTemplate(value: ThemeTemplate): PaletteId {
+	if (value === 'classic') return 'classic';
+	if (value === 'fullbleed-glass') return 'glass';
+	if (value === 'flat') return 'flat';
+	return DEFAULT_PALETTE;
+}
+
+function templateOfLayout(value: PageLayout): TemplateId {
+	return value === 'split_panel' ? 'split' : DEFAULT_TEMPLATE;
+}
+
+function readFormFrame(value: unknown): FormFrame {
+	return value === 'full' || value === 'card' ? value : 'full';
+}
+
+function readBrandPanelLogoDisplay(value: unknown): BrandPanelLogoDisplay {
+	return value === 'auto' ||
+		value === 'image' ||
+		value === 'text' ||
+		value === 'hidden' ||
+		value === 'inherit'
+		? value
+		: 'inherit';
 }
 
 function readPageLayout(value: unknown): PageLayout {
@@ -87,6 +136,9 @@ function readTopbarPosition(value: unknown, legacyValue: unknown): TopbarPositio
 		value === 'bottom_left' ||
 		value === 'bottom_center' ||
 		value === 'bottom_right' ||
+		value === 'form_bottom_left' ||
+		value === 'form_bottom_center' ||
+		value === 'form_bottom_right' ||
 		value === 'hidden' ||
 		value === 'below_card'
 	) {
@@ -220,6 +272,15 @@ function setCustomCss(css: string | null) {
 
 export function createLoginUIPageStore() {
 	let themeTemplate = $state<ThemeTemplate>(DEFAULT_THEME_TEMPLATE);
+	let template = $state<TemplateId>(DEFAULT_TEMPLATE);
+	let palette = $state<PaletteId>(DEFAULT_PALETTE);
+	let formFrame = $state<FormFrame>('full');
+	let formAreaColor = $state('');
+	let headerName = $state('');
+	let brandPanelLogoDisplay = $state<BrandPanelLogoDisplay>('inherit');
+	let backgroundImageOpacity = $state(100);
+	let brandPanelImageUrl = $state<string | null>(null);
+	let brandPanelImageOpacity = $state(100);
 	let layout = $state<PageLayout>(DEFAULT_PAGE_LAYOUT);
 	let fontFamily = $state<FontFamily>('system');
 	let fontScale = $state<FontScale>('comfortable');
@@ -241,6 +302,7 @@ export function createLoginUIPageStore() {
 	let languageSwitcherPosition = $state<LanguageSwitcherPosition>('below_card');
 	let topbarPosition = $state<TopbarPosition>('below_card');
 	let themeToggleEnabled = $state(true);
+	let themeFixed = $state(false);
 	let languageSelectEnabled = $state(true);
 	let headerStyle = $state<HeaderStyle>('center');
 	let footerStyle = $state<FooterStyle>('simple');
@@ -261,10 +323,18 @@ export function createLoginUIPageStore() {
 	let brandPanelText = $state<string | null>(null);
 	let customCss = $state<string | null>(null);
 
+	/** `inherit` follows the logo display of the form side. */
+	function effectiveBrandPanelLogoDisplay(): LogoDisplay {
+		return brandPanelLogoDisplay === 'inherit' ? logoDisplay : brandPanelLogoDisplay;
+	}
+
 	function applyDocumentState(customCss: string | null) {
 		if (!browser) return;
 		const html = document.documentElement;
 		html.setAttribute('data-login-theme', themeTemplate);
+		html.setAttribute('data-login-template', template);
+		html.setAttribute('data-login-palette', palette);
+		html.setAttribute('data-form-frame', formFrame);
 		html.setAttribute('data-page-layout', layout);
 		html.setAttribute('data-font-family', fontFamily);
 		html.setAttribute('data-font-scale', fontScale);
@@ -286,6 +356,9 @@ export function createLoginUIPageStore() {
 		html.setAttribute('data-brand-position', brandPosition);
 		html.setAttribute('data-brand-align', brandAlign);
 		html.setAttribute('data-logo-display', logoDisplay);
+		html.setAttribute('data-brand-panel-logo-display', effectiveBrandPanelLogoDisplay());
+		html.setAttribute('data-has-brand-panel-image', brandPanelImageUrl ? 'true' : 'false');
+		html.setAttribute('data-has-form-area-color', sanitizeColor(formAreaColor) ? 'true' : 'false');
 
 		setOptionalStyleProperty(
 			'--login-page-background-color',
@@ -299,14 +372,12 @@ export function createLoginUIPageStore() {
 		setOptionalStyleProperty('--login-copy-color', sanitizeColor(copyColor) || null);
 		setOptionalStyleProperty(
 			'--login-page-background-layer',
-			backgroundImageUrl && isValidImageUrl(backgroundImageUrl)
-				? `url("${backgroundImageUrl}")`
-				: null
+			backgroundImageUrl && isValidImageUrl(backgroundImageUrl) ? cssUrl(backgroundImageUrl) : null
 		);
 		setOptionalStyleProperty(
 			'--login-panel-background-layer',
 			loginPanelBackgroundImageUrl && isValidImageUrl(loginPanelBackgroundImageUrl)
-				? `url("${loginPanelBackgroundImageUrl}")`
+				? cssUrl(loginPanelBackgroundImageUrl)
 				: null
 		);
 		setOptionalStyleProperty(
@@ -321,14 +392,44 @@ export function createLoginUIPageStore() {
 			'--login-panel-background-opacity',
 			String(loginPanelBackgroundOpacity / 100)
 		);
+		setOptionalStyleProperty('--login-form-area-color', sanitizeColor(formAreaColor) || null);
+		setOptionalStyleProperty(
+			'--login-page-background-opacity',
+			String(backgroundImageOpacity / 100)
+		);
+		setOptionalStyleProperty(
+			'--login-brand-panel-image-layer',
+			brandPanelImageUrl && isValidImageUrl(brandPanelImageUrl) ? cssUrl(brandPanelImageUrl) : null
+		);
+		setOptionalStyleProperty(
+			'--login-brand-panel-image-opacity',
+			String(brandPanelImageOpacity / 100)
+		);
 		setCustomCss(customCss);
 	}
 
 	function setFromUIConfig(ui: LoginUIConfig | null | undefined) {
 		const page = ui?.pageTemplate;
 		const appearance = ui?.appearance;
-		themeTemplate = readThemeTemplate(ui?.themeTemplate);
-		layout = readPageLayout(page?.layout);
+		// A server that sends `palette` and `template` is read by them; an older one by the
+		// pre-palette `themeTemplate` and `layout`, as before.
+		const servedPalette = readPalette(page?.palette);
+		const servedTemplate = readTemplate(page?.template);
+		layout = servedTemplate ? layoutFor(servedTemplate) : readPageLayout(page?.layout);
+		template = servedTemplate ?? templateOfLayout(layout);
+		const legacyTheme = readThemeTemplate(ui?.themeTemplate);
+		palette = servedPalette ?? paletteOfThemeTemplate(legacyTheme);
+		themeTemplate = servedPalette ? legacyThemeFor(servedPalette, template) : legacyTheme;
+		formFrame = readFormFrame(page?.formFrame);
+		formAreaColor = sanitizeColor(page?.formAreaColor) || '';
+		headerName = readOptionalText(ui?.branding?.headerName) ?? '';
+		brandPanelLogoDisplay = readBrandPanelLogoDisplay(page?.brandPanelLogoDisplay);
+		backgroundImageOpacity = readPercentage(appearance?.backgroundImageOpacity, 100);
+		brandPanelImageUrl =
+			appearance?.brandPanelImageUrl && isValidImageUrl(appearance.brandPanelImageUrl)
+				? appearance.brandPanelImageUrl
+				: null;
+		brandPanelImageOpacity = readPercentage(appearance?.brandPanelImageOpacity, 100);
 		fontFamily = readFontFamily(page?.fontFamily);
 		fontScale = readFontScale(page?.fontScale);
 		backgroundColor = sanitizeColor(page?.backgroundColor) || '';
@@ -356,8 +457,17 @@ export function createLoginUIPageStore() {
 		poweredByEnabled = readBoolean(page?.poweredByEnabled, true);
 		authSwitchLinkEnabled = readBoolean(page?.authSwitchLinkEnabled, true);
 		languageSwitcherPosition = readLanguageSwitcherPosition(page?.languageSwitcherPosition);
-		topbarPosition = readTopbarPosition(page?.topbarPosition, page?.languageSwitcherPosition);
+		// "Form bottom" belongs to the split template's form side; where there is no such side it is
+		// the page bottom, as before.
+		const readPosition = readTopbarPosition(page?.topbarPosition, page?.languageSwitcherPosition);
+		topbarPosition =
+			layout === 'split_panel'
+				? readPosition
+				: (readPosition.replace(/^form_/, '') as TopbarPosition);
 		themeToggleEnabled = readBoolean(page?.themeToggleEnabled, true);
+		// Only a light or dark mode can be fixed (as the server serves it, and for an older one).
+		const mode = ui?.theme?.trim().toLowerCase();
+		themeFixed = readBoolean(ui?.themeFixed, false) && (mode === 'light' || mode === 'dark');
 		languageSelectEnabled = readBoolean(page?.languageSelectEnabled, true);
 		headerStyle = readHeaderStyle(page?.headerStyle);
 		footerStyle = readFooterStyle(page?.footerStyle);
@@ -383,6 +493,46 @@ export function createLoginUIPageStore() {
 	return {
 		get themeTemplate() {
 			return themeTemplate;
+		},
+		get template() {
+			return template;
+		},
+		get palette() {
+			return palette;
+		},
+		get formFrame() {
+			return formFrame;
+		},
+		/** The form area colour (hex with optional alpha); empty while the palette's applies. */
+		get formAreaColor() {
+			return formAreaColor;
+		},
+		/** The name shown in the page header; empty when none is set. */
+		get headerName() {
+			return headerName;
+		},
+		/** How the logo appears on the brand panel (`inherit` resolved to the form side's). */
+		get brandPanelLogoDisplay() {
+			return effectiveBrandPanelLogoDisplay();
+		},
+		/** `url("…")` for the page background image, or null (the same value the stylesheet reads). */
+		get backgroundImageLayer() {
+			return backgroundImageUrl ? cssUrl(backgroundImageUrl) : null;
+		},
+		get loginPanelBackgroundLayer() {
+			return loginPanelBackgroundImageUrl ? cssUrl(loginPanelBackgroundImageUrl) : null;
+		},
+		get brandPanelImageLayer() {
+			return brandPanelImageUrl ? cssUrl(brandPanelImageUrl) : null;
+		},
+		get backgroundImageOpacity() {
+			return backgroundImageOpacity;
+		},
+		get brandPanelImageUrl() {
+			return brandPanelImageUrl;
+		},
+		get brandPanelImageOpacity() {
+			return brandPanelImageOpacity;
 		},
 		get layout() {
 			return layout;
@@ -427,8 +577,13 @@ export function createLoginUIPageStore() {
 		get loginPanelBackgroundOpacity() {
 			return loginPanelBackgroundOpacity;
 		},
+		/**
+		 * The brand panel is an element of the split template. With no brand content it is gone,
+		 * except under the floating card, where it is the stage behind the card (its picture and
+		 * colour) and shows nothing of its own.
+		 */
 		get showBrandPanel() {
-			return layout === 'split_panel' && brandContentMode !== 'none';
+			return layout === 'split_panel' && (brandContentMode !== 'none' || formFrame === 'card');
 		},
 		get headerEnabled() {
 			return headerEnabled;
@@ -452,10 +607,14 @@ export function createLoginUIPageStore() {
 			return topbarPosition;
 		},
 		get showTopbar() {
-			return topbarPosition !== 'hidden' && (themeToggleEnabled || languageSelectEnabled);
+			return (
+				topbarPosition !== 'hidden' &&
+				((themeToggleEnabled && !themeFixed) || languageSelectEnabled)
+			);
 		},
+		/** The mode switch is offered unless the tenant disabled it or fixed the mode. */
 		get themeToggleEnabled() {
-			return themeToggleEnabled;
+			return themeToggleEnabled && !themeFixed;
 		},
 		get languageSelectEnabled() {
 			return languageSelectEnabled;

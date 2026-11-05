@@ -58,6 +58,32 @@ import { deriveEncryptionKey, encryptSecretFields } from '@authrim/ar-lib-plugin
 import { externalSignupProviderIds } from '@authrim/ar-lib-core';
 import { getAuthenticationMethodsHandler } from '../authentication-methods';
 
+/** The slice of the served `ui` object that the typed assertions below read. */
+interface ServedLoginUi {
+  theme: string;
+  themeFixed: boolean;
+  branding: { headerName: string };
+  pageTemplate: {
+    template: string;
+    palette: string;
+    layout: string;
+    formFrame: string;
+    brandPanelLogoDisplay: string;
+    topbarPosition: string;
+    accentColor: string;
+    backgroundColor: string;
+    titleColor: string;
+    textColor: string;
+    copyColor: string;
+    formAreaColor: string;
+  };
+  appearance: {
+    backgroundImageOpacity: number;
+    brandPanelImageOpacity: number;
+    brandPanelImageUrl: string | null;
+  };
+}
+
 // =============================================================================
 // Mock helpers
 // =============================================================================
@@ -207,15 +233,22 @@ describe('Authentication Methods API', () => {
       const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
       const body = (await res.json()) as any;
 
-      expect(body.ui.theme).toBe('light');
+      expect(body.ui.theme).toBe('auto');
+      expect((body as { ui: ServedLoginUi }).ui.themeFixed).toBe(false);
       // The colour variants are gone: a value stored before is not served.
       expect(body.ui).not.toHaveProperty('variant');
       expect(body.ui.branding.brandName).toBe('Authrim');
+      expect((body as { ui: ServedLoginUi }).ui.branding.headerName).toBe('');
       expect(body.ui.branding.logoUrl).toBeNull();
       expect(body.ui.branding.faviconUrl).toBeNull();
       expect(body.ui.themeTemplate).toBe('meridian');
       expect(body.ui.pageTemplate).toMatchObject({
+        template: 'standard',
+        palette: 'meridian',
         layout: 'centered_card',
+        formAreaColor: '',
+        formFrame: 'full',
+        brandPanelLogoDisplay: 'inherit',
         logoLayout: 'stack',
         topbarPosition: 'below_card',
         themeToggleEnabled: true,
@@ -2040,8 +2073,16 @@ describe('Authentication Methods API', () => {
         'settings:tenant:default:login-ui': JSON.stringify({
           'login-ui.theme': 'dark',
           'login-ui.variant': 'navy',
-          'login-ui.theme_template': 'fullbleed-glass',
-          'login-ui.page_layout': 'fullbleed_card',
+          'login-ui.template': 'split',
+          'login-ui.palette': 'glass',
+          'login-ui.theme_fixed': true,
+          'login-ui.form_area_color': '#ffffff80',
+          'login-ui.form_frame': 'card',
+          'login-ui.header_name': 'My App Console',
+          'login-ui.brand_panel_logo_display': 'text',
+          'login-ui.background_image_opacity': 35,
+          'login-ui.brand_panel_image_url': 'https://example.com/brand.jpg',
+          'login-ui.brand_panel_image_opacity': 55,
           'login-ui.font_family': 'mono',
           'login-ui.font_scale': 'spacious',
           'login-ui.background_color': '#0b1220',
@@ -2118,9 +2159,16 @@ describe('Authentication Methods API', () => {
       expect(body.ui.branding.brandName).toBe('My App');
       expect(body.ui.branding.logoUrl).toBe('https://example.com/logo.png');
       expect(body.ui.branding.faviconUrl).toBe('https://example.com/favicon.ico');
+      expect((body as { ui: ServedLoginUi }).ui.themeFixed).toBe(true);
+      expect((body as { ui: ServedLoginUi }).ui.branding.headerName).toBe('My App Console');
       expect(body.ui.themeTemplate).toBe('fullbleed-glass');
       expect(body.ui.pageTemplate).toMatchObject({
-        layout: 'fullbleed_card',
+        template: 'split',
+        palette: 'glass',
+        layout: 'split_panel',
+        formAreaColor: '#ffffff80',
+        formFrame: 'card',
+        brandPanelLogoDisplay: 'text',
         fontFamily: 'mono',
         fontScale: 'spacious',
         backgroundColor: '#0b1220',
@@ -2157,6 +2205,11 @@ describe('Authentication Methods API', () => {
       expect(body.ui.supportedLocales).toEqual(['en', 'ja', 'fr']);
       expect(body.ui.defaultLocale).toBe('fr');
       expect(body.ui.appearance.backgroundImageUrl).toBe('https://example.com/bg.jpg');
+      expect((body as { ui: ServedLoginUi }).ui.appearance.backgroundImageOpacity).toBe(35);
+      expect((body as { ui: ServedLoginUi }).ui.appearance.brandPanelImageUrl).toBe(
+        'https://example.com/brand.jpg'
+      );
+      expect((body as { ui: ServedLoginUi }).ui.appearance.brandPanelImageOpacity).toBe(55);
       expect(body.ui.appearance.loginPanelBackgroundImageUrl).toBe('https://example.com/panel.jpg');
       expect(body.ui.appearance.thumbnailUrl).toBe('https://example.com/thumb.webp');
       expect(body.ui.appearance.customCss).toBe('.auth-page { background: #fff; }');
@@ -2228,6 +2281,254 @@ describe('Authentication Methods API', () => {
   });
 
   // ===========================================================================
+  // Template / palette / theme parity fields
+  // ===========================================================================
+
+  describe('Login UI template, palette and theme parity', () => {
+    async function getUi(
+      tenantLoginUi: Record<string, unknown>,
+      extra: Record<string, string> = {}
+    ): Promise<ServedLoginUi> {
+      const settingsKV = createMockKV({
+        'settings:tenant:default:login-ui': JSON.stringify(tenantLoginUi),
+        ...extra,
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV });
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      expect(res.status).toBe(200);
+      return (await res.json<{ ui: ServedLoginUi }>()).ui;
+    }
+
+    it.each(['standard', 'split', 'minimal'])('serves the template %s', async (template) => {
+      const ui = await getUi({ 'login-ui.template': template });
+      expect(ui.pageTemplate.template).toBe(template);
+      expect(ui.pageTemplate.layout).toBe(template === 'split' ? 'split_panel' : 'centered_card');
+    });
+
+    it.each(['meridian', 'classic', 'glass', 'flat'])('serves the palette %s', async (palette) => {
+      const ui = await getUi({ 'login-ui.palette': palette });
+      expect(ui.pageTemplate.palette).toBe(palette);
+    });
+
+    it('falls back to the defaults for unknown template and palette ids', async () => {
+      const ui = await getUi({ 'login-ui.template': 'fullbleed', 'login-ui.palette': 'neon' });
+      expect(ui.pageTemplate.template).toBe('standard');
+      expect(ui.pageTemplate.palette).toBe('meridian');
+    });
+
+    it('never returns fullbleed_card as the layout', async () => {
+      const ui = await getUi({ 'login-ui.page_layout': 'fullbleed_card' });
+      expect(ui.pageTemplate.layout).toBe('centered_card');
+      expect(ui.pageTemplate.template).toBe('standard');
+    });
+
+    it('derives the template from the deprecated page_layout only when template was never set', async () => {
+      expect((await getUi({ 'login-ui.page_layout': 'split_panel' })).pageTemplate.template).toBe(
+        'split'
+      );
+      expect((await getUi({ 'login-ui.page_layout': 'centered_card' })).pageTemplate.template).toBe(
+        'standard'
+      );
+      const both = await getUi({
+        'login-ui.page_layout': 'split_panel',
+        'login-ui.template': 'minimal',
+      });
+      expect(both.pageTemplate.template).toBe('minimal');
+    });
+
+    it.each([
+      ['classic', 'classic'],
+      ['meridian', 'meridian'],
+      ['split-brand-panel', 'meridian'],
+      ['fullbleed-glass', 'glass'],
+    ])(
+      'derives the palette from the deprecated theme_template %s as %s',
+      async (legacy, palette) => {
+        expect((await getUi({ 'login-ui.theme_template': legacy })).pageTemplate.palette).toBe(
+          palette
+        );
+      }
+    );
+
+    it('prefers the palette over the deprecated theme_template', async () => {
+      const ui = await getUi({
+        'login-ui.theme_template': 'classic',
+        'login-ui.palette': 'flat',
+      });
+      expect(ui.pageTemplate.palette).toBe('flat');
+    });
+
+    it('inherits a platform template when the tenant sets nothing', async () => {
+      const ui = await getUi(
+        {},
+        {
+          'settings:platform:login-ui': JSON.stringify({
+            'login-ui.template': 'minimal',
+            'login-ui.palette': 'flat',
+          }),
+        }
+      );
+      expect(ui.pageTemplate.template).toBe('minimal');
+      expect(ui.pageTemplate.palette).toBe('flat');
+    });
+
+    it('serves auto, light and dark as the theme mode and rejects other values', async () => {
+      for (const mode of ['auto', 'light', 'dark']) {
+        expect((await getUi({ 'login-ui.theme': mode })).theme).toBe(mode);
+      }
+      expect((await getUi({ 'login-ui.theme': 'sepia' })).theme).toBe('auto');
+    });
+
+    it('serves theme_fixed as a boolean and falls back for junk', async () => {
+      const dark = { 'login-ui.theme': 'dark' };
+      expect((await getUi({ ...dark, 'login-ui.theme_fixed': true })).themeFixed).toBe(true);
+      expect((await getUi({ ...dark, 'login-ui.theme_fixed': 'true' })).themeFixed).toBe(true);
+      expect((await getUi({ ...dark, 'login-ui.theme_fixed': 'yes' })).themeFixed).toBe(false);
+    });
+
+    it('fixes only a light or dark mode: theme_fixed is ignored while the theme is auto', async () => {
+      expect((await getUi({ 'login-ui.theme_fixed': true })).themeFixed).toBe(false);
+      expect(
+        (await getUi({ 'login-ui.theme': 'auto', 'login-ui.theme_fixed': true })).themeFixed
+      ).toBe(false);
+      expect(
+        (await getUi({ 'login-ui.theme': 'light', 'login-ui.theme_fixed': true })).themeFixed
+      ).toBe(true);
+    });
+
+    it('serves form_frame, full unless the card is chosen, and full for junk', async () => {
+      expect((await getUi({})).pageTemplate.formFrame).toBe('full');
+      expect((await getUi({ 'login-ui.form_frame': 'card' })).pageTemplate.formFrame).toBe('card');
+      expect((await getUi({ 'login-ui.form_frame': 'full' })).pageTemplate.formFrame).toBe('full');
+      expect((await getUi({ 'login-ui.form_frame': 'floating' })).pageTemplate.formFrame).toBe(
+        'full'
+      );
+    });
+
+    it('serves header_name and brand_panel_logo_display', async () => {
+      const ui = await getUi({
+        'login-ui.header_name': '  Console  ',
+        'login-ui.brand_panel_logo_display': 'hidden',
+      });
+      expect(ui.branding.headerName).toBe('Console');
+      expect(ui.pageTemplate.brandPanelLogoDisplay).toBe('hidden');
+      const junk = await getUi({ 'login-ui.brand_panel_logo_display': 'sideways' });
+      expect(junk.pageTemplate.brandPanelLogoDisplay).toBe('inherit');
+    });
+
+    it.each(['form_bottom_left', 'form_bottom_center', 'form_bottom_right'])(
+      'serves the topbar position %s',
+      async (position) => {
+        expect(
+          (await getUi({ 'login-ui.topbar_position': position })).pageTemplate.topbarPosition
+        ).toBe(position);
+      }
+    );
+
+    it('bounds the image opacities to 0-100 and falls back for junk', async () => {
+      const high = await getUi({
+        'login-ui.background_image_opacity': 250,
+        'login-ui.brand_panel_image_opacity': -5,
+      });
+      expect(high.appearance.backgroundImageOpacity).toBe(100);
+      expect(high.appearance.brandPanelImageOpacity).toBe(0);
+      const text = await getUi({ 'login-ui.background_image_opacity': '40' });
+      expect(text.appearance.backgroundImageOpacity).toBe(40);
+      const junk = await getUi({
+        'login-ui.background_image_opacity': 'lots',
+        'login-ui.brand_panel_image_opacity': null,
+      });
+      expect(junk.appearance.backgroundImageOpacity).toBe(100);
+      expect(junk.appearance.brandPanelImageOpacity).toBe(100);
+    });
+
+    it('ignores an inherited property name as the deprecated theme_template', async () => {
+      for (const legacy of ['constructor', 'toString', '__proto__']) {
+        const ui = await getUi({ 'login-ui.theme_template': legacy });
+        expect(ui.pageTemplate.palette, legacy).toBe('meridian');
+      }
+    });
+
+    it('treats an empty or blank opacity as unset and keeps the inherited value', async () => {
+      const inherited = {
+        'settings:platform:login-ui': JSON.stringify({
+          'login-ui.background_image_opacity': 80,
+          'login-ui.brand_panel_image_opacity': 70,
+        }),
+      };
+      for (const blank of ['', '   ']) {
+        const ui = await getUi(
+          {
+            'login-ui.background_image_opacity': blank,
+            'login-ui.brand_panel_image_opacity': blank,
+          },
+          inherited
+        );
+        expect(ui.appearance.backgroundImageOpacity, JSON.stringify(blank)).toBe(80);
+        expect(ui.appearance.brandPanelImageOpacity, JSON.stringify(blank)).toBe(70);
+      }
+    });
+
+    it('validates the brand panel image URL like the other image URLs', async () => {
+      const valid = await getUi({ 'login-ui.brand_panel_image_url': 'https://example.com/a.png' });
+      expect(valid.appearance.brandPanelImageUrl).toBe('https://example.com/a.png');
+      const asset = '/api/assets/tenant_1/login-ui/panel-background/abc.webp';
+      expect(
+        (await getUi({ 'login-ui.brand_panel_image_url': asset })).appearance.brandPanelImageUrl
+      ).toBe(asset);
+      for (const bad of ['http://example.com/a.png', 'javascript:alert(1)', '/api/assets/x/../y']) {
+        expect(
+          (await getUi({ 'login-ui.brand_panel_image_url': bad })).appearance.brandPanelImageUrl
+        ).toBeNull();
+      }
+    });
+
+    it('accepts 8-digit hex for the page colours and the form area colour', async () => {
+      const ui = await getUi({
+        'login-ui.background_color': '#0b122080',
+        'login-ui.title_color': '#111827cc',
+        'login-ui.text_color': '#1f2937FF',
+        'login-ui.copy_color': '#4b556380',
+        'login-ui.form_area_color': '#ffffff99',
+      });
+      expect(ui.pageTemplate).toMatchObject({
+        backgroundColor: '#0b122080',
+        titleColor: '#111827cc',
+        textColor: '#1f2937FF',
+        copyColor: '#4b556380',
+        formAreaColor: '#ffffff99',
+      });
+    });
+
+    it('drops malformed hex colours (5, 7 and 9 digits) and non-colours', async () => {
+      const ui = await getUi({
+        'login-ui.background_color': '#12345',
+        'login-ui.title_color': '#1234567',
+        'login-ui.text_color': '#123456789',
+        'login-ui.form_area_color': 'url(x)',
+      });
+      expect(ui.pageTemplate).toMatchObject({
+        backgroundColor: '',
+        titleColor: '',
+        textColor: '',
+        formAreaColor: '',
+      });
+    });
+
+    it('keeps the accent colour opaque-only', async () => {
+      expect((await getUi({ 'login-ui.accent_color': '#336699' })).pageTemplate.accentColor).toBe(
+        '#336699'
+      );
+      expect((await getUi({ 'login-ui.accent_color': '#abc' })).pageTemplate.accentColor).toBe(
+        '#abc'
+      );
+      expect((await getUi({ 'login-ui.accent_color': '#336699cc' })).pageTemplate.accentColor).toBe(
+        ''
+      );
+    });
+  });
+
+  // ===========================================================================
   // Error handling
   // ===========================================================================
 
@@ -2279,7 +2580,7 @@ describe('Authentication Methods API', () => {
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
 
-      expect(body.ui.theme).toBe('light');
+      expect(body.ui.theme).toBe('auto');
       // The colour variants are gone: a value stored before is not served.
       expect(body.ui).not.toHaveProperty('variant');
       expect(body.ui.appearance.footerLinks).toEqual([]);

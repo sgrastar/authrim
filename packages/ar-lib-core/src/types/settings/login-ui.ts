@@ -12,6 +12,32 @@
 
 import type { CategoryMeta, SettingMeta } from '../../utils/settings-manager';
 
+/**
+ * Layout templates (placement only). Colours and shape come from the palette.
+ * - standard: header, a centred card holding the form, footer
+ * - split: brand panel + form side
+ * - minimal: a centred form placed directly on the page, no card box
+ */
+export const LOGIN_UI_TEMPLATE_IDS = ['standard', 'split', 'minimal'] as const;
+export type LoginUITemplateId = (typeof LOGIN_UI_TEMPLATE_IDS)[number];
+export const DEFAULT_LOGIN_UI_TEMPLATE: LoginUITemplateId = 'standard';
+
+/**
+ * Built-in palette ids. The palettes themselves (colours and shape tokens) live in the Login UI's
+ * registry (ar-login-ui src/lib/palettes.ts); this list is the single backend source of truth for
+ * which ids may be stored and returned. Add a palette there first, then add its id here.
+ */
+export const LOGIN_UI_PALETTE_IDS = ['meridian', 'classic', 'glass', 'flat'] as const;
+export type LoginUIPaletteId = (typeof LOGIN_UI_PALETTE_IDS)[number];
+export const DEFAULT_LOGIN_UI_PALETTE: LoginUIPaletteId = 'meridian';
+
+/** Unknown or missing palette ids read as the default palette. */
+export function normalizeLoginUIPaletteId(value: unknown): LoginUIPaletteId {
+  return typeof value === 'string' && (LOGIN_UI_PALETTE_IDS as readonly string[]).includes(value)
+    ? (value as LoginUIPaletteId)
+    : DEFAULT_LOGIN_UI_PALETTE;
+}
+
 export type LoginUITextField =
   | 'tagline'
   | 'brandPanelTitle'
@@ -29,11 +55,16 @@ export type LoginUITextLocalizations = Record<string, Partial<Record<LoginUIText
 export interface LoginUISettings {
   // Theme
   'login-ui.theme': string;
+  'login-ui.theme_fixed': boolean;
+  'login-ui.template': string;
+  'login-ui.palette': string;
+  /** @deprecated Replaced by `login-ui.palette`. */
   'login-ui.theme_template': string;
   'login-ui.published_version': number;
   'login-ui.published_at': string;
   'login-ui.published_snapshot': string;
   'login-ui.rollback_snapshot': string;
+  /** @deprecated Replaced by `login-ui.template`. */
   'login-ui.page_layout': string;
   'login-ui.font_family': string;
   'login-ui.font_scale': string;
@@ -42,14 +73,17 @@ export interface LoginUISettings {
   'login-ui.title_color': string;
   'login-ui.text_color': string;
   'login-ui.copy_color': string;
+  'login-ui.form_area_color': string;
 
   // Branding
   'login-ui.brand_name': string;
+  'login-ui.header_name': string;
   'login-ui.logo_url': string;
   'login-ui.favicon_url': string;
   'login-ui.thumbnail_url': string;
   'login-ui.logo_display': string;
   'login-ui.logo_layout': string;
+  'login-ui.brand_panel_logo_display': string;
   'login-ui.brand_panel_title': string;
   'login-ui.brand_panel_text': string;
 
@@ -61,7 +95,10 @@ export interface LoginUISettings {
 
   // Appearance
   'login-ui.background_image_url': string;
+  'login-ui.background_image_opacity': number;
   'login-ui.login_panel_background_image_url': string;
+  'login-ui.brand_panel_image_url': string;
+  'login-ui.brand_panel_image_opacity': number;
   'login-ui.custom_css': string;
   'login-ui.header_enabled': boolean;
   'login-ui.subtitle_enabled': boolean;
@@ -75,6 +112,7 @@ export interface LoginUISettings {
   'login-ui.header_style': string;
   'login-ui.footer_style': string;
   'login-ui.split_frame': string;
+  'login-ui.form_frame': string;
   'login-ui.split_panel_side': string;
   'login-ui.split_panel_width': string;
   'login-ui.split_background_mode': string;
@@ -104,11 +142,44 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
   'login-ui.theme': {
     key: 'login-ui.theme',
     type: 'enum',
-    default: 'light',
+    default: 'auto',
     envKey: 'LOGIN_UI_THEME',
     label: 'Theme Mode',
-    description: 'Default theme mode for the Login UI (light or dark)',
-    enum: ['light', 'dark'],
+    description:
+      'Default theme mode for the Login UI. Auto follows the visitor device; light or dark is the tenant default',
+    enum: ['auto', 'light', 'dark'],
+    visibility: 'public',
+  },
+  'login-ui.theme_fixed': {
+    key: 'login-ui.theme_fixed',
+    type: 'boolean',
+    default: false,
+    envKey: 'LOGIN_UI_THEME_FIXED',
+    label: 'Fix Theme Mode',
+    description:
+      'When true and the theme mode is light or dark, that mode is always used: the visitor choice and device setting are ignored and the theme toggle is hidden. Ignored when the theme mode is auto',
+    visibility: 'public',
+  },
+  'login-ui.template': {
+    key: 'login-ui.template',
+    type: 'enum',
+    default: DEFAULT_LOGIN_UI_TEMPLATE,
+    envKey: 'LOGIN_UI_TEMPLATE',
+    label: 'Template',
+    description:
+      'Login UI layout: standard (centred card), split (brand panel and form side) or minimal (centred form without a card)',
+    enum: [...LOGIN_UI_TEMPLATE_IDS],
+    visibility: 'public',
+  },
+  'login-ui.palette': {
+    key: 'login-ui.palette',
+    type: 'enum',
+    default: DEFAULT_LOGIN_UI_PALETTE,
+    envKey: 'LOGIN_UI_PALETTE',
+    label: 'Palette',
+    description:
+      'Built-in colour and shape palette, combined freely with any template. Explicit colour settings override it',
+    enum: [...LOGIN_UI_PALETTE_IDS],
     visibility: 'public',
   },
   'login-ui.theme_template': {
@@ -116,10 +187,12 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
     type: 'enum',
     default: 'meridian',
     envKey: 'LOGIN_UI_THEME_TEMPLATE',
-    label: 'Theme Template',
-    description: 'Built-in Login UI theme template',
+    label: 'Theme Template (deprecated)',
+    description:
+      'Deprecated: replaced by login-ui.palette. Still accepted; the Login UI API derives the palette from it only when login-ui.palette was never set',
     enum: ['classic', 'meridian', 'split-brand-panel', 'fullbleed-glass'],
     visibility: 'public',
+    deprecated: true,
   },
   'login-ui.published_version': {
     key: 'login-ui.published_version',
@@ -167,10 +240,12 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
     type: 'enum',
     default: 'centered_card',
     envKey: 'LOGIN_UI_PAGE_LAYOUT',
-    label: 'Page Layout',
-    description: 'Outer page layout for Login UI screens',
+    label: 'Page Layout (deprecated)',
+    description:
+      'Deprecated: replaced by login-ui.template. Still accepted; the Login UI API derives the template from it only when login-ui.template was never set (split_panel is split, anything else is standard)',
     enum: ['centered_card', 'split_panel', 'fullbleed_card'],
     visibility: 'public',
+    deprecated: true,
   },
   'login-ui.font_family': {
     key: 'login-ui.font_family',
@@ -239,6 +314,16 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
     description: 'Optional CSS color override for supporting copy, subtitles, and helper text',
     visibility: 'public',
   },
+  'login-ui.form_area_color': {
+    key: 'login-ui.form_area_color',
+    type: 'string',
+    default: '',
+    envKey: 'LOGIN_UI_FORM_AREA_COLOR',
+    label: 'Form Area Color',
+    description:
+      'Colour of the form area: the card, or the form side of the split template. #rgb, #rrggbb or #rrggbbaa. Empty follows the palette. In the split template the legacy login panel background colour wins when set',
+    visibility: 'public',
+  },
   'login-ui.brand_name': {
     key: 'login-ui.brand_name',
     type: 'string',
@@ -246,6 +331,15 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
     envKey: 'LOGIN_UI_BRAND_NAME',
     label: 'Brand Name',
     description: 'Brand name displayed on the Login UI',
+    visibility: 'public',
+  },
+  'login-ui.header_name': {
+    key: 'login-ui.header_name',
+    type: 'string',
+    default: '',
+    envKey: 'LOGIN_UI_HEADER_NAME',
+    label: 'Header Name',
+    description: 'Name shown in the header. Empty uses the brand name',
     visibility: 'public',
   },
   'login-ui.logo_url': {
@@ -265,6 +359,17 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
     label: 'Logo Display',
     description: 'Logo rendering priority. Auto uses image first, then brand text fallback',
     enum: ['auto', 'image', 'text', 'hidden'],
+    visibility: 'public',
+  },
+  'login-ui.brand_panel_logo_display': {
+    key: 'login-ui.brand_panel_logo_display',
+    type: 'enum',
+    default: 'inherit',
+    envKey: 'LOGIN_UI_BRAND_PANEL_LOGO_DISPLAY',
+    label: 'Brand Panel Logo Display',
+    description:
+      'How the split brand panel shows the logo and name. Inherit uses the logo display setting (which then applies to both the header and the panel)',
+    enum: ['inherit', 'auto', 'image', 'text', 'hidden'],
     visibility: 'public',
   },
   'login-ui.brand_panel_title': {
@@ -372,6 +477,39 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
     description: 'URL to the background image displayed on the Login UI',
     visibility: 'public',
   },
+  'login-ui.background_image_opacity': {
+    key: 'login-ui.background_image_opacity',
+    type: 'number',
+    default: 100,
+    envKey: 'LOGIN_UI_BACKGROUND_IMAGE_OPACITY',
+    label: 'Background Image Opacity',
+    description: 'Opacity of the page background image from transparent to clear',
+    min: 0,
+    max: 100,
+    unit: 'percent',
+    visibility: 'public',
+  },
+  'login-ui.brand_panel_image_url': {
+    key: 'login-ui.brand_panel_image_url',
+    type: 'string',
+    default: '',
+    envKey: 'LOGIN_UI_BRAND_PANEL_IMAGE_URL',
+    label: 'Brand Panel Image URL',
+    description: 'Optional picture laid over the split brand panel fill, under its text',
+    visibility: 'public',
+  },
+  'login-ui.brand_panel_image_opacity': {
+    key: 'login-ui.brand_panel_image_opacity',
+    type: 'number',
+    default: 100,
+    envKey: 'LOGIN_UI_BRAND_PANEL_IMAGE_OPACITY',
+    label: 'Brand Panel Image Opacity',
+    description: 'Opacity of the brand panel picture from transparent to clear',
+    min: 0,
+    max: 100,
+    unit: 'percent',
+    visibility: 'public',
+  },
   'login-ui.login_panel_background_image_url': {
     key: 'login-ui.login_panel_background_image_url',
     type: 'string',
@@ -441,7 +579,8 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
     default: 'below_card',
     envKey: 'LOGIN_UI_TOPBAR_POSITION',
     label: 'Topbar Position',
-    description: 'Where the theme toggle and language selector are displayed on Login UI pages',
+    description:
+      'Where the theme toggle and language selector are displayed on Login UI pages. The form_bottom_* values place them at the bottom of the split template form side and behave as below_card elsewhere',
     enum: [
       'below_card',
       'in_card',
@@ -449,6 +588,9 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
       'bottom_left',
       'bottom_center',
       'bottom_right',
+      'form_bottom_left',
+      'form_bottom_center',
+      'form_bottom_right',
       'hidden',
     ],
     visibility: 'public',
@@ -518,6 +660,17 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
     envKey: 'LOGIN_UI_SPLIT_FRAME',
     label: 'Split Frame',
     description: 'Whether split-panel themes use a full-page or framed card shell',
+    enum: ['full', 'card'],
+    visibility: 'public',
+  },
+  'login-ui.form_frame': {
+    key: 'login-ui.form_frame',
+    type: 'enum',
+    default: 'full',
+    envKey: 'LOGIN_UI_FORM_FRAME',
+    label: 'Form Frame',
+    description:
+      'Split template only. Full: the form side is a full-height panel. Card: the brand panel runs behind the whole stage and the form area floats over it as a card',
     enum: ['full', 'card'],
     visibility: 'public',
   },
@@ -735,7 +888,10 @@ export const LOGIN_UI_CATEGORY_META: CategoryMeta = {
  * Default Login UI settings values
  */
 export const LOGIN_UI_DEFAULTS: LoginUISettings = {
-  'login-ui.theme': 'light',
+  'login-ui.theme': 'auto',
+  'login-ui.theme_fixed': false,
+  'login-ui.template': DEFAULT_LOGIN_UI_TEMPLATE,
+  'login-ui.palette': DEFAULT_LOGIN_UI_PALETTE,
   'login-ui.theme_template': 'meridian',
   'login-ui.published_version': 0,
   'login-ui.published_at': '',
@@ -749,12 +905,15 @@ export const LOGIN_UI_DEFAULTS: LoginUISettings = {
   'login-ui.title_color': '',
   'login-ui.text_color': '',
   'login-ui.copy_color': '',
+  'login-ui.form_area_color': '',
   'login-ui.brand_name': 'Authrim',
+  'login-ui.header_name': '',
   'login-ui.logo_url': '',
   'login-ui.favicon_url': '',
   'login-ui.thumbnail_url': '',
   'login-ui.logo_display': 'auto',
   'login-ui.logo_layout': 'stack',
+  'login-ui.brand_panel_logo_display': 'inherit',
   'login-ui.brand_panel_title': '',
   'login-ui.brand_panel_text': '',
   'login-ui.supported_locales':
@@ -763,7 +922,10 @@ export const LOGIN_UI_DEFAULTS: LoginUISettings = {
   'login-ui.primary_locales': null,
   'login-ui.show_english_language_names': false,
   'login-ui.background_image_url': '',
+  'login-ui.background_image_opacity': 100,
   'login-ui.login_panel_background_image_url': '',
+  'login-ui.brand_panel_image_url': '',
+  'login-ui.brand_panel_image_opacity': 100,
   'login-ui.custom_css': '',
   'login-ui.header_enabled': true,
   'login-ui.subtitle_enabled': true,
@@ -777,6 +939,7 @@ export const LOGIN_UI_DEFAULTS: LoginUISettings = {
   'login-ui.header_style': 'center',
   'login-ui.footer_style': 'simple',
   'login-ui.split_frame': 'full',
+  'login-ui.form_frame': 'full',
   'login-ui.split_panel_side': 'left',
   'login-ui.split_panel_width': 'narrow',
   'login-ui.split_background_mode': 'shared',

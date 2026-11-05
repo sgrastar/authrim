@@ -108,13 +108,23 @@ export function isValidReturnUrl(url: string): boolean {
 }
 
 /**
+ * A `url("…")` value for a custom property, from a URL `isValidImageUrl` accepted. That check
+ * parses the URL but leaves the text as it was, so a quote, a backslash or a line break in it
+ * could end the string and add declarations of its own; each is written as a URL writes it.
+ */
+export function cssUrl(url: string): string {
+	return `url("${url.replace(/["\\\n\r\f]/g, (character) => encodeURIComponent(character))}")`;
+}
+
+/**
  * Validate image URL for use in <img> src attributes.
  * Allows HTTPS URLs and safe base64-encoded data:image URIs only.
  * Prevents javascript: and other dangerous schemes.
  * SVG data URIs are excluded to prevent XSS via inline SVG event handlers.
  */
-export function isValidImageUrl(url: string): boolean {
-	if (!url) return false;
+export function isValidImageUrl(url: unknown): url is string {
+	// A value off the wire may be any JSON: only a non-empty string can be an image URL.
+	if (typeof url !== 'string' || !url) return false;
 	if (url.startsWith('//')) return false;
 	// Explicitly reject SVG data URIs — SVG can contain <script> and event handlers (XSS).
 	// This guard catches all SVG variants (svg+xml, svg+xml;charset=..., etc.)

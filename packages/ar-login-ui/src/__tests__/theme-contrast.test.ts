@@ -154,6 +154,12 @@ const glassLight = {
 	...tokens(app, `${BOUNDARY}[data-theme='light'][data-login-theme='fullbleed-glass'] {`)
 };
 
+const flatLight = tokens(app, `${BOUNDARY}[data-login-theme='flat'] {`);
+const flatDark = {
+	...flatLight,
+	...tokens(app, `${BOUNDARY}[data-theme='dark'][data-login-theme='flat'] {`)
+};
+
 const classicLight = classic(":root,\n[data-theme='light'] {");
 const classicDark = classic("/* === Dark Theme === */\n[data-theme='dark'] {");
 
@@ -162,6 +168,8 @@ const CASES: Case[] = [
 	{ name: 'classic dark', values: classicDark, behind: page(classicDark) },
 	{ name: 'meridian / split light', values: meridianLight, behind: page(meridianLight) },
 	{ name: 'meridian / split dark', values: meridianDark, behind: page(meridianDark) },
+	{ name: 'flat light', values: flatLight, behind: page(flatLight) },
+	{ name: 'flat dark', values: flatDark, behind: page(flatDark) },
 	{ name: 'fullbleed glass dark', values: glassDark, behind: imageryUnderScrim(glassDark) },
 	{ name: 'fullbleed glass light', values: glassLight, behind: imageryUnderScrim(glassLight) }
 ];

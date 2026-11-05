@@ -470,7 +470,8 @@ components:
                 enabled: false
                 providers: []
             ui:
-              theme: light
+              theme: auto
+              themeFixed: false
               supportedLocales:
                 - en
                 - ja
@@ -481,6 +482,11 @@ components:
               showEnglishLanguageNames: false
               branding:
                 brandName: Authrim
+                headerName: ''
+              pageTemplate:
+                template: standard
+                palette: meridian
+                formFrame: full
             meta:
               cacheTTL: 60
               revision: 2026-06-19T00:00:00.000Z
@@ -1341,10 +1347,98 @@ components:
               type: boolean
               default: false
               description: Display English names alongside native names in the language selector.
+            theme:
+              type: string
+              enum:
+                - auto
+                - light
+                - dark
+              default: auto
+              description: >-
+                Colour mode. `auto` follows the visitor's system setting; `light` and `dark` are
+                the tenant's default, which a visitor may still switch unless `themeFixed` is true.
+            themeFixed:
+              type: boolean
+              default: false
+              description: >-
+                When true the visitor cannot change the colour mode. Only `light` and `dark` can be
+                fixed: while `theme` is `auto` this is false, whatever is stored.
+            branding:
+              type: object
+              additionalProperties: true
+              properties:
+                headerName:
+                  type: string
+                  description: Name shown in the page header. Empty when none is set.
+            pageTemplate:
+              type: object
+              additionalProperties: true
+              properties:
+                template:
+                  type: string
+                  enum:
+                    - standard
+                    - split
+                    - minimal
+                  default: standard
+                  description: Page structure. `layout` is derived from it and kept for older clients.
+                palette:
+                  type: string
+                  enum:
+                    - meridian
+                    - classic
+                    - glass
+                    - flat
+                  default: meridian
+                  description: Built-in colour and shape set.
+                formFrame:
+                  type: string
+                  enum:
+                    - full
+                    - card
+                  default: full
+                  description: >-
+                    Split template only. `full`: the form side is a full-height panel. `card`: the
+                    brand panel runs behind the whole stage and the form area floats over it as a
+                    card.
+                formAreaColor:
+                  type: string
+                  description: >-
+                    Form area background as a hex colour, with an optional alpha channel. Empty when
+                    none is set, in which case the palette's own colour applies.
+                brandPanelLogoDisplay:
+                  type: string
+                  enum:
+                    - inherit
+                    - auto
+                    - image
+                    - text
+                    - hidden
+                  default: inherit
+                  description: How the logo appears on the brand panel of the split template.
             appearance:
               type: object
               additionalProperties: true
               properties:
+                backgroundImageOpacity:
+                  type: number
+                  minimum: 0
+                  maximum: 100
+                  default: 100
+                  description: Opacity of the page background image, as a percentage.
+                brandPanelImageUrl:
+                  type:
+                    - string
+                    - 'null'
+                  description: >-
+                    Background image of the brand panel. An https URL or a tenant Login UI asset
+                    path; null when none is set or the stored value is not valid.
+                brandPanelImageOpacity:
+                  type: number
+                  minimum: 0
+                  maximum: 100
+                  default: 100
+                  description: Opacity of the brand panel image, as a percentage.
                 headerText:
                   type:
                     - string

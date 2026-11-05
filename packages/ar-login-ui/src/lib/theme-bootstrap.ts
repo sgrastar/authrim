@@ -1,5 +1,13 @@
+import { PALETTE_BACKGROUNDS, type PaletteId } from './palettes.js';
+
 export type LoginUIThemeMode = 'light' | 'dark';
-export type LoginUIThemeTemplate = 'classic' | 'meridian' | 'split-brand-panel' | 'fullbleed-glass';
+/** A pre-palette theme name, or a palette id (`glass` and `flat` have no pre-palette name). */
+export type LoginUIThemeTemplate =
+	| 'classic'
+	| 'meridian'
+	| 'split-brand-panel'
+	| 'fullbleed-glass'
+	| PaletteId;
 
 export const LOGIN_UI_THEME_HINT_COOKIE = 'authrim_theme_hint';
 export const LOGIN_UI_THEME_HINT_MAX_AGE_SECONDS = 60 * 60;
@@ -16,7 +24,10 @@ const THEME_TEMPLATE_BACKGROUNDS: Record<LoginUIThemeTemplate, Record<LoginUIThe
 	classic: { light: '#eeeae3', dark: '#0f0d0c' },
 	meridian: { light: '#eef1f6', dark: '#0b0e16' },
 	'split-brand-panel': { light: '#eef1f6', dark: '#0b0e16' },
-	'fullbleed-glass': { light: '#ecdfd3', dark: '#0d0908' }
+	'fullbleed-glass': { light: '#ecdfd3', dark: '#0d0908' },
+	// The palette ids not already named above; the palette table is the single source.
+	glass: PALETTE_BACKGROUNDS.glass,
+	flat: PALETTE_BACKGROUNDS.flat
 };
 
 export function normalizeLoginUIThemeMode(value: unknown): LoginUIThemeMode | null {

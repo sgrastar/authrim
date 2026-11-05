@@ -40,7 +40,7 @@
 	interface DiscoveryUiForm {
 		overrideEnabled: boolean;
 		inheritFromLoginUi: boolean;
-		theme: '' | 'light' | 'dark';
+		theme: '' | 'light' | 'dark' | 'auto';
 		brandName: string;
 		logoUrl: string;
 		pageTitle: string;
@@ -59,7 +59,7 @@
 	const LOGIN_UI_CATEGORY = 'login-ui';
 	const DISCOVERY_UI_CATEGORY = 'tenant-discovery-ui';
 	const DISCOVERY_UI_RUNTIME_DEFAULTS = {
-		theme: 'light',
+		theme: 'auto',
 		brandName: 'Authrim',
 		pageTitle: 'Tenant Discovery',
 		kickerText: 'Tenant discovery',
@@ -1353,6 +1353,7 @@
 								<option value="">{$LL.admin_tenant_discovery_inherit_default()}</option>
 								<option value="light">{$LL.admin_tenant_discovery_light()}</option>
 								<option value="dark">{$LL.admin_tenant_discovery_dark()}</option>
+								<option value="auto">{$LL.admin_tenant_discovery_auto()}</option>
 							</select>
 						</div>
 						<div class="form-group">
@@ -1494,6 +1495,7 @@
 								<option value="">{$LL.admin_tenant_discovery_inherit_default()}</option>
 								<option value="light">{$LL.admin_tenant_discovery_light()}</option>
 								<option value="dark">{$LL.admin_tenant_discovery_dark()}</option>
+								<option value="auto">{$LL.admin_tenant_discovery_auto()}</option>
 							</select>
 						</div>
 						<div class="form-group">

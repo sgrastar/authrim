@@ -2,6 +2,8 @@
  * What the Themes page is editing, held in the page until it is wired to the Admin API. Empty
  * means "not set here": the template's own value applies.
  */
+import type { PaletteId } from './theme-palettes';
+
 export type ThemeTemplate = 'standard' | 'split' | 'minimal';
 export type ThemeFont = 'system' | 'serif' | 'rounded' | 'mono';
 /** How the screens are spaced: the form's padding and gaps (the real screens' `font_scale`). */
@@ -54,6 +56,8 @@ export interface ThemeTexts {
 
 export interface ThemeDraft {
 	template: ThemeTemplate;
+	/** The colours and shape the screens start from; set colours below replace its own. */
+	palette: PaletteId;
 	background: string;
 	/** The form area: the box that holds the sign-in form. */
 	cardColor: string;
@@ -143,29 +147,6 @@ export const TOPBAR_POSITIONS: readonly TopbarPosition[] = [
 	'hidden'
 ];
 
-/**
- * The colours the real sign-in screens use when nothing is set (their default look, in light and
- * dark). An empty colour field means "these"; the preview and the fields' swatches show them.
- */
-export const LOGIN_DEFAULTS = {
-	light: {
-		background: '#eef1f6',
-		card: '#ffffff',
-		accent: '#2f52c4',
-		title: '#182238',
-		text: '#182238',
-		copy: '#55617c'
-	},
-	dark: {
-		background: '#0b0e16',
-		card: '#131a2a',
-		accent: '#93aef2',
-		title: '#eef2fa',
-		text: '#eef2fa',
-		copy: '#aeb9d0'
-	}
-} as const;
-
 /** The footer text every language starts with: a link to Authrim, which opens in a new window. */
 export const DEFAULT_FOOTER = 'Powered by <a href="https://authrim.com/">Authrim</a>';
 
@@ -176,6 +157,7 @@ function emptyTexts(): ThemeTexts {
 export function newThemeDraft(): ThemeDraft {
 	return {
 		template: 'standard',
+		palette: 'meridian',
 		background: '',
 		cardColor: '',
 		accent: '',
@@ -198,7 +180,7 @@ export function newThemeDraft(): ThemeDraft {
 		panelText: '',
 		splitFrame: 'full',
 		splitSide: 'left',
-		formFrame: 'card',
+		formFrame: 'full',
 		splitWidth: 'narrow',
 		brandPosition: 'center',
 		brandAlign: 'left',

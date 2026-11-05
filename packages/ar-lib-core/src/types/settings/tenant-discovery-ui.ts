@@ -49,7 +49,7 @@ export const TENANT_DISCOVERY_UI_SETTINGS_META: Record<
     default: '',
     label: 'Theme Mode',
     description: 'Optional theme mode override for the tenant discovery screen.',
-    enum: ['', 'light', 'dark'],
+    enum: ['', 'light', 'dark', 'auto'],
     visibility: 'public',
   },
   'tenant-discovery-ui.brand_name': {
