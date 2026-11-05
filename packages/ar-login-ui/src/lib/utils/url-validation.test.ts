@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { isValidDownloadUrl, isValidImageUrl, isValidLinkUrl } from './url-validation';
+import { cssUrl, isValidDownloadUrl, isValidImageUrl, isValidLinkUrl } from './url-validation';
 
 describe('url-validation', () => {
 	describe('isValidDownloadUrl', () => {
@@ -107,7 +107,35 @@ describe('url-validation', () => {
 		});
 	});
 
+	describe('cssUrl', () => {
+		it('wraps a plain URL in url("")', () => {
+			expect(cssUrl('https://example.com/a.png')).toBe('url("https://example.com/a.png")');
+		});
+
+		it('keeps a quote, a backslash or a line break from ending the string', () => {
+			const hostile = 'https://example.com/a"); color:red; --x:url("https://example.com/b';
+			const value = cssUrl(hostile);
+			expect(value).toBe(
+				'url("https://example.com/a%22); color:red; --x:url(%22https://example.com/b")'
+			);
+			// Between the opening and the closing quote there is no quote left.
+			expect(value.slice(5, -2)).not.toContain('"');
+			expect(cssUrl('https://example.com/a\\b\nc')).toBe('url("https://example.com/a%5Cb%0Ac")');
+		});
+
+		it('does not change what isValidImageUrl accepted', () => {
+			expect(isValidImageUrl('data:image/png;base64,iVBOR')).toBe(true);
+			expect(cssUrl('data:image/png;base64,iVBOR')).toBe('url("data:image/png;base64,iVBOR")');
+		});
+	});
+
 	describe('isValidImageUrl', () => {
+		it('returns false, rather than throwing, for a value that is not a string', () => {
+			for (const value of [123, {}, [], true, null, undefined]) {
+				expect(isValidImageUrl(value)).toBe(false);
+			}
+		});
+
 		it('allows https and safe raster data image URLs', () => {
 			expect(isValidImageUrl('https://cdn.example.com/logo.png')).toBe(true);
 			expect(isValidImageUrl('data:image/png;base64,aGVsbG8=')).toBe(true);

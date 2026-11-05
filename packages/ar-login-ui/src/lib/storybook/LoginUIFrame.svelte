@@ -74,6 +74,9 @@
 	class="login-ui-theme-boundary"
 	data-theme={themeStore.mode}
 	data-login-theme={loginUIPageStore.themeTemplate}
+	data-login-template={loginUIPageStore.template}
+	data-login-palette={loginUIPageStore.palette}
+	data-form-frame={loginUIPageStore.formFrame}
 	data-page-layout={loginUIPageStore.layout}
 	data-font-family={loginUIPageStore.fontFamily}
 	data-font-scale={loginUIPageStore.fontScale}
@@ -94,6 +97,9 @@
 	data-brand-position={loginUIPageStore.brandPosition}
 	data-brand-align={loginUIPageStore.brandAlign}
 	data-logo-display={loginUIPageStore.logoDisplay}
+	data-brand-panel-logo-display={loginUIPageStore.brandPanelLogoDisplay}
+	data-has-brand-panel-image={loginUIPageStore.brandPanelImageUrl ? 'true' : 'false'}
+	data-has-form-area-color={loginUIPageStore.formAreaColor ? 'true' : 'false'}
 	data-branding-loaded={brandingStore.isLoaded ? '' : undefined}
 	style:--login-page-background-color={loginUIPageStore.backgroundColor || undefined}
 	style:--login-accent-color={loginUIPageStore.accentColor || undefined}
@@ -101,12 +107,8 @@
 	style:--login-title-color={loginUIPageStore.titleColor || undefined}
 	style:--login-text-color={loginUIPageStore.textColor || undefined}
 	style:--login-copy-color={loginUIPageStore.copyColor || undefined}
-	style:--login-page-background-layer={loginUIPageStore.backgroundImageUrl
-		? `url("${loginUIPageStore.backgroundImageUrl}")`
-		: undefined}
-	style:--login-panel-background-layer={loginUIPageStore.loginPanelBackgroundImageUrl
-		? `url("${loginUIPageStore.loginPanelBackgroundImageUrl}")`
-		: undefined}
+	style:--login-page-background-layer={loginUIPageStore.backgroundImageLayer ?? undefined}
+	style:--login-panel-background-layer={loginUIPageStore.loginPanelBackgroundLayer ?? undefined}
 	style:--login-panel-background-fill={loginUIPageStore.loginPanelBackgroundColor
 		? loginUIPageStore.loginPanelBackgroundGradientColor
 			? `linear-gradient(135deg, ${loginUIPageStore.loginPanelBackgroundColor}, ${loginUIPageStore.loginPanelBackgroundGradientColor})`
@@ -115,6 +117,10 @@
 	style:--login-panel-background-opacity={String(
 		loginUIPageStore.loginPanelBackgroundOpacity / 100
 	)}
+	style:--login-form-area-color={loginUIPageStore.formAreaColor || undefined}
+	style:--login-page-background-opacity={String(loginUIPageStore.backgroundImageOpacity / 100)}
+	style:--login-brand-panel-image-layer={loginUIPageStore.brandPanelImageLayer ?? undefined}
+	style:--login-brand-panel-image-opacity={String(loginUIPageStore.brandPanelImageOpacity / 100)}
 >
 	<div class="sb-box" data-fit={fit} style:--sb-cell-height={`${height}px`} dir={direction}>
 		{#if fit === 'surface'}

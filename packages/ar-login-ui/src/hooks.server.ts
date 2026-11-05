@@ -56,6 +56,7 @@ import {
 	normalizeLoginUIThemeMode,
 	resolveLoginUIThemeBackground
 } from '#lib/theme-bootstrap.js';
+import { readPalette } from '#lib/palettes.js';
 
 type ContentSecurityPolicyHumanVerificationProvider = HumanVerificationProvider | 'all';
 
@@ -602,7 +603,8 @@ export function resolveInitialLoginUIAppearance(
 	const ui = authenticationMethods?.ui;
 	const configuredBackground = sanitizeColor(ui?.pageTemplate?.backgroundColor);
 	// The page background of the theme template in the mode the page opens in.
-	const template = ui?.themeTemplate;
+	// The palette names the colours; `themeTemplate` is its pre-palette name, kept for old servers.
+	const template = readPalette(ui?.pageTemplate?.palette) ?? ui?.themeTemplate;
 	const theme = ui?.theme?.trim().toLowerCase();
 	if (theme === 'dark') {
 		return {
@@ -611,10 +613,19 @@ export function resolveInitialLoginUIAppearance(
 		};
 	}
 	if (theme === 'auto') {
-		return {
-			background: resolveLoginUIThemeBackground('light', template, configuredBackground),
-			colorScheme: 'light dark'
-		};
+		// A tenant that names no mode opens in the mode the visitor's last page resolved to (`auto`
+		// cannot be fixed, so the hint is always the visitor's to give). With no hint the page
+		// opens light and takes the system's colour scheme.
+		const hinted = normalizeLoginUIThemeMode(themeHint?.theme);
+		return hinted
+			? {
+					background: resolveLoginUIThemeBackground(hinted, template, configuredBackground),
+					colorScheme: hinted
+				}
+			: {
+					background: resolveLoginUIThemeBackground('light', template, configuredBackground),
+					colorScheme: 'light dark'
+				};
 	}
 	if (theme === 'light') {
 		return {
