@@ -3,11 +3,15 @@
 	import type { LoginUIOverrides } from './config';
 	import LoginUIFrame from './LoginUIFrame.svelte';
 	import PageSample from './PageSample.svelte';
+	import type { PaletteId, TemplateId } from '#lib/palettes.js';
 	import type { Scheme, ThemeTemplate } from './globals.svelte';
 
 	export type GalleryCell = {
 		label: string;
+		/** A pre-palette name pins template and palette; `template` and `palette` pin one each. */
 		theme?: ThemeTemplate;
+		template?: TemplateId;
+		palette?: PaletteId;
 		scheme?: Scheme;
 		ui?: LoginUIOverrides;
 		kind?: 'login' | 'signup';
@@ -23,7 +27,15 @@
 	{#each cells as cell (cell.label)}
 		<figure>
 			<figcaption>{cell.label}</figcaption>
-			<LoginUIFrame fit="cell" {height} theme={cell.theme} scheme={cell.scheme} ui={cell.ui}>
+			<LoginUIFrame
+				fit="cell"
+				{height}
+				theme={cell.theme}
+				template={cell.template}
+				palette={cell.palette}
+				scheme={cell.scheme}
+				ui={cell.ui}
+			>
 				<PageSample kind={cell.kind} client={cell.client} />
 			</LoginUIFrame>
 		</figure>

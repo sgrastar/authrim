@@ -15,6 +15,7 @@
 	import { initializeLoginUIStores } from '#lib/stores/login-ui-context.js';
 	import { buildLoginUIConfig, type LoginUIOverrides } from './config';
 	import { sbGlobals, type Scheme, type ThemeTemplate } from './globals.svelte';
+	import type { PaletteId, TemplateId } from '#lib/palettes.js';
 
 	type Props = {
 		children: Snippet;
@@ -23,13 +24,25 @@
 		/** Cell height in px when `fit` is `cell`. */
 		height?: number;
 		/** Explicit values pin a frame; omitted values follow the toolbar. */
+		template?: TemplateId;
+		palette?: PaletteId;
+		/** One of the four pre-palette names: pins both template and palette (the older gallery cells). */
 		theme?: ThemeTemplate;
 		scheme?: Scheme;
 		/** What the Admin console would save for this tenant, on top of the theme's defaults. */
 		ui?: LoginUIOverrides;
 	};
 
-	let { children, fit = 'surface', height = 640, theme, scheme, ui }: Props = $props();
+	let {
+		children,
+		fit = 'surface',
+		height = 640,
+		theme,
+		template,
+		palette,
+		scheme,
+		ui
+	}: Props = $props();
 
 	const stores = initializeLoginUIStores();
 	const { brandingStore, loginUIPageStore, themeStore } = stores;
@@ -45,10 +58,13 @@
 	const response = $derived<AuthenticationMethodsResponse>({
 		methods: {} as AuthenticationMethodsResponse['methods'],
 		ui: buildLoginUIConfig(
-			{
-				theme: theme ?? sbGlobals.theme,
-				scheme: scheme ?? sbGlobals.scheme
-			},
+			theme
+				? { theme, scheme: scheme ?? sbGlobals.scheme }
+				: {
+						template: template ?? sbGlobals.template,
+						palette: palette ?? sbGlobals.palette,
+						scheme: scheme ?? sbGlobals.scheme
+					},
 			effectiveUi
 		),
 		meta: { cacheTTL: 0, revision: 'storybook' }

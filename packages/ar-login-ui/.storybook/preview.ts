@@ -12,17 +12,22 @@ import {
 	isLoginUILocale,
 	toDocumentDirection
 } from '../src/lib/i18n/locales';
+import { legacyThemeFor } from '../src/lib/palettes';
 import {
-	THEME_TEMPLATES,
-	THEME_TEMPLATE_LABELS,
-	isThemeTemplate,
-	sbGlobals
+	PALETTES,
+	PALETTE_LABELS,
+	TEMPLATES,
+	TEMPLATE_LABELS,
+	paletteFrom,
+	sbGlobals,
+	templateFrom
 } from '../src/lib/storybook/globals.svelte';
 
 installFakeCaptcha();
 
 function applyGlobals(globals: Record<string, unknown>): void {
-	sbGlobals.theme = isThemeTemplate(globals.theme) ? globals.theme : 'meridian';
+	sbGlobals.template = templateFrom(globals.template);
+	sbGlobals.palette = paletteFrom(globals.palette);
 	sbGlobals.scheme = globals.scheme === 'dark' ? 'dark' : 'light';
 	const locale = typeof globals.locale === 'string' ? globals.locale : 'ja';
 	sbGlobals.locale = isLoginUILocale(locale) ? locale : 'ja';
@@ -31,7 +36,7 @@ function applyGlobals(globals: Record<string, unknown>): void {
 	// The stores are kept off <html> (see main.ts), so the canvas background follows the toolbar here.
 	const root = document.documentElement;
 	root.setAttribute('data-theme', sbGlobals.scheme);
-	root.setAttribute('data-login-theme', sbGlobals.theme);
+	root.setAttribute('data-login-theme', legacyThemeFor(sbGlobals.palette, sbGlobals.template));
 	root.lang = sbGlobals.locale;
 	root.dir = toDocumentDirection(sbGlobals.locale);
 }
@@ -70,12 +75,21 @@ const choiceControls: ArgTypesEnhancer = ({ argTypes }) =>
 const preview: Preview = {
 	argTypesEnhancers: [choiceControls],
 	globalTypes: {
-		theme: {
-			description: 'Login UI theme template (what the Admin console calls "theme")',
+		template: {
+			description: "Login UI template: the structure of the page (the Admin console's Themes page)",
 			toolbar: {
-				title: 'Theme',
+				title: 'Template',
+				icon: 'layout',
+				items: TEMPLATES.map((value) => ({ value, title: TEMPLATE_LABELS[value] })),
+				dynamicTitle: true
+			}
+		},
+		palette: {
+			description: 'Login UI palette: the colours and the shape of the form area',
+			toolbar: {
+				title: 'Palette',
 				icon: 'paintbrush',
-				items: THEME_TEMPLATES.map((value) => ({ value, title: THEME_TEMPLATE_LABELS[value] })),
+				items: PALETTES.map((value) => ({ value, title: PALETTE_LABELS[value] })),
 				dynamicTitle: true
 			}
 		},
@@ -104,7 +118,7 @@ const preview: Preview = {
 			}
 		}
 	},
-	initialGlobals: { theme: 'meridian', scheme: 'light', locale: 'ja' },
+	initialGlobals: { template: 'standard', palette: 'meridian', scheme: 'light', locale: 'ja' },
 	// Globals are applied before the story renders: state cannot change during Svelte's render phase.
 	beforeEach: ({ globals }) => applyGlobals(globals),
 	decorators: [
