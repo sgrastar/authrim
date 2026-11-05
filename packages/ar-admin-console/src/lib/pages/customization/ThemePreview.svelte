@@ -454,6 +454,8 @@
 		position: relative;
 		grid-row: 2;
 		display: grid;
+		/* One row the height of the stage: a taller form must not stretch the row (and the brand panel) over the footer. */
+		grid-template-rows: minmax(0, 1fr);
 		min-width: 0;
 		min-height: 0;
 	}
