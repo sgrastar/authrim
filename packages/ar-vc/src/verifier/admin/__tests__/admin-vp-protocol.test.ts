@@ -336,6 +336,28 @@ describe('Digital Credentials API mode', () => {
     expect(decode(dc).match_code_required).toBe(false);
   });
 
+  it('marks a recovery enrolment with mode: recovery, and nothing else', () => {
+    const decode = (value: string) =>
+      JSON.parse(new TextDecoder().decode(Buffer.from(value, 'base64url'))) as Record<
+        string,
+        unknown
+      >;
+    const base = { tenant: 'Example', requestedAt: NOW, matchCodeRequired: true };
+    const recovery = decode(
+      encodeTransactionData({ ...base, purpose: 'enroll', mode: 'recovery' })
+    );
+    // The purpose stays `enroll`: wallets that do not know `mode` still accept the request.
+    expect(recovery.purpose).toBe('enroll');
+    expect(recovery.mode).toBe('recovery');
+    expect(decode(encodeTransactionData({ ...base, purpose: 'enroll' }))).not.toHaveProperty(
+      'mode'
+    );
+    // A step-up is never shown as a recovery.
+    expect(
+      decode(encodeTransactionData({ ...base, purpose: 'step_up', mode: 'recovery' }))
+    ).not.toHaveProperty('mode');
+  });
+
   it('refuses an answer that is not encrypted to the request key, or not as asked', async () => {
     const { data } = await encryptedAnswer({ admin: ['x'] });
     const other = JSON.stringify(

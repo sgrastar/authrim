@@ -35,6 +35,11 @@ export interface SecondFactorState {
 	enrollment: { mode: EnrollmentMode; first_enrollment_ends_at: number | null };
 	/** Whether Keyring may be presented through the browser (Digital Credentials API). */
 	keyring?: { dc_api: boolean };
+	/**
+	 * Whether a recovery can be requested. A sole administrator cannot (nobody could cancel it):
+	 * they recover with the environment owner procedure.
+	 */
+	recovery?: { available: boolean; reason?: 'sole_admin' };
 }
 
 export interface SecondFactorRecovery {

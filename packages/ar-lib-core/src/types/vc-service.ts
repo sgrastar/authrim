@@ -96,6 +96,11 @@ export interface CreateAdminPresentationInput {
   credentialIssuer: string;
   /** Tenant name shown in the wallet. */
   tenantLabel: string;
+  /**
+   * enroll only: `recovery` tells the wallet that the key is filed for a recovery request, so it
+   * can say so (sent as `mode` in `transaction_data`; the purpose stays `enroll`).
+   */
+  walletMode?: 'recovery';
   /** Opaque to ar-vc, returned with the result (string values, at most 2 KiB as JSON). */
   context?: Record<string, string | null>;
   /**
