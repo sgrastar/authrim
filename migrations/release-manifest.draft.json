@@ -23,6 +23,10 @@
             {
               "path": "003_credential_status_list_formats.sql",
               "checksum": "153c234a21fc2ef4f4249b7715e1a71f8dc0c0a5e6d52fc97fc420ab8fe09a7a"
+            },
+            {
+              "path": "004_screens_version.sql",
+              "checksum": "a71542865d5aa467253b0e54822d4527aded649027e12f9c4f09aad59342e1f7"
             }
           ]
         },
@@ -120,7 +124,12 @@
             "custom",
             "policy"
           ],
-          "files": []
+          "files": [
+            {
+              "path": "004_screens_version.sql",
+              "checksum": "2cc347a913f919408ff92c6e36df016061d50f2aacb1b2cadcc9afc163a7c51d"
+            }
+          ]
         },
         {
           "id": "pii-postgresql",
@@ -158,6 +167,10 @@
         {
           "path": "003_credential_status_list_formats.sql",
           "checksum": "153c234a21fc2ef4f4249b7715e1a71f8dc0c0a5e6d52fc97fc420ab8fe09a7a"
+        },
+        {
+          "path": "004_screens_version.sql",
+          "checksum": "a71542865d5aa467253b0e54822d4527aded649027e12f9c4f09aad59342e1f7"
         }
       ]
     },
@@ -283,6 +296,10 @@
         {
           "path": "001_0_5_0_core_baseline.sql",
           "checksum": "3466d97fc87ce485505bdf0bffbd5702aa6ec89f7728bce8ce4ebd720ea4a62b"
+        },
+        {
+          "path": "004_screens_version.sql",
+          "checksum": "2cc347a913f919408ff92c6e36df016061d50f2aacb1b2cadcc9afc163a7c51d"
         }
       ]
     },

@@ -15050,7 +15050,8 @@ paths:
       description: >-
         Lists reusable screens for Flow screen nodes. Built-in registration, profile
         completion, login, code input, and consent screens are created lazily for the
-        tenant when missing.
+        tenant when missing. Each screen carries its version and how many flows (drafts or
+        published versions) and account pages use it.
       responses:
         '200':
           description: Screens for the current tenant.
@@ -15061,11 +15062,32 @@ paths:
                 required:
                   - screens
                 properties:
+                  usages_complete:
+                    type: boolean
+                    description: >-
+                      False when a stored flow or settings document could not be read in full;
+                      the usage counts are then at least those shown.
                   screens:
                     type: array
                     items:
                       type: object
                       additionalProperties: true
+                      properties:
+                        version:
+                          type: integer
+                          minimum: 1
+                        usage:
+                          type: object
+                          required:
+                            - flows
+                            - account_pages
+                          properties:
+                            flows:
+                              type: integer
+                              minimum: 0
+                            account_pages:
+                              type: integer
+                              minimum: 0
         '400':
           $ref: '#/components/responses/Error'
         '401':
@@ -15245,7 +15267,12 @@ paths:
                   type: boolean
       responses:
         '201':
-          description: Created screen.
+          description: Created screen, at version 1 (also in the ETag header).
+          headers:
+            ETag:
+              schema:
+                type: string
+              description: The screen version, for example "1".
           content:
             application/json:
               schema:
@@ -15260,6 +15287,14 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+        '409':
+          description: >-
+            screen_key_taken when another screen of the tenant has the key, or the key is one
+            of the built-in screens'.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
           $ref: '#/components/responses/Error'
       security:
@@ -15271,12 +15306,17 @@ paths:
         - Flows
       operationId: getApiAdminScreensById
       summary: Get a screen.
-      description: Returns one tenant screen by id.
+      description: Returns one tenant screen by id, with its version and where it is used.
       parameters:
         - $ref: '#/components/parameters/Id'
       responses:
         '200':
           description: Screen.
+          headers:
+            ETag:
+              schema:
+                type: string
+              description: The screen version, for example "3".
           content:
             application/json:
               schema:
@@ -15285,6 +15325,51 @@ paths:
                   screen:
                     type: object
                     additionalProperties: true
+                  usages_complete:
+                    type: boolean
+                    description: >-
+                      False when a stored flow or settings document could not be read in full;
+                      the screen is then not deleted.
+                  usages:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                        - kind
+                      description: >-
+                        A flow node that shows the screen (in the flow's draft, in its published
+                        version, or in an older published version that sign-ins in progress
+                        still run) or an account page whose draft places it.
+                      properties:
+                        kind:
+                          type: string
+                          enum:
+                            - flow
+                            - account_page
+                        flow_id:
+                          type: string
+                        flow_name:
+                          type: string
+                        node_id:
+                          type:
+                            - string
+                            - 'null'
+                        node_title:
+                          type:
+                            - string
+                            - 'null'
+                        stage:
+                          type: string
+                          enum:
+                            - draft
+                            - published
+                            - running
+                        page_id:
+                          type:
+                            - string
+                            - 'null'
+                        page_name:
+                          type: string
         '401':
           $ref: '#/components/responses/Error'
         '403':
@@ -15301,9 +15386,17 @@ paths:
         - Flows
       operationId: putApiAdminScreensById
       summary: Update a screen.
-      description: Updates mutable fields for a tenant screen.
+      description: >-
+        Updates mutable fields for a tenant screen and raises its version. If-Match with the
+        screen's current version is required; a stale version is refused with ADMIN_CONFLICT.
       parameters:
         - $ref: '#/components/parameters/Id'
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
+          description: The screen version, for example "3".
       requestBody:
         required: true
         content:
@@ -15460,7 +15553,12 @@ paths:
                   type: boolean
       responses:
         '200':
-          description: Updated screen.
+          description: Updated screen, at its new version (also in the ETag header).
+          headers:
+            ETag:
+              schema:
+                type: string
+              description: The screen version, for example "4".
           content:
             application/json:
               schema:
@@ -15477,6 +15575,18 @@ paths:
           $ref: '#/components/responses/Error'
         '404':
           $ref: '#/components/responses/Error'
+        '409':
+          description: ADMIN_CONFLICT with current_version when the version is stale.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '428':
+          description: If-Match is missing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
           $ref: '#/components/responses/Error'
       security:
@@ -15487,9 +15597,18 @@ paths:
         - Flows
       operationId: deleteApiAdminScreensById
       summary: Delete a screen.
-      description: Deletes a custom screen. Built-in system screens cannot be deleted.
+      description: >-
+        Deletes a custom screen. Built-in system screens cannot be deleted, nor can a screen
+        that a flow (draft or published version) or an account page still uses. If-Match is
+        optional; when sent, a stale version is refused with ADMIN_CONFLICT.
       parameters:
         - $ref: '#/components/parameters/Id'
+        - name: If-Match
+          in: header
+          required: false
+          schema:
+            type: string
+          description: The screen version, for example "3".
       responses:
         '200':
           description: Screen deletion result.
@@ -15510,6 +15629,15 @@ paths:
           $ref: '#/components/responses/Error'
         '404':
           $ref: '#/components/responses/Error'
+        '409':
+          description: >-
+            screen_in_use (with the usages) while flows or account pages use the screen,
+            screen_usage_unknown when where it is used could not be read in full, or
+            ADMIN_CONFLICT with current_version when If-Match names a stale version.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
           $ref: '#/components/responses/Error'
       security:
