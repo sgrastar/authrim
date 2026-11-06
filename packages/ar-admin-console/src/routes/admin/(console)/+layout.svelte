@@ -5,6 +5,7 @@
 	import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import AppShell from '#lib/shell/AppShell.svelte';
+	import StepUpDialog from '#lib/shell/StepUpDialog.svelte';
 	import { noticeInbox } from '#lib/shell/notice-inbox.js';
 	import { isStandalonePath, resolveNavPath } from '#lib/shell/nav.js';
 	import { timePreference } from '#lib/ui/time/time-preference.svelte.js';
@@ -107,4 +108,5 @@
 	>
 		{@render children()}
 	</AppShell>
+	<StepUpDialog />
 {/if}

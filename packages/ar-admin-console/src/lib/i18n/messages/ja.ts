@@ -8,6 +8,7 @@ import { jaTenantGeneral } from './tenant-general/ja';
 import { jaSecurityKeys } from './security-keys/ja';
 import { jaNotices } from './notices/ja';
 import { jaCustomization } from './customization/ja';
+import { jaStepUp } from './step-up/ja';
 
 /**
  * Japanese is the source locale: every other locale must provide exactly these keys.
@@ -24,6 +25,7 @@ export const ja = {
 	...jaSecurityKeys,
 	...jaNotices,
 	...jaCustomization,
+	...jaStepUp,
 	'app.adminLabel': '管理コンソール',
 	'app.env.dev': '開発環境',
 	'app.env.prod': '本番環境',
@@ -164,6 +166,7 @@ export const ja = {
 	'plat.template.tag': '共有定義',
 	'scope.switch.title': '操作対象',
 	'notify.label': '通知',
+	'notify.empty': 'お知らせはありません',
 	'notify.open': '通知',
 	'notify.close': '閉じる',
 	'notify.severity.critical': 'クリティカル',

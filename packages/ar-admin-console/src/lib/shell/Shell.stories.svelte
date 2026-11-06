@@ -125,7 +125,18 @@
 	}}
 />
 
-<Story name="Notifications: none" args={{ path: '/admin/users/all', notifications: [] }} />
+<Story
+	name="Notifications: none"
+	args={{ path: '/admin/users/all', notifications: [] }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		// Opened with nothing in it, the list says so in a line instead of unfolding empty.
+		await userEvent.click(canvas.getByRole('button', { name: /Notifications|通知/ }));
+		await expect(canvas.getByText(/No notifications|お知らせはありません/)).toBeVisible();
+		// No empty list behind it, hidden or not.
+		await expect(canvasElement.querySelector('.notify__list')).toBeNull();
+	}}
+/>
 
 <Story name="Notifications: many" args={{ path: '/admin/users/all', notifications: busy }} />
 

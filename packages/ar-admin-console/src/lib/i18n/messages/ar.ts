@@ -9,6 +9,7 @@ import { arTenantGeneral } from './tenant-general/ar';
 import { arSecurityKeys } from './security-keys/ar';
 import { arNotices } from './notices/ar';
 import { arCustomization } from './customization/ar';
+import { arStepUp } from './step-up/ar';
 
 export const ar = {
 	...arSettings,
@@ -21,6 +22,7 @@ export const ar = {
 	...arSecurityKeys,
 	...arNotices,
 	...arCustomization,
+	...arStepUp,
 	'app.adminLabel': 'وحدة التحكم الإدارية',
 	'app.env.dev': 'التطوير',
 	'app.env.prod': 'الإنتاج',
@@ -161,6 +163,7 @@ export const ar = {
 	'plat.template.tag': 'مشترك',
 	'scope.switch.title': 'نطاق العمل',
 	'notify.label': 'الإشعارات',
+	'notify.empty': 'لا توجد إشعارات',
 	'notify.open': 'الإشعارات',
 	'notify.close': 'إغلاق',
 	'notify.severity.critical': 'حرج',

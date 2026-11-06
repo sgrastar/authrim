@@ -107,8 +107,11 @@ describe('over HTTP', () => {
 
 		fetchMock = respond({ channel: { id: 'c1' } });
 		await httpNoticeDelivery.replaceWebhookUrl('c1', URL_OK);
-		expect(lastCall(fetchMock)[0]).toBe('/api/admin/notice-channels/c1/webhook-url');
-		expect(JSON.parse(lastCall(fetchMock)[1].body as string)).toEqual({ webhook_url: URL_OK });
+		// The step-up requirements are read first (to ask the admin beforehand), then the URL is put.
+		const [requirements, put] = fetchMock.mock.calls as unknown as [string, RequestInit][];
+		expect(requirements[0]).toBe('/api/admin/me/step-up/requirements');
+		expect(put[0]).toBe('/api/admin/notice-channels/c1/webhook-url');
+		expect(JSON.parse(put[1].body as string)).toEqual({ webhook_url: URL_OK });
 
 		fetchMock = respond({ deleted: true });
 		await httpNoticeDelivery.deleteChannel('c1');

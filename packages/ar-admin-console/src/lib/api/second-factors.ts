@@ -118,10 +118,15 @@ export const httpSecondFactors: SecondFactorsClient = {
 	},
 
 	async remove(id) {
-		await withStepUp((receipt) =>
-			request('DELETE', `${ME}/second-factors/${encodeURIComponent(id)}`, {
-				headers: stepUpHeaders(receipt)
-			})
+		// Asked beforehand (always L2). Adding is not: the first key takes less, which only the
+		// refusal knows.
+		await withStepUp(
+			(receipt) =>
+				request('DELETE', `${ME}/second-factors/${encodeURIComponent(id)}`, {
+					headers: stepUpHeaders(receipt)
+				}),
+			undefined,
+			{ operation: 'admin.second_factor.remove' }
 		);
 	},
 

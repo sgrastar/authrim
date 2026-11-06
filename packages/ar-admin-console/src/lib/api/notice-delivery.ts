@@ -229,13 +229,16 @@ export const httpNoticeDelivery: NoticeDeliveryClient = {
 		return channelFromRow(body.channel);
 	},
 	async replaceWebhookUrl(id, webhookUrl) {
-		const body = await withStepUp(async (receipt) =>
-			readJson(
-				await adminFetch(
-					`${channelUrl(id)}/webhook-url`,
-					withReceipt(json('PUT', { webhook_url: webhookUrl }), receipt)
-				)
-			)
+		const body = await withStepUp(
+			async (receipt) =>
+				readJson(
+					await adminFetch(
+						`${channelUrl(id)}/webhook-url`,
+						withReceipt(json('PUT', { webhook_url: webhookUrl }), receipt)
+					)
+				),
+			undefined,
+			{ operation: 'webhook.destination.update' }
 		);
 		return channelFromRow(body.channel);
 	},
