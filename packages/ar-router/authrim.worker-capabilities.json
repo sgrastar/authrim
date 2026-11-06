@@ -29,6 +29,7 @@
     { "name": "OP_SAML", "kind": "service", "required": true },
     { "name": "OP_VC", "kind": "service", "required": true },
     { "name": "LOGIN_UI_WORKER", "kind": "service", "required": false },
+    { "name": "LOGIN_UI_EDGE", "kind": "service", "required": false },
     { "name": "ADMIN_UI_WORKER", "kind": "service", "required": false }
   ],
   "secrets": []

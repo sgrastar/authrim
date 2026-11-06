@@ -5,6 +5,7 @@ import { LITE_MODE_PROBE_URL } from '#lib/lite/routing.js';
 import { buildLiteContentSecurityPolicy, cspHashSource } from '../csp';
 import { liteTransformPageChunk } from '../document';
 import { createLiteHandleFetch, liteGuardHandle } from '../guard';
+import { markEdgeEntry } from '#lib/edge-context-header.js';
 
 function event(input: {
 	path: string;
@@ -117,7 +118,7 @@ describe('liteGuardHandle', () => {
 				path: '/login',
 				routeId: '/__lite/login',
 				method: 'POST',
-				headers: { 'content-type': 'application/json' }
+				headers: { 'content-type': 'application/json', origin: 'https://login.example' }
 			}),
 			resolve
 		});
@@ -129,13 +130,122 @@ describe('liteGuardHandle', () => {
 				method: 'POST',
 				headers: {
 					'content-type': 'application/x-www-form-urlencoded',
-					'content-length': '999999'
+					'content-length': '999999',
+					origin: 'https://login.example'
 				}
 			}),
 			resolve
 		});
 		expect(big.status).toBe(413);
 		expect(resolve).not.toHaveBeenCalled();
+	});
+});
+
+describe('liteGuardHandle and the edge context', () => {
+	const form = { 'content-type': 'application/x-www-form-urlencoded' };
+	const routerContext = (context: Record<string, unknown>) =>
+		JSON.stringify({
+			v: 1,
+			clientIp: '203.0.113.9',
+			publicOrigin: 'https://id.example',
+			...context
+		});
+
+	it('does not read the header without the Worker entry (vite dev, vite preview)', async () => {
+		const resolve = vi.fn(async () => page());
+		const e = event({
+			path: '/login',
+			routeId: '/__lite/login',
+			method: 'POST',
+			headers: {
+				...form,
+				origin: 'https://evil.example',
+				'x-authrim-edge-context': routerContext({ originVerified: true })
+			}
+		});
+		expect((await liteGuardHandle({ event: e, resolve })).status).toBe(403);
+		expect(e.locals.edge?.source).toBe('direct');
+	});
+
+	it('acts on a lite POST only when the Router verified the browser Origin', async () => {
+		markEdgeEntry();
+		const resolve = vi.fn(async () => page());
+		// The Router rewrote Origin to the UI's own origin: only its verdict counts.
+		const rewritten = { ...form, origin: 'https://login.example' };
+		for (const originVerified of [false, null, 'true']) {
+			const refused = await liteGuardHandle({
+				event: event({
+					path: '/login',
+					routeId: '/__lite/login',
+					method: 'POST',
+					headers: { ...rewritten, 'x-authrim-edge-context': routerContext({ originVerified }) }
+				}),
+				resolve
+			});
+			expect(refused.status).toBe(403);
+		}
+		const malformed = await liteGuardHandle({
+			event: event({
+				path: '/login',
+				routeId: '/__lite/login',
+				method: 'POST',
+				headers: { ...rewritten, 'x-authrim-edge-context': '{"v":1' }
+			}),
+			resolve
+		});
+		expect(malformed.status).toBe(403);
+		expect(resolve).not.toHaveBeenCalled();
+
+		const e = event({
+			path: '/login',
+			routeId: '/__lite/login',
+			method: 'POST',
+			headers: { ...form, 'x-authrim-edge-context': routerContext({ originVerified: true }) }
+		});
+		const accepted = await liteGuardHandle({ event: e, resolve });
+		expect(accepted.status).toBe(200);
+		expect(e.locals.edge).toEqual({
+			source: 'router',
+			originVerified: true,
+			clientIp: '203.0.113.9',
+			publicOrigin: 'https://id.example'
+		});
+	});
+
+	it('checks a direct lite POST itself, by Origin only', async () => {
+		const resolve = vi.fn(async () => page());
+		const post = (headers: Record<string, string>) =>
+			liteGuardHandle({
+				event: event({ path: '/login', routeId: '/__lite/login', method: 'POST', headers }),
+				resolve
+			});
+		expect((await post({ ...form, origin: 'https://evil.example' })).status).toBe(403);
+		expect((await post({ ...form, origin: 'null' })).status).toBe(403);
+		expect(
+			(await post({ ...form, origin: 'https://evil.example', referer: 'https://login.example/x' }))
+				.status
+		).toBe(403);
+		expect((await post(form)).status).toBe(403);
+		expect(resolve).not.toHaveBeenCalled();
+		// Without Origin, a Referer does not stand in for it (SvelteKit refuses such a POST too).
+		expect((await post({ ...form, referer: 'https://login.example/login?x=1' })).status).toBe(403);
+		expect(resolve).not.toHaveBeenCalled();
+		expect((await post({ ...form, origin: 'https://login.example' })).status).toBe(200);
+	});
+
+	it('takes the client IP of a direct request from CF-Connecting-IP only', async () => {
+		const e = event({
+			path: '/login',
+			routeId: null,
+			headers: { 'cf-connecting-ip': '198.51.100.7', 'x-forwarded-for': '10.0.0.1' }
+		});
+		await liteGuardHandle({ event: e, resolve: async () => page() });
+		expect(e.locals.edge).toEqual({
+			source: 'direct',
+			originVerified: null,
+			clientIp: '198.51.100.7',
+			publicOrigin: 'https://login.example'
+		});
 	});
 });
 
