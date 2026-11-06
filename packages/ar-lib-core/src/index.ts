@@ -19,6 +19,7 @@ export * from './types/runtime-profile';
 export * from './types/approval';
 export * from './types/screens';
 export * from './types/login-ui-languages';
+export * from './types/login-ui-lite';
 export * from './types/oidc-scopes';
 export * from './types/consent-records';
 export * from './services/notification-intent-routing';
@@ -62,6 +63,9 @@ export * from './services/plugin-installation-id';
 export * from './services/plugin-host-interface-contract.js';
 export * from './services/human-verification-runner';
 export * from './services/human-verification-policy';
+export * from './services/lite-policy';
+export * from './services/lite-compatibility';
+export * from './services/runtime-screen-resolution';
 
 // RFC 7517: JWK Types
 export * from './types/jwk';

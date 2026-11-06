@@ -142,6 +142,10 @@ export interface LoginUISettings {
   'login-ui.account_page_published_at': string;
   'login-ui.active_theme_id': string;
   'login-ui.active_theme_version': number;
+
+  // Lite Login UI
+  'login-ui.lite_mode': string;
+  'login-ui.lite_logo': string;
 }
 
 /**
@@ -903,6 +907,28 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
     integer: true,
     visibility: 'internal',
   },
+  // No envKey: an environment default would switch tenants on without the compatibility guard.
+  'login-ui.lite_mode': {
+    key: 'login-ui.lite_mode',
+    type: 'enum',
+    default: 'off',
+    label: 'Lite Login UI',
+    description:
+      'Whether the tenant uses the lite Login UI (server-rendered, for very poor networks): off or always. Changed only through PUT /api/admin/tenants/{tenantId}/login-ui/lite-mode, which checks that the lite UI can do everything the tenant uses; this setting records what that route published',
+    enum: ['off', 'always'],
+    scopes: ['tenant'],
+    visibility: 'page',
+  },
+  'login-ui.lite_logo': {
+    key: 'login-ui.lite_logo',
+    type: 'string',
+    default: '',
+    label: 'Lite Login UI Logo',
+    description:
+      'The logo the lite Login UI inlines into its pages: a still PNG or WebP image as a data: URI, at most 8 KB and 640x160 pixels. Empty: the brand name is shown as text',
+    scopes: ['tenant'],
+    visibility: 'public',
+  },
 };
 
 /**
@@ -993,6 +1019,8 @@ export const LOGIN_UI_DEFAULTS: LoginUISettings = {
   'login-ui.account_page_published_at': '',
   'login-ui.active_theme_id': '',
   'login-ui.active_theme_version': 0,
+  'login-ui.lite_mode': 'off',
+  'login-ui.lite_logo': '',
 };
 
 /**

@@ -10,6 +10,7 @@ import type { RateLimiterCounter } from '../durable-objects/RateLimiterCounter';
 import type { PARRequestStore } from '../durable-objects/PARRequestStore';
 import type { ChallengeStore } from '../durable-objects/ChallengeStore';
 import type { SAMLAggregateMetadataStore } from '../durable-objects/SAMLAggregateMetadataStore';
+import type { LitePolicyStore } from '../durable-objects/LitePolicyStore';
 import type { JWK } from 'jose';
 import type { LogIcebergSettingsEnv } from '../services/log-iceberg-config';
 import type { SAMLRuntimePorts } from './saml-runtime-ports';
@@ -494,6 +495,8 @@ export interface Env extends LogIcebergSettingsEnv {
   CHALLENGE_STORE: DurableObjectNamespace<ChallengeStore>;
   RATE_LIMITER: DurableObjectNamespace<RateLimiterCounter>; // #6: Atomic rate limiting
   USER_CODE_RATE_LIMITER: DurableObjectNamespace; // Device flow user code rate limiting
+  /** Per-tenant lite Login UI policy (LitePolicyStore). Absent: no tenant can be in lite mode. */
+  LITE_POLICY_STORE?: DurableObjectNamespace<LitePolicyStore>;
   PAR_REQUEST_STORE: DurableObjectNamespace<PARRequestStore>; // #11: PAR request_uri single-use
   DPOP_JTI_STORE: DurableObjectNamespace; // #12: DPoP JTI replay protection
   TOKEN_REVOCATION_STORE: DurableObjectNamespace; // Token revocation list

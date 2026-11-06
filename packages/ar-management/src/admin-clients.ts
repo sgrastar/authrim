@@ -1,3 +1,4 @@
+import { runLiteGuardedWrite } from './lite-mode-guard';
 import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
@@ -2037,10 +2038,24 @@ export async function adminClientUpdateWithHistoryContext(
     restoreAudit?: { restoredFrom: string; reason?: string };
   } = {}
 ): Promise<Response> {
-  return runTenantBackupCoveredMutation({
-    env: c.env,
-    tenantId: getTenantIdFromContext(c),
-    run: () => executeAdminClientUpdate(c, internal),
+  const tenantId = getTenantIdFromContext(c);
+  // The body is read once (an internal reader's answer is kept; Hono keeps the request's).
+  const internalBody = internal.readBody ? internal.readBody() : null;
+  const effective = internalBody ? { ...internal, readBody: () => internalBody } : internal;
+  const save = () =>
+    runTenantBackupCoveredMutation({
+      env: c.env,
+      tenantId,
+      run: () => executeAdminClientUpdate(c, effective),
+    });
+  // An application's own Login UI cannot serve a tenant in lite mode (lite-mode-guard.ts).
+  const body = await (internalBody ?? c.req.json<Record<string, unknown>>()).catch(() => null);
+  const loginUiUrl = body?.login_ui_url;
+  if (typeof loginUiUrl !== 'string' || loginUiUrl.trim() === '') return save();
+  const clientId = internal.clientId ?? c.req.param('id') ?? '';
+  return runLiteGuardedWrite(c, tenantId, {
+    check: async () => [{ code: 'client_login_ui_url', subject: clientId }],
+    write: save,
   });
 }
 

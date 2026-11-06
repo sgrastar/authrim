@@ -643,6 +643,20 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
   }),
   // Saved Login UI themes: reading is settings read; saving, deleting and applying one is the
   // same authority as the login-ui settings PATCH (applying writes that document).
+  // The lite Login UI switch: reading is settings read; switching changes the Login UI and the
+  // human verification provider, so it needs settings write (the route checks both categories).
+  rule({
+    pattern: '/api/admin/login-ui/lite-mode',
+    methods: READ_METHODS,
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_READ],
+    description: 'lite login UI policy and readiness read',
+  }),
+  rule({
+    pattern: '/api/admin/login-ui/lite-mode',
+    methods: ['PUT'],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_WRITE],
+    description: 'lite login UI switch',
+  }),
   rule({
     pattern: '/api/admin/login-ui/themes',
     methods: READ_METHODS,

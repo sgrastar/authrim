@@ -1,3 +1,4 @@
+import { runLiteGuardedWrite } from '../lite-mode-guard';
 import { z } from '../zod';
 import type { Context } from 'hono';
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
@@ -593,7 +594,7 @@ export async function getDirectoryConnectorsHandler(c: Context<{ Bindings: Env }
   });
 }
 
-export async function updateDirectoryConnectorsHandler(c: Context<{ Bindings: Env }>) {
+async function updateDirectoryConnectorsUnguarded(c: Context<{ Bindings: Env }>) {
   const tenantId = c.req.param('tenantId')!;
   const accessError = await requireTenantResourceAccess(c, tenantId);
   if (accessError) return accessError;
@@ -1387,4 +1388,23 @@ export async function listDirectoryConnectorRelayEventsHandler(c: Context<{ Bind
       502
     );
   }
+}
+
+/**
+ * The directory password is not in the lite Login UI: switching the directory sign-in on is
+ * refused for a tenant in lite mode (lite-mode-guard.ts). Access is checked first, so a caller
+ * without it learns nothing about the tenant.
+ */
+export async function updateDirectoryConnectorsHandler(c: Context<{ Bindings: Env }>) {
+  const tenantId = c.req.param('tenantId')!;
+  const accessError = await requireTenantResourceAccess(c, tenantId);
+  if (accessError) return accessError;
+  const parsed = DirectoryConnectorsUpdateSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success || normalizeConfig(parsed.data).enabled !== true) {
+    return updateDirectoryConnectorsUnguarded(c);
+  }
+  return runLiteGuardedWrite(c, tenantId, {
+    check: async () => [{ code: 'method_unsupported', subject: 'directory_password' }],
+    write: () => updateDirectoryConnectorsUnguarded(c),
+  });
 }

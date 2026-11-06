@@ -34,6 +34,7 @@ import {
 import { gateStepUpSettingsPatch, verifyProfileSwitch } from './step-up-settings';
 import type { ProfileSwitchGuard } from '../../profile-switch-verify';
 import { identityMappingReferenceProblem } from './identity-mapping-reference';
+import { guardTenantSettingsChangeForLite, patchTouchesLiteMode } from './lite-settings-guard';
 import {
   categoryPatchNeedsState,
   categoryValidationKind,
@@ -133,6 +134,13 @@ export interface ApplyTenantSettingsChangeInput {
    * hear of (and a refusal that gives no `code`) is to be read as `state` with no code.
    */
   onRefusal?: (refusal: ValidationRefusal) => void;
+  /**
+   * The lite Login UI switch recording the mode it published (`login-ui.lite_mode`). Only that
+   * route sets this; every other save refuses the key.
+   */
+  litePolicyRecord?: boolean;
+  /** Internal: the save already runs under the lite compatibility guard. */
+  liteGuarded?: boolean;
 }
 
 /** What a validation that refused a save was about; `code` is a fixed one, safe to give. */
@@ -191,6 +199,28 @@ export async function applyTenantSettingsChange(
     return errorResponse(c, 'forbidden', 'Cannot modify settings for this tenant', 403);
   }
 
+  // While the tenant is in lite mode, a change that would give it something the lite Login UI
+  // cannot do is refused, and a change of the actions that require human verification is
+  // published to the lite policy with it (lite-mode-guard.ts). The guard runs after the
+  // permission checks, so a caller that may not save learns nothing from its answer.
+  if (
+    !dryRun &&
+    !input.liteGuarded &&
+    !input.litePolicyRecord &&
+    (category === 'authentication-methods' || category === 'login-ui')
+  ) {
+    const bodyPromise = input.readBody();
+    const readBody = () => bodyPromise;
+    return guardTenantSettingsChangeForLite({
+      c,
+      tenantId,
+      category,
+      actor: adminAuth?.userId ?? 'unknown',
+      readBody,
+      save: () => applyTenantSettingsChange({ ...input, readBody, liteGuarded: true }),
+    });
+  }
+
   // A dry run writes nothing, so it is not a mutation the tenant backup has to cover.
   const covered = (run: () => Promise<Response>): Promise<Response> =>
     dryRun ? run() : runTenantBackupCoveredMutation({ env: c.env, tenantId, run });
@@ -212,6 +242,17 @@ export async function applyTenantSettingsChange(
       if (!body.ifMatch) {
         await auditFailure({ category, scope, reason: 'if_match_required' });
         return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
+      }
+
+      if (category === 'login-ui' && !input.litePolicyRecord && patchTouchesLiteMode(body)) {
+        input.onRefusal?.({ kind: 'value', code: 'lite_mode_dedicated_route' });
+        await auditFailure({ category, scope, reason: 'lite_mode_dedicated_route' });
+        return errorResponse(
+          c,
+          'lite_mode_dedicated_route',
+          'login-ui.lite_mode is changed only through PUT /api/admin/login-ui/lite-mode, which checks the tenant first',
+          400
+        );
       }
 
       if (category === 'login-ui') {
