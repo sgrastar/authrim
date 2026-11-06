@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { renderPortableMigrationSql } from '../../../../ar-lib-core/src/migrations/sql-portability';
 import type { VerifiedTenantBackupV2 } from '../backup-reader';
@@ -6,6 +6,7 @@ import { restoreVerifiedPostgresFamily } from '../postgres-restore';
 import { POSTGRES_RESTORE_TABLE_CONTRACTS } from '../postgres-restore-table-contract';
 import { POSTGRES_RESTORE_EXTENSION_CONTRACTS } from '../postgres-restore-extension-contract';
 import { expectPostgresRestoreReceiptTables } from './postgres-restore-receipt-expectations';
+import { freshInstallMigrationFiles } from '../../migrations/fresh-install-files';
 
 // Only the receipt projection is under test here; native PG constraints, seeds and
 // trigger metadata remain covered by postgres-restore.postgres.test.ts.
@@ -55,7 +56,9 @@ describe.each(['core', 'pii'] as const)(
     beforeAll(async () => {
       db = new DatabaseSync(':memory:');
       const migrations = new URL(`../../../../../migrations/${family}/d1/`, import.meta.url);
-      for (const file of [`001_0_5_0_${family}_baseline.sql`]) {
+      // The newest baseline and the migrations after it: a column a later migration adds must
+      // be in the contract as well.
+      for (const file of freshInstallMigrationFiles(await readdir(migrations))) {
         db.exec(
           renderPortableMigrationSql(await readFile(new URL(file, migrations), 'utf8'), 'sqlite')
         );

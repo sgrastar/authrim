@@ -21,6 +21,7 @@ import {
   BodyLimitExceededError,
   readRequestBytesWithLimit,
   redactSecretPathSegments,
+  publicLoginUiAssetResourcePolicy,
 } from '@authrim/ar-lib-core';
 
 // Module-level logger for router (no Hono context available in error handler)
@@ -997,6 +998,10 @@ app.use('*', async (c, next) => {
 
   return next();
 });
+
+// Public Login UI images may be shown by other origins (the admin console served apart from the
+// API, vanity domains). Registered before the security headers so it has the last word on CORP.
+app.use('/api/assets/*', publicLoginUiAssetResourcePolicy());
 
 // Enhanced security headers
 // Skip for /authorize endpoint to allow form_post response mode with nonce-based CSP

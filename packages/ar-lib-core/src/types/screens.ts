@@ -94,6 +94,8 @@ export interface Screen {
   settings_json?: string | ScreenSettings | null;
   is_active: number | boolean;
   is_system: number | boolean;
+  /** Optimistic-concurrency counter: a change must name it (If-Match), and raises it by one. */
+  version?: number;
   created_at: number;
   updated_at: number;
 }
@@ -105,7 +107,24 @@ export interface ScreenResponse extends Omit<
   fields: ScreenField[];
   localizations: Record<string, ScreenLocalization>;
   settings: ScreenSettings;
+  version: number;
 }
+
+/** Where a screen is used: a flow node that shows it, or an account page that places it. */
+export type ScreenUsage =
+  | {
+      kind: 'flow';
+      flow_id: string;
+      flow_name: string;
+      node_id: string | null;
+      node_title: string | null;
+      /**
+       * In the flow's draft, in the version it has published, or in an older published version
+       * that sign-ins in progress still run.
+       */
+      stage: 'draft' | 'published' | 'running';
+    }
+  | { kind: 'account_page'; page_id: string | null; page_name: string };
 
 export type AccountPagePlacementWidth = 'full' | 'half';
 
