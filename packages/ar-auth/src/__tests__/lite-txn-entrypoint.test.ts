@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { LitePolicyStore } from '@authrim/ar-lib-core/durable-objects/LitePolicyStore';
 import { LiteTxnStore } from '@authrim/ar-lib-core/durable-objects/LiteTxnStore';
 import { resetLitePolicyRuntimeCache } from '@authrim/ar-lib-core/services/lite-policy';
-import { LITE_TXN_AUDIENCE, LiteTxnEntrypoint } from '../lite-txn-entrypoint';
+import { LITE_TXN_AUDIENCE, LiteTxnEntrypoint, checkedReturnTo } from '../lite-txn-entrypoint';
 
 class Storage {
   readonly data = new Map<string, unknown>();
@@ -345,5 +345,99 @@ describe('LiteTxnEntrypoint', () => {
       operations: Record<string, { status: string; result: unknown }>;
     };
     expect(record.operations.op).toMatchObject({ status: 'done', result: 'sent' });
+  });
+
+  it('refuses account and re-authentication transactions until their session check exists', async () => {
+    await setPolicy('always');
+    for (const purpose of ['account', 'reauth'] as const) {
+      await expect(
+        entry().create({
+          ...call,
+          clientIp: null,
+          purpose,
+          sessionId: 'someone-else',
+          userId: 'u-other',
+        })
+      ).resolves.toEqual({ ok: false, reason: 'unsupported_purpose' });
+    }
+    expect(txnStores.size).toBe(0);
+  });
+
+  it('keeps only a return target of the public origin or a local path', async () => {
+    await setPolicy('always');
+    await expect(
+      entry().create({
+        ...call,
+        clientIp: null,
+        purpose: 'login',
+        returnTo: 'https://evil.example/x',
+      })
+    ).resolves.toEqual({ ok: false, reason: 'invalid_return_to' });
+    await expect(
+      entry().create({ ...call, clientIp: null, purpose: 'login', returnTo: `${ORIGIN}/account` })
+    ).resolves.toMatchObject({ ok: true, txn: { bound: { returnTo: `${ORIGIN}/account` } } });
+  });
+});
+
+describe('checkedReturnTo', () => {
+  it('allows the public origin and local paths only', () => {
+    expect(checkedReturnTo(undefined, ORIGIN)).toBeNull();
+    expect(checkedReturnTo('/authorize?x=1', ORIGIN)).toBe('/authorize?x=1');
+    expect(checkedReturnTo(`${ORIGIN}/a`, ORIGIN)).toBe(`${ORIGIN}/a`);
+    for (const bad of [
+      '//evil.example/x',
+      '/\\evil.example/x',
+      'https://evil.example/',
+      'https://id.example.evil/',
+      'javascript:alert(1)',
+      '/a\nb',
+      'x'.repeat(3000),
+      42,
+    ]) {
+      expect(checkedReturnTo(bad, ORIGIN)).toBeUndefined();
+    }
+  });
+
+  it('checks the URL as a URL: case, default port, user info, length', () => {
+    expect(checkedReturnTo('HTTPS://ID.EXAMPLE:443/a', ORIGIN)).toBe('HTTPS://ID.EXAMPLE:443/a');
+    expect(checkedReturnTo('https://id.example:444/a', ORIGIN)).toBeUndefined();
+    expect(checkedReturnTo('https://id.example@evil.example/', ORIGIN)).toBeUndefined();
+    expect(checkedReturnTo('https://evil.example@id.example/', ORIGIN)).toBe(
+      'https://evil.example@id.example/'
+    );
+    expect(checkedReturnTo(`/${'a'.repeat(2047)}`, ORIGIN)).toBe(`/${'a'.repeat(2047)}`);
+    expect(checkedReturnTo(`/${'a'.repeat(2048)}`, ORIGIN)).toBeUndefined();
+  });
+});
+
+describe('LiteTxnEntrypoint refusals before the store', () => {
+  it('checks the caller first, whatever the refusal', async () => {
+    await setPolicy('always');
+    const refused = [
+      { purpose: 'account' as const, sessionId: 's', userId: 'u' },
+      { purpose: 'login' as const, returnTo: 'https://evil.example/' },
+    ];
+    for (const props of [{ caller: 'x' }, { audience: 'x' }, { environmentId: 'x' }]) {
+      for (const input of refused) {
+        await expect(entry(props).create({ ...call, clientIp: null, ...input })).rejects.toThrow(
+          'lite_txn_unauthorized'
+        );
+      }
+    }
+    expect(txnStores.size).toBe(0);
+  });
+
+  it('makes no transaction for a malformed public origin, whatever the return target', async () => {
+    await setPolicy('always');
+    await expect(
+      entry().create({
+        ...call,
+        publicOrigin: 'https://id.example/path',
+        clientIp: null,
+        purpose: 'login',
+        returnTo: '/authorize',
+      })
+    ).resolves.toEqual({ ok: false, reason: 'tenant_unknown' });
+    expect(txnStores.size).toBe(0);
   });
 });

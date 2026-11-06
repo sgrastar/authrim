@@ -50,6 +50,8 @@ export interface LiteTxnEntrypointProps {
 
 /** Why the entrypoint refused before reaching the store. */
 export type LiteTxnEntryRefusal =
+  | 'unsupported_purpose'
+  | 'invalid_return_to'
   | 'tenant_unknown'
   | 'not_lite'
   | 'policy_unknown'
@@ -88,6 +90,23 @@ const NO_CURRENT_REVISION = '\u0000no-current-revision';
 async function sha256Hex(value: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * The return target, checked: a URL of the public origin, or a local path (one leading `/`, no
+ * backslash or control character). Null when there is none; undefined when it is not allowed.
+ */
+export function checkedReturnTo(value: unknown, publicOrigin: string): string | null | undefined {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== 'string' || value.length > 2048) return undefined;
+  // eslint-disable-next-line no-control-regex
+  if (/[\\\u0000-\u001f\u007f]/u.test(value)) return undefined;
+  if (value.startsWith('/')) return value.startsWith('//') ? undefined : value;
+  try {
+    return new URL(value).origin === publicOrigin ? value : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function originOf(value: string): URL | null {
@@ -189,6 +208,17 @@ export class LiteTxnEntrypoint extends WorkerEntrypoint<Env, LiteTxnEntrypointPr
 
   create(call: LiteTxnCreateCall): Promise<LiteTxnCreateResult | Refused> {
     return this.#covered(async () => {
+      // An account action or a re-authentication acts for the signed-in session and user, which
+      // this entrypoint does not check yet: both are refused until it does (lite plan PR7).
+      if (call.purpose !== 'login' && call.purpose !== 'signup') {
+        this.#authorize();
+        return { ok: false, reason: 'unsupported_purpose' } as const;
+      }
+      const returnTo = checkedReturnTo(call.returnTo, call.publicOrigin);
+      if (returnTo === undefined) {
+        this.#authorize();
+        return { ok: false, reason: 'invalid_return_to' } as const;
+      }
       const context = await this.#context(call);
       if (!context.ok) return context;
       const limits = await readLiteTxnLimits(this.env, context.tenantId);
@@ -214,7 +244,7 @@ export class LiteTxnEntrypoint extends WorkerEntrypoint<Env, LiteTxnEntrypointPr
         purpose: call.purpose,
         clientId: call.clientId ?? null,
         challengeId: call.challengeId ?? null,
-        returnTo: call.returnTo ?? null,
+        returnTo,
         policyRevision: context.policyRevision,
         sessionId: call.sessionId ?? null,
         userId: call.userId ?? null,

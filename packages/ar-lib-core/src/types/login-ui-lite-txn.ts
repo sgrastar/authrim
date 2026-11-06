@@ -79,7 +79,10 @@ export interface LiteTxnBound {
   clientId: string | null;
   /** The authorization or Flow challenge the transaction continues, when there is one. */
   challengeId: string | null;
-  /** The verified return target, when there is one. */
+  /**
+   * The return target, when there is one: a URL of `publicOrigin` or a local path (checked by
+   * ar-auth's LiteTxnEntrypoint before the transaction is made).
+   */
   returnTo: string | null;
   /** The tenant's lite policy revision when the transaction began. */
   policyRevision: string;
