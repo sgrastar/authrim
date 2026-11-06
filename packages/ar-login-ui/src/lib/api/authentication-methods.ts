@@ -139,6 +139,11 @@ export interface AuthenticationMethods {
 }
 
 export interface LoginUIConfig {
+	/**
+	 * The tenant's lite Login UI. `unknown`: the server could not read the tenant's lite policy
+	 * (the Login UI answers 503 then). Absent on older servers (read as `off`).
+	 */
+	lite?: { mode: 'off' | 'always' | 'unknown'; logo: string | null };
 	/** `auto` follows the visitor's system setting; `light` and `dark` are the tenant's default. */
 	theme: string;
 	/** When true the visitor cannot change the colour mode. Absent on older servers. */

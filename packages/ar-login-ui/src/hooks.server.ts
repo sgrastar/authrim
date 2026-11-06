@@ -50,6 +50,9 @@ import {
 } from '#lib/server/account-page-initial-data.js';
 import { sanitizeColor } from '#lib/utils/url-validation.js';
 import { getPlatformEnv } from '#lib/server/platform-env.js';
+import { createLiteHandleFetch, isLiteRoute, liteGuardHandle } from '#lib/server/lite/guard.js';
+import { liteTransformPageChunk } from '#lib/server/lite/document.js';
+import { isLiteModeAnswer, type LiteModeAnswer } from '#lib/lite/routing.js';
 import {
 	buildFirstPaintThemeScript,
 	LOGIN_UI_THEME_HINT_COOKIE,
@@ -1277,6 +1280,15 @@ export const localeHandle: Handle = async ({ event, resolve }) => {
 			getInitialLoginUIThemeHint(event)
 		);
 		setInitialLoginUIThemeHint(event, event.locals.authenticationMethods);
+		if (isLiteRoute(event)) {
+			return resolve(event, {
+				transformPageChunk: ({ html }) =>
+					liteTransformPageChunk(html, {
+						language: toDocumentLanguage(locale),
+						direction: toDocumentDirection(locale)
+					})
+			});
+		}
 		return resolve(event, {
 			transformPageChunk: ({ html }) =>
 				html
@@ -1350,8 +1362,18 @@ export const localeHandle: Handle = async ({ event, resolve }) => {
 	return resolveWithLocale(languageConfig.defaultLocale);
 };
 
+/** The request's lite Login UI mode, from the tenant's authentication methods answer. */
+async function readLiteModeForRequest(event: RequestEvent): Promise<LiteModeAnswer> {
+	const methods = await getCachedAuthenticationMethodsForRequest(event, getPlatformEnv(event));
+	const mode = methods?.ui.lite?.mode;
+	return isLiteModeAnswer(mode) ? mode : 'off';
+}
+
+export const handleFetch = createLiteHandleFetch(readLiteModeForRequest);
+
 export const handle = sequence(
 	httpsRedirectHandle,
+	liteGuardHandle,
 	loginTenantHostCookieHandle,
 	accountCanonicalHostHandle,
 	apiProxyHandle,
