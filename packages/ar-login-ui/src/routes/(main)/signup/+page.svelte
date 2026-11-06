@@ -75,6 +75,13 @@
 	import { onMount, untrack } from 'svelte';
 	import { page } from '$app/state';
 	import type { PageData } from './$types';
+	import {
+		hasScreenAnswer,
+		isAnswerScreenStep,
+		offProfileFieldKeys,
+		requiredScreenInputParts,
+		screenAnswerFields
+	} from '#lib/authrim/runtime-screen-answers.js';
 
 	type SignupPageData = PageData & {
 		authenticationMethods?: AuthenticationMethodsResponse;
@@ -146,6 +153,18 @@
 	let externalIdpLoading = $state<string | null>(null);
 	let runtimeFlow = $state<FlowRuntimeStartResponse | null>(null);
 	let runtimeFlowStep = $state<FlowRuntimeStep | null>(null);
+	// Answers that are not registration attributes, for the step they were entered on: a screen
+	// step's own parts (a profile completion, a survey) and any part kept off the profile. Another
+	// step starts empty, and none of them is ever sent as a registration attribute.
+	let runtimeScreenAnswers = $state<{ stepId: string | null; values: Record<string, string> }>({
+		stepId: null,
+		values: {}
+	});
+	const currentRuntimeScreenAnswers = $derived(
+		runtimeScreenAnswers.stepId !== null && runtimeScreenAnswers.stepId === runtimeFlowStep?.id
+			? runtimeScreenAnswers.values
+			: {}
+	);
 	let emailVerificationChallenge = $state<FlowRuntimeEmailVerificationChallenge | null>(null);
 	let emailVerificationChallengeRequestKey = '';
 	let runtimeFlowLoading = $state(true);
@@ -325,13 +344,23 @@
 	const blockLegacyAuthLayout = $derived(
 		useRuntimeAuthFormLayout || runtimeFlowBlocked || runtimeAuthFormMissing
 	);
-	const runtimeScreenFieldValues = $derived<Record<string, string>>({
-		...customFieldValues,
-		email,
-		name,
-		mail_otp_code_length: String(emailCodeDigits),
-		totp_code_length: String(totpDigits)
-	});
+	// A screen to answer shows what was entered on it only (what its submit sends); any other
+	// screen, the registration's own values.
+	const runtimeAnswerStep = $derived(
+		isAnswerScreenStep(runtimeFlowStep, getRuntimeScreen(runtimeFlowStep))
+	);
+	const runtimeScreenFieldValues = $derived<Record<string, string>>(
+		runtimeAnswerStep
+			? currentRuntimeScreenAnswers
+			: {
+					...customFieldValues,
+					...currentRuntimeScreenAnswers,
+					email,
+					name,
+					mail_otp_code_length: String(emailCodeDigits),
+					totp_code_length: String(totpDigits)
+				}
+	);
 	const runtimeMethodAvailability = $derived<Partial<Record<RuntimeAuthMethod, boolean>>>({
 		passkey: showRuntimePasskey,
 		mail_otp: showRuntimeEmailCode,
@@ -1152,47 +1181,42 @@
 	}
 
 	function getSubmittedCustomFields(): Record<string, string> {
+		// A part whose answer is kept off the profile is never sent as a profile attribute.
+		const offProfile = offProfileFieldKeys(getRuntimeScreen(runtimeFlowStep));
 		return Object.fromEntries(
 			Object.entries(customFieldValues).filter(([fieldKey, value]) => {
 				if (FIXED_REGISTRATION_FIELD_KEYS.has(normalizeRegistrationFieldKey(fieldKey))) {
 					return false;
 				}
+				if (offProfile.has(fieldKey)) return false;
 				return value !== '';
 			})
 		);
 	}
 
-	function getRuntimeProfileFields(): Array<{
-		field: string;
-		label: string;
-		required: boolean;
-		block_type: string;
-	}> {
-		const screen = getRuntimeScreen(runtimeFlowStep);
-		const fields = Array.isArray(screen?.fields) ? screen.fields : [];
-		return fields
-			.filter(
-				(field): field is Record<string, unknown> => Boolean(field) && typeof field === 'object'
-			)
-			.map((field) => ({
-				field: typeof field.field === 'string' ? field.field : '',
-				label:
-					typeof field.label === 'string' && field.label.trim()
-						? field.label
-						: typeof field.field === 'string'
-							? field.field
-							: $LL.common_field(),
-				required: field.required === true,
-				block_type: typeof field.block_type === 'string' ? field.block_type : 'identity_field'
-			}))
-			.filter((field) => field.field);
+	/** A screen step's submit: its consent decisions and the answers of its own parts. */
+	function getRuntimeScreenSubmitInput() {
+		const consent = getRuntimeConsentItemDecisionPayload();
+		if (!runtimeAnswerStep) return consent;
+		const fields = screenAnswerFields(
+			getRuntimeScreen(runtimeFlowStep),
+			(field) => currentRuntimeScreenAnswers[field]
+		);
+		return { ...consent, fields };
 	}
 
 	function getRuntimeScreenFieldValue(field: string): string {
+		if (runtimeAnswerStep) return currentRuntimeScreenAnswers[field] ?? '';
 		const normalized = field.toLowerCase();
 		if (normalized === 'email' || normalized.endsWith('.email')) return email;
 		if (normalized === 'name' || normalized.endsWith('.name')) return name;
+		if (isRuntimeScreenAnswer(field)) return currentRuntimeScreenAnswers[field] ?? '';
 		return customFieldValues[field] ?? '';
+	}
+
+	/** Whether a part's value is an answer kept for its step, not a registration attribute. */
+	function isRuntimeScreenAnswer(field: string): boolean {
+		return runtimeAnswerStep || offProfileFieldKeys(getRuntimeScreen(runtimeFlowStep)).has(field);
 	}
 
 	function setRuntimeScreenFieldError(field: string, message: string) {
@@ -1210,10 +1234,11 @@
 
 	function validateRuntimeScreenFields(): boolean {
 		if (!useRuntimeAuthFormLayout) return true;
-		for (const field of getRuntimeProfileFields()) {
-			if (field.block_type !== 'identity_field' || !field.required) continue;
-			if (getRuntimeScreenFieldValue(field.field).trim()) continue;
-			setRuntimeScreenFieldError(field.field, $LL.common_requiredField({ field: field.label }));
+		for (const part of requiredScreenInputParts(getRuntimeScreen(runtimeFlowStep))) {
+			if (typeof part.field !== 'string') continue;
+			if (hasScreenAnswer(part, getRuntimeScreenFieldValue(part.field))) continue;
+			const label = typeof part.label === 'string' && part.label.trim() ? part.label : part.field;
+			setRuntimeScreenFieldError(part.field, $LL.common_requiredField({ field: label }));
 		}
 		return !nameError && !emailError && Object.values(customFieldErrors).every((value) => !value);
 	}
@@ -1787,6 +1812,10 @@
 
 	function handleRuntimeScreenFieldValueChange(field: string, value: string | boolean) {
 		const stringValue = typeof value === 'string' ? value : value ? 'true' : 'false';
+		if (runtimeAnswerStep) {
+			setRuntimeScreenAnswer(field, stringValue);
+			return;
+		}
 		const normalized = field.toLowerCase();
 		if (normalized === 'email' || normalized.endsWith('.email')) {
 			email = stringValue;
@@ -1796,7 +1825,23 @@
 			name = stringValue;
 			return;
 		}
+		if (isRuntimeScreenAnswer(field)) {
+			setRuntimeScreenAnswer(field, stringValue);
+			return;
+		}
 		setCustomFieldValue(field, stringValue);
+	}
+
+	function setRuntimeScreenAnswer(field: string, value: string) {
+		const stepId = runtimeFlowStep?.id ?? null;
+		runtimeScreenAnswers = {
+			stepId,
+			values: {
+				...(runtimeScreenAnswers.stepId === stepId ? runtimeScreenAnswers.values : {}),
+				[field]: value
+			}
+		};
+		if (customFieldErrors[field]) customFieldErrors[field] = '';
 	}
 
 	function handleRuntimeScreenAuthAction(method: RuntimeAuthMethod, _action?: string) {
@@ -1937,7 +1982,7 @@
 		onRuntimeContinue={() =>
 			completeRuntimeOnlyStep(
 				getRuntimeScreenContinueHandle(runtimeFlowStep),
-				getRuntimeConsentItemDecisionPayload()
+				getRuntimeScreenSubmitInput()
 			)}
 		onRuntimeAccept={() =>
 			completeRuntimeOnlyStep('accepted', getRuntimeConsentItemDecisionPayload())}

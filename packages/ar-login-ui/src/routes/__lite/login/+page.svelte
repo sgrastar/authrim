@@ -13,13 +13,23 @@
 		const name = field.trim().toLowerCase();
 		return name === 'email' || name.endsWith('.email');
 	}
+
+	/** A form's action: the page's own query, then SvelteKit's action key. */
+	function actionOf(search: string, name: string): string {
+		return `${search || '?'}${search ? '&' : ''}/${name}`;
+	}
+
+	type FormError = 'email_invalid' | 'code_invalid' | 'busy' | 'resend_wait' | 'retry';
+	const formError = $derived(
+		form && 'error' in form && typeof form.error === 'string' ? (form.error as FormError) : null
+	);
 </script>
 
 {#if data.page === 'error'}
 	<LiteShell title={data.title} brandName={data.brandName} logo={data.logo}>
 		<h1>{data.title}</h1>
 		<p>{data.message}</p>
-		<p><a href="/login">{data.back}</a></p>
+		<p><a href={data.backHref}>{data.back}</a></p>
 	</LiteShell>
 {:else if data.page === 'relay'}
 	<LiteShell title={data.title} brandName={data.brandName} logo={data.logo}>
@@ -27,32 +37,49 @@
 	</LiteShell>
 {:else}
 	<LiteShell title={data.text.title} brandName={data.brandName} logo={data.logo}>
-		{#if form && 'restart' in form && form.restart}
-			<p role="alert">{data.text.unsupported}</p>
-			<p><a href="/login">{data.text.back}</a></p>
-		{:else if data.decision.kind === 'unsupported'}
+		{#if (form && 'restart' in form && form.restart) || data.decision.kind === 'unsupported'}
 			<h1>{data.text.title}</h1>
 			<p role="alert">{data.text.unsupported}</p>
-			<p><a href="/login">{data.text.back}</a></p>
-		{:else if data.decision.kind === 'continue'}
-			<h1>{data.text.title}</h1>
-			<form method="post" action={`${data.search || '?'}${data.search ? '&' : ''}/continue`}>
+			<!-- Back to the start of this request: the transaction is given up, so it starts afresh. -->
+			<form method="post" action={actionOf(data.search, 'restart')}>
 				<input type="hidden" name="txn" value={data.txnId} />
 				<input type="hidden" name="csrf" value={data.csrfToken} />
+				<button type="submit">{data.text.back}</button>
+			</form>
+		{:else if data.decision.kind === 'continue'}
+			<h1>{data.text.title}</h1>
+			{#if formError}<p role="alert">{data.text.errors[formError]}</p>{/if}
+			<form method="post" action={actionOf(data.search, 'continue')}>
+				<input type="hidden" name="txn" value={data.txnId} />
+				<input type="hidden" name="csrf" value={data.csrfToken} />
+				<input type="hidden" name="op" value={data.op} />
 				<button type="submit">{data.text.continue}</button>
 			</form>
+			{#if formError}
+				<!-- A Continue that failed may not go through again (a spent budget): a way out. -->
+				<form method="post" action={actionOf(data.search, 'restart')}>
+					<input type="hidden" name="txn" value={data.txnId} />
+					<input type="hidden" name="csrf" value={data.csrfToken} />
+					<button type="submit">{data.text.restart}</button>
+				</form>
+			{/if}
 		{:else}
 			{#if data.decision.title}<h1>{data.decision.title}</h1>{/if}
 			{#if data.decision.description}<p>{data.decision.description}</p>{/if}
+			{#if data.codeEntry?.maskedEmail}
+				<p>{data.text.codeSentTo} <strong>{data.codeEntry.maskedEmail}</strong></p>
+			{/if}
+			{#if formError}<p role="alert">{data.text.errors[formError]}</p>{/if}
 			<form
 				method="post"
-				action={`${data.search || '?'}${data.search ? '&' : ''}/send_code`}
-				data-lite-pow={data.pow ? JSON.stringify(data.pow) : undefined}
-				data-lite-pow-error={data.pow ? data.text.javascriptRequired : undefined}
+				action={actionOf(data.search, data.codeEntry ? 'verify_code' : 'send_code')}
+				data-lite-pow={data.pow && !data.codeEntry ? JSON.stringify(data.pow) : undefined}
+				data-lite-pow-error={data.pow && !data.codeEntry ? data.text.javascriptRequired : undefined}
 			>
 				<input type="hidden" name="txn" value={data.txnId} />
 				<input type="hidden" name="csrf" value={data.csrfToken} />
-				{#if data.pow}
+				<input type="hidden" name="op" value={data.op} />
+				{#if data.pow && !data.codeEntry}
 					<input type="hidden" name="human_verification_response" value="" />
 				{/if}
 				{#each data.decision.fields as field, index (`${field.blockType}:${field.field}:${index}`)}
@@ -67,6 +94,12 @@
 						<p>
 							{#if field.href}<a href={field.href}>{field.label}</a>{:else}{field.label}{/if}
 						</p>
+					{:else if field.blockType === 'identity_field' && field.valueType === 'boolean'}
+						<label class="check">
+							<input type="checkbox" name={field.field} value="true" required={field.required} />
+							{field.placeholder || field.label}
+						</label>
+						{#if field.helpText}<p class="muted">{field.helpText}</p>{/if}
 					{:else if field.blockType === 'identity_field'}
 						<label>
 							{field.label || data.text.email}
@@ -74,38 +107,56 @@
 								name={field.field}
 								type={isEmailField(field.field) ? 'email' : 'text'}
 								autocomplete={isEmailField(field.field) ? 'email' : 'off'}
-								required={field.required}
+								required={field.required && !data.codeEntry}
 								placeholder={field.placeholder ?? undefined}
 							/>
 						</label>
 						{#if field.helpText}<p class="muted">{field.helpText}</p>{/if}
 					{:else if field.blockType === 'code_input_widget'}
 						<label>
-							{field.label}
+							{field.label || data.text.code}
 							<input
 								name="code"
 								inputmode="numeric"
 								autocomplete="one-time-code"
-								pattern="[0-9]*"
-								maxlength="8"
+								pattern={'[0-9]{6}'}
+								minlength="6"
+								maxlength="6"
+								required
 							/>
 						</label>
-					{:else if field.blockType === 'auth_widget'}
-						<button
-							type="submit"
-							formaction={`${data.search || '?'}${data.search ? '&' : ''}/send_code`}
+						{#if data.codeEntry}<button type="submit">{data.text.verify}</button>{/if}
+					{:else if field.blockType === 'auth_widget' && !data.codeEntry}
+						<button type="submit" formaction={actionOf(data.search, 'send_code')}
 							>{field.label || data.text.sendCode}</button
 						>
-					{:else if field.blockType === 'guest_login_widget'}
-						<button
-							type="submit"
-							formnovalidate
-							formaction={`${data.search || '?'}${data.search ? '&' : ''}/guest`}
+					{:else if field.blockType === 'guest_login_widget' && !data.codeEntry}
+						<button type="submit" formnovalidate formaction={actionOf(data.search, 'guest')}
 							>{field.label || data.text.guest}</button
 						>
 					{/if}
 				{/each}
 			</form>
+			{#if data.codeEntry}
+				<form
+					method="post"
+					action={actionOf(data.search, 'resend')}
+					data-lite-pow={data.pow ? JSON.stringify(data.pow) : undefined}
+					data-lite-pow-error={data.pow ? data.text.javascriptRequired : undefined}
+				>
+					<input type="hidden" name="txn" value={data.txnId} />
+					<input type="hidden" name="csrf" value={data.csrfToken} />
+					<input type="hidden" name="op" value={data.op} />
+					<input type="hidden" name="human_verification_response" value="" />
+					{#if data.codeEntry.resendWait > 0}<p class="muted">{data.text.resendWait}</p>{/if}
+					<button type="submit">{data.text.resend}</button>
+				</form>
+				<form method="post" action={actionOf(data.search, 'restart')}>
+					<input type="hidden" name="txn" value={data.txnId} />
+					<input type="hidden" name="csrf" value={data.csrfToken} />
+					<button type="submit">{data.text.restart}</button>
+				</form>
+			{/if}
 			{#if data.pow}
 				<noscript><p role="alert">{data.text.javascriptRequired}</p></noscript>
 				<!-- eslint-disable-next-line svelte/no-at-html-tags -- a constant, allowed by its CSP hash -->

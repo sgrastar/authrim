@@ -84,9 +84,46 @@
 	{/snippet}
 </Story>
 
-<Story name="One key">
+<Story
+	name="One key"
+	play={async ({ canvasElement }) => {
+		// A single factor: the page suggests registering another one.
+		await within(canvasElement).findByText(t('sk.onlyOne.title'));
+	}}
+>
 	{#snippet template()}
 		<SecurityKeys client={createFakeSecondFactors({ keys: [{ label: 'YubiKey 5C (blue)' }] })} />
+	{/snippet}
+</Story>
+
+<Story
+	name="Sole administrator"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		// Nobody could cancel a recovery: the page says so instead of offering one.
+		await canvas.findByText(t('sk.recovery.soleAdmin'));
+		expect(canvas.queryByRole('button', { name: t('kp.recover.add') })).toBeNull();
+		expect(canvas.queryByRole('button', { name: t('sk.recover') })).toBeNull();
+	}}
+>
+	{#snippet template()}
+		<SecurityKeys
+			client={createFakeSecondFactors({ keys: [{ label: 'YubiKey 5C (blue)' }], soleAdmin: true })}
+		/>
+	{/snippet}
+</Story>
+
+<Story
+	name="Sole administrator with no usable key"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByText(t('sk.recoveryNeeded.title'));
+		await canvas.findByText(t('sk.recovery.soleAdmin'));
+		expect(canvas.queryByRole('button', { name: t('kp.recover.add') })).toBeNull();
+	}}
+>
+	{#snippet template()}
+		<SecurityKeys client={createFakeSecondFactors({ soleAdmin: true })} />
 	{/snippet}
 </Story>
 

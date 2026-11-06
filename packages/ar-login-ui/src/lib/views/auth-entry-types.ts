@@ -56,7 +56,7 @@ export type RuntimeStepView = {
 
 /** What the runtime screen draws beside the step itself; it changes as the person types. */
 export type RuntimeScreenState = {
-	fieldValues: Record<string, string>;
+	fieldValues: Record<string, string | boolean>;
 	methodAvailability: Partial<Record<RuntimeAuthMethod, boolean>>;
 	methodLoading: Partial<Record<RuntimeAuthMethod, boolean>>;
 	destinationFieldDecisions: Record<string, boolean>;

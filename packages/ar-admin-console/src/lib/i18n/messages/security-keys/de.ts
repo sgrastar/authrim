@@ -11,6 +11,11 @@ export const deSecurityKeys: Record<keyof typeof jaSecurityKeys, string> = {
 	'sk.nameHint': 'Zum Beispiel: YubiKey (blau)',
 	'sk.register': 'Schlüssel registrieren',
 	'sk.unnamed': 'Ohne Namen',
+	'sk.recovery.soleAdmin':
+		'Sie sind der einzige Administrator und können hier keine Wiederherstellung beantragen. Stellen Sie den Zugang über das Verfahren für Umgebungsverantwortliche (letzte Wiederherstellung) wieder her.',
+	'sk.onlyOne.title': 'Sie haben nur einen zweiten Faktor',
+	'sk.onlyOne.body':
+		'Wenn Sie ihn verlieren, können Sie keine sensiblen Vorgänge mehr ausführen. Registrieren Sie am besten einen weiteren Sicherheitsschlüssel oder Keyring.',
 	'sk.only': 'Einziger Schlüssel',
 	'sk.created': 'Registriert',
 	'sk.lastUsed': 'Zuletzt verwendet',

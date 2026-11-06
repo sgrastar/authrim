@@ -32,6 +32,8 @@ export interface FakeSecondFactorsOptions {
 		waitingHours?: number;
 		kind?: 'webauthn_credential' | 'keyring_holder_key';
 	}>;
+	/** The admin is the only administrator: the status says recovery is not available. */
+	soleAdmin?: boolean;
 	/** Recovery cannot be filed (the only admin, or email not available). */
 	recoveryRefused?: 'recovery_requires_last_resort' | 'recovery_notification_unavailable';
 	/** When the admin's own request lapses, from `now` (7 days by default). */
@@ -112,7 +114,10 @@ export function createFakeSecondFactors(
 									? 'first'
 									: 'recovery_required',
 						first_enrollment_ends_at: now + (options.firstEnrollmentOpen ? 5 : -2) * DAY
-					}
+					},
+					recovery: options.soleAdmin
+						? { available: false, reason: 'sole_admin' }
+						: { available: true }
 				})
 			),
 

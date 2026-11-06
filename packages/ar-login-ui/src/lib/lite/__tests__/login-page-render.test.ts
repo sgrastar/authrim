@@ -11,10 +11,26 @@ const text = {
 	guest: 'Continue as a guest',
 	javascriptRequired: 'Turn on JavaScript',
 	unsupported: 'Unavailable',
-	back: 'Back'
+	back: 'Back',
+	codeSentTo: 'Sent to',
+	code: 'Code',
+	verify: 'Verify',
+	resend: 'Resend code',
+	resendWait: 'Resend in 42s',
+	restart: 'Use another address',
+	errors: {
+		email_invalid: 'Not an address',
+		code_invalid: 'Wrong code',
+		busy: 'Too many',
+		resend_wait: 'Wait'
+	}
 };
 
-function page(fields: unknown[], pow: unknown = null) {
+function page(
+	fields: unknown[],
+	pow: unknown = null,
+	extra: { codeEntry?: unknown; form?: unknown } = {}
+) {
 	return render(LoginPage, {
 		props: {
 			data: {
@@ -24,14 +40,24 @@ function page(fields: unknown[], pow: unknown = null) {
 				search: '?challenge_id=ch-1',
 				txnId: 'txn-1',
 				csrfToken: 'csrf-1',
+				op: 'o'.repeat(22),
 				decision: { kind: 'screen', title: 'Sign in', description: null, fields },
+				codeEntry: extra.codeEntry ?? null,
 				pow,
 				text
 			} as never,
-			form: null
+			form: (extra.form ?? null) as never
 		}
 	});
 }
+
+const POW = {
+	algorithm: 'SHA-256',
+	challenge: 'a'.repeat(64),
+	maxnumber: 1,
+	salt: 's',
+	signature: 'g'
+};
 
 const field = (overrides: Record<string, unknown>) => ({
 	blockType: 'identity_field',
@@ -101,5 +127,86 @@ describe('the lite sign-in page as drawn', () => {
 		]);
 		expect(body).toContain('<h2>Welcome</h2>');
 		expect(body).toContain('<p>Sign in to go on</p>');
+	});
+
+	it('draws the code entry: the code form without a proof, the resend form with one', () => {
+		const { body } = page(
+			[field({ blockType: 'code_input_widget', field: 'code', label: 'Code' })],
+			POW,
+			{ codeEntry: { maskedEmail: 'p***n@example.com', resendWait: 42 } }
+		);
+		const forms = body.match(/<form[^>]*>/gu) ?? [];
+		expect(forms).toHaveLength(3);
+		expect(forms[0]).toContain('action="?challenge_id=ch-1&amp;/verify_code"');
+		expect(forms[0]).not.toContain('data-lite-pow');
+		expect(forms[1]).toContain('action="?challenge_id=ch-1&amp;/resend"');
+		expect(forms[1]).toContain('data-lite-pow=');
+		expect(forms[2]).toContain('action="?challenge_id=ch-1&amp;/restart"');
+		expect(body).toMatch(/<input[^>]*name="code"[^>]*autocomplete="one-time-code"/u);
+		expect(body).toContain('pattern="[0-9]{6}"');
+		expect(body).toContain('p***n@example.com');
+		expect(body).toContain('Resend in 42s');
+		expect(body.match(/name="op"/gu)).toHaveLength(2);
+	});
+
+	it('says what was wrong with the last post', () => {
+		const { body } = page([field({})], null, { form: { error: 'email_invalid' } });
+		expect(body).toMatch(/role="alert"[^>]*>Not an address/u);
+	});
+
+	it('draws a yes/no field as a checkbox', () => {
+		const { body } = page([
+			field({ field: 'newsletter', label: 'News', valueType: 'boolean', required: false })
+		]);
+		expect(body).toMatch(/<input[^>]*type="checkbox"[^>]*name="newsletter"/u);
+		expect(body).not.toMatch(/<input[^>]*name="newsletter"[^>]*type="text"/u);
+	});
+
+	it('goes back from a step it cannot draw by giving the transaction up (a restart post)', () => {
+		const { body } = render(LoginPage, {
+			props: {
+				data: {
+					brandName: 'Acme',
+					logo: null,
+					page: 'step',
+					search: '?challenge_id=ch-1',
+					txnId: 'txn-1',
+					csrfToken: 'csrf-1',
+					op: 'o'.repeat(22),
+					decision: { kind: 'unsupported', reasons: ['block:checkbox'] },
+					codeEntry: null,
+					pow: null,
+					text
+				} as never,
+				form: null
+			}
+		});
+		expect(body).toContain('action="?challenge_id=ch-1&amp;/restart"');
+		expect(body).toContain('name="txn" value="txn-1"');
+		expect(body).not.toContain('href="/login');
+	});
+
+	it('offers a way out next to a Continue that failed, and none next to one that did not', () => {
+		const draw = (form: unknown) =>
+			render(LoginPage, {
+				props: {
+					data: {
+						brandName: 'Acme',
+						logo: null,
+						page: 'step',
+						search: '',
+						txnId: 'txn-1',
+						csrfToken: 'csrf-1',
+						op: 'o'.repeat(22),
+						decision: { kind: 'continue' },
+						codeEntry: null,
+						pow: null,
+						text
+					} as never,
+					form: form as never
+				}
+			}).body;
+		expect(draw({ error: 'busy' })).toContain('action="?/restart"');
+		expect(draw(null)).not.toContain('/restart');
 	});
 });
