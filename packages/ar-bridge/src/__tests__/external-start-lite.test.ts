@@ -44,9 +44,13 @@ import { handleExternalStart } from '../handlers/start';
 function start(query: string) {
   const app = new Hono<{ Bindings: Env }>();
   app.get('/auth/external/:provider/start', (c) => handleExternalStart(c));
-  return app.request(`/auth/external/google/start?${query}`, {}, {
-    SETTINGS: { get: async () => null, put: async () => undefined },
-  });
+  return app.request(
+    `/auth/external/google/start?${query}`,
+    {},
+    {
+      SETTINGS: { get: async () => null, put: async () => undefined },
+    }
+  );
 }
 
 describe('external start for a tenant in lite mode', () => {
