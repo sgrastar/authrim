@@ -1,6 +1,6 @@
 import { redirect } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
-import { fetchDiscoveryConfig, getDiscoveryRequestHeaders } from '../../lib/discovery-entry';
+import { fetchDiscoveryConfig, getDiscoveryRequestHeaders } from '../../../lib/discovery-entry';
 
 export const load: PageServerLoad = async (event) => {
 	const discoveryHeaders = getDiscoveryRequestHeaders(event);

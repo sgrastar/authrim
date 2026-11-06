@@ -1565,10 +1565,10 @@ describe('Login UI proxy hooks', () => {
 	});
 
 	it('exposes the hook decision through root layout data', async () => {
-		const { load } = await import('../routes/+layout.server');
+		const { load } = await import('../routes/(main)/+layout.server');
 		const data = await load({
 			cookies: { get: () => undefined },
-			route: { id: '/login' },
+			route: { id: '/(main)/login' },
 			locals: {
 				emailVerificationProtocolEnabled: true,
 				authenticationMethods: null
@@ -1582,12 +1582,12 @@ describe('Login UI proxy hooks', () => {
 	});
 
 	it('does not persist an OIDC transaction locale from root layout data', async () => {
-		const { load } = await import('../routes/+layout.server');
+		const { load } = await import('../routes/(main)/+layout.server');
 		const setCookie = vi.fn();
 		const data = await load({
 			url: new URL('https://login.example.com/login?ui_locales=zh-Hant-TW%20en'),
 			cookies: { get: () => undefined, set: setCookie },
-			route: { id: '/login' },
+			route: { id: '/(main)/login' },
 			locals: {
 				locale: 'zh-TW',
 				emailVerificationProtocolEnabled: false,

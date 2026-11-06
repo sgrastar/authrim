@@ -44,7 +44,7 @@ describe('handleCodeEnterKey', () => {
 const read = (path: string) => readFileSync(resolve(__dirname, path), 'utf8');
 
 describe('wiring: the login form is not split by screen state', () => {
-	const loginPage = read('../../routes/login/+page.svelte');
+	const loginPage = read('../../routes/(main)/login/+page.svelte');
 	const runtimeScreen = read('../components/RuntimeScreen.svelte');
 	const pinInput = read('../components/PinCodeInput.svelte');
 	const loginView = read('../views/LoginView.svelte');

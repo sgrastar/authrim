@@ -5,8 +5,8 @@ import {
 	getDiscoveryRequestHeaders,
 	isCurrentSessionActive,
 	verifyLoginChallengeForCurrentTenant
-} from '../lib/discovery-entry';
-import { shouldUseFastTenantRootRedirect } from '../lib/server/login-entry-fast-path';
+} from '../../lib/discovery-entry';
+import { shouldUseFastTenantRootRedirect } from '../../lib/server/login-entry-fast-path';
 
 export const load: PageServerLoad = async (event) => {
 	const challengeId = event.url.searchParams.get('challenge_id');

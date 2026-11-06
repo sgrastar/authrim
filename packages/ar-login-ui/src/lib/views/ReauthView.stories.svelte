@@ -22,7 +22,7 @@
 			docs: {
 				description: {
 					component:
-						'Asks a signed-in user to prove it is still them, using any method the tenant allows for re-authentication. Dividers appear only between methods that are shown. The route (`src/routes/reauth`) owns the requests.'
+						'Asks a signed-in user to prove it is still them, using any method the tenant allows for re-authentication. Dividers appear only between methods that are shown. The route (`src/routes/(main)/reauth`) owns the requests.'
 				}
 			}
 		}

@@ -1,5 +1,5 @@
 import type { LayoutServerLoad } from './$types';
-import { fetchDiscoveryConfig, getDiscoveryRequestHeaders } from '../lib/discovery-entry';
+import { fetchDiscoveryConfig, getDiscoveryRequestHeaders } from '../../lib/discovery-entry';
 import { getLoginUILanguageConfig, resolveEnabledLoginUILocale } from '#lib/i18n/config.js';
 import { LOGIN_UI_THEME_HINT_COOKIE, normalizeLoginUIThemeMode } from '#lib/theme-bootstrap.js';
 
@@ -18,12 +18,21 @@ const RESOLVED_TENANT_AUTH_ROUTES = new Set([
 	'/verify-email-code'
 ]);
 
+/**
+ * The route ID without its layout groups: `/(main)/login` is the page at `/login`. Groups only
+ * choose a layout, so a page keeps its behaviour when it moves between groups.
+ */
+export function _routePathFromRouteId(routeId: string): string {
+	return routeId.replace(/\/\([^/)]+\)/g, '') || '/';
+}
+
 export function _shouldUseResolvedTenantBranding(routeId: string | null | undefined): boolean {
-	return Boolean(
-		routeId &&
-		(RESOLVED_TENANT_AUTH_ROUTES.has(routeId) ||
-			routeId === '/account' ||
-			routeId.startsWith('/account/'))
+	if (!routeId) return false;
+	const routePath = _routePathFromRouteId(routeId);
+	return (
+		RESOLVED_TENANT_AUTH_ROUTES.has(routePath) ||
+		routePath === '/account' ||
+		routePath.startsWith('/account/')
 	);
 }
 

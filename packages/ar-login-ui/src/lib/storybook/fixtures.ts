@@ -233,7 +233,7 @@ const providers: ExternalProvider[] = [
 	}
 ];
 
-/** What routes/login maps `visibleExternalProviders` to before handing them to RuntimeScreen. */
+/** What routes/(main)/login maps `visibleExternalProviders` to before handing them to RuntimeScreen. */
 export const externalProviders = providers.map((provider) => ({
 	id: provider.id,
 	label: provider.name,

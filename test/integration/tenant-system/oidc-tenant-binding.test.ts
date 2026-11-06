@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Hono } from 'hono';
 import { authorizeHandler } from '../../../packages/ar-auth/src/authorize';
 import { loginChallengeGetHandler } from '../../../packages/ar-auth/src/login-challenge';
-import { load as loginLoad } from '../../../packages/ar-login-ui/src/routes/login/+page.server';
+import { load as loginLoad } from '../../../packages/ar-login-ui/src/routes/(main)/login/+page.server';
 import { clearLoginDiscoveryConfigCacheForTests } from '../../../packages/ar-login-ui/src/lib/login-discovery-config-cache';
 import { getChallengeStoreByChallengeId } from '@authrim/ar-lib-core';
 import { tenantSystemProfiles } from './fixtures/profiles';

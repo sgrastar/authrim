@@ -27,7 +27,7 @@
 			docs: {
 				description: {
 					component:
-						'Backchannel (CIBA) requests an application made on the person’s behalf, each to approve or deny. The route (`src/routes/ciba`) loads the requests and ticks the clock; this view draws them in theme colours.'
+						'Backchannel (CIBA) requests an application made on the person’s behalf, each to approve or deny. The route (`src/routes/(main)/ciba`) loads the requests and ticks the clock; this view draws them in theme colours.'
 				}
 			}
 		}

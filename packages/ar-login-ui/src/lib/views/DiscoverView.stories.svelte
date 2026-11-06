@@ -26,7 +26,7 @@
 			docs: {
 				description: {
 					component:
-						'Where a person on the common entry host finds their organisation before signing in. The route (`src/routes/discover`) holds the configuration and the form results; this view draws them inside the shared shell. Forms post to `/discover?/resolve`; a tenant elsewhere is a validated link.'
+						'Where a person on the common entry host finds their organisation before signing in. The route (`src/routes/(main)/discover`) holds the configuration and the form results; this view draws them inside the shared shell. Forms post to `/discover?/resolve`; a tenant elsewhere is a validated link.'
 				}
 			}
 		}
