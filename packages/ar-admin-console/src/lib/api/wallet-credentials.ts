@@ -9,7 +9,10 @@
  * The offer and the transaction code are secrets for a few minutes: this module never logs or
  * stores them; the caller keeps them in memory only.
  */
+import { isFreshAuthRequired } from '#lib/api/admin-reauth.js';
 import { adminFetch } from '#lib/api/admin-request.js';
+import { stepUpHeaders, stepUpRequired, withStepUp } from '#lib/api/admin-step-up.js';
+import { errorFromResponse } from '#lib/api/api-error.js';
 import type { MessageKey } from '#lib/i18n/i18n.svelte.js';
 
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
@@ -187,11 +190,20 @@ export const httpWalletCredentials: WalletCredentialsClient & WalletCredentialMa
 	},
 
 	async revokeCredential(credentialId) {
-		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/me/wallet-credentials/${encodeURIComponent(credentialId)}/revoke`,
-			{ method: 'POST', credentials: 'include' }
-		);
-		if (!response.ok) throw await errorFrom(response);
+		// Revoking an admin credential is an L2 operation: the step-up runs here and the request is
+		// repeated with the receipt. Other refusals keep their wallet error codes.
+		await withStepUp(async (receipt) => {
+			const response = await adminFetch(
+				`${API_BASE_URL}/api/admin/me/wallet-credentials/${encodeURIComponent(credentialId)}/revoke`,
+				{ method: 'POST', credentials: 'include', headers: stepUpHeaders(receipt) }
+			);
+			if (response.ok) return;
+			if (response.status === 403) {
+				const error = await errorFromResponse(response.clone());
+				if (stepUpRequired(error) || isFreshAuthRequired(error)) throw error;
+			}
+			throw await errorFrom(response);
+		});
 	},
 
 	async createOffer() {

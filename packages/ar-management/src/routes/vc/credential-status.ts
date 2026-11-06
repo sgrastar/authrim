@@ -23,6 +23,7 @@ import {
   AR_ERROR_CODES,
   getLogger,
 } from '@authrim/ar-lib-core';
+import { ADMIN_CREDENTIAL_TYPE } from '../admin-management/admin-wallet-credential-store';
 
 type TransitionSpec = {
   from: CredentialStatus[];
@@ -73,6 +74,23 @@ async function applyTransition(
     const tenantId = getTenantIdFromContext(c);
     const adapter = createAuthContextFromHono(c, tenantId).coreAdapter;
     const now = Date.now();
+
+    // Admin credentials have their own routes, which check authority over the admin and ask for
+    // an L2 step-up. This generic route must not be a way around them. The type never changes.
+    const type = await adapter.queryOne<{ credential_type: string }>(
+      'SELECT credential_type FROM issued_credentials WHERE tenant_id = ? AND public_id = ?',
+      [tenantId, credentialId]
+    );
+    if (type?.credential_type === ADMIN_CREDENTIAL_TYPE) {
+      return c.json(
+        {
+          error: 'admin_credential_not_managed_here',
+          error_description:
+            'Admin credentials are revoked through the admin wallet credential routes',
+        },
+        409
+      );
+    }
 
     const result = await transitionCredentialStatus(adapter, {
       tenantId,

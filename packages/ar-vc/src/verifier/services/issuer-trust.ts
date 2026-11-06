@@ -111,8 +111,54 @@ export async function getIssuerPublicKey(
     return getKeyFromJwksUri(jwksUri, kid);
   }
 
+  // An https issuer publishes its keys in SD-JWT VC Issuer Metadata
+  if (issuerDid.startsWith('https://')) {
+    return getKeyFromIssuerMetadata(issuerDid, kid);
+  }
+
   // Fall back to DID document resolution
   return getKeyFromDid(env, issuerDid, kid);
+}
+
+/**
+ * The SD-JWT VC Issuer Metadata URL of an https issuer: `/.well-known/jwt-vc-issuer` inserted
+ * between the host and the path (draft-ietf-oauth-sd-jwt-vc, section 5).
+ */
+export function jwtVcIssuerMetadataUrl(issuer: string): string {
+  const url = new URL(issuer);
+  if (url.protocol !== 'https:' || url.search || url.hash || url.username || url.password) {
+    throw new Error('Issuer must be an https URL without query, fragment or credentials');
+  }
+  const path = url.pathname === '/' ? '' : url.pathname.replace(/\/$/, '');
+  return `${url.origin}/.well-known/jwt-vc-issuer${path}`;
+}
+
+/**
+ * Resolve the key from the issuer's own metadata. The metadata must name exactly this issuer, and
+ * holds the keys inline (`jwks`) or at an https `jwks_uri`.
+ */
+async function getKeyFromIssuerMetadata(issuer: string, kid?: string): Promise<CryptoKey> {
+  const metadata = await safeFetchJson<{ issuer?: unknown; jwks?: unknown; jwks_uri?: unknown }>(
+    jwtVcIssuerMetadataUrl(issuer),
+    {
+      headers: { Accept: 'application/json' },
+      requireHttps: true,
+      timeoutMs: 10000,
+      maxResponseSize: 256 * 1024,
+    }
+  );
+  if (metadata.issuer !== issuer) {
+    throw new Error('Issuer metadata names a different issuer');
+  }
+  const inline = metadata.jwks as { keys?: unknown } | undefined;
+  if (inline !== undefined) {
+    if (!Array.isArray(inline?.keys)) throw new Error('Issuer metadata jwks has no keys');
+    return selectJwksSigningKey(inline.keys as JWK[], kid);
+  }
+  if (typeof metadata.jwks_uri === 'string') {
+    return getKeyFromJwksUri(metadata.jwks_uri, kid);
+  }
+  throw new Error('Issuer metadata has neither jwks nor jwks_uri');
 }
 
 const EC_SIGNING_ALGORITHMS = ['ES256', 'ES384', 'ES512'];
@@ -152,9 +198,14 @@ async function getKeyFromJwksUri(jwksUri: string, kid?: string): Promise<CryptoK
     maxResponseSize: 256 * 1024, // 256 KB max for JWKS
   });
 
+  return selectJwksSigningKey(jwks.keys, kid);
+}
+
+/** The one EC signing key of a JWKS that a signature may be verified with. */
+function selectJwksSigningKey(keys: JWK[], kid?: string): Promise<CryptoKey> {
   // The same signing-key rules with or without a kid; without one the JWKS must hold exactly one
   // (ES256, ES384 or ES512 with use "sig") rather than the first in document order.
-  const signingKeys = jwks.keys.filter((key) => key.kty === 'EC' && isIssuerSigningJwk(key));
+  const signingKeys = keys.filter((key) => key.kty === 'EC' && isIssuerSigningJwk(key));
   const candidates =
     kid !== undefined
       ? signingKeys.filter((key) => key.kid === kid)

@@ -28,7 +28,7 @@ vi.mock('jose', () => ({
   importJWK: issuerTrustKeyMocks.importJWK,
 }));
 
-import { getIssuerPublicKey } from '../issuer-trust';
+import { getIssuerPublicKey, jwtVcIssuerMetadataUrl } from '../issuer-trust';
 
 describe('getIssuerPublicKey', () => {
   const env = {} as Env;
@@ -392,5 +392,78 @@ describe('getIssuerPublicKey', () => {
         expect.objectContaining({ x: 'e' })
       );
     });
+  });
+});
+
+describe('https issuers (SD-JWT VC Issuer Metadata)', () => {
+  const env = {} as Env;
+  const KEY = { kty: 'EC', crv: 'P-256', alg: 'ES256', use: 'sig', kid: 'k1' };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    issuerTrustKeyMocks.importECPublicKey.mockResolvedValue('ec-key');
+  });
+
+  it('builds the metadata URL by inserting the well-known segment before the path', () => {
+    expect(jwtVcIssuerMetadataUrl('https://idp.example.com')).toBe(
+      'https://idp.example.com/.well-known/jwt-vc-issuer'
+    );
+    expect(jwtVcIssuerMetadataUrl('https://idp.example.com/t/acme/')).toBe(
+      'https://idp.example.com/.well-known/jwt-vc-issuer/t/acme'
+    );
+    expect(() => jwtVcIssuerMetadataUrl('http://idp.example.com')).toThrow();
+    expect(() => jwtVcIssuerMetadataUrl('https://idp.example.com/?a=1')).toThrow();
+  });
+
+  it('uses the inline jwks of metadata that names the issuer, by kid', async () => {
+    issuerTrustKeyMocks.safeFetchJson.mockResolvedValue({
+      issuer: 'https://idp.example.com',
+      jwks: { keys: [KEY, { ...KEY, kid: 'k2' }] },
+    });
+
+    await expect(getIssuerPublicKey(env, 'https://idp.example.com', undefined, 'k2')).resolves.toBe(
+      'ec-key'
+    );
+    expect(issuerTrustKeyMocks.safeFetchJson).toHaveBeenCalledWith(
+      'https://idp.example.com/.well-known/jwt-vc-issuer',
+      expect.objectContaining({ requireHttps: true })
+    );
+    expect(issuerTrustKeyMocks.importECPublicKey).toHaveBeenCalledWith(
+      expect.objectContaining({ kid: 'k2' })
+    );
+    expect(issuerTrustKeyMocks.resolveDID).not.toHaveBeenCalled();
+  });
+
+  it('follows the jwks_uri of the metadata', async () => {
+    issuerTrustKeyMocks.safeFetchJson
+      .mockResolvedValueOnce({
+        issuer: 'https://idp.example.com',
+        jwks_uri: 'https://idp.example.com/vc/jwks',
+      })
+      .mockResolvedValueOnce({ keys: [KEY] });
+
+    await getIssuerPublicKey(env, 'https://idp.example.com', undefined, 'k1');
+    expect(issuerTrustKeyMocks.safeFetchJson).toHaveBeenLastCalledWith(
+      'https://idp.example.com/vc/jwks',
+      expect.objectContaining({ requireHttps: true })
+    );
+  });
+
+  it('refuses metadata that names another issuer', async () => {
+    issuerTrustKeyMocks.safeFetchJson.mockResolvedValue({
+      issuer: 'https://evil.example.com',
+      jwks: { keys: [KEY] },
+    });
+    await expect(
+      getIssuerPublicKey(env, 'https://idp.example.com', undefined, 'k1')
+    ).rejects.toThrow('different issuer');
+    expect(issuerTrustKeyMocks.importECPublicKey).not.toHaveBeenCalled();
+  });
+
+  it('refuses metadata without keys', async () => {
+    issuerTrustKeyMocks.safeFetchJson.mockResolvedValue({ issuer: 'https://idp.example.com' });
+    await expect(getIssuerPublicKey(env, 'https://idp.example.com')).rejects.toThrow(
+      'neither jwks nor jwks_uri'
+    );
   });
 });

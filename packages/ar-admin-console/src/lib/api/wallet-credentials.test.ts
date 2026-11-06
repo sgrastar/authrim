@@ -1,4 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const steps = vi.hoisted(() => ({
+	reauthenticate: vi.fn(async () => {}),
+	verifySecondFactor: vi.fn(async () => {}),
+	issueReceipt: vi.fn(async (_stepUpId: string) => 'asp_receipt')
+}));
+vi.mock('#lib/api/admin-step-up.js', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('#lib/api/admin-step-up.js')>();
+	return {
+		...actual,
+		withStepUp: <T>(operation: (receipt?: string) => Promise<T>) =>
+			actual.withStepUp(operation, steps)
+	};
+});
 import {
 	FRESH_AUTH_REQUIRED,
 	NOT_ELIGIBLE,
@@ -8,7 +22,10 @@ import {
 	walletCredentialErrorKey
 } from './wallet-credentials';
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+	vi.unstubAllGlobals();
+	vi.clearAllMocks();
+});
 
 const json = (status: number, body: unknown) =>
 	new Response(JSON.stringify(body), {
@@ -166,11 +183,37 @@ describe('revokeCredential', () => {
 		expect(init.method).toBe('POST');
 	});
 
-	it('keeps the API error code, including the fresh sign-in refusal', async () => {
-		stubFetch(json(403, { error: FRESH_AUTH_REQUIRED }));
+	it('re-authenticates and repeats the request after a fresh sign-in refusal', async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(json(403, { error: FRESH_AUTH_REQUIRED }))
+			.mockResolvedValueOnce(json(200, { id: 'c', status: 'revoked' }));
+		vi.stubGlobal('fetch', fetchMock);
+		await expect(httpWalletCredentials.revokeCredential('c')).resolves.toBeUndefined();
+		expect(steps.reauthenticate).toHaveBeenCalledTimes(1);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+	});
+
+	it('runs the L2 step-up and repeats the request with the receipt', async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(
+				json(403, { error: 'step_up_required', step_up_id: 'asr_1', missing: ['second_factor'] })
+			)
+			.mockResolvedValueOnce(json(200, { id: 'c', status: 'revoked' }));
+		vi.stubGlobal('fetch', fetchMock);
+		await expect(httpWalletCredentials.revokeCredential('c')).resolves.toBeUndefined();
+		expect(steps.verifySecondFactor).toHaveBeenCalledTimes(1);
+		expect(steps.issueReceipt).toHaveBeenCalledWith('asr_1');
+		const [, init] = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
+		expect(new Headers(init.headers).get('authrim-step-up-receipt')).toBe('asp_receipt');
+	});
+
+	it('keeps the wallet error code for other refusals', async () => {
+		stubFetch(json(409, { error: 'wallet_credential_not_revocable' }));
 		await expect(httpWalletCredentials.revokeCredential('c')).rejects.toMatchObject({
-			code: FRESH_AUTH_REQUIRED,
-			status: 403
+			code: 'wallet_credential_not_revocable',
+			status: 409
 		});
 		stubFetch(json(404, { error: 'not_found' }));
 		await expect(httpWalletCredentials.revokeCredential('c')).rejects.toMatchObject({

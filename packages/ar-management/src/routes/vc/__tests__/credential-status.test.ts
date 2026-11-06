@@ -4,13 +4,16 @@ import type { Env } from '@authrim/ar-lib-core';
 
 const mocks = vi.hoisted(() => ({
   transition: vi.fn(),
+  queryOne: vi.fn(async (_sql: string, _params: unknown[]): Promise<unknown> => null),
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
-    createAuthContextFromHono: () => ({ coreAdapter: { marker: 'core' } }),
+    createAuthContextFromHono: () => ({
+      coreAdapter: { marker: 'core', queryOne: mocks.queryOne },
+    }),
     transitionCredentialStatus: mocks.transition,
   };
 });
@@ -53,11 +56,27 @@ describe('credential status transitions', () => {
 
     expect(response.status).toBe(200);
     expect(mocks.transition).toHaveBeenCalledWith(
-      { marker: 'core' },
+      expect.objectContaining({ marker: 'core' }),
       expect.objectContaining({ tenantId: 'tenant-a', credentialId: 'cred-1', from, to })
     );
     expect(await response.json()).toMatchObject({ id: 'cred-1', status: to });
   });
+
+  it.each(['revoke', 'suspend', 'activate'] as const)(
+    'refuses to %s an admin credential, which has its own routes',
+    async (action) => {
+      mocks.queryOne.mockResolvedValueOnce({
+        credential_type: 'https://authrim.com/credentials/admin/v1',
+      });
+
+      const response = await call(action);
+
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ error: 'admin_credential_not_managed_here' });
+      expect(mocks.queryOne.mock.calls[0][1]).toEqual(['tenant-a', 'cred-1']);
+      expect(mocks.transition).not.toHaveBeenCalled();
+    }
+  );
 
   it('answers 200 with the current status when nothing changed (idempotent)', async () => {
     mocks.transition.mockResolvedValue({ outcome: 'unchanged' });

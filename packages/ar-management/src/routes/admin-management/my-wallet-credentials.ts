@@ -8,7 +8,8 @@
  * - POST /api/admin/me/wallet-credentials/offers          - Create an offer (fresh authentication)
  * - GET  /api/admin/me/wallet-credentials/offers/:offerId - Offer progress for the console
  * - GET  /api/admin/me/wallet-credentials                 - The caller's own admin credentials
- * - POST /api/admin/me/wallet-credentials/:credentialId/revoke - Revoke one (fresh authentication)
+ * - POST /api/admin/me/wallet-credentials/:credentialId/revoke - Revoke one (fresh authentication,
+ *   then an L2 step-up: admin_credential.revoke)
  */
 
 import { Hono } from 'hono';
@@ -26,6 +27,7 @@ import {
 } from '@authrim/ar-lib-core';
 import { writeAdminAuditLog } from '../../admin-shared';
 import { isFreshAdminHuman } from '../../agent-fresh-auth';
+import { requireAdminStepUp } from '../../admin-step-up-gate';
 import { getCanonicalTenantBaseUrlAsync } from '../../request-issuer';
 import {
   isOwnAdminCredential,
@@ -241,6 +243,15 @@ myWalletCredentialsRouter.post(
     if (!(await isOwnAdminCredential(adapter, home.tenantId, home.adminUserId, credentialId))) {
       return refuse(c, 'not_found', 404);
     }
+
+    // The receipt is spent here, after every check that can still refuse the request.
+    const stepUpRefused = await requireAdminStepUp(c as never, {
+      operation: 'admin_credential.revoke',
+      targetTenantId: home.tenantId,
+      targetIds: [home.adminUserId, credentialId],
+      params: { scope: 'own_wallet_credential' },
+    });
+    if (stepUpRefused) return stepUpRefused;
 
     const outcome = await revokeAdminCredential(adapter, home.tenantId, credentialId);
     if (outcome === 'not_found') return refuse(c, 'not_found', 404);

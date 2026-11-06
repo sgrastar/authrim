@@ -15,7 +15,14 @@
 
 import type { DatabaseAdapter } from '../db/adapter';
 import { D1StatusListRepository } from '../repositories/vc/status-list';
-import { IETF_TSL_FORMAT } from './status-list-codec';
+import {
+  IETF_TSL_FORMAT,
+  TSL_STATUS_VALID,
+  bitOrderForFormat,
+  decodeStatusListBytes,
+  isStatusListFormat,
+  readStatusEntry,
+} from './status-list-codec';
 import { StatusListManager, type StatusListPurpose } from './status-list-manager';
 
 export interface ReserveCredentialStatusSlotInput {
@@ -107,6 +114,40 @@ async function findOwnReservation(
   };
 }
 
+interface DecodedList {
+  bytes: Uint8Array;
+  bits: number;
+  format: 'ietf_tsl_v1' | 'w3c_bitstring_v1';
+}
+
+/** Whether the list entry at `index` holds the valid status (decoded lists cached per call). */
+async function entryIsValid(
+  adapter: DatabaseAdapter,
+  tenantId: string,
+  listInternalId: string,
+  index: number,
+  cache: Map<string, DecodedList>
+): Promise<boolean> {
+  let decoded = cache.get(listInternalId);
+  if (!decoded) {
+    const row = await adapter.queryOne<{ encoded_list: string; bits: number; format: string }>(
+      'SELECT encoded_list, bits, format FROM status_lists WHERE internal_id = ? AND tenant_id = ?',
+      [listInternalId, tenantId]
+    );
+    if (!row || !isStatusListFormat(row.format)) return false;
+    decoded = {
+      bytes: await decodeStatusListBytes(row.encoded_list, row.format),
+      bits: Number(row.bits),
+      format: row.format,
+    };
+    cache.set(listInternalId, decoded);
+  }
+  return (
+    readStatusEntry(decoded.bytes, index, decoded.bits, bitOrderForFormat(decoded.format)) ===
+    TSL_STATUS_VALID
+  );
+}
+
 export async function reserveCredentialStatusSlot(
   adapter: DatabaseAdapter,
   input: ReserveCredentialStatusSlotInput
@@ -120,6 +161,7 @@ export async function reserveCredentialStatusSlot(
 
   let collisions = 0;
   let rollovers = 0;
+  const decodedLists = new Map<string, DecodedList>();
   let list = await findUsableList(adapter, tenantId, purpose);
 
   while (true) {
@@ -137,6 +179,14 @@ export async function reserveCredentialStatusSlot(
     }
 
     const index = randomIndex(list.capacity);
+    // An entry that is not valid already carries a status, e.g. from a credential whose row did
+    // not come back with a partial restore: a new credential must never start out revoked.
+    if (!(await entryIsValid(adapter, tenantId, list.internal_id, index, decodedLists))) {
+      if (++collisions > MAX_COLLISION_RETRIES) {
+        throw new Error('credential_status_slot_unavailable');
+      }
+      continue;
+    }
     const operationId = crypto.randomUUID();
     const isoNow = new Date(now).toISOString();
 

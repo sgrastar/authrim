@@ -26677,6 +26677,8 @@ paths:
         Reactivates a suspended credential. The credential row and its status-list bit change in one
         atomic transition. An already active credential answers 200 again; a revoked or pending one
         answers 409; an unknown one 404; a concurrent change 503 temporarily_unavailable (retry).
+        An admin credential is refused with 409 admin_credential_not_managed_here (use the admin
+        wallet credential routes).
       responses:
         '200':
           $ref: '#/components/responses/VcCredentialStatusChange'
@@ -26712,6 +26714,8 @@ paths:
         status-list bit change in one atomic transition; nothing leaves revoked. Repeating the call
         answers 200 again; an unknown credential 404; a credential that cannot be revoked from its
         state 409; a concurrent change 503 temporarily_unavailable (retry).
+        An admin credential is refused with 409 admin_credential_not_managed_here (use the admin
+        wallet credential routes).
       responses:
         '200':
           $ref: '#/components/responses/VcCredentialStatusChange'
@@ -26747,6 +26751,8 @@ paths:
         in one atomic transition. An already suspended credential answers 200 again; a revoked or
         pending one answers 409; an unknown one 404; a concurrent change 503
         temporarily_unavailable (retry).
+        An admin credential is refused with 409 admin_credential_not_managed_here (use the admin
+        wallet credential routes).
       responses:
         '200':
           $ref: '#/components/responses/VcCredentialStatusChange'

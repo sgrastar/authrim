@@ -13,7 +13,10 @@ const mocks = vi.hoisted(() => ({
   coreQuery: vi.fn(),
   coreQueryOne: vi.fn(),
   transition: vi.fn(),
+  stepUp: vi.fn(async (_c: unknown, _descriptor: unknown): Promise<Response | null> => null),
 }));
+
+vi.mock('../admin-step-up-gate', () => ({ requireAdminStepUp: mocks.stepUp }));
 
 vi.mock('../admin-shared', () => ({ writeAdminAuditLog: mocks.writeAdminAuditLog }));
 vi.mock('../request-issuer', () => ({
@@ -369,6 +372,33 @@ describe('my wallet credential offers', () => {
       const audit = JSON.stringify(mocks.writeAdminAuditLog.mock.calls[0][1]);
       expect(audit).toContain('admin_wallet_credential.revoked');
       expect(audit).toContain('cred-1');
+    });
+
+    it('asks for an admin_credential.revoke step-up bound to the admin and the credential', async () => {
+      await createApp().revoke();
+      expect(mocks.stepUp).toHaveBeenCalledTimes(1);
+      expect(mocks.stepUp.mock.calls[0][1]).toEqual({
+        operation: 'admin_credential.revoke',
+        targetTenantId: 'tenant-1',
+        targetIds: ['admin-1', 'cred-1'],
+        params: { scope: 'own_wallet_credential' },
+      });
+    });
+
+    it('revokes nothing when the step-up refuses the request', async () => {
+      mocks.stepUp.mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: 'step_up_required' }), { status: 403 })
+      );
+      const response = await createApp().revoke();
+      expect(response.status).toBe(403);
+      expect(mocks.transition).not.toHaveBeenCalled();
+      expect(mocks.writeAdminAuditLog).not.toHaveBeenCalled();
+    });
+
+    it('does not spend a receipt on another admin credential', async () => {
+      mocks.coreQueryOne.mockResolvedValue(null);
+      await createApp().revoke('cred-of-someone-else');
+      expect(mocks.stepUp).not.toHaveBeenCalled();
     });
 
     it('is idempotent: an already revoked credential is 200 again', async () => {

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { reserveCredentialStatusSlot } from '../credential-status-reservation';
-import { encodeStatusListBytes } from '../status-list-codec';
+import { bitOrderForFormat, encodeStatusListBytes, writeStatusEntry } from '../status-list-codec';
 import { createStatusTestDb, type StatusTestDb } from './status-test-db';
 
 const TENANT = 'tenant-1';
@@ -16,13 +16,21 @@ describe('reserveCredentialStatusSlot', () => {
 
   async function insertList(
     id: string,
-    options: { capacity?: number; used?: number; format?: string; bits?: number } = {}
+    options: {
+      capacity?: number;
+      used?: number;
+      format?: string;
+      bits?: number;
+      entries?: Record<number, number>;
+    } = {}
   ) {
-    const { capacity = 8, used = 0, format = 'ietf_tsl_v1', bits = 2 } = options;
-    const encoded = await encodeStatusListBytes(
-      new Uint8Array((capacity * bits) / 8),
-      format === 'ietf_tsl_v1' ? 'ietf_tsl_v1' : 'w3c_bitstring_v1'
-    );
+    const { capacity = 8, used = 0, format = 'ietf_tsl_v1', bits = 2, entries = {} } = options;
+    const listFormat = format === 'ietf_tsl_v1' ? 'ietf_tsl_v1' : 'w3c_bitstring_v1';
+    const bytes = new Uint8Array((capacity * bits) / 8);
+    for (const [index, value] of Object.entries(entries)) {
+      writeStatusEntry(bytes, Number(index), bits, bitOrderForFormat(listFormat), value);
+    }
+    const encoded = await encodeStatusListBytes(bytes, listFormat);
     db.sqlite
       .prepare(
         `INSERT INTO status_lists (internal_id, public_id, tenant_id, purpose, encoded_list,
@@ -127,6 +135,22 @@ describe('reserveCredentialStatusSlot', () => {
       .prepare('SELECT status_list_index FROM issued_credentials ORDER BY status_list_index')
       .all();
     expect(rows).toEqual([{ status_list_index: 3 }, { status_list_index: 5 }]);
+  });
+
+  it('never hands out an entry that already carries a status (partial restore)', async () => {
+    // Entries 3 (revoked) and 4 (suspended) belong to credentials whose rows did not come back.
+    await insertList('restored', { capacity: 8, entries: { 3: 1, 4: 2 } });
+    const draws = [3, 4, 6];
+    vi.spyOn(globalThis.crypto, 'getRandomValues').mockImplementation(((array: Uint32Array) => {
+      array[0] = draws.shift() ?? 0;
+      return array;
+    }) as never);
+
+    const slot = await reserveCredentialStatusSlot(db.adapter, base);
+
+    expect(slot.index).toBe(6);
+    expect(usedCount('restored')).toBe(1);
+    expect(db.batches).toHaveLength(1);
   });
 
   it('seals a list at half capacity and moves to a new one', async () => {
