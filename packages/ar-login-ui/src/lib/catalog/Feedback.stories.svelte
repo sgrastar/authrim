@@ -129,45 +129,6 @@
 		</Catalog>
 	{/snippet}
 </Story>
-
-<Story name="Status page icons">
-	{#snippet template()}
-		<Catalog>
-			<Specimen
-				name="Default"
-				source=".auth-icon-badge__circle"
-				where="Success states: logout complete, callback success, device, verify-email-code."
-				card
-			>
-				<div class="auth-icon-badge">
-					<div class="auth-icon-badge__circle">
-						<div class="i-ph-check-circle h-9 w-9 auth-icon-badge__icon"></div>
-					</div>
-				</div>
-			</Specimen>
-			<Specimen name="Warning" source=".auth-icon-badge__circle--warning" where="reauth." card>
-				<div class="auth-icon-badge">
-					<div class="auth-icon-badge__circle auth-icon-badge__circle--warning">
-						<div class="i-ph-shield-warning h-9 w-9 auth-icon-badge__icon"></div>
-					</div>
-				</div>
-			</Specimen>
-			<Specimen
-				name="Danger"
-				source=".auth-icon-badge__circle--danger"
-				where="error page, callback error."
-				card
-			>
-				<div class="auth-icon-badge">
-					<div class="auth-icon-badge__circle auth-icon-badge__circle--danger">
-						<div class="i-ph-warning-circle h-9 w-9 auth-icon-badge__icon"></div>
-					</div>
-				</div>
-			</Specimen>
-		</Catalog>
-	{/snippet}
-</Story>
-
 <Story name="Consent and device panels">
 	{#snippet template()}
 		<Catalog>
