@@ -51,8 +51,16 @@
 	);
 	/** The header names the page by `headerName` when the tenant set one, else by the brand. */
 	const headerTitle = $derived(loginUIPageStore.headerName || brandName || $LL.app_title());
-	/** The language and mode switches may sit in the form row, below the form. */
-	const topbarInForm = $derived(loginUIPageStore.topbarPosition.startsWith('form_bottom_'));
+	/**
+	 * The language and mode switches may sit in the form row, below the form. In the split template
+	 * "below the card" is there too: the form side is one scrolling column, and switches laid over
+	 * its foot would cover the form's last lines.
+	 */
+	const topbarInForm = $derived(
+		loginUIPageStore.topbarPosition.startsWith('form_bottom_') ||
+			(loginUIPageStore.topbarPosition === 'below_card' &&
+				loginUIPageStore.layout === 'split_panel')
+	);
 	/** The page always has a level-one heading: the brand, shown in the header or for screen readers. */
 	const showVisibleHeading = $derived(loginUIPageStore.headerEnabled && showBrandText);
 </script>

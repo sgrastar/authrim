@@ -54,13 +54,6 @@
 </script>
 
 <Card class="mb-6">
-	<!-- Icon -->
-	<div class="auth-icon-badge">
-		<div class="auth-icon-badge__circle">
-			<div class="i-ph-device-mobile h-9 w-9 auth-icon-badge__icon"></div>
-		</div>
-	</div>
-
 	{#if step === 'input'}
 		<!-- Step 1: Enter device code -->
 		<h2 class="auth-section-title text-center">

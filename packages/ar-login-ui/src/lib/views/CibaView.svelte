@@ -86,11 +86,6 @@
 	{:else if requests.length === 0}
 		<Card>
 			<div class="py-8 text-center">
-				<div class="auth-icon-badge">
-					<div class="auth-icon-badge__circle">
-						<div class="i-ph-seal-check h-9 w-9 auth-icon-badge__icon"></div>
-					</div>
-				</div>
 				<h3 class="auth-section-title">{$LL.ciba_noPendingRequests()}</h3>
 				<p class="auth-section-subtitle">{$LL.ciba_noPendingDescription()}</p>
 			</div>
@@ -107,10 +102,6 @@
 								alt={request.client_name}
 								class="auth-ciba-request__logo"
 							/>
-						{:else}
-							<div class="auth-icon-badge__circle auth-ciba-request__logo" aria-hidden="true">
-								<div class="i-ph-device-mobile h-6 w-6 auth-icon-badge__icon"></div>
-							</div>
 						{/if}
 						<div class="auth-ciba-request__client">
 							<h3 class="auth-info-box__value">{request.client_name}</h3>

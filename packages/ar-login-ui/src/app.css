@@ -1437,9 +1437,12 @@ tr.expired {
 	opacity: var(--login-panel-background-opacity, 0.7);
 }
 
+/* The form side scrolls when its form is taller than the screen: its parts keep their height (a
+   shrunk card clips its own last buttons, being overflow: hidden). */
 [data-page-layout='split_panel'] .auth-container > * {
 	position: relative;
 	z-index: 1;
+	flex-shrink: 0;
 }
 
 [data-page-layout='split_panel'][data-split-panel-side='right'] .auth-brand-panel {
@@ -1912,21 +1915,12 @@ tr.expired {
 	position: absolute;
 }
 
-[data-page-layout='split_panel'][data-topbar-position='below_card'] .auth-main > .auth-topbar {
-	grid-row: 1;
-	grid-column: 2;
-	align-self: end;
-	justify-self: center;
-	margin: 0 0 44px;
-}
-
-[data-page-layout='split_panel'][data-split-panel-side='right'][data-topbar-position='below_card']
-	.auth-main
-	> .auth-topbar,
-[data-page-layout='split_panel'][data-brand-content-mode='none'][data-topbar-position='below_card']
-	.auth-main
-	> .auth-topbar {
-	grid-column: 1;
+/* In the split template "below the card" is in the form column, right under the form and the link
+   below it (AuthPageShell renders it there): laid over the column's foot it covered the form. */
+[data-page-layout='split_panel'][data-topbar-position='below_card'] .auth-container > .auth-topbar {
+	justify-content: center;
+	margin: 0;
+	padding-top: 20px;
 }
 
 .auth-container > .auth-topbar {
@@ -1963,45 +1957,6 @@ tr.expired {
 .theme-toggle:focus-visible {
 	outline: 2px solid var(--primary);
 	outline-offset: 2px;
-}
-
-/* --- Auth icon badge (centered icon circle) --- */
-.auth-icon-badge {
-	display: flex;
-	justify-content: center;
-	margin-bottom: 24px;
-}
-
-.auth-icon-badge__circle {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	width: 72px;
-	height: 72px;
-	border-radius: var(--radius-full);
-	background: var(--primary-light);
-}
-
-.auth-icon-badge__circle--warning {
-	background: var(--warning-light);
-}
-
-.auth-icon-badge__circle--danger {
-	background: var(--danger-light);
-}
-
-.auth-icon-badge__icon {
-	width: 36px;
-	height: 36px;
-	color: var(--primary);
-}
-
-.auth-icon-badge__circle--warning .auth-icon-badge__icon {
-	color: var(--warning);
-}
-
-.auth-icon-badge__circle--danger .auth-icon-badge__icon {
-	color: var(--danger);
 }
 
 /* --- Divider with text --- */

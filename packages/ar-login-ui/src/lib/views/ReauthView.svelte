@@ -110,13 +110,6 @@
 	</Card>
 {:else}
 	<Card class="mb-6">
-		<!-- Icon -->
-		<div class="auth-icon-badge">
-			<div class="auth-icon-badge__circle auth-icon-badge__circle--warning">
-				<div class="i-ph-shield-warning h-9 w-9 auth-icon-badge__icon"></div>
-			</div>
-		</div>
-
 		<h2 class="auth-section-title text-center">
 			{$LL.reauth_title()}
 		</h2>

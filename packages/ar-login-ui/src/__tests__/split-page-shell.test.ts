@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -532,6 +532,43 @@ describe('split page shell', () => {
 		expect(css).toMatch(
 			/\[data-login-theme='clear-glass'\]\s+\.auth-page\s+:is\(\.runtime-auth-button\.secondary, \.btn-secondary\)::after \{\s*padding: 1px;\s*background: var\(--glass-iris-soft\);/
 		);
+	});
+
+	it('scrolls the split form side rather than shrinking the form inside it', () => {
+		const css = source('app.css');
+		// A card is overflow: hidden, so a shrunk one clipped its own last buttons.
+		expect(css).toMatch(
+			/\[data-page-layout='split_panel'\] \.auth-container > \* \{\s*position: relative;\s*z-index: 1;\s*flex-shrink: 0;/
+		);
+	});
+
+	it('puts the split template\u2019s switches below the card in the form column, not over its foot', () => {
+		const shell = source('lib/components/AuthPageShell.svelte');
+		expect(shell).toMatch(
+			/topbarPosition === 'below_card' &&\s*loginUIPageStore\.layout === 'split_panel'/
+		);
+		const css = source('app.css');
+		// The switches no longer share the form column's grid cell, laid over its last lines.
+		expect(css).not.toContain(
+			"[data-page-layout='split_panel'][data-topbar-position='below_card'] .auth-main > .auth-topbar"
+		);
+		expect(css).toContain(
+			"[data-page-layout='split_panel'][data-topbar-position='below_card'] .auth-container > .auth-topbar {"
+		);
+	});
+
+	it('draws no decorative icon circles on the pages', () => {
+		const roots = ['lib/views', 'lib/components', 'routes'];
+		const files = roots.flatMap((root) =>
+			(readdirSync(resolve(__dirname, '..', root), { recursive: true }) as string[])
+				.filter((file) => file.endsWith('.svelte') && !file.includes('.stories.'))
+				.map((file) => `${root}/${file}`)
+		);
+		expect(files.length).toBeGreaterThan(20);
+		for (const file of files) {
+			expect(source(file), file).not.toContain('auth-icon-badge');
+		}
+		expect(source('app.css')).not.toContain('.auth-icon-badge');
 	});
 
 	it('keeps split brand copy readable independently from light form colors', () => {
