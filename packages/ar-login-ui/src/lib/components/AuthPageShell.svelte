@@ -63,6 +63,7 @@
 	data-branding-loaded={brand ? '' : undefined}
 	class:auth-page--has-footer={loginUIPageStore.footerEnabled}
 	style:--login-page-background-color={loginUIPageStore.backgroundColor || undefined}
+	data-has-accent-color={loginUIPageStore.accentColor ? 'true' : 'false'}
 	style:--login-accent-color={loginUIPageStore.accentColor || undefined}
 	style:--login-accent-text={loginUIPageStore.accentTextColor || undefined}
 	style:--login-title-color={loginUIPageStore.titleColor || undefined}

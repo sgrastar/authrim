@@ -25,6 +25,31 @@ const SHELL_PAGES = [
 	'routes/verify-email-code/+page.svelte'
 ];
 
+/** The custom properties of the rule that starts a line with `selector`. */
+function ruleTokens(css: string, selector: string): Record<string, string> {
+	const at = css.indexOf(`\n${selector}`);
+	if (at < 0) throw new Error(`No rule for ${selector}`);
+	const open = css.indexOf('{', at);
+	const close = css.indexOf('}', open);
+	const result: Record<string, string> = {};
+	for (const match of css.slice(open + 1, close).matchAll(/(--[\w-]+):\s*([^;]+);/g)) {
+		result[match[1]] = match[2].trim();
+	}
+	return result;
+}
+
+/** The selectors of the rule whose selector list starts at `start`, with Prettier's breaks undone. */
+function selectorsAt(css: string, start: number): string[] {
+	const list = css.slice(start, css.indexOf('{', start));
+	return list
+		.replace(/\s+/g, ' ')
+		.replace(/\( /g, '(')
+		.replace(/ \)/g, ')')
+		.split(/,(?![^(]*\))/)
+		.map((selector) => selector.trim())
+		.filter(Boolean);
+}
+
 describe('split page shell', () => {
 	it('keeps the header in the auth panel and the full-width footer outside the main area', () => {
 		expectPageShellOrder(source('lib/components/AuthPageShell.svelte'));
@@ -190,29 +215,323 @@ describe('split page shell', () => {
 		expect(css).toContain('--auth-card-padding: 20px;');
 		expect(css).toContain('--auth-control-height: 2.75rem;');
 		expect(css).toContain('--auth-heading-size: 1.25rem;');
-		expect(css).toContain("[data-login-theme='fullbleed-glass'] .runtime-screen-heading h2");
+		expect(css).toContain("[data-login-theme='swiss-grid'] .runtime-screen-heading h2");
 		expect(css).toContain('font-size: var(--auth-heading-size);');
 		expect(css).not.toContain("[data-page-layout='split_panel'] .runtime-auth-button {");
 	});
 
-	it('keeps fullbleed glass translucent while protecting text placed over imagery', () => {
+	it("draws Swiss Grid with the Admin console's Swiss Grid tokens", () => {
 		const css = source('app.css');
-
-		expect(css).toContain('--bg-card: rgba(14, 10, 9, 0.45);');
-		expect(css).toContain('--bg-card: rgba(255, 253, 250, 0.5);');
-		expect(css).toContain('--primary: var(--login-accent-color, #e8623f);');
-		expect(css).toContain('--primary: var(--login-accent-color, #b0301b);');
-		expect(css).toContain('--button-primary-bg: var(--primary);');
-		expect(css).toContain("[data-login-theme='fullbleed-glass'] .auth-page .auth-header__title");
-		expect(css).toMatch(
-			/\[data-login-theme='fullbleed-glass'\] \.auth-page \.auth-header__title \{[\s\S]*?font-size: 2em;[\s\S]*?font-weight: 300;[\s\S]*?letter-spacing: 0\.5em;[\s\S]*?text-indent: 0\.5em;/
+		const admin = readFileSync(
+			new URL('../../../ar-admin-console/src/lib/ui/themes/swiss-grid.css', import.meta.url),
+			'utf8'
 		);
-		expect(css).toContain("[data-login-theme='fullbleed-glass'] .auth-page .auth-header__subtitle");
-		expect(css).toContain("[data-login-theme='fullbleed-glass'] .auth-page .auth-bottom-link");
-		// Text on the imagery follows the boundary's scheme (contrast: theme-contrast.test.ts).
-		expect(css).toContain('color: var(--fullbleed-on-image-title);');
-		expect(css).toContain('--fullbleed-on-image-title: #fffaf6;');
-		expect(css).toContain('--fullbleed-on-image-title: #221b17;');
+		const adminLight = ruleTokens(admin, "[data-admin-theme='swiss-grid'] {");
+		const adminDark = ruleTokens(admin, "[data-admin-theme='swiss-grid'][data-scheme='dark'] {");
+		const light = ruleTokens(
+			css,
+			":is(:root, .login-ui-theme-boundary)[data-login-theme='swiss-grid'] {"
+		);
+		const dark = ruleTokens(
+			css,
+			":is(:root, .login-ui-theme-boundary)[data-theme='dark'][data-login-theme='swiss-grid'] {"
+		);
+
+		// The colours are the Admin console's: paper, ink, the rule, the status tones, the focus ring.
+		const pairs: Array<[string, string]> = [
+			['--bg-page', '--bg-page'],
+			['--bg-card', '--bg-card'],
+			['--bg-subtle', '--bg-subtle'],
+			['--bg-input', '--bg-input'],
+			['--text-primary', '--text-primary'],
+			['--text-secondary', '--text-secondary'],
+			['--text-muted', '--text-muted'],
+			['--focus-ring', '--focus-ring'],
+			['--success', '--success'],
+			['--warning', '--warning'],
+			['--danger', '--danger'],
+			['--success-light', '--success-bg'],
+			['--warning-light', '--warning-bg'],
+			['--danger-light', '--danger-bg']
+		];
+		for (const [login, adminKey] of pairs) {
+			expect(light[login], `light ${login}`).toBe(adminLight[adminKey]);
+		}
+		// Dark overrides only what the Admin console's dark overrides (status tints are translucent).
+		for (const [login, adminKey] of pairs.filter(([, key]) => adminDark[key] !== undefined)) {
+			expect(dark[login], `dark ${login}`).toBe(adminDark[adminKey]);
+		}
+		// The shape: square, rules in place of shadows, heavy tight headings.
+		expect(adminLight['--radius-control']).toBe('0px');
+		expect(light['--card-radius']).toBe('0px');
+		expect(light['--button-radius']).toBe('0px');
+		expect(light['--shadow-sm']).toBe('0 0 0 1px #141412');
+		expect(adminLight['--shadow-md']).toBe('0 0 0 1px var(--border-strong)');
+		expect(css).toMatch(
+			/\[data-login-theme='swiss-grid'\] \.auth-page \.auth-header__title,[\s\S]*?font-weight: 700;[\s\S]*?letter-spacing: -0\.03em;/
+		);
+		expect(adminLight['--heading-weight']).toBe('700');
+		expect(adminLight['--heading-tracking']).toBe('-0.03em');
+		// Nothing is translucent, blurred or lifted.
+		expect(light['--blur-sm']).toBe('none');
+		expect(light['--bg-card']).toBe(light['--bg-page']);
+	});
+
+	it('draws Glass as frosted glass: a blurred, translucent pane with a grain and a light rim', () => {
+		const css = source('app.css');
+		const light = ruleTokens(
+			css,
+			":is(:root, .login-ui-theme-boundary)[data-login-theme='glass'] {"
+		);
+
+		expect(light['--bg-card']).toMatch(/^rgba\(255, 255, 255, 0\.\d+\)$/);
+		// Frosted: the page behind is well blurred.
+		expect(light['--blur-sm']).toMatch(/^blur\((1[6-9]|2\d|3\d)px\) saturate\(\d+%\)$/);
+		expect(light['--card-radius']).toBe('20px');
+		expect(light['--glass-grain']).toContain('feTurbulence');
+		expect(light['--glass-rim']).toMatch(/^inset 0 1px 0 rgba\(255, 255, 255, 0\.\d+\)$/);
+		// The grain is drawn over the card's face; a button has no gloss band and no glow inside it.
+		expect(css).toContain("[data-login-theme='glass'] .card::before");
+		expect(css).not.toContain("[data-login-theme='glass'] .auth-page .runtime-auth-button::before");
+	});
+
+	it('draws Clear glass by its edges: an iridescent rim, glints and a reflection', () => {
+		const css = source('app.css');
+		const light = ruleTokens(
+			css,
+			":is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass'] {"
+		);
+
+		// Clear: the page behind stays nearly sharp, and the face is nearly clear.
+		expect(light['--blur-sm']).toMatch(/^blur\([0-4]px\) saturate\(\d+%\)$/);
+		expect(light['--bg-card']).toMatch(/^rgba\(255, 255, 255, 0\.(0\d|1\d?)\)$/);
+		expect(light['--button-radius']).toBe('999px');
+		expect(light['--glass-sheen']).toContain('120deg');
+		expect(light['--glass-glints']).toContain('radial-gradient');
+		expect(light['--glass-iris']).toContain('radial-gradient');
+		// The rim is a ring cut out of a filled box, on the card and on the buttons.
+		const rim = css.slice(css.indexOf("[data-login-theme='clear-glass'] .card::after,"));
+		expect(rim).toMatch(/^[^{]*\.runtime-auth-button::after,[^{]*\.btn::after \{/);
+		expect(rim.slice(0, rim.indexOf('}'))).toMatch(/content-box exclude/);
+		// A form on the page itself is no pane, so it has no rim either.
+		expect(css).toContain(
+			"[data-login-theme='clear-glass'][data-login-template='minimal'] .card::after"
+		);
+	});
+
+	it('makes both glasses opaque without the blur, over a picture and in the split card too', () => {
+		const css = source('app.css');
+		const lightProtection = "\n[data-login-theme='glass'][data-has-page-background-image='true'],";
+		const darkProtection =
+			"\n[data-theme='dark'][data-login-theme='glass'][data-has-page-background-image='true'],";
+		const light = selectorsAt(css, css.indexOf(lightProtection) + 1);
+		const dark = selectorsAt(css, css.indexOf(darkProtection) + 1);
+		// The split card floats over the tenant's brand panel in either scheme.
+		expect(light).toContain(
+			"[data-login-theme='clear-glass'][data-page-layout='split_panel'][data-form-frame='card']:not([data-theme='dark'])"
+		);
+		expect(dark).toContain(
+			"[data-theme='dark'][data-login-theme='clear-glass'][data-page-layout='split_panel'][data-form-frame='card']"
+		);
+
+		const fallbacks = [
+			'@media (prefers-reduced-transparency: reduce) {',
+			'@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {'
+		].map((opening) => {
+			const glassAt = css.indexOf(
+				"\n\t:is(:root, .login-ui-theme-boundary):is(\n\t\t[data-login-theme='glass']",
+				css.lastIndexOf(opening)
+			);
+			expect(glassAt).toBeGreaterThan(0);
+			const lightFallback = selectorsAt(css, glassAt + 1);
+			const darkFallback = selectorsAt(css, css.indexOf('}', glassAt) + 1);
+			return { glassAt, lightFallback, darkFallback };
+		});
+		for (const { glassAt, lightFallback, darkFallback } of fallbacks) {
+			const lightBody = css.slice(css.indexOf('{', glassAt), css.indexOf('}', glassAt));
+			expect(lightBody).toContain('--bg-card: #f3f4f7;');
+			expect(lightBody).toContain('--glass-sheen: linear-gradient(transparent, transparent);');
+			// Each protection more specific than the palette's own rule is repeated in the fallback
+			// (which comes later), so that the fallback still wins there.
+			for (const selector of light.filter((s) => s.includes('split_panel'))) {
+				expect(lightFallback).toContain(selector);
+			}
+			for (const selector of dark.filter((s) => s.includes('split_panel'))) {
+				expect(darkFallback).toContain(selector);
+			}
+		}
+		// Reduced transparency takes the blur away in both schemes: the dark scheme sets its own blur
+		// more specifically than the light fallback.
+		const [reducedFallback] = fallbacks;
+		const darkAt = css.indexOf('}', reducedFallback.glassAt) + 1;
+		for (const at of [reducedFallback.glassAt, darkAt]) {
+			expect(css.slice(css.indexOf('{', at), css.indexOf('}', at))).toContain('--blur-sm: none;');
+		}
+		// The page text's own panes over a picture lose their blur too.
+		const reduced = css.slice(css.lastIndexOf('@media (prefers-reduced-transparency: reduce) {'));
+		expect(reduced.slice(0, reduced.indexOf('@supports'))).toMatch(
+			/:is\(\.auth-header, \.auth-footer, \.auth-bottom-link\) \{\s*backdrop-filter: none;/
+		);
+	});
+
+	it('draws the glass fields’ keyboard focus ring over the rule that clears a pointer focus', () => {
+		const all = source('app.css');
+		const css = all.slice(all.indexOf('/* === Glass (login-ui.palette = glass, clear-glass) ==='));
+		const pointer = css.indexOf('\tinput:focus,');
+		const ring = css.indexOf('outline: 2px solid var(--primary);');
+		expect(pointer).toBeGreaterThan(0);
+		// It comes after the pointer-focus rule, which is as specific.
+		expect(ring).toBeGreaterThan(pointer);
+		const selectors = selectorsAt(css, css.lastIndexOf('}', ring) + 1);
+		expect(selectors).toContain(
+			":is([data-login-theme='glass'], [data-login-theme='clear-glass']) .auth-page .runtime-screen-field input:focus-visible"
+		);
+		expect(selectors).toContain(
+			":is([data-login-theme='glass'], [data-login-theme='clear-glass']) .auth-page .runtime-screen-field select:focus-visible"
+		);
+	});
+
+	it('keeps the reflection from behind a tenant accent’s label on Clear glass', () => {
+		const css = source('app.css');
+		const at = css.indexOf("\n[data-login-theme='clear-glass'][data-has-accent-color='true']") + 1;
+		expect(at).toBeGreaterThan(0);
+		// On the boundary (the document, the layout, a story's frame) or on the page shell itself.
+		expect(selectorsAt(css, at)).toEqual([
+			"[data-login-theme='clear-glass'][data-has-accent-color='true'] .auth-page :is(.runtime-auth-button:not(.secondary), .btn-primary)",
+			"[data-login-theme='clear-glass'] .auth-page[data-has-accent-color='true'] .runtime-auth-button:not(.secondary)",
+			"[data-login-theme='clear-glass'] .auth-page[data-has-accent-color='true'] .btn-primary"
+		]);
+		expect(css.slice(css.indexOf('{', at), css.indexOf('}', at))).toMatch(
+			// The shared Button paints its hover from the surface, so both drop the reflection.
+			/^\{\s*--button-primary-surface: var\(--glass-glints\), var\(--button-primary-bg\);\s*background: var\(--glass-glints\), var\(--button-primary-bg\);\s*$/
+		);
+		for (const file of [
+			'lib/components/AuthPageShell.svelte',
+			'routes/+layout.svelte',
+			'lib/storybook/LoginUIFrame.svelte'
+		]) {
+			expect(source(file)).toContain(
+				"data-has-accent-color={loginUIPageStore.accentColor ? 'true' : 'false'}"
+			);
+		}
+	});
+
+	it('keeps a tenant accent’s lightness when its glass button is hovered or pressed', () => {
+		const css = source('app.css');
+		const at =
+			css.indexOf(
+				"\n[data-has-accent-color='true']:is([data-login-theme='glass'], [data-login-theme='clear-glass'])"
+			) + 1;
+		expect(at).toBeGreaterThan(0);
+		expect(selectorsAt(css, at)).toEqual([
+			"[data-has-accent-color='true']:is([data-login-theme='glass'], [data-login-theme='clear-glass']) .auth-page :is(.runtime-auth-button:not(.secondary), .btn-primary):not(:disabled):is(:hover, :active)",
+			":is([data-login-theme='glass'], [data-login-theme='clear-glass']) .auth-page[data-has-accent-color='true'] :is(.runtime-auth-button:not(.secondary), .btn-primary):not(:disabled):is(:hover, :active)"
+		]);
+		expect(css.slice(css.indexOf('{', at), css.indexOf('}', at))).toMatch(
+			/^\{\s*filter: none;\s*$/
+		);
+		// It comes after the rules that brighten and darken the buttons.
+		expect(css.indexOf('filter: brightness(0.97);')).toBeLessThan(at);
+	});
+
+	it('shapes the shared Button by the palette’s button radius; the scrolling split side has no rim', () => {
+		const css = source('app.css');
+		expect(css).toMatch(
+			/:is\(\[data-login-theme='glass'\], \[data-login-theme='clear-glass'\]\) \.auth-page \.btn \{\s*border-radius: var\(--button-radius\);/
+		);
+		// A rim drawn inside the scrolling form side would scroll with the form.
+		expect(css).not.toMatch(/\.auth-container::after/);
+	});
+
+	it('moves the shared Button on hover as the sign-in buttons: no lift, no deep shadow', () => {
+		const css = source('app.css');
+		// Button.svelte lifts the button 2px with a deep shadow and outlines a secondary one in the
+		// accent; the glasses take those back, before the press rule that moves it down.
+		const frosted = css.indexOf(
+			"\n[data-login-theme='glass'] .auth-page .btn:not(:disabled):hover {"
+		);
+		const clear = css.indexOf(
+			"\n[data-login-theme='clear-glass'] .auth-page .btn:not(:disabled):hover {"
+		);
+		const press = css.indexOf('filter: brightness(0.97);');
+		for (const at of [frosted, clear]) {
+			expect(at).toBeGreaterThan(0);
+			expect(at).toBeLessThan(press);
+			expect(css.slice(at, css.indexOf('}', at))).toContain('transform: none;');
+		}
+		expect(css.slice(frosted, css.indexOf('}', frosted))).toContain(
+			'box-shadow: var(--glass-drop), var(--glass-rim);'
+		);
+		expect(css).toMatch(
+			/\[data-login-theme='glass'\] \.auth-page \.btn-secondary:not\(:disabled\):hover \{\s*border-color: var\(--button-secondary-border\);/
+		);
+		// Clear glass keeps its reflection on hover: Button.svelte paints the hover from the surface.
+		expect(css).toContain(
+			'--button-primary-surface: var(--glass-glints), var(--glass-sheen), var(--button-primary-bg);'
+		);
+	});
+
+	it('makes Clear glass’s small parts glass: alerts, badges, switches and sunken fields', () => {
+		const css = source('app.css');
+		const B = ":is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass']";
+		// These outweigh the components' scoped rules (a class and the scope): a boundary, the theme
+		// and the class.
+		for (const selector of [
+			`${B} .alert {`,
+			`${B} .alert::after {`,
+			`${B} .toggle-switch {`,
+			`${B} .toggle-switch-thumb {`
+		]) {
+			expect(css).toContain(`\n${selector}`);
+		}
+		// A badge's rule names its status class too: StatusBadge's `.status-badge.<status>` is as
+		// specific as a boundary, the theme and one class, and its shorthand would clear the gloss.
+		expect(css).toMatch(
+			/\n:is\(:root, \.login-ui-theme-boundary\)\[data-login-theme='clear-glass'\]\s+\.status-badge:is\(\.active, \.inactive, \.success, \.warning, \.danger, \.info, \.neutral\) \{\s*border: 1px solid var\(--glass-edge-light\);/
+		);
+		// An on switch takes the palette's tint, which the contrast test knows, not a tenant's accent.
+		const on = css.indexOf('.toggle-switch.toggle-switch-checked {');
+		expect(css.slice(on, css.indexOf('}', on))).toMatch(/background: var\(--glass-primary-bg\);/);
+		// Without the glass (reduced transparency, no backdrop-filter) the small parts are opaque.
+		for (const opening of [
+			'@media (prefers-reduced-transparency: reduce) {',
+			'@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {'
+		]) {
+			const block = css.slice(css.lastIndexOf(opening));
+			for (const token of [
+				'--glass-alert-sheen: linear-gradient(transparent, transparent);',
+				'--glass-gloss: linear-gradient(transparent, transparent);',
+				'--glass-toggle-track: #e6e9ee;',
+				'--glass-toggle-track: #2a2d34;'
+			]) {
+				expect(block).toContain(token);
+			}
+		}
+		// An alert's outline is no longer its tone in full; a ring of light takes it.
+		const alert = css.slice(css.indexOf(`\n${B} .alert {`));
+		expect(alert.slice(0, alert.indexOf('}'))).toContain('border-color: transparent;');
+		// The switch and its thumb keep the 3:1 hairline (theme-contrast.test.ts checks its colour).
+		for (const part of ['.toggle-switch {', '.toggle-switch-thumb {']) {
+			const at = css.indexOf(`\n${B} ${part}`);
+			expect(css.slice(at, css.indexOf('}', at))).toContain('var(--glass-line)');
+		}
+		// The shared Input is sunk like the sign-in fields; one in error keeps its red outline.
+		expect(css).toContain(
+			"[data-login-theme='clear-glass'] .auth-page :is(.form-input, .form-select):not(.has-error) {"
+		);
+		expect(css).toMatch(/:is\(\.form-input, \.form-select\):focus-visible/);
+	});
+
+	it('gives Clear glass secondary buttons a thinner rim of light alone', () => {
+		const css = source('app.css');
+		const light = ruleTokens(
+			css,
+			":is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass'] {"
+		);
+		expect(light['--glass-iris-soft']).not.toMatch(/hsl\(220/);
+		expect(css).toMatch(
+			/\[data-login-theme='clear-glass'\]\s+\.auth-page\s+:is\(\.runtime-auth-button\.secondary, \.btn-secondary\)::after \{\s*padding: 1px;\s*background: var\(--glass-iris-soft\);/
+		);
 	});
 
 	it('keeps split brand copy readable independently from light form colors', () => {

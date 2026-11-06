@@ -61,6 +61,8 @@ import { getAuthenticationMethodsHandler } from '../authentication-methods';
 /** The slice of the served `ui` object that the typed assertions below read. */
 interface ServedLoginUi {
   theme: string;
+  /** The deprecated pre-palette name, sent for older Login UI builds. */
+  themeTemplate: string;
   themeFixed: boolean;
   branding: { headerName: string };
   pageTemplate: {
@@ -2074,7 +2076,7 @@ describe('Authentication Methods API', () => {
           'login-ui.theme': 'dark',
           'login-ui.variant': 'navy',
           'login-ui.template': 'split',
-          'login-ui.palette': 'glass',
+          'login-ui.palette': 'swiss-grid',
           'login-ui.theme_fixed': true,
           'login-ui.form_area_color': '#ffffff80',
           'login-ui.form_frame': 'card',
@@ -2164,7 +2166,7 @@ describe('Authentication Methods API', () => {
       expect(body.ui.themeTemplate).toBe('fullbleed-glass');
       expect(body.ui.pageTemplate).toMatchObject({
         template: 'split',
-        palette: 'glass',
+        palette: 'swiss-grid',
         layout: 'split_panel',
         formAreaColor: '#ffffff80',
         formFrame: 'card',
@@ -2305,10 +2307,32 @@ describe('Authentication Methods API', () => {
       expect(ui.pageTemplate.layout).toBe(template === 'split' ? 'split_panel' : 'centered_card');
     });
 
-    it.each(['meridian', 'classic', 'glass', 'flat'])('serves the palette %s', async (palette) => {
-      const ui = await getUi({ 'login-ui.palette': palette });
-      expect(ui.pageTemplate.palette).toBe(palette);
-    });
+    it.each(['meridian', 'classic', 'swiss-grid', 'glass', 'clear-glass', 'flat'])(
+      'serves the palette %s',
+      async (palette) => {
+        const ui = await getUi({ 'login-ui.palette': palette });
+        expect(ui.pageTemplate.palette).toBe(palette);
+      }
+    );
+
+    it.each([
+      // An older Login UI build knows only the four old names: it gets the nearest one it has.
+      ['classic', 'standard', 'classic'],
+      ['meridian', 'standard', 'meridian'],
+      ['meridian', 'split', 'split-brand-panel'],
+      ['swiss-grid', 'standard', 'fullbleed-glass'],
+      ['glass', 'standard', 'meridian'],
+      ['glass', 'split', 'split-brand-panel'],
+      ['clear-glass', 'standard', 'meridian'],
+      ['clear-glass', 'split', 'split-brand-panel'],
+      ['flat', 'standard', 'meridian'],
+    ])(
+      'sends the palette %s on the %s template as the old name %s',
+      async (palette, template, legacy) => {
+        const ui = await getUi({ 'login-ui.palette': palette, 'login-ui.template': template });
+        expect(ui.themeTemplate).toBe(legacy);
+      }
+    );
 
     it('falls back to the defaults for unknown template and palette ids', async () => {
       const ui = await getUi({ 'login-ui.template': 'fullbleed', 'login-ui.palette': 'neon' });
@@ -2340,7 +2364,8 @@ describe('Authentication Methods API', () => {
       ['classic', 'classic'],
       ['meridian', 'meridian'],
       ['split-brand-panel', 'meridian'],
-      ['fullbleed-glass', 'glass'],
+      // The old Full-bleed glass is Swiss Grid now; `glass` is a new palette.
+      ['fullbleed-glass', 'swiss-grid'],
     ])(
       'derives the palette from the deprecated theme_template %s as %s',
       async (legacy, palette) => {

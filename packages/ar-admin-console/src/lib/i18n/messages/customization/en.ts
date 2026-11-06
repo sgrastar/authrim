@@ -24,8 +24,14 @@ export const enCustomization: Record<keyof typeof jaCustomization, string> = {
 	'th.palette.meridian.d': 'Cool blue on pale paper. Softly rounded.',
 	'th.palette.classic': 'Classic',
 	'th.palette.classic.d': 'Warm neutrals. Gently rounded.',
-	'th.palette.glass': 'Glass',
-	'th.palette.glass.d': 'A frosted form area with sharp corners. Best over a background image.',
+	'th.palette.swiss-grid': 'Swiss Grid',
+	'th.palette.swiss-grid.d': 'Paper and ink. Square corners, lines instead of shadows.',
+	'th.palette.glass': 'Frosted glass',
+	'th.palette.glass.d':
+		'Translucent panes that blur what is behind them, with a fine grain and a light rim.',
+	'th.palette.clear-glass': 'Clear glass',
+	'th.palette.clear-glass.d':
+		'Clear panes, seen by an iridescent rim, glints along the edges and a reflection. Pill-shaped buttons.',
 	'th.palette.flat': 'Flat',
 	'th.palette.flat.d': 'White and thin lines. No shadow, no frost.',
 	'th.g.colours': 'Colours',

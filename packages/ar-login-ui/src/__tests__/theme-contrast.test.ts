@@ -86,22 +86,33 @@ function contrast(a: Rgb, b: Rgb): number {
 	return (light + 0.05) / (dark + 0.05);
 }
 
-/** The colour stops of a fullbleed theme's default imagery (its `--fullbleed-default-image`). */
-function imageryStops(values: Record<string, string>): Rgb[] {
-	return [...values['--fullbleed-default-image'].matchAll(/#[0-9a-f]{6}/gi)].map(
-		(m) => colour(m[0]).rgb
+/**
+ * What shows through a Glass pane, in the places that are hardest on the text: the page colour,
+ * and the page colour under each layer of the backdrop's light and shade (`rgba(r, g, b, a)`).
+ * A pane is translucent, so its text must read over every one of them.
+ */
+function glassBehind(values: Record<string, string>): Rgb[] {
+	const page = colour(values['--bg-page']).rgb;
+	const layers = [...values['--glass-backdrop'].matchAll(/rgba\([^)]+\)/g)].map((m) =>
+		over(colour(m[0]), page)
 	);
+	return [page, ...layers];
 }
 
 /**
- * What shows through at the darkest and lightest places of a fullbleed page: each stop of the
- * imagery under the page-wide scrim. The top and bottom bands only push further the same way
- * (dark in dark mode, light in light mode), so leaving them out is the worst case for the text.
+ * The most opaque `rgba()` stop of a gradient (a variable of the theme is followed first): the
+ * point where a white reflection or gloss is strongest.
  */
-function imageryUnderScrim(values: Record<string, string>): Rgb[] {
-	const scrim = colour(values['--fullbleed-scrim']);
-	return imageryStops(values).map((stop) => over(scrim, stop));
+function brightestStop(value: string, values: Record<string, string>): Colour {
+	const variable = value.match(/^var\((--[\w-]+)\)$/);
+	if (variable) return brightestStop(values[variable[1]], values);
+	const stops = [...value.matchAll(/rgba\([^)]+\)/g)].map((m) => colour(m[0]));
+	if (stops.length === 0) return { rgb: [0, 0, 0], alpha: 0 };
+	return stops.reduce((a, b) => (b.alpha > a.alpha ? b : a));
 }
+
+/** A colour stop of a gradient (or a plain colour): `rgba()` or six-digit hex. */
+const STOP = /rgba\([^)]+\)|#[0-9a-f]{6}\b/gi;
 
 /** Contrast of a token's colour, composited (it may be translucent), on a background. */
 function textContrast(value: string, background: Rgb): number {
@@ -140,6 +151,22 @@ interface Case {
 	values: Record<string, string>;
 	/** What shows through the card: the page colour, or each stop of the imagery under its scrim. */
 	behind: Rgb[];
+	/** Over a picture the parts sit on the protected pane only, never on the bare photo. */
+	paneOnly?: boolean;
+}
+
+/** Where a part of the form can sit: on the card (over what shows through it) or on the page. */
+function surfacesOf({ values, behind, paneOnly }: Case): Rgb[] {
+	// Clear glass draws its reflection on the card's face (.card::before): where it is brightest
+	// too.
+	const reflection = values['--glass-sheen']
+		? brightestStop(values['--glass-sheen'], values)
+		: null;
+	return behind.flatMap((under) => {
+		const pane = over(colour(values['--bg-card']), under);
+		const panes = reflection ? [pane, over(reflection, pane)] : [pane];
+		return paneOnly ? panes : [...panes, under];
+	});
 }
 
 const BOUNDARY = ':is(:root, .login-ui-theme-boundary)';
@@ -148,11 +175,79 @@ const page = (values: Record<string, string>) => [colour(values['--bg-page']).rg
 
 const meridianLight = tokens(app, `${BOUNDARY}[data-login-theme='meridian'],`);
 const meridianDark = tokens(app, `${BOUNDARY}[data-theme='dark'][data-login-theme='meridian'],`);
-const glassDark = tokens(app, `${BOUNDARY}[data-login-theme='fullbleed-glass'] {`);
-const glassLight = {
-	...glassDark,
-	...tokens(app, `${BOUNDARY}[data-theme='light'][data-login-theme='fullbleed-glass'] {`)
+// Swiss Grid and Glass: light is the base, dark overrides it (as flat does).
+const swissLight = tokens(app, `${BOUNDARY}[data-login-theme='swiss-grid'] {`);
+const swissDark = {
+	...swissLight,
+	...tokens(app, `${BOUNDARY}[data-theme='dark'][data-login-theme='swiss-grid'] {`)
 };
+const glassLight = tokens(app, `${BOUNDARY}[data-login-theme='glass'] {`);
+const glassDark = {
+	...glassLight,
+	...tokens(app, `${BOUNDARY}[data-theme='dark'][data-login-theme='glass'] {`)
+};
+const clearLight = tokens(app, `${BOUNDARY}[data-login-theme='clear-glass'] {`);
+const clearDark = {
+	...clearLight,
+	...tokens(app, `${BOUNDARY}[data-theme='dark'][data-login-theme='clear-glass'] {`)
+};
+
+/** Over a tenant's picture (and in the split card) the glasses' panes are protected. */
+const PHOTOS: Rgb[] = [
+	[0, 0, 0],
+	[255, 255, 255],
+	[16, 26, 56]
+];
+const pictureLight = tokens(
+	app,
+	"[data-login-theme='glass'][data-has-page-background-image='true'],"
+);
+const pictureDark = tokens(
+	app,
+	"[data-theme='dark'][data-login-theme='glass'][data-has-page-background-image='true'],"
+);
+/** Clear glass over a white, a black or a dark-blue photo, with the protection applied. */
+const CLEAR_ON_PICTURE: Case[] = [
+	{
+		name: 'clear glass light over a picture',
+		values: { ...clearLight, ...pictureLight },
+		behind: PHOTOS,
+		paneOnly: true
+	},
+	{
+		name: 'clear glass dark over a picture',
+		values: { ...clearDark, ...pictureLight, ...pictureDark },
+		behind: PHOTOS,
+		paneOnly: true
+	}
+];
+
+/**
+ * The opaque fallbacks (reduced transparency, no backdrop-filter): each block's light and dark
+ * token rules, laid over Clear glass's own.
+ */
+function fallbackTokens(opening: string): [Record<string, string>, Record<string, string>] {
+	const block = app.slice(app.lastIndexOf(opening));
+	const bodies = [...block.matchAll(/\{([^{}]*--bg-card[^{}]*)\}/g)].slice(0, 2);
+	const read = (body: string) =>
+		Object.fromEntries(
+			[...body.matchAll(/(--[\w-]+):\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()])
+		);
+	return [read(bodies[0][1]), read(bodies[1][1])];
+}
+const CLEAR_FALLBACKS: Case[] = [
+	'@media (prefers-reduced-transparency: reduce) {',
+	'@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {'
+].flatMap((opening) => {
+	const [light, dark] = fallbackTokens(opening);
+	const kind = opening.startsWith('@media') ? 'reduced transparency' : 'no backdrop-filter';
+	const lightValues = { ...clearLight, ...light };
+	const darkValues = { ...clearDark, ...light, ...dark };
+	return [
+		{ name: `clear glass light, ${kind}`, values: lightValues, behind: page(lightValues) },
+		{ name: `clear glass dark, ${kind}`, values: darkValues, behind: page(darkValues) }
+	];
+});
 
 const flatLight = tokens(app, `${BOUNDARY}[data-login-theme='flat'] {`);
 const flatDark = {
@@ -170,8 +265,12 @@ const CASES: Case[] = [
 	{ name: 'meridian / split dark', values: meridianDark, behind: page(meridianDark) },
 	{ name: 'flat light', values: flatLight, behind: page(flatLight) },
 	{ name: 'flat dark', values: flatDark, behind: page(flatDark) },
-	{ name: 'fullbleed glass dark', values: glassDark, behind: imageryUnderScrim(glassDark) },
-	{ name: 'fullbleed glass light', values: glassLight, behind: imageryUnderScrim(glassLight) }
+	{ name: 'swiss grid light', values: swissLight, behind: page(swissLight) },
+	{ name: 'swiss grid dark', values: swissDark, behind: page(swissDark) },
+	{ name: 'glass light', values: glassLight, behind: glassBehind(glassLight) },
+	{ name: 'glass dark', values: glassDark, behind: glassBehind(glassDark) },
+	{ name: 'clear glass light', values: clearLight, behind: glassBehind(clearLight) },
+	{ name: 'clear glass dark', values: clearDark, behind: glassBehind(clearDark) }
 ];
 
 /** The destructive / warning colours: the base ones, with the scheme's own. */
@@ -245,8 +344,8 @@ describe('theme contrast', () => {
 	it.each([
 		{ name: 'meridian / split light', values: meridianLight },
 		{ name: 'meridian / split dark', values: meridianDark },
-		{ name: 'fullbleed glass dark', values: glassDark },
-		{ name: 'fullbleed glass light', values: glassLight }
+		{ name: 'swiss grid light', values: swissLight },
+		{ name: 'swiss grid dark', values: swissDark }
 	])('$name: primary button text meets AA', ({ values }) => {
 		const background = colour(
 			values['--button-primary-bg'] === 'var(--primary)'
@@ -257,26 +356,157 @@ describe('theme contrast', () => {
 	});
 
 	it.each([
-		{ name: 'fullbleed glass dark', values: glassDark },
-		{ name: 'fullbleed glass light', values: glassLight }
-	])('$name: text placed on the imagery meets AA', ({ values }) => {
-		for (const under of imageryUnderScrim(values)) {
-			for (const token of [
-				'--fullbleed-on-image-title',
-				'--fullbleed-on-image-text',
-				'--fullbleed-on-image-muted'
-			]) {
-				expect(
-					textContrast(values[token], under),
-					`${token} ${values[token]} on ${under.map(Math.round)}`
-				).toBeGreaterThanOrEqual(4.5);
+		{ name: 'glass light', values: glassLight },
+		{ name: 'glass dark', values: glassDark },
+		{ name: 'clear glass light', values: clearLight },
+		{ name: 'clear glass dark', values: clearDark }
+	])(
+		"$name: the blue-glass primary button's label meets AA over the pane and the backdrop",
+		({ values }) => {
+			// The preset button is translucent blue (one colour, or a gradient), over the pane, over what
+			// shows through the pane. A tenant's accent replaces it with a solid fill (and its own label
+			// colour). Clear glass lays its reflection over the tint: its brightest stop counts too.
+			const stops = [...values['--glass-primary-bg'].matchAll(/rgba\([^)]+\)/g)].map((m) =>
+				colour(m[0])
+			);
+			expect(stops.length).toBeGreaterThan(0);
+			const sheen = values['--glass-sheen']?.match(/rgba\([^)]+\)/)?.[0];
+			const label = colour(values['--button-primary-text']);
+			for (const under of glassBehind(values)) {
+				const pane = over(colour(values['--bg-card']), under);
+				for (const stop of stops) {
+					const tinted = over(stop, pane);
+					for (const button of sheen ? [tinted, over(colour(sheen), tinted)] : [tinted]) {
+						expect(
+							contrast(over(label, button), button),
+							`label ${values['--button-primary-text']} on ${button.map(Math.round)}`
+						).toBeGreaterThanOrEqual(4.5);
+					}
+				}
+			}
+		}
+	);
+
+	it.each([
+		{ name: 'glass light', scheme: 'light', base: glassLight },
+		{ name: 'glass dark', scheme: 'dark', base: glassDark },
+		{ name: 'clear glass light', scheme: 'light', base: clearLight },
+		{ name: 'clear glass dark', scheme: 'dark', base: clearDark }
+	])(
+		'$name: text on a pane over a tenant picture meets AA over a white or a black photo',
+		({ scheme, base }) => {
+			// One rule makes both glasses' panes opaque enough over a picture.
+			const pictureLight = tokens(
+				app,
+				"[data-login-theme='glass'][data-has-page-background-image='true'],"
+			);
+			const pictureDark = tokens(
+				app,
+				"[data-theme='dark'][data-login-theme='glass'][data-has-page-background-image='true'],"
+			);
+			const values = {
+				...base,
+				...pictureLight,
+				...(scheme === 'dark' ? pictureDark : {})
+			};
+			// A white or a black photo, and the split template's dark brand panel under a floating card.
+			for (const photo of [[0, 0, 0] as Rgb, [255, 255, 255] as Rgb, [16, 26, 56] as Rgb]) {
+				const card = over(colour(values['--bg-card']), photo);
+				// The links (the one under the card among them) are in the accent.
+				for (const token of ['--text-primary', '--text-secondary', '--text-muted', '--primary']) {
+					expect(
+						textContrast(values[token], card),
+						`${token} ${values[token]} on ${card.map(Math.round)} over ${photo}`
+					).toBeGreaterThanOrEqual(4.5);
+				}
+			}
+		}
+	);
+
+	it.each([
+		{ name: 'clear glass light', values: clearLight, behind: glassBehind(clearLight) },
+		{ name: 'clear glass dark', values: clearDark, behind: glassBehind(clearDark) },
+		...CLEAR_ON_PICTURE
+	])('$name: a status badge’s label meets AA under its gloss', (testCase) => {
+		const { values } = testCase;
+		const gloss = brightestStop(values['--glass-gloss'], values);
+		const badges: [string, string][] = [
+			['--glass-text-success', '--success-light'],
+			['--glass-text-warning', '--warning-light'],
+			['--glass-text-danger', '--danger-light'],
+			['--text-primary', '--primary-light'],
+			['--text-secondary', 'rgba(100, 116, 139, 0.1)']
+		];
+		const surfaces = surfacesOf(testCase);
+		for (const [text, tint] of badges) {
+			const tintColour = tint.startsWith('--')
+				? resolveColour(values[tint] ?? BASE[tint], values)
+				: colour(tint);
+			for (const surface of surfaces) {
+				for (const face of [over(tintColour, surface), over(gloss, over(tintColour, surface))]) {
+					expect(
+						textContrast(values[text], face),
+						`${text} on ${tint} at ${face.map(Math.round)}`
+					).toBeGreaterThanOrEqual(4.5);
+				}
 			}
 		}
 	});
 
-	it.each(CASES)(
+	it.each([
+		{ name: 'clear glass light', values: clearLight, behind: glassBehind(clearLight) },
+		{ name: 'clear glass dark', values: clearDark, behind: glassBehind(clearDark) },
+		...CLEAR_ON_PICTURE,
+		...CLEAR_FALLBACKS
+	])(
+		'$name: a field’s, a switch’s and its thumb’s hairline shows the control at 3:1',
+		(testCase) => {
+			const { values } = testCase;
+			const line = colour(values['--glass-line']);
+			const surfaces = surfacesOf(testCase);
+			// The page or the card; a switch's off track, its on track (each stop of the palette's
+			// tint, which a tenant's accent does not change), and a field's face.
+			const track = colour(values['--glass-toggle-track']);
+			const tint = [...values['--glass-primary-bg'].matchAll(STOP)].map((m) => colour(m[0]));
+			const field = colour(values['--bg-input']);
+			// The thumb, where it is faintest (its least opaque stop: there it stands out least from
+			// the track). Its outline lies outside it, on the off or the on track.
+			const thumb = [...values['--glass-thumb'].matchAll(STOP)]
+				.map((m) => colour(m[0]))
+				.reduce((a, b) => (b.alpha < a.alpha ? b : a));
+			for (const surface of surfaces) {
+				// Each face the line bounds: a field, the off track, the on track (each stop of the
+				// palette's tint).
+				const tracks = [over(track, surface), ...tint.map((stop) => over(stop, surface))];
+				for (const under of [surface, over(field, surface), ...tracks]) {
+					expect(
+						contrast(over(line, under), under),
+						`${values['--glass-line']} on ${under.map(Math.round)}`
+					).toBeGreaterThanOrEqual(3);
+				}
+				// The thumb shows where it is (on or off) if it stands out from the track by itself,
+				// or else if its outline stands out from both the track and the thumb.
+				for (const face of tracks) {
+					const disc = over(thumb, face);
+					const outline = over(line, face);
+					const shown =
+						contrast(disc, face) >= 3 ||
+						(contrast(outline, face) >= 3 && contrast(outline, disc) >= 3);
+					expect(
+						shown,
+						`thumb ${disc.map(Math.round)} on ${face.map(Math.round)}: ` +
+							`${contrast(disc, face).toFixed(2)} by itself, outline ` +
+							`${contrast(outline, face).toFixed(2)} / ${contrast(outline, disc).toFixed(2)}`
+					).toBe(true);
+				}
+			}
+		}
+	);
+
+	it.each([...CASES, ...CLEAR_ON_PICTURE])(
 		'$name: alert text meets AA on its tint, on the card or the page',
-		({ values, behind }) => {
+		(testCase) => {
+			const { values } = testCase;
 			// Dark mode is where the primary text is light.
 			const dark = luminance(colour(values['--text-primary']).rgb) > 0.5;
 			const tints: Record<string, string> = {
@@ -288,26 +518,21 @@ describe('theme contrast', () => {
 			for (const [variant, tint] of Object.entries(tints)) {
 				for (const part of ['text', 'title'] as const) {
 					const text = alertColour(variant, part, dark);
-					// Full bleed alerts sit on an opaque base (so over any image); elsewhere on the
-					// card or straight on the page.
-					const base = values['--fullbleed-alert-base'];
-					if (base) {
-						expect(app).toMatch(
-							new RegExp(
-								`\\[data-login-theme='fullbleed-glass'\\] \\.alert\\.alert-${variant} \\{[^}]*var\\(--fullbleed-alert-base\\)`
-							)
-						);
-					}
-					const surfaces = base
-						? [colour(base).rgb]
-						: behind.flatMap((under) => [over(colour(values['--bg-card']), under), under]);
+					// An alert sits on the card or straight on the page.
+					const surfaces = surfacesOf(testCase);
+					// Clear glass lays its reflection over the tint: its brightest stop as well.
+					const reflection = values['--glass-alert-sheen']
+						? brightestStop(values['--glass-alert-sheen'], values)
+						: null;
 					for (const surface of surfaces) {
-						const tinted = over(resolveColour(values[tint] ?? BASE[tint], values), surface);
-						const drawn = resolveColour(text, values);
-						expect(
-							contrast(over(drawn, tinted), tinted),
-							`${variant} ${part} ${text} on ${tinted.map(Math.round)}`
-						).toBeGreaterThanOrEqual(4.5);
+						const tint0 = over(resolveColour(values[tint] ?? BASE[tint], values), surface);
+						for (const tinted of reflection ? [tint0, over(reflection, tint0)] : [tint0]) {
+							const drawn = resolveColour(text, values);
+							expect(
+								contrast(over(drawn, tinted), tinted),
+								`${variant} ${part} ${text} on ${tinted.map(Math.round)}`
+							).toBeGreaterThanOrEqual(4.5);
+						}
 					}
 				}
 			}
@@ -329,27 +554,6 @@ describe('theme contrast', () => {
 			).toBeGreaterThanOrEqual(4.5);
 		}
 	});
-
-	it.each([
-		{ name: 'fullbleed glass dark', values: glassDark },
-		{ name: 'fullbleed glass light', values: glassLight }
-	])('$name: text on a tenant image meets AA on its backdrop, over any image', ({ values }) => {
-		const scrim = colour(values['--fullbleed-scrim']);
-		const backdrop = colour(values['--fullbleed-on-image-backdrop-image']);
-		for (const image of [[0, 0, 0] as Rgb, [255, 255, 255] as Rgb]) {
-			const under = over(backdrop, over(scrim, image));
-			for (const token of [
-				'--fullbleed-on-image-title',
-				'--fullbleed-on-image-text',
-				'--fullbleed-on-image-muted'
-			]) {
-				expect(
-					textContrast(values[token], under),
-					`${token} on ${under.map(Math.round)}`
-				).toBeGreaterThanOrEqual(4.5);
-			}
-		}
-	});
 });
 
 describe('first paint', () => {
@@ -363,8 +567,15 @@ describe('first paint', () => {
 			['meridian', 'dark', meridianDark],
 			['split-brand-panel', 'light', meridianLight],
 			['split-brand-panel', 'dark', meridianDark],
-			['fullbleed-glass', 'light', glassLight],
-			['fullbleed-glass', 'dark', glassDark]
+			['swiss-grid', 'light', swissLight],
+			['swiss-grid', 'dark', swissDark],
+			['glass', 'light', glassLight],
+			['glass', 'dark', glassDark],
+			['clear-glass', 'light', clearLight],
+			['clear-glass', 'dark', clearDark],
+			// An older server's name for what is now Swiss Grid.
+			['fullbleed-glass', 'light', swissLight],
+			['fullbleed-glass', 'dark', swissDark]
 		];
 		for (const [template, mode, values] of expected) {
 			expect(resolveLoginUIThemeBackground(mode, template), `${template} ${mode}`).toBe(

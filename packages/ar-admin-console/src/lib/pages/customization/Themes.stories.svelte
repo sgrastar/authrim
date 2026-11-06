@@ -828,24 +828,73 @@
 		await userEvent.click(
 			await canvas.findByRole('radio', { name: new RegExp(t('th.palette.glass')) })
 		);
-		await waitFor(() => expect(outline.style.getPropertyValue('--ol-accent')).toBe('#b0301b'));
-		// Glass is sharp-cornered and frosted.
-		await expect(outline.style.getPropertyValue('--ol-card-radius')).toBe('0px');
+		await waitFor(() => expect(outline.style.getPropertyValue('--ol-accent')).toBe('#3a5cb8'));
+		// Frosted glass is a rounded pane, translucent (its colour carries an alpha), blurred, with a
+		// light rim and a soft shadow.
+		await expect(outline.style.getPropertyValue('--ol-card')).toBe('#ffffff61');
+		await expect(outline.style.getPropertyValue('--ol-card-radius')).toBe('20px');
 		await expect(outline).toHaveAttribute('data-frost', 'true');
+		await expect(outline).toHaveAttribute('data-shadow', 'glass');
 		// It combines with another template; the colour fields show the palette's colours.
 		await userEvent.click(
 			await canvas.findByRole('radio', { name: new RegExp(t('th.tpl.split')) })
 		);
 		await expect(outline).toHaveAttribute('data-template', 'split');
-		await expect(outline.style.getPropertyValue('--ol-card-radius')).toBe('0px');
+		await expect(outline.style.getPropertyValue('--ol-card-radius')).toBe('20px');
 		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.look') }));
 		await expect(await canvas.findByRole('textbox', { name: t('th.c.accent') })).toHaveAttribute(
 			'placeholder',
-			'#b0301b'
+			'#3a5cb8'
 		);
 		// A colour of one's own still replaces the palette's.
 		await userEvent.type(await canvas.findByRole('textbox', { name: t('th.c.accent') }), '#112233');
 		await waitFor(() => expect(outline.style.getPropertyValue('--ol-accent')).toBe('#112233'));
+	}}
+>
+	{#snippet template()}
+		<Themes />
+	{/snippet}
+</Story>
+
+<Story
+	name="Swiss Grid is flat and square, with a ring in place of a shadow"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const outline = canvasElement.querySelector('.outline') as HTMLElement;
+		await userEvent.click(
+			await canvas.findByRole('radio', { name: new RegExp(t('th.palette.swiss-grid')) })
+		);
+		// Ink on paper, square corners, no blur, no shadow: the Admin console's Swiss Grid.
+		await waitFor(() => expect(outline.style.getPropertyValue('--ol-accent')).toBe('#141412'));
+		await expect(outline.style.getPropertyValue('--ol-card-radius')).toBe('0px');
+		await expect(outline.style.getPropertyValue('--ol-control-radius')).toBe('0px');
+		await expect(outline).toHaveAttribute('data-frost', 'false');
+		await expect(outline).toHaveAttribute('data-shadow', 'ring');
+		const card = canvasElement.querySelector('.outline__card') as HTMLElement;
+		await expect(getComputedStyle(card).boxShadow).toBe('none');
+	}}
+>
+	{#snippet template()}
+		<Themes />
+	{/snippet}
+</Story>
+
+<Story
+	name="Clear glass is nearly clear, with an iridescent rim and pill buttons"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const outline = canvasElement.querySelector('.outline') as HTMLElement;
+		await userEvent.click(
+			await canvas.findByRole('radio', { name: new RegExp(t('th.palette.clear-glass')) })
+		);
+		await waitFor(() => expect(outline.style.getPropertyValue('--ol-accent')).toBe('#284f97'));
+		await expect(outline.style.getPropertyValue('--ol-card')).toBe('#ffffff1a');
+		await expect(outline.style.getPropertyValue('--ol-card-radius')).toBe('24px');
+		await expect(outline.style.getPropertyValue('--ol-button-radius')).toBe('999px');
+		await expect(outline).toHaveAttribute('data-shadow', 'clear');
+		// The rim is drawn over the card's edge.
+		const card = canvasElement.querySelector('.outline__card') as HTMLElement;
+		await expect(getComputedStyle(card, '::after').content).not.toBe('none');
 	}}
 >
 	{#snippet template()}

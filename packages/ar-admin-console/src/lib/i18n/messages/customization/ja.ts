@@ -25,9 +25,13 @@ export const jaCustomization = {
 	'th.palette.meridian.d': '淡い紙色に青。角は丸めです。',
 	'th.palette.classic': 'クラシック',
 	'th.palette.classic.d': '温かみのある中間色。角は少し丸めです。',
-	'th.palette.glass': 'ガラス',
-	'th.palette.glass.d':
-		'すりガラスのフォームエリアで、角は直角です。背景画像との組み合わせに向きます。',
+	'th.palette.swiss-grid': 'スイスグリッド',
+	'th.palette.swiss-grid.d': '紙色と墨色。角は直角で、影の代わりに線を使います。',
+	'th.palette.glass': 'すりガラス',
+	'th.palette.glass.d': '後ろをぼかす半透明の面。細かな粒子と、上の縁の細い光があります。',
+	'th.palette.clear-glass': '透明ガラス',
+	'th.palette.clear-glass.d':
+		'後ろが透けて見えるガラス。虹色の縁、縁の光、斜めの映り込みで形が分かります。ボタンは丸い形です。',
 	'th.palette.flat': 'フラット',
 	'th.palette.flat.d': '白と細い線。影もすりガラスも使いません。',
 	'th.g.colours': '色',

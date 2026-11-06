@@ -204,6 +204,9 @@
 				style:--ol-density={DENSITIES[draft.fontScale]}
 				style:--ol-card-radius={`${shape.cardRadius}px`}
 				style:--ol-control-radius={`${shape.controlRadius}px`}
+				style:--ol-button-radius={`${shape.buttonRadius ?? shape.controlRadius}px`}
+				style:--ol-field-radius={`${shape.fieldRadius ?? shape.controlRadius}px`}
+				data-accent={draft.accent ? 'set' : 'preset'}
 				data-shadow={shape.shadow}
 				data-frost={shape.frost ? 'true' : 'false'}
 				style:font-family={FONT_STACKS[draft.font]}
@@ -742,13 +745,70 @@
 			0 10px 28px color-mix(in srgb, var(--ol-text) 10%, transparent);
 	}
 
-	.outline[data-shadow='deep'] .outline__card {
-		box-shadow: 0 24px 60px color-mix(in srgb, var(--ol-text) 35%, transparent);
+	/* Swiss Grid: a ring in ink in place of a shadow. */
+	.outline[data-shadow='ring'] .outline__card {
+		border-color: var(--ol-text);
+		box-shadow: none;
+	}
+
+	/* Frosted glass: a light border, one light line along the top, and a soft shadow. */
+	.outline[data-shadow='glass'] .outline__card {
+		border-color: color-mix(in srgb, white 65%, transparent);
+		box-shadow:
+			0 8px 32px color-mix(in srgb, var(--ol-text) 12%, transparent),
+			inset 0 1px 0 color-mix(in srgb, white 70%, transparent);
+	}
+
+	/* Clear glass: a halo, a diagonal reflection, and an iridescent rim (a ring cut out of a filled
+	   box), as on the real screens. */
+	.outline[data-shadow='clear'] .outline__card {
+		border-color: transparent;
+		box-shadow:
+			0 0 24px color-mix(in srgb, var(--ol-text) 22%, transparent),
+			0 12px 32px color-mix(in srgb, var(--ol-text) 10%, transparent);
+	}
+
+	.outline[data-shadow='clear'] .outline__card::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+		border-radius: inherit;
+		padding: 1.5px;
+		pointer-events: none;
+		background:
+			radial-gradient(at 0% 0%, hsl(180 100% 98%) 0, transparent 50%),
+			radial-gradient(at 29% 0%, hsl(189 100% 78%) 0, transparent 50%),
+			radial-gradient(at 100% 62%, hsl(0 0% 100%) 0, transparent 50%),
+			radial-gradient(at 90% 98%, hsl(169 88% 83%) 0, transparent 50%),
+			radial-gradient(at 26% 100%, hsl(220 6% 52%) 0, transparent 50%),
+			color-mix(in srgb, white 60%, transparent);
+		-webkit-mask:
+			linear-gradient(#000 0 0) content-box,
+			linear-gradient(#000 0 0);
+		-webkit-mask-composite: xor;
+		mask:
+			linear-gradient(#000 0 0) content-box exclude,
+			linear-gradient(#000 0 0);
+		mask-composite: exclude;
 	}
 
 	.outline[data-frost='true'] .outline__card {
 		background: color-mix(in srgb, var(--ol-card) 55%, transparent);
 		backdrop-filter: blur(14px);
+	}
+
+	/* Glass: its colour is already translucent (it carries an alpha), so it is drawn as it is.
+	   Frosted glass blurs what is behind it; clear glass hardly does, and carries a reflection. */
+	.outline[data-shadow='glass'] .outline__card {
+		background: var(--ol-card);
+		backdrop-filter: blur(24px) saturate(160%);
+	}
+
+	.outline[data-shadow='clear'] .outline__card {
+		background:
+			linear-gradient(120deg, color-mix(in srgb, white 42%, transparent), transparent 46%),
+			var(--ol-card);
+		backdrop-filter: blur(3px) saturate(115%);
 	}
 
 	/* Split, form frame "Full": the form area fills its side, no card around it. */
@@ -793,6 +853,12 @@
 		background: transparent;
 		backdrop-filter: none;
 		box-shadow: none;
+	}
+
+	/* No card box, so no rim either (nor on a split side the form fills). */
+	.outline[data-template='minimal'] .outline__card::after,
+	.outline__stage--formfull .outline__card::after {
+		display: none;
 	}
 
 	.outline__card h3 {
@@ -867,7 +933,7 @@
 		display: block;
 		height: 44px;
 		border: 1px solid var(--border);
-		border-radius: var(--ol-control-radius, var(--radius-sm));
+		border-radius: var(--ol-field-radius, var(--ol-control-radius, var(--radius-sm)));
 		background: var(--bg-input);
 	}
 
@@ -878,11 +944,33 @@
 		gap: 8px;
 		height: 44px;
 		font-size: var(--preview-fs-label);
-		border-radius: var(--ol-control-radius, var(--radius-sm));
+		border-radius: var(--ol-button-radius, var(--ol-control-radius, var(--radius-sm)));
 		background: var(--ol-accent);
 		color: var(--text-inverse);
 		font-weight: var(--fw-semibold);
 		--icon-size: var(--icon-md);
+	}
+
+	/* Glass: until an accent is set the main button is glass tinted by the accent (as on the real
+	   screens); a set accent fills it. Its label is then the title colour. */
+	.outline:is([data-shadow='glass'], [data-shadow='clear'])[data-accent='preset']
+		.outline__button:not(.outline__button--plain) {
+		border: 1px solid color-mix(in srgb, white 60%, transparent);
+		background: linear-gradient(
+			135deg,
+			color-mix(in srgb, var(--ol-accent) 40%, transparent),
+			color-mix(in srgb, var(--ol-accent) 26%, transparent)
+		);
+		color: var(--ol-title);
+	}
+
+	.outline:is([data-shadow='glass'], [data-shadow='clear']) .outline__button--plain {
+		border-color: color-mix(in srgb, white 60%, transparent);
+		background: linear-gradient(
+			135deg,
+			color-mix(in srgb, white 45%, transparent),
+			color-mix(in srgb, white 14%, transparent)
+		);
 	}
 
 	/* The other methods: a plain button, the accent kept for the main one. */

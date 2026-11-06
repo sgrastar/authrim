@@ -25,7 +25,7 @@
 			docs: {
 				description: {
 					component:
-						'A tenant picks a **template** (the structure of the page: standard, split, minimal) and a **palette** (the colours and the shape of the form area: Meridian, Classic, Glass, Flat). They combine freely. `form_area_color`, the image opacities, the brand panel picture and its logo display, the header name and the form-row switches are separate settings on top of them. The stylesheet is still keyed on the pre-palette names (`data-login-theme`, `data-page-layout`); `palettes.ts` translates.'
+						'A tenant picks a **template** (the structure of the page: standard, split, minimal) and a **palette** (the colours and the shape of the form area: Meridian, Classic, Swiss Grid, Frosted glass, Clear glass, Flat). They combine freely. `form_area_color`, the image opacities, the brand panel picture and its logo display, the header name and the form-row switches are separate settings on top of them. The stylesheet is still keyed on the pre-palette names (`data-login-theme`, `data-page-layout`); `palettes.ts` translates.'
 				}
 			}
 		}
@@ -43,7 +43,9 @@
 	const LABELS: Record<PaletteId, string> = {
 		meridian: 'Meridian',
 		classic: 'Classic',
-		glass: 'Glass',
+		'swiss-grid': 'Swiss Grid',
+		glass: 'Frosted glass',
+		'clear-glass': 'Clear glass',
 		flat: 'Flat'
 	};
 
@@ -132,6 +134,40 @@
 					})
 				}
 			]}
+		/>
+	{/snippet}
+</Story>
+
+<Story name="Split card: the two glasses over the brand picture">
+	{#snippet template()}
+		<ShellGallery
+			columns={2}
+			height={560}
+			cells={(['glass', 'clear-glass'] as const).flatMap((palette) =>
+				(['light', 'dark'] as const).map((scheme) => ({
+					label: `${LABELS[palette]}, ${scheme}: the card is near-opaque over the tenant's picture`,
+					scheme,
+					ui: ui('split', palette, {
+						branding: { logoUrl: SAMPLE_LOGO_URL },
+						appearance: { brandPanelImageUrl: SAMPLE_BACKGROUND_URL },
+						pageTemplate: { formFrame: 'card' }
+					})
+				}))
+			)}
+		/>
+	{/snippet}
+</Story>
+
+<Story name="Clear glass with a tenant accent: no reflection behind the label">
+	{#snippet template()}
+		<ShellGallery
+			columns={2}
+			height={520}
+			cells={(['light', 'dark'] as const).map((scheme) => ({
+				label: `accent #747474, ${scheme}`,
+				scheme,
+				ui: ui('standard', 'clear-glass', { pageTemplate: { accentColor: '#747474' } })
+			}))}
 		/>
 	{/snippet}
 </Story>

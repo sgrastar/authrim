@@ -9,16 +9,18 @@ describe('buildLoginUIConfig with a template and a palette', () => {
 			for (const palette of PALETTE_IDS) {
 				const ui = buildLoginUIConfig({ template, palette, scheme: 'light' });
 				expect(ui.pageTemplate).toMatchObject({ template, palette, layout: layoutFor(template) });
-				// The pre-palette name the server sends alongside, for older Login UI builds.
-				const legacy =
-					palette === 'classic'
-						? 'classic'
-						: palette === 'glass'
-							? 'fullbleed-glass'
-							: template === 'split'
-								? 'split-brand-panel'
-								: 'meridian';
-				expect(ui.themeTemplate).toBe(legacy);
+				// The pre-palette name the server sends alongside, for older Login UI builds (the
+				// table of ar-management's deriveLegacyThemeTemplate).
+				const meridianName = template === 'split' ? 'split-brand-panel' : 'meridian';
+				const legacy: Record<(typeof PALETTE_IDS)[number], string> = {
+					meridian: meridianName,
+					classic: 'classic',
+					'swiss-grid': 'fullbleed-glass',
+					glass: meridianName,
+					'clear-glass': meridianName,
+					flat: meridianName
+				};
+				expect(ui.themeTemplate).toBe(legacy[palette]);
 			}
 		}
 	});

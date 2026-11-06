@@ -12,7 +12,7 @@ import {
 	isLoginUILocale,
 	toDocumentDirection
 } from '../src/lib/i18n/locales';
-import { legacyThemeFor } from '../src/lib/palettes';
+import { PALETTE_BACKGROUNDS } from '../src/lib/palettes';
 import {
 	PALETTES,
 	PALETTE_LABELS,
@@ -34,9 +34,14 @@ function applyGlobals(globals: Record<string, unknown>): void {
 	setLocale(sbGlobals.locale);
 
 	// The stores are kept off <html> (see main.ts), so the canvas background follows the toolbar here.
+	// Only the colour is set: a `data-login-theme` on <html> would make the palette's element rules
+	// match every boundary inside it, a gallery cell with another palette included.
 	const root = document.documentElement;
 	root.setAttribute('data-theme', sbGlobals.scheme);
-	root.setAttribute('data-login-theme', legacyThemeFor(sbGlobals.palette, sbGlobals.template));
+	root.style.setProperty(
+		'--login-page-background-color',
+		PALETTE_BACKGROUNDS[sbGlobals.palette][sbGlobals.scheme]
+	);
 	root.lang = sbGlobals.locale;
 	root.dir = toDocumentDirection(sbGlobals.locale);
 }

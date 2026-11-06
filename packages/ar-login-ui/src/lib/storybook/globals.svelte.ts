@@ -30,7 +30,9 @@ export const TEMPLATE_LABELS: Record<TemplateId, string> = {
 export const PALETTE_LABELS: Record<PaletteId, string> = {
 	meridian: 'Meridian (default)',
 	classic: 'Classic',
-	glass: 'Glass',
+	'swiss-grid': 'Swiss Grid',
+	glass: 'Frosted glass',
+	'clear-glass': 'Clear glass',
 	flat: 'Flat'
 };
 
@@ -52,7 +54,8 @@ export const THEME_TEMPLATE_LABELS: Record<ThemeTemplate, string> = {
 	meridian: 'Meridian (default)',
 	classic: 'Classic',
 	'split-brand-panel': 'Split brand panel',
-	'fullbleed-glass': 'Full-bleed glass'
+	// The old Full-bleed glass is the Swiss Grid palette now; an older server's name still reads as it.
+	'fullbleed-glass': 'Full-bleed glass (now Swiss Grid)'
 };
 
 export const sbGlobals = $state<{
