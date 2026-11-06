@@ -140,6 +140,11 @@
       "required": true
     },
     {
+      "name": "LITE_TXN_STORE",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
       "name": "CONTROL_SMOKE_VERSION",
       "kind": "version_metadata",
       "required": true

@@ -64,6 +64,53 @@ export function litePowSettingsFrom(
   };
 }
 
+/** The lite transaction budgets of a tenant (`human_verification.lite_txn_*`), bounded. */
+export interface LiteTxnLimits {
+  perIpPerMinute: number;
+  perTenantPerMinute: number;
+  perBrowser: number;
+}
+
+export function liteTxnLimitsFrom(
+  document: Readonly<Record<string, unknown>> | null,
+  env: Readonly<Record<string, unknown>>
+): LiteTxnLimits {
+  const read = (name: string) => {
+    const meta: SettingMeta =
+      AUTHENTICATION_METHODS_SETTINGS_META[
+        `${PREFIX}${name}` as keyof typeof AUTHENTICATION_METHODS_SETTINGS_META
+      ];
+    return boundedNumber(meta, document?.[meta.key], meta.envKey ? env[meta.envKey] : undefined);
+  };
+  return {
+    perIpPerMinute: read('lite_txn_per_ip_per_minute'),
+    perTenantPerMinute: read('lite_txn_per_tenant_per_minute'),
+    perBrowser: read('lite_txn_per_browser'),
+  };
+}
+
+async function readAuthenticationMethodsDocument(
+  env: Env,
+  tenantId: string
+): Promise<Record<string, unknown> | null> {
+  try {
+    const raw = await env.SETTINGS?.get(humanVerificationSettingsKey(tenantId));
+    const parsed = raw ? (JSON.parse(raw) as unknown) : null;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function readLiteTxnLimits(env: Env, tenantId: string): Promise<LiteTxnLimits> {
+  return liteTxnLimitsFrom(
+    await readAuthenticationMethodsDocument(env, tenantId),
+    env as unknown as Record<string, unknown>
+  );
+}
+
 export async function readLitePowSettings(env: Env, tenantId: string): Promise<LitePowSettings> {
   let document: Record<string, unknown> | null = null;
   try {
