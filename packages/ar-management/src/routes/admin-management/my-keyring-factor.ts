@@ -29,7 +29,8 @@ import {
   AdminSecondFactorRepository,
   AdminSessionRepository,
   adminAuthMiddleware,
-  createAuthContextFromHono,
+  ensureDatabaseAdapter,
+  resolveTenantMetadataContext,
   createErrorResponse,
   evaluateAdminCredentialEligibility,
   evaluateAdminStepUpEvidence,
@@ -185,10 +186,9 @@ async function adminCredentialIsActive(
   adminUserId: string,
   credentialId: string
 ): Promise<boolean> {
-  const coreAdapter = createAuthContextFromHono(
-    c as unknown as Context<{ Bindings: Env }>,
-    tenantId
-  ).coreAdapter;
+  // This route acts outside any selected tenant: the core database is the admin's home tenant's.
+  const context = await resolveTenantMetadataContext(c.env, tenantId);
+  const coreAdapter = ensureDatabaseAdapter(context.coreDb, 'admin-keyring-factor');
   const row = await coreAdapter.queryOne<{ status: string }>(
     `SELECT status FROM issued_credentials
       WHERE tenant_id = ? AND public_id = ? AND user_id = ? AND credential_type = ?`,
@@ -392,6 +392,13 @@ myKeyringFactorRouter.get('/enroll/:id', async (c) => {
             ? 'second_factor_recovery_required'
             : 'second_factor_already_enrolled';
       return c.json({ status: 'failed', error }, 409);
+    }
+
+    // The credential may have been revoked while the key was being registered (its revocation
+    // found no factor to retire yet): checked again now, and the new factor retired if so.
+    if (!(await adminCredentialIsActive(c, outcome.tenantId, auth.userId, result.credentialId))) {
+      await repo.revokeByAdmin(auth.userId, inserted.factor.id);
+      return c.json({ status: 'failed', error: 'credential_not_active' });
     }
 
     await writeAdminAuditLog(c, {

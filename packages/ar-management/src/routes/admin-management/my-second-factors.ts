@@ -510,8 +510,22 @@ mySecondFactorsRouter.post('/webauthn/verify', async (c) => {
         backup_state: false,
         label: metadata.label ?? null,
       },
-      { firstOnly: metadata.mode === 'first' }
+      {
+        firstOnly: metadata.mode === 'first',
+        ...(metadata.mode === 'step_up' && metadata.approvingFactorId
+          ? { approvedBy: { factorId: metadata.approvingFactorId, sessionId: auth.sessionId } }
+          : {}),
+      }
     );
+    if (!result.inserted && result.reason === 'approval_revoked') {
+      return c.json(
+        {
+          error: 'step_up_required',
+          error_description: 'The security key that approved this registration is no longer active',
+        },
+        403
+      );
+    }
     if (!result.inserted && result.reason === 'enrollment_closed') {
       return c.json(
         {

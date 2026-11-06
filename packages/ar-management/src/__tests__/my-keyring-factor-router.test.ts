@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   insertKeyringHolderKey: vi.fn(),
   findActiveKeyringFactor: vi.fn(),
   touch: vi.fn(),
+  revokeByAdmin: vi.fn(async () => true),
   recordSecondFactorVerification: vi.fn(),
   homeTenant: vi.fn(),
   eligibility: vi.fn(),
@@ -44,6 +45,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     insertKeyringHolderKey = mocks.insertKeyringHolderKey;
     findActiveKeyringFactor = mocks.findActiveKeyringFactor;
     touch = mocks.touch;
+    revokeByAdmin = mocks.revokeByAdmin;
   }
   class MockAdminSessionRepository {
     constructor(_adapter: unknown, tenantId: string) {
@@ -57,7 +59,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     AdminSessionRepository: MockAdminSessionRepository,
     requireDedicatedAdminDatabaseAdapter: vi.fn(() => ({ queryOne: mocks.homeTenant })),
     evaluateAdminCredentialEligibility: mocks.eligibility,
-    createAuthContextFromHono: () => ({ coreAdapter: { queryOne: mocks.credentialRow } }),
+    resolveTenantMetadataContext: vi.fn(async () => ({ coreDb: 'core-db' })),
+    ensureDatabaseAdapter: vi.fn(() => ({ queryOne: mocks.credentialRow })),
     adminAuthMiddleware:
       () =>
       async (c: { set: (key: string, value: unknown) => void }, next: () => Promise<void>) => {
@@ -444,6 +447,16 @@ describe('GET /enroll/:id', () => {
     const response = await call('GET', '/enroll/g1:apac:0:vp_1');
     expect(response.status).toBe(409);
     expect(await response.json()).toEqual({ status: 'failed', error: 'credential_in_use' });
+  });
+
+  it('retires the new factor when the credential was revoked while it was registered', async () => {
+    mocks.credentialRow
+      .mockResolvedValueOnce({ status: 'active' })
+      .mockResolvedValueOnce({ status: 'revoked' });
+    const response = await call('GET', '/enroll/g1:apac:0:vp_1');
+    expect(await response.json()).toEqual({ status: 'failed', error: 'credential_not_active' });
+    expect(mocks.revokeByAdmin).toHaveBeenCalledWith('admin-1', 'kf-2');
+    expect(mocks.writeAdminAuditLog).not.toHaveBeenCalled();
   });
 
   it('registers a first factor only as a first enrolment', async () => {

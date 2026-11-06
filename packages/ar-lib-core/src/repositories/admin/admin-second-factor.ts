@@ -135,10 +135,16 @@ export class AdminSecondFactorRepository {
    */
   async insertWebAuthn(
     input: AdminWebAuthnSecondFactorInput,
-    options: { firstOnly: boolean; now?: number }
+    options: {
+      firstOnly: boolean;
+      /** As for insertKeyringHolderKey: the approval is checked in the INSERT itself. */
+      approvedBy?: { factorId: string; sessionId: string };
+      now?: number;
+    }
   ): Promise<AdminSecondFactorInsertResult> {
     const id = generateId();
     const now = options.now ?? getCurrentTimestamp();
+    const approval = options.approvedBy ?? null;
     const result = await this.adapter.execute(
       `INSERT INTO admin_second_factors (
          id, admin_user_id, kind, credential_id, public_key, counter, transports_json, aaguid,
@@ -147,6 +153,11 @@ export class AdminSecondFactorRepository {
        SELECT ?, ?, 'webauthn_credential', ?, ?, ?, ?, ?, ?, ?, ?, ?
        WHERE NOT EXISTS (SELECT 1 FROM admin_passkeys WHERE credential_id = ?)
          AND NOT EXISTS (SELECT 1 FROM admin_second_factors WHERE credential_id = ?)
+         AND (? IS NULL OR (EXISTS (
+           SELECT 1 FROM admin_second_factors WHERE id = ? AND admin_user_id = ? AND revoked_at IS NULL
+         ) AND EXISTS (
+           SELECT 1 FROM admin_sessions WHERE id = ? AND admin_user_id = ? AND second_factor_id = ?
+         )))
          AND (? = 0 OR (NOT EXISTS (
            SELECT 1 FROM admin_second_factors WHERE admin_user_id = ?
          ) AND EXISTS (
@@ -167,6 +178,12 @@ export class AdminSecondFactorRepository {
         now,
         input.credential_id,
         input.credential_id,
+        approval ? approval.factorId : null,
+        approval?.factorId ?? null,
+        input.admin_user_id,
+        approval?.sessionId ?? null,
+        input.admin_user_id,
+        approval?.factorId ?? null,
         options.firstOnly ? 1 : 0,
         input.admin_user_id,
         input.admin_user_id,
@@ -181,6 +198,7 @@ export class AdminSecondFactorRepository {
         [input.credential_id, input.credential_id]
       );
       if (inUse) return { inserted: false, reason: 'credential_in_use' };
+      if (approval) return { inserted: false, reason: 'approval_revoked' };
       const active = await this.listActiveByUser(input.admin_user_id);
       return {
         inserted: false,

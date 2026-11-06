@@ -63,6 +63,19 @@ describe('POST /api/admin/admins/:id/wallet-credentials/revoke', () => {
     });
   });
 
+  it('reports a retry when the Keyring factors of revoked credentials could not be retired', async () => {
+    mocks.coreQuery.mockImplementation(async (sql: string) =>
+      sql.includes("status = 'revoked'")
+        ? Promise.reject(new Error('core db down'))
+        : [{ public_id: 'c1' }]
+    );
+    const context = setup();
+    const actor = signIn(context.db, TENANT_SUPER_ADMIN);
+    const target = signIn(context.db, []);
+    const response = await context.call(actor.cookie, 'POST', path(target.userId));
+    expect(response.status).toBe(503);
+  });
+
   it('revokes nothing when the step-up refuses the request', async () => {
     mocks.stepUp.mockResolvedValue(
       new Response(JSON.stringify({ error: 'step_up_required' }), { status: 403 })

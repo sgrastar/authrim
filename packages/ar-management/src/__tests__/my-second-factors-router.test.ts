@@ -427,7 +427,11 @@ describe('mySecondFactorsRouter', () => {
         backup_state: false,
         label: 'Key',
       });
-      expect(options).toEqual({ firstOnly: false });
+      // The approving key is checked again in the INSERT itself.
+      expect(options).toEqual({
+        firstOnly: false,
+        approvedBy: { factorId: 'sf-1', sessionId: 'sess-1' },
+      });
       expect(mocks.verifyRegistrationResponse.mock.calls[0]?.[0]).toMatchObject({
         expectedChallenge: 'webauthn-challenge',
         expectedOrigin: ORIGIN,

@@ -128,22 +128,26 @@ export async function holderThumbprintOfCredential(
 }
 
 /**
- * A revoked admin credential takes its Keyring second factor with it: the key can no longer be
- * presented, and the evidence and receipts it gave must stop counting now. Never throws.
+ * Revoked admin credentials take their Keyring second factors with them: those keys can no
+ * longer be presented, and the evidence and receipts they gave must stop counting now. Every
+ * revoked credential of the admin is looked at, so a retry finishes what an earlier failure left
+ * (an administrator's revocation: not bound by the minimum). Throws when it could not finish.
  */
-export async function retireKeyringFactorOf(
+export async function retireKeyringFactorsOfRevokedCredentials(
   coreAdapter: DatabaseAdapter,
   adminAdapter: DatabaseAdapter,
   tenantId: string,
-  adminUserId: string,
-  credentialId: string
+  adminUserId: string
 ): Promise<void> {
-  try {
-    const jkt = await holderThumbprintOfCredential(coreAdapter, tenantId, credentialId);
-    if (jkt)
-      await new AdminSecondFactorRepository(adminAdapter).revokeKeyringHolderKey(adminUserId, jkt);
-  } catch {
-    // The credential is revoked either way; a later presentation of it is refused by its state.
+  const rows = await coreAdapter.query<{ holder_binding: string | null }>(
+    `SELECT holder_binding FROM issued_credentials
+      WHERE tenant_id = ? AND user_id = ? AND credential_type = ? AND status = 'revoked'`,
+    [tenantId, adminUserId, ADMIN_CREDENTIAL_TYPE]
+  );
+  const repository = new AdminSecondFactorRepository(adminAdapter);
+  for (const row of rows) {
+    const jkt = await thumbprintOf(row.holder_binding);
+    if (jkt) await repository.revokeKeyringHolderKey(adminUserId, jkt);
   }
 }
 

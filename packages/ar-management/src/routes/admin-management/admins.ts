@@ -40,7 +40,7 @@ import { sendAdminEmailChangeNotices } from './admin-email-change-notice';
 import {
   endedRevoked,
   listRevocableAdminCredentialIds,
-  retireKeyringFactorOf,
+  retireKeyringFactorsOfRevokedCredentials,
   revokeAdminCredential,
   type RevocationResult,
 } from './admin-wallet-credential-store';
@@ -817,10 +817,13 @@ adminUsersRouter.post('/:id/wallet-credentials/revoke', async (c) => {
       });
     }
     const allRevoked = results.every((result) => endedRevoked(result.outcome));
-    for (const result of results) {
-      if (endedRevoked(result.outcome)) {
-        await retireKeyringFactorOf(coreAdapter, adapter, tenantId, id, result.id);
-      }
+    // Every revoked credential takes its Keyring factor with it, including ones an earlier call
+    // revoked but could not finish: a failure here is reported for a retry.
+    let factorsRetired = true;
+    try {
+      await retireKeyringFactorsOfRevokedCredentials(coreAdapter, adapter, tenantId, id);
+    } catch {
+      factorsRetired = false;
     }
 
     await createAuditLog(
@@ -835,8 +838,12 @@ adminUsersRouter.post('/:id/wallet-credentials/revoke', async (c) => {
     );
 
     c.header('Cache-Control', 'no-store');
-    if (allRevoked) {
+    if (allRevoked && factorsRetired) {
       return c.json({ results, allRevoked }, 200);
+    }
+    if (!factorsRetired) {
+      c.header('Retry-After', '1');
+      return c.json({ results, allRevoked }, 503);
     }
     if (results.some((result) => result.outcome === 'conflict' || result.outcome === 'error')) {
       c.header('Retry-After', '1');

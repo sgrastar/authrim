@@ -358,6 +358,28 @@ describe('AdminSecondFactorRepository in the real admin schema', () => {
     expect(await repo.findActiveKeyringFactor('admin-1', 'M'.repeat(43))).toBeNull();
   });
 
+  it('adds a security key only while the approving factor is the session evidence', async () => {
+    const approving = await repo.insertWebAuthn(key('cred-a'), { firstOnly: false });
+    if (!approving.inserted) throw new Error('not inserted');
+    db.prepare(
+      `INSERT INTO admin_sessions (id, tenant_id, admin_user_id, created_at, expires_at)
+       VALUES ('sess-w', 'default', 'admin-1', 1, 9999999999999)`
+    ).run();
+    const approvedBy = { factorId: approving.factor.id, sessionId: 'sess-w' };
+    // Not yet the session's evidence: refused.
+    expect(await repo.insertWebAuthn(key('cred-b'), { firstOnly: false, approvedBy })).toEqual({
+      inserted: false,
+      reason: 'approval_revoked',
+    });
+    await new AdminSessionRepository(adapter, 'default').recordSecondFactorVerification('sess-w', {
+      adminUserId: 'admin-1',
+      secondFactorId: approving.factor.id,
+    });
+    expect(
+      await repo.insertWebAuthn(key('cred-b'), { firstOnly: false, approvedBy })
+    ).toMatchObject({ inserted: true });
+  });
+
   it('revokes the Keyring factor of a revoked credential and clears what it gave sessions', async () => {
     await repo.insertWebAuthn(key('cred-a'), { firstOnly: false });
     const keyring = await repo.insertKeyringHolderKey(
