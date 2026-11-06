@@ -1486,7 +1486,15 @@ paths:
         Advances the active runtime Flow step after verifying CSRF, interaction state, expiry,
         contract hash, HMAC signature, and current step identity. Step input is interpreted by the
         active runtime component; consent-policy input records consent item decisions and
-        Destination Profile field selections for the authenticated user.
+        Destination Profile field selections for the authenticated user. A `screen` step submitted
+        with `submitted` checks `input.fields` against the step's screen as the server resolves it
+        (only the input parts it shows, required parts, choice values, types) and stores the
+        answers of parts kept on the profile for the signed-in user: the standard profile fields a
+        login may update, and custom attributes through the Identity Schema's checked write.
+        Identifiers and contacts (email, phone, preferred_username) are never written this way,
+        and an answer kept off the profile is never written to the profile. A screen with a
+        sign-in part (an auth widget, a code input, a guest sign-in) is a sign-in, not a form:
+        its `submitted` reads no answers.
       parameters:
         - name: interaction_id
           in: path
@@ -1538,6 +1546,22 @@ paths:
                         must be true; optional fields set to false are omitted from release.
                       additionalProperties:
                         type: boolean
+                    fields:
+                      type: object
+                      description: >
+                        A `screen` step's answers, keyed by each input part's `field`. A checkbox
+                        is a boolean (or 'true'/'false'); a select or radio part one of its
+                        choices' values; a text part a string of at most 1000 characters; null
+                        leaves a part empty (and changes nothing stored). A key the screen does
+                        not show refuses the submit with 400 `invalid_screen_answers`, with
+                        `problem` (unknown_field, required, invalid_value, too_long,
+                        invalid_input, invalid_profile_value) and `field`. A profile answer
+                        without a signed-in session is answered 401 `authentication_required`.
+                      additionalProperties:
+                        type:
+                          - string
+                          - boolean
+                          - 'null'
       responses:
         '200':
           description: Updated runtime interaction state and next step.
@@ -1581,6 +1605,8 @@ paths:
                         additionalProperties: true
                         description: Protocol-specific continuation metadata for OIDC, SAML, or direct flows.
         '400':
+          $ref: '#/components/responses/Error'
+        '401':
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
