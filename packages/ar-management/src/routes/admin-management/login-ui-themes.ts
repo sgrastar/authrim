@@ -30,7 +30,9 @@ import {
   adminAuthMiddleware,
   createErrorResponse,
   getLogger,
+  getRateLimitProfileAsync,
   getTenantIdFromContext,
+  rateLimitMiddleware,
   requireDedicatedAdminDatabaseAdapter,
   validateLoginUICustomCss,
   validateSettingValue,
@@ -50,6 +52,14 @@ type Router = Hono<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } 
 
 export const loginUIThemesRouter: Router = new Hono();
 loginUIThemesRouter.use('*', adminAuthMiddleware({}));
+// As the settings routes: lenient to read, moderate to change (apply writes the settings too).
+loginUIThemesRouter.use('*', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(
+    c.env,
+    c.req.method === 'GET' || c.req.method === 'HEAD' ? 'lenient' : 'moderate'
+  );
+  return rateLimitMiddleware({ ...profile })(c as unknown as Context<{ Bindings: Env }>, next);
+});
 loginUIThemesRouter.use('*', async (c: AdminContext, next) => {
   const auth = c.get('adminAuth');
   const tenantId = getTenantIdFromContext(c);
@@ -231,8 +241,6 @@ const themeJson = (theme: LoginUITheme) => ({
   updated_at: theme.updated_at,
 });
 
-const textOrNull = (value: unknown) => (typeof value === 'string' ? value : null);
-
 interface ActiveTheme {
   theme_id: string;
   version: number;
@@ -260,17 +268,7 @@ loginUIThemesRouter.get('/', async (c) => {
       new LoginUIThemeRepository(adminAdapter(c)).list(tenantId),
       readLoginUIState(c, tenantId, true),
     ]);
-    return c.json({
-      themes: themes.map((theme) => ({
-        id: theme.id,
-        name: theme.name,
-        template: textOrNull(theme.values['login-ui.template']),
-        palette: textOrNull(theme.values['login-ui.palette']),
-        version: theme.version,
-        updated_at: theme.updated_at,
-      })),
-      active,
-    });
+    return c.json({ themes, active });
   } catch (error) {
     return failure(c, 'login_ui_themes_list', error);
   }

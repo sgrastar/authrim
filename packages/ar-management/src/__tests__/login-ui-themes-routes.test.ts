@@ -41,7 +41,7 @@ const mocks = vi.hoisted(() => {
     tenantId: 'tenant-a',
     document: { own: {}, revision: 1, staleSaves: 0, saves: [], trials: 0, refuseKeys: [] },
   };
-  return { state, writeAdminAuditLog: vi.fn() };
+  return { state, writeAdminAuditLog: vi.fn(), limited: [] as string[] };
 });
 
 vi.mock('../admin-shared', () => ({ writeAdminAuditLog: mocks.writeAdminAuditLog }));
@@ -106,6 +106,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   return {
     ...actual,
     requireDedicatedAdminDatabaseAdapter: vi.fn(() => mocks.state.adapter),
+    getRateLimitProfileAsync: vi.fn(async (_env: unknown, profile: string) => ({ profile })),
+    rateLimitMiddleware:
+      (options: { profile: string }) => async (_c: unknown, next: () => Promise<void>) => {
+        mocks.limited.push(options.profile);
+        await next();
+      },
     getTenantIdFromContext: vi.fn(() => mocks.state.tenantId),
     adminAuthMiddleware:
       () =>
@@ -211,6 +217,20 @@ describe('login UI theme routes', () => {
     };
     mocks.state.refuseSave = undefined;
     mocks.writeAdminAuditLog.mockReset();
+    mocks.limited.length = 0;
+  });
+
+  it('limits requests as the settings do: lenient to read, moderate to change', async () => {
+    await call('GET', '/');
+    await call('POST', '/', { name: 'X', values: {} });
+    expect(mocks.limited).toEqual(['lenient', 'moderate']);
+  });
+
+  it('lists themes without their values', async () => {
+    await createTheme('T', { 'login-ui.template': 'split', 'login-ui.brand_name': 'Acme' });
+    const listed = await (await call('GET', '/')).json<{ themes: Record<string, unknown>[] }>();
+    expect(listed.themes[0]).toMatchObject({ name: 'T', template: 'split', palette: null });
+    expect(listed.themes[0]).not.toHaveProperty('values');
   });
 
   it('starts empty and answers with no-store', async () => {

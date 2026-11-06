@@ -26,6 +26,16 @@ export interface LoginUITheme {
   updated_at: number;
 }
 
+/** A theme as the list shows it: its look's template and palette, not all of its values. */
+export interface LoginUIThemeSummary {
+  id: string;
+  name: string;
+  template: string | null;
+  palette: string | null;
+  version: number;
+  updated_at: number;
+}
+
 export interface LoginUIThemeInput {
   name: string;
   values: Record<string, unknown>;
@@ -76,13 +86,25 @@ export class LoginUIThemeRepository {
   constructor(private readonly adapter: DatabaseAdapter) {}
 
   /** The tenant's themes, most recently changed first. */
-  async list(tenantId: string): Promise<LoginUITheme[]> {
+  /** The tenant's themes, last updated first, without their values (which may be large). */
+  async list(tenantId: string): Promise<LoginUIThemeSummary[]> {
     const rows = await this.adapter.query<Record<string, unknown>>(
-      `SELECT * FROM login_ui_themes WHERE tenant_id = ?
+      `SELECT id, name, version, updated_at,
+              json_extract(values_json, '$."login-ui.template"') AS template,
+              json_extract(values_json, '$."login-ui.palette"') AS palette
+         FROM login_ui_themes WHERE tenant_id = ?
         ORDER BY updated_at DESC, id ASC LIMIT ?`,
       [tenantId, LOGIN_UI_THEME_LIMIT]
     );
-    return rows.map(toTheme);
+    const text = (value: unknown) => (typeof value === 'string' ? value : null);
+    return rows.map((row) => ({
+      id: String(row.id),
+      name: String(row.name),
+      template: text(row.template),
+      palette: text(row.palette),
+      version: Number(row.version),
+      updated_at: Number(row.updated_at),
+    }));
   }
 
   async find(tenantId: string, id: string): Promise<LoginUITheme | null> {

@@ -69,6 +69,7 @@ export {
   type LoginUITheme,
   type LoginUIThemeCreateResult,
   type LoginUIThemeInput,
+  type LoginUIThemeSummary,
   type LoginUIThemeUpdateResult,
 } from './login-ui-theme';
 export { AdminAuditLogRepository, type AdminAuditLogFilterOptions } from './admin-audit-log';
