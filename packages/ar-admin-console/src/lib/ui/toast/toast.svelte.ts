@@ -105,8 +105,10 @@ export const toast = {
 	warning: (message: unknown, options?: ToastOptions) => show('warning', message, options),
 	info: (message: unknown, options?: ToastOptions) => show('info', message, options),
 	dismiss,
+	/** Close every toast and forget what was shown, so the same message can show again at once. */
 	dismissAll(): void {
 		for (const item of items) dismiss(item.id);
+		recent.clear();
 	},
 	/** Hover or focus inside the stack: stop every countdown so nothing closes while being read. */
 	pause(): void {

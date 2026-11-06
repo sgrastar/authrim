@@ -1,4 +1,5 @@
-import type { FieldType, ValidationRules } from '#lib/api/schema-setting.js';
+import type { EnumOption, FieldType, ValidationRules } from '#lib/api/schema-setting.js';
+import type { ChoiceItem } from '#lib/ui/builder/OptionListEditor.svelte';
 
 /**
  * What the Admin API refuses, checked before sending. Its answer to every refused value is the
@@ -16,8 +17,12 @@ export const LABEL_MAX = 255;
 export const DESCRIPTION_MAX = 2000;
 export const NAMESPACE_MAX = 255;
 export const ENUM_VALUES_MAX = 100;
+export const ENUM_VALUE_MAX = 128;
+export const ENUM_LABEL_MAX = 100;
 export const PATTERN_MAX = 128;
 export const RULES_MAX_CHARS = 4096;
+/** Enum rules carry every choice's labels in every language (UTF-8 bytes, as the API counts). */
+export const ENUM_RULES_MAX_BYTES = 64 * 1024;
 
 export type KeyProblem = 'empty' | 'pattern' | 'reserved' | 'taken' | 'same';
 
@@ -85,7 +90,10 @@ export interface RulesForm {
 	pattern: string;
 	min: string;
 	max: string;
-	enumValues: string[];
+	/** The choices: value and default label, each with a stable key (see `enumLabels`). */
+	enumOptions: ChoiceItem[];
+	/** The choices' labels by language, by the choice's key. */
+	enumLabels: Record<string, Record<string, string>>;
 	minDate: string;
 	maxDate: string;
 }
@@ -97,7 +105,8 @@ export function emptyRulesForm(): RulesForm {
 		pattern: '',
 		min: '',
 		max: '',
-		enumValues: [],
+		enumOptions: [],
+		enumLabels: {},
 		minDate: '',
 		maxDate: ''
 	};
@@ -105,14 +114,28 @@ export function emptyRulesForm(): RulesForm {
 
 const text = (value: number | undefined) => (value === undefined ? '' : String(value));
 
+/** The choices of stored rules: their options, else their bare values. */
+function enumOptionsOf(rules: ValidationRules | null): EnumOption[] {
+	if (rules?.enum_options?.length) return rules.enum_options;
+	return (rules?.enum_values ?? []).map((value) => ({ value }));
+}
+
 export function formFromRules(rules: ValidationRules | null): RulesForm {
+	const options = enumOptionsOf(rules);
 	return {
 		minLength: text(rules?.min_length),
 		maxLength: text(rules?.max_length),
 		pattern: rules?.pattern ?? '',
 		min: text(rules?.min),
 		max: text(rules?.max),
-		enumValues: rules?.enum_values ? [...rules.enum_values] : [],
+		enumOptions: options.map((option, index) => ({
+			key: `choice-${index}`,
+			value: option.value,
+			label: option.label ?? ''
+		})),
+		enumLabels: Object.fromEntries(
+			options.map((option, index) => [`choice-${index}`, { ...(option.labels ?? {}) }])
+		),
 		minDate: rules?.min_date ?? '',
 		maxDate: rules?.max_date ?? ''
 	};
@@ -129,6 +152,9 @@ export type RulesProblem =
 	| 'enum_empty'
 	| 'enum_too_many'
 	| 'enum_duplicate'
+	| 'enum_value_empty'
+	| 'enum_value_too_long'
+	| 'enum_label_too_long'
 	| 'date_order'
 	| 'too_large';
 
@@ -154,7 +180,26 @@ export function rulesFromForm(type: FieldType, form: RulesForm): ValidationRules
 		if (min !== null) rules.min = min;
 		if (max !== null) rules.max = max;
 	}
-	if (type === 'enum') rules.enum_values = form.enumValues;
+	if (type === 'enum') {
+		rules.enum_values = form.enumOptions.map((option) => option.value.trim());
+		const options = form.enumOptions.map((option) => {
+			const labels = Object.fromEntries(
+				Object.entries(form.enumLabels[option.key ?? ''] ?? {})
+					.map(([locale, text]) => [locale, text.trim()])
+					.filter(([, text]) => text !== '')
+			);
+			const label = option.label.trim();
+			return {
+				value: option.value.trim(),
+				...(label ? { label } : {}),
+				...(Object.keys(labels).length ? { labels } : {})
+			};
+		});
+		// Choices with no label at all are stored as bare values, as before labels existed.
+		if (options.some((option) => 'label' in option || 'labels' in option)) {
+			rules.enum_options = options;
+		}
+	}
 	if (type === 'date') {
 		if (form.minDate !== '') rules.min_date = form.minDate;
 		if (form.maxDate !== '') rules.max_date = form.maxDate;
@@ -188,16 +233,28 @@ export function checkRules(
 			problems.max = 'range_order';
 	}
 	if (type === 'enum') {
-		const values = form.enumValues;
-		if (values.length === 0) problems.enumValues = 'enum_empty';
-		else if (values.length > ENUM_VALUES_MAX) problems.enumValues = 'enum_too_many';
-		else if (new Set(values).size !== values.length) problems.enumValues = 'enum_duplicate';
+		const values = form.enumOptions.map((option) => option.value.trim());
+		const labels = form.enumOptions.flatMap((option) => [
+			option.label,
+			...Object.values(form.enumLabels[option.key ?? ''] ?? {})
+		]);
+		if (values.length === 0) problems.enumOptions = 'enum_empty';
+		else if (values.length > ENUM_VALUES_MAX) problems.enumOptions = 'enum_too_many';
+		else if (values.some((value) => value === '')) problems.enumOptions = 'enum_value_empty';
+		else if (values.some((value) => value.length > ENUM_VALUE_MAX))
+			problems.enumOptions = 'enum_value_too_long';
+		else if (new Set(values).size !== values.length) problems.enumOptions = 'enum_duplicate';
+		else if (labels.some((label) => label.trim().length > ENUM_LABEL_MAX))
+			problems.enumLabels = 'enum_label_too_long';
 	}
 	if (type === 'date' && form.minDate !== '' && form.maxDate !== '' && form.minDate > form.maxDate)
 		problems.maxDate = 'date_order';
 	if (Object.keys(problems).length === 0) {
 		const rules = rulesFromForm(type, form);
-		if (rules && JSON.stringify(rules).length > RULES_MAX_CHARS) problems.rules = 'too_large';
+		// As the API measures them: the JSON sent, in UTF-8 bytes.
+		const max = type === 'enum' ? ENUM_RULES_MAX_BYTES : RULES_MAX_CHARS;
+		if (rules && new TextEncoder().encode(JSON.stringify(rules)).length > max)
+			problems.rules = 'too_large';
 	}
 	return problems;
 }

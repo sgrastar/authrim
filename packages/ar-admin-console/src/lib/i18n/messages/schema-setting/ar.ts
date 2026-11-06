@@ -109,6 +109,11 @@ export const arSchemaSetting: Record<keyof typeof jaSchemaSetting, string> = {
 	'ss.rules.enum_empty': 'Add at least one choice.',
 	'ss.rules.enum_too_many': 'Up to 100 choices.',
 	'ss.rules.enum_duplicate': 'A choice is repeated.',
+	'ss.rules.enum_value_empty': 'A choice has no value.',
+	'ss.rules.enum_value_too_long': 'A value can be up to 128 characters.',
+	'ss.rules.enum_label_too_long': 'A label can be up to 100 characters.',
+	'ss.rules.enumLabels': 'Labels by language',
+	'ss.rules.enumDefaultLabel': 'Default label',
 	'ss.rules.date_order': 'The latest date has to be on or after the earliest.',
 	'ss.rules.too_large': 'The validation rules are too large.',
 	'ss.section.identity': 'Identity',
@@ -232,6 +237,14 @@ export const arSchemaSetting: Record<keyof typeof jaSchemaSetting, string> = {
 	'ss.error.partial':
 		'Some people’s values could not be processed. The attribute is marked “Failed”: try again.',
 	'ss.error.failed': 'It failed. Try again.',
+	'ss.error.valuesInUse':
+		'Users hold {values}, so these choices cannot be removed. Change those users’ values first.',
+	'ss.error.valueHeld': '“{value}” ({count} users)',
+	'ss.error.listSeparator': ', ',
+	'ss.error.valuesInUseEncrypted':
+		'This attribute is encrypted, so its users cannot be counted by value. Choices cannot be removed while any user holds the attribute.',
+	'ss.error.valuesInUseUnverifiable':
+		'This attribute has too many users to check all their values, so its choices cannot be narrowed here. Contact support.',
 	'ss.usage.col.type': 'Kind',
 	'ss.usage.col.target': 'Used by',
 	'ss.usage.col.protection': 'Deleting',

@@ -106,6 +106,11 @@ export const jaSchemaSetting = {
 	'ss.rules.enum_empty': '選択肢を 1 つ以上入れてください。',
 	'ss.rules.enum_too_many': '選択肢は 100 個までです。',
 	'ss.rules.enum_duplicate': '同じ選択肢が重複しています。',
+	'ss.rules.enum_value_empty': '値が空の選択肢があります。',
+	'ss.rules.enum_value_too_long': '値は 128 文字までです。',
+	'ss.rules.enum_label_too_long': '表示名は 100 文字までです。',
+	'ss.rules.enumLabels': '言語ごとの表示名',
+	'ss.rules.enumDefaultLabel': '既定の表示名',
 	'ss.rules.date_order': '最も遅い日付は、最も早い日付以降にしてください。',
 	'ss.rules.too_large': '検証ルールが大きすぎます。',
 	'ss.section.identity': '基本情報',
@@ -228,6 +233,14 @@ export const jaSchemaSetting = {
 	'ss.error.partial':
 		'一部の利用者の値を処理できませんでした。属性は「失敗」の状態になっています。再試行してください。',
 	'ss.error.failed': '失敗しました。もう一度試してください。',
+	'ss.error.valuesInUse':
+		'{values}をユーザーが選んでいるため、選択肢から外せません。先にその人たちの値を変えてください。',
+	'ss.error.valueHeld': '「{value}」（{count} 人）',
+	'ss.error.listSeparator': '、',
+	'ss.error.valuesInUseEncrypted':
+		'この属性は暗号化されているため、値ごとの人数を数えられません。この属性を持つユーザーがいる間は、選択肢を外せません。',
+	'ss.error.valuesInUseUnverifiable':
+		'この属性を持つユーザーが多すぎて、すべての値を確かめられないため、選択肢を狭められません。サポートに連絡してください。',
 	'ss.usage.col.type': '種類',
 	'ss.usage.col.target': '使っているもの',
 	'ss.usage.col.protection': '削除',

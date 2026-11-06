@@ -35,6 +35,9 @@ export const RULES_PROBLEM_KEY: Record<RulesProblem, MessageKey> = {
 	enum_empty: 'ss.rules.enum_empty',
 	enum_too_many: 'ss.rules.enum_too_many',
 	enum_duplicate: 'ss.rules.enum_duplicate',
+	enum_value_empty: 'ss.rules.enum_value_empty',
+	enum_value_too_long: 'ss.rules.enum_value_too_long',
+	enum_label_too_long: 'ss.rules.enum_label_too_long',
 	date_order: 'ss.rules.date_order',
 	too_large: 'ss.rules.too_large'
 };
@@ -47,6 +50,7 @@ export const FAILURE_KEY: Record<SchemaFailureKind, MessageKey> = {
 	forbidden: 'ss.error.forbidden',
 	not_found: 'ss.error.notFound',
 	partial: 'ss.error.partial',
+	values_in_use: 'ss.error.valuesInUse',
 	failed: 'ss.error.failed'
 };
 

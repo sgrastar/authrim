@@ -1,4 +1,7 @@
 <script module lang="ts">
+	import Toaster from '#lib/ui/toast/Toaster.svelte';
+	import { toast } from '#lib/ui/toast/toast.svelte.js';
+	import { waitForSettledToasts } from '#lib/ui/stories/toast-settled.js';
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, userEvent, waitFor, within } from 'storybook/test';
 	import { ADMIN_ROLES } from '@authrim/ar-lib-core/constants/admin-roles';
@@ -34,6 +37,11 @@
 		permissions: ['admin:settings:read']
 	};
 	const body = () => within(document.body);
+	/** A toast with this text, once every toast on screen has finished moving. */
+	async function settledToast(text: string) {
+		await body().findByText(text);
+		await waitForSettledToasts();
+	}
 	/** Waits for a text that may be on screen more than once (a key in a row and in its label). */
 	const seen = async (scope: ReturnType<typeof within>, text: string) =>
 		(await scope.findAllByText(text))[0];
@@ -214,6 +222,70 @@
 			tenantId={TENANT}
 			access={EDITOR}
 			initialId="s-employee"
+		/>
+	{/snippet}
+</Story>
+
+<Story
+	name="Choices and their labels"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		// Toasts are shared by the stories of a run: start from none.
+		toast.dismissAll();
+		await waitFor(() => expect(toast.items.length).toBe(0));
+		await canvas.findByRole('heading', { level: 1, name: 'Department' });
+		// Each choice has its stored value and a default label; the labels by language sit under.
+		const first = canvas.getByRole('textbox', {
+			name: `${t('options.text')} — ${t('options.item', { n: 1 })}`
+		});
+		await userEvent.type(first, 'Engineering team');
+		const table = await canvas.findByRole('region', { name: t('ss.rules.enumLabels') });
+		await expect(within(table).getByText('Engineering')).toBeInTheDocument();
+		await userEvent.click(await canvas.findByRole('button', { name: t('common.save') }));
+		await settledToast(t('ss.saved'));
+	}}
+>
+	{#snippet template()}
+		<Toaster />
+		<SchemaSetting
+			client={createFakeSchemaSetting()}
+			tenantId={TENANT}
+			access={EDITOR}
+			initialId="s-department"
+		/>
+	{/snippet}
+</Story>
+
+<Story
+	name="A choice users hold cannot be removed"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		// Toasts are shared by the stories of a run: start from none.
+		toast.dismissAll();
+		await waitFor(() => expect(toast.items.length).toBe(0));
+		await canvas.findByRole('heading', { level: 1, name: 'Department' });
+		// "Sales" (the second choice) is held by 12 users in the fake.
+		await userEvent.click(
+			canvas.getByRole('button', {
+				name: t('options.remove', { name: t('options.item', { n: 2 }) })
+			})
+		);
+		await userEvent.click(await canvas.findByRole('button', { name: t('common.save') }));
+		// The save is refused: the toast names the choice and how many hold it.
+		await settledToast(
+			t('ss.error.valuesInUse', {
+				values: t('ss.error.valueHeld', { value: 'Sales', count: (12).toLocaleString('en') })
+			})
+		);
+	}}
+>
+	{#snippet template()}
+		<Toaster />
+		<SchemaSetting
+			client={createFakeSchemaSetting()}
+			tenantId={TENANT}
+			access={EDITOR}
+			initialId="s-department"
 		/>
 	{/snippet}
 </Story>

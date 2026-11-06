@@ -38,6 +38,9 @@ import {
   listNonPiiFieldUsage,
   countUsersWithNonPiiFieldData,
   countUsersWithPiiFieldData,
+  findHeldNonPiiValuesOutside,
+  normalizeEnumRules,
+  enumValuesOf,
   deleteStoredCustomClaimData,
   renameStoredCustomClaimData,
   resolveCustomClaimRuntimeSourcesFromEnv,
@@ -343,12 +346,115 @@ function isSafeRegex(pattern: string): boolean {
 }
 
 /**
- * Validate validation_rules based on field_type
+ * Stored validation_rules: an object, or null when there are none or they cannot be read. D1
+ * keeps them as JSON text; PostgreSQL (jsonb) answers the object itself.
+ */
+function parseStoredRules(value: unknown): unknown {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  if (typeof value !== 'string' || !value.trim()) return null;
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+/** The bytes of the JSON as stored (UTF-8), which is what the size limit is about. */
+const jsonBytes = (json: string) => new TextEncoder().encode(json).length;
+
+/**
+ * The 409 refusing enum rules that leave out values users hold, or null when every held value is
+ * still allowed. A non-PII attribute is read by value; an encrypted (PII) one only as a whole, so
+ * any holder of it refuses narrower rules.
+ */
+async function enumValuesInUse(
+  c: AdminContext,
+  tenantId: string,
+  fieldKey: string,
+  allowed: string[],
+  cardinality: 'single' | 'multi',
+  isPii: boolean
+): Promise<Response | null> {
+  const sources = await resolveCustomClaimStorageSources(c, tenantId);
+  if (isPii) {
+    const holders = Number(await countPiiFieldAcrossStores(sources, tenantId, fieldKey)) || 0;
+    if (holders === 0) return null;
+    return c.json(
+      {
+        error: 'enum_value_in_use',
+        error_description:
+          'The attribute is encrypted, so its users cannot be counted by value; narrow its choices only while no user holds the attribute.',
+        reason: 'encrypted',
+        values: [],
+        holders,
+      },
+      409
+    );
+  }
+  // The values to report (some from each store), then how many hold each of them in every store:
+  // a store that listed other values first must still count these.
+  const found = await mapWithConcurrency(sources.nonPiiDbs, 4, (db) =>
+    findHeldNonPiiValuesOutside(db, tenantId, fieldKey, allowed, cardinality, { limit: 20 })
+  );
+  // A store too large to read in full cannot show that no held value is left out: refused.
+  const unverifiable = () =>
+    c.json(
+      {
+        error: 'enum_value_in_use',
+        error_description:
+          'The attribute has too many users to check its values; the choices were not narrowed.',
+        reason: 'unverifiable',
+        values: [],
+      },
+      409
+    );
+  if (found.some((result) => !result.complete)) return unverifiable();
+  const reported = [...new Set(found.flatMap((result) => [...result.counts.keys()]))].slice(0, 20);
+  if (reported.length === 0) return null;
+  const totals = new Map<string, number>(reported.map((value) => [value, 0]));
+  const counts =
+    sources.nonPiiDbs.length > 1
+      ? await mapWithConcurrency(sources.nonPiiDbs, 4, (db) =>
+          findHeldNonPiiValuesOutside(db, tenantId, fieldKey, allowed, cardinality, {
+            only: reported,
+          })
+        )
+      : found;
+  if (counts.some((result) => !result.complete)) return unverifiable();
+  for (const result of counts) {
+    for (const [value, count] of result.counts) {
+      if (totals.has(value)) totals.set(value, (totals.get(value) ?? 0) + count);
+    }
+  }
+  const held = [...totals].filter(([, users]) => users > 0);
+  if (held.length === 0) return null;
+  return c.json(
+    {
+      error: 'enum_value_in_use',
+      error_description: 'Users hold values that the new choices do not allow.',
+      reason: 'held',
+      values: held.map(([value, users]) => ({ value, users })),
+    },
+    409
+  );
+}
+
+/**
+ * The largest validation_rules JSON: enum rules carry each choice's labels in every Login UI
+ * language (100 choices), the others a few numbers or a pattern.
+ */
+function rulesSizeLimit(fieldType: string): number {
+  return fieldType === 'enum' ? 64 * 1024 : 4096;
+}
+
+/**
+ * Validate validation_rules based on field_type. `rules` is what is stored when valid: the input,
+ * or for an enum its normalized form (enum_values derived from enum_options, labels trimmed).
  */
 function validateValidationRules(
   fieldType: FieldType,
   rules: unknown
-): { valid: boolean; error?: string } {
+): { valid: boolean; error?: string; rules?: unknown } {
   if (rules === null || rules === undefined) return { valid: true };
   if (typeof rules !== 'object' || Array.isArray(rules)) {
     return { valid: false, error: 'validation_rules must be an object' };
@@ -395,18 +501,10 @@ function validateValidationRules(
       return { valid: true };
     }
     case 'enum': {
-      const allowed = new Set(['enum_values']);
-      for (const key of Object.keys(r)) {
-        if (!allowed.has(key))
-          return { valid: false, error: `Unknown enum validation key: ${key}` };
-      }
-      if (!Array.isArray(r.enum_values) || r.enum_values.length === 0)
-        return { valid: false, error: 'enum_values must be a non-empty array' };
-      if (r.enum_values.length > 100)
-        return { valid: false, error: 'enum_values must have at most 100 items' };
-      if (!r.enum_values.every((v: unknown) => typeof v === 'string'))
-        return { valid: false, error: 'enum_values must contain only strings' };
-      return { valid: true };
+      const normalized = normalizeEnumRules(r);
+      return normalized.ok
+        ? { valid: true, rules: normalized.rules }
+        : { valid: false, error: normalized.error };
     }
     case 'date': {
       const allowed = new Set(['min_date', 'max_date']);
@@ -1221,19 +1319,21 @@ export async function adminCustomClaimCreateHandler(c: AdminContext) {
     // Validate validation_rules (pre-serialize for size check + reuse)
     let validationRulesJson: string | null = null;
     if (body.validation_rules !== undefined && body.validation_rules !== null) {
-      validationRulesJson = JSON.stringify(body.validation_rules);
-      if (validationRulesJson.length > 4096) {
-        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
-          variables: {
-            field: 'validation_rules',
-            reason: 'validation_rules JSON must be at most 4KB',
-          },
-        });
-      }
       const rulesCheck = validateValidationRules(field_type, body.validation_rules);
       if (!rulesCheck.valid) {
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
           variables: { field: 'validation_rules', reason: rulesCheck.error! },
+        });
+      }
+      // Measured as stored: normalized, in UTF-8 bytes.
+      validationRulesJson = JSON.stringify(rulesCheck.rules ?? body.validation_rules);
+      const limit = rulesSizeLimit(String(field_type));
+      if (jsonBytes(validationRulesJson) > limit) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
+          variables: {
+            field: 'validation_rules',
+            reason: `validation_rules JSON must be at most ${limit / 1024}KB`,
+          },
         });
       }
     }
@@ -1822,24 +1922,65 @@ export async function adminCustomClaimUpdateHandler(c: AdminContext) {
     // Validate validation_rules (pre-serialize for size check + reuse)
     const validationRules = body.validation_rules !== undefined ? body.validation_rules : undefined;
     let validationRulesJson: string | null | undefined;
+    // The rules as they will be stored (normalized), when this update sets them.
+    let nextRules: unknown;
     if (validationRules !== undefined && validationRules !== null) {
-      validationRulesJson = JSON.stringify(validationRules);
-      if (validationRulesJson.length > 4096) {
-        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
-          variables: {
-            field: 'validation_rules',
-            reason: 'validation_rules JSON must be at most 4KB',
-          },
-        });
-      }
       const rulesCheck = validateValidationRules(fieldType as FieldType, validationRules);
       if (!rulesCheck.valid) {
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
           variables: { field: 'validation_rules', reason: rulesCheck.error! },
         });
       }
+      nextRules = rulesCheck.rules ?? validationRules;
+      // Measured as stored: normalized, in UTF-8 bytes.
+      validationRulesJson = JSON.stringify(nextRules);
+      const limit = rulesSizeLimit(String(fieldType));
+      if (jsonBytes(validationRulesJson) > limit) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
+          variables: {
+            field: 'validation_rules',
+            reason: `validation_rules JSON must be at most ${limit / 1024}KB`,
+          },
+        });
+      }
     } else if (validationRules === null) {
       validationRulesJson = null;
+      nextRules = null;
+    } else if (fieldType !== schema.field_type) {
+      // A new type with the stored rules: they must suit it, as rules given with it would.
+      const stored = parseStoredRules(schema.validation_rules);
+      const rulesCheck = validateValidationRules(fieldType as FieldType, stored);
+      if (!rulesCheck.valid) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
+          variables: { field: 'validation_rules', reason: rulesCheck.error! },
+        });
+      }
+    }
+
+    // An enum's choices cannot leave out values users hold: those values would no longer be
+    // allowed. This covers removing a choice, constraining an enum that allowed any value, and
+    // making an attribute an enum. Encrypted values cannot be read by value, so any holder of the
+    // attribute refuses narrower choices.
+    const typeChanging = fieldType !== schema.field_type;
+    if (fieldType === 'enum' && (validationRules !== undefined || typeChanging)) {
+      const storedRules = parseStoredRules(schema.validation_rules);
+      const allowed = enumValuesOf(validationRules !== undefined ? nextRules : storedRules);
+      const before = schema.field_type === 'enum' ? enumValuesOf(storedRules) : [];
+      const kept = new Set(allowed);
+      // No values means any value; narrower is "some value allowed before is not now".
+      const narrower =
+        allowed.length > 0 && (before.length === 0 || before.some((value) => !kept.has(value)));
+      if (narrower) {
+        const refusal = await enumValuesInUse(
+          c,
+          tenantId,
+          String(schema.field_key),
+          allowed,
+          existingCardinality,
+          schema.is_pii === 1 || schema.is_pii === true
+        );
+        if (refusal) return refusal;
+      }
     }
 
     // Validate required_scopes (pre-serialize for reuse)
