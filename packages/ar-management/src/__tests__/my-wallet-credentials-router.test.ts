@@ -140,6 +140,19 @@ describe('my wallet credential offers', () => {
       expect(audit).not.toContain('credential_offer_uri');
     });
 
+    it('names the active Keyring factors in the offer link so Keyring renews with that key', async () => {
+      const JKT = 'NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs';
+      mocks.listActive.mockResolvedValueOnce([
+        { id: 'kf-1', kind: 'keyring_holder_key', holder_jkt: JKT },
+        { id: 'sf-1', kind: 'webauthn_credential', holder_jkt: null },
+      ]);
+      const response = await createApp().post();
+      const body = await response.json<{ credentialOffer: string }>();
+      expect(body.credentialOffer).toBe(`${OFFER.credentialOffer}&authrim_renew_holder_jkt=${JKT}`);
+      // The hint is not logged either.
+      expect(JSON.stringify(mocks.writeAdminAuditLog.mock.calls)).not.toContain(JKT);
+    });
+
     it.each([
       ['not MFA verified', { mfaVerified: false }],
       ['authenticated too long ago', { authenticationTimeMs: Date.now() - 6 * 60 * 1000 }],
@@ -311,18 +324,47 @@ describe('my wallet credential offers', () => {
         issuedAt: 2_000,
         expiresAt: 1_900_000_000_000,
         holderKeyThumbprint: expectedThumbprint,
+        secondFactor: false,
       });
       expect(body.items[1]).toEqual({
         id: 'cred-1',
         status: 'revoked',
         issuedAt: 1_000,
         expiresAt: null,
+        secondFactor: false,
       });
       const [sql, params] = mocks.coreQuery.mock.calls[0] as [string, unknown[]];
       expect(sql).toContain('ORDER BY created_at DESC');
       expect(sql).toContain('LIMIT 50');
       expect(sql).not.toContain("'pending'");
       expect(params).toEqual(['tenant-1', 'admin-1', 'https://authrim.com/credentials/admin/v1']);
+    });
+
+    it('marks the credential whose key is an active second factor', async () => {
+      const expected = await crypto.subtle.digest(
+        'SHA-256',
+        new TextEncoder().encode(`{"crv":"P-256","kty":"EC","x":"${JWK.x}","y":"${JWK.y}"}`)
+      );
+      const thumbprint = btoa(String.fromCharCode(...new Uint8Array(expected)))
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '');
+      mocks.listActive.mockResolvedValueOnce([{ id: 'kf-1', holder_jkt: thumbprint }]);
+      mocks.coreQuery.mockResolvedValue([
+        {
+          public_id: 'cred-2',
+          status: 'active',
+          holder_binding: JSON.stringify(JWK),
+          created_at: 2_000,
+          expires_at: null,
+        },
+      ]);
+      const body = await (
+        await createApp().list()
+      ).json<{
+        items: Array<Record<string, unknown>>;
+      }>();
+      expect(body.items[0]).toMatchObject({ id: 'cred-2', secondFactor: true });
     });
 
     it('omits the thumbprint for a malformed stored key', async () => {
@@ -456,6 +498,37 @@ describe('my wallet credential offers', () => {
         expect(response.status).toBe(503);
         expect(response.headers.get('Retry-After')).toBe('1');
       });
+    });
+
+    it('never touches the factor of another revoked credential (a failed renewal keeps the key)', async () => {
+      // An issuance abandoned while renewing with a registered key is left revoked with that key;
+      // revoking an unrelated credential must not take that factor.
+      const REGISTERED = { kty: 'EC', crv: 'P-256', x: 'eA', y: 'eQ' };
+      mocks.coreQuery.mockResolvedValue([{ holder_binding: JSON.stringify(REGISTERED) }]);
+      mocks.coreQueryOne.mockImplementation(async (sql: string) =>
+        sql.includes('holder_binding') ? { holder_binding: null } : { public_id: 'cred-1' }
+      );
+      const response = await createApp().revoke();
+      expect(response.status).toBe(200);
+      expect(mocks.revokeKeyring).not.toHaveBeenCalled();
+      expect(mocks.revokeFactor).not.toHaveBeenCalled();
+    });
+
+    it('covers removing a second factor for any credential with a holder key', async () => {
+      const HOLDER = { kty: 'EC', crv: 'P-256', x: 'eA', y: 'eQ' };
+      mocks.coreQueryOne.mockImplementation(async (sql: string) =>
+        sql.includes('holder_binding')
+          ? { holder_binding: JSON.stringify(HOLDER) }
+          : { public_id: 'cred-1' }
+      );
+      // Not a factor when the request starts; one registered meanwhile still goes with it.
+      mocks.findKeyring.mockResolvedValue(null);
+      const response = await createApp().revoke();
+      expect(response.status).toBe(200);
+      expect(mocks.stepUp.mock.calls[0][1]).toMatchObject({
+        alsoCovers: ['admin.second_factor.remove'],
+      });
+      expect(mocks.revokeKeyring).toHaveBeenCalledWith('admin-1', expect.any(String));
     });
 
     it('is idempotent: an already revoked credential is 200 again', async () => {

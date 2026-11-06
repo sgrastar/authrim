@@ -934,6 +934,11 @@ export const de = {
 	'keyring.credentials.noExpiry': 'Nicht festgelegt',
 	'keyring.credentials.revoke': 'Widerrufen',
 	'keyring.credentials.revokeTitle': 'Berechtigung {code} widerrufen?',
+	'keyring.issued.factorNote':
+		'Hat Keyring Ihren Nachweis erneuert, bleibt der Bestätigungscode des Schlüssels gleich und Ihr zweiter Faktor funktioniert weiter. Hat sich der Code geändert, ist dies ein neuer Schlüssel: Fügen Sie Keyring unter „Mein Konto“ als zweiten Faktor hinzu.',
+	'keyring.credentials.secondFactor': 'Zweiter Faktor',
+	'keyring.credentials.revokeRemovesFactor':
+		'Der Schlüssel dieses Nachweises ist als zweiter Faktor registriert. Wenn Sie ihn widerrufen, wird dieser zweite Faktor für alle Nachweise mit demselben Schlüssel entfernt (auch erneuerte). Ein alter Nachweis wird mit seinem Ablauf ungültig, auch wenn Sie ihn nicht widerrufen.',
 	'keyring.credentials.revokeBody':
 		'Die Berechtigung funktioniert sofort nicht mehr und kann nicht wiederhergestellt werden. Um Keyring wieder zu nutzen, müssen Sie eine neue Berechtigung hinzufügen.',
 	'keyring.credentials.revoked': 'Berechtigung widerrufen.',

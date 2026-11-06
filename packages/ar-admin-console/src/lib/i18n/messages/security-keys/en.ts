@@ -11,6 +11,11 @@ export const enSecurityKeys: Record<keyof typeof jaSecurityKeys, string> = {
 	'sk.nameHint': 'For example: YubiKey (blue)',
 	'sk.register': 'Register key',
 	'sk.unnamed': 'Unnamed',
+	'sk.recovery.soleAdmin':
+		'You are the only administrator, so you cannot request a recovery here. Recover with the environment owner procedure (last-resort recovery).',
+	'sk.onlyOne.title': 'You have only one second factor',
+	'sk.onlyOne.body':
+		'If you lose it, you cannot perform sensitive operations. We recommend registering another security key or Keyring.',
 	'sk.only': 'Only key',
 	'sk.created': 'Registered',
 	'sk.lastUsed': 'Last used',
