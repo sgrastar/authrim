@@ -601,6 +601,7 @@ export * from './middleware/deprecation-headers';
 export * from './middleware/sdk-compatibility';
 export * from './middleware/idempotency';
 export * from './middleware/diagnostic-logging-middleware';
+export * from './middleware/public-asset-resource-policy';
 export * from './middleware/csrf';
 
 // Plugin Context (Phase 9 - Plugin Architecture)

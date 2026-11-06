@@ -156,6 +156,32 @@ describe('securityHeaders', () => {
 		expect(response.headers.get('Pragma')).toBe('no-cache');
 		expect(response.headers.get('Content-Security-Policy')).toContain("default-src 'self'");
 	});
+
+	// Stored Login UI images are paths on the API, loaded from its origin when there is no proxy.
+	it('lets images load from a plain HTTP API origin in local development', async () => {
+		const csp = async (env: Record<string, unknown>) => {
+			const event = {
+				url: new URL('http://localhost:5174/admin/login'),
+				request: new Request('http://localhost:5174/admin/login', { method: 'GET' }),
+				platform: { env },
+				getClientAddress: () => '127.0.0.1'
+			} as unknown as Parameters<typeof securityHeaders>[0]['event'];
+			const response = await securityHeaders({
+				event,
+				resolve: vi.fn(
+					async () => new Response('page', { headers: { 'content-type': 'text/html' } })
+				)
+			});
+			return response.headers.get('Content-Security-Policy') ?? '';
+		};
+		expect(await csp({ PUBLIC_API_BASE_URL: 'http://localhost:8787' })).toContain(
+			"img-src 'self' https: data: blob: http://localhost:8787"
+		);
+		// An HTTPS API is already covered by https:, and nothing else is added.
+		expect(await csp({ PUBLIC_API_BASE_URL: 'https://api.example.com' })).toContain(
+			"img-src 'self' https: data: blob:;"
+		);
+	});
 });
 
 describe('apiProxy', () => {
