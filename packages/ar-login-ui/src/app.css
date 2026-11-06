@@ -1077,37 +1077,38 @@ tr.expired {
 	--panel-glass-bg: rgba(11, 14, 22, 0.4);
 }
 
-/* The brand panel always sits on a dark photographic or navy surface. Keep its
-   content on dedicated high-contrast colors instead of inheriting form colors. */
-:is(:root, .login-ui-theme-boundary)[data-login-theme='split-brand-panel'] {
+/* The brand panel always sits on a dark photographic or navy surface, whatever the palette. Keep
+   its content on dedicated high-contrast colors instead of inheriting form colors. */
+:is(:root, .login-ui-theme-boundary)[data-login-theme='split-brand-panel'],
+:is(:root, .login-ui-theme-boundary)[data-page-layout='split_panel'] {
 	--brand-panel-title-color: #f4f7ff;
 	--brand-panel-copy-color: #c7d2eb;
 }
 
-/* Vermilion: full-bleed imagery + strong glass + sharp corners
-   (mock: mocks/fullbleed-glass.html). Dark values are the base because the
-   page sits on imagery in both modes; light mode swaps card/text/accent. */
-:is(:root, .login-ui-theme-boundary)[data-login-theme='fullbleed-glass'] {
-	--login-page-background-color: #0d0908;
-	--primary: var(--login-accent-color, #e8623f);
-	--primary-hover: color-mix(in srgb, var(--primary) 82%, white);
-	--primary-light: color-mix(in srgb, var(--primary) 16%, transparent);
-	--gradient-primary: linear-gradient(
-		135deg,
-		var(--primary) 0%,
-		color-mix(in srgb, var(--primary) 82%, black) 100%
-	);
-	--bg-page: #0d0908;
-	--bg-card: rgba(14, 10, 9, 0.45);
-	--bg-glass: rgba(14, 10, 9, 0.45);
-	--bg-input: rgba(255, 255, 255, 0.08);
-	--bg-subtle: rgba(255, 255, 255, 0.06);
-	--blur-sm: blur(28px) saturate(140%);
-	--border: rgba(255, 255, 255, 0.18);
-	--border-glass: rgba(255, 255, 255, 0.18);
-	--text-primary: #f6efe9;
-	--text-secondary: #cfc3ba;
-	--text-muted: #99897f;
+/* Swiss Grid: flat, square and high contrast, drawn the way the Admin console's Swiss Grid theme
+   is (ar-admin-console src/lib/ui/themes/swiss-grid.css): a paper page that the card shares, ink
+   for text and the primary button, rules in place of shadows, no rounded corner, heavy tight
+   headings, and one warm orange for focus. Light is the base; dark overrides it. */
+:is(:root, .login-ui-theme-boundary)[data-login-theme='swiss-grid'] {
+	--login-page-background-color: #f6f5f1;
+	--login-page-overlay: transparent;
+	--focus-ring: #ff4400;
+	/* The primary button and links are ink; a tenant's accent replaces it, with its own label. */
+	--primary: var(--login-accent-color, #141412);
+	--primary-hover: var(--login-accent-color, #000000);
+	--primary-light: color-mix(in srgb, var(--primary) 7%, transparent);
+	--gradient-primary: var(--primary);
+	--bg-page: #f6f5f1;
+	--bg-card: #f6f5f1;
+	--bg-glass: #f6f5f1;
+	--bg-input: #fbfaf7;
+	--bg-subtle: #ecebe6;
+	--blur-sm: none;
+	--border: rgba(20, 20, 18, 0.15);
+	--border-glass: #141412;
+	--text-primary: #141412;
+	--text-secondary: #4f4e4a;
+	--text-muted: #5f5e59;
 	--radius-sm: 0px;
 	--radius-md: 0px;
 	--radius-lg: 0px;
@@ -1116,98 +1117,67 @@ tr.expired {
 	--card-padding: 24px;
 	--button-radius: 0px;
 	--input-radius: 0px;
-	--input-border: rgba(255, 255, 255, 0.26);
+	--input-border: rgba(20, 20, 18, 0.15);
 	--button-primary-bg: var(--primary);
-	/* A tenant's accent fills the button: its label takes the colour that reads on it. */
-	--button-primary-text: var(--login-accent-text, #1c0d08);
-	--button-secondary-bg: rgba(255, 255, 255, 0.07);
-	--button-secondary-border: rgba(255, 255, 255, 0.28);
-	--button-secondary-text: #f6efe9;
-	--card-bg-muted: rgba(255, 255, 255, 0.06);
-	--surface-muted: rgba(255, 255, 255, 0.06);
+	--button-primary-text: var(--login-accent-text, #f6f5f1);
+	--button-secondary-bg: #f6f5f1;
+	--button-secondary-border: #141412;
+	--button-secondary-text: #141412;
+	--card-bg-muted: #ecebe6;
+	--surface-muted: #ecebe6;
 	--accent-color: var(--primary);
-	--border-color: rgba(255, 255, 255, 0.18);
-	--shadow-sm: 0 24px 72px rgba(0, 0, 0, 0.55);
+	--border-color: rgba(20, 20, 18, 0.15);
+	/* Rules, not shadows: the card is a 1px ink ring (the Admin console's --shadow-md). */
+	--shadow-sm: 0 0 0 1px #141412;
+	--shadow-md: 0 0 0 1px #141412;
+	--shadow-lg: 0 0 0 2px #141412;
+	--success: #1a7a3c;
+	--success-light: #e3efe6;
+	--warning: #a33a00;
+	--warning-light: #fbe8dc;
+	--danger: #b8201c;
+	--danger-light: #f8e2e0;
+	--panel-glass-bg: #f6f5f1;
 	--font-display:
-		'Avenir Next Condensed', 'Avenir Next', 'Helvetica Neue', 'Hiragino Sans', 'Noto Sans JP',
-		sans-serif;
-	--font-body: 'Avenir Next', 'Helvetica Neue', 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+		'Archivo', system-ui, 'Hiragino Sans', 'Noto Sans JP', 'Helvetica Neue', Arial, sans-serif;
+	--font-body:
+		'Archivo', system-ui, 'Hiragino Sans', 'Noto Sans JP', 'Helvetica Neue', Arial, sans-serif;
 	--login-page-max-width: 420px;
-	/* The page: default imagery, then a page-wide scrim (under everything, wherever text sits)
-	   and darker top and bottom bands behind the header and footer. */
-	--fullbleed-default-image: linear-gradient(160deg, #3a2018 0%, #17100c 60%, #0d0908 100%);
-	--fullbleed-scrim: rgba(8, 5, 4, 0.5);
-	--fullbleed-overlay:
-		linear-gradient(to top, rgba(10, 7, 6, 0.55), rgba(10, 7, 6, 0.1) 26%, transparent 45%),
-		linear-gradient(to bottom, rgba(10, 7, 6, 0.4), transparent 32%),
-		linear-gradient(var(--fullbleed-scrim), var(--fullbleed-scrim));
-	/* Text placed on the imagery (header, footer, links under the card). */
-	--fullbleed-on-image-title: #fffaf6;
-	--fullbleed-on-image-text: rgba(255, 255, 255, 0.88);
-	--fullbleed-on-image-muted: rgba(255, 255, 255, 0.72);
-	--fullbleed-on-image-shadow: rgba(0, 0, 0, 0.5);
-	/* Behind text on a tenant's own image, whose lightness is unknown (none on the default). */
-	--fullbleed-on-image-backdrop-image: rgba(14, 10, 9, 0.62);
-	--fullbleed-alert-base: #1b1412;
 }
 
-:is(:root, .login-ui-theme-boundary)[data-theme='light'][data-login-theme='fullbleed-glass'] {
-	--login-page-background-color: #ecdfd3;
-	/* Darkened from #c93a22 so links meet 4.5:1 on the translucent card. */
-	--primary: var(--login-accent-color, #b0301b);
-	--primary-hover: color-mix(in srgb, var(--primary) 82%, black);
-	--primary-light: color-mix(in srgb, var(--primary) 12%, transparent);
-	--gradient-primary: linear-gradient(
-		135deg,
-		var(--primary) 0%,
-		color-mix(in srgb, var(--primary) 82%, black) 100%
-	);
-	--bg-page: #ecdfd3;
-	--bg-card: rgba(255, 253, 250, 0.5);
-	--bg-glass: rgba(255, 253, 250, 0.5);
-	--bg-input: rgba(255, 255, 255, 0.65);
-	--bg-subtle: rgba(34, 27, 23, 0.06);
-	--blur-sm: blur(26px) saturate(150%);
-	--border: rgba(34, 27, 23, 0.16);
-	--border-glass: rgba(255, 255, 255, 0.45);
-	--text-primary: #221b17;
-	--text-secondary: #5c524c;
-	--text-muted: #655a54;
-	--input-border: rgba(34, 27, 23, 0.28);
-	--button-primary-bg: var(--primary);
-	--button-primary-text: var(--login-accent-text, #ffffff);
-	--button-secondary-bg: rgba(255, 255, 255, 0.55);
-	--button-secondary-border: rgba(34, 27, 23, 0.35);
-	--button-secondary-text: #221b17;
-	--card-bg-muted: rgba(255, 255, 255, 0.42);
-	--surface-muted: rgba(255, 255, 255, 0.42);
-	--accent-color: var(--primary);
-	--border-color: rgba(34, 27, 23, 0.16);
-	--shadow-sm: 0 24px 64px rgba(12, 8, 6, 0.3);
-	/* Light mode keeps the card translucent, so what shows through it is light: light default
-	   imagery (a tenant's own image should be light too), light scrims, and dark text on it. */
-	--fullbleed-default-image: linear-gradient(160deg, #f6ede5 0%, #ecdfd3 60%, #e0cdbd 100%);
-	--fullbleed-scrim: rgba(250, 245, 240, 0.12);
-	--fullbleed-overlay:
-		linear-gradient(
-			to top,
-			rgba(250, 245, 240, 0.72),
-			rgba(250, 245, 240, 0.18) 26%,
-			transparent 45%
-		),
-		linear-gradient(
-			to bottom,
-			rgba(250, 245, 240, 0.78),
-			rgba(250, 245, 240, 0.36) 18%,
-			transparent 38%
-		),
-		linear-gradient(var(--fullbleed-scrim), var(--fullbleed-scrim));
-	--fullbleed-on-image-title: #221b17;
-	--fullbleed-on-image-text: #3d332e;
-	--fullbleed-on-image-muted: #4a3f39;
-	--fullbleed-on-image-shadow: rgba(255, 250, 246, 0.6);
-	--fullbleed-on-image-backdrop-image: rgba(250, 245, 240, 0.78);
-	--fullbleed-alert-base: #fbf7f3;
+:is(:root, .login-ui-theme-boundary)[data-theme='dark'][data-login-theme='swiss-grid'] {
+	--login-page-background-color: #121210;
+	--focus-ring: #ff5a14;
+	--primary: var(--login-accent-color, #e9e7e0);
+	--primary-hover: var(--login-accent-color, #ffffff);
+	--bg-page: #121210;
+	--bg-card: #181816;
+	--bg-glass: #181816;
+	--bg-input: #1e1e1b;
+	--bg-subtle: #1e1e1b;
+	--border: rgba(233, 231, 224, 0.16);
+	--border-glass: rgba(233, 231, 224, 0.5);
+	--text-primary: #e9e7e0;
+	--text-secondary: #bdbbb4;
+	--text-muted: #a3a19a;
+	--input-border: rgba(233, 231, 224, 0.16);
+	--button-primary-text: var(--login-accent-text, #121210);
+	--button-secondary-bg: #181816;
+	--button-secondary-border: rgba(233, 231, 224, 0.5);
+	--button-secondary-text: #e9e7e0;
+	--card-bg-muted: #1e1e1b;
+	--surface-muted: #1e1e1b;
+	--panel-glass-bg: #181816;
+	--border-color: rgba(233, 231, 224, 0.16);
+	--shadow-sm: 0 0 0 1px rgba(233, 231, 224, 0.5);
+	--shadow-md: 0 0 0 1px rgba(233, 231, 224, 0.5);
+	--shadow-lg: 0 0 0 2px rgba(233, 231, 224, 0.5);
+	--success: #4cc97a;
+	--success-light: rgba(76, 201, 122, 0.13);
+	--warning: #ff8a4c;
+	--warning-light: rgba(255, 90, 20, 0.13);
+	--danger: #ff6b67;
+	--danger-light: rgba(255, 107, 103, 0.13);
 }
 
 :is(:root, .login-ui-theme-boundary)[data-font-family='rounded'] {
@@ -1636,151 +1606,115 @@ tr.expired {
 	--login-page-overlay: linear-gradient(135deg, rgba(0, 0, 0, 0.38), rgba(0, 0, 0, 0.08));
 }
 
-/* --- Vermilion (fullbleed-glass) page treatment ---
-   Placed after the fullbleed_card overlay so the theme scrims win. The imagery, the scrims and the
-   colours of text placed on the imagery are tokens of the theme boundary (dark below, light in the
-   light block), so a page always follows its own boundary's scheme. */
-[data-login-theme='fullbleed-glass'] .auth-page {
-	--login-page-overlay: var(--fullbleed-overlay);
-	background-image:
-		var(--login-page-image-veil), var(--login-page-background-layer, var(--fullbleed-default-image));
+/* The split template's brand panel is ink, not navy: flat, no gradient. A tenant's own picture
+   still replaces it (those rules are more specific). */
+[data-login-theme='swiss-grid'][data-page-layout='split_panel'] .auth-brand-panel {
+	background-image: linear-gradient(#141412, #141412);
 }
 
-/* Vermilion bold typography and on-image readability (mock parity) */
-[data-login-theme='fullbleed-glass'] .auth-page .auth-header__title {
-	color: var(--fullbleed-on-image-title);
-	font-size: 2em;
-	font-weight: 300;
-	letter-spacing: 0.5em;
-	text-indent: 0.5em;
-	text-transform: uppercase;
-	line-height: 1.05;
-	text-shadow: 0 2px 28px var(--fullbleed-on-image-shadow);
+/* --- Swiss Grid elements ---
+   What the tokens above cannot say. Headings are heavy and tight (the Admin console's page title:
+   weight 700, tracking -0.03em); controls are square with a rule; focus is the warm orange ring;
+   a press pushes the button 1px. Nothing is translucent, blurred or shadowed. */
+[data-login-theme='swiss-grid'] .auth-page .auth-header__title,
+[data-login-theme='swiss-grid'] .runtime-screen-heading h2 {
+	font-family: var(--font-display);
+	font-weight: 700;
+	letter-spacing: -0.03em;
 }
 
-[data-login-theme='fullbleed-glass'] .auth-page .auth-header__subtitle {
-	color: var(--fullbleed-on-image-text);
-	letter-spacing: 0.12em;
-	text-shadow: 0 1px 16px var(--fullbleed-on-image-shadow);
+/* A screen's heading keeps the scale every theme shares. */
+[data-login-theme='swiss-grid'] .runtime-screen-heading h2,
+[data-login-theme='glass'] .runtime-screen-heading h2,
+[data-login-theme='clear-glass'] .runtime-screen-heading h2 {
+	font-size: var(--auth-heading-size);
 }
 
-[data-login-theme='fullbleed-glass'] .auth-page .auth-footer {
-	color: var(--fullbleed-on-image-muted);
-	text-shadow: 0 1px 12px var(--fullbleed-on-image-shadow);
+[data-login-theme='swiss-grid'] .auth-page :focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: 2px;
 }
 
-[data-login-theme='fullbleed-glass'] .auth-page .auth-bottom-link {
-	color: var(--fullbleed-on-image-text);
-	text-shadow: 0 1px 12px var(--fullbleed-on-image-shadow);
+[data-login-theme='swiss-grid'] .runtime-screen-field input,
+[data-login-theme='swiss-grid'] .runtime-screen-field select {
+	background: var(--bg-input);
+	border: 1px solid var(--input-border);
 }
 
-[data-login-theme='fullbleed-glass'] .auth-page .auth-bottom-link a {
-	color: var(--fullbleed-on-image-title);
-	text-decoration: underline;
+[data-login-theme='swiss-grid'] .runtime-screen-field input:focus {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: 0;
+	border-color: var(--text-primary);
+	box-shadow: none;
+}
+
+[data-login-theme='swiss-grid'] .runtime-auth-button,
+[data-login-theme='swiss-grid'] .btn {
+	font-weight: 600;
+	box-shadow: none;
+}
+
+/* The secondary button is the same ring the card is: ink on paper. */
+[data-login-theme='swiss-grid'] .runtime-auth-button.secondary,
+[data-login-theme='swiss-grid'] .btn-secondary {
+	background: var(--button-secondary-bg);
+	border: 1px solid var(--button-secondary-border);
+	color: var(--button-secondary-text);
+}
+
+/* A button answers a press at once: pushed 1px, and a darker face on the primary. */
+[data-login-theme='swiss-grid'] .runtime-auth-button:not(:disabled):active,
+[data-login-theme='swiss-grid'] .btn:not(:disabled):active {
+	transform: translateY(1px);
+}
+
+[data-login-theme='swiss-grid'] .runtime-auth-button:not(.secondary):not(:disabled):hover {
+	background: var(--primary-hover);
+}
+
+[data-login-theme='swiss-grid'] .runtime-auth-button.secondary:not(:disabled):hover {
+	background: var(--bg-subtle);
+	border-color: var(--button-secondary-border);
+}
+
+/* Status boxes are flat tints with a full ring, not a coloured stripe. */
+[data-login-theme='swiss-grid'] .alert {
+	border-radius: 0;
+	box-shadow: none;
+}
+
+[data-login-theme='swiss-grid'] .auth-client-card {
+	background: var(--card-bg-muted);
+	border: 1px solid var(--border);
+	box-shadow: none;
+}
+
+[data-login-theme='swiss-grid'] .auth-page .auth-bottom-link a,
+[data-login-theme='swiss-grid'] .auth-page a {
 	text-underline-offset: 3px;
 }
 
-/* Behind on-image text on a tenant's image (never on the default imagery, and never over a bar,
-   which has its own surface); it paints outside the box, so nothing shifts. */
-[data-login-theme='fullbleed-glass'][data-has-page-background-image='true']:not(
-		[data-header-style='bar']
-	)
-	.auth-page
-	.auth-header,
-[data-login-theme='fullbleed-glass'][data-has-page-background-image='true']:not(
-		[data-footer-style='bar']
-	)
-	.auth-page
-	.auth-footer,
-[data-login-theme='fullbleed-glass'][data-has-page-background-image='true']
-	.auth-page
-	.auth-bottom-link {
-	background: var(--fullbleed-on-image-backdrop-image);
-	box-shadow: 0 0 0 10px var(--fullbleed-on-image-backdrop-image);
-}
-
-/* A bar over a tenant's image is a surface of its own: as opaque as the backdrop, so its text
-   reads over any image too. */
-[data-login-theme='fullbleed-glass'][data-has-page-background-image='true'][data-header-style='bar']
-	.auth-page
-	.auth-header,
-[data-login-theme='fullbleed-glass'][data-has-page-background-image='true'][data-footer-style='bar']
-	.auth-page
-	.auth-footer {
-	background: var(--fullbleed-on-image-backdrop-image);
-}
-
-/* Alerts may sit on the imagery (outside the card): their tint goes over an opaque base, so their
-   text reads over any image. */
-[data-login-theme='fullbleed-glass'] .alert.alert-error {
-	background:
-		linear-gradient(var(--danger-light), var(--danger-light)), var(--fullbleed-alert-base);
-}
-
-[data-login-theme='fullbleed-glass'] .alert.alert-warning {
-	background:
-		linear-gradient(var(--warning-light), var(--warning-light)), var(--fullbleed-alert-base);
-}
-
-[data-login-theme='fullbleed-glass'] .alert.alert-success {
-	background:
-		linear-gradient(var(--success-light), var(--success-light)), var(--fullbleed-alert-base);
-}
-
-[data-login-theme='fullbleed-glass'] .alert.alert-info {
-	background:
-		linear-gradient(var(--primary-light), var(--primary-light)), var(--fullbleed-alert-base);
-}
-
-[data-login-theme='fullbleed-glass'] .runtime-screen-heading h2 {
-	font-family: var(--font-display);
-	font-size: var(--auth-heading-size);
-	font-weight: 800;
-	letter-spacing: -0.01em;
-}
-
-[data-login-theme='fullbleed-glass'] .runtime-auth-button {
-	letter-spacing: 0.04em;
-}
-
-[data-login-theme='fullbleed-glass'] .auth-client-card {
-	background: var(--card-bg-muted);
-	border-color: var(--border-glass);
-	backdrop-filter: var(--blur-sm);
-	-webkit-backdrop-filter: var(--blur-sm);
-}
-
-@media (prefers-reduced-transparency: reduce) {
-	:is(:root, .login-ui-theme-boundary)[data-login-theme='fullbleed-glass'] {
-		--blur-sm: none;
-		--bg-card: #171210;
-	}
-
-	:is(:root, .login-ui-theme-boundary)[data-theme='light'][data-login-theme='fullbleed-glass'] {
-		--bg-card: #fbf7f3;
-	}
-}
-
 /* --- Theme template interaction states (mock parity) --- */
-[data-login-theme]:not([data-login-theme='classic']):not([data-login-theme='fullbleed-glass'])
+[data-login-theme]:not([data-login-theme='classic']):not([data-login-theme='swiss-grid']):not(
+		[data-login-theme='glass']
+	):not([data-login-theme='clear-glass'])
 	.runtime-auth-button:not(.secondary):not(:disabled):hover {
 	background: var(--primary-hover);
 }
 
-/* Full bleed fills with a tenant's accent, its label chosen for that fill: hover keeps the fill
-   (a lighter or darker one could fail the label) and marks itself with a ring. */
-[data-login-theme='fullbleed-glass'] .runtime-auth-button:not(.secondary):not(:disabled):hover {
-	background: var(--button-primary-bg);
-	box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--button-primary-text) 45%, transparent);
-}
-
-[data-login-theme]:not([data-login-theme='classic'])
+[data-login-theme]:not([data-login-theme='classic']):not([data-login-theme='swiss-grid']):not(
+		[data-login-theme='glass']
+	):not([data-login-theme='clear-glass'])
 	.runtime-auth-button.secondary:not(:disabled):hover {
 	background: var(--primary-light);
 	border-color: var(--primary);
 }
 
-[data-login-theme]:not([data-login-theme='classic']) .runtime-screen-field input:focus {
+[data-login-theme]:not([data-login-theme='classic']):not([data-login-theme='swiss-grid']):not(
+		[data-login-theme='glass']
+	):not([data-login-theme='clear-glass'])
+	.runtime-screen-field
+	input:focus {
 	outline: none;
 	border-color: var(--primary);
 	box-shadow: 0 0 0 3px var(--primary-light);
@@ -3094,4 +3028,929 @@ tr.expired {
 			)
 		);
 	}
+}
+
+/* === Glass (login-ui.palette = glass, clear-glass) ===
+   Two kinds of glass over a page of soft colour (the light is transparent layers over the page
+   colour, so an admin's background colour shows through them):
+   - Frosted glass (`glass`): the page behind is blurred and brightened (blur 24px), the face is
+     translucent white with a fine grain, the rim is a thin light line, and the shadow is soft.
+   - Clear glass (`clear-glass`): the page behind stays sharp (blur 3px). The glass is seen by its
+     edges: an iridescent rim, two glints of light along the top and bottom edges, and a diagonal
+     reflection across the face.
+   Light and dark are presets: an admin's colours (with their alpha) replace them. */
+:is(:root, .login-ui-theme-boundary)[data-login-theme='glass'] {
+	--login-page-background-color: #e9ecf2;
+	--login-page-overlay: transparent;
+	/* The accent colours links and focus. */
+	--primary: var(--login-accent-color, #3a5cb8);
+	--primary-hover: var(--primary);
+	--primary-light: color-mix(in srgb, var(--primary) 12%, transparent);
+	--gradient-primary: var(--primary);
+	--bg-page: #e9ecf2;
+	--bg-card: rgba(255, 255, 255, 0.38);
+	--bg-glass: rgba(255, 255, 255, 0.38);
+	--bg-input: rgba(255, 255, 255, 0.5);
+	--bg-subtle: rgba(255, 255, 255, 0.3);
+	--blur-sm: blur(24px) saturate(160%);
+	--border: rgba(28, 34, 48, 0.1);
+	--border-glass: rgba(255, 255, 255, 0.65);
+	--text-primary: #1c1e24;
+	--text-secondary: #444955;
+	--text-muted: #545a66;
+	--radius-sm: 10px;
+	--radius-md: 14px;
+	--radius-lg: 18px;
+	--radius-xl: 20px;
+	--card-radius: 20px;
+	--card-padding: 26px;
+	--button-radius: 14px;
+	--input-radius: 12px;
+	--input-border: rgba(255, 255, 255, 0.75);
+	/* The main button is frosted glass tinted blue. A tenant's accent replaces it with a solid fill
+	   (and brings the label colour chosen for that fill). */
+	--glass-primary-bg: rgba(165, 192, 242, 0.5);
+	--button-primary-bg: var(--login-accent-color, var(--glass-primary-bg));
+	--button-primary-text: var(--login-accent-text, #15203a);
+	--button-secondary-bg: rgba(255, 255, 255, 0.42);
+	--button-secondary-border: rgba(255, 255, 255, 0.7);
+	--button-secondary-text: #1c1e24;
+	--card-bg-muted: rgba(255, 255, 255, 0.32);
+	--surface-muted: rgba(255, 255, 255, 0.32);
+	--accent-color: var(--primary);
+	--border-color: rgba(28, 34, 48, 0.1);
+	/* The rim: one light line along the top edge. */
+	--glass-rim: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+	--glass-drop: 0 2px 8px rgba(31, 38, 62, 0.06);
+	--shadow-sm: 0 8px 32px rgba(31, 38, 62, 0.12), var(--glass-rim);
+	--shadow-md: 0 8px 32px rgba(31, 38, 62, 0.12), var(--glass-rim);
+	--shadow-lg: 0 16px 48px rgba(31, 38, 62, 0.16), var(--glass-rim);
+	--panel-glass-bg: var(--bg-card);
+	/* The page: soft blots of colour for the glass to blur, over the page colour. */
+	--glass-backdrop:
+		radial-gradient(42% 38% at 18% 22%, rgba(150, 178, 255, 0.38), transparent 70%),
+		radial-gradient(40% 36% at 84% 30%, rgba(255, 186, 214, 0.36), transparent 70%),
+		radial-gradient(48% 42% at 62% 86%, rgba(150, 232, 214, 0.4), transparent 70%);
+	/* The frost's grain (fractal noise), drawn faintly over the face. */
+	--glass-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+	--glass-grain-opacity: 0.06;
+	--login-page-max-width: 420px;
+}
+
+:is(:root, .login-ui-theme-boundary)[data-theme='dark'][data-login-theme='glass'] {
+	--login-page-background-color: #14161b;
+	--primary: var(--login-accent-color, #a4bdf2);
+	--bg-page: #14161b;
+	--bg-card: rgba(255, 255, 255, 0.07);
+	--bg-glass: rgba(255, 255, 255, 0.07);
+	--bg-input: rgba(255, 255, 255, 0.05);
+	--bg-subtle: rgba(255, 255, 255, 0.06);
+	--blur-sm: blur(24px) saturate(140%);
+	--border: rgba(255, 255, 255, 0.12);
+	--border-glass: rgba(255, 255, 255, 0.14);
+	--text-primary: #f2f3f6;
+	--text-secondary: #c9ccd4;
+	--text-muted: #aeb2bc;
+	--input-border: rgba(255, 255, 255, 0.16);
+	--glass-primary-bg: rgba(120, 150, 230, 0.45);
+	--button-primary-text: var(--login-accent-text, #f5f7ff);
+	--button-secondary-bg: rgba(255, 255, 255, 0.08);
+	--button-secondary-border: rgba(255, 255, 255, 0.16);
+	--button-secondary-text: #f2f3f6;
+	--card-bg-muted: rgba(255, 255, 255, 0.06);
+	--surface-muted: rgba(255, 255, 255, 0.06);
+	--border-color: rgba(255, 255, 255, 0.12);
+	--glass-rim: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+	--glass-drop: 0 2px 8px rgba(0, 0, 0, 0.3);
+	--shadow-sm: 0 8px 32px rgba(0, 0, 0, 0.4), var(--glass-rim);
+	--shadow-md: 0 8px 32px rgba(0, 0, 0, 0.4), var(--glass-rim);
+	--shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.5), var(--glass-rim);
+	--glass-backdrop:
+		radial-gradient(42% 38% at 18% 22%, rgba(80, 100, 200, 0.32), transparent 70%),
+		radial-gradient(40% 36% at 84% 30%, rgba(170, 70, 130, 0.22), transparent 70%),
+		radial-gradient(48% 42% at 62% 86%, rgba(40, 150, 140, 0.22), transparent 70%);
+	--glass-grain-opacity: 0.08;
+}
+
+:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass'] {
+	--login-page-background-color: #dce3e9;
+	--login-page-overlay: transparent;
+	--primary: var(--login-accent-color, #284f97);
+	--primary-hover: var(--primary);
+	--primary-light: color-mix(in srgb, var(--primary) 12%, transparent);
+	--gradient-primary: var(--primary);
+	--bg-page: #dce3e9;
+	--bg-card: rgba(255, 255, 255, 0.1);
+	--bg-glass: rgba(255, 255, 255, 0.1);
+	--bg-input: rgba(255, 255, 255, 0.16);
+	--bg-subtle: rgba(255, 255, 255, 0.14);
+	--blur-sm: blur(3px) saturate(115%);
+	--border: rgba(21, 25, 31, 0.12);
+	--border-glass: rgba(255, 255, 255, 0.8);
+	--text-primary: #15191f;
+	--text-secondary: #3a4049;
+	--text-muted: #474e59;
+	--radius-sm: 12px;
+	--radius-md: 16px;
+	--radius-lg: 20px;
+	--radius-xl: 24px;
+	--card-radius: 24px;
+	--card-padding: 26px;
+	--button-radius: 999px;
+	--input-radius: 999px;
+	--input-border: rgba(255, 255, 255, 0.8);
+	/* The main button is clear glass tinted blue; a tenant's accent fills it instead. */
+	--glass-primary-bg: linear-gradient(
+		120deg,
+		rgba(160, 196, 242, 0.62) 0%,
+		rgba(118, 162, 226, 0.5) 100%
+	);
+	--button-primary-bg: var(--login-accent-color, var(--glass-primary-bg));
+	--button-primary-text: var(--login-accent-text, #10223f);
+	--button-secondary-bg: rgba(255, 255, 255, 0.1);
+	--button-secondary-border: transparent;
+	--button-secondary-text: #15191f;
+	--card-bg-muted: rgba(255, 255, 255, 0.14);
+	--surface-muted: rgba(255, 255, 255, 0.14);
+	--accent-color: var(--primary);
+	--border-color: rgba(21, 25, 31, 0.12);
+	/* The diagonal reflection across the face, and the glints along the top and bottom edges. */
+	--glass-sheen: linear-gradient(120deg, rgba(255, 255, 255, 0.42) 0%, rgba(255, 255, 255, 0) 46%);
+	--glass-glints:
+		radial-gradient(30% 6px at 30% 0, rgba(255, 255, 255, 0.95), transparent),
+		radial-gradient(30% 6px at 72% 100%, rgba(255, 255, 255, 0.95), transparent);
+	/* The iridescent rim: cyan, white and grey light caught at different points of the edge. */
+	--glass-iris:
+		radial-gradient(at 0% 0%, hsl(180 100% 98%) 0, transparent 50%),
+		radial-gradient(at 29% 0%, hsl(189 100% 78%) 0, transparent 50%),
+		radial-gradient(at 100% 62%, hsl(0 0% 100%) 0, transparent 50%),
+		radial-gradient(at 90% 98%, hsl(169 88% 83%) 0, transparent 50%),
+		radial-gradient(at 26% 100%, hsl(220 6% 52%) 0, transparent 50%),
+		radial-gradient(at 79% 0%, hsl(220 6% 60%) 0, transparent 50%),
+		linear-gradient(rgba(255, 255, 255, 0.75), rgba(255, 255, 255, 0.75));
+	/* A secondary button's rim: the light alone, brighter along the top, with no colour or grey. */
+	--glass-iris-soft:
+		radial-gradient(at 0% 0%, hsl(180 100% 98%) 0, transparent 60%),
+		linear-gradient(rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.4));
+	--glass-rim-width: 1.5px;
+	/* The small parts. Each goes as far as its contrast allows (theme-contrast.test.ts holds the
+	   limits): an alert's reflection and a badge's gloss lie behind text (4.5:1); the outline of a
+	   field, a switch and its thumb must show the control's shape (3:1). */
+	--glass-alert-sheen: var(--glass-sheen);
+	--glass-edge-light: rgba(255, 255, 255, 0.95);
+	--glass-gloss: linear-gradient(rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0) 60%);
+	--glass-line: rgba(20, 28, 40, 0.54);
+	--glass-text-success: #065f46;
+	--glass-text-warning: #92400e;
+	--glass-text-danger: #991b1b;
+	/* A field and a switch's track are sunk into the pane: shade under the top edge, light along
+	   the lower lip. */
+	--glass-sunken: inset 0 2px 5px rgba(20, 28, 40, 0.14), inset 0 -1px 0 rgba(255, 255, 255, 0.8);
+	--glass-toggle-track: rgba(255, 255, 255, 0.25);
+	--glass-thumb: linear-gradient(rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.72));
+	--glass-thumb-shadow: 0 1px 3px rgba(30, 40, 55, 0.2), inset 0 1px 0 #ffffff;
+	--glass-drop: 0 4px 14px rgba(40, 52, 66, 0.1);
+	--shadow-sm: 0 0 24px rgba(90, 105, 120, 0.28), 0 12px 32px rgba(30, 40, 55, 0.1);
+	--shadow-md: 0 0 24px rgba(90, 105, 120, 0.28), 0 12px 32px rgba(30, 40, 55, 0.1);
+	--shadow-lg: 0 0 28px rgba(90, 105, 120, 0.3), 0 18px 44px rgba(30, 40, 55, 0.14);
+	--panel-glass-bg: var(--bg-card);
+	--glass-backdrop:
+		radial-gradient(45% 40% at 20% 20%, rgba(255, 255, 255, 0.55), transparent 70%),
+		radial-gradient(38% 34% at 78% 16%, rgba(170, 160, 230, 0.2), transparent 70%),
+		radial-gradient(40% 40% at 84% 78%, rgba(120, 200, 205, 0.34), transparent 70%);
+	--login-page-max-width: 420px;
+}
+
+:is(:root, .login-ui-theme-boundary)[data-theme='dark'][data-login-theme='clear-glass'] {
+	--login-page-background-color: #111419;
+	--primary: var(--login-accent-color, #9dbcf0);
+	--bg-page: #111419;
+	--bg-card: rgba(255, 255, 255, 0.03);
+	--bg-glass: rgba(255, 255, 255, 0.03);
+	--bg-input: rgba(255, 255, 255, 0.04);
+	--bg-subtle: rgba(255, 255, 255, 0.04);
+	--border: rgba(255, 255, 255, 0.12);
+	--border-glass: rgba(255, 255, 255, 0.3);
+	--text-primary: #eef1f5;
+	--text-secondary: #c9ced6;
+	--text-muted: #a9afb9;
+	--input-border: rgba(255, 255, 255, 0.28);
+	--glass-primary-bg: linear-gradient(
+		120deg,
+		rgba(110, 150, 226, 0.36) 0%,
+		rgba(90, 130, 210, 0.32) 100%
+	);
+	--button-primary-text: var(--login-accent-text, #f5f8ff);
+	--button-secondary-bg: rgba(255, 255, 255, 0.03);
+	--button-secondary-text: #eef1f5;
+	--card-bg-muted: rgba(255, 255, 255, 0.04);
+	--surface-muted: rgba(255, 255, 255, 0.04);
+	--border-color: rgba(255, 255, 255, 0.12);
+	--glass-sheen: linear-gradient(120deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0) 46%);
+	--glass-glints:
+		radial-gradient(30% 6px at 30% 0, rgba(255, 255, 255, 0.7), transparent),
+		radial-gradient(30% 6px at 72% 100%, rgba(255, 255, 255, 0.7), transparent);
+	--glass-iris:
+		radial-gradient(at 0% 0%, hsl(180 100% 90% / 0.7) 0, transparent 50%),
+		radial-gradient(at 29% 0%, hsl(189 90% 70% / 0.6) 0, transparent 50%),
+		radial-gradient(at 100% 62%, hsl(0 0% 100% / 0.5) 0, transparent 50%),
+		radial-gradient(at 90% 98%, hsl(169 80% 70% / 0.55) 0, transparent 50%),
+		radial-gradient(at 26% 100%, hsl(220 8% 40% / 0.6) 0, transparent 50%),
+		linear-gradient(rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.2));
+	--glass-iris-soft: linear-gradient(rgba(255, 255, 255, 0.26), rgba(255, 255, 255, 0.1));
+	/* Under light text a reflection cuts the contrast, so the dark one is faint. */
+	--glass-alert-sheen: linear-gradient(
+		120deg,
+		rgba(255, 255, 255, 0.04) 0%,
+		rgba(255, 255, 255, 0) 46%
+	);
+	--glass-edge-light: rgba(255, 255, 255, 0.38);
+	--glass-gloss: linear-gradient(rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0) 60%);
+	--glass-line: rgba(255, 255, 255, 0.55);
+	--glass-text-success: #6ee7b7;
+	--glass-text-warning: #fcd34d;
+	--glass-text-danger: #fca5a5;
+	--glass-sunken: inset 0 2px 5px rgba(0, 0, 0, 0.45), inset 0 -1px 0 rgba(255, 255, 255, 0.1);
+	--glass-toggle-track: rgba(255, 255, 255, 0.06);
+	--glass-thumb: linear-gradient(rgba(255, 255, 255, 0.64), rgba(255, 255, 255, 0.54));
+	--glass-thumb-shadow: 0 1px 3px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+	--glass-drop: 0 4px 14px rgba(0, 0, 0, 0.35);
+	--shadow-sm: 0 0 24px rgba(0, 0, 0, 0.35), 0 12px 32px rgba(0, 0, 0, 0.35);
+	--shadow-md: 0 0 24px rgba(0, 0, 0, 0.35), 0 12px 32px rgba(0, 0, 0, 0.35);
+	--shadow-lg: 0 0 28px rgba(0, 0, 0, 0.4), 0 18px 44px rgba(0, 0, 0, 0.45);
+	--glass-backdrop:
+		radial-gradient(45% 40% at 20% 20%, rgba(90, 140, 200, 0.22), transparent 70%),
+		radial-gradient(38% 34% at 78% 16%, rgba(140, 110, 210, 0.18), transparent 70%),
+		radial-gradient(40% 40% at 84% 78%, rgba(60, 170, 170, 0.16), transparent 70%);
+}
+
+/* The palettes' own type, only while the tenant keeps the system family (a chosen family, set
+   earlier in this file, must not be overridden by a palette declared after it). */
+:is(:root, .login-ui-theme-boundary):is(
+		[data-login-theme='glass'],
+		[data-login-theme='clear-glass']
+	)[data-font-family='system'] {
+	--font-display:
+		'SF Pro Display', 'Inter', system-ui, 'Hiragino Sans', 'Noto Sans JP', 'Helvetica Neue',
+		sans-serif;
+	--font-body:
+		'SF Pro Text', 'Inter', system-ui, 'Hiragino Sans', 'Noto Sans JP', 'Helvetica Neue', sans-serif;
+}
+
+/* The page: its light, over the page colour; under a tenant's own picture when there is one. */
+:is([data-login-theme='glass'], [data-login-theme='clear-glass']) .auth-page {
+	background-image:
+		var(--login-page-image-veil), var(--login-page-background-layer, var(--glass-backdrop));
+}
+
+:is([data-login-theme='glass'], [data-login-theme='clear-glass']) .card {
+	position: relative;
+	isolation: isolate;
+}
+
+/* Frosted glass: the grain over the face. */
+[data-login-theme='glass'] .card::before {
+	content: '';
+	position: absolute;
+	inset: 0;
+	z-index: -1;
+	border-radius: inherit;
+	pointer-events: none;
+	background-image: var(--glass-grain);
+	background-size: 160px 160px;
+	opacity: var(--glass-grain-opacity);
+	mix-blend-mode: overlay;
+}
+
+/* Clear glass: the reflection and the glints on the face, under the content; the iridescent rim
+   over the edge (a ring cut out of a filled box with a mask). */
+[data-login-theme='clear-glass'] .card {
+	border-color: transparent;
+}
+
+[data-login-theme='clear-glass'] .card::before {
+	content: '';
+	position: absolute;
+	inset: 0;
+	z-index: -1;
+	border-radius: inherit;
+	pointer-events: none;
+	background: var(--glass-glints), var(--glass-sheen);
+}
+
+[data-login-theme='clear-glass'] .card::after,
+[data-login-theme='clear-glass'] .auth-page .runtime-auth-button::after,
+[data-login-theme='clear-glass'] .auth-page .btn::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+	padding: var(--glass-rim-width);
+	pointer-events: none;
+	background: var(--glass-iris);
+	-webkit-mask:
+		linear-gradient(#000 0 0) content-box,
+		linear-gradient(#000 0 0);
+	-webkit-mask-composite: xor;
+	mask:
+		linear-gradient(#000 0 0) content-box exclude,
+		linear-gradient(#000 0 0);
+	mask-composite: exclude;
+}
+
+/* A secondary button's rim is the light alone, and thinner: the colours are the card's and the main
+   button's. */
+[data-login-theme='clear-glass']
+	.auth-page
+	:is(.runtime-auth-button.secondary, .btn-secondary)::after {
+	padding: 1px;
+	background: var(--glass-iris-soft);
+}
+
+/* A form on the page itself is no pane, so it has no face either; nor is the split template's
+   inner card (its form side is the pane). The split form side carries no rim: it scrolls, and a
+   rim drawn inside it would scroll with the form; over the tenant's brand panel it is a
+   near-opaque pane anyway (see below). */
+[data-login-template='minimal']:is([data-login-theme='glass'], [data-login-theme='clear-glass'])
+	.card::before,
+:is([data-login-theme='glass'], [data-login-theme='clear-glass'])[data-login-template='minimal']
+	.card::before,
+:is([data-login-theme='glass'], [data-login-theme='clear-glass'])[data-page-layout='split_panel']
+	.card::before,
+[data-login-template='minimal'][data-login-theme='clear-glass'] .card::after,
+[data-login-theme='clear-glass'][data-login-template='minimal'] .card::after,
+[data-login-theme='clear-glass'][data-page-layout='split_panel'] .card::after {
+	display: none;
+}
+
+:is([data-login-theme='glass'], [data-login-theme='clear-glass']) .auth-page .auth-header__title,
+:is([data-login-theme='glass'], [data-login-theme='clear-glass']) .runtime-screen-heading h2 {
+	font-family: var(--font-display);
+	font-weight: 600;
+	letter-spacing: -0.015em;
+}
+
+/* A screen's heading keeps the scale every theme shares. */
+:is([data-login-theme='glass'], [data-login-theme='clear-glass']) .runtime-screen-heading h2 {
+	font-size: var(--auth-heading-size);
+}
+
+/* Buttons. Frosted: a frosted pane with a light border and the rim. Clear: the reflection, the
+   glints and the iridescent rim, as on the card. */
+:is([data-login-theme='glass'], [data-login-theme='clear-glass']) .auth-page .runtime-auth-button,
+:is([data-login-theme='glass'], [data-login-theme='clear-glass']) .auth-page .btn {
+	border-radius: var(--button-radius);
+	font-weight: 600;
+	transition:
+		transform var(--transition-fast),
+		box-shadow var(--transition-fast),
+		filter var(--transition-fast);
+}
+
+[data-login-theme='glass'] .auth-page .runtime-auth-button,
+[data-login-theme='glass'] .auth-page .btn {
+	border: 1px solid var(--button-secondary-border);
+	backdrop-filter: blur(16px) saturate(160%);
+	-webkit-backdrop-filter: blur(16px) saturate(160%);
+	box-shadow: var(--glass-drop), var(--glass-rim);
+}
+
+[data-login-theme='clear-glass'] .auth-page .runtime-auth-button,
+[data-login-theme='clear-glass'] .auth-page .btn {
+	position: relative;
+	isolation: isolate;
+	border: 1px solid transparent;
+	backdrop-filter: blur(2px) saturate(115%);
+	-webkit-backdrop-filter: blur(2px) saturate(115%);
+	box-shadow: var(--glass-drop);
+}
+
+/* The tint (or the tenant's accent) under the reflection. */
+[data-login-theme='clear-glass'] .auth-page .runtime-auth-button:not(.secondary),
+[data-login-theme='clear-glass'] .auth-page .btn-primary {
+	/* The shared Button paints its hover from this, so the reflection stays on hover too. */
+	--button-primary-surface: var(--glass-glints), var(--glass-sheen), var(--button-primary-bg);
+	background: var(--glass-glints), var(--glass-sheen), var(--button-primary-bg);
+	color: var(--button-primary-text);
+}
+
+/* A tenant's accent has its label colour chosen against the accent alone, so no reflection lies
+   behind the label; the glints keep to the edges. */
+[data-login-theme='clear-glass'][data-has-accent-color='true']
+	.auth-page
+	:is(.runtime-auth-button:not(.secondary), .btn-primary),
+[data-login-theme='clear-glass']
+	.auth-page[data-has-accent-color='true']
+	.runtime-auth-button:not(.secondary),
+[data-login-theme='clear-glass'] .auth-page[data-has-accent-color='true'] .btn-primary {
+	--button-primary-surface: var(--glass-glints), var(--button-primary-bg);
+	background: var(--glass-glints), var(--button-primary-bg);
+}
+
+[data-login-theme='glass'] .auth-page .runtime-auth-button:not(.secondary),
+[data-login-theme='glass'] .auth-page .btn-primary {
+	background: var(--button-primary-bg);
+	color: var(--button-primary-text);
+}
+
+:is([data-login-theme='glass'], [data-login-theme='clear-glass'])
+	.auth-page
+	.runtime-auth-button.secondary,
+:is([data-login-theme='glass'], [data-login-theme='clear-glass']) .auth-page .btn-secondary {
+	color: var(--button-secondary-text);
+}
+
+[data-login-theme='glass'] .auth-page .runtime-auth-button.secondary,
+[data-login-theme='glass'] .auth-page .btn-secondary {
+	background: var(--button-secondary-bg);
+}
+
+[data-login-theme='clear-glass'] .auth-page .runtime-auth-button.secondary,
+[data-login-theme='clear-glass'] .auth-page .btn-secondary {
+	background: var(--glass-glints), var(--glass-sheen), var(--button-secondary-bg);
+}
+
+:is([data-login-theme='glass'], [data-login-theme='clear-glass'])
+	.auth-page
+	.runtime-auth-button:not(:disabled):hover,
+:is([data-login-theme='glass'], [data-login-theme='clear-glass'])
+	.auth-page
+	.btn:not(:disabled):hover {
+	filter: brightness(1.04);
+}
+
+/* The shared Button moves as the sign-in buttons do: its own lift, deep shadow and accent outline
+   on hover are the other palettes'. (Before the press below, which moves it down.) */
+[data-login-theme='glass'] .auth-page .btn:not(:disabled):hover {
+	transform: none;
+	box-shadow: var(--glass-drop), var(--glass-rim);
+}
+
+[data-login-theme='clear-glass'] .auth-page .btn:not(:disabled):hover {
+	transform: none;
+	box-shadow: var(--glass-drop);
+}
+
+[data-login-theme='glass'] .auth-page .btn-secondary:not(:disabled):hover {
+	border-color: var(--button-secondary-border);
+	background: var(--button-secondary-bg);
+	color: var(--button-secondary-text);
+}
+
+[data-login-theme='clear-glass'] .auth-page .btn-secondary:not(:disabled):hover {
+	border-color: transparent;
+	background: var(--glass-glints), var(--glass-sheen), var(--button-secondary-bg);
+	color: var(--button-secondary-text);
+}
+
+:is([data-login-theme='glass'], [data-login-theme='clear-glass'])
+	.auth-page
+	.runtime-auth-button:not(:disabled):active,
+:is([data-login-theme='glass'], [data-login-theme='clear-glass'])
+	.auth-page
+	.btn:not(:disabled):active {
+	transform: translateY(1px);
+	filter: brightness(0.97);
+}
+
+/* A tenant's accent has its label colour chosen against the accent as it is: the press keeps its
+   move, but neither state changes the accent's lightness. */
+[data-has-accent-color='true']:is([data-login-theme='glass'], [data-login-theme='clear-glass'])
+	.auth-page
+	:is(.runtime-auth-button:not(.secondary), .btn-primary):not(:disabled):is(:hover, :active),
+:is([data-login-theme='glass'], [data-login-theme='clear-glass'])
+	.auth-page[data-has-accent-color='true']
+	:is(.runtime-auth-button:not(.secondary), .btn-primary):not(:disabled):is(:hover, :active) {
+	filter: none;
+}
+
+/* Fields. A field cannot hold the iridescent rim (an input has no ::before or ::after): it is a
+   pane with a light border, a little sunken. */
+:is([data-login-theme='glass'], [data-login-theme='clear-glass'])
+	.auth-page
+	.runtime-screen-field
+	input,
+:is([data-login-theme='glass'], [data-login-theme='clear-glass'])
+	.auth-page
+	.runtime-screen-field
+	select,
+:is([data-login-theme='glass'], [data-login-theme='clear-glass']) .auth-page select {
+	background: var(--bg-input);
+	border: 1px solid var(--input-border);
+	backdrop-filter: var(--blur-sm);
+	-webkit-backdrop-filter: var(--blur-sm);
+	box-shadow: inset 0 1px 3px rgba(20, 28, 40, 0.08);
+}
+
+:is([data-login-theme='glass'], [data-login-theme='clear-glass'])
+	.auth-page
+	.runtime-screen-field
+	input:focus,
+:is([data-login-theme='glass'], [data-login-theme='clear-glass'])
+	.auth-page
+	.runtime-screen-field
+	select:focus {
+	outline: none;
+	border-color: color-mix(in srgb, var(--primary) 60%, white);
+	box-shadow:
+		inset 0 1px 3px rgba(20, 28, 40, 0.08),
+		0 0 0 3px color-mix(in srgb, var(--primary) 24%, transparent);
+}
+
+/* Clear glass: a field is sunk into the pane (shade under the top edge, light along the lower
+   lip), outlined by the hairline that shows a control's shape at 3:1. */
+[data-login-theme='clear-glass'] .auth-page .runtime-screen-field input,
+[data-login-theme='clear-glass'] .auth-page .runtime-screen-field select,
+[data-login-theme='clear-glass'] .auth-page select,
+[data-login-theme='clear-glass'] .auth-page :is(.form-input, .form-select):not(.has-error) {
+	border-color: var(--glass-line);
+	box-shadow: var(--glass-sunken);
+}
+
+/* The shared Input (and select) takes the field's face too; one in error keeps its red outline. */
+[data-login-theme='clear-glass'] .auth-page :is(.form-input, .form-select) {
+	background-color: var(--bg-input);
+	box-shadow: var(--glass-sunken);
+}
+
+[data-login-theme='clear-glass'] .auth-page .runtime-screen-field input:focus,
+[data-login-theme='clear-glass'] .auth-page .runtime-screen-field select:focus,
+[data-login-theme='clear-glass'] .auth-page :is(.form-input, .form-select):not(.has-error):focus {
+	border-color: var(--primary);
+	box-shadow:
+		var(--glass-sunken),
+		0 0 0 3px color-mix(in srgb, var(--primary) 24%, transparent);
+}
+
+/* The keyboard focus ring. A field's own (as specific as the rule above, which clears the outline
+   for a pointer focus) so that the ring is drawn for it too. */
+:is([data-login-theme='glass'], [data-login-theme='clear-glass']) .auth-page :focus-visible,
+:is([data-login-theme='glass'], [data-login-theme='clear-glass'])
+	.auth-page
+	:is(.form-input, .form-select):focus-visible,
+:is([data-login-theme='glass'], [data-login-theme='clear-glass'])
+	.auth-page
+	.runtime-screen-field
+	input:focus-visible,
+:is([data-login-theme='glass'], [data-login-theme='clear-glass'])
+	.auth-page
+	.runtime-screen-field
+	select:focus-visible {
+	outline: 2px solid var(--primary);
+	outline-offset: 2px;
+}
+
+/* Status boxes and the client card are small panes of their own. */
+:is([data-login-theme='glass'], [data-login-theme='clear-glass']) .alert,
+:is([data-login-theme='glass'], [data-login-theme='clear-glass']) .auth-client-card {
+	border: 1px solid var(--border-glass);
+	border-radius: var(--radius-md);
+	backdrop-filter: var(--blur-sm);
+	-webkit-backdrop-filter: var(--blur-sm);
+	box-shadow: var(--glass-drop);
+}
+
+:is([data-login-theme='glass'], [data-login-theme='clear-glass']) .auth-client-card {
+	background: var(--card-bg-muted);
+}
+
+:is([data-login-theme='glass'], [data-login-theme='clear-glass']) .alert.alert-error {
+	background: linear-gradient(var(--danger-light), var(--danger-light)), var(--bg-card);
+}
+
+:is([data-login-theme='glass'], [data-login-theme='clear-glass']) .alert.alert-warning {
+	background: linear-gradient(var(--warning-light), var(--warning-light)), var(--bg-card);
+}
+
+:is([data-login-theme='glass'], [data-login-theme='clear-glass']) .alert.alert-success {
+	background: linear-gradient(var(--success-light), var(--success-light)), var(--bg-card);
+}
+
+:is([data-login-theme='glass'], [data-login-theme='clear-glass']) .alert.alert-info {
+	background: linear-gradient(var(--primary-light), var(--primary-light)), var(--bg-card);
+}
+
+/* Clear glass: the small parts are glass too. These outweigh the components' own rules (a class
+   and their scope), whatever order the stylesheets load in.
+
+   An alert: no coloured outline but a thin ring of light that takes the alert's tone halfway
+   round, the glints and (in the light scheme) the reflection on its face. */
+:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass'] .alert {
+	position: relative;
+	isolation: isolate;
+	border-color: transparent;
+	box-shadow: var(--glass-drop);
+}
+
+:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass'] .alert.alert-error {
+	--alert-tone: var(--danger);
+}
+
+:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass'] .alert.alert-warning {
+	--alert-tone: var(--warning);
+}
+
+:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass'] .alert.alert-success {
+	--alert-tone: var(--success);
+}
+
+:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass'] .alert.alert-info {
+	--alert-tone: var(--primary);
+}
+
+:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass'] .alert::before {
+	content: '';
+	position: absolute;
+	inset: 0;
+	z-index: -1;
+	border-radius: inherit;
+	pointer-events: none;
+	background: var(--glass-glints), var(--glass-alert-sheen);
+}
+
+:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass'] .alert::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+	padding: 1px;
+	pointer-events: none;
+	background: linear-gradient(
+		135deg,
+		var(--glass-edge-light),
+		color-mix(in srgb, var(--alert-tone, var(--primary)) 60%, transparent) 50%,
+		var(--glass-edge-light)
+	);
+	-webkit-mask:
+		linear-gradient(#000 0 0) content-box,
+		linear-gradient(#000 0 0);
+	-webkit-mask-composite: xor;
+	mask:
+		linear-gradient(#000 0 0) content-box exclude,
+		linear-gradient(#000 0 0);
+	mask-composite: exclude;
+}
+
+/* A status badge: its tint seen through glass, a gloss along the top, a rim of light, and the dot
+   a lit bead. */
+/* With its status class, so that it outweighs StatusBadge's own `.status-badge.<status>` (whose
+   `background` shorthand would clear the gloss) in any load order. */
+:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass']
+	.status-badge:is(.active, .inactive, .success, .warning, .danger, .info, .neutral) {
+	border: 1px solid var(--glass-edge-light);
+	background-image: var(--glass-gloss);
+	box-shadow: 0 2px 8px rgba(30, 40, 55, 0.08);
+	backdrop-filter: var(--blur-sm);
+	-webkit-backdrop-filter: var(--blur-sm);
+}
+
+:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass'] .status-badge .status-dot {
+	background-image: radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.85), transparent 60%);
+	box-shadow: 0 0 0 1px var(--glass-edge-light);
+}
+
+/* The label in the alerts' text colours: the tones themselves (--success and the rest) are too
+   light to read on their own tint. The dot keeps the tone. */
+:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass']
+	.status-badge:is(.active, .success) {
+	color: var(--glass-text-success);
+}
+
+:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass'] .status-badge.warning {
+	color: var(--glass-text-warning);
+}
+
+:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass'] .status-badge.danger {
+	color: var(--glass-text-danger);
+}
+
+:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass']
+	.status-badge:is(.inactive, .neutral) {
+	color: var(--text-secondary);
+}
+
+/* As the info alert: a tenant's accent may not read on its own tint (the dot keeps it). */
+:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass'] .status-badge.info {
+	color: var(--text-primary);
+}
+
+/* A switch, as glass as the page's light allows: a clear track sunk into the pane and a clear
+   thumb. On and off are told by where the thumb is, so the track and the thumb each keep a
+   hairline at 3:1; the on track takes the main button's tint. */
+:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass'] .toggle-switch {
+	background: var(--glass-toggle-track);
+	box-shadow:
+		inset 0 0 0 1px var(--glass-line),
+		var(--glass-sunken);
+	backdrop-filter: var(--blur-sm);
+	-webkit-backdrop-filter: var(--blur-sm);
+}
+
+:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass']
+	.toggle-switch.toggle-switch-checked {
+	/* The palette's own tint, not a tenant's accent: the hairline is fixed, so the colour under
+	   it must be one the contrast test knows. No glints either: they would lie under the line. */
+	background: var(--glass-primary-bg);
+}
+
+:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass'] .toggle-switch-thumb {
+	background: var(--glass-thumb);
+	box-shadow:
+		0 0 0 1px var(--glass-line),
+		var(--glass-thumb-shadow);
+}
+
+/* Over a tenant's own picture, whose lightness is unknown, the panes are more opaque (their text
+   must read over a white or a black photo alike). The split template's floating card lies over
+   the brand panel, whose colour and picture are the tenant's too, so it is as opaque in either
+   scheme. */
+[data-login-theme='glass'][data-has-page-background-image='true'],
+[data-login-theme='clear-glass'][data-has-page-background-image='true'],
+[data-login-theme='glass'][data-page-layout='split_panel'][data-form-frame='card']:not(
+		[data-theme='dark']
+	),
+[data-login-theme='clear-glass'][data-page-layout='split_panel'][data-form-frame='card']:not(
+		[data-theme='dark']
+	) {
+	--bg-card: rgba(255, 255, 255, 0.9);
+	--bg-glass: rgba(255, 255, 255, 0.9);
+	--bg-input: rgba(255, 255, 255, 0.92);
+	--button-secondary-bg: rgba(255, 255, 255, 0.9);
+	--card-bg-muted: rgba(255, 255, 255, 0.78);
+}
+
+[data-theme='dark'][data-login-theme='glass'][data-has-page-background-image='true'],
+[data-theme='dark'][data-login-theme='clear-glass'][data-has-page-background-image='true'],
+[data-theme='dark'][data-login-theme='glass'][data-page-layout='split_panel'][data-form-frame='card'],
+[data-theme='dark'][data-login-theme='clear-glass'][data-page-layout='split_panel'][data-form-frame='card'] {
+	--bg-card: rgba(23, 24, 27, 0.82);
+	--bg-glass: rgba(23, 24, 27, 0.82);
+	--bg-input: rgba(23, 24, 27, 0.88);
+	--button-secondary-bg: rgba(23, 24, 27, 0.88);
+	--card-bg-muted: rgba(23, 24, 27, 0.78);
+	/* Over a white photo the protected pane is mid-grey: light text keeps no room for a reflection
+	   on the card, an alert or a badge. */
+	--glass-sheen: linear-gradient(transparent, transparent);
+	--glass-alert-sheen: linear-gradient(transparent, transparent);
+	--glass-gloss: linear-gradient(transparent, transparent);
+}
+
+/* The page's own text (the header, the footer, the link under the card) lies on the picture, not on
+   a pane: over a tenant's picture each sits on a small pane of its own. A minimal form has no card,
+   so it keeps one here. */
+[data-has-page-background-image='true']:is(
+		[data-login-theme='glass'],
+		[data-login-theme='clear-glass']
+	)
+	.auth-page
+	:is(.auth-header, .auth-footer, .auth-bottom-link) {
+	background: var(--bg-card);
+	border-radius: var(--radius-md);
+	backdrop-filter: blur(14px) saturate(140%);
+	-webkit-backdrop-filter: blur(14px) saturate(140%);
+}
+
+[data-has-page-background-image='true'][data-login-template='minimal']:is(
+		[data-login-theme='glass'],
+		[data-login-theme='clear-glass']
+	)
+	.card {
+	background: var(--bg-card);
+	border: 1px solid var(--border-glass);
+	box-shadow: var(--shadow-sm);
+}
+
+/* Glass needs what is behind it; without it (reduced transparency, or a browser without
+   backdrop-filter) the panes are opaque and the clear glass loses its reflection. */
+@media (prefers-reduced-transparency: reduce) {
+	:is(:root, .login-ui-theme-boundary):is(
+		[data-login-theme='glass'],
+		[data-login-theme='clear-glass']
+	),
+	[data-login-theme='glass'][data-page-layout='split_panel'][data-form-frame='card']:not(
+			[data-theme='dark']
+		),
+	[data-login-theme='clear-glass'][data-page-layout='split_panel'][data-form-frame='card']:not(
+			[data-theme='dark']
+		) {
+		--blur-sm: none;
+		--bg-card: #f3f4f7;
+		--bg-glass: #f3f4f7;
+		--bg-input: #fafbfc;
+		--button-secondary-bg: #f7f8fa;
+		--glass-primary-bg: #bccdee;
+		--glass-sheen: linear-gradient(transparent, transparent);
+		--glass-glints: linear-gradient(transparent, transparent);
+		--glass-grain-opacity: 0;
+		--glass-alert-sheen: linear-gradient(transparent, transparent);
+		--glass-gloss: linear-gradient(transparent, transparent);
+		--glass-toggle-track: #e6e9ee;
+		--glass-thumb: linear-gradient(#ffffff, #ffffff);
+		--card-bg-muted: #eceef2;
+	}
+
+	:is(:root, .login-ui-theme-boundary):is(
+			[data-login-theme='glass'],
+			[data-login-theme='clear-glass']
+		)[data-theme='dark'],
+	[data-theme='dark'][data-login-theme='glass'][data-page-layout='split_panel'][data-form-frame='card'],
+	[data-theme='dark'][data-login-theme='clear-glass'][data-page-layout='split_panel'][data-form-frame='card'] {
+		/* The dark scheme sets its own blur, more specifically than the rule above. */
+		--blur-sm: none;
+		--bg-card: #202228;
+		--bg-glass: #202228;
+		--bg-input: #25272e;
+		--button-secondary-bg: #282a31;
+		--glass-primary-bg: #34467a;
+		--glass-sheen: linear-gradient(transparent, transparent);
+		--glass-glints: linear-gradient(transparent, transparent);
+		--glass-grain-opacity: 0;
+		--glass-alert-sheen: linear-gradient(transparent, transparent);
+		--glass-gloss: linear-gradient(transparent, transparent);
+		--glass-toggle-track: #2a2d34;
+		--glass-thumb: linear-gradient(#aeb4c0, #aeb4c0);
+		--card-bg-muted: #25272e;
+	}
+
+	:is([data-login-theme='glass'], [data-login-theme='clear-glass']) .auth-page .runtime-auth-button,
+	:is([data-login-theme='glass'], [data-login-theme='clear-glass']) .auth-page .btn,
+	:is([data-login-theme='glass'], [data-login-theme='clear-glass'])
+		.auth-page
+		.runtime-screen-field
+		input,
+	:is([data-login-theme='glass'], [data-login-theme='clear-glass'])
+		.auth-page
+		.runtime-screen-field
+		select,
+	:is([data-login-theme='glass'], [data-login-theme='clear-glass']) .auth-page select,
+	:is([data-login-theme='glass'], [data-login-theme='clear-glass']) .alert,
+	:is([data-login-theme='glass'], [data-login-theme='clear-glass']) .auth-client-card,
+	:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass']
+		.status-badge:is(.active, .inactive, .success, .warning, .danger, .info, .neutral),
+	:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass'] .toggle-switch,
+	[data-has-page-background-image='true']:is(
+			[data-login-theme='glass'],
+			[data-login-theme='clear-glass']
+		)
+		.auth-page
+		:is(.auth-header, .auth-footer, .auth-bottom-link) {
+		backdrop-filter: none;
+		-webkit-backdrop-filter: none;
+	}
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+	:is(:root, .login-ui-theme-boundary):is(
+		[data-login-theme='glass'],
+		[data-login-theme='clear-glass']
+	),
+	[data-login-theme='glass'][data-page-layout='split_panel'][data-form-frame='card']:not(
+			[data-theme='dark']
+		),
+	[data-login-theme='clear-glass'][data-page-layout='split_panel'][data-form-frame='card']:not(
+			[data-theme='dark']
+		) {
+		--bg-card: #f3f4f7;
+		--bg-glass: #f3f4f7;
+		--bg-input: #fafbfc;
+		--button-secondary-bg: #f7f8fa;
+		--glass-primary-bg: #bccdee;
+		--glass-sheen: linear-gradient(transparent, transparent);
+		--glass-glints: linear-gradient(transparent, transparent);
+		--glass-grain-opacity: 0;
+		--glass-alert-sheen: linear-gradient(transparent, transparent);
+		--glass-gloss: linear-gradient(transparent, transparent);
+		--glass-toggle-track: #e6e9ee;
+		--glass-thumb: linear-gradient(#ffffff, #ffffff);
+		--card-bg-muted: #eceef2;
+	}
+
+	:is(:root, .login-ui-theme-boundary):is(
+			[data-login-theme='glass'],
+			[data-login-theme='clear-glass']
+		)[data-theme='dark'],
+	[data-theme='dark'][data-login-theme='glass'][data-page-layout='split_panel'][data-form-frame='card'],
+	[data-theme='dark'][data-login-theme='clear-glass'][data-page-layout='split_panel'][data-form-frame='card'] {
+		--bg-card: #202228;
+		--bg-glass: #202228;
+		--bg-input: #25272e;
+		--button-secondary-bg: #282a31;
+		--glass-primary-bg: #34467a;
+		--glass-sheen: linear-gradient(transparent, transparent);
+		--glass-glints: linear-gradient(transparent, transparent);
+		--glass-grain-opacity: 0;
+		--glass-alert-sheen: linear-gradient(transparent, transparent);
+		--glass-gloss: linear-gradient(transparent, transparent);
+		--glass-toggle-track: #2a2d34;
+		--glass-thumb: linear-gradient(#aeb4c0, #aeb4c0);
+		--card-bg-muted: #25272e;
+	}
+}
+
+/* Swiss Grid's split form side is the paper itself: the split rules above blur and thin it for the
+   other palettes, and a tenant's picture would show through. These come last to win over them. */
+[data-login-theme='swiss-grid'][data-page-layout='split_panel'] .auth-container,
+[data-login-theme='swiss-grid'][data-page-layout='split_panel'] .auth-main {
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
 }

@@ -5,6 +5,7 @@
  */
 import type { LoginUIConfig } from '#lib/api/authentication-methods.js';
 import { LOGIN_UI_LOCALES } from '#lib/i18n/locales.js';
+import { layoutFor, type PaletteId, type TemplateId } from '#lib/palettes.js';
 import type { Scheme, ThemeTemplate } from './globals.svelte';
 
 type PageTemplate = NonNullable<LoginUIConfig['pageTemplate']>;
@@ -39,12 +40,36 @@ export function layoutForTheme(theme: ThemeTemplate): PageTemplate['layout'] {
 	return 'centered_card';
 }
 
+/**
+ * What a tenant saves is a template and a palette. `theme` (one of the four pre-palette names) is
+ * for the galleries that pin a frame to one; it is what an older server would send, and the
+ * Login UI reads it through the same fallback.
+ */
+export type LoginUIConfigInput =
+	| { theme: ThemeTemplate; template?: undefined; palette?: undefined; scheme: Scheme }
+	| { theme?: undefined; template: TemplateId; palette: PaletteId; scheme: Scheme };
+
+/**
+ * The pre-palette `themeTemplate` the server sends alongside a palette and template, for older
+ * Login UI builds. Swiss Grid is the former Glass (`fullbleed-glass`); the two glasses and `flat`
+ * did not exist then, so they are sent as the Meridian name of their template
+ * (the same derivation as `deriveLegacyThemeTemplate` in ar-management).
+ */
+function serverLegacyTheme(palette: PaletteId, template: TemplateId): ThemeTemplate {
+	if (palette === 'classic') return 'classic';
+	if (palette === 'swiss-grid') return 'fullbleed-glass';
+	return template === 'split' ? 'split-brand-panel' : 'meridian';
+}
+
 export function buildLoginUIConfig(
-	input: { theme: ThemeTemplate; scheme: Scheme },
+	input: LoginUIConfigInput,
 	overrides: LoginUIOverrides = {}
 ): LoginUIConfig {
+	const modern = input.theme === undefined;
+	const themeName = modern ? serverLegacyTheme(input.palette, input.template) : input.theme;
 	const pageTemplate: PageTemplate = {
-		layout: layoutForTheme(input.theme),
+		layout: modern ? layoutFor(input.template) : layoutForTheme(input.theme),
+		...(modern ? { template: input.template, palette: input.palette } : {}),
 		fontFamily: 'system',
 		fontScale: 'comfortable',
 		backgroundColor: '',
@@ -55,7 +80,9 @@ export function buildLoginUIConfig(
 		footerEnabled: true,
 		poweredByEnabled: true,
 		authSwitchLinkEnabled: true,
-		topbarPosition: topbarForTheme(input.theme),
+		// The server does not derive the position from the template: a tenant that set none has
+		// `below_card`. (The pre-palette path keeps the old Split brand panel preset's `bottom_right`.)
+		topbarPosition: modern ? 'below_card' : topbarForTheme(input.theme),
 		themeToggleEnabled: true,
 		languageSelectEnabled: true,
 		languageSwitcherPosition: 'below_card',
@@ -72,9 +99,19 @@ export function buildLoginUIConfig(
 		brandPanelText: 'One account for every Acme service.',
 		...overrides.pageTemplate
 	};
+	// A story that sets only the layout (the layouts gallery, a part shown on a centred page) says
+	// nothing about the template, and the Login UI reads `template` before `layout`: leaving the
+	// toolbar's template in would override the layout it asked for. Without it the Login UI derives
+	// the template from the layout, as it does for a server that sends only the layout.
+	if (
+		modern &&
+		overrides.pageTemplate?.layout !== undefined &&
+		overrides.pageTemplate.template === undefined
+	)
+		delete pageTemplate.template;
 	return {
 		theme: input.scheme,
-		themeTemplate: input.theme,
+		themeTemplate: themeName,
 		branding: {
 			logoUrl: SAMPLE_LOGO_URL,
 			faviconUrl: null,

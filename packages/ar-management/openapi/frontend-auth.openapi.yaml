@@ -1387,10 +1387,17 @@ components:
                   enum:
                     - meridian
                     - classic
+                    - swiss-grid
                     - glass
+                    - clear-glass
                     - flat
                   default: meridian
-                  description: Built-in colour and shape set.
+                  description: >-
+                    Built-in colour and shape set. `swiss-grid` is flat, square and high contrast, drawn
+                    as the Admin console's Swiss Grid theme is; `glass` is frosted glass (blurred,
+                    translucent panes with a thin light rim); `clear-glass` is clear glass (barely
+                    blurred, with an iridescent rim and highlights along its edges). An older server's `fullbleed-glass` theme
+                    template is `swiss-grid`.
                 formFrame:
                   type: string
                   enum:

@@ -1,7 +1,7 @@
 import { PALETTE_BACKGROUNDS, type PaletteId } from './palettes.js';
 
 export type LoginUIThemeMode = 'light' | 'dark';
-/** A pre-palette theme name, or a palette id (`glass` and `flat` have no pre-palette name). */
+/** A pre-palette theme name, or a palette id (those that came after the old names have none). */
 export type LoginUIThemeTemplate =
 	| 'classic'
 	| 'meridian'
@@ -26,9 +26,12 @@ const THEME_TEMPLATE_BACKGROUNDS: Record<LoginUIThemeTemplate, Record<LoginUIThe
 	classic: { light: '#eeeae3', dark: '#0f0d0c' },
 	meridian: { light: '#eef1f6', dark: '#0b0e16' },
 	'split-brand-panel': { light: '#eef1f6', dark: '#0b0e16' },
-	'fullbleed-glass': { light: '#ecdfd3', dark: '#0d0908' },
+	// The old Full-bleed glass is Swiss Grid now; an older server may still send the old name.
+	'fullbleed-glass': PALETTE_BACKGROUNDS['swiss-grid'],
 	// The palette ids not already named above; the palette table is the single source.
+	'swiss-grid': PALETTE_BACKGROUNDS['swiss-grid'],
 	glass: PALETTE_BACKGROUNDS.glass,
+	'clear-glass': PALETTE_BACKGROUNDS['clear-glass'],
 	flat: PALETTE_BACKGROUNDS.flat
 };
 

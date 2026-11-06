@@ -24,7 +24,7 @@ import {
 	type TemplateId
 } from '#lib/palettes.js';
 
-/** The value of `data-login-theme`: the pre-palette theme names, plus `flat`. */
+/** The value of `data-login-theme`: the pre-palette theme names, plus the palettes after them. */
 type ThemeTemplate = LegacyThemeName;
 type PageLayout = 'centered_card' | 'split_panel' | 'fullbleed_card';
 type FontFamily = 'system' | 'rounded' | 'serif' | 'mono';
@@ -64,9 +64,13 @@ const DEFAULT_THEME_TEMPLATE: ThemeTemplate = 'meridian';
 const DEFAULT_PAGE_LAYOUT: PageLayout = 'centered_card';
 
 function readThemeTemplate(value: unknown): ThemeTemplate {
+	// The old Full-bleed glass is Swiss Grid now: an older server's name is read as the new one.
+	if (value === 'fullbleed-glass') return 'swiss-grid';
 	return value === 'classic' ||
 		value === 'split-brand-panel' ||
-		value === 'fullbleed-glass' ||
+		value === 'swiss-grid' ||
+		value === 'glass' ||
+		value === 'clear-glass' ||
 		value === 'flat' ||
 		value === 'meridian'
 		? value
@@ -76,7 +80,9 @@ function readThemeTemplate(value: unknown): ThemeTemplate {
 /** The palette a pre-palette `themeTemplate` stands for (a server that sends no `palette`). */
 function paletteOfThemeTemplate(value: ThemeTemplate): PaletteId {
 	if (value === 'classic') return 'classic';
-	if (value === 'fullbleed-glass') return 'glass';
+	if (value === 'swiss-grid') return 'swiss-grid';
+	if (value === 'glass') return 'glass';
+	if (value === 'clear-glass') return 'clear-glass';
 	if (value === 'flat') return 'flat';
 	return DEFAULT_PALETTE;
 }
@@ -359,6 +365,7 @@ export function createLoginUIPageStore() {
 		html.setAttribute('data-brand-panel-logo-display', effectiveBrandPanelLogoDisplay());
 		html.setAttribute('data-has-brand-panel-image', brandPanelImageUrl ? 'true' : 'false');
 		html.setAttribute('data-has-form-area-color', sanitizeColor(formAreaColor) ? 'true' : 'false');
+		html.setAttribute('data-has-accent-color', accentColor ? 'true' : 'false');
 
 		setOptionalStyleProperty(
 			'--login-page-background-color',
