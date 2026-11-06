@@ -17,6 +17,7 @@ import {
   createErrorResponse,
   getTenantIdFromContext,
   hasAdminPermission,
+  isExactMatchOnlyAdminPermission,
   hasGlobalAdminPermission,
   intersectMachinePermissionSets,
   requireDedicatedAdminDatabaseAdapter,
@@ -160,10 +161,18 @@ function adds(current: readonly string[], next: readonly string[]): boolean {
   return next.some((entry) => !held.has(entry));
 }
 
-/** Whether `next` holds a step-up exemption that `current` does not. */
+/**
+ * Whether `next` holds a step-up exemption, or another exact-name-only permission such as the
+ * last-resort recovery, that `current` does not. A credential with no list of its own may still
+ * gain one this way, since no wildcard on its principal carries it.
+ */
 function addsStepUpExemption(current: readonly string[], next: readonly string[]): boolean {
   const held = new Set(current);
-  return next.some((entry) => entry.startsWith(STEP_UP_EXEMPT_PREFIX) && !held.has(entry));
+  return next.some(
+    (entry) =>
+      (entry.startsWith(STEP_UP_EXEMPT_PREFIX) || isExactMatchOnlyAdminPermission(entry)) &&
+      !held.has(entry)
+  );
 }
 
 /**

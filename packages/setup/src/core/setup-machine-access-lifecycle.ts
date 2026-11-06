@@ -7,6 +7,10 @@ interface EphemeralSetupMachineAccessInput<T> {
   config: AuthrimConfig;
   keysDir: string;
   databaseIdentifier?: string;
+  /** Write the principal with only these permissions instead of the default setup scopes. */
+  permissions?: readonly string[];
+  /** With `permissions`: let the principal reach every tenant (a platform-wide operation). */
+  allTenants?: boolean;
   onProgress?: (message: string) => void;
   action: () => Promise<T>;
 }
@@ -15,6 +19,13 @@ async function ensureEphemeralAccess<T>(
   input: EphemeralSetupMachineAccessInput<T>,
   databaseOptions: { databaseIdentifier: string } | undefined
 ) {
+  if (input.permissions) {
+    return ensureSetupMachineAccessInD1(input.env, input.config, input.keysDir, input.onProgress, {
+      ...(databaseOptions ?? {}),
+      permissions: input.permissions,
+      ...(input.allTenants ? { allTenants: true } : {}),
+    });
+  }
   return databaseOptions
     ? ensureSetupMachineAccessInD1(
         input.env,

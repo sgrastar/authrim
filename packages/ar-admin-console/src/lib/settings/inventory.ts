@@ -736,7 +736,8 @@ place('settings/team', 'Admin sign-in', {
 		'session.ttl.admin_passkey',
 		'security.admin_step_up_overrides',
 		'security.admin_step_up_enforced',
-		'security.admin_keyring_dc_api'
+		'security.admin_keyring_dc_api',
+		'security.admin_last_resort_reenroll_window_seconds'
 	]
 });
 

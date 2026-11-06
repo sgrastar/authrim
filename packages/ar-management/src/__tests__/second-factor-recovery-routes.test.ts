@@ -325,6 +325,16 @@ describe('second-factor recovery', () => {
       expect(body).toMatchObject({ error });
       expect(mocks.sendRecoveryNotice).not.toHaveBeenCalled();
     });
+
+    it('asks to sign in again when the session ended before the request was filed', async () => {
+      mocks.create.mockResolvedValue({ created: false, reason: 'session_ended' });
+
+      const { status, body } = await file();
+
+      expect(status).toBe(401);
+      expect(body).toMatchObject({ error: 'session_ended' });
+      expect(mocks.sendRecoveryNotice).not.toHaveBeenCalled();
+    });
   });
 
   describe('the requester', () => {

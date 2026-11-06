@@ -6,8 +6,9 @@
  *
  * Registering needs an L2 receipt once the admin has a second factor. The first one can be
  * registered with a fresh passkey alone, but only inside the admin's one-time enrollment window;
- * after it, an admin without any must go through recovery. Removing needs an L2 receipt and never
- * leaves fewer than the minimum.
+ * after it, an admin without any must go through recovery. The last-resort recovery (setup tool,
+ * see admin-last-resort-recovery.ts) opens a short re-enrolment window that allows this once
+ * more. Removing needs an L2 receipt and never leaves fewer than the minimum.
  *
  * Endpoints:
  * - GET    /api/admin/me/second-factors                  - List own second factors and the enrollment state
@@ -185,7 +186,9 @@ function minimumReached(c: AdminContext): Response {
 
 /**
  * How the admin may register now: `step_up` with an L2 receipt once a factor is active, `first`
- * with a fresh passkey inside the enrollment window, otherwise `recovery_required`.
+ * with a fresh passkey inside the enrollment window (or the re-enrolment window the last-resort
+ * recovery opened), otherwise `recovery_required`. `graceEndsAt` is when the window that applies
+ * closes: the re-enrolment window's end while that one is what allows a first registration.
  */
 export async function enrollmentState(
   repo: AdminSecondFactorRepository,
@@ -195,14 +198,19 @@ export async function enrollmentState(
   mode: EnrollmentMode | 'recovery_required';
   active: AdminSecondFactor[];
   graceEndsAt: number | null;
+  reenrollUntil: number | null;
 }> {
   const active = await repo.listActiveByUser(adminUserId);
   const graceEndsAt = await repo.getEnrollmentGraceEndsAt(adminUserId);
-  if (active.length > 0) return { mode: 'step_up', active, graceEndsAt };
+  const reenrollUntil = await repo.getReenrollWindowEndsAt(adminUserId, now);
+  if (active.length > 0) return { mode: 'step_up', active, graceEndsAt, reenrollUntil };
   // The first enrollment is once: an admin whose keys were all revoked recovers instead.
   if (graceEndsAt !== null && now < graceEndsAt && !(await repo.hasEverEnrolled(adminUserId)))
-    return { mode: 'first', active, graceEndsAt };
-  return { mode: 'recovery_required', active, graceEndsAt };
+    return { mode: 'first', active, graceEndsAt, reenrollUntil };
+  // Unless the last-resort recovery opened a re-enrolment window (revoked keys stay revoked).
+  if (reenrollUntil !== null)
+    return { mode: 'first', active, graceEndsAt: reenrollUntil, reenrollUntil };
+  return { mode: 'recovery_required', active, graceEndsAt, reenrollUntil };
 }
 
 /**
@@ -226,7 +234,11 @@ mySecondFactorsRouter.get('/', async (c) => {
       second_factors: factors.map(presentSecondFactor),
       active_count: state.active.length,
       minimum: ADMIN_SECOND_FACTOR_MINIMUM,
-      enrollment: { mode: state.mode, first_enrollment_ends_at: state.graceEndsAt },
+      enrollment: {
+        mode: state.mode,
+        first_enrollment_ends_at: state.graceEndsAt,
+        reenroll_until: state.reenrollUntil,
+      },
       keyring: { dc_api: dcApi },
     });
   } catch (error) {
@@ -521,6 +533,7 @@ mySecondFactorsRouter.post('/webauthn/verify', async (c) => {
       },
       {
         firstOnly: metadata.mode === 'first',
+        sessionId: auth.sessionId,
         ...(metadata.mode === 'step_up' && metadata.approvingFactorId
           ? { approvedBy: { factorId: metadata.approvingFactorId, sessionId: auth.sessionId } }
           : {}),
@@ -533,6 +546,12 @@ mySecondFactorsRouter.post('/webauthn/verify', async (c) => {
           error_description: 'The security key that approved this registration is no longer active',
         },
         403
+      );
+    }
+    if (!result.inserted && result.reason === 'session_ended') {
+      return c.json(
+        { error: 'session_ended', error_description: 'This session has ended: sign in again' },
+        401
       );
     }
     if (!result.inserted && result.reason === 'enrollment_closed') {

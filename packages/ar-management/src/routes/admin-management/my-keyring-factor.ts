@@ -586,6 +586,7 @@ async function completeEnroll(c: AdminContext): Promise<Response> {
       { admin_user_id: auth.userId, holder_jkt: result.holderJkt, label: KEYRING_LABEL },
       {
         firstOnly: mode === 'first',
+        sessionId: auth.sessionId,
         ...(mode === 'step_up' && approving
           ? { approvedBy: { factorId: approving, sessionId: auth.sessionId } }
           : {}),
@@ -593,6 +594,9 @@ async function completeEnroll(c: AdminContext): Promise<Response> {
     );
     if (!inserted.inserted && inserted.reason === 'approval_revoked') {
       return c.json({ status: 'failed', error: 'step_up_required' }, 403);
+    }
+    if (!inserted.inserted && inserted.reason === 'session_ended') {
+      return c.json({ status: 'failed', error: 'session_ended' }, 401);
     }
     if (!inserted.inserted) {
       const error =
