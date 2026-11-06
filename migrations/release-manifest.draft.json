@@ -69,6 +69,10 @@
             {
               "path": "008_admin_notice_delivery.sql",
               "checksum": "c385bfa6d360f6a0b3a39d6b59ec1f66d649df38228581b7bd206deb96ae28eb"
+            },
+            {
+              "path": "009_login_ui_themes.sql",
+              "checksum": "471446e9ada72235ddccc310959490ecb2c8cfb16733b581c9d15ddddf1f9b86"
             }
           ]
         },
@@ -205,6 +209,10 @@
         {
           "path": "008_admin_notice_delivery.sql",
           "checksum": "c385bfa6d360f6a0b3a39d6b59ec1f66d649df38228581b7bd206deb96ae28eb"
+        },
+        {
+          "path": "009_login_ui_themes.sql",
+          "checksum": "471446e9ada72235ddccc310959490ecb2c8cfb16733b581c9d15ddddf1f9b86"
         }
       ]
     },

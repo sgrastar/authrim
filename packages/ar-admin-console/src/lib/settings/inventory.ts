@@ -791,7 +791,9 @@ place('hidden', 'Kept by the theme and account page editors', {
 		'login-ui.account_page_draft',
 		'login-ui.account_page_published',
 		'login-ui.account_page_published_version',
-		'login-ui.account_page_published_at'
+		'login-ui.account_page_published_at',
+		'login-ui.active_theme_id',
+		'login-ui.active_theme_version'
 	]
 });
 

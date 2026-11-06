@@ -2,19 +2,19 @@
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, fireEvent, userEvent, waitFor, within } from 'storybook/test';
 	import { t, tIn } from '#lib/i18n/i18n.svelte.js';
-	import Themes from './Themes.svelte';
+	import Page from '#lib/ui/templates/Page.svelte';
+	import ThemeEditor from './ThemeEditor.svelte';
 
 	const { Story } = defineMeta({
-		title: 'Pages/Customization/Themes',
-		component: Themes,
-		// draft: the frame of the page. Nothing is read from or written to the Admin API yet.
-		tags: ['autodocs', 'draft'],
+		title: 'Pages/Customization/Theme editor',
+		component: ThemeEditor,
+		tags: ['autodocs'],
 		parameters: {
 			layout: 'fullscreen',
 			docs: {
 				description: {
 					component:
-						'Customization → Themes: how the tenant’s sign-in screens look (legacy `/admin/themes`, `login-ui.*` settings).\n\nThe preview on the start side (screen, colour mode, phone or desktop width), the inspector on the end side (one tab per section: Layout, Design, Content, Images), and custom CSS under both, set a size down because it is narrow and holds many controls. What is edited is drawn in the preview as it is typed, chosen or uploaded. It is held in the page: nothing is read from or saved to the Admin API yet, and custom CSS is not applied in the preview yet. The preview shows an outline of a sign-in screen, not the real screens.\n\nThe parts it uses are the console’s own; the ones it still lacks are listed in the pull request.'
+						'Customization → Themes → a theme: how the tenant’s sign-in screens look. The theme page (`ThemeEditorPage`) puts this editor under its header (the theme’s name, Save, Apply) and loads and saves the draft through `/api/admin/login-ui/themes`.\n\nThe preview on the start side (screen, colour mode, phone or desktop width), the inspector on the end side (one tab per section: Layout, Design, Content, Images), and custom CSS under both, set a size down because it is narrow and holds many controls. What is edited is drawn in the preview as it is typed, chosen or uploaded; custom CSS is not applied in the preview. The preview shows an outline of a sign-in screen, not the real screens.'
 				}
 			}
 		}
@@ -36,7 +36,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -51,7 +51,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -67,7 +67,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -100,7 +100,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -122,7 +122,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -138,7 +138,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -158,7 +158,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -179,7 +179,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -199,7 +199,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -224,7 +224,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -250,7 +250,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -270,7 +270,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -295,7 +295,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -320,7 +320,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -358,7 +358,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -393,7 +393,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -416,7 +416,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -434,7 +434,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -467,7 +467,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -504,7 +504,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -534,7 +534,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -554,7 +554,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -572,7 +572,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -601,7 +601,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -628,7 +628,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -660,7 +660,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -691,7 +691,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -727,7 +727,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -747,7 +747,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -776,7 +776,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -793,7 +793,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -813,7 +813,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -852,7 +852,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -875,7 +875,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -898,7 +898,7 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
 
@@ -920,6 +920,6 @@
 	}}
 >
 	{#snippet template()}
-		<Themes />
+		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>

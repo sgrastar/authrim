@@ -100,9 +100,9 @@ export function resolveNavPath(pathname: string): NavLocation | null {
 		const area = nav.byId.get(OVERVIEW_ID[kind]);
 		return area ? { kind, area, item: null, top: topEntryOf(kind, area.id) } : null;
 	}
-	if (rest.length > 2) return null;
+	if (rest.length > 3) return null;
 
-	const [segment, itemId] = rest;
+	const [segment, itemId, detail] = rest;
 	const area =
 		(kind === 'platform' ? nav.byId.get(`${PLATFORM_PREFIX}${segment}`) : undefined) ??
 		(segment.startsWith(PLATFORM_PREFIX) ? undefined : nav.byId.get(segment));
@@ -114,7 +114,10 @@ export function resolveNavPath(pathname: string): NavLocation | null {
 			: null;
 	}
 	const item = area.children.find((c) => c.id === itemId) ?? null;
-	return item ? { kind, area, item, top: topEntryOf(kind, area.id) } : null;
+	// A record's page under its item (…/branding/<id>) is shown as the item; only for an item that
+	// says it has such pages.
+	if (!item || (detail !== undefined && !item.details)) return null;
+	return { kind, area, item, top: topEntryOf(kind, area.id) };
 }
 
 /** Pages that live outside the navigation (reached from the account menu). */

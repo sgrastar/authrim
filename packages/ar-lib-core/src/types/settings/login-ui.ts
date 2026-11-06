@@ -140,6 +140,8 @@ export interface LoginUISettings {
   'login-ui.account_page_published': string;
   'login-ui.account_page_published_version': number;
   'login-ui.account_page_published_at': string;
+  'login-ui.active_theme_id': string;
+  'login-ui.active_theme_version': number;
 }
 
 /**
@@ -879,6 +881,28 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
     visibility: 'internal',
     status: 'in_development',
   },
+  'login-ui.active_theme_id': {
+    key: 'login-ui.active_theme_id',
+    type: 'string',
+    default: '',
+    envKey: 'LOGIN_UI_ACTIVE_THEME_ID',
+    label: 'Active Saved Theme ID',
+    description:
+      'ID of the saved Login UI theme last applied to this tenant. Written by the theme apply operation, not edited by hand',
+    visibility: 'internal',
+  },
+  'login-ui.active_theme_version': {
+    key: 'login-ui.active_theme_version',
+    type: 'number',
+    default: 0,
+    envKey: 'LOGIN_UI_ACTIVE_THEME_VERSION',
+    label: 'Active Saved Theme Version',
+    description:
+      'Version of the saved Login UI theme last applied to this tenant. Written by the theme apply operation, not edited by hand',
+    min: 0,
+    integer: true,
+    visibility: 'internal',
+  },
 };
 
 /**
@@ -967,4 +991,65 @@ export const LOGIN_UI_DEFAULTS: LoginUISettings = {
   'login-ui.account_page_published': '',
   'login-ui.account_page_published_version': 0,
   'login-ui.account_page_published_at': '',
+  'login-ui.active_theme_id': '',
+  'login-ui.active_theme_version': 0,
 };
+
+/**
+ * The appearance keys a saved Login UI theme may hold. Applying a theme sets each of these to the
+ * theme's value, or clears it when the theme does not hold it, so the live Login UI equals the
+ * theme. Locales and the legacy/deprecated keys are not part of a theme.
+ */
+export const LOGIN_UI_THEME_KEYS = [
+  'login-ui.template',
+  'login-ui.palette',
+  'login-ui.theme',
+  'login-ui.font_family',
+  'login-ui.font_scale',
+  'login-ui.background_color',
+  'login-ui.accent_color',
+  'login-ui.title_color',
+  'login-ui.text_color',
+  'login-ui.copy_color',
+  'login-ui.form_area_color',
+  'login-ui.brand_name',
+  'login-ui.header_name',
+  'login-ui.logo_url',
+  'login-ui.favicon_url',
+  'login-ui.logo_display',
+  'login-ui.brand_panel_logo_display',
+  'login-ui.logo_layout',
+  'login-ui.brand_panel_title',
+  'login-ui.brand_panel_text',
+  'login-ui.background_image_url',
+  'login-ui.background_image_opacity',
+  'login-ui.login_panel_background_image_url',
+  'login-ui.login_panel_background_opacity',
+  'login-ui.brand_panel_image_url',
+  'login-ui.brand_panel_image_opacity',
+  'login-ui.custom_css',
+  'login-ui.header_enabled',
+  'login-ui.subtitle_enabled',
+  'login-ui.footer_enabled',
+  'login-ui.powered_by_enabled',
+  'login-ui.theme_toggle_enabled',
+  'login-ui.language_select_enabled',
+  'login-ui.topbar_position',
+  'login-ui.header_style',
+  'login-ui.footer_style',
+  'login-ui.split_frame',
+  'login-ui.form_frame',
+  'login-ui.split_panel_side',
+  'login-ui.split_panel_width',
+  'login-ui.split_background_mode',
+  'login-ui.login_panel_background_color',
+  'login-ui.login_panel_background_gradient_color',
+  'login-ui.brand_content_mode',
+  'login-ui.brand_position',
+  'login-ui.brand_align',
+  'login-ui.header_text',
+  'login-ui.text_localizations',
+  'login-ui.footer_text',
+  'login-ui.footer_links',
+] as const satisfies ReadonlyArray<keyof LoginUISettings>;
+export type LoginUIThemeKey = (typeof LOGIN_UI_THEME_KEYS)[number];

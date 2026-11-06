@@ -260,6 +260,12 @@ const packageSpecs = [
         },
       },
       {
+        file: 'packages/ar-management/src/routes/admin-management/login-ui-themes.ts',
+        receiverPrefixes: {
+          loginUIThemesRouter: '/api/admin/login-ui/themes',
+        },
+      },
+      {
         file: 'packages/ar-management/src/routes/admin-management/admin-second-factors.ts',
         receiverPrefixes: {
           adminSecondFactorsRouter: '/api/admin/admins/:id/second-factors',
