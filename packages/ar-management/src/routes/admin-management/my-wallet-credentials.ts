@@ -24,6 +24,9 @@ import {
   rateLimitMiddleware,
   requiredIdempotencyMiddleware,
   requireDedicatedAdminDatabaseAdapter,
+  ADMIN_SECOND_FACTOR_MINIMUM,
+  markIdempotentResponseRetryable,
+  AdminSecondFactorRepository,
 } from '@authrim/ar-lib-core';
 import { writeAdminAuditLog } from '../../admin-shared';
 import { isFreshAdminHuman } from '../../agent-fresh-auth';
@@ -32,6 +35,8 @@ import { getCanonicalTenantBaseUrlAsync } from '../../request-issuer';
 import {
   isOwnAdminCredential,
   listOwnAdminCredentials,
+  holderThumbprintOfCredential,
+  retireKeyringFactorsOfRevokedCredentials,
   revokeAdminCredential,
 } from './admin-wallet-credential-store';
 
@@ -51,6 +56,19 @@ export const myWalletCredentialsRouter = new Hono<{
 }>();
 
 myWalletCredentialsRouter.use('*', adminAuthMiddleware({}));
+
+function secondFactorMinimum(c: WalletContext) {
+  c.header('Cache-Control', 'no-store');
+  return c.json(
+    {
+      error: 'second_factor_minimum',
+      error_description:
+        'This credential is your only second factor: register another one before revoking it',
+      minimum: ADMIN_SECOND_FACTOR_MINIMUM,
+    },
+    409
+  );
+}
 
 function refuse(c: WalletContext, error: string, status: 403 | 404 | 503) {
   c.header('Cache-Control', 'no-store');
@@ -244,24 +262,60 @@ myWalletCredentialsRouter.post(
       return refuse(c, 'not_found', 404);
     }
 
+    // A credential registered as one of the admin's second factors takes the factor with it:
+    // that is removing a second factor, under the same rules (the minimum, its L2 operation).
+    const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'admin-wallet-credential');
+    const factors = new AdminSecondFactorRepository(adminAdapter);
+    const jkt = await holderThumbprintOfCredential(adapter, home.tenantId, credentialId);
+    const factor = jkt ? await factors.findActiveKeyringFactor(home.adminUserId, jkt) : null;
+    if (
+      factor &&
+      (await factors.listActiveByUser(home.adminUserId)).length <= ADMIN_SECOND_FACTOR_MINIMUM
+    ) {
+      return secondFactorMinimum(c);
+    }
+
     // The receipt is spent here, after every check that can still refuse the request.
     const stepUpRefused = await requireAdminStepUp(c as never, {
       operation: 'admin_credential.revoke',
+      ...(factor ? { alsoCovers: ['admin.second_factor.remove' as const] } : {}),
       targetTenantId: home.tenantId,
       targetIds: [home.adminUserId, credentialId],
       params: { scope: 'own_wallet_credential' },
     });
     if (stepUpRefused) return stepUpRefused;
 
+    if (factor) {
+      const removed = await factors.revoke(home.adminUserId, factor.id);
+      if (!removed.revoked && removed.reason === 'minimum_reached') return secondFactorMinimum(c);
+    }
+
     const outcome = await revokeAdminCredential(adapter, home.tenantId, credentialId);
     if (outcome === 'not_found') return refuse(c, 'not_found', 404);
     if (outcome === 'conflict' || outcome === 'error') {
+      // Not the outcome of the request: the same Idempotency-Key may try again.
+      markIdempotentResponseRetryable(c as never);
       c.header('Retry-After', '1');
       return refuse(c, 'wallet_credential_unavailable', 503);
     }
     if (outcome === 'not_allowed') {
       c.header('Cache-Control', 'no-store');
       return c.json({ error: 'wallet_credential_not_revocable' }, 409);
+    }
+
+    // Whatever an earlier revocation left behind is finished here; a failure is retried.
+    try {
+      await retireKeyringFactorsOfRevokedCredentials(
+        adapter,
+        adminAdapter,
+        home.tenantId,
+        home.adminUserId
+      );
+    } catch {
+      // Not the outcome of the request: the same Idempotency-Key may try again.
+      markIdempotentResponseRetryable(c as never);
+      c.header('Retry-After', '1');
+      return refuse(c, 'wallet_credential_unavailable', 503);
     }
 
     // Only the credential id: nothing about the key or the claims.

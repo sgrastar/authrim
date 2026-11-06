@@ -4,7 +4,11 @@
 	 * every key is lost. Confirmations the Admin API asks for (passkey, a key, a step-up receipt)
 	 * are handled inside the client.
 	 */
+	import { withStepUp } from '#lib/api/admin-step-up.js';
 	import { ApiError } from '#lib/api/api-error.js';
+	import { httpKeyringFactor, type KeyringFactorClient } from '#lib/api/keyring-factor.js';
+	import KeyringPresentationDialog from '#lib/keyring/KeyringPresentationDialog.svelte';
+	import { KeyringPresentationFlow } from '#lib/keyring/presentation-flow.svelte.js';
 	import type {
 		SecondFactor,
 		SecondFactorRecovery,
@@ -34,13 +38,15 @@
 
 	interface Props {
 		client: SecondFactorsClient;
+		/** Keyring as a second factor (registration). */
+		keyring?: KeyringFactorClient;
 		/** Fixed clock for stories and tests. */
 		now?: () => number;
 		/** How often the waiting period is looked at again. */
 		tickMs?: number;
 	}
 
-	let { client, now = Date.now, tickMs = 30_000 }: Props = $props();
+	let { client, keyring = httpKeyringFactor, now = Date.now, tickMs = 30_000 }: Props = $props();
 
 	// The clock the waiting period is read against: a request becomes completable, or lapses,
 	// while the page stays open.
@@ -121,6 +127,31 @@
 	}
 
 	const nameOf = (key: { label: string | null }) => key.label || t('sk.unnamed');
+	const isKeyring = (key: SecondFactor) => key.kind === 'keyring_holder_key';
+
+	// Registering Keyring: an L2 step-up (or the first-enrollment rule) when the request starts,
+	// then the presentation from Keyring; the server registers the key once it is verified.
+	let enrolling = $state<KeyringPresentationFlow | null>(null);
+
+	function openKeyring() {
+		enrolling?.destroy();
+		const flow = new KeyringPresentationFlow({
+			start: () => withStepUp((receipt) => keyring.startEnroll(receipt)),
+			progress: (id) => keyring.enrollProgress(id),
+			onverified: () => {
+				closeKeyring();
+				toast.success(t('kp.enroll.added'));
+				void load();
+			}
+		});
+		enrolling = flow;
+		void flow.start();
+	}
+
+	function closeKeyring() {
+		enrolling?.destroy();
+		enrolling = null;
+	}
 
 	function openAdd(kind: 'key' | 'recovery') {
 		addName = '';
@@ -194,7 +225,10 @@
 <Card title={t('sk.title')} info={t('sk.info')}>
 	{#snippet actions()}
 		{#if loadState === 'ready' && keyState?.enrollment.mode !== 'recovery_required' && !recovery}
-			<Button icon="plus" size="sm" onclick={() => openAdd('key')}>{t('sk.add')}</Button>
+			<InlineGroup>
+				<Button icon="plus" size="sm" onclick={openKeyring}>{t('kp.enroll.add')}</Button>
+				<Button icon="plus" size="sm" onclick={() => openAdd('key')}>{t('sk.add')}</Button>
+			</InlineGroup>
 		{/if}
 	{/snippet}
 
@@ -247,8 +281,9 @@
 			{:else}
 				<ItemGrid label={t('sk.title')}>
 					{#each activeKeys as key (key.id)}
-						<ItemCard title={nameOf(key)} icon="key">
+						<ItemCard title={nameOf(key)} icon={isKeyring(key) ? 'deviceMobile' : 'key'}>
 							{#snippet meta()}
+								<Badge>{t(isKeyring(key) ? 'kp.kind.keyring' : 'kp.kind.securityKey')}</Badge>
 								{#if onlyOne}<Badge tone="info">{t('sk.only')}</Badge>{/if}
 							{/snippet}
 							{#snippet actions()}
@@ -301,6 +336,15 @@
 		bind:value={addName}
 	/>
 </FormDialog>
+
+<KeyringPresentationDialog
+	open={enrolling !== null}
+	title={t('kp.enroll.title')}
+	description={`${t('kp.enroll.body')} ${t('kp.enroll.needCredential')}`}
+	flow={enrolling}
+	onretry={() => void enrolling?.start()}
+	oncancel={closeKeyring}
+/>
 
 <ConfirmDialog
 	open={removing !== null}

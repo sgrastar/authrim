@@ -89,6 +89,76 @@ paths:
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
+  /vp/admin/request/{id}:
+    get:
+      tags:
+        - OpenID4VP
+      summary: Return the signed request object of an administrator presentation.
+      description: >-
+        Wallet-facing request object of an administrator presentation (second factor of an admin
+        step-up, or its enrolment). A JAR signed with the tenant's VC issuer key under the
+        decentralized_identifier Client Identifier Prefix (did:web of the tenant host): one DCQL
+        query for the admin credential, one transaction_data entry, response_mode direct_post.
+        Served only while the request is pending; 404 invalid_request_uri otherwise.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: The signed request object.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum:
+                  - no-store
+          content:
+            application/oauth-authz-req+jwt:
+              schema:
+                type: string
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+  /vp/admin/response:
+    post:
+      tags:
+        - OpenID4VP
+      summary: Receive the wallet response of an administrator presentation.
+      description: >-
+        direct_post response of an administrator presentation. vp_token is a JSON object with
+        exactly one presentation under the query id "admin": the admin credential (SD-JWT VC)
+        with a KB-JWT signed by its holder key over the request nonce, the client_id audience,
+        sd_hash (RFC 9901), transaction_data_hashes and the authrim_match_code claim (the two
+        digits shown in the console). A refused presentation fails the request for good (400
+        access_denied with the reason as error_description); an infrastructure error leaves it
+        open for another post (503).
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required:
+                - vp_token
+                - state
+              properties:
+                vp_token:
+                  type: string
+                  maxLength: 32768
+                state:
+                  type: string
+                  description: The request id.
+      responses:
+        '200':
+          description: Verified.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
   /vp/requests/{id}:
     get:
       tags:

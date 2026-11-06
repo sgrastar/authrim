@@ -40,6 +40,7 @@ import { sendAdminEmailChangeNotices } from './admin-email-change-notice';
 import {
   endedRevoked,
   listRevocableAdminCredentialIds,
+  retireKeyringFactorsOfRevokedCredentials,
   revokeAdminCredential,
   type RevocationResult,
 } from './admin-wallet-credential-store';
@@ -769,6 +770,18 @@ adminUsersRouter.post('/:id/wallet-credentials/revoke', async (c) => {
     const id = c.req.param('id');
     const tenantId = getTenantIdFromContext(c);
 
+    // One's own credentials are revoked one by one under the second-factor rules (the minimum,
+    // admin.second_factor.remove), on /api/admin/me/wallet-credentials.
+    if (id === authContext.userId) {
+      return c.json(
+        {
+          error: 'use_own_wallet_credential_route',
+          error_description: 'Revoke your own credentials from My account',
+        },
+        403
+      );
+    }
+
     // The admin's home tenant is the tenant the account is stored under. A deactivated (soft
     // deleted) account is included: its credentials must still be revocable.
     const existing = await adapter.queryOne<{ id: string }>(
@@ -816,6 +829,14 @@ adminUsersRouter.post('/:id/wallet-credentials/revoke', async (c) => {
       });
     }
     const allRevoked = results.every((result) => endedRevoked(result.outcome));
+    // Every revoked credential takes its Keyring factor with it, including ones an earlier call
+    // revoked but could not finish: a failure here is reported for a retry.
+    let factorsRetired = true;
+    try {
+      await retireKeyringFactorsOfRevokedCredentials(coreAdapter, adapter, tenantId, id);
+    } catch {
+      factorsRetired = false;
+    }
 
     await createAuditLog(
       c,
@@ -829,8 +850,12 @@ adminUsersRouter.post('/:id/wallet-credentials/revoke', async (c) => {
     );
 
     c.header('Cache-Control', 'no-store');
-    if (allRevoked) {
+    if (allRevoked && factorsRetired) {
       return c.json({ results, allRevoked }, 200);
+    }
+    if (!factorsRetired) {
+      c.header('Retry-After', '1');
+      return c.json({ results, allRevoked }, 503);
     }
     if (results.some((result) => result.outcome === 'conflict' || result.outcome === 'error')) {
       c.header('Retry-After', '1');

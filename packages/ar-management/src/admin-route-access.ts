@@ -122,6 +122,10 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
   ),
   authenticated('/api/admin/me/second-factors', 'current admin step-up second factors'),
   authenticated('/api/admin/me/second-factors/*', 'current admin step-up second factors'),
+  authenticated(
+    '/api/admin/me/keyring/*',
+    'current admin Keyring second factor (step-up, enrolment)'
+  ),
   authenticated('/api/admin/me/second-factor-recovery', 'current admin second-factor recovery'),
   authenticated('/api/admin/me/second-factor-recovery/*', 'current admin second-factor recovery'),
   authenticated('/api/admin/me/notice-preferences', 'current admin notice email preferences'),

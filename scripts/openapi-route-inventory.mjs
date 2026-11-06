@@ -241,6 +241,12 @@ const packageSpecs = [
         },
       },
       {
+        file: 'packages/ar-management/src/routes/admin-management/my-keyring-factor.ts',
+        receiverPrefixes: {
+          myKeyringFactorRouter: '/api/admin/me/keyring',
+        },
+      },
+      {
         file: 'packages/ar-management/src/routes/admin-management/my-second-factor-recovery.ts',
         receiverPrefixes: {
           mySecondFactorRecoveryRouter: '/api/admin/me/second-factor-recovery',

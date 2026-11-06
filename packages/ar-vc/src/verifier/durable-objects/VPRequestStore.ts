@@ -9,6 +9,13 @@ import { DurableObject } from 'cloudflare:workers';
 import type { SqlStorageValue } from '@cloudflare/workers-types';
 import { createLogger } from '@authrim/ar-lib-core';
 import type { Env, VPRequestState } from '../../types';
+import {
+  AdminVPRequestTable,
+  type AdminVPRequestInput,
+  type AdminVPResult,
+  type AdminVPStatus,
+  type ReserveAdminVPResult,
+} from '../admin/admin-vp-request-store';
 
 const log = createLogger().module('VC-VP-COORDINATOR');
 const DEFAULT_LEASE_MS = 60_000;
@@ -131,8 +138,11 @@ function minimizeVerifiedClaimNames(
 }
 
 export class VPRequestStoreV2 extends DurableObject<Env> {
+  private readonly admin: AdminVPRequestTable;
+
   constructor(ctx: DurableObjectState, env?: Env) {
     super(ctx, env ?? ({} as Env));
+    this.admin = new AdminVPRequestTable(ctx.storage.sql);
     void ctx.blockConcurrencyWhile(async () => {
       this.initializeSchema();
     });
@@ -142,6 +152,94 @@ export class VPRequestStoreV2 extends DurableObject<Env> {
     initializeCredentialStoreSchema(this.ctx.storage, VP_INITIAL_SCHEMA, VP_PRIMARY_KEY_MIGRATION, [
       'vp_requests',
     ]);
+    this.admin.initialize();
+  }
+
+  // ---- Administrator presentations (second factor of an admin step-up) ----
+
+  createAdminRequestRpc(input: AdminVPRequestInput): void {
+    this.admin.create(input);
+    this.scheduleAlarm(input.expiresAt);
+  }
+
+  getAdminRequestObjectRpc(input: { id: string; tenantId: string; now: number }): string | null {
+    return this.admin.requestObject(input.id, input.tenantId, input.now);
+  }
+
+  reserveAdminResponseRpc(input: {
+    id: string;
+    tenantId: string;
+    responseFingerprint: string;
+    now: number;
+  }): ReserveAdminVPResult {
+    return this.admin.reserve(input.id, input.tenantId, input.responseFingerprint, input.now);
+  }
+
+  completeAdminResponseRpc(input: {
+    id: string;
+    tenantId: string;
+    reservationId: string;
+    holderJkt: string;
+    credentialId: string;
+    now: number;
+  }): boolean {
+    return this.admin.complete(
+      input.id,
+      input.tenantId,
+      input.reservationId,
+      { holderJkt: input.holderJkt, credentialId: input.credentialId },
+      input.now
+    );
+  }
+
+  failAdminResponseRpc(input: {
+    id: string;
+    tenantId: string;
+    reservationId: string;
+    errorCode: string;
+  }): boolean {
+    return this.admin.fail(input.id, input.tenantId, input.reservationId, input.errorCode);
+  }
+
+  releaseAdminResponseRpc(input: {
+    id: string;
+    tenantId: string;
+    reservationId: string;
+    now: number;
+  }): boolean {
+    return this.admin.release(input.id, input.tenantId, input.reservationId, input.now);
+  }
+
+  getAdminStatusRpc(input: {
+    id: string;
+    tenantId: string;
+    adminUserId: string;
+    sessionId: string;
+    now: number;
+  }): { status: AdminVPStatus; expiresAt: number; errorCode?: string } | null {
+    return this.admin.status(
+      input.id,
+      input.tenantId,
+      input.adminUserId,
+      input.sessionId,
+      input.now
+    );
+  }
+
+  consumeAdminResultRpc(input: {
+    id: string;
+    tenantId: string;
+    adminUserId: string;
+    sessionId: string;
+    now: number;
+  }): AdminVPResult | null {
+    return this.admin.consume(
+      input.id,
+      input.tenantId,
+      input.adminUserId,
+      input.sessionId,
+      input.now
+    );
   }
 
   createRequestRpc(input: VPRequestState): VPRequestState {
@@ -378,7 +476,7 @@ export class VPRequestStoreV2 extends DurableObject<Env> {
       now
     );
     this.ctx.storage.sql.exec(`DELETE FROM vp_requests WHERE expires_at < ?`, now - RETENTION_MS);
-    const nextAlarm = this.ctx.storage.sql
+    const nextRelyingParty = this.ctx.storage.sql
       .exec<{ next_at: number | null }>(
         `SELECT MIN(CASE WHEN expires_at > ? THEN expires_at ELSE expires_at + ? END) AS next_at
          FROM vp_requests WHERE expires_at + ? > ?`,
@@ -388,7 +486,13 @@ export class VPRequestStoreV2 extends DurableObject<Env> {
         now
       )
       .one().next_at;
-    if (nextAlarm !== null) await this.ctx.storage.setAlarm(Math.max(nextAlarm, now + 1_000));
+    const nextAdmin = this.admin.sweep(now);
+    const candidates = [nextRelyingParty, nextAdmin].filter(
+      (value): value is number => value !== null
+    );
+    if (candidates.length > 0) {
+      await this.ctx.storage.setAlarm(Math.max(Math.min(...candidates), now + 1_000));
+    }
   }
 
   async fetch(request: Request): Promise<Response> {

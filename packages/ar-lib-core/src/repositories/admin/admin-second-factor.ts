@@ -53,7 +53,10 @@ export interface AdminWebAuthnSecondFactorInput {
 
 export type AdminSecondFactorInsertResult =
   | { inserted: true; factor: AdminSecondFactor }
-  | { inserted: false; reason: 'already_enrolled' | 'enrollment_closed' | 'credential_in_use' };
+  | {
+      inserted: false;
+      reason: 'already_enrolled' | 'enrollment_closed' | 'credential_in_use' | 'approval_revoked';
+    };
 
 export type AdminSecondFactorRevokeResult =
   | { revoked: true }
@@ -132,10 +135,16 @@ export class AdminSecondFactorRepository {
    */
   async insertWebAuthn(
     input: AdminWebAuthnSecondFactorInput,
-    options: { firstOnly: boolean; now?: number }
+    options: {
+      firstOnly: boolean;
+      /** As for insertKeyringHolderKey: the approval is checked in the INSERT itself. */
+      approvedBy?: { factorId: string; sessionId: string };
+      now?: number;
+    }
   ): Promise<AdminSecondFactorInsertResult> {
     const id = generateId();
     const now = options.now ?? getCurrentTimestamp();
+    const approval = options.approvedBy ?? null;
     const result = await this.adapter.execute(
       `INSERT INTO admin_second_factors (
          id, admin_user_id, kind, credential_id, public_key, counter, transports_json, aaguid,
@@ -144,6 +153,11 @@ export class AdminSecondFactorRepository {
        SELECT ?, ?, 'webauthn_credential', ?, ?, ?, ?, ?, ?, ?, ?, ?
        WHERE NOT EXISTS (SELECT 1 FROM admin_passkeys WHERE credential_id = ?)
          AND NOT EXISTS (SELECT 1 FROM admin_second_factors WHERE credential_id = ?)
+         AND (? IS NULL OR (EXISTS (
+           SELECT 1 FROM admin_second_factors WHERE id = ? AND admin_user_id = ? AND revoked_at IS NULL
+         ) AND EXISTS (
+           SELECT 1 FROM admin_sessions WHERE id = ? AND admin_user_id = ? AND second_factor_id = ?
+         )))
          AND (? = 0 OR (NOT EXISTS (
            SELECT 1 FROM admin_second_factors WHERE admin_user_id = ?
          ) AND EXISTS (
@@ -164,6 +178,12 @@ export class AdminSecondFactorRepository {
         now,
         input.credential_id,
         input.credential_id,
+        approval ? approval.factorId : null,
+        approval?.factorId ?? null,
+        input.admin_user_id,
+        approval?.sessionId ?? null,
+        input.admin_user_id,
+        approval?.factorId ?? null,
         options.firstOnly ? 1 : 0,
         input.admin_user_id,
         input.admin_user_id,
@@ -178,6 +198,7 @@ export class AdminSecondFactorRepository {
         [input.credential_id, input.credential_id]
       );
       if (inUse) return { inserted: false, reason: 'credential_in_use' };
+      if (approval) return { inserted: false, reason: 'approval_revoked' };
       const active = await this.listActiveByUser(input.admin_user_id);
       return {
         inserted: false,
@@ -204,6 +225,132 @@ export class AdminSecondFactorRepository {
         revoked_at: null,
       },
     };
+  }
+
+  /**
+   * Register the holder key of the admin's Keyring credential as a second factor, after a
+   * presentation proved possession of it. `firstOnly` follows the same rules as for WebAuthn
+   * keys. A holder key registered before (revoked ones included) is refused: revoked factors are
+   * never brought back.
+   */
+  async insertKeyringHolderKey(
+    input: { admin_user_id: string; holder_jkt: string; label?: string | null },
+    options: {
+      firstOnly: boolean;
+      /**
+       * The factor that approved the registration (the receipt's second factor) and the session
+       * that verified it: the row is written only while that factor is still active and still
+       * the session's evidence, in the same statement, so a revocation in between wins.
+       */
+      approvedBy?: { factorId: string; sessionId: string };
+      now?: number;
+    }
+  ): Promise<AdminSecondFactorInsertResult> {
+    const id = generateId();
+    const now = options.now ?? getCurrentTimestamp();
+    const approval = options.approvedBy ?? null;
+    const result = await this.adapter.execute(
+      `INSERT INTO admin_second_factors (id, admin_user_id, kind, holder_jkt, label, created_at)
+       SELECT ?, ?, 'keyring_holder_key', ?, ?, ?
+       WHERE NOT EXISTS (SELECT 1 FROM admin_second_factors WHERE holder_jkt = ?)
+         AND (? IS NULL OR (EXISTS (
+           SELECT 1 FROM admin_second_factors WHERE id = ? AND admin_user_id = ? AND revoked_at IS NULL
+         ) AND EXISTS (
+           SELECT 1 FROM admin_sessions WHERE id = ? AND admin_user_id = ? AND second_factor_id = ?
+         )))
+         AND (? = 0 OR (NOT EXISTS (
+           SELECT 1 FROM admin_second_factors WHERE admin_user_id = ?
+         ) AND EXISTS (
+           SELECT 1 FROM admin_users
+            WHERE id = ? AND COALESCE(second_factor_grace_started_at, created_at) + ? > ?
+         )))`,
+      [
+        id,
+        input.admin_user_id,
+        input.holder_jkt,
+        input.label ?? null,
+        now,
+        input.holder_jkt,
+        approval ? approval.factorId : null,
+        approval?.factorId ?? null,
+        input.admin_user_id,
+        approval?.sessionId ?? null,
+        input.admin_user_id,
+        approval?.factorId ?? null,
+        options.firstOnly ? 1 : 0,
+        input.admin_user_id,
+        input.admin_user_id,
+        ADMIN_SECOND_FACTOR_ENROLLMENT_GRACE_MS,
+        now,
+      ]
+    );
+    if (result.rowsAffected === 0) {
+      const inUse = await this.adapter.queryOne<{ found: number }>(
+        'SELECT 1 AS found FROM admin_second_factors WHERE holder_jkt = ? LIMIT 1',
+        [input.holder_jkt]
+      );
+      if (inUse) return { inserted: false, reason: 'credential_in_use' };
+      if (approval) return { inserted: false, reason: 'approval_revoked' };
+      const active = await this.listActiveByUser(input.admin_user_id);
+      return {
+        inserted: false,
+        reason: active.length > 0 ? 'already_enrolled' : 'enrollment_closed',
+      };
+    }
+    return {
+      inserted: true,
+      factor: {
+        id,
+        admin_user_id: input.admin_user_id,
+        kind: 'keyring_holder_key',
+        credential_id: null,
+        holder_jkt: input.holder_jkt,
+        public_key: null,
+        counter: 0,
+        transports: null,
+        aaguid: null,
+        backup_eligible: null,
+        backup_state: null,
+        label: input.label ?? null,
+        created_at: now,
+        last_used_at: null,
+        revoked_at: null,
+      },
+    };
+  }
+
+  /** The admin's active Keyring factor with this holder key, or null. */
+  async findActiveKeyringFactor(
+    adminUserId: string,
+    holderJkt: string
+  ): Promise<AdminSecondFactor | null> {
+    const row = await this.adapter.queryOne<Record<string, unknown>>(
+      `SELECT * FROM admin_second_factors
+        WHERE admin_user_id = ? AND holder_jkt = ? AND kind = 'keyring_holder_key'
+          AND revoked_at IS NULL`,
+      [adminUserId, holderJkt]
+    );
+    return row ? this.rowToFactor(row) : null;
+  }
+
+  /**
+   * Revoke the admin's Keyring factor with this holder key, when its credential was revoked: the
+   * key can no longer be presented, and evidence it gave sessions (and receipts resting on it)
+   * must stop counting at once. Not bound by the minimum, like an administrator's revocation.
+   */
+  async revokeKeyringHolderKey(adminUserId: string, holderJkt: string): Promise<boolean> {
+    const factor = await this.findActiveKeyringFactor(adminUserId, holderJkt);
+    if (!factor) return false;
+    return this.revokeByAdmin(adminUserId, factor.id);
+  }
+
+  /** Mark a factor used now (Keyring factors have no counter). */
+  async touch(id: string, usedAt: number): Promise<boolean> {
+    const result = await this.adapter.execute(
+      'UPDATE admin_second_factors SET last_used_at = ? WHERE id = ? AND revoked_at IS NULL',
+      [usedAt, id]
+    );
+    return result.rowsAffected > 0;
   }
 
   /**

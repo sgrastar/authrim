@@ -129,6 +129,55 @@ export interface SignSDJWTIssuerResult {
   kid: string;
 }
 
+const ADMIN_VP_CLIENT_ID_PREFIX = 'decentralized_identifier:';
+const DID_WEB_HOST = /^did:web:[a-z0-9.-]{1,253}$/u;
+
+/**
+ * The did:web DID of an administrator presentation request, or null when the payload is not the
+ * one shape KeyManager signs for it: a fresh, short-lived OpenID4VP request for a `vp_token`
+ * posted back to an https `response_uri` on the DID's own host.
+ */
+export function adminVPRequestDid(payload: JWTPayload, now: number): string | null {
+  const clientId = typeof payload.client_id === 'string' ? payload.client_id : '';
+  if (!clientId.startsWith(ADMIN_VP_CLIENT_ID_PREFIX)) return null;
+  const did = clientId.slice(ADMIN_VP_CLIENT_ID_PREFIX.length);
+  if (!DID_WEB_HOST.test(did)) return null;
+  let responseUri: URL;
+  try {
+    responseUri = new URL(String(payload.response_uri));
+  } catch {
+    return null;
+  }
+  const iat = payload.iat;
+  const exp = payload.exp;
+  const transactionData = payload.transaction_data;
+  const valid =
+    payload.response_type === 'vp_token' &&
+    payload.response_mode === 'direct_post' &&
+    responseUri.protocol === 'https:' &&
+    responseUri.hostname === did.slice('did:web:'.length) &&
+    responseUri.port === '' &&
+    typeof payload.nonce === 'string' &&
+    payload.nonce.length >= 16 &&
+    payload.nonce.length <= 128 &&
+    typeof payload.state === 'string' &&
+    payload.state.length > 0 &&
+    payload.state.length <= 256 &&
+    typeof iat === 'number' &&
+    Math.abs(iat - now) <= 300 &&
+    typeof exp === 'number' &&
+    exp > iat &&
+    exp - iat <= 600 &&
+    typeof payload.dcql_query === 'object' &&
+    payload.dcql_query !== null &&
+    Array.isArray(transactionData) &&
+    transactionData.length === 1 &&
+    typeof transactionData[0] === 'string' &&
+    transactionData[0].length <= 4096 &&
+    JSON.stringify(payload).length <= 16 * 1024;
+  return valid ? did : null;
+}
+
 export interface SignStatusListCredentialResult {
   token: string;
   kid: string;
@@ -373,6 +422,7 @@ export const SAML_DR_KEY_MANAGER_SURFACE = {
     'signVCIAccessTokenRpc',
     'signSDJWTIssuerRpc',
     'signStatusListCredentialRpc',
+    'signAdminVPRequestRpc',
     'getAllECPublicKeysRpc',
     'getVcIssuerJwksRpc',
     'revokeVcIssuerKeyRpc',
@@ -1123,6 +1173,29 @@ export class KeyManager extends DurableObject<Env> {
       const privateKey = await importPKCS8(activeKey.privatePEM, 'ES256');
       const token = await new SignJWT(payload)
         .setProtectedHeader({ alg: 'ES256', typ: 'dc+sd-jwt', kid: activeKey.kid })
+        .sign(privateKey);
+      return { token, kid: activeKey.kid };
+    });
+  }
+
+  /**
+   * Sign the request object of an administrator presentation (OpenID4VP 1.0, signed request with
+   * the `decentralized_identifier` Client Identifier Prefix). Only that one fixed shape is
+   * accepted, and the `kid` is the DID URL under which the DID document publishes the key.
+   */
+  async signAdminVPRequestRpc(payload: JWTPayload): Promise<SignSDJWTIssuerResult> {
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      const did = adminVPRequestDid(payload, Math.floor(Date.now() / 1000));
+      if (!did) throw new Error('invalid_admin_vp_request_signing_input');
+      const activeKey = await this.#ensureActiveVcES256Key();
+      const privateKey = await importPKCS8(activeKey.privatePEM, 'ES256');
+      const token = await new SignJWT(payload)
+        .setProtectedHeader({
+          alg: 'ES256',
+          typ: 'oauth-authz-req+jwt',
+          kid: `${did}#${encodeURIComponent(activeKey.kid)}`,
+        })
         .sign(privateKey);
       return { token, kid: activeKey.kid };
     });

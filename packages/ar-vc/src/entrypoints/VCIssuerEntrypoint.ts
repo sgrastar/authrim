@@ -3,6 +3,11 @@ import { runSamlDrCoveredOperation } from '@authrim/ar-lib-core/services/tenant-
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type {
   AdminCredentialOfferStatus,
+  AdminPresentationRef,
+  AdminPresentationResult,
+  AdminPresentationStatus,
+  CreateAdminPresentationInput,
+  CreateAdminPresentationResult,
   CreateAdminCredentialOfferServiceInput,
   CreateAdminCredentialOfferServiceResult,
   CreateCredentialOfferServiceInput,
@@ -10,6 +15,11 @@ import type {
 } from '@authrim/ar-lib-core';
 import { ADMIN_CREDENTIAL_CONFIGURATION_ID, isValidTenantIdentifier } from '@authrim/ar-lib-core';
 import type { Env } from '../types';
+import {
+  consumeAdminPresentation,
+  createAdminPresentationRequest,
+  getAdminPresentationStatus,
+} from '../verifier/admin/admin-vp-service';
 import type {
   AdminOfferProgress,
   CreateCredentialOfferInput,
@@ -313,6 +323,33 @@ export class VCIssuerEntrypoint extends WorkerEntrypoint<Env> {
     });
   }
 
+  /** Start an administrator presentation (second factor of a step-up, or its enrolment). */
+  async createAdminPresentationRequest(
+    input: CreateAdminPresentationInput
+  ): Promise<CreateAdminPresentationResult> {
+    return runSamlDrCoveredOperation(this.env, this.ctx, (env) =>
+      createAdminPresentationRequest(env, input)
+    );
+  }
+
+  /** Null unless the request is one of exactly this admin session. */
+  async getAdminPresentationStatus(
+    input: AdminPresentationRef
+  ): Promise<{ status: AdminPresentationStatus; expiresAt: number; errorCode?: string } | null> {
+    return runSamlDrCoveredOperation(this.env, this.ctx, (env) =>
+      getAdminPresentationStatus(env, input)
+    );
+  }
+
+  /** The verified result, once, to the admin session that asked for it. */
+  async consumeAdminPresentation(
+    input: AdminPresentationRef
+  ): Promise<AdminPresentationResult | null> {
+    return runSamlDrCoveredOperation(this.env, this.ctx, (env) =>
+      consumeAdminPresentation(env, input)
+    );
+  }
+
   /** Null unless the offer is an admin offer of exactly this tenant and administrator. */
   async getAdminCredentialOfferStatus(input: {
     tenantId: string;
@@ -354,7 +391,10 @@ export class VCIssuerEntrypoint extends WorkerEntrypoint<Env> {
 }
 
 export const SAML_DR_WRITER_SURFACES = [
+  'rpc:VCIssuerEntrypoint.consumeAdminPresentation',
   'rpc:VCIssuerEntrypoint.createAdminCredentialOffer',
+  'rpc:VCIssuerEntrypoint.createAdminPresentationRequest',
   'rpc:VCIssuerEntrypoint.createCredentialOffer',
   'rpc:VCIssuerEntrypoint.getAdminCredentialOfferStatus',
+  'rpc:VCIssuerEntrypoint.getAdminPresentationStatus',
 ] as const;

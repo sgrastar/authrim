@@ -6,7 +6,7 @@
  */
 
 import type { CredentialStatus, DatabaseAdapter } from '@authrim/ar-lib-core';
-import { transitionCredentialStatus } from '@authrim/ar-lib-core';
+import { AdminSecondFactorRepository, transitionCredentialStatus } from '@authrim/ar-lib-core';
 
 export const ADMIN_CREDENTIAL_TYPE = 'https://authrim.com/credentials/admin/v1';
 
@@ -111,6 +111,44 @@ export async function listOwnAdminCredentials(
     });
   }
   return items;
+}
+
+/** RFC 7638 thumbprint of an admin credential's holder key, or undefined. */
+export async function holderThumbprintOfCredential(
+  adapter: DatabaseAdapter,
+  tenantId: string,
+  credentialId: string
+): Promise<string | undefined> {
+  const row = await adapter.queryOne<{ holder_binding: string | null }>(
+    `SELECT holder_binding FROM issued_credentials
+      WHERE tenant_id = ? AND public_id = ? AND credential_type = ?`,
+    [tenantId, credentialId, ADMIN_CREDENTIAL_TYPE]
+  );
+  return thumbprintOf(row?.holder_binding ?? null);
+}
+
+/**
+ * Revoked admin credentials take their Keyring second factors with them: those keys can no
+ * longer be presented, and the evidence and receipts they gave must stop counting now. Every
+ * revoked credential of the admin is looked at, so a retry finishes what an earlier failure left
+ * (an administrator's revocation: not bound by the minimum). Throws when it could not finish.
+ */
+export async function retireKeyringFactorsOfRevokedCredentials(
+  coreAdapter: DatabaseAdapter,
+  adminAdapter: DatabaseAdapter,
+  tenantId: string,
+  adminUserId: string
+): Promise<void> {
+  const rows = await coreAdapter.query<{ holder_binding: string | null }>(
+    `SELECT holder_binding FROM issued_credentials
+      WHERE tenant_id = ? AND user_id = ? AND credential_type = ? AND status = 'revoked'`,
+    [tenantId, adminUserId, ADMIN_CREDENTIAL_TYPE]
+  );
+  const repository = new AdminSecondFactorRepository(adminAdapter);
+  for (const row of rows) {
+    const jkt = await thumbprintOf(row.holder_binding);
+    if (jkt) await repository.revokeKeyringHolderKey(adminUserId, jkt);
+  }
 }
 
 /** True when the credential is an admin credential of exactly this admin in this tenant. */

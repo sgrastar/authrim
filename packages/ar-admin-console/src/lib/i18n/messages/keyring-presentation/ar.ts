@@ -1,0 +1,52 @@
+/**
+ * Keyring as a step-up second factor: the presentation dialog and its enrolment. Spread into
+ * `../ar.ts`.
+ */
+export const arKeyringPresentation = {
+	'kp.starting': 'جارٍ تجهيز الطلب…',
+	'kp.scan': 'امسح رمز QR باستخدام Authrim Keyring.',
+	'kp.step.scan': 'امسح رمز QR باستخدام Authrim Keyring على iPhone.',
+	'kp.step.code': 'تحقق مما توافق عليه، ثم اكتب الرقم المعروض هنا في Keyring.',
+	'kp.step.confirm': 'أكّد باستخدام Face ID أو رمز الدخول.',
+	'kp.qr.alt': 'رمز QR لـ Authrim Keyring',
+	'kp.code.label': 'الرقم الذي تكتبه في Keyring',
+	'kp.code.note': 'هذا الرقم غير موجود في رمز QR. لا تكتب أبدًا رقمًا يعطيك إياه شخص آخر.',
+	'kp.checking': 'أجاب Keyring. جارٍ التحقق…',
+	'kp.expiresIn': 'صالح لمدة {time}',
+	'kp.verified': 'تم التأكيد باستخدام Keyring.',
+	'kp.expired': 'انتهى الوقت. ابدأ من جديد.',
+	'kp.failed': 'تعذّر التأكيد باستخدام Keyring. ابدأ من جديد.',
+	'kp.failed.matchCode':
+		'الرقم الذي كُتب في Keyring غير مطابق. لم يعد هذا الطلب صالحًا: ابدأ من جديد.',
+	'kp.failed.notRegistered': 'بيانات Keyring هذه غير مسجلة كأحد عواملك الثانية.',
+	'kp.failed.alreadyRegistered': 'بيانات Keyring هذه مسجلة بالفعل أو سبق تسجيلها.',
+	'kp.failed.notActive': 'بيانات Keyring هذه معلّقة أو ملغاة.',
+	'kp.failed.wrongAdmin': 'بيانات Keyring هذه تخص مسؤولًا آخر.',
+	'kp.failed.stale': 'انتهت صلاحية التأكيد الذي يستند إليه هذا. ابدأ العملية من جديد.',
+	'kp.error': 'تعذّر بدء الطلب.',
+	'kp.error.cancelled': 'أُلغي التأكيد.',
+	'kp.error.notRegistered': 'لا توجد بعد بيانات Keyring مسجلة كعامل ثانٍ.',
+	'kp.error.notEligible': 'لا يمكنك استخدام بيانات اعتماد المسؤول حاليًا.',
+	'kp.error.unavailable': 'Keyring غير متاح في هذه البيئة.',
+	'kp.error.recovery': 'لا يوجد عامل ثانٍ مسجل وانتهت مهلة التسجيل الأول: اطلب الاسترداد.',
+	'kp.again': 'البدء من جديد',
+	'kp.prompt.title': 'التأكيد بالعامل الثاني',
+	'kp.prompt.desc': 'تحتاج هذه العملية إلى تأكيد ثانٍ إلى جانب مفتاح المرور.',
+	'kp.prompt.keyringDesc': 'قدّم بيانات اعتماد المسؤول من Authrim Keyring.',
+	'kp.prompt.choose': 'كيف تريد التأكيد؟',
+	'kp.prompt.keyring': 'Authrim Keyring',
+	'kp.prompt.keyringHint': 'امسح رمز QR بجهاز iPhone واكتب رقمًا.',
+	'kp.prompt.securityKey': 'مفتاح الأمان',
+	'kp.prompt.securityKeyHint': 'استخدم مفتاح أمان USB أو NFC مسجلًا.',
+	'kp.prompt.continue': 'متابعة',
+	'kp.prompt.other': 'استخدام مفتاح الأمان',
+	'kp.enroll.add': 'إضافة Keyring',
+	'kp.enroll.title': 'إضافة Authrim Keyring كعامل ثانٍ',
+	'kp.enroll.body':
+		'قدّم بيانات اعتماد المسؤول الصادرة إلى Keyring. يصبح مفتاحها أحد عواملك الثانية.',
+	'kp.enroll.needCredential':
+		'أصدر أولًا بيانات اعتماد المسؤول إلى Keyring (حسابي ← Authrim Keyring).',
+	'kp.enroll.added': 'أُضيف Keyring كعامل ثانٍ.',
+	'kp.kind.keyring': 'Keyring',
+	'kp.kind.securityKey': 'مفتاح الأمان'
+};

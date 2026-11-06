@@ -7,6 +7,7 @@ import { deAccountFlows } from './account-flows/de';
 import { deSchemaSetting } from './schema-setting/de';
 import { deTenantGeneral } from './tenant-general/de';
 import { deSecurityKeys } from './security-keys/de';
+import { deKeyringPresentation } from './keyring-presentation/de';
 import { deNotices } from './notices/de';
 import { deCustomization } from './customization/de';
 import { deStepUp } from './step-up/de';
@@ -20,6 +21,7 @@ export const de = {
 	...deSchemaSetting,
 	...deTenantGeneral,
 	...deSecurityKeys,
+	...deKeyringPresentation,
 	...deNotices,
 	...deCustomization,
 	...deStepUp,

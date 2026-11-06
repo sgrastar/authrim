@@ -40,6 +40,20 @@ export const VC_RATE_LIMITS: ReadonlyArray<{
     profile: 'lenient',
     endpointClass: 'vci_offer',
   },
+  // Administrator presentations: single-use requests that a wrong match code or a bad response
+  // fails for good, so the limits only stop floods.
+  {
+    path: '/vp/admin/response',
+    endpoint: '/vp/admin/response',
+    profile: 'moderate',
+    endpointClass: 'vp_admin_response',
+  },
+  {
+    path: '/vp/admin/request/*',
+    endpoint: '/vp/admin/request/',
+    profile: 'moderate',
+    endpointClass: 'vp_admin_request',
+  },
   {
     path: '/vp/response',
     endpoint: '/vp/response',

@@ -13,6 +13,10 @@ const mocks = vi.hoisted(() => ({
   coreQuery: vi.fn(),
   coreQueryOne: vi.fn(),
   transition: vi.fn(),
+  findKeyring: vi.fn(async (): Promise<unknown> => null),
+  listActive: vi.fn(async (): Promise<unknown[]> => []),
+  revokeFactor: vi.fn(async (): Promise<unknown> => ({ revoked: true })),
+  revokeKeyring: vi.fn(async () => true),
   stepUp: vi.fn(async (_c: unknown, _descriptor: unknown): Promise<Response | null> => null),
 }));
 
@@ -44,6 +48,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       coreAdapter: { query: mocks.coreQuery, queryOne: mocks.coreQueryOne },
     }),
     transitionCredentialStatus: mocks.transition,
+    AdminSecondFactorRepository: class {
+      findActiveKeyringFactor = mocks.findKeyring;
+      listActiveByUser = mocks.listActive;
+      revoke = mocks.revokeFactor;
+      revokeKeyringHolderKey = mocks.revokeKeyring;
+    },
   };
 });
 
@@ -347,6 +357,9 @@ describe('my wallet credential offers', () => {
     beforeEach(() => {
       mocks.coreQueryOne.mockResolvedValue({ public_id: 'cred-1' });
       mocks.transition.mockResolvedValue({ outcome: 'changed', previous: 'active' });
+      mocks.findKeyring.mockResolvedValue(null);
+      mocks.listActive.mockResolvedValue([]);
+      mocks.coreQuery.mockResolvedValue([]);
     });
 
     it('revokes the caller own credential and audits the id only', async () => {
@@ -399,6 +412,50 @@ describe('my wallet credential offers', () => {
       mocks.coreQueryOne.mockResolvedValue(null);
       await createApp().revoke('cred-of-someone-else');
       expect(mocks.stepUp).not.toHaveBeenCalled();
+    });
+
+    describe('a credential registered as a Keyring second factor', () => {
+      const HOLDER = { kty: 'EC', crv: 'P-256', x: 'eA', y: 'eQ' };
+      beforeEach(() => {
+        mocks.coreQueryOne.mockImplementation(async (sql: string) =>
+          sql.includes('holder_binding')
+            ? { holder_binding: JSON.stringify(HOLDER) }
+            : { public_id: 'cred-1' }
+        );
+        mocks.findKeyring.mockResolvedValue({ id: 'kf-1' });
+        mocks.coreQuery.mockResolvedValue([{ holder_binding: JSON.stringify(HOLDER) }]);
+      });
+
+      it('refuses when it is the only second factor, before any receipt is spent', async () => {
+        mocks.listActive.mockResolvedValue([{ id: 'kf-1' }]);
+        const response = await createApp().revoke();
+        expect(response.status).toBe(409);
+        expect(await response.json()).toMatchObject({ error: 'second_factor_minimum' });
+        expect(mocks.stepUp).not.toHaveBeenCalled();
+        expect(mocks.transition).not.toHaveBeenCalled();
+      });
+
+      it('asks for the second-factor removal step-up too and removes the factor first', async () => {
+        mocks.listActive.mockResolvedValue([{ id: 'kf-1' }, { id: 'sf-1' }]);
+        const response = await createApp().revoke();
+        expect(response.status).toBe(200);
+        expect(mocks.stepUp.mock.calls[0][1]).toMatchObject({
+          operation: 'admin_credential.revoke',
+          alsoCovers: ['admin.second_factor.remove'],
+        });
+        expect(mocks.revokeFactor).toHaveBeenCalledWith('admin-1', 'kf-1');
+        expect(mocks.revokeFactor.mock.invocationCallOrder[0]).toBeLessThan(
+          mocks.transition.mock.invocationCallOrder[0]
+        );
+      });
+
+      it('reports a retry when what the revocation left could not be finished', async () => {
+        mocks.listActive.mockResolvedValue([{ id: 'kf-1' }, { id: 'sf-1' }]);
+        mocks.revokeKeyring.mockRejectedValueOnce(new Error('admin db down'));
+        const response = await createApp().revoke();
+        expect(response.status).toBe(503);
+        expect(response.headers.get('Retry-After')).toBe('1');
+      });
     });
 
     it('is idempotent: an already revoked credential is 200 again', async () => {
