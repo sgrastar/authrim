@@ -1055,6 +1055,20 @@ describe('Router Worker', () => {
         expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
       });
 
+      it('opens public Login UI images to other origins and keeps the rest same-origin', async () => {
+        const asset = await app.fetch(
+          new Request('https://example.com/api/assets/first/login-ui/logo/logo-123.png'),
+          mockEnv
+        );
+        expect(asset.headers.get('cross-origin-resource-policy')).toBe('cross-origin');
+
+        const other = await app.fetch(
+          new Request('https://example.com/api/avatars/u.png'),
+          mockEnv
+        );
+        expect(other.headers.get('cross-origin-resource-policy')).toBe('same-origin');
+      });
+
       it('should route /scim/v2/* to OP_MANAGEMENT', async () => {
         const req = new Request('https://example.com/scim/v2/Users');
         await app.fetch(req, mockEnv);
