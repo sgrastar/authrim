@@ -5,7 +5,7 @@ type Translate = (key: MessageKey, params?: Record<string, string | number>) => 
 
 /**
  * What the step-up dialog says: "This operation is L1. It takes one passkey verification and one
- * security key verification. Continue?", each check named once, in the order they are made.
+ * second-factor verification (security key or Keyring). Continue?", each check named once, in the order they are made.
  */
 export function stepUpPromptBody(request: StepUpPromptRequest, translate: Translate): string {
 	const factors = (['passkey', 'second_factor'] as const)

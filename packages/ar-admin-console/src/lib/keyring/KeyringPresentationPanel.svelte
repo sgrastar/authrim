@@ -97,12 +97,8 @@
 				return t('kp.starting');
 			case 'waiting':
 				return flow.checking ? t('kp.checking') : t('kp.scan');
-			case 'verified':
-				return t('kp.verified');
-			case 'ended':
-				return failureText;
-			case 'error':
-				return startErrorText;
+			// The verified, failed and refused states show a live callout, which is announced
+			// already; saying it here too would read it twice.
 			default:
 				return '';
 		}

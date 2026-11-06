@@ -14,7 +14,7 @@ describe('stepUpPromptBody', () => {
 		expect(
 			stepUpPromptBody({ level: 'L2', factors: ['second_factor', 'passkey'] }, translator(ja))
 		).toBe(
-			'この操作は L2 です。パスキー認証が 1 回、セキュリティキー認証が 1 回必要です。実施しますか？'
+			'この操作は L2 です。パスキー認証が 1 回、2 つ目の要素（セキュリティキーか Keyring）の確認が 1 回必要です。実施しますか？'
 		);
 		expect(stepUpPromptBody({ level: 'L1', factors: ['passkey'] }, translator(en))).toBe(
 			'This operation is L1. It takes one passkey verification. Continue?'

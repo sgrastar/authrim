@@ -12,7 +12,7 @@
 			docs: {
 				description: {
 					component:
-						'Asks the admin before a step-up: the operation’s level and the checks it takes ("This operation is L2. It takes one passkey verification and one security key verification. Continue?"). Mounted once by the console; every operation run through `withStepUp` asks here, from the tenant’s requirements (`/api/admin/me/step-up/requirements` and `stepUpFactorsNeeded()`) when the operation is named, else from the refusal. Declining runs neither the checks nor the operation.'
+						'Asks the admin before a step-up: the operation’s level and the checks it takes ("This operation is L2. It takes one passkey verification and one second-factor verification (security key or Keyring). Continue?"). Mounted once by the console; every operation run through `withStepUp` asks here, from the tenant’s requirements (`/api/admin/me/step-up/requirements` and `stepUpFactorsNeeded()`) when the operation is named, else from the refusal. Declining runs neither the checks nor the operation.'
 				}
 			}
 		}

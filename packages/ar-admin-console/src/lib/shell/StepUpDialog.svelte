@@ -7,7 +7,7 @@
 
 	/**
 	 * Asks the admin before a step-up: "This operation is L2. It takes one passkey verification and
-	 * one security key verification. Continue?". Mounted once by the console; every operation run
+	 * one second-factor verification (security key or Keyring). Continue?". Mounted once by the console; every operation run
 	 * through `withStepUp` asks here. `request` opens it without the registry (Storybook).
 	 */
 	interface Props {
