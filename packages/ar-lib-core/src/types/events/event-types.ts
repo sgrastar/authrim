@@ -299,6 +299,22 @@ export const SCIM_EVENTS = {
 export type ScimEventType = (typeof SCIM_EVENTS)[keyof typeof SCIM_EVENTS];
 
 // =============================================================================
+// Flow Events
+// =============================================================================
+
+/**
+ * Login Flow event types.
+ *
+ * Pattern: flow.<object>.<action>
+ */
+export const FLOW_EVENTS = {
+  /** A screen step was submitted; carries the answers its parts send to the Flow and its event. */
+  SCREEN_SUBMITTED: 'flow.screen.submitted',
+} as const;
+
+export type FlowEventType = (typeof FLOW_EVENTS)[keyof typeof FLOW_EVENTS];
+
+// =============================================================================
 // Combined Event Types
 // =============================================================================
 
@@ -317,6 +333,7 @@ export const EVENT_TYPES = {
   ...DOMAIN_EVENTS,
   ...SETTINGS_EVENTS,
   ...SCIM_EVENTS,
+  ...FLOW_EVENTS,
 } as const;
 
 export type EventType =
@@ -330,7 +347,8 @@ export type EventType =
   | SecurityEventType
   | DomainEventType
   | SettingsEventType
-  | ScimEventType;
+  | ScimEventType
+  | FlowEventType;
 
 // =============================================================================
 // Event Data Types
@@ -563,4 +581,23 @@ export interface ScimEventData extends BaseEventData {
     succeeded: number;
     failed: number;
   };
+}
+
+/**
+ * `flow.screen.submitted` event data: the answers of the parts kept off the profile whose answers
+ * go to the Flow and its event (`answer_targets` includes `flow_event`). Free text is carried here
+ * only, never stored; a part left empty is absent. The event is not written to the audit log.
+ */
+export interface FlowScreenSubmittedEventData extends BaseEventData {
+  interactionId: string;
+  flowId: string;
+  flowVersionId: string;
+  stepId: string;
+  /** One visit of the step: the same for a submit sent again (a receiver may drop a repeat). */
+  submissionId: string;
+  screenId: string;
+  screenKey: string;
+  /** The user the interaction is about, or null before anyone signs in. */
+  userId: string | null;
+  answers: Record<string, string | boolean>;
 }

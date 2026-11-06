@@ -561,6 +561,7 @@ import {
   adminScreensListHandler,
   adminScreenUpdateHandler,
 } from './admin-screens';
+import { adminScreenResponsesHandler } from './admin-screen-responses';
 import {
   adminLauncherCreateHandler,
   adminLauncherDeleteHandler,
@@ -2654,6 +2655,12 @@ app.get(
   '/api/admin/screens/:id',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminScreenGetHandler
+);
+// What people answered is their personal data: read with the permission to read users.
+app.get(
+  '/api/admin/screens/:id/responses',
+  requireAdminPermissions([ADMIN_PERMISSIONS.USERS_READ]),
+  adminScreenResponsesHandler
 );
 app.put(
   '/api/admin/screens/:id',

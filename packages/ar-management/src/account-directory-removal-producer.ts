@@ -310,6 +310,11 @@ export async function eraseAccountPiiAfterDirectoryRemovalPrepared(
       params: [input.tenantId, input.userId],
     },
     {
+      // What the person answered to login screens (their response records).
+      sql: 'DELETE FROM screen_responses WHERE tenant_id = ? AND user_id = ?',
+      params: [input.tenantId, input.userId],
+    },
+    {
       sql: `DELETE FROM pairwise_subject_identifiers
         WHERE tenant_id = ? AND user_id = ? AND EXISTS (
           SELECT 1 FROM users_pii AS tenant_parent

@@ -1492,9 +1492,15 @@ paths:
         answers of parts kept on the profile for the signed-in user: the standard profile fields a
         login may update, and custom attributes through the Identity Schema's checked write.
         Identifiers and contacts (email, phone, preferred_username) are never written this way,
-        and an answer kept off the profile is never written to the profile. A screen with a
-        sign-in part (an auth widget, a code input, a guest sign-in) is a sign-in, not a form:
-        its `submitted` reads no answers.
+        and an answer kept off the profile is never written to the profile: it goes where its
+        part's `answer_targets` say. With `flow_event`, a choice (select, radio, checkbox) is kept
+        with the interaction by step, and every answer, free text included, is carried by the
+        `flow.screen.submitted` webhook event only (not written to the audit log). With `record`,
+        the answers are kept as the signed-in user's response record (one per visit of the step,
+        replaced by a submit sent again). Profile and record answers need a session (401
+        `AR_FLOW_SCREEN_ANSWERS_AUTH_REQUIRED` otherwise). A screen with a sign-in part (an auth
+        widget, a code input, a guest sign-in) is a sign-in, not a form: its `submitted` reads no
+        answers.
       parameters:
         - name: interaction_id
           in: path

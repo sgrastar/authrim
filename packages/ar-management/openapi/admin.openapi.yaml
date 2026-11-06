@@ -15773,6 +15773,110 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  '/api/admin/screens/{id}/responses':
+    get:
+      tags:
+        - Flows
+      operationId: getApiAdminScreensByIdResponses
+      summary: List a screen's response records.
+      description: >-
+        What signed-in people answered to the screen's parts whose answers go to the response
+        record (answer_targets includes record), newest first. One record per visit of a Flow
+        screen step; a submit sent again replaces its own record. The answers are personal data,
+        so reading them needs the permission to read users. Records are deleted with the person's
+        account and with the tenant.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: cursor
+          in: query
+          required: false
+          description: The next_cursor of the previous page.
+          schema:
+            type: string
+            maxLength: 600
+      responses:
+        '200':
+          description: A page of response records.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              description: no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - responses
+                  - next_cursor
+                properties:
+                  responses:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                        - id
+                        - user_id
+                        - screen_key
+                        - answers
+                        - created_at
+                        - updated_at
+                      properties:
+                        id:
+                          type: string
+                        user_id:
+                          type: string
+                        screen_key:
+                          type: string
+                        flow_id:
+                          type: string
+                          nullable: true
+                        flow_version_id:
+                          type: string
+                          nullable: true
+                        interaction_id:
+                          type: string
+                          nullable: true
+                        step_id:
+                          type: string
+                          nullable: true
+                        answers:
+                          type: object
+                          description: The answers by part field (a checkbox as a boolean).
+                          additionalProperties:
+                            oneOf:
+                              - type: string
+                              - type: boolean
+                        created_at:
+                          type: integer
+                          description: Unix time in milliseconds.
+                        updated_at:
+                          type: integer
+                          description: Unix time in milliseconds.
+                  next_cursor:
+                    type: string
+                    nullable: true
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   '/api/admin/flows/{id}':
     delete:
       tags:

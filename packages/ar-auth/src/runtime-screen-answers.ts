@@ -8,12 +8,16 @@
  * its choices' values; a text part a string. Only the input parts the screen shows may be
  * answered: a key the screen does not ask for refuses the whole submit.
  *
- * What is stored where (`persistRuntimeScreenProfileAnswers`):
+ * What is stored where:
  * - a part stored to the profile writes the user's standard profile field (the ones a login may
  *   update) or the custom attribute of the same key in the Identity Schema;
  * - an identifier or a contact (email, phone, preferred_username) is never written here;
  * - a part not stored to the profile is never written to the profile, whatever its key: its
- *   answer goes where its `answer_targets` say (the Flow and its event, the response record).
+ *   answer goes where its `answer_targets` say (`splitOffProfileAnswers`). To the Flow and its
+ *   event: a choice is kept with the interaction (`context_json.screen_answers`), and every answer
+ *   rides on the `flow.screen.submitted` event (free text there only, stored nowhere). To the
+ *   response record: the signed-in user's `screen_responses` row, in their PII database (a guest's
+ *   answers are not kept as a record).
  */
 import {
   PROFILE_UPDATE_FIELDS,
@@ -252,4 +256,59 @@ export function splitProfileAnswers(
     }
   }
   return { profile, custom, skipped };
+}
+
+/** The part kinds whose answers are a choice (kept with the Flow, usable to branch on). */
+const CHOICE_ANSWER_TYPES: ReadonlySet<RuntimeScreenAnswer['blockType']> = new Set([
+  'select',
+  'radio',
+  'checkbox',
+]);
+
+export interface OffProfileScreenAnswers {
+  /** Whether the screen has a part whose answers go to the Flow and its event. */
+  hasFlowEventPart: boolean;
+  /** Whether the screen has such a part that is a choice (select, radio, checkbox). */
+  hasFlowContextPart: boolean;
+  /** Whether the screen has a part whose answers go to the response record. */
+  hasRecordPart: boolean;
+  /** Every answer going to the Flow's event, free text included (carried by the event only). */
+  flowEvent: Record<string, ScreenAnswerValue>;
+  /** The choice answers going to the Flow, kept with the interaction. Free text never is. */
+  flowContext: Record<string, ScreenAnswerValue>;
+  /** The answers going to the response record (a signed-in user's PII). */
+  record: Record<string, ScreenAnswerValue>;
+}
+
+/**
+ * Where the answers kept off the profile go, by each part's `answer_targets`. A part left empty
+ * is absent (it has no answer to keep). A part stored to the profile goes nowhere here.
+ */
+export function splitOffProfileAnswers(answers: RuntimeScreenAnswer[]): OffProfileScreenAnswers {
+  const split: OffProfileScreenAnswers = {
+    hasFlowEventPart: false,
+    hasFlowContextPart: false,
+    hasRecordPart: false,
+    flowEvent: {},
+    flowContext: {},
+    record: {},
+  };
+  for (const answer of answers) {
+    if (answer.storeToProfile) continue;
+    const toFlow = answer.answerTargets.includes('flow_event');
+    const isChoice = CHOICE_ANSWER_TYPES.has(answer.blockType);
+    const toRecord = answer.answerTargets.includes('record');
+    if (toFlow) {
+      split.hasFlowEventPart = true;
+      if (isChoice) split.hasFlowContextPart = true;
+    }
+    if (toRecord) split.hasRecordPart = true;
+    if (answer.value === null) continue;
+    if (toFlow) {
+      split.flowEvent[answer.field] = answer.value;
+      if (isChoice) split.flowContext[answer.field] = answer.value;
+    }
+    if (toRecord) split.record[answer.field] = answer.value;
+  }
+  return split;
 }

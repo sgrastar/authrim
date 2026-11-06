@@ -88,6 +88,9 @@ const PG_SCHEMA_TABLES = new Set([
   'pii_log_purge_operations',
   'guest_pii_mutation_epoch',
   'guest_pii_erasure_markers',
+  // Registered accounts' screen response records: a guest's answers are never kept as one, so
+  // the table is not part of the guest erasure profile.
+  'screen_responses',
   // Installation bookkeeping can exist in either provider profile.
   'authrim_migrations',
   'authrim_runtime_probes',

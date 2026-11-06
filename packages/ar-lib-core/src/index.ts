@@ -565,6 +565,7 @@ export type {
   SecurityEventData,
   DomainEventData,
   SettingsEventData,
+  FlowScreenSubmittedEventData,
 } from './types/events';
 export {
   createUnifiedEvent,
@@ -580,6 +581,7 @@ export {
   SECURITY_EVENTS,
   DOMAIN_EVENTS,
   SETTINGS_EVENTS,
+  FLOW_EVENTS,
   EVENT_TYPES,
 } from './types/events';
 export * from './services/event-handler-registry';

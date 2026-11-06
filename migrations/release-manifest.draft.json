@@ -39,7 +39,12 @@
             "pii",
             "tenant_pii"
           ],
-          "files": []
+          "files": [
+            {
+              "path": "003_screen_responses.sql",
+              "checksum": "3042f0a094d1888288992b9c67bd7badd33743443b4a54ea2f9789e83f79e024"
+            }
+          ]
         },
         {
           "id": "admin-d1",
@@ -139,7 +144,12 @@
           "logicalRoles": [
             "pii"
           ],
-          "files": []
+          "files": [
+            {
+              "path": "003_screen_responses.sql",
+              "checksum": "07eae09b39f1c590833504629f80817367f79f59111799c03203d92b641f6bef"
+            }
+          ]
         }
       ]
     }
@@ -187,6 +197,10 @@
         {
           "path": "001_0_5_0_pii_baseline.sql",
           "checksum": "ce422a267ab9255b6ea660d7ebf73529fc4f88def5b14f47e25b2fb724150742"
+        },
+        {
+          "path": "003_screen_responses.sql",
+          "checksum": "3042f0a094d1888288992b9c67bd7badd33743443b4a54ea2f9789e83f79e024"
         }
       ]
     },
@@ -315,6 +329,10 @@
         {
           "path": "001_0_5_0_pii_baseline.sql",
           "checksum": "ae851b69f10b4a67c987f207dcc0c0cbac48fbaa7b9828c757f35a9e0330118f"
+        },
+        {
+          "path": "003_screen_responses.sql",
+          "checksum": "07eae09b39f1c590833504629f80817367f79f59111799c03203d92b641f6bef"
         }
       ]
     }

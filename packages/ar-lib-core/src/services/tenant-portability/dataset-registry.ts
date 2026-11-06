@@ -126,7 +126,7 @@ const TABLE_GROUPS: Partial<
     users: `
       account_webhook_delivery_fields account_webhook_outbox account_webhook_snapshots external_identifier_unlink_operations
       guest_upgrade_operations guest_pii_erasure_markers identity_identifier_replacement_challenges identity_identifier_replacement_operations identity_sensitive_values linked_identities
-      pairwise_subject_identifiers pii_log_purge_operations service_group_inputs service_group_write_boundaries subject_identifiers user_anonymization_map
+      pairwise_subject_identifiers pii_log_purge_operations screen_responses service_group_inputs service_group_write_boundaries subject_identifiers user_anonymization_map
       users_pii users_pii_tombstone
     `,
     sensitive_logs: `
