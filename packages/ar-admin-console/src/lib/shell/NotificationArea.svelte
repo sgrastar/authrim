@@ -153,49 +153,61 @@
 		</div>
 		<div class="notify__body" class:is-open={open} inert={!open}>
 			<div class="notify__body-inner">
-				<ul class="notify__list" id="{uid}-list" aria-label={t('notify.label')} bind:this={list}>
-					{#each ordered as item, index (item.id)}
-						<li class="notify__row">
-							<a
-								class="notify__link"
-								href={notificationHref(item.id)}
-								onmousedown={keepFocus}
-								onclick={() => close()}
-							>
-								<span
-									class="notify__pill notify__pill--row notify__pill--{item.severity}"
-									aria-hidden="true">{t(`notify.short.${item.severity}`)}</span
-								>
-								<span class="notify__item-body">
-									<span class="notify__item-text">
-										<span class="notify__sr"
-											>{t(`notify.severity.${item.severity}`)}:
-										</span>{item.text}
-									</span>
-									{#if item.time}<span class="notify__item-meta">{item.time}</span>{/if}
-								</span>
-							</a>
-							{#if isDismissible(item)}
-								<button
-									type="button"
-									class="notify__dismiss"
+				{#if ordered.length === 0}
+					<p class="notify__empty" id="{uid}-list">{t('notify.empty')}</p>
+				{:else}
+					<ul class="notify__list" id="{uid}-list" aria-label={t('notify.label')} bind:this={list}>
+						{#each ordered as item, index (item.id)}
+							<li class="notify__row">
+								<a
+									class="notify__link"
+									href={notificationHref(item.id)}
 									onmousedown={keepFocus}
-									aria-label="{t('notify.dismiss')}: {item.text}"
-									title={t('notify.dismiss')}
-									onclick={(event) => dismiss(item.id, index, event.detail === 0)}
+									onclick={() => close()}
 								>
-									<Icon name="close" />
-								</button>
-							{/if}
-						</li>
-					{/each}
-				</ul>
+									<span
+										class="notify__pill notify__pill--row notify__pill--{item.severity}"
+										aria-hidden="true">{t(`notify.short.${item.severity}`)}</span
+									>
+									<span class="notify__item-body">
+										<span class="notify__item-text">
+											<span class="notify__sr"
+												>{t(`notify.severity.${item.severity}`)}:
+											</span>{item.text}
+										</span>
+										{#if item.time}<span class="notify__item-meta">{item.time}</span>{/if}
+									</span>
+								</a>
+								{#if isDismissible(item)}
+									<button
+										type="button"
+										class="notify__dismiss"
+										onmousedown={keepFocus}
+										aria-label="{t('notify.dismiss')}: {item.text}"
+										title={t('notify.dismiss')}
+										onclick={(event) => dismiss(item.id, index, event.detail === 0)}
+									>
+										<Icon name="close" />
+									</button>
+								{/if}
+							</li>
+						{/each}
+					</ul>
+				{/if}
 			</div>
 		</div>
 	</div>
 </div>
 
 <style>
+	/* Nothing to list: said in a line, in the list's place. */
+	.notify__empty {
+		margin: 0;
+		padding: 12px 14px;
+		color: var(--text-secondary);
+		font-size: var(--fs-body);
+	}
+
 	/* The slot keeps its size, so the header does not move when the sheet opens. */
 	.notify {
 		position: relative;

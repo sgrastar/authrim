@@ -1122,7 +1122,8 @@ const LEGACY_THEME_TEMPLATE_PALETTE: Record<string, LoginUIPaletteId> = {
   classic: 'classic',
   meridian: 'meridian',
   'split-brand-panel': 'meridian',
-  'fullbleed-glass': 'glass',
+  // The old Full-bleed glass look is now the Swiss Grid palette; `glass` is a new palette.
+  'fullbleed-glass': 'swiss-grid',
 };
 
 /**
@@ -2360,7 +2361,8 @@ function deriveLegacyThemeTemplate(
   template: LoginUITemplateId
 ): UIConfig['themeTemplate'] {
   if (palette === 'classic') return 'classic';
-  if (palette === 'glass') return 'fullbleed-glass';
+  // An older Login UI build knows no Swiss Grid, Glass, Clear glass or Flat: it gets the nearest name it has.
+  if (palette === 'swiss-grid') return 'fullbleed-glass';
   return template === 'split' ? 'split-brand-panel' : 'meridian';
 }
 

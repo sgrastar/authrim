@@ -64,7 +64,10 @@ describe('loginUIPageStore templates and palettes', () => {
 		['meridian', 'split', 'split-brand-panel'],
 		['meridian', 'minimal', 'meridian'],
 		['classic', 'split', 'classic'],
-		['glass', 'standard', 'fullbleed-glass'],
+		['swiss-grid', 'standard', 'swiss-grid'],
+		['swiss-grid', 'split', 'swiss-grid'],
+		['glass', 'standard', 'glass'],
+		['glass', 'split', 'glass'],
 		['flat', 'minimal', 'flat']
 	] as const)(
 		'paints the %s palette on the %s template with the %s rules',
@@ -91,10 +94,11 @@ describe('loginUIPageStore templates and palettes', () => {
 		const store = createLoginUIPageStore();
 		store.setFromUIConfig(config({ layout: 'split_panel' }, { themeTemplate: 'fullbleed-glass' }));
 
-		expect(store.palette).toBe('glass');
+		// The old Full-bleed glass is Swiss Grid now: an older server's name is read as the new one.
+		expect(store.palette).toBe('swiss-grid');
 		expect(store.template).toBe('split');
-		expect(store.themeTemplate).toBe('fullbleed-glass');
-		expect(html().getAttribute('data-login-theme')).toBe('fullbleed-glass');
+		expect(store.themeTemplate).toBe('swiss-grid');
+		expect(html().getAttribute('data-login-theme')).toBe('swiss-grid');
 		expect(html().getAttribute('data-page-layout')).toBe('split_panel');
 	});
 
@@ -324,6 +328,18 @@ describe('loginUIPageStore templates and palettes', () => {
 
 		store.setFromUIConfig(config({ formAreaColor: '' }));
 		expect(html().getAttribute('data-has-form-area-color')).toBe('false');
+	});
+
+	it('marks a tenant accent that is set (Clear glass keeps its reflection from behind the label)', () => {
+		const store = createLoginUIPageStore();
+		store.setFromUIConfig(config({ accentColor: '#747474' }));
+		expect(html().getAttribute('data-has-accent-color')).toBe('true');
+
+		store.setFromUIConfig(config({ accentColor: 'not-a-colour' }));
+		expect(html().getAttribute('data-has-accent-color')).toBe('false');
+
+		store.setFromUIConfig(config({ accentColor: '' }));
+		expect(html().getAttribute('data-has-accent-color')).toBe('false');
 	});
 
 	it('keeps the brand panel as the stage behind a floating card, even with no brand content', () => {

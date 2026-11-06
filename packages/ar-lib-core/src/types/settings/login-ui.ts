@@ -27,7 +27,14 @@ export const DEFAULT_LOGIN_UI_TEMPLATE: LoginUITemplateId = 'standard';
  * registry (ar-login-ui src/lib/palettes.ts); this list is the single backend source of truth for
  * which ids may be stored and returned. Add a palette there first, then add its id here.
  */
-export const LOGIN_UI_PALETTE_IDS = ['meridian', 'classic', 'glass', 'flat'] as const;
+export const LOGIN_UI_PALETTE_IDS = [
+  'meridian',
+  'classic',
+  'swiss-grid',
+  'glass',
+  'clear-glass',
+  'flat',
+] as const;
 export type LoginUIPaletteId = (typeof LOGIN_UI_PALETTE_IDS)[number];
 export const DEFAULT_LOGIN_UI_PALETTE: LoginUIPaletteId = 'meridian';
 

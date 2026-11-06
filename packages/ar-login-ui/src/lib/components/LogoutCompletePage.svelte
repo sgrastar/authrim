@@ -18,12 +18,6 @@
 
 <AuthPageShell>
 	<Card class="text-center">
-		<div class="auth-icon-badge">
-			<div class="auth-icon-badge__circle">
-				<div class="i-ph-check h-9 w-9 auth-icon-badge__icon"></div>
-			</div>
-		</div>
-
 		<h2 class="auth-section-title text-center">
 			{$LL.logout_completeTitle()}
 		</h2>

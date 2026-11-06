@@ -134,6 +134,7 @@
 	data-brand-panel-logo-display={loginUIPageStore.brandPanelLogoDisplay}
 	data-has-brand-panel-image={loginUIPageStore.brandPanelImageUrl ? 'true' : 'false'}
 	data-has-form-area-color={loginUIPageStore.formAreaColor ? 'true' : 'false'}
+	data-has-accent-color={loginUIPageStore.accentColor ? 'true' : 'false'}
 	data-branding-loaded={brandingStore.isLoaded ? '' : undefined}
 	style:--login-page-background-color={loginUIPageStore.backgroundColor || undefined}
 	style:--login-accent-color={loginUIPageStore.accentColor || undefined}

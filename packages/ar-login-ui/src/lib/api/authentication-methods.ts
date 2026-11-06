@@ -156,7 +156,7 @@ export interface LoginUIConfig {
 		/** Page structure. Absent on older servers, which send only `layout`. */
 		template?: 'standard' | 'split' | 'minimal';
 		/** Built-in colour and shape set. Absent on older servers. */
-		palette?: 'meridian' | 'classic' | 'glass' | 'flat';
+		palette?: 'meridian' | 'classic' | 'swiss-grid' | 'glass' | 'clear-glass' | 'flat';
 		formFrame?: 'card' | 'full';
 		/** Hex colour with an optional alpha channel; empty when none is set. */
 		formAreaColor?: string;

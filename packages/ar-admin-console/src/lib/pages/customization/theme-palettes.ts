@@ -8,7 +8,7 @@
  * palette it knows, or the real screens fall back to the default.
  */
 
-export type PaletteId = 'meridian' | 'classic' | 'glass' | 'flat';
+export type PaletteId = 'meridian' | 'classic' | 'swiss-grid' | 'glass' | 'clear-glass' | 'flat';
 
 /** The colours that apply while a colour field is empty (the fields show these). */
 export interface PaletteColours {
@@ -20,7 +20,12 @@ export interface PaletteColours {
 	copy: string;
 }
 
-export type PaletteShadow = 'none' | 'soft' | 'deep';
+/**
+ * How the form area is lifted: not at all, a soft shadow, a 1px ring in ink (Swiss Grid draws
+ * rings in place of shadows), frosted glass (a light rim and a soft shadow), or clear glass (an
+ * iridescent rim, a reflection and a halo).
+ */
+export type PaletteShadow = 'none' | 'soft' | 'ring' | 'glass' | 'clear';
 
 /** How the form area is shaped. */
 export interface PaletteShape {
@@ -28,8 +33,12 @@ export interface PaletteShape {
 	cardRadius: number;
 	/** Corner radius of buttons and fields, in px. */
 	controlRadius: number;
+	/** Corner radius of buttons, when they differ from fields (Clear glass buttons are pills). */
+	buttonRadius?: number;
+	/** Corner radius of fields, when it differs from the rest. */
+	fieldRadius?: number;
 	shadow: PaletteShadow;
-	/** The form area is frosted glass over the page (best with a background picture). */
+	/** The form area is blurred, translucent glass over the page. */
 	frost: boolean;
 }
 
@@ -84,24 +93,80 @@ export const THEME_PALETTES: readonly ThemePalette[] = [
 		shape: { cardRadius: 16, controlRadius: 10, shadow: 'soft', frost: false }
 	},
 	{
-		id: 'glass',
+		id: 'swiss-grid',
 		light: {
-			background: '#ecdfd3',
-			card: '#fffdfa',
-			accent: '#b0301b',
-			title: '#221b17',
-			text: '#221b17',
-			copy: '#5c524c'
+			background: '#f6f5f1',
+			card: '#f6f5f1',
+			accent: '#141412',
+			title: '#141412',
+			text: '#141412',
+			copy: '#4f4e4a'
 		},
 		dark: {
-			background: '#0d0908',
-			card: '#0e0a09',
-			accent: '#e8623f',
-			title: '#f6efe9',
-			text: '#f6efe9',
-			copy: '#cfc3ba'
+			background: '#121210',
+			card: '#181816',
+			accent: '#e9e7e0',
+			title: '#e9e7e0',
+			text: '#e9e7e0',
+			copy: '#bdbbb4'
 		},
-		shape: { cardRadius: 0, controlRadius: 0, shadow: 'deep', frost: true }
+		shape: { cardRadius: 0, controlRadius: 0, shadow: 'ring', frost: false }
+	},
+	{
+		id: 'glass',
+		// Frosted glass. The form area is a translucent pane: its colour carries an alpha (#rrggbbaa),
+		// which the admin can change, or replace with a colour of their own, in the Design tab.
+		light: {
+			background: '#e9ecf2',
+			card: '#ffffff61',
+			accent: '#3a5cb8',
+			title: '#1c1e24',
+			text: '#1c1e24',
+			copy: '#444955'
+		},
+		dark: {
+			background: '#14161b',
+			card: '#ffffff12',
+			accent: '#a4bdf2',
+			title: '#f2f3f6',
+			text: '#f2f3f6',
+			copy: '#c9ccd4'
+		},
+		shape: {
+			cardRadius: 20,
+			controlRadius: 14,
+			fieldRadius: 12,
+			shadow: 'glass',
+			frost: true
+		}
+	},
+	{
+		id: 'clear-glass',
+		// Clear glass: nearly clear (a low alpha), seen by its rim and its reflection.
+		light: {
+			background: '#dce3e9',
+			card: '#ffffff1a',
+			accent: '#284f97',
+			title: '#15191f',
+			text: '#15191f',
+			copy: '#3a4049'
+		},
+		dark: {
+			background: '#111419',
+			card: '#ffffff08',
+			accent: '#9dbcf0',
+			title: '#eef1f5',
+			text: '#eef1f5',
+			copy: '#c9ced6'
+		},
+		shape: {
+			cardRadius: 24,
+			controlRadius: 16,
+			buttonRadius: 999,
+			fieldRadius: 999,
+			shadow: 'clear',
+			frost: true
+		}
 	},
 	{
 		id: 'flat',

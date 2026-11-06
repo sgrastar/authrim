@@ -49,12 +49,6 @@
 </script>
 
 <Card class="mb-6">
-	<div class="auth-icon-badge">
-		<div class="auth-icon-badge__circle">
-			<div class="i-ph-envelope-simple-fill h-9 w-9 auth-icon-badge__icon"></div>
-		</div>
-	</div>
-
 	<h2 class="auth-section-title text-center">
 		{$LL.emailCode_title()}
 	</h2>

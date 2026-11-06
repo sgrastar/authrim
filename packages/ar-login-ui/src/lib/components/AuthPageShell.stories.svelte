@@ -1,5 +1,6 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
+	import { expect } from 'storybook/test';
 	import LoginUIFrame from '#lib/storybook/LoginUIFrame.svelte';
 	import PageSample from '#lib/storybook/PageSample.svelte';
 	import ShellGallery from '#lib/storybook/ShellGallery.svelte';
@@ -50,6 +51,36 @@
 
 <Story name="With client card">
 	{#snippet template()}{@render full({}, 'login', true)}{/snippet}
+</Story>
+
+<Story
+	name="Split: a long form scrolls, the switches below its last link"
+	play={async ({ canvasElement }) => {
+		// A short screen, so that the form is taller than its column.
+		const shell = canvasElement.querySelector<HTMLElement>('.auth-page');
+		shell!.style.height = '560px';
+		shell!.style.minHeight = '0';
+		await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+		const column = canvasElement.querySelector<HTMLElement>('.auth-container');
+		await expect(column).not.toBeNull();
+		await expect(column!.scrollHeight).toBeGreaterThan(column!.clientHeight);
+		const form = column!.querySelector<HTMLElement>('.card');
+		const link = column!.querySelector<HTMLElement>('.auth-bottom-link');
+		const switches = column!.querySelector<HTMLElement>('.auth-topbar');
+		// The switches are in the form column, under its last link, not laid over its foot.
+		await expect(switches).not.toBeNull();
+		await expect(switches!.getBoundingClientRect().top).toBeGreaterThanOrEqual(
+			link!.getBoundingClientRect().bottom - 1
+		);
+		// The form keeps its height (its last buttons are not clipped); the column scrolls instead.
+		await expect(form!.scrollHeight).toBeLessThanOrEqual(form!.clientHeight + 1);
+	}}
+>
+	{#snippet template()}{@render full(
+			page({ template: 'split', layout: 'split_panel', topbarPosition: 'below_card' }),
+			'login',
+			true
+		)}{/snippet}
 </Story>
 
 <Story name="Header: off">
