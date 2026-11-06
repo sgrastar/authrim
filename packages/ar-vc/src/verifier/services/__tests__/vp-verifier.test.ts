@@ -4,6 +4,7 @@
  * Tests for the VP token verification service.
  */
 
+import { exportJWK, generateKeyPair } from 'jose';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Env } from '../../../types';
 
@@ -167,6 +168,51 @@ describe('verifyVPToken', () => {
     expect(result.disclosedClaims).toEqual({ given_name: 'John', family_name: 'Doe' });
     expect(result.holderBindingVerified).toBe(true);
     expect(result.issuerTrusted).toBe(true);
+  });
+
+  it('checks the key binding with the holder key the credential is bound to', async () => {
+    const { publicKey } = await generateKeyPair('ES256', { extractable: true });
+    const jwk = await exportJWK(publicKey);
+    const trustAll = () => {
+      vi.mocked(checkIssuerTrust).mockResolvedValue({ trusted: true } as never);
+      vi.mocked(getIssuerPublicKey).mockResolvedValue({} as CryptoKey);
+      vi.mocked(verifySDJWTVC).mockResolvedValue({
+        verified: true,
+        disclosedClaims: {},
+        holderBindingVerified: true,
+      } as never);
+    };
+
+    trustAll();
+    vi.mocked(parseSDJWTVC).mockResolvedValue({
+      payload: {
+        iss: 'did:web:trusted-issuer.com',
+        vct: 'v',
+        cnf: { jwk: { kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y } },
+      },
+      disclosures: [],
+      kbJwt: 'kb',
+    } as never);
+    await verifyVPToken(createMockEnv(), 'token', defaultOptions);
+    const holderKey = vi.mocked(verifySDJWTVC).mock.calls[0][2];
+    expect(holderKey).not.toBeNull();
+    expect((holderKey as { type?: string }).type).toBe('public');
+
+    // No holder key bound (or a private or unsupported one): no key to check a binding with.
+    for (const cnf of [
+      undefined,
+      { jwk: { kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y, d: 'secret' } },
+      { jwk: { kty: 'OKP', crv: 'Ed25519', x: 'x' } },
+    ]) {
+      vi.mocked(verifySDJWTVC).mockClear();
+      vi.mocked(parseSDJWTVC).mockResolvedValue({
+        payload: { iss: 'did:web:trusted-issuer.com', vct: 'v', ...(cnf ? { cnf } : {}) },
+        disclosures: [],
+        kbJwt: 'kb',
+      } as never);
+      await verifyVPToken(createMockEnv(), 'token', defaultOptions);
+      expect(vi.mocked(verifySDJWTVC).mock.calls[0][2]).toBeNull();
+    }
   });
 
   it('should reject VP from untrusted issuer when trust is required', async () => {
