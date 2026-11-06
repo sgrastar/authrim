@@ -4,12 +4,15 @@
  * - `liteHandleFetch` answers the probe `reroute` fetches with the request's lite mode, from the
  *   tenant's authentication methods answer. A failed fetch reads as `off`: the normal Login UI
  *   is served as before, and the backends enforce lite mode themselves.
- * - `liteGuardHandle` (first in the handle sequence):
+ * - `liteGuardHandle` (second in the handle sequence) reads the request's edge context into
+ *   `event.locals.edge`, then:
  *   - a direct request for `/__lite/...` is refused (404), judged on the path the browser asked
  *     for, never on the route it was sent to;
  *   - a data request a normal page sends (`__data.json`) that was sent to a lite route is refused
  *     (503) before anything runs: a page opened before the switch must not act on its own;
- *   - a lite POST must be urlencoded and within the size limit before its action runs;
+ *   - a lite POST must come from a page of its own origin (the edge context: the Router's check of
+ *     the browser's Origin, or the UI's own for a direct request), be urlencoded and be within
+ *     the size limit before its action runs;
  *   - every lite response is `private, no-store` and carries the lite CSP.
  */
 import type { RequestEvent } from '@sveltejs/kit';
@@ -22,6 +25,7 @@ import {
 	LITE_ROUTE_PREFIX,
 	type LiteModeAnswer
 } from '#lib/lite/routing.js';
+import { requestEdgeContext } from '../edge-context';
 import { buildLiteContentSecurityPolicy, cspHashSource } from './csp';
 import { isLiteFormContentType, liteFormDeclaredTooLarge } from './form';
 
@@ -86,6 +90,7 @@ export async function litePageContentSecurityPolicy(
 }
 
 export const liteGuardHandle: Handle = async ({ event, resolve }) => {
+	event.locals.edge = requestEdgeContext(event);
 	if (isInternalLitePath(event.url.pathname)) return refuse(404, 'Not Found');
 	if (!isLiteRoute(event)) return resolve(event);
 	// A lite route is reached only by rerouting an in-scope page: one whose requested path is not
@@ -94,6 +99,9 @@ export const liteGuardHandle: Handle = async ({ event, resolve }) => {
 
 	if (event.isDataRequest) return refuse(503, 'Service Unavailable');
 	if (event.request.method === 'POST') {
+		// The browser's Origin as the Router saw it (or as the UI sees it on its own hostname):
+		// a lite form acts only for a page of the origin it was posted to.
+		if (event.locals.edge.originVerified !== true) return refuse(403, 'Forbidden');
 		if (!isLiteFormContentType(event.request.headers.get('content-type'))) {
 			return refuse(415, 'Unsupported Media Type');
 		}

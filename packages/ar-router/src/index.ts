@@ -8,6 +8,14 @@ import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { logger } from 'hono/logger';
 import {
+  buildLoginUiEdgeContext,
+  headerOrigin,
+  forgetLoginUiEdge,
+  LOGIN_UI_EDGE_CONTEXT_HEADER,
+  loginUiEdgeAvailable,
+  type LoginUiEdgeBinding,
+} from './login-ui-edge';
+import {
   createLogger,
   isAllowedOrigin,
   parseAllowedOrigins,
@@ -72,6 +80,11 @@ interface Env extends SamlDrWriterEnv {
   LOGIN_UI_HOST_MODE?: 'dedicated' | 'shared';
   /** Login UI Worker service binding */
   LOGIN_UI_WORKER?: Fetcher;
+  /**
+   * The Login UI's edge entrypoint (`LoginUiEdgeEntrypoint`): when bound, Login UI requests go
+   * through it with the Router's Origin and IP checks as RPC arguments (login-ui-edge.ts).
+   */
+  LOGIN_UI_EDGE?: LoginUiEdgeBinding;
   /** Admin UI Worker service binding */
   ADMIN_UI_WORKER?: Fetcher;
   /** User-owned service site Worker service binding */
@@ -876,16 +889,17 @@ function getAccountPageInternalPath(requestPath: string, accountPagePath: string
 /**
  * Proxy request to a UI Worker.
  * Maintains all headers, query params, and body.
- * Rewrites Origin/Referer headers to match the UI Worker target so that
+ * Rewrites a same-origin Origin/Referer to match the UI Worker target so that
  * SvelteKit CSRF protection (which compares Origin vs event.url.origin)
- * does not reject proxied state-changing requests.
+ * does not reject proxied state-changing requests; cross-origin ones stay as sent.
  */
 async function proxyToUiWorker(
   request: Request,
   baseUrl: string,
   path: string,
   serviceBinding?: Fetcher,
-  sharedLoginHost = false
+  sharedLoginHost = false,
+  loginUiEdge?: LoginUiEdgeBinding
 ): Promise<Response> {
   if (!/^\/(?!\/)[a-zA-Z0-9._~!$&'()*+,;=:@%/-]*$/u.test(path)) {
     return Response.json(
@@ -905,22 +919,28 @@ async function proxyToUiWorker(
   const headers = new Headers(request.headers);
   headers.set('X-Authrim-Original-Host', new URL(request.url).host);
   headers.delete('X-Authrim-Shared-Login-Host');
+  headers.delete(LOGIN_UI_EDGE_CONTEXT_HEADER);
   if (sharedLoginHost) headers.set('X-Authrim-Shared-Login-Host', 'true');
   const targetOrigin = targetUrl.origin;
 
-  // Rewrite Origin/Referer so SvelteKit CSRF check passes
-  if (headers.has('origin')) {
+  // Rewrite a same-origin Origin/Referer to the UI's origin so the UI's same-origin checks see
+  // what the browser saw. A cross-origin one is passed unchanged: rewriting it would turn a
+  // cross-site request into a same-origin one for the UI (and for the backends it calls).
+  const publicOrigin = new URL(request.url).origin;
+  const browserOrigin = headerOrigin(headers.get('origin'));
+  if (headers.has('origin') && browserOrigin === publicOrigin) {
     headers.set('origin', targetOrigin);
+  } else if (browserOrigin !== null && browserOrigin === targetOrigin) {
+    // A page on the UI's own origin posting through the Router is cross-origin here, but would
+    // look same-origin to the UI: pass it as an opaque origin instead.
+    headers.set('origin', 'null');
   }
-  if (headers.has('referer')) {
-    try {
-      const referer = new URL(headers.get('referer')!);
-      referer.host = targetUrl.host;
-      referer.protocol = targetUrl.protocol;
-      headers.set('referer', referer.toString());
-    } catch {
-      // Keep original if malformed
-    }
+  const refererValue = headers.get('referer');
+  if (refererValue !== null && headerOrigin(refererValue) === publicOrigin) {
+    const referer = new URL(refererValue);
+    referer.host = targetUrl.host;
+    referer.protocol = targetUrl.protocol;
+    headers.set('referer', referer.toString());
   }
 
   const hasBody = request.method !== 'GET' && request.method !== 'HEAD' && request.body !== null;
@@ -933,7 +953,43 @@ async function proxyToUiWorker(
     redirect: 'manual',
   });
 
+  // The edge context is computed from the request as the browser sent it, before the rewrite.
+  if (loginUiEdge && (await loginUiEdgeAvailable(loginUiEdge))) {
+    try {
+      return await loginUiEdge.handle(proxyRequest, buildLoginUiEdgeContext(request));
+    } catch (error) {
+      // The entrypoint failed (a rollback to a Login UI without it, or a failed call): ask again
+      // on the next request. Only a GET or HEAD is sent again, the plain way: any other request
+      // may have been carried out before the call failed.
+      forgetLoginUiEdge(loginUiEdge);
+      if (request.method !== 'GET' && request.method !== 'HEAD') throw error;
+      const retry = new Request(targetUrl.toString(), {
+        method: request.method,
+        headers,
+        redirect: 'manual',
+      });
+      return serviceBinding ? serviceBinding.fetch(retry) : fetch(retry);
+    }
+  }
   return serviceBinding ? serviceBinding.fetch(proxyRequest) : fetch(proxyRequest);
+}
+
+/** Proxy a request to the Login UI, through its edge entrypoint when that is bound. */
+function proxyToLoginUi(
+  env: Env,
+  request: Request,
+  baseUrl: string,
+  path: string,
+  sharedLoginHost = false
+): Promise<Response> {
+  return proxyToUiWorker(
+    request,
+    baseUrl,
+    path,
+    env.LOGIN_UI_WORKER,
+    sharedLoginHost,
+    env.LOGIN_UI_EDGE
+  );
 }
 
 // Create Hono app with Cloudflare Workers types
@@ -987,13 +1043,7 @@ app.use('*', async (c, next) => {
     requestHost === loginUiHost &&
     !isLoginUiBackendProxyRequest(c.req.raw)
   ) {
-    return proxyToUiWorker(
-      c.req.raw,
-      c.env.AR_LOGIN_UI_URL,
-      c.req.path,
-      c.env.LOGIN_UI_WORKER,
-      true
-    );
+    return proxyToLoginUi(c.env, c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path, true);
   }
 
   return next();
@@ -1630,7 +1680,7 @@ app.post('/logout/backchannel', async (c) => {
 
 app.get('/logged-out', async (c) => {
   if (isLoginUiPathProxyEnabled(c.env) && c.env.AR_LOGIN_UI_URL) {
-    return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path, c.env.LOGIN_UI_WORKER);
+    return proxyToLoginUi(c.env, c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path);
   }
   const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
@@ -2053,7 +2103,7 @@ for (const uiPath of LOGIN_UI_PATHS) {
   // Handle exact path
   app.all(uiPath, async (c) => {
     if (isLoginUiPathProxyEnabled(c.env) && c.env.AR_LOGIN_UI_URL) {
-      return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path, c.env.LOGIN_UI_WORKER);
+      return proxyToLoginUi(c.env, c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path);
     }
     return c.json(
       {
@@ -2068,7 +2118,7 @@ for (const uiPath of LOGIN_UI_PATHS) {
   // Handle paths with trailing content (e.g., /login/*, /signup/*)
   app.all(`${uiPath}/*`, async (c) => {
     if (isLoginUiPathProxyEnabled(c.env) && c.env.AR_LOGIN_UI_URL) {
-      return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path, c.env.LOGIN_UI_WORKER);
+      return proxyToLoginUi(c.env, c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path);
     }
     return c.json(
       {
@@ -2091,7 +2141,7 @@ app.get('/geo/*', async (c) => {
 // Login UI SvelteKit static assets use a dedicated namespace to avoid /_app collisions.
 app.all(`${LOGIN_UI_ASSET_PREFIX}/*`, async (c) => {
   if (isLoginUiPathProxyEnabled(c.env) && c.env.AR_LOGIN_UI_URL) {
-    return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path, c.env.LOGIN_UI_WORKER);
+    return proxyToLoginUi(c.env, c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path);
   }
   return c.json({ error: 'not_found', message: 'Login UI proxy is not enabled' }, 404);
 });
@@ -2140,7 +2190,7 @@ app.get('/', async (c) => {
     ) {
       return c.redirect('/login', 303);
     }
-    return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL!, '/', c.env.LOGIN_UI_WORKER);
+    return proxyToLoginUi(c.env, c.req.raw, c.env.AR_LOGIN_UI_URL!, '/');
   }
 
   // Return basic API info when Login UI proxy is not enabled.
@@ -2169,7 +2219,7 @@ app.all('*', async (c, next) => {
   }
 
   if (isLoginUiPathProxyEnabled(c.env) && c.env.AR_LOGIN_UI_URL) {
-    return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, internalPath, c.env.LOGIN_UI_WORKER);
+    return proxyToLoginUi(c.env, c.req.raw, c.env.AR_LOGIN_UI_URL, internalPath);
   }
   return c.json({ error: 'not_found', message: 'Login UI proxy is not enabled' }, 404);
 });
