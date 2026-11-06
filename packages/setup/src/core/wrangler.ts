@@ -1328,7 +1328,7 @@ export function generateWranglerConfig(
   // Service Bindings for ar-router (required for routing to other workers)
   if (component === 'ar-router') {
     // Core services (always required)
-    const services: Array<{ binding: string; service: string }> = [
+    const services: Array<{ binding: string; service: string; entrypoint?: string }> = [
       { binding: 'OP_DISCOVERY', service: `${env}-ar-discovery` },
       { binding: 'OP_AUTH', service: `${env}-ar-auth` },
       { binding: 'OP_TOKEN', service: `${env}-ar-token` },
@@ -1346,6 +1346,13 @@ export function generateWranglerConfig(
     services.push({ binding: 'OP_VC', service: `${env}-ar-vc` });
     if (config.components.loginUi) {
       services.push({ binding: 'LOGIN_UI_WORKER', service: `${env}-ar-login-ui` });
+      // The Login UI's edge entrypoint: the Router passes its Origin and IP checks as RPC
+      // arguments (ar-router/src/login-ui-edge.ts).
+      services.push({
+        binding: 'LOGIN_UI_EDGE',
+        service: `${env}-ar-login-ui`,
+        entrypoint: 'LoginUiEdgeEntrypoint',
+      });
     }
     if (config.components.adminUi) {
       services.push({ binding: 'ADMIN_UI_WORKER', service: `${env}-ar-admin-ui` });
