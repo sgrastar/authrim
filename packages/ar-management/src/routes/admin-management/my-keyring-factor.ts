@@ -151,7 +151,7 @@ async function readStartBody(c: AdminContext): Promise<StartBody | Response> {
     if (typeof body !== 'object' || body === null || Array.isArray(body)) {
       return refuse(c, 400, 'invalid_request');
     }
-    return body as StartBody;
+    return body;
   } catch {
     return refuse(c, 400, 'invalid_request');
   }
