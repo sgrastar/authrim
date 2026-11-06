@@ -15163,8 +15163,14 @@ paths:
                         type: boolean
                       block_type:
                         type: string
+                        description: >-
+                          The part's type. Omitted, it is identity_field (an attribute's text
+                          input); a value not listed here is refused.
                         enum:
                           - identity_field
+                          - select
+                          - radio
+                          - checkbox
                           - auth_widget
                           - guest_login_widget
                           - code_input_widget
@@ -15191,6 +15197,9 @@ paths:
                         type:
                           - string
                           - 'null'
+                        description: >-
+                          Legacy: boolean on an identity_field stored to the profile asks yes or
+                          no (a checkbox part does the same). Ignored on other parts.
                         enum:
                           - text
                           - boolean
@@ -15263,8 +15272,58 @@ paths:
                         maximum: 4
                       order:
                         type: integer
+                      show_label:
+                        type: boolean
+                        description: >-
+                          Input parts (identity_field, select, radio, checkbox): false hides the
+                          label on screen (it is still read out). Default true.
+                      store_to_profile:
+                        type: boolean
+                        description: >-
+                          Input parts: whether the answer is the user's attribute named by
+                          `field` (default true). A select or radio part stored to the profile
+                          needs a single-valued active enum attribute, a checkbox a
+                          single-valued active boolean one; their choices come from the Identity
+                          Schema at run time. When false, `field` is the answer's own key (a
+                          letter followed by letters, digits or _, at most 64; not an
+                          attribute's key or a standard claim's name, and not used twice on the
+                          screen).
+                      answer_targets:
+                        type: array
+                        description: >-
+                          Only when store_to_profile is false (required then): where the answer
+                          goes. flow_event is the Flow context and a flow.screen.submitted event;
+                          record is the screen's response record.
+                        minItems: 1
+                        items:
+                          type: string
+                          enum:
+                            - flow_event
+                            - record
+                      options:
+                        type: array
+                        description: >-
+                          Only for a select or radio part not stored to the profile (required
+                          then). Values are unique, at most 128 characters; labels at most 100.
+                        minItems: 1
+                        maxItems: 100
+                        items:
+                          type: object
+                          required:
+                            - value
+                          properties:
+                            value:
+                              type: string
+                              maxLength: 128
+                            label:
+                              type: string
+                              maxLength: 100
                 localizations:
                   type: object
+                  description: >-
+                    By language. `fields[key]` (the part's block_id, else its field and
+                    position) translates label, text, help_text and placeholder, and `options`
+                    the labels of the part's own options by option value.
                   additionalProperties: true
                 settings:
                   type: object
@@ -15449,8 +15508,14 @@ paths:
                         type: boolean
                       block_type:
                         type: string
+                        description: >-
+                          The part's type. Omitted, it is identity_field (an attribute's text
+                          input); a value not listed here is refused.
                         enum:
                           - identity_field
+                          - select
+                          - radio
+                          - checkbox
                           - auth_widget
                           - guest_login_widget
                           - code_input_widget
@@ -15477,6 +15542,9 @@ paths:
                         type:
                           - string
                           - 'null'
+                        description: >-
+                          Legacy: boolean on an identity_field stored to the profile asks yes or
+                          no (a checkbox part does the same). Ignored on other parts.
                         enum:
                           - text
                           - boolean
@@ -15549,8 +15617,58 @@ paths:
                         maximum: 4
                       order:
                         type: integer
+                      show_label:
+                        type: boolean
+                        description: >-
+                          Input parts (identity_field, select, radio, checkbox): false hides the
+                          label on screen (it is still read out). Default true.
+                      store_to_profile:
+                        type: boolean
+                        description: >-
+                          Input parts: whether the answer is the user's attribute named by
+                          `field` (default true). A select or radio part stored to the profile
+                          needs a single-valued active enum attribute, a checkbox a
+                          single-valued active boolean one; their choices come from the Identity
+                          Schema at run time. When false, `field` is the answer's own key (a
+                          letter followed by letters, digits or _, at most 64; not an
+                          attribute's key or a standard claim's name, and not used twice on the
+                          screen).
+                      answer_targets:
+                        type: array
+                        description: >-
+                          Only when store_to_profile is false (required then): where the answer
+                          goes. flow_event is the Flow context and a flow.screen.submitted event;
+                          record is the screen's response record.
+                        minItems: 1
+                        items:
+                          type: string
+                          enum:
+                            - flow_event
+                            - record
+                      options:
+                        type: array
+                        description: >-
+                          Only for a select or radio part not stored to the profile (required
+                          then). Values are unique, at most 128 characters; labels at most 100.
+                        minItems: 1
+                        maxItems: 100
+                        items:
+                          type: object
+                          required:
+                            - value
+                          properties:
+                            value:
+                              type: string
+                              maxLength: 128
+                            label:
+                              type: string
+                              maxLength: 100
                 localizations:
                   type: object
+                  description: >-
+                    By language. `fields[key]` (the part's block_id, else its field and
+                    position) translates label, text, help_text and placeholder, and `options`
+                    the labels of the part's own options by option value.
                   additionalProperties: true
                 settings:
                   type: object

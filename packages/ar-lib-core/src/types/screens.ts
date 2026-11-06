@@ -18,6 +18,12 @@ export type ScreenBlockType =
   | 'divider'
   | 'layout_row'
   | 'link'
+  /** A choice from a list (a drop-down). */
+  | 'select'
+  /** A choice from a list, every option on screen. */
+  | 'radio'
+  /** A yes/no answer. */
+  | 'checkbox'
   | 'account_upgrade_widget'
   | 'account_profile_widget'
   | 'account_device_list_widget'
@@ -29,7 +35,29 @@ export type ScreenBlockType =
   | 'account_social_account_widget'
   | 'account_launcher_widget';
 
+/**
+ * The legacy way to ask a yes/no question: an `identity_field` with `value_type: 'boolean'`. Saved
+ * screens are rewritten to a `checkbox` block; the run time still reads both.
+ */
 export type ScreenValueType = 'text' | 'boolean';
+
+/** Where the answer to a part that is not stored to the profile goes (one or both). */
+export type ScreenAnswerTarget = 'flow_event' | 'record';
+export const SCREEN_ANSWER_TARGETS: readonly ScreenAnswerTarget[] = ['flow_event', 'record'];
+
+/** A choice of a `select` or `radio` part that is not stored to the profile. */
+export interface ScreenFieldOption {
+  value: string;
+  label: string;
+}
+
+/** The input parts: what a person answers on a screen. */
+export const SCREEN_INPUT_BLOCK_TYPES = ['identity_field', 'select', 'radio', 'checkbox'] as const;
+/** The input parts whose answers are a choice from a list. */
+export const SCREEN_CHOICE_BLOCK_TYPES = ['select', 'radio'] as const;
+export const MAX_SCREEN_FIELD_OPTIONS = 100;
+export const MAX_SCREEN_OPTION_VALUE_LENGTH = 128;
+export const MAX_SCREEN_OPTION_LABEL_LENGTH = 100;
 export type ScreenCanvasLayout = 'narrow' | 'wide';
 export type ScreenHumanVerificationTiming = 'initial' | 'submit';
 export type ScreenDisplayConditionMode = 'always' | 'feature_enabled' | 'hidden';
@@ -71,6 +99,20 @@ export interface ScreenField {
   layout_columns?: number | null;
   layout_column?: number | null;
   order?: number;
+  /** Input parts: whether the label is shown (a hidden one is still read out). Default true. */
+  show_label?: boolean;
+  /**
+   * Input parts: whether the answer is the user's attribute named by `field` (default true). When
+   * false, `field` is the answer's own key, and `answer_targets` says where the answer goes.
+   */
+  store_to_profile?: boolean;
+  /** Only when `store_to_profile` is false: one or both. */
+  answer_targets?: ScreenAnswerTarget[];
+  /**
+   * Only for a `select` or `radio` part not stored to the profile. A part stored to the profile
+   * takes its choices from the attribute's Identity Schema at run time (none are saved here).
+   */
+  options?: ScreenFieldOption[];
 }
 
 export interface ScreenLocalization {
@@ -78,7 +120,10 @@ export interface ScreenLocalization {
   description?: string;
   fields?: Record<
     string,
-    Partial<Pick<ScreenField, 'label' | 'text' | 'help_text' | 'placeholder'>>
+    Partial<Pick<ScreenField, 'label' | 'text' | 'help_text' | 'placeholder'>> & {
+      /** The labels of a part's own options (not stored to the profile), by option value. */
+      options?: Record<string, string>;
+    }
   >;
 }
 
