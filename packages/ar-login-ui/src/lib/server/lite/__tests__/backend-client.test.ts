@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
 	createLiteBackendClient,
 	isForwardableSetCookie,
+	isPageLoadOriginCall,
 	parseSetCookie,
 	pathMatches
 } from '../backend-client';
@@ -193,5 +194,75 @@ describe('path-match', () => {
 		expect(pathMatches('/api/', '/api/v1')).toBe(true);
 		expect(pathMatches('/api', '/apix')).toBe(false);
 		expect(pathMatches('/api/v1', '/api')).toBe(false);
+	});
+});
+
+describe('the calls a page view may make with the public origin', () => {
+	it('are the Flow start and the email verification challenge, as POST, and nothing else', () => {
+		expect(isPageLoadOriginCall('POST', '/api/v1/login/interactions/start')).toBe(true);
+		expect(
+			isPageLoadOriginCall(
+				'POST',
+				'/api/v1/login/interactions/abc-123/email-verification/challenge'
+			)
+		).toBe(true);
+		for (const [method, path] of [
+			['POST', '/api/v1/login/interactions/abc/submit'],
+			['POST', '/api/v1/auth/direct/email-code/send'],
+			['POST', '/api/v1/auth/direct/email-code/verify'],
+			['POST', '/api/v1/auth/direct/session'],
+			['POST', '/api/auth/guest/login'],
+			['POST', '/api/v1/login/interactions/start/extra'],
+			['POST', '/api/v1/login/interactions/a/b/email-verification/challenge'],
+			['DELETE', '/api/v1/login/interactions/start']
+		]) {
+			expect(isPageLoadOriginCall(method, path)).toBe(false);
+		}
+	});
+
+	it('get the Origin on a page view; a side effect does not', async () => {
+		const origins: Array<string | null> = [];
+		const backend = client(
+			async (_url, init) => {
+				origins.push(new Headers(init.headers).get('origin'));
+				return answer([]);
+			},
+			{ originVerified: false }
+		);
+		await backend.request('/api/v1/login/interactions/start', { json: {} });
+		await backend.request('/api/v1/auth/direct/email-code/send', { json: {} });
+		expect(origins).toEqual(['https://id.example', null]);
+	});
+});
+
+describe('the client of a page view', () => {
+	it('refuses every call with a side effect before making it, and never follows a redirect', async () => {
+		const fetch = vi.fn(async () => answer([]));
+		const backend = createLiteBackendClient({
+			fetcher: { fetch },
+			publicOrigin: 'https://id.example',
+			backendBaseUrl: 'https://backend.internal/',
+			cookieHeader: null,
+			clientIp: null,
+			originVerified: false,
+			mode: 'page_load'
+		});
+		for (const path of [
+			'/api/v1/login/interactions/abc/submit',
+			'/api/v1/auth/direct/email-code/send',
+			'/api/v1/auth/direct/session',
+			'/api/auth/guest/login'
+		]) {
+			await expect(backend.request(path, { json: {} })).rejects.toThrow(
+				'lite_backend_not_allowed_on_page_load'
+			);
+		}
+		expect(fetch).not.toHaveBeenCalled();
+		await backend.request('/api/v1/login/interactions/start', { json: {} });
+		await backend.request('/api/auth/human-verification/pow-challenge?action=login');
+		expect(fetch).toHaveBeenCalledTimes(2);
+		for (const call of fetch.mock.calls as unknown as Array<[string, RequestInit]>) {
+			expect(call[1].redirect).toBe('manual');
+		}
 	});
 });

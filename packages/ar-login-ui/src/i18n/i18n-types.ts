@@ -1847,6 +1847,10 @@ type RootTranslation = {
 	 * @param {number} position
 	 */
 	emailCode_digitLabel: RequiredParams<'position'>;
+	/**
+	 * T​h​i​s​ ​p​a​g​e​ ​r​u​n​s​ ​a​ ​s​e​c​u​r​i​t​y​ ​c​h​e​c​k​ ​i​n​ ​y​o​u​r​ ​b​r​o​w​s​e​r​.​ ​T​u​r​n​ ​o​n​ ​J​a​v​a​S​c​r​i​p​t​,​ ​t​h​e​n​ ​r​e​l​o​a​d​ ​t​h​e​ ​p​a​g​e​.
+	 */
+	lite_javascriptRequired: string;
 };
 
 export type TranslationFunctions = {
@@ -3637,6 +3641,10 @@ export type TranslationFunctions = {
 	 * Digit {position} of 6
 	 */
 	emailCode_digitLabel: (arg: { position: number }) => LocalizedString;
+	/**
+	 * This page runs a security check in your browser. Turn on JavaScript, then reload the page.
+	 */
+	lite_javascriptRequired: () => LocalizedString;
 };
 
 export type Formatters = {};

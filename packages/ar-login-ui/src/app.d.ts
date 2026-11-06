@@ -76,6 +76,11 @@ declare global {
 			loginUiLite?: import('#lib/lite/routing.js').LiteModeAnswer;
 			/** What the Router checked at its edge, or the UI's own check (lib/server/edge-context.ts). */
 			edge?: import('#lib/server/edge-context.js').EdgeContext;
+			/**
+			 * A lite action's finished sign-in: where its relay page goes. SvelteKit runs the page's
+			 * load after an action; with this set, the load starts nothing and draws the relay.
+			 */
+			liteRelay?: { url: string; continueLabel: string };
 			/** What a lite page adds to the lite CSP: a fixed script's hash, a relay's destination. */
 			liteCsp?: { scriptHashes?: string[]; formAction?: string };
 			loginChallengeThemeTarget?: {

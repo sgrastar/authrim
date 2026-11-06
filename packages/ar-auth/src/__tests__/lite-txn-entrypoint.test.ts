@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { LitePolicyStore } from '@authrim/ar-lib-core/durable-objects/LitePolicyStore';
 import { LiteTxnStore } from '@authrim/ar-lib-core/durable-objects/LiteTxnStore';
 import { resetLitePolicyRuntimeCache } from '@authrim/ar-lib-core/services/lite-policy';
+import { tenantPrimaryVanityDomainCacheKey } from '@authrim/ar-lib-core/services/tenant-vanity-domain-resolver';
 import { LITE_TXN_AUDIENCE, LiteTxnEntrypoint, checkedReturnTo } from '../lite-txn-entrypoint';
 
 class Storage {
@@ -78,6 +79,15 @@ beforeEach(() => {
   counts = new Map();
   env = {
     AUTHRIM_ENVIRONMENT_NAME: 'test',
+    // The tenant's canonical issuer: ISSUER_URL, with no primary vanity domain.
+    ISSUER_URL: ORIGIN,
+    AUTHRIM_CONFIG: {
+      get: async (key: string) =>
+        key === tenantPrimaryVanityDomainCacheKey('default')
+          ? '__authrim_no_primary_vanity_domain__'
+          : null,
+      put: async () => undefined,
+    },
     LITE_POLICY_STORE: { idFromName: (n: string) => n, get: () => policy },
     LITE_TXN_STORE: {
       idFromName: (n: string) => n,
@@ -247,9 +257,10 @@ describe('LiteTxnEntrypoint', () => {
     await expect(
       entry().transition({ ...call, txnId, expectedVersion: 1, to: 'pending' })
     ).resolves.toEqual({ ok: false, reason: 'policy_changed' });
-    await expect(
-      entry().issueStartGrant({ ...call, txnId, provider: 'google', action: 'login' })
-    ).resolves.toEqual({ ok: false, reason: 'policy_changed' });
+    await expect(entry().issueStartGrant({ ...call, txnId, provider: 'google' })).resolves.toEqual({
+      ok: false,
+      reason: 'policy_changed',
+    });
   });
 
   it('keeps another browser out of a transaction', async () => {
@@ -314,9 +325,10 @@ describe('LiteTxnEntrypoint', () => {
       ok: false,
       reason: 'policy_changed',
     });
-    await expect(
-      entry().issueStartGrant({ ...call, txnId, provider: 'google', action: 'login' })
-    ).resolves.toEqual({ ok: false, reason: 'policy_changed' });
+    await expect(entry().issueStartGrant({ ...call, txnId, provider: 'google' })).resolves.toEqual({
+      ok: false,
+      reason: 'policy_changed',
+    });
   });
 
   it('records a result after the tenant left lite mode, and makes no move', async () => {
@@ -390,6 +402,8 @@ describe('checkedReturnTo', () => {
       'https://evil.example/',
       'https://id.example.evil/',
       'javascript:alert(1)',
+      'https://user@id.example/account',
+      'blob:https://id.example/1234',
       '/a\nb',
       'x'.repeat(3000),
       42,
@@ -402,9 +416,7 @@ describe('checkedReturnTo', () => {
     expect(checkedReturnTo('HTTPS://ID.EXAMPLE:443/a', ORIGIN)).toBe('HTTPS://ID.EXAMPLE:443/a');
     expect(checkedReturnTo('https://id.example:444/a', ORIGIN)).toBeUndefined();
     expect(checkedReturnTo('https://id.example@evil.example/', ORIGIN)).toBeUndefined();
-    expect(checkedReturnTo('https://evil.example@id.example/', ORIGIN)).toBe(
-      'https://evil.example@id.example/'
-    );
+    expect(checkedReturnTo('https://evil.example@id.example/', ORIGIN)).toBeUndefined();
     expect(checkedReturnTo(`/${'a'.repeat(2047)}`, ORIGIN)).toBe(`/${'a'.repeat(2047)}`);
     expect(checkedReturnTo(`/${'a'.repeat(2048)}`, ORIGIN)).toBeUndefined();
   });
@@ -439,5 +451,110 @@ describe('LiteTxnEntrypoint refusals before the store', () => {
       })
     ).resolves.toEqual({ ok: false, reason: 'tenant_unknown' });
     expect(txnStores.size).toBe(0);
+  });
+
+  it('makes a transaction only on the tenant canonical issuer origin', async () => {
+    await setPolicy('always');
+    // Another host of the same tenant (single-tenant mode resolves any host to it).
+    await expect(
+      entry().create({
+        ...call,
+        publicOrigin: 'https://ui.example.workers.dev',
+        clientIp: null,
+        purpose: 'login',
+      })
+    ).resolves.toEqual({ ok: false, reason: 'origin_not_canonical', canonicalOrigin: ORIGIN });
+    // No transaction was made (a store stub may be addressed; nothing is written to it).
+    const written = [...txnStores.values()].flatMap((store) => [
+      ...(
+        store as unknown as { ctx: { storage: { data: Map<string, unknown> } } }
+      ).ctx.storage.data.keys(),
+    ]);
+    expect(written).toEqual([]);
+  });
+
+  it('keeps a transaction to the origin it was made on', async () => {
+    await setPolicy('always');
+    const created = await entry().create({ ...call, clientIp: null, purpose: 'login' });
+    if (!created.ok) throw new Error(created.reason);
+    await expect(
+      entry().get({
+        ...call,
+        publicOrigin: 'https://ui.example.workers.dev',
+        txnId: created.txn.id,
+      })
+    ).resolves.toEqual({ ok: false, reason: 'binding_mismatch' });
+  });
+
+  it('stores no session or user for a sign-in or sign-up, whatever the caller passes', async () => {
+    await setPolicy('always');
+    for (const purpose of ['login', 'signup'] as const) {
+      const created = await entry().create({
+        ...call,
+        clientIp: null,
+        purpose,
+        sessionId: 'asserted-session',
+        userId: 'asserted-user',
+      });
+      expect(created).toMatchObject({
+        ok: true,
+        txn: { bound: { sessionId: null, userId: null } },
+      });
+    }
+  });
+
+  it('gives a start grant the transaction purpose as its action', async () => {
+    await setPolicy('always');
+    const created = await entry().create({ ...call, clientIp: null, purpose: 'signup' });
+    if (!created.ok) throw new Error(created.reason);
+    const issued = await entry().issueStartGrant({
+      ...call,
+      txnId: created.txn.id,
+      provider: 'google',
+      action: 'login',
+    } as never);
+    expect(issued).toMatchObject({ ok: true });
+    const store = [...txnStores.values()][0] as unknown as {
+      ctx: { storage: { data: Map<string, unknown> } };
+    };
+    const record = [...store.ctx.storage.data.values()].find(
+      (value) => (value as { id?: string }).id === created.txn.id
+    ) as { grants: Record<string, { spec: { action: string } }> };
+    expect(Object.values(record.grants)[0]?.spec.action).toBe('signup');
+  });
+
+  it('reads a transaction against the current policy when asked, with the cache still warm', async () => {
+    await setPolicy('always');
+    const created = await entry().create({ ...call, clientIp: null, purpose: 'login' });
+    if (!created.ok) throw new Error(created.reason);
+    const lease = await policy.acquireLeaseRpc('default');
+    if (!lease.acquired) throw new Error('lease');
+    await policy.commitRpc({
+      tenantId: 'default',
+      token: lease.token,
+      expectedGeneration: lease.generation,
+      liteMode: 'always',
+      humanVerificationRequired: { login: false, signup: false, reauth: false },
+    });
+    const txnId = created.txn.id;
+    // The cached read still says the old revision; the current one refuses.
+    await expect(entry().get({ ...call, txnId })).resolves.toMatchObject({ ok: true });
+    await expect(entry().get({ ...call, txnId, current: true })).resolves.toEqual({
+      ok: false,
+      reason: 'policy_changed',
+    });
+  });
+
+  it('sends another host of the tenant to the canonical origin before checking the return target', async () => {
+    await setPolicy('always');
+    await expect(
+      entry().create({
+        ...call,
+        publicOrigin: 'https://ui.example.workers.dev',
+        clientIp: null,
+        purpose: 'login',
+        returnTo: `${ORIGIN}/account`,
+      })
+    ).resolves.toEqual({ ok: false, reason: 'origin_not_canonical', canonicalOrigin: ORIGIN });
   });
 });

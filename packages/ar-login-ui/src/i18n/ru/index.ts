@@ -339,7 +339,9 @@ const ru = createTranslation({
 	login_extError_reauthNotProven_message:
 		'Ваш поставщик входа не подтвердил, что вы вошли снова. Войдите снова или выберите другой способ.',
 	login_extError_default_title: 'Ошибка аутентификации',
-	login_extError_default_message: 'Во время внешней аутентификации произошла ошибка.'
+	login_extError_default_message: 'Во время внешней аутентификации произошла ошибка.',
+	lite_javascriptRequired:
+		'Эта страница выполняет проверку безопасности в вашем браузере. Включите JavaScript и перезагрузите страницу.'
 });
 
 export default ru;

@@ -96,6 +96,11 @@ export interface LiteTxnRef {
   bindingHash: string;
   txnId: string;
   /**
+   * The public origin of the call: a transaction made for another origin is refused
+   * (`binding_mismatch`). Left out only by the store's own tests.
+   */
+  publicOrigin?: string;
+  /**
    * The tenant's current lite policy revision: a transaction made under another one is refused
    * (`policy_changed`), checked with the call itself. Left out only to record the result of an
    * operation already carried out.
@@ -221,13 +226,11 @@ function cleanBound(input: LiteTxnBound): LiteTxnBound | null {
   };
   if (Object.values(strings).some((value) => value === undefined)) return null;
   if (!LITE_TXN_PURPOSES.includes(input.purpose)) return null;
-  // An account action or a re-authentication acts for one signed-in session and user.
-  if (
-    (input.purpose === 'account' || input.purpose === 'reauth') &&
-    (strings.sessionId === null || strings.userId === null)
-  ) {
-    return null;
-  }
+  // An account action or a re-authentication acts for one signed-in session and user; a sign-in
+  // or sign-up acts for nobody yet, so it carries neither (no later step can read a user from it).
+  const forSession = input.purpose === 'account' || input.purpose === 'reauth';
+  if (forSession !== (strings.sessionId !== null && strings.userId !== null)) return null;
+  if (!forSession && (strings.sessionId !== null || strings.userId !== null)) return null;
   return {
     tenantId: strings.tenantId as string,
     publicOrigin: strings.publicOrigin as string,
@@ -328,6 +331,9 @@ export class LiteTxnStore extends DurableObject<Env> {
     const txn = await this.ctx.storage.get<StoredTxn>(TXN_PREFIX + ref.txnId);
     if (!txn) return 'not_found';
     if (txn.bound.tenantId !== ref.tenantId) return 'binding_mismatch';
+    if (ref.publicOrigin !== undefined && txn.bound.publicOrigin !== ref.publicOrigin) {
+      return 'binding_mismatch';
+    }
     if (Date.now() >= txn.expiresAt) return 'expired';
     if (
       options.checkRevision &&
@@ -425,7 +431,9 @@ export class LiteTxnStore extends DurableObject<Env> {
     if (isFinished(txn)) return 'finished';
     if (txn.version !== move.expectedVersion) return 'version_mismatch';
     if (!isLiteTxnTransitionAllowed(txn.state, move.to)) return 'invalid_transition';
-    if (txn.updates >= LITE_TXN_MAX_UPDATES) return 'budget_exceeded';
+    // Finishing is never refused for the budget: a finished transaction must not stay live.
+    const finishing = move.to === 'completed' || move.to === 'abandoned';
+    if (txn.updates >= LITE_TXN_MAX_UPDATES && !finishing) return 'budget_exceeded';
     let data: Record<string, unknown>;
     try {
       data = applyPatch(txn.data, move.patch);

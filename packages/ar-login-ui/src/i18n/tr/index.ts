@@ -499,7 +499,9 @@ const translation = {
 	login_signingInTo: 'Giriş yapılan uygulama:',
 	common_contactSupport: 'Destek ekibiyle iletişime geçin',
 	common_dismissAlert: 'Uyarıyı kapat',
-	emailCode_digitLabel: '6 hanenin {position}. hanesi'
+	emailCode_digitLabel: '6 hanenin {position}. hanesi',
+	lite_javascriptRequired:
+		"Bu sayfa tarayıcınızda bir güvenlik denetimi çalıştırır. JavaScript'i açın, ardından sayfayı yeniden yükleyin."
 } satisfies Translation;
 
 export default translation;

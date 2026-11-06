@@ -21,6 +21,8 @@ import { WorkerEntrypoint } from 'cloudflare:workers';
 import { runSamlDrCoveredOperation } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import {
   checkRateLimit,
+  buildCanonicalTenantIssuerUrl,
+  buildIssuerUrl,
   getTenantIdFromHost,
   readCurrentLitePolicySnapshot,
   readLiteRuntimeState,
@@ -51,6 +53,7 @@ export interface LiteTxnEntrypointProps {
 /** Why the entrypoint refused before reaching the store. */
 export type LiteTxnEntryRefusal =
   | 'unsupported_purpose'
+  | 'origin_not_canonical'
   | 'invalid_return_to'
   | 'tenant_unknown'
   | 'not_lite'
@@ -103,7 +106,14 @@ export function checkedReturnTo(value: unknown, publicOrigin: string): string | 
   if (/[\\\u0000-\u001f\u007f]/u.test(value)) return undefined;
   if (value.startsWith('/')) return value.startsWith('//') ? undefined : value;
   try {
-    return new URL(value).origin === publicOrigin ? value : undefined;
+    const url = new URL(value);
+    // http(s) only and no user info (a `blob:` URL shares its creator's origin).
+    return url.origin === publicOrigin &&
+      (url.protocol === 'https:' || url.protocol === 'http:') &&
+      !url.username &&
+      !url.password
+      ? value
+      : undefined;
   } catch {
     return undefined;
   }
@@ -151,6 +161,7 @@ export class LiteTxnEntrypoint extends WorkerEntrypoint<Env, LiteTxnEntrypointPr
         tenantId: string;
         policyRevision: string;
         bindingHash: string;
+        publicOrigin: string;
         store: DurableObjectStub<LiteTxnStore>;
       }
   > {
@@ -179,6 +190,7 @@ export class LiteTxnEntrypoint extends WorkerEntrypoint<Env, LiteTxnEntrypointPr
       tenantId,
       policyRevision: typeof policyRevision === 'string' ? policyRevision : NO_CURRENT_REVISION,
       bindingHash,
+      publicOrigin: origin.origin,
       store,
     };
   }
@@ -214,13 +226,31 @@ export class LiteTxnEntrypoint extends WorkerEntrypoint<Env, LiteTxnEntrypointPr
         this.#authorize();
         return { ok: false, reason: 'unsupported_purpose' } as const;
       }
-      const returnTo = checkedReturnTo(call.returnTo, call.publicOrigin);
-      if (returnTo === undefined) {
-        this.#authorize();
-        return { ok: false, reason: 'invalid_return_to' } as const;
-      }
       const context = await this.#context(call);
       if (!context.ok) return context;
+      // The browser must be on the tenant's canonical issuer origin (not a shared Login UI host,
+      // a non-primary vanity domain or workers.dev): the page goes there first (plan R4-2).
+      let canonicalOrigin: string;
+      try {
+        canonicalOrigin = new URL(
+          await buildCanonicalTenantIssuerUrl(
+            this.env,
+            context.tenantId,
+            buildIssuerUrl(this.env, context.tenantId),
+            { strict: true }
+          )
+        ).origin;
+      } catch {
+        return { ok: false, reason: 'unavailable' } as const;
+      }
+      if (canonicalOrigin !== call.publicOrigin) {
+        return { ok: false, reason: 'origin_not_canonical', canonicalOrigin } as const;
+      }
+      // Checked on the canonical origin (a request from another host goes there first).
+      const returnTo = checkedReturnTo(call.returnTo, call.publicOrigin);
+      if (returnTo === undefined) {
+        return { ok: false, reason: 'invalid_return_to' } as const;
+      }
       const limits = await readLiteTxnLimits(this.env, context.tenantId);
       try {
         for (const [key, maxRequests] of [
@@ -246,8 +276,9 @@ export class LiteTxnEntrypoint extends WorkerEntrypoint<Env, LiteTxnEntrypointPr
         challengeId: call.challengeId ?? null,
         returnTo,
         policyRevision: context.policyRevision,
-        sessionId: call.sessionId ?? null,
-        userId: call.userId ?? null,
+        // Only login and signup reach here (see above): neither acts for a session or user yet.
+        sessionId: null,
+        userId: null,
       };
       return context.store.createTxnRpc({
         tenantId: context.tenantId,
@@ -260,10 +291,17 @@ export class LiteTxnEntrypoint extends WorkerEntrypoint<Env, LiteTxnEntrypointPr
     });
   }
 
-  /** Reads a transaction to show a page: the runtime cache is enough (every change re-checks). */
-  get(call: LiteTxnCall & { txnId: string }): Promise<LiteTxnResult | Refused> {
+  /**
+   * Reads a transaction. To show a page the runtime cache is enough; before a form post acts
+   * (`current: true`) the tenant's current policy is read, so a post under an earlier revision is
+   * refused before any backend call.
+   */
+  get(call: LiteTxnCall & { txnId: string; current?: boolean }): Promise<LiteTxnResult | Refused> {
     return this.#covered(async () => {
-      const context = await this.#context(call, { current: false, requireLite: true });
+      const context = await this.#context(call, {
+        current: call.current === true,
+        requireLite: true,
+      });
       if (!context.ok) return context;
       return context.store.getTxnRpc(this.#ref(context, call.txnId));
     });
@@ -329,28 +367,41 @@ export class LiteTxnEntrypoint extends WorkerEntrypoint<Env, LiteTxnEntrypointPr
     });
   }
 
+  /** A one-time start grant for the provider; its action is the transaction's purpose. */
   issueStartGrant(
-    call: LiteTxnCall & { txnId: string; provider: string; action: LiteTxnPurpose }
+    call: LiteTxnCall & { txnId: string; provider: string }
   ): Promise<{ ok: true; grantId: string } | { ok: false; reason: string }> {
     return this.#covered(async () => {
       const context = await this.#context(call);
       if (!context.ok) return context;
+      const ref = this.#ref(context, call.txnId);
+      // (The stub's RPC types wrap the answer; it is the store's LiteTxnResult.)
+      const read = (await context.store.getTxnRpc(ref)) as LiteTxnResult;
+      if (!read.ok) return read;
       const spec: LiteStartGrantSpec = {
         provider: call.provider,
-        action: call.action,
+        action: read.txn.bound.purpose,
         policyRevision: context.policyRevision,
       };
-      return context.store.issueStartGrantRpc({ ...this.#ref(context, call.txnId), spec });
+      return context.store.issueStartGrantRpc({ ...ref, spec });
     });
   }
 
-  /** The store reference, with the current policy revision (checked by the store, atomically). */
-  #ref(context: { tenantId: string; bindingHash: string; policyRevision: string }, txnId: string) {
+  #ref(
+    context: {
+      tenantId: string;
+      bindingHash: string;
+      policyRevision: string;
+      publicOrigin: string;
+    },
+    txnId: string
+  ) {
     return {
       tenantId: context.tenantId,
       bindingHash: context.bindingHash,
       txnId,
       policyRevision: context.policyRevision,
+      publicOrigin: context.publicOrigin,
     };
   }
 }

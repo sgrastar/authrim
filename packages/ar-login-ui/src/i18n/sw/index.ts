@@ -501,7 +501,9 @@ const translation = {
 	login_signingInTo: 'Inaingia kwenye:',
 	common_contactSupport: 'Wasiliana na msaada',
 	common_dismissAlert: 'Funga tahadhari',
-	emailCode_digitLabel: 'Tarakimu ya {position} kati ya 6'
+	emailCode_digitLabel: 'Tarakimu ya {position} kati ya 6',
+	lite_javascriptRequired:
+		'Ukurasa huu huendesha ukaguzi wa usalama katika kivinjari chako. Washa JavaScript, kisha pakia upya ukurasa.'
 } satisfies Translation;
 
 export default translation;

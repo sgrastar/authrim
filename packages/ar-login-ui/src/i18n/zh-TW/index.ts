@@ -312,7 +312,8 @@ const zhTW = createTranslation({
 	login_extError_reauthNotProven_message:
 		'您的登入提供者未確認您已重新登入。請重新登入或選擇其他方式。',
 	login_extError_default_title: '驗證錯誤',
-	login_extError_default_message: '外部驗證期間發生錯誤。'
+	login_extError_default_message: '外部驗證期間發生錯誤。',
+	lite_javascriptRequired: '此頁面會在瀏覽器中進行安全檢查。請啟用 JavaScript，然後重新載入頁面。'
 });
 
 export default zhTW;

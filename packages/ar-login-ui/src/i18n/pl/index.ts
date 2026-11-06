@@ -501,7 +501,9 @@ const translation = {
 	login_signingInTo: 'Logowanie do',
 	common_contactSupport: 'Skontaktuj się z pomocą techniczną',
 	common_dismissAlert: 'Zamknij powiadomienie',
-	emailCode_digitLabel: 'Cyfra {position} z 6'
+	emailCode_digitLabel: 'Cyfra {position} z 6',
+	lite_javascriptRequired:
+		'Ta strona przeprowadza w przeglądarce kontrolę bezpieczeństwa. Włącz JavaScript, a następnie załaduj stronę ponownie.'
 } satisfies Translation;
 
 export default translation;

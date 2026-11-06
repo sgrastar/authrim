@@ -348,7 +348,9 @@ const es = createTranslation({
 	login_extError_reauthNotProven_message:
 		'Tu proveedor de inicio de sesión no confirmó que volviste a iniciar sesión. Vuelve a iniciar sesión o elige otro método.',
 	login_extError_default_title: 'Error de autenticación',
-	login_extError_default_message: 'Se produjo un error durante la autenticación externa.'
+	login_extError_default_message: 'Se produjo un error durante la autenticación externa.',
+	lite_javascriptRequired:
+		'Esta página realiza una comprobación de seguridad en su navegador. Active JavaScript y vuelva a cargar la página.'
 });
 
 export default es;

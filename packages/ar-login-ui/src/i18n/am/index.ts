@@ -461,7 +461,8 @@ const translation = {
 	login_signingInTo: 'ወደዚህ በመግባት ላይ፦',
 	common_contactSupport: 'ድጋፍን ያነጋግሩ',
 	common_dismissAlert: 'ማስጠንቀቂያውን ዝጋ',
-	emailCode_digitLabel: 'ቁጥር {position} ከ 6'
+	emailCode_digitLabel: 'ቁጥር {position} ከ 6',
+	lite_javascriptRequired: 'ይህ ገጽ በአሳሽዎ ውስጥ የደህንነት ፍተሻ ያካሂዳል። JavaScriptን ያብሩ፣ ከዚያ ገጹን እንደገና ይጫኑ።'
 } satisfies Translation;
 
 export default translation;
