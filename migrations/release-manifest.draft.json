@@ -15,10 +15,7 @@
           "schemaFamily": "core",
           "dialect": "sqlite",
           "targetKind": "cloudflare-d1",
-          "logicalRoles": [
-            "core",
-            "tenant_core"
-          ],
+          "logicalRoles": ["core", "tenant_core"],
           "files": []
         },
         {
@@ -26,10 +23,7 @@
           "schemaFamily": "pii",
           "dialect": "sqlite",
           "targetKind": "cloudflare-d1",
-          "logicalRoles": [
-            "pii",
-            "tenant_pii"
-          ],
+          "logicalRoles": ["pii", "tenant_pii"],
           "files": []
         },
         {
@@ -37,9 +31,7 @@
           "schemaFamily": "admin",
           "dialect": "sqlite",
           "targetKind": "cloudflare-d1",
-          "logicalRoles": [
-            "admin"
-          ],
+          "logicalRoles": ["admin"],
           "files": [
             {
               "path": "003_admin_session_passkey_evidence.sql",
@@ -64,6 +56,10 @@
             {
               "path": "008_admin_notice_delivery.sql",
               "checksum": "c385bfa6d360f6a0b3a39d6b59ec1f66d649df38228581b7bd206deb96ae28eb"
+            },
+            {
+              "path": "009_login_ui_themes.sql",
+              "checksum": "471446e9ada72235ddccc310959490ecb2c8cfb16733b581c9d15ddddf1f9b86"
             }
           ]
         },
@@ -72,9 +68,7 @@
           "schemaFamily": "control",
           "dialect": "sqlite",
           "targetKind": "cloudflare-d1",
-          "logicalRoles": [
-            "control"
-          ],
+          "logicalRoles": ["control"],
           "files": []
         },
         {
@@ -82,9 +76,7 @@
           "schemaFamily": "lookup",
           "dialect": "sqlite",
           "targetKind": "cloudflare-d1",
-          "logicalRoles": [
-            "lookup"
-          ],
+          "logicalRoles": ["lookup"],
           "files": []
         },
         {
@@ -92,9 +84,7 @@
           "schemaFamily": "plugin_runner",
           "dialect": "sqlite",
           "targetKind": "cloudflare-d1",
-          "logicalRoles": [
-            "plugin_runner"
-          ],
+          "logicalRoles": ["plugin_runner"],
           "files": []
         },
         {
@@ -102,11 +92,7 @@
           "schemaFamily": "core",
           "dialect": "postgresql",
           "targetKind": "postgresql-connection",
-          "logicalRoles": [
-            "core",
-            "custom",
-            "policy"
-          ],
+          "logicalRoles": ["core", "custom", "policy"],
           "files": []
         },
         {
@@ -114,9 +100,7 @@
           "schemaFamily": "pii",
           "dialect": "postgresql",
           "targetKind": "postgresql-connection",
-          "logicalRoles": [
-            "pii"
-          ],
+          "logicalRoles": ["pii"],
           "files": []
         }
       ]
@@ -133,10 +117,7 @@
       "schemaFamily": "core",
       "dialect": "sqlite",
       "targetKind": "cloudflare-d1",
-      "logicalRoles": [
-        "core",
-        "tenant_core"
-      ],
+      "logicalRoles": ["core", "tenant_core"],
       "files": [
         {
           "path": "001_0_5_0_core_baseline.sql",
@@ -149,10 +130,7 @@
       "schemaFamily": "pii",
       "dialect": "sqlite",
       "targetKind": "cloudflare-d1",
-      "logicalRoles": [
-        "pii",
-        "tenant_pii"
-      ],
+      "logicalRoles": ["pii", "tenant_pii"],
       "files": [
         {
           "path": "001_0_5_0_pii_baseline.sql",
@@ -165,9 +143,7 @@
       "schemaFamily": "admin",
       "dialect": "sqlite",
       "targetKind": "cloudflare-d1",
-      "logicalRoles": [
-        "admin"
-      ],
+      "logicalRoles": ["admin"],
       "files": [
         {
           "path": "001_0_5_0_admin_baseline.sql",
@@ -196,6 +172,10 @@
         {
           "path": "008_admin_notice_delivery.sql",
           "checksum": "c385bfa6d360f6a0b3a39d6b59ec1f66d649df38228581b7bd206deb96ae28eb"
+        },
+        {
+          "path": "009_login_ui_themes.sql",
+          "checksum": "471446e9ada72235ddccc310959490ecb2c8cfb16733b581c9d15ddddf1f9b86"
         }
       ]
     },
@@ -204,9 +184,7 @@
       "schemaFamily": "control",
       "dialect": "sqlite",
       "targetKind": "cloudflare-d1",
-      "logicalRoles": [
-        "control"
-      ],
+      "logicalRoles": ["control"],
       "files": [
         {
           "path": "001_0_5_0_control_baseline.sql",
@@ -219,9 +197,7 @@
       "schemaFamily": "lookup",
       "dialect": "sqlite",
       "targetKind": "cloudflare-d1",
-      "logicalRoles": [
-        "lookup"
-      ],
+      "logicalRoles": ["lookup"],
       "files": [
         {
           "path": "001_0_5_0_lookup_baseline.sql",
@@ -234,9 +210,7 @@
       "schemaFamily": "plugin_runner",
       "dialect": "sqlite",
       "targetKind": "cloudflare-d1",
-      "logicalRoles": [
-        "plugin_runner"
-      ],
+      "logicalRoles": ["plugin_runner"],
       "files": [
         {
           "path": "001_0_5_0_plugin_runner_baseline.sql",
@@ -249,11 +223,7 @@
       "schemaFamily": "core",
       "dialect": "postgresql",
       "targetKind": "postgresql-connection",
-      "logicalRoles": [
-        "core",
-        "custom",
-        "policy"
-      ],
+      "logicalRoles": ["core", "custom", "policy"],
       "files": [
         {
           "path": "001_0_5_0_core_baseline.sql",
@@ -266,9 +236,7 @@
       "schemaFamily": "pii",
       "dialect": "postgresql",
       "targetKind": "postgresql-connection",
-      "logicalRoles": [
-        "pii"
-      ],
+      "logicalRoles": ["pii"],
       "files": [
         {
           "path": "001_0_5_0_pii_baseline.sql",

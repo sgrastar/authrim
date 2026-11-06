@@ -297,6 +297,10 @@ describe('tenant deletion jobs', () => {
       'DELETE FROM tenant_discovery_indexes WHERE tenant_id = ?',
       ['target-tenant']
     );
+    expect(mockControlTx.execute).toHaveBeenCalledWith(
+      'DELETE FROM login_ui_themes WHERE tenant_id = ?',
+      ['target-tenant']
+    );
     expect(mockControlTx.execute).not.toHaveBeenCalledWith(
       'DELETE FROM tenant_runtime_registry_snapshots WHERE tenant_id = ?',
       expect.any(Array)

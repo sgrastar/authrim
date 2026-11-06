@@ -32835,6 +32835,283 @@ paths:
           $ref: '#/components/responses/Error'
       security:
         - adminSessionCookie: []
+  /api/admin/login-ui/themes:
+    get:
+      tags:
+        - Login UI Themes
+      operationId: getApiAdminLoginUiThemes
+      summary: List the tenant's saved Login UI themes
+      description: >-
+        Summaries of the tenant's saved themes, most recently changed first, and the theme last
+        applied to the tenant's Login UI (null when none). Requires settings read permission.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        '200':
+          description: Themes and the applied one.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - themes
+                  - active
+                properties:
+                  themes:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/LoginUIThemeSummary'
+                  active:
+                    oneOf:
+                      - $ref: '#/components/schemas/LoginUIThemeActive'
+                      - type: 'null'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+    post:
+      tags:
+        - Login UI Themes
+      operationId: postApiAdminLoginUiThemes
+      summary: Save a Login UI theme
+      description: >-
+        Saves a named set of Login UI appearance settings. Only the appearance keys of the theme
+        allowlist are accepted, each checked as the settings PATCH checks it. Names are unique per
+        tenant ignoring case; a tenant keeps at most 50 themes. Requires the login UI settings
+        update permission.
+      x-authrim-route-coverage: inferred-from-source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginUIThemeInput'
+      responses:
+        '201':
+          description: The saved theme.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - theme
+                properties:
+                  theme:
+                    $ref: '#/components/schemas/LoginUITheme'
+        '400':
+          description: invalid_request listing the rejected keys.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: theme_name_taken or theme_limit_reached.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/login-ui/themes/{id}:
+    get:
+      tags:
+        - Login UI Themes
+      operationId: getApiAdminLoginUiThemesById
+      summary: Get a saved Login UI theme
+      description: The theme and whether it is the applied one. Requires settings read permission.
+      x-authrim-route-coverage: inferred-from-source
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The theme.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - theme
+                  - active
+                properties:
+                  theme:
+                    $ref: '#/components/schemas/LoginUITheme'
+                  active:
+                    type: boolean
+        '404':
+          description: Not found in the admin's tenant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+    put:
+      tags:
+        - Login UI Themes
+      operationId: putApiAdminLoginUiThemesById
+      summary: Replace a saved Login UI theme
+      description: >-
+        Replaces the theme's name and values and raises its version. If-Match with the theme's
+        current version is required. Saving does not change the live Login UI; apply the theme
+        again to publish the new version.
+      x-authrim-route-coverage: inferred-from-source
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
+          description: The theme version, for example "3".
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginUIThemeInput'
+      responses:
+        '200':
+          description: The updated theme.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - theme
+                properties:
+                  theme:
+                    $ref: '#/components/schemas/LoginUITheme'
+        '400':
+          description: invalid_request listing the rejected keys.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found in the admin's tenant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: ADMIN_CONFLICT with current_version when the version is stale, or theme_name_taken.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '428':
+          description: If-Match is missing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+    delete:
+      tags:
+        - Login UI Themes
+      operationId: deleteApiAdminLoginUiThemesById
+      summary: Delete a saved Login UI theme
+      description: The theme that is applied to the Login UI cannot be deleted.
+      x-authrim-route-coverage: inferred-from-source
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Deleted.
+        '404':
+          description: Not found in the admin's tenant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: theme_active.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/login-ui/themes/{id}/apply:
+    post:
+      tags:
+        - Login UI Themes
+      operationId: postApiAdminLoginUiThemesByIdApply
+      summary: Apply a saved theme to the Login UI
+      description: >-
+        Writes the theme into the tenant's login-ui settings: every theme key is set to the
+        theme's value or cleared when the theme does not set it, and the applied theme's ID and
+        version are recorded. Runs through the settings save (version check, validation, audit,
+        authentication-methods cache revision). The body may name the version the caller reviewed.
+      x-authrim-route-coverage: inferred-from-source
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                version:
+                  type: integer
+                  minimum: 1
+      responses:
+        '200':
+          description: The theme is live.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - active
+                  - settings_version
+                properties:
+                  active:
+                    $ref: '#/components/schemas/LoginUIThemeActive'
+                  settings_version:
+                    type: [string, 'null']
+                    description: Version of the tenant login-ui settings document after the save.
+        '404':
+          description: Not found in the admin's tenant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: The theme version changed (ADMIN_CONFLICT with current_version) or the settings changed concurrently (settings_conflict).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
   /api/admin/notices:
     get:
       tags:
@@ -77544,6 +77821,80 @@ components:
           enum: [critical, high, caution, info]
         enabled:
           type: boolean
+        created_by:
+          type: [string, 'null']
+        created_at:
+          type: integer
+        updated_at:
+          type: integer
+    LoginUIThemeActive:
+      type: object
+      required:
+        - theme_id
+        - version
+      properties:
+        theme_id:
+          type: string
+        version:
+          type: integer
+    LoginUIThemeSummary:
+      type: object
+      required:
+        - id
+        - name
+        - template
+        - palette
+        - version
+        - updated_at
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        template:
+          type: [string, 'null']
+        palette:
+          type: [string, 'null']
+        version:
+          type: integer
+        updated_at:
+          type: integer
+    LoginUIThemeInput:
+      type: object
+      required:
+        - name
+        - values
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
+        values:
+          type: object
+          description: >-
+            Login UI appearance settings keyed by full setting key (for example
+            "login-ui.template"). Unknown keys are rejected.
+          additionalProperties: true
+    LoginUITheme:
+      type: object
+      required:
+        - id
+        - name
+        - values
+        - version
+        - created_by
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        values:
+          type: object
+          additionalProperties: true
+        version:
+          type: integer
         created_by:
           type: [string, 'null']
         created_at:

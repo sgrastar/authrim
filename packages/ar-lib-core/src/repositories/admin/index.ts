@@ -62,6 +62,15 @@ export {
   type AdminNoticeSource,
   type AdminNoticeViewer,
 } from './admin-notice';
+export {
+  LOGIN_UI_THEME_LIMIT,
+  LoginUIThemeRepository,
+  loginUIThemeNameKey,
+  type LoginUITheme,
+  type LoginUIThemeCreateResult,
+  type LoginUIThemeInput,
+  type LoginUIThemeUpdateResult,
+} from './login-ui-theme';
 export { AdminAuditLogRepository, type AdminAuditLogFilterOptions } from './admin-audit-log';
 export { AdminIpAllowlistRepository } from './admin-ip-allowlist';
 export {

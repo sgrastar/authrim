@@ -33,7 +33,11 @@ const REFUSED = 'backup_restore_authority_required';
 function freshDatabase(family: 'core' | 'pii' | 'admin') {
   const database = new DatabaseSync(':memory:');
   const directory = `${root}migrations/${family}/d1`;
-  for (const file of [`001_0_5_0_${family}_baseline.sql`])
+  // The 0.5.0 baseline, and the later admin tables the backup registry requires.
+  for (const file of [
+    `001_0_5_0_${family}_baseline.sql`,
+    ...(family === 'admin' ? ['009_login_ui_themes.sql'] : []),
+  ])
     database.exec(
       readFileSync(`${directory}/${file}`, 'utf8')
         .replaceAll(

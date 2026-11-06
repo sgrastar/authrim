@@ -630,6 +630,32 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     permissions: [ADMIN_PERMISSIONS.SETTINGS_LOGIN_UI_UPDATE],
     description: 'tenant login UI settings update',
   }),
+  // Saved Login UI themes: reading is settings read; saving, deleting and applying one is the
+  // same authority as the login-ui settings PATCH (applying writes that document).
+  rule({
+    pattern: '/api/admin/login-ui/themes',
+    methods: READ_METHODS,
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_READ],
+    description: 'saved login UI themes read',
+  }),
+  rule({
+    pattern: '/api/admin/login-ui/themes/*',
+    methods: READ_METHODS,
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_READ],
+    description: 'saved login UI theme read',
+  }),
+  rule({
+    pattern: '/api/admin/login-ui/themes',
+    methods: [...WRITE_METHODS, ...DELETE_METHODS],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_LOGIN_UI_UPDATE],
+    description: 'saved login UI themes write',
+  }),
+  rule({
+    pattern: '/api/admin/login-ui/themes/*',
+    methods: [...WRITE_METHODS, ...DELETE_METHODS],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_LOGIN_UI_UPDATE],
+    description: 'saved login UI theme write, delete and apply',
+  }),
   ...byMethod(
     '/api/admin/tenants/:tenantId/settings/*',
     ADMIN_PERMISSIONS.SETTINGS_READ,
