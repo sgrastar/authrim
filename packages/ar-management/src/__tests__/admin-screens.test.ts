@@ -6,7 +6,9 @@ const mocks = vi.hoisted(() => {
     queryOne: vi.fn(),
     execute: vi.fn(),
   };
-  return { db };
+  /** The tenant's `login-ui` settings as KV holds them (account pages), or null. */
+  const settings = { loginUi: null as string | null };
+  return { db, settings };
 });
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -76,9 +78,15 @@ const expectedDefaultAuthFieldNames = [
   'auth.directory_password',
 ];
 
+const env = {
+  SETTINGS: { get: vi.fn(async () => mocks.settings.loginUi) },
+};
+
 function createContext() {
   return {
+    env,
     req: {},
+    header: vi.fn(),
     json: vi.fn((body: unknown, status?: number) => {
       return new Response(JSON.stringify(body), {
         status: status ?? 200,
@@ -88,11 +96,18 @@ function createContext() {
   } as never;
 }
 
-function createMutationContext(body: Record<string, unknown>, id = 'screen-custom') {
+function createMutationContext(
+  body: Record<string, unknown>,
+  id = 'screen-custom',
+  headers: Record<string, string> = {}
+) {
   return {
+    env,
+    header: vi.fn(),
     req: {
       json: vi.fn().mockResolvedValue(body),
       param: vi.fn().mockReturnValue(id),
+      header: vi.fn((name: string) => headers[name.toLowerCase()]),
     },
     json: vi.fn(
       (payload: unknown, status?: number) =>
@@ -114,6 +129,7 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
 
 beforeEach(() => {
   rows.length = 0;
+  mocks.settings.loginUi = null;
   mocks.db.query.mockReset();
   mocks.db.queryOne.mockReset();
   mocks.db.execute.mockReset();
@@ -171,7 +187,7 @@ beforeEach(() => {
         if (row) row.localizations_json = localizationsJson;
       }
     }
-    return { success: true };
+    return { success: true, rowsAffected: 1 };
   });
 
   mocks.db.query.mockImplementation(async (sql: string, params: unknown[] = []) => {

@@ -9,11 +9,14 @@ import type {
   ScreenSettings,
 } from '@authrim/ar-lib-core';
 import {
+  AR_ERROR_CODES,
   createAuditLogFromContext,
   createAuthContextFromHono,
+  createErrorResponse,
   getLogger,
   getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
+import { collectScreenUsages, usageCounts } from './admin-screen-usage';
 
 type AdminContext = Context<{ Bindings: Env }>;
 type Row = Record<string, unknown>;
@@ -1692,6 +1695,9 @@ const DEFAULT_SCREENS: Array<{
   },
 ];
 
+/** The keys of the built-in screens: a custom screen cannot take one. */
+const RESERVED_SCREEN_KEYS = new Set(DEFAULT_SCREENS.map((screen) => screen.screen_key));
+
 function invalid(c: AdminContext, error_description: string): Response {
   return c.json({ error: 'invalid_request', error_description }, 400);
 }
@@ -1702,6 +1708,59 @@ function notFound(c: AdminContext, error_description: string): Response {
 
 function nowMs(): number {
   return Date.now();
+}
+
+/** A row's version: rows from before the column existed read as version 1. */
+function readVersion(row: Row): number {
+  const version = Number(row.version);
+  return Number.isSafeInteger(version) && version > 0 ? version : 1;
+}
+
+const versionEtag = (version: number) => `"${version}"`;
+
+/** The version in If-Match: "3", 3 or "v3"; null when absent, NaN when unreadable. */
+function parseIfMatchVersion(c: AdminContext): number | null {
+  const raw = typeof c.req.header === 'function' ? c.req.header('if-match') : undefined;
+  if (!raw) return null;
+  const normalized = raw.trim().replace(/^W\//, '').replace(/^"|"$/g, '').replace(/^v/, '');
+  const version = /^\d+$/.test(normalized) ? Number.parseInt(normalized, 10) : Number.NaN;
+  return Number.isSafeInteger(version) && version > 0 ? version : Number.NaN;
+}
+
+function setEtag(c: AdminContext, version: number): void {
+  if (typeof c.header === 'function') c.header('ETag', versionEtag(version));
+}
+
+function screenKeyTaken(c: AdminContext): Response {
+  return c.json(
+    { error: 'screen_key_taken', error_description: 'A screen with this key already exists' },
+    409
+  );
+}
+
+/** A unique-index refusal, as D1 (SQLite) and PostgreSQL word it. */
+function isUniqueViolation(error: unknown): boolean {
+  const record = error && typeof error === 'object' ? (error as Record<string, unknown>) : {};
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    record.code === '23505' ||
+    /UNIQUE constraint failed|duplicate key value violates unique constraint/i.test(message)
+  );
+}
+
+function conflict(c: AdminContext, currentVersion: number): Promise<Response> {
+  return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT, {
+    extensions: {
+      details: {
+        conflict: {
+          reason: 'concurrent_modification',
+          actual_version: currentVersion,
+          current_etag: versionEtag(currentVersion),
+        },
+      },
+      current_version: currentVersion,
+    },
+  });
 }
 
 function readTrimmed(value: unknown): string | null {
@@ -2381,6 +2440,7 @@ function toResponse(row: Row): ScreenResponse {
     settings: normalizeSettings(parseJson<ScreenSettings | null>(row.settings_json, null)),
     is_active: row.is_active as number | boolean,
     is_system: row.is_system as number | boolean,
+    version: readVersion(row),
     created_at: Number(row.created_at),
     updated_at: Number(row.updated_at),
   };
@@ -2410,7 +2470,7 @@ export async function ensureDefaultScreens(c: AdminContext, tenantId: string): P
         if (serializeJson(mergedFields) !== serializeJson(fields)) {
           await authCtx.coreAdapter.execute(
             `UPDATE screens
-                SET fields_json = ?, updated_at = ?
+                SET fields_json = ?, updated_at = ?, version = version + 1
               WHERE tenant_id = ? AND id = ?`,
             [serializeJson(mergedFields), nowMs(), tenantId, existing.id]
           );
@@ -2418,7 +2478,7 @@ export async function ensureDefaultScreens(c: AdminContext, tenantId: string): P
         if (serializeJson(mergedLocalizations) !== serializeJson(currentLocalizations)) {
           await authCtx.coreAdapter.execute(
             `UPDATE screens
-                SET localizations_json = ?, updated_at = ?
+                SET localizations_json = ?, updated_at = ?, version = version + 1
               WHERE tenant_id = ? AND id = ?`,
             [serializeJson(mergedLocalizations), nowMs(), tenantId, existing.id]
           );
@@ -2426,7 +2486,7 @@ export async function ensureDefaultScreens(c: AdminContext, tenantId: string): P
         if (existing.screen_kind !== screen.screen_kind) {
           await authCtx.coreAdapter.execute(
             `UPDATE screens
-                SET screen_kind = ?, updated_at = ?
+                SET screen_kind = ?, updated_at = ?, version = version + 1
               WHERE tenant_id = ? AND id = ?`,
             [screen.screen_kind, nowMs(), tenantId, existing.id]
           );
@@ -2479,13 +2539,27 @@ export async function adminScreensListHandler(c: AdminContext) {
     const tenantId = getTenantIdFromContext(c);
     await ensureDefaultScreens(c, tenantId);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const rows = await authCtx.coreAdapter.query(
+    const rows = await authCtx.coreAdapter.query<Row>(
       `SELECT * FROM screens
        WHERE tenant_id = ?
        ORDER BY is_system DESC, screen_kind ASC, display_name ASC`,
       [tenantId]
     );
-    return c.json({ screens: (rows as Row[]).map(toResponse) });
+    const screens = rows.map(toResponse);
+    const { usages, complete } = await collectScreenUsages(
+      c.env,
+      authCtx.coreAdapter,
+      tenantId,
+      screens
+    );
+    return c.json({
+      screens: screens.map((screen) => ({
+        ...screen,
+        usage: usageCounts(usages.get(screen.id) ?? []),
+      })),
+      // False when a stored document could not be read: the counts are then at least these.
+      usages_complete: complete,
+    });
   } catch (error) {
     log.error('Failed to list screens', { action: 'list' }, error as Error);
     return c.json({ error: 'server_error', error_description: 'Failed to list screens' }, 500);
@@ -2502,7 +2576,12 @@ export async function adminScreenGetHandler(c: AdminContext) {
       [tenantId, c.req.param('id')]
     );
     if (!row) return notFound(c, 'Screen not found');
-    return c.json({ screen: toResponse(row) });
+    const screen = toResponse(row);
+    const { usages, complete } = await collectScreenUsages(c.env, authCtx.coreAdapter, tenantId, [
+      screen,
+    ]);
+    setEtag(c, screen.version);
+    return c.json({ screen, usages: usages.get(screen.id) ?? [], usages_complete: complete });
   } catch (error) {
     log.error('Failed to get screen', { action: 'get' }, error as Error);
     return c.json({ error: 'server_error', error_description: 'Failed to get screen' }, 500);
@@ -2528,30 +2607,49 @@ export async function adminScreenCreateHandler(c: AdminContext) {
       const accountValidationError = validateAccountScreenFields(fields);
       if (accountValidationError) return invalid(c, accountValidationError);
     }
+    // The built-in keys belong to the system screens (also when a tenant has not got them yet):
+    // the run time falls back to them, so a custom screen must not take one.
+    const taken =
+      RESERVED_SCREEN_KEYS.has(screenKey) ||
+      (await authCtx.coreAdapter.queryOne<Row>(
+        'SELECT id FROM screens WHERE tenant_id = ? AND screen_key = ?',
+        [tenantId, screenKey]
+      ));
+    if (taken) return screenKeyTaken(c);
 
     const now = nowMs();
     const id = crypto.randomUUID();
-    await authCtx.coreAdapter.execute(
-      `INSERT INTO screens
+    const inserted = await authCtx.coreAdapter
+      .execute(
+        `INSERT INTO screens
        (id, tenant_id, screen_key, display_name, description, screen_kind, fields_json,
-        localizations_json, settings_json, is_active, is_system, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        tenantId,
-        screenKey,
-        displayName,
-        readTrimmed(body.description),
-        screenKind,
-        serializeJson(fields),
-        serializeJson(normalizeLocalizations(body.localizations)),
-        serializeJson(normalizeSettings(body.settings)),
-        readBoolean(body.is_active, true) ? 1 : 0,
-        0,
-        now,
-        now,
-      ]
-    );
+        localizations_json, settings_json, is_active, is_system, created_at, updated_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+        [
+          id,
+          tenantId,
+          screenKey,
+          displayName,
+          readTrimmed(body.description),
+          screenKind,
+          serializeJson(fields),
+          serializeJson(normalizeLocalizations(body.localizations)),
+          serializeJson(normalizeSettings(body.settings)),
+          readBoolean(body.is_active, true) ? 1 : 0,
+          0,
+          now,
+          now,
+        ]
+      )
+      .then(
+        () => true,
+        (error: unknown) => {
+          // Another request took the key in between: the unique index refuses the second.
+          if (isUniqueViolation(error)) return false;
+          throw error;
+        }
+      );
+    if (!inserted) return screenKeyTaken(c);
     const row = await authCtx.coreAdapter.queryOne<Row>(
       'SELECT * FROM screens WHERE tenant_id = ? AND id = ?',
       [tenantId, id]
@@ -2561,6 +2659,7 @@ export async function adminScreenCreateHandler(c: AdminContext) {
       screen_kind: screenKind,
       base_preset_key: normalizeSettings(body.settings).base_preset_key ?? null,
     });
+    setEtag(c, 1);
     return c.json({ screen: row ? toResponse(row) : null }, 201);
   } catch (error) {
     log.error('Failed to create screen', { action: 'create' }, error as Error);
@@ -2576,13 +2675,26 @@ export async function adminScreenUpdateHandler(c: AdminContext) {
     if (!id) return invalid(c, 'Screen id is required');
     const authCtx = createAuthContextFromHono(c, tenantId);
     const existing = await authCtx.coreAdapter.queryOne<Row>(
-      'SELECT id, is_system, screen_kind, fields_json FROM screens WHERE tenant_id = ? AND id = ?',
+      `SELECT id, is_system, screen_kind, fields_json, version
+         FROM screens WHERE tenant_id = ? AND id = ?`,
       [tenantId, id]
     );
     if (!existing) return notFound(c, 'Screen not found');
     if (readBoolean(existing.is_system, false)) {
       return invalid(c, 'System screens are immutable; create a custom copy before editing');
     }
+    const expected = parseIfMatchVersion(c);
+    if (expected === null) {
+      return c.json(
+        {
+          error: 'precondition_required',
+          error_description: 'If-Match with the screen version is required',
+        },
+        428
+      );
+    }
+    if (Number.isNaN(expected)) return invalid(c, 'If-Match must be a screen version');
+    if (readVersion(existing) !== expected) return conflict(c, readVersion(existing));
     const body = await c.req.json<Row>();
     const sets: string[] = [];
     const params: unknown[] = [];
@@ -2633,21 +2745,32 @@ export async function adminScreenUpdateHandler(c: AdminContext) {
       params.push(readBoolean(body.is_active, true) ? 1 : 0);
     }
     if (sets.length === 0) return invalid(c, 'No fields to update');
-    sets.push('updated_at = ?');
-    params.push(nowMs(), tenantId, id);
-    await authCtx.coreAdapter.execute(
-      `UPDATE screens SET ${sets.join(', ')} WHERE tenant_id = ? AND id = ?`,
+    sets.push('updated_at = ?', 'version = version + 1');
+    params.push(nowMs(), tenantId, id, expected);
+    // The version named in If-Match must still be the row's: a change saved in between wins.
+    const result = await authCtx.coreAdapter.execute(
+      `UPDATE screens SET ${sets.join(', ')}
+        WHERE tenant_id = ? AND id = ? AND version = ?`,
       params
     );
     const row = await authCtx.coreAdapter.queryOne<Row>(
       'SELECT * FROM screens WHERE tenant_id = ? AND id = ?',
       [tenantId, id]
     );
+    if (!(result.rowsAffected > 0)) {
+      if (!row) return notFound(c, 'Screen not found');
+      return conflict(c, readVersion(row));
+    }
     await recordScreenAudit(c, 'screen.updated', id, {
       changed_fields: Object.keys(body).sort(),
       base_preset_key: normalizeSettings(body.settings).base_preset_key ?? null,
+      version: expected + 1,
     });
-    return c.json({ screen: row ? toResponse(row) : null });
+    // The row as read after the change: its content and its version belong together (another
+    // change may already have followed, and then both are that change's).
+    const screen = row ? toResponse(row) : null;
+    if (screen) setEtag(c, screen.version);
+    return c.json({ screen });
   } catch (error) {
     log.error('Failed to update screen', { action: 'update' }, error as Error);
     return c.json({ error: 'server_error', error_description: 'Failed to update screen' }, 500);
@@ -2661,18 +2784,56 @@ export async function adminScreenDeleteHandler(c: AdminContext) {
     const id = c.req.param('id');
     if (!id) return invalid(c, 'Screen id is required');
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const existing = await authCtx.coreAdapter.queryOne<{ is_system: number | boolean }>(
-      'SELECT is_system FROM screens WHERE tenant_id = ? AND id = ?',
+    const existing = await authCtx.coreAdapter.queryOne<Row>(
+      'SELECT id, screen_key, is_system, version FROM screens WHERE tenant_id = ? AND id = ?',
       [tenantId, id]
     );
     if (!existing) return notFound(c, 'Screen not found');
     if (readBoolean(existing.is_system, false))
       return invalid(c, 'System screens cannot be deleted');
-    await authCtx.coreAdapter.execute('DELETE FROM screens WHERE tenant_id = ? AND id = ?', [
-      tenantId,
-      id,
-    ]);
-    await recordScreenAudit(c, 'screen.deleted', id, {});
+    // If-Match is optional here (a delete names no content), but honoured when sent.
+    const expected = parseIfMatchVersion(c);
+    if (Number.isNaN(expected)) return invalid(c, 'If-Match must be a screen version');
+    if (expected !== null && readVersion(existing) !== expected) {
+      return conflict(c, readVersion(existing));
+    }
+    const screen = { id: String(existing.id), screen_key: String(existing.screen_key) };
+    const found = await collectScreenUsages(c.env, authCtx.coreAdapter, tenantId, [screen]);
+    if (!found.complete) {
+      return c.json(
+        {
+          error: 'screen_usage_unknown',
+          error_description:
+            'Where the screen is used could not be read in full, so it is not deleted',
+        },
+        409
+      );
+    }
+    const usages = found.usages.get(screen.id) ?? [];
+    if (usages.length > 0) {
+      return c.json(
+        {
+          error: 'screen_in_use',
+          error_description: 'The screen is used by flows or account pages',
+          usages,
+        },
+        409
+      );
+    }
+    const result = await authCtx.coreAdapter.execute(
+      `DELETE FROM screens
+        WHERE tenant_id = ? AND id = ?${expected === null ? '' : ' AND version = ?'}`,
+      expected === null ? [tenantId, id] : [tenantId, id, expected]
+    );
+    if (!(result.rowsAffected > 0)) {
+      const current = await authCtx.coreAdapter.queryOne<Row>(
+        'SELECT version FROM screens WHERE tenant_id = ? AND id = ?',
+        [tenantId, id]
+      );
+      if (!current) return notFound(c, 'Screen not found');
+      return conflict(c, readVersion(current));
+    }
+    await recordScreenAudit(c, 'screen.deleted', id, { screen_key: screen.screen_key });
     return c.json({ success: true });
   } catch (error) {
     log.error('Failed to delete screen', { action: 'delete' }, error as Error);

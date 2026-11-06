@@ -95,6 +95,8 @@ export interface Screen {
 	settings: ScreenSettings;
 	is_active: boolean | number;
 	is_system: boolean | number;
+	/** The change counter the API checks (If-Match) before saving over the screen. */
+	version?: number;
 	created_at: number;
 	updated_at: number;
 }
@@ -114,11 +116,17 @@ async function parseResponse<T>(response: Response): Promise<T> {
 	return response.json() as Promise<T>;
 }
 
-function jsonRequest<T>(path: string, method: string, body?: unknown): Promise<T> {
+function jsonRequest<T>(
+	path: string,
+	method: string,
+	body?: unknown,
+	headers?: Record<string, string>
+): Promise<T> {
 	return adminFetch(`${API_BASE_URL}${path}`, {
 		method,
 		includeJsonContentType: body !== undefined,
-		body: body === undefined ? undefined : JSON.stringify(body)
+		body: body === undefined ? undefined : JSON.stringify(body),
+		headers
 	}).then(parseResponse<T>);
 }
 
@@ -148,8 +156,10 @@ export const adminScreensAPI = {
 		return jsonRequest<{ screen: Screen }>('/api/admin/screens', 'POST', body);
 	},
 
+	/** `version` is the one the screen was read at: a change saved since then is refused (409). */
 	async update(
 		id: string,
+		version: number,
 		body: Partial<{
 			display_name: string;
 			description: string | null;
@@ -163,11 +173,17 @@ export const adminScreensAPI = {
 		return jsonRequest<{ screen: Screen }>(
 			`/api/admin/screens/${encodeURIComponent(id)}`,
 			'PUT',
-			body
+			body,
+			{ 'If-Match': `"${version}"` }
 		);
 	},
 
-	async delete(id: string) {
-		return jsonRequest<{ success: true }>(`/api/admin/screens/${encodeURIComponent(id)}`, 'DELETE');
+	async delete(id: string, version?: number) {
+		return jsonRequest<{ success: true }>(
+			`/api/admin/screens/${encodeURIComponent(id)}`,
+			'DELETE',
+			undefined,
+			version === undefined ? undefined : { 'If-Match': `"${version}"` }
+		);
 	}
 };
