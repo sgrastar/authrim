@@ -10,6 +10,7 @@ import { enSecurityKeys } from './security-keys/en';
 import { enKeyringPresentation } from './keyring-presentation/en';
 import { enNotices } from './notices/en';
 import { enCustomization } from './customization/en';
+import { enStepUp } from './step-up/en';
 
 export const en = {
 	...enSettings,
@@ -23,6 +24,7 @@ export const en = {
 	...enKeyringPresentation,
 	...enNotices,
 	...enCustomization,
+	...enStepUp,
 	'app.adminLabel': 'Admin',
 	'app.env.dev': 'Development',
 	'app.env.prod': 'Production',
@@ -163,6 +165,7 @@ export const en = {
 	'plat.template.tag': 'Shared',
 	'scope.switch.title': 'Operating on',
 	'notify.label': 'Notifications',
+	'notify.empty': 'No notifications',
 	'notify.open': 'Notifications',
 	'notify.close': 'Close',
 	'notify.severity.critical': 'Critical',

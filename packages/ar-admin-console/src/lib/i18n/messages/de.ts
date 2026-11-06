@@ -10,6 +10,7 @@ import { deSecurityKeys } from './security-keys/de';
 import { deKeyringPresentation } from './keyring-presentation/de';
 import { deNotices } from './notices/de';
 import { deCustomization } from './customization/de';
+import { deStepUp } from './step-up/de';
 
 export const de = {
 	...deSettings,
@@ -23,6 +24,7 @@ export const de = {
 	...deKeyringPresentation,
 	...deNotices,
 	...deCustomization,
+	...deStepUp,
 	'app.adminLabel': 'Verwaltungskonsole',
 	'app.env.dev': 'Entwicklung',
 	'app.env.prod': 'Produktion',
@@ -163,6 +165,7 @@ export const de = {
 	'plat.template.tag': 'Geteilt',
 	'scope.switch.title': 'Wirkungsbereich',
 	'notify.label': 'Benachrichtigungen',
+	'notify.empty': 'Keine Benachrichtigungen',
 	'notify.open': 'Benachrichtigungen',
 	'notify.close': 'Schließen',
 	'notify.severity.critical': 'Kritisch',

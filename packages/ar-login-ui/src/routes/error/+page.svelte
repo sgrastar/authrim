@@ -35,13 +35,6 @@
 <AuthPageShell>
 	<!-- Error Card -->
 	<Card class="text-center">
-		<!-- Error Icon -->
-		<div class="auth-icon-badge">
-			<div class="auth-icon-badge__circle auth-icon-badge__circle--danger">
-				<div class="i-ph-warning-circle h-9 w-9 auth-icon-badge__icon"></div>
-			</div>
-		</div>
-
 		<!-- Title -->
 		<h2 class="auth-section-title text-center">
 			{$LL.error_title()}

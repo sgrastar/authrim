@@ -10,6 +10,7 @@ import { arSecurityKeys } from './security-keys/ar';
 import { arKeyringPresentation } from './keyring-presentation/ar';
 import { arNotices } from './notices/ar';
 import { arCustomization } from './customization/ar';
+import { arStepUp } from './step-up/ar';
 
 export const ar = {
 	...arSettings,
@@ -23,6 +24,7 @@ export const ar = {
 	...arKeyringPresentation,
 	...arNotices,
 	...arCustomization,
+	...arStepUp,
 	'app.adminLabel': 'وحدة التحكم الإدارية',
 	'app.env.dev': 'التطوير',
 	'app.env.prod': 'الإنتاج',
@@ -163,6 +165,7 @@ export const ar = {
 	'plat.template.tag': 'مشترك',
 	'scope.switch.title': 'نطاق العمل',
 	'notify.label': 'الإشعارات',
+	'notify.empty': 'لا توجد إشعارات',
 	'notify.open': 'الإشعارات',
 	'notify.close': 'إغلاق',
 	'notify.severity.critical': 'حرج',

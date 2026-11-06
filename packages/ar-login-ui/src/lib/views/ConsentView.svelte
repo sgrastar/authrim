@@ -174,12 +174,6 @@
 					alt={consentData.client.client_name}
 					class="h-16 w-16 mx-auto mb-4 rounded-lg"
 				/>
-			{:else}
-				<div class="auth-icon-badge" style="margin-bottom: 16px;">
-					<div class="auth-icon-badge__circle" style="width: 64px; height: 64px;">
-						<div class="i-ph-buildings h-8 w-8 auth-icon-badge__icon"></div>
-					</div>
-				</div>
 			{/if}
 
 			<h2 class="auth-section-title" style="text-align: center;">
@@ -603,7 +597,6 @@
 {:else}
 	<!-- Error State -->
 	<Card class="text-center py-12">
-		<div class="i-ph-warning-circle h-12 w-12 mx-auto mb-4" style="color: var(--danger);"></div>
 		<p style="color: var(--danger);">{error || $LL.error_unknown()}</p>
 	</Card>
 {/if}

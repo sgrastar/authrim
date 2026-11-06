@@ -897,7 +897,7 @@ describe('Login UI proxy hooks', () => {
 			resolveInitialLoginUIAppearance({
 				ui: { theme: 'dark', themeTemplate: 'fullbleed-glass' }
 			} as never)
-		).toEqual({ background: '#0d0908', colorScheme: 'dark' });
+		).toEqual({ background: '#121210', colorScheme: 'dark' });
 	});
 
 	it('opens an auto tenant in the visitor’s last mode', async () => {
@@ -982,7 +982,9 @@ describe('Login UI proxy hooks', () => {
 			resolveInitialLoginUIAppearance({ ui: { theme: 'light', ...ui } } as never).background;
 
 		expect(light({ pageTemplate: { palette: 'flat' } })).toBe('#ffffff');
-		expect(light({ pageTemplate: { palette: 'glass' } })).toBe('#ecdfd3');
+		expect(light({ pageTemplate: { palette: 'swiss-grid' } })).toBe('#f6f5f1');
+		expect(light({ pageTemplate: { palette: 'glass' } })).toBe('#e9ecf2');
+		expect(light({ pageTemplate: { palette: 'clear-glass' } })).toBe('#dce3e9');
 		// An unknown palette is read through the pre-palette name, as the page store reads it.
 		expect(light({ pageTemplate: { palette: 'unknown' }, themeTemplate: 'classic' })).toBe(
 			'#eeeae3'
