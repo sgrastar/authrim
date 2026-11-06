@@ -3049,6 +3049,20 @@ tr.expired {
 	/* The frost's grain (fractal noise), drawn faintly over the face. */
 	--glass-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 	--glass-grain-opacity: 0.06;
+	/* The small parts, as Clear glass's (theme-contrast.test.ts holds their limits): a field's and
+	   a switch's 3:1 hairline and sunken face, a badge's gloss and AA label colours. Frosted glass
+	   has no reflection on an alert. */
+	--glass-alert-sheen: linear-gradient(transparent, transparent);
+	--glass-edge-light: rgba(255, 255, 255, 0.9);
+	--glass-gloss: linear-gradient(rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0) 60%);
+	--glass-line: rgba(20, 28, 40, 0.54);
+	--glass-text-success: #065f46;
+	--glass-text-warning: #92400e;
+	--glass-text-danger: #991b1b;
+	--glass-sunken: inset 0 2px 5px rgba(20, 28, 40, 0.12), inset 0 -1px 0 rgba(255, 255, 255, 0.8);
+	--glass-toggle-track: rgba(255, 255, 255, 0.4);
+	--glass-thumb: linear-gradient(rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.72));
+	--glass-thumb-shadow: 0 1px 3px rgba(30, 40, 55, 0.2), inset 0 1px 0 #ffffff;
 	--login-page-max-width: 420px;
 }
 
@@ -3085,6 +3099,16 @@ tr.expired {
 		radial-gradient(40% 36% at 84% 30%, rgba(170, 70, 130, 0.22), transparent 70%),
 		radial-gradient(48% 42% at 62% 86%, rgba(40, 150, 140, 0.22), transparent 70%);
 	--glass-grain-opacity: 0.08;
+	--glass-edge-light: rgba(255, 255, 255, 0.32);
+	--glass-gloss: linear-gradient(rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0) 60%);
+	--glass-line: rgba(255, 255, 255, 0.62);
+	--glass-text-success: #6ee7b7;
+	--glass-text-warning: #fcd34d;
+	--glass-text-danger: #fca5a5;
+	--glass-sunken: inset 0 2px 5px rgba(0, 0, 0, 0.45), inset 0 -1px 0 rgba(255, 255, 255, 0.08);
+	--glass-toggle-track: rgba(255, 255, 255, 0.06);
+	--glass-thumb: linear-gradient(rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.62));
+	--glass-thumb-shadow: 0 1px 3px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.45);
 }
 
 :is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass'] {
@@ -3512,25 +3536,43 @@ tr.expired {
 		0 0 0 3px color-mix(in srgb, var(--primary) 24%, transparent);
 }
 
-/* Clear glass: a field is sunk into the pane (shade under the top edge, light along the lower
+/* Both glasses: a field is sunk into the pane (shade under the top edge, light along the lower
    lip), outlined by the hairline that shows a control's shape at 3:1. */
-[data-login-theme='clear-glass'] .auth-page .runtime-screen-field input,
-[data-login-theme='clear-glass'] .auth-page .runtime-screen-field select,
-[data-login-theme='clear-glass'] .auth-page select,
-[data-login-theme='clear-glass'] .auth-page :is(.form-input, .form-select):not(.has-error) {
+:is([data-login-theme='glass'], [data-login-theme='clear-glass'])
+	.auth-page
+	.runtime-screen-field
+	input,
+:is([data-login-theme='glass'], [data-login-theme='clear-glass'])
+	.auth-page
+	.runtime-screen-field
+	select,
+:is([data-login-theme='glass'], [data-login-theme='clear-glass']) .auth-page select,
+:is([data-login-theme='glass'], [data-login-theme='clear-glass'])
+	.auth-page
+	:is(.form-input, .form-select):not(.has-error) {
 	border-color: var(--glass-line);
 	box-shadow: var(--glass-sunken);
 }
 
 /* The shared Input (and select) takes the field's face too; one in error keeps its red outline. */
-[data-login-theme='clear-glass'] .auth-page :is(.form-input, .form-select) {
+:is([data-login-theme='glass'], [data-login-theme='clear-glass'])
+	.auth-page
+	:is(.form-input, .form-select) {
 	background-color: var(--bg-input);
 	box-shadow: var(--glass-sunken);
 }
 
-[data-login-theme='clear-glass'] .auth-page .runtime-screen-field input:focus,
-[data-login-theme='clear-glass'] .auth-page .runtime-screen-field select:focus,
-[data-login-theme='clear-glass'] .auth-page :is(.form-input, .form-select):not(.has-error):focus {
+:is([data-login-theme='glass'], [data-login-theme='clear-glass'])
+	.auth-page
+	.runtime-screen-field
+	input:focus,
+:is([data-login-theme='glass'], [data-login-theme='clear-glass'])
+	.auth-page
+	.runtime-screen-field
+	select:focus,
+:is([data-login-theme='glass'], [data-login-theme='clear-glass'])
+	.auth-page
+	:is(.form-input, .form-select):not(.has-error):focus {
 	border-color: var(--primary);
 	box-shadow:
 		var(--glass-sunken),
@@ -3585,31 +3627,51 @@ tr.expired {
 	background: linear-gradient(var(--primary-light), var(--primary-light)), var(--bg-card);
 }
 
-/* Clear glass: the small parts are glass too. These outweigh the components' own rules (a class
+/* Both glasses: the small parts are glass too. These outweigh the components' own rules (a class
    and their scope), whatever order the stylesheets load in.
 
    An alert: no coloured outline but a thin ring of light that takes the alert's tone halfway
    round, the glints and (in the light scheme) the reflection on its face. */
-:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass'] .alert {
+:is(:root, .login-ui-theme-boundary):is(
+		[data-login-theme='glass'],
+		[data-login-theme='clear-glass']
+	)
+	.alert {
 	position: relative;
 	isolation: isolate;
 	border-color: transparent;
 	box-shadow: var(--glass-drop);
 }
 
-:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass'] .alert.alert-error {
+:is(:root, .login-ui-theme-boundary):is(
+		[data-login-theme='glass'],
+		[data-login-theme='clear-glass']
+	)
+	.alert.alert-error {
 	--alert-tone: var(--danger);
 }
 
-:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass'] .alert.alert-warning {
+:is(:root, .login-ui-theme-boundary):is(
+		[data-login-theme='glass'],
+		[data-login-theme='clear-glass']
+	)
+	.alert.alert-warning {
 	--alert-tone: var(--warning);
 }
 
-:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass'] .alert.alert-success {
+:is(:root, .login-ui-theme-boundary):is(
+		[data-login-theme='glass'],
+		[data-login-theme='clear-glass']
+	)
+	.alert.alert-success {
 	--alert-tone: var(--success);
 }
 
-:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass'] .alert.alert-info {
+:is(:root, .login-ui-theme-boundary):is(
+		[data-login-theme='glass'],
+		[data-login-theme='clear-glass']
+	)
+	.alert.alert-info {
 	--alert-tone: var(--primary);
 }
 
@@ -3623,7 +3685,11 @@ tr.expired {
 	background: var(--glass-glints), var(--glass-alert-sheen);
 }
 
-:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass'] .alert::after {
+:is(:root, .login-ui-theme-boundary):is(
+		[data-login-theme='glass'],
+		[data-login-theme='clear-glass']
+	)
+	.alert::after {
 	content: '';
 	position: absolute;
 	inset: 0;
@@ -3650,7 +3716,10 @@ tr.expired {
    a lit bead. */
 /* With its status class, so that it outweighs StatusBadge's own `.status-badge.<status>` (whose
    `background` shorthand would clear the gloss) in any load order. */
-:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass']
+:is(:root, .login-ui-theme-boundary):is(
+		[data-login-theme='glass'],
+		[data-login-theme='clear-glass']
+	)
 	.status-badge:is(.active, .inactive, .success, .warning, .danger, .info, .neutral) {
 	border: 1px solid var(--glass-edge-light);
 	background-image: var(--glass-gloss);
@@ -3659,40 +3728,67 @@ tr.expired {
 	-webkit-backdrop-filter: var(--blur-sm);
 }
 
-:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass'] .status-badge .status-dot {
+:is(:root, .login-ui-theme-boundary):is(
+		[data-login-theme='glass'],
+		[data-login-theme='clear-glass']
+	)
+	.status-badge
+	.status-dot {
 	background-image: radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.85), transparent 60%);
 	box-shadow: 0 0 0 1px var(--glass-edge-light);
 }
 
 /* The label in the alerts' text colours: the tones themselves (--success and the rest) are too
    light to read on their own tint. The dot keeps the tone. */
-:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass']
+:is(:root, .login-ui-theme-boundary):is(
+		[data-login-theme='glass'],
+		[data-login-theme='clear-glass']
+	)
 	.status-badge:is(.active, .success) {
 	color: var(--glass-text-success);
 }
 
-:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass'] .status-badge.warning {
+:is(:root, .login-ui-theme-boundary):is(
+		[data-login-theme='glass'],
+		[data-login-theme='clear-glass']
+	)
+	.status-badge.warning {
 	color: var(--glass-text-warning);
 }
 
-:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass'] .status-badge.danger {
+:is(:root, .login-ui-theme-boundary):is(
+		[data-login-theme='glass'],
+		[data-login-theme='clear-glass']
+	)
+	.status-badge.danger {
 	color: var(--glass-text-danger);
 }
 
-:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass']
+:is(:root, .login-ui-theme-boundary):is(
+		[data-login-theme='glass'],
+		[data-login-theme='clear-glass']
+	)
 	.status-badge:is(.inactive, .neutral) {
 	color: var(--text-secondary);
 }
 
 /* As the info alert: a tenant's accent may not read on its own tint (the dot keeps it). */
-:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass'] .status-badge.info {
+:is(:root, .login-ui-theme-boundary):is(
+		[data-login-theme='glass'],
+		[data-login-theme='clear-glass']
+	)
+	.status-badge.info {
 	color: var(--text-primary);
 }
 
 /* A switch, as glass as the page's light allows: a clear track sunk into the pane and a clear
    thumb. On and off are told by where the thumb is, so the track and the thumb each keep a
    hairline at 3:1; the on track takes the main button's tint. */
-:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass'] .toggle-switch {
+:is(:root, .login-ui-theme-boundary):is(
+		[data-login-theme='glass'],
+		[data-login-theme='clear-glass']
+	)
+	.toggle-switch {
 	background: var(--glass-toggle-track);
 	box-shadow:
 		inset 0 0 0 1px var(--glass-line),
@@ -3701,14 +3797,21 @@ tr.expired {
 	-webkit-backdrop-filter: var(--blur-sm);
 }
 
-:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass']
+:is(:root, .login-ui-theme-boundary):is(
+		[data-login-theme='glass'],
+		[data-login-theme='clear-glass']
+	)
 	.toggle-switch.toggle-switch-checked {
 	/* The palette's own tint, not a tenant's accent: the hairline is fixed, so the colour under
 	   it must be one the contrast test knows. No glints either: they would lie under the line. */
 	background: var(--glass-primary-bg);
 }
 
-:is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass'] .toggle-switch-thumb {
+:is(:root, .login-ui-theme-boundary):is(
+		[data-login-theme='glass'],
+		[data-login-theme='clear-glass']
+	)
+	.toggle-switch-thumb {
 	background: var(--glass-thumb);
 	box-shadow:
 		0 0 0 1px var(--glass-line),

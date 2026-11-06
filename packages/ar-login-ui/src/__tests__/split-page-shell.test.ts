@@ -471,9 +471,11 @@ describe('split page shell', () => {
 		);
 	});
 
-	it('makes Clear glass’s small parts glass: alerts, badges, switches and sunken fields', () => {
-		const css = source('app.css');
-		const B = ":is(:root, .login-ui-theme-boundary)[data-login-theme='clear-glass']";
+	it('makes both glasses’ small parts glass: alerts, badges, switches and sunken fields', () => {
+		// Prettier breaks long selector lists over lines: compared with the breaks undone.
+		const css = source('app.css').replace(/\s+/g, ' ').replace(/\( /g, '(').replace(/ \)/g, ')');
+		const B =
+			":is(:root, .login-ui-theme-boundary):is([data-login-theme='glass'], [data-login-theme='clear-glass'])";
 		// These outweigh the components' scoped rules (a class and the scope): a boundary, the theme
 		// and the class.
 		for (const selector of [
@@ -482,12 +484,12 @@ describe('split page shell', () => {
 			`${B} .toggle-switch {`,
 			`${B} .toggle-switch-thumb {`
 		]) {
-			expect(css).toContain(`\n${selector}`);
+			expect(css).toContain(` ${selector}`);
 		}
 		// A badge's rule names its status class too: StatusBadge's `.status-badge.<status>` is as
 		// specific as a boundary, the theme and one class, and its shorthand would clear the gloss.
 		expect(css).toMatch(
-			/\n:is\(:root, \.login-ui-theme-boundary\)\[data-login-theme='clear-glass'\]\s+\.status-badge:is\(\.active, \.inactive, \.success, \.warning, \.danger, \.info, \.neutral\) \{\s*border: 1px solid var\(--glass-edge-light\);/
+			/ :is\(:root, \.login-ui-theme-boundary\):is\(\[data-login-theme='glass'\], \[data-login-theme='clear-glass'\]\)\s+\.status-badge:is\(\.active, \.inactive, \.success, \.warning, \.danger, \.info, \.neutral\) \{\s*border: 1px solid var\(--glass-edge-light\);/
 		);
 		// An on switch takes the palette's tint, which the contrast test knows, not a tenant's accent.
 		const on = css.indexOf('.toggle-switch.toggle-switch-checked {');
@@ -508,16 +510,16 @@ describe('split page shell', () => {
 			}
 		}
 		// An alert's outline is no longer its tone in full; a ring of light takes it.
-		const alert = css.slice(css.indexOf(`\n${B} .alert {`));
+		const alert = css.slice(css.indexOf(` ${B} .alert {`));
 		expect(alert.slice(0, alert.indexOf('}'))).toContain('border-color: transparent;');
 		// The switch and its thumb keep the 3:1 hairline (theme-contrast.test.ts checks its colour).
 		for (const part of ['.toggle-switch {', '.toggle-switch-thumb {']) {
-			const at = css.indexOf(`\n${B} ${part}`);
+			const at = css.indexOf(` ${B} ${part}`);
 			expect(css.slice(at, css.indexOf('}', at))).toContain('var(--glass-line)');
 		}
 		// The shared Input is sunk like the sign-in fields; one in error keeps its red outline.
-		expect(css).toContain(
-			"[data-login-theme='clear-glass'] .auth-page :is(.form-input, .form-select):not(.has-error) {"
+		expect(css).toMatch(
+			/:is\(\[data-login-theme='glass'\], \[data-login-theme='clear-glass'\]\)\s+\.auth-page\s+:is\(\.form-input, \.form-select\):not\(\.has-error\) \{/
 		);
 		expect(css).toMatch(/:is\(\.form-input, \.form-select\):focus-visible/);
 	});
