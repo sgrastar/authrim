@@ -20,6 +20,7 @@ import {
 
 const log = createLogger().module('VC-VP-VERIFIER');
 import type { StatusListKeyResolver } from '@authrim/ar-lib-core';
+import { importJWK } from 'jose';
 import type { Env, VPVerificationResult } from '../../types';
 import { checkIssuerTrust, getIssuerPublicKey } from './issuer-trust';
 import { createVCConfigManager } from '../../utils/vc-config';
@@ -114,7 +115,10 @@ export async function verifyVPToken(
 
     if (issuerPublicKey) {
       try {
-        const verifyResult = await verifySDJWTVC(vpToken, issuerPublicKey, null, {
+        // The holder key the issuer bound the credential to (`cnf.jwk`): only with it is the
+        // key binding JWT checked, and only then is the presenter shown to hold the credential.
+        const holderKey = await importHolderKey(payload.cnf);
+        const verifyResult = await verifySDJWTVC(vpToken, issuerPublicKey, holderKey, {
           issuer: issuerDid,
           vct,
           nonce: options.nonce,
@@ -250,6 +254,38 @@ export async function verifyVPToken(
       warnings,
       haipCompliant: false,
     };
+  }
+}
+
+const HOLDER_CURVE_ALGORITHMS: Record<string, string> = {
+  'P-256': 'ES256',
+  'P-384': 'ES384',
+  'P-521': 'ES512',
+};
+
+/**
+ * The public EC holder key of `cnf.jwk`, or null when the credential binds none (or binds a key
+ * that is not a public EC key on a supported curve).
+ */
+async function importHolderKey(cnf: unknown): Promise<CryptoKey | null> {
+  const jwk = (cnf as { jwk?: Record<string, unknown> } | undefined)?.jwk;
+  if (!jwk || jwk.kty !== 'EC' || 'd' in jwk) return null;
+  const alg = HOLDER_CURVE_ALGORITHMS[String(jwk.crv)];
+  if (!alg || typeof jwk.x !== 'string' || typeof jwk.y !== 'string') return null;
+  // The issuer may restrict the key (RFC 7517 section 4): only a signing key may bind.
+  if (jwk.alg !== undefined && jwk.alg !== alg) return null;
+  if (jwk.use !== undefined && jwk.use !== 'sig') return null;
+  if (
+    jwk.key_ops !== undefined &&
+    !(Array.isArray(jwk.key_ops) && (jwk.key_ops as unknown[]).includes('verify'))
+  ) {
+    return null;
+  }
+  try {
+    const key = await importJWK({ kty: 'EC', crv: jwk.crv as string, x: jwk.x, y: jwk.y }, alg);
+    return key instanceof CryptoKey ? key : null;
+  } catch {
+    return null;
   }
 }
 
