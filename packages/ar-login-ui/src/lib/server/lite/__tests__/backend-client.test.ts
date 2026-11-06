@@ -266,3 +266,36 @@ describe('the client of a page view', () => {
 		}
 	});
 });
+
+describe('what a call may add', () => {
+	it('adds only the human verification screen header, never one the client sets itself', async () => {
+		let seen = new Headers();
+		const backend = client(async (_url, init) => {
+			seen = new Headers(init.headers);
+			return answer([]);
+		});
+		await backend.request('/api/v1/auth/direct/email-code/send', {
+			json: {},
+			headers: {
+				'X-Authrim-Human-Verification-Action': 'login',
+				Origin: 'https://evil.example',
+				Cookie: 'authrim_session=forged',
+				'X-Other': '1'
+			}
+		});
+		expect(seen.get('X-Authrim-Human-Verification-Action')).toBe('login');
+		expect(seen.get('Origin')).toBe('https://id.example');
+		expect(seen.get('Cookie')).not.toContain('forged');
+		expect(seen.get('X-Other')).toBeNull();
+	});
+
+	it("tells whether the jar holds a cookie, the browser's or one an answer set", async () => {
+		const backend = client(async () => answer(['authrim_guest=g1; Path=/; Secure; SameSite=Lax']), {
+			cookieHeader: 'theme=dark'
+		});
+		expect(backend.hasCookie('authrim_session')).toBe(false);
+		expect(backend.hasCookie('theme')).toBe(true);
+		await backend.request('/api/auth/guest/login', { json: {} });
+		expect(backend.hasCookie('authrim_guest')).toBe(true);
+	});
+});

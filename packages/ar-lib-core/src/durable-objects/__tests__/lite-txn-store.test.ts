@@ -602,6 +602,39 @@ describe('LiteTxnStore: what reaches storage', () => {
     ).resolves.toEqual({ ok: false, reason: 'budget_exceeded' });
   });
 
+  it('makes the move a completion asks for with the change its start reserved, at the limit', async () => {
+    const { store } = createStore();
+    const txn = await create(store);
+    const starts = Math.floor(LITE_TXN_MAX_UPDATES / 2);
+    for (let i = 0; i < starts - 1; i++) {
+      await store.beginOperationRpc({ ...ref(txn.id), operationId: `op-${i}` });
+      await store.completeOperationRpc({
+        attempt: 1,
+        ...ref(txn.id),
+        operationId: `op-${i}`,
+        result: i,
+      });
+    }
+    await store.beginOperationRpc({ ...ref(txn.id), operationId: 'last' });
+    // The budget is spent now; the side effect was carried out: what it leaves is recorded.
+    await expect(
+      store.completeOperationRpc({
+        attempt: 1,
+        ...ref(txn.id),
+        operationId: 'last',
+        result: 'x',
+        transition: { expectedVersion: 1, to: 'verified', patch: { checked: 'artifact' } },
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      txn: { state: 'verified', data: { checked: 'artifact' } },
+    });
+    // And nothing more: an ordinary move is still refused.
+    await expect(
+      store.transitionRpc({ ...ref(txn.id), expectedVersion: 2, to: 'pending' })
+    ).resolves.toEqual({ ok: false, reason: 'budget_exceeded' });
+  });
+
   it('keeps the room it promised a running operation, so its result is always recorded', async () => {
     const { store } = createStore();
     const txn = await create(store);

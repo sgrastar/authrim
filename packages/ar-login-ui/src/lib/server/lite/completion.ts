@@ -1,6 +1,7 @@
 /**
  * Where a completed lite sign-in goes: the Flow's continuation (the `/authorize` confirmation, or
- * the SAML SSO endpoint), else the transaction's checked return target, else the home page. Only
+ * the SAML SSO endpoint), else the transaction's checked return target, else the sign-in's own
+ * destination, else the home page. Only
  * a destination on the public origin is used; the result is an absolute URL for the relay page
  * (a 303 out of a form post, then on to the application, would run into `form-action`).
  */
@@ -30,6 +31,8 @@ export function liteCompletionDestination(
 	bound: {
 		publicOrigin: string;
 		returnTo: string | null;
+		/** The sign-in's own destination (the direct session's `redirect_url`), checked too. */
+		fallback?: string | null;
 		samlRequestId?: string | null;
 		samlSpEntityId?: string | null;
 	}
@@ -48,6 +51,7 @@ export function liteCompletionDestination(
 			bound.publicOrigin
 		) ??
 		sameOriginUrl(bound.returnTo, bound.publicOrigin) ??
+		sameOriginUrl(bound.fallback, bound.publicOrigin) ??
 		new URL('/', bound.publicOrigin).toString()
 	);
 }

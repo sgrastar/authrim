@@ -214,6 +214,8 @@ export interface LiteScreenField {
 	text: string | null;
 	helpText: string | null;
 	placeholder: string | null;
+	/** An identity field's value type: `boolean` is drawn as a checkbox (as the SPA does). */
+	valueType: string | null;
 	/** A link block's destination, checked (safeLinkHref); null for any other block. */
 	href: string | null;
 }
@@ -328,6 +330,7 @@ export function decideLiteStep(
 			text: readString(raw.text),
 			helpText: readString(raw.help_text),
 			placeholder: readString(raw.placeholder),
+			valueType: blockType === 'identity_field' ? readString(raw.value_type) : null,
 			href: blockType === 'link' ? safeLinkHref(raw.href) : null
 		});
 	}
@@ -355,6 +358,7 @@ export function decideLiteStep(
 			text: null,
 			helpText: null,
 			placeholder: null,
+			valueType: null,
 			href: null
 		});
 	}
