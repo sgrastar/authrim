@@ -166,6 +166,7 @@ export const ja = {
 	'plat.template.tag': '共有定義',
 	'scope.switch.title': '操作対象',
 	'notify.label': '通知',
+	'notify.empty': 'お知らせはありません',
 	'notify.open': '通知',
 	'notify.close': '閉じる',
 	'notify.severity.critical': 'クリティカル',

@@ -163,6 +163,7 @@ export const de = {
 	'plat.template.tag': 'Geteilt',
 	'scope.switch.title': 'Wirkungsbereich',
 	'notify.label': 'Benachrichtigungen',
+	'notify.empty': 'Keine Benachrichtigungen',
 	'notify.open': 'Benachrichtigungen',
 	'notify.close': 'Schließen',
 	'notify.severity.critical': 'Kritisch',

@@ -163,6 +163,7 @@ export const ar = {
 	'plat.template.tag': 'مشترك',
 	'scope.switch.title': 'نطاق العمل',
 	'notify.label': 'الإشعارات',
+	'notify.empty': 'لا توجد إشعارات',
 	'notify.open': 'الإشعارات',
 	'notify.close': 'إغلاق',
 	'notify.severity.critical': 'حرج',

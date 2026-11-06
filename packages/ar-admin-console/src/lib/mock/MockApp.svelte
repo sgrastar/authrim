@@ -7,6 +7,7 @@
 	import AppShell from '#lib/shell/AppShell.svelte';
 	import { isStandalonePath, resolveNavPath } from '#lib/shell/nav.js';
 	import PlaceholderPage from '#lib/shell/PlaceholderPage.svelte';
+	import StepUpDialog from '#lib/shell/StepUpDialog.svelte';
 	import { overrideLanguageChange } from '#lib/shell/language.js';
 	import type { ScopeOption } from '#lib/shell/ScopeSwitcher.svelte';
 	import EmptyState from '#lib/ui/patterns/EmptyState.svelte';
@@ -139,6 +140,8 @@
 			{/if}
 		{/key}
 	</AppShell>
+	<!-- As in the console: operations that need a step-up ask here first. -->
+	<StepUpDialog />
 </div>
 
 <style>

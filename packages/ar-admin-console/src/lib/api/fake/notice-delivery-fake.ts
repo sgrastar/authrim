@@ -3,6 +3,7 @@
  * webhook URL must be a Slack Incoming Webhook, it is never kept or returned (only a hint of
  * its end), platform channels need platform authority, and writes need settings write access.
  */
+import type { FakeStepUp } from './step-up-fake';
 import { ApiError } from '../api-error';
 import {
 	CHANNEL_NAME_MAX,
@@ -47,6 +48,8 @@ export interface FakeNoticeDeliveryOptions {
 	canWrite?: boolean;
 	/** The test message is refused by Slack with this reason. */
 	testError?: string;
+	/** Step-up for the operations that need it (the mock asks through the console's dialog). */
+	stepUp?: FakeStepUp;
 }
 
 const NOW = Date.UTC(2026, 10, 4, 3, 0, 0);
@@ -236,11 +239,14 @@ export function createFakeNoticeDelivery(
 			return { ...channel };
 		},
 		async replaceWebhookUrl(id, webhookUrl) {
-			await step('replaceWebhookUrl', true);
-			const channel = find(id);
-			channel.webhook_url_hint = hintOf(checkUrl(webhookUrl));
-			channel.updated_at = Date.now();
-			return { ...channel };
+			const replace = async () => {
+				await step('replaceWebhookUrl', true);
+				const channel = find(id);
+				channel.webhook_url_hint = hintOf(checkUrl(webhookUrl));
+				channel.updated_at = Date.now();
+				return { ...channel };
+			};
+			return options.stepUp ? options.stepUp.run('webhook.destination.update', replace) : replace();
 		},
 		async deleteChannel(id) {
 			await step('deleteChannel', true);

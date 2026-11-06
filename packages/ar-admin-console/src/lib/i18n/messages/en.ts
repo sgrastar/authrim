@@ -163,6 +163,7 @@ export const en = {
 	'plat.template.tag': 'Shared',
 	'scope.switch.title': 'Operating on',
 	'notify.label': 'Notifications',
+	'notify.empty': 'No notifications',
 	'notify.open': 'Notifications',
 	'notify.close': 'Close',
 	'notify.severity.critical': 'Critical',
