@@ -36,7 +36,6 @@ import {
   isOwnAdminCredential,
   listOwnAdminCredentials,
   holderThumbprintOfCredential,
-  retireKeyringFactorsOfRevokedCredentials,
   revokeAdminCredential,
 } from './admin-wallet-credential-store';
 
@@ -68,6 +67,27 @@ function secondFactorMinimum(c: WalletContext) {
     },
     409
   );
+}
+
+/** Thumbprints of the admin's active Keyring second factors. */
+async function activeKeyringFactorThumbprints(
+  c: WalletContext,
+  adminUserId: string
+): Promise<Set<string>> {
+  const adapter = requireDedicatedAdminDatabaseAdapter(c.env, 'admin-wallet-credential');
+  const active = await new AdminSecondFactorRepository(adapter).listActiveByUser(adminUserId);
+  return new Set(active.flatMap((factor) => (factor.holder_jkt ? [factor.holder_jkt] : [])));
+}
+
+/** Query parameter of the offer link naming the holder keys Keyring should keep when it renews. */
+export const RENEW_HOLDER_JKT_PARAM = 'authrim_renew_holder_jkt';
+
+/** The offer link with the renewal hint appended (comma-separated thumbprints), if any. */
+export function withRenewalHint(credentialOffer: string, jkts: string[]): string {
+  const usable = jkts.filter((jkt) => /^[A-Za-z0-9_-]{43}$/.test(jkt));
+  if (usable.length === 0) return credentialOffer;
+  const separator = credentialOffer.includes('?') ? '&' : '?';
+  return `${credentialOffer}${separator}${RENEW_HOLDER_JKT_PARAM}=${usable.join(',')}`;
 }
 
 function refuse(c: WalletContext, error: string, status: 403 | 404 | 503) {
@@ -175,11 +195,17 @@ myWalletCredentialsRouter.post(
       metadata: { offer_id: offer.offerId },
     });
 
+    // Keyring renews with the holder key that is already a second factor, so the factor carries
+    // over to the new credential. The thumbprints are public-key digests: the wallet only uses a
+    // key it already holds for a credential of this issuer, and other wallets ignore the parameter.
+    const renewJkts = [...(await activeKeyringFactorThumbprints(c, home.adminUserId))];
+    const credentialOffer = withRenewalHint(offer.credentialOffer, renewJkts);
+
     c.header('Cache-Control', 'no-store');
     return c.json(
       {
         offerId: offer.offerId,
-        credentialOffer: offer.credentialOffer,
+        credentialOffer,
         transactionCode: offer.transactionCode,
         expiresAt: offer.expiresAt,
       },
@@ -218,8 +244,16 @@ myWalletCredentialsRouter.get('/', async (c) => {
     home.tenantId
   ).coreAdapter;
   const items = await listOwnAdminCredentials(adapter, home.tenantId, home.adminUserId);
+  // Which credentials carry a holder key that is one of the admin's active second factors, so the
+  // console can warn before one is revoked or replaced.
+  const factorJkts = await activeKeyringFactorThumbprints(c, home.adminUserId);
   c.header('Cache-Control', 'no-store');
-  return c.json({ items });
+  return c.json({
+    items: items.map((item) => ({
+      ...item,
+      secondFactor: !!item.holderKeyThumbprint && factorJkts.has(item.holderKeyThumbprint),
+    })),
+  });
 });
 
 myWalletCredentialsRouter.post(
@@ -267,6 +301,9 @@ myWalletCredentialsRouter.post(
     const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'admin-wallet-credential');
     const factors = new AdminSecondFactorRepository(adminAdapter);
     const jkt = await holderThumbprintOfCredential(adapter, home.tenantId, credentialId);
+    // Revoking any credential that carries a registered holder key revokes that key as a second
+    // factor too, even when a renewed credential shares the key: a revocation says the key is no
+    // longer trusted, and it always goes through the minimum and the factor's own L2 operation.
     const factor = jkt ? await factors.findActiveKeyringFactor(home.adminUserId, jkt) : null;
     if (
       factor &&
@@ -278,7 +315,9 @@ myWalletCredentialsRouter.post(
     // The receipt is spent here, after every check that can still refuse the request.
     const stepUpRefused = await requireAdminStepUp(c as never, {
       operation: 'admin_credential.revoke',
-      ...(factor ? { alsoCovers: ['admin.second_factor.remove' as const] } : {}),
+      // Any credential with a holder key can take a factor with it (one registered meanwhile
+      // included), so removing a second factor is always covered.
+      ...(jkt ? { alsoCovers: ['admin.second_factor.remove' as const] } : {}),
       targetTenantId: home.tenantId,
       targetIds: [home.adminUserId, credentialId],
       params: { scope: 'own_wallet_credential' },
@@ -303,14 +342,12 @@ myWalletCredentialsRouter.post(
       return c.json({ error: 'wallet_credential_not_revocable' }, 409);
     }
 
-    // Whatever an earlier revocation left behind is finished here; a failure is retried.
+    // A factor of this credential's key that is still active (registered while this request ran)
+    // goes with the credential: the revocation wins, as for an administrator's revocation. Only
+    // this key: other revoked rows can carry a registered key too (an issuance that failed while
+    // renewing with that key is left revoked). A failure here is retried with the same key.
     try {
-      await retireKeyringFactorsOfRevokedCredentials(
-        adapter,
-        adminAdapter,
-        home.tenantId,
-        home.adminUserId
-      );
+      if (jkt) await factors.revokeKeyringHolderKey(home.adminUserId, jkt);
     } catch {
       // Not the outcome of the request: the same Idempotency-Key may try again.
       markIdempotentResponseRetryable(c as never);

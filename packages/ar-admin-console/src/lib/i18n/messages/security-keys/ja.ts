@@ -13,6 +13,11 @@ export const jaSecurityKeys = {
 	'sk.nameHint': '例：YubiKey（青）',
 	'sk.register': 'キーを登録',
 	'sk.unnamed': '名前なし',
+	'sk.recovery.soleAdmin':
+		'管理者があなた 1 人のため、この画面からは復旧を申請できません。環境の管理者向けの手順（最終手段の復旧）で復旧してください。',
+	'sk.onlyOne.title': '2 つ目の要素が 1 つだけです',
+	'sk.onlyOne.body':
+		'この要素をなくすと、重要な操作ができなくなります。セキュリティキーか Keyring をもう 1 つ登録しておくことをおすすめします。',
 	'sk.only': '唯一のキー',
 	'sk.created': '登録日時',
 	'sk.lastUsed': '最終使用',

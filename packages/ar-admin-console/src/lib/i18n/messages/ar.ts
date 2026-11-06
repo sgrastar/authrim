@@ -11,6 +11,7 @@ import { arKeyringPresentation } from './keyring-presentation/ar';
 import { arNotices } from './notices/ar';
 import { arCustomization } from './customization/ar';
 import { arStepUp } from './step-up/ar';
+import { arAdminAudit } from './admin-audit/ar';
 
 export const ar = {
 	...arSettings,
@@ -25,6 +26,7 @@ export const ar = {
 	...arNotices,
 	...arCustomization,
 	...arStepUp,
+	...arAdminAudit,
 	'app.adminLabel': 'وحدة التحكم الإدارية',
 	'app.env.dev': 'التطوير',
 	'app.env.prod': 'الإنتاج',
@@ -900,6 +902,11 @@ export const ar = {
 	'keyring.credentials.noExpiry': 'غير محدد',
 	'keyring.credentials.revoke': 'إلغاء',
 	'keyring.credentials.revokeTitle': 'هل تريد إلغاء بيانات الاعتماد {code}؟',
+	'keyring.issued.factorNote':
+		'إذا جدّد Keyring بيانات اعتمادك، يبقى رمز تأكيد المفتاح كما كان ويستمر العامل الثاني في العمل. وإذا تغيّر الرمز فهذا مفتاح جديد: أضف Keyring كعامل ثانٍ من «حسابي».',
+	'keyring.credentials.secondFactor': 'عامل ثانٍ',
+	'keyring.credentials.revokeRemovesFactor':
+		'مفتاح بيانات الاعتماد هذه مسجّل كعامل ثانٍ. إلغاؤها يزيل هذا العامل الثاني لكل بيانات الاعتماد التي تستخدم المفتاح نفسه (بما فيها المجدّدة). تتوقف بيانات الاعتماد القديمة عن العمل عند انتهاء صلاحيتها حتى لو لم تلغها.',
 	'keyring.credentials.revokeBody':
 		'ستتوقف بيانات الاعتماد عن العمل فورًا ولا يمكن استعادتها. لاستخدام Keyring مرة أخرى عليك إضافة بيانات اعتماد جديدة.',
 	'keyring.credentials.revoked': 'تم إلغاء بيانات الاعتماد.',

@@ -314,4 +314,36 @@ describe('adminAuditRouter detail permission', () => {
     });
     expect(mockUserRepo.getAdminUser).not.toHaveBeenCalledWith('amp_mcp_admin');
   });
+
+  it('reads end_date as the whole day for a date and as the instant for a timestamp', async () => {
+    mockAuditRepo.searchAuditLogs.mockResolvedValue({
+      items: [],
+      total: 0,
+      page: 1,
+      limit: 50,
+      totalPages: 0,
+    });
+    const app = createApp();
+    const list = (query: string) =>
+      app.request(
+        `/api/admin/admin-audit-log?${query}`,
+        { method: 'GET', headers: { 'X-Admin-Permissions': 'admin:admin_audit:read' } },
+        mockEnv
+      );
+
+    expect((await list('start_date=2026-11-01&end_date=2026-11-07')).status).toBe(200);
+    expect(mockAuditRepo.searchAuditLogs.mock.calls[0][0]).toMatchObject({
+      from_timestamp: Date.parse('2026-11-01'),
+      to_timestamp: Date.parse('2026-11-08') - 1,
+    });
+
+    expect(
+      (await list('start_date=2026-11-07T09%3A00%3A00.000Z&end_date=2026-11-07T10%3A30%3A00.000Z'))
+        .status
+    ).toBe(200);
+    expect(mockAuditRepo.searchAuditLogs.mock.calls[1][0]).toMatchObject({
+      from_timestamp: Date.parse('2026-11-07T09:00:00.000Z'),
+      to_timestamp: Date.parse('2026-11-07T10:30:00.000Z'),
+    });
+  });
 });

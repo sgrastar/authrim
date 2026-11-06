@@ -175,6 +175,12 @@ export async function createAdminPresentationRequest(
   if (input.purpose === 'step_up' && input.holderJkts.length === 0) {
     throw new Error('no_registered_holder_key');
   }
+  if (
+    input.walletMode !== undefined &&
+    (input.walletMode !== 'recovery' || input.purpose !== 'enroll')
+  ) {
+    throw new Error('invalid_wallet_mode');
+  }
   const credentialIssuer = canonicalIssuer(input.credentialIssuer);
   const tenantLabel =
     typeof input.tenantLabel === 'string' && input.tenantLabel.trim()
@@ -219,6 +225,9 @@ export async function createAdminPresentationRequest(
     tenant: tenantLabel,
     requestedAt: nowSeconds,
     matchCodeRequired: mode === 'direct_post',
+    ...(input.purpose === 'enroll' && input.walletMode === 'recovery'
+      ? { mode: 'recovery' as const }
+      : {}),
   });
   const payload = buildAdminVPRequestPayload({
     credentialIssuer,

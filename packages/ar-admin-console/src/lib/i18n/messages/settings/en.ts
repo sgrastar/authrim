@@ -1,6 +1,27 @@
 import type { jaSettings } from './ja';
 
 export const enSettings: Record<keyof typeof jaSettings, string> = {
+	'set.page.team': 'Administrators',
+	'set.page.team.desc': 'How administrators sign in to this console.',
+	'set.section.adminSignIn': 'Admin sign-in',
+	'set.section.adminSignIn.desc':
+		'How long this tenant’s administrators stay signed in, and the checks asked before an operation.',
+	'set.section.adminSignInPlatform': 'Admin sign-in for every tenant',
+	'set.section.adminSignInPlatform.desc':
+		'Applies to the administrators of every tenant. Only platform administrators can change it.',
+	'set.k.session.ttl.admin_passkey': 'Sign-in length for administrators using a passkey',
+	'set.k.session.ttl.admin_passkey.desc':
+		'How long after signing in with a passkey an administrator is asked to sign in again.',
+	'set.k.security.admin_step_up_overrides': 'Raised checks by operation',
+	'set.k.security.admin_step_up_overrides.desc':
+		'Operation names with the check they ask for (L1: a passkey; L2: a passkey and a second factor), for example {"client.secret.rotate": "L2"}. A level cannot go below the built-in one.',
+	'set.k.security.admin_step_up_enforced': 'Ask for extra checks before admin operations',
+	'set.k.security.admin_step_up_enforced.desc':
+		'Off skips the passkey and second-factor checks before sensitive admin operations. Turn it off only during a migration; turning it off itself needs an L2 check.',
+	'set.k.security.admin_keyring_dc_api': 'Present Keyring through the browser',
+	'set.k.security.admin_keyring_dc_api.desc':
+		'Where the browser supports it, administrators present their Keyring credential through the Digital Credentials API instead of a QR code.',
+	'settings.json.object': 'Enter a JSON object (in braces { }).',
 	'set.page.stayingSignedIn': 'Staying signed in',
 	'set.page.stayingSignedIn.desc':
 		'How long people stay signed in once they have signed in, and how long their apps keep that sign-in.',

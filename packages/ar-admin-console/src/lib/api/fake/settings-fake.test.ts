@@ -81,4 +81,35 @@ describe('the in-memory Settings API', () => {
 		const latest = await api.get(tenant, 'oauth');
 		expect(latest.values['oauth.sso_enabled']).toBe(true);
 	});
+
+	it('keeps each setting to the scopes it can be set at, as the API does', async () => {
+		const api = createFakeSettings({
+			stored: {
+				platform: { 'security.admin_step_up_overrides': { 'tenant.delete': 'L2' } },
+				'tenant:acme': { 'security.admin_step_up_enforced': false }
+			}
+		});
+		const read = await api.get(tenant, 'security');
+		// A platform-only switch stored for a tenant, and a tenant-only map stored for the
+		// platform, are both ignored.
+		expect(read.sources['security.admin_step_up_enforced']).toBe('default');
+		expect(read.values['security.admin_step_up_enforced']).toBe(true);
+		expect(read.inherited.sources['security.admin_step_up_overrides']).toBe('default');
+		expect(read.values['security.admin_step_up_overrides']).toEqual({});
+		// Neither set nor cleared at a scope it cannot be set at.
+		await expect(
+			api.patch(tenant, 'security', {
+				ifMatch: read.version,
+				set: { 'security.admin_keyring_dc_api': true },
+				clear: ['security.admin_step_up_enforced']
+			})
+		).rejects.toBeInstanceOf(RejectedError);
+		const platform = await api.get({ level: 'platform' }, 'security');
+		await expect(
+			api.patch({ level: 'platform' }, 'security', {
+				ifMatch: platform.version,
+				set: { 'security.admin_step_up_enforced': false }
+			})
+		).resolves.toMatchObject({ applied: ['security.admin_step_up_enforced'] });
+	});
 });
