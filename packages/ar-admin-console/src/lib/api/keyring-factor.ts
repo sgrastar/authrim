@@ -5,6 +5,7 @@
  *   GET  /step-up/:id      its progress; the server records the factor once verified
  *   POST /enroll           start a presentation that registers the holder key (L2 receipt)
  *   GET  /enroll/:id       its progress; the server registers the key once verified
+ *   POST /enroll {"purpose":"recovery"}  the same presentation, filed as a recovery request
  *
  * Failures are ApiErrors, so withStepUp can answer a step-up or fresh sign-in refusal.
  */
@@ -102,12 +103,20 @@ async function postJson(path: string, body: unknown, receipt?: string): Promise<
 	return parsed;
 }
 
-async function post(path: string, receipt?: string): Promise<PresentationStart> {
-	return parseStart(await postJson(path, {}, receipt));
+async function post(
+	path: string,
+	receipt?: string,
+	extra: Record<string, string> = {}
+): Promise<PresentationStart> {
+	return parseStart(await postJson(path, extra, receipt));
 }
 
-async function postInBrowser(path: string, receipt?: string): Promise<BrowserPresentationStart> {
-	return parseBrowserStart(await postJson(path, { mode: 'dc_api' }, receipt));
+async function postInBrowser(
+	path: string,
+	receipt?: string,
+	extra: Record<string, string> = {}
+): Promise<BrowserPresentationStart> {
+	return parseBrowserStart(await postJson(path, { mode: 'dc_api', ...extra }, receipt));
 }
 
 async function get(path: string): Promise<PresentationProgress> {
@@ -133,6 +142,12 @@ export interface KeyringFactorClient {
 	submitStepUp(requestId: string, data: unknown): Promise<PresentationProgress>;
 	startEnrollInBrowser(receipt?: string): Promise<BrowserPresentationStart>;
 	submitEnroll(requestId: string, data: unknown): Promise<PresentationProgress>;
+	/**
+	 * Recovery: the same presentation, whose holder key is filed as a second-factor recovery
+	 * request (a fresh passkey, no step-up); its progress is the enrolment's.
+	 */
+	startRecovery(): Promise<PresentationStart>;
+	startRecoveryInBrowser(): Promise<BrowserPresentationStart>;
 }
 
 export const httpKeyringFactor: KeyringFactorClient = {
@@ -147,5 +162,7 @@ export const httpKeyringFactor: KeyringFactorClient = {
 		),
 	startEnrollInBrowser: (receipt) => postInBrowser('/enroll', receipt),
 	submitEnroll: async (id, data) =>
-		parseProgress(await postJson(`/enroll/${encodeURIComponent(id)}/response`, { response: data }))
+		parseProgress(await postJson(`/enroll/${encodeURIComponent(id)}/response`, { response: data })),
+	startRecovery: () => post('/enroll', undefined, { purpose: 'recovery' }),
+	startRecoveryInBrowser: () => postInBrowser('/enroll', undefined, { purpose: 'recovery' })
 };

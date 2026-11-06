@@ -59,6 +59,10 @@ export const deKeyringPresentation = {
 	'kp.enroll.needCredential':
 		'Stellen Sie zuerst den Administrator-Nachweis in Keyring aus (Mein Konto → Authrim Keyring).',
 	'kp.enroll.added': 'Keyring wurde als zweiter Faktor hinzugefügt.',
+	'kp.recover.add': 'Wiederherstellung mit Keyring beantragen',
+	'kp.recover.title': 'Wiederherstellung mit Authrim Keyring beantragen',
+	'kp.recover.body':
+		'Legen Sie den in Keyring ausgestellten Administrator-Nachweis vor, um den Antrag zu stellen. Sie und alle Administratoren des Mandanten erhalten eine E-Mail; nach 24 Stunden kann er abgeschlossen werden. Dabei werden alle Ihre aktuellen zweiten Faktoren widerrufen und Ihre anderen Sitzungen beendet.',
 	'kp.kind.keyring': 'Keyring',
 	'kp.kind.securityKey': 'Sicherheitsschlüssel'
 };

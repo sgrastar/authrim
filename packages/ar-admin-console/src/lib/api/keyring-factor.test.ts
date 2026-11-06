@@ -91,6 +91,28 @@ describe('httpKeyringFactor', () => {
 		expect(new Headers(init.headers).get('authrim-step-up-receipt')).toBe('asp_receipt');
 	});
 
+	it('starts a recovery as an enrolment with the recovery purpose and no receipt', async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(json(201, START))
+			.mockResolvedValueOnce(
+				json(201, {
+					request_id: 'r1',
+					dc_request: { protocol: 'openid4vp-v1-signed', data: { request: 'h.p.s' } },
+					expires_at: 1
+				})
+			);
+		vi.stubGlobal('fetch', fetchMock);
+		await httpKeyringFactor.startRecovery();
+		await httpKeyringFactor.startRecoveryInBrowser();
+		const bodies = (fetchMock.mock.calls as Array<[string, RequestInit]>).map(([url, init]) => {
+			expect(url).toBe('/api/admin/me/keyring/enroll');
+			expect(new Headers(init.headers).has('authrim-step-up-receipt')).toBe(false);
+			return JSON.parse(String(init.body)) as unknown;
+		});
+		expect(bodies).toEqual([{ purpose: 'recovery' }, { mode: 'dc_api', purpose: 'recovery' }]);
+	});
+
 	it('turns a refused start into an ApiError for withStepUp', async () => {
 		vi.stubGlobal(
 			'fetch',

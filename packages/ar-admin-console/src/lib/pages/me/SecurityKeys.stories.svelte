@@ -23,7 +23,7 @@
 			docs: {
 				description: {
 					component:
-						'My account → Security keys: the step-up second factors confirmed in addition to the passkey before sensitive operations (L2). Only device-bound keys can be registered. The first key needs only a fresh passkey inside the one-time enrollment window; later keys need a step-up receipt, which the client obtains by itself. An admin who lost every key files a recovery request with a new key: it can be completed 24 hours later, and the admin or another admin of the tenant can cancel it until then.'
+						'My account → Security keys: the step-up second factors confirmed in addition to the passkey before sensitive operations (L2). Only device-bound keys can be registered. The first key needs only a fresh passkey inside the one-time enrollment window; later keys need a step-up receipt, which the client obtains by itself. An admin who lost every key files a recovery request with a new key, or with Keyring (presenting their admin credential): it can be completed 24 hours later, and the admin or another admin of the tenant can cancel it until then.'
 				}
 			}
 		}
@@ -104,6 +104,24 @@
 <Story name="Recovery needed">
 	{#snippet template()}
 		<SecurityKeys client={createFakeSecondFactors()} />
+	{/snippet}
+</Story>
+
+<Story
+	name="Recovery with Keyring"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByRole('button', { name: t('kp.recover.add') }));
+		const page = within(canvasElement.ownerDocument.body);
+		await page.findByText(t('kp.recover.title'));
+		await page.findByText(t('kp.code.label'));
+	}}
+>
+	{#snippet template()}
+		<SecurityKeys
+			client={createFakeSecondFactors()}
+			keyring={createFakeKeyringFactor({ answerAfterMs: 5_000 })}
+		/>
 	{/snippet}
 </Story>
 

@@ -21,7 +21,9 @@ function client(status: 'verified' | 'pending' = 'verified'): KeyringFactorClien
 		})),
 		submitStepUp: vi.fn(async () => ({ status })),
 		startEnrollInBrowser: vi.fn(),
-		submitEnroll: vi.fn()
+		submitEnroll: vi.fn(),
+		startRecovery: vi.fn(),
+		startRecoveryInBrowser: vi.fn()
 	};
 }
 

@@ -27,7 +27,11 @@ export interface FakeSecondFactorsOptions {
 	/** The admin's own request: waiting, or ready to complete. */
 	recovery?: 'waiting' | 'ready';
 	/** Open requests of other admins in the tenant. */
-	tenantRequests?: Array<{ email: string; waitingHours?: number }>;
+	tenantRequests?: Array<{
+		email: string;
+		waitingHours?: number;
+		kind?: 'webauthn_credential' | 'keyring_holder_key';
+	}>;
 	/** Recovery cannot be filed (the only admin, or email not available). */
 	recoveryRefused?: 'recovery_requires_last_resort' | 'recovery_notification_unavailable';
 	/** When the admin's own request lapses, from `now` (7 days by default). */
@@ -74,7 +78,8 @@ export function createFakeSecondFactors(
 		(request, index) => ({
 			id: `rec-${index + 1}`,
 			status: 'pending',
-			label: null,
+			kind: request.kind ?? 'webauthn_credential',
+			label: request.kind === 'keyring_holder_key' ? 'Keyring' : null,
 			aaguid: null,
 			requested_at: now - (request.waitingHours ?? 2) * HOUR,
 			not_before: now + (24 - (request.waitingHours ?? 2)) * HOUR,

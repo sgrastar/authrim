@@ -26,7 +26,13 @@ export interface AdminSecondFactorRecovery {
   admin_user_id: string;
   tenant_id: string;
   status: AdminSecondFactorRecoveryStatus;
-  credential_id: string;
+  /** What the request will make the admin's second factor. */
+  kind: AdminSecondFactorRecoveryKind;
+  /** WebAuthn: the new credential. */
+  credential_id: string | null;
+  /** Keyring: the holder key, and the admin credential it was presented with. */
+  holder_jkt: string | null;
+  admin_credential_id: string | null;
   aaguid: string | null;
   label: string | null;
   requested_session_id: string;
@@ -41,24 +47,42 @@ export interface AdminSecondFactorRecovery {
   cancel_reason: AdminSecondFactorRecoveryCancelReason | null;
 }
 
-export interface AdminSecondFactorRecoveryInput {
+export type AdminSecondFactorRecoveryKind = 'webauthn_credential' | 'keyring_holder_key';
+
+interface AdminSecondFactorRecoveryInputBase {
   admin_user_id: string;
   tenant_id: string;
+  label?: string | null;
+  requested_session_id: string;
+}
+
+/** A new WebAuthn credential, verified when the request is filed. */
+export interface AdminSecondFactorRecoveryWebAuthnInput extends AdminSecondFactorRecoveryInputBase {
+  kind?: 'webauthn_credential';
   credential_id: string;
   public_key: string;
   counter: number;
   transports?: string[];
   aaguid?: string | null;
-  label?: string | null;
-  requested_session_id: string;
 }
+
+/** A Keyring holder key, presented with the admin's own admin credential. */
+export interface AdminSecondFactorRecoveryKeyringInput extends AdminSecondFactorRecoveryInputBase {
+  kind: 'keyring_holder_key';
+  holder_jkt: string;
+  admin_credential_id: string;
+}
+
+export type AdminSecondFactorRecoveryInput =
+  | AdminSecondFactorRecoveryWebAuthnInput
+  | AdminSecondFactorRecoveryKeyringInput;
 
 export type AdminSecondFactorRecoveryCreateResult =
   | { created: true; recovery: AdminSecondFactorRecovery }
   | { created: false; reason: 'already_pending' | 'credential_in_use' };
 
 export type AdminSecondFactorRecoveryCompleteResult =
-  | { completed: true; secondFactorId: string }
+  | { completed: true; secondFactorId: string; recovery: AdminSecondFactorRecovery }
   | { completed: false; reason: 'not_found' | 'too_early' | 'expired' };
 
 const PENDING_SQL = `status = 'pending'`;
@@ -103,7 +127,8 @@ export class AdminSecondFactorRecoveryRepository {
 
   /**
    * File a request. A pending request past its window is closed first; another open one makes
-   * this fail. The credential must not already be a passkey or a second factor.
+   * this fail. The credential must not already be a passkey or a second factor; a holder key must
+   * never have been a second factor (revoked ones included, as for an enrolment).
    */
   async create(
     input: AdminSecondFactorRecoveryInput,
@@ -112,8 +137,14 @@ export class AdminSecondFactorRecoveryRepository {
     const id = generateId();
     const notBefore = now + ADMIN_SECOND_FACTOR_RECOVERY_WAIT_MS;
     const expiresAt = notBefore + ADMIN_SECOND_FACTOR_RECOVERY_COMPLETION_WINDOW_MS;
+    const keyring = input.kind === 'keyring_holder_key' ? input : null;
+    const webauthn = input.kind === 'keyring_holder_key' ? null : input;
     const transports =
-      input.transports && input.transports.length > 0 ? JSON.stringify(input.transports) : null;
+      webauthn?.transports && webauthn.transports.length > 0
+        ? JSON.stringify(webauthn.transports)
+        : null;
+    const credentialId = webauthn?.credential_id ?? null;
+    const holderJkt = keyring?.holder_jkt ?? null;
     const [, insert] = await this.adapter.batch([
       {
         // A request past its window, or one whose notices never all went out, is closed first.
@@ -124,34 +155,39 @@ export class AdminSecondFactorRecoveryRepository {
       },
       {
         sql: `INSERT INTO admin_second_factor_recoveries (
-            id, admin_user_id, tenant_id, status, credential_id, public_key, counter,
-            transports_json, aaguid, label, requested_session_id, requested_at, not_before,
-            expires_at
+            id, admin_user_id, tenant_id, status, kind, credential_id, public_key, counter,
+            transports_json, aaguid, label, holder_jkt, admin_credential_id,
+            requested_session_id, requested_at, not_before, expires_at
           )
-          SELECT ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          SELECT ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
           WHERE NOT EXISTS (
               SELECT 1 FROM admin_second_factor_recoveries
                WHERE admin_user_id = ? AND ${PENDING_SQL}
             )
             AND NOT EXISTS (SELECT 1 FROM admin_passkeys WHERE credential_id = ?)
-            AND NOT EXISTS (SELECT 1 FROM admin_second_factors WHERE credential_id = ?)`,
+            AND NOT EXISTS (SELECT 1 FROM admin_second_factors WHERE credential_id = ?)
+            AND NOT EXISTS (SELECT 1 FROM admin_second_factors WHERE holder_jkt = ?)`,
         params: [
           id,
           input.admin_user_id,
           input.tenant_id,
-          input.credential_id,
-          input.public_key,
-          input.counter,
+          keyring ? 'keyring_holder_key' : 'webauthn_credential',
+          credentialId,
+          webauthn?.public_key ?? null,
+          webauthn?.counter ?? 0,
           transports,
-          input.aaguid ?? null,
+          webauthn?.aaguid ?? null,
           input.label ?? null,
+          holderJkt,
+          keyring?.admin_credential_id ?? null,
           input.requested_session_id,
           now,
           notBefore,
           expiresAt,
           input.admin_user_id,
-          input.credential_id,
-          input.credential_id,
+          credentialId,
+          credentialId,
+          holderJkt,
         ],
       },
     ]);
@@ -169,8 +205,11 @@ export class AdminSecondFactorRecoveryRepository {
         admin_user_id: input.admin_user_id,
         tenant_id: input.tenant_id,
         status: 'pending',
-        credential_id: input.credential_id,
-        aaguid: input.aaguid ?? null,
+        kind: keyring ? 'keyring_holder_key' : 'webauthn_credential',
+        credential_id: credentialId,
+        holder_jkt: holderJkt,
+        admin_credential_id: keyring?.admin_credential_id ?? null,
+        aaguid: webauthn?.aaguid ?? null,
         label: input.label ?? null,
         requested_session_id: input.requested_session_id,
         requested_at: now,
@@ -218,8 +257,8 @@ export class AdminSecondFactorRecoveryRepository {
 
   /**
    * Complete the admin's pending request inside its window. In one batch: the request becomes
-   * completed, every active second factor of the admin is revoked, the request's credential
-   * becomes the admin's only second factor, the admin's other sessions end and the current
+   * completed, every active second factor of the admin is revoked, the request's credential (or
+   * holder key) becomes the admin's only second factor, the admin's other sessions end and the current
    * session loses any second-factor evidence. Each follow-up statement runs only if this call
    * completed the request (matched on the completion time it wrote).
    */
@@ -251,11 +290,14 @@ export class AdminSecondFactorRecoveryRepository {
       },
       {
         sql: `INSERT INTO admin_second_factors (
-            id, admin_user_id, kind, credential_id, public_key, counter, transports_json, aaguid,
-            backup_eligible, backup_state, label, created_at
+            id, admin_user_id, kind, credential_id, holder_jkt, public_key, counter,
+            transports_json, aaguid, backup_eligible, backup_state, label, created_at
           )
-          SELECT ?, admin_user_id, 'webauthn_credential', credential_id, public_key, counter,
-                 transports_json, aaguid, 0, 0, label, ?
+          SELECT ?, admin_user_id, kind, credential_id, holder_jkt, public_key, counter,
+                 transports_json, aaguid,
+                 CASE kind WHEN 'webauthn_credential' THEN 0 END,
+                 CASE kind WHEN 'webauthn_credential' THEN 0 END,
+                 label, ?
             FROM admin_second_factor_recoveries
            WHERE id = ? AND status = 'completed' AND completed_at = ?`,
         params: [factorId, now, open.id, now],
@@ -278,7 +320,11 @@ export class AdminSecondFactorRecoveryRepository {
         reason: !again ? 'not_found' : now < again.not_before ? 'too_early' : 'expired',
       };
     }
-    return { completed: true, secondFactorId: factorId };
+    return {
+      completed: true,
+      secondFactorId: factorId,
+      recovery: { ...open, status: 'completed', completed_at: now },
+    };
   }
 
   private rowToRecovery(row: Record<string, unknown>): AdminSecondFactorRecovery {
@@ -294,7 +340,10 @@ export class AdminSecondFactorRecoveryRepository {
         status === 'completed' || status === 'cancelled' || status === 'expired'
           ? status
           : 'pending',
-      credential_id: String(row.credential_id),
+      kind: row.kind === 'keyring_holder_key' ? 'keyring_holder_key' : 'webauthn_credential',
+      credential_id: str(row.credential_id),
+      holder_jkt: str(row.holder_jkt),
+      admin_credential_id: str(row.admin_credential_id),
       aaguid: str(row.aaguid),
       label: str(row.label),
       requested_session_id: String(row.requested_session_id),

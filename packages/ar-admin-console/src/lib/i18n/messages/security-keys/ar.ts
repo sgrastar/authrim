@@ -63,6 +63,7 @@ export const arSecurityKeys: Record<keyof typeof jaSecurityKeys, string> = {
 	'sk.others.info':
 		'طلب مسؤولون في هذا المستأجر استبدال مفاتيح الأمان الخاصة بهم. ألغِ أي طلب لا تتوقعه.',
 	'sk.others.admin': 'المسؤول',
+	'sk.others.kind': 'العامل الجديد',
 	'sk.others.requested': 'تاريخ الطلب',
 	'sk.others.notBefore': 'يمكن إكماله بعد',
 	'sk.others.cancel': 'إلغاء',

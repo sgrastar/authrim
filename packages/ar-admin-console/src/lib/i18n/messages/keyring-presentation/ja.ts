@@ -55,6 +55,10 @@ export const jaKeyringPresentation = {
 	'kp.enroll.needCredential':
 		'先に、管理者の資格情報を Keyring に発行してください（マイアカウント → Authrim Keyring）。',
 	'kp.enroll.added': 'Keyring を 2 つ目の要素として追加しました。',
+	'kp.recover.add': 'Keyring で復旧を申請',
+	'kp.recover.title': 'Authrim Keyring で復旧を申請',
+	'kp.recover.body':
+		'Keyring に発行された管理者の資格情報を提示して申請します。あなたとテナントの管理者全員にメールが届き、24 時間後に完了できます。完了すると、今の 2 つ目の要素はすべて失効し、ほかのセッションは終了します。',
 	'kp.kind.keyring': 'Keyring',
 	'kp.kind.securityKey': 'セキュリティキー'
 };

@@ -25,10 +25,19 @@ const mocks = vi.hoisted(() => ({
   sessionTenants: [] as string[],
   settings: vi.fn(),
   browserOrigin: vi.fn(),
+  refuseRecoveryRequest: vi.fn(),
+  fileRecoveryRequest: vi.fn(),
   auth: {},
 }));
 
 vi.mock('../admin-shared', () => ({ writeAdminAuditLog: mocks.writeAdminAuditLog }));
+vi.mock('../routes/admin-management/my-second-factor-recovery', async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import('../routes/admin-management/my-second-factor-recovery')
+  >()),
+  refuseRecoveryRequest: mocks.refuseRecoveryRequest,
+  fileRecoveryRequest: mocks.fileRecoveryRequest,
+}));
 vi.mock('../request-issuer', () => ({
   getCanonicalTenantBaseUrlAsync: (...args: unknown[]) => mocks.issuer(...args) as Promise<string>,
 }));
@@ -161,6 +170,10 @@ beforeEach(() => {
   mocks.credentialRow.mockResolvedValue({ status: 'active' });
   mocks.settings.mockResolvedValue({ 'security.admin_keyring_dc_api': false });
   mocks.browserOrigin.mockReturnValue('https://console.example.com');
+  mocks.refuseRecoveryRequest.mockResolvedValue(null);
+  mocks.fileRecoveryRequest.mockResolvedValue(
+    Response.json({ recovery: { id: 'rec-1', kind: 'keyring_holder_key' } }, { status: 201 })
+  );
   vc.submitAdminPresentationResponse.mockResolvedValue({ outcome: 'verified' });
   vc.createAdminPresentationRequest.mockResolvedValue({
     requestId: 'g1:apac:0:vp_1',
@@ -585,5 +598,98 @@ describe('Digital Credentials API mode', () => {
       400
     );
     expect(mocks.recordSecondFactorVerification).not.toHaveBeenCalled();
+  });
+});
+
+describe('recovery with Keyring', () => {
+  const recoveryResult = (overrides: Record<string, unknown> = {}) => ({
+    purpose: 'enroll',
+    context: { mode: 'recovery', approving_factor_id: null },
+    holderJkt: JKT,
+    credentialId: 'cred-1',
+    verifiedAt: NOW,
+    ...overrides,
+  });
+
+  it('starts an enrolment presentation for a recovery request after the request checks', async () => {
+    mocks.listActiveByUser.mockResolvedValue([]);
+
+    const response = await call('POST', '/enroll', undefined, { purpose: 'recovery' });
+
+    expect(response.status).toBe(201);
+    expect(mocks.refuseRecoveryRequest).toHaveBeenCalledOnce();
+    expect(mocks.requireAdminStepUp).not.toHaveBeenCalled();
+    expect(vc.createAdminPresentationRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        purpose: 'enroll',
+        holderJkts: [JKT],
+        context: { mode: 'recovery', approving_factor_id: null },
+      })
+    );
+  });
+
+  it('starts nothing when a recovery request may not be filed', async () => {
+    mocks.refuseRecoveryRequest.mockResolvedValue(
+      Response.json({ error: 'recovery_pending' }, { status: 409 })
+    );
+
+    const response = await call('POST', '/enroll', undefined, { purpose: 'recovery' });
+
+    expect(response.status).toBe(409);
+    expect(vc.createAdminPresentationRequest).not.toHaveBeenCalled();
+  });
+
+  it('refuses an unknown purpose or a body that is not an object', async () => {
+    expect((await call('POST', '/enroll', undefined, { purpose: 'other' })).status).toBe(400);
+    expect((await call('POST', '/enroll', undefined, ['recovery'])).status).toBe(400);
+    expect(vc.createAdminPresentationRequest).not.toHaveBeenCalled();
+  });
+
+  it('files the presented holder key as the recovery request, registering no factor', async () => {
+    vc.consumeAdminPresentation.mockResolvedValue(recoveryResult());
+
+    const response = await call('GET', '/enroll/g1:apac:0:vp_1');
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toEqual({
+      status: 'verified',
+      recovery: { id: 'rec-1', kind: 'keyring_holder_key' },
+    });
+    expect(mocks.fileRecoveryRequest.mock.calls[0]?.[2]).toEqual({
+      kind: 'keyring_holder_key',
+      holder_jkt: JKT,
+      admin_credential_id: 'cred-1',
+      label: 'Keyring',
+    });
+    expect(mocks.insertKeyringHolderKey).not.toHaveBeenCalled();
+  });
+
+  it('answers a refused filing as a failed presentation, with its status', async () => {
+    vc.consumeAdminPresentation.mockResolvedValue(recoveryResult());
+    mocks.fileRecoveryRequest.mockResolvedValue(
+      Response.json({ error: 'recovery_notification_failed' }, { status: 503 })
+    );
+
+    const response = await call('GET', '/enroll/g1:apac:0:vp_1');
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      status: 'failed',
+      error: 'recovery_notification_failed',
+    });
+  });
+
+  it('files nothing once the fresh passkey went stale, or the credential was revoked', async () => {
+    vc.consumeAdminPresentation.mockResolvedValue(recoveryResult());
+    mocks.auth = human({ authenticationTimeMs: NOW - 60 * 60_000 });
+    expect((await call('GET', '/enroll/g1:apac:0:vp_1')).status).toBe(403);
+
+    mocks.auth = human();
+    mocks.credentialRow.mockResolvedValue({ status: 'revoked' });
+    expect(await (await call('GET', '/enroll/g1:apac:0:vp_1')).json()).toEqual({
+      status: 'failed',
+      error: 'credential_not_active',
+    });
+    expect(mocks.fileRecoveryRequest).not.toHaveBeenCalled();
   });
 });

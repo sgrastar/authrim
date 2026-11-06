@@ -8,6 +8,9 @@
  *
  * - step-up: on the session, as the second-factor evidence L2 needs (like a security key)
  * - enrolment: the credential's holder key becomes one of the admin's second factors
+ * - recovery (enrolment with `purpose: 'recovery'`): the holder key is filed as the new second
+ *   factor of a recovery request instead (my-second-factor-recovery.ts), for an admin who lost
+ *   their factors
  *
  * Endpoints:
  * - POST /api/admin/me/keyring/step-up       - Start a presentation for the session's second factor
@@ -47,7 +50,8 @@ import { writeAdminAuditLog } from '../../admin-shared';
 import { refuseAdminFreshAuth, requireAdminStepUp } from '../../admin-step-up-gate';
 import { getCanonicalTenantBaseUrlAsync } from '../../request-issuer';
 import { enrollmentState, presentSecondFactor } from './my-second-factors';
-import { ADMIN_CREDENTIAL_TYPE } from './admin-wallet-credential-store';
+import { isActiveOwnAdminCredential } from './admin-wallet-credential-store';
+import { fileRecoveryRequest, refuseRecoveryRequest } from './my-second-factor-recovery';
 
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
 type HumanSession = AdminAuthContext & { sessionId: string; sessionTenantId: string };
@@ -134,18 +138,31 @@ export async function keyringDcApiEnabled(env: Env, tenantId: string): Promise<b
  * How the console asks for the presentation: a QR code by default, or `{ "mode": "dc_api" }`
  * for the browser's Digital Credentials API, bound to the console origin the request came from.
  */
-async function requestedTransport(
-  c: AdminContext,
-  auth: HumanSession
-): Promise<Transport | Response> {
-  let body: unknown = null;
+interface StartBody {
+  mode?: unknown;
+  purpose?: unknown;
+}
+
+/** The optional JSON body of a start: `{ mode?, purpose? }`. */
+async function readStartBody(c: AdminContext): Promise<StartBody | Response> {
   try {
     const text = await c.req.text();
-    body = text ? (JSON.parse(text) as unknown) : null;
+    const body = text ? (JSON.parse(text) as unknown) : {};
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+      return refuse(c, 400, 'invalid_request');
+    }
+    return body as StartBody;
   } catch {
     return refuse(c, 400, 'invalid_request');
   }
-  const mode = (body as { mode?: unknown } | null)?.mode;
+}
+
+async function requestedTransport(
+  c: AdminContext,
+  auth: HumanSession,
+  body: StartBody
+): Promise<Transport | Response> {
+  const mode = body.mode;
   if (mode === undefined || mode === 'direct_post') return { mode: 'direct_post' };
   if (mode !== 'dc_api') return refuse(c, 400, 'invalid_request');
   if (!(await keyringDcApiEnabled(c.env, auth.sessionTenantId))) {
@@ -306,12 +323,7 @@ async function adminCredentialIsActive(
   // This route acts outside any selected tenant: the core database is the admin's home tenant's.
   const context = await resolveTenantMetadataContext(c.env, tenantId);
   const coreAdapter = ensureDatabaseAdapter(context.coreDb, 'admin-keyring-factor');
-  const row = await coreAdapter.queryOne<{ status: string }>(
-    `SELECT status FROM issued_credentials
-      WHERE tenant_id = ? AND public_id = ? AND user_id = ? AND credential_type = ?`,
-    [tenantId, credentialId, adminUserId, ADMIN_CREDENTIAL_TYPE]
-  );
-  return row?.status === 'active';
+  return isActiveOwnAdminCredential(coreAdapter, tenantId, adminUserId, credentialId);
 }
 
 /**
@@ -322,7 +334,9 @@ myKeyringFactorRouter.post('/step-up', async (c) => {
   const auth = humanSession(c.get('adminAuth'));
   if (!auth) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
   try {
-    const transport = await requestedTransport(c, auth);
+    const body = await readStartBody(c);
+    if (body instanceof Response) return body;
+    const transport = await requestedTransport(c, auth, body);
     if (transport instanceof Response) return transport;
     const started = await prepareStart(c, auth);
     if (started instanceof Response) return started;
@@ -396,6 +410,43 @@ async function completeStepUp(c: AdminContext): Promise<Response> {
   }
 }
 
+/**
+ * A verified recovery presentation: the holder key is filed as the new second factor of a
+ * recovery request (the waiting period, notices and completion are the request's), answered in
+ * the shape of a presentation's progress.
+ */
+async function fileKeyringRecovery(
+  c: AdminContext,
+  auth: HumanSession,
+  result: AdminPresentationResult
+): Promise<Response> {
+  // The fresh passkey the request rests on must still be fresh when it is filed.
+  if (evaluateAdminStepUpEvidence(auth, 'L1', Date.now()).missing.length > 0) {
+    return c.json({ status: 'failed', error: 'admin_fresh_auth_required' }, 403);
+  }
+  const filed = await fileRecoveryRequest(c, auth, {
+    kind: 'keyring_holder_key',
+    holder_jkt: result.holderJkt,
+    admin_credential_id: result.credentialId,
+    label: KEYRING_LABEL,
+  });
+  const body = (await filed.json().catch(() => null)) as {
+    recovery?: unknown;
+    error?: unknown;
+  } | null;
+  setNoStore(c);
+  if (filed.ok && body?.recovery) {
+    return c.json({ status: 'verified', recovery: body.recovery }, 201);
+  }
+  return c.json(
+    {
+      status: 'failed',
+      error: typeof body?.error === 'string' ? body.error : 'recovery_failed',
+    },
+    filed.status as 403 | 409 | 500 | 503
+  );
+}
+
 myKeyringFactorRouter.get('/step-up/:id', (c) => completeStepUp(c));
 myKeyringFactorRouter.post('/step-up/:id/response', (c) =>
   submitBrowserAnswer(c, () => completeStepUp(c))
@@ -406,17 +457,44 @@ myKeyringFactorRouter.post('/step-up/:id/response', (c) =>
  * Starts a presentation that registers the holder key of the admin's Keyring credential. Like a
  * security key: an L2 receipt (admin.second_factor.add) once a factor is active, a fresh passkey
  * inside the first-enrollment window, otherwise recovery.
+ *
+ * With `purpose: 'recovery'` the key is for a recovery request instead: a fresh passkey and the
+ * same checks as a security key's recovery request (another admin exists, none is open, email can
+ * be delivered); the request is filed once the presentation is verified.
  */
 myKeyringFactorRouter.post('/enroll', async (c) => {
   const auth = humanSession(c.get('adminAuth'));
   if (!auth) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
   try {
-    const transport = await requestedTransport(c, auth);
+    const body = await readStartBody(c);
+    if (body instanceof Response) return body;
+    if (body.purpose !== undefined && body.purpose !== 'recovery') {
+      return refuse(c, 400, 'invalid_request');
+    }
+    const transport = await requestedTransport(c, auth, body);
     if (transport instanceof Response) return transport;
     const started = await prepareStart(c, auth);
     if (started instanceof Response) return started;
-    const repo = new AdminSecondFactorRepository(adminAdapter(c));
+    const adapter = adminAdapter(c);
+    const repo = new AdminSecondFactorRepository(adapter);
     const now = Date.now();
+    // Every holder key ever registered (revoked ones included) is refused again.
+    const registered = (await repo.listByUser(auth.userId)).flatMap((factor) =>
+      factor.holder_jkt ? [factor.holder_jkt] : []
+    );
+    if (body.purpose === 'recovery') {
+      const refused = await refuseRecoveryRequest(c, auth, adapter, now);
+      if (refused) return refused;
+      return startPresentation(
+        c,
+        auth,
+        started,
+        'enroll',
+        registered,
+        { mode: 'recovery', approving_factor_id: null },
+        transport
+      );
+    }
     const state = await enrollmentState(repo, auth.userId, now);
     if (state.mode === 'recovery_required') {
       return c.json(
@@ -446,10 +524,6 @@ myKeyringFactorRouter.post('/enroll', async (c) => {
       );
       if (refused) return refused;
     }
-    // Every holder key ever registered (revoked ones included) is refused again.
-    const registered = (await repo.listByUser(auth.userId)).flatMap((factor) =>
-      factor.holder_jkt ? [factor.holder_jkt] : []
-    );
     return startPresentation(
       c,
       auth,
@@ -483,6 +557,7 @@ async function completeEnroll(c: AdminContext): Promise<Response> {
     if (outcome instanceof Response) return outcome;
     const { result } = outcome;
     const mode = result.context.mode;
+    if (mode === 'recovery') return fileKeyringRecovery(c, auth, result);
     if (mode !== 'first' && mode !== 'step_up') {
       return c.json({ status: 'failed', error: 'invalid_enrollment' });
     }

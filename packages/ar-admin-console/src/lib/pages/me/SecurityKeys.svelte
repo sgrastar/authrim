@@ -134,25 +134,37 @@
 
 	// Registering Keyring: an L2 step-up (or the first-enrollment rule) when the request starts,
 	// then the presentation from Keyring; the server registers the key once it is verified.
+	// For recovery the same presentation files a recovery request (a fresh passkey, no step-up).
 	let enrolling = $state<KeyringPresentationFlow | null>(null);
+	let keyringPurpose = $state<'enroll' | 'recovery'>('enroll');
 
-	function openKeyring() {
+	function openKeyring(purpose: 'enroll' | 'recovery' = 'enroll') {
 		enrolling?.destroy();
+		keyringPurpose = purpose;
+		const recovering = purpose === 'recovery';
 		const flow = new KeyringPresentationFlow({
-			start: () => withStepUp((receipt) => keyring.startEnroll(receipt)),
+			start: () =>
+				withStepUp((receipt) =>
+					recovering ? keyring.startRecovery() : keyring.startEnroll(receipt)
+				),
 			progress: (id) => keyring.enrollProgress(id),
 			// Through the browser when the platform allows it and the browser can; the QR code stays.
 			...(keyState?.keyring?.dc_api && browserSupportsDigitalCredentials()
 				? {
 						browser: {
-							start: () => withStepUp((receipt) => keyring.startEnrollInBrowser(receipt)),
+							start: () =>
+								withStepUp((receipt) =>
+									recovering
+										? keyring.startRecoveryInBrowser()
+										: keyring.startEnrollInBrowser(receipt)
+								),
 							submit: (id: string, data: unknown) => keyring.submitEnroll(id, data)
 						}
 					}
 				: {}),
 			onverified: () => {
 				closeKeyring();
-				toast.success(t('kp.enroll.added'));
+				toast.success(t(recovering ? 'sk.recoveryFiled' : 'kp.enroll.added'));
 				void load();
 			}
 		});
@@ -238,7 +250,7 @@
 	{#snippet actions()}
 		{#if loadState === 'ready' && keyState?.enrollment.mode !== 'recovery_required' && !recovery}
 			<InlineGroup>
-				<Button icon="plus" size="sm" onclick={openKeyring}>{t('kp.enroll.add')}</Button>
+				<Button icon="plus" size="sm" onclick={() => openKeyring()}>{t('kp.enroll.add')}</Button>
 				<Button icon="plus" size="sm" onclick={() => openAdd('key')}>{t('sk.add')}</Button>
 			</InlineGroup>
 		{/if}
@@ -284,7 +296,12 @@
 			{:else if keyState.enrollment.mode === 'recovery_required'}
 				<Callout tone="warning" title={t('sk.recoveryNeeded.title')}>
 					<p>{t('sk.recoveryNeeded.body')}</p>
-					<Button size="sm" onclick={() => openAdd('recovery')}>{t('sk.recover')}</Button>
+					<InlineGroup>
+						<Button size="sm" onclick={() => openAdd('recovery')}>{t('sk.recover')}</Button>
+						<Button size="sm" onclick={() => openKeyring('recovery')}>
+							{t('kp.recover.add')}
+						</Button>
+					</InlineGroup>
 				</Callout>
 			{/if}
 
@@ -324,6 +341,9 @@
 					<Button size="sm" variant="ghost" onclick={() => openAdd('recovery')}>
 						{t('sk.recover')}
 					</Button>
+					<Button size="sm" variant="ghost" onclick={() => openKeyring('recovery')}>
+						{t('kp.recover.add')}
+					</Button>
 				</div>
 			{/if}
 		</div>
@@ -351,8 +371,10 @@
 
 <KeyringPresentationDialog
 	open={enrolling !== null}
-	title={t('kp.enroll.title')}
-	description={`${t('kp.enroll.body')} ${t('kp.enroll.needCredential')}`}
+	title={t(keyringPurpose === 'recovery' ? 'kp.recover.title' : 'kp.enroll.title')}
+	description={`${t(keyringPurpose === 'recovery' ? 'kp.recover.body' : 'kp.enroll.body')} ${t(
+		'kp.enroll.needCredential'
+	)}`}
 	flow={enrolling}
 	onretry={() => void enrolling?.start()}
 	onqr={() => void enrolling?.start({ qr: true })}
@@ -390,6 +412,8 @@
 
 	.recover-link {
 		display: flex;
+		flex-wrap: wrap;
 		justify-content: flex-end;
+		gap: var(--space-related);
 	}
 </style>

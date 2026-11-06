@@ -81,6 +81,8 @@ export function createFakeKeyringFactor(
 		startStepUpInBrowser: startInBrowser,
 		submitStepUp: submit,
 		startEnrollInBrowser: startInBrowser,
-		submitEnroll: submit
+		submitEnroll: submit,
+		startRecovery: () => start(),
+		startRecoveryInBrowser: () => startInBrowser()
 	};
 }

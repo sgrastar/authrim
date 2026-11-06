@@ -68,6 +68,7 @@ export const deSecurityKeys: Record<keyof typeof jaSecurityKeys, string> = {
 	'sk.others.info':
 		'Administratoren dieses Mandanten möchten ihre Sicherheitsschlüssel ersetzen. Ziehen Sie unerwartete Anträge zurück.',
 	'sk.others.admin': 'Administrator',
+	'sk.others.kind': 'Neuer Faktor',
 	'sk.others.requested': 'Beantragt',
 	'sk.others.notBefore': 'Abschluss möglich ab',
 	'sk.others.cancel': 'Zurückziehen',
