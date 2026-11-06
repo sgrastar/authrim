@@ -5,8 +5,10 @@
  */
 
 import type { Env } from '../../types';
-import { decodeBase64Url, createLogger, buildIssuerUrl } from '@authrim/ar-lib-core';
+import { decodeBase64Url, createLogger } from '@authrim/ar-lib-core';
 import { createVCConfigManager } from '../../utils/vc-config';
+import { VCI_SIGNING_ALGORITHM } from '../credential-configurations';
+import { getVciAuthorizationServer } from '../routes/metadata';
 
 const log = createLogger().module('VCI-TOKEN');
 
@@ -95,37 +97,13 @@ function resolveCNonceExpiry(env: Env): number {
   return Number.isInteger(parsed) && parsed > 0 && parsed <= 3600 ? parsed : 300;
 }
 
-function resolveExpectedIssuerIdentifier(
-  env: Env,
-  expectedTenantId: string,
-  expectedIssuerOverride?: string
-): string {
-  if (expectedIssuerOverride) {
-    return expectedIssuerOverride;
-  }
-
-  if (env.ISSUER_IDENTIFIER && !env.ISSUER_IDENTIFIER.startsWith('did:web:')) {
-    return env.ISSUER_IDENTIFIER;
-  }
-
-  try {
-    const issuerUrl = buildIssuerUrl(
-      env as unknown as Parameters<typeof buildIssuerUrl>[0],
-      requireTenantId(expectedTenantId, 'VCI issuer identifier')
-    );
-    return `did:web:${new URL(issuerUrl).hostname}`;
-  } catch {
-    return env.ISSUER_IDENTIFIER || 'did:web:authrim.com';
-  }
-}
-
 /**
  * Validate a VCI access token
  */
 export async function validateVCIAccessToken(
   env: Env,
   accessToken: string,
-  expectedIssuerOverride: string | undefined,
+  credentialIssuer: string,
   expectedTenantId: string
 ): Promise<TokenValidationResult> {
   try {
@@ -144,9 +122,9 @@ export async function validateVCIAccessToken(
     const header = JSON.parse(decodeBase64Url(parts[0])) as JWTHeader;
     const payload = JSON.parse(decodeBase64Url(parts[1])) as VCIAccessTokenPayload;
 
-    // Check expiration
+    // Check expiration (always present on tokens signed by KeyManager)
     const now = Math.floor(Date.now() / 1000);
-    if (payload.exp && payload.exp < now) {
+    if (typeof payload.exp !== 'number' || payload.exp < now) {
       return { valid: false, error: 'Token expired' };
     }
 
@@ -156,21 +134,12 @@ export async function validateVCIAccessToken(
       return { valid: false, error: 'Token not yet valid' };
     }
 
-    // Validate issuer (should be our auth server)
-    const expectedIssuer = resolveExpectedIssuerIdentifier(
-      env,
-      normalizedExpectedTenantId,
-      expectedIssuerOverride
-    );
-    // Allow issuer to be URL or DID format
-    if (payload.iss !== expectedIssuer) {
+    // Issued by the pre-authorized AS for this Credential Issuer only.
+    if (payload.iss !== getVciAuthorizationServer(credentialIssuer)) {
       return { valid: false, error: 'Invalid issuer' };
     }
-
-    // Validate audience (should include this VCI endpoint)
     const aud = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
-    const vciAudience = `${expectedIssuer}/vci`;
-    if (!aud.some((a) => a === vciAudience || a === expectedIssuer)) {
+    if (aud.length !== 1 || aud[0] !== credentialIssuer) {
       return { valid: false, error: 'Invalid audience' };
     }
 
@@ -231,19 +200,16 @@ async function verifyTokenSignature(
     // local so this helper cannot later turn an untrusted JWT iss claim into a JWKS fetch target.
     const tenantId = requireTenantId(expectedTenantId, 'VCI access token signature');
     const doId = env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
-    const stub = env.KEY_MANAGER.get(doId);
+    // Over RPC: the KeyManager's HTTP `/ec/jwks` requires the internal secret. The VC issuer set
+    // also holds keys retained after rotation and never revoked ones.
+    const stub = env.KEY_MANAGER.get(doId) as unknown as {
+      getVcIssuerJwksRpc(): Promise<{ keys: Array<{ kid?: string; kty: string }> }>;
+    };
+    // KeyManager always signs VCI access tokens with a kid; without one the key is ambiguous.
+    if (typeof header.kid !== 'string' || !header.kid) return false;
+    const jwks = await stub.getVcIssuerJwksRpc();
 
-    const jwksResponse = await stub.fetch(new Request('https://internal/ec/jwks'));
-    if (!jwksResponse.ok) {
-      log.error('Failed to get JWKS from KeyManager', {});
-      return false;
-    }
-
-    const jwks = (await jwksResponse.json()) as { keys: Array<{ kid?: string; kty: string }> };
-
-    const key = header.kid
-      ? jwks.keys.find((k) => k.kid === header.kid)
-      : jwks.keys.find((k) => k.kty === 'EC');
+    const key = jwks.keys.find((k) => k.kid === header.kid);
 
     if (!key) {
       log.error('Signing key not found in JWKS', {});
@@ -299,8 +265,8 @@ export async function validateProofOfPossession(
       return { valid: false, error: 'Invalid typ header' };
     }
 
-    // Validate algorithm (HAIP requires ES256, ES384, or ES512)
-    if (!['ES256', 'ES384', 'ES512'].includes(header.alg)) {
+    // Only the advertised proof algorithm (proof_signing_alg_values_supported)
+    if (header.alg !== VCI_SIGNING_ALGORITHM) {
       return { valid: false, error: 'Unsupported algorithm' };
     }
 
@@ -330,6 +296,10 @@ export async function validateProofOfPossession(
     const validityPeriod = await configManager.getPopValiditySeconds();
 
     const now = Math.floor(Date.now() / 1000);
+    // iat is REQUIRED in the proof; a missing value would slip past both comparisons.
+    if (typeof payload.iat !== 'number' || !Number.isFinite(payload.iat)) {
+      return { valid: false, error: 'Missing iat' };
+    }
     if (payload.iat > now + clockSkew) {
       return { valid: false, error: 'Proof issued in the future' };
     }

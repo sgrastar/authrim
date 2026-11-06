@@ -100,6 +100,7 @@ describe('navigation model', () => {
 	it('keeps personal settings outside the navigation', () => {
 		expect(isStandalonePath('/admin/me')).toBe(true);
 		expect(isStandalonePath('/admin/me/')).toBe(true);
+		expect(isStandalonePath('/admin/me/keyring')).toBe(true);
 		expect(isStandalonePath('/admin/users')).toBe(false);
 		expect(resolveNavPath('/admin/me')).toBeNull();
 		expect(allNavHrefs()).not.toContain('/admin/me');

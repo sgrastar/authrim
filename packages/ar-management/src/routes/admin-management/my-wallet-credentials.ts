@@ -1,0 +1,279 @@
+/**
+ * My wallet credential API
+ *
+ * Self-service issuance of the signed-in admin's own admin credential into a wallet
+ * (admin credential design D4/D5). The subject is always the caller.
+ *
+ * Endpoints:
+ * - POST /api/admin/me/wallet-credentials/offers          - Create an offer (fresh authentication)
+ * - GET  /api/admin/me/wallet-credentials/offers/:offerId - Offer progress for the console
+ * - GET  /api/admin/me/wallet-credentials                 - The caller's own admin credentials
+ * - POST /api/admin/me/wallet-credentials/:credentialId/revoke - Revoke one (fresh authentication,
+ *   then an L2 step-up: admin_credential.revoke)
+ */
+
+import { Hono } from 'hono';
+import type { Context } from 'hono';
+import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
+import {
+  adminAuthMiddleware,
+  createAuthContextFromHono,
+  evaluateAdminCredentialEligibility,
+  getRateLimitProfileAsync,
+  getTenantIdFromContext,
+  rateLimitMiddleware,
+  requiredIdempotencyMiddleware,
+  requireDedicatedAdminDatabaseAdapter,
+} from '@authrim/ar-lib-core';
+import { writeAdminAuditLog } from '../../admin-shared';
+import { isFreshAdminHuman } from '../../agent-fresh-auth';
+import { requireAdminStepUp } from '../../admin-step-up-gate';
+import { getCanonicalTenantBaseUrlAsync } from '../../request-issuer';
+import {
+  isOwnAdminCredential,
+  listOwnAdminCredentials,
+  revokeAdminCredential,
+} from './admin-wallet-credential-store';
+
+type WalletContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
+
+interface SessionRow {
+  tenant_id: string;
+  derived_target_tenant_id: string | null;
+}
+
+const CREDENTIAL_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
+const OFFER_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
+
+export const myWalletCredentialsRouter = new Hono<{
+  Bindings: Env;
+  Variables: { adminAuth?: AdminAuthContext };
+}>();
+
+myWalletCredentialsRouter.use('*', adminAuthMiddleware({}));
+
+function refuse(c: WalletContext, error: string, status: 403 | 404 | 503) {
+  c.header('Cache-Control', 'no-store');
+  return c.json({ error }, status);
+}
+
+/**
+ * The caller must be a human on a stored, non-derived session whose tenant is the request tenant
+ * and the admin's home tenant. `adminAuth.tenantId` is rewritten to the request tenant, so the
+ * stored session row is what proves it.
+ */
+async function resolveHome(
+  c: WalletContext
+): Promise<{ tenantId: string; adminUserId: string } | Response> {
+  const auth = c.get('adminAuth');
+  if (
+    !auth ||
+    auth.authMethod !== 'session' ||
+    (auth.actorType && auth.actorType !== 'human') ||
+    !auth.sessionId ||
+    !auth.userId
+  ) {
+    return refuse(c, 'wallet_credential_session_required', 403);
+  }
+  const tenantId = getTenantIdFromContext(c);
+  const adapter = requireDedicatedAdminDatabaseAdapter(c.env, 'admin-wallet-credential');
+  const session = await adapter.queryOne<SessionRow>(
+    `SELECT tenant_id, derived_target_tenant_id
+       FROM admin_sessions
+      WHERE id = ? AND admin_user_id = ? AND expires_at > ?`,
+    [auth.sessionId, auth.userId, Date.now()]
+  );
+  if (!session || session.derived_target_tenant_id !== null || session.tenant_id !== tenantId) {
+    return refuse(c, 'wallet_credential_home_session_required', 403);
+  }
+  const home = await adapter.queryOne<{ tenant_id: string }>(
+    'SELECT tenant_id FROM admin_users WHERE id = ?',
+    [auth.userId]
+  );
+  if (!home || home.tenant_id !== tenantId) {
+    return refuse(c, 'wallet_credential_home_session_required', 403);
+  }
+  return { tenantId, adminUserId: auth.userId };
+}
+
+myWalletCredentialsRouter.post(
+  '/offers',
+  async (c, next) => {
+    const profile = await getRateLimitProfileAsync(c.env, 'strict');
+    return rateLimitMiddleware({
+      ...profile,
+      endpoints: ['/api/admin/me/wallet-credentials/offers'],
+      endpointClass: 'mgmt_admin_wallet_credential_offer',
+    })(c as unknown as Context<{ Bindings: Env }>, next);
+  },
+  // Before the idempotency reservation, so a refusal is never replayed after re-authentication.
+  async (c, next) => {
+    const auth = c.get('adminAuth');
+    if (!auth || !isFreshAdminHuman(auth, Date.now())) {
+      return refuse(c, 'wallet_credential_fresh_auth_required', 403);
+    }
+    return next();
+  },
+  // Only the identifiers are replayed; the offer URI and the transaction code never are.
+  requiredIdempotencyMiddleware({
+    ttlSeconds: 900,
+    failClosedOnStorageError: true,
+    reserveBeforeExecution: true,
+    redactFields: ['credentialOffer', 'transactionCode'],
+  }) as never,
+  async (c) => {
+    const home = await resolveHome(c);
+    if (home instanceof Response) return home;
+
+    const adapter = requireDedicatedAdminDatabaseAdapter(c.env, 'admin-wallet-credential');
+    const eligibility = await evaluateAdminCredentialEligibility(adapter, {
+      tenantId: home.tenantId,
+      adminUserId: home.adminUserId,
+      now: Date.now(),
+    });
+    if (!eligibility.eligible) {
+      return refuse(c, 'wallet_credential_not_eligible', 403);
+    }
+    if (!c.env.VC_ISSUER) {
+      return refuse(c, 'wallet_credential_unavailable', 503);
+    }
+    const canonicalIssuer = new URL(await getCanonicalTenantBaseUrlAsync(c.env, home.tenantId));
+    if (canonicalIssuer.protocol !== 'https:') {
+      return refuse(c, 'wallet_credential_unavailable', 503);
+    }
+
+    const offer = await c.env.VC_ISSUER.createAdminCredentialOffer({
+      tenantId: home.tenantId,
+      adminUserId: home.adminUserId,
+      credentialIssuer: canonicalIssuer.origin,
+    });
+
+    // The offer id only: neither the offer URI nor the transaction code is ever logged.
+    await writeAdminAuditLog(c, {
+      action: 'admin_wallet_credential.offer_created',
+      resourceType: 'admin_wallet_credential_offer',
+      resourceId: offer.offerId,
+      result: 'success',
+      metadata: { offer_id: offer.offerId },
+    });
+
+    c.header('Cache-Control', 'no-store');
+    return c.json(
+      {
+        offerId: offer.offerId,
+        credentialOffer: offer.credentialOffer,
+        transactionCode: offer.transactionCode,
+        expiresAt: offer.expiresAt,
+      },
+      201
+    );
+  }
+);
+
+myWalletCredentialsRouter.get('/offers/:offerId', async (c) => {
+  const home = await resolveHome(c);
+  if (home instanceof Response) return home;
+  const offerId = c.req.param('offerId');
+  if (!OFFER_ID_PATTERN.test(offerId)) {
+    return refuse(c, 'not_found', 404);
+  }
+  if (!c.env.VC_ISSUER) {
+    return refuse(c, 'wallet_credential_unavailable', 503);
+  }
+  const status = await c.env.VC_ISSUER.getAdminCredentialOfferStatus({
+    tenantId: home.tenantId,
+    adminUserId: home.adminUserId,
+    offerId,
+  });
+  if (!status) {
+    return refuse(c, 'not_found', 404);
+  }
+  c.header('Cache-Control', 'no-store');
+  return c.json(status);
+});
+
+myWalletCredentialsRouter.get('/', async (c) => {
+  const home = await resolveHome(c);
+  if (home instanceof Response) return home;
+  const adapter = createAuthContextFromHono(
+    c as unknown as Context<{ Bindings: Env }>,
+    home.tenantId
+  ).coreAdapter;
+  const items = await listOwnAdminCredentials(adapter, home.tenantId, home.adminUserId);
+  c.header('Cache-Control', 'no-store');
+  return c.json({ items });
+});
+
+myWalletCredentialsRouter.post(
+  '/:credentialId/revoke',
+  async (c, next) => {
+    const profile = await getRateLimitProfileAsync(c.env, 'strict');
+    return rateLimitMiddleware({
+      ...profile,
+      endpoints: ['/api/admin/me/wallet-credentials/*/revoke'],
+      endpointClass: 'mgmt_admin_wallet_credential_revoke',
+    })(c as unknown as Context<{ Bindings: Env }>, next);
+  },
+  // Before the idempotency reservation, so a refusal is never replayed after re-authentication.
+  async (c, next) => {
+    const auth = c.get('adminAuth');
+    if (!auth || !isFreshAdminHuman(auth, Date.now())) {
+      return refuse(c, 'wallet_credential_fresh_auth_required', 403);
+    }
+    return next();
+  },
+  requiredIdempotencyMiddleware({
+    ttlSeconds: 900,
+    failClosedOnStorageError: true,
+    reserveBeforeExecution: true,
+  }) as never,
+  async (c) => {
+    const home = await resolveHome(c);
+    if (home instanceof Response) return home;
+    const credentialId = c.req.param('credentialId');
+    if (!CREDENTIAL_ID_PATTERN.test(credentialId)) {
+      return refuse(c, 'not_found', 404);
+    }
+
+    const adapter = createAuthContextFromHono(
+      c as unknown as Context<{ Bindings: Env }>,
+      home.tenantId
+    ).coreAdapter;
+    // Another admin's credential, or one of another type, is indistinguishable from none.
+    if (!(await isOwnAdminCredential(adapter, home.tenantId, home.adminUserId, credentialId))) {
+      return refuse(c, 'not_found', 404);
+    }
+
+    // The receipt is spent here, after every check that can still refuse the request.
+    const stepUpRefused = await requireAdminStepUp(c as never, {
+      operation: 'admin_credential.revoke',
+      targetTenantId: home.tenantId,
+      targetIds: [home.adminUserId, credentialId],
+      params: { scope: 'own_wallet_credential' },
+    });
+    if (stepUpRefused) return stepUpRefused;
+
+    const outcome = await revokeAdminCredential(adapter, home.tenantId, credentialId);
+    if (outcome === 'not_found') return refuse(c, 'not_found', 404);
+    if (outcome === 'conflict' || outcome === 'error') {
+      c.header('Retry-After', '1');
+      return refuse(c, 'wallet_credential_unavailable', 503);
+    }
+    if (outcome === 'not_allowed') {
+      c.header('Cache-Control', 'no-store');
+      return c.json({ error: 'wallet_credential_not_revocable' }, 409);
+    }
+
+    // Only the credential id: nothing about the key or the claims.
+    await writeAdminAuditLog(c, {
+      action: 'admin_wallet_credential.revoked',
+      resourceType: 'admin_wallet_credential',
+      resourceId: credentialId,
+      result: 'success',
+      metadata: { credential_id: credentialId },
+    });
+
+    c.header('Cache-Control', 'no-store');
+    return c.json({ id: credentialId, status: 'revoked' });
+  }
+);

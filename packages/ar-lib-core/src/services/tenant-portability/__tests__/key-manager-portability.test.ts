@@ -3,6 +3,7 @@ import { expect, it } from 'vitest';
 import {
   keyManagerTenantBackupSnapshotIsEmpty,
   keyManagerTenantBackupSnapshotsEqual,
+  MAX_RETIRED_PUBLIC_KEYS,
   normalizeKeyManagerTenantBackupSnapshot,
   type KeyManagerTenantBackupSnapshot,
   type PortableECAlgorithm,
@@ -196,4 +197,34 @@ it('rejects an encryption key whose private key does not decrypt for its public 
       },
     })
   ).rejects.toThrow('backup_key_manager_snapshot_invalid');
+});
+
+it('carries more retained VC public keys than live keys, up to the retention cap', async () => {
+  const pair = await generateKeyPair('ES256', { extractable: true });
+  const { kty, crv, x, y } = await exportJWK(pair.publicKey);
+  const retained = (count: number) =>
+    Array.from({ length: count }, (_, index) => {
+      const kid = `retired-${index}`;
+      return {
+        kid,
+        algorithm: 'ES256' as const,
+        publicJWK: { kid, kty, crv, x, y, alg: 'ES256', use: 'sig' },
+        retiredAt: 100 + index,
+        retainUntil: 100 + index + 365 * 24 * 60 * 60 * 1000,
+      };
+    });
+  const base = await snapshot();
+
+  const normalized = await normalizeKeyManagerTenantBackupSnapshot({
+    ...base,
+    vcEc: { ...base.vcEc, retiredPublicKeys: retained(MAX_RETIRED_PUBLIC_KEYS) },
+  });
+  expect(normalized.vcEc.retiredPublicKeys).toHaveLength(MAX_RETIRED_PUBLIC_KEYS);
+
+  await expect(
+    normalizeKeyManagerTenantBackupSnapshot({
+      ...base,
+      vcEc: { ...base.vcEc, retiredPublicKeys: retained(MAX_RETIRED_PUBLIC_KEYS + 1) },
+    })
+  ).rejects.toThrow();
 });

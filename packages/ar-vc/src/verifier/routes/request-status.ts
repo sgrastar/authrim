@@ -9,6 +9,7 @@
  * - Self-routing: shard info embedded in ID, no external lookup needed
  */
 
+import { isConfiguredShard } from '../../utils/configured-shard';
 import type { Context } from 'hono';
 import type { Env } from '../../types';
 import { getVPRequestStoreById } from '../../utils/vp-request-sharding';
@@ -43,9 +44,11 @@ export async function vpRequestStatusRoute(c: Context<{ Bindings: Env }>): Promi
 
     // Get DO stub using region-aware sharding (self-routing from ID)
     // Request ID format: g{gen}:{region}:{shard}:vp_{uuid}
-    const { stub } = getVPRequestStoreById(c.env, requestId, getTenantIdFromContext(c));
-
     const tenantId = getTenantIdFromContext(c);
+    const { stub, resolution } = getVPRequestStoreById(c.env, requestId, tenantId);
+    if (!(await isConfiguredShard(c.env, tenantId, resolution))) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
     const response = await stub.fetch(
       new Request('https://internal/status', {
         method: 'POST',

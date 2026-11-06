@@ -324,6 +324,7 @@ import {
   adminSigningKeysStatusHandler,
   adminSigningKeysRotateHandler,
   adminSigningKeysEmergencyRotateHandler,
+  adminVcIssuerKeyRevokeHandler,
 } from './signing-keys';
 import { introspectHandler } from './introspect';
 import {
@@ -2339,6 +2340,7 @@ app.delete('/api/admin/users/:userId/refresh-tokens', revokeAllUserRefreshTokens
 app.get('/api/admin/signing-keys/status', adminSigningKeysStatusHandler);
 app.post('/api/admin/signing-keys/rotate', adminSigningKeysRotateHandler);
 app.post('/api/admin/signing-keys/emergency-rotate', adminSigningKeysEmergencyRotateHandler);
+app.post('/api/admin/signing-keys/vc/:kid/revoke', adminVcIssuerKeyRevokeHandler);
 
 // Admin SCIM Token Management endpoints
 app.get('/api/admin/scim-tokens', adminScimTokensListHandler);
@@ -4905,7 +4907,10 @@ export const SAML_DR_COORDINATOR_SURFACES = [
   'test.run-scheduled',
   'fetch.replication-export-control',
 ] as const;
-export const SAML_DR_READ_ONLY_SURFACES = ['GuestUpgradeReadinessEntrypoint.read'] as const;
+export const SAML_DR_READ_ONLY_SURFACES = [
+  'AdminCredentialEligibilityEntrypoint.checkAdminCredentialEligibility',
+  'GuestUpgradeReadinessEntrypoint.read',
+] as const;
 
 // Export control must remain available while the source's business writers are drained.
 // This isolated router authenticates its own narrow, revocable export grant on every request;
@@ -4976,4 +4981,5 @@ export {
 } from './account-directory-producer';
 export { CrossShardAccountListService } from './cross-shard-account-list';
 
+export { AdminCredentialEligibilityEntrypoint } from './admin-credential-eligibility-entrypoint';
 export { GuestUpgradeReadinessEntrypoint } from './guest-upgrade-readiness-entrypoint';

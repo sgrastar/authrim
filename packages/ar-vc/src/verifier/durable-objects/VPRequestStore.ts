@@ -274,18 +274,21 @@ export class VPRequestStoreV2 extends DurableObject<Env> {
       row.expires_at
     );
     try {
-      const cursor = this.ctx.storage.sql.exec(
-        `UPDATE vp_requests SET status = 'processing', response_fingerprint = ?,
+      const updated = this.ctx.storage.sql
+        .exec(
+          `UPDATE vp_requests SET status = 'processing', response_fingerprint = ?,
          reservation_id = ?, lease_expires_at = ? WHERE id = ? AND tenant_id = ?
-         AND status = 'pending' AND expires_at > ?`,
-        fingerprint,
-        reservationId,
-        leaseExpiresAt,
-        id,
-        tenantId,
-        input.now
-      );
-      if (cursor.rowsWritten !== 1) return { reserved: false, reason: 'unavailable' };
+         AND status = 'pending' AND expires_at > ?
+       RETURNING id`,
+          fingerprint,
+          reservationId,
+          leaseExpiresAt,
+          id,
+          tenantId,
+          input.now
+        )
+        .toArray().length;
+      if (updated !== 1) return { reserved: false, reason: 'unavailable' };
       return {
         reserved: true,
         reservationId,
@@ -312,17 +315,20 @@ export class VPRequestStoreV2 extends DurableObject<Env> {
       input.verifiedClaimNames,
       extractRequestedClaimNames(row)
     );
-    const cursor = this.ctx.storage.sql.exec(
-      `UPDATE vp_requests SET status = 'verified', reservation_id = NULL,
+    const updated = this.ctx.storage.sql
+      .exec(
+        `UPDATE vp_requests SET status = 'verified', reservation_id = NULL,
        lease_expires_at = NULL, verified_claim_names_json = ?, error_code = NULL,
        error_description = NULL WHERE id = ? AND tenant_id = ? AND status = 'processing'
-       AND reservation_id = ?`,
-      minimizedClaimNames ? JSON.stringify(minimizedClaimNames) : null,
-      required(input.id, 'request_id'),
-      required(input.tenantId, 'tenant_id'),
-      required(input.reservationId, 'reservation_id')
-    );
-    return cursor.rowsWritten === 1;
+       AND reservation_id = ?
+       RETURNING id`,
+        minimizedClaimNames ? JSON.stringify(minimizedClaimNames) : null,
+        required(input.id, 'request_id'),
+        required(input.tenantId, 'tenant_id'),
+        required(input.reservationId, 'reservation_id')
+      )
+      .toArray().length;
+    return updated === 1;
   }
 
   failResponseRpc(input: {
@@ -332,30 +338,36 @@ export class VPRequestStoreV2 extends DurableObject<Env> {
     errorCode: string;
     errorDescription?: string;
   }): boolean {
-    const cursor = this.ctx.storage.sql.exec(
-      `UPDATE vp_requests SET status = 'failed', reservation_id = NULL,
+    const updated = this.ctx.storage.sql
+      .exec(
+        `UPDATE vp_requests SET status = 'failed', reservation_id = NULL,
        lease_expires_at = NULL, error_code = ?, error_description = ?
-       WHERE id = ? AND tenant_id = ? AND status = 'processing' AND reservation_id = ?`,
-      required(input.errorCode, 'error_code'),
-      input.errorDescription?.slice(0, 500) ?? null,
-      required(input.id, 'request_id'),
-      required(input.tenantId, 'tenant_id'),
-      required(input.reservationId, 'reservation_id')
-    );
-    return cursor.rowsWritten === 1;
+       WHERE id = ? AND tenant_id = ? AND status = 'processing' AND reservation_id = ?
+       RETURNING id`,
+        required(input.errorCode, 'error_code'),
+        input.errorDescription?.slice(0, 500) ?? null,
+        required(input.id, 'request_id'),
+        required(input.tenantId, 'tenant_id'),
+        required(input.reservationId, 'reservation_id')
+      )
+      .toArray().length;
+    return updated === 1;
   }
 
   releaseResponseRpc(input: { id: string; tenantId: string; reservationId: string }): boolean {
-    const cursor = this.ctx.storage.sql.exec(
-      `UPDATE vp_requests SET status = 'pending', response_fingerprint = NULL,
+    const updated = this.ctx.storage.sql
+      .exec(
+        `UPDATE vp_requests SET status = 'pending', response_fingerprint = NULL,
        reservation_id = NULL, lease_expires_at = NULL WHERE id = ? AND tenant_id = ?
-       AND status = 'processing' AND reservation_id = ? AND expires_at > ?`,
-      required(input.id, 'request_id'),
-      required(input.tenantId, 'tenant_id'),
-      required(input.reservationId, 'reservation_id'),
-      Date.now()
-    );
-    return cursor.rowsWritten === 1;
+       AND status = 'processing' AND reservation_id = ? AND expires_at > ?
+       RETURNING id`,
+        required(input.id, 'request_id'),
+        required(input.tenantId, 'tenant_id'),
+        required(input.reservationId, 'reservation_id'),
+        Date.now()
+      )
+      .toArray().length;
+    return updated === 1;
   }
 
   async alarm(): Promise<void> {

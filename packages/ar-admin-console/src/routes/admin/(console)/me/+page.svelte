@@ -307,6 +307,10 @@
 		{/if}
 	</Card>
 
+	<Card title={t('me.keyring')} description={t('me.keyringDesc')}>
+		<Button icon="plus" size="sm" href="/admin/me/keyring">{t('keyring.start.button')}</Button>
+	</Card>
+
 	<SecurityKeys client={httpSecondFactors} />
 
 	<RecoveryRequests

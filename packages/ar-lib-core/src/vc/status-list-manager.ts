@@ -1,7 +1,8 @@
 /**
  * Status List Manager
  *
- * Manages Bitstring Status List 2021 lifecycle including:
+ * Manages status list lifecycle (Token Status List for new lists, Bitstring Status List for
+ * existing ones) including:
  * - Creating new status lists
  * - Allocating indices for new credentials
  * - Updating credential status (revoke/suspend/activate)
@@ -10,7 +11,19 @@
  * @see https://w3c-ccg.github.io/vc-status-list-2021/
  */
 
-import { StatusValue, getStatusAtIndex } from './status-list';
+import { StatusValue } from './status-list';
+import {
+  IETF_TSL_FORMAT,
+  TSL_BITS,
+  W3C_BITSTRING_FORMAT,
+  bitOrderForFormat,
+  decodeStatusListBytes,
+  encodeStatusListBytes,
+  readStatusEntry,
+  statusListByteLength,
+  writeStatusEntry,
+  type StatusListFormat,
+} from './status-list-codec';
 
 /**
  * Status list states
@@ -38,6 +51,13 @@ export interface StatusListRecord {
   created_at: string;
   updated_at: string;
   sealed_at: string | null;
+  /** Encoding of `encoded_list`: existing lists are 'w3c_bitstring_v1', new ones 'ietf_tsl_v1' */
+  format: StatusListFormat;
+  /** Bits per entry (1 for W3C lists, 2 for Token Status Lists) */
+  bits: number;
+  /** Bumped by every status change; guards concurrent read-modify-write */
+  version: number;
+  last_operation_id: string | null;
 }
 
 /**
@@ -54,9 +74,13 @@ export interface IndexAllocation {
  */
 export interface StatusListRepository {
   /**
-   * Find active status list for tenant/purpose
+   * Find active status list for tenant/purpose (and format, when given)
    */
-  findActiveList(tenantId: string, purpose: StatusListPurpose): Promise<StatusListRecord | null>;
+  findActiveList(
+    tenantId: string,
+    purpose: StatusListPurpose,
+    format?: StatusListFormat
+  ): Promise<StatusListRecord | null>;
 
   /**
    * Find status list by ID
@@ -92,12 +116,12 @@ export interface StatusListRepository {
 }
 
 /**
- * Default capacity: 131072 = 16KB (1 bit per status)
+ * Default capacity: 131072 entries (16KB with 1 bit, 32KB with 2 bits per status)
  */
 const DEFAULT_CAPACITY = 131072;
 
 /**
- * Maximum supported capacity: 1048576 = 128KB (1 bit per status)
+ * Maximum supported capacity: 1048576 entries (128KB with 1 bit per status)
  */
 const MAX_CAPACITY = 1048576;
 
@@ -132,183 +156,39 @@ function generateInternalListId(): string {
   return `sli_${crypto.randomUUID().replace(/-/g, '')}`;
 }
 
-function byteCountForCapacity(capacity: number): number {
+function bitsForFormat(format: StatusListFormat): number {
+  return format === IETF_TSL_FORMAT ? TSL_BITS : 1;
+}
+
+function validateCapacity(capacity: number, format: StatusListFormat): void {
   if (!Number.isSafeInteger(capacity) || capacity < 1 || capacity > MAX_CAPACITY) {
     throw new Error(`Status list capacity must be between 1 and ${MAX_CAPACITY}`);
   }
-  return Math.ceil(capacity / 8);
+  // Slots are drawn with a CSPRNG mask, which needs a power of two.
+  if (format === IETF_TSL_FORMAT && (capacity & (capacity - 1)) !== 0) {
+    throw new Error('Token Status List capacity must be a power of two');
+  }
 }
 
-/**
- * Create an empty bitstring encoded as base64url + gzip
- */
-async function createEmptyBitstring(capacity: number): Promise<string> {
-  // Create zero-filled bitstring (capacity bits = capacity/8 bytes)
-  const byteCount = byteCountForCapacity(capacity);
-  const bitstring = new Uint8Array(byteCount);
-
-  // Compress with gzip
-  const stream = new CompressionStream('gzip');
-  const writer = stream.writable.getWriter();
-  const reader = stream.readable.getReader();
-
-  const writePromise = (async () => {
-    await writer.write(bitstring);
-    await writer.close();
-  })();
-
-  const chunks: Uint8Array[] = [];
-  const readPromise = (async () => {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      if (value) chunks.push(value);
-    }
-  })();
-
-  await Promise.all([writePromise, readPromise]);
-
-  // Concatenate chunks
-  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-  const compressed = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    compressed.set(chunk, offset);
-    offset += chunk.length;
-  }
-
-  // Encode as base64url
-  return btoa(String.fromCharCode(...compressed))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/[=]/g, '');
+function listByteLimit(list: Pick<StatusListRecord, 'capacity' | 'bits'>): number {
+  return statusListByteLength(list.capacity, list.bits);
 }
 
-/**
- * Decode base64url encoded gzip compressed bitstring
- */
-async function decodeBitstring(encoded: string, capacity: number): Promise<Uint8Array> {
-  const maxBytes = byteCountForCapacity(capacity);
-  const maxEncodedLength = Math.ceil((maxBytes * 4) / 3) + 1024;
-  if (encoded.length > maxEncodedLength) {
-    throw new Error('Encoded status list exceeds maximum size');
-  }
-
-  // Add padding if needed
-  const padded = encoded + '==='.slice(0, (4 - (encoded.length % 4)) % 4);
-  const decoded = Uint8Array.from(atob(padded.replace(/-/g, '+').replace(/_/g, '/')), (c) =>
-    c.charCodeAt(0)
-  );
-  if (decoded.length > maxBytes + 1024) {
-    throw new Error('Compressed status list exceeds maximum size');
-  }
-
-  // Check for GZIP magic bytes
-  if (decoded.length >= 2 && decoded[0] === 0x1f && decoded[1] === 0x8b) {
-    const ds = new DecompressionStream('gzip');
-    const writer = ds.writable.getWriter();
-    const reader = ds.readable.getReader();
-
-    const writePromise = (async () => {
-      await writer.write(decoded);
-      await writer.close();
-    })();
-
-    const chunks: Uint8Array[] = [];
-    let totalLength = 0;
-    const readPromise = (async () => {
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        if (!value) continue;
-        totalLength += value.length;
-        if (totalLength > maxBytes) {
-          await reader.cancel().catch(() => {});
-          throw new Error('Decoded status list exceeds maximum size');
-        }
-        chunks.push(value);
-      }
-    })();
-
-    await Promise.all([writePromise, readPromise]);
-
-    const result = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const chunk of chunks) {
-      result.set(chunk, offset);
-      offset += chunk.length;
-    }
-    return result;
-  }
-
-  if (decoded.length > maxBytes) {
-    throw new Error('Decoded status list exceeds maximum size');
-  }
-
-  return decoded;
-}
-
-/**
- * Encode bitstring as base64url + gzip
- */
-async function encodeBitstring(bitstring: Uint8Array): Promise<string> {
-  const stream = new CompressionStream('gzip');
-  const writer = stream.writable.getWriter();
-  const reader = stream.readable.getReader();
-
-  const writePromise = (async () => {
-    await writer.write(bitstring);
-    await writer.close();
-  })();
-
-  const chunks: Uint8Array[] = [];
-  const readPromise = (async () => {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      if (value) chunks.push(value);
-    }
-  })();
-
-  await Promise.all([writePromise, readPromise]);
-
-  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-  const compressed = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    compressed.set(chunk, offset);
-    offset += chunk.length;
-  }
-
-  return btoa(String.fromCharCode(...compressed))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/[=]/g, '');
+/** Records written before the format columns existed read as W3C Bitstring lists */
+function listFormat(list: Pick<StatusListRecord, 'format'>): StatusListFormat {
+  return list.format ?? W3C_BITSTRING_FORMAT;
 }
 
 /**
  * Set status at a specific index in the bitstring
  */
-function setStatusAtIndex(bitstring: Uint8Array, index: number, status: StatusValue): void {
-  // SECURITY: Validate index is a non-negative integer
-  if (!Number.isInteger(index) || index < 0) {
-    throw new Error(`Index must be a non-negative integer, got: ${index}`);
-  }
-
-  const byteIndex = Math.floor(index / 8);
-  const bitPosition = 7 - (index % 8); // MSB first
-
-  if (byteIndex >= bitstring.length) {
-    throw new Error(`Index ${index} out of bounds (max: ${bitstring.length * 8 - 1})`);
-  }
-
-  if (status === StatusValue.VALID) {
-    // Clear bit (set to 0)
-    bitstring[byteIndex] &= ~(1 << bitPosition);
-  } else {
-    // Set bit (set to 1)
-    bitstring[byteIndex] |= 1 << bitPosition;
-  }
+function setStatusAtIndex(
+  bitstring: Uint8Array,
+  index: number,
+  list: Pick<StatusListRecord, 'format' | 'bits'>,
+  status: StatusValue
+): void {
+  writeStatusEntry(bitstring, index, list.bits ?? 1, bitOrderForFormat(listFormat(list)), status);
 }
 
 /**
@@ -327,17 +207,24 @@ export class StatusListManager {
    *
    * @param tenantId - Tenant identifier
    * @param purpose - 'revocation' or 'suspension'
-   * @param capacity - Maximum number of entries (default: 131072)
+   * @param capacity - Maximum number of entries (default: 131072; a power of two for Token Status Lists)
+   * @param format - 'ietf_tsl_v1' (default, 2 bits per entry) or 'w3c_bitstring_v1' (legacy)
    * @returns Created status list record
    */
   async createStatusList(
     tenantId: string,
     purpose: StatusListPurpose,
-    capacity: number = DEFAULT_CAPACITY
+    capacity: number = DEFAULT_CAPACITY,
+    format: StatusListFormat = IETF_TSL_FORMAT
   ): Promise<StatusListRecord> {
+    validateCapacity(capacity, format);
+    const bits = bitsForFormat(format);
     const listId = generateListId(tenantId, purpose);
     const internalId = generateInternalListId();
-    const encodedList = await createEmptyBitstring(capacity);
+    const encodedList = await encodeStatusListBytes(
+      new Uint8Array(statusListByteLength(capacity, bits)),
+      format
+    );
     const now = new Date().toISOString();
 
     const record: Omit<StatusListRecord, 'created_at' | 'updated_at'> = {
@@ -351,6 +238,10 @@ export class StatusListManager {
       used_count: 0,
       state: 'active',
       sealed_at: null,
+      format,
+      bits,
+      version: 0,
+      last_operation_id: null,
     };
 
     await this.repository.create(record);
@@ -363,7 +254,10 @@ export class StatusListManager {
   }
 
   /**
-   * Allocate an index for a new credential
+   * Allocate the next sequential index of a legacy W3C Bitstring list.
+   *
+   * New credentials use `reserveCredentialStatusSlot` (unpredictable index on a Token Status
+   * List); this stays for existing W3C lists.
    *
    * Automatically creates a new list if none exists,
    * or rotates to a new list if the current one is full.
@@ -421,16 +315,21 @@ export class StatusListManager {
     purpose: StatusListPurpose
   ): Promise<IndexAllocation> {
     // Find active list
-    let activeList = await this.repository.findActiveList(tenantId, purpose);
+    let activeList = await this.repository.findActiveList(tenantId, purpose, W3C_BITSTRING_FORMAT);
 
     // Create new list if none exists
     if (!activeList) {
       try {
-        activeList = await this.createStatusList(tenantId, purpose);
+        activeList = await this.createStatusList(
+          tenantId,
+          purpose,
+          DEFAULT_CAPACITY,
+          W3C_BITSTRING_FORMAT
+        );
       } catch (error) {
         // Race condition: another process may have created the list
         // Try to find the newly created list
-        activeList = await this.repository.findActiveList(tenantId, purpose);
+        activeList = await this.repository.findActiveList(tenantId, purpose, W3C_BITSTRING_FORMAT);
         if (!activeList) {
           throw new StatusListAllocationError(
             `Failed to create or find active list: ${error instanceof Error ? error.message : 'Unknown'}`,
@@ -453,7 +352,12 @@ export class StatusListManager {
       }
 
       // Create new list
-      activeList = await this.createStatusList(tenantId, purpose);
+      activeList = await this.createStatusList(
+        tenantId,
+        purpose,
+        DEFAULT_CAPACITY,
+        W3C_BITSTRING_FORMAT
+      );
     }
 
     // Atomically increment used_count and get the new index
@@ -505,13 +409,17 @@ export class StatusListManager {
     }
 
     // Decode bitstring
-    const bitstring = await decodeBitstring(list.encoded_list, list.capacity);
+    const bitstring = await decodeStatusListBytes(
+      list.encoded_list,
+      listFormat(list),
+      listByteLimit({ capacity: list.capacity, bits: list.bits ?? 1 })
+    );
 
     // Update status
-    setStatusAtIndex(bitstring, index, status);
+    setStatusAtIndex(bitstring, index, list, status);
 
     // Re-encode and save
-    const encodedList = await encodeBitstring(bitstring);
+    const encodedList = await encodeStatusListBytes(bitstring, listFormat(list));
     await this.repository.update(tenantId, listId, { encoded_list: encodedList });
   }
 
@@ -540,7 +448,7 @@ export class StatusListManager {
    * Get the encoded bitstring for a status list
    *
    * @param listId - Status list ID
-   * @returns Base64url encoded gzip compressed bitstring
+   * @returns Base64url encoded compressed bitstring (zlib for Token Status Lists, gzip for W3C)
    */
   async getEncodedList(tenantId: string, listId: string): Promise<string> {
     const list = await this.repository.findById(tenantId, listId);
@@ -580,8 +488,12 @@ export class StatusListManager {
       throw new Error(`Status list not found: ${listId}`);
     }
 
-    const bitstring = await decodeBitstring(list.encoded_list, list.capacity);
-    return getStatusAtIndex(bitstring, index);
+    const bitstring = await decodeStatusListBytes(
+      list.encoded_list,
+      listFormat(list),
+      listByteLimit({ capacity: list.capacity, bits: list.bits ?? 1 })
+    );
+    return readStatusEntry(bitstring, index, list.bits ?? 1, bitOrderForFormat(listFormat(list)));
   }
 
   /**
@@ -598,7 +510,7 @@ export class StatusListManager {
 
     // Use a hash of the encoded list as ETag
     const encoder = new TextEncoder();
-    const data = encoder.encode(list.encoded_list + list.updated_at);
+    const data = encoder.encode(`${list.encoded_list}${list.updated_at}${list.version ?? 0}`);
     const hashBuffer = await crypto.subtle.digest('SHA-256', data);
     const hashArray = Array.from(new Uint8Array(hashBuffer));
     const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');

@@ -28,13 +28,13 @@ import {
  * These run the real admin-auth middleware and the real routers on the real Admin schema.
  */
 
-function setup() {
+function setup(envExtras: Record<string, unknown> = {}) {
   return setupApp((app) => {
     app.route('/api/admin/admin-roles', adminRolesRouter);
     app.route('/api/admin/admins', adminUsersRouter);
     app.route('/api/admin/admin-invitations', adminInvitationsRouter);
     app.route('/api/admin/machine-access', machineAccessRouter);
-  });
+  }, envExtras);
 }
 
 const PUBLIC_JWK = { kty: 'EC', crv: 'P-256', x: 'x', y: 'y' };
@@ -802,7 +802,9 @@ describe('bringing a global invitation back', () => {
   });
 
   it('lets a global ar_super_admin resend it, and a tenant-limited ar_super_admin resend a tenant invitation', async () => {
-    const context = setup();
+    // The invitations are homed in TENANT; making it the deployment default keeps the D9
+    // placement policy satisfied so that only the resend authority is exercised here.
+    const context = setup({ DEFAULT_TENANT_ID: TENANT });
     insertInvitation(context, {
       id: 'global-invitation',
       roleId: 'role_ar_support',

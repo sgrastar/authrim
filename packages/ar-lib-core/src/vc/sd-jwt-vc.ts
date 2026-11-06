@@ -327,9 +327,8 @@ export async function createSDJWTVCWithSigner(
 
   // Add holder binding
   if (holderBinding) {
-    // Use JWK thumbprint for cnf
-    const thumbprint = await generateJWKThumbprint(holderBinding);
-    payload.cnf = { jkt: thumbprint };
+    // SD-JWT VC / HAIP: the holder's public key itself, so a verifier can check the KB-JWT
+    payload.cnf = { jwk: toPublicHolderJwk(holderBinding) };
   }
 
   // Add status claim
@@ -758,41 +757,13 @@ async function calculateSDHash(sdjwtvc: string): Promise<string> {
 }
 
 /**
- * Generate JWK Thumbprint (RFC 7638)
+ * Public members of a holder key (no private or extra members) for `cnf.jwk`.
  */
-async function generateJWKThumbprint(jwk: JWK): Promise<string> {
-  let thumbprintInput: string;
-
-  if (jwk.kty === 'EC') {
-    // EC key thumbprint
-    thumbprintInput = JSON.stringify({
-      crv: jwk.crv,
-      kty: jwk.kty,
-      x: jwk.x,
-      y: jwk.y,
-    });
-  } else if (jwk.kty === 'RSA') {
-    // RSA key thumbprint
-    thumbprintInput = JSON.stringify({
-      e: jwk.e,
-      kty: jwk.kty,
-      n: jwk.n,
-    });
-  } else if (jwk.kty === 'OKP') {
-    // OKP key thumbprint
-    thumbprintInput = JSON.stringify({
-      crv: jwk.crv,
-      kty: jwk.kty,
-      x: jwk.x,
-    });
-  } else {
-    throw new Error(`Unsupported key type: ${jwk.kty}`);
-  }
-
-  const encoder = new TextEncoder();
-  const data = encoder.encode(thumbprintInput);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  return base64url.encode(new Uint8Array(hashBuffer));
+function toPublicHolderJwk(jwk: JWK): JWK {
+  if (jwk.kty === 'EC') return { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y };
+  if (jwk.kty === 'OKP') return { kty: jwk.kty, crv: jwk.crv, x: jwk.x };
+  if (jwk.kty === 'RSA') return { kty: jwk.kty, n: jwk.n, e: jwk.e };
+  throw new Error(`Unsupported key type: ${jwk.kty}`);
 }
 
 /**

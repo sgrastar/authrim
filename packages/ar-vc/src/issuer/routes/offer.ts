@@ -9,18 +9,14 @@
  * - Region-aware DO placement with locationHint
  */
 
+import { isConfiguredShard, ShardConfigUnavailableError } from '../../utils/configured-shard';
 import type { Context } from 'hono';
 import type { Env } from '../../types';
 import {
   getCredentialOfferStoreById,
   parsePreAuthorizedCode,
 } from '../../utils/credential-offer-sharding';
-import {
-  createErrorResponse,
-  AR_ERROR_CODES,
-  getLogger,
-  getTenantIdFromContext,
-} from '@authrim/ar-lib-core';
+import { getLogger, getTenantIdFromContext } from '@authrim/ar-lib-core';
 import { getRequestIssuerUrl } from '../../request-identifiers';
 
 interface CredentialOffer {
@@ -52,20 +48,21 @@ export async function credentialOfferRoute(c: Context<{ Bindings: Env }>): Promi
     const offerReference = c.req.param('id');
 
     if (!offerReference) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
-        variables: { field: 'id' },
-      });
+      return offerNotFound(c);
     }
 
     // Get DO stub using region-aware sharding (self-routing from ID)
     // Offer ID format: g{gen}:{region}:{shard}:co_{uuid}
     const parsedReference = parsePreAuthorizedCode(offerReference);
     if (!parsedReference) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+      return offerNotFound(c);
     }
     const offerId = parsedReference.offerId;
     const tenantId = getTenantIdFromContext(c);
-    const { stub } = getCredentialOfferStoreById(c.env, offerId, tenantId);
+    const { stub, resolution } = getCredentialOfferStoreById(c.env, offerId, tenantId);
+    if (!(await isConfiguredShard(c.env, tenantId, resolution))) {
+      return offerNotFound(c);
+    }
 
     const response = await stub.fetch(
       new Request(
@@ -74,7 +71,7 @@ export async function credentialOfferRoute(c: Context<{ Bindings: Env }>): Promi
     );
 
     if (!response.ok) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+      return offerNotFound(c);
     }
 
     const offer = (await response.json()) as {
@@ -85,15 +82,24 @@ export async function credentialOfferRoute(c: Context<{ Bindings: Env }>): Promi
       expiresAt: number;
     };
 
-    // Check expiration
-    if (Date.now() > offer.expiresAt) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    // Expired or already used offers are indistinguishable from unknown ones
+    if (Date.now() > offer.expiresAt || offer.status !== 'pending') {
+      return offerNotFound(c);
     }
 
-    // Check status
-    if (offer.status !== 'pending') {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
-    }
+    // Progress for the offer's owner (admin console): first successful fetch only. The response
+    // is unchanged, so nothing about the owner or the state leaks to the fetching party.
+    await stub
+      .fetch(
+        new Request('https://internal/offer/fetched', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: offerId, tenantId, now: Date.now() }),
+        })
+      )
+      .catch((error: unknown) =>
+        log.warn('Failed to record credential offer fetch', {}, error as Error)
+      );
 
     // Build credential offer response
     const credentialOffer: CredentialOffer = {
@@ -113,9 +119,19 @@ export async function credentialOfferRoute(c: Context<{ Bindings: Env }>): Promi
       },
     };
 
+    c.header('Cache-Control', 'no-store');
     return c.json(credentialOffer);
   } catch (error) {
     log.error('Credential offer retrieval failed', {}, error as Error);
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    c.header('Cache-Control', 'no-store');
+    if (error instanceof ShardConfigUnavailableError) {
+      return c.json({ error: 'temporarily_unavailable' }, 503);
+    }
+    return c.json({ error: 'server_error' }, 500);
   }
+}
+
+function offerNotFound(c: Context<{ Bindings: Env }>): Response {
+  c.header('Cache-Control', 'no-store');
+  return c.json({ error: 'not_found' }, 404);
 }

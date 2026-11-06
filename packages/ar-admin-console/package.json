@@ -38,6 +38,7 @@
 		"@sveltejs/vite-plugin-svelte": "^7.3.1",
 		"@testing-library/jest-dom": "^7.0.1",
 		"@testing-library/svelte": "5.4.2",
+		"@types/qrcode": "^1.5.6",
 		"@vitest/browser": "^4.1.12",
 		"@vitest/browser-playwright": "^4.1.12",
 		"eslint": "^9.39.1",
@@ -60,7 +61,8 @@
 	"dependencies": {
 		"@authrim/ar-lib-core": "workspace:*",
 		"@authrim/ar-lib-field-mapping": "workspace:*",
-		"@simplewebauthn/browser": "^14.0.0"
+		"@simplewebauthn/browser": "^14.0.0",
+		"qrcode": "^1.5.4"
 	},
 	"imports": {
 		"#lib": "./src/lib/index.js",

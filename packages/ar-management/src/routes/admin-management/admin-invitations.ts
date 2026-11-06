@@ -17,6 +17,7 @@ import {
   adminAuthMiddleware,
   ADMIN_ROLES,
 } from '@authrim/ar-lib-core';
+import { ensureCrossTenantPlacement } from './cross-tenant-placement';
 import { writeAdminAuditLog } from '../../admin-shared';
 import { requireAdminStepUp } from '../../admin-step-up-gate';
 import { callerOutranksGlobally } from './admin-role-authority';
@@ -328,6 +329,12 @@ adminInvitationsRouter.post('/', async (c) => {
   ) {
     return c.json({ error: 'insufficient_permissions' }, 403);
   }
+  // The invited admin is homed in this (request) tenant.
+  const placementRefusal = ensureCrossTenantPlacement(c, c.env, {
+    scopeType,
+    homeTenantId: tenantId,
+  });
+  if (placementRefusal) return placementRefusal;
   if (roleExpiresAt !== undefined && (!Number.isFinite(roleExpiresAt) || roleExpiresAt <= now)) {
     return c.json({ error: 'invalid_role_expiry' }, 400);
   }
@@ -510,6 +517,12 @@ adminInvitationsRouter.post('/:id/resend', async (c) => {
   ) {
     return c.json({ error: 'insufficient_permissions' }, 403);
   }
+  // Placement policy (D9): never bring back a global invitation for a non-default home tenant.
+  const placementRefusal = ensureCrossTenantPlacement(c, c.env, {
+    scopeType: invitation.scope_type,
+    homeTenantId: tenantId,
+  });
+  if (placementRefusal) return placementRefusal;
 
   // A resend issues a new code and a new validity window, bringing an expired invitation back, so
   // it is a role grant again. Spent right before the update.

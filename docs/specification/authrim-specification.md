@@ -1649,6 +1649,16 @@ The Admin database-connection inventory may show Control Plane-managed D1 resour
 assignment metadata. Those rows are operational inventory, not selectable storage modes. R2 and audit
 destination inventory remains separate from identity-data placement.
 
+Region-sharded Durable Object state that a client addresses by ID (credential offers, proof nonces,
+VP requests) carries its generation, region, shard and jurisdiction in that ID. Before calling the
+store, a Worker checks those against the tenant's current region shard configuration: an ID naming
+an unconfigured shard is refused without creating an object, an ID of a newer generation re-reads the
+configuration, and an unreadable configuration is a temporary error, never a credential error.
+Changing a tenant's residency jurisdiction does not migrate or keep serving this short-lived state:
+offers, nonces and VP requests created under the previous jurisdiction are refused from the moment
+the new configuration is read, and holders or verifiers start the flow again. Their remaining rows
+expire in the previous jurisdiction through the stores' own retention.
+
 Admin status changes and account-wide session revocation resolve the account's owning Core
 store even while it is suspended or locked. Status changes retain DO-first disabling and
 Core-first activation; operational reason details remain in the tenant's operational log store.

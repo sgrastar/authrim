@@ -117,6 +117,45 @@ paths:
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
+  /.well-known/oauth-authorization-server/vci:
+    get:
+      tags:
+        - OpenID4VCI
+      summary: Return RFC 8414 metadata of the pre-authorized Authorization Server.
+      description: >-
+        The Credential Issuer lists `<issuer>/vci` in `authorization_servers`. This AS only supports
+        the pre-authorized code grant, so it has no authorization endpoint and omits
+        `response_types_supported`.
+      responses:
+        '200':
+          description: Authorization Server metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VCIAuthorizationServerMetadata'
+  /.well-known/jwt-vc-issuer:
+    get:
+      tags:
+        - OpenID4VCI
+      summary: Return SD-JWT VC issuer metadata (issuer signing keys).
+      description: >-
+        Active and overlap keys, plus public keys kept for up to 365 days after normal rotation so
+        that unexpired credentials still verify. Keys revoked by emergency rotation or by
+        `POST /api/admin/signing-keys/vc/{kid}/revoke` are never listed.
+      responses:
+        '200':
+          description: JWT VC Issuer Metadata.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              description: public, max-age=300
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JwtVcIssuerMetadata'
+        '500':
+          $ref: '#/components/responses/OAuthError'
   /vci/token:
     post:
       tags:
@@ -127,17 +166,22 @@ paths:
         assurance enabled, a default FAL of FAL2 or above with fal2_requires_dpop, or FAL3 with
         fal3_requires_par, refuses the grant with unauthorized_client before the offer is
         reserved. Assurance settings that cannot be read return 503 temporarily_unavailable.
+        Errors use OAuth codes: invalid_request (including a missing tx_code the offer requires,
+        or a tx_code the offer does not expect), invalid_grant (unknown, used or expired code, or a
+        wrong tx_code), unsupported_grant_type, and invalid_authorization_details
+        (authorization_details is not supported). The token lives at most 300 seconds and no
+        authorization_details are returned, so the wallet requests by credential_configuration_id.
       requestBody:
         $ref: '#/components/requestBodies/VCIToken'
       responses:
         '200':
           $ref: '#/components/responses/VCIToken'
         '400':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/OAuthError'
         '500':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/OAuthError'
         '503':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/OAuthError'
   /vci/nonce:
     post:
       tags:
@@ -159,29 +203,46 @@ paths:
       tags:
         - OpenID4VCI
       summary: Get a credential offer.
+      description: >-
+        Referenced by `openid-credential-offer://?credential_offer_uri=...`. Unknown, expired and
+        already used offers all return 404 not_found. The path segment is a bearer secret and is
+        redacted in logs.
       parameters:
         - $ref: '#/components/parameters/Id'
       responses:
         '200':
           $ref: '#/components/responses/CredentialOffer'
-        '400':
-          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/OAuthError'
         '500':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/OAuthError'
   /vci/credential:
     post:
       tags:
         - OpenID4VCI
       summary: Issue a credential.
+      description: >-
+        Errors: 401 invalid_token with `WWW-Authenticate: Bearer error="invalid_token"`; 400
+        invalid_credential_request, unknown_credential_configuration, invalid_proof or
+        invalid_nonce. `credential_identifier` and the pre-Final `proof` parameter are rejected.
+        Each offer yields at most one credential: the first request that passes validation claims
+        the issuance, and every other or later request with the same offer (even with the same
+        access token) gets 400 invalid_credential_request, as does a request whose issuance
+        cannot be completed (for an administrator credential: the administrator is no longer
+        eligible). A failed or interrupted issuance ends the offer; a new offer is needed.
+        Administrator credentials (`AuthrimAdminCredential`) are issued only for offers created
+        through the dedicated admin path and always require a holder key.
       requestBody:
         $ref: '#/components/requestBodies/CredentialRequest'
       responses:
         '200':
           $ref: '#/components/responses/Credential'
         '400':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/OAuthError'
+        '401':
+          $ref: '#/components/responses/OAuthError'
         '500':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/OAuthError'
       security:
         - credentialBearer: []
   /vci/deferred:
@@ -194,10 +255,27 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/Credential'
+        '202':
+          description: Still pending; poll again after `interval` seconds.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - transaction_id
+                  - interval
+                properties:
+                  transaction_id:
+                    type: string
+                  interval:
+                    type: integer
+                    example: 5
         '400':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/OAuthError'
+        '401':
+          $ref: '#/components/responses/OAuthError'
         '500':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/OAuthError'
       security:
         - credentialBearer: []
   /vci/status-lists/{listId}:
@@ -445,6 +523,17 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/VPAuthorizationRequestObject'
+    OAuthError:
+      description: OAuth 2.0 / OpenID4VCI error.
+      headers:
+        Cache-Control:
+          schema:
+            type: string
+          description: Always no-store.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/OAuthErrorResponse'
     IssuerMetadata:
       description: OpenID4VCI issuer metadata.
       content:
@@ -813,6 +902,13 @@ components:
           type: string
           format: uri
           example: https://auth.example.com
+        authorization_servers:
+          type: array
+          items:
+            type: string
+            format: uri
+          example:
+            - https://auth.example.com/vci
         credential_endpoint:
           type: string
           format: uri
@@ -832,13 +928,26 @@ components:
           example:
             AuthrimIdentityCredential:
               format: dc+sd-jwt
+              scope: authrim_identity_credential
               vct: https://authrim.com/credentials/identity/v1
               cryptographic_binding_methods_supported:
                 - jwk
               credential_signing_alg_values_supported:
                 - ES256
-                - ES384
-                - ES512
+              proof_types_supported:
+                jwt:
+                  proof_signing_alg_values_supported:
+                    - ES256
+              credential_metadata:
+                display:
+                  - name: Authrim Identity Credential
+                    locale: en
+                claims:
+                  - path:
+                      - given_name
+                    display:
+                      - name: Given Name
+                        locale: en
         display:
           type: array
           items:
@@ -847,10 +956,15 @@ components:
       type: object
       required:
         - format
+        - scope
+        - vct
       properties:
         format:
           type: string
           example: dc+sd-jwt
+        scope:
+          type: string
+          example: authrim_identity_credential
         vct:
           type: string
           example: https://authrim.com/credentials/identity/v1
@@ -866,8 +980,6 @@ components:
             type: string
           example:
             - ES256
-            - ES384
-            - ES512
         proof_types_supported:
           type: object
           additionalProperties:
@@ -877,14 +989,42 @@ components:
                 type: array
                 items:
                   type: string
-        claims:
+        credential_metadata:
           type: object
-          additionalProperties:
-            type: object
+          properties:
+            display:
+              type: array
+              items:
+                $ref: '#/components/schemas/DisplayProperties'
+            claims:
+              type: array
+              items:
+                $ref: '#/components/schemas/ClaimDescriptor'
+    ClaimDescriptor:
+      type: object
+      required:
+        - path
+      properties:
+        path:
+          type: array
+          items:
+            type: string
+          example:
+            - given_name
+        mandatory:
+          type: boolean
         display:
           type: array
           items:
-            $ref: '#/components/schemas/DisplayProperties'
+            type: object
+            required:
+              - name
+              - locale
+            properties:
+              name:
+                type: string
+              locale:
+                type: string
     DisplayProperties:
       type: object
       required:
@@ -931,7 +1071,6 @@ components:
         - access_token
         - token_type
         - expires_in
-        - authorization_details
       properties:
         access_token:
           type: string
@@ -943,23 +1082,8 @@ components:
           example: Bearer
         expires_in:
           type: integer
-          example: 3600
-        authorization_details:
-          type: array
-          items:
-            $ref: '#/components/schemas/AuthorizationDetail'
-    AuthorizationDetail:
-      type: object
-      required:
-        - type
-        - credential_configuration_id
-      properties:
-        type:
-          type: string
-          example: openid_credential
-        credential_configuration_id:
-          type: string
-          example: AuthrimIdentityCredential
+          maximum: 300
+          example: 300
     CredentialOffer:
       type: object
       required:
@@ -1040,8 +1164,14 @@ components:
           type: array
           minItems: 1
           items:
-            type: string
-          description: Issued SD-JWT VC compact serializations.
+            type: object
+            required:
+              - credential
+            properties:
+              credential:
+                type: string
+                description: Issued SD-JWT VC compact serialization.
+          description: Issued credentials (OpenID4VCI 1.0 Final §8.3).
         transaction_id:
           type: string
           description: Present only when issuance is deferred.
@@ -1050,6 +1180,66 @@ components:
             - credentials
         - required:
             - transaction_id
+    VCIAuthorizationServerMetadata:
+      type: object
+      required:
+        - issuer
+        - token_endpoint
+        - grant_types_supported
+      properties:
+        issuer:
+          type: string
+          format: uri
+          example: https://auth.example.com/vci
+        token_endpoint:
+          type: string
+          format: uri
+          example: https://auth.example.com/vci/token
+        grant_types_supported:
+          type: array
+          items:
+            type: string
+          example:
+            - urn:ietf:params:oauth:grant-type:pre-authorized_code
+        token_endpoint_auth_methods_supported:
+          type: array
+          items:
+            type: string
+          example:
+            - none
+        pre-authorized_grant_anonymous_access_supported:
+          type: boolean
+          example: true
+    JwtVcIssuerMetadata:
+      type: object
+      required:
+        - issuer
+        - jwks
+      properties:
+        issuer:
+          type: string
+          format: uri
+          example: https://auth.example.com
+        jwks:
+          type: object
+          required:
+            - keys
+          properties:
+            keys:
+              type: array
+              items:
+                type: object
+                description: EC public JWK with `kid`; never private members.
+    OAuthErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          example: invalid_proof
+        error_description:
+          type: string
     NonceResponse:
       type: object
       required:

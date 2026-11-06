@@ -22,6 +22,7 @@ import {
   AR_ERROR_CODES,
   createAuditLog,
   createAuditLogFromContext,
+  getDefaultTenantId,
   getLogger,
   getPrimaryTenantId,
   getTenantIdFromContext,
@@ -1778,6 +1779,19 @@ async function executeTenantLifecycleCommand(
     );
   }
 
+  // The deployment default tenant is the home of every cross-tenant admin (admin credential
+  // design D9) and its id is a deployment setting, so it is protected whichever tenant carries
+  // the movable is_default label.
+  if (tenant.id === getDefaultTenantId(c.env) && (command === 'suspend' || command === 'freeze')) {
+    return c.json(
+      {
+        error: 'default_tenant_protected',
+        error_description: 'The deployment default tenant cannot be suspended or frozen',
+      },
+      409
+    );
+  }
+
   let transition: { targetState: TenantLifecycleState; async: boolean };
   try {
     transition = validateTenantLifecycleTransition(
@@ -2282,6 +2296,16 @@ export async function adminTenantDeleteHandler(c: Context<{ Bindings: Env }>) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
       variables: { field: 'id', reason: 'Cannot delete the primary tenant' },
     });
+  }
+
+  if (id === getDefaultTenantId(c.env)) {
+    return c.json(
+      {
+        error: 'default_tenant_protected',
+        error_description: 'The deployment default tenant cannot be deleted',
+      },
+      409
+    );
   }
 
   try {

@@ -1,6 +1,8 @@
 const AGENT_ELEVATION_RETURN_PATH = /^\/admin\/agent-access\/elevations\/ael_[A-Za-z0-9-]{1,128}$/;
 const AGENT_BULK_RETURN_PATH =
 	/^\/admin\/agent-access\/bulk-plans\/abp_[A-Za-z0-9-]{1,128}\/[1-9][0-9]*$/;
+/** The wallet-credential page asks for a fresh sign-in, then must come back to itself. */
+const KEYRING_RETURN_PATH = '/admin/me/keyring';
 const AGENT_LOGIN_HANDOFF_ID = /^alh_[A-Za-z0-9_-]{32}$/;
 
 /**
@@ -27,6 +29,9 @@ export function resolveAdminLoginReturnTo(search: string, origin: string): strin
 		}
 		if (target.origin !== origin) return '/admin';
 		if (!target.search && AGENT_ELEVATION_RETURN_PATH.test(target.pathname)) {
+			return target.pathname;
+		}
+		if (!target.search && target.pathname === KEYRING_RETURN_PATH) {
 			return target.pathname;
 		}
 		if (!target.search && AGENT_BULK_RETURN_PATH.test(target.pathname)) {

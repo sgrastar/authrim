@@ -26,6 +26,7 @@
 import type { Context, Next } from 'hono';
 import type { Env } from '../types/env';
 import { createLogger } from '../utils/logger';
+import { redactSecretPathSegments } from '../utils/diagnostic-redaction';
 
 const log = createLogger().module('PluginContext');
 
@@ -473,7 +474,7 @@ export function pluginContextMiddleware(options: PluginContextMiddlewareOptions 
     } finally {
       if (timingEnabled) {
         log.info('Plugin context timing', {
-          path: new URL(c.req.url).pathname,
+          path: redactSecretPathSegments(new URL(c.req.url).pathname),
           cache_status: cacheStatus,
           initialized,
           duration_ms: roundDiagnosticDurationMs(diagnosticTimingNowMs() - startedAtMs),

@@ -15,6 +15,7 @@ import {
   adminTenantProvisioningStatusHandler,
   adminTenantUpdateHandler,
   adminTenantSuspendHandler,
+  adminTenantFreezeHandler,
   adminTenantResumeHandler,
   adminTenantLifecycleJobRetryHandler,
   adminTenantsListHandler,
@@ -110,7 +111,9 @@ vi.mock('@authrim/ar-lib-core', () => ({
             : 500;
     return new Response(JSON.stringify({ error: code, details }), { status });
   }),
-  getDefaultTenantId: vi.fn(() => 'default'),
+  getDefaultTenantId: vi.fn(
+    (env: { DEFAULT_TENANT_ID?: string }) => env?.DEFAULT_TENANT_ID || 'default'
+  ),
   isReservedPlatformTenantId: vi.fn((id: string) => id.trim().toLowerCase() === 'platform'),
   getLogger: vi.fn(() => ({
     module: vi.fn(() => ({
@@ -325,6 +328,9 @@ function createContext(
   } as any;
 }
 
+// The default tenant tests only need the handler's context type, not the mock's `any`.
+const protectedContext = (...args: Parameters<typeof createContext>) =>
+  createContext(...args) as unknown as Parameters<typeof adminTenantDeleteHandler>[0];
 const deleteCtx = () =>
   createContext({}, {}, { id: 'second' }) as unknown as Parameters<
     typeof adminTenantDeleteHandler
@@ -1085,6 +1091,52 @@ describe('Control Plane tenant management', () => {
     expect(response.status).toBe(409);
     expect(adapters.defaultAdapter.execute).not.toHaveBeenCalled();
     expect(adapters.lifecycleJobsAdapter.execute).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['suspend', adminTenantSuspendHandler],
+    ['freeze', adminTenantFreezeHandler],
+  ])(
+    'refuses to %s the deployment default tenant even without the default label',
+    async (_command, handler) => {
+      adapters.defaultAdapter = createAdapter((sql, _params, op) => {
+        if (op === 'queryOne' && sql.includes('FROM admin_jobs')) return null;
+        if (op === 'queryOne' && sql.includes('FROM tenants WHERE id = ?')) {
+          return createTenantRow('second', { lifecycle_state: 'active', updated_at: 10 });
+        }
+        throw new Error(`unexpected SQL: ${sql}`);
+      });
+      adapters.lifecycleJobsAdapter = createAdapter((sql, _params, op) => {
+        if (op === 'queryOne' && sql.includes('FROM admin_jobs')) return null;
+        throw new Error(`unexpected SQL: ${sql}`);
+      });
+
+      const response = await handler(
+        protectedContext(
+          { expected_state: 'active', expected_updated_at: 10, reason: 'pause' },
+          { DEFAULT_TENANT_ID: 'second' },
+          { id: 'second' }
+        )
+      );
+
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ error: 'default_tenant_protected' });
+      expect(adapters.defaultAdapter.execute).not.toHaveBeenCalled();
+    }
+  );
+
+  it('refuses to delete the deployment default tenant before reading it', async () => {
+    adapters.defaultAdapter = createAdapter((sql) => {
+      throw new Error(`unexpected SQL: ${sql}`);
+    });
+
+    const response = await adminTenantDeleteHandler(
+      protectedContext({}, { DEFAULT_TENANT_ID: 'second' }, { id: 'second' })
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: 'default_tenant_protected' });
+    expect(adapters.defaultAdapter.transaction).not.toHaveBeenCalled();
   });
 
   it('rejects reuse of an idempotency key with a different payload', async () => {

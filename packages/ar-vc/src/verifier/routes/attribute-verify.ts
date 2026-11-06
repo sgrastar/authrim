@@ -14,6 +14,7 @@
  * Important: This is NOT for login - VC is used as attribute proof only.
  */
 
+import { isConfiguredShard } from '../../utils/configured-shard';
 import type { Context } from 'hono';
 import type { Env, VPRequestState } from '../../types';
 import {
@@ -423,7 +424,10 @@ export async function attributeVerifyResponse(c: Context<{ Bindings: Env }>): Pr
 
     // Get VP request from Durable Object
     const tenantId = getTenantIdFromContext(c);
-    const { stub } = getVPRequestStoreById(c.env, body.state, tenantId);
+    const { stub, resolution } = getVPRequestStoreById(c.env, body.state, tenantId);
+    if (!(await isConfiguredShard(c.env, tenantId, resolution))) {
+      return c.json({ error: 'invalid_request', error_description: 'VP request unavailable' }, 400);
+    }
     const reserveResponse = await stub.fetch(
       new Request('https://internal/reserve', {
         method: 'POST',

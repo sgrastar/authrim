@@ -20,6 +20,7 @@ import {
   getRegionAwareDOStub,
   getRegionShardConfig,
   getDefaultRegionShardConfig,
+  isConfiguredRegionShard,
   parseRegionPlacementKey,
   validateRegionShardResidencyStrict,
   type RegionShardConfig,
@@ -833,6 +834,36 @@ describe('Region Sharding Utilities', () => {
       expect(get).toHaveBeenCalledWith('region_shard_config:tenant-a', { type: 'json' });
     });
 
+    it('never lets a slower earlier read replace the cached result of a later one', async () => {
+      const residency = {
+        version: 1 as const,
+        residencyPolicyId: 'policy-us',
+        residencyPartition: 'default',
+        policyGeneration: 1,
+        allowedRegions: ['enam' as const],
+        jurisdiction: null,
+      };
+      const older = buildPolicyConstrainedRegionShardConfig({ residency, now: 1 });
+      const newer = { ...older, currentGeneration: older.currentGeneration + 1 };
+      let finishEarlier: (value: unknown) => void = () => undefined;
+      const get = vi
+        .fn()
+        .mockImplementationOnce(() => new Promise((resolve) => (finishEarlier = resolve)))
+        .mockResolvedValueOnce(newer);
+      const env = { AUTHRIM_CONFIG: { get } } as never;
+
+      const earlier = getRegionShardConfig(env, 'tenant-a', { bypassCache: true });
+      await expect(getRegionShardConfig(env, 'tenant-a', { bypassCache: true })).resolves.toBe(
+        newer
+      );
+      finishEarlier(older);
+
+      // The earlier read adopts the newer cached result instead of overwriting it.
+      await expect(earlier).resolves.toBe(newer);
+      await expect(getRegionShardConfig(env, 'tenant-a')).resolves.toBe(newer);
+      expect(get).toHaveBeenCalledTimes(2);
+    });
+
     it('builds only regions allowed by the server-owned residency projection', () => {
       const config = buildPolicyConstrainedRegionShardConfig({
         residency: {
@@ -968,5 +999,63 @@ describe('Region Sharding Utilities', () => {
       );
       expect(() => parseRegionPlacementKey('unknown_j_eu')).toThrow('region_shard_region_invalid');
     });
+  });
+});
+
+describe('isConfiguredRegionShard', () => {
+  const config = {
+    ...getDefaultRegionShardConfig(),
+    currentGeneration: 2,
+    currentTotalShards: 4,
+    currentRegions: { enam: { startShard: 0, endShard: 3, shardCount: 4 } },
+    previousGenerations: [
+      {
+        generation: 1,
+        totalShards: 2,
+        regions: { apac: { startShard: 0, endShard: 1, shardCount: 2 } },
+      },
+    ],
+  };
+
+  it('accepts shards of the current and of a still routed generation', () => {
+    expect(
+      isConfiguredRegionShard(config, { generation: 2, regionKey: 'enam', shardIndex: 3 })
+    ).toBe(true);
+    expect(
+      isConfiguredRegionShard(config, { generation: 1, regionKey: 'apac', shardIndex: 1 })
+    ).toBe(true);
+  });
+
+  it.each([
+    {
+      name: 'an unknown generation',
+      resolution: { generation: 9, regionKey: 'enam', shardIndex: 0 },
+    },
+    {
+      name: 'an index past the shard count',
+      resolution: { generation: 2, regionKey: 'enam', shardIndex: 999999 },
+    },
+    { name: 'a negative index', resolution: { generation: 2, regionKey: 'enam', shardIndex: -1 } },
+    {
+      name: 'a region the index does not map to',
+      resolution: { generation: 2, regionKey: 'apac', shardIndex: 0 },
+    },
+    { name: 'an invalid region', resolution: { generation: 2, regionKey: 'mars', shardIndex: 0 } },
+    {
+      name: 'a jurisdiction the tenant has not',
+      resolution: { generation: 2, regionKey: 'enam_j_eu', shardIndex: 0 },
+    },
+  ])('rejects $name', ({ resolution }) => {
+    expect(isConfiguredRegionShard(config, resolution)).toBe(false);
+  });
+
+  it('requires the jurisdiction of a residency-bound tenant', () => {
+    const bound = { ...config, residency: { jurisdiction: 'eu' } } as unknown as RegionShardConfig;
+    expect(
+      isConfiguredRegionShard(bound, { generation: 2, regionKey: 'enam_j_eu', shardIndex: 0 })
+    ).toBe(true);
+    expect(
+      isConfiguredRegionShard(bound, { generation: 2, regionKey: 'enam', shardIndex: 0 })
+    ).toBe(false);
   });
 });

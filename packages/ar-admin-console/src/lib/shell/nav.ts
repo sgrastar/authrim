@@ -121,7 +121,7 @@ export function resolveNavPath(pathname: string): NavLocation | null {
 }
 
 /** Pages that live outside the navigation (reached from the account menu). */
-const STANDALONE_PATHS: ReadonlySet<string> = new Set(['/admin/me']);
+const STANDALONE_PATHS: ReadonlySet<string> = new Set(['/admin/me', '/admin/me/keyring']);
 
 export function isStandalonePath(pathname: string): boolean {
 	return STANDALONE_PATHS.has(pathname.replace(/\/+$/, '') || '/');

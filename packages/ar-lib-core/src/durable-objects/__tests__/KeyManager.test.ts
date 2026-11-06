@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   decodeJwt,
   decodeProtectedHeader,
@@ -1137,13 +1137,17 @@ describe('KeyManager Durable Object', () => {
         userId: 'user-a',
         offerId: 'g1:apac:1:co_offer-a',
         credentialConfigurationId: 'UniversityDegreeCredential',
-        issuer: 'did:web:issuer.example.com',
+        issuer: 'https://issuer.example.com/vci',
+        audience: 'https://issuer.example.com',
+        expiresInSeconds: 3600,
       });
       const publicKey = await importJWK(activeKey.publicJWK, 'ES256');
       const verified = await jwtVerify(result.token, publicKey, {
-        issuer: 'did:web:issuer.example.com',
-        audience: 'did:web:issuer.example.com',
+        issuer: 'https://issuer.example.com/vci',
+        audience: 'https://issuer.example.com',
       });
+      // Bearer issuance tokens are capped at five minutes whatever the caller asks for
+      expect((verified.payload.exp ?? 0) - (verified.payload.iat ?? 0)).toBe(300);
 
       expect(verified.payload).toMatchObject({
         sub: 'user-a',
@@ -1163,7 +1167,21 @@ describe('KeyManager Durable Object', () => {
           userId: 'user-a',
           offerId: 'offer-a',
           credentialConfigurationId: 'UniversityDegreeCredential',
-          issuer: 'did:web:issuer.example.com',
+          issuer: 'https://issuer.example.com/vci',
+          audience: 'https://issuer.example.com',
+        })
+      ).rejects.toThrow('invalid_vci_access_token_signing_input');
+    });
+
+    it('requires an explicit audience', async () => {
+      await expect(
+        keyManager.signVCIAccessTokenRpc({
+          tenantId: 'tenant-a',
+          userId: 'user-a',
+          offerId: 'offer-a',
+          credentialConfigurationId: 'UniversityDegreeCredential',
+          issuer: 'https://issuer.example.com/vci',
+          audience: ' ',
         })
       ).rejects.toThrow('invalid_vci_access_token_signing_input');
     });
@@ -1190,6 +1208,27 @@ describe('KeyManager Durable Object', () => {
         typ: 'dc+sd-jwt',
         kid: activeKey.kid,
       });
+    });
+
+    it('creates the VC issuer key on first use and shares it across concurrent signers', async () => {
+      expect((await keyManager.getVcIssuerJwksRpc()).keys).toEqual([]);
+      const now = Math.floor(Date.now() / 1000);
+      const payload = {
+        iss: 'https://issuer.example.com',
+        vct: 'https://issuer.example.com/credentials/admin/v1',
+        iat: now,
+        _sd_alg: 'sha-256',
+      };
+      const [first, second] = await Promise.all([
+        keyManager.signSDJWTIssuerRpc(payload),
+        keyManager.signSDJWTIssuerRpc(payload),
+      ]);
+
+      expect(first.kid).toBe(second.kid);
+      const { keys } = await keyManager.getVcIssuerJwksRpc();
+      expect(keys.map((key) => key.kid)).toEqual([first.kid]);
+      const publicKey = await importJWK(keys[0], 'ES256');
+      await expect(jwtVerify(first.token, publicKey)).resolves.toBeDefined();
     });
 
     it('rejects oversized and structurally invalid VC payloads', async () => {
@@ -1240,6 +1279,316 @@ describe('KeyManager Durable Object', () => {
           vc: { type: ['VerifiableCredential'] },
         })
       ).rejects.toThrow('invalid_status_list_signing_input');
+    });
+  });
+
+  describe('Token Status List signing RPC', () => {
+    const validPayload = () => {
+      const now = Math.floor(Date.now() / 1000);
+      return {
+        iss: 'https://issuer.example.com/t1',
+        sub: 'https://issuer.example.com/t1/vci/status-lists/list-a',
+        iat: now,
+        exp: now + 86400,
+        ttl: 300,
+        status_list: { bits: 2, lst: 'eJzTBwAAAQAB' },
+      };
+    };
+
+    it('signs the draft-14 token shape for an https issuer', async () => {
+      const activeKey = await keyManager.rotateECKeysRpc('ES256');
+      const result = await keyManager.signStatusListCredentialRpc(validPayload());
+      const publicKey = await importJWK(activeKey.publicJWK, 'ES256');
+
+      await expect(jwtVerify(result.token, publicKey)).resolves.toMatchObject({
+        payload: { ttl: 300, status_list: { bits: 2 } },
+      });
+      expect(decodeProtectedHeader(result.token)).toMatchObject({
+        typ: 'statuslist+jwt',
+        kid: activeKey.kid,
+      });
+    });
+
+    it.each([
+      [
+        'a sub on another origin',
+        (p: ReturnType<typeof validPayload>) => ({ ...p, sub: 'https://evil.example.net/x' }),
+      ],
+      [
+        'a non-https issuer',
+        (p: ReturnType<typeof validPayload>) => ({ ...p, iss: 'http://issuer.example.com' }),
+      ],
+      ['a missing ttl', ({ ttl: _ttl, ...p }: ReturnType<typeof validPayload>) => p],
+      ['a zero ttl', (p: ReturnType<typeof validPayload>) => ({ ...p, ttl: 0 })],
+      ['a ttl over a day', (p: ReturnType<typeof validPayload>) => ({ ...p, ttl: 86401 })],
+      [
+        'unsupported bits',
+        (p: ReturnType<typeof validPayload>) => ({ ...p, status_list: { bits: 3, lst: 'x' } }),
+      ],
+      [
+        'a non-string list',
+        (p: ReturnType<typeof validPayload>) => ({ ...p, status_list: { bits: 2, lst: 7 } }),
+      ],
+      [
+        'an expiry beyond 24 hours',
+        (p: ReturnType<typeof validPayload>) => ({ ...p, exp: p.exp + 3600 }),
+      ],
+      ['an extra claim', (p: ReturnType<typeof validPayload>) => ({ ...p, admin: true })],
+      ['an old iat', (p: ReturnType<typeof validPayload>) => ({ ...p, iat: p.iat - 3600 })],
+    ])('rejects %s', async (_label, mutate) => {
+      await expect(keyManager.signStatusListCredentialRpc(mutate(validPayload()))).rejects.toThrow(
+        'invalid_status_list_signing_input'
+      );
+    });
+  });
+
+  describe('VC issuer public key retention', () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const start = Date.UTC(2026, 9, 4);
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('keeps the public key of a normally retired key after the overlap is cleaned up', async () => {
+      vi.useFakeTimers({ now: start });
+      const first = await keyManager.rotateECKeysRpc('ES256');
+      vi.setSystemTime(start + DAY / 2);
+      const second = await keyManager.rotateECKeysRpc('ES256');
+
+      let jwks = await keyManager.getVcIssuerJwksRpc();
+      expect(jwks.keys.map((k) => k.kid).sort()).toEqual([first.kid, second.kid].sort());
+
+      vi.setSystemTime(start + 3 * DAY);
+      const third = await keyManager.rotateECKeysRpc('ES256');
+      const status = await keyManager.getECStatusRpc();
+      expect(status.keys.map((k) => k.kid)).not.toContain(first.kid);
+
+      jwks = await keyManager.getVcIssuerJwksRpc();
+      expect(jwks.keys.map((k) => k.kid)).toEqual(
+        expect.arrayContaining([first.kid, second.kid, third.kid])
+      );
+      for (const k of jwks.keys) {
+        expect(k).not.toHaveProperty('d');
+        expect(k).toMatchObject({ kty: 'EC', crv: 'P-256', alg: 'ES256', use: 'sig' });
+      }
+      const retired = jwks.keys.find((k) => k.kid === first.kid)!;
+      await expect(importJWK(retired, 'ES256')).resolves.toBeDefined();
+      // Retained keys are never offered for signing.
+      await expect(keyManager.getActiveECKeyRpc('ES256')).resolves.toMatchObject({
+        kid: third.kid,
+      });
+    });
+
+    it('revokes a retained public key by kid so its credentials stop verifying', async () => {
+      vi.useFakeTimers({ now: start });
+      const first = await keyManager.rotateECKeysRpc('ES256');
+      vi.setSystemTime(start + 1000);
+      await keyManager.rotateECKeysRpc('ES256');
+      vi.setSystemTime(start + 2 * DAY);
+      await keyManager.rotateECKeysRpc('ES256');
+      expect((await keyManager.getVcIssuerJwksRpc()).keys.map((k) => k.kid)).toContain(first.kid);
+
+      await expect(
+        keyManager.revokeVcIssuerKeyRpc(first.kid, 'leaked after rotation')
+      ).resolves.toEqual({ revoked: true });
+      expect((await keyManager.getVcIssuerJwksRpc()).keys.map((k) => k.kid)).not.toContain(
+        first.kid
+      );
+      const exported = await keyManager.exportTenantBackupStateRpc();
+      expect(exported.vcEc.retiredPublicKeys?.map((r) => r.kid) ?? []).not.toContain(first.kid);
+    });
+
+    it('revokes an overlap key at once and never retains it', async () => {
+      vi.useFakeTimers({ now: start });
+      const first = await keyManager.rotateECKeysRpc('ES256');
+      vi.setSystemTime(start + 1000);
+      await keyManager.rotateECKeysRpc('ES256');
+
+      await expect(
+        keyManager.revokeVcIssuerKeyRpc(first.kid, 'overlap key compromised')
+      ).resolves.toEqual({ revoked: true });
+      expect((await keyManager.getVcIssuerJwksRpc()).keys.map((k) => k.kid)).not.toContain(
+        first.kid
+      );
+
+      vi.setSystemTime(start + 3 * DAY);
+      await keyManager.rotateECKeysRpc('ES256');
+      expect((await keyManager.getVcIssuerJwksRpc()).keys.map((k) => k.kid)).not.toContain(
+        first.kid
+      );
+    });
+
+    it('replaces an active key through emergency rotation when revoked by kid', async () => {
+      const active = await keyManager.rotateECKeysRpc('ES256');
+      const result = await keyManager.revokeVcIssuerKeyRpc(active.kid, 'active key compromised');
+
+      expect(result.revoked).toBe(true);
+      expect(result.replacedBy).toBeDefined();
+      expect(result.replacedBy).not.toBe(active.kid);
+      await expect(keyManager.getActiveECKeyRpc('ES256')).resolves.toMatchObject({
+        kid: result.replacedBy,
+      });
+      expect((await keyManager.getVcIssuerJwksRpc()).keys.map((k) => k.kid)).not.toContain(
+        active.kid
+      );
+    });
+
+    it('reports unknown kids and refuses revocation without a reason', async () => {
+      const active = await keyManager.rotateECKeysRpc('ES256');
+      await expect(
+        keyManager.revokeVcIssuerKeyRpc('unknown-kid', 'no such key here')
+      ).resolves.toEqual({ revoked: false });
+      await expect(keyManager.revokeVcIssuerKeyRpc(active.kid, 'short')).rejects.toThrow(
+        'invalid_revocation_reason'
+      );
+      await expect(keyManager.getActiveECKeyRpc('ES256')).resolves.toMatchObject({
+        kid: active.kid,
+      });
+    });
+
+    it('refuses revocation reasons the DR backup could not carry', async () => {
+      const active = await keyManager.rotateECKeysRpc('ES256');
+      await expect(keyManager.revokeVcIssuerKeyRpc(active.kid, 'x'.repeat(2049))).rejects.toThrow(
+        'invalid_revocation_reason'
+      );
+      await expect(keyManager.getActiveECKeyRpc('ES256')).resolves.toMatchObject({
+        kid: active.kid,
+      });
+    });
+
+    it('prunes a retained key after retainUntil', async () => {
+      vi.useFakeTimers({ now: start });
+      const first = await keyManager.rotateECKeysRpc('ES256');
+      vi.setSystemTime(start + 1000);
+      await keyManager.rotateECKeysRpc('ES256');
+      vi.setSystemTime(start + 2 * DAY);
+      await keyManager.rotateECKeysRpc('ES256');
+      expect((await keyManager.getVcIssuerJwksRpc()).keys.map((k) => k.kid)).toContain(first.kid);
+
+      // Hidden from the JWKS as soon as retainUntil passes, and removed at the next cleanup.
+      vi.setSystemTime(start + 2 * DAY + 366 * DAY);
+      expect((await keyManager.getVcIssuerJwksRpc()).keys.map((k) => k.kid)).not.toContain(
+        first.kid
+      );
+      await keyManager.rotateECKeysRpc('ES256');
+      const exported = await keyManager.exportTenantBackupStateRpc();
+      expect(exported.vcEc.retiredPublicKeys?.map((r) => r.kid) ?? []).not.toContain(first.kid);
+    });
+
+    it('never retains a key revoked by emergency rotation and drops a retained copy', async () => {
+      vi.useFakeTimers({ now: start });
+      const first = await keyManager.rotateECKeysRpc('ES256');
+      vi.setSystemTime(start + 1000);
+      await keyManager.rotateECKeysRpc('ES256');
+      vi.setSystemTime(start + 2 * DAY);
+      const third = await keyManager.rotateECKeysRpc('ES256');
+      expect((await keyManager.getVcIssuerJwksRpc()).keys.map((k) => k.kid)).toContain(first.kid);
+
+      // Emergency-revoke the active key: it is excluded, and a retained copy would be removed.
+      await keyManager.emergencyRotateECKeysRpc('ES256', 'compromised');
+      let kids = (await keyManager.getVcIssuerJwksRpc()).keys.map((k) => k.kid);
+      expect(kids).not.toContain(third.kid);
+      expect(kids).toContain(first.kid);
+
+      // Revoked keys cleaned up later never enter the retained list.
+      vi.setSystemTime(start + 400 * DAY);
+      await keyManager.rotateECKeysRpc('ES256');
+      kids = (await keyManager.getVcIssuerJwksRpc()).keys.map((k) => k.kid);
+      expect(kids).not.toContain(third.kid);
+
+      // A retained copy with the revoked kid is removed on emergency revocation.
+      const snapshot = await keyManager.exportTenantBackupStateRpc();
+      const active = snapshot.vcEc.keys.find((k) => k.status === 'active')!;
+      const seeded = structuredClone(state.storage.map.get('ecState')) as {
+        retiredPublicKeys?: unknown[];
+      };
+      seeded.retiredPublicKeys = [
+        ...(seeded.retiredPublicKeys ?? []),
+        {
+          kid: active.kid,
+          algorithm: 'ES256',
+          publicJWK: active.publicJWK,
+          retiredAt: Date.now(),
+          retainUntil: Date.now() + 365 * DAY,
+        },
+      ];
+      state.storage.map.set('ecState', seeded);
+      const reloaded = new KeyManager(state as unknown as DurableObjectState, env);
+      await reloaded.emergencyRotateECKeysRpc('ES256', 'compromised again');
+      expect((await reloaded.getVcIssuerJwksRpc()).keys.map((k) => k.kid)).not.toContain(
+        active.kid
+      );
+    });
+
+    it('tolerates stored state without the retained list and exports it consistently', async () => {
+      const snapshot = await createPortableSnapshot();
+      await keyManager.importTenantBackupStateRpc(snapshot);
+      const jwks = await keyManager.getVcIssuerJwksRpc();
+      expect(jwks.keys.map((k) => k.kid)).toEqual(['vc-backup-key']);
+      await expect(keyManager.verifyTenantBackupStateRpc(snapshot)).resolves.toBe(true);
+    });
+
+    it('round-trips retained public keys through backup export, import and verify', async () => {
+      vi.useFakeTimers({ now: start });
+      const first = await keyManager.rotateECKeysRpc('ES256');
+      vi.setSystemTime(start + 1000);
+      await keyManager.rotateECKeysRpc('ES256');
+      vi.setSystemTime(start + 2 * DAY);
+      await keyManager.rotateECKeysRpc('ES256');
+
+      const exported = await keyManager.exportTenantBackupStateRpc();
+      expect(exported.vcEc.retiredPublicKeys?.map((r) => r.kid)).toEqual([first.kid]);
+      expect(JSON.stringify(exported.vcEc.retiredPublicKeys)).not.toContain('"d"');
+      await expect(keyManager.verifyTenantBackupStateRpc(exported)).resolves.toBe(true);
+
+      const target = new KeyManager(
+        new MockDurableObjectState() as unknown as DurableObjectState,
+        env
+      );
+      await target.importTenantBackupStateRpc(exported, { replaceBootstrapKey: true });
+      expect((await target.getVcIssuerJwksRpc()).keys.map((k) => k.kid)).toContain(first.kid);
+    });
+
+    it('refuses a rotation that would push unexpired retained keys past the cap', async () => {
+      vi.useFakeTimers({ now: start });
+      const active = await keyManager.rotateECKeysRpc('ES256');
+      const exported = await keyManager.exportTenantBackupStateRpc();
+      const { kty, crv, x, y } = active.publicJWK;
+      const retained = (count: number) =>
+        Array.from({ length: count }, (_, index) => {
+          const kid = `retired-${index}`;
+          return {
+            kid,
+            algorithm: 'ES256' as const,
+            publicJWK: { kid, kty, crv, x, y, alg: 'ES256', use: 'sig' },
+            retiredAt: start - DAY,
+            retainUntil: start + 300 * DAY,
+          };
+        });
+      const seeded = (count: number) => {
+        const target = new KeyManager(
+          new MockDurableObjectState() as unknown as DurableObjectState,
+          env
+        );
+        return target
+          .importTenantBackupStateRpc(
+            { ...exported, vcEc: { ...exported.vcEc, retiredPublicKeys: retained(count) } },
+            { replaceBootstrapKey: true }
+          )
+          .then(() => target);
+      };
+
+      // One live key plus 1023 retained keys: the next rotation would retain 1024 + 1.
+      const full = await seeded(1023);
+      await expect(full.rotateECKeysRpc('ES256')).rejects.toThrow(
+        'vc_issuer_key_retention_cap_reached'
+      );
+      expect((await full.getVcIssuerJwksRpc()).keys).toHaveLength(1024);
+      await expect(full.getActiveECKeyRpc('ES256')).resolves.toMatchObject({ kid: active.kid });
+
+      const roomy = await seeded(1022);
+      await expect(roomy.rotateECKeysRpc('ES256')).resolves.toMatchObject({ status: 'active' });
     });
   });
 });

@@ -19,6 +19,7 @@ import type {
 } from './types';
 import type { DiagnosticLoggingSettings } from '../../types/settings/diagnostic-logging';
 import { createLogger } from '../../utils/logger';
+import { redactSecretPathSegments } from '../../utils/diagnostic-redaction';
 import { DiagnosticLogR2Adapter, createDiagnosticLogR2Adapter } from './diagnostic-log-r2-adapter';
 import {
   filterSafeHeaders,
@@ -193,7 +194,7 @@ export class DiagnosticLogger {
       storageMode: this.storageMode,
       anonymizedUserId: options.anonymizedUserId,
       method: options.request.method,
-      path: url.pathname,
+      path: redactSecretPathSegments(url.pathname),
       query: sanitizeQueryParams(Object.fromEntries(url.searchParams)),
       headers: filterSafeHeaders(options.request.headers, safeHeadersList),
       bodySummary,
