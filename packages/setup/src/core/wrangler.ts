@@ -450,6 +450,8 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
     // LITE_POLICY_STORE: a tenant in lite mode verifies the lite Login UI's proof of work and
     // refuses the endpoints the lite UI does not use.
     'LITE_POLICY_STORE',
+    // LITE_TXN_STORE: the lite Login UI's transactions, behind ar-auth's LiteTxnEntrypoint.
+    'LITE_TXN_STORE',
   ],
   // SESSION_CLIENT_STORE: the authorization code exchange records the client in the session,
   // so a later logout knows to notify it.
@@ -1922,6 +1924,10 @@ function generateDOMigrations(): WranglerConfig['migrations'] {
       tag: 'v14',
       new_sqlite_classes: ['LitePolicyStore'],
     },
+    {
+      tag: 'v15',
+      new_sqlite_classes: ['LiteTxnStore'],
+    },
   ];
 }
 
@@ -2875,7 +2881,9 @@ export function generateUiWorkersWranglerConfig(options: UiWorkersWranglerOption
     `name = "${uiWorkerName}"`,
     `workers_dev = ${workersDev}`,
     `compatibility_date = "2024-01-01"`,
-    `compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]`,
+    // rpc: the Login UI calls ar-auth's LiteTxnEntrypoint and serves LoginUiEdgeEntrypoint by
+    // RPC, which this compatibility date predates.
+    `compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public", "rpc"]`,
     `main = ".svelte-kit/cloudflare/_worker.js"`,
     ``,
     `[assets]`,
@@ -2917,6 +2925,19 @@ export function generateUiWorkersWranglerConfig(options: UiWorkersWranglerOption
     if (component === 'ar-login-ui') {
       lines.push(`entrypoint = "LoginUiBackendEntrypoint"`);
     }
+  }
+
+  if (needsProxy && component === 'ar-login-ui') {
+    // The lite Login UI's transactions: ar-auth's LiteTxnEntrypoint, which checks these props.
+    // Only in the final, service-bound configuration (the lite UI runs behind the Router); the
+    // pass that creates the binding targets before the Router is deployed binds nothing.
+    lines.push(``, `[[services]]`);
+    lines.push(`binding = "LITE_TXN"`);
+    lines.push(`service = "${env}-ar-auth"`);
+    lines.push(`entrypoint = "LiteTxnEntrypoint"`);
+    lines.push(
+      `props = { caller = "ar-login-ui", environmentId = ${JSON.stringify(env)}, audience = "authrim-lite-txn-v1" }`
+    );
   }
 
   return lines.join('\n') + '\n';

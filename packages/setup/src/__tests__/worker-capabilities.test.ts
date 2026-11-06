@@ -440,6 +440,12 @@ describe('worker capability manifests', () => {
         required: true,
         capability: 'runtime_api.invoke',
       },
+      {
+        name: 'LITE_TXN',
+        kind: 'service',
+        required: false,
+        capability: 'runtime_api.invoke',
+      },
     ]);
   });
 

@@ -479,13 +479,17 @@ describe('generateRoutes', () => {
       name: 'USER_CODE_RATE_LIMITER',
       class_name: 'UserCodeRateLimiter',
     });
-    expect(libCoreConfig.migrations?.at(-2)).toEqual({
+    expect(libCoreConfig.migrations?.at(-3)).toEqual({
       tag: 'v13',
       new_sqlite_classes: ['UserCodeRateLimiter'],
     });
-    expect(libCoreConfig.migrations?.at(-1)).toEqual({
+    expect(libCoreConfig.migrations?.at(-2)).toEqual({
       tag: 'v14',
       new_sqlite_classes: ['LitePolicyStore'],
+    });
+    expect(libCoreConfig.migrations?.at(-1)).toEqual({
+      tag: 'v15',
+      new_sqlite_classes: ['LiteTxnStore'],
     });
     expect(
       libCoreConfig.migrations

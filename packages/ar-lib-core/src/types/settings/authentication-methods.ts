@@ -37,6 +37,9 @@ export interface AuthenticationMethodsSettings {
   'authentication-methods.human_verification.pow_challenge_ttl': number;
   'authentication-methods.human_verification.pow_issue_per_ip_per_minute': number;
   'authentication-methods.human_verification.pow_issue_per_tenant_per_minute': number;
+  'authentication-methods.human_verification.lite_txn_per_ip_per_minute': number;
+  'authentication-methods.human_verification.lite_txn_per_tenant_per_minute': number;
+  'authentication-methods.human_verification.lite_txn_per_browser': number;
   'authentication-methods.external_provider_usage': string;
   'authentication-methods.external_providers': string;
   'authentication-methods.directory_password.enabled': boolean;
@@ -307,6 +310,46 @@ export const AUTHENTICATION_METHODS_SETTINGS_META: Record<
     envNumber: 'in-range',
     visibility: 'admin',
   },
+  'authentication-methods.human_verification.lite_txn_per_ip_per_minute': {
+    key: 'authentication-methods.human_verification.lite_txn_per_ip_per_minute',
+    type: 'number',
+    default: 60,
+    envKey: 'LITE_TXN_PER_IP_PER_MINUTE',
+    label: 'Lite Transactions per IP',
+    description:
+      'How many lite Login UI transactions one IP address may start per minute (a page view can start one before any proof of work)',
+    min: 1,
+    max: 100_000,
+    integer: true,
+    envNumber: 'in-range',
+    visibility: 'admin',
+  },
+  'authentication-methods.human_verification.lite_txn_per_tenant_per_minute': {
+    key: 'authentication-methods.human_verification.lite_txn_per_tenant_per_minute',
+    type: 'number',
+    default: 6_000,
+    envKey: 'LITE_TXN_PER_TENANT_PER_MINUTE',
+    label: 'Lite Transactions per Tenant',
+    description: 'How many lite Login UI transactions the tenant may start per minute in all',
+    min: 1,
+    max: 1_000_000,
+    integer: true,
+    envNumber: 'in-range',
+    visibility: 'admin',
+  },
+  'authentication-methods.human_verification.lite_txn_per_browser': {
+    key: 'authentication-methods.human_verification.lite_txn_per_browser',
+    type: 'number',
+    default: 8,
+    envKey: 'LITE_TXN_PER_BROWSER',
+    label: 'Lite Transactions per Browser',
+    description: 'How many live lite Login UI transactions one browser may hold at a time',
+    min: 1,
+    max: 64,
+    integer: true,
+    envNumber: 'in-range',
+    visibility: 'admin',
+  },
   'authentication-methods.external_provider_usage': {
     key: 'authentication-methods.external_provider_usage',
     type: 'json',
@@ -372,6 +415,9 @@ export const AUTHENTICATION_METHODS_DEFAULTS: AuthenticationMethodsSettings = {
   'authentication-methods.human_verification.pow_challenge_ttl': 600,
   'authentication-methods.human_verification.pow_issue_per_ip_per_minute': 30,
   'authentication-methods.human_verification.pow_issue_per_tenant_per_minute': 3_000,
+  'authentication-methods.human_verification.lite_txn_per_ip_per_minute': 60,
+  'authentication-methods.human_verification.lite_txn_per_tenant_per_minute': 6_000,
+  'authentication-methods.human_verification.lite_txn_per_browser': 8,
   'authentication-methods.external_provider_usage': '[]',
   'authentication-methods.external_providers': '[]',
   'authentication-methods.directory_password.enabled': false,

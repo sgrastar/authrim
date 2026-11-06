@@ -252,7 +252,10 @@ place(
 			'authentication-methods.human_verification.pow_max_number',
 			'authentication-methods.human_verification.pow_challenge_ttl',
 			'authentication-methods.human_verification.pow_issue_per_ip_per_minute',
-			'authentication-methods.human_verification.pow_issue_per_tenant_per_minute'
+			'authentication-methods.human_verification.pow_issue_per_tenant_per_minute',
+			'authentication-methods.human_verification.lite_txn_per_ip_per_minute',
+			'authentication-methods.human_verification.lite_txn_per_tenant_per_minute',
+			'authentication-methods.human_verification.lite_txn_per_browser'
 		]
 	},
 	{

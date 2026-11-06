@@ -15,6 +15,10 @@ describe('generateUiWorkersWranglerConfig', () => {
       expect(result).toContain('compatibility_date = "2024-01-01"');
       expect(result).toContain('nodejs_compat');
       expect(result).toContain('global_fetch_strictly_public');
+      // RPC (LiteTxnEntrypoint, LoginUiEdgeEntrypoint) needs it before 2024-04-03.
+      expect(result).toContain(
+        'compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public", "rpc"]'
+      );
       expect(result).toContain('main = ".svelte-kit/cloudflare/_worker.js"');
       expect(result).toContain('[assets]');
       expect(result).toContain('directory = ".svelte-kit/cloudflare"');
@@ -22,6 +26,7 @@ describe('generateUiWorkersWranglerConfig', () => {
       expect(result).toContain('run_worker_first = ["/account", "/account/*"]');
       expect(result).not.toContain('[[services]]');
       expect(result).not.toContain('AR_ROUTER');
+      expect(result).not.toContain('LITE_TXN');
     });
 
     it('generates correct toml for ar-admin-ui', () => {
@@ -52,6 +57,12 @@ describe('generateUiWorkersWranglerConfig', () => {
       expect(result).toContain('binding = "AR_ROUTER"');
       expect(result).toContain('service = "test-ar-router"');
       expect(result).toContain('entrypoint = "LoginUiBackendEntrypoint"');
+      expect(result).toContain('binding = "LITE_TXN"');
+      expect(result).toContain('service = "test-ar-auth"');
+      expect(result).toContain('entrypoint = "LiteTxnEntrypoint"');
+      expect(result).toContain(
+        'props = { caller = "ar-login-ui", environmentId = "test", audience = "authrim-lite-txn-v1" }'
+      );
     });
 
     it('generates [[services]] section for ar-admin-ui', () => {

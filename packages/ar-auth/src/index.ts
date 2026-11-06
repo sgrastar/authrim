@@ -892,3 +892,4 @@ app.fetch = (request, env, context) =>
 export default app;
 export { DirectoryConnectorRelay } from './directory-connector-relay';
 export { RuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';
+export { LiteTxnEntrypoint } from './lite-txn-entrypoint';
