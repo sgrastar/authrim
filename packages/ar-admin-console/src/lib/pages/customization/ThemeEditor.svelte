@@ -1,27 +1,29 @@
 <script lang="ts">
 	import { t } from '#lib/i18n/i18n.svelte.js';
-	import PageHeader from '#lib/ui/patterns/PageHeader.svelte';
 	import Tabs from '#lib/ui/patterns/Tabs.svelte';
-	import Badge from '#lib/ui/primitives/Badge.svelte';
-	import Page from '#lib/ui/templates/Page.svelte';
 	import ThemeAdvanced from './ThemeAdvanced.svelte';
 	import ThemeContent from './ThemeContent.svelte';
 	import ThemeLayout from './ThemeLayout.svelte';
 	import ThemeDesign from './ThemeDesign.svelte';
 	import ThemeImages from './ThemeImages.svelte';
 	import ThemePreview from './ThemePreview.svelte';
-	import { newThemeDraft } from './theme-draft';
+	import { newThemeDraft, type ThemeDraft } from './theme-draft';
 	import { THEME_SECTIONS, type PreviewScreen } from './theme-sections';
 
 	/**
-	 * Customization → Themes: how the tenant's sign-in screens look.
+	 * The theme editor: how the tenant's sign-in screens look, under the theme page's header.
 	 *
 	 * The preview column (first) and the editing column (one tab per section, the inspector) sit
 	 * side by side and the preview stays in view while the inspector is edited; on a narrow screen
-	 * they stack, editing first. Custom CSS sits under both, full width. The inspector is dense: its controls and spacing are a size down. What is edited is held in the page (`draft`) and drawn by the preview; it is
-	 * not read from or saved to the Admin API yet.
+	 * they stack, editing first. Custom CSS sits under both, full width. The inspector is dense: its
+	 * controls and spacing are a size down. `draft` is what is edited, drawn by the preview; the
+	 * page around it loads and saves it (a new draft when none is given).
 	 */
-	let draft = $state(newThemeDraft());
+	interface Props {
+		draft?: ThemeDraft;
+	}
+
+	let { draft = $bindable(newThemeDraft()) }: Props = $props();
 	let section = $state<string>(THEME_SECTIONS[0].id);
 	let screen = $state<PreviewScreen>('signIn');
 	let mode = $state<'light' | 'dark'>('light');
@@ -33,13 +35,7 @@
 	const tabs = $derived(THEME_SECTIONS.map((item) => ({ id: item.id, label: t(item.tab) })));
 </script>
 
-<Page>
-	<PageHeader title={t('nav.custom.branding')} description={t('th.desc')}>
-		{#snippet badges()}
-			<Badge tone="neutral">{t('th.status.published')}</Badge>
-		{/snippet}
-	</PageHeader>
-
+<div class="editor">
 	<div class="workspace">
 		<div class="workspace__edit">
 			<Tabs label={t('th.edit.label')} items={tabs} bind:value={section}>
@@ -68,9 +64,16 @@
 	<div class="advanced">
 		<ThemeAdvanced bind:draft />
 	</div>
-</Page>
+</div>
 
 <style>
+	/* The editor's parts are spaced as the page's sections are. */
+	.editor {
+		display: grid;
+		gap: var(--space-section);
+		min-width: 0;
+	}
+
 	/* The preview on the start side, the inspector on the end side; the preview follows the scroll. */
 	.workspace {
 		display: grid;

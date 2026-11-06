@@ -289,6 +289,8 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				id: 'branding',
 				label: 'nav.custom.branding',
 				icon: 'brush',
+				// The theme editor: …/branding/new and …/branding/<theme id>.
+				details: true,
 				legacyRoutes: ['/admin/themes']
 			},
 			{

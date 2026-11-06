@@ -29,6 +29,11 @@ export interface NavItem {
 	badge?: string;
 	/** What the page needs; admins who could not use it do not see the item (nav-access.ts). */
 	requires?: NavRequirement;
+	/**
+	 * The page has pages of its own one level down (`…/<item>/<id>`, a record's editor): they are
+	 * shown as the item, in its place in the navigation. Other paths under the item are unknown.
+	 */
+	details?: boolean;
 	legacyRoutes: readonly string[];
 }
 

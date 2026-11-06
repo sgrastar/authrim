@@ -457,6 +457,14 @@ export const API_GROUPS: readonly ApiGroup[] = [
 	// -------------------------------------------------------------------------------------------
 	// Customization
 	{
+		id: 'login-ui-themes',
+		name: 'Login UI themes',
+		kind: 'records',
+		page: 'customization/branding',
+		paths: [`${A}/login-ui/themes`],
+		note: 'Saved themes; applying one writes its values to the login-ui settings.'
+	},
+	{
 		id: 'login-ui-assets',
 		name: 'Login UI images',
 		kind: 'actions',

@@ -51,6 +51,20 @@ describe('navigation model', () => {
 		}
 	});
 
+	it('shows a record\u2019s page as its item, for an item that has such pages', () => {
+		for (const path of [
+			'/admin/customization/branding/new',
+			'/admin/customization/branding/thm_1'
+		]) {
+			const location = resolveNavPath(path);
+			expect(location?.item?.id, path).toBe('branding');
+			expect(location?.area.id).toBe('customization');
+		}
+		// Not deeper, and not under an item without such pages.
+		expect(resolveNavPath('/admin/customization/branding/thm_1/extra')).toBeNull();
+		expect(resolveNavPath('/admin/customization/login-ui/x')).toBeNull();
+	});
+
 	it('maps merged categories to the category that contains them', () => {
 		expect(topEntryOf('tenant', 'integrations').id).toBe('operate');
 		expect(topEntryOf('platform', 'customization').id).toBe('configure');
