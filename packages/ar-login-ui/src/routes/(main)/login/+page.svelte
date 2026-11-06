@@ -84,6 +84,7 @@
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import { page } from '$app/state';
 	import type { PageData } from './$types';
+	import { isAnswerScreenStep, screenAnswerFields } from '#lib/authrim/runtime-screen-answers.js';
 
 	type LoginPageData = PageData & {
 		authenticationMethods?: AuthenticationMethodsResponse;
@@ -218,6 +219,17 @@
 	let externalIdpLoading = $state<string | null>(null);
 	let runtimeFlow = $state<FlowRuntimeStartResponse | null>(null);
 	let runtimeFlowStep = $state<FlowRuntimeStep | null>(null);
+	// What the person entered in a screen step's own parts (a profile completion, a survey), for
+	// the step it was entered on: another step starts empty.
+	let runtimeScreenAnswers = $state<{
+		stepId: string | null;
+		values: Record<string, string | boolean>;
+	}>({ stepId: null, values: {} });
+	const currentRuntimeScreenAnswers = $derived(
+		runtimeScreenAnswers.stepId !== null && runtimeScreenAnswers.stepId === runtimeFlowStep?.id
+			? runtimeScreenAnswers.values
+			: {}
+	);
 	let emailVerificationChallenge = $state<FlowRuntimeEmailVerificationChallenge | null>(null);
 	let emailVerificationChallengeRequestKey = '';
 	let runtimeFlowLoading = $state(true);
@@ -463,22 +475,32 @@
 			!blockLegacyAuthLayout
 		)
 	);
-	const runtimeScreenFieldValues = $derived<Record<string, string>>({
-		email,
-		identifier: combinedIdentifier || totpIdentifier || email,
-		mail_otp_code: mailOtpCode,
-		mail_otp_code_length: String(emailCodeDigits),
-		mail_otp_sent: mailOtpSent ? 'true' : 'false',
-		mail_otp_resend_remaining: String(mailOtpResendRemaining),
-		mail_otp_resend_total: String(MAIL_OTP_RESEND_SECONDS),
-		code_input_method: totpCodeRequested ? 'totp' : mailOtpSent ? 'mail_otp' : '',
-		totp_identifier: totpIdentifier,
-		totp_code: totpCode,
-		totp_code_length: String(totpDigits),
-		totp_code_requested: totpCodeRequested ? 'true' : 'false',
-		directory_username: directoryUsername,
-		directory_password: directoryPassword
-	});
+	// A screen to answer shows what was entered on it only (what its submit sends); any other
+	// screen, the sign-in's own values.
+	const runtimeAnswerStep = $derived(
+		isAnswerScreenStep(runtimeFlowStep, getRuntimeScreen(runtimeFlowStep))
+	);
+	const runtimeScreenFieldValues = $derived<Record<string, string | boolean>>(
+		runtimeAnswerStep ? currentRuntimeScreenAnswers : runtimeSignInFieldValues()
+	);
+	function runtimeSignInFieldValues(): Record<string, string | boolean> {
+		return {
+			email,
+			identifier: combinedIdentifier || totpIdentifier || email,
+			mail_otp_code: mailOtpCode,
+			mail_otp_code_length: String(emailCodeDigits),
+			mail_otp_sent: mailOtpSent ? 'true' : 'false',
+			mail_otp_resend_remaining: String(mailOtpResendRemaining),
+			mail_otp_resend_total: String(MAIL_OTP_RESEND_SECONDS),
+			code_input_method: totpCodeRequested ? 'totp' : mailOtpSent ? 'mail_otp' : '',
+			totp_identifier: totpIdentifier,
+			totp_code: totpCode,
+			totp_code_length: String(totpDigits),
+			totp_code_requested: totpCodeRequested ? 'true' : 'false',
+			directory_username: directoryUsername,
+			directory_password: directoryPassword
+		};
+	}
 	const runtimeMethodAvailability = $derived<Partial<Record<RuntimeAuthMethod, boolean>>>({
 		passkey: showRuntimePasskey,
 		mail_otp: showRuntimeEmailCode,
@@ -2099,6 +2121,10 @@
 	}
 
 	function handleRuntimeScreenFieldValueChange(field: string, value: string | boolean) {
+		if (runtimeAnswerStep) {
+			setRuntimeScreenAnswer(field, value);
+			return;
+		}
 		const stringValue = typeof value === 'string' ? value : value ? 'true' : 'false';
 		const normalized = field.toLowerCase();
 		if (normalized === 'email' || normalized.endsWith('.email')) {
@@ -2126,7 +2152,32 @@
 		}
 		if (normalized === 'directory_password' || normalized === 'password') {
 			directoryPassword = stringValue;
+			return;
 		}
+		// Any other part is the screen's own (an answer the step submits).
+		setRuntimeScreenAnswer(field, value);
+	}
+
+	function setRuntimeScreenAnswer(field: string, value: string | boolean) {
+		const stepId = runtimeFlowStep?.id ?? null;
+		runtimeScreenAnswers = {
+			stepId,
+			values: {
+				...(runtimeScreenAnswers.stepId === stepId ? runtimeScreenAnswers.values : {}),
+				[field]: value
+			}
+		};
+	}
+
+	/** A screen step's submit: its consent decisions and the answers of its own parts. */
+	function getRuntimeScreenSubmitInput() {
+		const consent = getRuntimeConsentItemDecisionPayload();
+		if (!runtimeAnswerStep) return consent;
+		const fields = screenAnswerFields(
+			getRuntimeScreen(runtimeFlowStep),
+			(field) => currentRuntimeScreenAnswers[field]
+		);
+		return { ...consent, fields };
 	}
 
 	function handleRuntimeScreenAuthAction(method: RuntimeAuthMethod, action?: string) {
@@ -2299,7 +2350,7 @@
 		onRuntimeContinue={() =>
 			completeRuntimeOnlyStep(
 				getRuntimeScreenContinueHandle(runtimeFlowStep),
-				getRuntimeConsentItemDecisionPayload()
+				getRuntimeScreenSubmitInput()
 			)}
 		onRuntimeAccept={() =>
 			completeRuntimeOnlyStep('accepted', getRuntimeConsentItemDecisionPayload())}

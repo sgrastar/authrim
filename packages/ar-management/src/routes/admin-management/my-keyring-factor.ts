@@ -186,7 +186,8 @@ async function startPresentation(
   purpose: AdminPresentationPurpose,
   holderJkts: string[],
   context: Record<string, string | null>,
-  transport: Transport
+  transport: Transport,
+  walletMode?: 'recovery'
 ): Promise<Response> {
   const request = await c.env.VC_ISSUER!.createAdminPresentationRequest({
     tenantId: started.tenantId,
@@ -196,6 +197,7 @@ async function startPresentation(
     holderJkts,
     credentialIssuer: started.credentialIssuer,
     tenantLabel: new URL(started.credentialIssuer).hostname,
+    ...(walletMode ? { walletMode } : {}),
     context,
     mode: transport.mode,
     ...(transport.mode === 'dc_api' ? { origin: transport.origin } : {}),
@@ -492,7 +494,8 @@ myKeyringFactorRouter.post('/enroll', async (c) => {
         'enroll',
         registered,
         { mode: 'recovery', approving_factor_id: null },
-        transport
+        transport,
+        'recovery'
       );
     }
     const state = await enrollmentState(repo, auth.userId, now);

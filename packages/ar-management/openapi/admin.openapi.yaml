@@ -32330,7 +32330,10 @@ paths:
         The signed-in Admin's own admin credentials (active, suspended or revoked; never pending)
         in the home tenant, newest first, at most 50. Requires the Admin's own home-tenant session.
         holderKeyThumbprint is the RFC 7638 SHA-256 thumbprint of the stored holder key and is
-        absent for older credentials without one. The response is never cached.
+        absent for older credentials without one. secondFactor is true when that holder key is one
+        of the Admin's active Keyring second factors (several credentials can share one key when
+        Keyring renewed them). Revoking any credential that carries a registered key also revokes
+        that key as a second factor. The response is never cached.
       x-authrim-route-coverage: inferred-from-source
       responses:
         '200':
@@ -32357,6 +32360,7 @@ paths:
                         - status
                         - issuedAt
                         - expiresAt
+                        - secondFactor
                       properties:
                         id:
                           type: string
@@ -32375,6 +32379,9 @@ paths:
                           description: Expiry in epoch milliseconds, null when unknown.
                         holderKeyThumbprint:
                           type: string
+                        secondFactor:
+                          type: boolean
+                          description: Whether the holder key is one of the Admin's active second factors.
         '403':
           $ref: '#/components/responses/Error'
         default:
@@ -32496,7 +32503,12 @@ paths:
                     type: string
                   credentialOffer:
                     type: string
-                    description: openid-credential-offer:// URI carrying credential_offer_uri.
+                    description: >-
+                      openid-credential-offer:// URI carrying credential_offer_uri. When the Admin
+                      has active Keyring second factors, it also carries authrim_renew_holder_jkt
+                      (comma-separated RFC 7638 thumbprints): Keyring then renews with a key it
+                      already holds for this issuer, so the second factor carries over to the new
+                      credential. Other wallets ignore the parameter.
                   transactionCode:
                     type: string
                     description: One-time code the wallet asks for; shown only after the wallet fetched the offer.
@@ -33322,6 +33334,21 @@ paths:
                         description: >-
                           Whether Keyring may also be presented through the browser (Digital
                           Credentials API; platform setting security.admin_keyring_dc_api).
+                  recovery:
+                    type: object
+                    required:
+                      - available
+                    description: >-
+                      Whether a second-factor recovery can be requested. A sole administrator
+                      (no other active administrator anywhere) cannot: nobody could cancel the
+                      request, so they recover with the environment owner procedure.
+                    properties:
+                      available:
+                        type: boolean
+                      reason:
+                        type: string
+                        enum:
+                          - sole_admin
         default:
           $ref: '#/components/responses/Error'
       security:

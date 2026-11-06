@@ -1,6 +1,31 @@
 import type { jaSettings } from './ja';
 
 export const arSettings: Record<keyof typeof jaSettings, string> = {
+	'set.page.team': 'المسؤولون',
+	'set.page.team.desc': 'كيف يسجّل المسؤولون الدخول إلى وحدة التحكم هذه.',
+	'set.section.adminSignIn': 'تسجيل دخول المسؤولين',
+	'set.section.adminSignIn.desc':
+		'المدة التي يبقى فيها مسؤولو هذا المستأجر مسجّلين، والتحققات المطلوبة قبل أي عملية.',
+	'set.section.adminSignInPlatform': 'تسجيل دخول المسؤولين لكل المستأجرين',
+	'set.section.adminSignInPlatform.desc':
+		'ينطبق على مسؤولي كل المستأجرين. لا يغيّره إلا مسؤولو المنصة.',
+	'set.k.session.ttl.admin_passkey': 'مدة تسجيل دخول المسؤولين بمفتاح المرور',
+	'set.k.session.ttl.admin_passkey.desc':
+		'المدة بعد تسجيل الدخول بمفتاح مرور قبل أن يُطلب من المسؤول تسجيل الدخول مجددًا.',
+	'set.k.security.admin_step_up_overrides': 'تحققات مرفوعة لكل عملية',
+	'set.k.security.admin_step_up_overrides.desc':
+		'أسماء العمليات مع التحقق المطلوب (L1: مفتاح مرور؛ L2: مفتاح مرور وعامل ثانٍ)، مثل {"client.secret.rotate": "L2"}. لا يمكن خفض المستوى عن المستوى المضمّن.',
+	'set.k.security.admin_step_up_enforced': 'طلب تحققات إضافية قبل عمليات الإدارة',
+	'set.k.security.admin_step_up_enforced.desc':
+		'عند الإيقاف تُتخطّى تحققات مفتاح المرور والعامل الثاني قبل عمليات الإدارة الحساسة. أوقفه أثناء الترحيل فقط؛ الإيقاف نفسه يتطلب تحقق L2.',
+	'set.k.security.admin_keyring_dc_api': 'تقديم Keyring عبر المتصفح',
+	'set.k.security.admin_keyring_dc_api.desc':
+		'حيث يدعم المتصفح ذلك، يقدّم المسؤولون بيانات اعتماد Keyring عبر Digital Credentials API بدلًا من رمز QR.',
+	'set.k.security.admin_last_resort_reenroll_window_seconds':
+		'مدة إعادة التسجيل بعد الاسترداد الأخير',
+	'set.k.security.admin_last_resort_reenroll_window_seconds.desc':
+		'بعد أن يلغي الاسترداد الأخير العوامل الثانية للمسؤول، المدة التي يمكنه خلالها تسجيل عامل أول من جديد باستخدام مفتاح المرور وحده.',
+	'settings.json.object': 'أدخل كائن JSON (بين القوسين { }).',
 	'set.page.stayingSignedIn': 'البقاء مسجلاً للدخول',
 	'set.page.stayingSignedIn.desc':
 		'المدة التي يبقى فيها الأشخاص مسجلين للدخول بعد تسجيل دخولهم، والمدة التي تحتفظ فيها تطبيقاتهم بهذا الدخول.',

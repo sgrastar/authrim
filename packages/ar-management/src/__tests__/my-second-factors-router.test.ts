@@ -5,6 +5,7 @@ import type { Env } from '@authrim/ar-lib-core';
 const NOW = Date.now();
 
 const mocks = vi.hoisted(() => ({
+  hasAnotherAdmin: vi.fn(async () => true),
   listActiveByUser: vi.fn(),
   listByUser: vi.fn(),
   getEnrollmentGraceEndsAt: vi.fn(),
@@ -35,6 +36,7 @@ vi.mock('../admin-shared', () => ({ writeAdminAuditLog: mocks.writeAdminAuditLog
 vi.mock('../routes/admin-management/my-second-factor-recovery', () => ({
   refuseRecoveryRequest: mocks.refuseRecoveryRequest,
   fileRecoveryRequest: mocks.fileRecoveryRequest,
+  hasAnotherAdmin: mocks.hasAnotherAdmin,
 }));
 
 vi.mock('../admin-step-up-gate', async (importOriginal) => {
@@ -219,7 +221,15 @@ describe('mySecondFactorsRouter', () => {
         minimum: 1,
         enrollment: { mode: 'step_up', first_enrollment_ends_at: NOW - 1, reenroll_until: null },
         keyring: { dc_api: false },
+        recovery: { available: true },
       });
+    });
+
+    it('says up front that a sole administrator cannot request a recovery', async () => {
+      mocks.hasAnotherAdmin.mockResolvedValueOnce(false);
+      const { status, body } = await call('GET', '');
+      expect(status).toBe(200);
+      expect(body).toMatchObject({ recovery: { available: false, reason: 'sole_admin' } });
     });
 
     it('refuses a machine caller', async () => {

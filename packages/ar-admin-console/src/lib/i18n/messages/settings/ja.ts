@@ -3,6 +3,30 @@
  * and sections, and the shared settings-page wording. Spread into `../ja.ts`.
  */
 export const jaSettings = {
+	'set.page.team': '管理者ユーザー',
+	'set.page.team.desc': '管理者がこのコンソールにログインする方法を決めます。',
+	'set.section.adminSignIn': '管理者のログイン',
+	'set.section.adminSignIn.desc':
+		'このテナントの管理者が、ログインしたままでいられる時間と、操作の前に求める確認です。',
+	'set.section.adminSignInPlatform': '全テナント共通の管理者ログイン',
+	'set.section.adminSignInPlatform.desc':
+		'すべてのテナントの管理者に適用されます。変更できるのはプラットフォーム管理者だけです。',
+	'set.k.session.ttl.admin_passkey': 'パスキーでログインした管理者のログイン時間',
+	'set.k.session.ttl.admin_passkey.desc':
+		'管理者がパスキーでログインしてから、もう一度ログインを求めるまでの時間です。',
+	'set.k.security.admin_step_up_overrides': '操作ごとの追加確認の引き上げ',
+	'set.k.security.admin_step_up_overrides.desc':
+		'操作名と求める確認（L1: パスキー、L2: パスキーと 2 要素目）の組です。例: {"client.secret.rotate": "L2"}。組み込みのレベルより下げることはできません。',
+	'set.k.security.admin_step_up_enforced': '管理操作の追加確認を求める',
+	'set.k.security.admin_step_up_enforced.desc':
+		'オフにすると、重要な管理操作の前のパスキーと 2 要素目の確認を省きます。移行作業のあいだだけオフにしてください。オフにする操作にも L2 の確認が必要です。',
+	'set.k.security.admin_keyring_dc_api': 'Keyring をブラウザーから提示する',
+	'set.k.security.admin_keyring_dc_api.desc':
+		'対応するブラウザーでは、QR コードの代わりに Digital Credentials API で Keyring の証明書を提示できるようにします。',
+	'set.k.security.admin_last_resort_reenroll_window_seconds': '最終手段の復旧後に再登録できる期間',
+	'set.k.security.admin_last_resort_reenroll_window_seconds.desc':
+		'最終手段の復旧で管理者の第 2 要素を取り消した後、パスキーだけで最初の第 2 要素を登録し直せる期間です。',
+	'settings.json.object': 'JSON のオブジェクト（{ } で囲んだ形）を入力してください。',
 	'set.page.stayingSignedIn': 'ログイン状態の維持',
 	'set.page.stayingSignedIn.desc':
 		'一度ログインした利用者と、そのアプリが、どれくらいの間ログインしたままでいられるかを決めます。',

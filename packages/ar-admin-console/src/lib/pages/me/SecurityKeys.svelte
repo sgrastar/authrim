@@ -74,6 +74,8 @@
 	const activeKeys = $derived((keyState?.second_factors ?? []).filter((key) => !key.revoked_at));
 	const onlyOne = $derived(activeKeys.length === 1);
 	const recoveryReady = $derived(recovery !== null && clock >= recovery.not_before);
+	// A sole administrator is refused a recovery: say so before they prepare a new factor.
+	const recoveryBlocked = $derived(keyState?.recovery?.available === false);
 	// A lapsed request can no longer be completed: read the state again (it is gone from it).
 	// At most once a minute: with this device's clock ahead of the server's, the server may still
 	// list it for a while.
@@ -295,14 +297,20 @@
 				</Callout>
 			{:else if keyState.enrollment.mode === 'recovery_required'}
 				<Callout tone="warning" title={t('sk.recoveryNeeded.title')}>
-					<p>{t('sk.recoveryNeeded.body')}</p>
-					<InlineGroup>
-						<Button size="sm" onclick={() => openAdd('recovery')}>{t('sk.recover')}</Button>
-						<Button size="sm" onclick={() => openKeyring('recovery')}>
-							{t('kp.recover.add')}
-						</Button>
-					</InlineGroup>
+					{#if recoveryBlocked}
+						<p>{t('sk.recovery.soleAdmin')}</p>
+					{:else}
+						<p>{t('sk.recoveryNeeded.body')}</p>
+						<InlineGroup>
+							<Button size="sm" onclick={() => openAdd('recovery')}>{t('sk.recover')}</Button>
+							<Button size="sm" onclick={() => openKeyring('recovery')}>
+								{t('kp.recover.add')}
+							</Button>
+						</InlineGroup>
+					{/if}
 				</Callout>
+			{:else if onlyOne}
+				<Callout title={t('sk.onlyOne.title')}>{t('sk.onlyOne.body')}</Callout>
 			{/if}
 
 			{#if activeKeys.length === 0}
@@ -338,12 +346,16 @@
 
 			{#if activeKeys.length > 0 && !recovery}
 				<div class="recover-link">
-					<Button size="sm" variant="ghost" onclick={() => openAdd('recovery')}>
-						{t('sk.recover')}
-					</Button>
-					<Button size="sm" variant="ghost" onclick={() => openKeyring('recovery')}>
-						{t('kp.recover.add')}
-					</Button>
+					{#if recoveryBlocked}
+						<p class="recover-link__note">{t('sk.recovery.soleAdmin')}</p>
+					{:else}
+						<Button size="sm" variant="ghost" onclick={() => openAdd('recovery')}>
+							{t('sk.recover')}
+						</Button>
+						<Button size="sm" variant="ghost" onclick={() => openKeyring('recovery')}>
+							{t('kp.recover.add')}
+						</Button>
+					{/if}
 				</div>
 			{/if}
 		</div>
@@ -415,5 +427,11 @@
 		flex-wrap: wrap;
 		justify-content: flex-end;
 		gap: var(--space-related);
+	}
+
+	.recover-link__note {
+		margin: 0;
+		color: var(--text-muted);
+		font-size: var(--fs-caption);
 	}
 </style>

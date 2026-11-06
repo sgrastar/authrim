@@ -74,9 +74,18 @@ export function refusal(meta: SettingMeta, value: unknown): string | null {
 				: `Value must be one of: ${(meta.enum ?? []).join(', ')}`;
 		case 'string':
 			return typeof value === 'string' ? null : 'Value must be text';
+		case 'json':
+			return value !== null && typeof value === 'object' && !Array.isArray(value)
+				? null
+				: 'Value must be an object';
 		default:
 			return null;
 	}
+}
+
+/** Whether a setting can be set at a level (its own `scopes`, when it narrows its category's). */
+function settableAt(meta: SettingMeta, level: SettingsTarget['level']): boolean {
+	return !meta.scopes || meta.scopes.includes(level);
 }
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -151,7 +160,10 @@ export function createFakeSettings(options: FakeSettingsOptions = {}): SettingsC
 			const sources: Record<string, SettingSource> = {};
 			const inherited: SettingsGetResult['inherited'] = { values: {}, sources: {} };
 			for (const [key, meta] of Object.entries(settingsOf(category))) {
-				const parent = parents.find((p) => key in p.stored);
+				// A value stored at a scope the setting cannot be set at is ignored, as the API does.
+				const parent = parents.find(
+					(p) => key in p.stored && settableAt(meta, p.source === 'tenant' ? 'tenant' : 'platform')
+				);
 				const [value, source]: [unknown, InheritedSettingSource] = parent
 					? [parent.stored[key], parent.source]
 					: key in env
@@ -159,8 +171,9 @@ export function createFakeSettings(options: FakeSettingsOptions = {}): SettingsC
 						: [meta.default, 'default'];
 				inherited.values[key] = value;
 				inherited.sources[key] = source;
-				values[key] = key in stored ? stored[key] : value;
-				sources[key] = key in stored ? 'kv' : source;
+				const own = key in stored && settableAt(meta, target.level);
+				values[key] = own ? stored[key] : value;
+				sources[key] = own ? 'kv' : source;
 			}
 			const result: SettingsGetResult = {
 				category,
@@ -203,9 +216,11 @@ export function createFakeSettings(options: FakeSettingsOptions = {}): SettingsC
 				const meta = metas[key];
 				const reason = !meta
 					? 'Unknown setting'
-					: isLocked(key)
-						? 'Fixed by the scope above'
-						: refusal(meta, value);
+					: !settableAt(meta, target.level)
+						? 'Not settable at this scope'
+						: isLocked(key)
+							? 'Fixed by the scope above'
+							: refusal(meta, value);
 				if (reason) {
 					result.rejected[key] = reason;
 					continue;
@@ -214,8 +229,16 @@ export function createFakeSettings(options: FakeSettingsOptions = {}): SettingsC
 				result.applied.push(key);
 			}
 			for (const key of request.clear ?? []) {
-				if (!metas[key] || isLocked(key)) {
-					result.rejected[key] = metas[key] ? 'Fixed by the scope above' : 'Unknown setting';
+				const meta = metas[key];
+				const reason = !meta
+					? 'Unknown setting'
+					: !settableAt(meta, target.level)
+						? 'Not settable at this scope'
+						: isLocked(key)
+							? 'Fixed by the scope above'
+							: null;
+				if (reason) {
+					result.rejected[key] = reason;
 					continue;
 				}
 				delete stored[key];

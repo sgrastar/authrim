@@ -79,6 +79,12 @@
 	const statusTone = (status: WalletCredential['status']) =>
 		status === 'active' ? 'success' : status === 'suspended' ? 'warning' : 'neutral';
 
+	/** Revoking a credential whose key is a second factor revokes that factor too. */
+	const revokeBody = (target: WalletCredential | null) =>
+		target?.secondFactor
+			? `${t('keyring.credentials.revokeBody')} ${t('keyring.credentials.revokeRemovesFactor')}`
+			: t('keyring.credentials.revokeBody');
+
 	function openRevoke(credential: WalletCredential) {
 		revokeError = null;
 		needsFreshAuth = false;
@@ -135,6 +141,9 @@
 				<ItemCard title={codeOf(credential)} icon="key">
 					{#snippet meta()}
 						<Badge tone={statusTone(credential.status)}>{statusLabel(credential.status)}</Badge>
+						{#if credential.secondFactor && credential.status !== 'revoked'}
+							<Badge tone="info">{t('keyring.credentials.secondFactor')}</Badge>
+						{/if}
 					{/snippet}
 					<DetailList size="sm">
 						<DetailItem label={t('keyring.credentials.issued')}>
@@ -165,7 +174,7 @@
 <ConfirmDialog
 	open={revoking !== null}
 	title={t('keyring.credentials.revokeTitle', { code: revoking ? codeOf(revoking) : '' })}
-	body={t('keyring.credentials.revokeBody')}
+	body={revokeBody(revoking)}
 	confirmLabel={t('keyring.credentials.revoke')}
 	tone="danger"
 	{busy}

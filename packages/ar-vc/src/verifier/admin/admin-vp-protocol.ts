@@ -82,6 +82,8 @@ export interface AdminVPTransactionDetails {
   requestedAt: number;
   /** Whether the wallet must ask for the code shown in the console (QR requests only). */
   matchCodeRequired: boolean;
+  /** enroll only: the key is filed for a recovery request (shown as such by the wallet). */
+  mode?: 'recovery';
 }
 
 /** The single `transaction_data` entry, base64url-encoded JSON (OpenID4VP 1.0 section 8.4). */
@@ -96,6 +98,10 @@ export function encodeTransactionData(details: AdminVPTransactionDetails): strin
         requested_at: details.requestedAt,
         // Only a QR request shows a match code; the browser itself binds a DC API one.
         match_code_required: details.matchCodeRequired,
+        // Wallets that do not know `mode` ignore it and show an ordinary registration.
+        ...(details.purpose === 'enroll' && details.mode === 'recovery'
+          ? { mode: 'recovery' }
+          : {}),
       })
     )
   );

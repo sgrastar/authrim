@@ -53,7 +53,11 @@ import { generateRegistrationOptions, verifyRegistrationResponse } from '@simple
 import type { RegistrationResponseJSON } from '@simplewebauthn/server';
 import { writeAdminAuditLog } from '../../admin-shared';
 import { refuseAdminFreshAuth, requireAdminStepUp } from '../../admin-step-up-gate';
-import { fileRecoveryRequest, refuseRecoveryRequest } from './my-second-factor-recovery';
+import {
+  fileRecoveryRequest,
+  hasAnotherAdmin,
+  refuseRecoveryRequest,
+} from './my-second-factor-recovery';
 
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
 type HumanSession = AdminAuthContext & { sessionId: string; sessionTenantId: string };
@@ -240,6 +244,14 @@ mySecondFactorsRouter.get('/', async (c) => {
         reenroll_until: state.reenrollUntil,
       },
       keyring: { dc_api: dcApi },
+      // A sole administrator cannot request a recovery (nobody could cancel it): the console says
+      // so up front instead of after the admin has prepared a new factor.
+      recovery: (await hasAnotherAdmin(
+        requireDedicatedAdminDatabaseAdapter(c.env, 'admin-management'),
+        auth.userId
+      ))
+        ? { available: true }
+        : { available: false, reason: 'sole_admin' },
     });
   } catch (error) {
     secondFactorLog(c).error('Failed to list second factors', {

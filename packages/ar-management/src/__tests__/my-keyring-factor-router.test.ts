@@ -631,9 +631,22 @@ describe('recovery with Keyring', () => {
       expect.objectContaining({
         purpose: 'enroll',
         holderJkts: [JKT],
+        // Keyring is told it is a recovery request, so it can say so.
+        walletMode: 'recovery',
         context: { mode: 'recovery', approving_factor_id: null },
       })
     );
+  });
+
+  it('does not mark an ordinary enrolment as a recovery', async () => {
+    mocks.listActiveByUser.mockResolvedValue([]);
+    mocks.hasEverEnrolled.mockResolvedValue(false);
+    const response = await call('POST', '/enroll', undefined, {});
+    expect(response.status).toBe(201);
+    expect(vc.createAdminPresentationRequest).toHaveBeenCalledOnce();
+    const [input] = vc.createAdminPresentationRequest.mock.calls[0] as [Record<string, unknown>];
+    expect(input.purpose).toBe('enroll');
+    expect(input).not.toHaveProperty('walletMode');
   });
 
   it('starts nothing when a recovery request may not be filed', async () => {

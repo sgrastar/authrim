@@ -65,6 +65,9 @@ interface ParsedSetCookie {
 	raw: string;
 }
 
+/** The request headers a call may add: the human verification screen a proof came from. */
+const EXTRA_HEADERS: ReadonlySet<string> = new Set(['x-authrim-human-verification-action']);
+
 const COOKIE_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u;
 
 interface JarCookie {
@@ -166,9 +169,18 @@ export function createLiteBackendClient(options: LiteBackendClientOptions) {
 		}
 	}
 
-	function headersFor(json: boolean, requestPath: string, method: string): Headers {
+	function headersFor(
+		json: boolean,
+		requestPath: string,
+		method: string,
+		extra: Readonly<Record<string, string>>
+	): Headers {
 		const headers = new Headers({ Accept: 'application/json' });
 		if (json) headers.set('Content-Type', 'application/json');
+		// Only the headers a call may add (never one the client sets itself below).
+		for (const [name, value] of Object.entries(extra)) {
+			if (EXTRA_HEADERS.has(name.toLowerCase())) headers.set(name, value);
+		}
 		// As a browser sends them: those whose Path matches, the longer Path first.
 		const cookie = jar
 			.filter((entry) => pathMatches(entry.path, requestPath))
@@ -200,7 +212,12 @@ export function createLiteBackendClient(options: LiteBackendClientOptions) {
 		/** Calls a backend path with an optional JSON body; the answer's cookies go into the jar. */
 		async request(
 			path: string,
-			init: { method?: 'GET' | 'POST' | 'PUT' | 'DELETE'; json?: unknown } = {}
+			init: {
+				method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
+				json?: unknown;
+				/** Extra request headers, from EXTRA_HEADERS only. */
+				headers?: Readonly<Record<string, string>>;
+			} = {}
 		): Promise<LiteBackendAnswer> {
 			// A local path only: no scheme or host, no backslash (a URL parser reads `/\host` as
 			// `//host`), no control character; and it must resolve to the public origin.
@@ -219,7 +236,7 @@ export function createLiteBackendClient(options: LiteBackendClientOptions) {
 			}
 			const response = await options.fetcher.fetch(url.toString(), {
 				method,
-				headers: headersFor(init.json !== undefined, url.pathname, method),
+				headers: headersFor(init.json !== undefined, url.pathname, method, init.headers ?? {}),
 				body: init.json === undefined ? undefined : JSON.stringify(init.json),
 				redirect: 'manual'
 			});
@@ -232,6 +249,10 @@ export function createLiteBackendClient(options: LiteBackendClientOptions) {
 				json = null;
 			}
 			return { status: response.status, headers: response.headers, json };
+		},
+		/** Whether the jar holds a cookie of that name (the browser's, or one an answer set). */
+		hasCookie(name: string): boolean {
+			return jar.some((entry) => entry.name === name && entry.value !== '');
 		},
 		/** The `Set-Cookie` values to put on the response to the browser. */
 		setCookies(): string[] {

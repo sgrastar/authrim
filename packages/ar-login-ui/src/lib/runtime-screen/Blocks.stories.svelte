@@ -236,6 +236,91 @@
 </Story>
 
 <Story
+	name="Choices and checkboxes"
+	args={{
+		screen: only(
+			blocks.choice(
+				'select',
+				'department',
+				'Department',
+				[
+					['sales', 'Sales'],
+					['dev', 'Development']
+				],
+				{ placeholder: 'Choose one', required: true }
+			),
+			blocks.choice(
+				'radio',
+				'survey',
+				'How did you hear about us?',
+				[
+					['web', 'On the web'],
+					['friend', 'From a friend']
+				],
+				{ store_to_profile: false, answer_targets: ['record'] }
+			),
+			blocks.tick('terms_ok', 'I have read the house rules', { required: true }),
+			blocks.tick('newsletter', 'Send me product news', {
+				help_text: 'At most once a month.'
+			}),
+			blocks.choice(
+				'select',
+				'language',
+				'Language',
+				[
+					['en', 'English'],
+					['ja', '日本語']
+				],
+				{ show_label: false, placeholder: 'Language' }
+			)
+		),
+		mode: 'signup',
+		values: { survey: 'web' }
+	}}
+	play={async ({ canvasElement, args }) => {
+		const canvas = within(canvasElement);
+		await userEvent.selectOptions(canvas.getByLabelText(/Department/u), 'dev');
+		await expect(args.onAction).toHaveBeenCalledWith('field', {
+			field: 'department',
+			value: 'dev'
+		});
+		await userEvent.click(canvas.getByLabelText(/house rules/u));
+		await expect(args.onAction).toHaveBeenCalledWith('field', {
+			field: 'terms_ok',
+			value: true
+		});
+		await userEvent.click(canvas.getByLabelText('From a friend'));
+		await expect(args.onAction).toHaveBeenCalledWith('field', {
+			field: 'survey',
+			value: 'friend'
+		});
+		// A hidden label is still the control's name.
+		await expect(canvas.getByLabelText('Language')).toBeInTheDocument();
+	}}
+>
+	{#snippet template(args)}
+		<LoginUIFrame><RuntimeScreenHarness {...args} /></LoginUIFrame>
+	{/snippet}
+</Story>
+
+<Story
+	name="Three-column row"
+	args={{
+		screen: only(
+			blocks.row(3),
+			blocks.name('given_name', 'First name', 1),
+			blocks.name('middle_name', 'Middle name', 2),
+			blocks.name('family_name', 'Last name', 3)
+		),
+		mode: 'signup'
+	}}
+>
+	{#snippet template(args)}
+		<LoginUIFrame><RuntimeScreenHarness {...args} /></LoginUIFrame>
+	{/snippet}
+</Story>
+
+<Story
 	name="Typing and choosing"
 	args={{ screen: only(blocks.email(), blocks.mailOtp(), blocks.passkey()), mode: 'signup' }}
 	play={async ({ canvasElement, args }) => {

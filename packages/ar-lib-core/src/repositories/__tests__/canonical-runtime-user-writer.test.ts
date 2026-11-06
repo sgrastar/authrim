@@ -357,6 +357,8 @@ describe('CanonicalRuntimeUserWriter', () => {
         values: { given_name: 'X' },
       })
     ).resolves.toBe(false);
+    await expect(writer.hasProfile('user-1')).resolves.toBe(true);
+    await expect(writer.hasProfile('unknown')).resolves.toBe(false);
   });
 
   it('marks canonical runtime users deleted for SCIM delete cutover', async () => {

@@ -114,7 +114,10 @@ async function keyringCredentialIsActive(
 }
 
 /** Whether anyone other than this admin is an active administrator anywhere. */
-async function hasAnotherAdmin(adapter: DatabaseAdapter, adminUserId: string): Promise<boolean> {
+export async function hasAnotherAdmin(
+  adapter: DatabaseAdapter,
+  adminUserId: string
+): Promise<boolean> {
   const row = await adapter.queryOne<{ id: string }>(
     `SELECT id FROM admin_users
       WHERE id <> ? AND is_active = 1 AND status = 'active' LIMIT 1`,

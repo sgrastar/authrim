@@ -41,13 +41,35 @@
 			status: 'active',
 			issuedAt: Date.UTC(2026, 10, 2, 9, 30),
 			expiresAt: Date.UTC(2027, 10, 2, 9, 30),
-			holderKeyThumbprint: THUMBPRINT
+			holderKeyThumbprint: THUMBPRINT,
+			secondFactor: true
 		},
 		{
 			id: 'cred_old',
 			status: 'revoked',
 			issuedAt: Date.UTC(2026, 9, 1, 9, 30),
-			expiresAt: Date.UTC(2026, 9, 1, 9, 30) + 365 * DAY
+			expiresAt: Date.UTC(2026, 9, 1, 9, 30) + 365 * DAY,
+			secondFactor: false
+		}
+	];
+
+	/** Keyring renewed the credential with the same holder key: both carry the second factor. */
+	const RENEWED: WalletCredential[] = [
+		{
+			id: 'cred_renewed',
+			status: 'active',
+			issuedAt: Date.UTC(2026, 10, 30, 9, 30),
+			expiresAt: Date.UTC(2027, 10, 30, 9, 30),
+			holderKeyThumbprint: THUMBPRINT,
+			secondFactor: true
+		},
+		{
+			id: 'cred_previous',
+			status: 'active',
+			issuedAt: Date.UTC(2026, 10, 2, 9, 30),
+			expiresAt: Date.UTC(2027, 10, 2, 9, 30),
+			holderKeyThumbprint: THUMBPRINT,
+			secondFactor: true
 		}
 	];
 
@@ -95,7 +117,8 @@
 							status: 'active',
 							issuedAt: Date.now(),
 							expiresAt: Date.now() + 365 * DAY,
-							holderKeyThumbprint: THUMBPRINT
+							holderKeyThumbprint: THUMBPRINT,
+							secondFactor: true
 						},
 						...credentials
 					];
@@ -209,6 +232,46 @@
 >
 	{#snippet template()}
 		<Keyring client={client(['pending'], { credentials: CREDENTIALS })} />
+	{/snippet}
+</Story>
+
+<Story
+	name="Revoking a second-factor credential"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByText(t('keyring.credentials.secondFactor'));
+		await userEvent.click(
+			canvas.getByRole('button', { name: new RegExp(t('keyring.credentials.revoke')) })
+		);
+		const dialog = await within(document.body).findByRole('dialog');
+		await within(dialog).findByText((content) =>
+			content.includes(t('keyring.credentials.revokeRemovesFactor'))
+		);
+	}}
+>
+	{#snippet template()}
+		<Keyring client={client(['pending'], { credentials: CREDENTIALS })} />
+	{/snippet}
+</Story>
+
+<Story
+	name="Renewed credentials share the factor"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		expect(await canvas.findAllByText(t('keyring.credentials.secondFactor'))).toHaveLength(2);
+		const [, previous] = canvas.getAllByRole('button', {
+			name: new RegExp(t('keyring.credentials.revoke'))
+		});
+		await userEvent.click(previous);
+		// Revoking the older one revokes the shared key as a second factor too.
+		const dialog = await within(document.body).findByRole('dialog');
+		await within(dialog).findByText((content) =>
+			content.includes(t('keyring.credentials.revokeRemovesFactor'))
+		);
+	}}
+>
+	{#snippet template()}
+		<Keyring client={client(['pending'], { credentials: RENEWED })} />
 	{/snippet}
 </Story>
 
