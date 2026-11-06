@@ -203,6 +203,10 @@ describe('verifyVPToken', () => {
       undefined,
       { jwk: { kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y, d: 'secret' } },
       { jwk: { kty: 'OKP', crv: 'Ed25519', x: 'x' } },
+      // Restricted by the issuer to another use or algorithm.
+      { jwk: { kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y, use: 'enc' } },
+      { jwk: { kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y, alg: 'ECDH-ES' } },
+      { jwk: { kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y, key_ops: ['encrypt'] } },
     ]) {
       vi.mocked(verifySDJWTVC).mockClear();
       vi.mocked(parseSDJWTVC).mockResolvedValue({

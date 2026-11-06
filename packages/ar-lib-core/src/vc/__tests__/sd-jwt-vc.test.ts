@@ -16,6 +16,7 @@ import {
   type SDJWTVCCreateOptions,
 } from '../sd-jwt-vc';
 import { generateECKeySet } from '../../utils/ec-keys';
+import { SignJWT } from 'jose';
 
 describe('SD-JWT VC', () => {
   describe('isSDJWTVC', () => {
@@ -426,7 +427,7 @@ describe('SD-JWT VC', () => {
         'nonce-1',
         'https://verifier.example.com'
       );
-      const kb = presentation.split('~').pop()!;
+      const kb = presentation.split('~').at(-1) ?? '';
       const payload = JSON.parse(atob(kb.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))) as {
         sd_hash: string;
       };
@@ -492,6 +493,37 @@ describe('SD-JWT VC', () => {
       await expect(
         verifySDJWTVC(withoutKb + kb, issuerKeySet.publicKey, holderKeySet.publicKey, verifyOptions)
       ).rejects.toThrow('Invalid Key Binding JWT');
+    });
+
+    it('accepts a key binding from a holder whose clock runs a little ahead', async () => {
+      const { issuerKeySet, holderKeySet, sdjwtvc } = await issued();
+      const withoutKb = `${sdjwtvc.issuerJwt}~`;
+      const kb = await createKeyBindingJWT(
+        holderKeySet.privateKey,
+        'ES256',
+        'nonce-1',
+        'https://verifier.example.com',
+        withoutKb
+      );
+      const now = Math.floor(Date.now() / 1000);
+      const at = (currentTime: number) =>
+        verifySDJWTVC(withoutKb + kb, issuerKeySet.publicKey, holderKeySet.publicKey, {
+          ...verifyOptions,
+          currentTime,
+        });
+      await expect(at(now - 30)).resolves.toMatchObject({ holderBindingVerified: true });
+      await expect(at(now - 120)).rejects.toThrow('Invalid Key Binding JWT');
+    });
+
+    it('refuses a credential whose disclosure digests use another algorithm', async () => {
+      const { issuerKeySet } = await issued();
+      const jwt = await new SignJWT({ vct: 'test-vct', _sd_alg: 'sha-512', _sd: [] })
+        .setProtectedHeader({ alg: 'ES256', typ: 'dc+sd-jwt', kid: 'issuer-key' })
+        .setIssuer('https://issuer.example.com')
+        .sign(issuerKeySet.privateKey);
+      await expect(
+        verifySDJWTVC(`${jwt}~`, issuerKeySet.publicKey, null, verifyOptions)
+      ).rejects.toThrow('Unsupported _sd_alg');
     });
 
     it('reads a credential without key binding and refuses malformed forms', async () => {

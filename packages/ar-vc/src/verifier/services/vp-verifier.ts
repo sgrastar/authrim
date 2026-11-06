@@ -272,6 +272,15 @@ async function importHolderKey(cnf: unknown): Promise<CryptoKey | null> {
   if (!jwk || jwk.kty !== 'EC' || 'd' in jwk) return null;
   const alg = HOLDER_CURVE_ALGORITHMS[String(jwk.crv)];
   if (!alg || typeof jwk.x !== 'string' || typeof jwk.y !== 'string') return null;
+  // The issuer may restrict the key (RFC 7517 section 4): only a signing key may bind.
+  if (jwk.alg !== undefined && jwk.alg !== alg) return null;
+  if (jwk.use !== undefined && jwk.use !== 'sig') return null;
+  if (
+    jwk.key_ops !== undefined &&
+    !(Array.isArray(jwk.key_ops) && (jwk.key_ops as unknown[]).includes('verify'))
+  ) {
+    return null;
+  }
   try {
     const key = await importJWK({ kty: 'EC', crv: jwk.crv as string, x: jwk.x, y: jwk.y }, alg);
     return key instanceof CryptoKey ? key : null;

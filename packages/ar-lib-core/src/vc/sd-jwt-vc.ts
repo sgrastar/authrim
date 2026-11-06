@@ -445,6 +445,12 @@ export async function verifySDJWTVC(
     currentDate: currentTime ? new Date(currentTime * 1000) : undefined,
   });
 
+  // Disclosure digests are SHA-256 here; a credential naming another algorithm is refused
+  // rather than checked with the wrong one.
+  if (payload._sd_alg !== undefined && payload._sd_alg !== 'sha-256') {
+    throw new Error('Unsupported _sd_alg');
+  }
+
   // Verify VCT if specified
   if (vct && payload.vct !== vct) {
     throw new Error(`VCT mismatch: expected ${vct}, got ${payload.vct}`);
@@ -652,7 +658,7 @@ async function verifyKeyBindingJWT(
   // Check if KB-JWT is too old
   // SECURITY: Explicitly check for negative age (defense in depth)
   const age = now - unsafePayload.iat;
-  if (age < 0 || age > maxAge) {
+  if (age < -clockSkewTolerance || age > maxAge) {
     throw new Error(INVALID_KB_JWT);
   }
 
