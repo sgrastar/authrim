@@ -43,6 +43,11 @@ export const PHASE5_SQLITE_TABLE_GROUPS: readonly Phase5TableGroup[] = [
   },
   {
     family: 'admin',
+    module: 'flows-ui',
+    tables: ['login_ui_themes'],
+  },
+  {
+    family: 'admin',
     module: 'authorization',
     tables: [
       'admin_ip_allowlist',

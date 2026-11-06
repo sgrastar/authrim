@@ -41,7 +41,17 @@
 	const known = $derived(resolveNavPath(consolePath));
 	const location = $derived(known ?? resolveNavPath('/admin')!);
 	const standalone = $derived(isStandalonePath(consolePath));
-	const loader = $derived(known ? mockPageFor(consolePath) : undefined);
+	// A record's page under an item that has them (…/branding/<id>) is the item's page, which reads
+	// the record from the address.
+	const recordOf = (path: string) => path.replace(/\/+$/, '').split('/').pop() ?? '';
+	const loader = $derived(
+		!known
+			? undefined
+			: (mockPageFor(consolePath) ??
+					(known.item?.details && recordOf(consolePath) !== known.item.id
+						? mockPageFor(consolePath.replace(/\/+$/, '').replace(/\/[^/]+$/, ''))
+						: undefined))
+	);
 
 	let tenant = $state('acme');
 	// The header reads the same in-memory notices as the Notifications page.

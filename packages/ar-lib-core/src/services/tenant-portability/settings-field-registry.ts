@@ -579,6 +579,7 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     login-ui.background_image_opacity
     login-ui.brand_panel_image_opacity
     login-ui.account_page_published_version
+    login-ui.active_theme_version
   `,
     ],
     [
@@ -587,6 +588,7 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       'value',
       `
     login-ui.published_at
+    login-ui.active_theme_id
     login-ui.background_color
     login-ui.accent_color
     login-ui.title_color

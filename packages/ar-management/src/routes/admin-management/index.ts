@@ -42,6 +42,7 @@ import { adminSecondFactorRecoveriesRouter } from './admin-second-factor-recover
 import { adminSecondFactorsRouter } from './admin-second-factors';
 import { adminNoticesRouter } from './admin-notices';
 import { adminNoticeChannelsRouter, myNoticePreferencesRouter } from './admin-notice-delivery';
+import { loginUIThemesRouter } from './login-ui-themes';
 import { myAgentConsentsRouter } from './my-agent-consents';
 import { myWalletCredentialsRouter } from './my-wallet-credentials';
 import { adminAccessControlRouter } from './admin-access-control';
@@ -103,6 +104,7 @@ adminManagementRouter.route('/me/second-factor-recovery', mySecondFactorRecovery
 adminManagementRouter.route('/admin-second-factor-recoveries', adminSecondFactorRecoveriesRouter);
 adminManagementRouter.route('/notices', adminNoticesRouter);
 adminManagementRouter.route('/notice-channels', adminNoticeChannelsRouter);
+adminManagementRouter.route('/login-ui/themes', loginUIThemesRouter);
 adminManagementRouter.route('/me/notice-preferences', myNoticePreferencesRouter);
 adminManagementRouter.route('/me/agent-consents', myAgentConsentsRouter);
 adminManagementRouter.route('/me/wallet-credentials', myWalletCredentialsRouter);
@@ -158,6 +160,7 @@ export { adminSecondFactorRecoveriesRouter } from './admin-second-factor-recover
 export { adminSecondFactorsRouter } from './admin-second-factors';
 export { adminNoticesRouter } from './admin-notices';
 export { adminNoticeChannelsRouter, myNoticePreferencesRouter } from './admin-notice-delivery';
+export { loginUIThemesRouter } from './login-ui-themes';
 export { myAgentConsentsRouter } from './my-agent-consents';
 export { myWalletCredentialsRouter } from './my-wallet-credentials';
 export { adminApprovalsRouter } from './admin-approvals';

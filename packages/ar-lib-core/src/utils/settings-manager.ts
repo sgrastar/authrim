@@ -482,6 +482,80 @@ export function settingsStorageKey(category: string, scope: SettingScope): strin
 // ============================================================================
 
 /**
+ * Validate one value against its setting metadata (type, range, enum): the check every settings
+ * write applies per key. Exported so that other writers of setting values (saved Login UI
+ * themes) validate exactly as a PATCH does.
+ */
+export function validateSettingValue(
+  key: string,
+  value: unknown,
+  meta: SettingMeta
+): SettingsValidationResult {
+  const errors: SettingsValidationError[] = [];
+
+  // Type validation
+  switch (meta.type) {
+    case 'number':
+    case 'duration':
+      if (typeof value !== 'number' || !Number.isFinite(value)) {
+        errors.push({ key, reason: `Expected number, got ${typeof value}` });
+      } else {
+        if (meta.integer && !Number.isSafeInteger(value)) {
+          errors.push({ key, reason: 'Value must be a safe integer' });
+        }
+        if (meta.step !== undefined && value % meta.step !== 0) {
+          errors.push({ key, reason: `Value must be a multiple of ${meta.step}` });
+        }
+        if (meta.min !== undefined && value < meta.min) {
+          errors.push({ key, reason: `Value must be >= ${meta.min}` });
+        }
+        if (meta.max !== undefined && value > meta.max) {
+          errors.push({ key, reason: `Value must be <= ${meta.max}` });
+        }
+      }
+      break;
+
+    case 'boolean':
+      if (typeof value !== 'boolean') {
+        errors.push({ key, reason: `Expected boolean, got ${typeof value}` });
+      }
+      break;
+
+    case 'string':
+      if (typeof value !== 'string') {
+        errors.push({ key, reason: `Expected string, got ${typeof value}` });
+      }
+      break;
+
+    case 'enum':
+      if (typeof value !== 'string') {
+        errors.push({ key, reason: `Expected string, got ${typeof value}` });
+      } else if (meta.enum && !meta.enum.includes(value)) {
+        errors.push({ key, reason: `Value must be one of: ${meta.enum.join(', ')}` });
+      }
+      break;
+
+    case 'json':
+      if (typeof value === 'string') {
+        try {
+          JSON.parse(value);
+        } catch {
+          errors.push({ key, reason: 'Expected valid JSON string' });
+        }
+      } else {
+        try {
+          JSON.stringify(value);
+        } catch {
+          errors.push({ key, reason: 'Expected JSON-serializable value' });
+        }
+      }
+      break;
+  }
+
+  return { valid: errors.length === 0, errors };
+}
+
+/**
  * Settings Manager
  *
  * Provides unified settings management with:
@@ -1078,68 +1152,7 @@ export class SettingsManager {
     value: unknown,
     meta: SettingMeta
   ): SettingsValidationResult {
-    const errors: SettingsValidationError[] = [];
-
-    // Type validation
-    switch (meta.type) {
-      case 'number':
-      case 'duration':
-        if (typeof value !== 'number' || !Number.isFinite(value)) {
-          errors.push({ key, reason: `Expected number, got ${typeof value}` });
-        } else {
-          if (meta.integer && !Number.isSafeInteger(value)) {
-            errors.push({ key, reason: 'Value must be a safe integer' });
-          }
-          if (meta.step !== undefined && value % meta.step !== 0) {
-            errors.push({ key, reason: `Value must be a multiple of ${meta.step}` });
-          }
-          if (meta.min !== undefined && value < meta.min) {
-            errors.push({ key, reason: `Value must be >= ${meta.min}` });
-          }
-          if (meta.max !== undefined && value > meta.max) {
-            errors.push({ key, reason: `Value must be <= ${meta.max}` });
-          }
-        }
-        break;
-
-      case 'boolean':
-        if (typeof value !== 'boolean') {
-          errors.push({ key, reason: `Expected boolean, got ${typeof value}` });
-        }
-        break;
-
-      case 'string':
-        if (typeof value !== 'string') {
-          errors.push({ key, reason: `Expected string, got ${typeof value}` });
-        }
-        break;
-
-      case 'enum':
-        if (typeof value !== 'string') {
-          errors.push({ key, reason: `Expected string, got ${typeof value}` });
-        } else if (meta.enum && !meta.enum.includes(value)) {
-          errors.push({ key, reason: `Value must be one of: ${meta.enum.join(', ')}` });
-        }
-        break;
-
-      case 'json':
-        if (typeof value === 'string') {
-          try {
-            JSON.parse(value);
-          } catch {
-            errors.push({ key, reason: 'Expected valid JSON string' });
-          }
-        } else {
-          try {
-            JSON.stringify(value);
-          } catch {
-            errors.push({ key, reason: 'Expected JSON-serializable value' });
-          }
-        }
-        break;
-    }
-
-    return { valid: errors.length === 0, errors };
+    return validateSettingValue(key, value, meta);
   }
 
   /**
