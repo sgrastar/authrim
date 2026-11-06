@@ -18,11 +18,13 @@ export type LiteTxnState = (typeof LITE_TXN_STATES)[number];
 /**
  * The moves a transaction may make. `pending`: waiting on the user (a code sent, a passkey or a
  * proof asked for); `verified`: a step of the flow is done (another may follow, hence back to
- * `pending`); `completed`: the flow finished; `abandoned`: given up (a restart, a policy change).
+ * `pending`); `completed`: the flow finished (from `pending` too: a sign-in with an existing
+ * session completes without a step of its own); `abandoned`: given up (a restart, a policy
+ * change). A move to `completed` or `abandoned` is never refused for the change budget.
  */
 export const LITE_TXN_TRANSITIONS: Readonly<Record<LiteTxnState, readonly LiteTxnState[]>> = {
   open: ['pending', 'verified', 'abandoned'],
-  pending: ['pending', 'verified', 'abandoned'],
+  pending: ['pending', 'verified', 'completed', 'abandoned'],
   verified: ['pending', 'verified', 'completed', 'abandoned'],
   completed: [],
   abandoned: [],

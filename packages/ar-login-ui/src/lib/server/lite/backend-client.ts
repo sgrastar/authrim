@@ -10,8 +10,21 @@
  *
  * The request carries the visitor's IP from the edge context as `CF-Connecting-IP` (what the
  * backends' rate limits read first) and `X-Forwarded-For`, and an Origin only when the caller
- * says the form post was verified: the public origin, never one taken from the request.
+ * says the form post was verified, or for the few side-effect-free calls a page view makes
+ * (PAGE_LOAD_ORIGIN_CALLS): the public origin, never one taken from the request.
  */
+
+/**
+ * The backend calls a page view (a GET) may make with the public origin: only what the normal
+ * SPA's page load does, with no side effect beyond it (start or resume a Flow). Every other call
+ * carries an Origin only from a verified form post. (Add an entry only with the page that needs
+ * it.)
+ */
+const PAGE_LOAD_ORIGIN_CALLS: readonly RegExp[] = [/^\/api\/v1\/login\/interactions\/start$/u];
+
+export function isPageLoadOriginCall(method: string, path: string): boolean {
+	return method === 'POST' && PAGE_LOAD_ORIGIN_CALLS.some((pattern) => pattern.test(path));
+}
 
 export interface LiteBackendFetcher {
 	fetch(input: string, init: RequestInit): Promise<Response>;
@@ -31,6 +44,11 @@ export interface LiteBackendClientOptions {
 	acceptLanguage?: string | null;
 	/** Whether the form post's Origin was verified (the edge context). */
 	originVerified: boolean;
+	/**
+	 * `page_load`: the client of a page view (a GET). It refuses, before any request, every call
+	 * other than a GET or one of PAGE_LOAD_ORIGIN_CALLS. `form_post` (default): a verified post.
+	 */
+	mode?: 'page_load' | 'form_post';
 }
 
 export interface LiteBackendAnswer {
@@ -148,7 +166,7 @@ export function createLiteBackendClient(options: LiteBackendClientOptions) {
 		}
 	}
 
-	function headersFor(json: boolean, requestPath: string): Headers {
+	function headersFor(json: boolean, requestPath: string, method: string): Headers {
 		const headers = new Headers({ Accept: 'application/json' });
 		if (json) headers.set('Content-Type', 'application/json');
 		// As a browser sends them: those whose Path matches, the longer Path first.
@@ -165,8 +183,10 @@ export function createLiteBackendClient(options: LiteBackendClientOptions) {
 			headers.set('CF-Connecting-IP', options.clientIp);
 			headers.set('X-Forwarded-For', options.clientIp);
 		}
-		// Only after the form post was verified does a backend call carry the public origin.
-		if (options.originVerified) headers.set('Origin', publicOrigin.origin);
+		// The public origin: after a verified form post, or for a page view's allowed calls.
+		if (options.originVerified || isPageLoadOriginCall(method, requestPath)) {
+			headers.set('Origin', publicOrigin.origin);
+		}
 		headers.set('Host', publicOrigin.host);
 		headers.set('X-Forwarded-Host', publicOrigin.host);
 		headers.set('X-Authrim-Forwarded-Host', publicOrigin.host);
@@ -188,9 +208,18 @@ export function createLiteBackendClient(options: LiteBackendClientOptions) {
 			if (!/^\/(?!\/)[^\\\u0000-\u001f\u007f]*$/u.test(path)) throw new Error('lite_backend_path');
 			const url = new URL(path, base);
 			if (url.origin !== base.origin) throw new Error('lite_backend_path');
+			const method = init.method ?? (init.json === undefined ? 'GET' : 'POST');
+			// A page view makes no call with a side effect: those come from a verified form post.
+			if (
+				options.mode === 'page_load' &&
+				method !== 'GET' &&
+				!isPageLoadOriginCall(method, url.pathname)
+			) {
+				throw new Error('lite_backend_not_allowed_on_page_load');
+			}
 			const response = await options.fetcher.fetch(url.toString(), {
-				method: init.method ?? (init.json === undefined ? 'GET' : 'POST'),
-				headers: headersFor(init.json !== undefined, url.pathname),
+				method,
+				headers: headersFor(init.json !== undefined, url.pathname, method),
 				body: init.json === undefined ? undefined : JSON.stringify(init.json),
 				redirect: 'manual'
 			});

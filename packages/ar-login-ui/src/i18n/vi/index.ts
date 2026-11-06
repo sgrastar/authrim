@@ -500,7 +500,9 @@ const vi = createTranslation({
 	login_signingInTo: 'Đang đăng nhập vào',
 	common_contactSupport: 'Liên hệ hỗ trợ',
 	common_dismissAlert: 'Đóng thông báo',
-	emailCode_digitLabel: 'Chữ số {position} trong 6'
+	emailCode_digitLabel: 'Chữ số {position} trong 6',
+	lite_javascriptRequired:
+		'Trang này chạy một bước kiểm tra bảo mật trong trình duyệt của bạn. Hãy bật JavaScript, rồi tải lại trang.'
 });
 
 export default vi;

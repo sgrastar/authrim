@@ -350,7 +350,9 @@ const de = createTranslation({
 	login_extError_reauthNotProven_message:
 		'Ihr Anmeldeanbieter hat nicht bestätigt, dass Sie sich erneut angemeldet haben. Melden Sie sich erneut an oder wählen Sie eine andere Methode.',
 	login_extError_default_title: 'Authentifizierungsfehler',
-	login_extError_default_message: 'Bei der externen Authentifizierung ist ein Fehler aufgetreten.'
+	login_extError_default_message: 'Bei der externen Authentifizierung ist ein Fehler aufgetreten.',
+	lite_javascriptRequired:
+		'Diese Seite führt in Ihrem Browser eine Sicherheitsprüfung durch. Aktivieren Sie JavaScript und laden Sie die Seite dann neu.'
 });
 
 export default de;

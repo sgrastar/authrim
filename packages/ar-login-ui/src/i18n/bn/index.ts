@@ -506,7 +506,9 @@ const translation = {
 	login_signingInTo: 'যে অ্যাপ্লিকেশনে সাইন ইন করছেন:',
 	common_contactSupport: 'সহায়তার সঙ্গে যোগাযোগ করুন',
 	common_dismissAlert: 'সতর্কতা বন্ধ করুন',
-	emailCode_digitLabel: '৬টির মধ্যে {position} নম্বর অঙ্ক'
+	emailCode_digitLabel: '৬টির মধ্যে {position} নম্বর অঙ্ক',
+	lite_javascriptRequired:
+		'এই পাতাটি আপনার ব্রাউজারে একটি নিরাপত্তা যাচাই চালায়। JavaScript চালু করুন, তারপর পাতাটি আবার লোড করুন।'
 } satisfies Translation;
 
 export default translation;

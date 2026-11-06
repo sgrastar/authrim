@@ -528,7 +528,9 @@ const ja = {
 	common_dismissAlert: '通知を閉じる',
 
 	// Accessibility
-	emailCode_digitLabel: '6桁中{position}桁目'
+	emailCode_digitLabel: '6桁中{position}桁目',
+	lite_javascriptRequired:
+		'この画面では、ブラウザーでセキュリティの確認を行います。JavaScript を有効にしてから、ページを再読み込みしてください。'
 } satisfies Translation;
 
 export default ja;

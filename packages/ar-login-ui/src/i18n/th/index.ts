@@ -482,7 +482,9 @@ const th = createTranslation({
 	login_signingInTo: 'กำลังเข้าสู่ระบบ',
 	common_contactSupport: 'ติดต่อฝ่ายสนับสนุน',
 	common_dismissAlert: 'ปิดการแจ้งเตือน',
-	emailCode_digitLabel: 'หลักที่ {position} จาก 6'
+	emailCode_digitLabel: 'หลักที่ {position} จาก 6',
+	lite_javascriptRequired:
+		'หน้านี้จะตรวจสอบความปลอดภัยในเบราว์เซอร์ของคุณ เปิด JavaScript แล้วโหลดหน้านี้ใหม่'
 });
 
 export default th;

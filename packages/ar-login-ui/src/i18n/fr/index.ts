@@ -348,7 +348,9 @@ const fr = createTranslation({
 	login_extError_reauthNotProven_message:
 		"Votre fournisseur de connexion n'a pas confirmé que vous vous êtes reconnecté. Reconnectez-vous ou choisissez une autre méthode.",
 	login_extError_default_title: 'Erreur d’authentification',
-	login_extError_default_message: 'Une erreur s’est produite pendant l’authentification externe.'
+	login_extError_default_message: 'Une erreur s’est produite pendant l’authentification externe.',
+	lite_javascriptRequired:
+		'Cette page effectue une vérification de sécurité dans votre navigateur. Activez JavaScript, puis rechargez la page.'
 });
 
 export default fr;

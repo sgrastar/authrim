@@ -54,24 +54,31 @@ interface LiteTxnBinding {
 }
 
 export interface LiteTxnCreateInput {
+	/** `account` and `reauth` are refused until their session check exists (lite plan PR7). */
 	purpose: LiteTxnPurpose;
 	clientId?: string | null;
 	challengeId?: string | null;
 	returnTo?: string | null;
-	sessionId?: string | null;
-	userId?: string | null;
 	data?: Record<string, unknown>;
 	reuseKey?: string;
 }
 
 const NO_BINDING = { ok: false, reason: 'invalid_binding' } as const;
 
-/** The transactions of the request's browser, or null without the `LITE_TXN` binding. */
+const NOT_THROUGH_ROUTER = { ok: false, reason: 'not_through_router' } as const;
+
+/**
+ * The transactions of the request's browser, or null without the `LITE_TXN` binding or the
+ * request's edge context (the lite guard sets it on every request; without it nothing here is
+ * trusted). A transaction is made only for a request the Router checked at its edge: a request
+ * straight to the Login UI's own hostname (workers.dev) has no trusted public origin.
+ */
 export function liteTxnClient(event: RequestEvent) {
 	const service = getPlatformEnv(event)?.LITE_TXN as LiteTxnBinding | undefined;
-	if (!service) return null;
-	const publicOrigin = event.locals.edge?.publicOrigin ?? event.url.origin;
-	const clientIp = event.locals.edge?.clientIp ?? null;
+	const edge = event.locals.edge;
+	if (!service || !edge) return null;
+	const publicOrigin = edge.publicOrigin;
+	const clientIp = edge.clientIp;
 	const call = (txnId: string) => {
 		const binding = readBrowserBinding(event);
 		return binding ? { publicOrigin, binding, txnId } : null;
@@ -79,13 +86,15 @@ export function liteTxnClient(event: RequestEvent) {
 
 	return {
 		/** Makes a transaction (and the browser binding, when the browser has none yet). */
-		create(input: LiteTxnCreateInput) {
+		async create(input: LiteTxnCreateInput): Promise<LiteTxnAnswer & { reused?: boolean }> {
+			if (edge.source !== 'router') return NOT_THROUGH_ROUTER;
 			const { binding } = ensureBrowserBinding(event);
 			return service.create({ ...input, publicOrigin, binding, clientIp });
 		},
-		async get(txnId: string): Promise<LiteTxnAnswer> {
+		/** `current`: checked against the tenant's current policy (before a form post acts). */
+		async get(txnId: string, options: { current?: boolean } = {}): Promise<LiteTxnAnswer> {
 			const base = call(txnId);
-			return base ? service.get(base) : NO_BINDING;
+			return base ? service.get({ ...base, current: options.current === true }) : NO_BINDING;
 		},
 		async transition(
 			txnId: string,
@@ -111,9 +120,10 @@ export function liteTxnClient(event: RequestEvent) {
 				? service.completeOperation({ ...base, operationId, attempt, result, transition })
 				: NO_BINDING;
 		},
-		async issueStartGrant(txnId: string, provider: string, action: LiteTxnPurpose) {
+		/** A one-time start grant for the provider (its action is the transaction's purpose). */
+		async issueStartGrant(txnId: string, provider: string) {
 			const base = call(txnId);
-			return base ? service.issueStartGrant({ ...base, provider, action }) : NO_BINDING;
+			return base ? service.issueStartGrant({ ...base, provider }) : NO_BINDING;
 		}
 	};
 }

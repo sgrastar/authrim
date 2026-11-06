@@ -72,12 +72,33 @@ describe('the lite transaction client', () => {
 	});
 
 	it('answers invalid_binding without a binding cookie, except when creating', async () => {
-		const { e, service, set } = event({}, { publicOrigin: 'https://id.example', clientIp: null });
+		const { e, service, set } = event(
+			{},
+			{ source: 'router', publicOrigin: 'https://id.example', clientIp: null }
+		);
 		const txns = liteTxnClient(e);
 		await expect(txns?.get('t1')).resolves.toEqual({ ok: false, reason: 'invalid_binding' });
 		expect(service.get).not.toHaveBeenCalled();
 		await txns?.create({ purpose: 'login' });
 		expect(set).toHaveBeenCalledTimes(1);
+	});
+
+	it('makes no transaction for a request that did not come through the Router', async () => {
+		const { e, service, set } = event(
+			{},
+			{ source: 'direct', publicOrigin: 'https://ui.workers.dev', clientIp: '198.51.100.1' }
+		);
+		await expect(liteTxnClient(e)?.create({ purpose: 'login' })).resolves.toEqual({
+			ok: false,
+			reason: 'not_through_router'
+		});
+		expect(service.create).not.toHaveBeenCalled();
+		expect(set).not.toHaveBeenCalled();
+	});
+
+	it('is null without the edge context', () => {
+		const { e } = event({ [LITE_BINDING_COOKIE]: BINDING }, undefined);
+		expect(liteTxnClient(e)).toBeNull();
 	});
 
 	it('is null without the LITE_TXN binding', () => {
