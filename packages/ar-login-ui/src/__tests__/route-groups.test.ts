@@ -10,6 +10,12 @@ const ROUTES = resolve(__dirname, '../routes');
  */
 const PAGES_OUTSIDE_MAIN = new Set<string>([]);
 
+/**
+ * The lite Login UI's pages (routes/__lite): reached only through reroute, with their own inline
+ * stylesheet and no client JavaScript.
+ */
+const LITE_PREFIX = '__lite';
+
 function listFiles(dir: string): string[] {
 	return readdirSync(dir).flatMap((name) => {
 		const path = join(dir, name);
@@ -41,6 +47,20 @@ describe('Login UI route groups', () => {
 			.filter((path) => /(^|\/)\+page(\.server)?\.(svelte|ts)$/u.test(path))
 			.filter((path) => !path.startsWith('(main)/'))
 			.map((path) => path.replace(/\/?\+page(\.server)?\.(svelte|ts)$/u, '') || '/');
-		expect(pagesOutsideMain.filter((page) => !PAGES_OUTSIDE_MAIN.has(page))).toEqual([]);
+		expect(
+			pagesOutsideMain.filter(
+				(page) => !PAGES_OUTSIDE_MAIN.has(page) && !page.startsWith(`${LITE_PREFIX}/`)
+			)
+		).toEqual([]);
+	});
+
+	it('keeps the lite pages free of the normal Login UI styles and client scripts', () => {
+		const liteLayout = readFileSync(join(ROUTES, '__lite/+layout.ts'), 'utf8');
+		expect(liteLayout).toContain('export const csr = false;');
+		for (const path of files.filter((file) => file.startsWith(`${LITE_PREFIX}/`))) {
+			const source = readFileSync(join(ROUTES, path), 'utf8');
+			expect(source, path).not.toMatch(/import\s+['"][^'"]+\.css['"]/u);
+			expect(source, path).not.toContain('virtual:uno.css');
+		}
 	});
 });
