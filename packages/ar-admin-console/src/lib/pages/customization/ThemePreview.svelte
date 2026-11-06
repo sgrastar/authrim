@@ -775,20 +775,21 @@
 		border-radius: inherit;
 		padding: 1.5px;
 		pointer-events: none;
+		/* The Login UI's iridescent rim, in named colours: cyan, white and grey light. */
 		background:
-			radial-gradient(at 0% 0%, hsl(180 100% 98%) 0, transparent 50%),
-			radial-gradient(at 29% 0%, hsl(189 100% 78%) 0, transparent 50%),
-			radial-gradient(at 100% 62%, hsl(0 0% 100%) 0, transparent 50%),
-			radial-gradient(at 90% 98%, hsl(169 88% 83%) 0, transparent 50%),
-			radial-gradient(at 26% 100%, hsl(220 6% 52%) 0, transparent 50%),
+			radial-gradient(at 0% 0%, azure 0, transparent 50%),
+			radial-gradient(at 29% 0%, paleturquoise 0, transparent 50%),
+			radial-gradient(at 100% 62%, white 0, transparent 50%),
+			radial-gradient(at 90% 98%, lightcyan 0, transparent 50%),
+			radial-gradient(at 26% 100%, slategray 0, transparent 50%),
 			color-mix(in srgb, white 60%, transparent);
 		-webkit-mask:
-			linear-gradient(#000 0 0) content-box,
-			linear-gradient(#000 0 0);
+			linear-gradient(black 0 0) content-box,
+			linear-gradient(black 0 0);
 		-webkit-mask-composite: xor;
 		mask:
-			linear-gradient(#000 0 0) content-box exclude,
-			linear-gradient(#000 0 0);
+			linear-gradient(black 0 0) content-box exclude,
+			linear-gradient(black 0 0);
 		mask-composite: exclude;
 	}
 
