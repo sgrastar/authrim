@@ -23,6 +23,7 @@ import {
   getUIConfig,
   buildIssuerUrl,
   getTenantIdFromContext,
+  readLiteModeState,
   getLogger,
   createLogger,
   createDiagnosticLoggerFromContext,
@@ -159,6 +160,18 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
     const maxAgeParam = c.req.query('max_age');
     let acrValues = c.req.query('acr_values');
     const tenantId = getTenantIdFromContext(c);
+    // A tenant in lite mode starts external sign-in (and linking) only from the lite Login UI,
+    // which proves human verification first; until that start is wired, it is refused here.
+    if ((await readLiteModeState(c.env, tenantId)) !== 'off') {
+      c.header('Cache-Control', 'no-store');
+      return c.json(
+        {
+          error: 'lite_mode_endpoint_unavailable',
+          error_description: 'This tenant starts external sign-in from the lite Login UI',
+        },
+        403
+      );
+    }
     const clientId = c.req.query('client_id');
     const codeChallenge = c.req.query('code_challenge');
     const codeChallengeMethod = c.req.query('code_challenge_method');

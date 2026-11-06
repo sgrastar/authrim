@@ -33,6 +33,10 @@ export interface AuthenticationMethodsSettings {
   'authentication-methods.human_verification.login_enabled': boolean;
   'authentication-methods.human_verification.signup_enabled': boolean;
   'authentication-methods.human_verification.reauth_enabled': boolean;
+  'authentication-methods.human_verification.pow_max_number': number;
+  'authentication-methods.human_verification.pow_challenge_ttl': number;
+  'authentication-methods.human_verification.pow_issue_per_ip_per_minute': number;
+  'authentication-methods.human_verification.pow_issue_per_tenant_per_minute': number;
   'authentication-methods.external_provider_usage': string;
   'authentication-methods.external_providers': string;
   'authentication-methods.directory_password.enabled': boolean;
@@ -248,6 +252,61 @@ export const AUTHENTICATION_METHODS_SETTINGS_META: Record<
     description: 'Require human verification before re-authentication actions',
     visibility: 'page',
   },
+  // The lite Login UI's proof of work (used only while the tenant is in lite mode).
+  'authentication-methods.human_verification.pow_max_number': {
+    key: 'authentication-methods.human_verification.pow_max_number',
+    type: 'number',
+    default: 25_000,
+    envKey: 'LITE_POW_MAX_NUMBER',
+    label: 'Lite Proof of Work Difficulty',
+    description:
+      'The largest number a lite Login UI proof of work may hide: a browser tries about half of it on average. Provisional until measured on low-end phones',
+    min: 1_000,
+    max: 10_000_000,
+    integer: true,
+    envNumber: 'in-range',
+    visibility: 'admin',
+  },
+  'authentication-methods.human_verification.pow_challenge_ttl': {
+    key: 'authentication-methods.human_verification.pow_challenge_ttl',
+    type: 'number',
+    default: 600,
+    envKey: 'LITE_POW_CHALLENGE_TTL',
+    label: 'Lite Proof of Work Lifetime',
+    description: 'How long a lite Login UI proof of work can be solved and used',
+    unit: 'seconds',
+    min: 60,
+    max: 3600,
+    integer: true,
+    envNumber: 'in-range',
+    visibility: 'admin',
+  },
+  'authentication-methods.human_verification.pow_issue_per_ip_per_minute': {
+    key: 'authentication-methods.human_verification.pow_issue_per_ip_per_minute',
+    type: 'number',
+    default: 30,
+    envKey: 'LITE_POW_ISSUE_PER_IP_PER_MINUTE',
+    label: 'Lite Proof of Work Issues per IP',
+    description: 'How many lite Login UI proofs of work one IP address may be given per minute',
+    min: 1,
+    max: 10_000,
+    integer: true,
+    envNumber: 'in-range',
+    visibility: 'admin',
+  },
+  'authentication-methods.human_verification.pow_issue_per_tenant_per_minute': {
+    key: 'authentication-methods.human_verification.pow_issue_per_tenant_per_minute',
+    type: 'number',
+    default: 3_000,
+    envKey: 'LITE_POW_ISSUE_PER_TENANT_PER_MINUTE',
+    label: 'Lite Proof of Work Issues per Tenant',
+    description: 'How many lite Login UI proofs of work the tenant may give out per minute in all',
+    min: 1,
+    max: 1_000_000,
+    integer: true,
+    envNumber: 'in-range',
+    visibility: 'admin',
+  },
   'authentication-methods.external_provider_usage': {
     key: 'authentication-methods.external_provider_usage',
     type: 'json',
@@ -309,6 +368,10 @@ export const AUTHENTICATION_METHODS_DEFAULTS: AuthenticationMethodsSettings = {
   'authentication-methods.human_verification.login_enabled': false,
   'authentication-methods.human_verification.signup_enabled': false,
   'authentication-methods.human_verification.reauth_enabled': false,
+  'authentication-methods.human_verification.pow_max_number': 25_000,
+  'authentication-methods.human_verification.pow_challenge_ttl': 600,
+  'authentication-methods.human_verification.pow_issue_per_ip_per_minute': 30,
+  'authentication-methods.human_verification.pow_issue_per_tenant_per_minute': 3_000,
   'authentication-methods.external_provider_usage': '[]',
   'authentication-methods.external_providers': '[]',
   'authentication-methods.directory_password.enabled': false,

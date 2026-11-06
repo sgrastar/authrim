@@ -37,6 +37,7 @@ import {
 import { generateEmailCode, hashEmailCode, verifyEmailCodeHash } from './utils/email-code-utils';
 import { getEmailCodeHtml, getEmailCodeText } from './utils/email/templates';
 import { invitationChallengeStore, invitationEmailProofId } from './invitation-redemption';
+import { liteModeEndpointUnavailable, readLiteMode } from './lite-mode';
 
 const INVITATION_EMAIL_CODE_TTL_SECONDS = 600;
 const INVITATION_EMAIL_PROOF_TTL_SECONDS = 900;
@@ -174,6 +175,9 @@ export async function sendInvitationEmailCodeHandler(c: Context<{ Bindings: Env 
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
     const tenantId = invitation.tenant_id;
+    // The invitation's tenant decides: a tenant in lite mode sends invitation codes only from the
+    // lite Login UI's sign-up, behind human verification (refused here until that is wired).
+    if ((await readLiteMode(c.env, tenantId)) !== 'off') return liteModeEndpointUnavailable(c);
     const hmacSecret = c.env.OTP_HMAC_SECRET;
     if (!hmacSecret) {
       return createErrorResponse(c, AR_ERROR_CODES.CONFIG_MISSING_SECRET);

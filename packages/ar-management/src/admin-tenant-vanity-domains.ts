@@ -1018,8 +1018,15 @@ async function createAsksPrimary(c: VanityContext): Promise<boolean> {
   return parsed.success ? parsed.data.is_primary : false;
 }
 
-function guardTenantRow(write: Handler): Handler {
-  return (c) => guardIssuer(c, getTenantIdFromContext(c), () => tenantRowIsPrimary(c), write);
+function guardTenantRow(
+  write: Handler,
+  permission: string = ADMIN_PERMISSIONS.TENANT_DOMAINS_WRITE
+): Handler {
+  // The handler's own permission check comes first (it answers 403); the row is read only after.
+  return (c) =>
+    hasPermission(c, permission)
+      ? guardIssuer(c, getTenantIdFromContext(c), () => tenantRowIsPrimary(c), write)
+      : write(c);
 }
 
 function guardPlatformRow(write: Handler, always: boolean): Handler {
@@ -1073,7 +1080,8 @@ export const verifyTenantVanityDomainHandler = guardTenantRow(
   verifyTenantVanityDomainHandlerUnguarded
 );
 export const deleteTenantVanityDomainHandler = guardTenantRow(
-  deleteTenantVanityDomainHandlerUnguarded
+  deleteTenantVanityDomainHandlerUnguarded,
+  ADMIN_PERMISSIONS.TENANT_DOMAINS_DELETE
 );
 export const setPrimaryPlatformTenantVanityDomainHandler = guardPlatformRow(
   setPrimaryPlatformTenantVanityDomainHandlerUnguarded,

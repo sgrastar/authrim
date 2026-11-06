@@ -94,6 +94,31 @@ describe('SP login tenant signing boundary', () => {
     };
   });
 
+  it('refuses an SP start for a tenant in lite mode before anything else', async () => {
+    // A tenant in lite mode starts SAML sign-in only from the lite Login UI.
+    mockEnv.LITE_POLICY_STORE = {
+      idFromName: vi.fn((name: string) => name),
+      get: vi.fn(() => ({
+        getSnapshotRpc: vi.fn().mockResolvedValue({
+          tenantId: 'tenant-a',
+          liteMode: 'always',
+          humanVerificationRequired: { login: true, signup: true, reauth: false },
+          policyRevision: 'rev-1',
+          generation: 1,
+          updatedAt: 1,
+        }),
+      })),
+    } as unknown as Env['LITE_POLICY_STORE'];
+
+    const { context, redirect } = createLoginContext(mockEnv, 'tenant-a');
+    const res = await handleSPLogin(context);
+
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ error: 'lite_mode_endpoint_unavailable' });
+    expect(redirect).not.toHaveBeenCalled();
+    expect(mockGetIdPConfig).not.toHaveBeenCalled();
+  });
+
   it('fails closed when SP-initiated redirect signing keyRef belongs to another tenant', async () => {
     mockGetIdPConfig.mockResolvedValue({
       entityId: 'https://idp.example.com',
@@ -627,6 +652,7 @@ function createLoginContext(
       header: vi.fn().mockReturnValue(undefined),
     },
     get: vi.fn((key: string) => (key === 'tenantId' ? tenantId : undefined)),
+    header: vi.fn(),
     redirect,
     json: vi.fn((data: unknown, status: number) => new Response(JSON.stringify(data), { status })),
     html: vi.fn((html: string) => new Response(html, { status: 200 })),

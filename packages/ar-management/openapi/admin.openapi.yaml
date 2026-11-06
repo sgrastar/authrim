@@ -33588,7 +33588,8 @@ paths:
       summary: Read the tenant's lite Login UI policy and readiness
       description: >-
         The published lite Login UI policy (from the tenant's policy store), the mode the settings
-        record, and whether the tenant could switch to `always` now, with the reasons it cannot.
+        record (`recorded_mode`), and whether the tenant could switch to `always` now, with the
+        reasons it cannot.
         Requires settings read permission.
       x-authrim-route-coverage: inferred-from-source
       responses:
@@ -33653,9 +33654,12 @@ paths:
         that the lite Login UI can do everything the tenant uses and is refused with the reasons
         otherwise; until the lite Login UI is released, switching on is refused everywhere except
         an environment that allows the pre-release. The mode and the actions that require human
-        verification are published together under the policy store's lease, then recorded in the
-        setting `login-ui.lite_mode` (which the settings PATCH refuses). Requires settings write
-        permission for both the Login UI and the authentication methods.
+        verification are published together under the policy store's lease. Switching on first
+        sets the tenant's outage marker (what the runtimes ask when they cannot read the policy;
+        it is never cleared); a marker that cannot be set stops the switch (503). The mode is
+        recorded in the setting `login-ui.lite_mode` for the console (the settings PATCH refuses
+        it). Requires settings write permission for both the Login UI and
+        the authentication methods.
       x-authrim-route-coverage: inferred-from-source
       requestBody:
         required: true
@@ -33671,7 +33675,7 @@ paths:
                   enum: ['off', always]
       responses:
         '200':
-          description: The published policy; `recorded` is false when the setting was not written.
+          description: The published policy; `recorded` is false when the console record was not written.
           content:
             application/json:
               schema:

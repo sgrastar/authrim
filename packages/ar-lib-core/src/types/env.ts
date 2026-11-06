@@ -697,6 +697,8 @@ export interface Env extends LogIcebergSettingsEnv {
   DEFAULT_IAL?: string; // Default Identity Assurance Level (IAL1-3)
   // Deleted accounts (settings account-lifecycle.deletion.*; KV takes precedence)
   TOMBSTONE_HMAC_KEYRING?: string; // Secret: deleted emails' fingerprint keys (JSON keyring)
+  /** Secret (ar-auth): the lite Login UI's proof-of-work keys (JSON keyring, 32-byte keys). */
+  HUMAN_VERIFICATION_POW_HMAC_KEYRING?: string;
   INVESTIGATION_SUBJECT_HMAC_KEYRING?: string; // Secret: failed sign-in attempts' subject hash keys (JSON keyring)
   ACCOUNT_TOMBSTONE_RETENTION_DAYS?: string; // Days a deletion record is kept (1-3650, default 90)
   ACCOUNT_TOMBSTONE_BLOCK_REREGISTRATION?: string; // 'true' blocks sign-up with a deleted address

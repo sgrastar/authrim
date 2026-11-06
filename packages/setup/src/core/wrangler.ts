@@ -447,6 +447,9 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
     'PAR_REQUEST_STORE',
     'FLOW_STATE_STORE',
     'DPOP_JTI_STORE',
+    // LITE_POLICY_STORE: a tenant in lite mode verifies the lite Login UI's proof of work and
+    // refuses the endpoints the lite UI does not use.
+    'LITE_POLICY_STORE',
   ],
   // SESSION_CLIENT_STORE: the authorization code exchange records the client in the session,
   // so a later logout knows to notify it.
@@ -510,6 +513,8 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
     'SESSION_STORE',
     'SESSION_REVOCATION_STORE',
     'CHALLENGE_STORE',
+    // LITE_POLICY_STORE: a tenant in lite mode starts SAML sign-in only from the lite UI.
+    'LITE_POLICY_STORE',
   ],
   // RATE_LIMITER: /api/external/* is rate limited. Without it the limiter falls back to a
   // STATE_STORE KV the Bridge Worker does not have, and every request would answer 503.
@@ -524,6 +529,8 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
     'CHALLENGE_STORE',
     'RATE_LIMITER',
     'DPOP_JTI_STORE',
+    // LITE_POLICY_STORE: a tenant in lite mode starts external sign-in only from the lite UI.
+    'LITE_POLICY_STORE',
   ],
   'ar-vc': ['KEY_MANAGER', 'RATE_LIMITER', 'TOKEN_REVOCATION_STORE'],
 };

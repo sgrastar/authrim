@@ -244,6 +244,22 @@ place('authentication/protection', 'Bot protection', {
 		'authentication-methods.human_verification.provider'
 	]
 });
+place(
+	'authentication/protection',
+	'Lite Login UI proof of work',
+	{
+		advanced: [
+			'authentication-methods.human_verification.pow_max_number',
+			'authentication-methods.human_verification.pow_challenge_ttl',
+			'authentication-methods.human_verification.pow_issue_per_ip_per_minute',
+			'authentication-methods.human_verification.pow_issue_per_tenant_per_minute'
+		]
+	},
+	{
+		'authentication-methods.human_verification.pow_max_number':
+			'Used only while the tenant is in lite mode; provisional until measured on low-end phones.'
+	}
+);
 place('authentication/protection', 'API rate limits', {
 	advanced: [
 		'rate_limit.strict',

@@ -157,6 +157,21 @@ fi
 echo "📝 Saved to: $INVESTIGATION_SUBJECT_HMAC_KEYRING_PATH"
 echo ""
 
+# Generate the lite Login UI's proof-of-work keyring (ar-auth only). Same JSON shape and rotation
+# as the tombstone keyring: add a key, deploy, then make it current; keep the old key for at least
+# the challenge lifetime. An existing keyring is kept.
+HUMAN_VERIFICATION_POW_HMAC_KEYRING_PATH="$KEYS_DIR/human_verification_pow_hmac_keyring.json"
+if [ ! -f "$HUMAN_VERIFICATION_POW_HMAC_KEYRING_PATH" ]; then
+    HUMAN_VERIFICATION_POW_HMAC_KEY=$(head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=' | tr -d '\n')
+    printf '{"current":1,"keys":{"1":"%s"}}' "$HUMAN_VERIFICATION_POW_HMAC_KEY" > "$HUMAN_VERIFICATION_POW_HMAC_KEYRING_PATH"
+    chmod 600 "$HUMAN_VERIFICATION_POW_HMAC_KEYRING_PATH"
+    echo -e "${GREEN}✅ Proof-of-work HMAC keyring generated${NC}"
+else
+    echo -e "${YELLOW}ℹ️  Proof-of-work HMAC keyring kept${NC}"
+fi
+echo "📝 Saved to: $HUMAN_VERIFICATION_POW_HMAC_KEYRING_PATH"
+echo ""
+
 # Extract public key from private key
 TEMP_PUBLIC_KEY=$(mktemp)
 openssl rsa -in "$PRIVATE_KEY_PATH" -pubout -out "$TEMP_PUBLIC_KEY" 2>/dev/null

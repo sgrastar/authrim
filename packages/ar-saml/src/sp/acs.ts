@@ -45,6 +45,7 @@ import {
   readExternalProviderUsagePolicy,
   resolveSessionTtl,
   checkEmailRegistration,
+  readLiteModeState,
 } from '@authrim/ar-lib-core';
 import {
   applyExternalSignupInvitation,
@@ -200,7 +201,12 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
       unsettledInvitation = validatedRequest.context?.invitation ?? null;
       attemptInteractionId = validatedRequest.context?.attemptInteractionId ?? null;
       attemptRequestId = validatedRequest.requestId;
-    } else if (await getStrictInResponseToSetting(env)) {
+    } else if (
+      (await getStrictInResponseToSetting(env)) ||
+      // A tenant in lite mode takes no unsolicited response, whatever the global setting says:
+      // its sign-ins start from the lite Login UI, behind human verification.
+      (env.LITE_POLICY_STORE !== undefined && (await readLiteModeState(env, tenantId)) !== 'off')
+    ) {
       log.error('SAML Response missing InResponseTo while strict mode is enabled', {});
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }

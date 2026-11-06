@@ -6,9 +6,10 @@
  *   whether the tenant could switch to `always` now (`readiness.issues`).
  * PUT /api/admin/login-ui/lite-mode   { "mode": "off" | "always" }
  *   Switches the tenant. Under the policy store's lease: the compatibility check (for `always`),
- *   the policy commit (mode and the actions that require human verification, as one value), then
- *   the setting `login-ui.lite_mode` as the record of what was published. The settings PATCH
- *   refuses that setting: this route is the only way to change it.
+ *   the outage marker (switching on: set in the tenant's marker instance, never cleared), the
+ *   policy commit (mode and the actions that require human verification, as one value), then the
+ *   setting `login-ui.lite_mode` as the record shown in the console. The settings PATCH refuses
+ *   that setting: this route is the only way to change it.
  *
  * The tenant comes from the request context, as for the other Login UI admin routes.
  */
@@ -19,6 +20,7 @@ import {
   adminAuthMiddleware,
   createErrorResponse,
   getLitePolicyStore,
+  getLitePolicyMarkerStore,
   getLogger,
   getRateLimitProfileAsync,
   getTenantIdFromContext,
@@ -114,7 +116,11 @@ async function recordMode(c: AdminContext, tenantId: string, mode: LiteMode): Pr
       litePolicyRecord: true,
       readBody: async () => ({ ifMatch: settingsVersion, set: { [LITE_MODE_KEY]: mode } }),
     });
-    if (response.ok) return true;
+    if (response.ok) {
+      // Saved in D1 but not yet in KV: the runtimes read KV, so it is not recorded yet.
+      const saved = await response.json<{ projection?: unknown }>().catch(() => null);
+      return saved !== null && saved.projection === undefined;
+    }
     if (response.status !== 409) return false;
   }
   return false;
@@ -175,10 +181,17 @@ loginUILiteModeRouter.put('/', async (c) => {
 
   let leaseOpen = true;
   try {
-    const before = await store.getSnapshotRpc(tenantId);
+    const status = await store.getStatusRpc(tenantId);
+    const before = status.snapshot;
     if (mode === 'always') {
       const issues = await evaluateLiteReadiness(c, tenantId);
       if (issues.length > 0) return liteModeUnsupportedResponse(c, issues);
+      // The outage marker: what a runtime asks when it cannot read the policy instance. Set in
+      // the tenant's separate marker instance (strongly consistent) before `always` is published,
+      // and never cleared, so it is never behind the policy.
+      const marker = getLitePolicyMarkerStore(c.env, tenantId);
+      if (!marker) return litePolicyUnavailableResponse(c);
+      await marker.markEverLiteRpc(tenantId);
     }
     const required = await requiredHumanVerificationActions(c.env, tenantId);
     const committed = await store.commitRpc({
@@ -191,6 +204,8 @@ loginUILiteModeRouter.put('/', async (c) => {
     leaseOpen = false;
     if (!committed.committed) return liteModeChangeInProgressResponse(c, 1000);
 
+    // The setting is the record shown in the console and kept by backups; the runtimes do not
+    // read it. A record that cannot be written leaves the switch in place.
     const recorded = await recordMode(c, tenantId, mode).catch((error: unknown) => {
       log(c).error('Lite mode published but not recorded in settings', {}, error as Error);
       return false;

@@ -7,6 +7,9 @@ interface RouteMockState {
   issues: Array<{ code: string; subject?: string }>;
   required: { login: boolean; signup: boolean; reauth: boolean };
   recordSaves: Array<Record<string, unknown>>;
+  failRecord: boolean;
+  pendingProjection: boolean;
+  leaseHeldDuringRecord: boolean[];
 }
 
 const mocks = vi.hoisted(() => {
@@ -16,6 +19,9 @@ const mocks = vi.hoisted(() => {
     issues: [],
     required: { login: true, signup: false, reauth: false },
     recordSaves: [],
+    failRecord: false,
+    pendingProjection: false,
+    leaseHeldDuringRecord: [],
   };
   return { state, writeAdminAuditLog: vi.fn(), invalidate: vi.fn() };
 });
@@ -42,6 +48,13 @@ vi.mock('../routes/settings-v2/tenant-settings-apply', () => ({
     readBody: () => Promise<{ set: Record<string, unknown> }>;
   }) => {
     const body = await input.readBody();
+    if (mocks.state.failRecord) return Response.json({ error: 'server_error' }, { status: 500 });
+    mocks.state.leaseHeldDuringRecord.push(
+      (await currentStore().getStatusRpc('tenant-a')).changeInProgress
+    );
+    if (mocks.state.pendingProjection) {
+      return Response.json({ version: 'rev-2', projection: 'pending' });
+    }
     mocks.state.recordSaves.push({ litePolicyRecord: input.litePolicyRecord, ...body.set });
     mocks.state.recorded = String(body.set['login-ui.lite_mode']);
     return Response.json({ version: 'rev-2' });
@@ -89,6 +102,10 @@ const ADMIN = {
 };
 
 let store: LitePolicyStore;
+let kv: Map<string, string>;
+function currentStore() {
+  return store;
+}
 let env: Record<string, unknown>;
 
 function call(method: string, body?: unknown) {
@@ -110,11 +127,25 @@ describe('lite Login UI switch route', () => {
     mocks.state.issues = [];
     mocks.state.required = { login: true, signup: false, reauth: false };
     mocks.state.recordSaves = [];
+    mocks.state.failRecord = false;
+    mocks.state.pendingProjection = false;
+    mocks.state.leaseHeldDuringRecord = [];
     mocks.writeAdminAuditLog.mockClear();
     mocks.invalidate.mockClear();
     store = new LitePolicyStore({ storage: new Storage() } as never, {} as never);
-    env = { LITE_POLICY_STORE: { idFromName: (name: string) => name, get: () => store } };
+    kv = new Map();
+    env = {
+      LITE_POLICY_STORE: { idFromName: (name: string) => name, get: () => store },
+      SETTINGS: {
+        get: async (key: string) => kv.get(key) ?? null,
+        put: async (key: string, value: string) => {
+          kv.set(key, value);
+        },
+      },
+    };
   });
+
+  const switchOn = () => call('PUT', { mode: 'always' });
 
   it('reports the policy, the recorded mode and the readiness', async () => {
     mocks.state.issues = [{ code: 'not_released' }];
@@ -143,9 +174,10 @@ describe('lite Login UI switch route', () => {
     expect(mocks.state.recordSaves).toEqual([]);
   });
 
-  it('publishes the mode with the required actions, then records it', async () => {
+  it('marks the tenant before publishing always, then records it', async () => {
     const response = await call('PUT', { mode: 'always' });
     expect(response.status).toBe(200);
+    expect(await store.isEverLiteRpc('tenant-a')).toBe(true);
     const body = await response.json<Record<string, unknown>>();
     expect(body).toMatchObject({
       mode: 'always',
@@ -171,12 +203,34 @@ describe('lite Login UI switch route', () => {
     );
   });
 
+  it('keeps the marker when the tenant is switched off', async () => {
+    expect((await switchOn()).status).toBe(200);
+    expect((await call('PUT', { mode: 'off' })).status).toBe(200);
+    expect(await store.isEverLiteRpc('tenant-a')).toBe(true);
+  });
+
+  it('does not publish always when the marker cannot be written', async () => {
+    store.markEverLiteRpc = async () => {
+      throw new Error('down');
+    };
+    expect((await call('PUT', { mode: 'always' })).status).toBe(503);
+    expect((await store.getStatusRpc('tenant-a')).snapshot.liteMode).toBe('off');
+  });
+
+  it('keeps the switch when the console record cannot be written', async () => {
+    mocks.state.failRecord = true;
+    const response = await switchOn();
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ mode: 'always', recorded: false });
+  });
+
   it('switches off without the compatibility check', async () => {
-    await call('PUT', { mode: 'always' });
+    await switchOn();
     mocks.state.issues = [{ code: 'not_released' }];
     const response = await call('PUT', { mode: 'off' });
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ mode: 'off', generation: 2 });
+    expect(mocks.state.recordSaves.at(-1)).toMatchObject({ 'login-ui.lite_mode': 'off' });
   });
 
   it('asks to retry while another change holds the lease', async () => {
