@@ -68,6 +68,7 @@ import {
   isSAMLAuthorizationChallenge,
 } from '@authrim/ar-lib-core';
 import { resolveRuntimeScreenRow } from '@authrim/ar-lib-core/services/runtime-screen-resolution';
+import { applyRuntimeScreenOptions } from './runtime-screen-options';
 
 type AuthContext = Context<{ Bindings: Env }>;
 type FlowRuntimeEnv = Env & {
@@ -568,10 +569,15 @@ function normalizeRegistrationFieldKey(field: string): string {
     : normalized;
 }
 
+/** The input parts that answer an attribute of the profile. */
+const PROFILE_INPUT_BLOCK_TYPES = new Set(['identity_field', 'select', 'radio', 'checkbox']);
+
 function registrationIdentityFieldKey(field: FlowRuntimeJsonObject): string | null {
   const fieldName = readString(field.field, 200);
   const blockType = readString(field.block_type, 80) ?? 'identity_field';
-  if (blockType !== 'identity_field' || !fieldName) return null;
+  if (!PROFILE_INPUT_BLOCK_TYPES.has(blockType) || !fieldName) return null;
+  // An answer not stored to the profile is not an attribute, whatever its key.
+  if (field.store_to_profile === false) return null;
   return normalizeRegistrationFieldKey(fieldName);
 }
 
@@ -1703,11 +1709,16 @@ async function resolveRuntimeScreenContent(
     fields = await applyRegistrationSchemaRequirements(db, tenantId, fields);
   }
   const localizations = parseRuntimeJsonObject(row.localizations_json);
-  const localized = applyRuntimeScreenLocalization(
-    fields,
+  const language = requestedLanguage(requestContext);
+  const localized = applyRuntimeScreenLocalization(fields, localizations, language, 'en');
+  // The choices of the select and radio parts: the Identity Schema's now, or the part's own.
+  const withOptions = await applyRuntimeScreenOptions(
+    db,
+    tenantId,
+    localized.fields,
     localizations,
-    requestedLanguage(requestContext),
-    'en'
+    language,
+    screenLocalizationKey
   );
   return {
     id: row.id,
@@ -1715,7 +1726,7 @@ async function resolveRuntimeScreenContent(
     display_name: localized.displayName ?? row.display_name,
     description: localized.description ?? row.description,
     screen_kind: row.screen_kind,
-    fields: localized.fields,
+    fields: withOptions,
     localizations,
     settings: parseRuntimeJsonObject(row.settings_json),
   };

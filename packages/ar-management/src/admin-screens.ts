@@ -5,10 +5,22 @@ import {
   liteIssuesOfScreenRemoval,
   resolveLiteMethodState,
 } from './lite-mode-readiness';
+import {
+  MAX_SCREEN_FIELD_OPTIONS,
+  MAX_SCREEN_OPTION_LABEL_LENGTH,
+  OIDC_STANDARD_CLAIM_SCOPE,
+  MAX_SCREEN_OPTION_VALUE_LENGTH,
+  RESERVED_CLAIMS,
+  SCREEN_ANSWER_TARGETS,
+  SCREEN_CHOICE_BLOCK_TYPES,
+  SCREEN_INPUT_BLOCK_TYPES,
+} from '@authrim/ar-lib-core';
 import type {
   Env,
+  ScreenAnswerTarget,
   ScreenDisplayCondition,
   ScreenField,
+  ScreenFieldOption,
   ScreenKind,
   ScreenLocalization,
   ScreenResponse,
@@ -57,6 +69,9 @@ const SCREEN_KINDS = new Set<ScreenKind>([
 ]);
 const SCREEN_BLOCK_TYPES = new Set([
   'identity_field',
+  'select',
+  'radio',
+  'checkbox',
   'auth_widget',
   'guest_login_widget',
   'code_input_widget',
@@ -1788,10 +1803,17 @@ function readBoolean(value: unknown, fallback: boolean): boolean {
   return fallback;
 }
 
-function readBlockType(value: unknown): ScreenField['block_type'] {
-  return typeof value === 'string' && SCREEN_BLOCK_TYPES.has(value)
-    ? (value as ScreenField['block_type'])
-    : 'identity_field';
+/**
+ * A part's type. No type is an attribute's input (`identity_field`, as screens always saved them);
+ * a type that is not one of the parts is refused when saving (`strict`), and read as an input when
+ * reading a stored screen (screens saved before the check).
+ */
+function readBlockType(value: unknown, strict: boolean): ScreenField['block_type'] | null {
+  if (value === undefined || value === null || value === '') return 'identity_field';
+  if (typeof value === 'string' && SCREEN_BLOCK_TYPES.has(value)) {
+    return value as ScreenField['block_type'];
+  }
+  return strict ? null : 'identity_field';
 }
 
 function readValueType(value: unknown): ScreenField['value_type'] {
@@ -1886,25 +1908,190 @@ function parseJson<T>(value: unknown, fallback: T): T {
   }
 }
 
-function normalizeFields(value: unknown): ScreenField[] | null {
-  if (!Array.isArray(value)) return null;
+/** The key of an answer not stored to the profile: a plain identifier, never an attribute path. */
+const ANSWER_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,63}$/u;
+
+/**
+ * Names an answer of its own may not take: the standard claims, the claims a token reserves, and
+ * Authrim's own. An answer so named could later be read as that claim.
+ */
+function isReservedAnswerKey(key: string): boolean {
+  const lower = key.toLowerCase();
+  return (
+    lower in OIDC_STANDARD_CLAIM_SCOPE ||
+    (RESERVED_CLAIMS as readonly string[]).includes(lower) ||
+    lower.startsWith('authrim_')
+  );
+}
+
+type FieldsResult = { ok: true; fields: ScreenField[] } | { ok: false; error: string };
+
+function readAnswerTargets(value: unknown): ScreenAnswerTarget[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const targets: ScreenAnswerTarget[] = [];
+  for (const target of value) {
+    if (!SCREEN_ANSWER_TARGETS.includes(target as ScreenAnswerTarget)) return null;
+    if (!targets.includes(target as ScreenAnswerTarget)) targets.push(target as ScreenAnswerTarget);
+  }
+  // In a fixed order, so the same choice is saved the same way.
+  return SCREEN_ANSWER_TARGETS.filter((target) => targets.includes(target));
+}
+
+function readFieldOptions(value: unknown, where: string): ScreenFieldOption[] | string {
+  if (!Array.isArray(value) || value.length === 0)
+    return `${where}: options must list at least one choice`;
+  if (value.length > MAX_SCREEN_FIELD_OPTIONS) {
+    return `${where}: at most ${MAX_SCREEN_FIELD_OPTIONS} options`;
+  }
+  const options: ScreenFieldOption[] = [];
+  for (const raw of value) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      return `${where}: each option must be an object`;
+    }
+    const option = raw as Row;
+    const optionValue = readTrimmed(option.value);
+    const label = readTrimmed(option.label) ?? optionValue;
+    if (!optionValue) return `${where}: an option value must not be empty`;
+    if (optionValue.length > MAX_SCREEN_OPTION_VALUE_LENGTH) {
+      return `${where}: option values must be at most ${MAX_SCREEN_OPTION_VALUE_LENGTH} characters`;
+    }
+    if (label && label.length > MAX_SCREEN_OPTION_LABEL_LENGTH) {
+      return `${where}: option labels must be at most ${MAX_SCREEN_OPTION_LABEL_LENGTH} characters`;
+    }
+    if (options.some((existing) => existing.value === optionValue)) {
+      return `${where}: option "${optionValue}" is listed twice`;
+    }
+    options.push({ value: optionValue, label: label ?? optionValue });
+  }
+  return options;
+}
+
+/**
+ * What an input part answers: an attribute of the profile (the default), or an answer of its own
+ * with where it goes. Null for a part that is not an input. A string is why it cannot be saved.
+ */
+function readInputAnswer(
+  record: Row,
+  blockType: NonNullable<ScreenField['block_type']>,
+  field: string,
+  strict: boolean
+):
+  | Pick<ScreenField, 'show_label' | 'store_to_profile' | 'answer_targets' | 'options'>
+  | string
+  | null {
+  if (!(SCREEN_INPUT_BLOCK_TYPES as readonly string[]).includes(blockType)) return null;
+  const where = `Field "${field}"`;
+  const showLabel =
+    record.show_label === undefined ? undefined : readBoolean(record.show_label, true);
+  const storeToProfile =
+    record.store_to_profile === undefined ? true : readBoolean(record.store_to_profile, true);
+  const isChoice = (SCREEN_CHOICE_BLOCK_TYPES as readonly string[]).includes(blockType);
+  if (storeToProfile) {
+    if (strict && record.answer_targets !== undefined && record.answer_targets !== null) {
+      return `${where}: answer_targets is only for a part not stored to the profile`;
+    }
+    if (strict && record.options !== undefined && record.options !== null) {
+      return `${where}: a part stored to the profile takes its options from the Identity Schema`;
+    }
+    return { ...(showLabel === false ? { show_label: false } : {}) };
+  }
+  if (strict && !ANSWER_KEY_PATTERN.test(field)) {
+    return `${where}: the key of an answer not stored to the profile must be a letter followed by letters, digits or _ (at most 64)`;
+  }
+  if (strict && isReservedAnswerKey(field)) {
+    return `${where}: an answer not stored to the profile must not use a standard claim's name`;
+  }
+  const targets = readAnswerTargets(record.answer_targets);
+  if (!targets) {
+    if (strict) return `${where}: answer_targets must list flow_event, record or both`;
+  }
+  let options: ScreenFieldOption[] | undefined;
+  if (isChoice) {
+    const read = readFieldOptions(record.options, where);
+    if (typeof read === 'string') {
+      if (strict) return read;
+    } else {
+      options = read;
+    }
+  } else if (strict && record.options !== undefined && record.options !== null) {
+    return `${where}: only a select or radio part has options`;
+  }
+  return {
+    ...(showLabel === false ? { show_label: false } : {}),
+    store_to_profile: false,
+    answer_targets: targets ?? [...SCREEN_ANSWER_TARGETS],
+    ...(options ? { options } : {}),
+  };
+}
+
+/**
+ * The parts of a screen as they are saved: each one checked and with only the properties it has.
+ * `strict` (a save) refuses what cannot be saved, with the reason; reading a stored screen is not
+ * strict, so a screen saved before a check still opens.
+ */
+function normalizeFieldsDetailed(value: unknown, strict = true): FieldsResult {
+  if (!Array.isArray(value)) return { ok: false, error: 'fields must be an array' };
   const fields: ScreenField[] = [];
+  const answerKeys = new Set<string>();
+  const profileKeys = new Set<string>();
   for (const item of value) {
-    if (!item || typeof item !== 'object') return null;
+    if (!item || typeof item !== 'object')
+      return { ok: false, error: 'Each field must be an object' };
     const record = item as Row;
     const field = readTrimmed(record.field);
     const label = readTrimmed(record.label);
-    if (!field || !label) return null;
-    const blockType = readBlockType(record.block_type);
+    if (!field || !label) return { ok: false, error: 'Each field needs a field and a label' };
+    const blockType = readBlockType(record.block_type, strict);
+    if (!blockType) return { ok: false, error: `Field "${field}": unknown block_type` };
     const href = readSafeLinkHref(record.href);
-    if (blockType === 'link' && !href) return null;
+    if (blockType === 'link' && !href) {
+      return {
+        ok: false,
+        error: `Field "${field}": a link needs an https URL or a path on this site`,
+      };
+    }
+    const answer = readInputAnswer(record, blockType, field, strict);
+    if (typeof answer === 'string') return { ok: false, error: answer };
+    // An answer of its own must not share a key with another answer, nor with an attribute the
+    // screen asks (the two could not be told apart), in any spelling of the key.
+    if (answer) {
+      const key = attributeKeyOf(field);
+      if (answer.store_to_profile === false) {
+        if (answerKeys.has(key)) {
+          return {
+            ok: false,
+            error: `Field "${field}": two parts of the screen use the same answer key`,
+          };
+        }
+        if (profileKeys.has(key)) {
+          return {
+            ok: false,
+            error: `Field "${field}": an answer not stored to the profile shares its key with an attribute the screen asks`,
+          };
+        }
+        answerKeys.add(key);
+      } else {
+        if (answerKeys.has(key)) {
+          return {
+            ok: false,
+            error: `Field "${field}": an answer not stored to the profile shares its key with an attribute the screen asks`,
+          };
+        }
+        profileKeys.add(key);
+      }
+    }
     fields.push({
       field,
       label: label.slice(0, 200),
       required: readBoolean(record.required, false),
       block_type: blockType,
       block_id: readTrimmed(record.block_id) ?? undefined,
-      value_type: readValueType(record.value_type),
+      // The legacy yes/no input: only on a text input stored to the profile (a checkbox needs
+      // none, and an answer of its own is asked with a checkbox).
+      value_type:
+        blockType === 'identity_field' && answer?.store_to_profile !== false
+          ? readValueType(record.value_type)
+          : undefined,
       auth_method: readTrimmed(record.auth_method),
       code_input_mode: readCodeInputMode(record.code_input_mode),
       external_idp_show_action_text:
@@ -1923,9 +2110,91 @@ function normalizeFields(value: unknown): ScreenField[] | null {
         typeof record.order === 'number' && Number.isInteger(record.order)
           ? record.order
           : undefined,
+      ...(answer ?? {}),
     });
   }
-  return fields;
+  return { ok: true, fields };
+}
+
+/** An attribute key as the run time reads it from a part (`field.canonical.` names the same one). */
+function attributeKeyOf(field: string): string {
+  const normalized = field.trim().toLowerCase();
+  return normalized.startsWith('field.canonical.')
+    ? normalized.slice('field.canonical.'.length)
+    : normalized;
+}
+
+/**
+ * The checks a save makes against the tenant's Identity Schema: a choice part stored to the
+ * profile names a single-valued enum attribute, a checkbox a single-valued boolean one; and an
+ * answer not stored to the profile does not take an attribute's key (it would then be read as
+ * that attribute). A text input stays as lenient as before (screens name attributes that are not
+ * custom ones, such as the standard claims). Null when the parts pass.
+ */
+async function schemaProblemOf(
+  db: { query<T>(sql: string, params: unknown[]): Promise<T[]> },
+  tenantId: string,
+  fields: ScreenField[]
+): Promise<string | null> {
+  const needsSchema = fields.some(
+    (field) =>
+      field.store_to_profile === false ||
+      field.block_type === 'select' ||
+      field.block_type === 'radio' ||
+      field.block_type === 'checkbox'
+  );
+  if (!needsSchema) return null;
+  const rows = await db.query<{
+    field_key: string;
+    field_type: string;
+    cardinality: string | null;
+    is_active: number | boolean;
+  }>(
+    `SELECT field_key, field_type, cardinality, is_active
+       FROM custom_claim_schemas WHERE tenant_id = ?`,
+    [tenantId]
+  );
+  // Every key, active or not, for the answers of their own; the active attribute of a key for
+  // the parts that answer one (a key may have an inactive row beside its active one).
+  const allKeys = new Set(rows.map((row) => attributeKeyOf(row.field_key)));
+  const schemas = new Map(
+    rows
+      .filter((row) => readBoolean(row.is_active, false))
+      .map((row) => [attributeKeyOf(row.field_key), row])
+  );
+  for (const field of fields) {
+    const where = `Field "${field.field}"`;
+    if (field.store_to_profile === false) {
+      if (allKeys.has(attributeKeyOf(field.field))) {
+        return `${where}: an answer not stored to the profile must not use an attribute's key`;
+      }
+      continue;
+    }
+    const wanted =
+      field.block_type === 'select' || field.block_type === 'radio'
+        ? 'enum'
+        : field.block_type === 'checkbox'
+          ? 'boolean'
+          : null;
+    if (!wanted) continue;
+    const schema = schemas.get(attributeKeyOf(field.field));
+    if (!schema) {
+      return `${where}: names no active attribute of the Identity Schema`;
+    }
+    if (schema.field_type !== wanted) {
+      return `${where}: a ${field.block_type} part needs an attribute of type ${wanted}`;
+    }
+    if (schema.cardinality === 'multi') {
+      return `${where}: a ${field.block_type} part cannot answer a multi-valued attribute`;
+    }
+  }
+  return null;
+}
+
+/** The parts of a screen as a save would keep them, or null when they cannot be saved. */
+function normalizeFields(value: unknown): ScreenField[] | null {
+  const result = normalizeFieldsDetailed(value, true);
+  return result.ok ? result.fields : null;
 }
 
 function validateAccountScreenFields(fields: ScreenField[]): string | null {
@@ -1939,6 +2208,28 @@ function validateAccountScreenFields(fields: ScreenField[]): string | null {
     return 'Account screens may contain at most one primary Account Widget';
   }
   return null;
+}
+
+/** The translated labels of a part's own options: by option value, the labels kept short. */
+function localizedOptionsOf(value: unknown): { options?: Record<string, string> } {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const options: Record<string, string> = {};
+  for (const [optionValue, label] of Object.entries(value as Row).slice(
+    0,
+    MAX_SCREEN_FIELD_OPTIONS
+  )) {
+    if (!optionValue || optionValue.length > MAX_SCREEN_OPTION_VALUE_LENGTH) continue;
+    if (
+      optionValue === '__proto__' ||
+      optionValue === 'constructor' ||
+      optionValue === 'prototype'
+    ) {
+      continue;
+    }
+    if (typeof label !== 'string' || !label.trim()) continue;
+    options[optionValue] = label.trim().slice(0, MAX_SCREEN_OPTION_LABEL_LENGTH);
+  }
+  return Object.keys(options).length > 0 ? { options } : {};
 }
 
 function normalizeLocalizations(value: unknown): Record<string, ScreenLocalization> {
@@ -1969,6 +2260,7 @@ function normalizeLocalizations(value: unknown): Record<string, ScreenLocalizati
           ...(typeof field.placeholder === 'string'
             ? { placeholder: field.placeholder.trim().slice(0, 500) }
             : {}),
+          ...localizedOptionsOf(field.options),
         };
       }
     }
@@ -2439,7 +2731,10 @@ function toResponse(row: Row): ScreenResponse {
     display_name: String(row.display_name),
     description: typeof row.description === 'string' ? row.description : null,
     screen_kind: String(row.screen_kind) as ScreenKind,
-    fields: normalizeFields(parsedFields) ?? [],
+    fields: (() => {
+      const read = normalizeFieldsDetailed(parsedFields, false);
+      return read.ok ? read.fields : [];
+    })(),
     localizations: normalizeLocalizations(
       parseJson<Record<string, ScreenLocalization>>(row.localizations_json, {})
     ),
@@ -2604,15 +2899,19 @@ async function adminScreenCreateUnguarded(c: AdminContext) {
     const rawKey = readTrimmed(body.screen_key) ?? displayName;
     const screenKey = rawKey ? normalizeScreenKey(rawKey) : '';
     const screenKind = body.screen_kind;
-    const fields = normalizeFields(body.fields);
+    const read = normalizeFieldsDetailed(body.fields);
     if (!displayName) return invalid(c, 'display_name is required');
     if (!screenKey) return invalid(c, 'screen_key is required');
     if (!SCREEN_KINDS.has(screenKind as ScreenKind)) return invalid(c, 'Invalid screen_kind');
-    if (!fields || fields.length === 0) return invalid(c, 'fields must contain at least one field');
+    if (!read.ok) return invalid(c, read.error);
+    const fields = read.fields;
+    if (fields.length === 0) return invalid(c, 'fields must contain at least one field');
     if (screenKind === 'account') {
       const accountValidationError = validateAccountScreenFields(fields);
       if (accountValidationError) return invalid(c, accountValidationError);
     }
+    const schemaProblem = await schemaProblemOf(authCtx.coreAdapter, tenantId, fields);
+    if (schemaProblem) return invalid(c, schemaProblem);
     // The built-in keys belong to the system screens (also when a tenant has not got them yet):
     // the run time falls back to them, so a custom screen must not take one.
     const taken =
@@ -2722,8 +3021,10 @@ async function adminScreenUpdateUnguarded(c: AdminContext) {
       params.push(body.screen_kind);
     }
     if (body.fields !== undefined) {
-      const fields = normalizeFields(body.fields);
-      if (!fields || fields.length === 0) {
+      const read = normalizeFieldsDetailed(body.fields);
+      if (!read.ok) return invalid(c, read.error);
+      const fields = read.fields;
+      if (fields.length === 0) {
         return invalid(c, 'fields must contain at least one field');
       }
       const effectiveKind = (body.screen_kind ?? existing.screen_kind) as ScreenKind;
@@ -2731,6 +3032,8 @@ async function adminScreenUpdateUnguarded(c: AdminContext) {
         const accountValidationError = validateAccountScreenFields(fields);
         if (accountValidationError) return invalid(c, accountValidationError);
       }
+      const schemaProblem = await schemaProblemOf(authCtx.coreAdapter, tenantId, fields);
+      if (schemaProblem) return invalid(c, schemaProblem);
       sets.push('fields_json = ?');
       params.push(serializeJson(fields));
     } else if (body.screen_kind === 'account') {
