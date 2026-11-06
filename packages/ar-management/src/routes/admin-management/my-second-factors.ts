@@ -185,7 +185,7 @@ function minimumReached(c: AdminContext): Response {
  * How the admin may register now: `step_up` with an L2 receipt once a factor is active, `first`
  * with a fresh passkey inside the enrollment window, otherwise `recovery_required`.
  */
-async function enrollmentState(
+export async function enrollmentState(
   repo: AdminSecondFactorRepository,
   adminUserId: string,
   now: number

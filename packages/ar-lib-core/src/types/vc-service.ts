@@ -77,7 +77,75 @@ export interface AdminCredentialOfferStatus {
   holderKeyThumbprint?: string;
 }
 
+/** Why an administrator presentation is asked for. */
+export type AdminPresentationPurpose = 'step_up' | 'enroll';
+
+export interface CreateAdminPresentationInput {
+  /** The admin's home tenant (issuer of the admin credential). */
+  tenantId: string;
+  adminUserId: string;
+  /** The admin session the result may be recorded on; nothing else can consume it. */
+  sessionId: string;
+  purpose: AdminPresentationPurpose;
+  /**
+   * step_up: RFC 7638 thumbprints of the admin's active Keyring second factors (one must be
+   * presented). enroll: the ones already registered (none of them may be presented).
+   */
+  holderJkts: string[];
+  /** The tenant's canonical https base URL (credential issuer and verifier). */
+  credentialIssuer: string;
+  /** Tenant name shown in the wallet. */
+  tenantLabel: string;
+  /** Opaque to ar-vc, returned with the result (string values, at most 2 KiB as JSON). */
+  context?: Record<string, string | null>;
+}
+
+export interface CreateAdminPresentationResult {
+  requestId: string;
+  /** `openid4vp://` value for the QR code. */
+  qr: string;
+  /** The two digits the console shows and the admin types into the wallet. */
+  matchCode: string;
+  expiresAt: number;
+}
+
+export type AdminPresentationStatus =
+  | 'pending'
+  | 'processing'
+  | 'verified'
+  | 'failed'
+  | 'expired'
+  | 'consumed';
+
+export interface AdminPresentationRef {
+  tenantId: string;
+  adminUserId: string;
+  sessionId: string;
+  requestId: string;
+}
+
+export interface AdminPresentationResult {
+  purpose: AdminPresentationPurpose;
+  context: Record<string, string | null>;
+  /** RFC 7638 thumbprint of the presented holder key. */
+  holderJkt: string;
+  /** The admin credential's public id. */
+  credentialId: string;
+  verifiedAt: number;
+}
+
 export interface VCIssuerServiceBinding {
+  /** Start an administrator presentation (QR, cross-device). */
+  createAdminPresentationRequest(
+    input: CreateAdminPresentationInput
+  ): Promise<CreateAdminPresentationResult>;
+  /** Null when the request does not exist or belongs to another admin session. */
+  getAdminPresentationStatus(
+    input: AdminPresentationRef
+  ): Promise<{ status: AdminPresentationStatus; expiresAt: number; errorCode?: string } | null>;
+  /** The verified result, handed over once; null otherwise. */
+  consumeAdminPresentation(input: AdminPresentationRef): Promise<AdminPresentationResult | null>;
+
   createCredentialOffer(
     input: CreateCredentialOfferServiceInput
   ): Promise<CreateCredentialOfferServiceResult>;

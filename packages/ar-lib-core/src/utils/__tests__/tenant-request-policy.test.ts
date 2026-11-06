@@ -32,6 +32,10 @@ describe('tenant request path classification', () => {
     '/api/admin/me/second-factor-recovery',
     '/api/admin/me/second-factor-recovery/complete',
     '/api/admin/me/second-factor-recovery/cancel',
+    '/api/admin/me/keyring/step-up',
+    '/api/admin/me/keyring/step-up/g1:apac:0:vp_x',
+    '/api/admin/me/keyring/enroll',
+    '/api/admin/me/keyring/enroll/g1:apac:0:vp_x',
   ])('keeps Admin identity operations platform-owned: %s', (path) => {
     expect(classifyTenantRequestPath(path)).toBe('platform_admin');
   });
@@ -53,6 +57,9 @@ describe('tenant request path classification', () => {
     '/api/admin/me/second-factors/webauthn/unknown/extra',
     '/api/admin/me/second-factor-recovery/other',
     '/api/admin/admin-second-factor-recoveries',
+    '/api/admin/me/keyring',
+    '/api/admin/me/keyring/other',
+    '/api/admin/me/keyring/step-up/id/extra',
   ])('retains tenant isolation for tenant operations and adjacent routes: %s', (path) => {
     expect(classifyTenantRequestPath(path)).toBe('tenant_scoped_admin');
   });

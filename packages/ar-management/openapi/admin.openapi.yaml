@@ -32547,6 +32547,159 @@ paths:
           $ref: '#/components/responses/Error'
       security:
         - adminSessionCookie: []
+  /api/admin/me/keyring/step-up:
+    post:
+      tags:
+        - Admin Passkeys
+      operationId: postApiAdminMeKeyringStepUp
+      summary: Start a Keyring presentation for the session's second factor
+      description: >-
+        Starts an administrator presentation (OpenID4VP, cross-device QR) of the admin credential
+        whose holder key is one of the current admin's registered Keyring second factors. Returns
+        the QR value and the two-digit match code the admin types into Keyring. Human admin
+        sessions only. 409 keyring_not_registered without a Keyring factor; 403
+        keyring_not_eligible for an admin no longer eligible for the admin credential.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        '201':
+          description: The presentation request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminKeyringPresentationStart'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/me/keyring/step-up/{id}:
+    get:
+      tags:
+        - Admin Passkeys
+      operationId: getApiAdminMeKeyringStepUpById
+      summary: Progress of a Keyring step-up presentation
+      description: >-
+        Status of a presentation started by this session (pending, processing, failed, expired,
+        consumed). Once verified, the result is consumed exactly once and the Keyring factor is
+        recorded on the session as its second-factor evidence (status verified, verified_at).
+      x-authrim-route-coverage: inferred-from-source
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The progress.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminKeyringPresentationProgress'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/me/keyring/enroll:
+    post:
+      tags:
+        - Admin Passkeys
+      operationId: postApiAdminMeKeyringEnroll
+      summary: Start a Keyring presentation that registers its holder key
+      description: >-
+        Starts an administrator presentation whose holder key becomes one of the current admin's
+        second factors. Like a security key: an L2 receipt (admin.second_factor.add) in
+        authrim-step-up-receipt once a factor is active, a fresh passkey inside the
+        first-enrollment window, otherwise 403 second_factor_recovery_required. A holder key
+        registered before (revoked ones included) is refused by the wallet response.
+      parameters:
+        - name: authrim-step-up-receipt
+          in: header
+          required: false
+          schema:
+            type: string
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        '201':
+          description: The presentation request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminKeyringPresentationStart'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/me/keyring/enroll/{id}:
+    get:
+      tags:
+        - Admin Passkeys
+      operationId: getApiAdminMeKeyringEnrollById
+      summary: Progress of a Keyring enrolment presentation
+      description: >-
+        Status of an enrolment presentation started by this session. Once verified, the result is
+        consumed exactly once and the holder key is registered (201 with the second factor), if
+        the evidence the enrolment rests on is still fresh and the approving factor still active.
+      x-authrim-route-coverage: inferred-from-source
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The progress.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminKeyringPresentationProgress'
+        '201':
+          description: The holder key was registered.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - status
+                  - second_factor
+                properties:
+                  status:
+                    type: string
+                    enum:
+                      - verified
+                  second_factor:
+                    type: object
+                    additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   /api/admin/me/second-factors:
     get:
       tags:
@@ -50461,6 +50614,47 @@ components:
                 type: boolean
                 const: false
   schemas:
+    AdminKeyringPresentationStart:
+      type: object
+      required:
+        - request_id
+        - qr
+        - match_code
+        - expires_at
+      properties:
+        request_id:
+          type: string
+        qr:
+          type: string
+          description: openid4vp:// value with client_id and request_uri, for the QR code.
+        match_code:
+          type: string
+          pattern: '^[0-9]{2}$'
+          description: Shown in the console only; the admin types it into Keyring.
+        expires_at:
+          type: integer
+          description: Epoch milliseconds.
+    AdminKeyringPresentationProgress:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum:
+            - pending
+            - processing
+            - verified
+            - failed
+            - expired
+            - consumed
+        expires_at:
+          type: integer
+        verified_at:
+          type: integer
+        error:
+          type: string
+          description: Why the presentation failed (e.g. match_code_mismatch).
     LogReadCoverage:
       type: object
       additionalProperties: false

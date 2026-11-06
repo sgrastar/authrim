@@ -22,6 +22,8 @@ import {
 } from '#lib/api/admin-reauth.js';
 import { adminFetch, API_BASE_URL } from '#lib/api/admin-request.js';
 import { ApiError } from '#lib/api/api-error.js';
+import { httpKeyringFactor } from '#lib/api/keyring-factor.js';
+import { secondFactorPrompt } from '#lib/keyring/second-factor-prompt.svelte.js';
 
 /** The request header that carries a receipt. */
 export const STEP_UP_RECEIPT_HEADER = 'authrim-step-up-receipt';
@@ -48,8 +50,44 @@ export function stepUpRequired(error: unknown): StepUpRequired | null {
 	return { stepUpId, missing };
 }
 
-/** Verify one of the admin's registered security keys and record it on the session. */
+/** The kinds of second factor the admin has active; empty when they cannot be read. */
+async function activeSecondFactorKinds(): Promise<Set<string>> {
+	try {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/me/second-factors`, {
+			credentials: 'include'
+		});
+		if (!response.ok) return new Set();
+		const body = (await response.json()) as {
+			second_factors?: Array<{ kind?: unknown; revoked_at?: unknown }>;
+		};
+		return new Set(
+			(body.second_factors ?? []).flatMap((factor) =>
+				factor.revoked_at == null && typeof factor.kind === 'string' ? [factor.kind] : []
+			)
+		);
+	} catch {
+		return new Set();
+	}
+}
+
+/**
+ * Verify a second factor and record it on the session. With Keyring registered the admin
+ * chooses (Keyring, or a security key when there is one); otherwise a security key is asked for.
+ */
 export async function verifySecondFactor(): Promise<void> {
+	const kinds = await activeSecondFactorKinds();
+	if (kinds.has('keyring_holder_key')) {
+		const answer = await secondFactorPrompt.ask({
+			hasSecurityKey: kinds.has('webauthn_credential'),
+			client: httpKeyringFactor
+		});
+		if (answer === 'keyring_verified') return;
+	}
+	await verifySecurityKey();
+}
+
+/** Verify one of the admin's registered security keys and record it on the session. */
+export async function verifySecurityKey(): Promise<void> {
 	const { options, challenge_id } = await postJson<{
 		options: PublicKeyCredentialRequestOptionsJSON;
 		challenge_id: string;

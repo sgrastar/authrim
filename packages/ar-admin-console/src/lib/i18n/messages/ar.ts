@@ -7,6 +7,7 @@ import { arAccountFlows } from './account-flows/ar';
 import { arSchemaSetting } from './schema-setting/ar';
 import { arTenantGeneral } from './tenant-general/ar';
 import { arSecurityKeys } from './security-keys/ar';
+import { arKeyringPresentation } from './keyring-presentation/ar';
 import { arNotices } from './notices/ar';
 import { arCustomization } from './customization/ar';
 
@@ -19,6 +20,7 @@ export const ar = {
 	...arSchemaSetting,
 	...arTenantGeneral,
 	...arSecurityKeys,
+	...arKeyringPresentation,
 	...arNotices,
 	...arCustomization,
 	'app.adminLabel': 'وحدة التحكم الإدارية',

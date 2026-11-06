@@ -1,6 +1,7 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, userEvent, within } from 'storybook/test';
+	import { createFakeKeyringFactor } from '#lib/api/fake/keyring-factor-fake.js';
 	import { createFakeSecondFactors } from '#lib/api/fake/second-factors-fake.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import SecurityKeys from './SecurityKeys.svelte';
@@ -42,6 +43,43 @@
 			client={createFakeSecondFactors({
 				keys: [{ label: 'YubiKey 5C (blue)' }, { label: 'YubiKey 5 NFC (spare)' }]
 			})}
+		/>
+	{/snippet}
+</Story>
+
+<Story
+	name="Security key and Keyring"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByText('iPhone (Keyring)');
+		expect(canvas.getByText(t('kp.kind.keyring'))).toBeTruthy();
+	}}
+>
+	{#snippet template()}
+		<SecurityKeys
+			client={createFakeSecondFactors({
+				keys: [
+					{ label: 'YubiKey 5C (blue)' },
+					{ label: 'iPhone (Keyring)', kind: 'keyring_holder_key' }
+				]
+			})}
+			keyring={createFakeKeyringFactor()}
+		/>
+	{/snippet}
+</Story>
+
+<Story
+	name="Add Keyring"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByRole('button', { name: t('kp.enroll.add') }));
+		await within(canvasElement.ownerDocument.body).findByText(t('kp.code.label'));
+	}}
+>
+	{#snippet template()}
+		<SecurityKeys
+			client={createFakeSecondFactors({ keys: [{ label: 'YubiKey 5C (blue)' }] })}
+			keyring={createFakeKeyringFactor({ answerAfterMs: 5_000 })}
 		/>
 	{/snippet}
 </Story>

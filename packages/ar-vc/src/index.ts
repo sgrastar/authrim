@@ -17,6 +17,7 @@
  * @see https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html
  */
 
+import { adminVPRequestObjectRoute, adminVPResponseRoute } from './verifier/admin/admin-vp-routes';
 import { VC_RATE_LIMITS } from './rate-limits';
 import { runSamlDrCoveredFetch } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { Hono } from 'hono';
@@ -145,6 +146,10 @@ app.get('/vp/request/:id', vpRequestObjectRoute);
 
 // Request status (for polling)
 app.get('/vp/requests/:id', vpRequestStatusRoute);
+
+// Administrator presentation (second factor of an admin step-up; fixed acceptance rules)
+app.get('/vp/admin/request/:id', adminVPRequestObjectRoute);
+app.post('/vp/admin/response', adminVPResponseRoute);
 
 // Authenticated attribute elevation. All three routes use the shared token
 // introspector; the response rechecks the active subject before persistence.

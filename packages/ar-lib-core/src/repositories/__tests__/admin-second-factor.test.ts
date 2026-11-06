@@ -296,6 +296,61 @@ describe('AdminSecondFactorRepository in the real admin schema', () => {
     ).toEqual({ id: b.factor.id });
   });
 
+  it('registers a Keyring holder key once, never again after revocation', async () => {
+    const jkt = 'J'.repeat(43);
+    const first = await repo.insertKeyringHolderKey(
+      { admin_user_id: 'admin-1', holder_jkt: jkt, label: 'Keyring' },
+      { firstOnly: true }
+    );
+    expect(first).toMatchObject({
+      inserted: true,
+      factor: { kind: 'keyring_holder_key', holder_jkt: jkt, credential_id: null },
+    });
+    if (!first.inserted) throw new Error('not inserted');
+    expect(await repo.findActiveKeyringFactor('admin-1', jkt)).toMatchObject({
+      id: first.factor.id,
+    });
+    expect(await repo.findActiveKeyringFactor('admin-2', jkt)).toBeNull();
+
+    // The same key for another admin, or again for this one, is refused.
+    expect(
+      await repo.insertKeyringHolderKey(
+        { admin_user_id: 'admin-2', holder_jkt: jkt },
+        { firstOnly: false }
+      )
+    ).toEqual({ inserted: false, reason: 'credential_in_use' });
+
+    await repo.insertWebAuthn(key('cred-a'), { firstOnly: false });
+    expect(await repo.revoke('admin-1', first.factor.id)).toMatchObject({ revoked: true });
+    expect(await repo.findActiveKeyringFactor('admin-1', jkt)).toBeNull();
+    expect(
+      await repo.insertKeyringHolderKey(
+        { admin_user_id: 'admin-1', holder_jkt: jkt },
+        { firstOnly: false }
+      )
+    ).toEqual({ inserted: false, reason: 'credential_in_use' });
+  });
+
+  it('applies the first-enrollment rules to a Keyring holder key', async () => {
+    await repo.insertWebAuthn(key('cred-a'), { firstOnly: true });
+    expect(
+      await repo.insertKeyringHolderKey(
+        { admin_user_id: 'admin-1', holder_jkt: 'K'.repeat(43) },
+        { firstOnly: true }
+      )
+    ).toEqual({ inserted: false, reason: 'already_enrolled' });
+  });
+
+  it('marks a Keyring factor used, only while it is active', async () => {
+    const result = await repo.insertKeyringHolderKey(
+      { admin_user_id: 'admin-1', holder_jkt: 'L'.repeat(43) },
+      { firstOnly: false }
+    );
+    if (!result.inserted) throw new Error('not inserted');
+    expect(await repo.touch(result.factor.id, 123)).toBe(true);
+    expect((await repo.listByUser('admin-1'))[0].last_used_at).toBe(123);
+  });
+
   it('starts the enrollment window at account creation unless the migration set it', async () => {
     addAdmin(db, 'admin-new', 5_000);
     db.prepare('UPDATE admin_users SET second_factor_grace_started_at = NULL WHERE id = ?').run(
