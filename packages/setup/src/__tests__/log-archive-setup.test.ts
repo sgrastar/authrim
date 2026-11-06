@@ -16,6 +16,7 @@ import {
 } from '../core/log-archive-config.js';
 import {
   LogArchiveApi,
+  LogArchiveApiError,
   LOG_ARCHIVE_SCHEMA_DIGEST,
   planLogArchive,
   preflightLogArchive,
@@ -60,7 +61,10 @@ function fixture(mode: 'pipeline' | 'scheduled') {
   const archive = createLogArchiveConfig('demo', mode);
   const remote = new Map<string, Record<string, unknown>>();
   const calls: Array<{ path: string; method: string; body?: Record<string, unknown> }> = [];
-  const overrides = new Map<string, { status?: number; result?: unknown }>();
+  const overrides = new Map<
+    string,
+    { status?: number; result?: unknown; errors?: unknown; raw?: string }
+  >();
   const loseResponse = new Set<string>();
   const permissionGroups = [
     { id: 'catalog-read', name: 'Workers R2 Data Catalog Read' },
@@ -77,9 +81,14 @@ function fixture(mode: 'pipeline' | 'scheduled') {
       : undefined;
     calls.push({ path, method, body });
     const override = overrides.get(path);
+    if (override?.raw !== undefined) return new Response(override.raw, { status: override.status });
     if (override)
       return new Response(
-        JSON.stringify({ success: (override.status ?? 200) < 400, result: override.result }),
+        JSON.stringify({
+          success: (override.status ?? 200) < 400,
+          result: override.result,
+          ...(override.errors === undefined ? {} : { errors: override.errors }),
+        }),
         { status: override.status ?? 200 }
       );
     let result: unknown;
@@ -480,25 +489,21 @@ describe('log archive setup contract', () => {
     ).resolves.toBeUndefined();
   });
 
-  it('refuses a missing Paid subscription or insufficient credential permissions without resource mutations', async () => {
+  it('does not judge the plan beforehand, and refuses insufficient credential permissions without resource mutations', async () => {
     implemented.push('pipeline');
-    const free = fixture('pipeline');
-    free.overrides.set('subscriptions', { result: [] });
-    await expect(provisionLogArchive(free.options)).rejects.toThrow('workers_paid_required');
-    expect(free.calls.some((call) => call.method !== 'GET')).toBe(false);
-    const unreadable = fixture('pipeline');
-    unreadable.overrides.set('subscriptions', { status: 403 });
-    const progress: string[] = [];
-    await expect(
-      preflightLogArchive({ ...unreadable.options, onProgress: (m) => progress.push(m) })
-    ).resolves.toBeUndefined();
-    expect(progress.join('\n')).toContain('Workers Paid could not be confirmed');
-    const unauthorized = fixture('pipeline');
-    unauthorized.overrides.set('subscriptions', { status: 401 });
-    await expect(preflightLogArchive(unauthorized.options)).resolves.toBeUndefined();
-    const unavailable = fixture('pipeline');
-    unavailable.overrides.set('subscriptions', { status: 500 });
-    await expect(preflightLogArchive(unavailable.options)).rejects.toThrow('request_failed');
+    // Whatever billing says, or fails to say, setup does not look at it: Cloudflare decides.
+    for (const override of [
+      { result: [] },
+      { result: [{ rate_plan: { id: 'r2_paid' }, state: 'Paid' }] },
+      { status: 403 },
+      { status: 401 },
+      { status: 500 },
+    ]) {
+      const f = fixture('pipeline');
+      f.overrides.set('subscriptions', override);
+      await expect(preflightLogArchive(f.options)).resolves.toBeUndefined();
+      expect(f.calls.some((call) => call.path === 'subscriptions')).toBe(false);
+    }
     const denied = fixture('pipeline');
     denied.overrides.set('tokens/permission_groups?scope=com.cloudflare.api.account', {
       status: 403,
@@ -580,14 +585,301 @@ describe('log archive setup contract', () => {
     expect(await loadIssuedLogArchiveAccountId(directory, 'demo', 'scheduled')).toBeUndefined();
   });
 
-  it('requires an explicitly usable subscription state instead of accepting cancelled or unknown states', async () => {
-    implemented.push('pipeline');
-    for (const state of ['Cancelled', 'Expired', 'Failed', 'AwaitingPayment', 'Trial', undefined]) {
+  describe('a refusal says which step Cloudflare refused and what it said', () => {
+    const refusal = async (
+      path: string,
+      override: { status?: number; errors?: unknown; raw?: string },
+      method = 'GET'
+    ) => {
       const f = fixture('pipeline');
-      f.overrides.set('subscriptions', { result: [{ rate_plan: { id: 'WORKERS_PAID' }, state }] });
-      await expect(provisionLogArchive(f.options)).rejects.toThrow('workers_paid_required');
-      expect(f.calls.some((call) => call.method !== 'GET')).toBe(false);
-    }
+      f.overrides.set(path, { status: 403, ...override });
+      return f.options.api.request(path, method, method === 'GET' ? undefined : {}).then(
+        () => {
+          throw new Error('expected a refusal');
+        },
+        (error: unknown) => error as LogArchiveApiError
+      );
+    };
+
+    it('names the step, the HTTP status and Cloudflare’s code and message', async () => {
+      const error = await refusal(
+        'pipelines/v1/streams',
+        {
+          errors: [{ code: 1234, message: 'Workers Paid plan is required' }],
+        },
+        'POST'
+      );
+      expect(error.code).toBe('log_archive_permission_or_subscription_required');
+      expect(error.status).toBe(403);
+      expect(error.message).toContain('log_archive_permission_or_subscription_required');
+      expect(error.message).toContain('step pipeline_stream');
+      expect(error.message).toContain('HTTP 403');
+      expect(error.message).toContain('code 1234: Workers Paid plan is required');
+    });
+
+    it('tells the steps apart', async () => {
+      const step = async (path: string, method = 'GET') =>
+        (await refusal(path, { errors: [{ code: 10000 }] }, method)).detail?.step;
+      expect(await step('tokens/verify')).toBe('token_verify');
+      expect(await step('tokens/permission_groups?scope=x')).toBe('token_permission_groups');
+      expect(await step('tokens/read-id')).toBe('token_policy_read');
+      expect(await step('basin-catalog/bucket')).toBe('catalog_read');
+      expect(await step('basin-catalog/bucket/enable', 'POST')).toBe('catalog_enable');
+      expect(await step('basin-catalog/bucket/namespaces/n/tables/t/maintenance-configs')).toBe(
+        'table_maintenance'
+      );
+      expect(await step('pipelines/v1/sinks', 'POST')).toBe('pipeline_sink');
+      expect(await step('pipelines/v1/pipelines', 'POST')).toBe('pipeline_pipeline');
+    });
+
+    it('keeps the code but not the text for the step that carries a credential', async () => {
+      const error = await refusal(
+        'pipelines/v1/sinks',
+        {
+          errors: [{ code: 7003, message: `bad token ${tokenWrite}` }],
+        },
+        'POST'
+      );
+      expect(error.message).toContain('code 7003');
+      expect(error.message).not.toContain('bad token');
+      expect(error.message).not.toContain(tokenWrite);
+    });
+
+    it('redacts token-like runs and bounds the text of other steps', async () => {
+      const error = await refusal(
+        'basin-catalog/bucket/enable',
+        {
+          errors: [
+            { code: 1, message: `token ${'A'.repeat(40)} is not allowed\n${'x '.repeat(300)}` },
+          ],
+        },
+        'POST'
+      );
+      expect(error.message).toContain('[redacted]');
+      expect(error.message).not.toContain('A'.repeat(24));
+      expect(error.message).not.toContain('\n');
+      expect(error.message.length).toBeLessThan(400);
+    });
+
+    it('removes the request’s own credentials whatever their length or alphabet', async () => {
+      // Short, and base64 with `+ / =`: neither looks like the long runs the patterns catch.
+      const f = fixture('pipeline');
+      const short = 'abc123';
+      const base64ish = 'Abc+/0123=';
+      const api = new LogArchiveApi(accountId, short, f.fetcher);
+      f.overrides.set('pipelines/v1/streams', {
+        status: 403,
+        errors: [{ code: 1, message: `rejected ${short} and ${base64ish} for a${short}b` }],
+      });
+      const error = await api
+        .request('pipelines/v1/streams', 'POST', { config: { token: base64ish } })
+        .catch((reason: unknown) => reason as LogArchiveApiError);
+      expect(error.message).toContain('[redacted]');
+      expect(error.message).not.toContain(short);
+      expect(error.message).not.toContain(base64ish);
+    });
+
+    it('drops the message when a credential is split by whitespace, and keeps one that is whole', async () => {
+      const f = fixture('pipeline');
+      const secret = 'abc123XYZ789';
+      const api = new LogArchiveApi(accountId, secret, f.fetcher);
+      const refuse = async (message: string) => {
+        f.overrides.set('basin-catalog/bucket', { status: 403, errors: [{ code: 5, message }] });
+        return (await api.request('basin-catalog/bucket').catch((e: unknown) => e)) as Error;
+      };
+      for (const message of [
+        `bad ${secret.slice(0, 6)}\n${secret.slice(6)}`,
+        `bad ${secret.slice(0, 6)}  ${secret.slice(6)}`,
+      ]) {
+        const error = await refuse(message);
+        expect(error.message).toContain('code 5');
+        expect(error.message).not.toContain('bad');
+        expect(error.message).not.toContain('abc123');
+        expect(error.message).not.toContain('XYZ789');
+      }
+      const whole = await refuse(`bad ${secret} here`);
+      expect(whole.message).toContain('bad [redacted] here');
+    });
+
+    it('finds a split credential even when a shorter credential sits inside it', async () => {
+      const f = fixture('pipeline');
+      const api = new LogArchiveApi(accountId, 'abc123', f.fetcher);
+      f.overrides.set('tokens/verify', {
+        status: 403,
+        errors: [{ code: 5, message: 'bad abc123\nXYZ789 here' }],
+      });
+      const error = (await api
+        .request('tokens/verify', 'GET', undefined, 'abc123XYZ789')
+        .catch((e: unknown) => e)) as Error;
+      expect(error.message).toContain('code 5');
+      expect(error.message).not.toContain('XYZ789');
+      expect(error.message).not.toContain('bad');
+      // The same with a one-character credential inside the longer one.
+      const tiny = new LogArchiveApi(accountId, 'a', f.fetcher);
+      const other = (await tiny
+        .request('tokens/verify', 'GET', undefined, 'abc123XYZ789')
+        .catch((e: unknown) => e)) as Error;
+      expect(other.message).not.toContain('XYZ789');
+    });
+
+    it('drops the message when any copy of a credential is split, even if another is whole', async () => {
+      const secret = 'abc123XYZ789';
+      const f = fixture('pipeline');
+      const api = new LogArchiveApi(accountId, secret, f.fetcher);
+      const refuse = async (message: string) => {
+        f.overrides.set('basin-catalog/bucket', { status: 403, errors: [{ code: 5, message }] });
+        return (await api.request('basin-catalog/bucket').catch((e: unknown) => e)) as Error;
+      };
+      const mixed = await refuse(`first ${secret} then abc123\nXYZ789 again`);
+      expect(mixed.message).toContain('code 5');
+      expect(mixed.message).not.toContain('first');
+      expect(mixed.message).not.toContain('XYZ789');
+      // Separators other than whitespace, and zero-width or control characters.
+      for (const message of [
+        'bad abc123-.-XYZ789',
+        'bad abc123, XYZ789',
+        'bad abc123\u200bXYZ789',
+        'bad abc123\u0000XYZ789',
+        'bad abc\u200b123XYZ789',
+      ]) {
+        const error = await refuse(message);
+        expect(error.message).toContain('code 5');
+        expect(error.message).not.toContain('bad');
+        expect(error.message).not.toContain('XYZ789');
+      }
+      // A whole copy alone is redacted, and the rest of the message is kept.
+      expect((await refuse(`ok ${secret} and ${secret}`)).message).toContain(
+        'ok [redacted] and [redacted]'
+      );
+    });
+
+    it('drops a message that carries control or zero-width characters even with no credential', async () => {
+      const error = await refusal('basin-catalog/bucket', {
+        errors: [{ code: 6, message: 'looks\u200bfine' }],
+      });
+      expect(error.message).toContain('code 6');
+      expect(error.message).not.toContain('looks');
+    });
+
+    it('finds split credentials that have no letters or digits', async () => {
+      const f = fixture('pipeline');
+      const refuse = async (credential: string, message: string) => {
+        const api = new LogArchiveApi(accountId, credential, f.fetcher);
+        f.overrides.set('basin-catalog/bucket', { status: 403, errors: [{ code: 5, message }] });
+        return (await api.request('basin-catalog/bucket').catch((e: unknown) => e)) as Error;
+      };
+      for (const [credential, message] of [
+        ['+/=+/=', 'bad +/ =+ /='],
+        ['秘密鍵', 'bad 秘 密 鍵'],
+        ['秘密鍵', 'bad 秘\n密鍵'],
+      ]) {
+        const error = await refuse(credential, message);
+        expect(error.message).toContain('code 5');
+        expect(error.message).not.toContain('bad');
+      }
+      // Whole, they are replaced and the rest of the message is kept.
+      expect((await refuse('秘密鍵', 'bad 秘密鍵 here')).message).toContain('bad [redacted] here');
+      expect((await refuse('+/=+/=', 'bad +/=+/= here')).message).toContain('bad [redacted] here');
+    });
+
+    it('drops the message when a replacement would join its neighbours into a credential', async () => {
+      const f = fixture('pipeline');
+      const api = new LogArchiveApi(accountId, 'abc123', f.fetcher);
+      f.overrides.set('tokens/verify', {
+        status: 403,
+        errors: [{ code: 5, message: 'bad prefixabc123suffix here' }],
+      });
+      // `prefix[redacted]suffix` is not a credential, but with the sink-style token below it would
+      // be: the second credential is what the joined text spells once the first is replaced.
+      const error = (await api
+        .request('tokens/verify', 'GET', undefined, 'prefix[redacted]suffix')
+        .catch((e: unknown) => e)) as Error;
+      expect(error.message).toContain('code 5');
+      expect(error.message).not.toContain('prefix');
+      expect(error.message).not.toContain('bad');
+    });
+
+    it('shows Cloudflare’s text only for steps that are listed as safe', async () => {
+      // A step that is not recognised shows codes only, as does the sink.
+      const unknown = await refusal('some/new/endpoint', {
+        errors: [{ code: 9, message: 'detail' }],
+      });
+      expect(unknown.message).toContain('step cloudflare_api');
+      expect(unknown.message).toContain('code 9');
+      expect(unknown.message).not.toContain('detail');
+      const listed = await refusal('basin-catalog/bucket', {
+        errors: [{ code: 9, message: 'detail' }],
+      });
+      expect(listed.message).toContain('code 9: detail');
+    });
+
+    it('removes bearer values and JWT-shaped values, however short their segments', async () => {
+      const error = await refusal('tokens/verify', {
+        errors: [{ code: 1, message: 'bad Authorization: Bearer s3cret and eyJh.eyJz.sig' }],
+      });
+      expect(error.message).not.toContain('s3cret');
+      expect(error.message).not.toContain('eyJh.eyJz.sig');
+      expect(error.message).toContain('Bearer [redacted]');
+    });
+
+    it('drops a very long message whole, quickly, and keeps the code', async () => {
+      const started = performance.now();
+      const error = await refusal(
+        'pipelines/v1/streams',
+        {
+          errors: [{ code: 77, message: 'X'.repeat(200_000) }],
+        },
+        'POST'
+      );
+      expect(performance.now() - started).toBeLessThan(1000);
+      expect(error.message).toContain('code 77');
+      expect(error.message).not.toContain('XXXX');
+      // A message at the limit is still read and redacted.
+      const bounded = await refusal(
+        'pipelines/v1/streams',
+        {
+          errors: [{ code: 78, message: `denied ${'Y'.repeat(30)}` }],
+        },
+        'POST'
+      );
+      expect(bounded.message).toContain('denied [redacted]');
+    });
+
+    it('treats a body that is not an object as a refusal with no details', async () => {
+      for (const raw of ['null', '"nope"', '7', '[]']) {
+        const error = await refusal('pipelines/v1/streams', { raw }, 'POST');
+        expect(error).toBeInstanceOf(LogArchiveApiError);
+        expect(error.code).toBe('log_archive_permission_or_subscription_required');
+        expect(error.message).toContain('step pipeline_stream, HTTP 403');
+      }
+    });
+
+    it('still names the step when Cloudflare sent no usable body or errors', async () => {
+      const noErrors = await refusal('pipelines/v1/streams', {}, 'POST');
+      expect(noErrors.message).toContain('step pipeline_stream, HTTP 403');
+      expect(noErrors.message).not.toContain('Cloudflare:');
+      const garbage = await refusal('pipelines/v1/streams', { raw: '<html>', status: 502 }, 'POST');
+      expect(garbage.code).toBe('log_archive_cloudflare_response_invalid');
+      expect(garbage.message).toContain('step pipeline_stream');
+      const malformed = await refusal(
+        'pipelines/v1/streams',
+        {
+          errors: [null, 'x', { code: 'nope', message: 5 }],
+        },
+        'POST'
+      );
+      expect(malformed.message).toContain('step pipeline_stream, HTTP 403');
+    });
+
+    it('keeps a 404 as the plain resource-not-found signal that callers branch on', async () => {
+      const f = fixture('pipeline');
+      f.overrides.set('basin-catalog/bucket', { status: 404 });
+      await expect(f.options.api.request('basin-catalog/bucket')).rejects.toMatchObject({
+        status: 404,
+        code: 'log_archive_resource_not_found',
+        message: 'log_archive_resource_not_found',
+      });
+    });
   });
 
   it('records a definite Catalog rejection so permission repair can resume the same owned plan', async () => {

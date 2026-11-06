@@ -26,8 +26,9 @@ A missing `logging.archive` is allowed only while editing a wizard draft. Provis
 configuration generation, and deployment require an explicit mode; there is no legacy storage mode.
 
 Both modes require R2 and Basin Catalog. Pipeline mode also requires Workers Paid and durable
-logging delivery queues. Setup checks subscriptions and permissions; it never subscribes the
-account or silently changes modes. A mode whose producer, query, retention, or recovery path is
+logging delivery queues. Setup does not look up the plan beforehand (a login often cannot read
+billing, and a wrong guess would block a paid account): Cloudflare decides, and a refusal names
+the step and what Cloudflare said. Setup never subscribes the account or silently changes modes. A mode whose producer, query, retention, or recovery path is
 incomplete is hidden in interactive setup and rejected before resource creation or Worker config
 generation. Resource-plan previews report whether the selected mode is implemented.
 
@@ -58,8 +59,7 @@ Noninteractive setup accepts `LOG_ARCHIVE_BOOTSTRAP_TOKEN` instead of explicit
 `LOG_ARCHIVE_CATALOG_SINK_TOKEN` in pipeline mode). Explicit Catalog tokens select the manual
 path and take precedence over automatic defaults; supplying both explicit tokens and a bootstrap
 token is an error, including partial explicit credentials. Manual verification requires Setup
-authentication that can inspect account token policies; pipeline provisioning also reads account
-subscriptions. Tokens are stored as private local secret files and never enter config, lock,
+authentication that can inspect account token policies. Tokens are stored as private local secret files and never enter config, lock,
 plans, or progress responses. Only Management receives `LOG_ARCHIVE_CATALOG_READ_TOKEN` and
 `LOG_ARCHIVE_CATALOG_WRITE_TOKEN` as Worker secrets. The Pipeline Sink token stays with Setup.
 
