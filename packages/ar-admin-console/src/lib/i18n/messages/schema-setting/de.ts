@@ -250,6 +250,8 @@ export const deSchemaSetting: Record<keyof typeof jaSchemaSetting, string> = {
 	'ss.error.listSeparator': ', ',
 	'ss.error.valuesInUseEncrypted':
 		'Dieses Attribut ist verschlüsselt, daher lassen sich seine Nutzer nicht nach Wert zählen. Auswahlmöglichkeiten können nicht entfernt werden, solange ein Nutzer das Attribut hat.',
+	'ss.error.valuesInUseUnverifiable':
+		'Dieses Attribut hat zu viele Nutzer, um alle Werte zu prüfen, daher lassen sich die Auswahlmöglichkeiten hier nicht einschränken. Wenden Sie sich an den Support.',
 	'ss.usage.col.type': 'Art',
 	'ss.usage.col.target': 'Verwendet von',
 	'ss.usage.col.protection': 'Löschen',

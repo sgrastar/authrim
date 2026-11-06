@@ -239,6 +239,8 @@ export const jaSchemaSetting = {
 	'ss.error.listSeparator': '、',
 	'ss.error.valuesInUseEncrypted':
 		'この属性は暗号化されているため、値ごとの人数を数えられません。この属性を持つユーザーがいる間は、選択肢を外せません。',
+	'ss.error.valuesInUseUnverifiable':
+		'この属性を持つユーザーが多すぎて、すべての値を確かめられないため、選択肢を狭められません。サポートに連絡してください。',
 	'ss.usage.col.type': '種類',
 	'ss.usage.col.target': '使っているもの',
 	'ss.usage.col.protection': '削除',

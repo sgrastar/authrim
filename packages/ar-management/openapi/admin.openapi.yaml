@@ -10277,7 +10277,8 @@ paths:
         '409':
           description: >-
             enum_value_in_use (reason held: the values left out, with their user counts; reason
-            encrypted: the attribute's holders), or another conflict.
+            encrypted: the attribute's holders; reason unverifiable: too many users to check every
+            value), or another conflict.
           content:
             application/json:
               schema:

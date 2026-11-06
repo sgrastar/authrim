@@ -117,6 +117,7 @@
 		const found = failureOf(failure);
 		if (found.kind !== 'values_in_use' || !found.held) return t(FAILURE_KEY[found.kind]);
 		if (found.held.encrypted) return t('ss.error.valuesInUseEncrypted');
+		if (found.held.unverifiable) return t('ss.error.valuesInUseUnverifiable');
 		const list = found.held.values
 			.map(({ value, users }) =>
 				t('ss.error.valueHeld', { value, count: (users ?? 0).toLocaleString(i18n.locale) })

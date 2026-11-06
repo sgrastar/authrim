@@ -1411,6 +1411,24 @@ describe('Custom Claims Admin API', () => {
       expect(status).toBe(409);
     });
 
+    it('refuses narrower choices when the users are too many to check', async () => {
+      // Every page is full of allowed values: the scan stops at its budget before the end.
+      const page = Array.from({ length: 500 }, () => ({ field_value: 'female', count: 1 }));
+      mockDbQuery.mockImplementation(async (sql: string) => {
+        if (sql.includes('FROM user_custom_fields')) return page;
+        if (sql.includes('custom_claim_schemas')) return [enumRow()];
+        return [];
+      });
+      const c = context({
+        method: 'PUT',
+        params: { id: 'schema-1' },
+        body: { validation_rules: { enum_values: ['female', 'male'] } },
+      });
+      const { body, status } = await read(await adminCustomClaimUpdateHandler(c));
+      expect(status).toBe(409);
+      expect(body).toMatchObject({ error: 'enum_value_in_use', reason: 'unverifiable' });
+    });
+
     it('lets choices be added without reading who holds what', async () => {
       respond(enumRow(), [{ field_value: 'other', count: 9 }]);
       const c = context({

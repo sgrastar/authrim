@@ -396,7 +396,20 @@ async function enumValuesInUse(
   const found = await mapWithConcurrency(sources.nonPiiDbs, 4, (db) =>
     findHeldNonPiiValuesOutside(db, tenantId, fieldKey, allowed, cardinality, { limit: 20 })
   );
-  const reported = [...new Set(found.flatMap((byValue) => [...byValue.keys()]))].slice(0, 20);
+  // A store too large to read in full cannot show that no held value is left out: refused.
+  const unverifiable = () =>
+    c.json(
+      {
+        error: 'enum_value_in_use',
+        error_description:
+          'The attribute has too many users to check its values; the choices were not narrowed.',
+        reason: 'unverifiable',
+        values: [],
+      },
+      409
+    );
+  if (found.some((result) => !result.complete)) return unverifiable();
+  const reported = [...new Set(found.flatMap((result) => [...result.counts.keys()]))].slice(0, 20);
   if (reported.length === 0) return null;
   const totals = new Map<string, number>(reported.map((value) => [value, 0]));
   const counts =
@@ -407,8 +420,9 @@ async function enumValuesInUse(
           })
         )
       : found;
-  for (const byValue of counts) {
-    for (const [value, count] of byValue) {
+  if (counts.some((result) => !result.complete)) return unverifiable();
+  for (const result of counts) {
+    for (const [value, count] of result.counts) {
       if (totals.has(value)) totals.set(value, (totals.get(value) ?? 0) + count);
     }
   }

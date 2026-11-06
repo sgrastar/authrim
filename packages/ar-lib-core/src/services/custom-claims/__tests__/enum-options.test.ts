@@ -107,7 +107,8 @@ describe('findHeldNonPiiValuesOutside', () => {
       ['female', 'male'],
       'single'
     );
-    expect(Object.fromEntries(held)).toEqual({ other: 2 });
+    expect(held.complete).toBe(true);
+    expect(Object.fromEntries(held.counts)).toEqual({ other: 2 });
   });
 
   it('reads every page of a large attribute', async () => {
@@ -120,7 +121,7 @@ describe('findHeldNonPiiValuesOutside', () => {
     const allowed = rows.slice(0, 1202).map(([, , value]) => value);
     const held = await findHeldNonPiiValuesOutside(db, 't1', 'code', allowed, 'single');
     // The one value not allowed is on the third page.
-    expect(Object.fromEntries(held)).toEqual({ v01202: 1 });
+    expect(Object.fromEntries(held.counts)).toEqual({ v01202: 1 });
   });
 
   it('counts exactly the values asked for, however many others there are', async () => {
@@ -136,13 +137,13 @@ describe('findHeldNonPiiValuesOutside', () => {
     const db = store(rows);
     // With the default limit, "z" (sorted last) is not among the 20 reported...
     const first = await findHeldNonPiiValuesOutside(db, 't1', 'code', [], 'single');
-    expect(first.size).toBe(20);
-    expect(first.has('z')).toBe(false);
+    expect(first.counts.size).toBe(20);
+    expect(first.counts.has('z')).toBe(false);
     // ...and asked for by name, it is counted in full.
     const only = await findHeldNonPiiValuesOutside(db, 't1', 'code', [], 'single', {
       only: ['z'],
     });
-    expect(Object.fromEntries(only)).toEqual({ z: 2 });
+    expect(Object.fromEntries(only.counts)).toEqual({ z: 2 });
   });
 
   it('looks inside the arrays of a multi-value attribute', async () => {
@@ -153,6 +154,39 @@ describe('findHeldNonPiiValuesOutside', () => {
       ['u4', 'tags', JSON.stringify(['c', 'z'])],
     ]);
     const held = await findHeldNonPiiValuesOutside(db, 't1', 'tags', ['c', 'a_b'], 'multi');
-    expect(Object.fromEntries(held)).toEqual({ '100%': 1, 'a"q': 1, z: 1 });
+    expect(Object.fromEntries(held.counts)).toEqual({ '100%': 1, 'a"q': 1, z: 1 });
+  });
+
+  it('does not aggregate more single-value rows than its budget reads', async () => {
+    // 501 users, one value: the aggregate would be one row, but it would read all 501.
+    const rows: [string, string, string][] = Array.from({ length: 501 }, (_, index) => [
+      `u${index}`,
+      'plan',
+      'gold',
+    ]);
+    const db = store(rows);
+    const bounded = await findHeldNonPiiValuesOutside(db, 't1', 'plan', ['gold'], 'single', {
+      maxPages: 1,
+    });
+    expect(bounded.complete).toBe(false);
+    const within = await findHeldNonPiiValuesOutside(db, 't1', 'plan', ['gold'], 'single', {
+      maxPages: 2,
+    });
+    expect(within.complete).toBe(true);
+  });
+
+  it('stops after its page budget and says the answer is incomplete', async () => {
+    const rows: [string, string, string][] = Array.from({ length: 1200 }, (_, index) => [
+      `u${String(index).padStart(5, '0')}`,
+      'tags',
+      JSON.stringify(['c']),
+    ]);
+    const db = store(rows);
+    const held = await findHeldNonPiiValuesOutside(db, 't1', 'tags', ['c'], 'multi', {
+      maxPages: 2,
+    });
+    expect(held.complete).toBe(false);
+    const all = await findHeldNonPiiValuesOutside(db, 't1', 'tags', ['c'], 'multi');
+    expect(all.complete).toBe(true);
   });
 });

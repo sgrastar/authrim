@@ -104,13 +104,25 @@ export async function countUsersWithNonPiiFieldData(
 
 /** Rows read per page while looking for held values (bounded statements, bounded memory). */
 const HELD_PAGE = 500;
+/**
+ * Pages read at most in one store: past this the answer is incomplete and the caller refuses
+ * (it cannot tell that no held value is left out). 200 pages are 100,000 rows.
+ */
+const HELD_MAX_PAGES = 200;
+
+/** The held values found, and whether every row of the attribute was read. */
+export interface HeldValuesResult {
+  counts: Map<string, number>;
+  complete: boolean;
+}
 
 /**
  * The values users hold in a non-PII attribute that `allowed` does not contain, with how many
  * users hold each: at most `limit` values, or exactly the values in `only` (to count values found
  * elsewhere, such as in another store). A single value is stored as it is, several as a JSON
  * array (write-validator); a user has one row per attribute, so a value counts once per row. Reads
- * page by page and keeps one number per value, so memory stays bounded.
+ * page by page and keeps one number per value, so memory stays bounded; it stops after `maxPages` pages
+ * (the result is then incomplete).
  */
 export async function findHeldNonPiiValuesOutside(
   db: DatabaseSource,
@@ -118,8 +130,9 @@ export async function findHeldNonPiiValuesOutside(
   fieldKey: string,
   allowed: readonly string[],
   cardinality: 'single' | 'multi',
-  options: { limit?: number; only?: readonly string[] } = {}
-): Promise<Map<string, number>> {
+  options: { limit?: number; only?: readonly string[]; maxPages?: number } = {}
+): Promise<HeldValuesResult> {
+  const maxPages = options.maxPages ?? HELD_MAX_PAGES;
   const adapter = ensureDatabaseAdapter(db, 'custom-claims-storage-admin-core');
   const allowedSet = new Set(allowed);
   const only = options.only ? new Set(options.only) : null;
@@ -132,8 +145,18 @@ export async function findHeldNonPiiValuesOutside(
     counts.set(value, (counts.get(value) ?? 0) + users);
   };
   if (cardinality === 'single') {
+    // The aggregate below reads every user's row at once: first make sure there are no more rows
+    // than the pages would read, without counting them all.
+    const budget = await adapter.query<{ count: number | string }>(
+      `SELECT COUNT(*) AS count FROM (
+         SELECT 1 FROM user_custom_fields WHERE tenant_id = ? AND field_name = ? LIMIT ?
+       ) AS bounded`,
+      [tenantId, fieldKey, maxPages * HELD_PAGE + 1]
+    );
+    if ((Number(budget[0]?.count) || 0) > maxPages * HELD_PAGE) return { counts, complete: false };
     let after = '';
-    for (;;) {
+    for (let page = 0; ; page++) {
+      if (page >= maxPages) return { counts, complete: false };
       const rows = await adapter.query<{ field_value: string | null; count: number | string }>(
         `SELECT field_value, COUNT(DISTINCT user_id) AS count
            FROM user_custom_fields
@@ -148,10 +171,11 @@ export async function findHeldNonPiiValuesOutside(
       if (rows.length < HELD_PAGE || (!only && counts.size >= limit)) break;
       after = rows[rows.length - 1].field_value ?? '';
     }
-    return counts;
+    return { counts, complete: true };
   }
   let afterUser = '';
-  for (;;) {
+  for (let page = 0; ; page++) {
+    if (page >= maxPages) return { counts, complete: false };
     const rows = await adapter.query<{ user_id: string; field_value: string | null }>(
       `SELECT user_id, field_value
          FROM user_custom_fields
@@ -172,7 +196,7 @@ export async function findHeldNonPiiValuesOutside(
     if (rows.length < HELD_PAGE) break;
     afterUser = rows[rows.length - 1].user_id;
   }
-  return counts;
+  return { counts, complete: true };
 }
 
 export async function countUsersWithPiiFieldData(

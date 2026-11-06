@@ -365,8 +365,11 @@ export interface SchemaFailure {
 	usage: UsageBinding[];
 	/** For `partial` and `forbidden`: the API's own explanation, when it gave a readable one. */
 	detail: string;
-	/** For `values_in_use`: the choices still held; `encrypted` when they cannot be counted. */
-	held?: { values: HeldValue[]; encrypted: boolean };
+	/**
+	 * For `values_in_use`: the choices still held. `encrypted`: the values cannot be read by value;
+	 * `unverifiable`: too many users to check them all. Either way the save was refused.
+	 */
+	held?: { values: HeldValue[]; encrypted: boolean; unverifiable: boolean };
 }
 
 function heldValuesFrom(value: unknown): HeldValue[] {
@@ -396,7 +399,11 @@ export function failureOf(error: unknown): SchemaFailure {
 				return {
 					...none,
 					kind: 'values_in_use',
-					held: { values: heldValuesFrom(body.values), encrypted: body.reason === 'encrypted' }
+					held: {
+						values: heldValuesFrom(body.values),
+						encrypted: body.reason === 'encrypted',
+						unverifiable: body.reason === 'unverifiable'
+					}
 				};
 			}
 			return body.error === 'field_in_use'

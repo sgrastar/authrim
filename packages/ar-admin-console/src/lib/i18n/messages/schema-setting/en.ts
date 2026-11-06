@@ -239,6 +239,8 @@ export const enSchemaSetting: Record<keyof typeof jaSchemaSetting, string> = {
 	'ss.error.listSeparator': ', ',
 	'ss.error.valuesInUseEncrypted':
 		'This attribute is encrypted, so its users cannot be counted by value. Choices cannot be removed while any user holds the attribute.',
+	'ss.error.valuesInUseUnverifiable':
+		'This attribute has too many users to check all their values, so its choices cannot be narrowed here. Contact support.',
 	'ss.usage.col.type': 'Kind',
 	'ss.usage.col.target': 'Used by',
 	'ss.usage.col.protection': 'Deleting',
