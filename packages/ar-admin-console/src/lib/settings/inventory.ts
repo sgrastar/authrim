@@ -548,6 +548,17 @@ place('customization/login-ui', 'Languages', {
 	primary: ['login-ui.supported_locales', 'login-ui.default_locale'],
 	advanced: ['login-ui.primary_locales', 'login-ui.show_english_language_names']
 });
+place(
+	'customization/login-ui',
+	'Lite Login UI',
+	{ primary: ['login-ui.lite_mode', 'login-ui.lite_logo'] },
+	{
+		'login-ui.lite_mode':
+			'Switched with PUT /api/admin/login-ui/lite-mode (a compatibility check, then the policy); the settings PATCH refuses it. Show the readiness issues from the GET of that route.',
+		'login-ui.lite_logo':
+			'A still PNG or WebP of at most 8 KB and 640x160 px, saved as a data: URI.'
+	}
+);
 place('customization/login-ui', 'Custom CSS and themes', {
 	advanced: ['login-ui.custom_css', 'login-ui.custom_themes']
 });

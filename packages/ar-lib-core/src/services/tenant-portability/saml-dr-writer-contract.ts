@@ -187,6 +187,7 @@ const SURFACES: Partial<Record<SamlDrWriterComponent, readonly string[]>> = {
     'excluded-transient:do:SessionStore',
     'excluded-transient:do:TokenRevocationStore',
     'excluded-transient:do:UserCodeRateLimiter',
+    'excluded-reapplied-setting:do:LitePolicyStore',
     'excluded-transient:do:SAMLRequestStore',
     'excluded-transient:do:SAMLAggregateMetadataStore',
     'excluded-transient:do:PermissionChangeHub',

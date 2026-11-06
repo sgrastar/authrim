@@ -272,6 +272,12 @@ const packageSpecs = [
         },
       },
       {
+        file: 'packages/ar-management/src/routes/admin-management/login-ui-lite-mode.ts',
+        receiverPrefixes: {
+          loginUILiteModeRouter: '/api/admin/login-ui/lite-mode',
+        },
+      },
+      {
         file: 'packages/ar-management/src/routes/admin-management/admin-second-factors.ts',
         receiverPrefixes: {
           adminSecondFactorsRouter: '/api/admin/admins/:id/second-factors',

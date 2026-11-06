@@ -568,6 +568,7 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     login-ui.brand_content_mode
     login-ui.brand_position
     login-ui.brand_align
+    login-ui.lite_mode
   `,
     ],
     [
@@ -636,6 +637,7 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     login-ui.background_image_url
     login-ui.login_panel_background_image_url
     login-ui.brand_panel_image_url
+    login-ui.lite_logo
   `,
     ],
     [

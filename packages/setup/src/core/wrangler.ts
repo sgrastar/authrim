@@ -484,6 +484,9 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
     'VERSION_MANAGER',
     'CHALLENGE_STORE',
     'DPOP_JTI_STORE',
+    // LITE_POLICY_STORE: the tenant's lite Login UI policy; the admin guard publishes it and
+    // the authentication methods answer reports it to the Login UI.
+    'LITE_POLICY_STORE',
   ],
   'ar-agent-access': ['KEY_MANAGER', 'RATE_LIMITER', 'DPOP_JTI_STORE'],
   'ar-router': [],
@@ -1900,6 +1903,10 @@ function generateDOMigrations(): WranglerConfig['migrations'] {
     {
       tag: 'v13',
       new_sqlite_classes: ['UserCodeRateLimiter'],
+    },
+    {
+      tag: 'v14',
+      new_sqlite_classes: ['LitePolicyStore'],
     },
   ];
 }

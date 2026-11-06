@@ -3,6 +3,7 @@
  * UI locales, the post login and App Login settings). Shared by the tenant, app and platform
  * routes and by the bulk apply.
  */
+import { checkLiteLogoDataUri } from '@authrim/ar-lib-core/utils/lite-logo';
 import type { CategoryName, Env, SettingsPatchRequest, DatabaseSource } from '@authrim/ar-lib-core';
 import {
   dcrReservedTargetProblem,
@@ -86,6 +87,19 @@ export function validateLoginUIPatch(body: SettingsPatchRequest): {
   message?: string;
   details?: Record<string, unknown>;
 } {
+  const liteLogo = body.set?.['login-ui.lite_logo'];
+  if (liteLogo !== undefined && liteLogo !== '') {
+    const check = checkLiteLogoDataUri(liteLogo);
+    if (!check.ok) {
+      return {
+        ok: false,
+        message:
+          'login-ui.lite_logo must be a still PNG or WebP image as a data: URI, at most 8 KB and 640x160 pixels',
+        details: { reason: check.reason },
+      };
+    }
+  }
+
   const supportedLocales = body.set?.['login-ui.supported_locales'];
   const defaultLocale = body.set?.['login-ui.default_locale'];
   const primaryLocales = body.set?.['login-ui.primary_locales'];

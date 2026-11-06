@@ -359,20 +359,38 @@ function selectedPageId(
   return document.default_page_id;
 }
 
-async function getPublishedAccountPage(
-  env: Env,
-  tenantId: string
-): Promise<{
+export interface PublishedAccountPage {
   definition: AccountPageDefinition;
   version: number;
   published_at: string;
   page_id: string | null;
   name: string;
   screens: ScreenResponse[] | null;
-}> {
+}
+
+export async function getPublishedAccountPage(
+  env: Env,
+  tenantId: string
+): Promise<PublishedAccountPage> {
+  let settings: Record<string, unknown> | null;
   try {
     const raw = await env.SETTINGS?.get(`settings:tenant:${tenantId}:login-ui`);
-    if (!raw) {
+    settings = raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
+  } catch {
+    settings = null;
+  }
+  return publishedAccountPageFromSettings(settings);
+}
+
+/**
+ * The account page a tenant's `login-ui` settings publish. Takes the document itself, so a
+ * change can be judged before it is saved (the lite Login UI guard).
+ */
+export function publishedAccountPageFromSettings(
+  settings: Record<string, unknown> | null
+): PublishedAccountPage {
+  try {
+    if (!settings) {
       return {
         definition: structuredClone(DEFAULT_ACCOUNT_PAGE_DEFINITION),
         version: 0,
@@ -382,7 +400,6 @@ async function getPublishedAccountPage(
         screens: null,
       };
     }
-    const settings = JSON.parse(raw) as Record<string, unknown>;
     const serializedPages = settings['login-ui.account_pages'];
     if (typeof serializedPages === 'string' && serializedPages.trim()) {
       const document = JSON.parse(serializedPages) as AccountPagesDocument;

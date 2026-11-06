@@ -1,3 +1,4 @@
+import { runLiteGuardedWrite } from './lite-mode-guard';
 import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import type { Context } from 'hono';
 import { z } from './zod';
@@ -515,7 +516,7 @@ export async function listTenantVanityDomainsHandler(c: Context<{ Bindings: Env 
   });
 }
 
-export async function createTenantVanityDomainHandler(c: Context<{ Bindings: Env }>) {
+async function createTenantVanityDomainHandlerUnguarded(c: Context<{ Bindings: Env }>) {
   if (!hasPermission(c, ADMIN_PERMISSIONS.TENANT_DOMAINS_WRITE)) return permissionDenied(c);
 
   const body = await c.req.json<unknown>().catch(() => null);
@@ -572,7 +573,7 @@ export async function listPlatformTenantVanityDomainsHandler(c: Context<{ Bindin
   });
 }
 
-export async function createPlatformTenantVanityDomainHandler(c: Context<{ Bindings: Env }>) {
+async function createPlatformTenantVanityDomainHandlerUnguarded(c: Context<{ Bindings: Env }>) {
   if (!isSystemAdmin(getAdminAuth(c))) return permissionDenied(c);
 
   const body = await c.req.json<unknown>().catch(() => null);
@@ -603,7 +604,7 @@ export async function getPlatformTenantVanityDomainHandler(c: Context<{ Bindings
   return c.json({ domain: formatDomain(match.row) });
 }
 
-export async function updateTenantVanityDomainHandler(c: Context<{ Bindings: Env }>) {
+async function updateTenantVanityDomainHandlerUnguarded(c: Context<{ Bindings: Env }>) {
   if (!hasPermission(c, ADMIN_PERMISSIONS.TENANT_DOMAINS_WRITE)) return permissionDenied(c);
 
   const tenantId = getTenantIdFromContext(c);
@@ -667,7 +668,7 @@ export async function updateTenantVanityDomainHandler(c: Context<{ Bindings: Env
   return c.json(formatDomain(updated!));
 }
 
-export async function setPrimaryTenantVanityDomainHandler(c: Context<{ Bindings: Env }>) {
+async function setPrimaryTenantVanityDomainHandlerUnguarded(c: Context<{ Bindings: Env }>) {
   if (!hasPermission(c, ADMIN_PERMISSIONS.TENANT_DOMAINS_WRITE)) return permissionDenied(c);
 
   try {
@@ -688,7 +689,7 @@ export async function setPrimaryTenantVanityDomainHandler(c: Context<{ Bindings:
   }
 }
 
-export async function syncTenantVanityDomainHandler(c: Context<{ Bindings: Env }>) {
+async function syncTenantVanityDomainHandlerUnguarded(c: Context<{ Bindings: Env }>) {
   if (!hasPermission(c, ADMIN_PERMISSIONS.TENANT_DOMAINS_WRITE)) return permissionDenied(c);
 
   const tenantId = getTenantIdFromContext(c);
@@ -748,7 +749,7 @@ export async function syncTenantVanityDomainHandler(c: Context<{ Bindings: Env }
   }
 }
 
-export async function verifyTenantVanityDomainHandler(c: Context<{ Bindings: Env }>) {
+async function verifyTenantVanityDomainHandlerUnguarded(c: Context<{ Bindings: Env }>) {
   if (!hasPermission(c, ADMIN_PERMISSIONS.TENANT_DOMAINS_WRITE)) return permissionDenied(c);
 
   const tenantId = getTenantIdFromContext(c);
@@ -784,7 +785,7 @@ export async function verifyTenantVanityDomainHandler(c: Context<{ Bindings: Env
   return c.json({ domain: formatDomain(updated!), cloudflare_configured: false });
 }
 
-export async function deleteTenantVanityDomainHandler(c: Context<{ Bindings: Env }>) {
+async function deleteTenantVanityDomainHandlerUnguarded(c: Context<{ Bindings: Env }>) {
   if (!hasPermission(c, ADMIN_PERMISSIONS.TENANT_DOMAINS_DELETE)) return permissionDenied(c);
 
   const tenantId = getTenantIdFromContext(c);
@@ -820,7 +821,7 @@ export async function deleteTenantVanityDomainHandler(c: Context<{ Bindings: Env
   return c.json({ success: true });
 }
 
-export async function setPrimaryPlatformTenantVanityDomainHandler(c: Context<{ Bindings: Env }>) {
+async function setPrimaryPlatformTenantVanityDomainHandlerUnguarded(c: Context<{ Bindings: Env }>) {
   if (!isSystemAdmin(getAdminAuth(c))) return permissionDenied(c);
 
   const id = c.req.param('id')!;
@@ -842,7 +843,7 @@ export async function setPrimaryPlatformTenantVanityDomainHandler(c: Context<{ B
   }
 }
 
-export async function syncPlatformTenantVanityDomainHandler(c: Context<{ Bindings: Env }>) {
+async function syncPlatformTenantVanityDomainHandlerUnguarded(c: Context<{ Bindings: Env }>) {
   if (!isSystemAdmin(getAdminAuth(c))) return permissionDenied(c);
 
   const id = c.req.param('id')!;
@@ -901,7 +902,7 @@ export async function syncPlatformTenantVanityDomainHandler(c: Context<{ Binding
   }
 }
 
-export async function verifyPlatformTenantVanityDomainHandler(c: Context<{ Bindings: Env }>) {
+async function verifyPlatformTenantVanityDomainHandlerUnguarded(c: Context<{ Bindings: Env }>) {
   if (!isSystemAdmin(getAdminAuth(c))) return permissionDenied(c);
 
   const id = c.req.param('id')!;
@@ -937,7 +938,7 @@ export async function verifyPlatformTenantVanityDomainHandler(c: Context<{ Bindi
   return c.json({ domain: formatDomain(updated!), cloudflare_configured: false });
 }
 
-export async function deletePlatformTenantVanityDomainHandler(c: Context<{ Bindings: Env }>) {
+async function deletePlatformTenantVanityDomainHandlerUnguarded(c: Context<{ Bindings: Env }>) {
   if (!isSystemAdmin(getAdminAuth(c))) return permissionDenied(c);
 
   const id = c.req.param('id')!;
@@ -972,3 +973,121 @@ export async function deletePlatformTenantVanityDomainHandler(c: Context<{ Bindi
   });
   return c.json({ success: true });
 }
+
+// =============================================================================
+// Lite Login UI guard
+// =============================================================================
+
+/**
+ * A tenant in lite mode keeps its canonical issuer: external sign-in returns there, and the lite
+ * Login UI binds the browser on that origin (lite-mode-guard.ts). So, while it is in lite mode, a
+ * change that can move it is refused: making a domain primary (on creation too, where it is the
+ * default), and changing, verifying, syncing or deleting the primary domain. Other domains are
+ * managed as usual. Switch the lite UI off to change the primary domain.
+ */
+type VanityContext = Context<{ Bindings: Env }>;
+type Handler = (c: VanityContext) => Promise<Response>;
+
+const ISSUER_CHANGE_ISSUE = [{ code: 'issuer_origin_mismatch' as const, subject: 'vanity_domain' }];
+
+function guardIssuer(
+  c: VanityContext,
+  tenantId: string | null,
+  movesIssuer: () => Promise<boolean>,
+  write: Handler
+): Promise<Response> {
+  if (!tenantId) return write(c);
+  return runLiteGuardedWrite(c, tenantId, {
+    check: async () => ((await movesIssuer()) ? ISSUER_CHANGE_ISSUE : []),
+    write: () => write(c),
+  });
+}
+
+async function tenantRowIsPrimary(c: VanityContext): Promise<boolean> {
+  const row = await getDomainById(
+    getCoreAdapter(c),
+    c.req.param('id') ?? '',
+    getTenantIdFromContext(c)
+  );
+  return row?.is_primary === 1;
+}
+
+async function createAsksPrimary(c: VanityContext): Promise<boolean> {
+  const body = await c.req.json<unknown>().catch(() => null);
+  const parsed = CreateSchema.safeParse(body);
+  return parsed.success ? parsed.data.is_primary : false;
+}
+
+function guardTenantRow(write: Handler): Handler {
+  return (c) => guardIssuer(c, getTenantIdFromContext(c), () => tenantRowIsPrimary(c), write);
+}
+
+function guardPlatformRow(write: Handler, always: boolean): Handler {
+  return async (c) => {
+    // Without the policy store no tenant can be in lite mode: nothing to look up.
+    if (!isSystemAdmin(getAdminAuth(c)) || !c.env?.LITE_POLICY_STORE) return write(c);
+    const match = await findPlatformDomainById(c.env, c.req.param('id') ?? '');
+    return guardIssuer(
+      c,
+      match?.row.tenant_id ?? null,
+      async () => always || match?.row.is_primary === 1,
+      write
+    );
+  };
+}
+
+export const createTenantVanityDomainHandler: Handler = (c) =>
+  hasPermission(c, ADMIN_PERMISSIONS.TENANT_DOMAINS_WRITE)
+    ? guardIssuer(
+        c,
+        getTenantIdFromContext(c),
+        () => createAsksPrimary(c),
+        createTenantVanityDomainHandlerUnguarded
+      )
+    : createTenantVanityDomainHandlerUnguarded(c);
+export const createPlatformTenantVanityDomainHandler: Handler = async (c) => {
+  if (!isSystemAdmin(getAdminAuth(c))) return createPlatformTenantVanityDomainHandlerUnguarded(c);
+  const body = await c.req.json<{ tenant_id?: unknown }>().catch(() => null);
+  const tenantId = typeof body?.tenant_id === 'string' && body.tenant_id ? body.tenant_id : null;
+  return guardIssuer(
+    c,
+    tenantId,
+    () => createAsksPrimary(c),
+    createPlatformTenantVanityDomainHandlerUnguarded
+  );
+};
+export const updateTenantVanityDomainHandler = guardTenantRow(
+  updateTenantVanityDomainHandlerUnguarded
+);
+export const setPrimaryTenantVanityDomainHandler: Handler = (c) =>
+  hasPermission(c, ADMIN_PERMISSIONS.TENANT_DOMAINS_WRITE)
+    ? guardIssuer(
+        c,
+        getTenantIdFromContext(c),
+        async () => true,
+        setPrimaryTenantVanityDomainHandlerUnguarded
+      )
+    : setPrimaryTenantVanityDomainHandlerUnguarded(c);
+export const syncTenantVanityDomainHandler = guardTenantRow(syncTenantVanityDomainHandlerUnguarded);
+export const verifyTenantVanityDomainHandler = guardTenantRow(
+  verifyTenantVanityDomainHandlerUnguarded
+);
+export const deleteTenantVanityDomainHandler = guardTenantRow(
+  deleteTenantVanityDomainHandlerUnguarded
+);
+export const setPrimaryPlatformTenantVanityDomainHandler = guardPlatformRow(
+  setPrimaryPlatformTenantVanityDomainHandlerUnguarded,
+  true
+);
+export const syncPlatformTenantVanityDomainHandler = guardPlatformRow(
+  syncPlatformTenantVanityDomainHandlerUnguarded,
+  false
+);
+export const verifyPlatformTenantVanityDomainHandler = guardPlatformRow(
+  verifyPlatformTenantVanityDomainHandlerUnguarded,
+  false
+);
+export const deletePlatformTenantVanityDomainHandler = guardPlatformRow(
+  deletePlatformTenantVanityDomainHandlerUnguarded,
+  false
+);

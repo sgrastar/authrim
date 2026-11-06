@@ -78,6 +78,7 @@ export const DURABLE_OBJECTS = [
   { name: 'FLOW_STATE_STORE', className: 'FlowStateStore' },
   { name: 'DEVICE_SECRET_ROUTE_STORE', className: 'DeviceSecretRouteStore' },
   { name: 'USER_CODE_RATE_LIMITER', className: 'UserCodeRateLimiter' },
+  { name: 'LITE_POLICY_STORE', className: 'LitePolicyStore' },
 ] as const;
 
 export type DurableObjectBinding = (typeof DURABLE_OBJECTS)[number];

@@ -22,6 +22,8 @@
  */
 
 import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
+import { readLitePolicySnapshot } from '@authrim/ar-lib-core/services/lite-policy';
+import { checkLiteLogoDataUri } from '@authrim/ar-lib-core/utils/lite-logo';
 import type { Context } from 'hono';
 import type {
   Env,
@@ -37,6 +39,7 @@ import {
   isHumanVerificationRequired,
   readHumanVerificationSelection,
   getRequestHost,
+  createLogger,
   getLogger,
   getTenantIdFromContext,
   resolveGuestSettings,
@@ -214,6 +217,15 @@ const LOGIN_UI_TOPBAR_POSITIONS: readonly LoginUITopbarPosition[] = [
 ];
 
 interface UIConfig {
+  /**
+   * The tenant's lite Login UI. `mode` comes from the tenant's LitePolicyStore: `unknown` when the
+   * store could not be read (the Login UI answers 503 then, and this answer is not cached).
+   * `logo` is the lite logo (a checked `data:` URI), sent only while `mode` is `always`.
+   */
+  lite: {
+    mode: 'off' | 'always' | 'unknown';
+    logo: string | null;
+  };
   /** Tenant default mode: `auto` follows the visitor's device. */
   theme: 'auto' | 'light' | 'dark';
   /** With `theme` light/dark: that mode always applies and the Login UI hides its toggle. */
@@ -416,6 +428,7 @@ const LOGIN_PROVIDER_ICON_NAMES = new Set([
 ]);
 
 const DEFAULT_UI_CONFIG: UIConfig = {
+  lite: { mode: 'off', logo: null },
   theme: 'auto',
   themeFixed: false,
   themeTemplate: 'meridian',
@@ -519,6 +532,7 @@ const DEFAULT_UI_CONFIG: UIConfig = {
  * Login UI settings stored in AUTHRIM_CONFIG KV (settings-v2 format)
  */
 interface LoginUIKVSettings {
+  'login-ui.lite_logo'?: string;
   'login-ui.theme'?: string;
   'login-ui.theme_fixed'?: boolean | string;
   'login-ui.template'?: string;
@@ -648,6 +662,8 @@ interface ExternalLoginProviderUsageConfig {
 
 /** The Login UI settings the sign-in page uses. */
 interface LoginUIResolved {
+  /** The saved lite logo when it passes the lite logo check, else null. */
+  liteLogo: string | null;
   theme: UIConfig['theme'];
   themeFixed: boolean;
   template: LoginUITemplateId;
@@ -1219,6 +1235,9 @@ function resolveLoginUIFromKVSettings(
     formAreaColor: readSafeColor(kvSettings['login-ui.form_area_color'], defaults.formAreaColor),
     brandName: kvSettings['login-ui.brand_name'] || defaults.brandName,
     headerName: readHeaderName(kvSettings['login-ui.header_name'], defaults.headerName),
+    liteLogo: checkLiteLogoDataUri(kvSettings['login-ui.lite_logo']).ok
+      ? kvSettings['login-ui.lite_logo']!
+      : defaults.liteLogo,
     logoUrl: isValidLoginUIImageUrl(kvSettings['login-ui.logo_url'])
       ? kvSettings['login-ui.logo_url']!
       : defaults.logoUrl,
@@ -1430,6 +1449,7 @@ async function getLoginUISettings(
   clientId?: string | null
 ): Promise<LoginUIResolved> {
   const defaults: LoginUIResolved = {
+    liteLogo: null,
     theme: DEFAULT_UI_CONFIG.theme,
     themeFixed: DEFAULT_UI_CONFIG.themeFixed,
     template: DEFAULT_UI_CONFIG.pageTemplate.template,
@@ -1914,10 +1934,28 @@ interface BuiltInMethodsResolved {
   totpRequirementMode: 'optional' | 'required';
 }
 
-async function resolveBuiltInAuthenticationMethods(
+export async function resolveBuiltInAuthenticationMethods(
   env: Env,
   tenantId: string
 ): Promise<BuiltInMethodsResolved> {
+  try {
+    const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:authentication-methods`);
+    return builtInAuthenticationMethodsFromSettings(
+      kvJson ? (JSON.parse(kvJson) as AuthenticationMethodKVSettings) : null
+    );
+  } catch {
+    return builtInAuthenticationMethodsFromSettings(null);
+  }
+}
+
+/**
+ * The built-in methods an authentication-methods document turns on, with the defaults and the
+ * older single switches applied. Takes the document, so a change can be judged before it is
+ * saved (the lite Login UI guard).
+ */
+export function builtInAuthenticationMethodsFromSettings(
+  kvSettings: AuthenticationMethodKVSettings | null
+): BuiltInMethodsResolved {
   // Where the tenant sets none: passkeys on, email codes off.
   const passkeyDefault = true;
   const emailCodeDefault = false;
@@ -1939,11 +1977,8 @@ async function resolveBuiltInAuthenticationMethods(
     totpRequirementMode: 'optional',
   };
 
-  try {
-    const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:authentication-methods`);
-    if (!kvJson) return defaults;
-
-    const kvSettings = JSON.parse(kvJson) as AuthenticationMethodKVSettings;
+  if (!kvSettings) return defaults;
+  {
     const legacyPasskeyEnabled = kvSettings['authentication-methods.passkey.enabled'];
     const legacyEmailOtpEnabled = kvSettings['authentication-methods.email_otp.enabled'];
     const legacyTotpEnabled = kvSettings['authentication-methods.totp.enabled'];
@@ -2008,8 +2043,6 @@ async function resolveBuiltInAuthenticationMethods(
           : defaults.totpDefaultAcr,
       totpRequirementMode: totpRequirementPolicy.mode,
     };
-  } catch {
-    return defaults;
   }
 }
 
@@ -2028,7 +2061,7 @@ function parseTotpRequirementPolicy(value: unknown): { mode: 'optional' | 'requi
   return { mode: 'optional' };
 }
 
-async function resolveDirectoryPasswordMethod(
+export async function resolveDirectoryPasswordMethod(
   env: Env,
   tenantId: string
 ): Promise<DirectoryPasswordResolved> {
@@ -2369,8 +2402,9 @@ function deriveLegacyThemeTemplate(
 /**
  * Build UI config from resolved Login UI settings
  */
-function buildUIConfig(loginUI: LoginUIResolved): UIConfig {
+function buildUIConfig(loginUI: LoginUIResolved, liteMode: UIConfig['lite']['mode']): UIConfig {
   return {
+    lite: { mode: liteMode, logo: liteMode === 'always' ? loginUI.liteLogo : null },
     theme: loginUI.theme,
     // A fixed mode needs a mode to fix: with `auto` the visitor's device decides (see the catalog).
     themeFixed: loginUI.themeFixed && loginUI.theme !== 'auto',
@@ -2488,6 +2522,26 @@ async function resolveSelfServiceUIConfig(
  * Resolve cache TTL from KV → env → default
  * Priority: KV (SETTINGS) → env (AUTHENTICATION_METHODS_CACHE_TTL) → DEFAULT_CACHE_TTL
  */
+/**
+ * The tenant's lite Login UI mode for the Login UI's routing. `unknown` when the policy store is
+ * bound but cannot be read: the Login UI must not guess which UI to serve.
+ */
+async function readLiteModeForResponse(
+  env: Env,
+  tenantId: string
+): Promise<UIConfig['lite']['mode']> {
+  try {
+    return (await readLitePolicySnapshot(env, tenantId)).liteMode;
+  } catch (error) {
+    createLogger()
+      .module('LOGIN-METHODS')
+      .warn('Lite policy unreadable for the authentication methods answer', {
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
+    return 'unknown';
+  }
+}
+
 async function resolveCacheTTL(env: Env, tenantId: string): Promise<number> {
   // 1. Try KV (settings-v2) — tenant-aware
   try {
@@ -2727,26 +2781,27 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
     };
 
     // Resolve Login UI settings and cache TTL in parallel (tenant-aware)
-    const [loginUISettings, selfServiceUI, cacheTTL] = await measureAuthenticationMethodsTiming(
-      timing,
-      'ui_config',
-      () =>
+    const [loginUISettings, selfServiceUI, cacheTTL, liteMode] =
+      await measureAuthenticationMethodsTiming(timing, 'ui_config', () =>
         samlDrAll([
           getLoginUISettings(env, tenantId, requestedClientId),
           resolveSelfServiceUIConfig(env, tenantId),
           resolveCacheTTL(env, tenantId),
+          readLiteModeForResponse(env, tenantId),
         ])
-    );
+      );
     const ui = {
-      ...buildUIConfig(loginUISettings),
+      ...buildUIConfig(loginUISettings, liteMode),
       selfService: selfServiceUI,
     };
+    // An answer that could not read the lite policy is not kept: it would serve 503 until it expires.
+    const uncacheable = samlAvailability.unreadable || liteMode === 'unknown';
 
     const response: AuthenticationMethodsResponse = {
       methods,
       ui,
       meta: {
-        cacheTTL: samlAvailability.unreadable ? 0 : cacheTTL,
+        cacheTTL: uncacheable ? 0 : cacheTTL,
         revision: new Date().toISOString(),
       },
     };
@@ -2754,13 +2809,13 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
     const httpResponse = buildAuthenticationMethodsJsonResponse(
       tenantId,
       response,
-      samlAvailability.unreadable ? 0 : cacheTTL,
+      uncacheable ? 0 : cacheTTL,
       edgeCacheTTL,
       edgeCacheRequest ? 'miss' : 'bypass',
-      samlAvailability.unreadable
+      uncacheable
     );
     // An answer made without the SAML switch is not kept: it would hide SAML until the cache expires.
-    if (edgeCache && edgeCacheRequest && edgeCacheTTL > 0 && !samlAvailability.unreadable) {
+    if (edgeCache && edgeCacheRequest && edgeCacheTTL > 0 && !uncacheable) {
       await measureAuthenticationMethodsTiming(timing, 'cache_put', () =>
         putAuthenticationMethodsEdgeCache(
           c,
