@@ -250,6 +250,19 @@ export class CanonicalRuntimeUserWriter {
     };
   }
 
+  /** Whether an existing runtime user has a profile that `updateProfileFields` can write. */
+  async hasProfile(userId: string): Promise<boolean> {
+    const account = await this.repository.findAccountByLegacyUserId(userId, {
+      includeInactive: true,
+      consistencyClass: 'primary_required',
+    });
+    if (!account?.primary_subject_id) return false;
+    const profiles = await this.repository.findProfilesForSubject(account.primary_subject_id, {
+      includeInactive: true,
+    });
+    return profiles.length > 0;
+  }
+
   /**
    * Write only the given profile fields of an existing runtime user, leaving its lifecycle,
    * labels, contacts and other attributes as they are. False when the user has no profile.

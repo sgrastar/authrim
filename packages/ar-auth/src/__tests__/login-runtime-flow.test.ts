@@ -48,6 +48,8 @@ const mocks = vi.hoisted(() => {
   };
   const runtimeUsers = {
     findById: vi.fn(),
+    updateProfileFields: vi.fn(async (..._args: unknown[]): Promise<boolean> => true),
+    hasProfile: vi.fn(async (..._args: unknown[]): Promise<boolean> => true),
   };
   const idQueue = ['interaction_1', 'step_1', 'audit_1', 'audit_2', 'step_2', 'audit_3'];
 
@@ -71,6 +73,9 @@ const mocks = vi.hoisted(() => {
     getFeatureFlag: vi.fn(),
     resolveAccountCoreDataContext: vi.fn(),
     resolveAccountDataContextFromHono: vi.fn(async () => undefined),
+    resolveCustomClaimRuntimeSourcesFromHono: vi.fn(),
+    validateCustomClaimWrite: vi.fn(),
+    persistCustomClaimWrite: vi.fn(),
     info: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
@@ -95,7 +100,16 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       findById(...args: unknown[]) {
         return mocks.runtimeUsers.findById(...args);
       }
+      updateProfileFields(...args: unknown[]) {
+        return mocks.runtimeUsers.updateProfileFields(...args);
+      }
+      hasProfile(...args: unknown[]) {
+        return mocks.runtimeUsers.hasProfile(...args);
+      }
     },
+    resolveCustomClaimRuntimeSourcesFromHono: mocks.resolveCustomClaimRuntimeSourcesFromHono,
+    validateCustomClaimWrite: mocks.validateCustomClaimWrite,
+    persistCustomClaimWrite: mocks.persistCustomClaimWrite,
     generateId: vi.fn(() => mocks.idQueue.shift() ?? `generated_${mocks.idQueue.length}`),
     getChallengeStoreByChallengeId: vi.fn(() => mocks.challengeStore),
     getFeatureFlag: mocks.getFeatureFlag,
@@ -883,6 +897,24 @@ function resetAdapter() {
   mocks.challengeStore.getChallengeRpc.mockReset();
   mocks.challengeStore.storeChallengeRpc.mockReset();
   mocks.runtimeUsers.findById.mockReset();
+  mocks.runtimeUsers.updateProfileFields.mockReset().mockResolvedValue(true);
+  mocks.runtimeUsers.hasProfile.mockReset().mockResolvedValue(true);
+  mocks.resolveCustomClaimRuntimeSourcesFromHono.mockReset().mockResolvedValue({
+    schemaDb: mocks.coreAdapter,
+    nonPiiDb: mocks.coreAdapter,
+    piiDb: mocks.coreAdapter,
+  });
+  mocks.validateCustomClaimWrite
+    .mockReset()
+    .mockImplementation(async (input: { submitted: Record<string, unknown> }) => ({
+      ok: true,
+      schemas: [],
+      nonPiiValues: input.submitted,
+      piiValues: {},
+      nonPiiKeysToDelete: [],
+      piiKeysToDelete: [],
+    }));
+  mocks.persistCustomClaimWrite.mockReset().mockResolvedValue(undefined);
   mocks.resolveAccountDataContextFromHono.mockReset().mockResolvedValue(undefined);
   mocks.consumeAuthorizationChallengeContinuation.mockReset();
   mocks.readAuthorizationChallengeFreshness.mockReset();
@@ -5175,6 +5207,194 @@ describe('LoginUI runtime Flow handlers', () => {
 
       expect(response.status).toBe(200);
       expect(mocks.consumeAuthorizationChallengeContinuation).not.toHaveBeenCalled();
+    });
+
+    describe("a screen step's answers", () => {
+      const profileScreen = {
+        id: 'screen_profile',
+        screen_key: 'profile_completion',
+        display_name: 'Profile',
+        description: null,
+        screen_kind: 'profile_completion',
+        fields_json: JSON.stringify([
+          { field: 'given_name', label: 'Given name', required: true },
+          { field: 'department', label: 'Department', block_type: 'select' },
+          {
+            field: 'survey',
+            label: 'Survey',
+            block_type: 'radio',
+            store_to_profile: false,
+            answer_targets: ['record'],
+            options: [{ value: 'web', label: 'Web' }],
+          },
+        ]),
+        localizations_json: null,
+        settings_json: null,
+      };
+      const screenRuntime: FlowRuntimeContract = {
+        flow_kind: 'login',
+        ui: {
+          steps: [
+            {
+              id: 'screen:step',
+              source_node_id: 'screen',
+              component: 'screen',
+              render: true,
+              config: { screen_ref: 'profile_completion' },
+            },
+            oidcAuthCompletionRuntime.ui.steps[1],
+          ],
+        },
+      };
+      const readsScreen = () => {
+        mocks.coreAdapter.queryOne.mockImplementation(async (sql: string) =>
+          String(sql).includes('FROM screens') ? profileScreen : undefined
+        );
+        mocks.coreAdapter.query.mockImplementation(async (sql: string) => {
+          if (String(sql).includes('FROM custom_claim_schemas')) {
+            return [
+              {
+                field_key: 'department',
+                field_type: 'enum',
+                validation_rules: JSON.stringify({ enum_values: ['sales', 'dev'] }),
+              },
+            ];
+          }
+          return [];
+        });
+      };
+      const submitAnswers = (
+        fields: unknown,
+        withSession = true,
+        alsoReads?: () => void,
+        userId: string | undefined = 'user_1'
+      ) =>
+        submitStep({
+          runtime: screenRuntime,
+          currentStep: { node: 'screen', step: 'screen:step' },
+          handle: 'submitted',
+          withSession,
+          userId,
+          body: { input: { fields } },
+          beforeSubmit: () => {
+            readsScreen();
+            alsoReads?.();
+          },
+        });
+
+      it('stores the profile answers for the signed-in user, never one kept off the profile', async () => {
+        const { response } = await submitAnswers({
+          given_name: 'Ada',
+          department: 'dev',
+          survey: 'web',
+        });
+
+        expect(response.status).toBe(200);
+        expect(mocks.runtimeUsers.updateProfileFields).toHaveBeenCalledWith('user_1', {
+          given_name: 'Ada',
+        });
+        expect(mocks.validateCustomClaimWrite).toHaveBeenCalledWith(
+          expect.objectContaining({ userId: 'user_1', submitted: { department: 'dev' } })
+        );
+        expect(mocks.persistCustomClaimWrite).toHaveBeenCalledTimes(1);
+      });
+
+      it('refuses answers the screen does not allow, before anything is stored', async () => {
+        for (const fields of [
+          { given_name: 'Ada', department: 'hr' },
+          { department: 'dev' },
+          { given_name: 'Ada', email: 'ada@example.com' },
+          { given_name: 'Ada', survey: 'elsewhere' },
+        ]) {
+          const { response, data } = await submitAnswers(fields);
+          expect(response.status).toBe(400);
+          expect(data.error).toBe('invalid_screen_answers');
+          expect(mocks.runtimeUsers.updateProfileFields).not.toHaveBeenCalled();
+          expect(mocks.persistCustomClaimWrite).not.toHaveBeenCalled();
+          expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
+        }
+      });
+
+      it('asks for a sign-in before storing a profile answer', async () => {
+        const { response } = await submitAnswers({ given_name: 'Ada' }, false);
+
+        expect(response.status).toBe(401);
+        expect(mocks.runtimeUsers.updateProfileFields).not.toHaveBeenCalled();
+      });
+
+      it('refuses a profile value the Identity Schema refuses', async () => {
+        const { response, data } = await submitAnswers(
+          { given_name: 'Ada', department: 'dev' },
+          true,
+          () =>
+            mocks.validateCustomClaimWrite.mockResolvedValueOnce({
+              ok: false,
+              error: 'Department must be one of the allowed values',
+            })
+        );
+
+        expect(response.status).toBe(400);
+        expect(data.problem).toBe('invalid_profile_value');
+        expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
+      });
+
+      it('changes nothing, not even whom the interaction is about, when an answer is refused', async () => {
+        const { response } = await submitAnswers(
+          { given_name: 'Ada', department: 'dev' },
+          true,
+          () =>
+            mocks.validateCustomClaimWrite.mockResolvedValueOnce({
+              ok: false,
+              error: 'Department must be one of the allowed values',
+            }),
+          undefined
+        );
+
+        expect(response.status).toBe(400);
+        expectNothingWritten();
+        expect(mocks.runtimeUsers.updateProfileFields).not.toHaveBeenCalled();
+      });
+
+      it('refuses an answer the schema reads as empty, never deleting what is stored', async () => {
+        const { response, data } = await submitAnswers(
+          { given_name: 'Ada', department: 'dev' },
+          true,
+          () =>
+            mocks.validateCustomClaimWrite.mockResolvedValueOnce({
+              ok: true,
+              schemas: [],
+              nonPiiValues: {},
+              piiValues: {},
+              nonPiiKeysToDelete: ['department'],
+              piiKeysToDelete: [],
+            })
+        );
+
+        expect(response.status).toBe(400);
+        expect(data.problem).toBe('invalid_profile_value');
+        expect(mocks.persistCustomClaimWrite).not.toHaveBeenCalled();
+        expect(mocks.runtimeUsers.updateProfileFields).not.toHaveBeenCalled();
+      });
+
+      it('writes nothing when the user has no profile to update', async () => {
+        const { response } = await submitAnswers(
+          { given_name: 'Ada', department: 'dev' },
+          true,
+          () => mocks.runtimeUsers.hasProfile.mockResolvedValue(false)
+        );
+
+        expect(response.status).toBe(400);
+        expect(mocks.runtimeUsers.updateProfileFields).not.toHaveBeenCalled();
+        expect(mocks.persistCustomClaimWrite).not.toHaveBeenCalled();
+        expect(mocks.coreAdapter.batch).not.toHaveBeenCalled();
+      });
+
+      it('refuses answers for someone other than the user the interaction is about', async () => {
+        const { response } = await submitAnswers({ given_name: 'Ada' }, true, undefined, 'user_2');
+
+        expect(response.status).toBe(403);
+        expect(mocks.runtimeUsers.updateProfileFields).not.toHaveBeenCalled();
+      });
     });
   });
 

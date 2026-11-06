@@ -410,3 +410,92 @@ describe('guest login widget', () => {
 		expect(body).toContain('Guest');
 	});
 });
+
+describe('RuntimeScreen answer parts', () => {
+	function renderParts(
+		fields: Array<Record<string, unknown>>,
+		fieldValues: Record<string, string | boolean> = {}
+	) {
+		setLocale('en');
+		return render(RuntimeScreen, { props: { screen: { fields }, fieldValues } }).body;
+	}
+
+	const options = [
+		{ value: 'sales', label: 'Sales' },
+		{ value: 'dev', label: 'Development' }
+	];
+
+	it('draws a select with an empty choice first and the chosen value selected', () => {
+		const body = renderParts(
+			[{ field: 'department', label: 'Department', block_type: 'select', options }],
+			{ department: 'dev' }
+		);
+		expect(body).toContain('<select');
+		expect(body).toContain('<option value=""></option>');
+		expect(body).toMatch(/<option value="dev"[^>]*selected[^>]*>Development<\/option>/u);
+	});
+
+	it('draws a radio group with its label as the legend', () => {
+		const body = renderParts(
+			[{ field: 'plan', label: 'Plan', block_type: 'radio', required: true, options }],
+			{ plan: 'sales' }
+		);
+		expect(body).toContain('<fieldset');
+		expect(body).toMatch(/<legend[^>]*>\s*Plan/u);
+		expect(body.match(/type="radio"/gu)).toHaveLength(2);
+		expect(body).toMatch(/value="sales"[^>]*checked/u);
+	});
+
+	it('draws a checkbox with its label once', () => {
+		const body = renderParts([
+			{ field: 'newsletter', label: 'Send me news', block_type: 'checkbox', required: true }
+		]);
+		expect(body).toContain('type="checkbox"');
+		expect(body.match(/Send me news/gu)).toHaveLength(1);
+	});
+
+	it('draws the legacy yes/no form as a checkbox, its label once', () => {
+		const body = renderParts(
+			[{ field: 'agree', label: 'I agree', value_type: 'boolean', placeholder: 'I agree' }],
+			{ agree: true }
+		);
+		expect(body).toMatch(/type="checkbox"[^>]*checked/u);
+		expect(body.match(/I agree/gu)).toHaveLength(1);
+	});
+
+	it('names a legacy checkbox by its label and its own words together', () => {
+		const body = renderParts([
+			{
+				field: 'newsletter',
+				block_id: 'newsletter-1',
+				label: 'Newsletter',
+				value_type: 'boolean',
+				placeholder: 'Send me product news',
+				show_label: false
+			}
+		]);
+		expect(body).toContain(
+			'aria-labelledby="runtime-field-newsletter-1-question runtime-field-newsletter-1-box"'
+		);
+		expect(body).toMatch(/id="runtime-field-newsletter-1-question"[^>]*class="[^"]*sr-only/u);
+		expect(body).toContain('id="runtime-field-newsletter-1-box">Send me product news');
+	});
+
+	it('keeps a hidden label for screen readers', () => {
+		const body = renderParts([
+			{ field: 'department', label: 'Department', block_type: 'select', options, show_label: false }
+		]);
+		expect(body).toMatch(/<span class="[^"]*sr-only[^"]*"[^>]*>\s*Department/u);
+	});
+
+	it('lays a row out in three columns', () => {
+		const body = renderParts([
+			{ field: 'row', label: 'Row', block_type: 'layout_row', layout_columns: 3 },
+			{ field: 'a', label: 'A', layout_column: 1 },
+			{ field: 'b', label: 'B', layout_column: 2 },
+			{ field: 'c', label: 'C', layout_column: 3 }
+		]);
+		expect(body).toContain('repeat(3, minmax(0, 1fr))');
+		expect(body).toContain('grid-column: 3 / span 1;');
+	});
+});
