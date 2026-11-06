@@ -3,7 +3,10 @@ import {
   environmentReplicationMachineRouter,
   isEnvironmentReplicationControlRequest,
 } from './routes/replication-environments';
-import { reconcileProfileRegistryProjection } from '@authrim/ar-lib-core';
+import {
+  publicLoginUiAssetResourcePolicy,
+  reconcileProfileRegistryProjection,
+} from '@authrim/ar-lib-core';
 import { processTenantBackupMaintenance } from './tenant-backup-services';
 import { processTenantBackupOperations } from './tenant-backup-operation-dispatcher';
 import { createProductionTenantBackupExportAdapter } from './tenant-backup-production-export';
@@ -1196,6 +1199,10 @@ app.use(
 );
 app.use('/api/auth/discovery', authBootstrapPluginContextMiddleware);
 app.use('/api/auth/discovery/*', authBootstrapPluginContextMiddleware);
+
+// Public Login UI images may be shown by other origins (the admin console served apart from the
+// API, vanity domains). Registered before the security headers so it has the last word on CORP.
+app.use('/api/assets/*', publicLoginUiAssetResourcePolicy());
 
 // Enhanced security headers
 app.use(
