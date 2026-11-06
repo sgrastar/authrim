@@ -203,7 +203,7 @@ describe('LiteTxnStore: moving', () => {
       store.transitionRpc({ ...ref(txn.id), expectedVersion: 1, to: 'verified' })
     ).resolves.toEqual({ ok: false, reason: 'version_mismatch' });
     await expect(
-      store.transitionRpc({ ...ref(txn.id), expectedVersion: 2, to: 'completed' })
+      store.transitionRpc({ ...ref(txn.id), expectedVersion: 2, to: 'open' })
     ).resolves.toEqual({ ok: false, reason: 'invalid_transition' });
     const verified = await store.transitionRpc({
       ...ref(txn.id),
@@ -819,6 +819,31 @@ describe('LiteTxnStore: completions that could not be stored as given', () => {
     });
   });
 
+  it('refuses a session or user on a sign-in or sign-up', async () => {
+    const { store } = createStore();
+    for (const purpose of ['login', 'signup'] as const) {
+      await expect(
+        store.createTxnRpc({
+          tenantId: 'tenant-a',
+          bindingHash: BINDING,
+          bound: bound({ purpose, sessionId: 's1', userId: null }),
+          maxActive: 4,
+        })
+      ).resolves.toEqual({ ok: false, reason: 'too_large' });
+    }
+  });
+
+  it('refuses a call for another public origin than the transaction was made on', async () => {
+    const { store } = createStore();
+    const txn = await create(store);
+    await expect(
+      store.getTxnRpc({ ...ref(txn.id), publicOrigin: 'https://other.example' })
+    ).resolves.toEqual({ ok: false, reason: 'binding_mismatch' });
+    await expect(
+      store.getTxnRpc({ ...ref(txn.id), publicOrigin: 'https://id.example' })
+    ).resolves.toMatchObject({ ok: true });
+  });
+
   it('requires the signed-in session and user for account and re-authentication', async () => {
     const { store } = createStore();
     for (const purpose of ['account', 'reauth'] as const) {
@@ -860,5 +885,28 @@ describe('LiteTxnStore: completions that could not be stored as given', () => {
         maxActive: 4,
       })
     ).resolves.toEqual({ ok: false, reason: 'budget_exceeded' });
+  });
+});
+
+describe('LiteTxnStore: finishing', () => {
+  it('completes from pending, and finishes even with the change budget spent', async () => {
+    const { store } = createStore();
+    const txn = await create(store);
+    let version = 1;
+    for (let i = 0; i < LITE_TXN_MAX_UPDATES; i++) {
+      const moved = await store.transitionRpc({
+        ...ref(txn.id),
+        expectedVersion: version,
+        to: 'pending',
+      });
+      if (!moved.ok) break;
+      version = moved.txn.version;
+    }
+    await expect(
+      store.transitionRpc({ ...ref(txn.id), expectedVersion: version, to: 'pending' })
+    ).resolves.toEqual({ ok: false, reason: 'budget_exceeded' });
+    await expect(
+      store.transitionRpc({ ...ref(txn.id), expectedVersion: version, to: 'completed' })
+    ).resolves.toMatchObject({ ok: true, txn: { state: 'completed' } });
   });
 });

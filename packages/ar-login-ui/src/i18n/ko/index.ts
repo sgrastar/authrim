@@ -328,7 +328,9 @@ const ko = createTranslation({
 	login_extError_reauthNotProven_message:
 		'로그인 제공자가 다시 로그인했음을 확인하지 않았습니다. 다시 로그인하거나 다른 방법을 선택하세요.',
 	login_extError_default_title: '인증 오류',
-	login_extError_default_message: '외부 인증 중 오류가 발생했습니다.'
+	login_extError_default_message: '외부 인증 중 오류가 발생했습니다.',
+	lite_javascriptRequired:
+		'이 페이지는 브라우저에서 보안 확인을 실행합니다. JavaScript를 켠 다음 페이지를 새로 고치세요.'
 });
 
 export default ko;

@@ -498,7 +498,9 @@ const translation = {
 	login_signingInTo: 'इसमें साइन इन किया जा रहा है:',
 	common_contactSupport: 'सहायता से संपर्क करें',
 	common_dismissAlert: 'सूचना बंद करें',
-	emailCode_digitLabel: '6 में से अंक {position}'
+	emailCode_digitLabel: '6 में से अंक {position}',
+	lite_javascriptRequired:
+		'यह पेज आपके ब्राउज़र में सुरक्षा जाँच करता है। JavaScript चालू करें, फिर पेज को दोबारा लोड करें।'
 } satisfies Translation;
 
 export default translation;

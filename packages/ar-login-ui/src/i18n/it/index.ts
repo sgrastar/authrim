@@ -504,7 +504,9 @@ const it = createTranslation({
 	login_signingInTo: 'Accesso a',
 	common_contactSupport: 'Contatta l’assistenza',
 	common_dismissAlert: 'Chiudi avviso',
-	emailCode_digitLabel: 'Cifra {position} di 6'
+	emailCode_digitLabel: 'Cifra {position} di 6',
+	lite_javascriptRequired:
+		'Questa pagina esegue un controllo di sicurezza nel browser. Attiva JavaScript, quindi ricarica la pagina.'
 });
 
 export default it;

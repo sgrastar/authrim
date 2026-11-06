@@ -475,7 +475,9 @@ const ar = createTranslation({
 	login_signingInTo: 'تسجيل الدخول إلى',
 	common_contactSupport: 'التواصل مع الدعم',
 	common_dismissAlert: 'إغلاق التنبيه',
-	emailCode_digitLabel: 'الرقم {position} من 6'
+	emailCode_digitLabel: 'الرقم {position} من 6',
+	lite_javascriptRequired:
+		'تُجري هذه الصفحة فحصًا أمنيًا في متصفحك. فعّل JavaScript، ثم أعد تحميل الصفحة.'
 });
 
 export default ar;
