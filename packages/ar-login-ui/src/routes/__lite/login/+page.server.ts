@@ -210,9 +210,11 @@ export const load: PageServerLoad = async (event) => {
 	});
 	let pow: LitePowChallenge | null = null;
 	if (decision.kind === 'screen' && decision.fields.some((f) => PROOF_BLOCKS.has(f.blockType))) {
+		// A lite page never draws such a form without its proof: no challenge (the tenant left
+		// lite mode, or none could be issued) is an error page, not a form without one.
 		const challenge = await fetchLitePowChallenge(backend, 'login');
-		if (challenge.ok) pow = challenge.challenge;
-		else if (challenge.reason === 'unavailable') return errorPage(event, 'unavailable');
+		if (!challenge.ok) return errorPage(event, 'unavailable');
+		pow = challenge.challenge;
 	}
 	if (pow) event.locals.liteCsp = { scriptHashes: [await cspHashSource(LITE_POW_SOLVER_SCRIPT)] };
 
@@ -278,6 +280,9 @@ async function postedTxn(event: RequestEvent) {
 	// Against the tenant's current policy: a post under an earlier revision stops here.
 	const read = await txns.get(txnId, { current: true });
 	if (!read.ok || !sameToken(read.txn.csrfToken, token)) return null;
+	// A sign-in transaction still going on: not another purpose's, not a finished one.
+	if (read.txn.bound.purpose !== 'login') return null;
+	if (read.txn.state === 'completed' || read.txn.state === 'abandoned') return null;
 	return { txns, txn: read.txn, fields: form.fields };
 }
 

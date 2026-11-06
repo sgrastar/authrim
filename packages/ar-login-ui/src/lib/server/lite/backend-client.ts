@@ -15,14 +15,12 @@
  */
 
 /**
- * The backend calls a page view (a GET) may make with the public origin: they have no side effect
- * beyond what the normal SPA's page load does (start or resume a Flow; create the email
- * verification challenge). Every other call carries an Origin only from a verified form post.
+ * The backend calls a page view (a GET) may make with the public origin: only what the normal
+ * SPA's page load does, with no side effect beyond it (start or resume a Flow). Every other call
+ * carries an Origin only from a verified form post. (Add an entry only with the page that needs
+ * it.)
  */
-const PAGE_LOAD_ORIGIN_CALLS: readonly RegExp[] = [
-	/^\/api\/v1\/login\/interactions\/start$/u,
-	/^\/api\/v1\/login\/interactions\/[A-Za-z0-9_-]{1,128}\/email-verification\/challenge$/u
-];
+const PAGE_LOAD_ORIGIN_CALLS: readonly RegExp[] = [/^\/api\/v1\/login\/interactions\/start$/u];
 
 export function isPageLoadOriginCall(method: string, path: string): boolean {
 	return method === 'POST' && PAGE_LOAD_ORIGIN_CALLS.some((pattern) => pattern.test(path));

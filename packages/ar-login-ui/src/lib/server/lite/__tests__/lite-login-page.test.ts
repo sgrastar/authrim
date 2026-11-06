@@ -624,3 +624,35 @@ describe('round 6 review regressions', () => {
 		).toBe('https://id.example/authorize?_confirmation_challenge=x');
 	});
 });
+
+describe('security review regressions', () => {
+	it('draws no proof-guarded form without a challenge', async () => {
+		routes['/api/auth/human-verification/pow-challenge'] = () => json({}, 404);
+		const page = (await run(event())) as Record<string, unknown>;
+		expect(page.page).toBe('error');
+	});
+
+	it('refuses a post for a finished transaction or another purpose', async () => {
+		for (const txn of [
+			txnView({
+				state: 'completed',
+				data: { flow: { interactionId: 'i', contractHash: 'h', signature: 's' } }
+			}),
+			txnView({
+				state: 'abandoned',
+				data: { flow: { interactionId: 'i', contractHash: 'h', signature: 's' } }
+			}),
+			txnView({
+				state: 'pending',
+				bound: { ...txnView().bound, purpose: 'signup' },
+				data: { flow: { interactionId: 'i', contractHash: 'h', signature: 's' } }
+			})
+		]) {
+			txnState.get = { ok: true, txn };
+			await expect(post('/login?/continue', 'txn=txn-1&csrf=csrf-1')).resolves.toMatchObject({
+				status: 403
+			});
+		}
+		expect(backendCalls).toEqual([]);
+	});
+});

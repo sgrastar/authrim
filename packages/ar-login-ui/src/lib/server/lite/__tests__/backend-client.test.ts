@@ -198,14 +198,14 @@ describe('path-match', () => {
 });
 
 describe('the calls a page view may make with the public origin', () => {
-	it('are the Flow start and the email verification challenge, as POST, and nothing else', () => {
+	it('are the Flow start, as POST, and nothing else', () => {
 		expect(isPageLoadOriginCall('POST', '/api/v1/login/interactions/start')).toBe(true);
 		expect(
 			isPageLoadOriginCall(
 				'POST',
 				'/api/v1/login/interactions/abc-123/email-verification/challenge'
 			)
-		).toBe(true);
+		).toBe(false);
 		for (const [method, path] of [
 			['POST', '/api/v1/login/interactions/abc/submit'],
 			['POST', '/api/v1/auth/direct/email-code/send'],
