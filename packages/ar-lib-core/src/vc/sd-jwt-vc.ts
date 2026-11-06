@@ -356,6 +356,8 @@ export async function createSDJWTVCWithSigner(
  * @returns Parsed SD-JWT VC
  */
 export async function parseSDJWTVC(sdjwtvc: string): Promise<ParsedSDJWTVC | null> {
+  // RFC 9901: `<issuer JWT>~<disclosure>~...~` without key binding, or
+  // `<issuer JWT>~<disclosure>~...~<KB-JWT>` with it (the KB-JWT is the part after the last `~`).
   const parts = sdjwtvc.split(SD_JWT_SEPARATOR);
 
   if (parts.length < 2) {
@@ -363,29 +365,18 @@ export async function parseSDJWTVC(sdjwtvc: string): Promise<ParsedSDJWTVC | nul
   }
 
   const issuerJwt = parts[0];
-  let kbJwt: string | undefined;
-
-  // Check if last non-empty part is a KB-JWT
   const lastPart = parts[parts.length - 1];
-  const secondLastPart = parts[parts.length - 2];
-
-  // If last part is empty and second-last looks like a JWT, it might be KB-JWT
-  if (lastPart === '' && secondLastPart && secondLastPart.split('.').length === 3) {
-    // Check if it's a disclosure or KB-JWT by trying to decode as disclosure
-    const decoded = await decodeDisclosure(secondLastPart);
-    if (!decoded) {
-      // It's a KB-JWT
-      kbJwt = secondLastPart;
-    }
+  let kbJwt: string | undefined;
+  if (lastPart !== '') {
+    if (lastPart.split('.').length !== 3) return null;
+    kbJwt = lastPart;
   }
 
   // Parse disclosures (supports both regular and array element disclosures)
   const disclosures: SDJWTDisclosure[] = [];
-  const startIdx = 1;
-  const endIdx = kbJwt ? parts.length - 2 : parts.length - 1;
-
-  for (let i = startIdx; i < endIdx; i++) {
-    if (parts[i] === '') continue;
+  for (let i = 1; i < parts.length - 1; i++) {
+    // An empty disclosure (`~~`) is not well-formed.
+    if (parts[i] === '') return null;
 
     // Try regular disclosure first
     let disclosure = await decodeDisclosure(parts[i]);
@@ -393,9 +384,8 @@ export async function parseSDJWTVC(sdjwtvc: string): Promise<ParsedSDJWTVC | nul
       // Try array element disclosure (2-element format)
       disclosure = await decodeArrayElementDisclosure(parts[i]);
     }
-    if (disclosure) {
-      disclosures.push(disclosure);
-    }
+    if (!disclosure) return null;
+    disclosures.push(disclosure);
   }
 
   // Decode issuer JWT
@@ -455,6 +445,12 @@ export async function verifySDJWTVC(
     currentDate: currentTime ? new Date(currentTime * 1000) : undefined,
   });
 
+  // Disclosure digests are SHA-256 here; a credential naming another algorithm is refused
+  // rather than checked with the wrong one.
+  if (payload._sd_alg !== undefined && payload._sd_alg !== 'sha-256') {
+    throw new Error('Unsupported _sd_alg');
+  }
+
   // Verify VCT if specified
   if (vct && payload.vct !== vct) {
     throw new Error(`VCT mismatch: expected ${vct}, got ${payload.vct}`);
@@ -473,7 +469,8 @@ export async function verifySDJWTVC(
     await verifyKeyBindingJWT(kbJwt, holderKey, {
       nonce,
       audience,
-      sdjwtvc: sdjwtvc.substring(0, sdjwtvc.lastIndexOf(SD_JWT_SEPARATOR + kbJwt)),
+      // RFC 9901 4.3.1: sd_hash covers the presentation up to and including the last `~`.
+      sdjwtvc: sdjwtvc.substring(0, sdjwtvc.length - kbJwt.length),
       currentTime,
     });
     holderBindingVerified = true;
@@ -661,7 +658,7 @@ async function verifyKeyBindingJWT(
   // Check if KB-JWT is too old
   // SECURITY: Explicitly check for negative age (defense in depth)
   const age = now - unsafePayload.iat;
-  if (age < 0 || age > maxAge) {
+  if (age < -clockSkewTolerance || age > maxAge) {
     throw new Error(INVALID_KB_JWT);
   }
 
@@ -729,13 +726,13 @@ export async function createVCPresentation(
   const disclosureStrings = selectedDisclosures.map((d) => d.encoded);
   const sdjwtWithoutKb = [sdjwtvc.issuerJwt, ...disclosureStrings, ''].join(SD_JWT_SEPARATOR);
 
-  // Create KB-JWT
+  // Create KB-JWT; its sd_hash covers the presentation including the trailing `~` (RFC 9901)
   const kbJwt = await createKeyBindingJWT(
     holderPrivateKey,
     algorithm,
     nonce,
     audience,
-    sdjwtWithoutKb.slice(0, -1) // Remove trailing ~
+    sdjwtWithoutKb
   );
 
   // Combine with KB-JWT
