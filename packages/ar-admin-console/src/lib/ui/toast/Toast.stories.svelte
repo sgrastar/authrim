@@ -3,6 +3,7 @@
 	import { expect, userEvent, waitFor, within } from 'storybook/test';
 	import ToastAllTones, { showAllTones } from '../stories/ToastAllTones.svelte';
 	import ToastDemo from '../stories/ToastDemo.svelte';
+	import { waitForSettledToasts } from '../stories/toast-settled';
 	import Toaster from './Toaster.svelte';
 	import { toast } from './toast.svelte';
 
@@ -39,6 +40,8 @@
 		await userEvent.click(body.getAllByRole('button', { name: /./ }).at(-1)!);
 		await waitFor(() => expect(toast.items).toHaveLength(3));
 		showAllTones();
+		// The check runs when the play ends: every tone on screen, done flying in.
+		await waitForSettledToasts(4);
 	}}
 >
 	{#snippet template()}<ToastAllTones />{/snippet}
