@@ -179,35 +179,47 @@ export async function withStepUp<T>(
 		}
 	}
 
-	// A refusal after checks made beforehand means they went stale meanwhile: it is asked again,
-	// for what the refusal names.
-	let required: StepUpRequired | null;
-	let reauthenticated = false;
-	try {
-		return await operation();
-	} catch (error) {
-		if (!isFreshAuthRequired(error)) {
-			required = stepUpRequired(error);
-			if (!required) throw error;
-		} else {
-			// A route can ask for a fresh sign-in first and for the step-up only after it.
-			await ask({ level: 'L1', factors: ['passkey'] });
-			await steps.reauthenticate();
-			reauthenticated = true;
-			try {
-				return await operation();
-			} catch (retryError) {
-				required = stepUpRequired(retryError);
-				if (!required) throw retryError;
+	/**
+	 * Send the operation (without a receipt). A route can ask for a fresh sign-in first and for
+	 * the step-up only after it: the fresh sign-in is met once, then the operation is sent again.
+	 * Returns its value, or the step-up it was refused for (with the passkey dropped from what is
+	 * missing when it was just confirmed).
+	 */
+	const attempt = async (): Promise<
+		{ done: true; value: T } | { done: false; required: StepUpRequired }
+	> => {
+		try {
+			return { done: true, value: await operation() };
+		} catch (error) {
+			if (!isFreshAuthRequired(error)) {
+				const required = stepUpRequired(error);
+				if (!required) throw error;
+				return { done: false, required };
 			}
 		}
-	}
-	// The passkey was just confirmed for the fresh sign-in: only what else is missing is asked for.
-	await meet(
-		reauthenticated
-			? { ...required, missing: required.missing.filter((factor) => factor !== 'passkey') }
-			: required
-	);
+		await ask({ level: 'L1', factors: ['passkey'] });
+		await steps.reauthenticate();
+		try {
+			return { done: true, value: await operation() };
+		} catch (error) {
+			const required = stepUpRequired(error);
+			if (!required) throw error;
+			return {
+				done: false,
+				required: {
+					...required,
+					missing: required.missing.filter((factor) => factor !== 'passkey')
+				}
+			};
+		}
+	};
+
+	// A refusal after checks made beforehand means they went stale meanwhile: it is asked again,
+	// for what the refusal names.
+	const first = await attempt();
+	if (first.done) return first.value;
+	const required = first.required;
+	await meet(required);
 	// The admin may take a while to answer and verify: by then another check may have gone stale,
 	// or the step-up itself may have expired (it lives a few minutes). Either is met once or twice
 	// more; past that the refusal is passed on.
@@ -225,16 +237,12 @@ export async function withStepUp<T>(
 				continue;
 			}
 			if (!isUnknownStepUp(error)) throw error;
-			// The step-up is gone: the operation is sent once more for a new one.
-			let renewed: StepUpRequired | null;
-			try {
-				return await operation();
-			} catch (again) {
-				renewed = stepUpRequired(again);
-				if (!renewed) throw again;
-			}
-			await meet(renewed);
-			stepUpId = renewed.stepUpId;
+			// The step-up is gone: the operation is sent once more for a new one (meeting a fresh
+			// sign-in it may ask for first, as the first try does).
+			const renewed = await attempt();
+			if (renewed.done) return renewed.value;
+			await meet(renewed.required);
+			stepUpId = renewed.required.stepUpId;
 			continue;
 		}
 		return operation(receipt);
