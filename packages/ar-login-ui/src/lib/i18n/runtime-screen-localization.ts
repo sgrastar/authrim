@@ -39,6 +39,27 @@ function localizedFieldValue(
 }
 
 /**
+ * A select or radio part's choices in the locale: each choice's label by language (sent with it by
+ * the run time, from the Identity Schema or the screen), else its default label, else its value.
+ */
+function localizedOptions(options: unknown, locale: string): unknown {
+	if (!Array.isArray(options)) return options;
+	// The locale itself (and its base language), never English: a choice's default label is the
+	// one for every language without a label of its own, as the Identity Schema defines it.
+	const normalized = locale.replace('_', '-');
+	const candidates = [...new Set([normalized, normalized.split('-')[0]])];
+	return options.map((option) => {
+		if (!isRecord(option)) return option;
+		const labels = isRecord(option.labels) ? option.labels : {};
+		const own = candidates.map((candidate) => readText(labels[candidate])).find(Boolean);
+		return {
+			...option,
+			label: own ?? readText(option.default_label) ?? readText(option.label) ?? option.value
+		};
+	});
+}
+
+/**
  * Reapplies the selected localization to a hydrated runtime screen.
  *
  * The runtime API localizes `fields` for the language used when an interaction starts, while also
@@ -81,7 +102,10 @@ export function localizeRuntimeScreen(
 					englishField,
 					'placeholder',
 					value.placeholder
-				)
+				),
+				...(Array.isArray(value.options)
+					? { options: localizedOptions(value.options, locale) }
+					: {})
 			};
 		})
 	};

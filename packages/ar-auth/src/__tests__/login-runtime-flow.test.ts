@@ -1842,6 +1842,17 @@ describe('LoginUI runtime Flow handlers', () => {
             required: true,
             block_type: 'identity_field',
           },
+          // A checkbox answers its attribute as a text input does.
+          { field: 'newsletter', label: 'Newsletter', required: false, block_type: 'checkbox' },
+          // An answer of its own is no attribute, whatever its key: its own setting stands.
+          {
+            field: 'locale',
+            label: 'Locale (asked)',
+            required: true,
+            block_type: 'checkbox',
+            store_to_profile: false,
+            answer_targets: ['record'],
+          },
         ]),
         localizations_json: JSON.stringify({}),
         settings_json: JSON.stringify({ canvas_layout: 'narrow' }),
@@ -1850,6 +1861,7 @@ describe('LoginUI runtime Flow handlers', () => {
       { field_key: 'email', registration_required: 1 },
       { field_key: 'department', registration_required: 1 },
       { field_key: 'locale', registration_required: 0 },
+      { field_key: 'newsletter', registration_required: 1 },
     ]);
 
     const response = await loginRuntimeInteractionStartHandler(
@@ -1866,6 +1878,8 @@ describe('LoginUI runtime Flow handlers', () => {
           { field: 'department', required: true },
           { field: 'locale', required: false },
           { field: 'unmanaged', required: true },
+          { field: 'newsletter', required: true },
+          { field: 'locale', required: true, store_to_profile: false },
         ],
       },
     });
