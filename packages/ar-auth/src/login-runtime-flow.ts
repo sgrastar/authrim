@@ -4278,6 +4278,13 @@ function withRuntimeScreenAnswers(
   return next;
 }
 
+/** The interaction's context without any screen step's choices. */
+function withoutRuntimeScreenAnswers(context: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...context };
+  delete next.screen_answers;
+  return next;
+}
+
 /**
  * Publishes `flow.screen.submitted` for a saved screen step, without being waited for (its
  * failure is logged). It carries the answers going to the Flow, free text included, so it is not
@@ -4368,7 +4375,8 @@ async function writeRuntimeScreenResponse(input: {
   const pii = createPIIContextFromHono(c, tenantId).defaultPiiAdapter;
   const now = Date.now();
   // Not for an account being deleted: its tombstone is written before its PII is erased, so a
-  // record written first is erased with the rest, and none is written after.
+  // record written first is erased with the rest, and none is written after. Nor for a guest
+  // being erased (the handler keeps no guest record; the database refuses one under erasure).
   await pii.execute(
     `INSERT INTO screen_responses (
        id, tenant_id, user_id, screen_id, screen_key, flow_id, flow_version_id, interaction_id,
@@ -4377,6 +4385,8 @@ async function writeRuntimeScreenResponse(input: {
      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
       WHERE NOT EXISTS (
         SELECT 1 FROM users_pii_tombstone WHERE tenant_id = ? AND id = ?
+      ) AND NOT EXISTS (
+        SELECT 1 FROM guest_pii_erasure_markers WHERE tenant_id = ? AND user_id = ?
       )
      ON CONFLICT (id) DO UPDATE SET answers_json = excluded.answers_json,
        updated_at = excluded.updated_at
@@ -4395,6 +4405,8 @@ async function writeRuntimeScreenResponse(input: {
       JSON.stringify(input.answers),
       now,
       now,
+      tenantId,
+      userId,
       tenantId,
       userId,
     ]
@@ -6509,16 +6521,16 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
   }
 
   // The choices a screen sends to the Flow are kept with the interaction, by step (a step shown
-  // again replaces its own), so a later step can be chosen by them.
-  const nextContextJson = offProfileAnswers?.hasFlowContextPart
-    ? JSON.stringify(
-        withRuntimeScreenAnswers(
-          parseJsonObject(interaction.context_json),
-          current.step.id,
-          offProfileAnswers.flowContext
-        )
-      )
-    : null;
+  // again replaces its own), so a later step can be chosen by them. They serve the steps still to
+  // come: an interaction that ends here keeps none (it outlives the person's account otherwise).
+  const storedContext = parseJsonObject(interaction.context_json);
+  const keptContext = offProfileAnswers?.hasFlowContextPart
+    ? withRuntimeScreenAnswers(storedContext, current.step.id, offProfileAnswers.flowContext)
+    : storedContext;
+  const nextContextJson =
+    offProfileAnswers?.hasFlowContextPart || (completed && 'screen_answers' in storedContext)
+      ? JSON.stringify(completed ? withoutRuntimeScreenAnswers(keptContext) : keptContext)
+      : null;
 
   await writeAtomically(db, (write) => {
     write(

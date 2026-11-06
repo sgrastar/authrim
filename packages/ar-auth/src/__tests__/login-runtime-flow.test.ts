@@ -5410,6 +5410,25 @@ describe('LoginUI runtime Flow handlers', () => {
         expect(contextWrites()[0]?.screen_answers).toEqual({ 'screen:step': { plan: 'pro' } });
       });
 
+      it('keeps no choices once the interaction ends at the screen', async () => {
+        const { response } = await submitStep({
+          runtime: { flow_kind: 'login', ui: { steps: [screenRuntime.ui.steps[0]] } },
+          currentStep: { node: 'screen', step: 'screen:step' },
+          handle: 'submitted',
+          withSession: true,
+          userId: 'user_1',
+          body: { input: { fields: { plan: 'pro' } } },
+          beforeSubmit: () => readsScreen(flowScreen),
+        });
+
+        expect(response.status).toBe(200);
+        const [context] = contextWrites();
+        expect(context).toBeDefined();
+        expect(context).not.toHaveProperty('screen_answers');
+        // The event still carries the answer.
+        expect(mocks.publishEvent).toHaveBeenCalledTimes(1);
+      });
+
       it('keeps the choices only while the interaction is still at the step', async () => {
         await submitAnswers({ plan: 'pro' }, false, undefined, undefined, flowScreen);
 
@@ -5481,7 +5500,9 @@ describe('LoginUI runtime Flow handlers', () => {
         // Never for an account being deleted (its tombstone comes before its PII is erased).
         expect(String(writes[0][0])).toContain('NOT EXISTS');
         expect(String(writes[0][0])).toContain('users_pii_tombstone');
-        expect(params.slice(12)).toEqual(['tenant_test', 'user_1']);
+        expect(params.slice(12)).toEqual(['tenant_test', 'user_1', 'tenant_test', 'user_1']);
+        // Nor for a guest under erasure (the database refuses it, whatever the handler judged).
+        expect(String(writes[0][0])).toContain('guest_pii_erasure_markers');
         expect(mocks.resolveAccountDataContextFromHono).toHaveBeenCalledWith(
           expect.anything(),
           'user_1'
