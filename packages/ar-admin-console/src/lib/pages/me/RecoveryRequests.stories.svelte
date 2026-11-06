@@ -13,7 +13,7 @@
 			docs: {
 				description: {
 					component:
-						'The open security-key recovery requests of the tenant’s other admins, each of which can be cancelled during its 24-hour wait (admin users write permission and a fresh passkey). The card shows only while there is a request; an admin who may not read the tenant’s admins sees nothing.'
+						'The open second-factor recovery requests of the tenant’s other admins (a new security key or Keyring), with the kind of factor each would install, each of which can be cancelled during its 24-hour wait (admin users write permission and a fresh passkey). The card shows only while there is a request; an admin who may not read the tenant’s admins sees nothing.'
 				}
 			}
 		}
@@ -26,6 +26,9 @@
 		const canvas = within(canvasElement);
 		await canvas.findByText('hanako.sato@example.com');
 		await expect(canvas.getAllByRole('button', { name: t('sk.others.cancel') })).toHaveLength(2);
+		// Which kind of factor each request would install.
+		await expect(canvas.getByText(t('kp.kind.keyring'))).toBeInTheDocument();
+		await expect(canvas.getByText(t('kp.kind.securityKey'))).toBeInTheDocument();
 	}}
 >
 	{#snippet template()}
@@ -34,7 +37,7 @@
 			client={createFakeSecondFactors({
 				tenantRequests: [
 					{ email: 'hanako.sato@example.com', waitingHours: 3 },
-					{ email: 'ops-admin@example.com', waitingHours: 20 }
+					{ email: 'ops-admin@example.com', waitingHours: 20, kind: 'keyring_holder_key' }
 				]
 			})}
 		/>

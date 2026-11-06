@@ -67,7 +67,13 @@
 		credential_not_active: 'kp.failed.notActive',
 		wrong_admin: 'kp.failed.wrongAdmin',
 		step_up_expired: 'kp.failed.stale',
-		step_up_required: 'kp.failed.stale'
+		step_up_required: 'kp.failed.stale',
+		admin_fresh_auth_required: 'kp.failed.stale',
+		// Filing a recovery request with the presented key
+		recovery_pending: 'sk.error.pending',
+		recovery_requires_last_resort: 'sk.error.lastResort',
+		recovery_notification_unavailable: 'sk.error.noEmail',
+		recovery_notification_failed: 'sk.error.noEmail'
 	};
 
 	const failureText = $derived(
@@ -80,7 +86,10 @@
 		keyring_not_registered: 'kp.error.notRegistered',
 		keyring_not_eligible: 'kp.error.notEligible',
 		keyring_unavailable: 'kp.error.unavailable',
-		second_factor_recovery_required: 'kp.error.recovery'
+		second_factor_recovery_required: 'kp.error.recovery',
+		recovery_pending: 'sk.error.pending',
+		recovery_requires_last_resort: 'sk.error.lastResort',
+		recovery_notification_unavailable: 'sk.error.noEmail'
 	};
 
 	const startErrorText = $derived(

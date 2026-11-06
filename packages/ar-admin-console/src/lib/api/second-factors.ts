@@ -40,6 +40,8 @@ export interface SecondFactorState {
 export interface SecondFactorRecovery {
 	id: string;
 	status: 'pending' | 'completed' | 'cancelled' | 'expired';
+	/** The new second factor: a security key, or the holder key of a Keyring admin credential. */
+	kind?: 'webauthn_credential' | 'keyring_holder_key';
 	label: string | null;
 	aaguid: string | null;
 	requested_at: number;

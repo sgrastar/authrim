@@ -65,6 +65,7 @@ export const jaSecurityKeys = {
 	'sk.others.info':
 		'このテナントの管理者が、セキュリティキーの入れ替えを申請しています。心当たりがなければ取り消してください。',
 	'sk.others.admin': '管理者',
+	'sk.others.kind': '新しい要素',
 	'sk.others.requested': '申請日時',
 	'sk.others.notBefore': '完了できる日時',
 	'sk.others.cancel': '取り消す',

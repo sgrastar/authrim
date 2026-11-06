@@ -65,6 +65,7 @@ export const enSecurityKeys: Record<keyof typeof jaSecurityKeys, string> = {
 	'sk.others.info':
 		'Administrators of this tenant asked to replace their security keys. Cancel any request you do not expect.',
 	'sk.others.admin': 'Administrator',
+	'sk.others.kind': 'New factor',
 	'sk.others.requested': 'Requested',
 	'sk.others.notBefore': 'Can be completed after',
 	'sk.others.cancel': 'Cancel',

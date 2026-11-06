@@ -56,6 +56,10 @@ export const enKeyringPresentation = {
 	'kp.enroll.needCredential':
 		'First issue the admin credential to Keyring (My account → Authrim Keyring).',
 	'kp.enroll.added': 'Keyring was added as a second factor.',
+	'kp.recover.add': 'Request recovery with Keyring',
+	'kp.recover.title': 'Request recovery with Authrim Keyring',
+	'kp.recover.body':
+		'Present the admin credential issued to your Keyring to file the request. You and every administrator of the tenant are emailed, and it can be completed after 24 hours. Completing it revokes all your current second factors and ends your other sessions.',
 	'kp.kind.keyring': 'Keyring',
 	'kp.kind.securityKey': 'Security key'
 };

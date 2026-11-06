@@ -9,6 +9,8 @@ import {
   ADMIN_SECOND_FACTOR_RECOVERY_WAIT_MS,
   AdminSecondFactorRecoveryRepository,
   type AdminSecondFactorRecoveryInput,
+  type AdminSecondFactorRecoveryKeyringInput,
+  type AdminSecondFactorRecoveryWebAuthnInput,
 } from '../admin/admin-second-factor-recovery';
 import { sqliteAdapter } from './sqlite-core-schema';
 
@@ -16,13 +18,19 @@ const ADMIN_MIGRATIONS = new URL('../../../../../migrations/admin/d1/', import.m
 const T0 = 1_000_000;
 const AFTER_WAIT = T0 + ADMIN_SECOND_FACTOR_RECOVERY_WAIT_MS;
 
-function adminSchema(): { db: DatabaseSync; adapter: DatabaseAdapter } {
+const SCHEMA_FILES = [
+  '003_admin_session_passkey_evidence.sql',
+  '004_admin_second_factors.sql',
+  '005_admin_second_factor_recoveries.sql',
+  '010_keyring_second_factor_recoveries.sql',
+];
+
+function adminSchema(files: string[] = SCHEMA_FILES): {
+  db: DatabaseSync;
+  adapter: DatabaseAdapter;
+} {
   const fixture = sqliteAdapter('admin');
-  for (const file of [
-    '003_admin_session_passkey_evidence.sql',
-    '004_admin_second_factors.sql',
-    '005_admin_second_factor_recoveries.sql',
-  ]) {
+  for (const file of files) {
     fixture.db.exec(
       renderPortableMigrationSql(readMigrationSource(ADMIN_MIGRATIONS, file), 'sqlite')
     );
@@ -30,7 +38,9 @@ function adminSchema(): { db: DatabaseSync; adapter: DatabaseAdapter } {
   return fixture;
 }
 
-function request(overrides: Partial<AdminSecondFactorRecoveryInput> = {}) {
+function request(
+  overrides: Partial<AdminSecondFactorRecoveryWebAuthnInput> = {}
+): AdminSecondFactorRecoveryWebAuthnInput {
   return {
     admin_user_id: 'admin-1',
     tenant_id: 'default',
@@ -72,7 +82,7 @@ describe('AdminSecondFactorRecoveryRepository in the real admin schema', () => {
   });
 
   /** Files a request and marks its notices sent, as the route does. */
-  async function file(input = request(), now = T0) {
+  async function file(input: AdminSecondFactorRecoveryInput = request(), now = T0) {
     const result = await recoveries.create(input, now);
     if (result.created) await recoveries.markNotified(result.recovery.id, now);
     return result;
@@ -256,5 +266,137 @@ describe('AdminSecondFactorRecoveryRepository in the real admin schema', () => {
     expect((await recoveries.listOpenByTenant('default', T0)).map((r) => r.admin_user_id)).toEqual([
       'admin-1',
     ]);
+  });
+
+  describe('with a Keyring holder key', () => {
+    const keyring = (
+      overrides: Partial<AdminSecondFactorRecoveryKeyringInput> = {}
+    ): AdminSecondFactorRecoveryKeyringInput => ({
+      kind: 'keyring_holder_key',
+      admin_user_id: 'admin-1',
+      tenant_id: 'default',
+      holder_jkt: 'jkt-new',
+      admin_credential_id: 'vc-1',
+      label: 'Keyring',
+      requested_session_id: 'sess-1',
+      ...overrides,
+    });
+
+    it('files the request with the holder key and the credential it was presented with', async () => {
+      const filed = await file(keyring());
+      if (!filed.created) throw new Error('not filed');
+      expect(filed.recovery).toMatchObject({
+        kind: 'keyring_holder_key',
+        holder_jkt: 'jkt-new',
+        admin_credential_id: 'vc-1',
+        credential_id: null,
+      });
+      expect(await recoveries.findById(filed.recovery.id)).toMatchObject({
+        kind: 'keyring_holder_key',
+        holder_jkt: 'jkt-new',
+        admin_credential_id: 'vc-1',
+        credential_id: null,
+        notified_at: T0,
+      });
+    });
+
+    it('refuses a holder key that was ever a second factor, revoked ones included', async () => {
+      const inserted = await factors.insertKeyringHolderKey(
+        { admin_user_id: 'admin-2', holder_jkt: 'jkt-new' },
+        { firstOnly: false }
+      );
+      if (!inserted.inserted) throw new Error('setup failed');
+      await factors.revokeByAdmin('admin-2', inserted.factor.id);
+
+      expect(await recoveries.create(keyring(), T0)).toEqual({
+        created: false,
+        reason: 'credential_in_use',
+      });
+    });
+
+    it('makes the holder key the only second factor on completion', async () => {
+      const old = await oldFactor();
+      await file(keyring());
+
+      const result = await recoveries.complete('admin-1', 'sess-1', AFTER_WAIT);
+      if (!result.completed) throw new Error('not completed');
+      expect(result.recovery).toMatchObject({
+        kind: 'keyring_holder_key',
+        admin_credential_id: 'vc-1',
+        status: 'completed',
+        completed_at: AFTER_WAIT,
+      });
+      const active = await factors.listActiveByUser('admin-1');
+      expect(
+        active.map((factor) => [factor.id, factor.kind, factor.holder_jkt, factor.credential_id])
+      ).toEqual([[result.secondFactorId, 'keyring_holder_key', 'jkt-new', null]]);
+      expect(await factors.isActive('admin-1', old.id)).toBe(false);
+    });
+
+    it('keeps each kind’s columns complete', () => {
+      const insert = db.prepare(
+        `INSERT INTO admin_second_factor_recoveries (
+           id, admin_user_id, tenant_id, status, kind, credential_id, public_key, holder_jkt,
+           admin_credential_id, requested_session_id, requested_at, not_before, expires_at
+         ) VALUES (?, 'admin-1', 'default', 'cancelled', ?, ?, ?, ?, ?, 'sess-1', 1, 2, 3)`
+      );
+      // A Keyring request without its credential, or carrying WebAuthn columns.
+      expect(() => insert.run('r1', 'keyring_holder_key', null, null, 'jkt', null)).toThrow();
+      expect(() => insert.run('r2', 'keyring_holder_key', 'cred', null, 'jkt', 'vc')).toThrow();
+      // A WebAuthn request carrying a holder key.
+      expect(() => insert.run('r3', 'webauthn_credential', 'cred', 'cGs=', 'jkt', null)).toThrow();
+      expect(() => insert.run('r4', 'something_else', 'cred', 'cGs=', null, null)).toThrow();
+    });
+  });
+});
+
+describe('migration 010 (Keyring recovery requests)', () => {
+  it('keeps every existing request as a WebAuthn one', () => {
+    const { db } = adminSchema(SCHEMA_FILES.slice(0, 3));
+    db.prepare(
+      `INSERT INTO admin_users (id, tenant_id, email, created_at, updated_at)
+       VALUES ('admin-1', 'default', 'a@example.com', 1, 1)`
+    ).run();
+    db.prepare(
+      `INSERT INTO admin_second_factor_recoveries (
+         id, admin_user_id, tenant_id, status, credential_id, public_key, counter,
+         transports_json, aaguid, label, requested_session_id, notified_at, requested_at,
+         not_before, expires_at
+       ) VALUES ('r1', 'admin-1', 'default', 'pending', 'cred', 'cGs=', 3, '["usb"]', 'aa', 'Key',
+         'sess-1', 2, 1, 5, 9)`
+    ).run();
+
+    db.exec(
+      renderPortableMigrationSql(readMigrationSource(ADMIN_MIGRATIONS, SCHEMA_FILES[3]), 'sqlite')
+    );
+
+    expect(db.prepare('SELECT * FROM admin_second_factor_recoveries').all()).toEqual([
+      expect.objectContaining({
+        id: 'r1',
+        kind: 'webauthn_credential',
+        credential_id: 'cred',
+        public_key: 'cGs=',
+        counter: 3,
+        transports_json: '["usb"]',
+        aaguid: 'aa',
+        label: 'Key',
+        holder_jkt: null,
+        admin_credential_id: null,
+        notified_at: 2,
+        not_before: 5,
+        expires_at: 9,
+      }),
+    ]);
+    // The one-pending-request rule survives the rebuild.
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO admin_second_factor_recoveries (
+             id, admin_user_id, tenant_id, status, credential_id, public_key,
+             requested_session_id, requested_at, not_before, expires_at
+           ) VALUES ('r2', 'admin-1', 'default', 'pending', 'cred2', 'cGs=', 's', 1, 2, 3)`
+        )
+        .run()
+    ).toThrow();
   });
 });

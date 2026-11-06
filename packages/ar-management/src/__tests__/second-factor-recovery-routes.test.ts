@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   markNotified: vi.fn(),
   queryOne: vi.fn(),
   query: vi.fn(),
+  coreQueryOne: vi.fn(),
+  revokeByAdmin: vi.fn(),
   recoveryNoticeAvailable: vi.fn(),
   sendRecoveryNotice: vi.fn(),
   writeAdminAuditLog: vi.fn(),
@@ -54,6 +56,9 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     complete = mocks.complete;
     markNotified = mocks.markNotified;
   }
+  class MockFactorRepository {
+    revokeByAdmin = mocks.revokeByAdmin;
+  }
   const status: Record<string, number> = {
     [actual.AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS]: 403,
     [actual.AR_ERROR_CODES.INTERNAL_ERROR]: 500,
@@ -61,6 +66,9 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   return {
     ...actual,
     AdminSecondFactorRecoveryRepository: MockRecoveryRepository,
+    AdminSecondFactorRepository: MockFactorRepository,
+    resolveTenantMetadataContext: vi.fn(async () => ({ coreDb: {} })),
+    ensureDatabaseAdapter: vi.fn(() => ({ queryOne: mocks.coreQueryOne })),
     requireDedicatedAdminDatabaseAdapter: vi.fn(() => ({
       queryOne: mocks.queryOne,
       query: mocks.query,
@@ -108,7 +116,10 @@ function recovery(overrides: Record<string, unknown> = {}) {
     admin_user_id: 'admin-1',
     tenant_id: 'default',
     status: 'pending',
+    kind: 'webauthn_credential',
     credential_id: 'cred-new',
+    holder_jkt: null,
+    admin_credential_id: null,
     aaguid: null,
     label: 'New key',
     requested_session_id: 'sess-1',
@@ -326,6 +337,7 @@ describe('second-factor recovery', () => {
         recovery: {
           id: 'rec-1',
           status: 'pending',
+          kind: 'webauthn_credential',
           label: 'New key',
           aaguid: null,
           requested_at: NOW - 1000,
@@ -337,7 +349,11 @@ describe('second-factor recovery', () => {
 
     it('completes after the wait with a fresh passkey and notifies', async () => {
       mocks.findOpenByUser.mockResolvedValue(recovery({ not_before: NOW - 1 }));
-      mocks.complete.mockResolvedValue({ completed: true, secondFactorId: 'sf-new' });
+      mocks.complete.mockResolvedValue({
+        completed: true,
+        secondFactorId: 'sf-new',
+        recovery: recovery({ status: 'completed', completed_at: NOW }),
+      });
 
       const { status, body } = await call('POST', '/api/admin/me/second-factor-recovery/complete');
 
@@ -356,7 +372,11 @@ describe('second-factor recovery', () => {
       ['cancellation', '/api/admin/me/second-factor-recovery/cancel', 'recovery_cancelled'],
     ])('still answers and audits the %s when its notice throws', async (_label, path, action) => {
       mocks.findOpenByUser.mockResolvedValue(recovery({ not_before: NOW - 1 }));
-      mocks.complete.mockResolvedValue({ completed: true, secondFactorId: 'sf-new' });
+      mocks.complete.mockResolvedValue({
+        completed: true,
+        secondFactorId: 'sf-new',
+        recovery: recovery({ status: 'completed', completed_at: NOW }),
+      });
       mocks.sendRecoveryNotice.mockRejectedValue(new Error('db'));
 
       expect((await call('POST', path)).status).toBe(200);
@@ -404,6 +424,105 @@ describe('second-factor recovery', () => {
 
       expect(status).toBe(409);
       expect(body).toMatchObject({ error: 'credential_in_use' });
+    });
+
+    describe('with a Keyring holder key', () => {
+      const keyringRecovery = (overrides: Record<string, unknown> = {}) =>
+        recovery({
+          kind: 'keyring_holder_key',
+          credential_id: null,
+          holder_jkt: 'jkt-new',
+          admin_credential_id: 'vc-1',
+          label: 'Keyring',
+          not_before: NOW - 1,
+          ...overrides,
+        });
+
+      beforeEach(() => {
+        mocks.findOpenByUser.mockResolvedValue(keyringRecovery());
+        mocks.complete.mockResolvedValue({
+          completed: true,
+          secondFactorId: 'sf-new',
+          recovery: keyringRecovery({ status: 'completed', completed_at: NOW }),
+        });
+      });
+
+      it('completes while the admin credential is still active', async () => {
+        mocks.coreQueryOne.mockResolvedValue({ status: 'active' });
+
+        const { status, body } = await call(
+          'POST',
+          '/api/admin/me/second-factor-recovery/complete'
+        );
+
+        expect(status).toBe(200);
+        expect(body).toEqual({ completed: true, second_factor_id: 'sf-new' });
+        expect(mocks.coreQueryOne.mock.calls[0]?.[1]).toEqual([
+          'default',
+          'vc-1',
+          'admin-1',
+          'https://authrim.com/credentials/admin/v1',
+        ]);
+        expect(mocks.revokeByAdmin).not.toHaveBeenCalled();
+        expect(mocks.writeAdminAuditLog.mock.calls[0]?.[1]).toMatchObject({
+          action: 'admin.second_factor.recovery_completed',
+          metadata: { second_factor_id: 'sf-new', kind: 'keyring_holder_key' },
+        });
+      });
+
+      it('completes nothing once the admin credential expired during the wait', async () => {
+        mocks.coreQueryOne.mockResolvedValue({
+          status: 'active',
+          expires_at: Math.floor(NOW / 1000) - 60,
+        });
+
+        const { status, body } = await call(
+          'POST',
+          '/api/admin/me/second-factor-recovery/complete'
+        );
+
+        expect(status).toBe(409);
+        expect(body).toMatchObject({ error: 'credential_not_active' });
+        expect(mocks.complete).not.toHaveBeenCalled();
+      });
+
+      it('completes nothing once the admin credential was revoked during the wait', async () => {
+        mocks.coreQueryOne.mockResolvedValue({ status: 'revoked' });
+
+        const { status, body } = await call(
+          'POST',
+          '/api/admin/me/second-factor-recovery/complete'
+        );
+
+        expect(status).toBe(409);
+        expect(body).toMatchObject({ error: 'credential_not_active' });
+        expect(mocks.complete).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ['revoked', () => mocks.coreQueryOne.mockResolvedValueOnce({ status: 'revoked' })],
+        ['unknown', () => mocks.coreQueryOne.mockRejectedValueOnce(new Error('db'))],
+      ])(
+        'retires the new factor when the credential is %s right after completion',
+        async (_label, arrange) => {
+          mocks.coreQueryOne.mockResolvedValueOnce({ status: 'active' });
+          arrange();
+
+          const { status, body } = await call(
+            'POST',
+            '/api/admin/me/second-factor-recovery/complete'
+          );
+
+          expect(status).toBe(409);
+          expect(body).toMatchObject({ error: 'credential_not_active' });
+          expect(mocks.revokeByAdmin).toHaveBeenCalledWith('admin-1', 'sf-new');
+          expect(mocks.sendRecoveryNotice).not.toHaveBeenCalled();
+          expect(mocks.writeAdminAuditLog.mock.calls[0]?.[1]).toMatchObject({
+            result: 'failure',
+            metadata: { reason: 'credential_not_active' },
+          });
+        }
+      );
     });
 
     it('cancels their own request and notifies', async () => {

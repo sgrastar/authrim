@@ -73,6 +73,10 @@
             {
               "path": "009_login_ui_themes.sql",
               "checksum": "471446e9ada72235ddccc310959490ecb2c8cfb16733b581c9d15ddddf1f9b86"
+            },
+            {
+              "path": "010_keyring_second_factor_recoveries.sql",
+              "checksum": "3a266ffccf0d21d2c197638b717944edb4f268e37169ff8972eb7c228f6fc093"
             }
           ]
         },
@@ -213,6 +217,10 @@
         {
           "path": "009_login_ui_themes.sql",
           "checksum": "471446e9ada72235ddccc310959490ecb2c8cfb16733b581c9d15ddddf1f9b86"
+        },
+        {
+          "path": "010_keyring_second_factor_recoveries.sql",
+          "checksum": "3a266ffccf0d21d2c197638b717944edb4f268e37169ff8972eb7c228f6fc093"
         }
       ]
     },

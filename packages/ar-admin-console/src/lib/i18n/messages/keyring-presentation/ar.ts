@@ -51,6 +51,10 @@ export const arKeyringPresentation = {
 	'kp.enroll.needCredential':
 		'أصدر أولًا بيانات اعتماد المسؤول إلى Keyring (حسابي ← Authrim Keyring).',
 	'kp.enroll.added': 'أُضيف Keyring كعامل ثانٍ.',
+	'kp.recover.add': 'طلب الاسترداد باستخدام Keyring',
+	'kp.recover.title': 'طلب الاسترداد باستخدام Authrim Keyring',
+	'kp.recover.body':
+		'قدِّم بيانات اعتماد المسؤول الصادرة إلى Keyring لتقديم الطلب. ستصلك أنت وجميع مسؤولي المستأجر رسالة بريد إلكتروني، ويمكن إكماله بعد 24 ساعة. عند إكماله تُلغى جميع العوامل الثانية الحالية وتنتهي جلساتك الأخرى.',
 	'kp.kind.keyring': 'Keyring',
 	'kp.kind.securityKey': 'مفتاح الأمان'
 };

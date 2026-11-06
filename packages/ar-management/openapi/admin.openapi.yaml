@@ -32485,9 +32485,11 @@ paths:
       summary: Complete own second-factor recovery
       description: >-
         After the waiting period, with a fresh passkey: revoke every active second factor of the
-        current admin, make the request's security key their second factor, end their other
-        sessions and clear second-factor evidence from this one, in one batch. The requester and
-        the tenant's administrators are notified.
+        current admin, make the request's security key (or Keyring holder key) their second
+        factor, end their other sessions and clear second-factor evidence from this one, in one
+        batch. The requester and the tenant's administrators are notified. A Keyring request is
+        completed only while the admin credential it was presented with is still active, checked
+        before and again right after the completion (the new factor is retired if it no longer is).
         A selected tenant runtime snapshot is not required.
       x-authrim-route-coverage: inferred-from-source
       responses:
@@ -32519,7 +32521,8 @@ paths:
                 $ref: '#/components/schemas/Error'
         '409':
           description: >-
-            recovery_waiting (with not_before) before the waiting period ends, or credential_in_use.
+            recovery_waiting (with not_before) before the waiting period ends, credential_in_use, or
+            credential_not_active (Keyring: the admin credential was revoked).
           content:
             application/json:
               schema:
@@ -32703,12 +32706,33 @@ paths:
         bound to the console origin and encrypted, the response carries dc_request (for
         navigator.credentials.get) in place of qr and match_code, and the browser's answer is
         submitted to …/{id}/response.
+        With "purpose": "recovery" the holder key is for a second-factor recovery request
+        instead (an admin who lost their factors): a fresh passkey and the checks of a recovery
+        request (recovery_requires_last_resort, recovery_pending,
+        recovery_notification_unavailable) apply in place of the step-up, and the verified
+        presentation files the request rather than registering a factor.
       parameters:
         - name: authrim-step-up-receipt
           in: header
           required: false
           schema:
             type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mode:
+                  type: string
+                  enum:
+                    - direct_post
+                    - dc_api
+                purpose:
+                  type: string
+                  enum:
+                    - recovery
       x-authrim-route-coverage: inferred-from-source
       responses:
         '201':
@@ -32738,6 +32762,8 @@ paths:
         Status of an enrolment presentation started by this session. Once verified, the result is
         consumed exactly once and the holder key is registered (201 with the second factor), if
         the evidence the enrolment rests on is still fresh and the approving factor still active.
+        For a recovery presentation the holder key is filed as a recovery request instead (201
+        with the request); a refused filing answers {status: failed, error} with its status.
       x-authrim-route-coverage: inferred-from-source
       parameters:
         - name: id
@@ -32760,7 +32786,6 @@ paths:
                 type: object
                 required:
                   - status
-                  - second_factor
                 properties:
                   status:
                     type: string
@@ -32769,6 +32794,10 @@ paths:
                   second_factor:
                     type: object
                     additionalProperties: true
+                    description: The registered factor (an enrolment).
+                  recovery:
+                    $ref: '#/components/schemas/AdminSecondFactorRecovery'
+                    description: The filed recovery request (a recovery presentation).
         '403':
           $ref: '#/components/responses/Error'
         '404':
@@ -78781,6 +78810,14 @@ components:
             - completed
             - cancelled
             - expired
+        kind:
+          type: string
+          enum:
+            - webauthn_credential
+            - keyring_holder_key
+          description: >-
+            What the request makes the admin's second factor: a security key, or the holder key
+            of their Keyring admin credential.
         label:
           type:
             - string
@@ -78803,6 +78840,7 @@ components:
       required:
         - id
         - status
+        - kind
         - label
         - aaguid
         - requested_at

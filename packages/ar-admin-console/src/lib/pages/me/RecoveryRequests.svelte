@@ -65,6 +65,7 @@
 
 	const columns = $derived([
 		{ key: 'admin', label: t('sk.others.admin') },
+		{ key: 'kind', label: t('sk.others.kind') },
 		{ key: 'requested', label: t('sk.others.requested') },
 		{ key: 'notBefore', label: t('sk.others.notBefore') },
 		...(canCancel
@@ -87,6 +88,8 @@
 			{#snippet cell(row, column)}
 				{#if column.key === 'admin'}
 					<span dir="ltr">{row.admin_email ?? row.admin_user_id}</span>
+				{:else if column.key === 'kind'}
+					{t(row.kind === 'keyring_holder_key' ? 'kp.kind.keyring' : 'kp.kind.securityKey')}
 				{:else if column.key === 'requested'}
 					<DateTime value={row.requested_at} />
 				{:else if column.key === 'notBefore'}

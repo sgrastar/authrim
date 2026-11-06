@@ -166,6 +166,29 @@ export async function isOwnAdminCredential(
   return !!row;
 }
 
+/**
+ * True when the credential is an active, unexpired admin credential of exactly this admin in this
+ * tenant. Its row stays `active` past its expiry (`expires_at`, seconds), which the wallet's
+ * presentation would then fail on: an expired credential counts as not active here too.
+ */
+export async function isActiveOwnAdminCredential(
+  adapter: DatabaseAdapter,
+  tenantId: string,
+  adminUserId: string,
+  credentialId: string,
+  nowMs: number = Date.now()
+): Promise<boolean> {
+  const row = await adapter.queryOne<{ status: string; expires_at: number | null }>(
+    `SELECT status, expires_at FROM issued_credentials
+      WHERE tenant_id = ? AND public_id = ? AND user_id = ? AND credential_type = ?`,
+    [tenantId, credentialId, adminUserId, ADMIN_CREDENTIAL_TYPE]
+  );
+  if (row?.status !== 'active') return false;
+  return row.expires_at === null || row.expires_at === undefined
+    ? true
+    : Number(row.expires_at) * 1000 > nowMs;
+}
+
 export type RevocationOutcome =
   | 'revoked'
   | 'unchanged'

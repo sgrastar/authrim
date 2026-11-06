@@ -24,21 +24,27 @@ import type { Context } from 'hono';
 import type {
   AdminAuthContext,
   AdminSecondFactorRecovery,
+  AdminSecondFactorRecoveryKeyringInput,
+  AdminSecondFactorRecoveryWebAuthnInput,
   DatabaseAdapter,
   Env,
 } from '@authrim/ar-lib-core';
 import {
   AR_ERROR_CODES,
   AdminSecondFactorRecoveryRepository,
+  AdminSecondFactorRepository,
   adminAuthMiddleware,
   createErrorResponse,
+  ensureDatabaseAdapter,
   evaluateAdminStepUpEvidence,
   getLogger,
   isAdminStepUpHumanSession,
   requireDedicatedAdminDatabaseAdapter,
+  resolveTenantMetadataContext,
 } from '@authrim/ar-lib-core';
 import { writeAdminAuditLog } from '../../admin-shared';
 import { refuseAdminFreshAuth } from '../../admin-step-up-gate';
+import { isActiveOwnAdminCredential } from './admin-wallet-credential-store';
 import {
   recoveryNoticeAvailable,
   sendRecoveryNotice,
@@ -78,12 +84,33 @@ export function presentRecovery(recovery: AdminSecondFactorRecovery) {
   return {
     id: recovery.id,
     status: recovery.status,
+    kind: recovery.kind,
     label: recovery.label,
     aaguid: recovery.aaguid,
     requested_at: recovery.requested_at,
     not_before: recovery.not_before,
     expires_at: recovery.expires_at,
   };
+}
+
+/**
+ * Whether the admin credential a Keyring request was presented with is still active. It lives in
+ * the core database of the admin's home tenant (the request's tenant), whatever tenant the
+ * session acts in now.
+ */
+async function keyringCredentialIsActive(
+  c: AdminContext,
+  recovery: AdminSecondFactorRecovery
+): Promise<boolean> {
+  if (!recovery.admin_credential_id) return false;
+  const context = await resolveTenantMetadataContext(c.env, recovery.tenant_id);
+  const coreAdapter = ensureDatabaseAdapter(context.coreDb, 'admin-second-factor-recovery');
+  return isActiveOwnAdminCredential(
+    coreAdapter,
+    recovery.tenant_id,
+    recovery.admin_user_id,
+    recovery.admin_credential_id
+  );
 }
 
 /** Whether anyone other than this admin is an active administrator anywhere. */
@@ -141,17 +168,17 @@ export async function refuseRecoveryRequest(
  * File the request for a verified new credential and notify. If any notice cannot be handed to
  * delivery, the request is cancelled again rather than left to wait unseen.
  */
+type FiledBySession = 'admin_user_id' | 'tenant_id' | 'requested_session_id';
+
+/** The new second factor a request carries: a WebAuthn credential or a Keyring holder key. */
+export type RecoveryCredential =
+  | Omit<AdminSecondFactorRecoveryWebAuthnInput, FiledBySession>
+  | Omit<AdminSecondFactorRecoveryKeyringInput, FiledBySession>;
+
 export async function fileRecoveryRequest(
   c: AdminContext,
   auth: HumanSession,
-  credential: {
-    credential_id: string;
-    public_key: string;
-    counter: number;
-    transports: string[];
-    aaguid: string | null;
-    label: string | null;
-  }
+  credential: RecoveryCredential
 ): Promise<Response> {
   const requesterEmail = auth.email;
   if (!requesterEmail) {
@@ -231,7 +258,7 @@ export async function fileRecoveryRequest(
       resourceType: 'admin_second_factor_recovery',
       resourceId: result.recovery.id,
       result: 'success',
-      metadata: { not_before: result.recovery.not_before },
+      metadata: { not_before: result.recovery.not_before, kind: result.recovery.kind },
     });
     return c.json({ recovery: presentRecovery(result.recovery) }, 201);
   } catch (error) {
@@ -281,6 +308,17 @@ mySecondFactorRecoveryRouter.post('/complete', async (c) => {
     const adapter = adminAdapter(c);
     const repo = new AdminSecondFactorRecoveryRepository(adapter);
     const open = await repo.findOpenByUser(auth.userId, now);
+    // A Keyring request stands on the admin credential it was presented with: revoked during the
+    // wait, the request completes nothing (and the old factors stay).
+    if (open?.kind === 'keyring_holder_key' && !(await keyringCredentialIsActive(c, open))) {
+      return c.json(
+        {
+          error: 'credential_not_active',
+          error_description: 'The admin credential this request was made with is no longer active',
+        },
+        409
+      );
+    }
     let result;
     try {
       result = await repo.complete(auth.userId, auth.sessionId, now);
@@ -305,10 +343,37 @@ mySecondFactorRecoveryRouter.post('/complete', async (c) => {
       return c.json({ error: 'not_found', error_description: 'No open recovery request' }, 404);
     }
 
-    if (open) {
+    // Revoked between the check above and the completion (its revocation found no factor to
+    // retire yet): checked again, and the new factor retired if so. Fail closed: a credential that
+    // cannot be confirmed active now does not keep the factor.
+    if (
+      result.recovery.kind === 'keyring_holder_key' &&
+      !(await keyringCredentialIsActive(c, result.recovery).catch(() => false))
+    ) {
+      await new AdminSecondFactorRepository(adapter).revokeByAdmin(
+        auth.userId,
+        result.secondFactorId
+      );
+      await writeAdminAuditLog(c, {
+        action: 'admin.second_factor.recovery_completed',
+        resourceType: 'admin_second_factor_recovery',
+        resourceId: result.recovery.id,
+        result: 'failure',
+        metadata: { second_factor_id: result.secondFactorId, reason: 'credential_not_active' },
+      });
+      return c.json(
+        {
+          error: 'credential_not_active',
+          error_description: 'The admin credential this request was made with is no longer active',
+        },
+        409
+      );
+    }
+
+    {
       const noticed = await sendRecoveryNoticeAfterCommit(c.env, adapter, {
         event: 'completed',
-        recovery: { ...open, status: 'completed', completed_at: now },
+        recovery: result.recovery,
         requester: { id: auth.userId, email: auth.email ?? '' },
         now,
       });
@@ -321,9 +386,9 @@ mySecondFactorRecoveryRouter.post('/complete', async (c) => {
     await writeAdminAuditLog(c, {
       action: 'admin.second_factor.recovery_completed',
       resourceType: 'admin_second_factor_recovery',
-      resourceId: open?.id ?? auth.userId,
+      resourceId: result.recovery.id,
       result: 'success',
-      metadata: { second_factor_id: result.secondFactorId },
+      metadata: { second_factor_id: result.secondFactorId, kind: result.recovery.kind },
     });
     return c.json({ completed: true, second_factor_id: result.secondFactorId });
   } catch (error) {

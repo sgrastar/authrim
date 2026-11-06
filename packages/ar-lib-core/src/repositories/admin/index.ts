@@ -35,7 +35,10 @@ export {
   type AdminSecondFactorRecoveryCompleteResult,
   type AdminSecondFactorRecoveryCreateResult,
   type AdminSecondFactorRecoveryInput,
+  type AdminSecondFactorRecoveryKeyringInput,
+  type AdminSecondFactorRecoveryKind,
   type AdminSecondFactorRecoveryStatus,
+  type AdminSecondFactorRecoveryWebAuthnInput,
 } from './admin-second-factor-recovery';
 export {
   ADMIN_NOTICE_EMAIL_DEFAULTS,
