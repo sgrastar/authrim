@@ -32,6 +32,7 @@ import {
   type AdminRoleAssignmentScopeType,
 } from '@authrim/ar-lib-core';
 import { writeAdminAuditLog } from '../../admin-shared';
+import { ensureCrossTenantPlacement } from './cross-tenant-placement';
 import { requireAdminStepUp } from '../../admin-step-up-gate';
 import {
   callerOutranks,
@@ -336,6 +337,14 @@ adminRolesRouter.post('/:id/assignments', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
     }
 
+    const placementRefusal = ensureCrossTenantPlacement(c, c.env, {
+      scopeType: normalizedScope.scopeType,
+      homeTenantId: user.tenant_id,
+    });
+    if (placementRefusal) {
+      return placementRefusal;
+    }
+
     const duplicate = await roleAssignmentRepo.assignmentExists({
       adminUserId: body.admin_user_id,
       adminRoleId: id,
@@ -462,6 +471,25 @@ adminRolesRouter.patch('/:id/assignments/:assignmentId', async (c) => {
         !callerOutranksGlobally(authContext, role.hierarchy_level))
     ) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+    }
+
+    // Only a change to global scope is a new cross-tenant grant; an existing global assignment
+    // keeps working (expiry change, role-preserving update) wherever its admin is homed.
+    if (assignment.scope_type !== 'global' && normalizedScope.scopeType === 'global') {
+      const target = await new AdminUserRepository(adapter).findByTenantAndId(
+        tenantId,
+        assignment.admin_user_id
+      );
+      if (!target) {
+        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+      }
+      const placementRefusal = ensureCrossTenantPlacement(c, c.env, {
+        scopeType: normalizedScope.scopeType,
+        homeTenantId: target.tenant_id,
+      });
+      if (placementRefusal) {
+        return placementRefusal;
+      }
     }
 
     // An expiry ends the assignment (now, or later by itself), so it is held to the rule for

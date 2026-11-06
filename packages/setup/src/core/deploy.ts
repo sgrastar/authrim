@@ -1374,6 +1374,41 @@ function initialBridgeBootstrapConfig(
   return path;
 }
 
+function initialVcBootstrapConfig(
+  options: DeployOptions,
+  components: readonly WorkerComponent[],
+  strategy: 'direct' | 'staged'
+): string | undefined {
+  if (!components.includes('ar-vc') || options.existingComponents?.includes('ar-management')) {
+    return undefined;
+  }
+  const fullConfigPath = options.configFile
+    ? options.configFile
+    : join(options.rootDir, 'packages', 'ar-vc', 'wrangler.toml');
+  if (
+    !existsSync(fullConfigPath) ||
+    !readFileSync(fullConfigPath, 'utf-8').includes('binding = "ADMIN_CREDENTIAL_ELIGIBILITY"')
+  ) {
+    return undefined;
+  }
+  // The full VC config binds Management, which Cloudflare requires to exist at upload time.
+  // A VC-only deploy without Management (known to be absent) would be rejected; say why up front.
+  if (!components.includes('ar-management')) {
+    if (options.existingComponents !== undefined) {
+      throw new Error('vc_deploy_requires_management');
+    }
+    return undefined;
+  }
+  if (strategy !== 'direct') {
+    return undefined;
+  }
+  const path = join(options.rootDir, 'packages', 'ar-vc', AUTH_BOOTSTRAP_CONFIG_FILE);
+  if (!options.dryRun && !existsSync(path)) {
+    throw new Error('initial_vc_bootstrap_config_missing');
+  }
+  return path;
+}
+
 function clampConcurrency(value: number | undefined): number {
   return Math.min(4, Math.max(1, Math.floor(value ?? DEFAULT_DEPLOY_CONCURRENCY)));
 }
@@ -3553,6 +3588,7 @@ export async function deployAll(
   }
   const authBootstrapConfig = initialAuthBootstrapConfig(options, components, strategy);
   const bridgeBootstrapConfig = initialBridgeBootstrapConfig(options, components, strategy);
+  const vcBootstrapConfig = initialVcBootstrapConfig(options, components, strategy);
   const throttle = makeThrottle(options);
 
   options.onProgress?.('Starting Authrim deployment...\n');
@@ -3626,6 +3662,11 @@ export async function deployAll(
         if (component === 'ar-management' && bridgeBootstrapConfig) {
           options.onProgress?.(
             '  [DRY RUN] Would redeploy ar-bridge with EXTERNAL_IDP_ACCOUNT_PROVISIONER after ar-management'
+          );
+        }
+        if (component === 'ar-management' && vcBootstrapConfig) {
+          options.onProgress?.(
+            '  [DRY RUN] Would redeploy ar-vc with ADMIN_CREDENTIAL_ELIGIBILITY after ar-management'
           );
         }
         return {
@@ -3932,6 +3973,8 @@ export async function deployAll(
       let fullAuthResult: DeployResult | undefined;
       let bootstrapBridgeResult: DeployResult | undefined;
       let fullBridgeResult: DeployResult | undefined;
+      let bootstrapVcResult: DeployResult | undefined;
+      let fullVcResult: DeployResult | undefined;
       resultMap = await runDependencyScheduler(components, options, throttle, async (component) => {
         const failure = validationFailures.get(component);
         if (failure) {
@@ -3970,10 +4013,21 @@ export async function deployAll(
           );
           return bootstrapBridgeResult;
         }
+        if (component === 'ar-vc' && vcBootstrapConfig) {
+          options.onProgress?.(
+            'Deploying initial ar-vc bootstrap without ADMIN_CREDENTIAL_ELIGIBILITY...'
+          );
+          bootstrapVcResult = await deployWorkerDirect(
+            contexts.get(component)!,
+            { ...options, configFile: vcBootstrapConfig },
+            throttle
+          );
+          return bootstrapVcResult;
+        }
         const result = await deployWorkerDirect(contexts.get(component)!, options, throttle);
         if (
           component !== 'ar-management' ||
-          (!authBootstrapConfig && !bridgeBootstrapConfig) ||
+          (!authBootstrapConfig && !bridgeBootstrapConfig && !vcBootstrapConfig) ||
           !result.success
         ) {
           return result;
@@ -4026,6 +4080,29 @@ export async function deployAll(
               success: false,
               trafficCommitted: true,
               error: `Management deployed, but full Auth redeploy failed: ${promoted.error || 'unknown error'}`,
+            };
+          }
+        }
+        if (vcBootstrapConfig) {
+          options.onProgress?.(
+            'Redeploying ar-vc with the ADMIN_CREDENTIAL_ELIGIBILITY binding...'
+          );
+          const promotedVc = await deployWorkerDirect(contexts.get('ar-vc')!, options, throttle);
+          if (promotedVc.success) {
+            fullVcResult = promotedVc;
+          } else {
+            fullVcResult = {
+              ...promotedVc,
+              success: false,
+              trafficCommitted: true,
+              deployedAt: bootstrapVcResult?.deployedAt,
+              error: `Initial VC bootstrap is still active; full VC redeploy failed: ${promotedVc.error || 'unknown error'}`,
+            };
+            return {
+              ...result,
+              success: false,
+              trafficCommitted: true,
+              error: `Management deployed, but full VC redeploy failed: ${promotedVc.error || 'unknown error'}`,
             };
           }
         }
@@ -4128,6 +4205,27 @@ export async function deployAll(
             error:
               bootstrapBridgeResult?.error ||
               'Initial Bridge bootstrap remains active because Management or full Bridge deployment did not complete',
+          }
+        );
+      }
+      if (vcBootstrapConfig) {
+        resultMap.set(
+          'ar-vc',
+          fullVcResult ?? {
+            ...(bootstrapVcResult ??
+              makeSkippedResult(
+                'ar-vc',
+                options,
+                'Initial VC bootstrap did not complete',
+                contexts.get('ar-vc')
+              )),
+            success: false,
+            trafficCommitted:
+              bootstrapVcResult?.success === true || bootstrapVcResult?.trafficCommitted === true,
+            error:
+              bootstrapVcResult?.success === true
+                ? 'Initial VC bootstrap is active, but Management did not complete the full VC redeploy'
+                : bootstrapVcResult?.error || 'Initial VC bootstrap did not complete',
           }
         );
       }

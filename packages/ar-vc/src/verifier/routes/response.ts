@@ -10,6 +10,7 @@
  * - Region-aware DO placement with locationHint
  */
 
+import { isConfiguredShard } from '../../utils/configured-shard';
 import type { Context } from 'hono';
 import type { Env, VPRequestState } from '../../types';
 import {
@@ -94,7 +95,10 @@ export async function vpResponseRoute(c: Context<{ Bindings: Env }>): Promise<Re
 
     // Get the DO stub using region-aware sharding (self-routing from ID)
     const tenantId = getTenantIdFromContext(c);
-    const { stub } = getVPRequestStoreById(c.env, requestId, tenantId);
+    const { stub, resolution } = getVPRequestStoreById(c.env, requestId, tenantId);
+    if (!(await isConfiguredShard(c.env, tenantId, resolution))) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
     const reserveResponse = await stub.fetch(
       new Request('https://internal/reserve', {
         method: 'POST',

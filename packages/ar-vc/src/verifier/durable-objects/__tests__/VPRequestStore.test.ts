@@ -5,11 +5,14 @@ import { VPRequestStore } from '../VPRequestStore';
 import type { VPRequestState } from '../../../types';
 
 type Row = Record<string, SqlStorageValue>;
-function cursor(rows: Row[] = [], rowsWritten = 0): SqlStorageCursor<Row> {
+function cursor(rows: Row[] = [], _changes = 0): SqlStorageCursor<Row> {
   return {
     columnNames: rows.length ? Object.keys(rows[0]) : [],
     rowsRead: rows.length,
-    rowsWritten,
+    // Cloudflare counts index writes in `rowsWritten`; the store must count RETURNING rows.
+    get rowsWritten(): never {
+      throw new Error('rowsWritten differs on Cloudflare; count RETURNING rows instead');
+    },
     toArray: () => rows,
     one: () => rows[0],
     raw: () => rows.map(Object.values),
@@ -74,7 +77,7 @@ class MemoryVpSql {
         created_at: created,
         expires_at: expires,
       });
-      return cursor([], 1) as never;
+      return cursor([{ id: 'changed' }], 1) as never;
     }
     if (q.startsWith('SELECT * FROM vp_requests')) {
       const row = this.rows.get(String(p[0]));
@@ -111,7 +114,7 @@ class MemoryVpSql {
       row.response_fingerprint = p[0];
       row.reservation_id = p[1];
       row.lease_expires_at = p[2];
-      return cursor([], 1) as never;
+      return cursor([{ id: 'changed' }], 1) as never;
     }
     if (q.includes("SET status = 'verified'")) {
       const row = this.rows.get(String(p[1]));
@@ -126,7 +129,7 @@ class MemoryVpSql {
       row.verified_claim_names_json = p[0];
       row.reservation_id = null;
       row.lease_expires_at = null;
-      return cursor([], 1) as never;
+      return cursor([{ id: 'changed' }], 1) as never;
     }
     if (q.includes("SET status = 'failed'")) {
       const row = this.rows.get(String(p[2]));
@@ -141,7 +144,7 @@ class MemoryVpSql {
       row.error_code = p[0];
       row.error_description = p[1];
       row.reservation_id = null;
-      return cursor([], 1) as never;
+      return cursor([{ id: 'changed' }], 1) as never;
     }
     if (q.includes("SET status = 'pending'")) {
       const idIndex = p.length === 4 ? 0 : 0;
@@ -152,7 +155,7 @@ class MemoryVpSql {
         row.reservation_id = null;
         row.lease_expires_at = null;
       }
-      return cursor([], row ? 1 : 0) as never;
+      return cursor(row ? [{ id: 'changed' }] : [], row ? 1 : 0) as never;
     }
     if (q.includes("SET status = 'expired'")) {
       if (q.includes('WHERE id = ?')) {
@@ -161,7 +164,7 @@ class MemoryVpSql {
       } else
         for (const row of this.rows.values())
           if (Number(row.expires_at) <= Number(p[0])) row.status = 'expired';
-      return cursor([], 1) as never;
+      return cursor([{ id: 'changed' }], 1) as never;
     }
     if (q.startsWith('DELETE')) return cursor() as never;
     throw new Error(`Unhandled SQL: ${q}`);

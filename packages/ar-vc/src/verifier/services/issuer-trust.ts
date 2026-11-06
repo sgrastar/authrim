@@ -94,26 +94,117 @@ export async function checkIssuerTrust(
 }
 
 /**
- * Get issuer's public key for signature verification
+ * Get issuer's public key for signature verification.
+ *
+ * With a `kid` (from the signed JWT's header) the key is the one it names, never another key of
+ * the issuer: after a rotation an issuer publishes several keys. Without one, the issuer's single
+ * suitable key is used as before.
  */
 export async function getIssuerPublicKey(
   env: Env,
   issuerDid: string,
-  jwksUri?: string
+  jwksUri?: string,
+  kid?: string
 ): Promise<CryptoKey> {
   // Try JWKS URI first if provided
   if (jwksUri) {
-    return getKeyFromJwksUri(jwksUri);
+    return getKeyFromJwksUri(jwksUri, kid);
+  }
+
+  // An https issuer publishes its keys in SD-JWT VC Issuer Metadata
+  if (issuerDid.startsWith('https://')) {
+    return getKeyFromIssuerMetadata(issuerDid, kid);
   }
 
   // Fall back to DID document resolution
-  return getKeyFromDid(env, issuerDid);
+  return getKeyFromDid(env, issuerDid, kid);
+}
+
+/**
+ * The SD-JWT VC Issuer Metadata URL of an https issuer: `/.well-known/jwt-vc-issuer` inserted
+ * between the host and the path (draft-ietf-oauth-sd-jwt-vc, section 5).
+ */
+export function jwtVcIssuerMetadataUrl(issuer: string): string {
+  const url = new URL(issuer);
+  if (url.protocol !== 'https:' || url.search || url.hash || url.username || url.password) {
+    throw new Error('Issuer must be an https URL without query, fragment or credentials');
+  }
+  const path = url.pathname === '/' ? '' : url.pathname.replace(/\/$/, '');
+  return `${url.origin}/.well-known/jwt-vc-issuer${path}`;
+}
+
+/**
+ * Resolve the key from the issuer's own metadata. The metadata must name exactly this issuer, and
+ * holds the keys inline (`jwks`) or at an https `jwks_uri`.
+ */
+async function getKeyFromIssuerMetadata(issuer: string, kid?: string): Promise<CryptoKey> {
+  const metadata = await safeFetchJson<{ issuer?: unknown; jwks?: unknown; jwks_uri?: unknown }>(
+    jwtVcIssuerMetadataUrl(issuer),
+    {
+      headers: { Accept: 'application/json' },
+      requireHttps: true,
+      timeoutMs: 10000,
+      maxResponseSize: 256 * 1024,
+    }
+  );
+  if (metadata.issuer !== issuer) {
+    throw new Error('Issuer metadata names a different issuer');
+  }
+  const inline = metadata.jwks as { keys?: unknown } | undefined;
+  if (inline !== undefined) {
+    if (!Array.isArray(inline?.keys)) throw new Error('Issuer metadata jwks has no keys');
+    return selectJwksSigningKey(inline.keys as JWK[], kid, { optionalUseAndAlg: true });
+  }
+  if (typeof metadata.jwks_uri === 'string') {
+    // The keys come from the issuer's own origin, never from a host its metadata points to.
+    let jwksUrl: URL;
+    try {
+      jwksUrl = new URL(metadata.jwks_uri);
+    } catch {
+      throw new Error('Issuer metadata jwks_uri is not a URL');
+    }
+    if (jwksUrl.protocol !== 'https:' || jwksUrl.origin !== new URL(issuer).origin) {
+      throw new Error('Issuer metadata jwks_uri must be on the issuer origin');
+    }
+    return getKeyFromJwksUri(jwksUrl.href, kid, { optionalUseAndAlg: true });
+  }
+  throw new Error('Issuer metadata has neither jwks nor jwks_uri');
+}
+
+const EC_SIGNING_ALGORITHMS = ['ES256', 'ES384', 'ES512'];
+const EC_CURVE_ALGORITHMS: Record<string, string> = {
+  'P-256': 'ES256',
+  'P-384': 'ES384',
+  'P-521': 'ES512',
+};
+
+/**
+ * Whether a JWK may verify an issuer's signature: an EC key whose `alg` (when stated) is its
+ * curve's, or an Ed25519 key, and never one whose stated `use` or `key_ops` rule verifying out.
+ */
+function isIssuerSigningJwk(
+  jwk: { kty?: string; crv?: string; alg?: string; use?: string; key_ops?: string[] } | undefined
+): boolean {
+  if (!jwk) return false;
+  if (jwk.use !== undefined && jwk.use !== 'sig') return false;
+  if (jwk.key_ops !== undefined && !jwk.key_ops.includes('verify')) return false;
+  if (jwk.kty === 'EC') {
+    const alg = EC_CURVE_ALGORITHMS[jwk.crv ?? ''];
+    return alg !== undefined && (jwk.alg === undefined || jwk.alg === alg);
+  }
+  return (
+    jwk.kty === 'OKP' && jwk.crv === 'Ed25519' && (jwk.alg === undefined || jwk.alg === 'EdDSA')
+  );
 }
 
 /**
  * Fetch public key from JWKS URI
  */
-async function getKeyFromJwksUri(jwksUri: string): Promise<CryptoKey> {
+async function getKeyFromJwksUri(
+  jwksUri: string,
+  kid?: string,
+  selection: KeySelection = {}
+): Promise<CryptoKey> {
   const jwks = await safeFetchJson<{ keys: JWK[] }>(jwksUri, {
     headers: { Accept: 'application/json' },
     requireHttps: true,
@@ -121,17 +212,97 @@ async function getKeyFromJwksUri(jwksUri: string): Promise<CryptoKey> {
     maxResponseSize: 256 * 1024, // 256 KB max for JWKS
   });
 
-  // Find a signing key (ES256, ES384, or ES512)
-  const signingKey = jwks.keys.find(
-    (key) =>
-      key.use === 'sig' && key.kty === 'EC' && ['ES256', 'ES384', 'ES512'].includes(key.alg || '')
-  );
+  return selectJwksSigningKey(jwks.keys, kid, selection);
+}
+
+interface KeySelection {
+  /**
+   * Without a kid, accept the one key that passes the signing-key rules even when it omits the
+   * optional `use` and `alg` (SD-JWT VC Issuer Metadata). Otherwise a kid-less signature needs a
+   * key stating `use: sig` and its `alg`.
+   */
+  optionalUseAndAlg?: boolean;
+}
+
+/** The one EC signing key of a JWKS that a signature may be verified with. */
+function selectJwksSigningKey(
+  keys: JWK[],
+  kid?: string,
+  selection: KeySelection = {}
+): Promise<CryptoKey> {
+  // The same signing-key rules with or without a kid; without one the JWKS must hold exactly one
+  // (ES256, ES384 or ES512 with use "sig") rather than the first in document order.
+  const signingKeys = keys.filter((key) => key.kty === 'EC' && isIssuerSigningJwk(key));
+  const candidates =
+    kid !== undefined
+      ? signingKeys.filter((key) => key.kid === kid)
+      : selection.optionalUseAndAlg
+        ? signingKeys
+        : signingKeys.filter(
+            (key) => key.use === 'sig' && EC_SIGNING_ALGORITHMS.includes(key.alg || '')
+          );
+  if (candidates.length > 1) {
+    throw new Error('JWKS has several matching signing keys: the signature must name one with kid');
+  }
+  const signingKey = candidates[0];
 
   if (!signingKey) {
     throw new Error('No suitable EC signing key found in JWKS');
   }
 
-  return importECPublicKey(signingKey);
+  return importECPublicKey(withEcAlgorithm(signingKey));
+}
+
+/** A DID URL for a method or key reference: absolute, a `#fragment`, or a bare fragment. */
+function absoluteMethodId(did: string, reference: string): string {
+  if (reference.startsWith('did:')) return reference;
+  return `${did}${reference.startsWith('#') ? '' : '#'}${reference}`;
+}
+
+/**
+ * The one verification method a JWT `kid` names. Method IDs (relative ones resolved against the
+ * DID) decide first; a JWK's own `kid` only when no method ID matches. More than one match is
+ * ambiguous and refused rather than resolved by document order.
+ */
+function methodNamedBy<T extends { id: string; publicKeyJwk?: { kid?: string } }>(
+  did: string,
+  kid: string,
+  methods: readonly T[]
+): T {
+  const target = absoluteMethodId(did, kid);
+  const byId = methods.filter((vm) => absoluteMethodId(did, vm.id) === target);
+  const matches = byId.length ? byId : methods.filter((vm) => vm.publicKeyJwk?.kid === kid);
+  if (matches.length !== 1) {
+    throw new Error(
+      matches.length
+        ? 'Key id names more than one verification method'
+        : 'No verification method matches the key id'
+    );
+  }
+  return matches[0];
+}
+
+/** The ES algorithm of an EC public key, taken from its curve when the JWK omits `alg`. */
+function withEcAlgorithm(jwk: JWK): JWK {
+  if (jwk.alg) return jwk;
+  const alg = EC_CURVE_ALGORITHMS[jwk.crv ?? ''];
+  return alg ? { ...jwk, alg } : jwk;
+}
+
+type DidDocument = NonNullable<Awaited<ReturnType<typeof resolveDID>>>;
+type DidVerificationMethod = NonNullable<DidDocument['verificationMethod']>[number];
+
+/**
+ * The methods a DID document lets sign assertions (credentials, status lists): its
+ * `assertionMethod` entries, references resolved against `verificationMethod`.
+ */
+function assertionMethodsOf(did: string, document: DidDocument): DidVerificationMethod[] {
+  const methods = document.verificationMethod ?? [];
+  return (document.assertionMethod ?? []).flatMap((entry) => {
+    if (typeof entry !== 'string') return [entry as DidVerificationMethod];
+    const id = absoluteMethodId(did, entry);
+    return methods.filter((vm) => absoluteMethodId(did, vm.id) === id);
+  });
 }
 
 /**
@@ -141,7 +312,7 @@ async function getKeyFromJwksUri(jwksUri: string): Promise<CryptoKey> {
  * - did:web (with SSRF protection via safeFetch)
  * - did:key (with multibase/multicodec decoding to JWK)
  */
-async function getKeyFromDid(env: Env, did: string): Promise<CryptoKey> {
+async function getKeyFromDid(env: Env, did: string, kid?: string): Promise<CryptoKey> {
   // Resolve DID document using shared resolver
   const didDocument = await resolveDID(did);
 
@@ -150,33 +321,37 @@ async function getKeyFromDid(env: Env, did: string): Promise<CryptoKey> {
     throw new Error('Failed to resolve DID document');
   }
 
-  // Find verification method with public key
-  const verificationMethods = didDocument.verificationMethod;
+  // Only the issuer's own assertion keys sign credentials and status lists, with or without a kid:
+  // a key for another purpose, of another controller or of another type never does.
+  const isIssuerAssertionKey = (vm: DidVerificationMethod) =>
+    vm.controller === did && isIssuerSigningJwk(vm.publicKeyJwk);
+  const assertionMethods = assertionMethodsOf(did, didDocument);
 
-  if (!verificationMethods || verificationMethods.length === 0) {
-    throw new Error('No verification methods found in DID document');
+  let verificationMethod: DidVerificationMethod;
+  if (kid !== undefined) {
+    // A kid names exactly one assertion method; a missing one is an error, not a reason to try
+    // others.
+    verificationMethod = methodNamedBy(did, kid, assertionMethods);
+    if (verificationMethod.controller !== did) {
+      throw new Error('Verification method is controlled by another DID');
+    }
+    if (!isIssuerSigningJwk(verificationMethod.publicKeyJwk)) {
+      throw new Error('Verification method is not a supported signing key');
+    }
+  } else {
+    // Without a kid the issuer must have exactly one usable assertion key.
+    const candidates = assertionMethods.filter(isIssuerAssertionKey);
+    if (candidates.length !== 1) {
+      throw new Error(
+        candidates.length
+          ? 'DID document has several assertion keys: the signature must name one with kid'
+          : 'No assertion key found in DID document'
+      );
+    }
+    verificationMethod = candidates[0];
   }
 
-  // Try to find an EC key first (for HAIP compliance)
-  let verificationMethod = verificationMethods.find(
-    (vm) =>
-      vm.publicKeyJwk?.kty === 'EC' &&
-      ['P-256', 'P-384', 'P-521'].includes(vm.publicKeyJwk?.crv || '')
-  );
-
-  // Fall back to OKP (Ed25519) if no EC key found
-  if (!verificationMethod) {
-    verificationMethod = verificationMethods.find(
-      (vm) => vm.publicKeyJwk?.kty === 'OKP' && vm.publicKeyJwk?.crv === 'Ed25519'
-    );
-  }
-
-  // Last resort: any key with publicKeyJwk
-  if (!verificationMethod) {
-    verificationMethod = verificationMethods.find((vm) => vm.publicKeyJwk);
-  }
-
-  if (!verificationMethod?.publicKeyJwk) {
+  if (!verificationMethod.publicKeyJwk) {
     throw new Error('No public key found in DID document');
   }
 
@@ -184,7 +359,7 @@ async function getKeyFromDid(env: Env, did: string): Promise<CryptoKey> {
 
   // Import based on key type
   if (jwk.kty === 'EC') {
-    return importECPublicKey(jwk as JWK);
+    return importECPublicKey(withEcAlgorithm(jwk as JWK));
   } else if (jwk.kty === 'OKP') {
     // Use jose's importJWK for OKP keys
     return (await importJWK(jwk as JWK, jwk.alg || 'EdDSA')) as CryptoKey;

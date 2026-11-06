@@ -75,15 +75,13 @@ describe('validateVCIAccessToken', () => {
   it('accepts the access token without embedding credential claims', async () => {
     const { publicKey, privateKey } = await generateKeyPair('ES256', { extractable: true });
     const publicJwk = await exportJWK(publicKey);
-    const issuer = 'did:web:acme.oidc.example.com';
+    const issuer = 'https://acme.oidc.example.com';
     const stub = {
-      fetch: vi.fn(async (request: Request) => {
-        const path = new URL(request.url).pathname;
-        if (path === '/ec/jwks') {
-          return Response.json({ keys: [{ ...publicJwk, alg: 'ES256', kid: 'key-1' }] });
-        }
-        return Response.json({ kid: 'key-1', publicKeyJwk: publicJwk, algorithm: 'ES256' });
-      }),
+      // The KeyManager's HTTP endpoints require the internal secret: keys come over RPC only.
+      fetch: vi.fn(async () => new Response('Unauthorized', { status: 401 })),
+      getVcIssuerJwksRpc: vi.fn(async () => ({
+        keys: [{ ...publicJwk, alg: 'ES256', kid: 'key-1' }],
+      })),
       signVCIAccessTokenRpc: vi.fn(
         async (input: {
           tenantId: string;
@@ -91,6 +89,7 @@ describe('validateVCIAccessToken', () => {
           offerId: string;
           credentialConfigurationId: string;
           issuer: string;
+          audience: string;
           expiresInSeconds: number;
         }) => {
           const now = Math.floor(Date.now() / 1000);
@@ -106,7 +105,7 @@ describe('validateVCIAccessToken', () => {
             .setJti('token-jti')
             .setExpirationTime(now + input.expiresInSeconds)
             .setIssuer(input.issuer)
-            .setAudience(input.issuer)
+            .setAudience(input.audience)
             .sign(privateKey);
           return { token };
         }
@@ -127,9 +126,16 @@ describe('validateVCIAccessToken', () => {
         credentialConfigurationId: 'UniversityDegreeCredential',
         offerId: 'g1:apac:1:co_offer-a',
       },
-      issuer
+      { credentialIssuer: issuer, expiresInSeconds: 300 }
     );
 
+    expect(stub.signVCIAccessTokenRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        issuer: 'https://acme.oidc.example.com/vci',
+        audience: issuer,
+        expiresInSeconds: 300,
+      })
+    );
     await expect(validateVCIAccessToken(env, token, issuer, 'acme')).resolves.toMatchObject({
       valid: true,
       userId: 'user-acme',
@@ -140,51 +146,64 @@ describe('validateVCIAccessToken', () => {
     expect((await validateVCIAccessToken(env, token, issuer, 'acme')).claims).toBeUndefined();
   });
 
-  it('derives the fallback DID issuer from the expected request tenant', async () => {
-    const { publicKey, privateKey } = await generateKeyPair('ES256');
+  it.each([
+    { name: 'no kid', kid: undefined },
+    { name: 'a kid missing from the issuer keys (revoked or unknown)', kid: 'key-revoked' },
+  ])('rejects an access token signed with $name', async ({ kid }) => {
+    const { publicKey, privateKey } = await generateKeyPair('ES256', { extractable: true });
     const publicJwk = await exportJWK(publicKey);
-    const keyManager = createKeyManagerEnv({
-      keys: [{ ...publicJwk, alg: 'ES256', kid: 'tenant-acme-key' }],
-    });
+    const issuer = 'https://acme.oidc.example.com';
     const env = {
-      ...keyManager.bindings,
-      BASE_DOMAIN: 'oidc.example.com',
-      NAKED_DOMAIN_AS_ISSUER: 'true',
-      PRIMARY_TENANT_ID: 'default',
-      DEFAULT_TENANT_ID: 'default',
+      KEY_MANAGER: {
+        idFromName: vi.fn((name: string) => name),
+        get: vi.fn(() => ({
+          getVcIssuerJwksRpc: vi.fn(async () => ({
+            keys: [{ ...publicJwk, alg: 'ES256', kid: 'key-1' }],
+          })),
+        })),
+      },
     } as unknown as Env;
-
-    const token = await new SignJWT({
-      iss: 'did:web:acme.oidc.example.com',
-      sub: 'user-acme',
-      aud: 'did:web:acme.oidc.example.com',
-      scope: 'openid credential',
-      tenant_id: 'acme',
-      credential_configuration_id: 'UniversityDegreeCredential',
-      credential_claims: { given_name: 'Alice' },
-    })
-      .setProtectedHeader({ alg: 'ES256', typ: 'JWT', kid: 'tenant-acme-key' })
-      .setIssuedAt()
-      .setExpirationTime('5m')
+    const now = Math.floor(Date.now() / 1000);
+    // Signed with the published key's private half: only the kid decides the outcome.
+    const token = await new SignJWT({ tenant_id: 'acme', scope: 'credential' })
+      .setProtectedHeader({ alg: 'ES256', typ: 'at+jwt', ...(kid ? { kid } : {}) })
+      .setSubject('user-acme')
+      .setIssuedAt(now)
+      .setJti('token-jti')
+      .setExpirationTime(now + 300)
+      .setIssuer(`${issuer}/vci`)
+      .setAudience(issuer)
       .sign(privateKey);
 
-    const result = await validateVCIAccessToken(env, token, undefined, 'acme');
-
-    expect(result).toMatchObject({
-      valid: true,
-      userId: 'user-acme',
-      tenantId: 'acme',
-      vct: 'UniversityDegreeCredential',
+    await expect(validateVCIAccessToken(env, token, issuer, 'acme')).resolves.toMatchObject({
+      valid: false,
+      error: 'Invalid signature',
     });
-    expect(keyManager.mocks.idFromName).toHaveBeenCalledWith('acme-v3');
-    expect(keyManager.mocks.idFromName).not.toHaveBeenCalledWith('default-v3');
   });
 
   it.each([
     {
       name: 'lookalike issuer',
       claims: {
-        iss: 'https://evil-authrim.example.com',
+        iss: 'https://evil-authrim.example.com/vci',
+        aud: 'https://acme.oidc.example.com',
+        scope: 'credential',
+      },
+      error: 'Invalid issuer',
+    },
+    {
+      name: 'credential issuer instead of the /vci authorization server as issuer',
+      claims: {
+        iss: 'https://acme.oidc.example.com',
+        aud: 'https://acme.oidc.example.com',
+        scope: 'credential',
+      },
+      error: 'Invalid issuer',
+    },
+    {
+      name: 'legacy did:web issuer',
+      claims: {
+        iss: 'did:web:acme.oidc.example.com',
         aud: 'did:web:acme.oidc.example.com',
         scope: 'credential',
       },
@@ -193,8 +212,26 @@ describe('validateVCIAccessToken', () => {
     {
       name: 'audience that only contains the vci substring',
       claims: {
-        iss: 'did:web:acme.oidc.example.com',
+        iss: 'https://acme.oidc.example.com/vci',
         aud: 'https://evil.example.com/callback?vci=true',
+        scope: 'credential',
+      },
+      error: 'Invalid audience',
+    },
+    {
+      name: 'audience naming the authorization server instead of the credential issuer',
+      claims: {
+        iss: 'https://acme.oidc.example.com/vci',
+        aud: 'https://acme.oidc.example.com/vci',
+        scope: 'credential',
+      },
+      error: 'Invalid audience',
+    },
+    {
+      name: 'additional audience',
+      claims: {
+        iss: 'https://acme.oidc.example.com/vci',
+        aud: ['https://acme.oidc.example.com', 'https://other.example.com'],
         scope: 'credential',
       },
       error: 'Invalid audience',
@@ -202,8 +239,8 @@ describe('validateVCIAccessToken', () => {
     {
       name: 'openid-only scope',
       claims: {
-        iss: 'did:web:acme.oidc.example.com',
-        aud: 'did:web:acme.oidc.example.com',
+        iss: 'https://acme.oidc.example.com/vci',
+        aud: 'https://acme.oidc.example.com',
         scope: 'openid',
       },
       error: 'Missing required scope',
@@ -232,7 +269,9 @@ describe('validateVCIAccessToken', () => {
       .setExpirationTime('5m')
       .sign(privateKey);
 
-    await expect(validateVCIAccessToken(env, token, undefined, 'acme')).resolves.toEqual({
+    await expect(
+      validateVCIAccessToken(env, token, 'https://acme.oidc.example.com', 'acme')
+    ).resolves.toEqual({
       valid: false,
       error,
     });
@@ -240,6 +279,52 @@ describe('validateVCIAccessToken', () => {
 });
 
 describe('validateProofOfPossession', () => {
+  const proofEnv = { POP_VALIDITY_SECONDS: '300', POP_CLOCK_SKEW_SECONDS: '60' } as unknown as Env;
+
+  it('rejects a proof without iat', async () => {
+    const { publicKey, privateKey } = await generateKeyPair('ES256');
+    const jwt = await new SignJWT({ aud: 'https://issuer.example.com', nonce: 'nonce-123' })
+      .setProtectedHeader({
+        alg: 'ES256',
+        typ: 'openid4vci-proof+jwt',
+        jwk: await exportJWK(publicKey),
+      })
+      .sign(privateKey);
+
+    await expect(
+      validateProofOfPossession(
+        proofEnv,
+        { proof_type: 'jwt', jwt },
+        'nonce-123',
+        'https://issuer.example.com'
+      )
+    ).resolves.toEqual({ valid: false, error: 'Missing iat' });
+  });
+
+  it('rejects proof algorithms other than the advertised ES256', async () => {
+    const { publicKey, privateKey } = await generateKeyPair('ES384');
+    const jwt = await new SignJWT({
+      aud: 'https://issuer.example.com',
+      nonce: 'nonce-123',
+      iat: Math.floor(Date.now() / 1000),
+    })
+      .setProtectedHeader({
+        alg: 'ES384',
+        typ: 'openid4vci-proof+jwt',
+        jwk: await exportJWK(publicKey),
+      })
+      .sign(privateKey);
+
+    await expect(
+      validateProofOfPossession(
+        proofEnv,
+        { proof_type: 'jwt', jwt },
+        'nonce-123',
+        'https://issuer.example.com'
+      )
+    ).resolves.toEqual({ valid: false, error: 'Unsupported algorithm' });
+  });
+
   it('accepts a signed JWT proof with the expected nonce and audience', async () => {
     const now = Math.floor(Date.now() / 1000);
     const jwt = await createProofJwt({

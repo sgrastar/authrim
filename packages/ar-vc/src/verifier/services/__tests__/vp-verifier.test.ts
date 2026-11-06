@@ -42,7 +42,8 @@ vi.mock('@authrim/ar-lib-core', () => {
       requireStatusCheck: false,
       allowedAlgorithms: ['ES256', 'ES384', 'ES512'],
     }),
-    checkCredentialStatus: vi.fn().mockResolvedValue(true),
+    getCredentialStatusValue: vi.fn().mockResolvedValue(0),
+    TSL_STATUS_SUSPENDED: 2,
     decodeBase64Url: vi.fn((value: string) => {
       const padded = value
         .replace(/-/g, '+')
@@ -66,7 +67,7 @@ vi.mock('@authrim/ar-lib-core', () => {
 import { verifyVPToken } from '../vp-verifier';
 import { checkIssuerTrust, getIssuerPublicKey } from '../issuer-trust';
 import {
-  checkCredentialStatus,
+  getCredentialStatusValue,
   getHaipPolicy,
   parseSDJWTVC,
   verifySDJWTVC,
@@ -98,7 +99,7 @@ const defaultOptions = {
 describe('verifyVPToken', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(checkCredentialStatus).mockResolvedValue(true);
+    vi.mocked(getCredentialStatusValue).mockResolvedValue(0);
     vi.mocked(getHaipPolicy).mockReturnValue({
       requireHolderBinding: true,
       requireIssuerTrust: true,
@@ -388,21 +389,23 @@ describe('verifyVPToken', () => {
       });
 
       vi.mocked(getIssuerPublicKey).mockResolvedValue({} as CryptoKey);
-      vi.mocked(checkCredentialStatus).mockImplementation(async (_uri, _index, options) => {
+      vi.mocked(getCredentialStatusValue).mockImplementation(async (_uri, _index, options) => {
         await expect(options?.keyResolver?.('did:web:attacker.example.com')).rejects.toThrow(
           'Status List issuer mismatch'
         );
-        return false;
+        return 1;
       });
 
       const env = createMockEnv();
       const result = await verifyVPToken(env, 'vp-token-with-status', defaultOptions);
 
-      expect(checkCredentialStatus).toHaveBeenCalledWith(
+      expect(getCredentialStatusValue).toHaveBeenCalledWith(
         'https://legitimate-issuer.com/status/list-1',
         0,
         expect.objectContaining({
           verifySignature: true,
+          format: 'w3c_bitstring_v1',
+          expectedIssuer: 'did:web:legitimate-issuer.com',
         })
       );
       expect(result.verified).toBe(false);
@@ -458,7 +461,7 @@ describe('verifyVPToken', () => {
       });
 
       vi.mocked(getIssuerPublicKey).mockResolvedValue({} as CryptoKey);
-      vi.mocked(checkCredentialStatus).mockRejectedValue(new Error('network unavailable'));
+      vi.mocked(getCredentialStatusValue).mockRejectedValue(new Error('network unavailable'));
 
       const env = createMockEnv();
       const result = await verifyVPToken(env, 'vp-token', defaultOptions);
@@ -466,6 +469,163 @@ describe('verifyVPToken', () => {
       expect(result.verified).toBe(false);
       expect(result.statusValid).toBe(false);
       expect(result.errors).toContain('Status check failed: network unavailable');
+    });
+  });
+
+  describe('Status claim enforcement', () => {
+    const ISSUER = 'https://issuer.example.com';
+    const LIST_URI = `${ISSUER}/vci/status-lists/list-1`;
+
+    async function verifyWithPayload(
+      claims: Record<string, unknown>,
+      requireStatusCheck = false,
+      issuerJwt?: string
+    ): Promise<Awaited<ReturnType<typeof verifyVPToken>>> {
+      vi.mocked(getHaipPolicy).mockReturnValue({
+        requireHolderBinding: true,
+        requireIssuerTrust: true,
+        requireStatusCheck,
+        allowedAlgorithms: ['ES256'],
+        allowedFormats: ['dc+sd-jwt'],
+        preferDCQL: true,
+        requireDirectPost: true,
+      });
+      vi.mocked(parseSDJWTVC).mockResolvedValue({
+        payload: { iss: ISSUER, vct: 'https://authrim.com/credentials/identity/v1', ...claims },
+        disclosures: [],
+        kbJwt: 'kb-jwt-token',
+        issuerJwt,
+      } as never);
+      vi.mocked(verifySDJWTVC).mockResolvedValue({
+        verified: true,
+        disclosedClaims: {},
+        holderBindingVerified: true,
+      } as never);
+      vi.mocked(checkIssuerTrust).mockResolvedValue({
+        trusted: true,
+        issuer: {
+          id: 'issuer-1',
+          tenantId: 'tenant-1',
+          issuerDid: ISSUER,
+          credentialTypes: [],
+          trustLevel: 'standard',
+          status: 'active',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+      });
+      vi.mocked(getIssuerPublicKey).mockResolvedValue({} as CryptoKey);
+      return verifyVPToken(createMockEnv(), 'vp-token', defaultOptions);
+    }
+
+    const tslClaim = { status: { status_list: { idx: 5, uri: LIST_URI } } };
+
+    it('accepts a Token Status List credential whose entry is 0', async () => {
+      vi.mocked(getCredentialStatusValue).mockResolvedValue(0);
+      const result = await verifyWithPayload(tslClaim);
+      expect(result.verified).toBe(true);
+      expect(getCredentialStatusValue).toHaveBeenCalledWith(
+        LIST_URI,
+        5,
+        expect.objectContaining({ format: 'ietf_tsl_v1', expectedIssuer: ISSUER })
+      );
+    });
+
+    it('resolves the credential key and a rotated status list key by their own kid', async () => {
+      const header = btoa(JSON.stringify({ alg: 'ES256', kid: 'key-old' }))
+        .replace(/=+$/, '')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_');
+      const resolved: string[] = [];
+      vi.mocked(getCredentialStatusValue).mockImplementation(async (_uri, _idx, options) => {
+        // The list signed with the credential's key, then one signed after a rotation.
+        await options?.keyResolver?.(ISSUER, 'key-old');
+        await options?.keyResolver?.(ISSUER, 'key-new');
+        resolved.push('done');
+        return 0;
+      });
+
+      const result = await verifyWithPayload(tslClaim, false, `${header}.payload.signature`);
+
+      expect(result.verified).toBe(true);
+      expect(resolved).toEqual(['done']);
+      expect(vi.mocked(getIssuerPublicKey).mock.calls).toEqual([
+        [expect.anything(), ISSUER, undefined, 'key-old'],
+        [expect.anything(), ISSUER, undefined, 'key-new'],
+      ]);
+    });
+
+    it('rejects status 1 (invalid) and 2 (suspended) with distinct errors', async () => {
+      vi.mocked(getCredentialStatusValue).mockResolvedValue(1);
+      const revoked = await verifyWithPayload(tslClaim);
+      expect(revoked.verified).toBe(false);
+      expect(revoked.errors).toContain('Credential has been revoked');
+
+      vi.mocked(getCredentialStatusValue).mockResolvedValue(2);
+      const suspended = await verifyWithPayload(tslClaim);
+      expect(suspended.verified).toBe(false);
+      expect(suspended.errors).toContain('Credential has been suspended');
+    });
+
+    it('rejects any other non-zero status value', async () => {
+      vi.mocked(getCredentialStatusValue).mockResolvedValue(3);
+      const result = await verifyWithPayload(tslClaim);
+      expect(result.verified).toBe(false);
+      expect(result.statusValid).toBe(false);
+    });
+
+    it('rejects a status failure even when requireStatusCheck is false', async () => {
+      vi.mocked(getCredentialStatusValue).mockRejectedValue(new Error('Status List token expired'));
+      const result = await verifyWithPayload(tslClaim, false);
+      expect(result.verified).toBe(false);
+      expect(result.statusValid).toBe(false);
+      expect(result.errors).toContain('Status check failed: Status List token expired');
+    });
+
+    it('rejects a malformed status claim instead of treating it as absent', async () => {
+      const result = await verifyWithPayload({
+        status: { status_list: { idx: -1, uri: LIST_URI } },
+      });
+      expect(result.verified).toBe(false);
+      expect(result.errors).toContain('Status check failed: Malformed status claim');
+      expect(getCredentialStatusValue).not.toHaveBeenCalled();
+    });
+
+    it('rejects a credential that carries both status claims', async () => {
+      const result = await verifyWithPayload({
+        ...tslClaim,
+        credentialStatus: {
+          type: 'BitstringStatusListEntry',
+          statusListIndex: 1,
+          statusListCredential: LIST_URI,
+        },
+      });
+      expect(result.verified).toBe(false);
+      expect(result.errors).toContain('Status check failed: Ambiguous status claim');
+    });
+
+    it('still reads legacy W3C credentialStatus as a Bitstring Status List', async () => {
+      vi.mocked(getCredentialStatusValue).mockResolvedValue(0);
+      const result = await verifyWithPayload({
+        credentialStatus: {
+          type: 'BitstringStatusListEntry',
+          statusListIndex: 3,
+          statusListCredential: LIST_URI,
+        },
+      });
+      expect(result.verified).toBe(true);
+      expect(getCredentialStatusValue).toHaveBeenCalledWith(
+        LIST_URI,
+        3,
+        expect.objectContaining({ format: 'w3c_bitstring_v1' })
+      );
+    });
+
+    it('lets requireStatusCheck govern only credentials without a status claim', async () => {
+      const without = await verifyWithPayload({}, true);
+      expect(without.errors).toContain('Status claim required but not present in credential');
+      const optional = await verifyWithPayload({}, false);
+      expect(optional.verified).toBe(true);
     });
   });
 

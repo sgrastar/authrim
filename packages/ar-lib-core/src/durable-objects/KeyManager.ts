@@ -111,7 +111,10 @@ export interface SignVCIAccessTokenInput {
   userId: string;
   offerId: string;
   credentialConfigurationId: string;
+  /** Authorization Server identifier (`iss`). */
   issuer: string;
+  /** Credential Issuer identifier (`aud`). */
+  audience: string;
   expiresInSeconds?: number;
 }
 
@@ -172,7 +175,32 @@ interface ECKeyManagerState {
   activeKeyIds: Record<ECAlgorithm, string | null>;
   config: KeyRotationConfig;
   lastRotation: number | null;
+  /** Public halves of normally retired keys. Verify-only; absent in state stored before retention. */
+  retiredPublicKeys?: RetiredECPublicKey[];
 }
+
+/**
+ * Public key of an EC key retired by normal rotation. The private key is gone, so it can never
+ * sign; it is kept so long-lived credentials signed with it still verify until retainUntil.
+ */
+interface RetiredECPublicKey {
+  kid: string;
+  algorithm: ECAlgorithm;
+  publicJWK: JWK;
+  retiredAt: number;
+  retainUntil: number;
+}
+
+/** How long a normally retired EC public key stays resolvable (max credential lifetime). */
+const RETIRED_EC_PUBLIC_KEY_RETENTION_MS = 365 * 24 * 60 * 60 * 1000;
+/**
+ * Upper bound on retained public keys (same cap as DR backup). Rotation is refused before it is
+ * reached, so an unexpired retained key is never dropped.
+ */
+const MAX_RETIRED_EC_PUBLIC_KEYS = 1024;
+
+/** Longest stored `revokedReason`, in UTF-8 bytes (DR backup accepts at most 2048). */
+export const MAX_KEY_REVOCATION_REASON_BYTES = 2048;
 
 /** Dedicated EC state for OIDC ID Token and UserInfo signing. Never shared with VC keys. */
 interface OIDCECKeyManagerState {
@@ -346,6 +374,8 @@ export const SAML_DR_KEY_MANAGER_SURFACE = {
     'signSDJWTIssuerRpc',
     'signStatusListCredentialRpc',
     'getAllECPublicKeysRpc',
+    'getVcIssuerJwksRpc',
+    'revokeVcIssuerKeyRpc',
     'rotateECKeysRpc',
     'rotateECKeysWithPrivateRpc',
     'emergencyRotateECKeysRpc',
@@ -381,6 +411,73 @@ export const SAML_DR_KEY_MANAGER_SURFACE = {
   readonly: ['exportTenantBackupStateRpc', 'verifyTenantBackupStateRpc', 'getExistingSecretRpc'],
 } as const;
 
+const TOKEN_STATUS_LIST_CLAIMS = new Set(['iss', 'sub', 'iat', 'exp', 'ttl', 'status_list']);
+const MAX_STATUS_LIST_TTL_SECONDS = 86400;
+
+function sameHttpsOrigin(a: string, b: string): boolean {
+  try {
+    const left = new URL(a);
+    const right = new URL(b);
+    return (
+      left.protocol === 'https:' && right.protocol === 'https:' && left.origin === right.origin
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Token Status List (draft-14): https issuer, `sub` the list URI on the issuer's origin */
+function isValidTokenStatusListPayload(payload: JWTPayload, now: number): boolean {
+  const statusList = payload.status_list as { bits?: unknown; lst?: unknown } | undefined;
+  return (
+    Object.keys(payload).every((claim) => TOKEN_STATUS_LIST_CLAIMS.has(claim)) &&
+    typeof payload.iss === 'string' &&
+    typeof payload.sub === 'string' &&
+    sameHttpsOrigin(payload.iss, payload.sub) &&
+    typeof payload.iat === 'number' &&
+    payload.iat <= now + 60 &&
+    payload.iat >= now - 600 &&
+    typeof payload.exp === 'number' &&
+    payload.exp > now &&
+    payload.exp <= now + 86400 &&
+    typeof payload.ttl === 'number' &&
+    Number.isInteger(payload.ttl) &&
+    payload.ttl > 0 &&
+    payload.ttl <= MAX_STATUS_LIST_TTL_SECONDS &&
+    typeof statusList === 'object' &&
+    statusList !== null &&
+    [1, 2, 4, 8].includes(statusList.bits as number) &&
+    typeof statusList.lst === 'string'
+  );
+}
+
+/** Legacy Bitstring Status List JWT (did:web issuer, `vc` credential) */
+function isValidLegacyStatusListPayload(payload: JWTPayload, now: number): boolean {
+  const vc = payload.vc as
+    | {
+        type?: unknown;
+        credentialSubject?: { type?: unknown; statusPurpose?: unknown; encodedList?: unknown };
+      }
+    | undefined;
+  const subject = vc?.credentialSubject;
+  return (
+    typeof payload.iss === 'string' &&
+    payload.iss.startsWith('did:web:') &&
+    typeof payload.sub === 'string' &&
+    payload.sub.startsWith('https://') &&
+    typeof payload.iat === 'number' &&
+    Math.abs(payload.iat - now) <= 300 &&
+    typeof payload.exp === 'number' &&
+    payload.exp > now &&
+    payload.exp <= now + 86400 &&
+    Array.isArray(vc?.type) &&
+    vc.type.includes('BitstringStatusListCredential') &&
+    subject?.type === 'BitstringStatusList' &&
+    ['revocation', 'suspension'].includes(String(subject.statusPurpose)) &&
+    typeof subject.encodedList === 'string'
+  );
+}
+
 export class KeyManager extends DurableObject<Env> {
   private keyManagerState: KeyManagerState | null = null;
   private ecKeyManagerState: ECKeyManagerState | null = null;
@@ -388,6 +485,7 @@ export class KeyManager extends DurableObject<Env> {
   private oidcPS256KeyManagerState: OIDCPS256KeyManagerState | null = null;
   private oidcES256CreationPromise: Promise<StoredECKey> | null = null;
   private oidcPS256CreationPromise: Promise<StoredKey> | null = null;
+  private vcES256CreationPromise: Promise<StoredECKey> | null = null;
   private requestObjectEncKeyManagerState: RequestObjectEncKeyManagerState | null = null;
   private requestObjectEncCreationPromise: Promise<StoredKey> | null = null;
   #requiresAdmittedInitialization = false;
@@ -913,6 +1011,30 @@ export class KeyManager extends DurableObject<Env> {
   }
 
   /**
+   * RPC: JWKS for resolving VC issuer signing keys. Active and overlap keys plus public keys
+   * retained after normal rotation; never revoked keys or private members.
+   */
+  async getVcIssuerJwksRpc(): Promise<{ keys: JWK[] }> {
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      await this.#initializeECState();
+
+      const state = this.#getECState();
+      const now = Date.now();
+      const keys = new Map<string, JWK>();
+      for (const k of state.keys) {
+        if (k.status !== 'revoked') keys.set(k.kid, this.#publicOnlyECJWK(k.publicJWK, k.kid));
+      }
+      for (const r of state.retiredPublicKeys ?? []) {
+        if (r.retainUntil > now && !keys.has(r.kid)) {
+          keys.set(r.kid, this.#publicOnlyECJWK(r.publicJWK, r.kid));
+        }
+      }
+      return { keys: [...keys.values()] };
+    });
+  }
+
+  /**
    * RPC: Get the active EC signing key with private key (for internal VC signing)
    */
   async getActiveECKeyWithPrivateRpc(algorithm: ECAlgorithm): Promise<StoredECKey | null> {
@@ -931,6 +1053,7 @@ export class KeyManager extends DurableObject<Env> {
       const offerId = input.offerId?.trim();
       const configurationId = input.credentialConfigurationId?.trim();
       const issuer = input.issuer?.trim();
+      const audience = input.audience?.trim();
       if (
         !tenantId ||
         tenantId.length > 128 ||
@@ -941,13 +1064,15 @@ export class KeyManager extends DurableObject<Env> {
         !configurationId ||
         configurationId.length > 256 ||
         !issuer ||
-        issuer.length > 2048
+        issuer.length > 2048 ||
+        !audience ||
+        audience.length > 2048
       ) {
         throw new Error('invalid_vci_access_token_signing_input');
       }
-      const expiresIn = Math.min(Math.max(input.expiresInSeconds ?? 3600, 60), 3600);
-      const activeKey = await this.getActiveECKey('ES256');
-      if (!activeKey) throw new Error('vci_access_token_signing_key_unavailable');
+      // Bearer issuance tokens stay short-lived (OpenID4VCI §13.10).
+      const expiresIn = Math.min(Math.max(input.expiresInSeconds ?? 300, 60), 300);
+      const activeKey = await this.#ensureActiveVcES256Key();
       const privateKey = await importPKCS8(activeKey.privatePEM, 'ES256');
       const now = Math.floor(Date.now() / 1000);
       const jti = crypto.randomUUID();
@@ -963,7 +1088,7 @@ export class KeyManager extends DurableObject<Env> {
         .setJti(jti)
         .setExpirationTime(now + expiresIn)
         .setIssuer(issuer)
-        .setAudience(issuer)
+        .setAudience(audience)
         .sign(privateKey);
       return { token, kid: activeKey.kid, jti };
     });
@@ -994,8 +1119,7 @@ export class KeyManager extends DurableObject<Env> {
       ) {
         throw new Error('invalid_sd_jwt_issuer_signing_input');
       }
-      const activeKey = await this.getActiveECKey('ES256');
-      if (!activeKey) throw new Error('sd_jwt_issuer_signing_key_unavailable');
+      const activeKey = await this.#ensureActiveVcES256Key();
       const privateKey = await importPKCS8(activeKey.privatePEM, 'ES256');
       const token = await new SignJWT(payload)
         .setProtectedHeader({ alg: 'ES256', typ: 'dc+sd-jwt', kid: activeKey.kid })
@@ -1004,44 +1128,26 @@ export class KeyManager extends DurableObject<Env> {
     });
   }
 
-  /** Sign the fixed Bitstring Status List JWT contract without exporting key material. */
+  /**
+   * Sign a status list token without exporting key material. Two fixed shapes are accepted:
+   * the Token Status List (https `iss`, `sub` the list URI on the same origin, `ttl`,
+   * `status_list: { bits, lst }`) and the legacy Bitstring Status List JWT (did:web `iss`, `vc`).
+   */
   async signStatusListCredentialRpc(payload: JWTPayload): Promise<SignStatusListCredentialResult> {
     return runSamlDrCoveredOperation(this.env, undefined, async () => {
       await this.#initializeState();
       const now = Math.floor(Date.now() / 1000);
-      const vc = payload.vc as
-        | {
-            type?: unknown;
-            credentialSubject?: {
-              type?: unknown;
-              statusPurpose?: unknown;
-              encodedList?: unknown;
-            };
-          }
-        | undefined;
-      const subject = vc?.credentialSubject;
       const encodedPayload = JSON.stringify(payload);
-      if (
-        typeof payload.iss !== 'string' ||
-        !payload.iss.startsWith('did:web:') ||
-        typeof payload.sub !== 'string' ||
-        !payload.sub.startsWith('https://') ||
-        typeof payload.iat !== 'number' ||
-        Math.abs(payload.iat - now) > 300 ||
-        typeof payload.exp !== 'number' ||
-        payload.exp <= now ||
-        payload.exp > now + 86400 ||
-        !Array.isArray(vc?.type) ||
-        !vc.type.includes('BitstringStatusListCredential') ||
-        subject?.type !== 'BitstringStatusList' ||
-        !['revocation', 'suspension'].includes(String(subject.statusPurpose)) ||
-        typeof subject.encodedList !== 'string' ||
-        encodedPayload.length > 4 * 1024 * 1024
-      ) {
+      if (encodedPayload.length > 4 * 1024 * 1024)
+        throw new Error('invalid_status_list_signing_input');
+      const valid =
+        'status_list' in payload
+          ? isValidTokenStatusListPayload(payload, now)
+          : isValidLegacyStatusListPayload(payload, now);
+      if (!valid) {
         throw new Error('invalid_status_list_signing_input');
       }
-      const activeKey = await this.getActiveECKey('ES256');
-      if (!activeKey) throw new Error('status_list_signing_key_unavailable');
+      const activeKey = await this.#ensureActiveVcES256Key();
       const privateKey = await importPKCS8(activeKey.privatePEM, 'ES256');
       const token = await new SignJWT(payload)
         .setProtectedHeader({ alg: 'ES256', typ: 'statuslist+jwt', kid: activeKey.kid })
@@ -1091,6 +1197,63 @@ export class KeyManager extends DurableObject<Env> {
     return runSamlDrCoveredOperation(this.env, undefined, async () => {
       await this.#initializeState();
       return this.emergencyRotateECKeys(algorithm, reason);
+    });
+  }
+
+  /**
+   * RPC: Revoke one VC issuer EC key by kid, wherever it is in its lifecycle. An active key is
+   * replaced through emergency rotation; an overlap key is revoked at once; a public key retained
+   * after normal rotation is dropped. Credentials signed with the key then no longer verify.
+   */
+  async revokeVcIssuerKeyRpc(
+    kid: string,
+    reason: string
+  ): Promise<{ revoked: boolean; replacedBy?: string }> {
+    return runSamlDrCoveredOperation(this.env, undefined, async () => {
+      await this.#initializeState();
+      await this.#initializeECState();
+      const normalizedKid = typeof kid === 'string' ? kid.trim() : '';
+      if (!normalizedKid || normalizedKid.length > 256) throw new Error('invalid_kid');
+      if (
+        typeof reason !== 'string' ||
+        reason.trim().length < 10 ||
+        new TextEncoder().encode(reason).byteLength > MAX_KEY_REVOCATION_REASON_BYTES
+      ) {
+        throw new Error('invalid_revocation_reason');
+      }
+
+      const state = this.#getECState();
+      const activeAlgorithm = (Object.keys(state.activeKeyIds) as ECAlgorithm[]).find(
+        (algorithm) => state.activeKeyIds[algorithm] === normalizedKid
+      );
+      if (activeAlgorithm) {
+        const result = await this.emergencyRotateECKeys(activeAlgorithm, reason);
+        return { revoked: true, replacedBy: result.newKid };
+      }
+
+      const now = Date.now();
+      let revoked = false;
+      const key = state.keys.find((k) => k.kid === normalizedKid);
+      if (key && key.status !== 'revoked') {
+        key.status = 'revoked';
+        key.revokedAt = now;
+        key.revokedReason = reason;
+        revoked = true;
+      }
+      const retained = state.retiredPublicKeys ?? [];
+      if (retained.some((r) => r.kid === normalizedKid)) {
+        state.retiredPublicKeys = retained.filter((r) => r.kid !== normalizedKid);
+        revoked = true;
+      }
+      if (!revoked) return { revoked: false };
+
+      await this.#saveECState();
+      log.warn('VC issuer EC key revoked', {
+        kid: normalizedKid,
+        reason,
+        timestamp: new Date(now).toISOString(),
+      });
+      return { revoked: true };
     });
   }
 
@@ -1365,6 +1528,21 @@ export class KeyManager extends DurableObject<Env> {
     return this.#getOIDCPS256State()
       .keys.filter((key) => key.status !== 'revoked')
       .map((key) => key.publicJWK);
+  }
+
+  /**
+   * The VC issuer's ES256 signing key, created on first use like the RS256 OIDC key. Concurrent
+   * first signers share one creation so a new environment never gets two active keys.
+   */
+  async #ensureActiveVcES256Key(): Promise<StoredECKey> {
+    const active = await this.getActiveECKey('ES256');
+    if (active) return active;
+    if (!this.vcES256CreationPromise) {
+      this.vcES256CreationPromise = this.rotateECKeys('ES256').finally(() => {
+        this.vcES256CreationPromise = null;
+      });
+    }
+    return this.vcES256CreationPromise;
   }
 
   async #ensureActiveOIDCES256Key(): Promise<StoredECKey> {
@@ -2101,6 +2279,17 @@ export class KeyManager extends DurableObject<Env> {
       await this.#initializeState();
       await this.#initializeECState();
 
+      // Every live key and every unexpired retained public key will be retained after this
+      // rotation. Refuse before changing state rather than drop a key that still verifies.
+      const current = this.#getECState();
+      const now = Date.now();
+      const retainedAfterRotation =
+        (current.retiredPublicKeys ?? []).filter((r) => r.retainUntil > now).length +
+        current.keys.filter((k) => k.status !== 'revoked').length;
+      if (retainedAfterRotation >= MAX_RETIRED_EC_PUBLIC_KEYS) {
+        throw new Error('vc_issuer_key_retention_cap_reached');
+      }
+
       // Generate new key
       const newKey = await this.generateNewECKey(algorithm);
 
@@ -2187,6 +2376,13 @@ export class KeyManager extends DurableObject<Env> {
       currentActiveKey.revokedAt = now;
       currentActiveKey.revokedReason = reason;
 
+      // A revoked key must not stay resolvable through public-key retention
+      if (state.retiredPublicKeys) {
+        state.retiredPublicKeys = state.retiredPublicKeys.filter(
+          (r) => r.kid !== currentActiveKey.kid
+        );
+      }
+
       // Update state
       state.activeKeyIds[algorithm] = newKey.kid;
       state.lastRotation = now;
@@ -2214,6 +2410,7 @@ export class KeyManager extends DurableObject<Env> {
     const state = this.#getECState();
     const retentionMillis = state.config.retentionPeriodDays * 24 * 60 * 60 * 1000;
     const now = Date.now();
+    const retired = (state.retiredPublicKeys ?? []).filter((r) => r.retainUntil > now);
 
     state.keys = state.keys.filter((k) => {
       // Always keep active keys
@@ -2221,8 +2418,17 @@ export class KeyManager extends DurableObject<Env> {
         return true;
       }
 
-      // Remove overlap keys that have expired
+      // Remove overlap keys that have expired, keeping only the public half
       if (k.status === 'overlap' && k.expiresAt && k.expiresAt < now) {
+        if (!retired.some((r) => r.kid === k.kid)) {
+          retired.push({
+            kid: k.kid,
+            algorithm: k.algorithm,
+            publicJWK: this.#publicOnlyECJWK(k.publicJWK, k.kid),
+            retiredAt: now,
+            retainUntil: now + RETIRED_EC_PUBLIC_KEY_RETENTION_MS,
+          });
+        }
         return false;
       }
 
@@ -2235,6 +2441,16 @@ export class KeyManager extends DurableObject<Env> {
       // Keep everything else
       return true;
     });
+
+    // Only write the field once there is something to retain, so older state shapes stay intact
+    if (retired.length > 0 || state.retiredPublicKeys !== undefined) {
+      state.retiredPublicKeys = retired;
+    }
+  }
+
+  /** Copy only the public members of an EC JWK (never d or other private parameters). */
+  #publicOnlyECJWK(jwk: JWK, kid: string): JWK {
+    return { kid, kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y, alg: jwk.alg, use: 'sig' };
   }
 
   /**

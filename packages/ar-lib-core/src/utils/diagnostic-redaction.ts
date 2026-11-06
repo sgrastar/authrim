@@ -1374,6 +1374,17 @@ function redactCredentials(text: string): string {
   });
 }
 
+/** Request paths whose final segment is a bearer secret (the pre-authorized code). */
+const SECRET_PATH_PATTERN = /^(\/vci\/offers\/)[^/]+/;
+
+/**
+ * Request path safe to log: segments that carry a credential (`/vci/offers/<pre-authorized
+ * code>`) are replaced, everything else is returned unchanged.
+ */
+export function redactSecretPathSegments(path: string): string {
+  return path.replace(SECRET_PATH_PATTERN, '$1[REDACTED]');
+}
+
 /**
  * Replace the secrets in a text: compact JWTs, secret members of JSON text, the values of secret
  * parameters in URLs and form bodies, and `Bearer`/`DPoP`/`Basic` credentials. Everything else is

@@ -24,6 +24,7 @@ import {
   isValidTenantIdentifier,
 } from '../utils/tenant-request-policy';
 import { createLogger, type Logger } from '../utils/logger';
+import { redactSecretPathSegments } from '../utils/diagnostic-redaction';
 import {
   getPrimaryTenantVanityDomain,
   resolveTenantFromVanityHost,
@@ -417,7 +418,7 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
       errorLogger.warn('Tenant resolution failed', {
         error: tenantResult.error,
         host: c.req.header('Host'),
-        path: c.req.path,
+        path: redactSecretPathSegments(c.req.path),
       });
 
       // Return appropriate error response
@@ -490,7 +491,7 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
         errorLogger.warn('Tenant metadata source resolution failed', {
           error: code,
           tenantId,
-          path: c.req.path,
+          path: redactSecretPathSegments(c.req.path),
         });
         return c.json(
           { error: 'temporarily_unavailable', error_description: 'Tenant unavailable' },
@@ -508,7 +509,7 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
         errorLogger.warn('Tenant existence check failed', {
           tenantId,
           host: c.req.header('Host'),
-          path: c.req.path,
+          path: redactSecretPathSegments(c.req.path),
         });
         return c.json({ error: 'not_found', error_description: 'Tenant not found' }, 404);
       }
@@ -565,7 +566,7 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
         errorLogger.warn('Tenant host or identifier binding check failed', {
           tenantId,
           host: c.req.header('Host'),
-          path: c.req.path,
+          path: redactSecretPathSegments(c.req.path),
         });
         return c.json({ error: 'not_found', error_description: 'Tenant not found' }, 404);
       }
@@ -622,7 +623,7 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
     // Log request start
     logger.debug('Request started', {
       method: c.req.method,
-      path: c.req.path,
+      path: redactSecretPathSegments(c.req.path),
       host: c.req.header('Host'),
       userAgent: c.req.header('User-Agent'),
     });
@@ -640,7 +641,7 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
         appendServerTiming(c, timingSpans);
         logger.info('Request context timing', {
           diagnosticSessionId,
-          path: c.req.path,
+          path: redactSecretPathSegments(c.req.path),
           request_class: requestClass,
           duration_ms: roundDiagnosticDurationMs(duration),
           spans_ms: Object.fromEntries(timingSpans.map((span) => [span.name, span.durationMs])),
@@ -648,7 +649,7 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
       }
       logger.debug('Request completed', {
         method: c.req.method,
-        path: c.req.path,
+        path: redactSecretPathSegments(c.req.path),
         status: c.res.status,
         durationMs: duration,
       });

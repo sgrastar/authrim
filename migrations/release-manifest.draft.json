@@ -19,7 +19,12 @@
             "core",
             "tenant_core"
           ],
-          "files": []
+          "files": [
+            {
+              "path": "003_credential_status_list_formats.sql",
+              "checksum": "153c234a21fc2ef4f4249b7715e1a71f8dc0c0a5e6d52fc97fc420ab8fe09a7a"
+            }
+          ]
         },
         {
           "id": "pii-d1",
@@ -141,6 +146,10 @@
         {
           "path": "001_0_5_0_core_baseline.sql",
           "checksum": "2d6e9557d96ce9df5e747cb0e4b32531ccf19dfb3403e1b164dd6efc471e2a5a"
+        },
+        {
+          "path": "003_credential_status_list_formats.sql",
+          "checksum": "153c234a21fc2ef4f4249b7715e1a71f8dc0c0a5e6d52fc97fc420ab8fe09a7a"
         }
       ]
     },

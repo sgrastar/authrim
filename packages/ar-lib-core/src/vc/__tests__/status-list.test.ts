@@ -16,6 +16,10 @@ import {
   StatusValue,
 } from '../status-list';
 import type { StatusListKeyResolver } from '../status-list';
+import { encodeStatusListBytes } from '../status-list-codec';
+
+/** W3C lists are gzip-compressed, as the Bitstring Status List specification requires. */
+const gzipList = (bitstring: Uint8Array) => encodeStatusListBytes(bitstring, 'w3c_bitstring_v1');
 
 // Mock safeFetch from url-security module
 const mockSafeFetch = vi.fn();
@@ -103,7 +107,7 @@ describe('Status List 2021', () => {
     it('should fetch and parse JSON-LD status list credential', async () => {
       // Create a simple uncompressed bitstring (for testing)
       const bitstring = new Uint8Array([0b10000000]); // First credential is revoked
-      const encodedList = btoa(String.fromCharCode(...bitstring));
+      const encodedList = await gzipList(bitstring);
 
       mockSafeFetch.mockResolvedValueOnce({
         ok: true,
@@ -139,7 +143,7 @@ describe('Status List 2021', () => {
 
     it('should cache status list results', async () => {
       const bitstring = new Uint8Array([0b00000000]);
-      const encodedList = btoa(String.fromCharCode(...bitstring));
+      const encodedList = await gzipList(bitstring);
 
       mockSafeFetch.mockResolvedValue({
         ok: true,
@@ -184,7 +188,7 @@ describe('Status List 2021', () => {
     it('should return true for valid (non-revoked) credential', async () => {
       // First bit is 0 (valid)
       const bitstring = new Uint8Array([0b01111111]);
-      const encodedList = btoa(String.fromCharCode(...bitstring));
+      const encodedList = await gzipList(bitstring);
 
       mockSafeFetch.mockResolvedValueOnce({
         ok: true,
@@ -207,7 +211,7 @@ describe('Status List 2021', () => {
     it('should return false for revoked credential', async () => {
       // First bit is 1 (revoked)
       const bitstring = new Uint8Array([0b10000000]);
-      const encodedList = btoa(String.fromCharCode(...bitstring));
+      const encodedList = await gzipList(bitstring);
 
       mockSafeFetch.mockResolvedValueOnce({
         ok: true,
@@ -230,7 +234,7 @@ describe('Status List 2021', () => {
     it('should check specific index in status list', async () => {
       // Indexes 0, 2, 4 are revoked (10101000)
       const bitstring = new Uint8Array([0b10101000]);
-      const encodedList = btoa(String.fromCharCode(...bitstring));
+      const encodedList = await gzipList(bitstring);
 
       mockSafeFetch.mockResolvedValue({
         ok: true,
@@ -291,7 +295,7 @@ describe('Status List 2021', () => {
       kid: string,
       issuer: string
     ): Promise<string> {
-      const encodedList = btoa(String.fromCharCode(...bitstring));
+      const encodedList = await gzipList(bitstring);
       const publicJwk = await exportJWK(keyPair.publicKey);
 
       const jwt = await new SignJWT({
@@ -374,7 +378,7 @@ describe('Status List 2021', () => {
     it('should skip signature verification when verifySignature=false', async () => {
       // Create an unsigned/invalid JWT (just structure, no valid signature)
       const bitstring = new Uint8Array([0b01111111]);
-      const encodedList = btoa(String.fromCharCode(...bitstring));
+      const encodedList = await gzipList(bitstring);
 
       // Manually create a fake JWT without proper signature
       const header = btoa(JSON.stringify({ alg: 'ES256', typ: 'statuslist+jwt' }))
@@ -413,7 +417,7 @@ describe('Status List 2021', () => {
     it('should reject JWT missing issuer claim', async () => {
       const keyPair = await generateKeyPair('ES256', { extractable: true });
       const bitstring = new Uint8Array([0b01111111]);
-      const encodedList = btoa(String.fromCharCode(...bitstring));
+      const encodedList = await gzipList(bitstring);
 
       // Create JWT without iss or sub
       const jwt = await new SignJWT({
@@ -439,17 +443,14 @@ describe('Status List 2021', () => {
       ).rejects.toThrow('missing issuer');
     });
 
-    it('should use IETF status_list format with signature verification', async () => {
+    it('rejects a Token Status List payload on the W3C path, even when correctly signed', async () => {
       const keyPair = await generateKeyPair('ES256', { extractable: true });
       const publicJwk = await exportJWK(keyPair.publicKey);
       const issuer = 'https://issuer.example.com';
 
       // Create uncompressed bitstring (index 0 = valid)
       const bitstring = new Uint8Array([0b01111111]);
-      const encodedList = btoa(String.fromCharCode(...bitstring))
-        .replace(/\+/g, '-')
-        .replace(/\//g, '_')
-        .replace(/[=]/g, '');
+      const encodedList = await gzipList(bitstring);
 
       // Create JWT with IETF format (status_list.lst)
       const jwt = await new SignJWT({
@@ -471,19 +472,17 @@ describe('Status List 2021', () => {
 
       const keyResolver: StatusListKeyResolver = async () => publicJwk;
 
-      const isValid = await checkCredentialStatus(`${issuer}/status/1`, 0, {
-        verifySignature: true,
-        keyResolver,
-      });
-
-      expect(isValid).toBe(true);
+      // The credential declared a W3C status: the two formats are never read with each other's decoder.
+      await expect(
+        checkCredentialStatus(`${issuer}/status/1`, 0, { verifySignature: true, keyResolver })
+      ).rejects.toThrow('Status list format mismatch');
     });
   });
 
   describe('Cache Management', () => {
     it('should clear all caches with clearAllStatusListCaches', async () => {
       const bitstring = new Uint8Array([0b01111111]);
-      const encodedList = btoa(String.fromCharCode(...bitstring));
+      const encodedList = await gzipList(bitstring);
 
       mockSafeFetch.mockResolvedValue({
         ok: true,
@@ -510,6 +509,94 @@ describe('Status List 2021', () => {
       // Third fetch (should fetch again)
       await fetchStatusList('https://issuer.example/status/1', { verifySignature: false });
       expect(mockSafeFetch).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('W3C lists after the stage-3 hardening', () => {
+    const URI = 'https://issuer.example/status/9';
+
+    async function signedLegacyList(issuer: string, exp?: number) {
+      const keyPair = await generateKeyPair('ES256', { extractable: true });
+      const publicJwk = await exportJWK(keyPair.publicKey);
+      let builder = new SignJWT({
+        iss: issuer,
+        sub: URI,
+        vc: { credentialSubject: { encodedList: await gzipList(new Uint8Array(4)) } },
+      }).setProtectedHeader({ alg: 'ES256', typ: 'statuslist+jwt', kid: 'k' });
+      if (exp !== undefined) builder = builder.setExpirationTime(exp);
+      const jwt = await builder.sign(keyPair.privateKey);
+      const keyResolver: StatusListKeyResolver = async () => publicJwk;
+      return { jwt, keyResolver };
+    }
+
+    it('refuses an unsigned JSON list when the signature must be verified', async () => {
+      mockSafeFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        text: async () =>
+          JSON.stringify({
+            credentialSubject: { encodedList: await gzipList(new Uint8Array(4)) },
+          }),
+      });
+      await expect(checkCredentialStatus(URI, 0, { verifySignature: true })).rejects.toThrow(
+        'Unsigned status list cannot be verified'
+      );
+    });
+
+    it('rechecks the verified issuer on a cache hit', async () => {
+      const { jwt, keyResolver } = await signedLegacyList('did:web:issuer-a.example');
+      mockSafeFetch.mockResolvedValue({
+        ok: true,
+        headers: new Headers({ 'content-type': 'application/statuslist+jwt' }),
+        text: async () => jwt,
+      });
+      await expect(
+        checkCredentialStatus(URI, 0, {
+          verifySignature: true,
+          keyResolver,
+          expectedIssuer: 'did:web:issuer-a.example',
+        })
+      ).resolves.toBe(true);
+      // Same URI, another credential issuer: the cached list must not answer for it.
+      await expect(
+        checkCredentialStatus(URI, 0, {
+          verifySignature: true,
+          keyResolver,
+          expectedIssuer: 'did:web:issuer-b.example',
+        })
+      ).rejects.toThrow('Status list issuer does not match the credential issuer');
+    });
+
+    it('stops answering from the cache once the token has expired', async () => {
+      vi.useFakeTimers();
+      try {
+        const nowS = Math.floor(Date.now() / 1000);
+        const { jwt, keyResolver } = await signedLegacyList('did:web:issuer-a.example', nowS + 30);
+        mockSafeFetch.mockResolvedValue({
+          ok: true,
+          headers: new Headers({ 'content-type': 'application/statuslist+jwt' }),
+          text: async () => jwt,
+        });
+        const options = { verifySignature: true, keyResolver, cacheTtlMs: 3_600_000 };
+        await checkCredentialStatus(URI, 0, options);
+        vi.setSystemTime((nowS + 31) * 1000);
+        await expect(checkCredentialStatus(URI, 0, options)).rejects.toThrow();
+        expect(mockSafeFetch).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('refuses a W3C list that is not gzip-compressed', async () => {
+      const zlib = await encodeStatusListBytes(new Uint8Array(4), 'ietf_tsl_v1');
+      mockSafeFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        text: async () => JSON.stringify({ credentialSubject: { encodedList: zlib } }),
+      });
+      await expect(checkCredentialStatus(URI, 0, { verifySignature: false })).rejects.toThrow(
+        'Unsupported status list compression'
+      );
     });
   });
 });

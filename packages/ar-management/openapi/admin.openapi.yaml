@@ -4012,6 +4012,46 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  /api/admin/admins/cross-tenant-exceptions:
+    get:
+      tags:
+        - Admin Users
+      summary: List legacy cross-tenant administrators.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+      responses:
+        '200':
+          description: Administrators with a current global assignment whose home tenant is not the deployment default tenant.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        email:
+                          type: string
+                        tenant_id:
+                          type: string
+                        assignment_ids:
+                          type: array
+                          items:
+                            type: string
+                  total:
+                    type: integer
+                  default_tenant_id:
+                    type: string
+      description: >-
+        Read-only listing for the migration described in the admin credential design (D9). Callers
+        holding the global wildcard see all tenants; others only their own tenant's administrators.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   '/api/admin/admins/{id}':
     get:
       tags:
@@ -5006,6 +5046,49 @@ paths:
           in: path
           required: true
           description: Admin user id.
+          schema:
+            type: string
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/admins/{id}/wallet-credentials/revoke':
+    post:
+      tags:
+        - Admin Users
+      operationId: postApiAdminAdminsByIdWalletCredentialsRevoke
+      summary: Revoke all wallet credentials of an admin user.
+      description: >-
+        Revokes every pending, active or suspended Keyring (wallet) admin credential of an Admin
+        user, in the admin's home tenant core database. Works for an active, suspended or
+        deactivated admin and is idempotent, so it can be retried at any time. Needs an L2 step-up
+        (admin_credential.revoke, receipt in authrim-step-up-receipt). Responds 200 only when every
+        credential ended revoked (already revoked counts); 503 with Retry-After when any credential
+        hit a concurrent change or an error (retry); 409 when a credential cannot be revoked from
+        its state. The body lists the outcome of every credential in all cases.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        '200':
+          $ref: '#/components/responses/AdminWalletCredentialsRevokeAll'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/AdminWalletCredentialsRevokeAllPartial'
+        '503':
+          $ref: '#/components/responses/AdminWalletCredentialsRevokeAllPartial'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Admin user id.
+          schema:
+            type: string
+        - name: authrim-step-up-receipt
+          in: header
+          required: false
           schema:
             type: string
       security:
@@ -23344,6 +23427,73 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  /api/admin/signing-keys/vc/{kid}/revoke:
+    post:
+      tags:
+        - Admin Miscellaneous
+      operationId: postApiAdminSigningKeysVcKidRevoke
+      summary: Revoke a VC issuer signing key
+      description: >-
+        Revokes one VC issuer (EC) signing key by kid, including a key already retired by normal
+        rotation whose public half is still published for credential verification. An active key is
+        replaced through emergency rotation. Every credential the key signed stops verifying once
+        cached issuer metadata expires (up to 5 minutes). Needs an L2 step-up (signing_key.rotate,
+        receipt in authrim-step-up-receipt). Records a critical audit event.
+      parameters:
+        - name: kid
+          in: path
+          required: true
+          schema:
+            type: string
+            maxLength: 256
+        - name: authrim-step-up-receipt
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - reason
+              properties:
+                reason:
+                  type: string
+                  minLength: 10
+      responses:
+        '200':
+          description: Key revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - success
+                  - revokedKeyId
+                properties:
+                  success:
+                    type: boolean
+                  revokedKeyId:
+                    type: string
+                  newKeyId:
+                    type: string
+                    description: Present when the revoked key was active and has been replaced.
+                  warning:
+                    type: string
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   /api/admin/stats/auth:
     get:
       tags:
@@ -26524,8 +26674,11 @@ paths:
       operationId: postApiAdminVcCredentialsByIdActivate
       summary: Activate credential
       description: >-
-        Reactivates a suspended credential by updating the credential status list and credential
-        record.
+        Reactivates a suspended credential. The credential row and its status-list bit change in one
+        atomic transition. An already active credential answers 200 again; a revoked or pending one
+        answers 409; an unknown one 404; a concurrent change 503 temporarily_unavailable (retry).
+        An admin credential is refused with 409 admin_credential_not_managed_here (use the admin
+        wallet credential routes).
       responses:
         '200':
           $ref: '#/components/responses/VcCredentialStatusChange'
@@ -26534,6 +26687,12 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       parameters:
         - name: id
@@ -26551,8 +26710,12 @@ paths:
       operationId: postApiAdminVcCredentialsByIdRevoke
       summary: Revoke credential
       description: >-
-        Permanently revokes a verifiable credential by marking its status-list entry revoked and
-        updating the credential record.
+        Permanently revokes a pending, active or suspended credential. The credential row and its
+        status-list bit change in one atomic transition; nothing leaves revoked. Repeating the call
+        answers 200 again; an unknown credential 404; a credential that cannot be revoked from its
+        state 409; a concurrent change 503 temporarily_unavailable (retry).
+        An admin credential is refused with 409 admin_credential_not_managed_here (use the admin
+        wallet credential routes).
       responses:
         '200':
           $ref: '#/components/responses/VcCredentialStatusChange'
@@ -26561,6 +26724,12 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       parameters:
         - name: id
@@ -26578,8 +26747,12 @@ paths:
       operationId: postApiAdminVcCredentialsByIdSuspend
       summary: Suspend credential
       description: >-
-        Temporarily suspends an active credential using the status list associated with the
-        credential.
+        Temporarily suspends an active credential. The credential row and its status-list bit change
+        in one atomic transition. An already suspended credential answers 200 again; a revoked or
+        pending one answers 409; an unknown one 404; a concurrent change 503
+        temporarily_unavailable (retry).
+        An admin credential is refused with 409 admin_credential_not_managed_here (use the admin
+        wallet credential routes).
       responses:
         '200':
           $ref: '#/components/responses/VcCredentialStatusChange'
@@ -26588,6 +26761,12 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       parameters:
         - name: id
@@ -31745,6 +31924,248 @@ paths:
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/AdminPasskeyOptions'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/me/wallet-credentials:
+    get:
+      tags:
+        - Admin Wallet Credentials
+      operationId: getApiAdminMeWalletCredentials
+      summary: List the signed-in admin's own credentials.
+      description: >-
+        The signed-in Admin's own admin credentials (active, suspended or revoked; never pending)
+        in the home tenant, newest first, at most 50. Requires the Admin's own home-tenant session.
+        holderKeyThumbprint is the RFC 7638 SHA-256 thumbprint of the stored holder key and is
+        absent for older credentials without one. The response is never cached.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        '200':
+          description: The credentials.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum:
+                  - no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - items
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                        - id
+                        - status
+                        - issuedAt
+                        - expiresAt
+                      properties:
+                        id:
+                          type: string
+                        status:
+                          type: string
+                          enum:
+                            - active
+                            - suspended
+                            - revoked
+                        issuedAt:
+                          type: integer
+                          description: Issuance time in epoch milliseconds.
+                        expiresAt:
+                          type: integer
+                          nullable: true
+                          description: Expiry in epoch milliseconds, null when unknown.
+                        holderKeyThumbprint:
+                          type: string
+        '403':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/me/wallet-credentials/{credentialId}/revoke':
+    post:
+      tags:
+        - Admin Wallet Credentials
+      operationId: postApiAdminMeWalletCredentialsByCredentialIdRevoke
+      summary: Revoke one of the signed-in admin's own credentials.
+      description: >-
+        Revokes the credential (pending, active or suspended) immediately and permanently. Requires
+        a fresh human session (MFA verified, authenticated within 5 minutes), otherwise 403
+        wallet_credential_fresh_auth_required, and the Admin's own home-tenant session. Another
+        Admin's credential, or an unknown id, is 404. Repeating the call answers 200 again. A
+        concurrent change answers 503 with Retry-After. The response is never cached.
+      x-authrim-route-coverage: inferred-from-source
+      parameters:
+        - name: credentialId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The credential is revoked.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum:
+                  - no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - id
+                  - status
+                properties:
+                  id:
+                    type: string
+                  status:
+                    type: string
+                    enum:
+                      - revoked
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/me/wallet-credentials/offers:
+    post:
+      tags:
+        - Admin Wallet Credentials
+      operationId: postApiAdminMeWalletCredentialsOffers
+      summary: Create an admin credential offer.
+      description: >-
+        Create a one-time OpenID4VCI offer of the signed-in Admin's own admin credential. Requires a
+        fresh human session (MFA verified, authenticated within 5 minutes); otherwise 403
+        wallet_credential_fresh_auth_required. The session must be the Admin's own home-tenant
+        session, not a tenant-switched one. The Admin must be eligible (active, unlocked, with a
+        role assignment effective in the home tenant), otherwise 403 wallet_credential_not_eligible.
+        The response is never cached; a replay of the same Idempotency-Key returns it without the
+        offer URI and transaction code.
+      x-authrim-route-coverage: inferred-from-source
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        '201':
+          description: Offer created.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum:
+                  - no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - offerId
+                  - credentialOffer
+                  - transactionCode
+                  - expiresAt
+                properties:
+                  offerId:
+                    type: string
+                  credentialOffer:
+                    type: string
+                    description: openid-credential-offer:// URI carrying credential_offer_uri.
+                  transactionCode:
+                    type: string
+                    description: One-time code the wallet asks for; shown only after the wallet fetched the offer.
+                  expiresAt:
+                    type: integer
+                    description: Expiry in epoch milliseconds.
+        '403':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/me/wallet-credentials/offers/{offerId}':
+    get:
+      tags:
+        - Admin Wallet Credentials
+      operationId: getApiAdminMeWalletCredentialsOffersByOfferId
+      summary: Get admin credential offer progress.
+      description: >-
+        Progress of an offer created by the signed-in Admin, for the console's polling. 404 for an
+        unknown offer or one owned by another Admin. The response is never cached.
+      x-authrim-route-coverage: inferred-from-source
+      parameters:
+        - name: offerId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Offer progress.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum:
+                  - no-store
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - offerId
+                  - state
+                  - expiresAt
+                properties:
+                  offerId:
+                    type: string
+                  state:
+                    type: string
+                    enum:
+                      - pending
+                      - fetched
+                      - token_issued
+                      - issued
+                      - failed
+                      - expired
+                      - locked
+                  expiresAt:
+                    type: integer
+                  holderKeyThumbprint:
+                    type: string
+                    description: RFC 7638 thumbprint of the issued credential's cnf.jwk, once issued.
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        default:
+          $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -46879,6 +47300,18 @@ components:
             success: true
             message: Revoked all refresh tokens for user user_123
             revoked: 3
+    AdminWalletCredentialsRevokeAll:
+      description: Every wallet credential of the admin is revoked.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AdminWalletCredentialsRevokeAllResponse'
+    AdminWalletCredentialsRevokeAllPartial:
+      description: Some credentials are not revoked; see the per-credential outcomes.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AdminWalletCredentialsRevokeAllResponse'
     VcCredentialStatusChange:
       description: Credential status update result.
       content:
@@ -46888,8 +47321,6 @@ components:
           example:
             id: cred_123
             status: revoked
-            status_list_id: sl_revocation_1
-            status_list_index: 42
             revoked_at: 2026-06-01T00:00:00.000Z
     VcStatusListList:
       description: Status lists for the tenant.
@@ -51140,10 +51571,19 @@ components:
         transaction_code_required: { type: boolean, default: false }
     CredentialOfferResult:
       type: object
-      required: [offerId, credentialOfferUri, expiresAt, claimManifestHash]
+      required: [offerId, credentialOfferUri, credentialOffer, expiresAt, claimManifestHash]
       properties:
         offerId: { type: string }
-        credentialOfferUri: { type: string, format: uri }
+        credentialOfferUri:
+          type: string
+          format: uri
+          description: https URI of the Credential Offer object (the wallet's credential_offer_uri).
+        credentialOffer:
+          type: string
+          format: uri
+          description: >-
+            `openid-credential-offer://?credential_offer_uri=...`; the value to render as a QR code
+            or open on the same device. Contains a bearer secret; never log or persist it.
         expiresAt: { type: integer }
         claimManifestHash: { type: string }
         transactionCode: { type: string, writeOnly: true }
@@ -74766,14 +75206,39 @@ components:
           type: string
         revoked:
           type: integer
+    AdminWalletCredentialsRevokeAllResponse:
+      type: object
+      required:
+        - results
+        - allRevoked
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            required:
+              - id
+              - outcome
+            properties:
+              id:
+                type: string
+              outcome:
+                type: string
+                enum:
+                  - revoked
+                  - unchanged
+                  - not_found
+                  - not_allowed
+                  - conflict
+                  - error
+        allRevoked:
+          type: boolean
     VcCredentialStatusChangeResponse:
       type: object
       additionalProperties: false
       required:
         - id
         - status
-        - status_list_id
-        - status_list_index
       properties:
         id:
           type: string
@@ -74783,10 +75248,6 @@ components:
             - active
             - suspended
             - revoked
-        status_list_id:
-          type: string
-        status_list_index:
-          type: integer
         revoked_at:
           type: string
           format: date-time
@@ -74799,8 +75260,6 @@ components:
       example:
         id: cred_123
         status: revoked
-        status_list_id: sl_revocation_1
-        status_list_index: 42
         revoked_at: 2026-06-01T00:00:00.000Z
     VcStatusList:
       type: object

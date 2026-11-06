@@ -198,6 +198,45 @@ describe('Router Worker', () => {
         expect(mockEnv.OP_VC.fetch).toHaveBeenCalledTimes(1);
       });
 
+      it('should route /.well-known/jwt-vc-issuer to OP_VC', async () => {
+        const req = new Request('https://example.com/.well-known/jwt-vc-issuer');
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_VC.fetch).toHaveBeenCalledTimes(1);
+        expect(mockEnv.OP_DISCOVERY.fetch).not.toHaveBeenCalled();
+      });
+
+      it('should route /.well-known/oauth-authorization-server/vci to OP_VC', async () => {
+        const req = new Request('https://example.com/.well-known/oauth-authorization-server/vci');
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_VC.fetch).toHaveBeenCalledTimes(1);
+        expect(mockEnv.OP_DISCOVERY.fetch).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        '/.well-known/oauth-authorization-server',
+        '/.well-known/oauth-authorization-server/oauth/admin-agent',
+      ])('should keep %s on OP_DISCOVERY', async (path) => {
+        await app.fetch(new Request(`https://example.com${path}`), mockEnv);
+
+        expect(mockEnv.OP_DISCOVERY.fetch).toHaveBeenCalledTimes(1);
+        expect(mockEnv.OP_VC.fetch).not.toHaveBeenCalled();
+      });
+
+      it.each(['/.well-known/jwt-vc-issuer', '/.well-known/oauth-authorization-server/vci'])(
+        'should return 404 for %s when OP_VC is not bound',
+        async (path) => {
+          const res = await app.fetch(new Request(`https://example.com${path}`), {
+            ...mockEnv,
+            OP_VC: undefined,
+          });
+
+          expect(res.status).toBe(404);
+          expect(mockEnv.OP_DISCOVERY.fetch).not.toHaveBeenCalled();
+        }
+      );
+
       it('should route /vci/* to OP_VC', async () => {
         const req = new Request('https://example.com/vci/credential', { method: 'POST' });
         await app.fetch(req, mockEnv);

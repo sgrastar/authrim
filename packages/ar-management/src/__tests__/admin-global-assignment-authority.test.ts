@@ -134,7 +134,7 @@ function setup() {
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       },
-      { DB_ADMIN: adapter } as unknown as Env
+      { DB_ADMIN: adapter, DEFAULT_TENANT_ID: TENANT } as unknown as Env
     );
     return { status: response.status, json: (await response.json()) as Record<string, any> };
   };

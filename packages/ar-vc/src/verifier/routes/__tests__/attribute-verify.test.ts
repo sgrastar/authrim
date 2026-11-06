@@ -7,6 +7,12 @@ import {
   initiateAttributeVerification,
 } from '../attribute-verify';
 
+// Shard configuration lives in KV; these tests use IDs of configured shards.
+vi.mock('../../../utils/configured-shard', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../utils/configured-shard')>()),
+  isConfiguredShard: vi.fn(async () => true),
+}));
+
 const mocks = vi.hoisted(() => ({
   adminQueryOne: vi.fn(),
   coreQueryOne: vi.fn(),

@@ -180,7 +180,7 @@ import {
   recoverLegacyPreBundleEmailSecrets,
   stagePendingEmailSecrets,
 } from '../core/pending-email-secrets.js';
-import { generateWranglerConfig, toToml } from '../core/wrangler.js';
+import { bootstrapWranglerOptions, generateWranglerConfig, toToml } from '../core/wrangler.js';
 import {
   checkWranglerStatus,
   saveMasterWranglerConfigs,
@@ -4606,17 +4606,18 @@ export function createApiRoutes(): Hono {
           if (!existsSync(componentDir)) {
             continue;
           }
-          if (component === 'ar-control' || component === 'ar-auth' || component === 'ar-bridge') {
+          if (
+            component === 'ar-control' ||
+            component === 'ar-auth' ||
+            component === 'ar-bridge' ||
+            component === 'ar-vc'
+          ) {
             const bootstrapConfig = generateWranglerConfig(
               component,
               config,
               resourceIds,
               workersSubdomain ?? undefined,
-              component === 'ar-control'
-                ? { includeControlSmokeBindings: false, includeControlCronTriggers: false }
-                : component === 'ar-auth'
-                  ? { includeAuthAccountProvisioner: false }
-                  : { includeExternalIdpAccountProvisioner: false }
+              bootstrapWranglerOptions(component)
             );
             await writePrivateFileAtomically(
               join(componentDir, 'wrangler.bootstrap.toml'),
@@ -5556,18 +5557,15 @@ export function createApiRoutes(): Hono {
               if (
                 component === 'ar-control' ||
                 component === 'ar-auth' ||
-                component === 'ar-bridge'
+                component === 'ar-bridge' ||
+                component === 'ar-vc'
               ) {
                 const bootstrapConfig = generateWranglerConfig(
                   component,
                   config,
                   lockResourceIds,
                   workersSubdomain ?? undefined,
-                  component === 'ar-control'
-                    ? { includeControlSmokeBindings: false, includeControlCronTriggers: false }
-                    : component === 'ar-auth'
-                      ? { includeAuthAccountProvisioner: false }
-                      : { includeExternalIdpAccountProvisioner: false }
+                  bootstrapWranglerOptions(component)
                 );
                 await writePrivateFileAtomically(
                   join(componentDir, 'wrangler.bootstrap.toml'),

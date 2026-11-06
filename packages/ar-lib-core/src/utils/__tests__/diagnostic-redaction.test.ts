@@ -6,6 +6,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  redactSecretPathSegments,
   isCompactJwt,
   isProtectedForm,
   maskIpAddress,
@@ -520,5 +521,20 @@ describe('what counts as already protected', () => {
     );
     const twice = await inMode('full', once as unknown as DiagnosticLogEntry);
     expect(twice).toEqual(once);
+  });
+});
+
+describe('redactSecretPathSegments', () => {
+  it('hides the pre-authorized code carried by a credential offer path', () => {
+    expect(
+      redactSecretPathSegments('/vci/offers/g1:apac:3:co_550e8400.abcdefghijklmnopqrstuvwxyzABCDEF')
+    ).toBe('/vci/offers/[REDACTED]');
+    expect(redactSecretPathSegments('/vci/offers/code/extra')).toBe('/vci/offers/[REDACTED]/extra');
+  });
+
+  it('leaves every other path unchanged', () => {
+    for (const path of ['/vci/offers/', '/vci/token', '/api/vci/offers/x', '/vci/offersx/y']) {
+      expect(redactSecretPathSegments(path)).toBe(path);
+    }
   });
 });

@@ -33,22 +33,25 @@ const PUBLIC_JWK = { kty: 'EC', crv: 'P-256', x: 'x', y: 'y' };
 const MACHINE_ACCESS = '/api/admin/machine-access';
 const ROTATIONS = '/api/admin/platform/control-plane/lookup-hmac/rotations';
 
-async function setup() {
+async function setup(envExtras: Record<string, unknown> = {}) {
   const kit = await createTokenKit();
-  const context = setupApp((app) => {
-    app.route('/api/admin/admin-roles', adminRolesRouter);
-    app.route('/api/admin/admins', adminUsersRouter);
-    app.route('/api/admin/admin-invitations', adminInvitationsRouter);
-    app.route(MACHINE_ACCESS, machineAccessRouter);
-    app.route('/api/admin/platform/control-plane', controlPlaneOperationsRouter);
-    // The guard that settings, tombstones, runtime profiles and the like sit behind.
-    app.get(
-      '/guarded/system-admin',
-      adminAuthMiddleware({ plane: 'tenant' }),
-      requireSystemAdmin(),
-      (c) => c.json({ ok: true })
-    );
-  }, kit.env);
+  const context = setupApp(
+    (app) => {
+      app.route('/api/admin/admin-roles', adminRolesRouter);
+      app.route('/api/admin/admins', adminUsersRouter);
+      app.route('/api/admin/admin-invitations', adminInvitationsRouter);
+      app.route(MACHINE_ACCESS, machineAccessRouter);
+      app.route('/api/admin/platform/control-plane', controlPlaneOperationsRouter);
+      // The guard that settings, tombstones, runtime profiles and the like sit behind.
+      app.get(
+        '/guarded/system-admin',
+        adminAuthMiddleware({ plane: 'tenant' }),
+        requireSystemAdmin(),
+        (c) => c.json({ ok: true })
+      );
+    },
+    { ...kit.env, ...envExtras }
+  );
   return { ...context, kit };
 }
 type Context = Awaited<ReturnType<typeof setup>>;
@@ -500,7 +503,9 @@ describe('5. the hierarchy that counts for a global role is the global one', () 
   });
 
   it('refuses a global assignment of a role above the global hierarchy, even with the wildcard', async () => {
-    const context = await setup();
+    // The target is homed in TENANT; make it the deployment default so that the cross-tenant
+    // placement policy allows global grants and only the hierarchy rule is exercised.
+    const context = await setup({ DEFAULT_TENANT_ID: TENANT });
     insertRole(context.db, {
       id: 'role_global_all',
       name: 'global-all',

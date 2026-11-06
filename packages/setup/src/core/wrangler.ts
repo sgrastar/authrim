@@ -139,6 +139,8 @@ export interface GenerateWranglerConfigOptions {
   includeAuthAccountProvisioner?: boolean;
   /** Initial-deploy escape hatch for the Bridge -> Management -> Bridge bootstrap cycle. */
   includeExternalIdpAccountProvisioner?: boolean;
+  /** Initial-deploy escape hatch for the VC -> Management -> VC bootstrap cycle. */
+  includeAdminCredentialEligibility?: boolean;
   /**
    * Generate for `wrangler dev` on a developer machine instead of a Cloudflare deployment.
    * The managed-deploy build guard, placement and cron triggers are dropped, and Service Bindings
@@ -149,6 +151,22 @@ export interface GenerateWranglerConfigOptions {
 }
 
 /** Local development runs UIs and the API on different localhost ports, which browsers treat as one site. */
+/** Bindings left out of `wrangler.bootstrap.toml` for a Worker deployed before its target exists. */
+export function bootstrapWranglerOptions(
+  component: 'ar-control' | 'ar-auth' | 'ar-bridge' | 'ar-vc'
+): GenerateWranglerConfigOptions {
+  switch (component) {
+    case 'ar-control':
+      return { includeControlSmokeBindings: false, includeControlCronTriggers: false };
+    case 'ar-auth':
+      return { includeAuthAccountProvisioner: false };
+    case 'ar-bridge':
+      return { includeExternalIdpAccountProvisioner: false };
+    case 'ar-vc':
+      return { includeAdminCredentialEligibility: false };
+  }
+}
+
 export interface GenerateEnvVarsOptions {
   allowLocalhostSameSite?: boolean;
 }
@@ -1216,6 +1234,20 @@ export function generateWranglerConfig(
         entrypoint: 'VCIssuerEntrypoint',
       });
     }
+  }
+
+  if (
+    component === 'ar-vc' &&
+    config.components.vc === true &&
+    options.includeAdminCredentialEligibility !== false
+  ) {
+    wranglerConfig.services ??= [];
+    wranglerConfig.services.push({
+      binding: 'ADMIN_CREDENTIAL_ELIGIBILITY',
+      service: `${env}-ar-management`,
+      entrypoint: 'AdminCredentialEligibilityEntrypoint',
+      props: { caller: 'ar-vc', environmentId: env },
+    });
   }
 
   if (component === 'ar-plugin-runner') {

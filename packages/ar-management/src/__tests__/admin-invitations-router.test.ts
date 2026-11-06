@@ -87,6 +87,7 @@ function createTestApp() {
     app,
     env: {
       DB_ADMIN: {},
+      DEFAULT_TENANT_ID: 'tenant_123',
       ADMIN_UI_URL: 'https://admin.example.com',
       EMAIL_FROM: 'security@example.com',
     } as unknown as Env,
@@ -282,6 +283,39 @@ describe('adminInvitationsRouter', () => {
     expect(insertParams?.[8]).toBeNull();
   });
 
+  it('refuses a global invitation from a tenant that is not the deployment default', async () => {
+    repo.getRole.mockResolvedValue({
+      id: 'role_ar_super_admin',
+      tenant_id: 'default',
+      name: 'ar_super_admin',
+      display_name: 'Super Admin',
+      hierarchy_level: 0,
+      is_system: true,
+    });
+    const { app, env } = createTestApp();
+    const response = await app.request(
+      '/api/admin/admin-invitations',
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-test-permissions': invitationPermissions(['*']),
+          'x-test-global-permissions': '*',
+          'x-test-tenant-scope': '*',
+          'x-test-hierarchy-level': '0',
+        },
+        body: JSON.stringify({ email: 'peer@example.com', role_id: 'role_ar_super_admin' }),
+      },
+      { ...env, DEFAULT_TENANT_ID: 'platform' }
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: 'cross_tenant_admin_requires_default_home',
+    });
+    expect(getInvitationInsertParams()).toBeUndefined();
+  });
+
   it.each([
     [
       'a wildcard that is not a global one',
@@ -475,6 +509,53 @@ describe('adminInvitationsRouter', () => {
     await expect(response.json()).resolves.toEqual({ error: 'invitation_resend_conflict' });
     expect(notifier.send).not.toHaveBeenCalled();
     expect(audit).not.toHaveBeenCalled();
+  });
+
+  it('never resends a global invitation for a home tenant other than the default', async () => {
+    adapter.queryOne.mockResolvedValueOnce({
+      id: 'invitation_1',
+      tenant_id: 'tenant_123',
+      email: 'admin@example.com',
+      name: null,
+      code_hash: 'previous-code-hash',
+      status: 'pending',
+      admin_role_id: 'role_ar_tenant_admin',
+      role_name: 'ar_tenant_admin',
+      role_display_name: 'Administrator',
+      scope_type: 'global',
+      scope_id: null,
+      role_expires_at: null,
+      ip_restriction_enabled: 0,
+      allowed_ip_ranges_json: '[]',
+      expires_at: Date.now() - 60_000,
+      last_sent_at: Date.now(),
+      last_delivery_status: 'sent',
+      accepted_at: null,
+      created_by: 'admin_actor',
+      created_at: Date.now(),
+      updated_at: Date.now(),
+    });
+    const { app, env } = createTestApp();
+
+    const response = await app.request(
+      '/api/admin/admin-invitations/invitation_1/resend',
+      {
+        method: 'POST',
+        headers: {
+          'x-test-permissions': invitationPermissions(['*']),
+          'x-test-global-permissions': '*',
+          'x-test-tenant-scope': '*',
+        },
+      },
+      { ...env, DEFAULT_TENANT_ID: 'platform' }
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'cross_tenant_admin_requires_default_home',
+    });
+    expect(adapter.batch).not.toHaveBeenCalled();
+    expect(notifier.send).not.toHaveBeenCalled();
   });
 
   it('atomically invalidates redeemed enrollment state when replacing a code', async () => {

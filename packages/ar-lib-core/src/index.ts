@@ -418,6 +418,9 @@ export * from './vc/haip-policy';
 export * from './vc/sd-jwt-vc';
 export * from './vc/status-list';
 export * from './vc/status-list-manager';
+export * from './vc/status-list-codec';
+export * from './vc/credential-status-transition';
+export * from './vc/credential-status-reservation';
 
 // Services
 export * from './services/rule-evaluator';
@@ -430,6 +433,7 @@ export * from './services/support-ops';
 export * from './services/check-audit-service';
 export * from './services/permission-change-notifier';
 export * from './services/admin-database-adapter';
+export * from './services/admin-credential-eligibility';
 export * from './services/admin-authentication-audit';
 export * from './services/destination-profile-consent';
 export * from './services/backchannel-logout-sender';
@@ -511,6 +515,7 @@ export {
   isProtectedForm,
   maskIpAddress,
   redactSecretsInText,
+  redactSecretPathSegments,
   redactCompactJwts,
   redactPhoneNumbers,
   redactPiiText,

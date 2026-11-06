@@ -18,6 +18,7 @@ import {
   requireDedicatedAdminDatabaseAdapter,
   resolveRuntimeIdentityMappingBinding,
   executeServerFlow,
+  ADMIN_CREDENTIAL_CONFIGURATION_ID,
 } from '@authrim/ar-lib-core';
 import { executeRuntimeMapping } from '@authrim/ar-lib-field-mapping/runtime';
 import type { SourceValueEnvelope } from '@authrim/ar-lib-field-mapping/contract';
@@ -300,6 +301,8 @@ export async function adminCredentialProfileVersionCreateHandler(c: AdminContext
       body.credential_configuration_id,
       'credential_configuration_id'
     );
+    if (configurationId === ADMIN_CREDENTIAL_CONFIGURATION_ID)
+      return invalid(c, 'This credential configuration is issued only to administrators', 400);
     const issuanceFlowId = requireKey(body.issuance_flow_id, 'issuance_flow_id');
     const issuanceMappingSetId = requireKey(
       body.issuance_mapping_set_id,
@@ -440,7 +443,11 @@ export async function adminCredentialProfilePublishHandler(c: AdminContext) {
       'SELECT configuration_id, is_active FROM credential_configurations WHERE tenant_id = ? AND configuration_id = ?',
       [profile.tenant_id, version.credential_configuration_id]
     );
-    if (!configuration || configuration.is_active !== 1)
+    if (
+      !configuration ||
+      configuration.is_active !== 1 ||
+      version.credential_configuration_id === ADMIN_CREDENTIAL_CONFIGURATION_ID
+    )
       throw new Error('credential_configuration_not_active');
     const issuanceFlowVersionId = await requirePublishedFlow(
       core,

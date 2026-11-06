@@ -2855,6 +2855,22 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           0o644
         );
       }
+      const vcDir = join(rootDir, 'packages', 'ar-vc');
+      if (existsSync(vcDir)) {
+        const resourceIds = buildResourceIdsFromLock(currentLock, config);
+        const bootstrapConfig = generateWranglerConfig(
+          'ar-vc',
+          config,
+          resourceIds,
+          workersSubdomain ?? undefined,
+          { includeAdminCredentialEligibility: false }
+        );
+        await writePrivateFileAtomically(
+          join(vcDir, 'wrangler.bootstrap.toml'),
+          toToml(bootstrapConfig, env),
+          0o644
+        );
+      }
     }
 
     // Build packages first (unless skipped or dry-run)

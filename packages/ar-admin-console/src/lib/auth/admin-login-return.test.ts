@@ -26,6 +26,24 @@ describe('resolveAdminLoginReturnTo', () => {
 		).toBe('/admin/agent-access/bulk-plans/abp_1234-abcd/2');
 	});
 
+	it('allows returning to the Keyring page, but only exactly and on this origin', () => {
+		expect(resolveAdminLoginReturnTo('?return_to=%2Fadmin%2Fme%2Fkeyring', ORIGIN)).toBe(
+			'/admin/me/keyring'
+		);
+		expect(resolveAdminLoginReturnTo('?return_to=%2Fadmin%2Fme%2Fkeyring%3Fx%3D1', ORIGIN)).toBe(
+			'/admin'
+		);
+		expect(resolveAdminLoginReturnTo('?return_to=%2Fadmin%2Fme%2Fkeyring%2Fx', ORIGIN)).toBe(
+			'/admin'
+		);
+		expect(
+			resolveAdminLoginReturnTo(
+				`?return_to=${encodeURIComponent('https://evil.example/admin/me/keyring')}`,
+				ORIGIN
+			)
+		).toBe('/admin');
+	});
+
 	it('rejects the legacy cross-origin Agent OAuth continuation', () => {
 		const target = `${ORIGIN}/oauth/admin-agent/authorize?request_uri=urn%3Atest&client_id=codex`;
 		expect(

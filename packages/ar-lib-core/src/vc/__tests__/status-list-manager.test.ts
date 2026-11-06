@@ -11,6 +11,9 @@ import {
   StatusListState,
   StatusValue,
 } from '../status-list-manager';
+import type { StatusListFormat } from '../status-list-codec';
+
+const LEGACY = 'w3c_bitstring_v1' as const;
 
 // Mock repository implementation
 class MockStatusListRepository implements StatusListRepository {
@@ -18,10 +21,16 @@ class MockStatusListRepository implements StatusListRepository {
 
   async findActiveList(
     tenantId: string,
-    purpose: StatusListPurpose
+    purpose: StatusListPurpose,
+    format?: StatusListFormat
   ): Promise<StatusListRecord | null> {
     for (const list of this.lists.values()) {
-      if (list.tenant_id === tenantId && list.purpose === purpose && list.state === 'active') {
+      if (
+        list.tenant_id === tenantId &&
+        list.purpose === purpose &&
+        list.state === 'active' &&
+        (!format || list.format === format)
+      ) {
         return list;
       }
     }
@@ -112,7 +121,7 @@ describe('StatusListManager', () => {
     });
 
     it('should create a status list with custom capacity', async () => {
-      const list = await manager.createStatusList('tenant1', 'suspension', 1000);
+      const list = await manager.createStatusList('tenant1', 'suspension', 1000, LEGACY);
 
       expect(list.capacity).toBe(1000);
       expect(list.purpose).toBe('suspension');
@@ -133,15 +142,43 @@ describe('StatusListManager', () => {
     });
   });
 
+  describe('format', () => {
+    it('creates Token Status Lists (zlib, 2 bits) by default and W3C lists on request', async () => {
+      const tsl = await manager.createStatusList('tenant1', 'revocation');
+      expect(tsl).toMatchObject({ format: 'ietf_tsl_v1', bits: 2, version: 0 });
+      const legacy = await manager.createStatusList('tenant1', 'revocation', 1024, LEGACY);
+      expect(legacy).toMatchObject({ format: 'w3c_bitstring_v1', bits: 1 });
+    });
+
+    it('requires a power-of-two capacity for Token Status Lists', async () => {
+      await expect(manager.createStatusList('tenant1', 'revocation', 1000)).rejects.toThrow(
+        'power of two'
+      );
+    });
+
+    it('stores suspended (2) in a Token Status List and reads it back', async () => {
+      const list = await manager.createStatusList('tenant1', 'revocation', 64);
+      await manager.updateStatus('tenant1', list.id, 5, 2 as StatusValue);
+      expect(await manager.getStatus('tenant1', list.id, 5)).toBe(2);
+      expect(await manager.getStatus('tenant1', list.id, 4)).toBe(0);
+    });
+
+    it('allocateIndex only uses W3C lists, never an active Token Status List', async () => {
+      const tsl = await manager.createStatusList('tenant1', 'revocation');
+      const allocation = await manager.allocateIndex('tenant1', 'revocation');
+      expect(allocation.listId).not.toBe(tsl.id);
+    });
+  });
+
   describe('decode bounds', () => {
     it('should reject oversized stored encoded lists', async () => {
-      const list = await manager.createStatusList('tenant1', 'revocation', 8);
+      const list = await manager.createStatusList('tenant1', 'revocation', 8, LEGACY);
       const stored = repository.getAll().find((candidate) => candidate.id === list.id);
       expect(stored).toBeDefined();
       stored!.encoded_list = 'A'.repeat(2048);
 
       await expect(manager.getStatus('tenant1', list.id, 0)).rejects.toThrow(
-        'Encoded status list exceeds maximum size'
+        'status list exceeds maximum size'
       );
     });
   });
@@ -168,7 +205,7 @@ describe('StatusListManager', () => {
 
     it('should rotate to a new list when capacity is reached', async () => {
       // Create a list with small capacity for testing
-      const smallList = await manager.createStatusList('tenant1', 'revocation', 3);
+      const smallList = await manager.createStatusList('tenant1', 'revocation', 3, LEGACY);
 
       // Fill up the list
       const alloc1 = await manager.allocateIndex('tenant1', 'revocation');
@@ -303,7 +340,7 @@ describe('StatusListManager', () => {
 
     it('should filter by state', async () => {
       // Create and fill a list to seal it
-      const list = await manager.createStatusList('tenant1', 'revocation', 1);
+      const list = await manager.createStatusList('tenant1', 'revocation', 1, LEGACY);
       await manager.allocateIndex('tenant1', 'revocation');
       await manager.allocateIndex('tenant1', 'revocation'); // This triggers rotation
 
@@ -358,7 +395,7 @@ describe('StatusListManager', () => {
     });
 
     it('should handle boundary index values', async () => {
-      const list = await manager.createStatusList('tenant1', 'revocation', 16); // 16 bits = 2 bytes
+      const list = await manager.createStatusList('tenant1', 'revocation', 16, LEGACY); // 16 bits = 2 bytes
 
       // Test first bit
       await manager.updateStatus('tenant1', list.id, 0, StatusValue.INVALID);
@@ -374,7 +411,7 @@ describe('StatusListManager', () => {
     });
 
     it('should correctly handle byte boundaries', async () => {
-      const list = await manager.createStatusList('tenant1', 'revocation', 24); // 3 bytes
+      const list = await manager.createStatusList('tenant1', 'revocation', 24, LEGACY); // 3 bytes
 
       // Set bits at byte boundaries
       await manager.updateStatus('tenant1', list.id, 7, StatusValue.INVALID); // Last bit of first byte

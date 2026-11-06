@@ -127,6 +127,13 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
   authenticated('/api/admin/me/notice-preferences', 'current admin notice email preferences'),
   authenticated('/api/admin/me/agent-consents', 'current admin Agent consent management'),
   authenticated('/api/admin/me/agent-consents/*', 'current admin Agent consent management'),
+  authenticated('/api/admin/me/wallet-credentials', 'current admin wallet credential list'),
+  authenticated('/api/admin/me/wallet-credentials/offers', 'current admin wallet credential offer'),
+  authenticated(
+    '/api/admin/me/wallet-credentials/offers/*',
+    'current admin wallet credential offer progress'
+  ),
+  authenticated('/api/admin/me/wallet-credentials/*', 'current admin wallet credential revocation'),
 
   ...byMethod(
     '/api/admin/tenant-backups',

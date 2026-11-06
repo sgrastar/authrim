@@ -12,6 +12,7 @@ import type {
   StatusListPurpose,
   StatusListState,
 } from '../../vc/status-list-manager';
+import type { StatusListFormat } from '../../vc/status-list-codec';
 
 /**
  * D1 Status List Repository Implementation
@@ -26,16 +27,19 @@ export class D1StatusListRepository implements IStatusListRepository {
    */
   async findActiveList(
     tenantId: string,
-    purpose: StatusListPurpose
+    purpose: StatusListPurpose,
+    format?: StatusListFormat
   ): Promise<StatusListRecord | null> {
     return this.adapter.queryOne<StatusListRecord>(
       `SELECT internal_id, public_id AS id, tenant_id, purpose, encoded_list,
-              current_index, capacity, used_count, state, sealed_at, created_at, updated_at
+              current_index, capacity, used_count, state, sealed_at, created_at, updated_at,
+              format, bits, version, last_operation_id
        FROM status_lists
        WHERE tenant_id = ? AND purpose = ? AND state = 'active'
+         ${format ? 'AND format = ?' : ''}
        ORDER BY created_at DESC
        LIMIT 1`,
-      [tenantId, purpose]
+      format ? [tenantId, purpose, format] : [tenantId, purpose]
     );
   }
 
@@ -45,7 +49,8 @@ export class D1StatusListRepository implements IStatusListRepository {
   async findById(tenantId: string, listId: string): Promise<StatusListRecord | null> {
     return this.adapter.queryOne<StatusListRecord>(
       `SELECT internal_id, public_id AS id, tenant_id, purpose, encoded_list,
-              current_index, capacity, used_count, state, sealed_at, created_at, updated_at
+              current_index, capacity, used_count, state, sealed_at, created_at, updated_at,
+              format, bits, version, last_operation_id
        FROM status_lists
        WHERE tenant_id = ? AND public_id = ?`,
       [tenantId, listId]
@@ -60,8 +65,9 @@ export class D1StatusListRepository implements IStatusListRepository {
     const sql = `
       INSERT INTO status_lists (
         internal_id, public_id, tenant_id, purpose, encoded_list, current_index,
-        capacity, used_count, state, sealed_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        capacity, used_count, state, sealed_at, created_at, updated_at,
+        format, bits, version, last_operation_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     await this.adapter.execute(sql, [
@@ -77,6 +83,10 @@ export class D1StatusListRepository implements IStatusListRepository {
       record.sealed_at,
       now,
       now,
+      record.format,
+      record.bits,
+      record.version,
+      record.last_operation_id,
     ]);
   }
 
@@ -93,6 +103,7 @@ export class D1StatusListRepository implements IStatusListRepository {
     const values: unknown[] = [now];
 
     if (updates.encoded_list !== undefined) {
+      setClauses.push('version = version + 1');
       setClauses.push('encoded_list = ?');
       values.push(updates.encoded_list);
     }
@@ -159,7 +170,8 @@ export class D1StatusListRepository implements IStatusListRepository {
     }
 
     const sql = `SELECT internal_id, public_id AS id, tenant_id, purpose, encoded_list,
-                        current_index, capacity, used_count, state, sealed_at, created_at, updated_at
+                        current_index, capacity, used_count, state, sealed_at, created_at, updated_at,
+                        format, bits, version, last_operation_id
                  FROM status_lists
                  WHERE ${conditions.join(' AND ')}
                  ORDER BY created_at DESC`;

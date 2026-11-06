@@ -5,11 +5,14 @@ import { CredentialOfferStore, type CreateCredentialOfferInput } from '../Creden
 
 type Row = Record<string, SqlStorageValue>;
 
-function cursor(rows: Row[] = [], rowsWritten = 0): SqlStorageCursor<Row> {
+function cursor(rows: Row[] = [], _changes = 0): SqlStorageCursor<Row> {
   return {
     columnNames: rows.length ? Object.keys(rows[0]) : [],
     rowsRead: rows.length,
-    rowsWritten,
+    // Cloudflare counts index writes in `rowsWritten`; the store must count RETURNING rows.
+    get rowsWritten(): never {
+      throw new Error('rowsWritten differs on Cloudflare; count RETURNING rows instead');
+    },
     toArray: () => rows,
     one: () => {
       if (rows.length !== 1) throw new Error('Expected one row');
@@ -29,7 +32,16 @@ class MemoryVciSql {
     ...p: SqlStorageValue[]
   ): SqlStorageCursor<T> {
     const q = query.replace(/\s+/g, ' ').trim();
-    if (q.startsWith('PRAGMA table_info')) return cursor([{ pk: 1, notnull: 1 }]) as never;
+    if (q.startsWith('PRAGMA table_info'))
+      return cursor([
+        { name: 'id', pk: 1, notnull: 1 },
+        { name: 'subject_kind', pk: 0, notnull: 1 },
+        { name: 'fetched_at', pk: 0, notnull: 0 },
+      ]) as never;
+    // The issuance table has its own tests against real SQLite (CredentialOfferIssuance.test.ts).
+    if (q.includes('credential_offer_issuances')) {
+      return cursor(q.startsWith('SELECT MIN(') ? [{ next_at: null }] : []) as never;
+    }
     if (q.startsWith('CREATE TABLE') || q.startsWith('CREATE INDEX')) return cursor() as never;
     if (q.startsWith('INSERT INTO credential_offers')) {
       const [
@@ -73,7 +85,7 @@ class MemoryVciSql {
         created_at: created,
         expires_at: expires,
       });
-      return cursor([], 1) as never;
+      return cursor([{ id: 'changed' }], 1) as never;
     }
     if (q.startsWith('SELECT * FROM credential_offers')) {
       const row = this.offers.get(String(p[0]));
@@ -98,7 +110,7 @@ class MemoryVciSql {
       if (!row || row.tenant_id !== p[3] || row.status !== 'pending') return cursor() as never;
       row.failed_attempts = p[0];
       row.status = p[1];
-      return cursor([], 1) as never;
+      return cursor([{ id: 'changed' }], 1) as never;
     }
     if (q.includes("SET status = 'processing', reservation_id = ?")) {
       const row = this.offers.get(String(p[2]));
@@ -112,7 +124,7 @@ class MemoryVciSql {
       row.status = 'processing';
       row.reservation_id = p[0];
       row.lease_expires_at = p[1];
-      return cursor([], 1) as never;
+      return cursor([{ id: 'changed' }], 1) as never;
     }
     if (q.includes("credential_offers SET status = 'consumed'")) {
       const row = this.offers.get(String(p[1]));
@@ -127,7 +139,7 @@ class MemoryVciSql {
       row.reservation_id = null;
       row.lease_expires_at = null;
       row.expires_at = p[0];
-      return cursor([], 1) as never;
+      return cursor([{ id: 'changed' }], 1) as never;
     }
     if (q.includes("credential_offers SET status = 'pending'")) {
       const idIndex = q.includes('WHERE id = ?') ? (p.length === 4 ? 0 : 2) : 0;
@@ -136,7 +148,7 @@ class MemoryVciSql {
       row.status = 'pending';
       row.reservation_id = null;
       row.lease_expires_at = null;
-      return cursor([], 1) as never;
+      return cursor([{ id: 'changed' }], 1) as never;
     }
     if (q.includes("credential_offers SET status = 'expired'")) {
       if (q.includes('WHERE id = ?')) {
@@ -152,7 +164,7 @@ class MemoryVciSql {
           }
         }
       }
-      return cursor([], 1) as never;
+      return cursor([{ id: 'changed' }], 1) as never;
     }
     if (q.startsWith('INSERT INTO proof_nonces')) {
       const [id, tenant, nonceHash, created, expires] = p;
@@ -168,7 +180,7 @@ class MemoryVciSql {
         created_at: created,
         expires_at: expires,
       });
-      return cursor([], 1) as never;
+      return cursor([{ id: 'changed' }], 1) as never;
     }
     if (q.startsWith('SELECT * FROM proof_nonces')) {
       const row = this.nonces.get(String(p[0]));
@@ -194,7 +206,7 @@ class MemoryVciSql {
       row.access_token_jti = p[1];
       row.reservation_id = p[2];
       row.lease_expires_at = p[3];
-      return cursor([], 1) as never;
+      return cursor([{ id: 'changed' }], 1) as never;
     }
     if (q.includes("proof_nonces SET status = 'consumed'")) {
       const row = this.nonces.get(String(p[0]));
@@ -208,14 +220,14 @@ class MemoryVciSql {
       row.status = 'consumed';
       row.reservation_id = null;
       row.lease_expires_at = null;
-      return cursor([], 1) as never;
+      return cursor([{ id: 'changed' }], 1) as never;
     }
     if (q.includes("SET claims_json = '{}'")) {
       for (const row of this.offers.values()) {
         if (row.status === 'consumed' && Number(row.expires_at) <= Number(p[0]))
           row.claims_json = '{}';
       }
-      return cursor([], 1) as never;
+      return cursor([{ id: 'changed' }], 1) as never;
     }
     if (q.startsWith('DELETE') || q.startsWith('UPDATE proof_nonces')) return cursor() as never;
     throw new Error(`Unhandled SQL: ${q}`);
@@ -344,6 +356,50 @@ describe('CredentialOfferStore security state machine', () => {
     expect(store.getOfferRpc({ id: 'offer-a', tenantId: 'tenant-a', now: 3_000 })?.status).toBe(
       'locked'
     );
+  });
+
+  it('treats a missing or unexpected tx_code as malformed without spending an attempt', () => {
+    store.createOfferRpc(offer('offer-pin', { txCodeHash: 'pin-ok', maxAttempts: 1 }));
+    store.createOfferRpc(offer('offer-open'));
+
+    for (let i = 0; i < 3; i++) {
+      expect(
+        store.reserveOfferRpc({
+          id: 'offer-pin',
+          tenantId: 'tenant-a',
+          preAuthorizedCodeHash: 'hash-offer-pin',
+          now: 2_000 + i,
+        })
+      ).toEqual({ reserved: false, reason: 'tx_code_required' });
+    }
+    expect(
+      store.reserveOfferRpc({
+        id: 'offer-open',
+        tenantId: 'tenant-a',
+        preAuthorizedCodeHash: 'hash-offer-open',
+        txCodeHash: 'pin-anything',
+        now: 2_000,
+      })
+    ).toEqual({ reserved: false, reason: 'tx_code_not_expected' });
+
+    // Neither offer was locked nor reserved, so the right request still succeeds.
+    expect(
+      store.reserveOfferRpc({
+        id: 'offer-pin',
+        tenantId: 'tenant-a',
+        preAuthorizedCodeHash: 'hash-offer-pin',
+        txCodeHash: 'pin-ok',
+        now: 2_010,
+      }).reserved
+    ).toBe(true);
+    expect(
+      store.reserveOfferRpc({
+        id: 'offer-open',
+        tenantId: 'tenant-a',
+        preAuthorizedCodeHash: 'hash-offer-open',
+        now: 2_010,
+      }).reserved
+    ).toBe(true);
   });
 
   it('does not expose an offer across tenants', () => {

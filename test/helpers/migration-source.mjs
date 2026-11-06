@@ -82,14 +82,24 @@ export function readRenderedMigrationSql(directory, filename) {
   );
 }
 
-/** Expand bridge bundles for tests that inspect historical order or reviewed source DDL. */
+/**
+ * Expand bridge bundles for tests that inspect historical order or reviewed source DDL.
+ *
+ * Migrations added after a release delta continue the file numbering of the delta (003, ...), which
+ * collides with the numbers of the consolidated historical sources. They are applied after all of
+ * the history, whatever their number.
+ */
 export function listMigrationSourceFiles(directory) {
   const { streamDirectory, bundles, freshBaselines } = releaseSources(directory);
-  return [
-    ...new Set(
-      readdirSync(streamDirectory)
-        .filter((file) => file.endsWith('.sql') && !freshBaselines.has(file))
-        .flatMap((file) => bundles.get(file)?.supersedes.map((source) => source.path) ?? [file])
-    ),
-  ].sort();
+  const history = new Set();
+  const additions = [];
+  for (const file of readdirSync(streamDirectory)
+    .filter((name) => name.endsWith('.sql') && !freshBaselines.has(name))
+    .sort()) {
+    const sources = bundles.get(file)?.supersedes.map((source) => source.path);
+    if (sources) for (const source of sources) history.add(source);
+    else if (file.endsWith('_baseline.sql')) history.add(file);
+    else additions.push(file);
+  }
+  return [...[...history].sort(), ...additions];
 }
