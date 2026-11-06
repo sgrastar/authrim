@@ -44,6 +44,10 @@ import {
   toOidcIdentityMappingRuntimeError,
   requireDedicatedAdminDatabaseAdapter,
   CanonicalRuntimeUserStore,
+  ensureDatabaseAdapter,
+  persistCustomClaimWrite,
+  resolveCustomClaimRuntimeSourcesFromHono,
+  validateCustomClaimWrite,
   resolveAccountCoreDataContext,
   resolveSubjectOrganizations,
   resolveSubjectRoles,
@@ -68,7 +72,13 @@ import {
   isSAMLAuthorizationChallenge,
 } from '@authrim/ar-lib-core';
 import { resolveRuntimeScreenRow } from '@authrim/ar-lib-core/services/runtime-screen-resolution';
-import { applyRuntimeScreenOptions } from './runtime-screen-options';
+import { applyRuntimeScreenOptions, runtimeAttributeKey } from './runtime-screen-options';
+import {
+  readRuntimeScreenAnswers,
+  splitProfileAnswers,
+  type RuntimeScreenAnswer,
+  type RuntimeScreenAnswerProblem,
+} from './runtime-screen-answers';
 
 type AuthContext = Context<{ Bindings: Env }>;
 type FlowRuntimeEnv = Env & {
@@ -4158,6 +4168,117 @@ export async function insertDestinationFieldConsentRecord(input: {
   );
 }
 
+/**
+ * Prepares the profile answers of a `screen` step for `userId`: everything is checked first (the
+ * Identity Schema's type and rules for a custom attribute, the user's profile for a standard
+ * field), with nothing written; `write` then stores them (standard profile fields with
+ * `updateProfileFields`, custom attributes through the schema's checked write). Writing the same
+ * answers again (a retried submit) leaves the same values. Answers kept off the profile are
+ * never passed here.
+ */
+async function prepareRuntimeScreenProfileAnswers(input: {
+  c: AuthContext;
+  tenantId: string;
+  userId: string;
+  answers: RuntimeScreenAnswer[];
+}): Promise<{ ok: true; write: () => Promise<void> } | { ok: false; error: string }> {
+  const { c, tenantId, userId, answers } = input;
+  await resolveAccountDataContextFromHono(c, userId);
+  const sources = await resolveCustomClaimRuntimeSourcesFromHono(c, tenantId);
+  const schemaRows = await ensureDatabaseAdapter(
+    sources.schemaDb,
+    'flow-screen-answer-schemas'
+  ).query<{ field_key: string }>(
+    `SELECT field_key FROM custom_claim_schemas WHERE tenant_id = ? AND is_active = 1`,
+    [tenantId]
+  );
+  const customKeys = new Map(
+    schemaRows.map((row) => [runtimeAttributeKey(row.field_key), row.field_key] as const)
+  );
+  const split = splitProfileAnswers(answers, customKeys);
+  if (split.skipped.length > 0) {
+    getLogger(c).module('LOGIN-RUNTIME-FLOW').info('Screen answers not stored to the profile', {
+      action: 'flow_screen_answers',
+      skipped_fields: split.skipped,
+    });
+  }
+
+  const validation =
+    Object.keys(split.custom).length > 0
+      ? await validateCustomClaimWrite({
+          db: sources.nonPiiDb,
+          dbPii: sources.piiDb,
+          schemaDb: sources.schemaDb,
+          tenantId,
+          userId,
+          submitted: split.custom,
+          requireCompleteRecord: false,
+          mergeExistingValues: false,
+        })
+      : null;
+  if (validation && !validation.ok) return { ok: false, error: validation.error };
+  // An answer never clears a stored value: one the schema reads as empty (such as `[]`) is not
+  // an answer, and is refused rather than deleting what is stored.
+  if (
+    validation &&
+    (validation.nonPiiKeysToDelete.length > 0 || validation.piiKeysToDelete.length > 0)
+  ) {
+    const key = [...validation.nonPiiKeysToDelete, ...validation.piiKeysToDelete][0];
+    return { ok: false, error: `The answer for ${key} is empty` };
+  }
+
+  const hasProfile = Object.keys(split.profile).length > 0;
+  const users = new CanonicalRuntimeUserStore({
+    coreAdapter: createAccountAuthContextFromHono(c, tenantId).coreAdapter,
+    piiAdapter: createPIIContextFromHono(c, tenantId).defaultPiiAdapter,
+    tenantId,
+  });
+  if (hasProfile && !(await users.hasProfile(userId))) {
+    return { ok: false, error: 'The profile cannot be updated' };
+  }
+
+  return {
+    ok: true,
+    write: async () => {
+      if (hasProfile && !(await users.updateProfileFields(userId, split.profile))) {
+        throw new Error('flow_screen_profile_unavailable');
+      }
+      if (validation) {
+        await persistCustomClaimWrite({
+          db: sources.nonPiiDb,
+          dbPii: sources.piiDb,
+          schemaDb: sources.schemaDb,
+          tenantId,
+          userId,
+          validation,
+        });
+      }
+    },
+  };
+}
+
+function screenAnswerError(
+  c: AuthContext,
+  interactionId: string,
+  problem: RuntimeScreenAnswerProblem | 'invalid_profile_value',
+  field: string | null,
+  description: string
+) {
+  return c.json(
+    {
+      error: 'invalid_screen_answers',
+      error_description: description,
+      error_code: 'AR_FLOW_SCREEN_ANSWERS_INVALID',
+      category: 'recoverable' satisfies FlowRuntimeErrorCategory,
+      action: 'retry_step' satisfies FlowRuntimeErrorAction,
+      interaction_id: interactionId,
+      problem,
+      field,
+    },
+    400
+  );
+}
+
 async function persistRuntimeConsentStep(input: {
   c: AuthContext;
   db: DatabaseAdapter;
@@ -5923,6 +6044,52 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
     );
   }
 
+  // A screen's answers, when it is submitted: checked against the screen the step shows (the
+  // server's), and its profile answers prepared for the signed-in user, before anything is
+  // recorded (a refused submit changes nothing, not even whom the interaction is about).
+  let screenAnswers: { userId: string; write: () => Promise<void> } | null = null;
+  if (current.step.component === 'screen' && effectiveSelectedHandle === 'submitted') {
+    const read = readRuntimeScreenAnswers(parseJsonRecord(current.step.config).screen, body.input);
+    if (!read.ok) {
+      return screenAnswerError(
+        c,
+        interactionId,
+        read.problem,
+        read.field,
+        read.field ? `The answer for ${read.field} is not valid` : 'The answers are not valid'
+      );
+    }
+    if (read.answers.some((answer) => answer.storeToProfile && answer.value !== null)) {
+      // Only for the person signed in, and only on an interaction about them (or no one yet).
+      const sessionUserId = challengeSession?.userId ?? null;
+      if (!sessionUserId) {
+        return runtimeError(
+          c,
+          401,
+          'authentication_required',
+          'Sign in to continue',
+          'AR_FLOW_SCREEN_ANSWERS_AUTH_REQUIRED',
+          'reauthentication_required',
+          'reauthenticate',
+          interactionId
+        );
+      }
+      if (interaction.user_id && interaction.user_id !== sessionUserId) {
+        return sessionUserMismatch(c, interactionId);
+      }
+      const prepared = await prepareRuntimeScreenProfileAnswers({
+        c,
+        tenantId,
+        userId: sessionUserId,
+        answers: read.answers,
+      });
+      if (!prepared.ok) {
+        return screenAnswerError(c, interactionId, 'invalid_profile_value', null, prepared.error);
+      }
+      screenAnswers = { userId: sessionUserId, write: prepared.write };
+    }
+  }
+
   const consentResult = await persistRuntimeConsentStep({
     c,
     db,
@@ -5964,6 +6131,19 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
     ) {
       return sessionUserMismatch(c, interactionId);
     }
+  }
+
+  // A screen's profile answers, checked and prepared before anything is recorded: stored once
+  // the interaction is about the person signed in.
+  if (screenAnswers) {
+    if (resolvedUserId && resolvedUserId !== screenAnswers.userId) {
+      return sessionUserMismatch(c, interactionId);
+    }
+    if (!(await claimInteractionUser(db, tenantId, interaction, screenAnswers.userId))) {
+      return sessionUserMismatch(c, interactionId);
+    }
+    resolvedUserId = screenAnswers.userId;
+    await screenAnswers.write();
   }
 
   const visibleStepResolution =

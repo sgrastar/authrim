@@ -34,7 +34,13 @@
 		display_condition?: RuntimeDisplayCondition | null;
 		layout_columns?: number | null;
 		layout_column?: number | null;
+		/** False: the label is read out but not shown. */
+		show_label?: boolean;
+		/** The choices of a select or radio part (their labels in the screen's language). */
+		options?: RuntimeFieldOption[];
 	};
+
+	type RuntimeFieldOption = { value: string; label: string };
 
 	type RuntimeDisplayCondition = {
 		mode: 'always' | 'feature_enabled' | 'hidden';
@@ -175,26 +181,39 @@
 		return value === true;
 	}
 
+	/** The most columns a row has (as the Admin Console's builder lays them out). */
+	const MAX_LAYOUT_COLUMNS = 3;
+
+	function clampLayoutInteger(value: number): number {
+		return Math.max(1, Math.min(MAX_LAYOUT_COLUMNS, Math.trunc(value)));
+	}
+
 	function readLayoutInteger(value: unknown, fallback = 1): number {
-		if (typeof value === 'number' && Number.isFinite(value)) {
-			return Math.max(1, Math.min(2, Math.trunc(value)));
-		}
+		if (typeof value === 'number' && Number.isFinite(value)) return clampLayoutInteger(value);
 		if (typeof value === 'string') {
 			const parsed = Number(value);
-			if (Number.isFinite(parsed)) return Math.max(1, Math.min(2, Math.trunc(parsed)));
+			if (Number.isFinite(parsed)) return clampLayoutInteger(parsed);
 		}
 		return fallback;
 	}
 
 	function readOptionalLayoutInteger(value: unknown): number | null {
-		if (typeof value === 'number' && Number.isFinite(value)) {
-			return Math.max(1, Math.min(2, Math.trunc(value)));
-		}
+		if (typeof value === 'number' && Number.isFinite(value)) return clampLayoutInteger(value);
 		if (typeof value === 'string' && value.trim()) {
 			const parsed = Number(value);
-			if (Number.isFinite(parsed)) return Math.max(1, Math.min(2, Math.trunc(parsed)));
+			if (Number.isFinite(parsed)) return clampLayoutInteger(parsed);
 		}
 		return null;
+	}
+
+	function readOptions(value: unknown): RuntimeFieldOption[] | undefined {
+		if (!Array.isArray(value)) return undefined;
+		const options: RuntimeFieldOption[] = [];
+		for (const option of value) {
+			if (!isRecord(option) || typeof option.value !== 'string' || !option.value) continue;
+			options.push({ value: option.value, label: readString(option.label) ?? option.value });
+		}
+		return options;
 	}
 
 	function normalizeField(value: unknown): RuntimeField | null {
@@ -221,7 +240,9 @@
 				value.human_verification_timing === 'submit' ? 'submit' : 'initial',
 			display_condition: normalizeDisplayCondition(value.display_condition),
 			layout_columns: readLayoutInteger(value.layout_columns),
-			layout_column: readOptionalLayoutInteger(value.layout_column)
+			layout_column: readOptionalLayoutInteger(value.layout_column),
+			show_label: value.show_label !== false,
+			options: readOptions(value.options)
 		};
 	}
 
@@ -554,6 +575,30 @@
 
 	function fieldBooleanValue(field: RuntimeField): boolean {
 		return fieldValues[field.field] === true || fieldValues[field.field] === 'true';
+	}
+
+	/** A checkbox part, or the legacy yes/no form (an identity field of value type boolean). */
+	function isCheckboxField(field: RuntimeField): boolean {
+		const blockType = field.block_type ?? 'identity_field';
+		return (
+			blockType === 'checkbox' || (blockType === 'identity_field' && field.value_type === 'boolean')
+		);
+	}
+
+	/** The legacy yes/no form's own words on the box, when they differ from its label. */
+	function legacyCheckboxText(field: RuntimeField): string | null {
+		if ((field.block_type ?? 'identity_field') !== 'identity_field') return null;
+		return field.placeholder && field.placeholder !== field.label ? field.placeholder : null;
+	}
+
+	/** A part's id in the page (from its block id or field, safe as an element id). */
+	function fieldDomId(field: RuntimeField): string {
+		return `runtime-field-${fieldKey(field).replace(/[^A-Za-z0-9_-]/gu, '_')}`;
+	}
+
+	function fieldDescriptionId(field: RuntimeField): string | undefined {
+		if (!field.help_text && !fieldError(field)) return undefined;
+		return `${fieldDomId(field)}-notes`;
 	}
 
 	function setFieldValue(field: RuntimeField, value: string | boolean) {
@@ -1112,44 +1157,129 @@
 				{/if}
 			</div>
 		{/if}
-	{:else}
-		<label class="runtime-screen-field">
-			<span>
-				{field.label}
-				{#if field.required}
-					<strong>*</strong>
-				{/if}
-			</span>
-			{#if field.value_type === 'boolean'}
-				<span class="runtime-checkbox-row">
-					<input
-						{disabled}
-						type="checkbox"
-						checked={fieldBooleanValue(field)}
-						onchange={(event) =>
-							setFieldValue(field, (event.currentTarget as HTMLInputElement).checked)}
-					/>
-					<span>{field.placeholder || field.label}</span>
+	{:else if isCheckboxField(field)}
+		<!-- The legacy yes/no form put its own words on the box (its placeholder) under the label:
+		     both are kept then. Otherwise the label is the box's only text. -->
+		{@const boxText = legacyCheckboxText(field)}
+		<div class="runtime-screen-field">
+			{#if boxText}
+				<span id={`${fieldDomId(field)}-question`} class:sr-only={field.show_label === false}>
+					{field.label}
+					{#if field.required}
+						<strong aria-hidden="true">*</strong>
+					{/if}
 				</span>
-			{:else}
+			{/if}
+			<label class="runtime-checkbox-row">
 				<input
 					{disabled}
-					type={isEmailIdentityField(field) ? 'email' : 'text'}
-					name={isEmailIdentityField(field) ? 'email' : undefined}
-					autocomplete={isEmailIdentityField(field) ? 'email' : undefined}
-					onkeydown={isEmailIdentityField(field) ? onEmailKeydown : undefined}
-					value={fieldStringValue(field)}
-					placeholder={field.placeholder || field.label}
-					oninput={(event) => setFieldValue(field, (event.currentTarget as HTMLInputElement).value)}
+					type="checkbox"
+					checked={fieldBooleanValue(field)}
+					aria-labelledby={boxText
+						? `${fieldDomId(field)}-question ${fieldDomId(field)}-box`
+						: undefined}
+					aria-required={field.required || undefined}
+					aria-describedby={fieldDescriptionId(field)}
+					onchange={(event) =>
+						setFieldValue(field, (event.currentTarget as HTMLInputElement).checked)}
 				/>
-			{/if}
+				{#if boxText}
+					<span id={`${fieldDomId(field)}-box`}>{boxText}</span>
+				{:else}
+					<span class:sr-only={field.show_label === false}>
+						{field.label}
+						{#if field.required}
+							<strong aria-hidden="true">*</strong>
+						{/if}
+					</span>
+				{/if}
+			</label>
+			{@render fieldNotes(field)}
+		</div>
+	{:else if blockType === 'radio'}
+		<fieldset
+			class="runtime-screen-field runtime-choice-group"
+			aria-describedby={fieldDescriptionId(field)}
+		>
+			<legend class:sr-only={field.show_label === false}>
+				{field.label}
+				{#if field.required}
+					<strong aria-hidden="true">*</strong>
+				{/if}
+			</legend>
+			{#each field.options ?? [] as option (option.value)}
+				<label class="runtime-checkbox-row">
+					<input
+						{disabled}
+						type="radio"
+						name={`runtime-field-${fieldKey(field)}`}
+						value={option.value}
+						required={field.required}
+						checked={fieldStringValue(field) === option.value}
+						onchange={() => setFieldValue(field, option.value)}
+					/>
+					<span>{option.label}</span>
+				</label>
+			{/each}
+			{@render fieldNotes(field)}
+		</fieldset>
+	{:else if blockType === 'select'}
+		<label class="runtime-screen-field">
+			<span class:sr-only={field.show_label === false}>
+				{field.label}
+				{#if field.required}
+					<strong aria-hidden="true">*</strong>
+				{/if}
+			</span>
+			<select
+				{disabled}
+				value={fieldStringValue(field)}
+				aria-required={field.required || undefined}
+				aria-describedby={fieldDescriptionId(field)}
+				onchange={(event) => setFieldValue(field, (event.currentTarget as HTMLSelectElement).value)}
+			>
+				<option value="">{field.placeholder ?? ''}</option>
+				{#each field.options ?? [] as option (option.value)}
+					<option value={option.value}>{option.label}</option>
+				{/each}
+			</select>
+			{@render fieldNotes(field)}
+		</label>
+	{:else}
+		<label class="runtime-screen-field">
+			<span class:sr-only={field.show_label === false}>
+				{field.label}
+				{#if field.required}
+					<strong aria-hidden="true">*</strong>
+				{/if}
+			</span>
+			<input
+				{disabled}
+				type={isEmailIdentityField(field) ? 'email' : 'text'}
+				name={isEmailIdentityField(field) ? 'email' : undefined}
+				autocomplete={isEmailIdentityField(field) ? 'email' : undefined}
+				aria-required={field.required || undefined}
+				aria-describedby={fieldDescriptionId(field)}
+				onkeydown={isEmailIdentityField(field) ? onEmailKeydown : undefined}
+				value={fieldStringValue(field)}
+				placeholder={field.placeholder || field.label}
+				oninput={(event) => setFieldValue(field, (event.currentTarget as HTMLInputElement).value)}
+			/>
+			{@render fieldNotes(field)}
+		</label>
+	{/if}
+{/snippet}
+
+{#snippet fieldNotes(field: RuntimeField)}
+	{#if field.help_text || fieldError(field)}
+		<span class="runtime-field-notes" id={fieldDescriptionId(field)}>
 			{#if field.help_text}
 				<small>{field.help_text}</small>
 			{/if}
 			{#if fieldError(field)}
 				<small class="runtime-screen-error">{fieldError(field)}</small>
 			{/if}
-		</label>
+		</span>
 	{/if}
 {/snippet}
 
@@ -1258,6 +1388,38 @@
 
 	.runtime-checkbox-row input {
 		width: auto;
+		min-height: 0;
+		padding: 0;
+	}
+
+	.runtime-screen-field select {
+		width: 100%;
+		min-height: var(--auth-control-height, 0);
+		border: 1px solid var(--input-border, var(--border));
+		border-radius: var(--input-radius, var(--radius-lg, var(--radius-md)));
+		background: var(--bg-input);
+		color: var(--text-primary);
+		font: inherit;
+		font-weight: 500;
+		padding: var(--auth-control-padding-y, 0.875rem) var(--auth-control-padding-x, 1rem);
+		font-size: var(--auth-control-font-size, 1rem);
+	}
+
+	.runtime-choice-group {
+		margin: 0;
+		border: 0;
+		padding: 0;
+		min-width: 0;
+	}
+
+	.runtime-choice-group legend {
+		margin-bottom: var(--auth-field-gap, 0.5rem);
+		padding: 0;
+	}
+
+	.runtime-field-notes {
+		display: grid;
+		gap: 0.25rem;
 	}
 
 	.runtime-auth-widget {
