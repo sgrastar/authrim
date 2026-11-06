@@ -102,6 +102,34 @@ describe('withStepUp', () => {
 		expect(operation).toHaveBeenLastCalledWith();
 	});
 
+	it('goes on to the step-up a route asks for after a fresh sign-in', async () => {
+		const flow = steps();
+		const operation = vi
+			.fn()
+			.mockRejectedValueOnce(new ApiError(403, 'wallet_credential_fresh_auth_required', 'x'))
+			.mockRejectedValueOnce(stepUp(['passkey', 'second_factor']))
+			.mockResolvedValueOnce('done');
+		await expect(withStepUp(operation, flow)).resolves.toBe('done');
+		// The passkey was just confirmed: only the second factor is asked for.
+		expect(flow.reauthenticate).toHaveBeenCalledOnce();
+		expect(flow.verifySecondFactor).toHaveBeenCalledOnce();
+		expect(flow.issueReceipt).toHaveBeenCalledWith('asr_1');
+		expect(operation).toHaveBeenLastCalledWith('asp_receipt');
+		expect(operation).toHaveBeenCalledTimes(3);
+	});
+
+	it('passes on a second fresh sign-in refusal', async () => {
+		const flow = steps();
+		const again = new ApiError(403, 'admin_fresh_auth_required', 'again');
+		const operation = vi
+			.fn()
+			.mockRejectedValueOnce(new ApiError(403, 'admin_fresh_auth_required', 'x'))
+			.mockRejectedValueOnce(again);
+		await expect(withStepUp(operation, flow)).rejects.toBe(again);
+		expect(flow.reauthenticate).toHaveBeenCalledOnce();
+		expect(flow.issueReceipt).not.toHaveBeenCalled();
+	});
+
 	it('passes a second refusal on without asking again', async () => {
 		const flow = steps();
 		const again = stepUp(['passkey'], 'asr_2');

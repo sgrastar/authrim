@@ -460,6 +460,37 @@ describe('https issuers (SD-JWT VC Issuer Metadata)', () => {
     expect(issuerTrustKeyMocks.importECPublicKey).not.toHaveBeenCalled();
   });
 
+  it('accepts the single key of metadata without kid, use or alg', async () => {
+    issuerTrustKeyMocks.safeFetchJson.mockResolvedValue({
+      issuer: 'https://idp.example.com',
+      jwks: { keys: [{ kty: 'EC', crv: 'P-256', x: 'x', y: 'y' }] },
+    });
+    await expect(getIssuerPublicKey(env, 'https://idp.example.com')).resolves.toBe('ec-key');
+    expect(issuerTrustKeyMocks.importECPublicKey).toHaveBeenCalledWith(
+      expect.objectContaining({ crv: 'P-256', alg: 'ES256' })
+    );
+  });
+
+  it('still refuses a kid-less signature when the metadata has several keys', async () => {
+    issuerTrustKeyMocks.safeFetchJson.mockResolvedValue({
+      issuer: 'https://idp.example.com',
+      jwks: { keys: [KEY, { ...KEY, kid: 'k2' }] },
+    });
+    await expect(getIssuerPublicKey(env, 'https://idp.example.com')).rejects.toThrow(
+      'several matching signing keys'
+    );
+  });
+
+  it('still refuses a key whose stated use rules signing out', async () => {
+    issuerTrustKeyMocks.safeFetchJson.mockResolvedValue({
+      issuer: 'https://idp.example.com',
+      jwks: { keys: [{ kty: 'EC', crv: 'P-256', use: 'enc' }] },
+    });
+    await expect(getIssuerPublicKey(env, 'https://idp.example.com')).rejects.toThrow(
+      'No suitable EC signing key'
+    );
+  });
+
   it('refuses metadata without keys', async () => {
     issuerTrustKeyMocks.safeFetchJson.mockResolvedValue({ issuer: 'https://idp.example.com' });
     await expect(getIssuerPublicKey(env, 'https://idp.example.com')).rejects.toThrow(

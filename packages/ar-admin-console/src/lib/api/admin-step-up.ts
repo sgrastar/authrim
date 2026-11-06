@@ -90,17 +90,26 @@ export async function withStepUp<T>(
 	steps: StepUpSteps = BROWSER_STEPS
 ): Promise<T> {
 	let required: StepUpRequired | null;
+	let reauthenticated = false;
 	try {
 		return await operation();
 	} catch (error) {
-		if (isFreshAuthRequired(error)) {
+		if (!isFreshAuthRequired(error)) {
+			required = stepUpRequired(error);
+			if (!required) throw error;
+		} else {
+			// A route can ask for a fresh sign-in first and for the step-up only after it.
 			await steps.reauthenticate();
-			return operation();
+			reauthenticated = true;
+			try {
+				return await operation();
+			} catch (retryError) {
+				required = stepUpRequired(retryError);
+				if (!required) throw retryError;
+			}
 		}
-		required = stepUpRequired(error);
-		if (!required) throw error;
 	}
-	if (required.missing.includes('passkey')) await steps.reauthenticate();
+	if (required.missing.includes('passkey') && !reauthenticated) await steps.reauthenticate();
 	if (required.missing.includes('second_factor')) await steps.verifySecondFactor();
 	const receipt = await steps.issueReceipt(required.stepUpId);
 	return operation(receipt);

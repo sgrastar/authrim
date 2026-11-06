@@ -12,7 +12,7 @@
 import { isFreshAuthRequired } from '#lib/api/admin-reauth.js';
 import { adminFetch } from '#lib/api/admin-request.js';
 import { stepUpHeaders, stepUpRequired, withStepUp } from '#lib/api/admin-step-up.js';
-import { errorFromResponse } from '#lib/api/api-error.js';
+import { ApiError, errorFromResponse } from '#lib/api/api-error.js';
 import type { MessageKey } from '#lib/i18n/i18n.svelte.js';
 
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
@@ -192,18 +192,24 @@ export const httpWalletCredentials: WalletCredentialsClient & WalletCredentialMa
 	async revokeCredential(credentialId) {
 		// Revoking an admin credential is an L2 operation: the step-up runs here and the request is
 		// repeated with the receipt. Other refusals keep their wallet error codes.
-		await withStepUp(async (receipt) => {
-			const response = await adminFetch(
-				`${API_BASE_URL}/api/admin/me/wallet-credentials/${encodeURIComponent(credentialId)}/revoke`,
-				{ method: 'POST', credentials: 'include', headers: stepUpHeaders(receipt) }
-			);
-			if (response.ok) return;
-			if (response.status === 403) {
-				const error = await errorFromResponse(response.clone());
-				if (stepUpRequired(error) || isFreshAuthRequired(error)) throw error;
-			}
-			throw await errorFrom(response);
-		});
+		try {
+			await withStepUp(async (receipt) => {
+				const response = await adminFetch(
+					`${API_BASE_URL}/api/admin/me/wallet-credentials/${encodeURIComponent(credentialId)}/revoke`,
+					{ method: 'POST', credentials: 'include', headers: stepUpHeaders(receipt) }
+				);
+				if (response.ok) return;
+				if (response.status === 403) {
+					const error = await errorFromResponse(response.clone());
+					if (stepUpRequired(error) || isFreshAuthRequired(error)) throw error;
+				}
+				throw await errorFrom(response);
+			});
+		} catch (error) {
+			// A refusal that survived the step-up keeps the wallet error contract of the page.
+			if (error instanceof ApiError) throw new WalletCredentialError(error.code, error.status);
+			throw error;
+		}
 	},
 
 	async createOffer() {

@@ -153,10 +153,10 @@ async function getKeyFromIssuerMetadata(issuer: string, kid?: string): Promise<C
   const inline = metadata.jwks as { keys?: unknown } | undefined;
   if (inline !== undefined) {
     if (!Array.isArray(inline?.keys)) throw new Error('Issuer metadata jwks has no keys');
-    return selectJwksSigningKey(inline.keys as JWK[], kid);
+    return selectJwksSigningKey(inline.keys as JWK[], kid, { optionalUseAndAlg: true });
   }
   if (typeof metadata.jwks_uri === 'string') {
-    return getKeyFromJwksUri(metadata.jwks_uri, kid);
+    return getKeyFromJwksUri(metadata.jwks_uri, kid, { optionalUseAndAlg: true });
   }
   throw new Error('Issuer metadata has neither jwks nor jwks_uri');
 }
@@ -190,7 +190,11 @@ function isIssuerSigningJwk(
 /**
  * Fetch public key from JWKS URI
  */
-async function getKeyFromJwksUri(jwksUri: string, kid?: string): Promise<CryptoKey> {
+async function getKeyFromJwksUri(
+  jwksUri: string,
+  kid?: string,
+  selection: KeySelection = {}
+): Promise<CryptoKey> {
   const jwks = await safeFetchJson<{ keys: JWK[] }>(jwksUri, {
     headers: { Accept: 'application/json' },
     requireHttps: true,
@@ -198,20 +202,35 @@ async function getKeyFromJwksUri(jwksUri: string, kid?: string): Promise<CryptoK
     maxResponseSize: 256 * 1024, // 256 KB max for JWKS
   });
 
-  return selectJwksSigningKey(jwks.keys, kid);
+  return selectJwksSigningKey(jwks.keys, kid, selection);
+}
+
+interface KeySelection {
+  /**
+   * Without a kid, accept the one key that passes the signing-key rules even when it omits the
+   * optional `use` and `alg` (SD-JWT VC Issuer Metadata). Otherwise a kid-less signature needs a
+   * key stating `use: sig` and its `alg`.
+   */
+  optionalUseAndAlg?: boolean;
 }
 
 /** The one EC signing key of a JWKS that a signature may be verified with. */
-function selectJwksSigningKey(keys: JWK[], kid?: string): Promise<CryptoKey> {
+function selectJwksSigningKey(
+  keys: JWK[],
+  kid?: string,
+  selection: KeySelection = {}
+): Promise<CryptoKey> {
   // The same signing-key rules with or without a kid; without one the JWKS must hold exactly one
   // (ES256, ES384 or ES512 with use "sig") rather than the first in document order.
   const signingKeys = keys.filter((key) => key.kty === 'EC' && isIssuerSigningJwk(key));
   const candidates =
     kid !== undefined
       ? signingKeys.filter((key) => key.kid === kid)
-      : signingKeys.filter(
-          (key) => key.use === 'sig' && EC_SIGNING_ALGORITHMS.includes(key.alg || '')
-        );
+      : selection.optionalUseAndAlg
+        ? signingKeys
+        : signingKeys.filter(
+            (key) => key.use === 'sig' && EC_SIGNING_ALGORITHMS.includes(key.alg || '')
+          );
   if (candidates.length > 1) {
     throw new Error('JWKS has several matching signing keys: the signature must name one with kid');
   }
