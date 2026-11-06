@@ -770,6 +770,18 @@ adminUsersRouter.post('/:id/wallet-credentials/revoke', async (c) => {
     const id = c.req.param('id');
     const tenantId = getTenantIdFromContext(c);
 
+    // One's own credentials are revoked one by one under the second-factor rules (the minimum,
+    // admin.second_factor.remove), on /api/admin/me/wallet-credentials.
+    if (id === authContext.userId) {
+      return c.json(
+        {
+          error: 'use_own_wallet_credential_route',
+          error_description: 'Revoke your own credentials from My account',
+        },
+        403
+      );
+    }
+
     // The admin's home tenant is the tenant the account is stored under. A deactivated (soft
     // deleted) account is included: its credentials must still be revocable.
     const existing = await adapter.queryOne<{ id: string }>(

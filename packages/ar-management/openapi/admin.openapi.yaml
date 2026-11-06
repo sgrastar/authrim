@@ -5063,6 +5063,8 @@ paths:
         deactivated admin and is idempotent, so it can be retried at any time. Needs an L2 step-up
         (admin_credential.revoke, receipt in authrim-step-up-receipt). The Keyring second factors of
         the admin's revoked credentials are revoked with them (503 when that could not finish).
+        An admin's own credentials are refused here (403 use_own_wallet_credential_route): they are
+        revoked under the second-factor rules on /api/admin/me/wallet-credentials.
         Responds 200 only when every
         credential ended revoked (already revoked counts); 503 with Retry-After when any credential
         hit a concurrent change or an error (retry); 409 when a credential cannot be revoked from

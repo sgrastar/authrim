@@ -396,7 +396,14 @@ myKeyringFactorRouter.get('/enroll/:id', async (c) => {
 
     // The credential may have been revoked while the key was being registered (its revocation
     // found no factor to retire yet): checked again now, and the new factor retired if so.
-    if (!(await adminCredentialIsActive(c, outcome.tenantId, auth.userId, result.credentialId))) {
+    // Fail closed: a credential that cannot be confirmed active now does not keep the factor.
+    const stillActive = await adminCredentialIsActive(
+      c,
+      outcome.tenantId,
+      auth.userId,
+      result.credentialId
+    ).catch(() => false);
+    if (!stillActive) {
       await repo.revokeByAdmin(auth.userId, inserted.factor.id);
       return c.json({ status: 'failed', error: 'credential_not_active' });
     }

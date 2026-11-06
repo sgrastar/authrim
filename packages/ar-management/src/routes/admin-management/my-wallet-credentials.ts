@@ -25,6 +25,7 @@ import {
   requiredIdempotencyMiddleware,
   requireDedicatedAdminDatabaseAdapter,
   ADMIN_SECOND_FACTOR_MINIMUM,
+  markIdempotentResponseRetryable,
   AdminSecondFactorRepository,
 } from '@authrim/ar-lib-core';
 import { writeAdminAuditLog } from '../../admin-shared';
@@ -292,6 +293,8 @@ myWalletCredentialsRouter.post(
     const outcome = await revokeAdminCredential(adapter, home.tenantId, credentialId);
     if (outcome === 'not_found') return refuse(c, 'not_found', 404);
     if (outcome === 'conflict' || outcome === 'error') {
+      // Not the outcome of the request: the same Idempotency-Key may try again.
+      markIdempotentResponseRetryable(c as never);
       c.header('Retry-After', '1');
       return refuse(c, 'wallet_credential_unavailable', 503);
     }
@@ -309,6 +312,8 @@ myWalletCredentialsRouter.post(
         home.adminUserId
       );
     } catch {
+      // Not the outcome of the request: the same Idempotency-Key may try again.
+      markIdempotentResponseRetryable(c as never);
       c.header('Retry-After', '1');
       return refuse(c, 'wallet_credential_unavailable', 503);
     }

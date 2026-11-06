@@ -459,6 +459,15 @@ describe('GET /enroll/:id', () => {
     expect(mocks.writeAdminAuditLog).not.toHaveBeenCalled();
   });
 
+  it('retires the new factor when the credential cannot be confirmed afterwards (fail closed)', async () => {
+    mocks.credentialRow
+      .mockResolvedValueOnce({ status: 'active' })
+      .mockRejectedValueOnce(new Error('core db down'));
+    const response = await call('GET', '/enroll/g1:apac:0:vp_1');
+    expect(await response.json()).toEqual({ status: 'failed', error: 'credential_not_active' });
+    expect(mocks.revokeByAdmin).toHaveBeenCalledWith('admin-1', 'kf-2');
+  });
+
   it('registers a first factor only as a first enrolment', async () => {
     vc.consumeAdminPresentation.mockResolvedValue({
       purpose: 'enroll',
