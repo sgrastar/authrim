@@ -156,7 +156,17 @@ async function getKeyFromIssuerMetadata(issuer: string, kid?: string): Promise<C
     return selectJwksSigningKey(inline.keys as JWK[], kid, { optionalUseAndAlg: true });
   }
   if (typeof metadata.jwks_uri === 'string') {
-    return getKeyFromJwksUri(metadata.jwks_uri, kid, { optionalUseAndAlg: true });
+    // The keys come from the issuer's own origin, never from a host its metadata points to.
+    let jwksUrl: URL;
+    try {
+      jwksUrl = new URL(metadata.jwks_uri);
+    } catch {
+      throw new Error('Issuer metadata jwks_uri is not a URL');
+    }
+    if (jwksUrl.protocol !== 'https:' || jwksUrl.origin !== new URL(issuer).origin) {
+      throw new Error('Issuer metadata jwks_uri must be on the issuer origin');
+    }
+    return getKeyFromJwksUri(jwksUrl.href, kid, { optionalUseAndAlg: true });
   }
   throw new Error('Issuer metadata has neither jwks nor jwks_uri');
 }

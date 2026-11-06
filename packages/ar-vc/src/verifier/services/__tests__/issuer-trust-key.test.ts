@@ -449,6 +449,17 @@ describe('https issuers (SD-JWT VC Issuer Metadata)', () => {
     );
   });
 
+  it('refuses a jwks_uri on another origin without fetching it', async () => {
+    issuerTrustKeyMocks.safeFetchJson.mockResolvedValueOnce({
+      issuer: 'https://idp.example.com',
+      jwks_uri: 'https://keys.attacker.example/jwks',
+    });
+    await expect(
+      getIssuerPublicKey(env, 'https://idp.example.com', undefined, 'k1')
+    ).rejects.toThrow('issuer origin');
+    expect(issuerTrustKeyMocks.safeFetchJson).toHaveBeenCalledTimes(1);
+  });
+
   it('refuses metadata that names another issuer', async () => {
     issuerTrustKeyMocks.safeFetchJson.mockResolvedValue({
       issuer: 'https://evil.example.com',
