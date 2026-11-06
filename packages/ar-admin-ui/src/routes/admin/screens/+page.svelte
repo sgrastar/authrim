@@ -58,6 +58,8 @@
 		settings: ScreenSettings;
 		is_active: boolean;
 		is_system: boolean;
+		/** The version the screen was read at (saving names it, so a newer save is not lost). */
+		version: number;
 	};
 
 	type ScreenPart = {
@@ -464,7 +466,8 @@
 			localizations: {},
 			settings: { canvas_layout: 'narrow' },
 			is_active: true,
-			is_system: false
+			is_system: false,
+			version: 1
 		};
 	}
 
@@ -1351,7 +1354,8 @@
 			localizations: screen.localizations ?? {},
 			settings: normalizeSettings(screen.settings),
 			is_active: toBoolean(screen.is_active),
-			is_system: toBoolean(screen.is_system)
+			is_system: toBoolean(screen.is_system),
+			version: screen.version ?? 1
 		};
 		synchronizeDraftRegistrationRequirements();
 		selectedBlockIndex = 0;
@@ -1580,7 +1584,7 @@
 				is_active: draft.is_active
 			};
 			if (draft.id) {
-				await adminScreensAPI.update(draft.id, body);
+				await adminScreensAPI.update(draft.id, draft.version, body);
 			} else {
 				const response = await adminScreensAPI.create(body);
 				selectedId = response.screen.id;
@@ -1604,7 +1608,7 @@
 		error = '';
 		message = '';
 		try {
-			await adminScreensAPI.delete(draft.id);
+			await adminScreensAPI.delete(draft.id, draft.version);
 			selectedId = null;
 			viewMode = 'preview';
 			draft = createEmptyDraft();
