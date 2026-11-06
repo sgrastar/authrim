@@ -39,6 +39,12 @@ export interface SettingsSection {
 	description?: MessageKey;
 	/** One line under the closed Advanced heading: what is inside. */
 	advanced?: MessageKey;
+	/**
+	 * Set for the whole deployment, whichever tenant is open: read and saved at the platform
+	 * scope, and shown only to admins who may see platform settings. For settings the API lets
+	 * only the platform set (`scopes: ['platform']`) that belong with a tenant page's own.
+	 */
+	level?: 'platform';
 	settings: readonly PlacedSetting[];
 }
 
@@ -70,14 +76,51 @@ export function categoryOf(key: string): CategoryName {
 
 /** Every category a page reads, in the order first used. */
 export function categoriesOf(page: SettingsPageDef): CategoryName[] {
-	const seen: CategoryName[] = [];
+	return [...new Set(partsOf(page).map((part) => part.category))];
+}
+
+/**
+ * One read and one save of a page: a category at the page's scope, or at the platform for a
+ * `level: 'platform'` section. A page that shows a category at both scopes has two parts of it,
+ * each with its own version.
+ */
+export interface SettingsPart {
+	/** The category's name at the page's scope; `platform/<category>` at the platform. */
+	id: string;
+	category: CategoryName;
+	platform: boolean;
+}
+
+/** The part a setting of a section is read from and saved to. */
+export function partIdOf(section: Pick<SettingsSection, 'level'>, key: string): string {
+	const category = categoryOf(key);
+	return section.level === 'platform' ? `platform/${category}` : category;
+}
+
+/** The part of a setting placed on a page (each setting has one place on a page). */
+export function partOfKey(page: SettingsPageDef, key: string): string {
+	const section = page.sections.find((candidate) =>
+		candidate.settings.some((setting) => setting.key === key)
+	);
+	if (!section) throw new Error(`Not on ${page.id}: ${key}`);
+	return partIdOf(section, key);
+}
+
+/** Every part a page reads, in the order first used. */
+export function partsOf(page: SettingsPageDef): SettingsPart[] {
+	const parts: SettingsPart[] = [];
 	for (const section of page.sections) {
 		for (const setting of section.settings) {
-			const category = categoryOf(setting.key);
-			if (!seen.includes(category)) seen.push(category);
+			const id = partIdOf(section, setting.key);
+			if (parts.some((part) => part.id === id)) continue;
+			parts.push({
+				id,
+				category: categoryOf(setting.key),
+				platform: section.level === 'platform'
+			});
 		}
 	}
-	return seen;
+	return parts;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -338,10 +381,44 @@ export const ENTERPRISE_SAML: SettingsPageDef = {
 	]
 };
 
+/**
+ * Settings → Administrators: how admins sign in to this console. The tenant's own part (how long
+ * an admin stays signed in, which operations ask for more), and for platform admins the switches
+ * that hold for every tenant. The list of administrators is still in the previous Admin UI.
+ */
+export const TEAM: SettingsPageDef = {
+	id: 'team',
+	nav: 'settings/team',
+	title: 'set.page.team',
+	description: 'set.page.team.desc',
+	sections: [
+		{
+			id: 'admin-sign-in',
+			title: 'set.section.adminSignIn',
+			description: 'set.section.adminSignIn.desc',
+			settings: [
+				{ key: 'session.ttl.admin_passkey', depth: 'primary' },
+				{ key: 'security.admin_step_up_overrides', depth: 'primary' }
+			]
+		},
+		{
+			id: 'admin-sign-in-platform',
+			title: 'set.section.adminSignInPlatform',
+			description: 'set.section.adminSignInPlatform.desc',
+			level: 'platform',
+			settings: [
+				{ key: 'security.admin_step_up_enforced', depth: 'primary' },
+				{ key: 'security.admin_keyring_dc_api', depth: 'primary' }
+			]
+		}
+	]
+};
+
 export const SETTINGS_PAGES: readonly SettingsPageDef[] = [
 	STAYING_SIGNED_IN,
 	PROTECTION,
 	ENTERPRISE_SAML,
 	SIGNING_KEYS,
-	APP_DEFAULTS
+	APP_DEFAULTS,
+	TEAM
 ];

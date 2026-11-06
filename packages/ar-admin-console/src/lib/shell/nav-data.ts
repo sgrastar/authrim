@@ -354,6 +354,7 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				id: 'admin-activity',
 				label: 'nav.mon.adminActivity',
 				icon: 'shield',
+				requires: { permission: 'admin:admin_audit:read' },
 				legacyRoutes: ['/admin/admin-audit']
 			},
 			{
@@ -470,6 +471,7 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				label: 'nav.set.team',
 				icon: 'users',
 				platform: 'tenant',
+				requires: { settings: ['session', 'security'] },
 				legacyRoutes: ['/admin/admins (このテナントの管理者のみ)']
 			},
 			{

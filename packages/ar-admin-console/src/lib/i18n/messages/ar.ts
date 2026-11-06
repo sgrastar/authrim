@@ -11,6 +11,7 @@ import { arKeyringPresentation } from './keyring-presentation/ar';
 import { arNotices } from './notices/ar';
 import { arCustomization } from './customization/ar';
 import { arStepUp } from './step-up/ar';
+import { arAdminAudit } from './admin-audit/ar';
 
 export const ar = {
 	...arSettings,
@@ -25,6 +26,7 @@ export const ar = {
 	...arNotices,
 	...arCustomization,
 	...arStepUp,
+	...arAdminAudit,
 	'app.adminLabel': 'وحدة التحكم الإدارية',
 	'app.env.dev': 'التطوير',
 	'app.env.prod': 'الإنتاج',

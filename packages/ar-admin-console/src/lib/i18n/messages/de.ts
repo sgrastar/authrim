@@ -11,6 +11,7 @@ import { deKeyringPresentation } from './keyring-presentation/de';
 import { deNotices } from './notices/de';
 import { deCustomization } from './customization/de';
 import { deStepUp } from './step-up/de';
+import { deAdminAudit } from './admin-audit/de';
 
 export const de = {
 	...deSettings,
@@ -25,6 +26,7 @@ export const de = {
 	...deNotices,
 	...deCustomization,
 	...deStepUp,
+	...deAdminAudit,
 	'app.adminLabel': 'Verwaltungskonsole',
 	'app.env.dev': 'Entwicklung',
 	'app.env.prod': 'Produktion',
