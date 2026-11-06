@@ -15,6 +15,7 @@ const app = readFileSync(new URL('../app.css', import.meta.url), 'utf8');
 const alert = readFileSync(new URL('../lib/components/Alert.svelte', import.meta.url), 'utf8');
 
 type Rgb = [number, number, number];
+type Values = Record<string, string>;
 interface Colour {
 	rgb: Rgb;
 	alpha: number;
@@ -206,17 +207,17 @@ const pictureDark = tokens(
 	app,
 	"[data-theme='dark'][data-login-theme='glass'][data-has-page-background-image='true'],"
 );
-/** Clear glass over a white, a black or a dark-blue photo, with the protection applied. */
-const CLEAR_ON_PICTURE: Case[] = [
+/** A glass over a white, a black or a dark-blue photo, with the protection applied. */
+const onPicture = (name: string, light: Values, dark: Values): Case[] => [
 	{
-		name: 'clear glass light over a picture',
-		values: { ...clearLight, ...pictureLight },
+		name: `${name} light over a picture`,
+		values: { ...light, ...pictureLight },
 		behind: PHOTOS,
 		paneOnly: true
 	},
 	{
-		name: 'clear glass dark over a picture',
-		values: { ...clearDark, ...pictureLight, ...pictureDark },
+		name: `${name} dark over a picture`,
+		values: { ...dark, ...pictureLight, ...pictureDark },
 		behind: PHOTOS,
 		paneOnly: true
 	}
@@ -224,9 +225,9 @@ const CLEAR_ON_PICTURE: Case[] = [
 
 /**
  * The opaque fallbacks (reduced transparency, no backdrop-filter): each block's light and dark
- * token rules, laid over Clear glass's own.
+ * token rules, laid over the glass's own.
  */
-function fallbackTokens(opening: string): [Record<string, string>, Record<string, string>] {
+function fallbackTokens(opening: string): [Values, Values] {
 	const block = app.slice(app.lastIndexOf(opening));
 	const bodies = [...block.matchAll(/\{([^{}]*--bg-card[^{}]*)\}/g)].slice(0, 2);
 	const read = (body: string) =>
@@ -235,19 +236,36 @@ function fallbackTokens(opening: string): [Record<string, string>, Record<string
 		);
 	return [read(bodies[0][1]), read(bodies[1][1])];
 }
-const CLEAR_FALLBACKS: Case[] = [
-	'@media (prefers-reduced-transparency: reduce) {',
-	'@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {'
-].flatMap((opening) => {
-	const [light, dark] = fallbackTokens(opening);
-	const kind = opening.startsWith('@media') ? 'reduced transparency' : 'no backdrop-filter';
-	const lightValues = { ...clearLight, ...light };
-	const darkValues = { ...clearDark, ...light, ...dark };
-	return [
-		{ name: `clear glass light, ${kind}`, values: lightValues, behind: page(lightValues) },
-		{ name: `clear glass dark, ${kind}`, values: darkValues, behind: page(darkValues) }
-	];
-});
+const withFallbacks = (name: string, base: Values, baseDark: Values): Case[] =>
+	[
+		'@media (prefers-reduced-transparency: reduce) {',
+		'@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {'
+	].flatMap((opening) => {
+		const [light, dark] = fallbackTokens(opening);
+		const kind = opening.startsWith('@media') ? 'reduced transparency' : 'no backdrop-filter';
+		const lightValues = { ...base, ...light };
+		const darkValues = { ...baseDark, ...light, ...dark };
+		return [
+			{ name: `${name} light, ${kind}`, values: lightValues, behind: page(lightValues) },
+			{ name: `${name} dark, ${kind}`, values: darkValues, behind: page(darkValues) }
+		];
+	});
+
+/** Both glasses' small parts (fields, switches, badges, alerts) in every place they are drawn. */
+const GLASS_PARTS: Case[] = (
+	[
+		['glass', glassLight, glassDark],
+		['clear glass', clearLight, clearDark]
+	] as const
+).flatMap(([name, light, dark]) => [
+	{ name: `${name} light`, values: light, behind: glassBehind(light) },
+	{ name: `${name} dark`, values: dark, behind: glassBehind(dark) },
+	...onPicture(name, light, dark)
+]);
+const GLASS_FALLBACKS: Case[] = [
+	...withFallbacks('glass', glassLight, glassDark),
+	...withFallbacks('clear glass', clearLight, clearDark)
+];
 
 const flatLight = tokens(app, `${BOUNDARY}[data-login-theme='flat'] {`);
 const flatDark = {
@@ -423,42 +441,36 @@ describe('theme contrast', () => {
 		}
 	);
 
-	it.each([
-		{ name: 'clear glass light', values: clearLight, behind: glassBehind(clearLight) },
-		{ name: 'clear glass dark', values: clearDark, behind: glassBehind(clearDark) },
-		...CLEAR_ON_PICTURE
-	])('$name: a status badge’s label meets AA under its gloss', (testCase) => {
-		const { values } = testCase;
-		const gloss = brightestStop(values['--glass-gloss'], values);
-		const badges: [string, string][] = [
-			['--glass-text-success', '--success-light'],
-			['--glass-text-warning', '--warning-light'],
-			['--glass-text-danger', '--danger-light'],
-			['--text-primary', '--primary-light'],
-			['--text-secondary', 'rgba(100, 116, 139, 0.1)']
-		];
-		const surfaces = surfacesOf(testCase);
-		for (const [text, tint] of badges) {
-			const tintColour = tint.startsWith('--')
-				? resolveColour(values[tint] ?? BASE[tint], values)
-				: colour(tint);
-			for (const surface of surfaces) {
-				for (const face of [over(tintColour, surface), over(gloss, over(tintColour, surface))]) {
-					expect(
-						textContrast(values[text], face),
-						`${text} on ${tint} at ${face.map(Math.round)}`
-					).toBeGreaterThanOrEqual(4.5);
+	it.each([...GLASS_PARTS, ...GLASS_FALLBACKS])(
+		'$name: a status badge’s label meets AA under its gloss',
+		(testCase) => {
+			const { values } = testCase;
+			const gloss = brightestStop(values['--glass-gloss'], values);
+			const badges: [string, string][] = [
+				['--glass-text-success', '--success-light'],
+				['--glass-text-warning', '--warning-light'],
+				['--glass-text-danger', '--danger-light'],
+				['--text-primary', '--primary-light'],
+				['--text-secondary', 'rgba(100, 116, 139, 0.1)']
+			];
+			const surfaces = surfacesOf(testCase);
+			for (const [text, tint] of badges) {
+				const tintColour = tint.startsWith('--')
+					? resolveColour(values[tint] ?? BASE[tint], values)
+					: colour(tint);
+				for (const surface of surfaces) {
+					for (const face of [over(tintColour, surface), over(gloss, over(tintColour, surface))]) {
+						expect(
+							textContrast(values[text], face),
+							`${text} on ${tint} at ${face.map(Math.round)}`
+						).toBeGreaterThanOrEqual(4.5);
+					}
 				}
 			}
 		}
-	});
+	);
 
-	it.each([
-		{ name: 'clear glass light', values: clearLight, behind: glassBehind(clearLight) },
-		{ name: 'clear glass dark', values: clearDark, behind: glassBehind(clearDark) },
-		...CLEAR_ON_PICTURE,
-		...CLEAR_FALLBACKS
-	])(
+	it.each([...GLASS_PARTS, ...GLASS_FALLBACKS])(
 		'$name: a field’s, a switch’s and its thumb’s hairline shows the control at 3:1',
 		(testCase) => {
 			const { values } = testCase;
@@ -503,7 +515,7 @@ describe('theme contrast', () => {
 		}
 	);
 
-	it.each([...CASES, ...CLEAR_ON_PICTURE])(
+	it.each([...CASES, ...GLASS_PARTS.filter((c) => c.paneOnly), ...GLASS_FALLBACKS])(
 		'$name: alert text meets AA on its tint, on the card or the page',
 		(testCase) => {
 			const { values } = testCase;
