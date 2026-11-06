@@ -2113,6 +2113,11 @@ crons = ["*/15 * * * *"]
       expect.arrayContaining([
         { binding: 'OP_VC', service: 'test-ar-vc' },
         { binding: 'LOGIN_UI_WORKER', service: 'test-ar-login-ui' },
+        {
+          binding: 'LOGIN_UI_EDGE',
+          service: 'test-ar-login-ui',
+          entrypoint: 'LoginUiEdgeEntrypoint',
+        },
         { binding: 'ADMIN_UI_WORKER', service: 'test-ar-admin-ui' },
       ])
     );
