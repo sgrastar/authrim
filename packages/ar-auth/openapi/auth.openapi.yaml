@@ -808,6 +808,61 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/DIDUnlink'
+  /api/auth/human-verification/pow-challenge:
+    get:
+      tags:
+        - Human Verification
+      operationId: getApiAuthHumanVerificationPowChallenge
+      summary: Issue a lite Login UI proof-of-work challenge
+      description: >-
+        For a tenant in lite mode only (404 otherwise). Returns an ALTCHA v1 challenge bound to
+        the tenant, the action and the tenant's current lite policy revision. The browser finds the
+        hidden number and sends base64(JSON {algorithm, challenge, number, salt, signature}) as
+        `human_verification_response`; each proof is accepted once, until it expires. Issues are
+        limited per IP and per tenant, atomically (429, or 503 when the counter is unavailable).
+        Never cached.
+      x-authrim-route-coverage: inferred-from-source
+      parameters:
+        - name: action
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [login, signup, reauth]
+      responses:
+        '200':
+          description: The challenge.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [challenge, policy_revision]
+                properties:
+                  challenge:
+                    type: object
+                    required: [algorithm, challenge, maxnumber, salt, signature]
+                    properties:
+                      algorithm:
+                        type: string
+                        enum: [SHA-256]
+                      challenge:
+                        type: string
+                      maxnumber:
+                        type: integer
+                      salt:
+                        type: string
+                      signature:
+                        type: string
+                  policy_revision:
+                    type: string
+        '400':
+          description: invalid_request (unknown action).
+        '404':
+          description: The tenant is not in lite mode.
+        '429':
+          description: rate_limit_exceeded (with Retry-After).
+        '503':
+          description: temporarily_unavailable (no keyring, or the policy or counter cannot be read).
   /api/auth/guest/login:
     post:
       tags:
@@ -4098,6 +4153,13 @@ components:
           type: string
           minLength: 1
           description: Email address or username/user identifier.
+        human_verification_response:
+          type: string
+          maxLength: 2048
+          description: >-
+            Required for a tenant in lite mode when its policy requires human verification for
+            sign-in (or re-authentication): the lite Login UI's proof of work, base64 of the
+            ALTCHA v1 JSON. Ignored otherwise.
         authorization_challenge_id:
           type: string
           minLength: 1

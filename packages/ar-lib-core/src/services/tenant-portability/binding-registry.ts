@@ -105,7 +105,7 @@ const groups: Array<{
     disposition: 'rebuild',
     names: 'LITE_POLICY_STORE',
     reason:
-      'Start restored tenants in the normal Login UI; re-apply the saved login-ui.lite_mode through the lite-mode route, whose guard re-checks the restored configuration.',
+      'Start restored tenants in the normal Login UI; re-apply lite mode through the lite-mode route (its guard re-checks the restored configuration) for a tenant whose saved login-ui.lite_mode says always.',
   },
   {
     kind: 'DurableObjectNamespace',

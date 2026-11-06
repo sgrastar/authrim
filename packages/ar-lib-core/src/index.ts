@@ -64,6 +64,8 @@ export * from './services/plugin-host-interface-contract.js';
 export * from './services/human-verification-runner';
 export * from './services/human-verification-policy';
 export * from './services/lite-policy';
+export * from './services/human-verification-pow';
+export * from './services/lite-human-verification';
 export * from './services/lite-compatibility';
 export * from './services/runtime-screen-resolution';
 

@@ -405,6 +405,26 @@ describe('SAML ACS records failed sign-ins against the start interaction', () =>
     expect(scheduledFailures()[0]?.interactionId).toBeFalsy();
   });
 
+  it('takes no unsolicited response for a tenant in lite mode, whatever the global setting', async () => {
+    assertionStore = 'new';
+    expect((await callACS('')).status).toBe(302);
+
+    mockEnv.LITE_POLICY_STORE = {
+      idFromName: vi.fn().mockReturnValue('lite-policy'),
+      get: vi.fn().mockReturnValue({
+        getSnapshotRpc: vi.fn().mockResolvedValue({
+          tenantId: 'tenant-a',
+          liteMode: 'always',
+          humanVerificationRequired: { login: true, signup: true, reauth: false },
+          policyRevision: 'rev-1',
+          generation: 1,
+          updatedAt: 1,
+        }),
+      }),
+    } as unknown as Env['LITE_POLICY_STORE'];
+    expect((await callACS('')).status).toBe(400);
+  });
+
   it('has no interaction to record against for an IdP-initiated response', async () => {
     assertionStore = 'replayed';
 

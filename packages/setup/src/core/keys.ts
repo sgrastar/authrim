@@ -84,6 +84,7 @@ export interface KeyMetadata {
     lookupHmacKeySlotA?: string;
     tombstoneHmacKeyring?: string;
     investigationSubjectHmacKeyring?: string;
+    humanVerificationPowHmacKeyring?: string;
     flowRuntimeHmacSecret?: string;
     vcTransactionCodeHmacSecret?: string;
     vcEvidenceHmacSecret?: string;
@@ -460,6 +461,48 @@ export function generateInvestigationSubjectHmacKeyring(): string {
 /** Whether a stored investigation keyring has the shape the Workers accept. */
 export function isValidInvestigationSubjectHmacKeyring(value: string): boolean {
   return isValidTombstoneHmacKeyring(value);
+}
+
+/**
+ * A new keyring for the lite Login UI's proof of work (HUMAN_VERIFICATION_POW_HMAC_KEYRING), of
+ * the tombstone keyring's shape: 256-bit keys by generation. Rotate by adding a key, deploying,
+ * then making it current; keep the old key for at least the challenge lifetime. See ar-lib-core
+ * human-verification-pow.
+ */
+export function generateHumanVerificationPowHmacKeyring(): string {
+  return generateTombstoneHmacKeyring();
+}
+
+/**
+ * Whether a stored proof-of-work keyring is one ar-auth accepts (ar-lib-core parsePowKeyring):
+ * `{"current", "keys"}` only, 1 to 8 keys, each kid a positive integer, each key base64url of
+ * exactly 32 bytes, the current kid among them.
+ */
+export function isValidHumanVerificationPowHmacKeyring(value: string): boolean {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+    const record = parsed as Record<string, unknown>;
+    if (Object.keys(record).some((key) => key !== 'current' && key !== 'keys')) return false;
+    const keys = record.keys;
+    if (!keys || typeof keys !== 'object' || Array.isArray(keys)) return false;
+    const entries = Object.entries(keys as Record<string, unknown>);
+    if (entries.length < 1 || entries.length > 8) return false;
+    const current = typeof record.current === 'number' ? String(record.current) : record.current;
+    return (
+      typeof current === 'string' &&
+      entries.some(([kid]) => kid === current) &&
+      entries.every(
+        ([kid, secret]) =>
+          /^[1-9][0-9]{0,8}$/u.test(kid) &&
+          typeof secret === 'string' &&
+          /^[A-Za-z0-9_-]{43}$/u.test(secret) &&
+          Buffer.from(secret, 'base64url').byteLength === 32
+      )
+    );
+  } catch {
+    return false;
+  }
 }
 
 /** Whether a stored tombstone keyring has the shape the Workers accept. */
@@ -1314,6 +1357,16 @@ export async function saveKeysToDirectory(
       'utf-8'
     );
     await chmod(investigationSubjectHmacKeyring, SENSITIVE_FILE_MODE);
+    const humanVerificationPowHmacKeyring = join(
+      stagingDir,
+      'human_verification_pow_hmac_keyring.json'
+    );
+    await writeFile(
+      humanVerificationPowHmacKeyring,
+      generateHumanVerificationPowHmacKeyring(),
+      'utf-8'
+    );
+    await chmod(humanVerificationPowHmacKeyring, SENSITIVE_FILE_MODE);
     await writeFile(paths.flowRuntimeHmacSecret, secrets.flowRuntimeHmacSecret, 'utf-8');
     await chmod(paths.flowRuntimeHmacSecret, SENSITIVE_FILE_MODE);
     await writeFile(
@@ -1823,6 +1876,7 @@ export async function ensureSupplementalKeyFiles(
     lookupHmacKeySlotA: join(keysDir, 'lookup_hmac_key_slot_a.txt'),
     tombstoneHmacKeyring: join(keysDir, 'tombstone_hmac_keyring.json'),
     investigationSubjectHmacKeyring: join(keysDir, 'investigation_subject_hmac_keyring.json'),
+    humanVerificationPowHmacKeyring: join(keysDir, 'human_verification_pow_hmac_keyring.json'),
     flowRuntimeHmacSecret: join(keysDir, 'flow_runtime_hmac_secret.txt'),
     vcTransactionCodeHmacSecret: join(keysDir, 'vc_transaction_code_hmac_secret.txt'),
     vcEvidenceHmacSecret: join(keysDir, 'vc_evidence_hmac_secret.txt'),
@@ -1921,6 +1975,13 @@ export async function ensureSupplementalKeyFiles(
     isValidInvestigationSubjectHmacKeyring,
     createdFiles
   );
+  // The lite Login UI's proof of work (ar-auth): kept as it is once made; rotated by adding keys.
+  await ensureSupplementalSecret(
+    paths.humanVerificationPowHmacKeyring,
+    generateHumanVerificationPowHmacKeyring,
+    isValidHumanVerificationPowHmacKeyring,
+    createdFiles
+  );
   await ensureNotificationPayloadKeySet(
     {
       privateSlotA: paths.notificationPayloadDecryptJwkSlotA,
@@ -1984,6 +2045,7 @@ export async function ensureSupplementalKeyFiles(
       : {}),
     tombstoneHmacKeyring: paths.tombstoneHmacKeyring,
     investigationSubjectHmacKeyring: paths.investigationSubjectHmacKeyring,
+    humanVerificationPowHmacKeyring: paths.humanVerificationPowHmacKeyring,
     flowRuntimeHmacSecret: paths.flowRuntimeHmacSecret,
     vcTransactionCodeHmacSecret: paths.vcTransactionCodeHmacSecret,
     vcEvidenceHmacSecret: paths.vcEvidenceHmacSecret,
