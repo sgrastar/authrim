@@ -20,6 +20,8 @@ const mocks = vi.hoisted(() => ({
   issuer: vi.fn(),
   requireAdminStepUp: vi.fn(),
   writeAdminAuditLog: vi.fn(),
+  credentialRow: vi.fn(),
+  sessionTenants: [] as string[],
   auth: {},
 }));
 
@@ -44,6 +46,9 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     touch = mocks.touch;
   }
   class MockAdminSessionRepository {
+    constructor(_adapter: unknown, tenantId: string) {
+      mocks.sessionTenants.push(tenantId);
+    }
     recordSecondFactorVerification = mocks.recordSecondFactorVerification;
   }
   return {
@@ -52,6 +57,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     AdminSessionRepository: MockAdminSessionRepository,
     requireDedicatedAdminDatabaseAdapter: vi.fn(() => ({ queryOne: mocks.homeTenant })),
     evaluateAdminCredentialEligibility: mocks.eligibility,
+    createAuthContextFromHono: () => ({ coreAdapter: { queryOne: mocks.credentialRow } }),
     adminAuthMiddleware:
       () =>
       async (c: { set: (key: string, value: unknown) => void }, next: () => Promise<void>) => {
@@ -120,6 +126,7 @@ function call(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.sessionTenants.length = 0;
   mocks.auth = human();
   mocks.homeTenant.mockResolvedValue({ tenant_id: 'home-tenant' });
   mocks.eligibility.mockResolvedValue({ eligible: true });
@@ -133,6 +140,7 @@ beforeEach(() => {
   mocks.findActiveKeyringFactor.mockResolvedValue(keyringFactor());
   mocks.touch.mockResolvedValue(true);
   mocks.recordSecondFactorVerification.mockResolvedValue(true);
+  mocks.credentialRow.mockResolvedValue({ status: 'active' });
   vc.createAdminPresentationRequest.mockResolvedValue({
     requestId: 'g1:apac:0:vp_1',
     qr: 'openid4vp://?client_id=x&request_uri=y',
@@ -230,6 +238,25 @@ describe('GET /step-up/:id', () => {
         metadata: { second_factor_id: 'kf-1', kind: 'keyring_holder_key' },
       })
     );
+  });
+
+  it('records nothing when the credential was revoked after the wallet answered', async () => {
+    mocks.credentialRow.mockResolvedValue({ status: 'revoked' });
+    const response = await call('GET', '/step-up/g1:apac:0:vp_1');
+    expect(await response.json()).toEqual({ status: 'failed', error: 'credential_not_active' });
+    expect(mocks.credentialRow.mock.calls[0][1]).toEqual([
+      'home-tenant',
+      'cred-1',
+      'admin-1',
+      'https://authrim.com/credentials/admin/v1',
+    ]);
+    expect(mocks.recordSecondFactorVerification).not.toHaveBeenCalled();
+  });
+
+  it('records on the session of the tenant it was created in, while acting in another', async () => {
+    mocks.auth = human({ tenantId: 'other-tenant', sessionTenantId: 'session-tenant' });
+    await call('GET', '/step-up/g1:apac:0:vp_1');
+    expect(mocks.sessionTenants).toEqual(['session-tenant']);
   });
 
   it('reports a pending or failed presentation without consuming it', async () => {
@@ -368,12 +395,30 @@ describe('GET /enroll/:id', () => {
     });
     expect(mocks.insertKeyringHolderKey).toHaveBeenCalledWith(
       { admin_user_id: 'admin-1', holder_jkt: 'N'.repeat(43), label: 'Keyring' },
-      { firstOnly: false }
+      { firstOnly: false, approvedBy: { factorId: 'sf-1', sessionId: 'sess-1' } }
     );
     expect(mocks.writeAdminAuditLog).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ action: 'admin.second_factor.added' })
     );
+  });
+
+  it('binds the registration to the approving factor and refuses when it was revoked meanwhile', async () => {
+    mocks.insertKeyringHolderKey.mockResolvedValue({ inserted: false, reason: 'approval_revoked' });
+    const response = await call('GET', '/enroll/g1:apac:0:vp_1');
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ status: 'failed', error: 'step_up_required' });
+    expect(mocks.insertKeyringHolderKey).toHaveBeenCalledWith(expect.anything(), {
+      firstOnly: false,
+      approvedBy: { factorId: 'sf-1', sessionId: 'sess-1' },
+    });
+  });
+
+  it('registers nothing when the credential was revoked after the wallet answered', async () => {
+    mocks.credentialRow.mockResolvedValue(null);
+    const response = await call('GET', '/enroll/g1:apac:0:vp_1');
+    expect(await response.json()).toEqual({ status: 'failed', error: 'credential_not_active' });
+    expect(mocks.insertKeyringHolderKey).not.toHaveBeenCalled();
   });
 
   it('refuses when the factor that approved the enrolment is no longer active', async () => {

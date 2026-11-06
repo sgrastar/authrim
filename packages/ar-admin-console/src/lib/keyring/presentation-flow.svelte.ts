@@ -67,6 +67,8 @@ export class KeyringPresentationFlow {
 	#tickTimer: ReturnType<typeof setInterval> | undefined;
 	#failures = 0;
 	#polling = false;
+	/** The server was asked after the local deadline (the flow never ends before that). */
+	#askedAfterDeadline = false;
 	#generation = 0;
 
 	constructor(options: PresentationFlowOptions) {
@@ -136,6 +138,7 @@ export class KeyringPresentationFlow {
 		this.#requestId = '';
 		this.#failures = 0;
 		this.#polling = false;
+		this.#askedAfterDeadline = false;
 	}
 
 	#clearPoll(): void {
@@ -152,13 +155,12 @@ export class KeyringPresentationFlow {
 	#tick(): void {
 		if (!this.waiting) return;
 		this.remainingMs = Math.max(0, this.#expiresAt - this.#now());
-		// Past the deadline only an answer the server is still checking is followed, and not for
-		// long; the server decides, and is asked once more before the flow gives up.
-		if (this.remainingMs === 0 && !this.checking) {
-			if (this.#now() >= this.#expiresAt + POLL_INTERVAL_MS) this.#end('expired');
-		} else if (this.#now() >= this.#expiresAt + VERIFICATION_GRACE_MS) {
-			this.#end('expired');
-		}
+		// Past the deadline the server decides: the flow ends only once it has been asked after
+		// the deadline (a result verified while the page was hidden is still collected). An answer
+		// the server is still checking is followed a little longer.
+		if (this.remainingMs > 0 || !this.#askedAfterDeadline) return;
+		const grace = this.checking ? VERIFICATION_GRACE_MS : POLL_INTERVAL_MS;
+		if (this.#now() >= this.#expiresAt + grace) this.#end('expired');
 	}
 
 	#end(reason: PresentationEndReason, failure: string | null = null): void {
@@ -178,10 +180,12 @@ export class KeyringPresentationFlow {
 		if (this.#polling || !this.waiting || !this.#visible) return;
 		this.#polling = true;
 		const generation = this.#generation;
+		const askedAt = this.#now();
 		try {
 			const progress = await this.#options.progress(this.#requestId);
 			if (generation !== this.#generation || !this.waiting) return;
 			this.#failures = 0;
+			if (askedAt >= this.#expiresAt) this.#askedAfterDeadline = true;
 			this.#apply(progress);
 		} catch {
 			if (generation !== this.#generation || !this.waiting) return;

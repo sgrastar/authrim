@@ -103,6 +103,20 @@ describe('KeyringPresentationFlow', () => {
 		expect(checking.flow.endReason).toBe('expired');
 	});
 
+	it('collects a result verified while the page was hidden past the deadline', async () => {
+		const progress = vi.fn(async (): Promise<PresentationProgress> => ({ status: 'verified' }));
+		const { flow, onverified } = flowWith(progress);
+		await flow.start();
+		flow.setVisible(false);
+		await advance(300_000 + 60_000);
+		expect(flow.phase).toBe('waiting');
+		expect(progress).not.toHaveBeenCalled();
+		flow.setVisible(true);
+		await advance(0);
+		expect(flow.phase).toBe('verified');
+		expect(onverified).toHaveBeenCalledTimes(1);
+	});
+
 	it('gives up after repeated failed status checks', async () => {
 		const { flow } = flowWith(async () => {
 			throw new Error('offline');

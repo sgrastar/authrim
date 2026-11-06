@@ -177,7 +177,7 @@ export function extractAdminPresentation(vpToken: unknown): string {
   }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(vpToken);
+    parsed = JSON.parse(vpToken) as unknown;
   } catch {
     refuse('invalid_vp_token');
   }
@@ -186,7 +186,7 @@ export function extractAdminPresentation(vpToken: unknown): string {
   }
   const entries = Object.entries(parsed);
   if (entries.length !== 1 || entries[0][0] !== ADMIN_VP_QUERY_ID) refuse('invalid_vp_token');
-  const presentations = entries[0][1];
+  const presentations: unknown = entries[0][1];
   if (
     !Array.isArray(presentations) ||
     presentations.length !== 1 ||

@@ -32,6 +32,7 @@ import { getCanonicalTenantBaseUrlAsync } from '../../request-issuer';
 import {
   isOwnAdminCredential,
   listOwnAdminCredentials,
+  retireKeyringFactorOf,
   revokeAdminCredential,
 } from './admin-wallet-credential-store';
 
@@ -263,6 +264,14 @@ myWalletCredentialsRouter.post(
       c.header('Cache-Control', 'no-store');
       return c.json({ error: 'wallet_credential_not_revocable' }, 409);
     }
+
+    await retireKeyringFactorOf(
+      adapter,
+      requireDedicatedAdminDatabaseAdapter(c.env, 'admin-wallet-credential'),
+      home.tenantId,
+      home.adminUserId,
+      credentialId
+    );
 
     // Only the credential id: nothing about the key or the claims.
     await writeAdminAuditLog(c, {

@@ -16,6 +16,34 @@ import { acceptAdminResponse, getAdminRequestObject } from './admin-vp-service';
 
 const MAX_FORM_BYTES = 48 * 1024;
 
+/**
+ * The body as text, read at most `limit` bytes: a larger body (with or without Content-Length)
+ * stops the read and answers null, so it is never held in full.
+ */
+async function readBounded(body: ReadableStream<Uint8Array> | null, limit: number) {
+  if (!body) return '';
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > limit) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(bytes);
+}
+
 function oauthError(c: Context<{ Bindings: Env }>, status: 400 | 404 | 503, error: string) {
   c.header('Cache-Control', 'no-store');
   return c.json({ error }, status);
@@ -52,11 +80,13 @@ export async function adminVPResponseRoute(c: Context<{ Bindings: Env }>): Promi
     return oauthError(c, 400, 'invalid_request');
   }
   const length = Number(c.req.header('Content-Length') ?? '0');
-  if (length > MAX_FORM_BYTES) return oauthError(c, 400, 'invalid_request');
-  let form: Record<string, string | File>;
+  if (!Number.isFinite(length) || length > MAX_FORM_BYTES) {
+    return oauthError(c, 400, 'invalid_request');
+  }
+  let form: Record<string, string>;
   try {
-    const raw = await c.req.text();
-    if (raw.length > MAX_FORM_BYTES) return oauthError(c, 400, 'invalid_request');
+    const raw = await readBounded(c.req.raw.body, MAX_FORM_BYTES);
+    if (raw === null) return oauthError(c, 400, 'invalid_request');
     form = Object.fromEntries(new URLSearchParams(raw).entries());
   } catch {
     return oauthError(c, 400, 'invalid_request');

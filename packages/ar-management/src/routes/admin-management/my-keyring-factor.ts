@@ -29,6 +29,7 @@ import {
   AdminSecondFactorRepository,
   AdminSessionRepository,
   adminAuthMiddleware,
+  createAuthContextFromHono,
   createErrorResponse,
   evaluateAdminCredentialEligibility,
   evaluateAdminStepUpEvidence,
@@ -40,6 +41,7 @@ import { writeAdminAuditLog } from '../../admin-shared';
 import { refuseAdminFreshAuth, requireAdminStepUp } from '../../admin-step-up-gate';
 import { getCanonicalTenantBaseUrlAsync } from '../../request-issuer';
 import { enrollmentState, presentSecondFactor } from './my-second-factors';
+import { ADMIN_CREDENTIAL_TYPE } from './admin-wallet-credential-store';
 
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
 type HumanSession = AdminAuthContext & { sessionId: string; sessionTenantId: string };
@@ -148,7 +150,7 @@ async function progress(
   c: AdminContext,
   auth: HumanSession,
   purpose: AdminPresentationPurpose
-): Promise<{ result: AdminPresentationResult } | Response> {
+): Promise<{ result: AdminPresentationResult; tenantId: string } | Response> {
   const requestId = c.req.param('id') ?? '';
   if (!REQUEST_ID.test(requestId)) return refuse(c, 404, 'not_found');
   if (!c.env.VC_ISSUER) return refuse(c, 503, 'keyring_unavailable');
@@ -170,7 +172,29 @@ async function progress(
   if (!result || result.purpose !== purpose) {
     return c.json({ status: 'consumed', expires_at: status.expiresAt });
   }
-  return { result };
+  // The credential may have been revoked since the wallet answered: its own row decides now.
+  if (!(await adminCredentialIsActive(c, tenantId, auth.userId, result.credentialId))) {
+    return c.json({ status: 'failed', error: 'credential_not_active' });
+  }
+  return { result, tenantId };
+}
+
+async function adminCredentialIsActive(
+  c: AdminContext,
+  tenantId: string,
+  adminUserId: string,
+  credentialId: string
+): Promise<boolean> {
+  const coreAdapter = createAuthContextFromHono(
+    c as unknown as Context<{ Bindings: Env }>,
+    tenantId
+  ).coreAdapter;
+  const row = await coreAdapter.queryOne<{ status: string }>(
+    `SELECT status FROM issued_credentials
+      WHERE tenant_id = ? AND public_id = ? AND user_id = ? AND credential_type = ?`,
+    [tenantId, credentialId, adminUserId, ADMIN_CREDENTIAL_TYPE]
+  );
+  return row?.status === 'active';
 }
 
 /**
@@ -224,9 +248,10 @@ myKeyringFactorRouter.get('/step-up/:id', async (c) => {
 
     const verifiedAt = Date.now();
     await repo.touch(factor.id, verifiedAt);
+    // The session row is the one of the tenant it was created in, whatever tenant it acts in now.
     const recorded = await new AdminSessionRepository(
       adapter,
-      auth.tenantId ?? auth.sessionTenantId
+      auth.sessionTenantId
     ).recordSecondFactorVerification(
       auth.sessionId,
       { adminUserId: auth.userId, secondFactorId: factor.id },
@@ -349,8 +374,16 @@ myKeyringFactorRouter.get('/enroll/:id', async (c) => {
 
     const inserted = await repo.insertKeyringHolderKey(
       { admin_user_id: auth.userId, holder_jkt: result.holderJkt, label: KEYRING_LABEL },
-      { firstOnly: mode === 'first' }
+      {
+        firstOnly: mode === 'first',
+        ...(mode === 'step_up' && approving
+          ? { approvedBy: { factorId: approving, sessionId: auth.sessionId } }
+          : {}),
+      }
     );
+    if (!inserted.inserted && inserted.reason === 'approval_revoked') {
+      return c.json({ status: 'failed', error: 'step_up_required' }, 403);
+    }
     if (!inserted.inserted) {
       const error =
         inserted.reason === 'credential_in_use'

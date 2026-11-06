@@ -40,6 +40,7 @@ import { sendAdminEmailChangeNotices } from './admin-email-change-notice';
 import {
   endedRevoked,
   listRevocableAdminCredentialIds,
+  retireKeyringFactorOf,
   revokeAdminCredential,
   type RevocationResult,
 } from './admin-wallet-credential-store';
@@ -816,6 +817,11 @@ adminUsersRouter.post('/:id/wallet-credentials/revoke', async (c) => {
       });
     }
     const allRevoked = results.every((result) => endedRevoked(result.outcome));
+    for (const result of results) {
+      if (endedRevoked(result.outcome)) {
+        await retireKeyringFactorOf(coreAdapter, adapter, tenantId, id, result.id);
+      }
+    }
 
     await createAuditLog(
       c,

@@ -6,7 +6,7 @@
  */
 
 import type { CredentialStatus, DatabaseAdapter } from '@authrim/ar-lib-core';
-import { transitionCredentialStatus } from '@authrim/ar-lib-core';
+import { AdminSecondFactorRepository, transitionCredentialStatus } from '@authrim/ar-lib-core';
 
 export const ADMIN_CREDENTIAL_TYPE = 'https://authrim.com/credentials/admin/v1';
 
@@ -111,6 +111,40 @@ export async function listOwnAdminCredentials(
     });
   }
   return items;
+}
+
+/** RFC 7638 thumbprint of an admin credential's holder key, or undefined. */
+export async function holderThumbprintOfCredential(
+  adapter: DatabaseAdapter,
+  tenantId: string,
+  credentialId: string
+): Promise<string | undefined> {
+  const row = await adapter.queryOne<{ holder_binding: string | null }>(
+    `SELECT holder_binding FROM issued_credentials
+      WHERE tenant_id = ? AND public_id = ? AND credential_type = ?`,
+    [tenantId, credentialId, ADMIN_CREDENTIAL_TYPE]
+  );
+  return thumbprintOf(row?.holder_binding ?? null);
+}
+
+/**
+ * A revoked admin credential takes its Keyring second factor with it: the key can no longer be
+ * presented, and the evidence and receipts it gave must stop counting now. Never throws.
+ */
+export async function retireKeyringFactorOf(
+  coreAdapter: DatabaseAdapter,
+  adminAdapter: DatabaseAdapter,
+  tenantId: string,
+  adminUserId: string,
+  credentialId: string
+): Promise<void> {
+  try {
+    const jkt = await holderThumbprintOfCredential(coreAdapter, tenantId, credentialId);
+    if (jkt)
+      await new AdminSecondFactorRepository(adminAdapter).revokeKeyringHolderKey(adminUserId, jkt);
+  } catch {
+    // The credential is revoked either way; a later presentation of it is refused by its state.
+  }
 }
 
 /** True when the credential is an admin credential of exactly this admin in this tenant. */
