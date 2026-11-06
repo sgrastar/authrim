@@ -455,6 +455,27 @@ function isAdminBootstrapProxyPath(pathname: string): boolean {
 	);
 }
 
+/**
+ * img-src: HTTPS, data: and blob: (local previews), and the API's origin when the proxy is off
+ * and the API is plain HTTP (local development): stored Login UI images are paths on the API,
+ * which the console loads from the API's origin (see apiAssetUrl).
+ */
+function buildImgSrc(platformEnv?: Record<string, unknown>): string {
+	const base = "img-src 'self' https: data: blob:";
+	if (isProxyEnabled(platformEnv)) return base;
+	const apiBaseUrl =
+		(platformEnv?.PUBLIC_API_BASE_URL as string | undefined)?.trim() ||
+		PUBLIC_API_BASE_URL?.trim() ||
+		import.meta.env.PUBLIC_API_BASE_URL?.trim();
+	if (!apiBaseUrl) return base;
+	try {
+		const api = new URL(apiBaseUrl);
+		return api.protocol === 'http:' ? `${base} ${api.origin}` : base;
+	} catch {
+		return base;
+	}
+}
+
 function buildConnectSrc(platformEnv?: Record<string, unknown>): string {
 	const telemetrySources = 'https://cloudflareinsights.com https://*.cloudflareinsights.com';
 	// When proxy is enabled, browser only requests to same-origin /api/*; 'self' is sufficient.
@@ -1013,14 +1034,15 @@ export const securityHeaders: Handle = async ({ event, resolve }) => {
 	// Content Security Policy
 	// - 'unsafe-inline' required for SvelteKit style injection and inline scripts
 	// - connect-src includes API origin for cross-origin API calls
-	// - img-src allows HTTPS, data: URIs, and blob: URLs for local image previews
+	// - img-src allows HTTPS, data: URIs, and blob: URLs for local image previews (and a plain
+	//   HTTP API origin in local development, for the stored Login UI images)
 	response.headers.set(
 		'Content-Security-Policy',
 		[
 			"default-src 'self'",
 			"script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com",
 			"style-src 'self' 'unsafe-inline'",
-			"img-src 'self' https: data: blob:",
+			buildImgSrc(platformEnv),
 			buildConnectSrc(platformEnv),
 			"font-src 'self'",
 			"frame-ancestors 'none'",

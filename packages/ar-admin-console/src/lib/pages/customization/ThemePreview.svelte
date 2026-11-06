@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { apiAssetUrl } from '#lib/api/assets.js';
 	import { t, tIn } from '#lib/i18n/i18n.svelte.js';
 	import { localeDir } from '#lib/i18n/locales.js';
 	import Icon from '#lib/ui/icons/Icon.svelte';
@@ -86,7 +87,8 @@
 			set(url);
 			return () => URL.revokeObjectURL(url);
 		}
-		set(value);
+		// A stored image is a path on the API, which the console may not serve itself.
+		set(value ? apiAssetUrl(value) : null);
 	}
 
 	$effect(() => imageUrl(draft.logo, (url) => (logoUrl = url)));

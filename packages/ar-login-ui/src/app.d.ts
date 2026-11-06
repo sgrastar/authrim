@@ -72,6 +72,10 @@ declare global {
 			authenticationMethods?:
 				| import('#lib/api/authentication-methods.js').AuthenticationMethodsResponse
 				| null;
+			/** The tenant's lite Login UI mode, as the request's authentication methods tell it. */
+			loginUiLite?: import('#lib/lite/routing.js').LiteModeAnswer;
+			/** What a lite page adds to the lite CSP: a fixed script's hash, a relay's destination. */
+			liteCsp?: { scriptHashes?: string[]; formAction?: string };
 			loginChallengeThemeTarget?: {
 				challengeId: string;
 				valid: boolean;
